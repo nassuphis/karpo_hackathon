@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PolyPaint</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #eee; display: flex; flex-direction: column; }
+#controls {
+    text-align: center; padding: 10px 16px;
+    display: flex; align-items: center; justify-content: center; gap: 20px;
+    flex-shrink: 0;
+}
+#controls label { font-size: 15px; display: flex; align-items: center; gap: 8px; }
+#degree { width: 180px; accent-color: #e94560; }
+#degree-value { font-weight: bold; font-size: 18px; color: #e94560; min-width: 28px; text-align: center; }
+#status { font-size: 12px; color: #888; }
+#panels { display: flex; justify-content: center; gap: 16px; padding: 0 12px 12px; flex: 1; min-height: 0; }
+.panel { text-align: center; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.panel h3 { margin-bottom: 6px; font-weight: 400; font-size: 14px; color: #aaa; flex-shrink: 0; }
+svg { background: #16213e; border: 1px solid #333; border-radius: 8px; flex: 1; }
+.grid line { stroke: #1f3354; stroke-width: 0.5; }
+.axis line { stroke: #2a4a6b; stroke-width: 1; }
+.unit-circle { fill: none; stroke: #2a4a6b; stroke-width: 1; stroke-dasharray: 4 3; }
+circle.coeff { cursor: grab; stroke-width: 1.5; }
+circle.coeff.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
+circle.root { pointer-events: none; }
+.trail { fill: none; stroke-width: 1.2; opacity: 0.6; stroke-linecap: round; stroke-linejoin: round; }
+#reset-btn {
+    background: #e94560; color: #fff; border: none; border-radius: 4px;
+    padding: 6px 14px; font-size: 13px; cursor: pointer;
+}
+#reset-btn:hover { background: #c73550; }
+#pattern { background: #16213e; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; font-size: 13px; }
+#spread { width: 100px; accent-color: #e94560; }
+#spread-value { font-size: 13px; color: #e94560; min-width: 32px; text-align: center; }
+.coeff-label { font-size: 10px; fill: #aaa; pointer-events: none; }
+.tooltip {
+    position: absolute; background: rgba(0,0,0,0.85); color: #fff;
+    padding: 4px 8px; border-radius: 4px; font-size: 12px; pointer-events: none;
+    display: none; white-space: nowrap;
+}
+</style>
+</head>
+<body>
+
+<div id="controls">
+    <label>Degree:
+        <input type="range" id="degree" min="3" max="30" value="5">
+        <span id="degree-value">5</span>
+    </label>
+    <label>Pattern:
+        <select id="pattern">
+            <optgroup label="Basic">
+                <option value="circle">Circle</option>
+                <option value="real">Real axis</option>
+                <option value="imag">Imaginary axis</option>
+                <option value="grid">Grid</option>
+                <option value="random">Random</option>
+            </optgroup>
+            <optgroup label="Coeff patterns">
+                <option value="spiral">Spiral</option>
+                <option value="star">Star</option>
+                <option value="lemniscate">Figure-8</option>
+                <option value="conjugate">Conjugate pairs</option>
+                <option value="two-clusters">Two clusters</option>
+                <option value="geometric">Geometric decay</option>
+                <option value="rose">Rose curve</option>
+                <option value="cardioid">Cardioid</option>
+            </optgroup>
+            <optgroup label="Roots shapes">
+                <option value="r-heart">Heart</option>
+                <option value="r-circle">Circle</option>
+                <option value="r-star">Star</option>
+                <option value="r-spiral">Spiral</option>
+                <option value="r-cross">Cross</option>
+                <option value="r-diamond">Diamond</option>
+                <option value="r-grid">Chessboard</option>
+                <option value="r-smiley">Smiley</option>
+                <option value="r-figure8">Figure-8</option>
+                <option value="r-butterfly">Butterfly</option>
+                <option value="r-trefoil">Trefoil</option>
+                <option value="r-polygon">Polygon</option>
+            </optgroup>
+        </select>
+    </label>
+    <label>Spread:
+        <input type="range" id="spread" min="0.2" max="2.5" step="0.1" value="1.0">
+        <span id="spread-value">1.0</span>
+    </label>
+    <button id="reset-btn">Reset Trails</button>
+    <span id="status">connecting...</span>
+</div>
+
+<div id="panels">
+    <div class="panel">
+        <h3>Coefficients (drag to edit)</h3>
+        <svg id="coeff-panel"></svg>
+    </div>
+    <div class="panel">
+        <h3>Roots (computed)</h3>
+        <svg id="roots-panel"></svg>
+    </div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+const MIN_RANGE = 1.5;
+const MARGIN = 30;
+const RANGE_PAD = 1.3; // 30% padding around data
+
+// Compute panel size from available space
+function getPanelSize() {
+    const controls = document.getElementById("controls");
+    const availH = window.innerHeight - controls.offsetHeight - 50;
+    const availW = (window.innerWidth - 16 * 3) / 2;
+    return Math.max(200, Math.floor(Math.min(availW, availH)));
+}
+
+let S = getPanelSize();
+
+// Per-panel state
+const panels = {
+    coeff: { range: 3, xScale: null, yScale: null, gridG: null, axisG: null, labelRe: null, labelIm: null, unitCircle: null },
+    roots: { range: 3, xScale: null, yScale: null, gridG: null, axisG: null, labelRe: null, labelIm: null, unitCircle: null }
+};
+
+function makeScales(range) {
+    return {
+        x: d3.scaleLinear().domain([-range, range]).range([MARGIN, S - MARGIN]),
+        y: d3.scaleLinear().domain([-range, range]).range([S - MARGIN, MARGIN])
+    };
+}
+
+function initPanelScales(p) {
+    const s = makeScales(p.range);
+    p.xScale = s.x;
+    p.yScale = s.y;
+}
+initPanelScales(panels.coeff);
+initPanelScales(panels.roots);
+
+// Convenience aliases (updated when range changes)
+function cxs() { return panels.coeff.xScale; }
+function cys() { return panels.coeff.yScale; }
+function rxs() { return panels.roots.xScale; }
+function rys() { return panels.roots.yScale; }
+
+let coefficients = [];
+let ws = null;
+let pendingSend = false;
+let trails = [];
+
+// --- Compute range needed to fit data ---
+
+function computeRange(points) {
+    // points: array of {re, im} or [re, im]
+    let maxAbs = MIN_RANGE;
+    for (const p of points) {
+        const re = Array.isArray(p) ? p[0] : p.re;
+        const im = Array.isArray(p) ? p[1] : p.im;
+        if (isFinite(re)) maxAbs = Math.max(maxAbs, Math.abs(re));
+        if (isFinite(im)) maxAbs = Math.max(maxAbs, Math.abs(im));
+    }
+    // Round up to a nice number and add padding
+    return Math.ceil(maxAbs * RANGE_PAD * 2) / 2;
+}
+
+// --- SVG setup / grid redraw ---
+
+function drawGrid(svgSel, p) {
+    const xs = p.xScale, ys = p.yScale, range = p.range;
+
+    // Clear old grid elements
+    if (p.gridG) p.gridG.remove();
+    if (p.axisG) p.axisG.remove();
+    if (p.labelRe) p.labelRe.remove();
+    if (p.labelIm) p.labelIm.remove();
+    if (p.unitCircle) p.unitCircle.remove();
+
+    // Grid lines at integers
+    p.gridG = svgSel.insert("g", ":first-child").attr("class", "grid");
+    const intMax = Math.floor(range);
+    for (let v = -intMax; v <= intMax; v++) {
+        p.gridG.append("line")
+            .attr("x1", xs(v)).attr("y1", ys(-range))
+            .attr("x2", xs(v)).attr("y2", ys(range));
+        p.gridG.append("line")
+            .attr("x1", xs(-range)).attr("y1", ys(v))
+            .attr("x2", xs(range)).attr("y2", ys(v));
+    }
+
+    // Axes
+    p.axisG = svgSel.insert("g", ":first-child").attr("class", "axis");
+    p.axisG.append("line")
+        .attr("x1", xs(-range)).attr("y1", ys(0))
+        .attr("x2", xs(range)).attr("y2", ys(0));
+    p.axisG.append("line")
+        .attr("x1", xs(0)).attr("y1", ys(-range))
+        .attr("x2", xs(0)).attr("y2", ys(range));
+
+    // Axis labels
+    p.labelRe = svgSel.append("text").attr("x", S - MARGIN + 4).attr("y", ys(0) + 4)
+        .attr("fill", "#556").attr("font-size", 11).text("Re");
+    p.labelIm = svgSel.append("text").attr("x", xs(0) + 6).attr("y", MARGIN - 4)
+        .attr("fill", "#556").attr("font-size", 11).text("Im");
+
+    // Unit circle
+    const r = Math.abs(xs(1) - xs(0));
+    p.unitCircle = svgSel.append("circle").attr("class", "unit-circle")
+        .attr("cx", xs(0)).attr("cy", ys(0)).attr("r", r);
+}
+
+function setupPanel(svgSel, p) {
+    svgSel.attr("width", S).attr("height", S).attr("viewBox", `0 0 ${S} ${S}`);
+    drawGrid(svgSel, p);
+}
+
+function updatePanelRange(svgSel, p, newRange) {
+    if (Math.abs(p.range - newRange) < 0.01) return; // no change
+    p.range = newRange;
+    initPanelScales(p);
+    drawGrid(svgSel, p);
+}
+
+const coeffSvg = d3.select("#coeff-panel");
+const rootsSvg = d3.select("#roots-panel");
+setupPanel(coeffSvg, panels.coeff);
+setupPanel(rootsSvg, panels.roots);
+
+// Layers: trails behind dots (on top of grid)
+let coeffLayer = coeffSvg.append("g");
+let trailLayer = rootsSvg.append("g");
+let rootsLayer = rootsSvg.append("g");
+
+// --- Tooltip ---
+
+const tooltip = document.getElementById("tooltip");
+
+function showTooltip(event, re, im) {
+    const sign = im >= 0 ? "+" : "−";
+    const absIm = Math.abs(im);
+    tooltip.textContent = `${re.toFixed(3)} ${sign} ${absIm.toFixed(3)}i`;
+    tooltip.style.display = "block";
+    tooltip.style.left = (event.pageX + 12) + "px";
+    tooltip.style.top = (event.pageY - 12) + "px";
+}
+
+function hideTooltip() {
+    tooltip.style.display = "none";
+}
+
+// --- Coefficient color ---
+
+function coeffColor(i, n) {
+    return d3.interpolateRainbow(i / n);
+}
+
+// --- Init coefficients with pattern ---
+
+function getPattern() { return document.getElementById("pattern").value; }
+function getSpread() { return parseFloat(document.getElementById("spread").value); }
+
+function initCoefficients(degree) {
+    const n = degree + 1;
+    const spread = getSpread();
+    const pattern = getPattern();
+    coefficients = [];
+
+    if (pattern === "circle") {
+        for (let i = 0; i < n; i++) {
+            const angle = (2 * Math.PI * i) / n;
+            coefficients.push({ re: spread * Math.cos(angle), im: spread * Math.sin(angle) });
+        }
+    } else if (pattern === "real") {
+        for (let i = 0; i < n; i++) {
+            const t = n === 1 ? 0 : -spread + (2 * spread * i) / (n - 1);
+            coefficients.push({ re: t, im: 0 });
+        }
+    } else if (pattern === "imag") {
+        for (let i = 0; i < n; i++) {
+            const t = n === 1 ? 0 : -spread + (2 * spread * i) / (n - 1);
+            coefficients.push({ re: 0, im: t });
+        }
+    } else if (pattern === "grid") {
+        const cols = Math.ceil(Math.sqrt(n));
+        const rows = Math.ceil(n / cols);
+        for (let i = 0; i < n; i++) {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            const re = cols === 1 ? 0 : -spread + (2 * spread * col) / (cols - 1);
+            const im = rows === 1 ? 0 : -spread + (2 * spread * row) / (rows - 1);
+            coefficients.push({ re, im });
+        }
+    } else if (pattern === "random") {
+        for (let i = 0; i < n; i++) {
+            coefficients.push({
+                re: (Math.random() * 2 - 1) * spread,
+                im: (Math.random() * 2 - 1) * spread
+            });
+        }
+    } else if (pattern === "spiral") {
+        // Archimedean spiral — roots trace beautiful curves when perturbed
+        for (let i = 0; i < n; i++) {
+            const t = i / (n - 1);
+            const r = spread * t;
+            const angle = 4 * Math.PI * t;
+            coefficients.push({ re: r * Math.cos(angle), im: r * Math.sin(angle) });
+        }
+    } else if (pattern === "star") {
+        // Alternating inner/outer radii — gives spiky root patterns
+        for (let i = 0; i < n; i++) {
+            const angle = (2 * Math.PI * i) / n;
+            const r = (i % 2 === 0) ? spread : spread * 0.4;
+            coefficients.push({ re: r * Math.cos(angle), im: r * Math.sin(angle) });
+        }
+    } else if (pattern === "lemniscate") {
+        // Figure-8 (Bernoulli lemniscate) — rich root sensitivity
+        for (let i = 0; i < n; i++) {
+            const t = (2 * Math.PI * i) / n;
+            const cos2t = Math.cos(2 * t);
+            const r = spread * Math.sqrt(Math.abs(cos2t));
+            const sign = cos2t >= 0 ? 1 : -1;
+            coefficients.push({ re: sign * r * Math.cos(t), im: sign * r * Math.sin(t) });
+        }
+    } else if (pattern === "conjugate") {
+        // Conjugate pairs straddling real axis — roots tend to stay near real axis then bifurcate
+        for (let i = 0; i < n; i++) {
+            const pairIdx = Math.floor(i / 2);
+            const re = n <= 2 ? 0 : -spread + (2 * spread * pairIdx) / (Math.ceil(n / 2) - 1 || 1);
+            const im = (i % 2 === 0) ? spread * 0.5 : -spread * 0.5;
+            coefficients.push({ re, im });
+        }
+    } else if (pattern === "two-clusters") {
+        // Two clusters — see roots jump between clusters as you drag
+        const half = Math.ceil(n / 2);
+        for (let i = 0; i < n; i++) {
+            const cluster = i < half ? -1 : 1;
+            const idx = i < half ? i : i - half;
+            const count = i < half ? half : n - half;
+            const angle = (2 * Math.PI * idx) / Math.max(count, 1);
+            const r = spread * 0.35;
+            coefficients.push({
+                re: cluster * spread * 0.7 + r * Math.cos(angle),
+                im: r * Math.sin(angle)
+            });
+        }
+    } else if (pattern === "geometric") {
+        // Geometric decay along real axis — classic for ill-conditioned polynomials
+        for (let i = 0; i < n; i++) {
+            const val = spread * Math.pow(0.7, i);
+            const sign = (i % 2 === 0) ? 1 : -1;
+            coefficients.push({ re: sign * val, im: 0 });
+        }
+    } else if (pattern === "rose") {
+        // Rose curve r = cos(kθ) — petals create interesting symmetry breaking
+        const k = 3; // 3-petal rose
+        for (let i = 0; i < n; i++) {
+            const t = (2 * Math.PI * i) / n;
+            const r = spread * Math.cos(k * t);
+            coefficients.push({ re: r * Math.cos(t), im: r * Math.sin(t) });
+        }
+    } else if (pattern === "cardioid") {
+        // Cardioid — heart-shaped curve, roots respond dramatically near the cusp
+        for (let i = 0; i < n; i++) {
+            const t = (2 * Math.PI * i) / n;
+            const r = spread * 0.5 * (1 + Math.cos(t));
+            coefficients.push({ re: r * Math.cos(t), im: r * Math.sin(t) });
+        }
+    } else if (pattern.startsWith("r-")) {
+        // Root-shape patterns: define roots, compute coefficients
+        const roots = generateRootShape(pattern, degree, spread);
+        const cs = rootsToCoefficients(roots);
+        for (const c of cs) coefficients.push(c);
+    }
+}
+
+// --- Roots → Coefficients ---
+// Expand (z - r₀)(z - r₁)...(z - r_{n-1}) into coefficient array
+function rootsToCoefficients(roots) {
+    // Start with polynomial = [1] (just the leading coefficient)
+    let re = [1], im = [0];
+    for (const root of roots) {
+        const newRe = new Array(re.length + 1).fill(0);
+        const newIm = new Array(im.length + 1).fill(0);
+        for (let j = 0; j < re.length; j++) {
+            // Multiply by z: shift coefficients up
+            newRe[j] += re[j];
+            newIm[j] += im[j];
+            // Multiply by -root: (a+bi)(-c-di) = (-ac+bd) + (-ad-bc)i
+            newRe[j + 1] += -re[j] * root.re + im[j] * root.im;
+            newIm[j + 1] += -re[j] * root.im - im[j] * root.re;
+        }
+        re = newRe;
+        im = newIm;
+    }
+    return re.map((r, i) => ({ re: r, im: im[i] }));
+}
+
+// --- Root shape generators ---
+function generateRootShape(pattern, degree, spread) {
+    const n = degree; // number of roots = degree
+    const roots = [];
+
+    if (pattern === "r-heart") {
+        for (let i = 0; i < n; i++) {
+            const t = (2 * Math.PI * i) / n;
+            const x = spread * 0.8 * 16 * Math.pow(Math.sin(t), 3) / 16;
+            const y = spread * 0.8 * (13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t)) / 16;
+            roots.push({ re: x, im: y });
+        }
+    } else if (pattern === "r-circle") {
+        for (let i = 0; i < n; i++) {
+            const angle = (2 * Math.PI * i) / n;
+            roots.push({ re: spread * Math.cos(angle), im: spread * Math.sin(angle) });
+        }
+    } else if (pattern === "r-star") {
+        for (let i = 0; i < n; i++) {
+            const angle = (2 * Math.PI * i) / n;
+            const r = (i % 2 === 0) ? spread : spread * 0.4;
+            roots.push({ re: r * Math.cos(angle), im: r * Math.sin(angle) });
+        }
+    } else if (pattern === "r-spiral") {
+        for (let i = 0; i < n; i++) {
+            const t = i / (n - 1);
+            const r = spread * (0.2 + 0.8 * t);
+            const angle = 4 * Math.PI * t;
+            roots.push({ re: r * Math.cos(angle), im: r * Math.sin(angle) });
+        }
+    } else if (pattern === "r-cross") {
+        // + shape: half on horizontal, half on vertical
+        const hCount = Math.ceil(n / 2);
+        const vCount = n - hCount;
+        for (let i = 0; i < hCount; i++) {
+            const t = hCount === 1 ? 0 : -spread + (2 * spread * i) / (hCount - 1);
+            roots.push({ re: t, im: 0 });
+        }
+        for (let i = 0; i < vCount; i++) {
+            const t = vCount === 1 ? 0 : -spread + (2 * spread * i) / (vCount - 1);
+            if (Math.abs(t) < 1e-10) continue; // skip origin (already in horizontal)
+            roots.push({ re: 0, im: t });
+        }
+        // Fill up if we skipped the origin duplicate
+        while (roots.length < n) {
+            roots.push({ re: 0, im: spread * 0.1 * roots.length });
+        }
+    } else if (pattern === "r-diamond") {
+        for (let i = 0; i < n; i++) {
+            const t = (2 * Math.PI * i) / n;
+            // Diamond: |x| + |y| = spread, parametrically
+            const x = spread * Math.cos(t);
+            const y = spread * Math.sin(t);
+            const scale = 1 / (Math.abs(Math.cos(t)) + Math.abs(Math.sin(t)));
+            roots.push({ re: x * scale, im: y * scale });
+        }
+    } else if (pattern === "r-grid") {
+        // Chessboard: only "black squares" of a grid
+        const side = Math.ceil(Math.sqrt(n * 2));
+        let placed = 0;
+        for (let row = 0; row < side && placed < n; row++) {
+            for (let col = 0; col < side && placed < n; col++) {
+                if ((row + col) % 2 === 0) {
+                    const re = -spread + (2 * spread * col) / (side - 1);
+                    const im = -spread + (2 * spread * row) / (side - 1);
+                    roots.push({ re, im });
+                    placed++;
+                }
+            }
+        }
+    } else if (pattern === "r-smiley") {
+        // Eyes + smile arc
+        const eyeCount = Math.max(2, Math.floor(n * 0.2));
+        const smileCount = n - eyeCount;
+        // Left eye
+        const leftEye = Math.ceil(eyeCount / 2);
+        for (let i = 0; i < leftEye; i++) {
+            const angle = (2 * Math.PI * i) / leftEye;
+            roots.push({ re: -spread * 0.35 + spread * 0.12 * Math.cos(angle), im: spread * 0.3 + spread * 0.12 * Math.sin(angle) });
+        }
+        // Right eye
+        const rightEye = eyeCount - leftEye;
+        for (let i = 0; i < rightEye; i++) {
+            const angle = (2 * Math.PI * i) / Math.max(rightEye, 1);
+            roots.push({ re: spread * 0.35 + spread * 0.12 * Math.cos(angle), im: spread * 0.3 + spread * 0.12 * Math.sin(angle) });
+        }
+        // Smile arc (bottom half of circle)
+        for (let i = 0; i < smileCount; i++) {
+            const angle = Math.PI + (Math.PI * 0.8) * (i / (smileCount - 1)) - Math.PI * 0.4;
+            roots.push({ re: spread * 0.6 * Math.cos(angle), im: spread * 0.6 * Math.sin(angle) - spread * 0.1 });
+        }
+    } else if (pattern === "r-figure8") {
+        for (let i = 0; i < n; i++) {
+            const t = (2 * Math.PI * i) / n;
+            const cos2t = Math.cos(2 * t);
+            const r = spread * Math.sqrt(Math.abs(cos2t));
+            const sign = cos2t >= 0 ? 1 : -1;
+            roots.push({ re: sign * r * Math.cos(t), im: sign * r * Math.sin(t) });
+        }
+    } else if (pattern === "r-butterfly") {
+        // Butterfly curve (polar)
+        for (let i = 0; i < n; i++) {
+            const t = (2 * Math.PI * i) / n;
+            const r = spread * 0.4 * (Math.exp(Math.cos(t)) - 2 * Math.cos(4 * t) + Math.pow(Math.sin(t / 12), 5));
+            roots.push({ re: r * Math.cos(t), im: r * Math.sin(t) });
+        }
+    } else if (pattern === "r-trefoil") {
+        // 3-leaf clover
+        for (let i = 0; i < n; i++) {
+            const t = (2 * Math.PI * i) / n;
+            const r = spread * Math.cos(3 * t);
+            roots.push({ re: r * Math.cos(t), im: r * Math.sin(t) });
+        }
+    } else if (pattern === "r-polygon") {
+        // Regular polygon outline (not just vertices)
+        const sides = Math.min(Math.max(3, Math.floor(degree / 2)), 8);
+        const vertices = [];
+        for (let s = 0; s < sides; s++) {
+            const angle = (2 * Math.PI * s) / sides - Math.PI / 2;
+            vertices.push({ re: spread * Math.cos(angle), im: spread * Math.sin(angle) });
+        }
+        // Distribute roots along edges
+        for (let i = 0; i < n; i++) {
+            const t = (i / n) * sides;
+            const edgeIdx = Math.floor(t) % sides;
+            const frac = t - Math.floor(t);
+            const v1 = vertices[edgeIdx];
+            const v2 = vertices[(edgeIdx + 1) % sides];
+            roots.push({ re: v1.re + frac * (v2.re - v1.re), im: v1.im + frac * (v2.im - v1.im) });
+        }
+    }
+    return roots;
+}
+
+// --- Drag behavior ---
+
+const drag = d3.drag()
+    .on("start", function () {
+        d3.select(this).raise().classed("dragging", true);
+    })
+    .on("drag", function (event, d) {
+        d.re = cxs().invert(event.x);
+        d.im = cys().invert(event.y);
+        d3.select(this).attr("cx", cxs()(d.re)).attr("cy", cys()(d.im));
+        coeffLayer.selectAll(".coeff-label")
+            .filter((_, j) => j === coefficients.indexOf(d))
+            .attr("x", cxs()(d.re) + 12).attr("y", cys()(d.im) + 4);
+        showTooltip(event.sourceEvent, d.re, d.im);
+        // Auto-scale coeff panel if dragged near edge
+        autoScaleCoeffPanel();
+        sendCoefficientsThrottled();
+    })
+    .on("end", function () {
+        d3.select(this).classed("dragging", false);
+        hideTooltip();
+    });
+
+function autoScaleCoeffPanel() {
+    const needed = computeRange(coefficients);
+    if (needed !== panels.coeff.range) {
+        updatePanelRange(coeffSvg, panels.coeff, needed);
+        // Re-position all dots and labels with new scale
+        coeffLayer.selectAll("circle.coeff")
+            .attr("cx", d => cxs()(d.re)).attr("cy", d => cys()(d.im));
+        coeffLayer.selectAll(".coeff-label")
+            .attr("x", d => cxs()(d.re) + 12).attr("y", d => cys()(d.im) + 4);
+    }
+}
+
+// --- Render coefficients ---
+
+function renderCoefficients() {
+    // Auto-scale coeff panel to fit all coefficients
+    const needed = computeRange(coefficients);
+    updatePanelRange(coeffSvg, panels.coeff, needed);
+
+    const n = coefficients.length;
+
+    const circles = coeffLayer.selectAll("circle.coeff").data(coefficients, (_, i) => i);
+
+    circles.enter()
+        .append("circle")
+        .attr("class", "coeff")
+        .attr("r", 10)
+        .attr("stroke", "#fff")
+        .call(drag)
+        .on("mouseover", function (event, d) { showTooltip(event, d.re, d.im); })
+        .on("mouseout", hideTooltip)
+      .merge(circles)
+        .attr("cx", d => cxs()(d.re))
+        .attr("cy", d => cys()(d.im))
+        .attr("fill", (_, i) => coeffColor(i, n));
+
+    circles.exit().remove();
+
+    const labels = coeffLayer.selectAll(".coeff-label").data(coefficients, (_, i) => i);
+
+    labels.enter()
+        .append("text")
+        .attr("class", "coeff-label")
+      .merge(labels)
+        .attr("x", d => cxs()(d.re) + 12)
+        .attr("y", d => cys()(d.im) + 4)
+        .text((_, i) => `c${subscript(i)}`);
+
+    labels.exit().remove();
+}
+
+function subscript(n) {
+    const digits = "₀₁₂₃₄₅₆₇₈₉";
+    return String(n).split("").map(d => digits[+d]).join("");
+}
+
+// --- Trail color per root ---
+
+function rootColor(i, n) {
+    return d3.interpolateSinebow(i / n);
+}
+
+// --- Root tracking: match new roots to previous by proximity ---
+
+let lastRoots = null; // previous frame's roots (after matching)
+
+function dist2(a, b) {
+    const dx = a[0] - b[0], dy = a[1] - b[1];
+    return dx * dx + dy * dy;
+}
+
+// Greedy closest-match assignment: reorder `incoming` so that
+// incoming[i] is the closest unmatched root to prev[i].
+function matchRoots(prev, incoming) {
+    const n = prev.length;
+    const m = incoming.length;
+    const matched = new Array(Math.max(n, m));
+    const used = new Array(m).fill(false);
+
+    // For each previous root, find closest unused new root
+    for (let i = 0; i < n && i < m; i++) {
+        let bestJ = -1, bestD = Infinity;
+        for (let j = 0; j < m; j++) {
+            if (used[j]) continue;
+            const d = dist2(prev[i], incoming[j]);
+            if (d < bestD) { bestD = d; bestJ = j; }
+        }
+        matched[i] = incoming[bestJ];
+        used[bestJ] = true;
+    }
+    // Any extra new roots (if count changed) go at the end
+    let k = n;
+    for (let j = 0; j < m; j++) {
+        if (!used[j]) matched[k++] = incoming[j];
+    }
+    return matched.slice(0, m);
+}
+
+// --- Render roots + trails ---
+
+function renderRoots(rawRoots) {
+    // Match new roots to previous frame to keep trails coherent
+    let roots;
+    if (lastRoots && lastRoots.length === rawRoots.length) {
+        roots = matchRoots(lastRoots, rawRoots);
+    } else {
+        roots = rawRoots;
+    }
+    lastRoots = roots;
+
+    // Grow/shrink trails
+    while (trails.length < roots.length) trails.push([]);
+    if (trails.length > roots.length) trails.length = roots.length;
+    for (let i = 0; i < roots.length; i++) {
+        trails[i].push(roots[i]);
+    }
+
+    // Auto-scale roots panel — only zoom OUT, never in (high water mark)
+    const needed = computeRange(roots);
+    const rootsRange = Math.max(needed, panels.roots.range);
+    updatePanelRange(rootsSvg, panels.roots, rootsRange);
+
+    // Line generator uses current roots scales
+    const lineFn = d3.line().x(d => rxs()(d[0])).y(d => rys()(d[1]));
+
+    // Draw trail paths
+    const paths = trailLayer.selectAll("path.trail").data(trails.slice(0, roots.length));
+
+    paths.enter()
+        .append("path")
+        .attr("class", "trail")
+      .merge(paths)
+        .attr("d", d => lineFn(d))
+        .attr("stroke", (_, i) => rootColor(i, roots.length));
+
+    paths.exit().remove();
+
+    // Draw root dots — no transition, positions update instantly at 60fps
+    const circles = rootsLayer.selectAll("circle.root").data(roots);
+
+    circles.enter()
+        .append("circle")
+        .attr("class", "root")
+        .attr("r", 7)
+        .attr("stroke", "#fff")
+        .attr("stroke-width", 1)
+      .merge(circles)
+        .attr("fill", (_, i) => rootColor(i, roots.length))
+        .attr("cx", d => rxs()(d[0]))
+        .attr("cy", d => rys()(d[1]));
+
+    circles.exit().remove();
+}
+
+function clearTrails() {
+    trails = [];
+    lastRoots = null;
+    trailLayer.selectAll("path.trail").remove();
+    rootsLayer.selectAll("circle.root").remove();
+    // Reset roots panel range
+    updatePanelRange(rootsSvg, panels.roots, MIN_RANGE);
+}
+
+// --- WebSocket ---
+
+function connectWebSocket() {
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(`${protocol}//${location.host}/ws`);
+
+    ws.onopen = () => {
+        document.getElementById("status").textContent = "connected";
+        sendCoefficients();
+    };
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.error) {
+            console.warn("Server error:", data.error);
+            return;
+        }
+        renderRoots(data.roots);
+    };
+
+    ws.onclose = () => {
+        document.getElementById("status").textContent = "reconnecting...";
+        setTimeout(connectWebSocket, 1000);
+    };
+
+    ws.onerror = () => ws.close();
+}
+
+function sendCoefficients() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            coefficients: coefficients.map(c => [c.re, c.im])
+        }));
+    }
+}
+
+function sendCoefficientsThrottled() {
+    if (!pendingSend) {
+        pendingSend = true;
+        requestAnimationFrame(() => {
+            sendCoefficients();
+            pendingSend = false;
+        });
+    }
+}
+
+// --- Degree slider ---
+
+const degreeInput = document.getElementById("degree");
+const degreeValue = document.getElementById("degree-value");
+
+function applyPattern() {
+    clearTrails();
+    initCoefficients(parseInt(degreeInput.value));
+    renderCoefficients();
+    sendCoefficients();
+}
+
+degreeInput.addEventListener("input", function () {
+    degreeValue.textContent = this.value;
+    applyPattern();
+});
+
+document.getElementById("pattern").addEventListener("change", applyPattern);
+
+document.getElementById("spread").addEventListener("input", function () {
+    document.getElementById("spread-value").textContent = parseFloat(this.value).toFixed(1);
+    applyPattern();
+});
+
+document.getElementById("reset-btn").addEventListener("click", function () {
+    clearTrails();
+    sendCoefficients();
+});
+
+// --- Resize handler ---
+
+function rebuild() {
+    S = getPanelSize();
+    initPanelScales(panels.coeff);
+    initPanelScales(panels.roots);
+
+    // Clear and rebuild both SVGs
+    coeffSvg.selectAll("*").remove();
+    rootsSvg.selectAll("*").remove();
+    setupPanel(coeffSvg, panels.coeff);
+    setupPanel(rootsSvg, panels.roots);
+
+    // Recreate layers
+    coeffLayer = coeffSvg.append("g");
+    trailLayer = rootsSvg.append("g");
+    rootsLayer = rootsSvg.append("g");
+
+    renderCoefficients();
+    // Re-render trails and roots from cached data
+    if (trails.length > 0) {
+        const cachedRoots = trails.map(t => t[t.length - 1]).filter(Boolean);
+        const lineFn = d3.line().x(d => rxs()(d[0])).y(d => rys()(d[1]));
+        const paths = trailLayer.selectAll("path.trail").data(trails.slice(0, cachedRoots.length));
+        paths.enter().append("path").attr("class", "trail")
+            .merge(paths)
+            .attr("d", d => lineFn(d))
+            .attr("stroke", (_, i) => rootColor(i, cachedRoots.length));
+        const circles = rootsLayer.selectAll("circle.root").data(cachedRoots);
+        circles.enter().append("circle").attr("class", "root")
+            .attr("r", 7).attr("stroke", "#fff").attr("stroke-width", 1)
+            .merge(circles)
+            .attr("fill", (_, i) => rootColor(i, cachedRoots.length))
+            .attr("cx", d => rxs()(d[0]))
+            .attr("cy", d => rys()(d[1]));
+    }
+}
+
+let resizeTimer;
+window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(rebuild, 150);
+});
+
+// --- Init ---
+
+initCoefficients(parseInt(degreeInput.value));
+renderCoefficients();
+connectWebSocket();
+</script>
+</body>
+</html>

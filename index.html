@@ -293,6 +293,7 @@ const animState = { playing: false, center: null, offsets: null, startTime: 0, r
 // Trail state
 let trailsEnabled = false;
 let trailData = []; // array of arrays: trailData[i] = [{re, im}, ...] for root i
+let coeffTrailData = []; // same structure for coefficient trails
 let trailComplete = false; // true once one full loop is detected
 const MAX_TRAIL_POINTS = 4000;
 const TRAIL_MIN_POINTS = 30; // minimum points before checking for loop closure
@@ -381,6 +382,7 @@ const rootsSvg = d3.select("#roots-panel");
 setupPanel(coeffSvg, panels.coeff);
 setupPanel(rootsSvg, panels.roots);
 
+let coeffTrailLayer = coeffSvg.append("g").attr("class", "trail-layer");
 let coeffLayer = coeffSvg.append("g");
 let trailLayer = rootsSvg.append("g").attr("class", "trail-layer");
 let rootsLayer = rootsSvg.append("g");
@@ -1028,6 +1030,18 @@ function animLoop(now) {
         coefficients[idx].im = newCenter.im + offset.im;
     }
 
+    // Record coefficient trail points
+    if (trailsEnabled && !trailComplete) {
+        const n = coefficients.length;
+        while (coeffTrailData.length < n) coeffTrailData.push([]);
+        coeffTrailData.length = n;
+        for (const idx of selectedCoeffs) {
+            coeffTrailData[idx].push({ re: coefficients[idx].re, im: coefficients[idx].im });
+            if (coeffTrailData[idx].length > MAX_TRAIL_POINTS) coeffTrailData[idx].shift();
+        }
+        renderCoeffTrails();
+    }
+
     // Update visuals for all selected coefficients
     coeffLayer.selectAll("circle.coeff")
         .filter(cd => selectedCoeffs.has(coefficients.indexOf(cd)))
@@ -1244,10 +1258,32 @@ function renderTrails() {
     paths.exit().remove();
 }
 
+function renderCoeffTrails() {
+    const xScale = cxs(), yScale = cys();
+    const n = coeffTrailData.length;
+    const paths = coeffTrailLayer.selectAll("path.trail-path").data(coeffTrailData);
+    paths.enter()
+        .append("path")
+        .attr("class", "trail-path")
+      .merge(paths)
+        .attr("d", pts => {
+            if (pts.length < 2) return "";
+            let d = `M${xScale(pts[0].re)},${yScale(pts[0].im)}`;
+            for (let j = 1; j < pts.length; j++) {
+                d += `L${xScale(pts[j].re)},${yScale(pts[j].im)}`;
+            }
+            return d;
+        })
+        .attr("stroke", (_, i) => coeffColor(i, n));
+    paths.exit().remove();
+}
+
 function clearTrails() {
     trailData = [];
+    coeffTrailData = [];
     trailComplete = false;
     trailLayer.selectAll("path.trail-path").remove();
+    coeffTrailLayer.selectAll("path.trail-path").remove();
 }
 
 
@@ -1685,6 +1721,26 @@ function snapCapture() {
     // Draw coefficient panel
     const cp = drawPanel(0, headerH, panels.coeff.range, false);
 
+    // Draw coefficient trails
+    if (coeffTrailData.length > 0) {
+        ctx.lineWidth = 1.5;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.globalAlpha = 0.6;
+        for (let i = 0; i < coeffTrailData.length; i++) {
+            const pts = coeffTrailData[i];
+            if (pts.length < 2) continue;
+            ctx.strokeStyle = coeffColor(i, coeffTrailData.length);
+            ctx.beginPath();
+            ctx.moveTo(cp.xs(pts[0].re), cp.ys(pts[0].im));
+            for (let j = 1; j < pts.length; j++) {
+                ctx.lineTo(cp.xs(pts[j].re), cp.ys(pts[j].im));
+            }
+            ctx.stroke();
+        }
+        ctx.globalAlpha = 1.0;
+    }
+
     // Draw coefficient dots + labels
     const nCoeff = coefficients.length;
     for (let i = 0; i < nCoeff; i++) {
@@ -1796,7 +1852,8 @@ function snapCapture() {
             coeff: { range: panels.coeff.range },
             roots: { range: panels.roots.range }
         },
-        trailData: trailData.map(pts => pts.map(p => [p.re, p.im]))
+        trailData: trailData.map(pts => pts.map(p => [p.re, p.im])),
+        coeffTrailData: coeffTrailData.map(pts => pts.map(p => [p.re, p.im]))
     };
 
     // Download PNG
@@ -1833,6 +1890,7 @@ function rebuild() {
     setupPanel(rootsSvg, panels.roots);
 
     // Recreate layers
+    coeffTrailLayer = coeffSvg.append("g").attr("class", "trail-layer");
     coeffLayer = coeffSvg.append("g");
     trailLayer = rootsSvg.append("g").attr("class", "trail-layer");
     rootsLayer = rootsSvg.append("g");
@@ -1845,6 +1903,7 @@ function rebuild() {
     rootsSvg.classed("domain-active", domainColoringEnabled);
     renderDomainColoring();
     if (trailData.length > 0) renderTrails();
+    if (coeffTrailData.length > 0) renderCoeffTrails();
 }
 
 let resizeTimer;

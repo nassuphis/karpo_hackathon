@@ -134,10 +134,10 @@ Select one or more coefficients — a translucent control overlay appears on the
 ### Trail Gallery
 
 <p align="center">
-  <img src="snaps/polypaint-2026-02-08T12-16-28.png" width="90%" alt="Degree-24 grid pattern — circle path trails">
+  <img src="snaps/polypaint-2026-02-08T12-25-27.png" width="90%" alt="Degree-24 grid pattern — circle path, one complete loop">
 </p>
 
-**Degree 24, grid pattern, circle path** — 20 of 25 coefficients selected and orbiting on a circle (radius 0.95, speed 0.4). The grid arrangement of coefficients on the left drives the 24 roots on the right through a complex dance. Each root's trail is colored by its array index. Small loops and cusps in the trails reveal where roots slow down near near-collisions; the large sweeping arcs show roots that respond dramatically to the coefficient perturbation.
+**Degree 24, grid pattern, circle path (one full loop)** — 17 of 25 coefficients orbiting on a circle (radius 0.75, speed 0.5). Left panel shows the coefficient trails — each selected coefficient traces its own circle, creating an overlapping ring pattern from the grid arrangement. Right panel shows the resulting root braids: small loops and cusps where roots nearly collide, large sweeping arcs where roots respond dramatically to the perturbation. The loop detection fired after one complete cycle (`trailComplete: true`), stopping trail accumulation automatically.
 
 ## Patterns
 

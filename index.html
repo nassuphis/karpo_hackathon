@@ -90,8 +90,6 @@ circle.root.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px
 #anim-bar.active { display: flex; }
 #anim-bar .bar-title { font-weight: bold; color: #e94560; font-size: 14px; }
 #anim-bar label { font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
-#anim-bar .loop-controls { display: none; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: center; }
-#anim-bar .loop-controls.active { display: flex; }
 #anim-bar select { background: #16213e; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 2px 6px; font-size: 11px; }
 #anim-bar input[type="range"] { width: 70px; accent-color: #e94560; }
 #anim-bar .bar-val { color: #e94560; min-width: 24px; text-align: right; font-size: 11px; }
@@ -174,37 +172,33 @@ circle.root.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px
             <svg id="coeff-panel"></svg>
             <div id="anim-bar">
                 <span class="bar-title" id="bar-title">c₀</span>
-                <label><input type="radio" name="coeff-mode" value="drag" checked> Drag</label>
-                <label><input type="radio" name="coeff-mode" value="loop"> Loop</label>
-                <span class="loop-controls" id="loop-controls">
-                    <label>Path:
-                        <select id="anim-path">
-                            <optgroup label="Basic">
-                                <option value="circle">Circle</option>
-                                <option value="horizontal">Horizontal</option>
-                                <option value="vertical">Vertical</option>
-                                <option value="spiral">Spiral</option>
-                                <option value="random">Random walk</option>
-                            </optgroup>
-                            <optgroup label="Curves">
-                                <option value="lissajous">Lissajous (3:2)</option>
-                                <option value="figure8">Figure-8</option>
-                                <option value="cardioid">Cardioid</option>
-                                <option value="astroid">Astroid</option>
-                                <option value="deltoid">Deltoid</option>
-                                <option value="rose">Rose (3-petal)</option>
-                                <option value="epitrochoid">Spirograph</option>
-                                <option value="hypotrochoid">Hypotrochoid</option>
-                                <option value="butterfly">Butterfly</option>
-                                <option value="star">Star (pentagram)</option>
-                                <option value="square">Square</option>
-                            </optgroup>
-                        </select>
-                    </label>
-                    <label>Radius: <input type="range" id="anim-radius" min="0.05" max="2.0" step="0.05" value="0.5"> <span class="bar-val" id="anim-radius-val">0.5</span></label>
-                    <label>Speed: <input type="range" id="anim-speed" min="0.1" max="5.0" step="0.1" value="1.0"> <span class="bar-val" id="anim-speed-val">1.0</span></label>
-                    <button id="play-btn">▶ Play</button>
-                </span>
+                <label>Path:
+                    <select id="anim-path">
+                        <optgroup label="Basic">
+                            <option value="circle">Circle</option>
+                            <option value="horizontal">Horizontal</option>
+                            <option value="vertical">Vertical</option>
+                            <option value="spiral">Spiral</option>
+                            <option value="random">Random walk</option>
+                        </optgroup>
+                        <optgroup label="Curves">
+                            <option value="lissajous">Lissajous (3:2)</option>
+                            <option value="figure8">Figure-8</option>
+                            <option value="cardioid">Cardioid</option>
+                            <option value="astroid">Astroid</option>
+                            <option value="deltoid">Deltoid</option>
+                            <option value="rose">Rose (3-petal)</option>
+                            <option value="epitrochoid">Spirograph</option>
+                            <option value="hypotrochoid">Hypotrochoid</option>
+                            <option value="butterfly">Butterfly</option>
+                            <option value="star">Star (pentagram)</option>
+                            <option value="square">Square</option>
+                        </optgroup>
+                    </select>
+                </label>
+                <label>Radius: <input type="range" id="anim-radius" min="0.05" max="2.0" step="0.05" value="0.5"> <span class="bar-val" id="anim-radius-val">0.5</span></label>
+                <label>Speed: <input type="range" id="anim-speed" min="0.1" max="5.0" step="0.1" value="1.0"> <span class="bar-val" id="anim-speed-val">1.0</span></label>
+                <button id="play-btn">▶ Play</button>
             </div>
         </div>
     </div>
@@ -269,7 +263,6 @@ let pendingSolve = false;
 // Selection & animation state
 const selectedCoeffs = new Set(); // indices into coefficients[]
 const selectedRoots = new Set();  // indices into currentRoots[]
-let coeffMode = "drag"; // "drag" or "loop"
 const animState = { playing: false, center: null, offsets: null, startTime: 0, rafId: null };
 // Domain coloring state
 let domainColoringEnabled = true;
@@ -682,8 +675,8 @@ const drag = d3.drag()
     .on("drag", function (event, d) {
         dragMoved = true;
         const idx = coefficients.indexOf(d);
-        // Skip if this group is being animated in loop mode
-        if (selectedCoeffs.has(idx) && coeffMode === "loop" && animState.playing) return;
+        // Skip if this group is being animated
+        if (selectedCoeffs.has(idx) && animState.playing) return;
 
         const newRe = cxs().invert(event.x);
         const newIm = cys().invert(event.y);
@@ -741,7 +734,6 @@ function autoScaleCoeffPanel() {
 // --- Coefficient selection & animation ---
 
 const animBar = document.getElementById("anim-bar");
-const loopControls = document.getElementById("loop-controls");
 const barTitle = document.getElementById("bar-title");
 const animPathSel = document.getElementById("anim-path");
 const animRadiusInput = document.getElementById("anim-radius");
@@ -752,9 +744,6 @@ const playBtn = document.getElementById("play-btn");
 
 function toggleCoeffSelect(idx) {
     stopAnimation();
-    coeffMode = "drag";
-    document.querySelector('input[name="coeff-mode"][value="drag"]').checked = true;
-    loopControls.classList.remove("active");
     playBtn.textContent = "▶ Play";
 
     if (selectedCoeffs.has(idx)) {
@@ -769,9 +758,6 @@ function toggleCoeffSelect(idx) {
 function clearCoeffSelection() {
     stopAnimation();
     selectedCoeffs.clear();
-    coeffMode = "drag";
-    document.querySelector('input[name="coeff-mode"][value="drag"]').checked = true;
-    loopControls.classList.remove("active");
     playBtn.textContent = "▶ Play";
     updateCoeffSelectionVisual();
     animBar.classList.remove("active");
@@ -810,16 +796,6 @@ function updateAnimBar() {
     }
     animBar.classList.add("active");
 }
-
-// Mode radio buttons
-document.querySelectorAll('input[name="coeff-mode"]').forEach(radio => {
-    radio.addEventListener("change", function () {
-        coeffMode = this.value;
-        loopControls.classList.toggle("active", coeffMode === "loop");
-        if (coeffMode === "drag") stopAnimation();
-        playBtn.textContent = "▶ Play";
-    });
-});
 
 // Slider value displays
 animRadiusInput.addEventListener("input", function () { animRadiusVal.textContent = parseFloat(this.value).toFixed(2); });
@@ -1147,8 +1123,9 @@ function renderRoots(newRoots) {
         currentRoots[i].im = newRoots[i].im;
     }
 
-    // Auto-scale roots panel
-    const needed = computeRange(currentRoots);
+    // Auto-scale roots panel (zoom-out only during animation)
+    let needed = computeRange(currentRoots);
+    if (animState.playing) needed = Math.max(needed, panels.roots.range);
     updatePanelRange(rootsSvg, panels.roots, needed);
     renderDomainColoringThrottled();
 

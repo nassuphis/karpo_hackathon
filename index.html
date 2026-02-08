@@ -139,6 +139,7 @@ circle.root.selected { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px #e9
         <button id="root-color-btn" class="active">Color roots</button>
         <button id="deselect-btn">Deselect all</button>
         <button id="select-all-coeffs-btn">Select all coeffs</button>
+        <button class="action-btn" id="snap-btn">Snap</button>
         <span class="control-label">Degree</span>
         <input type="number" id="degree-number" min="3" max="30" value="5">
     </div>
@@ -1608,6 +1609,215 @@ document.getElementById("rotate-btn").addEventListener("click", function () {
     const cosA = Math.cos(angle), sinA = Math.sin(angle);
     applyTransformToSelection((re, im) => ({ re: re * cosA - im * sinA, im: re * sinA + im * cosA }));
 });
+
+// --- Snap (capture) ---
+
+function snapCapture() {
+    const dpr = window.devicePixelRatio || 1;
+    const gap = 16;
+    const headerH = 24;
+    const cw = 2 * S + gap;
+    const ch = S + headerH;
+    const canvas = document.createElement("canvas");
+    canvas.width = cw * dpr;
+    canvas.height = ch * dpr;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+
+    // Background
+    ctx.fillStyle = "#0f0f23";
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Panel headers
+    ctx.fillStyle = "#666";
+    ctx.font = "11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("COEFFICIENTS", S / 2, 16);
+    ctx.fillText("ROOTS", S + gap + S / 2, 16);
+
+    // Helper: draw a panel
+    function drawPanel(offsetX, offsetY, range, skipBg) {
+        const x0 = offsetX, y0 = offsetY;
+        const xs = v => MARGIN + (v + range) / (2 * range) * (S - 2 * MARGIN) + x0;
+        const ys = v => (S - MARGIN) - (v + range) / (2 * range) * (S - 2 * MARGIN) + y0;
+
+        // Panel background
+        if (!skipBg) {
+            ctx.fillStyle = "#16213e";
+            ctx.fillRect(x0, y0, S, S);
+        }
+
+        // Grid lines
+        ctx.strokeStyle = "#1f3354";
+        ctx.lineWidth = 0.5;
+        const intMax = Math.floor(range);
+        for (let v = -intMax; v <= intMax; v++) {
+            ctx.beginPath();
+            ctx.moveTo(xs(v), ys(-range)); ctx.lineTo(xs(v), ys(range));
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(xs(-range), ys(v)); ctx.lineTo(xs(range), ys(v));
+            ctx.stroke();
+        }
+
+        // Axes
+        ctx.strokeStyle = "#2a4a6b";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(xs(-range), ys(0)); ctx.lineTo(xs(range), ys(0));
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(xs(0), ys(-range)); ctx.lineTo(xs(0), ys(range));
+        ctx.stroke();
+
+        // Unit circle
+        ctx.strokeStyle = "#2a4a6b";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.arc(xs(0), ys(0), Math.abs(xs(1) - xs(0)), 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        return { xs, ys };
+    }
+
+    // Draw coefficient panel
+    const cp = drawPanel(0, headerH, panels.coeff.range, false);
+
+    // Draw coefficient dots + labels
+    const nCoeff = coefficients.length;
+    for (let i = 0; i < nCoeff; i++) {
+        const c = coefficients[i];
+        const cx = cp.xs(c.re), cy = cp.ys(c.im);
+
+        // Selection glow
+        if (selectedCoeffs.has(i)) {
+            ctx.shadowColor = "#e94560";
+            ctx.shadowBlur = 12;
+        }
+        ctx.beginPath();
+        ctx.arc(cx, cy, 7, 0, 2 * Math.PI);
+        ctx.fillStyle = coeffColor(i, nCoeff);
+        ctx.fill();
+        ctx.strokeStyle = selectedCoeffs.has(i) ? "#fff" : "#fff";
+        ctx.lineWidth = selectedCoeffs.has(i) ? 2.5 : 1;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Label
+        ctx.fillStyle = "#aaa";
+        ctx.font = "10px sans-serif";
+        ctx.textAlign = "left";
+        ctx.fillText("c" + subscript(i), cx + 10, cy + 4);
+    }
+
+    // Draw roots panel: background first, then domain coloring, then grid on top
+    if (domainColoringEnabled) {
+        ctx.drawImage(domainCanvas, S + gap, headerH, S, S);
+        // Grid/axes/circle on top of domain coloring (skip background fill)
+    } else {
+        ctx.fillStyle = "#16213e";
+        ctx.fillRect(S + gap, headerH, S, S);
+    }
+    const rp = drawPanel(S + gap, headerH, panels.roots.range, true);
+
+    // Draw trails
+    if (trailData.length > 0) {
+        const jumpThresh = panels.roots.range * 0.3;
+        ctx.lineWidth = 1.5;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.globalAlpha = 0.6;
+        for (let i = 0; i < trailData.length; i++) {
+            const pts = trailData[i];
+            if (pts.length < 2) continue;
+            ctx.strokeStyle = rootColor(i, trailData.length);
+            ctx.beginPath();
+            ctx.moveTo(rp.xs(pts[0].re), rp.ys(pts[0].im));
+            for (let j = 1; j < pts.length; j++) {
+                const dist = Math.hypot(pts[j].re - pts[j-1].re, pts[j].im - pts[j-1].im);
+                if (dist > jumpThresh) {
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(rp.xs(pts[j].re), rp.ys(pts[j].im));
+                } else {
+                    ctx.lineTo(rp.xs(pts[j].re), rp.ys(pts[j].im));
+                }
+            }
+            ctx.stroke();
+        }
+        ctx.globalAlpha = 1.0;
+    }
+
+    // Draw root dots
+    const nRoots = currentRoots.length;
+    for (let i = 0; i < nRoots; i++) {
+        const r = currentRoots[i];
+        const cx = rp.xs(r.re), cy = rp.ys(r.im);
+        if (selectedRoots.has(i)) {
+            ctx.shadowColor = "#e94560";
+            ctx.shadowBlur = 12;
+        }
+        ctx.beginPath();
+        ctx.arc(cx, cy, 7, 0, 2 * Math.PI);
+        ctx.fillStyle = rootColor(i, nRoots);
+        ctx.fill();
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = selectedRoots.has(i) ? 2.5 : 1;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+    }
+
+    // Generate timestamp
+    const now = new Date();
+    const ts = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+
+    // Build metadata
+    const meta = {
+        timestamp: now.toISOString(),
+        degree: coefficients.length - 1,
+        pattern: document.getElementById("pattern").value,
+        domainColoring: domainColoringEnabled,
+        rootColoring: rootColorEnabled,
+        trails: trailsEnabled,
+        trailComplete: trailComplete,
+        animation: {
+            playing: animState.playing,
+            path: document.getElementById("anim-path").value,
+            radius: parseFloat(document.getElementById("anim-radius").value),
+            speed: parseFloat(document.getElementById("anim-speed").value)
+        },
+        selectedCoeffs: [...selectedCoeffs],
+        selectedRoots: [...selectedRoots],
+        coefficients: coefficients.map(c => [c.re, c.im]),
+        roots: currentRoots.map(r => [r.re, r.im]),
+        panels: {
+            coeff: { range: panels.coeff.range },
+            roots: { range: panels.roots.range }
+        },
+        trailData: trailData.map(pts => pts.map(p => [p.re, p.im]))
+    };
+
+    // Download PNG
+    canvas.toBlob(function (blob) {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `polypaint-${ts}.png`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    }, "image/png");
+
+    // Download JSON
+    const jsonBlob = new Blob([JSON.stringify(meta, null, 2)], { type: "application/json" });
+    const a2 = document.createElement("a");
+    a2.href = URL.createObjectURL(jsonBlob);
+    a2.download = `polypaint-${ts}.json`;
+    a2.click();
+    URL.revokeObjectURL(a2.href);
+}
+
+document.getElementById("snap-btn").addEventListener("click", snapCapture);
 
 // --- Resize handler ---
 

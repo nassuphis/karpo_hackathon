@@ -120,6 +120,32 @@ circle.root.selected { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px #e9
 }
 #trails-btn.active { background: #e94560; color: #fff; border-color: #e94560; }
 #trails-btn:hover:not(.active) { color: #ccc; border-color: #888; }
+#sel2path-btn {
+    background: transparent; color: #e94560; border: 1px solid #e94560; border-radius: 4px;
+    padding: 4px 10px; font-size: 11px; cursor: pointer; font-weight: 600; transition: all 0.15s;
+}
+#sel2path-btn:hover { background: #e94560; color: #fff; }
+#sel2path-btn:disabled { opacity: 0.3; cursor: default; background: transparent; color: #e94560; }
+#path-nav { display: flex; align-items: center; gap: 4px; }
+.path-nav-btn {
+    background: transparent; color: #888; border: 1px solid #555; border-radius: 3px;
+    width: 22px; height: 22px; font-size: 10px; cursor: pointer; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+}
+.path-nav-btn:hover { color: #fff; border-color: #888; }
+#path-label { font-size: 11px; color: #aaa; min-width: 56px; text-align: center; }
+#ccw-btn {
+    background: transparent; color: #888; border: 1px solid #555; border-radius: 4px;
+    padding: 3px 8px; font-size: 10px; cursor: pointer; transition: all 0.15s; min-width: 28px;
+}
+#ccw-btn.active { background: #5b6abf; color: #fff; border-color: #5b6abf; }
+#del-path-btn {
+    background: transparent; color: #666; border: 1px solid #444; border-radius: 4px;
+    width: 22px; height: 22px; font-size: 14px; cursor: pointer; padding: 0;
+    display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+}
+#del-path-btn:hover { color: #e94560; border-color: #e94560; }
+.bar-sep { width: 1px; height: 20px; background: rgba(255,255,255,0.12); margin: 0 4px; }
 .trail-path { fill: none; stroke-width: 1.5; opacity: 0.6; stroke-linecap: round; stroke-linejoin: round; }
 .tooltip {
     position: absolute; background: rgba(0,0,0,0.85); color: #fff;
@@ -196,8 +222,14 @@ circle.root.selected { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px #e9
         <div id="coeff-container">
             <svg id="coeff-panel"></svg>
             <div id="anim-bar">
+                <button id="sel2path-btn">Sel→Path</button>
+                <div id="path-nav">
+                    <button id="path-prev" class="path-nav-btn">◀</button>
+                    <span id="path-label">Path 1/1</span>
+                    <button id="path-next" class="path-nav-btn">▶</button>
+                </div>
                 <span class="bar-title" id="bar-title">c₀</span>
-                <label>Path:
+                <label>
                     <select id="anim-path">
                         <optgroup label="Basic">
                             <option value="circle">Circle</option>
@@ -221,8 +253,11 @@ circle.root.selected { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px #e9
                         </optgroup>
                     </select>
                 </label>
-                <label>Radius: <input type="range" id="anim-radius" min="0.05" max="2.0" step="0.05" value="0.5"> <span class="bar-val" id="anim-radius-val">0.5</span></label>
-                <label>Speed: <input type="range" id="anim-speed" min="0.1" max="5.0" step="0.1" value="1.0"> <span class="bar-val" id="anim-speed-val">1.0</span></label>
+                <label>R: <input type="range" id="anim-radius" min="0.05" max="3.0" step="0.05" value="0.5"> <span class="bar-val" id="anim-radius-val">0.5</span></label>
+                <label>S: <input type="range" id="anim-speed" min="0.1" max="5.0" step="0.1" value="1.0"> <span class="bar-val" id="anim-speed-val">1.0</span></label>
+                <button id="ccw-btn">CW</button>
+                <button id="del-path-btn">×</button>
+                <div class="bar-sep"></div>
                 <button id="play-btn">▶ Play</button>
                 <button id="trails-btn">Trails</button>
             </div>
@@ -289,7 +324,10 @@ let pendingSolve = false;
 // Selection & animation state
 const selectedCoeffs = new Set(); // indices into coefficients[]
 const selectedRoots = new Set();  // indices into currentRoots[]
-const animState = { playing: false, center: null, offsets: null, startTime: 0, rafId: null };
+const animState = { playing: false, startTime: 0, rafId: null };
+let animPaths = [];    // array of { id, coeffs: Set, pathType, radius, speed, ccw, center, offsets }
+let nextPathId = 1;
+let viewedPathIdx = 0; // index into animPaths for UI navigation
 // Trail state
 let trailsEnabled = false;
 let trailData = []; // array of arrays: trailData[i] = [{re, im}, ...] for root i
@@ -710,8 +748,8 @@ const drag = d3.drag()
     .on("drag", function (event, d) {
         dragMoved = true;
         const idx = d._idx;
-        // Skip if this group is being animated
-        if (selectedCoeffs.has(idx) && animState.playing) return;
+        // Skip if this coefficient is being animated
+        if (animState.playing && allPathCoeffs().has(idx)) return;
 
         const newRe = cxs().invert(event.x);
         const newIm = cys().invert(event.y);
@@ -777,10 +815,20 @@ const animRadiusVal = document.getElementById("anim-radius-val");
 const animSpeedVal = document.getElementById("anim-speed-val");
 const playBtn = document.getElementById("play-btn");
 const trailsBtn = document.getElementById("trails-btn");
+const sel2pathBtn = document.getElementById("sel2path-btn");
+const pathPrevBtn = document.getElementById("path-prev");
+const pathNextBtn = document.getElementById("path-next");
+const pathLabel = document.getElementById("path-label");
+const ccwBtn = document.getElementById("ccw-btn");
+const delPathBtn = document.getElementById("del-path-btn");
+const pathNav = document.getElementById("path-nav");
 
 function toggleCoeffSelect(idx) {
-    stopAnimation();
-    playBtn.textContent = "▶ Play";
+    // If animation is playing and user clicks a coefficient, stop animation
+    if (animState.playing) {
+        stopAnimation();
+        playBtn.textContent = "▶ Play";
+    }
 
     if (selectedCoeffs.has(idx)) {
         selectedCoeffs.delete(idx);
@@ -792,11 +840,13 @@ function toggleCoeffSelect(idx) {
 }
 
 function clearCoeffSelection() {
-    stopAnimation();
+    if (animState.playing) {
+        stopAnimation();
+        playBtn.textContent = "▶ Play";
+    }
     selectedCoeffs.clear();
-    playBtn.textContent = "▶ Play";
     updateCoeffSelectionVisual();
-    animBar.classList.remove("active");
+    updateAnimBar();
 }
 
 function clearRootSelection() {
@@ -819,23 +869,155 @@ function updateRootSelectionVisual() {
         .classed("selected", d => selectedRoots.has(d._idx));
 }
 
+// --- Path management ---
+
+function createPathFromSelection() {
+    if (selectedCoeffs.size === 0) return;
+    stopAnimation();
+    playBtn.textContent = "▶ Play";
+
+    const newCoeffs = new Set(selectedCoeffs);
+
+    // Remove these coefficients from existing paths
+    for (let i = animPaths.length - 1; i >= 0; i--) {
+        for (const idx of newCoeffs) {
+            animPaths[i].coeffs.delete(idx);
+        }
+        if (animPaths[i].coeffs.size === 0) {
+            animPaths.splice(i, 1);
+        }
+    }
+
+    // Create new path with defaults from current UI
+    const path = {
+        id: nextPathId++,
+        coeffs: newCoeffs,
+        pathType: animPathSel.value,
+        radius: parseFloat(animRadiusInput.value),
+        speed: parseFloat(animSpeedInput.value),
+        ccw: false,
+        center: null,
+        offsets: null
+    };
+    animPaths.push(path);
+    viewedPathIdx = animPaths.length - 1;
+
+    // Clear selection (coeffs are now in a path)
+    selectedCoeffs.clear();
+    updateCoeffSelectionVisual();
+    updateAnimBar();
+}
+
+function deleteCurrentPath() {
+    if (animPaths.length === 0) return;
+    stopAnimation();
+    playBtn.textContent = "▶ Play";
+    animPaths.splice(viewedPathIdx, 1);
+    if (viewedPathIdx >= animPaths.length) viewedPathIdx = Math.max(0, animPaths.length - 1);
+    updateAnimBar();
+}
+
+function coeffListLabel(coeffSet) {
+    const sorted = [...coeffSet].sort((a, b) => a - b);
+    if (sorted.length <= 4) {
+        return sorted.map(i => `c${subscript(i)}`).join(' ');
+    }
+    return `${sorted.length} coeffs`;
+}
+
+function syncBarToPath() {
+    if (animPaths.length === 0) return;
+    const path = animPaths[viewedPathIdx];
+    barTitle.textContent = coeffListLabel(path.coeffs);
+    animPathSel.value = path.pathType;
+    animRadiusInput.value = path.radius;
+    animRadiusVal.textContent = path.radius.toFixed(2);
+    animSpeedInput.value = path.speed;
+    animSpeedVal.textContent = path.speed.toFixed(1);
+    ccwBtn.textContent = path.ccw ? "CCW" : "CW";
+    ccwBtn.classList.toggle("active", path.ccw);
+    pathLabel.textContent = `Path ${viewedPathIdx + 1}/${animPaths.length}`;
+}
+
+function syncPathFromBar() {
+    if (animPaths.length === 0) return;
+    const path = animPaths[viewedPathIdx];
+    path.pathType = animPathSel.value;
+    path.radius = parseFloat(animRadiusInput.value);
+    path.speed = parseFloat(animSpeedInput.value);
+}
+
 function updateAnimBar() {
-    if (selectedCoeffs.size === 0) {
+    const hasPaths = animPaths.length > 0;
+    const hasSelection = selectedCoeffs.size > 0;
+
+    if (!hasPaths && !hasSelection) {
         animBar.classList.remove("active");
         return;
     }
-    const sorted = [...selectedCoeffs].sort((a, b) => a - b);
-    if (sorted.length <= 3) {
-        barTitle.textContent = sorted.map(i => `c${subscript(i)}`).join(' ');
-    } else {
-        barTitle.textContent = `${sorted.length} coefficients`;
-    }
     animBar.classList.add("active");
+
+    // Sel→Path button enabled only when coeffs are selected
+    sel2pathBtn.disabled = !hasSelection;
+
+    // Path nav and per-path controls visible only when paths exist
+    const pathControlsVisible = hasPaths;
+    pathNav.style.display = pathControlsVisible ? "flex" : "none";
+    barTitle.style.display = pathControlsVisible ? "" : "none";
+    animPathSel.parentElement.style.display = pathControlsVisible ? "" : "none";
+    animRadiusInput.parentElement.style.display = pathControlsVisible ? "" : "none";
+    animSpeedInput.parentElement.style.display = pathControlsVisible ? "" : "none";
+    ccwBtn.style.display = pathControlsVisible ? "" : "none";
+    delPathBtn.style.display = pathControlsVisible ? "" : "none";
+
+    if (hasPaths) {
+        syncBarToPath();
+    } else if (hasSelection) {
+        // Show just sel2path + play/trails
+        barTitle.style.display = "";
+        barTitle.textContent = coeffListLabel(selectedCoeffs);
+    }
 }
 
-// Slider value displays
-animRadiusInput.addEventListener("input", function () { animRadiusVal.textContent = parseFloat(this.value).toFixed(2); });
-animSpeedInput.addEventListener("input", function () { animSpeedVal.textContent = parseFloat(this.value).toFixed(1); });
+// Slider value displays — also sync to current path
+animRadiusInput.addEventListener("input", function () {
+    animRadiusVal.textContent = parseFloat(this.value).toFixed(2);
+    syncPathFromBar();
+});
+animSpeedInput.addEventListener("input", function () {
+    animSpeedVal.textContent = parseFloat(this.value).toFixed(1);
+    syncPathFromBar();
+});
+animPathSel.addEventListener("change", syncPathFromBar);
+
+// Sel→Path button
+sel2pathBtn.addEventListener("click", createPathFromSelection);
+
+// Path navigation
+pathPrevBtn.addEventListener("click", function () {
+    if (animPaths.length <= 1) return;
+    viewedPathIdx = (viewedPathIdx - 1 + animPaths.length) % animPaths.length;
+    syncBarToPath();
+    pathLabel.textContent = `Path ${viewedPathIdx + 1}/${animPaths.length}`;
+});
+pathNextBtn.addEventListener("click", function () {
+    if (animPaths.length <= 1) return;
+    viewedPathIdx = (viewedPathIdx + 1) % animPaths.length;
+    syncBarToPath();
+    pathLabel.textContent = `Path ${viewedPathIdx + 1}/${animPaths.length}`;
+});
+
+// CCW toggle
+ccwBtn.addEventListener("click", function () {
+    if (animPaths.length === 0) return;
+    const path = animPaths[viewedPathIdx];
+    path.ccw = !path.ccw;
+    this.textContent = path.ccw ? "CCW" : "CW";
+    this.classList.toggle("active", path.ccw);
+});
+
+// Delete path
+delPathBtn.addEventListener("click", deleteCurrentPath);
 
 // Play/Pause button
 playBtn.addEventListener("click", function () {
@@ -843,7 +1025,8 @@ playBtn.addEventListener("click", function () {
         stopAnimation();
         playBtn.textContent = "▶ Play";
     } else {
-        if (trailsEnabled) clearTrails(); // new cycle, fresh trails
+        if (animPaths.length === 0) return;
+        if (trailsEnabled) clearTrails();
         startAnimation();
         playBtn.textContent = "⏸ Pause";
     }
@@ -853,11 +1036,7 @@ playBtn.addEventListener("click", function () {
 trailsBtn.addEventListener("click", function () {
     trailsEnabled = !trailsEnabled;
     this.classList.toggle("active", trailsEnabled);
-    if (trailsEnabled) {
-        clearTrails(); // fresh start
-    } else {
-        clearTrails();
-    }
+    clearTrails();
 });
 
 // --- Path functions ---
@@ -981,73 +1160,80 @@ function animPathFn(name, t, center, radius) {
 // --- Animation engine ---
 
 function startAnimation() {
-    if (selectedCoeffs.size === 0) return;
+    if (animPaths.length === 0) return;
 
-    // Compute centroid of selected group
-    let centerRe = 0, centerIm = 0;
-    for (const idx of selectedCoeffs) {
-        centerRe += coefficients[idx].re;
-        centerIm += coefficients[idx].im;
+    // Compute centroid and offsets for each path
+    for (const path of animPaths) {
+        let cRe = 0, cIm = 0;
+        for (const idx of path.coeffs) {
+            cRe += coefficients[idx].re;
+            cIm += coefficients[idx].im;
+        }
+        cRe /= path.coeffs.size;
+        cIm /= path.coeffs.size;
+        path.center = { re: cRe, im: cIm };
+        path.offsets = new Map();
+        for (const idx of path.coeffs) {
+            path.offsets.set(idx, {
+                re: coefficients[idx].re - cRe,
+                im: coefficients[idx].im - cIm
+            });
+        }
     }
-    centerRe /= selectedCoeffs.size;
-    centerIm /= selectedCoeffs.size;
 
-    // Store each coefficient's offset from centroid
-    const offsets = new Map();
-    for (const idx of selectedCoeffs) {
-        offsets.set(idx, {
-            re: coefficients[idx].re - centerRe,
-            im: coefficients[idx].im - centerIm
-        });
-    }
-
-    animState.center = { re: centerRe, im: centerIm };
-    animState.offsets = offsets;
     animState.playing = true;
     animState.startTime = performance.now();
     animState.rafId = requestAnimationFrame(animLoop);
 }
 
+// Collect all coefficient indices across all paths
+function allPathCoeffs() {
+    const s = new Set();
+    for (const p of animPaths) for (const idx of p.coeffs) s.add(idx);
+    return s;
+}
+
 function animLoop(now) {
-    if (!animState.playing || selectedCoeffs.size === 0) return;
+    if (!animState.playing || animPaths.length === 0) return;
     const elapsed = (now - animState.startTime) / 1000;
-    const speed = parseFloat(animSpeedInput.value);
-    const radius = parseFloat(animRadiusInput.value);
-    const pathName = animPathSel.value;
-    const t = elapsed * speed;
 
-    let newCenter;
-    if (pathName === "random") {
-        newCenter = animPathFn("random", t, animState.center, radius);
-        animState.center = newCenter;
-    } else {
-        newCenter = animPathFn(pathName, t, animState.center, radius);
+    // Advance each path
+    for (const path of animPaths) {
+        const t = elapsed * path.speed * (path.ccw ? -1 : 1);
+        let newCenter;
+        if (path.pathType === "random") {
+            newCenter = animPathFn("random", t, path.center, path.radius);
+            path.center = newCenter;
+        } else {
+            newCenter = animPathFn(path.pathType, t, path.center, path.radius);
+        }
+        for (const [idx, offset] of path.offsets) {
+            coefficients[idx].re = newCenter.re + offset.re;
+            coefficients[idx].im = newCenter.im + offset.im;
+        }
     }
 
-    // Move all selected coefficients maintaining their offsets from centroid
-    for (const [idx, offset] of animState.offsets) {
-        coefficients[idx].re = newCenter.re + offset.re;
-        coefficients[idx].im = newCenter.im + offset.im;
-    }
-
-    // Record coefficient trail points
+    // Record coefficient trail points for all paths
     if (trailsEnabled && !trailComplete) {
         const n = coefficients.length;
         while (coeffTrailData.length < n) coeffTrailData.push([]);
         coeffTrailData.length = n;
-        for (const idx of selectedCoeffs) {
-            coeffTrailData[idx].push({ re: coefficients[idx].re, im: coefficients[idx].im });
-            if (coeffTrailData[idx].length > MAX_TRAIL_POINTS) coeffTrailData[idx].shift();
+        for (const path of animPaths) {
+            for (const idx of path.coeffs) {
+                coeffTrailData[idx].push({ re: coefficients[idx].re, im: coefficients[idx].im });
+                if (coeffTrailData[idx].length > MAX_TRAIL_POINTS) coeffTrailData[idx].shift();
+            }
         }
         renderCoeffTrails();
     }
 
-    // Update visuals for all selected coefficients
+    // Update visuals for all animated coefficients
+    const animated = allPathCoeffs();
     coeffLayer.selectAll("circle.coeff")
-        .filter(cd => selectedCoeffs.has(coefficients.indexOf(cd)))
+        .filter(cd => animated.has(cd._idx))
         .attr("cx", cd => cxs()(cd.re)).attr("cy", cd => cys()(cd.im));
     coeffLayer.selectAll(".coeff-label")
-        .filter(ld => selectedCoeffs.has(coefficients.indexOf(ld)))
+        .filter(ld => animated.has(ld._idx))
         .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
 
     autoScaleCoeffPanel();
@@ -1550,6 +1736,11 @@ function solveRootsThrottled() {
 const degreeNumber = document.getElementById("degree-number");
 
 function applyPattern() {
+    stopAnimation();
+    playBtn.textContent = "▶ Play";
+    animPaths = [];
+    viewedPathIdx = 0;
+    nextPathId = 1;
     clearAllSelection();
     clearTrails();
     currentRoots = [];
@@ -1838,12 +2029,15 @@ function snapCapture() {
         rootColoring: rootColorEnabled,
         trails: trailsEnabled,
         trailComplete: trailComplete,
-        animation: {
-            playing: animState.playing,
-            path: document.getElementById("anim-path").value,
-            radius: parseFloat(document.getElementById("anim-radius").value),
-            speed: parseFloat(document.getElementById("anim-speed").value)
-        },
+        animPaths: animPaths.map(p => ({
+            id: p.id,
+            coeffs: [...p.coeffs],
+            pathType: p.pathType,
+            radius: p.radius,
+            speed: p.speed,
+            ccw: p.ccw
+        })),
+        animPlaying: animState.playing,
         selectedCoeffs: [...selectedCoeffs],
         selectedRoots: [...selectedRoots],
         coefficients: coefficients.map(c => [c.re, c.im]),

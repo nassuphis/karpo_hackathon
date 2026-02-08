@@ -13,7 +13,7 @@ PolyPaint makes this relationship tangible. Two side-by-side complex-plane panel
 - **Left panel (Coefficients):** Drag any coefficient dot and watch the roots respond instantly on the right. The domain coloring background shifts in real time, revealing how the polynomial's complex landscape reshapes.
 - **Right panel (Roots):** Drag any root dot and the coefficients on the left update to match — the polynomial is reconstructed from its roots via (z − r₀)(z − r₁)···(z − rₙ₋₁).
 - **Multi-select:** Click multiple coefficients (or roots) to select a group. Drag any member and the whole group moves together, maintaining their relative positions.
-- **Animate:** Select one or more coefficients and hit Play — their centroid orbits along a path (circle, figure-8, spiral, etc.) while the roots dance in response. Each coefficient maintains its offset from the group center.
+- **Animate:** Define multiple simultaneous animation paths — each path drives a different subset of coefficients along its own curve (circle, figure-8, spiral, etc.) with independent radius, speed, and direction. Hit Play and all paths activate at once, creating rich interference patterns as the roots respond to the combined perturbation.
 - **Transform:** Select coefficients or roots and apply Scale, Add (complex), or Rotate operations to the group.
 
 Everything runs client-side in a single HTML file. No server, no build step, no dependencies to install.
@@ -27,7 +27,7 @@ Or visit the **[live demo](https://nassuphis.github.io/karpo_hackathon/)**.
 ## Architecture
 
 ```
-Single HTML file (~1650 lines)
+Single HTML file (~2000 lines)
 ├── d3.js v7 (CDN)          — SVG rendering, drag interactions
 ├── Ehrlich-Aberth solver    — polynomial root finding in pure JS
 ├── Horner evaluator         — domain coloring + derivative computation
@@ -113,6 +113,11 @@ This is not a solver artifact; it is a topological invariant of the loop. Differ
 | **Scale** action button | Multiplies all selected elements by a real number. |
 | **Add** action button | Adds a complex number (re + im·i) to all selected elements. |
 | **Rotate** action button | Rotates all selected elements by multiplying with exp(2πi·rev). |
+| **Sel→Path** button | Captures the current coefficient selection into a new animation path. |
+| **◀ ▶** path navigation | Cycle through defined paths to view/edit each one's settings. |
+| **CW / CCW** toggle | Sets clockwise or counter-clockwise direction for the current path. |
+| **×** delete button | Removes the currently viewed path. |
+| **Snap** button | Exports a PNG screenshot and JSON metadata file for the current state. |
 
 ### Multi-Select and Group Drag
 
@@ -120,16 +125,26 @@ Click any coefficient or root dot to toggle it into the selection. Click again t
 
 Clicking a coefficient clears any root selection and vice versa, so you work with one panel at a time. Press **Escape** to deselect all.
 
-### Coefficient Animation
+### Multi-Path Animation
 
-Select one or more coefficients — a translucent control overlay appears on the coefficient panel. The group's centroid follows a pre-programmed path, each coefficient maintaining its offset. Dragging still works when animation is paused.
+The animation system supports **multiple simultaneous paths**, each driving a different subset of coefficients along its own curve with independent settings.
 
-- 16 paths in two groups:
+**Workflow:**
+1. Select coefficients → click **Sel→Path** → a new path is created and the selection clears
+2. Select more coefficients → click **Sel→Path** again → a second path is created
+3. Use **◀ ▶** to navigate between paths and adjust each one's curve, radius, speed, and direction
+4. Click **Play** → all paths animate simultaneously
+
+Each path has:
+- **16 path curves** in two groups:
   - **Basic:** Circle, Horizontal, Vertical, Spiral, Random walk
   - **Curves:** Lissajous (3:2), Figure-8, Cardioid, Astroid, Deltoid, Rose (3-petal), Spirograph, Hypotrochoid, Butterfly, Star (pentagram), Square
-- Adjustable radius and speed
-- Play/Pause control
-- **Trails** toggle: roots leave colored SVG path trails as they move. Loop detection auto-stops recording after one full cycle. Jump detection breaks trails at root-index swaps to avoid artifacts.
+- **Radius** and **Speed** sliders (independent per path)
+- **CW/CCW** direction toggle
+
+When a coefficient is assigned to a new path, it is automatically removed from any existing path. Empty paths are auto-deleted.
+
+- **Trails** toggle: coefficients and roots leave colored SVG path trails as they move. Loop detection auto-stops recording after one full cycle. Jump detection breaks trails at root-index swaps to avoid artifacts.
 
 ### Trail Gallery
 
@@ -162,6 +177,12 @@ Select one or more coefficients — a translucent control overlay appears on the
 </p>
 
 **Degree 30, diamond root shape, circle path** — A single coefficient (c₈) orbiting on a large circle (radius 2.0, speed 0.4). The roots were initialized in a diamond arrangement. On the left, the lone selected coefficient traces one clean circle while the remaining coefficients sit near the origin. On the right, the 30 roots maintain their diamond shape but each traces a smooth rounded-square orbit — the diamond's corners soften into curves as the perturbation sweeps around. The minimal input (one coefficient, one circle) produces a surprisingly coherent collective response: every root moves in concert, preserving the diamond's symmetry while the trail reveals the underlying geometry of the perturbation.
+
+<p align="center">
+  <img src="snaps/polypaint-2026-02-08T13-37-45.png" width="90%" alt="Degree-5 multi-path — 6 paths, each coefficient on its own circle">
+</p>
+
+**Degree 5, circle pattern, 6 simultaneous paths (multi-path demo)** — Every coefficient (c₀ through c₅) assigned to its own animation path, all circles but with different configurations: c₀ on a large circle (radius 1.4, speed 0.6, CCW), c₄ barely moving (radius 0.5, speed 0.1, CCW), and the rest at radius 0.5, speed 1.0 with alternating CW/CCW directions. On the left, six circles of varying size show each coefficient's individual orbit. On the right, the 5 roots trace complex entangled loops — the interference between six independent perturbations at different frequencies and directions creates an intricate braid that no single-path animation could produce. The loop detection fired after one complete cycle, confirming the combined motion is periodic.
 
 ## Patterns
 
@@ -198,7 +219,8 @@ Heart, Circle, Star, Spiral, Cross, Diamond, Chessboard, Smiley, Figure-8, Butte
 
 ```
 karpo_hackathon/
-├── index.html            # Entire app (~1650 lines): CSS, JS, HTML all inline
+├── index.html            # Entire app (~2000 lines): CSS, JS, HTML all inline
+├── snaps/                # Snap captures (PNG + JSON metadata)
 └── README.md
 ```
 

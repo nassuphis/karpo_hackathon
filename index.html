@@ -32,6 +32,11 @@ circle.root.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
     padding: 6px 14px; font-size: 13px; cursor: pointer;
 }
 #reset-btn:hover { background: #c73550; }
+#deselect-btn {
+    background: transparent; color: #888; border: 1px solid #444; border-radius: 4px;
+    padding: 6px 14px; font-size: 13px; cursor: pointer;
+}
+#deselect-btn:hover { color: #eee; border-color: #888; }
 #pattern { background: #16213e; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; font-size: 13px; }
 #spread { width: 100px; accent-color: #e94560; }
 #spread-value { font-size: 13px; color: #e94560; min-width: 32px; text-align: center; }
@@ -121,6 +126,7 @@ circle.root.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px
     </label>
     <label><input type="checkbox" id="domain-coloring-toggle" checked> Domain coloring</label>
     <button id="reset-btn">Reset</button>
+    <button id="deselect-btn">Deselect all</button>
 </div>
 
 <div id="panels">
@@ -1318,6 +1324,8 @@ document.getElementById("reset-btn").addEventListener("click", function () {
     resetView();
     solveRoots();
 });
+
+document.getElementById("deselect-btn").addEventListener("click", clearAllSelection);
 
 document.getElementById("domain-coloring-toggle").addEventListener("change", function () {
     domainColoringEnabled = this.checked;

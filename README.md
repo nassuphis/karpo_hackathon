@@ -199,6 +199,12 @@ When a coefficient is assigned to a new path, it is automatically removed from a
 
 **Degree 29, grid pattern, 11 paths with mass horizontal perturbation** — Building on the previous snap, now with nearly every coefficient animated. Two group paths dominate: 12 coefficients (c₁–c₄, c₉–c₁₁, c₁₆–c₂₀) on a single horizontal at speed 0.7 with angle 0.73, and 5 coefficients (c₂₄–c₂₈) on a faster horizontal at speed 1.2 with angle 0.29. The remaining 4 solo paths keep their circles, star, and astroid from before. On the left, the angled horizontal paths form a striking fan of parallel lines across the grid — the angle slider tilts each group's oscillation axis differently. On the right, the root trails explode into tangled loops and whorls: with so many coefficients oscillating at different speeds and angles, the roots are pushed far from equilibrium, producing a chaotic braid where almost every root interacts with its neighbors.
 
+<p align="center">
+  <img src="snaps/polypaint-2026-02-08T18-50-52.png" width="90%" alt="Degree-5 circle pattern — Peano space-filling path, single coefficient">
+</p>
+
+**Degree 5, circle pattern, Peano space-filling path** — A single coefficient (c₁) tracing a Peano curve at radius 0.75, speed 0.1. On the left, the coefficient's path reveals the Peano curve's characteristic zigzag pattern — dense, space-filling, covering the full square around the coefficient. On the right, each of the 5 roots responds by tracing its own miniature space-filling shape: the Peano structure propagates through the polynomial, producing self-similar fractal-like trails at each root position. The slow speed (0.1) allows the trails to accumulate cleanly, showing the full one-cycle braid. A striking demonstration of how a single space-filling perturbation on one coefficient induces fractal geometry across all roots.
+
 ## Patterns
 
 ### Basic (5)

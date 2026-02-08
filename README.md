@@ -137,9 +137,10 @@ The animation system supports **multiple simultaneous paths**, each driving a di
 4. Click **Play** → all paths animate simultaneously
 
 Each path has:
-- **17 path curves** (including None) in two groups:
+- **20 path curves** (including None) in three groups:
   - **Basic:** None, Circle, Horizontal, Vertical, Spiral, Random walk
   - **Curves:** Lissajous (3:2), Figure-8, Cardioid, Astroid, Deltoid, Rose (3-petal), Spirograph, Hypotrochoid, Butterfly, Star (pentagram), Square
+  - **Space-filling:** Hilbert (Moore curve), Peano, Sierpinski arrowhead
 - **Radius**, **Speed**, and **Angle** sliders (independent per path)
 - **CW/CCW** direction toggle
 
@@ -250,6 +251,16 @@ karpo_hackathon/
 ### Path Transform Model
 
 Each coefficient assigned to an animation path stores 200 absolute curve points. When radius or angle sliders change, the existing points are transformed in place — radius scales around the coefficient's position, angle rotates around it. The coefficient stays fixed and the path reshapes smoothly around it. This avoids regenerating the curve from scratch, which would cause visible jumps after play-pause.
+
+### Space-Filling Curve Paths
+
+Three space-filling curves are available as animation paths, all implemented via L-system turtle graphics with caching:
+
+- **Hilbert (Moore curve):** Closed variant of the Hilbert curve — 4 Hilbert sub-curves arranged in a loop. Order 4, 256 points. Fills a square with uniform step sizes. L-system: `LFL+F+LFL`, `L → -RF+LFL+FR-`, `R → +LF-RFR-FL+`.
+- **Peano:** Classic Peano space-filling curve. Order 3, 729 points. Not naturally closed — uses out-and-back traversal for closure. L-system: `L`, `L → LFRFL-F-RFLFR+F+LFRFL`, `R → RFLFR+F+LFRFL-F-RFLFR`.
+- **Sierpinski arrowhead:** Fills a Sierpinski triangle. Order 5, 243 segments. Also out-and-back. L-system: `A → B-A-B`, `B → A+B+A` with 60-degree turns.
+
+All three generate perfectly uniform step sizes and are cached on first use.
 
 ### Performance
 

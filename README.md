@@ -12,7 +12,8 @@ PolyPaint makes this relationship tangible. Two side-by-side complex-plane panel
 
 - **Left panel (Coefficients):** Drag any coefficient dot and watch the roots respond instantly on the right. The domain coloring background shifts in real time, revealing how the polynomial's complex landscape reshapes.
 - **Right panel (Roots):** Drag any root dot and the coefficients on the left update to match — the polynomial is reconstructed from its roots via (z − r₀)(z − r₁)···(z − rₙ₋₁).
-- **Animate:** Click a coefficient to select it, switch to Loop mode, and watch it orbit along a path (circle, figure-8, spiral, etc.) while the roots dance in response.
+- **Multi-select:** Click multiple coefficients (or roots) to select a group. Drag any member and the whole group moves together, maintaining their relative positions.
+- **Animate:** Select one or more coefficients, switch to Loop mode, and watch their centroid orbit along a path (circle, figure-8, spiral, etc.) while the roots dance in response. Each coefficient maintains its offset from the group center.
 
 Everything runs client-side in a single HTML file. No server, no build step, no dependencies to install.
 
@@ -98,12 +99,18 @@ The polynomial is evaluated via Horner's method. The canvas renders at half reso
 | **Domain coloring** checkbox | Toggles the domain coloring background on the roots panel. |
 | **Reset** button | Resets the roots panel zoom and re-solves. |
 
+### Multi-Select and Group Drag
+
+Click any coefficient or root dot to toggle it into the selection. Click again to deselect. Selected items glow to indicate membership. Drag any selected item and the entire group translates together — relative positions are preserved.
+
+Clicking a coefficient clears any root selection and vice versa, so you work with one panel at a time.
+
 ### Coefficient Animation
 
-Click any coefficient dot to select it. A translucent control overlay appears on the coefficient panel:
+Select one or more coefficients — a translucent control overlay appears on the coefficient panel:
 
-- **Drag mode** (default): normal drag behavior
-- **Loop mode**: coefficient follows a pre-programmed path automatically
+- **Drag mode** (default): normal drag behavior (group drag if multiple selected)
+- **Loop mode**: the group's centroid follows a pre-programmed path, each coefficient maintaining its offset
   - 6 paths: Circle, Horizontal, Vertical, Spiral, Figure-8, Random walk
   - Adjustable radius and speed
   - Play/Pause control

@@ -41,6 +41,7 @@ circle.root.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
 #roots-panel.domain-active { background: transparent !important; }
 #domain-coloring-toggle { accent-color: #e94560; }
 circle.coeff.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px #e94560); }
+circle.root.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px #e94560); }
 #coeff-container { position: relative; flex: 1; min-height: 0; }
 #anim-bar {
     position: absolute; top: 8px; left: 8px; right: 8px; z-index: 10;
@@ -207,9 +208,10 @@ let currentRoots = []; // persistent root data for dragging
 let pendingSolve = false;
 
 // Selection & animation state
-let selectedCoeffIdx = null;
+const selectedCoeffs = new Set(); // indices into coefficients[]
+const selectedRoots = new Set();  // indices into currentRoots[]
 let coeffMode = "drag"; // "drag" or "loop"
-const animState = { playing: false, center: null, startTime: 0, rafId: null };
+const animState = { playing: false, center: null, offsets: null, startTime: 0, rafId: null };
 // Domain coloring state
 let domainColoringEnabled = true;
 let domainCanvas = document.getElementById("domain-canvas");
@@ -615,14 +617,34 @@ const drag = d3.drag()
     })
     .on("drag", function (event, d) {
         dragMoved = true;
-        // Skip drag if this coefficient is being animated
-        if (d === coefficients[selectedCoeffIdx] && coeffMode === "loop" && animState.playing) return;
-        d.re = cxs().invert(event.x);
-        d.im = cys().invert(event.y);
-        d3.select(this).attr("cx", cxs()(d.re)).attr("cy", cys()(d.im));
-        coeffLayer.selectAll(".coeff-label")
-            .filter(ld => ld === d)
-            .attr("x", cxs()(d.re) + 12).attr("y", cys()(d.im) + 4);
+        const idx = coefficients.indexOf(d);
+        // Skip if this group is being animated in loop mode
+        if (selectedCoeffs.has(idx) && coeffMode === "loop" && animState.playing) return;
+
+        const newRe = cxs().invert(event.x);
+        const newIm = cys().invert(event.y);
+
+        if (selectedCoeffs.has(idx) && selectedCoeffs.size > 1) {
+            // Group drag: apply delta to all selected
+            const deltaRe = newRe - d.re;
+            const deltaIm = newIm - d.im;
+            for (const si of selectedCoeffs) {
+                coefficients[si].re += deltaRe;
+                coefficients[si].im += deltaIm;
+            }
+            coeffLayer.selectAll("circle.coeff")
+                .attr("cx", cd => cxs()(cd.re)).attr("cy", cd => cys()(cd.im));
+            coeffLayer.selectAll(".coeff-label")
+                .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
+        } else {
+            // Single drag
+            d.re = newRe;
+            d.im = newIm;
+            d3.select(this).attr("cx", cxs()(d.re)).attr("cy", cys()(d.im));
+            coeffLayer.selectAll(".coeff-label")
+                .filter(ld => ld === d)
+                .attr("x", cxs()(d.re) + 12).attr("y", cys()(d.im) + 4);
+        }
         showTooltip(event.sourceEvent, d.re, d.im);
         autoScaleCoeffPanel();
         solveRootsThrottled();
@@ -634,7 +656,8 @@ const drag = d3.drag()
         // Click detection: if mouse didn't move, toggle selection
         if (!dragMoved) {
             const idx = coefficients.indexOf(d);
-            selectCoefficient(idx === selectedCoeffIdx ? null : idx);
+            clearRootSelection();
+            toggleCoeffSelect(idx);
         }
     });
 
@@ -662,21 +685,64 @@ const animRadiusVal = document.getElementById("anim-radius-val");
 const animSpeedVal = document.getElementById("anim-speed-val");
 const playBtn = document.getElementById("play-btn");
 
-function selectCoefficient(idx) {
+function toggleCoeffSelect(idx) {
     stopAnimation();
-    selectedCoeffIdx = idx;
     coeffMode = "drag";
-    // Update visual selection — compare by datum, not DOM index (.raise() reorders DOM)
-    const selData = idx !== null ? coefficients[idx] : null;
-    coeffLayer.selectAll("circle.coeff").classed("selected", d => d === selData);
-    // Update radio buttons
     document.querySelector('input[name="coeff-mode"][value="drag"]').checked = true;
     loopControls.classList.remove("active");
-    if (idx === null) {
+    playBtn.textContent = "▶ Play";
+
+    if (selectedCoeffs.has(idx)) {
+        selectedCoeffs.delete(idx);
+    } else {
+        selectedCoeffs.add(idx);
+    }
+    updateCoeffSelectionVisual();
+    updateAnimBar();
+}
+
+function clearCoeffSelection() {
+    stopAnimation();
+    selectedCoeffs.clear();
+    coeffMode = "drag";
+    document.querySelector('input[name="coeff-mode"][value="drag"]').checked = true;
+    loopControls.classList.remove("active");
+    playBtn.textContent = "▶ Play";
+    updateCoeffSelectionVisual();
+    animBar.classList.remove("active");
+}
+
+function clearRootSelection() {
+    selectedRoots.clear();
+    updateRootSelectionVisual();
+}
+
+function clearAllSelection() {
+    clearCoeffSelection();
+    clearRootSelection();
+}
+
+function updateCoeffSelectionVisual() {
+    coeffLayer.selectAll("circle.coeff")
+        .classed("selected", d => selectedCoeffs.has(coefficients.indexOf(d)));
+}
+
+function updateRootSelectionVisual() {
+    rootsLayer.selectAll("circle.root")
+        .classed("selected", d => selectedRoots.has(currentRoots.indexOf(d)));
+}
+
+function updateAnimBar() {
+    if (selectedCoeffs.size === 0) {
         animBar.classList.remove("active");
         return;
     }
-    barTitle.textContent = `c${subscript(idx)}`;
+    const sorted = [...selectedCoeffs].sort((a, b) => a - b);
+    if (sorted.length <= 3) {
+        barTitle.textContent = sorted.map(i => `c${subscript(i)}`).join(' ');
+    } else {
+        barTitle.textContent = `${sorted.length} coefficients`;
+    }
     animBar.classList.add("active");
 }
 
@@ -743,47 +809,62 @@ function animPathFn(name, t, center, radius) {
 // --- Animation engine ---
 
 function startAnimation() {
-    if (selectedCoeffIdx === null || selectedCoeffIdx >= coefficients.length) return;
-    const d = coefficients[selectedCoeffIdx];
-    // For random walk, the center drifts each frame
-    const pathName = animPathSel.value;
-    if (pathName === "random") {
-        animState.center = { re: d.re, im: d.im }; // mutable center for random walk
-    } else {
-        animState.center = { re: d.re, im: d.im };
+    if (selectedCoeffs.size === 0) return;
+
+    // Compute centroid of selected group
+    let centerRe = 0, centerIm = 0;
+    for (const idx of selectedCoeffs) {
+        centerRe += coefficients[idx].re;
+        centerIm += coefficients[idx].im;
     }
+    centerRe /= selectedCoeffs.size;
+    centerIm /= selectedCoeffs.size;
+
+    // Store each coefficient's offset from centroid
+    const offsets = new Map();
+    for (const idx of selectedCoeffs) {
+        offsets.set(idx, {
+            re: coefficients[idx].re - centerRe,
+            im: coefficients[idx].im - centerIm
+        });
+    }
+
+    animState.center = { re: centerRe, im: centerIm };
+    animState.offsets = offsets;
     animState.playing = true;
     animState.startTime = performance.now();
     animState.rafId = requestAnimationFrame(animLoop);
 }
 
 function animLoop(now) {
-    if (!animState.playing || selectedCoeffIdx === null) return;
+    if (!animState.playing || selectedCoeffs.size === 0) return;
     const elapsed = (now - animState.startTime) / 1000;
     const speed = parseFloat(animSpeedInput.value);
     const radius = parseFloat(animRadiusInput.value);
     const pathName = animPathSel.value;
     const t = elapsed * speed;
 
-    const d = coefficients[selectedCoeffIdx];
-    let newPos;
+    let newCenter;
     if (pathName === "random") {
-        // Random walk: center drifts
-        newPos = animPathFn("random", t, animState.center, radius);
-        animState.center = newPos; // update center for next frame
+        newCenter = animPathFn("random", t, animState.center, radius);
+        animState.center = newCenter;
     } else {
-        newPos = animPathFn(pathName, t, animState.center, radius);
+        newCenter = animPathFn(pathName, t, animState.center, radius);
     }
-    d.re = newPos.re;
-    d.im = newPos.im;
 
-    // Update the dot and label visually — compare by datum, not DOM index
+    // Move all selected coefficients maintaining their offsets from centroid
+    for (const [idx, offset] of animState.offsets) {
+        coefficients[idx].re = newCenter.re + offset.re;
+        coefficients[idx].im = newCenter.im + offset.im;
+    }
+
+    // Update visuals for all selected coefficients
     coeffLayer.selectAll("circle.coeff")
-        .filter(cd => cd === d)
-        .attr("cx", cxs()(d.re)).attr("cy", cys()(d.im));
+        .filter(cd => selectedCoeffs.has(coefficients.indexOf(cd)))
+        .attr("cx", cd => cxs()(cd.re)).attr("cy", cd => cys()(cd.im));
     coeffLayer.selectAll(".coeff-label")
-        .filter(ld => ld === d)
-        .attr("x", cxs()(d.re) + 12).attr("y", cys()(d.im) + 4);
+        .filter(ld => selectedCoeffs.has(coefficients.indexOf(ld)))
+        .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
 
     autoScaleCoeffPanel();
     solveRootsThrottled();
@@ -846,14 +927,33 @@ function subscript(n) {
 
 // --- Root drag behavior (roots → coefficients) ---
 
+let rootDragMoved = false;
 const rootDrag = d3.drag()
     .on("start", function () {
+        rootDragMoved = false;
         d3.select(this).raise().classed("dragging", true);
     })
     .on("drag", function (event, d) {
-        d.re = rxs().invert(event.x);
-        d.im = rys().invert(event.y);
-        d3.select(this).attr("cx", rxs()(d.re)).attr("cy", rys()(d.im));
+        rootDragMoved = true;
+        const newRe = rxs().invert(event.x);
+        const newIm = rys().invert(event.y);
+        const idx = currentRoots.indexOf(d);
+
+        if (selectedRoots.has(idx) && selectedRoots.size > 1) {
+            // Group drag: apply delta to all selected roots
+            const deltaRe = newRe - d.re;
+            const deltaIm = newIm - d.im;
+            for (const si of selectedRoots) {
+                currentRoots[si].re += deltaRe;
+                currentRoots[si].im += deltaIm;
+            }
+            rootsLayer.selectAll("circle.root")
+                .attr("cx", rd => rxs()(rd.re)).attr("cy", rd => rys()(rd.im));
+        } else {
+            d.re = newRe;
+            d.im = newIm;
+            d3.select(this).attr("cx", rxs()(d.re)).attr("cy", rys()(d.im));
+        }
         showTooltip(event.sourceEvent, d.re, d.im);
         autoScaleRootsPanel();
         // Recompute coefficients from current roots (all client-side)
@@ -862,9 +962,20 @@ const rootDrag = d3.drag()
         renderCoefficients();
         renderDomainColoringThrottled();
     })
-    .on("end", function () {
+    .on("end", function (event, d) {
         d3.select(this).classed("dragging", false);
         hideTooltip();
+        // Click detection: if mouse didn't move, toggle root selection
+        if (!rootDragMoved) {
+            const idx = currentRoots.indexOf(d);
+            clearCoeffSelection();
+            if (selectedRoots.has(idx)) {
+                selectedRoots.delete(idx);
+            } else {
+                selectedRoots.add(idx);
+            }
+            updateRootSelectionVisual();
+        }
     });
 
 function autoScaleRootsPanel() {
@@ -912,6 +1023,7 @@ function renderRoots(newRoots) {
 }
 
 function resetView() {
+    selectedRoots.clear();
     currentRoots = [];
     rootsLayer.selectAll("circle.root").remove();
     updatePanelRange(rootsSvg, panels.roots, MIN_RANGE);
@@ -1182,7 +1294,7 @@ const degreeInput = document.getElementById("degree");
 const degreeValue = document.getElementById("degree-value");
 
 function applyPattern() {
-    selectCoefficient(null); // stop animation, clear selection
+    clearAllSelection();
     resetView();
     initCoefficients(parseInt(degreeInput.value));
     renderCoefficients();
@@ -1232,11 +1344,7 @@ function rebuild() {
     rootsLayer = rootsSvg.append("g");
 
     renderCoefficients();
-    // Reapply selection visual if a coefficient is selected
-    if (selectedCoeffIdx !== null && selectedCoeffIdx < coefficients.length) {
-        const selData = coefficients[selectedCoeffIdx];
-        coeffLayer.selectAll("circle.coeff").classed("selected", d => d === selData);
-    }
+    updateCoeffSelectionVisual();
 
     // Re-solve roots and re-render domain coloring at new size
     solveRoots();

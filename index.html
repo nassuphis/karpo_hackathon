@@ -1077,7 +1077,8 @@ const rootDrag = d3.drag()
     });
 
 function autoScaleRootsPanel() {
-    const needed = computeRange(currentRoots);
+    let needed = computeRange(currentRoots);
+    if (animState.playing) needed = Math.max(needed, panels.roots.range);
     if (needed !== panels.roots.range) {
         updatePanelRange(rootsSvg, panels.roots, needed);
         rootsLayer.selectAll("circle.root")

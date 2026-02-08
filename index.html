@@ -8,18 +8,62 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; overflow: hidden; }
 body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #eee; display: flex; flex-direction: column; }
-#controls {
-    text-align: center; padding: 10px 16px;
-    display: flex; align-items: center; justify-content: center; gap: 20px;
-    flex-shrink: 0;
+/* --- Header --- */
+#header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; height: 28px; border-bottom: 1px solid #2a2a4a; flex-shrink: 0;
 }
-#controls label { font-size: 15px; display: flex; align-items: center; gap: 8px; }
-#degree { width: 180px; accent-color: #e94560; }
-#degree-value { font-weight: bold; font-size: 18px; color: #e94560; min-width: 28px; text-align: center; }
-#panels { display: flex; justify-content: center; gap: 16px; padding: 0 12px 12px; flex: 1; min-height: 0; }
+#header .app-title { font-size: 14px; font-weight: 600; color: #8888aa; letter-spacing: 0.5px; }
+#header .header-actions { display: flex; align-items: center; gap: 12px; }
+#domain-toggle-btn {
+    background: transparent; color: #666; border: 1px solid #444; border-radius: 12px;
+    padding: 3px 10px; font-size: 11px; cursor: pointer; transition: all 0.15s;
+}
+#domain-toggle-btn.active { background: #e94560; color: #fff; border-color: #e94560; }
+#domain-toggle-btn:hover:not(.active) { color: #aaa; border-color: #666; }
+#root-color-btn {
+    background: transparent; color: #666; border: 1px solid #444; border-radius: 12px;
+    padding: 3px 10px; font-size: 11px; cursor: pointer; transition: all 0.15s;
+}
+#root-color-btn.active { background: #e94560; color: #fff; border-color: #e94560; }
+#root-color-btn:hover:not(.active) { color: #aaa; border-color: #666; }
+#deselect-btn {
+    background: transparent; color: #666; border: 1px solid #444; border-radius: 12px;
+    padding: 3px 10px; font-size: 11px; cursor: pointer; transition: all 0.15s;
+}
+#deselect-btn:hover { color: #eee; border-color: #888; }
+/* --- Toolbar --- */
+#controls {
+    display: flex; align-items: center; justify-content: center;
+    padding: 6px 16px; border-bottom: 1px solid #2a2a4a; flex-shrink: 0; gap: 0;
+}
+.control-group {
+    display: flex; align-items: center; gap: 8px; padding: 0 20px;
+}
+.control-group + .control-group { border-left: 1px solid #2a2a4a; }
+.control-label {
+    font-size: 11px; color: #777; text-transform: uppercase;
+    letter-spacing: 0.5px; font-weight: 500;
+}
+#degree { width: 140px; accent-color: #e94560; }
+#degree-number {
+    width: 32px; background: transparent; color: #e94560; border: none;
+    border-bottom: 1px solid #444; font-size: 14px; font-weight: 600;
+    text-align: center; outline: none; font-family: inherit;
+}
+#degree-number:focus { border-bottom-color: #e94560; }
+/* Hide spin buttons on number input */
+#degree-number::-webkit-outer-spin-button,
+#degree-number::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+#degree-number { -moz-appearance: textfield; }
+#pattern { background: #16213e; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; font-size: 12px; }
+#spread { width: 120px; accent-color: #e94560; }
+#spread-value { font-size: 12px; color: #e94560; min-width: 28px; text-align: center; }
+/* --- Panels --- */
+#panels { display: flex; justify-content: center; gap: 16px; padding: 8px 12px 12px; flex: 1; min-height: 0; }
 .panel { text-align: center; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
-.panel h3 { margin-bottom: 6px; font-weight: 400; font-size: 14px; color: #aaa; flex-shrink: 0; }
-svg { background: #16213e; border: 1px solid #333; border-radius: 8px; flex: 1; position: relative; }
+.panel h3 { margin-bottom: 4px; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: #666; flex-shrink: 0; }
+svg { background: #16213e; border: 1px solid #2a2a4a; border-radius: 8px; flex: 1; position: relative; }
 .grid line { stroke: #1f3354; stroke-width: 0.5; }
 .axis line { stroke: #2a4a6b; stroke-width: 1; }
 .unit-circle { fill: none; stroke: #2a4a6b; stroke-width: 1; stroke-dasharray: 4 3; }
@@ -27,19 +71,10 @@ circle.coeff { cursor: grab; stroke-width: 1.5; }
 circle.coeff.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
 circle.root { cursor: grab; stroke-width: 1.5; }
 circle.root.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
-#deselect-btn {
-    background: transparent; color: #888; border: 1px solid #444; border-radius: 4px;
-    padding: 6px 14px; font-size: 13px; cursor: pointer;
-}
-#deselect-btn:hover { color: #eee; border-color: #888; }
-#pattern { background: #16213e; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; font-size: 13px; }
-#spread { width: 100px; accent-color: #e94560; }
-#spread-value { font-size: 13px; color: #e94560; min-width: 32px; text-align: center; }
 .coeff-label { font-size: 10px; fill: #aaa; pointer-events: none; }
 #roots-container { position: relative; flex: 1; min-height: 0; }
 #domain-canvas { position: absolute; top: 0; left: 0; border-radius: 8px; }
 #roots-panel.domain-active { background: transparent !important; }
-#domain-coloring-toggle { accent-color: #e94560; }
 circle.coeff.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px #e94560); }
 circle.root.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px #e94560); }
 #coeff-container { position: relative; flex: 1; min-height: 0; }
@@ -48,7 +83,7 @@ circle.root.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px
     display: none; padding: 8px 12px;
     background: rgba(22, 33, 62, 0.88);
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.08);
     border-radius: 8px;
     flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 14px;
 }
@@ -74,12 +109,22 @@ circle.root.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px
 </head>
 <body>
 
+<div id="header">
+    <span class="app-title">PolyPaint</span>
+    <div class="header-actions">
+        <button id="domain-toggle-btn" class="active">Domain coloring</button>
+        <button id="root-color-btn">Color roots</button>
+        <button id="deselect-btn">Deselect all</button>
+    </div>
+</div>
 <div id="controls">
-    <label>Degree:
+    <div class="control-group">
+        <span class="control-label">Degree</span>
         <input type="range" id="degree" min="3" max="30" value="5">
-        <span id="degree-value">5</span>
-    </label>
-    <label>Pattern:
+        <input type="number" id="degree-number" min="3" max="30" value="5">
+    </div>
+    <div class="control-group">
+        <span class="control-label">Pattern</span>
         <select id="pattern">
             <optgroup label="Basic">
                 <option value="circle">Circle</option>
@@ -114,13 +159,12 @@ circle.root.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px
                 <option value="r-infinity">Infinity</option>
             </optgroup>
         </select>
-    </label>
-    <label>Spread:
+    </div>
+    <div class="control-group">
+        <span class="control-label">Spread</span>
         <input type="range" id="spread" min="0.2" max="2.5" step="0.1" value="1.0">
         <span id="spread-value">1.0</span>
-    </label>
-    <label><input type="checkbox" id="domain-coloring-toggle" checked> Domain coloring</label>
-    <button id="deselect-btn">Deselect all</button>
+    </div>
 </div>
 
 <div id="panels">
@@ -182,8 +226,9 @@ const RANGE_PAD = 1.3; // 30% padding around data
 
 // Compute panel size from available space
 function getPanelSize() {
+    const header = document.getElementById("header");
     const controls = document.getElementById("controls");
-    const availH = window.innerHeight - controls.offsetHeight - 50;
+    const availH = window.innerHeight - header.offsetHeight - controls.offsetHeight - 50;
     const availW = (window.innerWidth - 16 * 3) / 2;
     return Math.max(200, Math.floor(Math.min(availW, availH)));
 }
@@ -228,6 +273,7 @@ let coeffMode = "drag"; // "drag" or "loop"
 const animState = { playing: false, center: null, offsets: null, startTime: 0, rafId: null };
 // Domain coloring state
 let domainColoringEnabled = true;
+let rootColorEnabled = false;
 let domainCanvas = document.getElementById("domain-canvas");
 let domainCtx = domainCanvas.getContext("2d");
 let domainPendingRender = false;
@@ -334,6 +380,10 @@ function hideTooltip() {
 
 function coeffColor(i, n) {
     return d3.interpolateRainbow(i / n);
+}
+
+function rootColor(i, n) {
+    return rootColorEnabled ? d3.interpolateRainbow(i / n) : "#e94560";
 }
 
 // --- Init coefficients with pattern ---
@@ -1104,11 +1154,11 @@ function renderRoots(newRoots) {
 
     const circles = rootsLayer.selectAll("circle.root").data(currentRoots, (_, i) => i);
 
+    const n = currentRoots.length;
     circles.enter()
         .append("circle")
         .attr("class", "root")
         .attr("r", 7)
-        .attr("fill", "#e94560")
         .attr("stroke", "#fff")
         .attr("stroke-width", 1)
         .call(rootDrag)
@@ -1116,7 +1166,8 @@ function renderRoots(newRoots) {
         .on("mouseout", hideTooltip)
       .merge(circles)
         .attr("cx", d => rxs()(d.re))
-        .attr("cy", d => rys()(d.im));
+        .attr("cy", d => rys()(d.im))
+        .attr("fill", (_, i) => rootColor(i, n));
 
     circles.exit().remove();
 }
@@ -1383,7 +1434,7 @@ function solveRootsThrottled() {
 // --- Degree slider ---
 
 const degreeInput = document.getElementById("degree");
-const degreeValue = document.getElementById("degree-value");
+const degreeNumber = document.getElementById("degree-number");
 
 function applyPattern() {
     clearAllSelection();
@@ -1397,7 +1448,16 @@ function applyPattern() {
 }
 
 degreeInput.addEventListener("input", function () {
-    degreeValue.textContent = this.value;
+    degreeNumber.value = this.value;
+    applyPattern();
+});
+
+degreeNumber.addEventListener("change", function () {
+    let v = parseInt(this.value);
+    if (isNaN(v)) v = 5;
+    v = Math.max(3, Math.min(30, v));
+    this.value = v;
+    degreeInput.value = v;
     applyPattern();
 });
 
@@ -1410,11 +1470,25 @@ document.getElementById("spread").addEventListener("input", function () {
 
 document.getElementById("deselect-btn").addEventListener("click", clearAllSelection);
 
-document.getElementById("domain-coloring-toggle").addEventListener("change", function () {
-    domainColoringEnabled = this.checked;
+const domainToggleBtn = document.getElementById("domain-toggle-btn");
+domainToggleBtn.addEventListener("click", function () {
+    domainColoringEnabled = !domainColoringEnabled;
+    this.classList.toggle("active", domainColoringEnabled);
     domainCanvas.style.display = domainColoringEnabled ? "block" : "none";
     rootsSvg.classed("domain-active", domainColoringEnabled);
     if (domainColoringEnabled) renderDomainColoring();
+});
+
+const rootColorBtn = document.getElementById("root-color-btn");
+rootColorBtn.addEventListener("click", function () {
+    rootColorEnabled = !rootColorEnabled;
+    this.classList.toggle("active", rootColorEnabled);
+    rootsLayer.selectAll("circle.root")
+        .attr("fill", (_, i) => rootColor(i, currentRoots.length));
+});
+
+document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") clearAllSelection();
 });
 
 // --- Resize handler ---

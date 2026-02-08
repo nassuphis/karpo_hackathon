@@ -133,15 +133,11 @@ Select one or more coefficients — a translucent control overlay appears on the
 
 ### Trail Gallery
 
-<!-- drop PNGs into img/ and uncomment -->
-<!-- <p align="center">
-  <img src="img/trails-circle.png" width="45%" alt="Trails — circle path">
-  <img src="img/trails-lissajous.png" width="45%" alt="Trails — Lissajous path">
-</p>
 <p align="center">
-  <img src="img/trails-rose.png" width="45%" alt="Trails — rose path">
-  <img src="img/trails-spirograph.png" width="45%" alt="Trails — spirograph path">
-</p> -->
+  <img src="snaps/polypaint-2026-02-08T12-16-28.png" width="90%" alt="Degree-24 grid pattern — circle path trails">
+</p>
+
+**Degree 24, grid pattern, circle path** — 20 of 25 coefficients selected and orbiting on a circle (radius 0.95, speed 0.4). The grid arrangement of coefficients on the left drives the 24 roots on the right through a complex dance. Each root's trail is colored by its array index. Small loops and cusps in the trails reveal where roots slow down near near-collisions; the large sweeping arcs show roots that respond dramatically to the coefficient perturbation.
 
 ## Patterns
 

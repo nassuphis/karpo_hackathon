@@ -27,11 +27,6 @@ circle.coeff { cursor: grab; stroke-width: 1.5; }
 circle.coeff.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
 circle.root { cursor: grab; stroke-width: 1.5; }
 circle.root.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
-#reset-btn {
-    background: #e94560; color: #fff; border: none; border-radius: 4px;
-    padding: 6px 14px; font-size: 13px; cursor: pointer;
-}
-#reset-btn:hover { background: #c73550; }
 #deselect-btn {
     background: transparent; color: #888; border: 1px solid #444; border-radius: 4px;
     padding: 6px 14px; font-size: 13px; cursor: pointer;
@@ -125,7 +120,6 @@ circle.root.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px
         <span id="spread-value">1.0</span>
     </label>
     <label><input type="checkbox" id="domain-coloring-toggle" checked> Domain coloring</label>
-    <button id="reset-btn">Reset</button>
     <button id="deselect-btn">Deselect all</button>
 </div>
 
@@ -1028,13 +1022,6 @@ function renderRoots(newRoots) {
     circles.exit().remove();
 }
 
-function resetView() {
-    selectedRoots.clear();
-    currentRoots = [];
-    rootsLayer.selectAll("circle.root").remove();
-    updatePanelRange(rootsSvg, panels.roots, MIN_RANGE);
-    renderDomainColoring();
-}
 
 // --- Domain coloring ---
 
@@ -1301,7 +1288,9 @@ const degreeValue = document.getElementById("degree-value");
 
 function applyPattern() {
     clearAllSelection();
-    resetView();
+    currentRoots = [];
+    rootsLayer.selectAll("circle.root").remove();
+    updatePanelRange(rootsSvg, panels.roots, MIN_RANGE);
     initCoefficients(parseInt(degreeInput.value));
     renderCoefficients();
     solveRoots();
@@ -1318,11 +1307,6 @@ document.getElementById("pattern").addEventListener("change", applyPattern);
 document.getElementById("spread").addEventListener("input", function () {
     document.getElementById("spread-value").textContent = parseFloat(this.value).toFixed(1);
     applyPattern();
-});
-
-document.getElementById("reset-btn").addEventListener("click", function () {
-    resetView();
-    solveRoots();
 });
 
 document.getElementById("deselect-btn").addEventListener("click", clearAllSelection);

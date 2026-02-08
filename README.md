@@ -97,7 +97,7 @@ The polynomial is evaluated via Horner's method. The canvas renders at half reso
 | **Pattern dropdown** | Initial arrangement of coefficients or roots. 25 patterns in 3 categories. |
 | **Spread slider** (0.2–2.5) | Scales the initial pattern size. |
 | **Domain coloring** checkbox | Toggles the domain coloring background on the roots panel. |
-| **Reset** button | Resets the roots panel zoom and re-solves. |
+| **Deselect all** button | Clears all coefficient and root selections. |
 
 ### Multi-Select and Group Drag
 

@@ -1,187 +1,164 @@
 # PolyPaint
 
-Interactive polynomial root visualizer. Drag coefficients in the complex plane and watch the roots move in real time.
+**[Try it live](https://nassuphis.github.io/karpo_hackathon/)**
 
-A degree-*n* polynomial has *n*+1 complex coefficients and *n* complex roots. PolyPaint gives you two side-by-side complex-plane panels: the left shows the coefficients as draggable dots, the right shows the roots computed on the fly. As you drag any coefficient, the roots flow continuously across the plane, leaving colored trails behind them.
+Interactive polynomial root visualizer. Drag coefficients *or* roots in the complex plane and watch everything update in real time.
+
+## What It Does
+
+A degree-*n* polynomial p(z) = c₀zⁿ + c₁zⁿ⁻¹ + ··· + cₙ has *n*+1 complex coefficients and *n* complex roots. The relationship between them is rich, nonlinear, and often surprising — small changes to one coefficient can send roots flying across the plane, while other perturbations barely move them.
+
+PolyPaint makes this relationship tangible. Two side-by-side complex-plane panels let you explore it from both directions:
+
+- **Left panel (Coefficients):** Drag any coefficient dot and watch the roots respond instantly on the right. The domain coloring background shifts in real time, revealing how the polynomial's complex landscape reshapes.
+- **Right panel (Roots):** Drag any root dot and the coefficients on the left update to match — the polynomial is reconstructed from its roots via (z − r₀)(z − r₁)···(z − rₙ₋₁).
+- **Animate:** Click a coefficient to select it, switch to Loop mode, and watch it orbit along a path (circle, figure-8, spiral, etc.) while the roots dance in response.
+
+Everything runs client-side in a single HTML file. No server, no build step, no dependencies to install.
 
 ## Quick Start
 
-```bash
-uv run uvicorn server:app --reload --port 8000
-```
+Open [`index.html`](index.html) in any modern browser. That's it.
 
-Open [http://localhost:8000](http://localhost:8000).
-
-> `uv run` automatically creates a virtual environment, installs all dependencies from `pyproject.toml`, and runs the command. No manual setup required.
+Or visit the **[live demo](https://nassuphis.github.io/karpo_hackathon/)**.
 
 ## Architecture
 
 ```
-Browser (d3.js v7)  ←— WebSocket (JSON) —→  FastAPI (Python)
-                                                  ↓
-                                             numpy.roots()
+Single HTML file (~1200 lines)
+├── d3.js v7 (CDN)          — SVG rendering, drag interactions
+├── Ehrlich-Aberth solver    — polynomial root finding in pure JS
+├── Horner evaluator         — domain coloring + derivative computation
+└── Canvas 2D API            — real-time domain coloring
 ```
 
-| Component | Technology | Why |
-|-----------|-----------|-----|
-| Frontend | Single HTML file, d3.js v7 (CDN) | No build step, immediate rendering |
-| Transport | WebSocket | Persistent connection avoids per-request overhead at 60Hz drag rate |
-| Backend | FastAPI + uvicorn | Async WebSocket support, minimal boilerplate |
-| Root solver | `numpy.roots()` | Eigenvalue decomposition of companion matrix, sub-millisecond even at degree 30 |
+No server. No WebSocket. No build tools. The entire app is one self-contained HTML file with inline CSS and JavaScript plus a single CDN dependency (d3.js).
 
-### Data Flow
+## Root Finding: Ehrlich-Aberth Method
 
-1. User drags a coefficient dot in the left panel
-2. `mousemove` fires, updating the coefficient's complex value
-3. `requestAnimationFrame` throttles WebSocket sends to ~60 msg/sec
-4. Server receives `{"coefficients": [[re, im], ...]}` (descending degree order)
-5. Server strips leading near-zero coefficients, calls `numpy.roots()`, filters NaN/Inf
-6. Server returns `{"roots": [[re, im], ...], "error": null}`
-7. Client matches incoming roots to previous frame (greedy nearest-neighbor) for trail coherence
-8. Client appends new positions to trail history, redraws SVG paths and dots
+The core computational engine is a pure JavaScript implementation of the [Ehrlich-Aberth method](https://en.wikipedia.org/wiki/Aberth_method) — a simultaneous iterative root-finding algorithm with cubic convergence.
+
+### How It Works
+
+Given a degree-*n* polynomial with coefficients c₀, ..., cₙ, the algorithm maintains *n* root approximations z₁, ..., zₙ and refines them all simultaneously:
+
+1. **Evaluate** p(zᵢ) and p'(zᵢ) at each current root estimate using [Horner's method](https://en.wikipedia.org/wiki/Horner%27s_method) — this computes both the polynomial value and its derivative in a single O(n) pass per root.
+
+2. **Newton step:** Compute the Newton correction wᵢ = p(zᵢ) / p'(zᵢ).
+
+3. **Aberth correction:** Instead of applying the Newton step directly (which would be plain Newton's method and only converge quadratically), apply the Aberth deflation:
+
+   ```
+   zᵢ ← zᵢ − wᵢ / (1 − wᵢ · Σⱼ≠ᵢ 1/(zᵢ − zⱼ))
+   ```
+
+   The sum term accounts for the other roots, effectively deflating the polynomial so each root estimate repels from the others. This is what gives the method its cubic convergence and prevents multiple estimates from collapsing onto the same root.
+
+4. **Converge** when max |correction| < 10⁻¹².
+
+### Why It's Fast for Interactive Use
+
+The key insight is **warm-starting**: when the user drags a coefficient slightly, the roots barely move. The previous frame's root positions are an excellent initial guess, so the solver converges in **1–3 iterations** during interactive drag (versus 15–30 iterations from a cold start). At degree 30, each iteration is O(n²) for the Aberth sums, making the total cost negligible compared to the domain coloring render.
+
+### Implementation Details
+
+The solver (`solveRootsEA` in `index.html`) uses:
+
+- **Flat arrays** `[re, im]` for root storage during iteration (avoids object allocation overhead in the hot loop)
+- **`Float64Array`** for coefficient storage (cache-friendly, typed-array fast paths in V8/SpiderMonkey)
+- **Simultaneous Horner evaluation** of p(z) and p'(z) — the derivative is accumulated alongside the polynomial value with zero extra cost:
+  ```
+  dp = dp · z + p      // derivative accumulator
+  p  = p · z + cₖ      // polynomial accumulator
+  ```
+- **Guard clauses** for degenerate cases: near-zero derivative (skip update), near-coincident roots (skip Aberth term), leading zero coefficients (strip before solving), degree 1 (direct formula)
+- **Radius heuristic** for cold-start initialization: initial guesses are spread on a circle of radius (|cₙ|/|c₀|)^(1/n), derived from the polynomial's coefficient ratio, with an angular offset of 0.37 radians to break symmetry
+
+### Bidirectional Editing
+
+Dragging roots works in the opposite direction: the polynomial is reconstructed from its roots by expanding the product (z − r₀)(z − r₁)···(z − rₙ₋₁) using sequential polynomial multiplication — O(n²) complex multiplications. The resulting coefficients are rendered on the left panel and the domain coloring updates accordingly.
+
+## Domain Coloring
+
+When enabled (on by default), the roots panel background is painted using [domain coloring](https://en.wikipedia.org/wiki/Domain_coloring). For each pixel at position z in the complex plane, the polynomial p(z) is evaluated and mapped to a color:
+
+- **Hue** = arg(p(z)) — the phase of the polynomial's value. Roots appear as points where all colors converge (all phases meet at a zero).
+- **Lightness** = 0.5 + 0.4·cos(2π·frac(log₂|p(z)|)) — contour lines at powers-of-2 modulus. Zeros appear as dark points.
+- **Saturation** = 0.8 fixed.
+
+The polynomial is evaluated via Horner's method. The canvas renders at half resolution with `devicePixelRatio` support and is CSS-scaled to full size, keeping it smooth at 60fps even at degree 30.
 
 ## Controls
 
 | Control | Description |
 |---------|-------------|
-| **Degree slider** (3–30) | Number of polynomial roots. Changing it reinitializes coefficients and clears trails. |
-| **Pattern dropdown** | Initial arrangement of coefficients (or roots). See [Patterns](#patterns) below. |
+| **Degree slider** (3–30) | Number of polynomial roots. Reinitializes coefficients on change. |
+| **Pattern dropdown** | Initial arrangement of coefficients or roots. 25 patterns in 3 categories. |
 | **Spread slider** (0.2–2.5) | Scales the initial pattern size. |
-| **Domain coloring** checkbox | Toggles the domain coloring background on the roots panel. See [Domain Coloring](#domain-coloring) below. |
-| **Reset Trails** button | Clears all trail paths and resets the roots panel zoom. Does not move coefficients. |
+| **Domain coloring** checkbox | Toggles the domain coloring background on the roots panel. |
+| **Reset** button | Resets the roots panel zoom and re-solves. |
 
-## Panels
+### Coefficient Animation
 
-### Left Panel — Coefficients
+Click any coefficient dot to select it. A translucent control overlay appears on the coefficient panel:
 
-- Each coefficient c₀, c₁, ..., cₙ is a colored circle at its position in the complex plane
-- **Drag any dot** to change that coefficient's value
-- Colors follow a rainbow gradient: `d3.interpolateRainbow(i/n)`
-- Labels (c₀, c₁, ...) appear next to each dot
-- **Auto-scaling**: the viewport grows when you drag a coefficient toward the edge, and shrinks when coefficients return closer to the origin
-- Hover tooltip shows exact complex value (e.g. `0.500 + 0.866i`)
-
-### Right Panel — Roots
-
-- Non-draggable dots showing the polynomial's roots, recomputed on every coefficient change
-- Colors use `d3.interpolateSinebow` to distinguish root identities
-- **Trails**: each root leaves a colored path behind it as it moves, showing the root locus
-- **Auto-scaling (zoom-out only)**: the viewport expands to fit roots that venture far from the origin but **never zooms back in** — this preserves visibility of the full trail history. Zoom resets only when trails are cleared.
-
-### Shared Visual Elements
-
-- Complex-plane grid with integer gridlines
-- Real (Re) and Imaginary (Im) axis labels
-- Dashed unit circle for reference
-- Dark theme: background `#1a1a2e`, panels `#16213e`
-
-## Domain Coloring
-
-When enabled (on by default), the roots panel background is painted using [domain coloring](https://en.wikipedia.org/wiki/Domain_coloring) — a standard technique for visualizing complex functions. For each pixel at position z in the complex plane, the polynomial p(z) is evaluated and mapped to a color:
-
-- **Hue** = arg(p(z)) — the phase/argument of the polynomial's value. A full rotation through the color wheel (red → yellow → green → cyan → blue → magenta → red) represents a full 2π cycle of the argument. Roots of the polynomial appear as points where all colors converge, since arg(p(z)) cycles through all values as you orbit a zero.
-- **Lightness** = modulated by log|p(z)| using the formula `0.5 + 0.4 * cos(2π * frac(log₂|p(z)|))`. This creates **contour lines** at powers of 2 in the modulus, making the magnitude structure visible. Zeros appear as dark points.
-- **Saturation** = fixed at 0.8.
-
-The polynomial is evaluated using [Horner's method](https://en.wikipedia.org/wiki/Horner%27s_method) for numerical stability and speed. The canvas renders at half resolution (~62k complex polynomial evaluations per frame) and is CSS-scaled to full size, keeping the visualization smooth at 60fps even at degree 30.
-
-The domain coloring updates in real time as you drag coefficients, giving an immediate visual sense of how the polynomial's complex landscape shifts.
+- **Drag mode** (default): normal drag behavior
+- **Loop mode**: coefficient follows a pre-programmed path automatically
+  - 6 paths: Circle, Horizontal, Vertical, Spiral, Figure-8, Random walk
+  - Adjustable radius and speed
+  - Play/Pause control
 
 ## Patterns
 
 ### Basic (5)
 
-Initialize coefficients in simple geometric arrangements:
-
 | Pattern | Description |
 |---------|-------------|
-| **Circle** | Evenly spaced on a circle of radius `spread` |
-| **Real axis** | Evenly spaced along the real axis |
-| **Imaginary axis** | Evenly spaced along the imaginary axis |
-| **Grid** | Square grid arrangement |
-| **Random** | Uniformly random in `[-spread, spread]²` |
+| Circle | Evenly spaced on a circle |
+| Real axis | Along the real axis |
+| Imaginary axis | Along the imaginary axis |
+| Grid | Square grid arrangement |
+| Random | Uniformly random |
 
 ### Coefficient Patterns (8)
 
-More complex coefficient arrangements that produce interesting root behaviors:
-
 | Pattern | Description |
 |---------|-------------|
-| **Spiral** | Archimedean spiral — roots trace beautiful curves when perturbed |
-| **Star** | Alternating inner/outer radii — gives spiky root patterns |
-| **Figure-8** | Bernoulli lemniscate — rich root sensitivity |
-| **Conjugate pairs** | Pairs straddling the real axis — roots bifurcate dramatically |
-| **Two clusters** | Two separate clusters — roots jump between them |
-| **Geometric decay** | Alternating-sign geometric series — classic ill-conditioned setup |
-| **Rose curve** | 3-petal rose `r = cos(3θ)` — symmetry-breaking effects |
-| **Cardioid** | Heart-shaped curve — roots respond dramatically near the cusp |
+| Spiral | Archimedean spiral |
+| Star | Alternating inner/outer radii |
+| Figure-8 | Bernoulli lemniscate |
+| Conjugate pairs | Pairs straddling the real axis |
+| Two clusters | Two separate clusters |
+| Geometric decay | Alternating-sign geometric series |
+| Rose curve | 3-petal rose r = cos(3θ) |
+| Cardioid | Heart-shaped curve |
 
-### Root Shapes (12)
+### Root Shapes (13)
 
-These define the *roots* in a specific shape, then compute the coefficients by expanding the product (z − r₀)(z − r₁)···(z − rₙ₋₁). Dragging the resulting coefficients perturbs the roots away from the initial shape:
+These define the *roots* in a specific shape, then compute the coefficients by expanding the product. Dragging the resulting coefficients perturbs the roots away from the initial shape:
 
-| Pattern | Description |
-|---------|-------------|
-| **Heart** | Parametric heart curve (sin³ form) |
-| **Circle** | Roots of unity (evenly on unit circle) |
-| **Star** | Alternating inner/outer radii |
-| **Spiral** | Archimedean spiral with increasing radius |
-| **Cross** | Plus (+) shape along both axes |
-| **Diamond** | L¹ unit ball: \|x\| + \|y\| = spread |
-| **Chessboard** | Only "black squares" of a grid |
-| **Smiley** | Two eyes (small circles) + smile arc |
-| **Figure-8** | Bernoulli lemniscate |
-| **Butterfly** | Butterfly polar curve |
-| **Trefoil** | 3-leaf clover `r = cos(3θ)` |
-| **Polygon** | Roots distributed along edges of a regular polygon (3–8 sides) |
-| **Infinity** | Lemniscate of Bernoulli (figure-eight / infinity symbol) |
-
-## Trail Coherence
-
-`numpy.roots()` returns roots in arbitrary order — there is no guaranteed correspondence between the i-th root across consecutive calls. Without correction, trails would jump chaotically between unrelated roots.
-
-PolyPaint solves this with **greedy nearest-neighbor matching**: for each root from the previous frame, the closest unmatched root in the new frame is assigned to the same trail. This is O(n²) per frame but negligible for n ≤ 30.
+Heart, Circle, Star, Spiral, Cross, Diamond, Chessboard, Smiley, Figure-8, Butterfly, Trefoil, Polygon, Infinity
 
 ## File Structure
 
 ```
-polypaint/
-├── pyproject.toml        # Dependencies: fastapi, uvicorn, websockets, numpy
-├── server.py             # FastAPI backend (~40 lines)
-├── static/
-│   └── index.html        # Entire frontend (~850 lines): d3.js, CSS, JS all inline
-├── uv.lock               # Locked dependency versions
+karpo_hackathon/
+├── index.html            # Entire app (~1200 lines): CSS, JS, HTML all inline
 └── README.md
 ```
 
-## Dependencies
-
-| Package | Version | Purpose |
-|---------|---------|---------|
-| fastapi | ≥0.115 | Web framework with WebSocket support |
-| uvicorn[standard] | ≥0.30 | ASGI server |
-| websockets | ≥12.0 | WebSocket protocol implementation |
-| numpy | ≥1.26 | Polynomial root finding via companion matrix eigenvalues |
-
-Python ≥ 3.10 required.
-
-## Technical Details
-
-### Root Finding
-
-`numpy.roots(coeffs)` works by constructing the [companion matrix](https://en.wikipedia.org/wiki/Companion_matrix) of the polynomial and computing its eigenvalues. This is numerically stable and runs in O(n³) time (dominated by the eigenvalue decomposition), which is sub-millisecond for degree ≤ 30.
+## Technical Notes
 
 ### Edge Cases Handled
 
-- **Leading coefficient at origin**: stripping leading near-zero coefficients before calling `numpy.roots` avoids degenerate companion matrices
-- **NaN/Inf roots**: filtered out server-side before sending to client
-- **WebSocket disconnect**: auto-reconnect after 1 second
-- **Window resize**: panels dynamically resize to use all available screen space
-- **Degree change**: coefficients reinitialized, trails cleared, both panels reset
+- **Leading coefficient at origin**: near-zero leading coefficients are stripped before solving
+- **NaN/Inf roots**: filtered out before rendering
+- **Window resize**: panels dynamically resize, solver re-runs
+- **Degree change**: coefficients reinitialized, both panels reset
 
 ### Performance
 
-- WebSocket sends are throttled via `requestAnimationFrame` (~60 fps cap)
-- No d3 transitions on root dots — positions update instantly to avoid animation conflicts during rapid drag
-- Single SVG per panel with layered groups (grid → trails → dots)
-- Trail paths use `d3.line()` generator, re-rendered each frame from cached point arrays
+- Root solving throttled via `requestAnimationFrame` (~60fps cap)
+- Domain coloring rendered to half-resolution canvas, CSS-scaled with `devicePixelRatio` support
+- No d3 transitions on dots — positions update instantly to avoid animation conflicts during rapid drag
+- Warm-started Ehrlich-Aberth typically converges in 1–3 iterations during interactive drag

@@ -10,11 +10,9 @@ html, body { height: 100%; overflow: hidden; }
 body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #eee; display: flex; flex-direction: column; }
 /* --- Header --- */
 #header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0 16px; height: 28px; border-bottom: 1px solid #2a2a4a; flex-shrink: 0;
+    padding: 4px 16px; border-bottom: 1px solid #2a2a4a; flex-shrink: 0;
 }
 #header .app-title { font-size: 14px; font-weight: 600; color: #8888aa; letter-spacing: 0.5px; }
-#header .header-actions { display: flex; align-items: center; gap: 12px; }
 #domain-toggle-btn {
     background: transparent; color: #666; border: 1px solid #444; border-radius: 12px;
     padding: 3px 10px; font-size: 11px; cursor: pointer; transition: all 0.15s;
@@ -32,9 +30,14 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; colo
     padding: 3px 10px; font-size: 11px; cursor: pointer; transition: all 0.15s;
 }
 #deselect-btn:hover { color: #eee; border-color: #888; }
+#select-all-coeffs-btn {
+    background: transparent; color: #666; border: 1px solid #444; border-radius: 12px;
+    padding: 3px 10px; font-size: 11px; cursor: pointer; transition: all 0.15s;
+}
+#select-all-coeffs-btn:hover { color: #eee; border-color: #888; }
 /* --- Toolbar --- */
 #controls {
-    display: flex; align-items: center; justify-content: center;
+    display: flex; align-items: center; justify-content: flex-start;
     padding: 6px 16px; border-bottom: 1px solid #2a2a4a; flex-shrink: 0; gap: 0;
 }
 .control-group {
@@ -45,7 +48,6 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; colo
     font-size: 11px; color: #777; text-transform: uppercase;
     letter-spacing: 0.5px; font-weight: 500;
 }
-#degree { width: 140px; accent-color: #e94560; }
 #degree-number {
     width: 32px; background: transparent; color: #e94560; border: none;
     border-bottom: 1px solid #444; font-size: 14px; font-weight: 600;
@@ -57,8 +59,22 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; colo
 #degree-number::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 #degree-number { -moz-appearance: textfield; }
 #pattern { background: #16213e; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; font-size: 12px; }
-#spread { width: 120px; accent-color: #e94560; }
-#spread-value { font-size: 12px; color: #e94560; min-width: 28px; text-align: center; }
+.action-btn {
+    background: #e94560; color: #fff; border: none; border-radius: 4px;
+    padding: 3px 8px; font-size: 11px; cursor: pointer; font-weight: 500;
+}
+.action-btn:hover { background: #c73550; }
+.param-input {
+    width: 48px; background: #16213e; color: #eee; border: 1px solid #444;
+    border-radius: 4px; padding: 3px 4px; font-size: 11px; text-align: center;
+    font-family: inherit; outline: none;
+}
+.param-input:focus { border-color: #e94560; }
+.param-input::-webkit-outer-spin-button,
+.param-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.param-input { -moz-appearance: textfield; }
+.param-label { font-size: 11px; color: #777; }
+#transform-group { gap: 5px; }
 /* --- Panels --- */
 #panels { display: flex; justify-content: center; gap: 16px; padding: 8px 12px 12px; flex: 1; min-height: 0; }
 .panel { text-align: center; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
@@ -75,8 +91,8 @@ circle.root.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
 #roots-container { position: relative; flex: 1; min-height: 0; }
 #domain-canvas { position: absolute; top: 0; left: 0; border-radius: 8px; }
 #roots-panel.domain-active { background: transparent !important; }
-circle.coeff.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px #e94560); }
-circle.root.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px #e94560); }
+circle.coeff.selected { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px #e94560) drop-shadow(0 0 16px #e94560); stroke: #fff; stroke-width: 2.5; }
+circle.root.selected { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px #e94560) drop-shadow(0 0 16px #e94560); stroke: #fff; stroke-width: 2.5; }
 #coeff-container { position: relative; flex: 1; min-height: 0; }
 #anim-bar {
     position: absolute; top: 8px; left: 8px; right: 8px; z-index: 10;
@@ -109,16 +125,14 @@ circle.root.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px
 
 <div id="header">
     <span class="app-title">PolyPaint</span>
-    <div class="header-actions">
-        <button id="domain-toggle-btn" class="active">Domain coloring</button>
-        <button id="root-color-btn">Color roots</button>
-        <button id="deselect-btn">Deselect all</button>
-    </div>
 </div>
 <div id="controls">
     <div class="control-group">
+        <button id="domain-toggle-btn">Domain coloring</button>
+        <button id="root-color-btn" class="active">Color roots</button>
+        <button id="deselect-btn">Deselect all</button>
+        <button id="select-all-coeffs-btn">Select all coeffs</button>
         <span class="control-label">Degree</span>
-        <input type="range" id="degree" min="3" max="30" value="5">
         <input type="number" id="degree-number" min="3" max="30" value="5">
     </div>
     <div class="control-group">
@@ -158,10 +172,13 @@ circle.root.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px
             </optgroup>
         </select>
     </div>
-    <div class="control-group">
-        <span class="control-label">Spread</span>
-        <input type="range" id="spread" min="0.2" max="2.5" step="0.1" value="1.0">
-        <span id="spread-value">1.0</span>
+    <div class="control-group" id="transform-group">
+        <button class="action-btn" id="scale-btn">Scale</button>
+        <input type="number" id="scale-val" value="2" step="0.1" class="param-input">
+        <button class="action-btn" id="add-btn">Add</button>
+        <input type="number" id="add-re" value="0" step="0.1" class="param-input"> + <input type="number" id="add-im" value="1" step="0.1" class="param-input"><span class="param-label">i</span>
+        <button class="action-btn" id="rotate-btn">Rotate</button>
+        <input type="number" id="rotate-val" value="0.25" step="0.01" class="param-input"><span class="param-label">rev</span>
     </div>
 </div>
 
@@ -265,8 +282,8 @@ const selectedCoeffs = new Set(); // indices into coefficients[]
 const selectedRoots = new Set();  // indices into currentRoots[]
 const animState = { playing: false, center: null, offsets: null, startTime: 0, rafId: null };
 // Domain coloring state
-let domainColoringEnabled = true;
-let rootColorEnabled = false;
+let domainColoringEnabled = false;
+let rootColorEnabled = true;
 let domainCanvas = document.getElementById("domain-canvas");
 let domainCtx = domainCanvas.getContext("2d");
 let domainPendingRender = false;
@@ -382,7 +399,7 @@ function rootColor(i, n) {
 // --- Init coefficients with pattern ---
 
 function getPattern() { return document.getElementById("pattern").value; }
-function getSpread() { return parseFloat(document.getElementById("spread").value); }
+function getSpread() { return 1.0; }
 
 function initCoefficients(degree) {
     const n = degree + 1;
@@ -674,7 +691,7 @@ const drag = d3.drag()
     })
     .on("drag", function (event, d) {
         dragMoved = true;
-        const idx = coefficients.indexOf(d);
+        const idx = d._idx;
         // Skip if this group is being animated
         if (selectedCoeffs.has(idx) && animState.playing) return;
 
@@ -712,7 +729,7 @@ const drag = d3.drag()
         hideTooltip();
         // Click detection: if mouse didn't move, toggle selection
         if (!dragMoved) {
-            const idx = coefficients.indexOf(d);
+            const idx = d._idx;
             clearRootSelection();
             toggleCoeffSelect(idx);
         }
@@ -775,12 +792,12 @@ function clearAllSelection() {
 
 function updateCoeffSelectionVisual() {
     coeffLayer.selectAll("circle.coeff")
-        .classed("selected", d => selectedCoeffs.has(coefficients.indexOf(d)));
+        .classed("selected", d => selectedCoeffs.has(d._idx));
 }
 
 function updateRootSelectionVisual() {
     rootsLayer.selectAll("circle.root")
-        .classed("selected", d => selectedRoots.has(currentRoots.indexOf(d)));
+        .classed("selected", d => selectedRoots.has(d._idx));
 }
 
 function updateAnimBar() {
@@ -1013,8 +1030,9 @@ function renderCoefficients() {
     updatePanelRange(coeffSvg, panels.coeff, needed);
 
     const n = coefficients.length;
+    for (let i = 0; i < n; i++) coefficients[i]._idx = i;
 
-    const circles = coeffLayer.selectAll("circle.coeff").data(coefficients, (_, i) => i);
+    const circles = coeffLayer.selectAll("circle.coeff").data(coefficients, d => d._idx);
 
     circles.enter()
         .append("circle")
@@ -1031,7 +1049,7 @@ function renderCoefficients() {
 
     circles.exit().remove();
 
-    const labels = coeffLayer.selectAll(".coeff-label").data(coefficients, (_, i) => i);
+    const labels = coeffLayer.selectAll(".coeff-label").data(coefficients, d => d._idx);
 
     labels.enter()
         .append("text")
@@ -1061,7 +1079,7 @@ const rootDrag = d3.drag()
         rootDragMoved = true;
         const newRe = rxs().invert(event.x);
         const newIm = rys().invert(event.y);
-        const idx = currentRoots.indexOf(d);
+        const idx = d._idx;
 
         if (selectedRoots.has(idx) && selectedRoots.size > 1) {
             // Group drag: apply delta to all selected roots
@@ -1091,7 +1109,7 @@ const rootDrag = d3.drag()
         hideTooltip();
         // Click detection: if mouse didn't move, toggle root selection
         if (!rootDragMoved) {
-            const idx = currentRoots.indexOf(d);
+            const idx = d._idx;
             clearCoeffSelection();
             if (selectedRoots.has(idx)) {
                 selectedRoots.delete(idx);
@@ -1129,9 +1147,10 @@ function renderRoots(newRoots) {
     updatePanelRange(rootsSvg, panels.roots, needed);
     renderDomainColoringThrottled();
 
-    const circles = rootsLayer.selectAll("circle.root").data(currentRoots, (_, i) => i);
-
     const n = currentRoots.length;
+    for (let i = 0; i < n; i++) currentRoots[i]._idx = i;
+
+    const circles = rootsLayer.selectAll("circle.root").data(currentRoots, d => d._idx);
     circles.enter()
         .append("circle")
         .attr("class", "root")
@@ -1408,9 +1427,8 @@ function solveRootsThrottled() {
     }
 }
 
-// --- Degree slider ---
+// --- Degree input ---
 
-const degreeInput = document.getElementById("degree");
 const degreeNumber = document.getElementById("degree-number");
 
 function applyPattern() {
@@ -1418,34 +1436,30 @@ function applyPattern() {
     currentRoots = [];
     rootsLayer.selectAll("circle.root").remove();
     updatePanelRange(rootsSvg, panels.roots, MIN_RANGE);
-    initCoefficients(parseInt(degreeInput.value));
+    initCoefficients(parseInt(degreeNumber.value));
     renderCoefficients();
     solveRoots();
     renderDomainColoring();
 }
-
-degreeInput.addEventListener("input", function () {
-    degreeNumber.value = this.value;
-    applyPattern();
-});
 
 degreeNumber.addEventListener("change", function () {
     let v = parseInt(this.value);
     if (isNaN(v)) v = 5;
     v = Math.max(3, Math.min(30, v));
     this.value = v;
-    degreeInput.value = v;
     applyPattern();
 });
 
 document.getElementById("pattern").addEventListener("change", applyPattern);
 
-document.getElementById("spread").addEventListener("input", function () {
-    document.getElementById("spread-value").textContent = parseFloat(this.value).toFixed(1);
-    applyPattern();
-});
-
 document.getElementById("deselect-btn").addEventListener("click", clearAllSelection);
+
+document.getElementById("select-all-coeffs-btn").addEventListener("click", function () {
+    clearRootSelection();
+    for (let i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+    updateCoeffSelectionVisual();
+    updateAnimBar();
+});
 
 const domainToggleBtn = document.getElementById("domain-toggle-btn");
 domainToggleBtn.addEventListener("click", function () {
@@ -1466,6 +1480,51 @@ rootColorBtn.addEventListener("click", function () {
 
 document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") clearAllSelection();
+});
+
+// --- Transform actions ---
+
+function applyTransformToSelection(fn) {
+    if (selectedCoeffs.size > 0) {
+        for (const idx of selectedCoeffs) {
+            const c = coefficients[idx];
+            const r = fn(c.re, c.im);
+            c.re = r.re; c.im = r.im;
+        }
+        autoScaleCoeffPanel();
+        renderCoefficients();
+        updateCoeffSelectionVisual();
+        solveRootsThrottled();
+    } else if (selectedRoots.size > 0) {
+        for (const idx of selectedRoots) {
+            const r = currentRoots[idx];
+            const res = fn(r.re, r.im);
+            r.re = res.re; r.im = res.im;
+        }
+        autoScaleRootsPanel();
+        coefficients = rootsToCoefficients(currentRoots.map(r => ({ re: r.re, im: r.im })));
+        renderCoefficients();
+        renderRoots(currentRoots);
+        updateRootSelectionVisual();
+    }
+}
+
+document.getElementById("scale-btn").addEventListener("click", function () {
+    const s = parseFloat(document.getElementById("scale-val").value) || 1;
+    applyTransformToSelection((re, im) => ({ re: re * s, im: im * s }));
+});
+
+document.getElementById("add-btn").addEventListener("click", function () {
+    const addRe = parseFloat(document.getElementById("add-re").value) || 0;
+    const addIm = parseFloat(document.getElementById("add-im").value) || 0;
+    applyTransformToSelection((re, im) => ({ re: re + addRe, im: im + addIm }));
+});
+
+document.getElementById("rotate-btn").addEventListener("click", function () {
+    const rev = parseFloat(document.getElementById("rotate-val").value) || 0;
+    const angle = 2 * Math.PI * rev;
+    const cosA = Math.cos(angle), sinA = Math.sin(angle);
+    applyTransformToSelection((re, im) => ({ re: re * cosA - im * sinA, im: re * sinA + im * cosA }));
 });
 
 // --- Resize handler ---
@@ -1503,7 +1562,8 @@ window.addEventListener("resize", () => {
 // --- Init ---
 
 rootsSvg.classed("domain-active", domainColoringEnabled);
-initCoefficients(parseInt(degreeInput.value));
+domainCanvas.style.display = domainColoringEnabled ? "block" : "none";
+initCoefficients(parseInt(degreeNumber.value));
 renderCoefficients();
 solveRoots();
 renderDomainColoring();

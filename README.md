@@ -13,7 +13,8 @@ PolyPaint makes this relationship tangible. Two side-by-side complex-plane panel
 - **Left panel (Coefficients):** Drag any coefficient dot and watch the roots respond instantly on the right. The domain coloring background shifts in real time, revealing how the polynomial's complex landscape reshapes.
 - **Right panel (Roots):** Drag any root dot and the coefficients on the left update to match — the polynomial is reconstructed from its roots via (z − r₀)(z − r₁)···(z − rₙ₋₁).
 - **Multi-select:** Click multiple coefficients (or roots) to select a group. Drag any member and the whole group moves together, maintaining their relative positions.
-- **Animate:** Select one or more coefficients, switch to Loop mode, and watch their centroid orbit along a path (circle, figure-8, spiral, etc.) while the roots dance in response. Each coefficient maintains its offset from the group center.
+- **Animate:** Select one or more coefficients and hit Play — their centroid orbits along a path (circle, figure-8, spiral, etc.) while the roots dance in response. Each coefficient maintains its offset from the group center.
+- **Transform:** Select coefficients or roots and apply Scale, Add (complex), or Rotate operations to the group.
 
 Everything runs client-side in a single HTML file. No server, no build step, no dependencies to install.
 
@@ -26,7 +27,7 @@ Or visit the **[live demo](https://nassuphis.github.io/karpo_hackathon/)**.
 ## Architecture
 
 ```
-Single HTML file (~1200 lines)
+Single HTML file (~1570 lines)
 ├── d3.js v7 (CDN)          — SVG rendering, drag interactions
 ├── Ehrlich-Aberth solver    — polynomial root finding in pure JS
 ├── Horner evaluator         — domain coloring + derivative computation
@@ -81,7 +82,7 @@ Dragging roots works in the opposite direction: the polynomial is reconstructed 
 
 ## Domain Coloring
 
-When enabled (on by default), the roots panel background is painted using [domain coloring](https://en.wikipedia.org/wiki/Domain_coloring). For each pixel at position z in the complex plane, the polynomial p(z) is evaluated and mapped to a color:
+When enabled (off by default, toggle via pill button), the roots panel background is painted using [domain coloring](https://en.wikipedia.org/wiki/Domain_coloring). For each pixel at position z in the complex plane, the polynomial p(z) is evaluated and mapped to a color:
 
 - **Hue** = arg(p(z)) — the phase of the polynomial's value. Roots appear as points where all colors converge (all phases meet at a zero).
 - **Lightness** = 0.5 + 0.4·cos(2π·frac(log₂|p(z)|)) — contour lines at powers-of-2 modulus. Zeros appear as dark points.
@@ -93,27 +94,31 @@ The polynomial is evaluated via Horner's method. The canvas renders at half reso
 
 | Control | Description |
 |---------|-------------|
-| **Degree slider** (3–30) | Number of polynomial roots. Reinitializes coefficients on change. |
-| **Pattern dropdown** | Initial arrangement of coefficients or roots. 25 patterns in 3 categories. |
-| **Spread slider** (0.2–2.5) | Scales the initial pattern size. |
-| **Domain coloring** checkbox | Toggles the domain coloring background on the roots panel. |
+| **Domain coloring** pill button | Toggles the domain coloring background on the roots panel (off by default). |
+| **Color roots** pill button | Toggles rainbow coloring on roots by array index (on by default). |
 | **Deselect all** button | Clears all coefficient and root selections. |
+| **Select all coeffs** button | Selects all coefficients for group operations. |
+| **Degree** number input (3–30) | Number of polynomial roots. Reinitializes coefficients on change. |
+| **Pattern dropdown** | Initial arrangement of coefficients or roots. 26 patterns in 3 categories. |
+| **Scale** action button | Multiplies all selected elements by a real number. |
+| **Add** action button | Adds a complex number (re + im·i) to all selected elements. |
+| **Rotate** action button | Rotates all selected elements by multiplying with exp(2πi·rev). |
 
 ### Multi-Select and Group Drag
 
 Click any coefficient or root dot to toggle it into the selection. Click again to deselect. Selected items glow to indicate membership. Drag any selected item and the entire group translates together — relative positions are preserved.
 
-Clicking a coefficient clears any root selection and vice versa, so you work with one panel at a time.
+Clicking a coefficient clears any root selection and vice versa, so you work with one panel at a time. Press **Escape** to deselect all.
 
 ### Coefficient Animation
 
-Select one or more coefficients — a translucent control overlay appears on the coefficient panel:
+Select one or more coefficients — a translucent control overlay appears on the coefficient panel. The group's centroid follows a pre-programmed path, each coefficient maintaining its offset. Dragging still works when animation is paused.
 
-- **Drag mode** (default): normal drag behavior (group drag if multiple selected)
-- **Loop mode**: the group's centroid follows a pre-programmed path, each coefficient maintaining its offset
-  - 6 paths: Circle, Horizontal, Vertical, Spiral, Figure-8, Random walk
-  - Adjustable radius and speed
-  - Play/Pause control
+- 16 paths in two groups:
+  - **Basic:** Circle, Horizontal, Vertical, Spiral, Random walk
+  - **Curves:** Lissajous (3:2), Figure-8, Cardioid, Astroid, Deltoid, Rose (3-petal), Spirograph, Hypotrochoid, Butterfly, Star (pentagram), Square
+- Adjustable radius and speed
+- Play/Pause control
 
 ## Patterns
 
@@ -150,7 +155,7 @@ Heart, Circle, Star, Spiral, Cross, Diamond, Chessboard, Smiley, Figure-8, Butte
 
 ```
 karpo_hackathon/
-├── index.html            # Entire app (~1200 lines): CSS, JS, HTML all inline
+├── index.html            # Entire app (~1570 lines): CSS, JS, HTML all inline
 └── README.md
 ```
 

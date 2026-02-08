@@ -90,6 +90,16 @@ When enabled (off by default, toggle via pill button), the roots panel backgroun
 
 The polynomial is evaluated via Horner's method. The canvas renders at half resolution with `devicePixelRatio` support and is CSS-scaled to full size, keeping it smooth at 60fps even at degree 30.
 
+## Root Braids and Monodromy
+
+When you animate a coefficient along a closed loop, the roots don't just wiggle — they trace out a **braid**. This is a topological phenomenon with deep mathematical roots (pun intended).
+
+The space of degree-*n* polynomials with distinct roots is topologically the [configuration space](https://en.wikipedia.org/wiki/Configuration_space_(mathematics)) of *n* unordered points in **C**. Its fundamental group is the [braid group](https://en.wikipedia.org/wiki/Braid_group) B_n. A closed loop in coefficient space induces a **monodromy permutation** on the roots — after one full cycle, root #3 might now occupy the position that root #7 had before.
+
+This is not a solver artifact; it is a topological invariant of the loop. Different loops around different "holes" in coefficient space produce different permutations. The [cohomology](https://en.wikipedia.org/wiki/Cohomology) of the configuration space (computed by Arnol'd and Cohen) classifies these possibilities.
+
+**What you see in PolyPaint:** the trail patterns are visual braids. When roots swap indices mid-trail, the jump detection breaks the path rather than drawing a false connecting line. A future improvement could track roots by continuity (solving a frame-to-frame assignment problem) rather than by array index, which would eliminate index swaps entirely and reveal the true braid structure.
+
 ## Controls
 
 | Control | Description |
@@ -120,6 +130,18 @@ Select one or more coefficients — a translucent control overlay appears on the
 - Adjustable radius and speed
 - Play/Pause control
 - **Trails** toggle: roots leave colored SVG path trails as they move. Loop detection auto-stops recording after one full cycle. Jump detection breaks trails at root-index swaps to avoid artifacts.
+
+### Trail Gallery
+
+<!-- drop PNGs into img/ and uncomment -->
+<!-- <p align="center">
+  <img src="img/trails-circle.png" width="45%" alt="Trails — circle path">
+  <img src="img/trails-lissajous.png" width="45%" alt="Trails — Lissajous path">
+</p>
+<p align="center">
+  <img src="img/trails-rose.png" width="45%" alt="Trails — rose path">
+  <img src="img/trails-spirograph.png" width="45%" alt="Trails — spirograph path">
+</p> -->
 
 ## Patterns
 
@@ -156,7 +178,7 @@ Heart, Circle, Star, Spiral, Cross, Diamond, Chessboard, Smiley, Figure-8, Butte
 
 ```
 karpo_hackathon/
-├── index.html            # Entire app (~1570 lines): CSS, JS, HTML all inline
+├── index.html            # Entire app (~1650 lines): CSS, JS, HTML all inline
 └── README.md
 ```
 

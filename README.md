@@ -47,6 +47,7 @@ Browser (d3.js v7)  ←— WebSocket (JSON) —→  FastAPI (Python)
 | **Degree slider** (3–30) | Number of polynomial roots. Changing it reinitializes coefficients and clears trails. |
 | **Pattern dropdown** | Initial arrangement of coefficients (or roots). See [Patterns](#patterns) below. |
 | **Spread slider** (0.2–2.5) | Scales the initial pattern size. |
+| **Domain coloring** checkbox | Toggles the domain coloring background on the roots panel. See [Domain Coloring](#domain-coloring) below. |
 | **Reset Trails** button | Clears all trail paths and resets the roots panel zoom. Does not move coefficients. |
 
 ## Panels
@@ -73,6 +74,18 @@ Browser (d3.js v7)  ←— WebSocket (JSON) —→  FastAPI (Python)
 - Real (Re) and Imaginary (Im) axis labels
 - Dashed unit circle for reference
 - Dark theme: background `#1a1a2e`, panels `#16213e`
+
+## Domain Coloring
+
+When enabled (on by default), the roots panel background is painted using [domain coloring](https://en.wikipedia.org/wiki/Domain_coloring) — a standard technique for visualizing complex functions. For each pixel at position z in the complex plane, the polynomial p(z) is evaluated and mapped to a color:
+
+- **Hue** = arg(p(z)) — the phase/argument of the polynomial's value. A full rotation through the color wheel (red → yellow → green → cyan → blue → magenta → red) represents a full 2π cycle of the argument. Roots of the polynomial appear as points where all colors converge, since arg(p(z)) cycles through all values as you orbit a zero.
+- **Lightness** = modulated by log|p(z)| using the formula `0.5 + 0.4 * cos(2π * frac(log₂|p(z)|))`. This creates **contour lines** at powers of 2 in the modulus, making the magnitude structure visible. Zeros appear as dark points.
+- **Saturation** = fixed at 0.8.
+
+The polynomial is evaluated using [Horner's method](https://en.wikipedia.org/wiki/Horner%27s_method) for numerical stability and speed. The canvas renders at half resolution (~62k complex polynomial evaluations per frame) and is CSS-scaled to full size, keeping the visualization smooth at 60fps even at degree 30.
+
+The domain coloring updates in real time as you drag coefficients, giving an immediate visual sense of how the polynomial's complex landscape shifts.
 
 ## Patterns
 
@@ -121,6 +134,7 @@ These define the *roots* in a specific shape, then compute the coefficients by e
 | **Butterfly** | Butterfly polar curve |
 | **Trefoil** | 3-leaf clover `r = cos(3θ)` |
 | **Polygon** | Roots distributed along edges of a regular polygon (3–8 sides) |
+| **Infinity** | Lemniscate of Bernoulli (figure-eight / infinity symbol) |
 
 ## Trail Coherence
 

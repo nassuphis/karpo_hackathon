@@ -16,18 +16,17 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; colo
 #controls label { font-size: 15px; display: flex; align-items: center; gap: 8px; }
 #degree { width: 180px; accent-color: #e94560; }
 #degree-value { font-weight: bold; font-size: 18px; color: #e94560; min-width: 28px; text-align: center; }
-#status { font-size: 12px; color: #888; }
 #panels { display: flex; justify-content: center; gap: 16px; padding: 0 12px 12px; flex: 1; min-height: 0; }
 .panel { text-align: center; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
 .panel h3 { margin-bottom: 6px; font-weight: 400; font-size: 14px; color: #aaa; flex-shrink: 0; }
-svg { background: #16213e; border: 1px solid #333; border-radius: 8px; flex: 1; }
+svg { background: #16213e; border: 1px solid #333; border-radius: 8px; flex: 1; position: relative; }
 .grid line { stroke: #1f3354; stroke-width: 0.5; }
 .axis line { stroke: #2a4a6b; stroke-width: 1; }
 .unit-circle { fill: none; stroke: #2a4a6b; stroke-width: 1; stroke-dasharray: 4 3; }
 circle.coeff { cursor: grab; stroke-width: 1.5; }
 circle.coeff.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
-circle.root { pointer-events: none; }
-.trail { fill: none; stroke-width: 1.2; opacity: 0.6; stroke-linecap: round; stroke-linejoin: round; }
+circle.root { cursor: grab; stroke-width: 1.5; }
+circle.root.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
 #reset-btn {
     background: #e94560; color: #fff; border: none; border-radius: 4px;
     padding: 6px 14px; font-size: 13px; cursor: pointer;
@@ -37,6 +36,29 @@ circle.root { pointer-events: none; }
 #spread { width: 100px; accent-color: #e94560; }
 #spread-value { font-size: 13px; color: #e94560; min-width: 32px; text-align: center; }
 .coeff-label { font-size: 10px; fill: #aaa; pointer-events: none; }
+#roots-container { position: relative; flex: 1; min-height: 0; }
+#domain-canvas { position: absolute; top: 0; left: 0; border-radius: 8px; }
+#roots-panel.domain-active { background: transparent !important; }
+#domain-coloring-toggle { accent-color: #e94560; }
+circle.coeff.selected { filter: drop-shadow(0 0 6px #e94560) drop-shadow(0 0 12px #e94560); }
+#anim-bar {
+    display: none; padding: 6px 16px;
+    align-items: center; justify-content: center; gap: 16px;
+    flex-shrink: 0; border-bottom: 1px solid #333;
+}
+#anim-bar.active { display: flex; }
+#anim-bar .bar-title { font-weight: bold; color: #e94560; font-size: 14px; }
+#anim-bar label { font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+#anim-bar .loop-controls { display: none; align-items: center; gap: 16px; }
+#anim-bar .loop-controls.active { display: flex; }
+#anim-bar select { background: #16213e; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 2px 6px; font-size: 12px; }
+#anim-bar input[type="range"] { width: 80px; accent-color: #e94560; }
+#anim-bar .bar-val { color: #e94560; min-width: 28px; text-align: right; font-size: 12px; }
+#play-btn {
+    background: #e94560; color: #fff; border: none; border-radius: 4px;
+    padding: 4px 12px; font-size: 12px; cursor: pointer;
+}
+#play-btn:hover { background: #c73550; }
 .tooltip {
     position: absolute; background: rgba(0,0,0,0.85); color: #fff;
     padding: 4px 8px; border-radius: 4px; font-size: 12px; pointer-events: none;
@@ -83,6 +105,7 @@ circle.root { pointer-events: none; }
                 <option value="r-butterfly">Butterfly</option>
                 <option value="r-trefoil">Trefoil</option>
                 <option value="r-polygon">Polygon</option>
+                <option value="r-infinity">Infinity</option>
             </optgroup>
         </select>
     </label>
@@ -90,8 +113,29 @@ circle.root { pointer-events: none; }
         <input type="range" id="spread" min="0.2" max="2.5" step="0.1" value="1.0">
         <span id="spread-value">1.0</span>
     </label>
-    <button id="reset-btn">Reset Trails</button>
-    <span id="status">connecting...</span>
+    <label><input type="checkbox" id="domain-coloring-toggle" checked> Domain coloring</label>
+    <button id="reset-btn">Reset</button>
+</div>
+
+<div id="anim-bar">
+    <span class="bar-title" id="bar-title">c₀</span>
+    <label><input type="radio" name="coeff-mode" value="drag" checked> Drag</label>
+    <label><input type="radio" name="coeff-mode" value="loop"> Loop</label>
+    <span class="loop-controls" id="loop-controls">
+        <label>Path:
+            <select id="anim-path">
+                <option value="circle">Circle</option>
+                <option value="horizontal">Horizontal</option>
+                <option value="vertical">Vertical</option>
+                <option value="spiral">Spiral</option>
+                <option value="figure8">Figure-8</option>
+                <option value="random">Random walk</option>
+            </select>
+        </label>
+        <label>Radius: <input type="range" id="anim-radius" min="0.05" max="2.0" step="0.05" value="0.5"> <span class="bar-val" id="anim-radius-val">0.5</span></label>
+        <label>Speed: <input type="range" id="anim-speed" min="0.1" max="5.0" step="0.1" value="1.0"> <span class="bar-val" id="anim-speed-val">1.0</span></label>
+        <button id="play-btn">▶ Play</button>
+    </span>
 </div>
 
 <div id="panels">
@@ -100,8 +144,11 @@ circle.root { pointer-events: none; }
         <svg id="coeff-panel"></svg>
     </div>
     <div class="panel">
-        <h3>Roots (computed)</h3>
-        <svg id="roots-panel"></svg>
+        <h3>Roots (drag to edit)</h3>
+        <div id="roots-container">
+            <canvas id="domain-canvas"></canvas>
+            <svg id="roots-panel"></svg>
+        </div>
     </div>
 </div>
 
@@ -150,9 +197,19 @@ function rxs() { return panels.roots.xScale; }
 function rys() { return panels.roots.yScale; }
 
 let coefficients = [];
-let ws = null;
-let pendingSend = false;
-let trails = [];
+let currentRoots = []; // persistent root data for dragging
+let pendingSolve = false;
+
+// Selection & animation state
+let selectedCoeffIdx = null;
+let coeffMode = "drag"; // "drag" or "loop"
+const animState = { playing: false, center: null, startTime: 0, rafId: null };
+// Domain coloring state
+let domainColoringEnabled = true;
+let domainCanvas = document.getElementById("domain-canvas");
+let domainCtx = domainCanvas.getContext("2d");
+let domainPendingRender = false;
+const DOMAIN_RES_SCALE = 0.5; // render at half resolution for performance
 
 // --- Compute range needed to fit data ---
 
@@ -231,9 +288,7 @@ const rootsSvg = d3.select("#roots-panel");
 setupPanel(coeffSvg, panels.coeff);
 setupPanel(rootsSvg, panels.roots);
 
-// Layers: trails behind dots (on top of grid)
 let coeffLayer = coeffSvg.append("g");
-let trailLayer = rootsSvg.append("g");
 let rootsLayer = rootsSvg.append("g");
 
 // --- Tooltip ---
@@ -530,31 +585,51 @@ function generateRootShape(pattern, degree, spread) {
             const v2 = vertices[(edgeIdx + 1) % sides];
             roots.push({ re: v1.re + frac * (v2.re - v1.re), im: v1.im + frac * (v2.im - v1.im) });
         }
+    } else if (pattern === "r-infinity") {
+        // Infinity / lemniscate of Bernoulli: two lobes
+        for (let i = 0; i < n; i++) {
+            const t = (2 * Math.PI * i) / n;
+            const denom = 1 + Math.sin(t) * Math.sin(t);
+            roots.push({
+                re: spread * Math.cos(t) / denom,
+                im: spread * Math.sin(t) * Math.cos(t) / denom
+            });
+        }
     }
     return roots;
 }
 
 // --- Drag behavior ---
 
+let dragMoved = false;
 const drag = d3.drag()
     .on("start", function () {
+        dragMoved = false;
         d3.select(this).raise().classed("dragging", true);
     })
     .on("drag", function (event, d) {
+        dragMoved = true;
+        // Skip drag if this coefficient is being animated
+        if (d === coefficients[selectedCoeffIdx] && coeffMode === "loop" && animState.playing) return;
         d.re = cxs().invert(event.x);
         d.im = cys().invert(event.y);
         d3.select(this).attr("cx", cxs()(d.re)).attr("cy", cys()(d.im));
         coeffLayer.selectAll(".coeff-label")
-            .filter((_, j) => j === coefficients.indexOf(d))
+            .filter(ld => ld === d)
             .attr("x", cxs()(d.re) + 12).attr("y", cys()(d.im) + 4);
         showTooltip(event.sourceEvent, d.re, d.im);
-        // Auto-scale coeff panel if dragged near edge
         autoScaleCoeffPanel();
-        sendCoefficientsThrottled();
+        solveRootsThrottled();
+        renderDomainColoringThrottled();
     })
-    .on("end", function () {
+    .on("end", function (event, d) {
         d3.select(this).classed("dragging", false);
         hideTooltip();
+        // Click detection: if mouse didn't move, toggle selection
+        if (!dragMoved) {
+            const idx = coefficients.indexOf(d);
+            selectCoefficient(idx === selectedCoeffIdx ? null : idx);
+        }
     });
 
 function autoScaleCoeffPanel() {
@@ -566,6 +641,156 @@ function autoScaleCoeffPanel() {
             .attr("cx", d => cxs()(d.re)).attr("cy", d => cys()(d.im));
         coeffLayer.selectAll(".coeff-label")
             .attr("x", d => cxs()(d.re) + 12).attr("y", d => cys()(d.im) + 4);
+    }
+}
+
+// --- Coefficient selection & animation ---
+
+const animBar = document.getElementById("anim-bar");
+const loopControls = document.getElementById("loop-controls");
+const barTitle = document.getElementById("bar-title");
+const animPathSel = document.getElementById("anim-path");
+const animRadiusInput = document.getElementById("anim-radius");
+const animSpeedInput = document.getElementById("anim-speed");
+const animRadiusVal = document.getElementById("anim-radius-val");
+const animSpeedVal = document.getElementById("anim-speed-val");
+const playBtn = document.getElementById("play-btn");
+
+function selectCoefficient(idx) {
+    stopAnimation();
+    selectedCoeffIdx = idx;
+    coeffMode = "drag";
+    // Update visual selection — compare by datum, not DOM index (.raise() reorders DOM)
+    const selData = idx !== null ? coefficients[idx] : null;
+    coeffLayer.selectAll("circle.coeff").classed("selected", d => d === selData);
+    // Update radio buttons
+    document.querySelector('input[name="coeff-mode"][value="drag"]').checked = true;
+    loopControls.classList.remove("active");
+    if (idx === null) {
+        animBar.classList.remove("active");
+        return;
+    }
+    barTitle.textContent = `c${subscript(idx)}`;
+    animBar.classList.add("active");
+}
+
+// Mode radio buttons
+document.querySelectorAll('input[name="coeff-mode"]').forEach(radio => {
+    radio.addEventListener("change", function () {
+        coeffMode = this.value;
+        loopControls.classList.toggle("active", coeffMode === "loop");
+        if (coeffMode === "drag") stopAnimation();
+        playBtn.textContent = "▶ Play";
+    });
+});
+
+// Slider value displays
+animRadiusInput.addEventListener("input", function () { animRadiusVal.textContent = parseFloat(this.value).toFixed(2); });
+animSpeedInput.addEventListener("input", function () { animSpeedVal.textContent = parseFloat(this.value).toFixed(1); });
+
+// Play/Pause button
+playBtn.addEventListener("click", function () {
+    if (animState.playing) {
+        stopAnimation();
+        playBtn.textContent = "▶ Play";
+    } else {
+        startAnimation();
+        playBtn.textContent = "⏸ Pause";
+    }
+});
+
+// --- Path functions ---
+
+function animPathFn(name, t, center, radius) {
+    const omega = 2 * Math.PI; // one full cycle per second (scaled by speed)
+    switch (name) {
+        case "circle":
+            return { re: center.re + radius * Math.cos(omega * t), im: center.im + radius * Math.sin(omega * t) };
+        case "horizontal":
+            return { re: center.re + radius * Math.cos(omega * t), im: center.im };
+        case "vertical":
+            return { re: center.re, im: center.im + radius * Math.cos(omega * t) };
+        case "spiral": {
+            const r = radius * (0.5 + 0.5 * Math.sin(omega * t / 4));
+            return { re: center.re + r * Math.cos(omega * t), im: center.im + r * Math.sin(omega * t) };
+        }
+        case "figure8": {
+            const denom = 1 + Math.sin(omega * t) * Math.sin(omega * t);
+            return {
+                re: center.re + radius * Math.cos(omega * t) / denom,
+                im: center.im + radius * Math.sin(omega * t) * Math.cos(omega * t) / denom
+            };
+        }
+        case "random": {
+            // Brownian-like: small random steps
+            const step = radius * 0.02;
+            return {
+                re: center.re + (Math.random() - 0.5) * step,
+                im: center.im + (Math.random() - 0.5) * step
+            };
+        }
+        default:
+            return center;
+    }
+}
+
+// --- Animation engine ---
+
+function startAnimation() {
+    if (selectedCoeffIdx === null || selectedCoeffIdx >= coefficients.length) return;
+    const d = coefficients[selectedCoeffIdx];
+    // For random walk, the center drifts each frame
+    const pathName = animPathSel.value;
+    if (pathName === "random") {
+        animState.center = { re: d.re, im: d.im }; // mutable center for random walk
+    } else {
+        animState.center = { re: d.re, im: d.im };
+    }
+    animState.playing = true;
+    animState.startTime = performance.now();
+    animState.rafId = requestAnimationFrame(animLoop);
+}
+
+function animLoop(now) {
+    if (!animState.playing || selectedCoeffIdx === null) return;
+    const elapsed = (now - animState.startTime) / 1000;
+    const speed = parseFloat(animSpeedInput.value);
+    const radius = parseFloat(animRadiusInput.value);
+    const pathName = animPathSel.value;
+    const t = elapsed * speed;
+
+    const d = coefficients[selectedCoeffIdx];
+    let newPos;
+    if (pathName === "random") {
+        // Random walk: center drifts
+        newPos = animPathFn("random", t, animState.center, radius);
+        animState.center = newPos; // update center for next frame
+    } else {
+        newPos = animPathFn(pathName, t, animState.center, radius);
+    }
+    d.re = newPos.re;
+    d.im = newPos.im;
+
+    // Update the dot and label visually — compare by datum, not DOM index
+    coeffLayer.selectAll("circle.coeff")
+        .filter(cd => cd === d)
+        .attr("cx", cxs()(d.re)).attr("cy", cys()(d.im));
+    coeffLayer.selectAll(".coeff-label")
+        .filter(ld => ld === d)
+        .attr("x", cxs()(d.re) + 12).attr("y", cys()(d.im) + 4);
+
+    autoScaleCoeffPanel();
+    solveRootsThrottled();
+    renderDomainColoringThrottled();
+
+    animState.rafId = requestAnimationFrame(animLoop);
+}
+
+function stopAnimation() {
+    animState.playing = false;
+    if (animState.rafId) {
+        cancelAnimationFrame(animState.rafId);
+        animState.rafId = null;
     }
 }
 
@@ -613,155 +838,334 @@ function subscript(n) {
     return String(n).split("").map(d => digits[+d]).join("");
 }
 
-// --- Trail color per root ---
+// --- Root drag behavior (roots → coefficients) ---
 
-function rootColor(i, n) {
-    return d3.interpolateSinebow(i / n);
+const rootDrag = d3.drag()
+    .on("start", function () {
+        d3.select(this).raise().classed("dragging", true);
+    })
+    .on("drag", function (event, d) {
+        d.re = rxs().invert(event.x);
+        d.im = rys().invert(event.y);
+        d3.select(this).attr("cx", rxs()(d.re)).attr("cy", rys()(d.im));
+        showTooltip(event.sourceEvent, d.re, d.im);
+        autoScaleRootsPanel();
+        // Recompute coefficients from current roots (all client-side)
+        const rootsForCoeffs = currentRoots.map(r => ({ re: r.re, im: r.im }));
+        coefficients = rootsToCoefficients(rootsForCoeffs);
+        renderCoefficients();
+        renderDomainColoringThrottled();
+    })
+    .on("end", function () {
+        d3.select(this).classed("dragging", false);
+        hideTooltip();
+    });
+
+function autoScaleRootsPanel() {
+    const needed = computeRange(currentRoots);
+    if (needed !== panels.roots.range) {
+        updatePanelRange(rootsSvg, panels.roots, needed);
+        rootsLayer.selectAll("circle.root")
+            .attr("cx", d => rxs()(d.re)).attr("cy", d => rys()(d.im));
+    }
 }
 
-// --- Root tracking: match new roots to previous by proximity ---
+// --- Render roots ---
 
-let lastRoots = null; // previous frame's roots (after matching)
-
-function dist2(a, b) {
-    const dx = a[0] - b[0], dy = a[1] - b[1];
-    return dx * dx + dy * dy;
-}
-
-// Greedy closest-match assignment: reorder `incoming` so that
-// incoming[i] is the closest unmatched root to prev[i].
-function matchRoots(prev, incoming) {
-    const n = prev.length;
-    const m = incoming.length;
-    const matched = new Array(Math.max(n, m));
-    const used = new Array(m).fill(false);
-
-    // For each previous root, find closest unused new root
-    for (let i = 0; i < n && i < m; i++) {
-        let bestJ = -1, bestD = Infinity;
-        for (let j = 0; j < m; j++) {
-            if (used[j]) continue;
-            const d = dist2(prev[i], incoming[j]);
-            if (d < bestD) { bestD = d; bestJ = j; }
-        }
-        matched[i] = incoming[bestJ];
-        used[bestJ] = true;
-    }
-    // Any extra new roots (if count changed) go at the end
-    let k = n;
-    for (let j = 0; j < m; j++) {
-        if (!used[j]) matched[k++] = incoming[j];
-    }
-    return matched.slice(0, m);
-}
-
-// --- Render roots + trails ---
-
-function renderRoots(rawRoots) {
-    // Match new roots to previous frame to keep trails coherent
-    let roots;
-    if (lastRoots && lastRoots.length === rawRoots.length) {
-        roots = matchRoots(lastRoots, rawRoots);
-    } else {
-        roots = rawRoots;
-    }
-    lastRoots = roots;
-
-    // Grow/shrink trails
-    while (trails.length < roots.length) trails.push([]);
-    if (trails.length > roots.length) trails.length = roots.length;
-    for (let i = 0; i < roots.length; i++) {
-        trails[i].push(roots[i]);
+function renderRoots(newRoots) {
+    // Update persistent root data
+    while (currentRoots.length < newRoots.length) currentRoots.push({ re: 0, im: 0 });
+    currentRoots.length = newRoots.length;
+    for (let i = 0; i < newRoots.length; i++) {
+        currentRoots[i].re = newRoots[i].re;
+        currentRoots[i].im = newRoots[i].im;
     }
 
-    // Auto-scale roots panel — only zoom OUT, never in (high water mark)
-    const needed = computeRange(roots);
-    const rootsRange = Math.max(needed, panels.roots.range);
-    updatePanelRange(rootsSvg, panels.roots, rootsRange);
+    // Auto-scale roots panel
+    const needed = computeRange(currentRoots);
+    updatePanelRange(rootsSvg, panels.roots, needed);
+    renderDomainColoringThrottled();
 
-    // Line generator uses current roots scales
-    const lineFn = d3.line().x(d => rxs()(d[0])).y(d => rys()(d[1]));
-
-    // Draw trail paths
-    const paths = trailLayer.selectAll("path.trail").data(trails.slice(0, roots.length));
-
-    paths.enter()
-        .append("path")
-        .attr("class", "trail")
-      .merge(paths)
-        .attr("d", d => lineFn(d))
-        .attr("stroke", (_, i) => rootColor(i, roots.length));
-
-    paths.exit().remove();
-
-    // Draw root dots — no transition, positions update instantly at 60fps
-    const circles = rootsLayer.selectAll("circle.root").data(roots);
+    const circles = rootsLayer.selectAll("circle.root").data(currentRoots, (_, i) => i);
 
     circles.enter()
         .append("circle")
         .attr("class", "root")
         .attr("r", 7)
+        .attr("fill", "#e94560")
         .attr("stroke", "#fff")
         .attr("stroke-width", 1)
+        .call(rootDrag)
+        .on("mouseover", function (event, d) { showTooltip(event, d.re, d.im); })
+        .on("mouseout", hideTooltip)
       .merge(circles)
-        .attr("fill", (_, i) => rootColor(i, roots.length))
-        .attr("cx", d => rxs()(d[0]))
-        .attr("cy", d => rys()(d[1]));
+        .attr("cx", d => rxs()(d.re))
+        .attr("cy", d => rys()(d.im));
 
     circles.exit().remove();
 }
 
-function clearTrails() {
-    trails = [];
-    lastRoots = null;
-    trailLayer.selectAll("path.trail").remove();
+function resetView() {
+    currentRoots = [];
     rootsLayer.selectAll("circle.root").remove();
-    // Reset roots panel range
     updatePanelRange(rootsSvg, panels.roots, MIN_RANGE);
+    renderDomainColoring();
 }
 
-// --- WebSocket ---
+// --- Domain coloring ---
 
-function connectWebSocket() {
-    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    ws = new WebSocket(`${protocol}//${location.host}/ws`);
+function hueToChannel(p, q, t) {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+}
 
-    ws.onopen = () => {
-        document.getElementById("status").textContent = "connected";
-        sendCoefficients();
-    };
+function hslToRgb(h, s, l) {
+    if (s === 0) return [Math.round(l * 255), Math.round(l * 255), Math.round(l * 255)];
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    return [
+        Math.round(hueToChannel(p, q, h + 1/3) * 255),
+        Math.round(hueToChannel(p, q, h) * 255),
+        Math.round(hueToChannel(p, q, h - 1/3) * 255)
+    ];
+}
 
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.error) {
-            console.warn("Server error:", data.error);
-            return;
+function renderDomainColoring() {
+    if (!domainColoringEnabled) return;
+
+    const range = panels.roots.range;
+    // Measure actual SVG position to align canvas precisely
+    // (SVG may be centered by text-align:center, shifted by border, etc.)
+    const svgEl = document.getElementById("roots-panel");
+    const container = document.getElementById("roots-container");
+    const svgRect = svgEl.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    const borderW = parseFloat(getComputedStyle(svgEl).borderLeftWidth) || 0;
+    const contentW = svgRect.width - 2 * borderW;
+    const vbScale = contentW / S; // viewBox units → CSS pixels
+    const plotSize = (S - 2 * MARGIN) * vbScale;
+    const plotLeft = (svgRect.left - containerRect.left) + borderW + MARGIN * vbScale;
+    const plotTop = (svgRect.top - containerRect.top) + borderW + MARGIN * vbScale;
+    const dpr = window.devicePixelRatio || 1;
+    const canvasW = Math.max(1, Math.floor(plotSize * DOMAIN_RES_SCALE * dpr));
+    const canvasH = canvasW;
+
+    domainCanvas.width = canvasW;
+    domainCanvas.height = canvasH;
+    domainCanvas.style.width = plotSize + "px";
+    domainCanvas.style.height = plotSize + "px";
+    domainCanvas.style.left = plotLeft + "px";
+    domainCanvas.style.top = plotTop + "px";
+
+    const imageData = domainCtx.createImageData(canvasW, canvasH);
+    const data = imageData.data;
+
+    const n = coefficients.length;
+    if (n === 0) { domainCtx.putImageData(imageData, 0, 0); return; }
+
+    // Precompute coefficient arrays for Horner's method
+    const cRe = new Float64Array(n);
+    const cIm = new Float64Array(n);
+    for (let k = 0; k < n; k++) {
+        cRe[k] = coefficients[k].re;
+        cIm[k] = coefficients[k].im;
+    }
+
+    const TWO_PI = 2 * Math.PI;
+    const INV_PI_180 = 180 / Math.PI;
+
+    for (let py = 0; py < canvasH; py++) {
+        const im = range - (2 * range * (py + 0.5)) / canvasH;
+        for (let px = 0; px < canvasW; px++) {
+            const re = -range + (2 * range * (px + 0.5)) / canvasW;
+
+            // Horner's method: p(z) = c[0]*z^(n-1) + c[1]*z^(n-2) + ... + c[n-1]
+            let pRe = cRe[0], pIm = cIm[0];
+            for (let k = 1; k < n; k++) {
+                const newRe = pRe * re - pIm * im + cRe[k];
+                const newIm = pRe * im + pIm * re + cIm[k];
+                pRe = newRe;
+                pIm = newIm;
+            }
+
+            // Hue from argument
+            let hue = Math.atan2(pIm, pRe) * INV_PI_180;
+            if (hue < 0) hue += 360;
+
+            // Lightness with log-modulus contour lines
+            const mod2 = pRe * pRe + pIm * pIm;
+            let lightness;
+            if (mod2 < 1e-600) {
+                lightness = 0;
+            } else {
+                const logMod = 0.5 * Math.log2(mod2); // = log2(|p(z)|)
+                const frac = logMod - Math.floor(logMod);
+                lightness = 0.5 + 0.4 * Math.cos(TWO_PI * frac);
+            }
+
+            const [r, g, b] = hslToRgb(hue / 360, 0.8, lightness);
+            const idx = (py * canvasW + px) * 4;
+            data[idx] = r;
+            data[idx + 1] = g;
+            data[idx + 2] = b;
+            data[idx + 3] = 255;
         }
-        renderRoots(data.roots);
-    };
-
-    ws.onclose = () => {
-        document.getElementById("status").textContent = "reconnecting...";
-        setTimeout(connectWebSocket, 1000);
-    };
-
-    ws.onerror = () => ws.close();
+    }
+    domainCtx.putImageData(imageData, 0, 0);
 }
 
-function sendCoefficients() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-            coefficients: coefficients.map(c => [c.re, c.im])
-        }));
+function renderDomainColoringThrottled() {
+    if (!domainPendingRender) {
+        domainPendingRender = true;
+        requestAnimationFrame(() => {
+            renderDomainColoring();
+            domainPendingRender = false;
+        });
     }
 }
 
-function sendCoefficientsThrottled() {
-    if (!pendingSend) {
-        pendingSend = true;
+// --- Ehrlich-Aberth client-side root solver ---
+
+function solveRootsEA(coeffs, warmStart) {
+    // coeffs: array of {re, im} in descending degree order
+    // warmStart: array of {re, im} initial guesses (or null)
+    // Returns: array of {re, im} roots
+
+    // Strip leading near-zero coefficients
+    let start = 0;
+    while (start < coeffs.length - 1 && Math.hypot(coeffs[start].re, coeffs[start].im) < 1e-15) {
+        start++;
+    }
+    const c = coeffs.slice(start);
+    const degree = c.length - 1;
+    if (degree <= 0) return [];
+
+    // Degree 1: linear case c[0]*z + c[1] = 0
+    if (degree === 1) {
+        const aRe = c[0].re, aIm = c[0].im;
+        const bRe = c[1].re, bIm = c[1].im;
+        const denom = aRe * aRe + aIm * aIm;
+        if (denom < 1e-30) return [];
+        return [{ re: -(bRe * aRe + bIm * aIm) / denom, im: -(bIm * aRe - bRe * aIm) / denom }];
+    }
+
+    const MAX_ITER = 100;
+    const TOL = 1e-12;
+
+    // Initialize root guesses
+    const roots = new Array(degree);
+    if (warmStart && warmStart.length === degree) {
+        for (let i = 0; i < degree; i++) {
+            roots[i] = [warmStart[i].re, warmStart[i].im];
+        }
+    } else {
+        // Spread initial guesses on a circle with radius from coefficient ratio
+        const leadMod = Math.hypot(c[0].re, c[0].im);
+        const trailMod = Math.hypot(c[degree].re, c[degree].im);
+        const radius = leadMod > 1e-30
+            ? Math.max(0.1, Math.min(Math.pow(trailMod / leadMod, 1 / degree), 10))
+            : 1;
+        for (let i = 0; i < degree; i++) {
+            const angle = (2 * Math.PI * i) / degree + 0.37; // offset to break symmetry
+            roots[i] = [radius * Math.cos(angle), radius * Math.sin(angle)];
+        }
+    }
+
+    // Precompute coefficient arrays for Horner's method
+    const n = c.length;
+    const cRe = new Float64Array(n);
+    const cIm = new Float64Array(n);
+    for (let k = 0; k < n; k++) {
+        cRe[k] = c[k].re;
+        cIm[k] = c[k].im;
+    }
+
+    // Iterate
+    for (let iter = 0; iter < MAX_ITER; iter++) {
+        let maxCorr = 0;
+
+        for (let i = 0; i < degree; i++) {
+            const zRe = roots[i][0], zIm = roots[i][1];
+
+            // Evaluate p(z) and p'(z) simultaneously via Horner
+            let pRe = cRe[0], pIm = cIm[0];
+            let dpRe = 0, dpIm = 0;
+            for (let k = 1; k < n; k++) {
+                // dp = dp * z + p
+                const ndRe = dpRe * zRe - dpIm * zIm + pRe;
+                const ndIm = dpRe * zIm + dpIm * zRe + pIm;
+                dpRe = ndRe;
+                dpIm = ndIm;
+                // p = p * z + c[k]
+                const npRe = pRe * zRe - pIm * zIm + cRe[k];
+                const npIm = pRe * zIm + pIm * zRe + cIm[k];
+                pRe = npRe;
+                pIm = npIm;
+            }
+
+            // Newton step: w = p(z) / p'(z)
+            const dpMod2 = dpRe * dpRe + dpIm * dpIm;
+            if (dpMod2 < 1e-60) continue;
+            const wRe = (pRe * dpRe + pIm * dpIm) / dpMod2;
+            const wIm = (pIm * dpRe - pRe * dpIm) / dpMod2;
+
+            // Aberth sum: S = Σ_{j≠i} 1/(z_i - z_j)
+            let sRe = 0, sIm = 0;
+            for (let j = 0; j < degree; j++) {
+                if (j === i) continue;
+                const dRe = zRe - roots[j][0];
+                const dIm = zIm - roots[j][1];
+                const dMod2 = dRe * dRe + dIm * dIm;
+                if (dMod2 < 1e-60) continue;
+                sRe += dRe / dMod2;
+                sIm += -dIm / dMod2;
+            }
+
+            // Aberth correction: correction = w / (1 - w * S)
+            const wsRe = wRe * sRe - wIm * sIm;
+            const wsIm = wRe * sIm + wIm * sRe;
+            const denomRe = 1 - wsRe;
+            const denomIm = -wsIm;
+            const denomMod2 = denomRe * denomRe + denomIm * denomIm;
+            if (denomMod2 < 1e-60) continue;
+
+            const corrRe = (wRe * denomRe + wIm * denomIm) / denomMod2;
+            const corrIm = (wIm * denomRe - wRe * denomIm) / denomMod2;
+
+            roots[i][0] -= corrRe;
+            roots[i][1] -= corrIm;
+
+            maxCorr = Math.max(maxCorr, Math.hypot(corrRe, corrIm));
+        }
+
+        if (maxCorr < TOL) break;
+    }
+
+    // Filter NaN/Inf and return
+    const result = [];
+    for (let i = 0; i < degree; i++) {
+        if (isFinite(roots[i][0]) && isFinite(roots[i][1])) {
+            result.push({ re: roots[i][0], im: roots[i][1] });
+        }
+    }
+    return result;
+}
+
+function solveRoots() {
+    const roots = solveRootsEA(coefficients, currentRoots);
+    renderRoots(roots);
+}
+
+function solveRootsThrottled() {
+    if (!pendingSolve) {
+        pendingSolve = true;
         requestAnimationFrame(() => {
-            sendCoefficients();
-            pendingSend = false;
+            solveRoots();
+            pendingSolve = false;
         });
     }
 }
@@ -772,10 +1176,12 @@ const degreeInput = document.getElementById("degree");
 const degreeValue = document.getElementById("degree-value");
 
 function applyPattern() {
-    clearTrails();
+    selectCoefficient(null); // stop animation, clear selection
+    resetView();
     initCoefficients(parseInt(degreeInput.value));
     renderCoefficients();
-    sendCoefficients();
+    solveRoots();
+    renderDomainColoring();
 }
 
 degreeInput.addEventListener("input", function () {
@@ -791,8 +1197,15 @@ document.getElementById("spread").addEventListener("input", function () {
 });
 
 document.getElementById("reset-btn").addEventListener("click", function () {
-    clearTrails();
-    sendCoefficients();
+    resetView();
+    solveRoots();
+});
+
+document.getElementById("domain-coloring-toggle").addEventListener("change", function () {
+    domainColoringEnabled = this.checked;
+    domainCanvas.style.display = domainColoringEnabled ? "block" : "none";
+    rootsSvg.classed("domain-active", domainColoringEnabled);
+    if (domainColoringEnabled) renderDomainColoring();
 });
 
 // --- Resize handler ---
@@ -810,27 +1223,19 @@ function rebuild() {
 
     // Recreate layers
     coeffLayer = coeffSvg.append("g");
-    trailLayer = rootsSvg.append("g");
     rootsLayer = rootsSvg.append("g");
 
     renderCoefficients();
-    // Re-render trails and roots from cached data
-    if (trails.length > 0) {
-        const cachedRoots = trails.map(t => t[t.length - 1]).filter(Boolean);
-        const lineFn = d3.line().x(d => rxs()(d[0])).y(d => rys()(d[1]));
-        const paths = trailLayer.selectAll("path.trail").data(trails.slice(0, cachedRoots.length));
-        paths.enter().append("path").attr("class", "trail")
-            .merge(paths)
-            .attr("d", d => lineFn(d))
-            .attr("stroke", (_, i) => rootColor(i, cachedRoots.length));
-        const circles = rootsLayer.selectAll("circle.root").data(cachedRoots);
-        circles.enter().append("circle").attr("class", "root")
-            .attr("r", 7).attr("stroke", "#fff").attr("stroke-width", 1)
-            .merge(circles)
-            .attr("fill", (_, i) => rootColor(i, cachedRoots.length))
-            .attr("cx", d => rxs()(d[0]))
-            .attr("cy", d => rys()(d[1]));
+    // Reapply selection visual if a coefficient is selected
+    if (selectedCoeffIdx !== null && selectedCoeffIdx < coefficients.length) {
+        const selData = coefficients[selectedCoeffIdx];
+        coeffLayer.selectAll("circle.coeff").classed("selected", d => d === selData);
     }
+
+    // Re-solve roots and re-render domain coloring at new size
+    solveRoots();
+    rootsSvg.classed("domain-active", domainColoringEnabled);
+    renderDomainColoring();
 }
 
 let resizeTimer;
@@ -841,9 +1246,11 @@ window.addEventListener("resize", () => {
 
 // --- Init ---
 
+rootsSvg.classed("domain-active", domainColoringEnabled);
 initCoefficients(parseInt(degreeInput.value));
 renderCoefficients();
-connectWebSocket();
+solveRoots();
+renderDomainColoring();
 </script>
 </body>
 </html>

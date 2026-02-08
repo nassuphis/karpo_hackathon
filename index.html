@@ -676,10 +676,11 @@ const drag = d3.drag()
     });
 
 function autoScaleCoeffPanel() {
-    const needed = computeRange(coefficients);
+    let needed = computeRange(coefficients);
+    // During animation, only zoom out — never shrink back
+    if (animState.playing) needed = Math.max(needed, panels.coeff.range);
     if (needed !== panels.coeff.range) {
         updatePanelRange(coeffSvg, panels.coeff, needed);
-        // Re-position all dots and labels with new scale
         coeffLayer.selectAll("circle.coeff")
             .attr("cx", d => cxs()(d.re)).attr("cy", d => cys()(d.im));
         coeffLayer.selectAll(".coeff-label")

@@ -115,6 +115,7 @@ This is not a solver artifact; it is a topological invariant of the loop. Differ
 | **Rotate** action button | Rotates all selected elements by multiplying with exp(2πi·rev). |
 | **Sel→Path** button | Captures the current coefficient selection into a new animation path. |
 | **◀ ▶** path navigation | Cycle through defined paths to view/edit each one's settings. |
+| **A (Angle)** slider | Rotates the path shape around the coefficient (0–1 → 0–360°). |
 | **CW / CCW** toggle | Sets clockwise or counter-clockwise direction for the current path. |
 | **×** delete button | Removes the currently viewed path. |
 | **Snap** button | Exports a PNG screenshot and JSON metadata file for the current state. |
@@ -136,15 +137,16 @@ The animation system supports **multiple simultaneous paths**, each driving a di
 4. Click **Play** → all paths animate simultaneously
 
 Each path has:
-- **16 path curves** in two groups:
-  - **Basic:** Circle, Horizontal, Vertical, Spiral, Random walk
+- **17 path curves** (including None) in two groups:
+  - **Basic:** None, Circle, Horizontal, Vertical, Spiral, Random walk
   - **Curves:** Lissajous (3:2), Figure-8, Cardioid, Astroid, Deltoid, Rose (3-petal), Spirograph, Hypotrochoid, Butterfly, Star (pentagram), Square
-- **Radius** and **Speed** sliders (independent per path)
+- **Radius**, **Speed**, and **Angle** sliders (independent per path)
 - **CW/CCW** direction toggle
 
 When a coefficient is assigned to a new path, it is automatically removed from any existing path. Empty paths are auto-deleted.
 
-- **Trails** toggle: coefficients and roots leave colored SVG path trails as they move. Loop detection auto-stops recording after one full cycle. Jump detection breaks trails at root-index swaps to avoid artifacts.
+- **Coefficient paths** are always visible on the left panel when a path is assigned — the colored curve shows exactly where each coefficient will travel during animation.
+- **Trails** toggle: enables root trail recording on the right panel. Roots leave colored SVG path trails as they move. Loop detection auto-stops recording after one full cycle. Jump detection breaks trails at root-index swaps to avoid artifacts.
 
 ### Trail Gallery
 
@@ -232,6 +234,10 @@ karpo_hackathon/
 - **NaN/Inf roots**: filtered out before rendering
 - **Window resize**: panels dynamically resize, solver re-runs
 - **Degree change**: coefficients reinitialized, both panels reset
+
+### Path Transform Model
+
+Each coefficient assigned to an animation path stores 200 absolute curve points. When radius or angle sliders change, the existing points are transformed in place — radius scales around the coefficient's position, angle rotates around it. The coefficient stays fixed and the path reshapes smoothly around it. This avoids regenerating the curve from scratch, which would cause visible jumps after play-pause.
 
 ### Performance
 

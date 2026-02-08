@@ -231,6 +231,7 @@ circle.root.selected { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px #e9
                 <span class="bar-title" id="bar-title">c₀</span>
                 <label>
                     <select id="anim-path">
+                        <option value="none">None</option>
                         <optgroup label="Basic">
                             <option value="circle">Circle</option>
                             <option value="horizontal">Horizontal</option>
@@ -255,6 +256,7 @@ circle.root.selected { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px #e9
                 </label>
                 <label>R: <input type="range" id="anim-radius" min="0.05" max="3.0" step="0.05" value="0.5"> <span class="bar-val" id="anim-radius-val">0.5</span></label>
                 <label>S: <input type="range" id="anim-speed" min="0.1" max="5.0" step="0.1" value="1.0"> <span class="bar-val" id="anim-speed-val">1.0</span></label>
+                <label>A: <input type="range" id="anim-angle" min="0" max="1.0" step="0.01" value="0"> <span class="bar-val" id="anim-angle-val">0.00</span></label>
                 <button id="ccw-btn">CW</button>
                 <button id="del-path-btn">×</button>
                 <div class="bar-sep"></div>
@@ -324,14 +326,13 @@ let pendingSolve = false;
 // Selection & animation state
 const selectedCoeffs = new Set(); // indices into coefficients[]
 const selectedRoots = new Set();  // indices into currentRoots[]
-const animState = { playing: false, startTime: 0, rafId: null };
-let animPaths = [];    // array of { id, coeffs: Set, pathType, radius, speed, ccw, center, offsets }
+const animState = { playing: false, startTime: 0, rafId: null, elapsedAtPause: null };
+let animPaths = [];    // array of { id, coeffs: Set, pathType, radius, speed, ccw, angle }
 let nextPathId = 1;
 let viewedPathIdx = 0; // index into animPaths for UI navigation
 // Trail state
 let trailsEnabled = false;
 let trailData = []; // array of arrays: trailData[i] = [{re, im}, ...] for root i
-let coeffTrailData = []; // same structure for coefficient trails
 let trailComplete = false; // true once one full loop is detected
 const MAX_TRAIL_POINTS = 4000;
 const TRAIL_MIN_POINTS = 30; // minimum points before checking for loop closure
@@ -569,6 +570,9 @@ function initCoefficients(degree) {
         const cs = rootsToCoefficients(roots);
         for (const c of cs) coefficients.push(c);
     }
+
+    // Initialize curve as null (no path assigned yet)
+    for (const c of coefficients) c.curve = null;
 }
 
 // --- Roots → Coefficients ---
@@ -761,15 +765,23 @@ const drag = d3.drag()
             for (const si of selectedCoeffs) {
                 coefficients[si].re += deltaRe;
                 coefficients[si].im += deltaIm;
+                if (coefficients[si].curve) {
+                    for (const pt of coefficients[si].curve) { pt.re += deltaRe; pt.im += deltaIm; }
+                }
             }
             coeffLayer.selectAll("circle.coeff")
                 .attr("cx", cd => cxs()(cd.re)).attr("cy", cd => cys()(cd.im));
             coeffLayer.selectAll(".coeff-label")
                 .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
         } else {
-            // Single drag
+            // Single drag: shift position and all curve points by delta
+            const deltaRe = newRe - d.re;
+            const deltaIm = newIm - d.im;
             d.re = newRe;
             d.im = newIm;
+            if (d.curve) {
+                for (const pt of d.curve) { pt.re += deltaRe; pt.im += deltaIm; }
+            }
             d3.select(this).attr("cx", cxs()(d.re)).attr("cy", cys()(d.im));
             coeffLayer.selectAll(".coeff-label")
                 .filter(ld => ld === d)
@@ -779,6 +791,8 @@ const drag = d3.drag()
         autoScaleCoeffPanel();
         solveRootsThrottled();
         renderDomainColoringThrottled();
+        // Update analytical coefficient path curves (they follow the coefficient)
+        if (animPaths.length > 0) renderCoeffTrails();
     })
     .on("end", function (event, d) {
         d3.select(this).classed("dragging", false);
@@ -801,6 +815,9 @@ function autoScaleCoeffPanel() {
             .attr("cx", d => cxs()(d.re)).attr("cy", d => cys()(d.im));
         coeffLayer.selectAll(".coeff-label")
             .attr("x", d => cxs()(d.re) + 12).attr("y", d => cys()(d.im) + 4);
+        // Trail SVG paths contain absolute screen coordinates — must re-render
+        // when the scale changes so trails stay aligned with coefficient dots
+        if (animPaths.length > 0) renderCoeffTrails();
     }
 }
 
@@ -813,6 +830,8 @@ const animRadiusInput = document.getElementById("anim-radius");
 const animSpeedInput = document.getElementById("anim-speed");
 const animRadiusVal = document.getElementById("anim-radius-val");
 const animSpeedVal = document.getElementById("anim-speed-val");
+const animAngleInput = document.getElementById("anim-angle");
+const animAngleVal = document.getElementById("anim-angle-val");
 const playBtn = document.getElementById("play-btn");
 const trailsBtn = document.getElementById("trails-btn");
 const sel2pathBtn = document.getElementById("sel2path-btn");
@@ -889,16 +908,26 @@ function createPathFromSelection() {
     }
 
     // Create new path with defaults from current UI
+    const pType = animPathSel.value;
+    const pRadius = parseFloat(animRadiusInput.value);
+    const pAngle = parseFloat(animAngleInput.value);
     const path = {
         id: nextPathId++,
         coeffs: newCoeffs,
-        pathType: animPathSel.value,
-        radius: parseFloat(animRadiusInput.value),
+        pathType: pType,
+        radius: pRadius,
         speed: parseFloat(animSpeedInput.value),
         ccw: false,
-        center: null,
-        offsets: null
+        angle: pAngle,
     };
+    // Compute per-coefficient absolute curves
+    if (pType !== "random" && pType !== "none") {
+        for (const idx of newCoeffs) {
+            const c = coefficients[idx];
+            c.curve = computeCurve(c.re, c.im, pType, pRadius, pAngle);
+        }
+    }
+    animState.elapsedAtPause = null;
     animPaths.push(path);
     viewedPathIdx = animPaths.length - 1;
 
@@ -906,15 +935,27 @@ function createPathFromSelection() {
     selectedCoeffs.clear();
     updateCoeffSelectionVisual();
     updateAnimBar();
+    renderCoeffTrails();
 }
 
 function deleteCurrentPath() {
     if (animPaths.length === 0) return;
+    // Snap removed coefficients to home, clear curve
+    const dying = animPaths[viewedPathIdx];
+    for (const idx of dying.coeffs) {
+        if (coefficients[idx].curve) {
+            coefficients[idx].re = coefficients[idx].curve[0].re;
+            coefficients[idx].im = coefficients[idx].curve[0].im;
+        }
+        coefficients[idx].curve = null;
+    }
     stopAnimation();
     playBtn.textContent = "▶ Play";
+    animState.elapsedAtPause = null;
     animPaths.splice(viewedPathIdx, 1);
     if (viewedPathIdx >= animPaths.length) viewedPathIdx = Math.max(0, animPaths.length - 1);
     updateAnimBar();
+    renderCoeffTrails();
 }
 
 function coeffListLabel(coeffSet) {
@@ -934,6 +975,8 @@ function syncBarToPath() {
     animRadiusVal.textContent = path.radius.toFixed(2);
     animSpeedInput.value = path.speed;
     animSpeedVal.textContent = path.speed.toFixed(1);
+    animAngleInput.value = path.angle;
+    animAngleVal.textContent = path.angle.toFixed(2);
     ccwBtn.textContent = path.ccw ? "CCW" : "CW";
     ccwBtn.classList.toggle("active", path.ccw);
     pathLabel.textContent = `Path ${viewedPathIdx + 1}/${animPaths.length}`;
@@ -942,9 +985,34 @@ function syncBarToPath() {
 function syncPathFromBar() {
     if (animPaths.length === 0) return;
     const path = animPaths[viewedPathIdx];
+    const oldType = path.pathType, oldRadius = path.radius, oldAngle = path.angle;
     path.pathType = animPathSel.value;
     path.radius = parseFloat(animRadiusInput.value);
     path.speed = parseFloat(animSpeedInput.value);
+    path.angle = parseFloat(animAngleInput.value);
+
+    if (path.pathType === "random" || path.pathType === "none") {
+        // No curve for random/none
+        for (const idx of path.coeffs) coefficients[idx].curve = null;
+        animState.elapsedAtPause = null;
+    } else if (path.pathType !== oldType) {
+        // Shape changed: full recompute, reset animation
+        computePathCurves(path);
+        animState.elapsedAtPause = null;
+    } else if (path.radius !== oldRadius || path.angle !== oldAngle) {
+        // Radius/angle changed: transform in place, KEEP elapsedAtPause
+        transformPathCurves(path, oldRadius, oldAngle);
+    }
+
+    // Update dot positions (coefficient may have moved to nearest point)
+    coeffLayer.selectAll("circle.coeff")
+        .filter(cd => path.coeffs.has(cd._idx))
+        .attr("cx", cd => cxs()(cd.re)).attr("cy", cd => cys()(cd.im));
+    coeffLayer.selectAll(".coeff-label")
+        .filter(ld => path.coeffs.has(ld._idx))
+        .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
+
+    renderCoeffTrails();
 }
 
 function updateAnimBar() {
@@ -967,6 +1035,7 @@ function updateAnimBar() {
     animPathSel.parentElement.style.display = pathControlsVisible ? "" : "none";
     animRadiusInput.parentElement.style.display = pathControlsVisible ? "" : "none";
     animSpeedInput.parentElement.style.display = pathControlsVisible ? "" : "none";
+    animAngleInput.parentElement.style.display = pathControlsVisible ? "" : "none";
     ccwBtn.style.display = pathControlsVisible ? "" : "none";
     delPathBtn.style.display = pathControlsVisible ? "" : "none";
 
@@ -986,6 +1055,10 @@ animRadiusInput.addEventListener("input", function () {
 });
 animSpeedInput.addEventListener("input", function () {
     animSpeedVal.textContent = parseFloat(this.value).toFixed(1);
+    syncPathFromBar();
+});
+animAngleInput.addEventListener("input", function () {
+    animAngleVal.textContent = parseFloat(this.value).toFixed(2);
     syncPathFromBar();
 });
 animPathSel.addEventListener("change", syncPathFromBar);
@@ -1014,6 +1087,8 @@ ccwBtn.addEventListener("click", function () {
     path.ccw = !path.ccw;
     this.textContent = path.ccw ? "CCW" : "CW";
     this.classList.toggle("active", path.ccw);
+    animState.elapsedAtPause = null;
+    renderCoeffTrails();
 });
 
 // Delete path
@@ -1026,8 +1101,14 @@ playBtn.addEventListener("click", function () {
         playBtn.textContent = "▶ Play";
     } else {
         if (animPaths.length === 0) return;
-        if (trailsEnabled) clearTrails();
+        // Clear root trails only (accumulated); coeff trails are per-coefficient curves
+        if (trailsEnabled) {
+            trailData = [];
+            trailComplete = false;
+            trailLayer.selectAll("path.trail-path").remove();
+        }
         startAnimation();
+        if (animPaths.length > 0) renderCoeffTrails();
         playBtn.textContent = "⏸ Pause";
     }
 });
@@ -1037,6 +1118,7 @@ trailsBtn.addEventListener("click", function () {
     trailsEnabled = !trailsEnabled;
     this.classList.toggle("active", trailsEnabled);
     clearTrails();
+    if (animPaths.length > 0) renderCoeffTrails();
 });
 
 // --- Path functions ---
@@ -1159,30 +1241,117 @@ function animPathFn(name, t, center, radius) {
 
 // --- Animation engine ---
 
+const COEFF_TRAIL_SAMPLES = 200; // points per analytical curve
+
+// Compute a closed curve of absolute positions for a coefficient.
+// curve[0] = {homeRe, homeIm} (the "home" position). Angle rotates the shape.
+function computeCurve(homeRe, homeIm, pathType, radius, angle) {
+    const N = COEFF_TRAIL_SAMPLES; // 200
+    const origin = { re: 0, im: 0 };
+    const d0 = animPathFn(pathType, 0, origin, radius);
+    const cosA = Math.cos(angle * 2 * Math.PI);
+    const sinA = Math.sin(angle * 2 * Math.PI);
+    const curve = new Array(N);
+    for (let k = 0; k < N; k++) {
+        const t = k / N;
+        const pt = animPathFn(pathType, t, origin, radius);
+        const dx = pt.re - d0.re, dy = pt.im - d0.im;
+        curve[k] = { re: homeRe + dx * cosA - dy * sinA,
+                      im: homeIm + dx * sinA + dy * cosA };
+    }
+    return curve;
+}
+
+// Recompute curves using the coefficient's current position as home (curve[0]).
+// The coefficient is always on the new path. Angle and radius come from the path settings.
+function computePathCurves(path) {
+    for (const idx of path.coeffs) {
+        const c = coefficients[idx];
+        c.curve = computeCurve(c.re, c.im, path.pathType, path.radius, path.angle);
+    }
+}
+
+// Transform existing curve points in place. Two separate operations:
+//   Radius change → scale around centroid (preserves geometric center)
+//   Angle change  → rotate around curve[0] (home), matching computeCurve semantics
+// Snap coefficient to nearest point. Preserves elapsedAtPause.
+function transformPathCurves(path, oldRadius, oldAngle) {
+    for (const idx of path.coeffs) {
+        const c = coefficients[idx];
+        if (!c.curve) continue;
+
+        // Step 1: Scale around coefficient's current position (radius change)
+        if (path.radius !== oldRadius && oldRadius > 0) {
+            const scale = path.radius / oldRadius;
+            const ax = c.re, ay = c.im;
+            for (const pt of c.curve) {
+                pt.re = ax + (pt.re - ax) * scale;
+                pt.im = ay + (pt.im - ay) * scale;
+            }
+        }
+
+        // Step 2: Rotate around coefficient's current position (angle change)
+        if (path.angle !== oldAngle) {
+            const dA = (path.angle - oldAngle) * 2 * Math.PI;
+            const cosA = Math.cos(dA), sinA = Math.sin(dA);
+            const hx = c.re, hy = c.im;
+            for (const pt of c.curve) {
+                const dx = pt.re - hx, dy = pt.im - hy;
+                pt.re = hx + dx * cosA - dy * sinA;
+                pt.im = hy + dx * sinA + dy * cosA;
+            }
+        }
+
+        // Snap coefficient to nearest point on transformed curve
+        let bestIdx = 0, bestDist = Infinity;
+        for (let k = 0; k < c.curve.length; k++) {
+            const d2 = (c.curve[k].re - c.re) ** 2 + (c.curve[k].im - c.im) ** 2;
+            if (d2 < bestDist) { bestDist = d2; bestIdx = k; }
+        }
+        c.re = c.curve[bestIdx].re;
+        c.im = c.curve[bestIdx].im;
+    }
+}
+
+// Derive re/im for all coefficients in a path by interpolating their absolute curve points.
+function syncCoeffPositions(path, curveIdx) {
+    for (const idx of path.coeffs) {
+        const curve = coefficients[idx].curve;
+        if (!curve) continue;
+        const N = curve.length;
+        const lo = Math.floor(curveIdx) % N;
+        const hi = (lo + 1) % N;
+        const frac = curveIdx - Math.floor(curveIdx);
+        coefficients[idx].re = curve[lo].re * (1 - frac) + curve[hi].re * frac;
+        coefficients[idx].im = curve[lo].im * (1 - frac) + curve[hi].im * frac;
+    }
+}
+
 function startAnimation() {
     if (animPaths.length === 0) return;
 
-    // Compute centroid and offsets for each path
-    for (const path of animPaths) {
-        let cRe = 0, cIm = 0;
-        for (const idx of path.coeffs) {
-            cRe += coefficients[idx].re;
-            cIm += coefficients[idx].im;
-        }
-        cRe /= path.coeffs.size;
-        cIm /= path.coeffs.size;
-        path.center = { re: cRe, im: cIm };
-        path.offsets = new Map();
-        for (const idx of path.coeffs) {
-            path.offsets.set(idx, {
-                re: coefficients[idx].re - cRe,
-                im: coefficients[idx].im - cIm
-            });
+    const resuming = animState.elapsedAtPause != null;
+
+    if (!resuming) {
+        // Fresh start: snap all animated coefficients to their home (curve[0])
+        for (const path of animPaths) {
+            for (const idx of path.coeffs) {
+                if (coefficients[idx].curve) {
+                    coefficients[idx].re = coefficients[idx].curve[0].re;
+                    coefficients[idx].im = coefficients[idx].curve[0].im;
+                }
+            }
         }
     }
 
     animState.playing = true;
-    animState.startTime = performance.now();
+    if (resuming) {
+        // Resume: adjust startTime so elapsed picks up where it left off
+        animState.startTime = performance.now() - animState.elapsedAtPause * 1000;
+        animState.elapsedAtPause = null;
+    } else {
+        animState.startTime = performance.now();
+    }
     animState.rafId = requestAnimationFrame(animLoop);
 }
 
@@ -1197,34 +1366,24 @@ function animLoop(now) {
     if (!animState.playing || animPaths.length === 0) return;
     const elapsed = (now - animState.startTime) / 1000;
 
-    // Advance each path
+    // Advance each path using per-coefficient curves + interpolation
     for (const path of animPaths) {
-        const t = elapsed * path.speed * (path.ccw ? -1 : 1);
-        let newCenter;
-        if (path.pathType === "random") {
-            newCenter = animPathFn("random", t, path.center, path.radius);
-            path.center = newCenter;
-        } else {
-            newCenter = animPathFn(path.pathType, t, path.center, path.radius);
-        }
-        for (const [idx, offset] of path.offsets) {
-            coefficients[idx].re = newCenter.re + offset.re;
-            coefficients[idx].im = newCenter.im + offset.im;
-        }
-    }
-
-    // Record coefficient trail points for all paths
-    if (trailsEnabled && !trailComplete) {
-        const n = coefficients.length;
-        while (coeffTrailData.length < n) coeffTrailData.push([]);
-        coeffTrailData.length = n;
-        for (const path of animPaths) {
+        if (path.pathType === "none") {
+            // None: no movement at all
+            continue;
+        } else if (path.pathType === "random") {
+            // Random walk: special case (not precomputed)
             for (const idx of path.coeffs) {
-                coeffTrailData[idx].push({ re: coefficients[idx].re, im: coefficients[idx].im });
-                if (coeffTrailData[idx].length > MAX_TRAIL_POINTS) coeffTrailData[idx].shift();
+                const step = path.radius * 0.02;
+                coefficients[idx].re += (Math.random() - 0.5) * step;
+                coefficients[idx].im += (Math.random() - 0.5) * step;
             }
+        } else {
+            const N = COEFF_TRAIL_SAMPLES;
+            const t = elapsed * path.speed * (path.ccw ? -1 : 1);
+            const rawIdx = ((t % 1) + 1) % 1 * N; // normalize to [0, N)
+            syncCoeffPositions(path, rawIdx);
         }
-        renderCoeffTrails();
     }
 
     // Update visuals for all animated coefficients
@@ -1244,6 +1403,9 @@ function animLoop(now) {
 }
 
 function stopAnimation() {
+    if (animState.playing) {
+        animState.elapsedAtPause = (performance.now() - animState.startTime) / 1000;
+    }
     animState.playing = false;
     if (animState.rafId) {
         cancelAnimationFrame(animState.rafId);
@@ -1330,6 +1492,7 @@ const rootDrag = d3.drag()
         // Recompute coefficients from current roots (all client-side)
         const rootsForCoeffs = currentRoots.map(r => ({ re: r.re, im: r.im }));
         coefficients = rootsToCoefficients(rootsForCoeffs);
+        for (const c of coefficients) c.curve = null;
         renderCoefficients();
         renderDomainColoringThrottled();
     })
@@ -1445,31 +1608,42 @@ function renderTrails() {
 }
 
 function renderCoeffTrails() {
+    // Draw the absolute curve points for each coefficient that has a curve.
     const xScale = cxs(), yScale = cys();
-    const n = coeffTrailData.length;
-    const paths = coeffTrailLayer.selectAll("path.trail-path").data(coeffTrailData);
+    const curveData = [];
+
+    for (const path of animPaths) {
+        if (path.pathType === "random" || path.pathType === "none") continue;
+        for (const idx of path.coeffs) {
+            if (coefficients[idx].curve) curveData.push({ idx });
+        }
+    }
+
+    const nCoeff = coefficients.length;
+    const paths = coeffTrailLayer.selectAll("path.trail-path").data(curveData, d => d.idx);
     paths.enter()
         .append("path")
         .attr("class", "trail-path")
       .merge(paths)
-        .attr("d", pts => {
-            if (pts.length < 2) return "";
-            let d = `M${xScale(pts[0].re)},${yScale(pts[0].im)}`;
-            for (let j = 1; j < pts.length; j++) {
-                d += `L${xScale(pts[j].re)},${yScale(pts[j].im)}`;
+        .attr("d", ({ idx }) => {
+            const curve = coefficients[idx].curve;
+            const N = curve.length;
+            let d = "";
+            for (let k = 0; k <= N; k++) {
+                const pt = curve[k % N];
+                d += (k === 0 ? "M" : "L") + xScale(pt.re) + "," + yScale(pt.im);
             }
-            return d;
+            return d + "Z";
         })
-        .attr("stroke", (_, i) => coeffColor(i, n));
+        .attr("stroke", ({ idx }) => coeffColor(idx, nCoeff));
     paths.exit().remove();
 }
 
 function clearTrails() {
     trailData = [];
-    coeffTrailData = [];
     trailComplete = false;
     trailLayer.selectAll("path.trail-path").remove();
-    coeffTrailLayer.selectAll("path.trail-path").remove();
+    // Coefficient paths are always visible — don't clear them here
 }
 
 
@@ -1912,22 +2086,30 @@ function snapCapture() {
     // Draw coefficient panel
     const cp = drawPanel(0, headerH, panels.coeff.range, false);
 
-    // Draw coefficient trails
-    if (coeffTrailData.length > 0) {
+    // Draw per-coefficient absolute curve trails
+    if (animPaths.length > 0) {
+        const nC = coefficients.length;
         ctx.lineWidth = 1.5;
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.globalAlpha = 0.6;
-        for (let i = 0; i < coeffTrailData.length; i++) {
-            const pts = coeffTrailData[i];
-            if (pts.length < 2) continue;
-            ctx.strokeStyle = coeffColor(i, coeffTrailData.length);
-            ctx.beginPath();
-            ctx.moveTo(cp.xs(pts[0].re), cp.ys(pts[0].im));
-            for (let j = 1; j < pts.length; j++) {
-                ctx.lineTo(cp.xs(pts[j].re), cp.ys(pts[j].im));
+        for (const path of animPaths) {
+            if (path.pathType === "random" || path.pathType === "none") continue;
+            for (const idx of path.coeffs) {
+                const curve = coefficients[idx].curve;
+                if (!curve) continue;
+                const N = curve.length;
+                ctx.strokeStyle = coeffColor(idx, nC);
+                ctx.beginPath();
+                for (let k = 0; k <= N; k++) {
+                    const pt = curve[k % N];
+                    const px = cp.xs(pt.re);
+                    const py = cp.ys(pt.im);
+                    if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+                }
+                ctx.closePath();
+                ctx.stroke();
             }
-            ctx.stroke();
         }
         ctx.globalAlpha = 1.0;
     }
@@ -2035,19 +2217,22 @@ function snapCapture() {
             pathType: p.pathType,
             radius: p.radius,
             speed: p.speed,
-            ccw: p.ccw
+            ccw: p.ccw,
+            angle: p.angle
         })),
         animPlaying: animState.playing,
         selectedCoeffs: [...selectedCoeffs],
         selectedRoots: [...selectedRoots],
-        coefficients: coefficients.map(c => [c.re, c.im]),
+        coefficients: coefficients.map(c => ({
+            pos: [c.re, c.im],
+            home: c.curve ? [c.curve[0].re, c.curve[0].im] : [c.re, c.im]
+        })),
         roots: currentRoots.map(r => [r.re, r.im]),
         panels: {
             coeff: { range: panels.coeff.range },
             roots: { range: panels.roots.range }
         },
-        trailData: trailData.map(pts => pts.map(p => [p.re, p.im])),
-        coeffTrailData: coeffTrailData.map(pts => pts.map(p => [p.re, p.im]))
+        trailData: trailData.map(pts => pts.map(p => [p.re, p.im]))
     };
 
     // Download PNG
@@ -2097,7 +2282,7 @@ function rebuild() {
     rootsSvg.classed("domain-active", domainColoringEnabled);
     renderDomainColoring();
     if (trailData.length > 0) renderTrails();
-    if (coeffTrailData.length > 0) renderCoeffTrails();
+    if (animPaths.length > 0) renderCoeffTrails();
 }
 
 let resizeTimer;

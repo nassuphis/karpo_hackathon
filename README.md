@@ -186,6 +186,12 @@ When a coefficient is assigned to a new path, it is automatically removed from a
 
 **Degree 5, circle pattern, 6 simultaneous paths (multi-path demo)** — Every coefficient (c₀ through c₅) assigned to its own animation path, all circles but with different configurations: c₀ on a large circle (radius 1.4, speed 0.6, CCW), c₄ barely moving (radius 0.5, speed 0.1, CCW), and the rest at radius 0.5, speed 1.0 with alternating CW/CCW directions. On the left, six circles of varying size show each coefficient's individual orbit. On the right, the 5 roots trace complex entangled loops — the interference between six independent perturbations at different frequencies and directions creates an intricate braid that no single-path animation could produce. The loop detection fired after one complete cycle, confirming the combined motion is periodic.
 
+<p align="center">
+  <img src="snaps/polypaint-2026-02-08T18-01-14.png" width="90%" alt="Degree-29 grid pattern — 10 paths with mixed shapes and angles">
+</p>
+
+**Degree 29, grid pattern, 10 simultaneous paths with mixed shapes and angles** — 10 of 30 coefficients each on their own path with diverse configurations: circles (c₀ at radius 1.4, c₁₃ at 0.5, c₁₇ at 1.0), a star (c₁₄ at radius 0.15), an astroid (c₁₅ at 0.3), and four horizontal oscillations (c₂₀–c₂₃ at varying speeds 0.2–0.8) plus c₅ horizontal at angle 0.96. Each path uses a different angle rotation, tilting the shapes relative to each other. On the left, the always-visible coefficient paths show the full variety — circles, a star, an astroid, and angled horizontal lines radiating from their coefficients across the grid. On the right, the 29 root trails form a dense braid around a large ring, with tight cusps where roots nearly collide and sweeping arcs from the combined interference of all 10 perturbations at different frequencies and orientations.
+
 ## Patterns
 
 ### Basic (5)

@@ -114,6 +114,13 @@ circle.root.selected { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px #e9
     padding: 4px 12px; font-size: 12px; cursor: pointer;
 }
 #play-btn:hover { background: #c73550; }
+#trails-btn {
+    background: transparent; color: #888; border: 1px solid #555; border-radius: 4px;
+    padding: 4px 12px; font-size: 12px; cursor: pointer; transition: all 0.15s;
+}
+#trails-btn.active { background: #e94560; color: #fff; border-color: #e94560; }
+#trails-btn:hover:not(.active) { color: #ccc; border-color: #888; }
+.trail-path { fill: none; stroke-width: 1.5; opacity: 0.6; stroke-linecap: round; stroke-linejoin: round; }
 .tooltip {
     position: absolute; background: rgba(0,0,0,0.85); color: #fff;
     padding: 4px 8px; border-radius: 4px; font-size: 12px; pointer-events: none;
@@ -216,6 +223,7 @@ circle.root.selected { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px #e9
                 <label>Radius: <input type="range" id="anim-radius" min="0.05" max="2.0" step="0.05" value="0.5"> <span class="bar-val" id="anim-radius-val">0.5</span></label>
                 <label>Speed: <input type="range" id="anim-speed" min="0.1" max="5.0" step="0.1" value="1.0"> <span class="bar-val" id="anim-speed-val">1.0</span></label>
                 <button id="play-btn">▶ Play</button>
+                <button id="trails-btn">Trails</button>
             </div>
         </div>
     </div>
@@ -281,6 +289,12 @@ let pendingSolve = false;
 const selectedCoeffs = new Set(); // indices into coefficients[]
 const selectedRoots = new Set();  // indices into currentRoots[]
 const animState = { playing: false, center: null, offsets: null, startTime: 0, rafId: null };
+// Trail state
+let trailsEnabled = false;
+let trailData = []; // array of arrays: trailData[i] = [{re, im}, ...] for root i
+let trailComplete = false; // true once one full loop is detected
+const MAX_TRAIL_POINTS = 4000;
+const TRAIL_MIN_POINTS = 30; // minimum points before checking for loop closure
 // Domain coloring state
 let domainColoringEnabled = false;
 let rootColorEnabled = true;
@@ -367,6 +381,7 @@ setupPanel(coeffSvg, panels.coeff);
 setupPanel(rootsSvg, panels.roots);
 
 let coeffLayer = coeffSvg.append("g");
+let trailLayer = rootsSvg.append("g").attr("class", "trail-layer");
 let rootsLayer = rootsSvg.append("g");
 
 // --- Tooltip ---
@@ -758,6 +773,7 @@ const animSpeedInput = document.getElementById("anim-speed");
 const animRadiusVal = document.getElementById("anim-radius-val");
 const animSpeedVal = document.getElementById("anim-speed-val");
 const playBtn = document.getElementById("play-btn");
+const trailsBtn = document.getElementById("trails-btn");
 
 function toggleCoeffSelect(idx) {
     stopAnimation();
@@ -824,8 +840,20 @@ playBtn.addEventListener("click", function () {
         stopAnimation();
         playBtn.textContent = "▶ Play";
     } else {
+        if (trailsEnabled) clearTrails(); // new cycle, fresh trails
         startAnimation();
         playBtn.textContent = "⏸ Pause";
+    }
+});
+
+// Trails toggle button
+trailsBtn.addEventListener("click", function () {
+    trailsEnabled = !trailsEnabled;
+    this.classList.toggle("active", trailsEnabled);
+    if (trailsEnabled) {
+        clearTrails(); // fresh start
+    } else {
+        clearTrails();
     }
 });
 
@@ -1166,6 +1194,59 @@ function renderRoots(newRoots) {
         .attr("fill", (_, i) => rootColor(i, n));
 
     circles.exit().remove();
+
+    // Record trail points during animation
+    if (trailsEnabled && animState.playing && !trailComplete) {
+        // Initialize trail arrays if needed
+        while (trailData.length < n) trailData.push([]);
+        trailData.length = n;
+        for (let i = 0; i < n; i++) {
+            trailData[i].push({ re: currentRoots[i].re, im: currentRoots[i].im });
+            if (trailData[i].length > MAX_TRAIL_POINTS) trailData[i].shift();
+        }
+        // Check for loop closure: all roots back near their starting positions
+        const len = trailData[0].length;
+        if (len > TRAIL_MIN_POINTS) {
+            let closed = true;
+            for (let i = 0; i < n; i++) {
+                const start = trailData[i][0];
+                const cur = trailData[i][len - 1];
+                const dist = Math.hypot(cur.re - start.re, cur.im - start.im);
+                if (dist > panels.roots.range * 0.01) { closed = false; break; }
+            }
+            if (closed) trailComplete = true;
+        }
+        renderTrails();
+    }
+}
+
+function renderTrails() {
+    const xScale = rxs(), yScale = rys();
+    const n = trailData.length;
+    const jumpThresh = panels.roots.range * 0.3; // 30% of visible range = likely a root swap
+    const paths = trailLayer.selectAll("path.trail-path").data(trailData);
+    paths.enter()
+        .append("path")
+        .attr("class", "trail-path")
+      .merge(paths)
+        .attr("d", pts => {
+            if (pts.length < 2) return "";
+            let d = `M${xScale(pts[0].re)},${yScale(pts[0].im)}`;
+            for (let j = 1; j < pts.length; j++) {
+                const dist = Math.hypot(pts[j].re - pts[j-1].re, pts[j].im - pts[j-1].im);
+                const cmd = dist > jumpThresh ? "M" : "L";
+                d += `${cmd}${xScale(pts[j].re)},${yScale(pts[j].im)}`;
+            }
+            return d;
+        })
+        .attr("stroke", (_, i) => rootColor(i, n));
+    paths.exit().remove();
+}
+
+function clearTrails() {
+    trailData = [];
+    trailComplete = false;
+    trailLayer.selectAll("path.trail-path").remove();
 }
 
 
@@ -1433,6 +1514,7 @@ const degreeNumber = document.getElementById("degree-number");
 
 function applyPattern() {
     clearAllSelection();
+    clearTrails();
     currentRoots = [];
     rootsLayer.selectAll("circle.root").remove();
     updatePanelRange(rootsSvg, panels.roots, MIN_RANGE);
@@ -1542,6 +1624,7 @@ function rebuild() {
 
     // Recreate layers
     coeffLayer = coeffSvg.append("g");
+    trailLayer = rootsSvg.append("g").attr("class", "trail-layer");
     rootsLayer = rootsSvg.append("g");
 
     renderCoefficients();
@@ -1551,6 +1634,7 @@ function rebuild() {
     solveRoots();
     rootsSvg.classed("domain-active", domainColoringEnabled);
     renderDomainColoring();
+    if (trailData.length > 0) renderTrails();
 }
 
 let resizeTimer;

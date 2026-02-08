@@ -27,7 +27,7 @@ Or visit the **[live demo](https://nassuphis.github.io/karpo_hackathon/)**.
 ## Architecture
 
 ```
-Single HTML file (~1570 lines)
+Single HTML file (~1650 lines)
 ├── d3.js v7 (CDN)          — SVG rendering, drag interactions
 ├── Ehrlich-Aberth solver    — polynomial root finding in pure JS
 ├── Horner evaluator         — domain coloring + derivative computation
@@ -119,6 +119,7 @@ Select one or more coefficients — a translucent control overlay appears on the
   - **Curves:** Lissajous (3:2), Figure-8, Cardioid, Astroid, Deltoid, Rose (3-petal), Spirograph, Hypotrochoid, Butterfly, Star (pentagram), Square
 - Adjustable radius and speed
 - Play/Pause control
+- **Trails** toggle: roots leave colored SVG path trails as they move. Loop detection auto-stops recording after one full cycle. Jump detection breaks trails at root-index swaps to avoid artifacts.
 
 ## Patterns
 

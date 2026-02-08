@@ -205,6 +205,12 @@ When a coefficient is assigned to a new path, it is automatically removed from a
 
 **Degree 5, circle pattern, Peano space-filling path** — A single coefficient (c₁) tracing a Peano curve at radius 0.75, speed 0.1. On the left, the coefficient's path reveals the Peano curve's characteristic zigzag pattern — dense, space-filling, covering the full square around the coefficient. On the right, each of the 5 roots responds by tracing its own miniature space-filling shape: the Peano structure propagates through the polynomial, producing self-similar fractal-like trails at each root position. The slow speed (0.1) allows the trails to accumulate cleanly, showing the full one-cycle braid. A striking demonstration of how a single space-filling perturbation on one coefficient induces fractal geometry across all roots.
 
+<p align="center">
+  <img src="snaps/polypaint-2026-02-08T21-58-35.png" width="90%" alt="Degree-20 two-clusters — dual Hilbert paths, all coefficients animated">
+</p>
+
+**Degree 20, two-clusters pattern, dual Hilbert (Moore curve) paths** — All 21 coefficients animated across two Hilbert paths at radius 0.65, speed 0.1, with complementary angles (0.75 and 0.25). One path drives 10 coefficients from one cluster, the other drives 11 from the second cluster. On the left, the overlapping Hilbert curves form a dense, layered maze — the two angle rotations tilt the space-filling grids against each other, creating a moiré-like interference pattern. On the right, the 20 root trails each trace their own miniature Hilbert-like fractal, arranged in a large ring. Every root responds to the combined space-filling motion of both coefficient groups, producing intricate self-similar shapes at each root position — some tightly wound, others more open depending on proximity to the coefficient clusters.
+
 ## Patterns
 
 ### Basic (5)

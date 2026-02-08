@@ -749,12 +749,17 @@ function generateRootShape(pattern, degree, spread) {
 // --- Drag behavior ---
 
 let dragMoved = false;
+let dragStartX = 0, dragStartY = 0;
+const CLICK_DEAD_ZONE = 3; // px threshold: smaller moves count as clicks, not drags
 const drag = d3.drag()
-    .on("start", function () {
+    .on("start", function (event) {
         dragMoved = false;
+        dragStartX = event.x;
+        dragStartY = event.y;
         d3.select(this).raise().classed("dragging", true);
     })
     .on("drag", function (event, d) {
+        if (!dragMoved && Math.hypot(event.x - dragStartX, event.y - dragStartY) < CLICK_DEAD_ZONE) return;
         dragMoved = true;
         const idx = d._idx;
         // Skip if this coefficient is being animated
@@ -964,9 +969,10 @@ function deleteCurrentPath() {
 }
 
 function coeffListLabel(coeffSet) {
+    const n = coefficients.length;
     const sorted = [...coeffSet].sort((a, b) => a - b);
     if (sorted.length <= 4) {
-        return sorted.map(i => `c${subscript(i)}`).join(' ');
+        return sorted.map(i => `c${subscript(n - 1 - i)}`).join(' ');
     }
     return `${sorted.length} coeffs`;
 }
@@ -1640,7 +1646,7 @@ function renderCoefficients() {
       .merge(labels)
         .attr("x", d => cxs()(d.re) + 12)
         .attr("y", d => cys()(d.im) + 4)
-        .text((_, i) => `c${subscript(i)}`);
+        .text((_, i) => `c${subscript(n - 1 - i)}`);
 
     labels.exit().remove();
 }
@@ -1653,12 +1659,16 @@ function subscript(n) {
 // --- Root drag behavior (roots → coefficients) ---
 
 let rootDragMoved = false;
+let rootDragStartX = 0, rootDragStartY = 0;
 const rootDrag = d3.drag()
-    .on("start", function () {
+    .on("start", function (event) {
         rootDragMoved = false;
+        rootDragStartX = event.x;
+        rootDragStartY = event.y;
         d3.select(this).raise().classed("dragging", true);
     })
     .on("drag", function (event, d) {
+        if (!rootDragMoved && Math.hypot(event.x - rootDragStartX, event.y - rootDragStartY) < CLICK_DEAD_ZONE) return;
         rootDragMoved = true;
         const newRe = rxs().invert(event.x);
         const newIm = rys().invert(event.y);
@@ -1685,6 +1695,16 @@ const rootDrag = d3.drag()
         const rootsForCoeffs = currentRoots.map(r => ({ re: r.re, im: r.im }));
         coefficients = rootsToCoefficients(rootsForCoeffs);
         for (const c of coefficients) c.curve = null;
+        // Clear animation paths — coefficient array was rebuilt, old paths are invalid
+        if (animPaths.length > 0) {
+            stopAnimation();
+            playBtn.textContent = "▶ Play";
+            animPaths = [];
+            viewedPathIdx = 0;
+            nextPathId = 1;
+            updateAnimBar();
+            renderCoeffTrails();
+        }
         renderCoefficients();
         renderDomainColoringThrottled();
     })
@@ -2082,8 +2102,29 @@ function solveRootsEA(coeffs, warmStart) {
     return result;
 }
 
+// Greedy nearest-neighbor matching: reorder newRoots to best match oldRoots indices.
+// Preserves root identity across frames so trails track the same root continuously.
+function matchRootOrder(newRoots, oldRoots) {
+    if (oldRoots.length === 0 || newRoots.length !== oldRoots.length) return newRoots;
+    const n = newRoots.length;
+    const used = new Uint8Array(n); // which newRoots indices are taken
+    const result = new Array(n);
+    for (let i = 0; i < n; i++) {
+        let bestJ = -1, bestDist = Infinity;
+        for (let j = 0; j < n; j++) {
+            if (used[j]) continue;
+            const d2 = (newRoots[j].re - oldRoots[i].re) ** 2 + (newRoots[j].im - oldRoots[i].im) ** 2;
+            if (d2 < bestDist) { bestDist = d2; bestJ = j; }
+        }
+        result[i] = newRoots[bestJ];
+        used[bestJ] = 1;
+    }
+    return result;
+}
+
 function solveRoots() {
-    const roots = solveRootsEA(coefficients, currentRoots);
+    let roots = solveRootsEA(coefficients, currentRoots);
+    roots = matchRootOrder(roots, currentRoots);
     renderRoots(roots);
 }
 
@@ -2331,7 +2372,7 @@ function snapCapture() {
         ctx.fillStyle = "#aaa";
         ctx.font = "10px sans-serif";
         ctx.textAlign = "left";
-        ctx.fillText("c" + subscript(i), cx + 10, cy + 4);
+        ctx.fillText("c" + subscript(nCoeff - 1 - i), cx + 10, cy + 4);
     }
 
     // Draw roots panel: background first, then domain coloring, then grid on top

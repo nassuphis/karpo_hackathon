@@ -192,6 +192,12 @@ When a coefficient is assigned to a new path, it is automatically removed from a
 
 **Degree 29, grid pattern, 10 simultaneous paths with mixed shapes and angles** — 10 of 30 coefficients each on their own path with diverse configurations: circles (c₀ at radius 1.4, c₁₃ at 0.5, c₁₇ at 1.0), a star (c₁₄ at radius 0.15), an astroid (c₁₅ at 0.3), and four horizontal oscillations (c₂₀–c₂₃ at varying speeds 0.2–0.8) plus c₅ horizontal at angle 0.96. Each path uses a different angle rotation, tilting the shapes relative to each other. On the left, the always-visible coefficient paths show the full variety — circles, a star, an astroid, and angled horizontal lines radiating from their coefficients across the grid. On the right, the 29 root trails form a dense braid around a large ring, with tight cusps where roots nearly collide and sweeping arcs from the combined interference of all 10 perturbations at different frequencies and orientations.
 
+<p align="center">
+  <img src="snaps/polypaint-2026-02-08T18-08-36.png" width="90%" alt="Degree-29 grid pattern — 11 paths, mostly angled horizontals, maximum chaos">
+</p>
+
+**Degree 29, grid pattern, 11 paths with mass horizontal perturbation** — Building on the previous snap, now with nearly every coefficient animated. Two group paths dominate: 12 coefficients (c₁–c₄, c₉–c₁₁, c₁₆–c₂₀) on a single horizontal at speed 0.7 with angle 0.73, and 5 coefficients (c₂₄–c₂₈) on a faster horizontal at speed 1.2 with angle 0.29. The remaining 4 solo paths keep their circles, star, and astroid from before. On the left, the angled horizontal paths form a striking fan of parallel lines across the grid — the angle slider tilts each group's oscillation axis differently. On the right, the root trails explode into tangled loops and whorls: with so many coefficients oscillating at different speeds and angles, the roots are pushed far from equilibrium, producing a chaotic braid where almost every root interacts with its neighbors.
+
 ## Patterns
 
 ### Basic (5)

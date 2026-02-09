@@ -12,9 +12,9 @@ PolyPaint makes this relationship tangible. Two side-by-side complex-plane panel
 
 - **Left panel (Coefficients):** Drag any coefficient dot and watch the roots respond instantly on the right. The domain coloring background shifts in real time, revealing how the polynomial's complex landscape reshapes.
 - **Right panel (Roots):** Drag any root dot and the coefficients on the left update to match — the polynomial is reconstructed from its roots via (z − r₀)(z − r₁)···(z − rₙ₋₁).
-- **Multi-select:** Click multiple coefficients (or roots) to select a group. Drag any member and the whole group moves together, maintaining their relative positions.
+- **Multi-select:** Click individual dots to toggle selection, or **marquee-select** by clicking and dragging on empty canvas to select all nodes inside the rectangle. Drag any selected item and the entire group moves together, maintaining relative positions.
 - **Animate:** Define multiple simultaneous animation paths — each path drives a different subset of coefficients along its own curve (circle, figure-8, spiral, etc.) with independent radius, speed, and direction. Hit Play and all paths activate at once, creating rich interference patterns as the roots respond to the combined perturbation.
-- **Transform:** Select coefficients or roots and apply Scale, Add (complex), or Rotate operations to the group.
+- **Transform:** Select coefficients or roots and use interactive gesture tools — **Scale** (vertical slider with exponential mapping), **Rotate** (horizontal slider in turns), and **Translate** (2D vector pad) — all with live preview as you drag.
 
 Everything runs client-side in a single HTML file. No server, no build step, no dependencies to install.
 
@@ -27,7 +27,7 @@ Or visit the **[live demo](https://nassuphis.github.io/karpo_hackathon/)**.
 ## Architecture
 
 ```
-Single HTML file (~2000 lines)
+Single HTML file (~3000 lines)
 ├── d3.js v7 (CDN)          — SVG rendering, drag interactions
 ├── Ehrlich-Aberth solver    — polynomial root finding in pure JS
 ├── Horner evaluator         — domain coloring + derivative computation
@@ -100,31 +100,36 @@ This is not a solver artifact; it is a topological invariant of the loop. Differ
 
 **What you see in PolyPaint:** the trail patterns are visual braids. When roots swap indices mid-trail, the jump detection breaks the path rather than drawing a false connecting line. A future improvement could track roots by continuity (solving a frame-to-frame assignment problem) rather than by array index, which would eliminate index swaps entirely and reveal the true braid structure.
 
-## Controls
+## Interface
+
+The UI is organized around a left sidebar with three groups and a compact header:
+
+**Header:** App title, clickable **Degree** label (click to open slider, range 3–30), and **Pattern** dropdown.
+
+**Sidebar — View:** ◐ Domain coloring toggle, 🎨 Root coloring toggle.
+
+**Sidebar — Tools:** ✕ Deselect all, ⬇ Export snapshot.
+
+**Sidebar — Ops** (enabled when nodes are selected): ⇕ **Scale** (vertical slider, exponential 0.1×–10×), ⟲ **Rotate** (horizontal slider, ±0.5 turns), ✛ **Translate** (2D vector pad, ±2 in each axis). Each opens a transient popover with live preview — drag to scrub, click outside or press Escape to commit and close.
 
 | Control | Description |
 |---------|-------------|
-| **Domain coloring** pill button | Toggles the domain coloring background on the roots panel (off by default). |
-| **Color roots** pill button | Toggles rainbow coloring on roots by array index (on by default). |
-| **Deselect all** button | Clears all coefficient and root selections. |
-| **Select all coeffs** button | Selects all coefficients for group operations. |
-| **Degree** number input (3–30) | Number of polynomial roots. Reinitializes coefficients on change. |
-| **Pattern dropdown** | Initial arrangement of coefficients or roots. 26 patterns in 3 categories. |
-| **Scale** action button | Multiplies all selected elements by a real number. |
-| **Add** action button | Adds a complex number (re + im·i) to all selected elements. |
-| **Rotate** action button | Rotates all selected elements by multiplying with exp(2πi·rev). |
+| **Degree** (header) | Click the number → horizontal slider popover (3–30). Reinitializes on change. |
+| **Pattern** dropdown | Initial arrangement of coefficients or roots. 26 patterns in 3 categories. |
+| **⊕** (coeff panel header) | Select all coefficients for group operations. |
 | **Sel→Path** button | Captures the current coefficient selection into a new animation path. |
-| **◀ ▶** path navigation | Cycle through defined paths to view/edit each one's settings. |
+| **◀ ▶** path navigation | Cycle through paths — auto-selects the viewed path's coefficients. |
 | **A (Angle)** slider | Rotates the path shape around the coefficient (0–1 → 0–360°). |
 | **CW / CCW** toggle | Sets clockwise or counter-clockwise direction for the current path. |
 | **×** delete button | Removes the currently viewed path. |
-| **Snap** button | Exports a PNG screenshot and JSON metadata file for the current state. |
 
-### Multi-Select and Group Drag
+### Selection
 
-Click any coefficient or root dot to toggle it into the selection. Click again to deselect. Selected items glow to indicate membership. Drag any selected item and the entire group translates together — relative positions are preserved.
-
-Clicking a coefficient clears any root selection and vice versa, so you work with one panel at a time. Press **Escape** to deselect all.
+- **Click** any dot to toggle it into the selection.
+- **Marquee select:** Click and drag on empty canvas to draw a selection rectangle — all nodes inside are added to the selection.
+- **Path navigation** auto-selects: cycling ◀/▶ through paths overrides the selection with the current path's coefficients.
+- Selected nodes pulse with a bright glow to clearly indicate membership.
+- Clicking a coefficient clears any root selection and vice versa. Press **Escape** to close any open tool, or deselect all if no tool is open.
 
 ### Multi-Path Animation
 
@@ -246,7 +251,7 @@ Heart, Circle, Star, Spiral, Cross, Diamond, Chessboard, Smiley, Figure-8, Butte
 
 ```
 karpo_hackathon/
-├── index.html            # Entire app (~2000 lines): CSS, JS, HTML all inline
+├── index.html            # Entire app (~3000 lines): CSS, JS, HTML all inline
 ├── snaps/                # Snap captures (PNG + JSON metadata)
 └── README.md
 ```

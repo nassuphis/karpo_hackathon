@@ -5,81 +5,191 @@
 <title>PolyPaint</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
+:root {
+    --bg: #0f1026;
+    --panel: #151a3a;
+    --stroke: rgba(255,255,255,0.08);
+    --stroke2: rgba(255,255,255,0.14);
+    --text: #e9e9f2;
+    --muted: #8a90a6;
+    --accent: #e94560;
+    --accent-hover: #c73550;
+    --accent-dim: rgba(233,69,96,0.18);
+    --accent-border: rgba(233,69,96,0.45);
+    --blue: #5b6abf;
+    --radius: 10px;
+    --blur: blur(12px);
+}
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; overflow: hidden; }
-body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #eee; display: flex; flex-direction: column; }
+body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: radial-gradient(ellipse 1200px 600px at 20% -10%, rgba(233,69,96,0.12), transparent 60%),
+                radial-gradient(ellipse 900px 500px at 90% 0%, rgba(91,106,191,0.10), transparent 60%),
+                var(--bg);
+    color: var(--text);
+    display: grid; grid-template-rows: auto 1fr; height: 100%;
+}
 /* --- Header --- */
 #header {
-    padding: 4px 16px; border-bottom: 1px solid #2a2a4a; flex-shrink: 0;
+    padding: 6px 14px; border-bottom: 1px solid var(--stroke);
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(10,12,30,0.55);
+    backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
 }
-#header .app-title { font-size: 14px; font-weight: 600; color: #8888aa; letter-spacing: 0.5px; }
-#domain-toggle-btn {
-    background: transparent; color: #666; border: 1px solid #444; border-radius: 12px;
-    padding: 3px 10px; font-size: 11px; cursor: pointer; transition: all 0.15s;
+#header .app-title {
+    font-size: 12px; font-weight: 600; color: var(--muted);
+    letter-spacing: 0.14em; text-transform: uppercase;
 }
-#domain-toggle-btn.active { background: #e94560; color: #fff; border-color: #e94560; }
-#domain-toggle-btn:hover:not(.active) { color: #aaa; border-color: #666; }
-#root-color-btn {
-    background: transparent; color: #666; border: 1px solid #444; border-radius: 12px;
-    padding: 3px 10px; font-size: 11px; cursor: pointer; transition: all 0.15s;
+.header-sep { width: 1px; height: 18px; background: var(--stroke2); }
+/* --- Content: sidebar + main --- */
+#content { display: grid; grid-template-columns: 60px 1fr; min-height: 0; }
+#sidebar {
+    padding: 10px 8px; border-right: 1px solid var(--stroke);
+    background: rgba(10,12,30,0.40);
+    backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+    display: flex; flex-direction: column; gap: 16px; align-items: center;
 }
-#root-color-btn.active { background: #e94560; color: #fff; border-color: #e94560; }
-#root-color-btn:hover:not(.active) { color: #aaa; border-color: #666; }
-#deselect-btn {
-    background: transparent; color: #666; border: 1px solid #444; border-radius: 12px;
-    padding: 3px 10px; font-size: 11px; cursor: pointer; transition: all 0.15s;
+.side-group { width: 100%; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.side-label {
+    font-size: 9px; color: var(--muted); letter-spacing: 0.12em;
+    text-transform: uppercase; opacity: 0.85;
 }
-#deselect-btn:hover { color: #eee; border-color: #888; }
-#select-all-coeffs-btn {
-    background: transparent; color: #666; border: 1px solid #444; border-radius: 12px;
-    padding: 3px 10px; font-size: 11px; cursor: pointer; transition: all 0.15s;
+.side-btn {
+    width: 40px; height: 40px; border-radius: 12px;
+    border: 1px solid var(--stroke); background: rgba(255,255,255,0.03);
+    color: var(--muted); display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 16px; padding: 0;
+    transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.06s;
 }
-#select-all-coeffs-btn:hover { color: #eee; border-color: #888; }
-/* --- Toolbar --- */
-#controls {
-    display: flex; align-items: center; justify-content: flex-start;
-    padding: 6px 16px; border-bottom: 1px solid #2a2a4a; flex-shrink: 0; gap: 0;
+.side-btn:hover { background: rgba(255,255,255,0.06); border-color: var(--stroke2); color: var(--text); }
+.side-btn:active { transform: translateY(1px); }
+.side-btn.active { background: var(--accent-dim); border-color: var(--accent-border); color: #fff; }
+#main { display: flex; flex-direction: column; min-height: 0; }
+.icon-btn {
+    width: 28px; height: 28px; border-radius: 8px;
+    border: 1px solid var(--stroke); background: rgba(255,255,255,0.03);
+    color: var(--muted); display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 13px; padding: 0;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
-.control-group {
-    display: flex; align-items: center; gap: 8px; padding: 0 20px;
-}
-.control-group + .control-group { border-left: 1px solid #2a2a4a; }
+.icon-btn:hover { background: rgba(255,255,255,0.06); border-color: var(--stroke2); color: var(--text); }
+.icon-btn.active { background: var(--accent-dim); border-color: var(--accent-border); color: #fff; }
 .control-label {
-    font-size: 11px; color: #777; text-transform: uppercase;
+    font-size: 10px; color: var(--muted); text-transform: uppercase;
     letter-spacing: 0.5px; font-weight: 500;
 }
-#degree-number {
-    width: 32px; background: transparent; color: #e94560; border: none;
-    border-bottom: 1px solid #444; font-size: 14px; font-weight: 600;
-    text-align: center; outline: none; font-family: inherit;
+.degree-val {
+    color: var(--accent); font-size: 14px; font-weight: 600;
+    cursor: pointer; min-width: 20px; text-align: center;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.12s;
 }
-#degree-number:focus { border-bottom-color: #e94560; }
-/* Hide spin buttons on number input */
-#degree-number::-webkit-outer-spin-button,
-#degree-number::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-#degree-number { -moz-appearance: textfield; }
-#pattern { background: #16213e; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; font-size: 12px; }
-.action-btn {
-    background: #e94560; color: #fff; border: none; border-radius: 4px;
-    padding: 3px 8px; font-size: 11px; cursor: pointer; font-weight: 500;
+.degree-val:hover { border-bottom-color: var(--accent); }
+.degree-val.tool-active { border-bottom-color: var(--accent); }
+#pattern {
+    background: rgba(255,255,255,0.04); color: var(--text);
+    border: 1px solid var(--stroke); border-radius: 6px;
+    padding: 4px 8px; font-size: 11px; outline: none;
 }
-.action-btn:hover { background: #c73550; }
-.param-input {
-    width: 48px; background: #16213e; color: #eee; border: 1px solid #444;
-    border-radius: 4px; padding: 3px 4px; font-size: 11px; text-align: center;
-    font-family: inherit; outline: none;
+/* --- Sidebar OPS --- */
+.side-group.ops .side-label { align-self: center; }
+#ops-target { opacity: 0.7; font-size: 8px; }
+#ops-group.disabled { opacity: 0.35; pointer-events: none; }
+#ops-group .side-btn.tool-active {
+    background: var(--accent-dim); border-color: var(--accent-border); color: #fff;
 }
-.param-input:focus { border-color: #e94560; }
-.param-input::-webkit-outer-spin-button,
-.param-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.param-input { -moz-appearance: textfield; }
-.param-label { font-size: 11px; color: #777; }
-#transform-group { gap: 5px; }
+/* --- Ops Popover --- */
+.ops-pop {
+    display: none; position: fixed; z-index: 200;
+    background: rgba(15, 16, 38, 0.92);
+    backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--stroke2); border-radius: var(--radius);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    padding: 10px; min-width: 52px;
+}
+.ops-pop.open { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.ops-pop .pop-title {
+    font-size: 9px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.10em;
+}
+.ops-pop .pop-val {
+    font-size: 11px; color: var(--accent); font-weight: 600; min-width: 40px; text-align: center;
+}
+/* Scale / Rotate slider track */
+.ops-pop .vslider {
+    width: 6px; height: 140px; border-radius: 3px;
+    background: rgba(255,255,255,0.06); position: relative; cursor: pointer;
+    touch-action: none;
+}
+.ops-pop .vslider .vslider-fill {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    border-radius: 3px; background: var(--accent-dim);
+    pointer-events: none;
+}
+.ops-pop .vslider .vslider-thumb {
+    position: absolute; left: 50%; width: 16px; height: 16px;
+    margin-left: -8px; margin-top: -8px;
+    border-radius: 50%; background: var(--accent); border: 2px solid #fff;
+    box-shadow: 0 0 8px rgba(233,69,96,0.5); pointer-events: none;
+}
+/* Horizontal slider (rotate) */
+.ops-pop .hslider {
+    width: 160px; height: 6px; border-radius: 3px;
+    background: rgba(255,255,255,0.06); position: relative; cursor: pointer;
+    touch-action: none;
+}
+.ops-pop .hslider .hslider-thumb {
+    position: absolute; top: 50%; width: 16px; height: 16px;
+    margin-left: -8px; margin-top: -8px;
+    border-radius: 50%; background: var(--accent); border: 2px solid #fff;
+    box-shadow: 0 0 8px rgba(233,69,96,0.5); pointer-events: none;
+}
+.ops-pop .hslider .hslider-center {
+    position: absolute; left: 50%; top: 0; bottom: 0; width: 1px;
+    background: rgba(255,255,255,0.15); pointer-events: none;
+}
+/* 2D vector pad */
+.ops-pop .vec-pad {
+    width: 140px; height: 140px; border-radius: 8px;
+    background: rgba(255,255,255,0.04); border: 1px solid var(--stroke);
+    position: relative; cursor: crosshair; touch-action: none;
+}
+.ops-pop .vec-pad .pad-axis {
+    position: absolute; background: rgba(255,255,255,0.08); pointer-events: none;
+}
+.ops-pop .vec-pad .pad-axis.h { left: 0; right: 0; top: 50%; height: 1px; }
+.ops-pop .vec-pad .pad-axis.v { top: 0; bottom: 0; left: 50%; width: 1px; }
+.ops-pop .vec-pad .pad-dot {
+    position: absolute; width: 14px; height: 14px;
+    margin-left: -7px; margin-top: -7px;
+    border-radius: 50%; background: var(--accent); border: 2px solid #fff;
+    box-shadow: 0 0 8px rgba(233,69,96,0.5); pointer-events: none;
+    left: 50%; top: 50%;
+}
+.ops-pop .vec-pad .pad-line {
+    position: absolute; pointer-events: none;
+    left: 50%; top: 50%; width: 0; height: 0;
+    transform-origin: 0 0;
+}
+.ops-pop .pop-row {
+    display: flex; gap: 8px; font-size: 10px; color: var(--muted);
+}
 /* --- Panels --- */
-#panels { display: flex; justify-content: center; gap: 16px; padding: 8px 12px 12px; flex: 1; min-height: 0; }
-.panel { text-align: center; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
-.panel h3 { margin-bottom: 4px; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: #666; flex-shrink: 0; }
-svg { background: #16213e; border: 1px solid #2a2a4a; border-radius: 8px; flex: 1; position: relative; }
+#panels { display: flex; justify-content: center; gap: 12px; padding: 8px 12px 12px 8px; flex: 1; min-height: 0; }
+.panel {
+    text-align: center; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;
+    background: rgba(255,255,255,0.02); border: 1px solid var(--stroke);
+    border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0,0,0,0.3); overflow: hidden;
+}
+.panel h3 {
+    margin: 0; padding: 8px 12px; flex-shrink: 0;
+    font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted);
+    border-bottom: 1px solid var(--stroke); background: rgba(10,12,30,0.45);
+    display: flex; align-items: center; justify-content: space-between;
+}
+.panel h3 .icon-btn { width: 22px; height: 22px; font-size: 11px; border-radius: 6px; }
+svg { background: var(--panel); border: 0; border-radius: 0; flex: 1; position: relative; }
 .grid line { stroke: #1f3354; stroke-width: 0.5; }
 .axis line { stroke: #2a4a6b; stroke-width: 1; }
 .unit-circle { fill: none; stroke: #2a4a6b; stroke-width: 1; stroke-dasharray: 4 3; }
@@ -89,68 +199,86 @@ circle.root { cursor: grab; stroke-width: 1.5; }
 circle.root.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
 .coeff-label { font-size: 10px; fill: #aaa; pointer-events: none; }
 #roots-container { position: relative; flex: 1; min-height: 0; }
-#domain-canvas { position: absolute; top: 0; left: 0; border-radius: 8px; }
+#domain-canvas { position: absolute; top: 0; left: 0; border-radius: 0; }
 #roots-panel.domain-active { background: transparent !important; }
-circle.coeff.selected { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px #e94560) drop-shadow(0 0 16px #e94560); stroke: #fff; stroke-width: 2.5; }
-circle.root.selected { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px #e94560) drop-shadow(0 0 16px #e94560); stroke: #fff; stroke-width: 2.5; }
+circle.coeff.selected, circle.root.selected {
+    stroke: #fff; stroke-width: 3;
+    filter: drop-shadow(0 0 4px var(--accent)) drop-shadow(0 0 10px var(--accent)) drop-shadow(0 0 18px rgba(233,69,96,0.4));
+    animation: sel-pulse 1.2s ease-in-out infinite alternate;
+}
+@keyframes sel-pulse {
+    from { filter: drop-shadow(0 0 4px var(--accent)) drop-shadow(0 0 10px var(--accent)) drop-shadow(0 0 18px rgba(233,69,96,0.4)); }
+    to   { filter: drop-shadow(0 0 6px var(--accent)) drop-shadow(0 0 14px var(--accent)) drop-shadow(0 0 24px rgba(233,69,96,0.5)); }
+}
+.sel-rect {
+    fill: rgba(233,69,96,0.12); stroke: rgba(233,69,96,0.65);
+    stroke-width: 1.5; stroke-dasharray: 4 3; pointer-events: none;
+}
 #coeff-container { position: relative; flex: 1; min-height: 0; }
+/* --- Anim bar --- */
 #anim-bar {
     position: absolute; top: 8px; left: 8px; right: 8px; z-index: 10;
     display: none; padding: 8px 12px;
-    background: rgba(22, 33, 62, 0.88);
-    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 8px;
-    flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 14px;
+    background: rgba(15, 16, 38, 0.88);
+    backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--stroke);
+    border-radius: var(--radius);
 }
-#anim-bar.active { display: flex; }
-#anim-bar .bar-title { font-weight: bold; color: #e94560; font-size: 14px; }
-#anim-bar label { font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
-#anim-bar select { background: #16213e; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 2px 6px; font-size: 11px; }
-#anim-bar input[type="range"] { width: 70px; accent-color: #e94560; }
-#anim-bar .bar-val { color: #e94560; min-width: 24px; text-align: right; font-size: 11px; }
+#anim-bar.active { display: grid; grid-template-columns: 1fr; gap: 6px; }
+.bar-row { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
+#anim-bar .bar-title { font-weight: bold; color: var(--accent); font-size: 13px; }
+#anim-bar label { font-size: 11px; display: flex; align-items: center; gap: 4px; cursor: pointer; color: var(--muted); }
+#anim-bar select {
+    background: rgba(255,255,255,0.04); color: var(--text);
+    border: 1px solid var(--stroke); border-radius: 6px;
+    padding: 2px 6px; font-size: 11px;
+}
+#anim-bar input[type="range"] { width: 70px; accent-color: var(--accent); }
+#anim-bar .bar-val { color: var(--accent); min-width: 24px; text-align: right; font-size: 11px; }
 #play-btn {
-    background: #e94560; color: #fff; border: none; border-radius: 4px;
-    padding: 4px 12px; font-size: 12px; cursor: pointer;
+    background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    padding: 4px 12px; font-size: 11px; cursor: pointer; font-weight: 500;
+    transition: background 0.12s;
 }
-#play-btn:hover { background: #c73550; }
+#play-btn:hover { background: var(--accent-hover); }
 #trails-btn {
-    background: transparent; color: #888; border: 1px solid #555; border-radius: 4px;
-    padding: 4px 12px; font-size: 12px; cursor: pointer; transition: all 0.15s;
+    background: transparent; color: var(--muted); border: 1px solid var(--stroke); border-radius: 6px;
+    padding: 4px 10px; font-size: 11px; cursor: pointer; transition: all 0.12s;
 }
-#trails-btn.active { background: #e94560; color: #fff; border-color: #e94560; }
-#trails-btn:hover:not(.active) { color: #ccc; border-color: #888; }
+#trails-btn.active { background: var(--accent-dim); color: #fff; border-color: var(--accent-border); }
+#trails-btn:hover:not(.active) { color: var(--text); border-color: var(--stroke2); }
 #sel2path-btn {
-    background: transparent; color: #e94560; border: 1px solid #e94560; border-radius: 4px;
-    padding: 4px 10px; font-size: 11px; cursor: pointer; font-weight: 600; transition: all 0.15s;
+    background: transparent; color: var(--accent); border: 1px solid var(--accent-border); border-radius: 6px;
+    padding: 4px 10px; font-size: 11px; cursor: pointer; font-weight: 600; transition: all 0.12s;
 }
-#sel2path-btn:hover { background: #e94560; color: #fff; }
-#sel2path-btn:disabled { opacity: 0.3; cursor: default; background: transparent; color: #e94560; }
+#sel2path-btn:hover { background: var(--accent); color: #fff; }
+#sel2path-btn:disabled { opacity: 0.3; cursor: default; background: transparent; color: var(--accent); }
 #path-nav { display: flex; align-items: center; gap: 4px; }
 .path-nav-btn {
-    background: transparent; color: #888; border: 1px solid #555; border-radius: 3px;
+    background: transparent; color: var(--muted); border: 1px solid var(--stroke); border-radius: 5px;
     width: 22px; height: 22px; font-size: 10px; cursor: pointer; padding: 0;
-    display: flex; align-items: center; justify-content: center;
+    display: flex; align-items: center; justify-content: center; transition: all 0.12s;
 }
-.path-nav-btn:hover { color: #fff; border-color: #888; }
-#path-label { font-size: 11px; color: #aaa; min-width: 56px; text-align: center; }
+.path-nav-btn:hover { color: #fff; border-color: var(--stroke2); }
+#path-label { font-size: 11px; color: var(--muted); min-width: 56px; text-align: center; }
 #ccw-btn {
-    background: transparent; color: #888; border: 1px solid #555; border-radius: 4px;
-    padding: 3px 8px; font-size: 10px; cursor: pointer; transition: all 0.15s; min-width: 28px;
+    background: transparent; color: var(--muted); border: 1px solid var(--stroke); border-radius: 6px;
+    padding: 3px 8px; font-size: 10px; cursor: pointer; transition: all 0.12s; min-width: 28px;
 }
-#ccw-btn.active { background: #5b6abf; color: #fff; border-color: #5b6abf; }
+#ccw-btn.active { background: rgba(91,106,191,0.20); color: #fff; border-color: rgba(91,106,191,0.55); }
 #del-path-btn {
-    background: transparent; color: #666; border: 1px solid #444; border-radius: 4px;
+    background: transparent; color: var(--muted); border: 1px solid var(--stroke); border-radius: 6px;
     width: 22px; height: 22px; font-size: 14px; cursor: pointer; padding: 0;
-    display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+    display: flex; align-items: center; justify-content: center; transition: all 0.12s;
 }
-#del-path-btn:hover { color: #e94560; border-color: #e94560; }
-.bar-sep { width: 1px; height: 20px; background: rgba(255,255,255,0.12); margin: 0 4px; }
+#del-path-btn:hover { color: var(--accent); border-color: var(--accent-border); }
 .trail-path { fill: none; stroke-width: 1.5; opacity: 0.6; stroke-linecap: round; stroke-linejoin: round; }
 .tooltip {
-    position: absolute; background: rgba(0,0,0,0.85); color: #fff;
-    padding: 4px 8px; border-radius: 4px; font-size: 12px; pointer-events: none;
+    position: absolute; background: rgba(10,12,30,0.75); color: var(--text);
+    padding: 5px 10px; border-radius: 8px; font-size: 12px; pointer-events: none;
     display: none; white-space: nowrap;
+    border: 1px solid var(--stroke);
+    backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
 }
 </style>
 </head>
@@ -158,20 +286,10 @@ circle.root.selected { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px #e9
 
 <div id="header">
     <span class="app-title">PolyPaint</span>
-</div>
-<div id="controls">
-    <div class="control-group">
-        <button id="domain-toggle-btn">Domain coloring</button>
-        <button id="root-color-btn" class="active">Color roots</button>
-        <button id="deselect-btn">Deselect all</button>
-        <button id="select-all-coeffs-btn">Select all coeffs</button>
-        <button class="action-btn" id="snap-btn">Snap</button>
-        <span class="control-label">Degree</span>
-        <input type="number" id="degree-number" min="3" max="30" value="5">
-    </div>
-    <div class="control-group">
-        <span class="control-label">Pattern</span>
-        <select id="pattern">
+    <div class="header-sep"></div>
+    <span class="control-label">Degree</span>
+    <span id="degree-number" class="degree-val">5</span>
+    <select id="pattern">
             <optgroup label="Basic">
                 <option value="circle">Circle</option>
                 <option value="real">Real axis</option>
@@ -204,82 +322,99 @@ circle.root.selected { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 8px #e9
                 <option value="r-polygon">Polygon</option>
                 <option value="r-infinity">Infinity</option>
             </optgroup>
-        </select>
-    </div>
-    <div class="control-group" id="transform-group">
-        <button class="action-btn" id="scale-btn">Scale</button>
-        <input type="number" id="scale-val" value="2" step="0.1" class="param-input">
-        <button class="action-btn" id="add-btn">Add</button>
-        <input type="number" id="add-re" value="0" step="0.1" class="param-input"> + <input type="number" id="add-im" value="1" step="0.1" class="param-input"><span class="param-label">i</span>
-        <button class="action-btn" id="rotate-btn">Rotate</button>
-        <input type="number" id="rotate-val" value="0.25" step="0.01" class="param-input"><span class="param-label">rev</span>
-    </div>
+    </select>
 </div>
-
-<div id="panels">
+<div id="content">
+    <div id="sidebar">
+        <div class="side-group">
+            <div class="side-label">View</div>
+            <button id="domain-toggle-btn" class="side-btn" title="Domain coloring">◐</button>
+            <button id="root-color-btn" class="side-btn active" title="Color roots">🎨</button>
+        </div>
+        <div class="side-group">
+            <div class="side-label">Tools</div>
+            <button id="deselect-btn" class="side-btn" title="Deselect all (Esc)">✕</button>
+            <button id="snap-btn" class="side-btn" title="Export snapshot">⬇</button>
+        </div>
+        <div class="side-group ops disabled" id="ops-group">
+            <div class="side-label">Ops <span id="ops-target"></span></div>
+            <button id="scale-tool-btn" class="side-btn" title="Scale">⇕</button>
+            <button id="rotate-tool-btn" class="side-btn" title="Rotate">⟲</button>
+            <button id="add-tool-btn" class="side-btn" title="Translate">✛</button>
+        </div>
+    </div>
+    <div id="main">
+        <div id="panels">
     <div class="panel">
-        <h3>Coefficients (drag to edit)</h3>
+        <h3><span>Coefficients</span><button id="select-all-coeffs-btn" class="icon-btn" title="Select all">⊕</button></h3>
         <div id="coeff-container">
             <svg id="coeff-panel"></svg>
             <div id="anim-bar">
-                <button id="sel2path-btn">Sel→Path</button>
-                <div id="path-nav">
-                    <button id="path-prev" class="path-nav-btn">◀</button>
-                    <span id="path-label">Path 1/1</span>
-                    <button id="path-next" class="path-nav-btn">▶</button>
+                <div class="bar-row">
+                    <button id="sel2path-btn">Sel→Path</button>
+                    <div id="path-nav">
+                        <button id="path-prev" class="path-nav-btn">◀</button>
+                        <span id="path-label">Path 1/1</span>
+                        <button id="path-next" class="path-nav-btn">▶</button>
+                    </div>
+                    <span class="bar-title" id="bar-title">c₀</span>
+                    <label>
+                        <select id="anim-path">
+                            <option value="none">None</option>
+                            <optgroup label="Basic">
+                                <option value="circle">Circle</option>
+                                <option value="horizontal">Horizontal</option>
+                                <option value="vertical">Vertical</option>
+                                <option value="spiral">Spiral</option>
+                                <option value="random">Random walk</option>
+                            </optgroup>
+                            <optgroup label="Curves">
+                                <option value="lissajous">Lissajous (3:2)</option>
+                                <option value="figure8">Figure-8</option>
+                                <option value="cardioid">Cardioid</option>
+                                <option value="astroid">Astroid</option>
+                                <option value="deltoid">Deltoid</option>
+                                <option value="rose">Rose (3-petal)</option>
+                                <option value="epitrochoid">Spirograph</option>
+                                <option value="hypotrochoid">Hypotrochoid</option>
+                                <option value="butterfly">Butterfly</option>
+                                <option value="star">Star (pentagram)</option>
+                                <option value="square">Square</option>
+                            </optgroup>
+                            <optgroup label="Space-filling">
+                                <option value="hilbert">Hilbert (Moore)</option>
+                                <option value="peano">Peano</option>
+                                <option value="sierpinski">Sierpinski</option>
+                            </optgroup>
+                        </select>
+                    </label>
+                    <button id="ccw-btn">CW</button>
+                    <button id="del-path-btn">×</button>
                 </div>
-                <span class="bar-title" id="bar-title">c₀</span>
-                <label>
-                    <select id="anim-path">
-                        <option value="none">None</option>
-                        <optgroup label="Basic">
-                            <option value="circle">Circle</option>
-                            <option value="horizontal">Horizontal</option>
-                            <option value="vertical">Vertical</option>
-                            <option value="spiral">Spiral</option>
-                            <option value="random">Random walk</option>
-                        </optgroup>
-                        <optgroup label="Curves">
-                            <option value="lissajous">Lissajous (3:2)</option>
-                            <option value="figure8">Figure-8</option>
-                            <option value="cardioid">Cardioid</option>
-                            <option value="astroid">Astroid</option>
-                            <option value="deltoid">Deltoid</option>
-                            <option value="rose">Rose (3-petal)</option>
-                            <option value="epitrochoid">Spirograph</option>
-                            <option value="hypotrochoid">Hypotrochoid</option>
-                            <option value="butterfly">Butterfly</option>
-                            <option value="star">Star (pentagram)</option>
-                            <option value="square">Square</option>
-                        </optgroup>
-                        <optgroup label="Space-filling">
-                            <option value="hilbert">Hilbert (Moore)</option>
-                            <option value="peano">Peano</option>
-                            <option value="sierpinski">Sierpinski</option>
-                        </optgroup>
-                    </select>
-                </label>
-                <label>R: <input type="range" id="anim-radius" min="0.05" max="3.0" step="0.05" value="0.5"> <span class="bar-val" id="anim-radius-val">0.5</span></label>
-                <label>S: <input type="range" id="anim-speed" min="0.1" max="1.0" step="0.1" value="1.0"> <span class="bar-val" id="anim-speed-val">1.0</span></label>
-                <label>A: <input type="range" id="anim-angle" min="0" max="1.0" step="0.01" value="0"> <span class="bar-val" id="anim-angle-val">0.00</span></label>
-                <button id="ccw-btn">CW</button>
-                <button id="del-path-btn">×</button>
-                <div class="bar-sep"></div>
-                <button id="play-btn">▶ Play</button>
-                <button id="trails-btn">Trails</button>
+                <div class="bar-row">
+                    <label>R: <input type="range" id="anim-radius" min="0.05" max="3.0" step="0.05" value="0.5"> <span class="bar-val" id="anim-radius-val">0.5</span></label>
+                    <label>S: <input type="range" id="anim-speed" min="0.1" max="1.0" step="0.1" value="1.0"> <span class="bar-val" id="anim-speed-val">1.0</span></label>
+                    <label>A: <input type="range" id="anim-angle" min="0" max="1.0" step="0.01" value="0"> <span class="bar-val" id="anim-angle-val">0.00</span></label>
+                    <button id="play-btn">▶ Play</button>
+                    <button id="trails-btn">Trails</button>
+                </div>
             </div>
         </div>
     </div>
     <div class="panel">
-        <h3>Roots (drag to edit)</h3>
+        <h3><span>Roots</span></h3>
         <div id="roots-container">
             <canvas id="domain-canvas"></canvas>
             <svg id="roots-panel"></svg>
         </div>
     </div>
 </div>
+    </div>
+</div>
 
 <div class="tooltip" id="tooltip"></div>
+<div id="ops-pop" class="ops-pop"></div>
+<div id="degree-pop" class="ops-pop"></div>
 
 <script>
 const MIN_RANGE = 1.5;
@@ -289,9 +424,10 @@ const RANGE_PAD = 1.3; // 30% padding around data
 // Compute panel size from available space
 function getPanelSize() {
     const header = document.getElementById("header");
-    const controls = document.getElementById("controls");
-    const availH = window.innerHeight - header.offsetHeight - controls.offsetHeight - 50;
-    const availW = (window.innerWidth - 16 * 3) / 2;
+    const sidebar = document.getElementById("sidebar");
+    const sidebarW = sidebar ? sidebar.offsetWidth : 0;
+    const availH = window.innerHeight - header.offsetHeight - 50;
+    const availW = (window.innerWidth - sidebarW - 16 * 3) / 2;
     return Math.max(200, Math.floor(Math.min(availW, availH)));
 }
 
@@ -888,14 +1024,101 @@ function clearAllSelection() {
     clearRootSelection();
 }
 
+function updateTransformGroupVisibility() {
+    const hasCoeff = selectedCoeffs.size > 0;
+    const hasRoot = selectedRoots.size > 0;
+    const hasSel = hasCoeff || hasRoot;
+    document.getElementById("ops-group").classList.toggle("disabled", !hasSel);
+    const t = document.getElementById("ops-target");
+    if (!hasSel) {
+        t.textContent = "";
+        if (typeof closeOpTool === "function") closeOpTool();
+    }
+    else if (hasCoeff) t.textContent = "· coeffs";
+    else t.textContent = "· roots";
+}
+
 function updateCoeffSelectionVisual() {
     coeffLayer.selectAll("circle.coeff")
         .classed("selected", d => selectedCoeffs.has(d._idx));
+    updateTransformGroupVisibility();
 }
 
 function updateRootSelectionVisual() {
     rootsLayer.selectAll("circle.root")
         .classed("selected", d => selectedRoots.has(d._idx));
+    updateTransformGroupVisibility();
+}
+
+// --- Marquee (area) selection ---
+
+function installMarqueeSelection(svgSel, getCirclesSel, which) {
+    const svgNode = svgSel.node();
+    let dragging = false;
+    let x0 = 0, y0 = 0;
+    let rect = null;
+
+    function begin(event) {
+        const t = event.target;
+        if (t && t.tagName === "circle") return;
+        if (event.button != null && event.button !== 0) return;
+
+        if (which === "coeff") clearRootSelection();
+        else clearCoeffSelection();
+
+        dragging = true;
+        const p = d3.pointer(event, svgNode);
+        x0 = p[0]; y0 = p[1];
+
+        rect = svgSel.append("rect")
+            .attr("class", "sel-rect")
+            .attr("x", x0).attr("y", y0)
+            .attr("width", 0).attr("height", 0);
+        event.preventDefault();
+    }
+
+    function move(event) {
+        if (!dragging || !rect) return;
+        const p = d3.pointer(event, svgNode);
+        const x1 = p[0], y1 = p[1];
+        rect.attr("x", Math.min(x0, x1)).attr("y", Math.min(y0, y1))
+            .attr("width", Math.abs(x1 - x0)).attr("height", Math.abs(y1 - y0));
+        event.preventDefault();
+    }
+
+    function end() {
+        if (!dragging) return;
+        dragging = false;
+        if (!rect) return;
+
+        const x = +rect.attr("x"), y = +rect.attr("y");
+        const w = +rect.attr("width"), h = +rect.attr("height");
+        rect.remove();
+        rect = null;
+
+        if (w < 3 || h < 3) return;
+
+        const xMax = x + w, yMax = y + h;
+        getCirclesSel().each(function(d) {
+            const cx = +this.getAttribute("cx");
+            const cy = +this.getAttribute("cy");
+            if (cx >= x && cx <= xMax && cy >= y && cy <= yMax) {
+                if (which === "coeff") selectedCoeffs.add(d._idx);
+                else selectedRoots.add(d._idx);
+            }
+        });
+
+        if (which === "coeff") {
+            updateCoeffSelectionVisual();
+            updateAnimBar();
+        } else {
+            updateRootSelectionVisual();
+        }
+    }
+
+    svgSel.on("mousedown.marquee", begin);
+    window.addEventListener("mousemove", move, { passive: false });
+    window.addEventListener("mouseup", end, { passive: false });
 }
 
 // --- Path management ---
@@ -1077,18 +1300,30 @@ animPathSel.addEventListener("change", syncPathFromBar);
 // Sel→Path button
 sel2pathBtn.addEventListener("click", createPathFromSelection);
 
+// Select the coefficients belonging to the currently viewed path
+function selectPathCoeffs() {
+    if (animPaths.length === 0) return;
+    const path = animPaths[viewedPathIdx];
+    clearRootSelection();
+    selectedCoeffs.clear();
+    for (const idx of path.coeffs) selectedCoeffs.add(idx);
+    updateCoeffSelectionVisual();
+}
+
 // Path navigation
 pathPrevBtn.addEventListener("click", function () {
     if (animPaths.length <= 1) return;
     viewedPathIdx = (viewedPathIdx - 1 + animPaths.length) % animPaths.length;
     syncBarToPath();
     pathLabel.textContent = `Path ${viewedPathIdx + 1}/${animPaths.length}`;
+    selectPathCoeffs();
 });
 pathNextBtn.addEventListener("click", function () {
     if (animPaths.length <= 1) return;
     viewedPathIdx = (viewedPathIdx + 1) % animPaths.length;
     syncBarToPath();
     pathLabel.textContent = `Path ${viewedPathIdx + 1}/${animPaths.length}`;
+    selectPathCoeffs();
 });
 
 // CCW toggle
@@ -2141,6 +2376,7 @@ function solveRootsThrottled() {
 // --- Degree input ---
 
 const degreeNumber = document.getElementById("degree-number");
+let currentDegree = 5;
 
 function applyPattern() {
     stopAnimation();
@@ -2154,19 +2390,115 @@ function applyPattern() {
     currentRoots = [];
     rootsLayer.selectAll("circle.root").remove();
     updatePanelRange(rootsSvg, panels.roots, MIN_RANGE);
-    initCoefficients(parseInt(degreeNumber.value));
+    initCoefficients(currentDegree);
     renderCoefficients();
     solveRoots();
     renderDomainColoring();
 }
 
-degreeNumber.addEventListener("change", function () {
-    let v = parseInt(this.value);
-    if (isNaN(v)) v = 5;
-    v = Math.max(3, Math.min(30, v));
-    this.value = v;
+function setDegree(v) {
+    v = Math.max(3, Math.min(30, Math.round(v)));
+    if (v === currentDegree) return;
+    currentDegree = v;
+    degreeNumber.textContent = v;
     applyPattern();
+}
+
+// Degree popover (horizontal slider 3–30)
+let degreePopEl = null;
+let degreeToolActive = false;
+
+function closeDegreePopover() {
+    if (degreePopEl) { degreePopEl.classList.remove("open"); degreePopEl.innerHTML = ""; }
+    degreeNumber.classList.remove("tool-active");
+    degreeToolActive = false;
+    window.removeEventListener("mousemove", degreeDragMove);
+    window.removeEventListener("mouseup", degreeDragUp);
+}
+let degreeDragMove = null;
+let degreeDragUp = null;
+
+degreeNumber.addEventListener("click", function(e) {
+    e.stopPropagation();
+    if (degreeToolActive) { closeDegreePopover(); return; }
+    // close any ops tool first
+    if (typeof closeOpTool === "function") closeOpTool();
+    degreeToolActive = true;
+    degreeNumber.classList.add("tool-active");
+
+    if (!degreePopEl) degreePopEl = document.getElementById("degree-pop");
+    degreePopEl.innerHTML = "";
+
+    const title = document.createElement("div");
+    title.className = "pop-title"; title.textContent = "Degree";
+    const valEl = document.createElement("div");
+    valEl.className = "pop-val";
+    valEl.textContent = currentDegree;
+
+    const slider = document.createElement("div");
+    slider.className = "hslider";
+    slider.style.width = "180px";
+    const thumb = document.createElement("div");
+    thumb.className = "hslider-thumb";
+    slider.appendChild(thumb);
+
+    // ticks
+    const tickRow = document.createElement("div");
+    tickRow.className = "pop-row";
+    tickRow.style.justifyContent = "space-between";
+    tickRow.style.width = "180px";
+    tickRow.style.fontSize = "9px";
+    tickRow.textContent = "3 — 30";
+
+    function uFromDeg(d) { return (d - 3) / (30 - 3); }
+    function degFromU(u) { return Math.round(3 + u * (30 - 3)); }
+    let u = uFromDeg(currentDegree);
+
+    function updateVisual() {
+        thumb.style.left = (u * 100) + "%";
+        const d = degFromU(u);
+        valEl.textContent = d;
+    }
+
+    function setFromX(clientX) {
+        const rect = slider.getBoundingClientRect();
+        u = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        updateVisual();
+        setDegree(degFromU(u));
+    }
+
+    let dragging = false;
+    slider.addEventListener("mousedown", ev => {
+        dragging = true; setFromX(ev.clientX); ev.preventDefault();
+    });
+    degreeDragMove = ev => { if (dragging) setFromX(ev.clientX); };
+    degreeDragUp = () => { dragging = false; };
+    window.addEventListener("mousemove", degreeDragMove);
+    window.addEventListener("mouseup", degreeDragUp);
+
+    updateVisual();
+    degreePopEl.appendChild(title);
+    degreePopEl.appendChild(slider);
+    degreePopEl.appendChild(valEl);
+    degreePopEl.appendChild(tickRow);
+    degreePopEl.classList.add("open");
+
+    // position below the degree label
+    const r = degreeNumber.getBoundingClientRect();
+    degreePopEl.style.left = r.left + "px";
+    degreePopEl.style.top = (r.bottom + 8) + "px";
 });
+
+// close degree popover on outside click
+document.addEventListener("mousedown", function(e) {
+    if (!degreeToolActive) return;
+    if (degreePopEl && degreePopEl.contains(e.target)) return;
+    if (degreeNumber.contains(e.target)) return;
+    closeDegreePopover();
+});
+document.addEventListener("keydown", function(e) {
+    if (e.key === "Escape" && degreeToolActive) { closeDegreePopover(); e.stopImmediatePropagation(); }
+}, true);
 
 document.getElementById("pattern").addEventListener("change", applyPattern);
 
@@ -2197,26 +2529,52 @@ rootColorBtn.addEventListener("click", function () {
 });
 
 document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") clearAllSelection();
+    if (e.key === "Escape") {
+        if (typeof activeToolBtn !== "undefined" && activeToolBtn) { closeOpTool(); return; }
+        clearAllSelection();
+    }
 });
 
-// --- Transform actions ---
+// --- Transform tools (popover with live preview) ---
 
-function applyTransformToSelection(fn) {
+const opsPop = document.getElementById("ops-pop");
+let activeToolBtn = null;
+let opSnapshot = null; // { which: "coeff"|"roots", items: [{idx, re, im}, ...] }
+
+function snapshotSelection() {
+    const items = [];
     if (selectedCoeffs.size > 0) {
         for (const idx of selectedCoeffs) {
             const c = coefficients[idx];
-            const r = fn(c.re, c.im);
+            items.push({ idx, re: c.re, im: c.im });
+        }
+        return { which: "coeff", items };
+    } else if (selectedRoots.size > 0) {
+        for (const idx of selectedRoots) {
+            const r = currentRoots[idx];
+            items.push({ idx, re: r.re, im: r.im });
+        }
+        return { which: "roots", items };
+    }
+    return null;
+}
+
+function applyPreview(snap, fn) {
+    if (!snap) return;
+    if (snap.which === "coeff") {
+        for (const s of snap.items) {
+            const c = coefficients[s.idx];
+            const r = fn(s.re, s.im);
             c.re = r.re; c.im = r.im;
         }
         autoScaleCoeffPanel();
         renderCoefficients();
         updateCoeffSelectionVisual();
         solveRootsThrottled();
-    } else if (selectedRoots.size > 0) {
-        for (const idx of selectedRoots) {
-            const r = currentRoots[idx];
-            const res = fn(r.re, r.im);
+    } else {
+        for (const s of snap.items) {
+            const r = currentRoots[s.idx];
+            const res = fn(s.re, s.im);
             r.re = res.re; r.im = res.im;
         }
         autoScaleRootsPanel();
@@ -2227,22 +2585,219 @@ function applyTransformToSelection(fn) {
     }
 }
 
-document.getElementById("scale-btn").addEventListener("click", function () {
-    const s = parseFloat(document.getElementById("scale-val").value) || 1;
-    applyTransformToSelection((re, im) => ({ re: re * s, im: im * s }));
+function positionPopover(btnEl) {
+    const r = btnEl.getBoundingClientRect();
+    opsPop.style.left = (r.right + 8) + "px";
+    opsPop.style.top = r.top + "px";
+}
+
+function closeOpTool() {
+    opsPop.classList.remove("open");
+    opsPop.innerHTML = "";
+    if (activeToolBtn) activeToolBtn.classList.remove("tool-active");
+    activeToolBtn = null;
+    opSnapshot = null;
+    // remove drag listeners
+    window.removeEventListener("mousemove", opToolMouseMove);
+    window.removeEventListener("mouseup", opToolMouseUp);
+}
+
+let opToolMouseMove = null;
+let opToolMouseUp = null;
+
+function openOpTool(btnEl, buildFn) {
+    if (activeToolBtn === btnEl) { closeOpTool(); return; }
+    closeOpTool();
+    closeDegreePopover();
+    opSnapshot = snapshotSelection();
+    if (!opSnapshot) return;
+    activeToolBtn = btnEl;
+    btnEl.classList.add("tool-active");
+    opsPop.innerHTML = "";
+    buildFn(opsPop, opSnapshot);
+    opsPop.classList.add("open");
+    positionPopover(btnEl);
+}
+
+// --- Scale tool: vertical slider, exponential mapping ---
+// u in [0,1] mapped to scale = exp(k*(u - 0.5)*2) where k=ln(10) → range [0.1, 10]
+const SCALE_K = Math.log(10);
+function uToScale(u) { return Math.exp(SCALE_K * (u * 2 - 1)); }
+function scaleToU(s) { return (Math.log(s) / SCALE_K + 1) / 2; }
+
+function buildScaleTool(pop, snap) {
+    const title = document.createElement("div");
+    title.className = "pop-title"; title.textContent = "Scale";
+    const valEl = document.createElement("div");
+    valEl.className = "pop-val"; valEl.textContent = "1.00×";
+
+    const slider = document.createElement("div");
+    slider.className = "vslider";
+    const fill = document.createElement("div");
+    fill.className = "vslider-fill";
+    const thumb = document.createElement("div");
+    thumb.className = "vslider-thumb";
+    slider.appendChild(fill);
+    slider.appendChild(thumb);
+
+    let u = 0.5; // start at 1×
+    function updateVisual() {
+        const pct = u * 100;
+        fill.style.height = pct + "%";
+        thumb.style.bottom = pct + "%";
+        const s = uToScale(u);
+        valEl.textContent = s.toFixed(2) + "×";
+        applyPreview(snap, (re, im) => ({ re: re * s, im: im * s }));
+    }
+
+    function setFromY(clientY) {
+        const rect = slider.getBoundingClientRect();
+        u = Math.max(0, Math.min(1, 1 - (clientY - rect.top) / rect.height));
+        updateVisual();
+    }
+
+    let dragging = false;
+    slider.addEventListener("mousedown", e => {
+        dragging = true; setFromY(e.clientY); e.preventDefault();
+    });
+    opToolMouseMove = e => { if (dragging) setFromY(e.clientY); };
+    opToolMouseUp = () => { dragging = false; };
+    window.addEventListener("mousemove", opToolMouseMove);
+    window.addEventListener("mouseup", opToolMouseUp);
+
+    updateVisual();
+    pop.appendChild(title);
+    pop.appendChild(slider);
+    pop.appendChild(valEl);
+}
+
+// --- Rotate tool: horizontal slider, -0.5 to 0.5 turns ---
+
+function buildRotateTool(pop, snap) {
+    const title = document.createElement("div");
+    title.className = "pop-title"; title.textContent = "Rotate";
+    const valEl = document.createElement("div");
+    valEl.className = "pop-val"; valEl.textContent = "0 turns";
+
+    const slider = document.createElement("div");
+    slider.className = "hslider";
+    const center = document.createElement("div");
+    center.className = "hslider-center";
+    const thumb = document.createElement("div");
+    thumb.className = "hslider-thumb";
+    slider.appendChild(center);
+    slider.appendChild(thumb);
+
+    let u = 0.5; // center = 0 turns
+    function updateVisual() {
+        const pct = u * 100;
+        thumb.style.left = pct + "%";
+        const turns = u - 0.5; // -0.5 to 0.5
+        const sign = turns >= 0 ? "+" : "";
+        valEl.textContent = sign + turns.toFixed(3) + " turns";
+        const angle = 2 * Math.PI * turns;
+        const cosA = Math.cos(angle), sinA = Math.sin(angle);
+        applyPreview(snap, (re, im) => ({
+            re: re * cosA - im * sinA,
+            im: re * sinA + im * cosA
+        }));
+    }
+
+    function setFromX(clientX) {
+        const rect = slider.getBoundingClientRect();
+        u = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        updateVisual();
+    }
+
+    let dragging = false;
+    slider.addEventListener("mousedown", e => {
+        dragging = true; setFromX(e.clientX); e.preventDefault();
+    });
+    opToolMouseMove = e => { if (dragging) setFromX(e.clientX); };
+    opToolMouseUp = () => { dragging = false; };
+    window.addEventListener("mousemove", opToolMouseMove);
+    window.addEventListener("mouseup", opToolMouseUp);
+
+    updateVisual();
+    pop.appendChild(title);
+    pop.appendChild(slider);
+    pop.appendChild(valEl);
+}
+
+// --- Add tool: 2D vector pad ---
+// Pad maps pixel offset to complex offset. Range: +/-2 in each axis.
+const PAD_RANGE = 2;
+
+function buildAddTool(pop, snap) {
+    const title = document.createElement("div");
+    title.className = "pop-title"; title.textContent = "Translate";
+    const valEl = document.createElement("div");
+    valEl.className = "pop-row";
+
+    const pad = document.createElement("div");
+    pad.className = "vec-pad";
+    const axH = document.createElement("div");
+    axH.className = "pad-axis h";
+    const axV = document.createElement("div");
+    axV.className = "pad-axis v";
+    const dot = document.createElement("div");
+    dot.className = "pad-dot";
+    pad.appendChild(axH);
+    pad.appendChild(axV);
+    pad.appendChild(dot);
+
+    let ux = 0.5, uy = 0.5; // center = (0,0)
+    function updateVisual() {
+        dot.style.left = (ux * 100) + "%";
+        dot.style.top = (uy * 100) + "%";
+        const dx = (ux - 0.5) * 2 * PAD_RANGE;
+        const dy = -(uy - 0.5) * 2 * PAD_RANGE; // screen Y is inverted
+        const signRe = dx >= 0 ? "+" : "";
+        const signIm = dy >= 0 ? "+" : "";
+        valEl.textContent = signRe + dx.toFixed(2) + " " + signIm + dy.toFixed(2) + "i";
+        applyPreview(snap, (re, im) => ({ re: re + dx, im: im + dy }));
+    }
+
+    function setFromXY(clientX, clientY) {
+        const rect = pad.getBoundingClientRect();
+        ux = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        uy = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+        updateVisual();
+    }
+
+    let dragging = false;
+    pad.addEventListener("mousedown", e => {
+        dragging = true; setFromXY(e.clientX, e.clientY); e.preventDefault();
+    });
+    opToolMouseMove = e => { if (dragging) setFromXY(e.clientX, e.clientY); };
+    opToolMouseUp = () => { dragging = false; };
+    window.addEventListener("mousemove", opToolMouseMove);
+    window.addEventListener("mouseup", opToolMouseUp);
+
+    updateVisual();
+    pop.appendChild(title);
+    pop.appendChild(pad);
+    pop.appendChild(valEl);
+}
+
+// Wire up buttons
+document.getElementById("scale-tool-btn").addEventListener("click", function() {
+    openOpTool(this, buildScaleTool);
+});
+document.getElementById("rotate-tool-btn").addEventListener("click", function() {
+    openOpTool(this, buildRotateTool);
+});
+document.getElementById("add-tool-btn").addEventListener("click", function() {
+    openOpTool(this, buildAddTool);
 });
 
-document.getElementById("add-btn").addEventListener("click", function () {
-    const addRe = parseFloat(document.getElementById("add-re").value) || 0;
-    const addIm = parseFloat(document.getElementById("add-im").value) || 0;
-    applyTransformToSelection((re, im) => ({ re: re + addRe, im: im + addIm }));
-});
-
-document.getElementById("rotate-btn").addEventListener("click", function () {
-    const rev = parseFloat(document.getElementById("rotate-val").value) || 0;
-    const angle = 2 * Math.PI * rev;
-    const cosA = Math.cos(angle), sinA = Math.sin(angle);
-    applyTransformToSelection((re, im) => ({ re: re * cosA - im * sinA, im: re * sinA + im * cosA }));
+// Close popover on click outside
+document.addEventListener("mousedown", e => {
+    if (!activeToolBtn) return;
+    if (opsPop.contains(e.target)) return;
+    // Check if clicking an ops button (toggle handled by its own listener)
+    if (e.target.id && e.target.id.endsWith("-tool-btn")) return;
+    closeOpTool();
 });
 
 // --- Snap (capture) ---
@@ -2529,10 +3084,14 @@ window.addEventListener("resize", () => {
 
 rootsSvg.classed("domain-active", domainColoringEnabled);
 domainCanvas.style.display = domainColoringEnabled ? "block" : "none";
-initCoefficients(parseInt(degreeNumber.value));
+initCoefficients(currentDegree);
 renderCoefficients();
 solveRoots();
 renderDomainColoring();
+
+// Install marquee selection (once — survives rebuild since SVG element persists)
+installMarqueeSelection(coeffSvg, () => coeffLayer.selectAll("circle.coeff"), "coeff");
+installMarqueeSelection(rootsSvg, () => rootsLayer.selectAll("circle.root"), "roots");
 </script>
 </body>
 </html>

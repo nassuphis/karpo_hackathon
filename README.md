@@ -19,7 +19,7 @@ PolyPaint makes this relationship tangible. Two side-by-side complex-plane panel
 - **Transform:** Select coefficients or roots and use interactive gesture tools — **Scale** (vertical slider with exponential mapping), **Rotate** (horizontal slider in turns), and **Translate** (2D vector pad) — all with live preview as you drag. Ops work on both coefficient and root selections — the target label turns green for coefficients, red for roots.
 - **Sonify:** Three independent sound layers — **Base** (FM drone), **Melody** (pentatonic arpeggiator), and **Voice** (close-encounter beeps) — each with its own sidebar button and config popover. Click any button to open a panel of tuning sliders (pitch, FM depth, volume, cutoff, etc.) that reshape the sound in real time. See [Sonification](docs/sonification.md) for the full algorithm.
 - **Sensitivity coloring:** Switch root coloring to **Derivative** mode to color each root by how sensitive it is to coefficient perturbation — blue (stable) through white to red (volatile). Uses the Jacobian ∂rⱼ/∂cₖ = −rⱼⁿ⁻ᵏ / p'(rⱼ) with rank-based normalization. The coefficient picker also shows per-coefficient sensitivity dots.
-- **Stats dashboard:** The roots panel has a **Stats** tab with four time-series plots, each selectable from: **Force** (total sensitivity w.r.t. moving coefficients), **Speed** (sum of root displacements), **MinDist** (closest root pair), **MaxDist** (farthest root pair). Data is collected every frame and displayed as auto-scaled rolling charts.
+- **Stats dashboard:** The roots panel has a **Stats** tab with four configurable plots, each selectable from 15 time-series stats, 5 phase-space plots, and a speed spectrum. Time-series include **Force/MinForce/MaxForce** (Jacobian sensitivity per root), **Speed/MinSpeed/MaxSpeed** (root displacements), **MinDist/MaxDist/MeanDist/ΔMeanDist/σDist** (pairwise distances), **Records** (closeness record-breaking events), **AngularMom** (signed rotational momentum), **σSpeed/EMASpeed** (speed statistics). Phase plots show correlations (e.g. MaxForce v MaxSpeed, MeanDist v σDist). **SpeedSpectrum** is a per-root bar chart with decaying peak dots and root index labels. Data is collected every frame into a 4000-frame ring buffer.
 
 Everything runs client-side in a single HTML file. No server, no build step, no dependencies to install.
 
@@ -72,9 +72,9 @@ The UI is organized around a left sidebar with three groups and a compact header
 | **CW / CCW** toggle | Sets clockwise or counter-clockwise direction for the current path. |
 | **×** delete button | Removes the currently viewed path. |
 | **Roots / Stats** tabs | Roots panel tab bar — switch between root visualization and stats dashboard. |
-| **Stats** dropdowns | Each of the 4 stat plots has a dropdown: Force, Speed, MinDist, MaxDist. |
+| **Stats** dropdowns | Each of the 4 stat plots has a dropdown: 15 time-series (Force, MinForce, MaxForce, Speed, MinSpeed, MaxSpeed, MinDist, MaxDist, Records, MeanDist, ΔMeanDist, AngularMom, σSpeed, EMASpeed, σDist), 5 phase-space plots, and SpeedSpectrum. |
 | **⏺** record (tab bar) | Records to WebM video. Mode selector: Roots, Coefficients, or Both (side-by-side). Auto-stops on loop completion. |
-| **⌂ Home** button | Returns all animated coefficients to their start positions (curve[0]) — resets the animation clock without changing path shapes. |
+| **⌂ Home** button | Returns all animated coefficients to their start positions (curve[0]) — resets the animation clock, clears stats data, without changing path shapes. |
 | **B / M / V** sound buttons | Toggle and configure the three sound layers. Click to open config popover with on/off toggle + tuning sliders. See [Sonification](docs/sonification.md). |
 | **Selection count** (panel headers) | Shows the number of selected items next to "Coefficients" (green) and "Roots" (red) panel titles. |
 

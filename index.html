@@ -608,15 +608,35 @@ let domainPendingRender = false;
 const DOMAIN_RES_SCALE = 0.5; // render at half resolution for performance
 // Stats tab state
 let activeTab = "roots";
-const STAT_TYPES = ["Force", "Speed", "MinDist", "MaxDist"];
-const STAT_COLORS = { Force: "#e94560", Speed: "#5b6abf", MinDist: "#2ecc71", MaxDist: "#f39c12" };
+const STAT_TYPES = ["Force", "MinForce", "MaxForce", "Speed", "MinSpeed", "MaxSpeed", "MinDist", "MaxDist", "Records", "MeanDist", "\u0394MeanDist", "AngularMom", "\u03c3Speed", "EMASpeed", "\u03c3Dist"];
+const STAT_COLORS = { Force: "#e94560", MinForce: "#f7a1b5", MaxForce: "#c0392b", Speed: "#5b6abf", MinSpeed: "#7eb8da", MaxSpeed: "#ff7b54", MinDist: "#2ecc71", MaxDist: "#f39c12", Records: "#ff6b9d", MeanDist: "#4ecdc4", "\u0394MeanDist": "#a8e6cf", AngularMom: "#e0aaff", "\u03c3Speed": "#48bfe3", EMASpeed: "#64dfdf", "\u03c3Dist": "#f4a261" };
+// Phase-space (XY) plot definitions: { label, xStat, yStat, color }
+const PHASE_PLOTS = [
+    { label: "Force v Speed", xStat: "Force", yStat: "Speed", color: "#c77dff" },
+    { label: "MinDist v MaxDist", xStat: "MinDist", yStat: "MaxDist", color: "#ffd166" },
+    { label: "MinSpeed v MaxSpeed", xStat: "MinSpeed", yStat: "MaxSpeed", color: "#72efdd" },
+    { label: "MeanDist v \u03c3Dist", xStat: "MeanDist", yStat: "\u03c3Dist", color: "#f4845f" },
+    { label: "MaxForce v MaxSpeed", xStat: "MaxForce", yStat: "MaxSpeed", color: "#e76f51" }
+];
+// Spectrum plots: special bar-chart visualizations (not time-series)
+const SPECTRUM_PLOTS = [
+    { label: "SpeedSpectrum" }
+];
+// Total dropdown options: time-series, then phase-space, then spectrum
+const PLOT_OPTIONS = [...STAT_TYPES, ...PHASE_PLOTS.map(p => p.label), ...SPECTRUM_PLOTS.map(p => p.label)];
+let pairRecords = null; // Float64Array(n*(n-1)/2): per-pair closest distance records for Records stat
 const statsState = {
     buffers: {},        // { statName: Float64Array ring buffer }
     frameCount: 0,
     writeIdx: 0,
     maxFrames: 4000,
     prevRoots: null,    // for Speed computation
-    plotConfigs: [0, 1, 2, 3], // index into STAT_TYPES for each of the 4 plots
+    prevMeanDist: null, // for ΔMeanDist computation
+    emaSpeed: 0,        // exponential moving average of Speed
+    rootSpeeds: null,   // Float64Array: cached per-root speeds for SpeedSpectrum
+    rootForces: null,   // Float64Array: cached per-root force (sensitivity) for MinForce/MaxForce
+    spectrumPeaks: null, // Float64Array: decaying peak heights for SpeedSpectrum dots
+    plotConfigs: [0, 1, 2, 3], // index into PLOT_OPTIONS for each of the 4 plots
     canvases: [],       // 4 canvas elements
     ctxs: [],           // 4 canvas 2D contexts
     dirty: true
@@ -2107,6 +2127,7 @@ document.getElementById("home-btn").addEventListener("click", function () {
         trailLayer.selectAll("path.trail-path").remove();
     }
     resetAudioState();
+    clearStatsData();
     renderCoeffTrails();
     autoScaleCoeffPanel();
     solveRootsThrottled();
@@ -4380,7 +4401,7 @@ document.getElementById("snap-btn").addEventListener("click", snapCapture);
         statsState.ctxs[i] = c.getContext("2d");
     });
     selects.forEach((sel, plotIdx) => {
-        STAT_TYPES.forEach((name, si) => {
+        PLOT_OPTIONS.forEach((name, si) => {
             const opt = document.createElement("option");
             opt.value = si; opt.textContent = name;
             sel.appendChild(opt);
@@ -4408,27 +4429,28 @@ function resizeStatsCanvases() {
     statsState.dirty = true;
 }
 
-function computeForce() {
-    // Total derivative of all roots w.r.t. moving coefficients (on a non-"none" path)
+function cacheRootForces() {
+    // Per-root sensitivity w.r.t. moving coefficients — cached for Force/MinForce/MaxForce
     const nRoots = currentRoots.length;
     const nCoeffs = coefficients.length;
     const deg = nCoeffs - 1;
-    if (nRoots === 0 || nCoeffs === 0) return 0;
+    if (!statsState.rootForces || statsState.rootForces.length !== nRoots) {
+        statsState.rootForces = new Float64Array(nRoots);
+    }
+    if (nRoots === 0 || nCoeffs === 0) { statsState.rootForces.fill(0); return; }
 
-    // Find moving coefficient indices
     const movingSet = new Set();
     for (const path of animPaths) {
         if (path.pathType !== "none") {
             for (const idx of path.coeffs) movingSet.add(idx);
         }
     }
-    if (movingSet.size === 0) return 0;
+    if (movingSet.size === 0) { statsState.rootForces.fill(0); return; }
 
     const cRe = new Float64Array(nCoeffs);
     const cIm = new Float64Array(nCoeffs);
     for (let i = 0; i < nCoeffs; i++) { cRe[i] = coefficients[i].re; cIm[i] = coefficients[i].im; }
 
-    // Precompute |p'(rj)| and |rj| for each root
     const invDpMag = new Float64Array(nRoots);
     const rMag = new Float64Array(nRoots);
     for (let j = 0; j < nRoots; j++) {
@@ -4447,15 +4469,37 @@ function computeForce() {
         invDpMag[j] = dm < 1e-30 ? 0 : 1 / dm;
     }
 
-    // Sum sensitivities only for moving coefficients
-    let total = 0;
-    for (const k of movingSet) {
-        const power = deg - k;
-        for (let j = 0; j < nRoots; j++) {
-            total += Math.pow(rMag[j], power) * invDpMag[j];
+    for (let j = 0; j < nRoots; j++) {
+        let f = 0;
+        for (const k of movingSet) {
+            f += Math.pow(rMag[j], deg - k) * invDpMag[j];
         }
+        statsState.rootForces[j] = f;
     }
+}
+
+function computeForce() {
+    const rf = statsState.rootForces;
+    if (!rf || rf.length === 0) return 0;
+    let total = 0;
+    for (let j = 0; j < rf.length; j++) total += rf[j];
     return total;
+}
+
+function computeMinForce() {
+    const rf = statsState.rootForces;
+    if (!rf || rf.length === 0) return 0;
+    let m = Infinity;
+    for (let j = 0; j < rf.length; j++) if (rf[j] < m) m = rf[j];
+    return m === Infinity ? 0 : m;
+}
+
+function computeMaxForce() {
+    const rf = statsState.rootForces;
+    if (!rf || rf.length === 0) return 0;
+    let m = 0;
+    for (let j = 0; j < rf.length; j++) if (rf[j] > m) m = rf[j];
+    return m;
 }
 
 function computeSpeed() {
@@ -4500,11 +4544,175 @@ function computeMaxDist() {
     return maxD;
 }
 
-const statComputeFns = [computeForce, computeSpeed, computeMinDist, computeMaxDist];
+function computeRecords() {
+    // Count per-pair closeness record updates using voiceConfig.novelty & .decay
+    const n = currentRoots.length;
+    if (n < 2) return 0;
+    const nPairs = n * (n - 1) / 2;
+
+    let seeding = false;
+    if (!pairRecords || pairRecords.length !== nPairs) {
+        pairRecords = new Float64Array(nPairs).fill(Infinity);
+        seeding = true;
+    }
+
+    let count = 0;
+    let idx = 0;
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            const d = Math.hypot(
+                currentRoots[i].re - currentRoots[j].re,
+                currentRoots[i].im - currentRoots[j].im
+            );
+            if (seeding) {
+                pairRecords[idx] = d;
+            } else if (d < pairRecords[idx]) {
+                count++;
+                pairRecords[idx] = d * voiceConfig.novelty;
+            }
+            idx++;
+        }
+    }
+
+    // Decay all records (memory > 1.0 → records grow, becoming beatable again)
+    if (!seeding) {
+        for (let k = 0; k < nPairs; k++) {
+            pairRecords[k] *= voiceConfig.decay;
+        }
+    }
+
+    return count;
+}
+
+function computeMeanDist() {
+    const n = currentRoots.length;
+    if (n < 2) return 0;
+    let total = 0;
+    let count = 0;
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            total += Math.hypot(
+                currentRoots[i].re - currentRoots[j].re,
+                currentRoots[i].im - currentRoots[j].im
+            );
+            count++;
+        }
+    }
+    return total / count;
+}
+
+function computeDeltaMeanDist() {
+    // Read the just-written MeanDist from the current buffer slot
+    const cur = statsState.buffers["MeanDist"][statsState.writeIdx];
+    const prev = statsState.prevMeanDist;
+    statsState.prevMeanDist = cur;
+    if (prev === null) return 0;
+    return Math.abs(cur - prev);
+}
+
+function computeMinSpeed() {
+    const s = statsState.rootSpeeds;
+    if (!s || s.length === 0) return 0;
+    let m = Infinity;
+    for (let i = 0; i < s.length; i++) if (s[i] < m) m = s[i];
+    return m === Infinity ? 0 : m;
+}
+
+function computeMaxSpeed() {
+    const s = statsState.rootSpeeds;
+    if (!s || s.length === 0) return 0;
+    let m = 0;
+    for (let i = 0; i < s.length; i++) if (s[i] > m) m = s[i];
+    return m;
+}
+
+function computeAngularMom() {
+    // Σ (rⱼ − centroid) × vⱼ  (2D cross product, signed)
+    const n = currentRoots.length;
+    if (n === 0 || !statsState.prevRoots || statsState.prevRoots.length !== n) return 0;
+    let cx = 0, cy = 0;
+    for (let i = 0; i < n; i++) { cx += currentRoots[i].re; cy += currentRoots[i].im; }
+    cx /= n; cy /= n;
+    let L = 0;
+    for (let i = 0; i < n; i++) {
+        const rx = currentRoots[i].re - cx;
+        const ry = currentRoots[i].im - cy;
+        const vx = currentRoots[i].re - statsState.prevRoots[i].re;
+        const vy = currentRoots[i].im - statsState.prevRoots[i].im;
+        L += rx * vy - ry * vx;
+    }
+    return L;
+}
+
+function computeSigmaSpeed() {
+    const s = statsState.rootSpeeds;
+    if (!s || s.length === 0) return 0;
+    const n = s.length;
+    let sum = 0;
+    for (let i = 0; i < n; i++) sum += s[i];
+    const mean = sum / n;
+    let var_ = 0;
+    for (let i = 0; i < n; i++) { const d = s[i] - mean; var_ += d * d; }
+    return Math.sqrt(var_ / n);
+}
+
+function computeEMASpeed() {
+    // Read the just-written Speed from the current buffer slot
+    const cur = statsState.buffers["Speed"][statsState.writeIdx];
+    statsState.emaSpeed += 0.05 * (cur - statsState.emaSpeed);
+    return statsState.emaSpeed;
+}
+
+function computeSigmaDist() {
+    const n = currentRoots.length;
+    if (n < 2) return 0;
+    // Read the just-written MeanDist
+    const mean = statsState.buffers["MeanDist"][statsState.writeIdx];
+    let var_ = 0, count = 0;
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            const d = Math.hypot(
+                currentRoots[i].re - currentRoots[j].re,
+                currentRoots[i].im - currentRoots[j].im
+            ) - mean;
+            var_ += d * d;
+            count++;
+        }
+    }
+    return Math.sqrt(var_ / count);
+}
+
+const statComputeFns = [computeForce, computeMinForce, computeMaxForce, computeSpeed, computeMinSpeed, computeMaxSpeed, computeMinDist, computeMaxDist, computeRecords, computeMeanDist, computeDeltaMeanDist, computeAngularMom, computeSigmaSpeed, computeEMASpeed, computeSigmaDist];
 
 function collectStatsSnapshot() {
     const n = currentRoots.length;
     if (n === 0) return;
+
+    // Cache per-root speeds first (before prevRoots is overwritten, and before stat fns that read rootSpeeds)
+    if (!statsState.rootSpeeds || statsState.rootSpeeds.length !== n) {
+        statsState.rootSpeeds = new Float64Array(n);
+    }
+    if (statsState.prevRoots && statsState.prevRoots.length === n) {
+        for (let i = 0; i < n; i++) {
+            statsState.rootSpeeds[i] = Math.hypot(
+                currentRoots[i].re - statsState.prevRoots[i].re,
+                currentRoots[i].im - statsState.prevRoots[i].im
+            );
+        }
+    } else {
+        statsState.rootSpeeds.fill(0);
+    }
+
+    // Update spectrum peak heights (decaying max)
+    if (!statsState.spectrumPeaks || statsState.spectrumPeaks.length !== n) {
+        statsState.spectrumPeaks = new Float64Array(n);
+    }
+    for (let i = 0; i < n; i++) {
+        statsState.spectrumPeaks[i] = Math.max(statsState.rootSpeeds[i], statsState.spectrumPeaks[i] * 0.993);
+    }
+
+    // Cache per-root forces before stat compute loop (MinForce/MaxForce read from cache)
+    cacheRootForces();
 
     const idx = statsState.writeIdx;
     for (let s = 0; s < STAT_TYPES.length; s++) {
@@ -4531,6 +4739,11 @@ function clearStatsData() {
     statsState.frameCount = 0;
     statsState.writeIdx = 0;
     statsState.prevRoots = null;
+    statsState.prevMeanDist = null;
+    statsState.emaSpeed = 0;
+    statsState.spectrumPeaks = null;
+    statsState.rootForces = null;
+    pairRecords = null;
     statsState.dirty = true;
     if (activeTab === "stats") drawAllStatsPlots();
 }
@@ -4543,13 +4756,10 @@ function drawStatsPlot(plotIdx) {
     const H = c.getBoundingClientRect().height;
     if (W === 0 || H === 0) return;
 
-    const statIdx = statsState.plotConfigs[plotIdx];
-    const statName = STAT_TYPES[statIdx];
-    const buf = statsState.buffers[statName];
+    const optIdx = statsState.plotConfigs[plotIdx];
     const nFrames = statsState.frameCount;
-    const color = STAT_COLORS[statName];
-
-    const ML = 6, MR = 4, MT = 4, MB = 4; // minimal margins
+    const startIdx = (nFrames < statsState.maxFrames) ? 0 : statsState.writeIdx;
+    const ML = 6, MR = 4, MT = 4, MB = 4;
     const plotW = W - ML - MR;
     const plotH = H - MT - MB;
 
@@ -4557,18 +4767,193 @@ function drawStatsPlot(plotIdx) {
     ctx.fillStyle = "#151a3a";
     ctx.fillRect(0, 0, W, H);
 
-    // Find max value in visible buffer for normalization
-    let yMax = 0;
-    const startIdx = (nFrames < statsState.maxFrames) ? 0 : statsState.writeIdx;
+    // Spectrum plot (bar chart)
+    const spectrumIdx = optIdx - STAT_TYPES.length - PHASE_PLOTS.length;
+    if (spectrumIdx >= 0) {
+        const n = currentRoots.length;
+        const speeds = statsState.rootSpeeds;
+        if (n === 0 || !speeds || speeds.length !== n) return;
+
+        // Extra bottom margin for index labels
+        const sMB = 10;
+        const sPlotH = plotH - sMB + MB; // reclaim original MB, add sMB
+
+        // Find max across speeds and peaks for normalization
+        let sMax = 0;
+        const peaks = statsState.spectrumPeaks;
+        for (let i = 0; i < n; i++) {
+            if (speeds[i] > sMax) sMax = speeds[i];
+            if (peaks && peaks.length === n && peaks[i] > sMax) sMax = peaks[i];
+        }
+        if (sMax < 1e-12) sMax = 1;
+
+        // Grid
+        ctx.strokeStyle = "rgba(255,255,255,0.04)";
+        ctx.lineWidth = 0.5;
+        for (const frac of [0.25, 0.5, 0.75]) {
+            const y = MT + sPlotH * (1 - frac);
+            ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML + plotW, y); ctx.stroke();
+        }
+        // Bottom axis
+        ctx.strokeStyle = "rgba(255,255,255,0.08)";
+        ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.moveTo(ML, MT + sPlotH); ctx.lineTo(ML + plotW, MT + sPlotH); ctx.stroke();
+
+        // Draw vertical bars per root
+        const barW = Math.max(1, plotW / n - 1);
+        const gap = plotW / n;
+        for (let i = 0; i < n; i++) {
+            const x = ML + gap * (i + 0.5);
+            const h = (speeds[i] / sMax) * sPlotH;
+            ctx.strokeStyle = rootColor(i, n);
+            ctx.lineWidth = Math.min(barW, 4);
+            ctx.lineCap = "butt";
+            ctx.globalAlpha = 0.9;
+            ctx.beginPath();
+            ctx.moveTo(x, MT + sPlotH);
+            ctx.lineTo(x, MT + sPlotH - h);
+            ctx.stroke();
+        }
+
+        // Draw decaying peak dots
+        if (peaks && peaks.length === n) {
+            const dotR = Math.min(barW * 0.6, 3);
+            for (let i = 0; i < n; i++) {
+                const ph = (peaks[i] / sMax) * sPlotH;
+                const y = MT + sPlotH - ph;
+                ctx.fillStyle = rootColor(i, n);
+                ctx.globalAlpha = 0.95;
+                ctx.beginPath();
+                ctx.arc(ML + gap * (i + 0.5), y, dotR, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // Root index labels below axis
+        ctx.globalAlpha = 0.6;
+        ctx.font = `${Math.min(8, gap * 0.8)}px system-ui`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        for (let i = 0; i < n; i++) {
+            ctx.fillStyle = rootColor(i, n);
+            ctx.fillText(i, ML + gap * (i + 0.5), MT + sPlotH + 1);
+        }
+
+        ctx.globalAlpha = 1.0;
+        return;
+    }
+
+    // Phase-space plot
+    const phaseIdx = optIdx - STAT_TYPES.length;
+    if (phaseIdx >= 0) {
+        const phase = PHASE_PLOTS[phaseIdx];
+        const bufX = statsState.buffers[phase.xStat];
+        const bufY = statsState.buffers[phase.yStat];
+        const color = phase.color;
+
+        // Find tight bounding box then add 10% padding
+        let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+        for (let f = 0; f < nFrames; f++) {
+            const bi = (startIdx + f) % statsState.maxFrames;
+            const vx = bufX[bi], vy = bufY[bi];
+            if (vx < xMin) xMin = vx; if (vx > xMax) xMax = vx;
+            if (vy < yMin) yMin = vy; if (vy > yMax) yMax = vy;
+        }
+        if (xMin === Infinity) { xMin = 0; xMax = 1; }
+        if (yMin === Infinity) { yMin = 0; yMax = 1; }
+        let xSpan = xMax - xMin, ySpan = yMax - yMin;
+        if (xSpan < 1e-12) { xMin -= 0.5; xMax += 0.5; xSpan = 1; }
+        if (ySpan < 1e-12) { yMin -= 0.5; yMax += 0.5; ySpan = 1; }
+        const pad = 0.1;
+        xMin -= xSpan * pad; xMax += xSpan * pad;
+        yMin -= ySpan * pad; yMax += ySpan * pad;
+        // Clamp lower bound to 0 when data is non-negative (these stats are all ≥ 0)
+        if (xMin < 0 && xMin + xSpan * pad >= 0) xMin = 0;
+        if (yMin < 0 && yMin + ySpan * pad >= 0) yMin = 0;
+
+        const pxOf = (v) => ML + ((v - xMin) / (xMax - xMin)) * plotW;
+        const pyOf = (v) => MT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+        // Grid
+        ctx.strokeStyle = "rgba(255,255,255,0.04)";
+        ctx.lineWidth = 0.5;
+        for (const frac of [0.25, 0.5, 0.75]) {
+            const y = MT + plotH * (1 - frac);
+            ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML + plotW, y); ctx.stroke();
+            const x = ML + plotW * frac;
+            ctx.beginPath(); ctx.moveTo(x, MT); ctx.lineTo(x, MT + plotH); ctx.stroke();
+        }
+
+        // Axes
+        ctx.strokeStyle = "rgba(255,255,255,0.08)";
+        ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.moveTo(ML, MT + plotH); ctx.lineTo(ML + plotW, MT + plotH); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(ML, MT); ctx.lineTo(ML, MT + plotH); ctx.stroke();
+
+        if (nFrames < 2) return;
+
+        // Draw phase path with age-based opacity (old=dim, new=bright)
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.lineWidth = 1.5;
+        for (let f = 1; f < nFrames; f++) {
+            const bi0 = (startIdx + f - 1) % statsState.maxFrames;
+            const bi1 = (startIdx + f) % statsState.maxFrames;
+            const alpha = 0.15 + 0.75 * (f / (nFrames - 1));
+            ctx.strokeStyle = color;
+            ctx.globalAlpha = alpha;
+            ctx.beginPath();
+            ctx.moveTo(pxOf(bufX[bi0]), pyOf(bufY[bi0]));
+            ctx.lineTo(pxOf(bufX[bi1]), pyOf(bufY[bi1]));
+            ctx.stroke();
+        }
+        ctx.globalAlpha = 1.0;
+
+        // Current position dot
+        const lastBi = (startIdx + nFrames - 1) % statsState.maxFrames;
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        ctx.arc(pxOf(bufX[lastBi]), pyOf(bufY[lastBi]), 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Axis labels (inside plot area)
+        ctx.fillStyle = "rgba(255,255,255,0.25)";
+        ctx.font = "8px system-ui";
+        ctx.textAlign = "center";
+        ctx.fillText(phase.xStat, ML + plotW / 2, MT + plotH - 3);
+        ctx.save();
+        ctx.translate(ML + 10, MT + plotH / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(phase.yStat, 0, 0);
+        ctx.restore();
+        return;
+    }
+
+    // Time-series plot (optIdx < STAT_TYPES.length)
+    const statName = STAT_TYPES[optIdx];
+    const buf = statsState.buffers[statName];
+    const color = STAT_COLORS[statName];
+
+    // Find min/max value in visible buffer
+    let yMin = 0, yMax = 0;
     for (let f = 0; f < nFrames; f++) {
         const bufIdx = (startIdx + f) % statsState.maxFrames;
         const v = buf[bufIdx];
         if (v > yMax) yMax = v;
+        if (v < yMin) yMin = v;
     }
-    if (yMax < 1e-12) yMax = 1;
+    const signed = yMin < -1e-12;
+    if (signed) {
+        // Symmetric axis around zero
+        const absMax = Math.max(Math.abs(yMin), Math.abs(yMax));
+        yMin = -absMax || -1; yMax = absMax || 1;
+    } else {
+        yMin = 0;
+        if (yMax < 1e-12) yMax = 1;
+    }
 
     const xOf = (f) => ML + (nFrames > 1 ? (f / (nFrames - 1)) * plotW : 0);
-    const yOf = (v) => MT + plotH - (v / yMax) * plotH;
+    const yOf = (v) => MT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
 
     // Subtle horizontal gridlines at 0.25, 0.5, 0.75
     ctx.strokeStyle = "rgba(255,255,255,0.04)";
@@ -4578,10 +4963,16 @@ function drawStatsPlot(plotIdx) {
         ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML + plotW, y); ctx.stroke();
     }
 
-    // Bottom axis
-    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    // Bottom axis (or zero line for signed stats)
+    ctx.strokeStyle = signed ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.08)";
     ctx.lineWidth = 0.5;
-    ctx.beginPath(); ctx.moveTo(ML, MT + plotH); ctx.lineTo(ML + plotW, MT + plotH); ctx.stroke();
+    if (signed) {
+        // Draw zero line in the middle
+        const zeroY = yOf(0);
+        ctx.beginPath(); ctx.moveTo(ML, zeroY); ctx.lineTo(ML + plotW, zeroY); ctx.stroke();
+    } else {
+        ctx.beginPath(); ctx.moveTo(ML, MT + plotH); ctx.lineTo(ML + plotW, MT + plotH); ctx.stroke();
+    }
 
     if (nFrames < 2) return;
 

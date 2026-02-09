@@ -8,7 +8,12 @@ Interactive polynomial root visualizer. Drag coefficients *or* roots in the comp
 
 A degree-*n* polynomial p(z) = c₀zⁿ + c₁zⁿ⁻¹ + ··· + cₙ has *n*+1 complex coefficients and *n* complex roots. The relationship between them is rich, nonlinear, and often surprising — small changes to one coefficient can send roots flying across the plane, while other perturbations barely move them.
 
-PolyPaint makes this relationship tangible. Two side-by-side complex-plane panels let you explore it from both directions:
+PolyPaint makes this relationship tangible. Two side-by-side complex-plane panels let you explore it from both directions.
+
+<video controls loop muted playsinline width="720">
+  <source src="snaps/polypaint-roots-2026-02-09T07-47-51.mp4" type="video/mp4">
+  <source src="snaps/polypaint-roots-2026-02-09T07-47-51.webm" type="video/webm">
+</video>
 
 - **Left panel (Coefficients):** Drag any coefficient dot and watch the roots respond instantly on the right. The domain coloring background shifts in real time, revealing how the polynomial's complex landscape reshapes.
 - **Right panel (Roots):** Drag any root dot and the coefficients on the left update to match — the polynomial is reconstructed from its roots via (z − r₀)(z − r₁)···(z − rₙ₋₁).

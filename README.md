@@ -10,7 +10,7 @@ A degree-*n* polynomial p(z) = c₀zⁿ + c₁zⁿ⁻¹ + ··· + cₙ has *n*+
 
 PolyPaint makes this relationship tangible. Two side-by-side complex-plane panels let you explore it from both directions.
 
-<video controls loop muted playsinline width="720" src="https://github.com/user-attachments/assets/80e4ed52-d158-4919-a40a-2310981276dd"></video>
+<video controls loop muted playsinline width="720" src="https://github.com/user-attachments/assets/7ab7733b-4a6f-47b2-b8fe-a9f650cd9c22"></video>
 
 - **Left panel (Coefficients):** Drag any coefficient dot and watch the roots respond instantly on the right. The domain coloring background shifts in real time, revealing how the polynomial's complex landscape reshapes.
 - **Right panel (Roots):** Drag any root dot and the coefficients on the left update to match — the polynomial is reconstructed from its roots via (z − r₀)(z − r₁)···(z − rₙ₋₁).

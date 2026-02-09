@@ -96,6 +96,7 @@ body {
 .side-group.ops .side-label { align-self: center; }
 #ops-target { opacity: 0.7; font-size: 8px; }
 #ops-group.disabled { opacity: 0.35; pointer-events: none; }
+#ops-group:not(.disabled) .side-btn { color: var(--text); border-color: var(--stroke2); }
 #ops-group .side-btn.tool-active {
     background: var(--accent-dim); border-color: var(--accent-border); color: #fff;
 }
@@ -325,6 +326,8 @@ circle.coeff.selected, circle.root.selected {
                 <option value="r-infinity">Infinity</option>
             </optgroup>
     </select>
+    <div class="header-sep"></div>
+    <button id="reset-btn" class="icon-btn" title="Reset to initial state">↺</button>
 </div>
 <div id="content">
     <div id="sidebar">
@@ -332,6 +335,7 @@ circle.coeff.selected, circle.root.selected {
             <div class="side-label">View</div>
             <button id="domain-toggle-btn" class="side-btn" title="Domain coloring">◐</button>
             <button id="root-color-btn" class="side-btn active" title="Color roots">🎨</button>
+            <button id="sound-toggle-btn" class="side-btn" title="Sound">🔇</button>
         </div>
         <div class="side-group">
             <div class="side-label">Tools</div>
@@ -348,7 +352,7 @@ circle.coeff.selected, circle.root.selected {
     <div id="main">
         <div id="panels">
     <div class="panel">
-        <h3><span>Coefficients</span><button id="select-all-coeffs-btn" class="icon-btn" title="Select all">⊕</button></h3>
+        <h3><span>Coefficients <span id="coeff-sel-count" style="font-size:9px;color:#5ddb6a;opacity:0.85;"></span></span><button id="select-all-coeffs-btn" class="icon-btn" title="Select all">⊕</button></h3>
         <div id="coeff-container">
             <svg id="coeff-panel"></svg>
             <div id="anim-bar">
@@ -395,16 +399,17 @@ circle.coeff.selected, circle.root.selected {
                 </div>
                 <div class="bar-row">
                     <label>R: <input type="range" id="anim-radius" min="0.05" max="3.0" step="0.05" value="0.5"> <span class="bar-val" id="anim-radius-val">0.5</span></label>
-                    <label>S: <input type="range" id="anim-speed" min="0.1" max="1.0" step="0.1" value="1.0"> <span class="bar-val" id="anim-speed-val">1.0</span></label>
+                    <label>S: <input type="range" id="anim-speed" min="0.01" max="1.0" step="0.01" value="1.0"> <span class="bar-val" id="anim-speed-val">1.0</span></label>
                     <label>A: <input type="range" id="anim-angle" min="0" max="1.0" step="0.01" value="0"> <span class="bar-val" id="anim-angle-val">0.00</span></label>
                     <button id="play-btn">▶ Play</button>
+                    <button id="home-btn" title="Return to start position">⌂ Home</button>
                     <button id="trails-btn">Trails</button>
                 </div>
             </div>
         </div>
     </div>
     <div class="panel">
-        <h3><span>Roots</span><span style="display:flex;gap:4px;align-items:center;"><select id="rec-mode" title="Recording mode" style="font-size:10px;padding:1px 2px;background:rgba(255,255,255,0.06);color:var(--muted);border:1px solid var(--stroke);border-radius:4px;cursor:pointer;"><option value="roots">Roots</option><option value="coeffs">Coeffs</option><option value="both">Both</option></select><button id="rec-roots-btn" class="icon-btn" title="Record (webm)">⏺</button><button id="stop-roots-btn" class="icon-btn" title="Stop recording" style="display:none;">⏹</button></span></h3>
+        <h3><span>Roots <span id="roots-sel-count" style="font-size:9px;color:#e94560;opacity:0.85;"></span></span><span style="display:flex;gap:4px;align-items:center;"><select id="rec-mode" title="Recording mode" style="font-size:10px;padding:1px 2px;background:rgba(255,255,255,0.06);color:var(--muted);border:1px solid var(--stroke);border-radius:4px;cursor:pointer;"><option value="roots">Roots</option><option value="coeffs">Coeffs</option><option value="both">Both</option></select><button id="rec-roots-btn" class="icon-btn" title="Record (webm)">⏺</button><button id="stop-roots-btn" class="icon-btn" title="Stop recording" style="display:none;">⏹</button></span></h3>
         <div id="roots-container">
             <canvas id="domain-canvas"></canvas>
             <svg id="roots-panel"></svg>
@@ -486,6 +491,150 @@ let domainCanvas = document.getElementById("domain-canvas");
 let domainCtx = domainCanvas.getContext("2d");
 let domainPendingRender = false;
 const DOMAIN_RES_SCALE = 0.5; // render at half resolution for performance
+// Audio sonification state
+let soundEnabled = false;
+let audioCtx = null;
+let audioNodes = null;
+let prevRootsAudio = null;
+let prevAnglesAudio = null;
+let smoothCx = 0, smoothCy = 0, smoothE = 0, smoothOmega = 0;
+let lastBeepTime = 0;
+let lastAudioUpdateTime = 0;
+let audioWatchdogId = null;
+const AUDIO_ALPHA = 0.1;
+
+function initAudio() {
+    if (audioCtx) return;
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const masterGain = audioCtx.createGain();
+    masterGain.gain.value = 0;
+    masterGain.connect(audioCtx.destination);
+    const osc1 = audioCtx.createOscillator();
+    osc1.type = "sine";
+    osc1.frequency.value = 220;
+    const osc2 = audioCtx.createOscillator();
+    osc2.type = "triangle";
+    osc2.frequency.value = 223;
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 800;
+    filter.Q.value = 2;
+    const gainNode = audioCtx.createGain();
+    gainNode.gain.value = 0.06;
+    const lfo = audioCtx.createOscillator();
+    lfo.type = "sine";
+    lfo.frequency.value = 5;
+    const lfoGain = audioCtx.createGain();
+    lfoGain.gain.value = 0;
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc1.frequency);
+    lfoGain.connect(osc2.frequency);
+    const beepOsc = audioCtx.createOscillator();
+    beepOsc.type = "sine";
+    beepOsc.frequency.value = 800;
+    const beepGain = audioCtx.createGain();
+    beepGain.gain.value = 0;
+    osc1.connect(gainNode);
+    osc2.connect(gainNode);
+    gainNode.connect(filter);
+    filter.connect(masterGain);
+    beepOsc.connect(beepGain);
+    beepGain.connect(masterGain);
+    osc1.start();
+    osc2.start();
+    lfo.start();
+    beepOsc.start();
+    audioNodes = { osc1, osc2, lfo, lfoGain, filter, gainNode, masterGain, beepOsc, beepGain };
+}
+
+function updateAudio() {
+    if (!soundEnabled || !audioCtx || !audioNodes) return;
+    const n = currentRoots.length;
+    if (n === 0) return;
+    const range = panels.roots.range;
+    const now = audioCtx.currentTime;
+    audioNodes.masterGain.gain.setTargetAtTime(1, now, 0.05);
+    let cx = 0, cy = 0;
+    for (const r of currentRoots) { cx += r.re; cy += r.im; }
+    cx /= n; cy /= n;
+    let E = 0;
+    if (prevRootsAudio && prevRootsAudio.length === n) {
+        const velocities = [];
+        for (let i = 0; i < n; i++) {
+            velocities.push(Math.hypot(
+                currentRoots[i].re - prevRootsAudio[i].re,
+                currentRoots[i].im - prevRootsAudio[i].im
+            ));
+        }
+        velocities.sort((a, b) => a - b);
+        E = velocities[Math.floor(n / 2)];
+    }
+    let omega = 0;
+    const angles = currentRoots.map(r => Math.atan2(r.im - cy, r.re - cx));
+    if (prevAnglesAudio && prevAnglesAudio.length === n) {
+        let dTheta = 0;
+        for (let i = 0; i < n; i++) {
+            let dt = angles[i] - prevAnglesAudio[i];
+            if (dt > Math.PI) dt -= 2 * Math.PI;
+            if (dt < -Math.PI) dt += 2 * Math.PI;
+            dTheta += dt;
+        }
+        omega = dTheta / n;
+    }
+    let dmin = Infinity;
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            const d = Math.hypot(currentRoots[i].re - currentRoots[j].re,
+                                 currentRoots[i].im - currentRoots[j].im);
+            if (d < dmin) dmin = d;
+        }
+    }
+    smoothCx += AUDIO_ALPHA * (cx / range - smoothCx);
+    smoothCy += AUDIO_ALPHA * (cy / range - smoothCy);
+    const eNorm = Math.min(E / (range * 0.05), 1);
+    smoothE += AUDIO_ALPHA * (eNorm - smoothE);
+    smoothOmega += AUDIO_ALPHA * (omega - smoothOmega);
+    const baseFreq = 220;
+    const pitch = baseFreq * Math.pow(2, smoothCx * 1.5);
+    audioNodes.osc1.frequency.setTargetAtTime(pitch, now, 0.05);
+    audioNodes.osc2.frequency.setTargetAtTime(pitch * 1.012, now, 0.05);
+    const cutoff = 400 + 2000 * ((smoothCy + 1) / 2) + 1500 * smoothE;
+    audioNodes.filter.frequency.setTargetAtTime(Math.max(200, Math.min(cutoff, 6000)), now, 0.05);
+    const gain = 0.18 * smoothE;
+    audioNodes.gainNode.gain.setTargetAtTime(gain, now, 0.05);
+    const vibHz = Math.min(Math.abs(smoothOmega) * 2.0, 5.0);
+    audioNodes.lfoGain.gain.setTargetAtTime(vibHz, now, 0.05);
+    const beepThresh = 0.12 * range;
+    if (dmin < beepThresh && now - lastBeepTime > 0.1) {
+        lastBeepTime = now;
+        const beepFreq = 600 + 2000 * (1 - dmin / beepThresh);
+        audioNodes.beepOsc.frequency.setTargetAtTime(beepFreq, now, 0.01);
+        audioNodes.beepGain.gain.cancelScheduledValues(now);
+        audioNodes.beepGain.gain.setValueAtTime(0.0001, now);
+        audioNodes.beepGain.gain.exponentialRampToValueAtTime(0.15, now + 0.005);
+        audioNodes.beepGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+    }
+    prevRootsAudio = currentRoots.map(r => ({ re: r.re, im: r.im }));
+    prevAnglesAudio = angles;
+    lastAudioUpdateTime = performance.now();
+}
+
+function audioWatchdog() {
+    if (!soundEnabled || !audioNodes || !audioCtx) return;
+    if (performance.now() - lastAudioUpdateTime > 150) {
+        audioNodes.masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.15);
+    }
+    audioWatchdogId = requestAnimationFrame(audioWatchdog);
+}
+
+function resetAudioState() {
+    prevRootsAudio = null;
+    prevAnglesAudio = null;
+    smoothCx = 0; smoothCy = 0; smoothE = 0; smoothOmega = 0;
+    if (audioNodes && audioCtx) {
+        audioNodes.masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.08);
+    }
+}
 
 // --- Compute range needed to fit data ---
 
@@ -1036,19 +1185,23 @@ function updateTransformGroupVisibility() {
         t.textContent = "";
         if (typeof closeOpTool === "function") closeOpTool();
     }
-    else if (hasCoeff) t.textContent = "· coeffs";
-    else t.textContent = "· roots";
+    else if (hasCoeff) { t.textContent = "· coeffs"; t.style.color = "#5ddb6a"; }
+    else { t.textContent = "· roots"; t.style.color = "#e94560"; }
 }
 
 function updateCoeffSelectionVisual() {
     coeffLayer.selectAll("circle.coeff")
         .classed("selected", d => selectedCoeffs.has(d._idx));
+    const cc = document.getElementById("coeff-sel-count");
+    cc.textContent = selectedCoeffs.size > 0 ? `(${selectedCoeffs.size})` : "";
     updateTransformGroupVisibility();
 }
 
 function updateRootSelectionVisual() {
     rootsLayer.selectAll("circle.root")
         .classed("selected", d => selectedRoots.has(d._idx));
+    const rc = document.getElementById("roots-sel-count");
+    rc.textContent = selectedRoots.size > 0 ? `(${selectedRoots.size})` : "";
     updateTransformGroupVisibility();
 }
 
@@ -1166,8 +1319,6 @@ function createPathFromSelection() {
     animPaths.push(path);
     viewedPathIdx = animPaths.length - 1;
 
-    // Clear selection (coeffs are now in a path)
-    selectedCoeffs.clear();
     updateCoeffSelectionVisual();
     updateAnimBar();
     renderCoeffTrails();
@@ -1210,7 +1361,7 @@ function syncBarToPath() {
     animRadiusInput.value = path.radius;
     animRadiusVal.textContent = path.radius.toFixed(2);
     animSpeedInput.value = path.speed;
-    animSpeedVal.textContent = path.speed.toFixed(1);
+    animSpeedVal.textContent = path.speed.toFixed(2);
     animAngleInput.value = path.angle;
     animAngleVal.textContent = path.angle.toFixed(2);
     ccwBtn.textContent = path.ccw ? "CCW" : "CW";
@@ -1290,7 +1441,7 @@ animRadiusInput.addEventListener("input", function () {
     syncPathFromBar();
 });
 animSpeedInput.addEventListener("input", function () {
-    animSpeedVal.textContent = parseFloat(this.value).toFixed(1);
+    animSpeedVal.textContent = parseFloat(this.value).toFixed(2);
     syncPathFromBar();
 });
 animAngleInput.addEventListener("input", function () {
@@ -1359,6 +1510,40 @@ playBtn.addEventListener("click", function () {
         if (animPaths.length > 0) renderCoeffTrails();
         playBtn.textContent = "⏸ Pause";
     }
+});
+
+// Home button: reset coefficients to their curve[0] (start) positions
+document.getElementById("home-btn").addEventListener("click", function () {
+    if (animState.playing) {
+        stopAnimation();
+        playBtn.textContent = "▶ Play";
+    }
+    animState.elapsedAtPause = null;
+    for (const path of animPaths) {
+        for (const idx of path.coeffs) {
+            if (coefficients[idx].curve) {
+                coefficients[idx].re = coefficients[idx].curve[0].re;
+                coefficients[idx].im = coefficients[idx].curve[0].im;
+            }
+        }
+    }
+    const animated = allPathCoeffs();
+    coeffLayer.selectAll("circle.coeff")
+        .filter(cd => animated.has(cd._idx))
+        .attr("cx", cd => cxs()(cd.re)).attr("cy", cd => cys()(cd.im));
+    coeffLayer.selectAll(".coeff-label")
+        .filter(ld => animated.has(ld._idx))
+        .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
+    if (trailsEnabled) {
+        trailData = [];
+        trailComplete = false;
+        trailLayer.selectAll("path.trail-path").remove();
+    }
+    resetAudioState();
+    renderCoeffTrails();
+    autoScaleCoeffPanel();
+    solveRootsThrottled();
+    renderDomainColoringThrottled();
 });
 
 // Trails toggle button
@@ -1847,6 +2032,7 @@ function stopAnimation() {
         cancelAnimationFrame(animState.rafId);
         animState.rafId = null;
     }
+    if (soundEnabled) resetAudioState();
 }
 
 // --- Render coefficients ---
@@ -2035,6 +2221,7 @@ function renderRoots(newRoots) {
         }
         renderTrails();
     }
+    if (soundEnabled) updateAudio();
 }
 
 function renderTrails() {
@@ -2392,6 +2579,7 @@ function applyPattern() {
     nextPathId = 1;
     clearAllSelection();
     clearTrails();
+    resetAudioState();
     renderCoeffTrails(); // remove stale coefficient path SVGs
     currentRoots = [];
     rootsLayer.selectAll("circle.root").remove();
@@ -2507,6 +2695,7 @@ document.addEventListener("keydown", function(e) {
 }, true);
 
 document.getElementById("pattern").addEventListener("change", applyPattern);
+document.getElementById("reset-btn").addEventListener("click", applyPattern);
 
 document.getElementById("deselect-btn").addEventListener("click", clearAllSelection);
 
@@ -2532,6 +2721,20 @@ rootColorBtn.addEventListener("click", function () {
     this.classList.toggle("active", rootColorEnabled);
     rootsLayer.selectAll("circle.root")
         .attr("fill", (_, i) => rootColor(i, currentRoots.length));
+});
+
+document.getElementById("sound-toggle-btn").addEventListener("click", function () {
+    soundEnabled = !soundEnabled;
+    this.classList.toggle("active", soundEnabled);
+    this.textContent = soundEnabled ? "🔊" : "🔇";
+    if (soundEnabled) {
+        initAudio();
+        if (audioCtx.state === "suspended") audioCtx.resume();
+        audioWatchdogId = requestAnimationFrame(audioWatchdog);
+    } else {
+        if (audioWatchdogId) { cancelAnimationFrame(audioWatchdogId); audioWatchdogId = null; }
+        resetAudioState();
+    }
 });
 
 document.addEventListener("keydown", function (e) {
@@ -2573,9 +2776,11 @@ function applyPreview(snap, fn) {
             const r = fn(s.re, s.im);
             c.re = r.re; c.im = r.im;
         }
+        for (const path of animPaths) computePathCurves(path);
         autoScaleCoeffPanel();
         renderCoefficients();
         updateCoeffSelectionVisual();
+        renderCoeffTrails();
         solveRootsThrottled();
     } else {
         for (const s of snap.items) {
@@ -2585,7 +2790,9 @@ function applyPreview(snap, fn) {
         }
         autoScaleRootsPanel();
         coefficients = rootsToCoefficients(currentRoots.map(r => ({ re: r.re, im: r.im })));
+        for (const path of animPaths) computePathCurves(path);
         renderCoefficients();
+        renderCoeffTrails();
         renderRoots(currentRoots);
         updateRootSelectionVisual();
     }
@@ -2980,13 +3187,55 @@ function startRecording() {
     mr.onstop = () => {
         const blob = new Blob(vidRec.chunks, { type: mr.mimeType || "video/webm" });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const now = new Date();
+        const ts = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
         const suffix = mode === "both" ? "both" : mode === "coeffs" ? "coeffs" : "roots";
+        const basename = `polypaint-${suffix}-${ts}`;
+
+        // Download video
+        const a = document.createElement("a");
         a.href = url;
-        a.download = `polypaint-${suffix}-${ts}.webm`;
+        a.download = `${basename}.webm`;
         a.click();
         URL.revokeObjectURL(url);
+
+        // Download JSON metadata (mirrors snap metadata)
+        const meta = {
+            type: "recording",
+            mode: mode,
+            timestamp: now.toISOString(),
+            degree: coefficients.length - 1,
+            pattern: document.getElementById("pattern").value,
+            domainColoring: domainColoringEnabled,
+            rootColoring: rootColorEnabled,
+            trails: trailsEnabled,
+            animPaths: animPaths.map(p => ({
+                id: p.id,
+                coeffs: [...p.coeffs],
+                pathType: p.pathType,
+                radius: p.radius,
+                speed: p.speed,
+                ccw: p.ccw,
+                angle: p.angle
+            })),
+            selectedCoeffs: [...selectedCoeffs],
+            selectedRoots: [...selectedRoots],
+            coefficients: coefficients.map(c => ({
+                pos: [c.re, c.im],
+                home: c.curve ? [c.curve[0].re, c.curve[0].im] : [c.re, c.im]
+            })),
+            roots: currentRoots.map(r => [r.re, r.im]),
+            panels: {
+                coeff: { range: panels.coeff.range },
+                roots: { range: panels.roots.range }
+            }
+        };
+        const jsonBlob = new Blob([JSON.stringify(meta, null, 2)], { type: "application/json" });
+        const a2 = document.createElement("a");
+        a2.href = URL.createObjectURL(jsonBlob);
+        a2.download = `${basename}.json`;
+        a2.click();
+        URL.revokeObjectURL(a2.href);
     };
 
     vidRec.recording = true;

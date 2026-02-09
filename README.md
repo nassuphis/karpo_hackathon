@@ -16,7 +16,8 @@ PolyPaint makes this relationship tangible. Two side-by-side complex-plane panel
 - **Right panel (Roots):** Drag any root dot and the coefficients on the left update to match — the polynomial is reconstructed from its roots via (z − r₀)(z − r₁)···(z − rₙ₋₁).
 - **Multi-select:** Click individual dots to toggle selection, or **marquee-select** by clicking and dragging on empty canvas to select all nodes inside the rectangle. Drag any selected item and the entire group moves together, maintaining relative positions.
 - **Animate:** Define multiple simultaneous animation paths — each path drives a different subset of coefficients along its own curve (circle, figure-8, spiral, etc.) with independent radius, speed, and direction. Hit Play and all paths activate at once, creating rich interference patterns as the roots respond to the combined perturbation.
-- **Transform:** Select coefficients or roots and use interactive gesture tools — **Scale** (vertical slider with exponential mapping), **Rotate** (horizontal slider in turns), and **Translate** (2D vector pad) — all with live preview as you drag.
+- **Transform:** Select coefficients or roots and use interactive gesture tools — **Scale** (vertical slider with exponential mapping), **Rotate** (horizontal slider in turns), and **Translate** (2D vector pad) — all with live preview as you drag. Ops work on both coefficient and root selections — the target label turns green for coefficients, red for roots.
+- **Sonify:** Toggle sound on and the app becomes an instrument — root motion drives a theremin-like drone in real time, whether from animation or manual drag. Pitch tracks the root centroid, brightness follows vertical position and kinetic energy, and near-collision events trigger sci-fi beeps. See [Sonification](#sonification) for the full algorithm.
 
 Everything runs client-side in a single HTML file. No server, no build step, no dependencies to install.
 
@@ -29,11 +30,12 @@ Or visit the **[live demo](https://nassuphis.github.io/karpo_hackathon/)**.
 ## Architecture
 
 ```
-Single HTML file (~3300 lines)
+Single HTML file (~3500 lines)
 ├── d3.js v7 (CDN)          — SVG rendering, drag interactions
 ├── Ehrlich-Aberth solver    — polynomial root finding in pure JS
 ├── Horner evaluator         — domain coloring + derivative computation
-└── Canvas 2D API            — real-time domain coloring
+├── Canvas 2D API            — real-time domain coloring
+└── Web Audio API            — sonification of root motion
 ```
 
 No server. No WebSocket. No build tools. The entire app is one self-contained HTML file with inline CSS and JavaScript plus a single CDN dependency (d3.js).
@@ -92,6 +94,86 @@ When enabled (off by default, toggle via the ◐ sidebar button), the roots pane
 
 The polynomial is evaluated via Horner's method. The canvas renders at half resolution with `devicePixelRatio` support and is CSS-scaled to full size, keeping it smooth at 60fps even at degree 30.
 
+## Sonification
+
+When enabled (off by default, toggle via the 🔇 sidebar button), root motion is mapped to sound in real time using the [Web Audio API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API). Sound is generated whenever roots update — both during animation playback and during interactive drag of coefficients or roots.
+
+### Audio Graph
+
+```
+[osc1: sine 220Hz] ──┐
+                      ├──► [gainNode] ──► [lowpass filter] ──► [masterGain] ──► speakers
+[osc2: triangle 223Hz] ──┘
+
+[beepOsc: sine] ──► [beepGain] ──► [masterGain]
+
+[lfo: sine 5Hz] ──► [lfoGain] ──► osc1.frequency + osc2.frequency
+```
+
+Two main oscillators (sine + slightly detuned triangle at +3 Hz) produce a thick, beating theremin tone. They pass through a gain stage, then a lowpass filter whose cutoff tracks vertical position and energy, then a master gain node that acts as the definitive gate. A separate beep oscillator, gated by its own gain envelope, handles collision events. An LFO provides vibrato on both main oscillators.
+
+### Feature Extraction
+
+Five features are extracted from `currentRoots` each frame:
+
+| Feature | Formula | Maps to |
+|---------|---------|---------|
+| **Centroid X** (`cx`) | mean of all root real parts | Oscillator pitch |
+| **Centroid Y** (`cy`) | mean of all root imaginary parts | Filter cutoff (brightness) |
+| **Energy** (`E`) | median of per-root frame-to-frame velocities | Gain (loudness) + filter cutoff boost |
+| **Swirl** (`Ω`) | mean angular velocity of roots around centroid | LFO depth (vibrato) |
+| **Min distance** (`dmin`) | minimum pairwise distance between any two roots | Beep trigger threshold |
+
+**Velocity** is computed as the Euclidean distance each root has moved since the previous frame. The median (not mean) is used to resist outlier spikes from root-index swaps. **Angular velocity** wraps angles correctly across the ±π boundary.
+
+All features are smoothed with a one-pole exponential filter before mapping to audio parameters:
+
+```
+smoothed += α × (raw − smoothed),  α = 0.1
+```
+
+This prevents audible discontinuities from frame-to-frame noise while remaining responsive enough to track real motion.
+
+### Sound Mapping
+
+**Pitch (theremin):**
+```
+frequency = 220 × 2^(cx_norm × 1.5)
+```
+where `cx_norm = cx / panel_range`. The centroid's horizontal position maps to ~1.5 octaves above A3 (220 Hz). Moving the root ensemble to the right raises pitch; moving left lowers it. The second oscillator tracks at `frequency × 1.012` for a 3 Hz beating effect.
+
+**Filter cutoff (brightness):**
+```
+cutoff = 400 + 2000 × (cy_norm + 1)/2 + 1500 × E_norm
+```
+Clamped to 200–6000 Hz, Q = 2. Higher root positions open the filter (brighter tone), and more kinetic energy adds further brightness. When roots are low and still, only the fundamental comes through; when they're high and fast, upper harmonics emerge.
+
+**Gain (loudness):**
+```
+gain = 0.18 × E_norm
+```
+where `E_norm = min(E / (range × 0.05), 1)`. **Purely energy-driven** — when nothing moves, gain is zero and there is complete silence. This means the sound only exists when roots are actively in motion (from animation or drag). The smoothing filter provides a natural ~10-frame fade-out when motion stops.
+
+**Vibrato (swirl):**
+```
+lfo_depth = min(|Ω_smoothed| × 2.0, 5.0)  Hz
+```
+The LFO runs at 5 Hz and modulates both oscillators' frequencies. When roots swirl (rotate coherently around their centroid), vibrato depth increases up to 5 Hz — a noticeable wobble. When roots move radially without rotation, vibrato is near zero.
+
+**Near-collision beep:**
+```
+if dmin < 0.12 × range:
+    beep_freq = 600 + 2000 × (1 − dmin/threshold)  Hz
+    envelope: 0.0001 → 0.15 (5ms attack) → 0.0001 (75ms decay)
+```
+When any two roots come within 12% of the visible range, a short sine beep fires. Closer approaches produce higher-pitched beeps (up to 2600 Hz). The 5ms attack ramp prevents clicks. Rate-limited to one beep per 100ms to avoid machine-gun stuttering during sustained near-collisions.
+
+### Silence Management
+
+A **watchdog timer** runs via `requestAnimationFrame` while sound is enabled. If `updateAudio()` has not been called for 150ms (i.e., no root updates from animation or drag), the watchdog fades `masterGain` to zero over ~150ms. This handles the edge case where drag stops and `renderRoots()` is no longer called — without the watchdog, the last gain value would persist as a lingering tone.
+
+Additionally, `resetAudioState()` is called on: animation stop, Home button, pattern change, degree change, and sound toggle off. It zeroes all smoothing accumulators and ramps `masterGain` to zero, ensuring clean silence in all state transitions.
+
 ## Root Braids and Monodromy
 
 When you animate a coefficient along a closed loop, the roots don't just wiggle — they trace out a **braid**. This is a topological phenomenon with deep mathematical roots (pun intended).
@@ -108,11 +190,11 @@ The UI is organized around a left sidebar with three groups and a compact header
 
 **Header:** App title, clickable **Degree** label (click to open slider, range 3–30), and **Pattern** dropdown.
 
-**Sidebar — View:** ◐ Domain coloring toggle, 🎨 Root coloring toggle.
+**Sidebar — View:** ◐ Domain coloring toggle, 🎨 Root coloring toggle, 🔇/🔊 Sound toggle.
 
 **Sidebar — Tools:** ✕ Deselect all, ⬇ Export snapshot.
 
-**Sidebar — Ops** (enabled when nodes are selected): ⇕ **Scale** (vertical slider, exponential 0.1×–10×), ⟲ **Rotate** (horizontal slider, ±0.5 turns), ✛ **Translate** (2D vector pad, ±2 in each axis). Each opens a transient popover with live preview — drag to scrub, click outside or press Escape to commit and close.
+**Sidebar — Ops** (enabled when nodes are selected — buttons brighten from dim to full when a selection exists): ⇕ **Scale** (vertical slider, exponential 0.1×–10×), ⟲ **Rotate** (horizontal slider, ±0.5 turns), ✛ **Translate** (2D vector pad, ±2 in each axis). Each opens a transient popover with live preview — drag to scrub, click outside or press Escape to commit and close. A colored target label below Ops shows "· coeffs" (green) or "· roots" (red) to indicate what the operations will affect.
 
 | Control | Description |
 |---------|-------------|
@@ -125,6 +207,9 @@ The UI is organized around a left sidebar with three groups and a compact header
 | **CW / CCW** toggle | Sets clockwise or counter-clockwise direction for the current path. |
 | **×** delete button | Removes the currently viewed path. |
 | **⏺** record (roots header) | Records to WebM video. Mode selector: Roots, Coefficients, or Both (side-by-side). Auto-stops on loop completion. |
+| **⌂ Home** button | Returns all animated coefficients to their start positions (curve[0]) — resets the animation clock without changing path shapes. |
+| **🔇/🔊** sound toggle | Enables WebAudio sonification of root motion. See [Sonification](#sonification). |
+| **Selection count** (panel headers) | Shows the number of selected items next to "Coefficients" (green) and "Roots" (red) panel titles. |
 
 ### Selection
 
@@ -139,7 +224,7 @@ The UI is organized around a left sidebar with three groups and a compact header
 The animation system supports **multiple simultaneous paths**, each driving a different subset of coefficients along its own curve with independent settings.
 
 **Workflow:**
-1. Select coefficients → click **Sel→Path** → a new path is created and the selection clears
+1. Select coefficients → click **Sel→Path** → a new path is created (selection persists for further operations)
 2. Select more coefficients → click **Sel→Path** again → a second path is created
 3. Use **◀ ▶** to navigate between paths and adjust each one's curve, radius, speed, and direction
 4. Click **Play** → all paths animate simultaneously
@@ -260,7 +345,7 @@ Heart, Circle, Star, Spiral, Cross, Diamond, Chessboard, Smiley, Figure-8, Butte
 
 ```
 karpo_hackathon/
-├── index.html            # Entire app (~3300 lines): CSS, JS, HTML all inline
+├── index.html            # Entire app (~3500 lines): CSS, JS, HTML all inline
 ├── snaps/                # Snap captures (PNG + JSON metadata)
 └── README.md
 ```

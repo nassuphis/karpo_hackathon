@@ -18,8 +18,8 @@ PolyPaint makes this relationship tangible. Two side-by-side complex-plane panel
 - **Animate:** Define multiple simultaneous animation paths — each path drives a different subset of coefficients along its own curve (circle, figure-8, spiral, etc.) with independent radius, speed, and direction. Hit Play and all paths activate at once, creating rich interference patterns as the roots respond to the combined perturbation.
 - **Transform:** Select coefficients or roots and use interactive gesture tools — **Scale** (vertical slider with exponential mapping), **Rotate** (horizontal slider in turns), and **Translate** (2D vector pad) — all with live preview as you drag. Ops work on both coefficient and root selections — the target label turns green for coefficients, red for roots.
 - **Sonify:** Three independent sound layers — **Base** (FM drone), **Melody** (pentatonic arpeggiator), and **Voice** (close-encounter beeps) — each with its own sidebar button and config popover. Click any button to open a panel of tuning sliders (pitch, FM depth, volume, cutoff, etc.) that reshape the sound in real time. See [Sonification](docs/sonification.md) for the full algorithm.
-
-<video controls loop playsinline width="720" src="https://github.com/user-attachments/assets/f2141904-eef3-433f-81fa-7ac0a1a61bb5"></video>
+- **Sensitivity coloring:** Switch root coloring to **Derivative** mode to color each root by how sensitive it is to coefficient perturbation — blue (stable) through white to red (volatile). Uses the Jacobian ∂rⱼ/∂cₖ = −rⱼⁿ⁻ᵏ / p'(rⱼ) with rank-based normalization. The coefficient picker also shows per-coefficient sensitivity dots.
+- **Stats dashboard:** The roots panel has a **Stats** tab with four time-series plots, each selectable from: **Force** (total sensitivity w.r.t. moving coefficients), **Speed** (sum of root displacements), **MinDist** (closest root pair), **MaxDist** (farthest root pair). Data is collected every frame and displayed as auto-scaled rolling charts.
 
 Everything runs client-side in a single HTML file. No server, no build step, no dependencies to install.
 
@@ -32,7 +32,7 @@ Or visit the **[live demo](https://nassuphis.github.io/karpo_hackathon/)**.
 ## Architecture
 
 ```
-Single HTML file (~3500 lines)
+Single HTML file (~4700 lines)
 ├── d3.js v7 (CDN)          — SVG rendering, drag interactions
 ├── Ehrlich-Aberth solver    — polynomial root finding in pure JS
 ├── Horner evaluator         — domain coloring + derivative computation
@@ -57,7 +57,7 @@ The UI is organized around a left sidebar with three groups and a compact header
 
 **Sidebar — View:** ◐ Domain coloring toggle, 🎨 Root coloring toggle, **B** Base / **M** Melody / **V** Voice sound toggles (each opens a config popover).
 
-**Sidebar — Tools:** ✕ Deselect all, ⬇ Export snapshot.
+**Sidebar — Tools:** ✕ Deselect all, ⊕ Select all coefficients, ☰ Coefficient picker (scrollable list with index color + sensitivity dots), ⬇ Export snapshot.
 
 **Sidebar — Ops** (enabled when nodes are selected — buttons brighten from dim to full when a selection exists): ⇕ **Scale** (vertical slider, exponential 0.1×–10×), ⟲ **Rotate** (horizontal slider, ±0.5 turns), ✛ **Translate** (2D vector pad, ±2 in each axis). Each opens a transient popover with live preview — drag to scrub, click outside or press Escape to commit and close. A colored target label below Ops shows "· coeffs" (green) or "· roots" (red) to indicate what the operations will affect.
 
@@ -71,7 +71,9 @@ The UI is organized around a left sidebar with three groups and a compact header
 | **A (Angle)** slider | Rotates the path shape around the coefficient (0–1 → 0–360°). |
 | **CW / CCW** toggle | Sets clockwise or counter-clockwise direction for the current path. |
 | **×** delete button | Removes the currently viewed path. |
-| **⏺** record (roots header) | Records to WebM video. Mode selector: Roots, Coefficients, or Both (side-by-side). Auto-stops on loop completion. |
+| **Roots / Stats** tabs | Roots panel tab bar — switch between root visualization and stats dashboard. |
+| **Stats** dropdowns | Each of the 4 stat plots has a dropdown: Force, Speed, MinDist, MaxDist. |
+| **⏺** record (tab bar) | Records to WebM video. Mode selector: Roots, Coefficients, or Both (side-by-side). Auto-stops on loop completion. |
 | **⌂ Home** button | Returns all animated coefficients to their start positions (curve[0]) — resets the animation clock without changing path shapes. |
 | **B / M / V** sound buttons | Toggle and configure the three sound layers. Click to open config popover with on/off toggle + tuning sliders. See [Sonification](docs/sonification.md). |
 | **Selection count** (panel headers) | Shows the number of selected items next to "Coefficients" (green) and "Roots" (red) panel titles. |
@@ -111,7 +113,7 @@ When a coefficient is assigned to a new path, it is automatically removed from a
 
 ```
 karpo_hackathon/
-├── index.html            # Entire app (~3500 lines): CSS, JS, HTML all inline
+├── index.html            # Entire app (~4700 lines): CSS, JS, HTML all inline
 ├── docs/
 │   ├── solver.md         # Ehrlich-Aberth method + domain coloring
 │   ├── sonification.md   # Audio graph, feature extraction, sound mapping

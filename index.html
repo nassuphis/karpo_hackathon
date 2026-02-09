@@ -204,6 +204,36 @@ body {
     font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;
 }
 .audio-toggle.on .toggle-label { color: var(--text); }
+/* --- Coeff picker rows --- */
+.cpick-row {
+    display: flex; align-items: center; gap: 6px; width: 100%;
+    padding: 2px 0; cursor: pointer; user-select: none;
+}
+.cpick-row:hover { background: rgba(255,255,255,0.05); }
+.cpick-row .cpick-dot {
+    width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+}
+.cpick-row .cpick-label {
+    font-size: 10px; color: var(--muted); width: 28px; flex-shrink: 0;
+}
+.cpick-row .cpick-power {
+    font-size: 9px; color: var(--muted); opacity: 0.6; width: 30px; flex-shrink: 0;
+}
+.cpick-row .cpick-coords {
+    font-size: 9px; color: var(--muted); flex: 1; text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.cpick-row .cpick-cb {
+    width: 12px; height: 12px; border: 1.5px solid var(--muted); border-radius: 2px;
+    flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    transition: all 0.12s;
+}
+.cpick-row .cpick-cb.checked {
+    background: var(--accent); border-color: var(--accent);
+}
+.cpick-row .cpick-cb.checked::after {
+    content: "✓"; font-size: 8px; color: #fff;
+}
 /* --- Panels --- */
 #panels { display: flex; justify-content: center; gap: 12px; padding: 8px 12px 12px 8px; flex: 1; min-height: 0; }
 .panel {
@@ -229,6 +259,35 @@ circle.coeff.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
 circle.root { cursor: grab; stroke-width: 1.5; }
 circle.root.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
 .coeff-label { font-size: 10px; fill: #aaa; pointer-events: none; }
+/* --- Tabs (roots panel) --- */
+.tab-bar { display:flex; align-items:stretch; padding:0 8px; gap:0;
+           flex-shrink:0; background:rgba(10,12,30,0.45);
+           border-bottom:1px solid var(--stroke); }
+.tab { padding:7px 14px 8px; font-weight:500; font-size:11px;
+       text-transform:uppercase; letter-spacing:0.8px; color:var(--muted);
+       background:transparent; border:1px solid transparent; border-bottom:none;
+       border-radius:var(--radius) var(--radius) 0 0; cursor:pointer;
+       position:relative; top:1px; margin-bottom:-1px; transition:color 0.12s, background 0.12s; }
+.tab:not(.active):hover { background:rgba(255,255,255,0.04); color:var(--text); }
+.tab.active { background:rgba(255,255,255,0.02); border-color:var(--stroke);
+              border-bottom-color:rgba(255,255,255,0.02); color:var(--text); z-index:1; }
+.tab-bar .icon-btn { width:22px; height:22px; font-size:11px; border-radius:6px; }
+.tab-bar-controls { display:flex; gap:4px; align-items:center; margin-left:auto; padding:0 0 0 8px; }
+.tab-panes { flex:1; min-height:0; position:relative; }
+.tab-content { position:absolute; top:0; left:0; right:0; bottom:0;
+               visibility:hidden; display:flex; flex-direction:column; }
+.tab-content.active { visibility:visible; }
+.stats-grid { display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr;
+              flex:1; gap:0; min-height:0; }
+.stats-cell { display:flex; flex-direction:column; min-height:0; border:1px solid var(--stroke);
+              margin:-0.5px; overflow:hidden; }
+.stats-cell:first-child { border-radius:0; }
+.stats-select { flex-shrink:0; width:100%; padding:3px 6px; font-size:10px;
+                background:rgba(10,12,30,0.6); color:var(--muted); border:none;
+                border-bottom:1px solid var(--stroke); cursor:pointer;
+                font-family:inherit; letter-spacing:0.5px; outline:none; }
+.stats-select:focus { color:var(--text); }
+.stats-canvas { flex:1; width:100%; min-height:0; background:var(--panel); }
 #roots-container { position: relative; flex: 1; min-height: 0; }
 #domain-canvas { position: absolute; top: 0; left: 0; border-radius: 0; }
 #roots-panel.domain-active { background: transparent !important; }
@@ -370,6 +429,8 @@ circle.coeff.selected, circle.root.selected {
         <div class="side-group">
             <div class="side-label">Tools</div>
             <button id="deselect-btn" class="side-btn" title="Deselect all (Esc)">✕</button>
+            <button id="select-all-btn" class="side-btn" title="Select all coefficients">⊕</button>
+            <button id="coeff-picker-btn" class="side-btn" title="Coefficient picker">☰</button>
             <button id="snap-btn" class="side-btn" title="Export snapshot">⬇</button>
         </div>
         <div class="side-group ops disabled" id="ops-group">
@@ -439,10 +500,30 @@ circle.coeff.selected, circle.root.selected {
         </div>
     </div>
     <div class="panel">
-        <h3><span>Roots <span id="roots-sel-count" style="font-size:9px;color:#e94560;opacity:0.85;"></span></span><span style="display:flex;gap:4px;align-items:center;"><select id="rec-mode" title="Recording mode" style="font-size:10px;padding:1px 2px;background:rgba(255,255,255,0.06);color:var(--muted);border:1px solid var(--stroke);border-radius:4px;cursor:pointer;"><option value="roots">Roots</option><option value="coeffs">Coeffs</option><option value="both">Both</option></select><button id="rec-roots-btn" class="icon-btn" title="Record (webm)">⏺</button><button id="stop-roots-btn" class="icon-btn" title="Stop recording" style="display:none;">⏹</button></span></h3>
-        <div id="roots-container">
-            <canvas id="domain-canvas"></canvas>
-            <svg id="roots-panel"></svg>
+        <div class="tab-bar">
+            <button class="tab active" data-tab="roots">Roots <span id="roots-sel-count" style="font-size:9px;color:#e94560;opacity:0.85;"></span></button>
+            <button class="tab" data-tab="stats">Stats</button>
+            <span class="tab-bar-controls">
+                <select id="rec-mode" title="Recording mode" style="font-size:10px;padding:1px 2px;background:rgba(255,255,255,0.06);color:var(--muted);border:1px solid var(--stroke);border-radius:4px;cursor:pointer;"><option value="roots">Roots</option><option value="coeffs">Coeffs</option><option value="both">Both</option></select>
+                <button id="rec-roots-btn" class="icon-btn" title="Record (webm)">⏺</button>
+                <button id="stop-roots-btn" class="icon-btn" title="Stop recording" style="display:none;">⏹</button>
+            </span>
+        </div>
+        <div class="tab-panes">
+            <div id="roots-content" class="tab-content active">
+                <div id="roots-container">
+                    <canvas id="domain-canvas"></canvas>
+                    <svg id="roots-panel"></svg>
+                </div>
+            </div>
+            <div id="stats-content" class="tab-content">
+                <div class="stats-grid">
+                    <div class="stats-cell"><select class="stats-select" data-plot="0"></select><canvas class="stats-canvas" data-plot="0"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="1"></select><canvas class="stats-canvas" data-plot="1"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="2"></select><canvas class="stats-canvas" data-plot="2"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="3"></select><canvas class="stats-canvas" data-plot="3"></canvas></div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -453,6 +534,8 @@ circle.coeff.selected, circle.root.selected {
 <div id="ops-pop" class="ops-pop"></div>
 <div id="degree-pop" class="ops-pop"></div>
 <div id="audio-pop" class="ops-pop" style="min-width:220px"></div>
+<div id="color-pop" class="ops-pop" style="min-width:160px"></div>
+<div id="coeff-pick-pop" class="ops-pop" style="min-width:240px"></div>
 
 <script>
 const MIN_RANGE = 1.5;
@@ -517,11 +600,27 @@ const MAX_TRAIL_POINTS = 4000;
 const TRAIL_MIN_POINTS = 30; // minimum points before checking for loop closure
 // Domain coloring state
 let domainColoringEnabled = false;
-let rootColorEnabled = true;
+let rootColorMode = "rainbow";  // "none" | "rainbow" | "derivative"
+let rootSensitivities = null;   // Float64Array for derivative mode
 let domainCanvas = document.getElementById("domain-canvas");
 let domainCtx = domainCanvas.getContext("2d");
 let domainPendingRender = false;
 const DOMAIN_RES_SCALE = 0.5; // render at half resolution for performance
+// Stats tab state
+let activeTab = "roots";
+const STAT_TYPES = ["Force", "Speed", "MinDist", "MaxDist"];
+const STAT_COLORS = { Force: "#e94560", Speed: "#5b6abf", MinDist: "#2ecc71", MaxDist: "#f39c12" };
+const statsState = {
+    buffers: {},        // { statName: Float64Array ring buffer }
+    frameCount: 0,
+    writeIdx: 0,
+    maxFrames: 4000,
+    prevRoots: null,    // for Speed computation
+    plotConfigs: [0, 1, 2, 3], // index into STAT_TYPES for each of the 4 plots
+    canvases: [],       // 4 canvas elements
+    ctxs: [],           // 4 canvas 2D contexts
+    dirty: true
+};
 // Audio sonification state
 let baseEnabled = false;
 let melodyEnabled = false;
@@ -544,19 +643,19 @@ const ENCOUNTER_TOP_K = 3;         // track top 3 records per root (non-tunable)
 
 // Tunable config objects (sliders modify these in real time)
 const baseConfig = {
-    freq: 110, octaves: 2.0,
+    freq: 85, octaves: 1.8,
     modRatio: 2.0, modDepth: 300,
     filterLo: 250, filterHi: 3500,
     gainFloor: 0.03, gainRange: 0.22,
     vibDepth: 10, vibRate: 6.0,
 };
 const melodyConfig = {
-    rate: 24, peak: 0.12, cutoff: 30,
+    rate: 5, peak: 0.12, cutoff: 5,
     attack: 0.004, decay: 0.064,
     filterLo: 1200, filterHi: 3800,
 };
 const voiceConfig = {
-    decay: 1.001, novelty: 1.0, cooldown: 0.08,
+    decay: 1.001, novelty: 0.85, cooldown: 0.01,
     peak: 0.12, attack: 0.005, ringdown: 0.08,
 };
 
@@ -1064,7 +1163,135 @@ function coeffColor(i, n) {
 }
 
 function rootColor(i, n) {
-    return rootColorEnabled ? d3.interpolateRainbow(i / n) : "#e94560";
+    if (rootColorMode === "rainbow") return d3.interpolateRainbow(i / n);
+    if (rootColorMode === "derivative" && rootSensitivities && i < rootSensitivities.length) {
+        return sensitivityColor(rootSensitivities[i]);
+    }
+    return "#e94560";
+}
+
+function sensitivityColor(normVal) {
+    if (normVal <= 0.5) {
+        const t = normVal * 2;
+        const r = Math.round(t * 255);
+        const g = Math.round(t * 255);
+        return `rgb(${r},${g},255)`;
+    } else {
+        const t = (normVal - 0.5) * 2;
+        const g = Math.round((1 - t) * 255);
+        const b = Math.round((1 - t) * 255);
+        return `rgb(255,${g},${b})`;
+    }
+}
+
+// Rank-based normalization: sort values, assign integer ranks (ties get same rank),
+// map linearly to [0,1]. 0=blue, 0.5=white, 1=red in sensitivityColor.
+function rankNormalize(raw) {
+    const n = raw.length;
+    if (n === 0) return null;
+    // Build (value, index) pairs, replacing non-finite with largest finite
+    let maxFinite = -Infinity;
+    for (let i = 0; i < n; i++) if (isFinite(raw[i]) && raw[i] > maxFinite) maxFinite = raw[i];
+    if (maxFinite === -Infinity) return null;
+    const pairs = [];
+    for (let i = 0; i < n; i++) pairs.push({ v: isFinite(raw[i]) ? raw[i] : maxFinite, i });
+    pairs.sort((a, b) => a.v - b.v);
+    // Assign integer ranks; ties get the same rank
+    const result = new Float64Array(n);
+    let rank = 0;
+    for (let p = 0; p < n; p++) {
+        if (p > 0 && pairs[p].v !== pairs[p - 1].v) rank = p;
+        result[pairs[p].i] = rank;
+    }
+    const maxRank = n - 1;
+    if (maxRank === 0) { result.fill(0.5); return result; }
+    for (let i = 0; i < n; i++) result[i] /= maxRank;
+    return result;
+}
+
+function computeCoeffSensitivities() {
+    const nRoots = currentRoots.length;
+    const nCoeffs = coefficients.length;
+    const deg = nCoeffs - 1;
+    if (nRoots === 0) return null;
+
+    const cRe = new Float64Array(nCoeffs);
+    const cIm = new Float64Array(nCoeffs);
+    for (let i = 0; i < nCoeffs; i++) { cRe[i] = coefficients[i].re; cIm[i] = coefficients[i].im; }
+
+    // Precompute 1/|p'(rj)| and |rj| for each root
+    const invDpMag = new Float64Array(nRoots);
+    const rMag = new Float64Array(nRoots);
+    for (let j = 0; j < nRoots; j++) {
+        const zRe = currentRoots[j].re, zIm = currentRoots[j].im;
+        rMag[j] = Math.hypot(zRe, zIm);
+        let pRe = cRe[0], pIm = cIm[0], dpRe = 0, dpIm = 0;
+        for (let k = 1; k <= deg; k++) {
+            const ndRe = dpRe * zRe - dpIm * zIm + pRe;
+            const ndIm = dpRe * zIm + dpIm * zRe + pIm;
+            dpRe = ndRe; dpIm = ndIm;
+            const npRe = pRe * zRe - pIm * zIm + cRe[k];
+            const npIm = pRe * zIm + pIm * zRe + cIm[k];
+            pRe = npRe; pIm = npIm;
+        }
+        const dm = Math.hypot(dpRe, dpIm);
+        invDpMag[j] = dm < 1e-30 ? 0 : 1 / dm;
+    }
+
+    // For each coefficient k: sensitivity_k = Σⱼ |rⱼ^(deg-k)| / |p'(rⱼ)|
+    const raw = new Float64Array(nCoeffs);
+    for (let k = 0; k < nCoeffs; k++) {
+        const power = deg - k;
+        let sum = 0;
+        for (let j = 0; j < nRoots; j++) {
+            sum += Math.pow(rMag[j], power) * invDpMag[j];
+        }
+        raw[k] = sum;
+    }
+
+    return rankNormalize(raw);
+}
+
+function computeRootSensitivities() {
+    const n = currentRoots.length;
+    const deg = coefficients.length - 1;
+    if (n === 0 || selectedCoeffs.size === 0) { rootSensitivities = null; return; }
+
+    // Build coefficient arrays for Horner evaluation of p'(z)
+    const cRe = new Float64Array(coefficients.length);
+    const cIm = new Float64Array(coefficients.length);
+    for (let i = 0; i < coefficients.length; i++) {
+        cRe[i] = coefficients[i].re;
+        cIm[i] = coefficients[i].im;
+    }
+
+    const raw = new Float64Array(n);
+    for (let j = 0; j < n; j++) {
+        const zRe = currentRoots[j].re, zIm = currentRoots[j].im;
+        // Horner: simultaneous p(z) and p'(z)
+        let pRe = cRe[0], pIm = cIm[0];
+        let dpRe = 0, dpIm = 0;
+        for (let k = 1; k <= deg; k++) {
+            const ndRe = dpRe * zRe - dpIm * zIm + pRe;
+            const ndIm = dpRe * zIm + dpIm * zRe + pIm;
+            dpRe = ndRe; dpIm = ndIm;
+            const npRe = pRe * zRe - pIm * zIm + cRe[k];
+            const npIm = pRe * zIm + pIm * zRe + cIm[k];
+            pRe = npRe; pIm = npIm;
+        }
+        const dpMag = Math.hypot(dpRe, dpIm);
+        if (dpMag < 1e-30) { raw[j] = Infinity; continue; }
+
+        // Sum |rj^(deg-k)| for each selected coefficient k
+        const rMag = Math.hypot(zRe, zIm);
+        let sum = 0;
+        for (const k of selectedCoeffs) {
+            sum += Math.pow(rMag, deg - k);
+        }
+        raw[j] = sum / dpMag;
+    }
+
+    rootSensitivities = rankNormalize(raw);
 }
 
 // --- Init coefficients with pattern ---
@@ -1530,6 +1757,10 @@ function updateCoeffSelectionVisual() {
     const cc = document.getElementById("coeff-sel-count");
     cc.textContent = selectedCoeffs.size > 0 ? `(${selectedCoeffs.size})` : "";
     updateTransformGroupVisibility();
+    if (rootColorMode === "derivative") {
+        computeRootSensitivities();
+        refreshRootColors();
+    }
 }
 
 function updateRootSelectionVisual() {
@@ -2454,20 +2685,24 @@ const rootDrag = d3.drag()
         autoScaleRootsPanel();
         // Recompute coefficients from current roots (all client-side)
         const rootsForCoeffs = currentRoots.map(r => ({ re: r.re, im: r.im }));
-        coefficients = rootsToCoefficients(rootsForCoeffs);
-        for (const c of coefficients) c.curve = null;
-        // Clear animation paths — coefficient array was rebuilt, old paths are invalid
-        if (animPaths.length > 0) {
-            stopAnimation();
-            playBtn.textContent = "▶ Play";
-            animPaths = [];
-            viewedPathIdx = 0;
-            nextPathId = 1;
-            updateAnimBar();
-            renderCoeffTrails();
+        const newCoeffs = rootsToCoefficients(rootsForCoeffs);
+        // Update coefficient positions in-place, preserving curves and path assignments
+        for (let ci = 0; ci < newCoeffs.length; ci++) {
+            const deltaRe = newCoeffs[ci].re - coefficients[ci].re;
+            const deltaIm = newCoeffs[ci].im - coefficients[ci].im;
+            coefficients[ci].re = newCoeffs[ci].re;
+            coefficients[ci].im = newCoeffs[ci].im;
+            if (coefficients[ci].curve) {
+                for (const pt of coefficients[ci].curve) {
+                    pt.re += deltaRe;
+                    pt.im += deltaIm;
+                }
+            }
         }
+        if (animPaths.length > 0) renderCoeffTrails();
         renderCoefficients();
         renderDomainColoringThrottled();
+        if (anySoundEnabled()) updateAudio();
     })
     .on("end", function (event, d) {
         d3.select(this).classed("dragging", false);
@@ -2515,6 +2750,8 @@ function renderRoots(newRoots) {
     const n = currentRoots.length;
     for (let i = 0; i < n; i++) currentRoots[i]._idx = i;
 
+    if (rootColorMode === "derivative") computeRootSensitivities();
+
     const circles = rootsLayer.selectAll("circle.root").data(currentRoots, d => d._idx);
     circles.enter()
         .append("circle")
@@ -2531,6 +2768,10 @@ function renderRoots(newRoots) {
         .attr("fill", (_, i) => rootColor(i, n));
 
     circles.exit().remove();
+
+    // Collect stats snapshot
+    collectStatsSnapshot();
+    if (activeTab === "stats" && statsState.dirty) drawAllStatsPlots();
 
     // Record trail points during animation
     if (trailsEnabled && animState.playing && !trailComplete) {
@@ -2916,6 +3157,7 @@ function applyPattern() {
     nextPathId = 1;
     clearAllSelection();
     clearTrails();
+    clearStatsData();
     resetAudioState();
     renderCoeffTrails(); // remove stale coefficient path SVGs
     currentRoots = [];
@@ -3036,6 +3278,13 @@ document.getElementById("reset-btn").addEventListener("click", applyPattern);
 
 document.getElementById("deselect-btn").addEventListener("click", clearAllSelection);
 
+document.getElementById("select-all-btn").addEventListener("click", function () {
+    clearRootSelection();
+    for (let i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+    updateCoeffSelectionVisual();
+    updateAnimBar();
+});
+
 document.getElementById("select-all-coeffs-btn").addEventListener("click", function () {
     clearRootSelection();
     for (let i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
@@ -3052,12 +3301,173 @@ domainToggleBtn.addEventListener("click", function () {
     if (domainColoringEnabled) renderDomainColoring();
 });
 
+// --- Root color popover ---
+const colorPop = document.getElementById("color-pop");
 const rootColorBtn = document.getElementById("root-color-btn");
-rootColorBtn.addEventListener("click", function () {
-    rootColorEnabled = !rootColorEnabled;
-    this.classList.toggle("active", rootColorEnabled);
+let colorPopOpen = false;
+
+function closeColorPop() {
+    colorPop.classList.remove("open");
+    colorPop.innerHTML = "";
+    rootColorBtn.classList.remove("tool-active");
+    colorPopOpen = false;
+}
+
+function refreshRootColors() {
     rootsLayer.selectAll("circle.root")
         .attr("fill", (_, i) => rootColor(i, currentRoots.length));
+}
+
+function buildColorPop(pop) {
+    const title = document.createElement("div");
+    title.className = "pop-title"; title.textContent = "Root Color";
+    pop.appendChild(title);
+
+    const modes = [
+        { key: "none", label: "None" },
+        { key: "rainbow", label: "Index Rainbow" },
+        { key: "derivative", label: "Derivative" },
+    ];
+    const rows = [];
+    modes.forEach(m => {
+        const row = document.createElement("div");
+        row.className = "audio-toggle" + (rootColorMode === m.key ? " on" : "");
+        const dot = document.createElement("span");
+        dot.className = "toggle-dot";
+        const lbl = document.createElement("span");
+        lbl.className = "toggle-label"; lbl.textContent = m.label;
+        row.appendChild(dot);
+        row.appendChild(lbl);
+        row.addEventListener("click", () => {
+            rootColorMode = m.key;
+            rootColorBtn.classList.toggle("active", rootColorMode !== "none");
+            rows.forEach(r => r.classList.remove("on"));
+            row.classList.add("on");
+            if (rootColorMode === "derivative") computeRootSensitivities();
+            refreshRootColors();
+        });
+        pop.appendChild(row);
+        rows.push(row);
+    });
+}
+
+rootColorBtn.addEventListener("click", function () {
+    if (colorPopOpen) { closeColorPop(); return; }
+    closeColorPop();
+    if (typeof closeOpTool === "function") closeOpTool();
+    if (typeof closeDegreePopover === "function") closeDegreePopover();
+    if (typeof closeAudioPop === "function") closeAudioPop();
+    if (typeof closeCoeffPick === "function") closeCoeffPick();
+    colorPopOpen = true;
+    rootColorBtn.classList.add("tool-active");
+    colorPop.innerHTML = "";
+    buildColorPop(colorPop);
+    colorPop.classList.add("open");
+    const r = rootColorBtn.getBoundingClientRect();
+    colorPop.style.left = (r.right + 8) + "px";
+    colorPop.style.top = r.top + "px";
+});
+
+// --- Coefficient picker popover ---
+const coeffPickPop = document.getElementById("coeff-pick-pop");
+const coeffPickerBtn = document.getElementById("coeff-picker-btn");
+let coeffPickOpen = false;
+
+function closeCoeffPick() {
+    coeffPickPop.classList.remove("open");
+    coeffPickPop.innerHTML = "";
+    coeffPickerBtn.classList.remove("tool-active");
+    coeffPickOpen = false;
+}
+
+function buildCoeffPickPop(pop) {
+    const title = document.createElement("div");
+    title.className = "pop-title"; title.textContent = "Coefficients";
+    pop.appendChild(title);
+
+    const scrollBox = document.createElement("div");
+    scrollBox.style.cssText = "max-height:184px;overflow-y:auto;width:100%;";
+
+    const deg = coefficients.length - 1;
+    const n = coefficients.length;
+    const coeffSens = computeCoeffSensitivities();
+    for (let i = 0; i < n; i++) {
+        const row = document.createElement("div");
+        row.className = "cpick-row";
+
+        const dot = document.createElement("span");
+        dot.className = "cpick-dot";
+        dot.style.background = coeffColor(i, n);
+
+        const sensDot = document.createElement("span");
+        sensDot.className = "cpick-dot";
+        sensDot.style.background = coeffSens ? sensitivityColor(coeffSens[i]) : "#555";
+
+        const label = document.createElement("span");
+        label.className = "cpick-label";
+        label.textContent = "c" + i;
+
+        const power = document.createElement("span");
+        power.className = "cpick-power";
+        const exp = deg - i;
+        power.textContent = exp === 0 ? "1" : exp === 1 ? "z" : "z" + superscript(exp);
+
+        const coords = document.createElement("span");
+        coords.className = "cpick-coords";
+        const c = coefficients[i];
+        const sign = c.im >= 0 ? "+" : "";
+        coords.textContent = c.re.toFixed(2) + sign + c.im.toFixed(2) + "i";
+
+        const cb = document.createElement("span");
+        cb.className = "cpick-cb" + (selectedCoeffs.has(i) ? " checked" : "");
+
+        row.appendChild(cb);
+        row.appendChild(dot);
+        row.appendChild(sensDot);
+        row.appendChild(label);
+        row.appendChild(power);
+        row.appendChild(coords);
+
+        const idx = i;
+        row.addEventListener("click", () => {
+            clearRootSelection();
+            if (selectedCoeffs.has(idx)) {
+                selectedCoeffs.delete(idx);
+                cb.classList.remove("checked");
+            } else {
+                selectedCoeffs.add(idx);
+                cb.classList.add("checked");
+            }
+            updateCoeffSelectionVisual();
+            updateAnimBar();
+        });
+
+        scrollBox.appendChild(row);
+    }
+    pop.appendChild(scrollBox);
+}
+
+function superscript(n) {
+    const sup = "\u2070\u00B9\u00B2\u00B3\u2074\u2075\u2076\u2077\u2078\u2079";
+    if (n < 10) return sup[n];
+    return String(n).split("").map(d => sup[+d]).join("");
+}
+
+coeffPickerBtn.addEventListener("click", function () {
+    if (coeffPickOpen) { closeCoeffPick(); return; }
+    closeCoeffPick();
+    if (typeof closeOpTool === "function") closeOpTool();
+    if (typeof closeDegreePopover === "function") closeDegreePopover();
+    if (typeof closeAudioPop === "function") closeAudioPop();
+    if (typeof closeColorPop === "function") closeColorPop();
+    coeffPickOpen = true;
+    coeffPickerBtn.classList.add("tool-active");
+    coeffPickPop.innerHTML = "";
+    buildCoeffPickPop(coeffPickPop);
+    coeffPickPop.classList.add("open");
+    const r = coeffPickerBtn.getBoundingClientRect();
+    coeffPickPop.style.left = (r.right + 8) + "px";
+    coeffPickPop.style.top = r.top + "px";
 });
 
 // --- Audio instrument config popovers ---
@@ -3075,6 +3485,8 @@ function openAudioPop(btnEl, buildFn) {
     closeAudioPop();
     if (typeof closeOpTool === "function") closeOpTool();
     if (typeof closeDegreePopover === "function") closeDegreePopover();
+    if (typeof closeColorPop === "function") closeColorPop();
+    if (typeof closeCoeffPick === "function") closeCoeffPick();
     activeAudioBtn = btnEl;
     btnEl.classList.add("tool-active");
     audioPop.innerHTML = "";
@@ -3162,6 +3574,8 @@ document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") {
         if (typeof activeToolBtn !== "undefined" && activeToolBtn) { closeOpTool(); return; }
         if (activeAudioBtn) { closeAudioPop(); return; }
+        if (colorPopOpen) { closeColorPop(); return; }
+        if (coeffPickOpen) { closeCoeffPick(); return; }
         clearAllSelection();
     }
 });
@@ -3245,6 +3659,8 @@ function openOpTool(btnEl, buildFn) {
     closeOpTool();
     closeDegreePopover();
     if (typeof closeAudioPop === "function") closeAudioPop();
+    if (typeof closeColorPop === "function") closeColorPop();
+    if (typeof closeCoeffPick === "function") closeCoeffPick();
     opSnapshot = snapshotSelection();
     if (!opSnapshot) return;
     activeToolBtn = btnEl;
@@ -3439,6 +3855,18 @@ document.addEventListener("mousedown", e => {
     if (activeAudioBtn) {
         if (!audioPop.contains(e.target) && !(e.target.id && e.target.id.endsWith("-toggle-btn"))) {
             closeAudioPop();
+        }
+    }
+    // Close color popover
+    if (colorPopOpen) {
+        if (!colorPop.contains(e.target) && e.target.id !== "root-color-btn") {
+            closeColorPop();
+        }
+    }
+    // Close coeff picker popover
+    if (coeffPickOpen) {
+        if (!coeffPickPop.contains(e.target) && e.target.id !== "coeff-picker-btn") {
+            closeCoeffPick();
         }
     }
 });
@@ -3643,7 +4071,7 @@ function startRecording() {
             degree: coefficients.length - 1,
             pattern: document.getElementById("pattern").value,
             domainColoring: domainColoringEnabled,
-            rootColoring: rootColorEnabled,
+            rootColoring: rootColorMode !== "none",
             trails: trailsEnabled,
             animPaths: animPaths.map(p => ({
                 id: p.id,
@@ -3893,7 +4321,7 @@ function snapCapture() {
         degree: coefficients.length - 1,
         pattern: document.getElementById("pattern").value,
         domainColoring: domainColoringEnabled,
-        rootColoring: rootColorEnabled,
+        rootColoring: rootColorMode !== "none",
         trails: trailsEnabled,
         trailComplete: trailComplete,
         animPaths: animPaths.map(p => ({
@@ -3942,6 +4370,267 @@ document.getElementById("snap-btn").addEventListener("click", snapCapture);
 
 // --- Resize handler ---
 
+// --- Stats tab ---
+
+(function initStatsCanvases() {
+    const canvases = document.querySelectorAll(".stats-canvas");
+    const selects = document.querySelectorAll(".stats-select");
+    canvases.forEach((c, i) => {
+        statsState.canvases[i] = c;
+        statsState.ctxs[i] = c.getContext("2d");
+    });
+    selects.forEach((sel, plotIdx) => {
+        STAT_TYPES.forEach((name, si) => {
+            const opt = document.createElement("option");
+            opt.value = si; opt.textContent = name;
+            sel.appendChild(opt);
+        });
+        sel.value = statsState.plotConfigs[plotIdx];
+        sel.addEventListener("change", () => {
+            statsState.plotConfigs[plotIdx] = parseInt(sel.value);
+            drawStatsPlot(plotIdx);
+        });
+    });
+    // Init ring buffers
+    for (const name of STAT_TYPES) statsState.buffers[name] = new Float64Array(statsState.maxFrames);
+})();
+
+function resizeStatsCanvases() {
+    const dpr = window.devicePixelRatio || 1;
+    for (let i = 0; i < 4; i++) {
+        const c = statsState.canvases[i];
+        if (!c) continue;
+        const rect = c.getBoundingClientRect();
+        c.width = Math.floor(rect.width * dpr);
+        c.height = Math.floor(rect.height * dpr);
+        statsState.ctxs[i].setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    statsState.dirty = true;
+}
+
+function computeForce() {
+    // Total derivative of all roots w.r.t. moving coefficients (on a non-"none" path)
+    const nRoots = currentRoots.length;
+    const nCoeffs = coefficients.length;
+    const deg = nCoeffs - 1;
+    if (nRoots === 0 || nCoeffs === 0) return 0;
+
+    // Find moving coefficient indices
+    const movingSet = new Set();
+    for (const path of animPaths) {
+        if (path.pathType !== "none") {
+            for (const idx of path.coeffs) movingSet.add(idx);
+        }
+    }
+    if (movingSet.size === 0) return 0;
+
+    const cRe = new Float64Array(nCoeffs);
+    const cIm = new Float64Array(nCoeffs);
+    for (let i = 0; i < nCoeffs; i++) { cRe[i] = coefficients[i].re; cIm[i] = coefficients[i].im; }
+
+    // Precompute |p'(rj)| and |rj| for each root
+    const invDpMag = new Float64Array(nRoots);
+    const rMag = new Float64Array(nRoots);
+    for (let j = 0; j < nRoots; j++) {
+        const zRe = currentRoots[j].re, zIm = currentRoots[j].im;
+        rMag[j] = Math.hypot(zRe, zIm);
+        let pRe = cRe[0], pIm = cIm[0], dpRe = 0, dpIm = 0;
+        for (let k = 1; k <= deg; k++) {
+            const ndRe = dpRe * zRe - dpIm * zIm + pRe;
+            const ndIm = dpRe * zIm + dpIm * zRe + pIm;
+            dpRe = ndRe; dpIm = ndIm;
+            const npRe = pRe * zRe - pIm * zIm + cRe[k];
+            const npIm = pRe * zIm + pIm * zRe + cIm[k];
+            pRe = npRe; pIm = npIm;
+        }
+        const dm = Math.hypot(dpRe, dpIm);
+        invDpMag[j] = dm < 1e-30 ? 0 : 1 / dm;
+    }
+
+    // Sum sensitivities only for moving coefficients
+    let total = 0;
+    for (const k of movingSet) {
+        const power = deg - k;
+        for (let j = 0; j < nRoots; j++) {
+            total += Math.pow(rMag[j], power) * invDpMag[j];
+        }
+    }
+    return total;
+}
+
+function computeSpeed() {
+    const n = currentRoots.length;
+    if (!statsState.prevRoots || statsState.prevRoots.length !== n) return 0;
+    let total = 0;
+    for (let i = 0; i < n; i++) {
+        const dx = currentRoots[i].re - statsState.prevRoots[i].re;
+        const dy = currentRoots[i].im - statsState.prevRoots[i].im;
+        total += Math.hypot(dx, dy);
+    }
+    return total;
+}
+
+function computeMinDist() {
+    const n = currentRoots.length;
+    if (n < 2) return 0;
+    let minD = Infinity;
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            const dx = currentRoots[i].re - currentRoots[j].re;
+            const dy = currentRoots[i].im - currentRoots[j].im;
+            const d = Math.hypot(dx, dy);
+            if (d < minD) minD = d;
+        }
+    }
+    return minD;
+}
+
+function computeMaxDist() {
+    const n = currentRoots.length;
+    if (n < 2) return 0;
+    let maxD = 0;
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            const dx = currentRoots[i].re - currentRoots[j].re;
+            const dy = currentRoots[i].im - currentRoots[j].im;
+            const d = Math.hypot(dx, dy);
+            if (d > maxD) maxD = d;
+        }
+    }
+    return maxD;
+}
+
+const statComputeFns = [computeForce, computeSpeed, computeMinDist, computeMaxDist];
+
+function collectStatsSnapshot() {
+    const n = currentRoots.length;
+    if (n === 0) return;
+
+    const idx = statsState.writeIdx;
+    for (let s = 0; s < STAT_TYPES.length; s++) {
+        statsState.buffers[STAT_TYPES[s]][idx] = statComputeFns[s]();
+    }
+
+    // Save previous roots for Speed computation next frame
+    if (!statsState.prevRoots || statsState.prevRoots.length !== n) {
+        statsState.prevRoots = [];
+        for (let i = 0; i < n; i++) statsState.prevRoots.push({ re: 0, im: 0 });
+    }
+    for (let i = 0; i < n; i++) {
+        statsState.prevRoots[i].re = currentRoots[i].re;
+        statsState.prevRoots[i].im = currentRoots[i].im;
+    }
+
+    statsState.writeIdx = (idx + 1) % statsState.maxFrames;
+    statsState.frameCount = Math.min(statsState.frameCount + 1, statsState.maxFrames);
+    statsState.dirty = true;
+}
+
+function clearStatsData() {
+    for (const name of STAT_TYPES) statsState.buffers[name].fill(0);
+    statsState.frameCount = 0;
+    statsState.writeIdx = 0;
+    statsState.prevRoots = null;
+    statsState.dirty = true;
+    if (activeTab === "stats") drawAllStatsPlots();
+}
+
+function drawStatsPlot(plotIdx) {
+    const ctx = statsState.ctxs[plotIdx];
+    if (!ctx) return;
+    const c = statsState.canvases[plotIdx];
+    const W = c.getBoundingClientRect().width;
+    const H = c.getBoundingClientRect().height;
+    if (W === 0 || H === 0) return;
+
+    const statIdx = statsState.plotConfigs[plotIdx];
+    const statName = STAT_TYPES[statIdx];
+    const buf = statsState.buffers[statName];
+    const nFrames = statsState.frameCount;
+    const color = STAT_COLORS[statName];
+
+    const ML = 6, MR = 4, MT = 4, MB = 4; // minimal margins
+    const plotW = W - ML - MR;
+    const plotH = H - MT - MB;
+
+    // Clear
+    ctx.fillStyle = "#151a3a";
+    ctx.fillRect(0, 0, W, H);
+
+    // Find max value in visible buffer for normalization
+    let yMax = 0;
+    const startIdx = (nFrames < statsState.maxFrames) ? 0 : statsState.writeIdx;
+    for (let f = 0; f < nFrames; f++) {
+        const bufIdx = (startIdx + f) % statsState.maxFrames;
+        const v = buf[bufIdx];
+        if (v > yMax) yMax = v;
+    }
+    if (yMax < 1e-12) yMax = 1;
+
+    const xOf = (f) => ML + (nFrames > 1 ? (f / (nFrames - 1)) * plotW : 0);
+    const yOf = (v) => MT + plotH - (v / yMax) * plotH;
+
+    // Subtle horizontal gridlines at 0.25, 0.5, 0.75
+    ctx.strokeStyle = "rgba(255,255,255,0.04)";
+    ctx.lineWidth = 0.5;
+    for (const frac of [0.25, 0.5, 0.75]) {
+        const y = MT + plotH * (1 - frac);
+        ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML + plotW, y); ctx.stroke();
+    }
+
+    // Bottom axis
+    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(ML, MT + plotH); ctx.lineTo(ML + plotW, MT + plotH); ctx.stroke();
+
+    if (nFrames < 2) return;
+
+    // Draw stat line
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    for (let f = 0; f < nFrames; f++) {
+        const bufIdx = (startIdx + f) % statsState.maxFrames;
+        const x = xOf(f);
+        const y = yOf(buf[bufIdx]);
+        if (f === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1.0;
+
+    // Current value label (top-right)
+    const lastIdx = (startIdx + nFrames - 1) % statsState.maxFrames;
+    const curVal = buf[lastIdx];
+    ctx.fillStyle = color;
+    ctx.font = "bold 9px system-ui";
+    ctx.textAlign = "right";
+    ctx.fillText(curVal < 100 ? curVal.toFixed(3) : curVal.toFixed(1), W - MR - 2, MT + 10);
+}
+
+function drawAllStatsPlots() {
+    statsState.dirty = false;
+    for (let i = 0; i < 4; i++) drawStatsPlot(i);
+}
+
+// Tab switching
+const tabButtons = document.querySelectorAll(".tab-bar .tab");
+const tabContents = {
+    roots: document.getElementById("roots-content"),
+    stats: document.getElementById("stats-content")
+};
+
+function switchTab(tabName) {
+    if (tabName === activeTab) return;
+    activeTab = tabName;
+    tabButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tabName));
+    for (const [key, el] of Object.entries(tabContents)) el.classList.toggle("active", key === tabName);
+    if (tabName === "stats") { resizeStatsCanvases(); drawAllStatsPlots(); }
+}
+tabButtons.forEach(btn => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
+
 function rebuild() {
     S = getPanelSize();
     initPanelScales(panels.coeff);
@@ -3968,6 +4657,8 @@ function rebuild() {
     renderDomainColoring();
     if (trailData.length > 0) renderTrails();
     if (animPaths.length > 0) renderCoeffTrails();
+    resizeStatsCanvases();
+    if (activeTab === "stats") drawAllStatsPlots();
 }
 
 let resizeTimer;

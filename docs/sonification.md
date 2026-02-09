@@ -1,5 +1,7 @@
 # Sonification
 
+<video controls loop playsinline width="720" src="https://github.com/user-attachments/assets/f2141904-eef3-433f-81fa-7ac0a1a61bb5"></video>
+
 Three independent instrument layers — **B** (Base), **M** (Melody), **V** (Voice) — can be toggled individually via sidebar buttons. Each button opens a config popover with an on/off toggle and tuning sliders that modify the sound in real time. Sound is generated whenever roots update — both during animation playback and during interactive drag of coefficients or roots.
 
 ## Audio Graph

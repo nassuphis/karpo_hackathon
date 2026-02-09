@@ -216,6 +216,12 @@ When a coefficient is assigned to a new path, it is automatically removed from a
 
 **Degree 20, two-clusters pattern, dual Hilbert (Moore curve) paths** — All 21 coefficients animated across two Hilbert paths at radius 0.65, speed 0.1, with complementary angles (0.75 and 0.25). One path drives 10 coefficients from one cluster, the other drives 11 from the second cluster. On the left, the overlapping Hilbert curves form a dense, layered maze — the two angle rotations tilt the space-filling grids against each other, creating a moiré-like interference pattern. On the right, the 20 root trails each trace their own miniature Hilbert-like fractal, arranged in a large ring. Every root responds to the combined space-filling motion of both coefficient groups, producing intricate self-similar shapes at each root position — some tightly wound, others more open depending on proximity to the coefficient clusters.
 
+<p align="center">
+  <img src="snaps/polypaint-2026-02-09T07-33-41.png" width="90%" alt="Degree-28 diamond roots — dual circle paths, web-like trail mesh">
+</p>
+
+**Degree 28, diamond root shape, dual circle paths at different speeds** — Two coefficients animated on independent circles: c₄ at radius 1.2, speed 0.6 (CW, angle 0.5) and c₀ at radius 1.2, speed 0.1 (CCW, angle 1.0). The roots were initialized in a diamond arrangement. On the left, the two coefficient paths — one large offset circle (c₀ near the bottom-left) and one near the cluster at center — show the asymmetric perturbation. On the right, the 28 roots maintain a large ring with the diamond's characteristic spacing, but the trails weave an intricate web of fine mesh-like filaments connecting neighboring roots. The speed ratio (6:1) between the two paths creates a dense Lissajous-like interference: the fast path drives rapid oscillations while the slow path modulates the overall envelope, producing a cage-like lattice structure around the ring.
+
 ## Patterns
 
 ### Basic (5)

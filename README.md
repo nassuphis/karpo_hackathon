@@ -101,30 +101,37 @@ When enabled (off by default, toggle via the 🔇 sidebar button), root motion i
 ### Audio Graph
 
 ```
-[osc1: sine 220Hz] ──┐
+[osc1: sine 110Hz] ──┐
                       ├──► [gainNode] ──► [lowpass filter] ──► [masterGain] ──► speakers
-[osc2: triangle 223Hz] ──┘
+[osc2: triangle ~111Hz] ──┘
 
 [beepOsc: sine] ──► [beepGain] ──► [masterGain]
 
-[lfo: sine 5Hz] ──► [lfoGain] ──► osc1.frequency + osc2.frequency
+[arpOsc: triangle] ──► [arpGain] ──► [arpFilter: lowpass] ──► [masterGain]
+
+[lfo: sine 1.5–7.5Hz] ──► [lfoGain] ──► osc1.frequency + osc2.frequency
 ```
 
-Two main oscillators (sine + slightly detuned triangle at +3 Hz) produce a thick, beating theremin tone. They pass through a gain stage, then a lowpass filter whose cutoff tracks vertical position and energy, then a master gain node that acts as the definitive gate. A separate beep oscillator, gated by its own gain envelope, handles collision events. An LFO provides vibrato on both main oscillators.
+Two main oscillators (sine + slightly detuned triangle at ×1.012) produce a thick, beating theremin tone. They pass through a gain stage, then a lowpass filter whose cutoff tracks the root constellation's spread and kinetic energy, then a master gain node that acts as the definitive gate. A separate beep oscillator, gated by its own gain envelope, handles close encounter events. An arpeggiator oscillator (triangle wave) cycles through roots at 24 notes/sec, mapping each root's angle to a pentatonic pitch and radius to an octave, with pluck-style envelopes gated by per-root velocity. An LFO provides vibrato on both main oscillators, with both rate and depth modulated by the root distribution.
 
 ### Feature Extraction
 
-Five features are extracted from `currentRoots` each frame:
+Six features are extracted from `currentRoots` each frame, using distribution statistics rather than simple averages. This ensures the sound responds to the *shape* of the root constellation, not just its center of mass.
 
 | Feature | Formula | Maps to |
 |---------|---------|---------|
-| **Centroid X** (`cx`) | mean of all root real parts | Oscillator pitch |
-| **Centroid Y** (`cy`) | mean of all root imaginary parts | Filter cutoff (brightness) |
-| **Energy** (`E`) | median of per-root frame-to-frame velocities | Gain (loudness) + filter cutoff boost |
-| **Swirl** (`Ω`) | mean angular velocity of roots around centroid | LFO depth (vibrato) |
-| **Min distance** (`dmin`) | minimum pairwise distance between any two roots | Beep trigger threshold |
+| **Median radius** (`r50`) | 50th percentile of distances from centroid | Oscillator pitch |
+| **Spread** (`r90 − r10`) | 90th minus 10th percentile of radii | Filter cutoff (brightness) |
+| **Energy med** (`E_med`) | 50th percentile of per-root velocities | Filter cutoff boost, LFO speed |
+| **Energy hi** (`E_hi`) | 85th percentile of per-root velocities | Gain (loudness) |
+| **Angular coherence** (`R`) | circular mean resultant length of root angles | LFO depth (vibrato) |
+| **Close encounters** | per-root top-3 closest distances ever seen | Beep on record-breaking approach |
 
-**Velocity** is computed as the Euclidean distance each root has moved since the previous frame. The median (not mean) is used to resist outlier spikes from root-index swaps. **Angular velocity** wraps angles correctly across the ±π boundary.
+**Radius distribution:** Each root's distance from the centroid is computed, sorted, and sampled at the 10th, 50th, and 90th percentiles using linear interpolation. The spread `r90 − r10` captures how "inflated" or "collapsed" the constellation is, independent of where its center sits.
+
+**Dual energy:** Per-root velocities (Euclidean frame-to-frame displacement) are sorted and sampled at two percentiles. The 50th percentile (`E_med`) provides a stable, noise-resistant measure; the 85th percentile (`E_hi`) captures when *some* roots go wild even if the majority are calm. This split prevents the median from flattening dynamics.
+
+**Angular coherence:** Instead of mean angular velocity (which cancels when roots rotate in opposite directions), we compute the [circular mean resultant length](https://en.wikipedia.org/wiki/Directional_statistics#Mean_resultant_length): `R = |mean(e^{iθ})|`. R = 1 when all roots cluster at the same angle (a "clump"); R ≈ 0 when angles are uniformly distributed (a ring). This gives structural information even when roots aren't moving.
 
 All features are smoothed with a one-pole exponential filter before mapping to audio parameters:
 
@@ -138,39 +145,53 @@ This prevents audible discontinuities from frame-to-frame noise while remaining 
 
 **Pitch (theremin):**
 ```
-frequency = 220 × 2^(cx_norm × 1.5)
+frequency = 110 × 2^((r50_norm − 0.5) × 2.0)
 ```
-where `cx_norm = cx / panel_range`. The centroid's horizontal position maps to ~1.5 octaves above A3 (220 Hz). Moving the root ensemble to the right raises pitch; moving left lowers it. The second oscillator tracks at `frequency × 1.012` for a 3 Hz beating effect.
+where `r50_norm = clamp(r50 / panel_range, 0, 1)`. The median radius maps to ±1 octave around A2 (110 Hz). When the root constellation expands, pitch rises; when it contracts, pitch falls. This is more stable than centroid-based pitch because the median radius resists centroid drift. The second oscillator tracks at `frequency × 1.012` for a slow beating effect.
 
 **Filter cutoff (brightness):**
 ```
-cutoff = 400 + 2000 × (cy_norm + 1)/2 + 1500 × E_norm
+cutoff = 250 + 3500 × spread_norm + 1500 × E_med_norm
 ```
-Clamped to 200–6000 Hz, Q = 2. Higher root positions open the filter (brighter tone), and more kinetic energy adds further brightness. When roots are low and still, only the fundamental comes through; when they're high and fast, upper harmonics emerge.
+Clamped to 150–8000 Hz, Q = 2. The constellation's spread opens the filter (wider cloud = brighter tone), and median kinetic energy adds further brightness. When roots are tightly clustered and still, only the fundamental comes through; when they're spread out and active, upper harmonics emerge.
 
 **Gain (loudness):**
 ```
-gain = 0.18 × E_norm
+gain = 0.03 + 0.22 × E_hi_smoothed
 ```
-where `E_norm = min(E / (range × 0.05), 1)`. **Purely energy-driven** — when nothing moves, gain is zero and there is complete silence. This means the sound only exists when roots are actively in motion (from animation or drag). The smoothing filter provides a natural ~10-frame fade-out when motion stops.
+where `E_hi_norm = clamp(E_hi / (range × 0.05), 0, 1)`. The 85th-percentile energy drives loudness — when even a few roots are moving fast, you hear it. The small floor (0.03) ensures the drone doesn't completely vanish during slow structural rearrangements. The smoothing filter provides a natural fade-out when motion stops, and the watchdog timer (see Silence Management) handles the final fade to true silence.
 
-**Vibrato (swirl):**
+**Vibrato (coherence):**
 ```
-lfo_depth = min(|Ω_smoothed| × 2.0, 5.0)  Hz
+lfo_depth = 2 + 10 × R_smoothed  Hz
+lfo_rate  = 1.5 + 6.0 × E_med_norm  Hz
 ```
-The LFO runs at 5 Hz and modulates both oscillators' frequencies. When roots swirl (rotate coherently around their centroid), vibrato depth increases up to 5 Hz — a noticeable wobble. When roots move radially without rotation, vibrato is near zero.
+The LFO modulates both oscillators' frequencies. When roots cluster angularly (high R), vibrato depth increases up to 12 Hz — the sound "wobbles" as the clump moves. When roots form a balanced ring (low R), vibrato settles to a gentle 2 Hz baseline. Additionally, the LFO *rate* itself increases with median energy: calm scenes get slow vibrato (1.5 Hz), active scenes get faster pulsing (up to 7.5 Hz).
 
-**Near-collision beep:**
+**Close encounter beeps (novelty-based):**
+
+Instead of a fixed or adaptive threshold, each root tracks its own **top 3 closest distances** ever observed to any neighbor. A beep fires only when a root **beats one of its own records** — a genuinely unusual close approach for that specific root.
+
+Each root's encounter table is seeded with current distances on the first frame (no startup burst). On subsequent frames:
+1. Each root finds its 3 closest neighbors via partial sort
+2. If any distance is smaller than the root's worst record, the record is replaced
+3. The root with the most dramatic improvement fires a beep at its own **pentatonic pitch** (root 0 = C4, root 1 = D4, ..., ascending through octaves via the scale [C, D, E, G, A])
+4. All records slowly **decay** (`×1.001` per frame, ~6%/sec at 60fps), so old records gradually become beatable again
+
 ```
-if dmin < 0.12 × range:
-    beep_freq = 600 + 2000 × (1 − dmin/threshold)  Hz
-    envelope: 0.0001 → 0.15 (5ms attack) → 0.0001 (75ms decay)
+pitch = midiToHz(60 + pentatonic[i % 5] + 12 × floor(i / 5))
+peak  = 0.05 + 0.12 × clamp(improvement / (range × 0.05), 0, 1)
+envelope: 0.0001 → peak (5ms attack) → 0.0001 (80ms decay)
+cooldown: 80ms between beeps
 ```
-When any two roots come within 12% of the visible range, a short sine beep fires. Closer approaches produce higher-pitched beeps (up to 2600 Hz). The 5ms attack ramp prevents clicks. Rate-limited to one beep per 100ms to avoid machine-gun stuttering during sustained near-collisions.
+
+This approach is inherently adaptive: tight configurations set low records early, so only truly exceptional approaches trigger; loose configurations keep records high, so moderate approaches still register. No threshold constants to tune.
 
 ### Silence Management
 
-A **watchdog timer** runs via `requestAnimationFrame` while sound is enabled. If `updateAudio()` has not been called for 150ms (i.e., no root updates from animation or drag), the watchdog fades `masterGain` to zero over ~150ms. This handles the edge case where drag stops and `renderRoots()` is no longer called — without the watchdog, the last gain value would persist as a lingering tone.
+A **watchdog timer** runs via `setInterval` (100ms) while sound is enabled. If `updateAudio()` has not been called for 150ms (i.e., no root updates from animation or drag), the watchdog fades `masterGain` to zero over ~150ms. Using `setInterval` instead of `requestAnimationFrame` ensures the watchdog keeps running even when the browser throttles animation in background tabs.
+
+A **visibilitychange** listener immediately ramps `masterGain` to zero (20ms time constant) when the page becomes hidden, preventing orphaned audio when the user switches tabs.
 
 Additionally, `resetAudioState()` is called on: animation stop, Home button, pattern change, degree change, and sound toggle off. It zeroes all smoothing accumulators and ramps `masterGain` to zero, ensuring clean silence in all state transitions.
 

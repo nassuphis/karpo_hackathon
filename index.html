@@ -398,7 +398,7 @@ circle.coeff.selected, circle.root.selected {
                     <button id="del-path-btn">×</button>
                 </div>
                 <div class="bar-row">
-                    <label>R: <input type="range" id="anim-radius" min="0.05" max="3.0" step="0.05" value="0.5"> <span class="bar-val" id="anim-radius-val">0.5</span></label>
+                    <label>R: <input type="range" id="anim-radius" min="1" max="100" step="1" value="25"> <span class="bar-val" id="anim-radius-val">25%</span></label>
                     <label>S: <input type="range" id="anim-speed" min="0.01" max="1.0" step="0.01" value="1.0"> <span class="bar-val" id="anim-speed-val">1.0</span></label>
                     <label>A: <input type="range" id="anim-angle" min="0" max="1.0" step="0.01" value="0"> <span class="bar-val" id="anim-angle-val">0.00</span></label>
                     <button id="play-btn">▶ Play</button>
@@ -496,12 +496,42 @@ let soundEnabled = false;
 let audioCtx = null;
 let audioNodes = null;
 let prevRootsAudio = null;
-let prevAnglesAudio = null;
-let smoothCx = 0, smoothCy = 0, smoothE = 0, smoothOmega = 0;
+let smoothE = 0, smoothR = 0, smoothSpread = 0, smoothCoherence = 0;
 let lastBeepTime = 0;
 let lastAudioUpdateTime = 0;
 let audioWatchdogId = null;
+let closeEncounters = null;  // Float64Array(n * TOP_K): per-root closest distances seen
+let encounterAge = null;     // Float64Array(n * TOP_K): frames since each record was set
+let arpPhase = 0;
+let arpSmoothVel = 0;
 const AUDIO_ALPHA = 0.1;
+const ARP_SCALE = [0, 2, 4, 7, 9]; // pentatonic
+
+// Close encounter constants
+const ENCOUNTER_DECAY = 1.001;     // records inflate ~6%/sec at 60fps
+const ENCOUNTER_COOLDOWN = 0.08;   // minimum 80ms between beeps
+const ENCOUNTER_TOP_K = 3;         // track top 3 records per root
+
+function audioClamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
+function frac01(x) { x = x % 1; return x < 0 ? x + 1 : x; }
+function quantizeToScale(semi) {
+    const oct = Math.floor(semi / 12);
+    const inOct = semi - 12 * oct;
+    let best = ARP_SCALE[0], bestD = 1e9;
+    for (const s of ARP_SCALE) {
+        const d = Math.abs(inOct - s);
+        if (d < bestD) { bestD = d; best = s; }
+    }
+    return 12 * oct + best;
+}
+function midiToHz(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+function percentileSorted(sorted, q) {
+    const n = sorted.length;
+    if (n === 0) return 0;
+    const idx = (n - 1) * q;
+    const lo = Math.floor(idx), hi = Math.ceil(idx);
+    return sorted[lo] * (1 - (idx - lo)) + sorted[hi] * (idx - lo);
+}
 
 function initAudio() {
     if (audioCtx) return;
@@ -540,11 +570,25 @@ function initAudio() {
     filter.connect(masterGain);
     beepOsc.connect(beepGain);
     beepGain.connect(masterGain);
+    // Arpeggiator oscillator
+    const arpOsc = audioCtx.createOscillator();
+    arpOsc.type = "triangle";
+    arpOsc.frequency.value = 440;
+    const arpGain = audioCtx.createGain();
+    arpGain.gain.value = 0;
+    const arpFilter = audioCtx.createBiquadFilter();
+    arpFilter.type = "lowpass";
+    arpFilter.frequency.value = 2500;
+    arpFilter.Q.value = 0.7;
+    arpOsc.connect(arpGain);
+    arpGain.connect(arpFilter);
+    arpFilter.connect(masterGain);
     osc1.start();
     osc2.start();
     lfo.start();
     beepOsc.start();
-    audioNodes = { osc1, osc2, lfo, lfoGain, filter, gainNode, masterGain, beepOsc, beepGain };
+    arpOsc.start();
+    audioNodes = { osc1, osc2, lfo, lfoGain, filter, gainNode, masterGain, beepOsc, beepGain, arpOsc, arpGain, arpFilter };
 }
 
 function updateAudio() {
@@ -554,68 +598,208 @@ function updateAudio() {
     const range = panels.roots.range;
     const now = audioCtx.currentTime;
     audioNodes.masterGain.gain.setTargetAtTime(1, now, 0.05);
+
+    // --- Centroid ---
     let cx = 0, cy = 0;
     for (const r of currentRoots) { cx += r.re; cy += r.im; }
     cx /= n; cy /= n;
-    let E = 0;
+
+    // --- Dual energy: E_med (stability) and E_hi (excitement) ---
+    let eMed = 0, eHi = 0;
     if (prevRootsAudio && prevRootsAudio.length === n) {
-        const velocities = [];
+        const v = new Array(n);
         for (let i = 0; i < n; i++) {
-            velocities.push(Math.hypot(
+            v[i] = Math.hypot(
                 currentRoots[i].re - prevRootsAudio[i].re,
                 currentRoots[i].im - prevRootsAudio[i].im
-            ));
+            );
         }
-        velocities.sort((a, b) => a - b);
-        E = velocities[Math.floor(n / 2)];
+        v.sort((a, b) => a - b);
+        eMed = percentileSorted(v, 0.50);
+        eHi  = percentileSorted(v, 0.85);
     }
-    let omega = 0;
-    const angles = currentRoots.map(r => Math.atan2(r.im - cy, r.re - cx));
-    if (prevAnglesAudio && prevAnglesAudio.length === n) {
-        let dTheta = 0;
-        for (let i = 0; i < n; i++) {
-            let dt = angles[i] - prevAnglesAudio[i];
-            if (dt > Math.PI) dt -= 2 * Math.PI;
-            if (dt < -Math.PI) dt += 2 * Math.PI;
-            dTheta += dt;
-        }
-        omega = dTheta / n;
-    }
-    let dmin = Infinity;
+
+    // --- Radius distribution around centroid ---
+    const radii = new Array(n);
     for (let i = 0; i < n; i++) {
-        for (let j = i + 1; j < n; j++) {
-            const d = Math.hypot(currentRoots[i].re - currentRoots[j].re,
-                                 currentRoots[i].im - currentRoots[j].im);
-            if (d < dmin) dmin = d;
-        }
+        radii[i] = Math.hypot(currentRoots[i].re - cx, currentRoots[i].im - cy);
     }
-    smoothCx += AUDIO_ALPHA * (cx / range - smoothCx);
-    smoothCy += AUDIO_ALPHA * (cy / range - smoothCy);
-    const eNorm = Math.min(E / (range * 0.05), 1);
-    smoothE += AUDIO_ALPHA * (eNorm - smoothE);
-    smoothOmega += AUDIO_ALPHA * (omega - smoothOmega);
-    const baseFreq = 220;
-    const pitch = baseFreq * Math.pow(2, smoothCx * 1.5);
+    radii.sort((a, b) => a - b);
+    const r50 = percentileSorted(radii, 0.50);
+    const r10 = percentileSorted(radii, 0.10);
+    const r90 = percentileSorted(radii, 0.90);
+    const spread = r90 - r10;
+
+    // --- Angular coherence R in [0,1] ---
+    let au = 0, av = 0;
+    for (let i = 0; i < n; i++) {
+        const th = Math.atan2(currentRoots[i].im - cy, currentRoots[i].re - cx);
+        au += Math.cos(th);
+        av += Math.sin(th);
+    }
+    au /= n; av /= n;
+    const coherence = Math.hypot(au, av); // 1 = clustered, 0 = uniform ring
+
+    // --- Normalize and smooth ---
+    const eNormMed = audioClamp(eMed / (range * 0.05), 0, 1);
+    const eNormHi  = audioClamp(eHi  / (range * 0.05), 0, 1);
+    const rNorm    = audioClamp(r50 / range, 0, 1);
+    const sNorm    = audioClamp(spread / range, 0, 1);
+
+    smoothE       += AUDIO_ALPHA * (eNormHi - smoothE);
+    smoothR       += AUDIO_ALPHA * (rNorm - smoothR);
+    smoothSpread  += AUDIO_ALPHA * (sNorm - smoothSpread);
+    smoothCoherence += AUDIO_ALPHA * (coherence - smoothCoherence);
+
+    // --- Pitch: median radius → ±1 octave around 110Hz ---
+    const baseFreq = 110;
+    const pitch = baseFreq * Math.pow(2, (smoothR - 0.5) * 2.0);
     audioNodes.osc1.frequency.setTargetAtTime(pitch, now, 0.05);
     audioNodes.osc2.frequency.setTargetAtTime(pitch * 1.012, now, 0.05);
-    const cutoff = 400 + 2000 * ((smoothCy + 1) / 2) + 1500 * smoothE;
-    audioNodes.filter.frequency.setTargetAtTime(Math.max(200, Math.min(cutoff, 6000)), now, 0.05);
-    const gain = 0.18 * smoothE;
+
+    // --- Filter cutoff: spread + median energy → brightness ---
+    const cutoff = 250 + 3500 * smoothSpread + 1500 * eNormMed;
+    audioNodes.filter.frequency.setTargetAtTime(audioClamp(cutoff, 150, 8000), now, 0.05);
+
+    // --- Gain: small floor + E_hi so it's not dead silent ---
+    const gain = 0.03 + 0.22 * smoothE;
     audioNodes.gainNode.gain.setTargetAtTime(gain, now, 0.05);
-    const vibHz = Math.min(Math.abs(smoothOmega) * 2.0, 5.0);
-    audioNodes.lfoGain.gain.setTargetAtTime(vibHz, now, 0.05);
-    const beepThresh = 0.12 * range;
-    if (dmin < beepThresh && now - lastBeepTime > 0.1) {
+
+    // --- Vibrato: angular coherence (clustered = clearer vibrato) ---
+    const vibDepthHz = 2 + 10 * smoothCoherence;
+    audioNodes.lfoGain.gain.setTargetAtTime(vibDepthHz, now, 0.05);
+
+    // --- LFO speed reacts to energy ---
+    audioNodes.lfo.frequency.setTargetAtTime(1.5 + 6.0 * eNormMed, now, 0.05);
+
+    // --- Close encounters: per-root record tracking ---
+    let seeding = false;
+    if (!closeEncounters || closeEncounters.length !== n * ENCOUNTER_TOP_K) {
+        closeEncounters = new Float64Array(n * ENCOUNTER_TOP_K).fill(Infinity);
+        encounterAge = new Float64Array(n * ENCOUNTER_TOP_K).fill(0);
+        seeding = true; // seed with current distances, no beep
+    }
+
+    let bestImprovement = 0;
+    let bestRoot = -1;
+
+    for (let i = 0; i < n; i++) {
+        // Find 3 closest neighbors for root i (partial sort)
+        const closest = [Infinity, Infinity, Infinity];
+        for (let j = 0; j < n; j++) {
+            if (j === i) continue;
+            const d = Math.hypot(currentRoots[i].re - currentRoots[j].re,
+                                 currentRoots[i].im - currentRoots[j].im);
+            if (d < closest[2]) {
+                closest[2] = d;
+                if (closest[2] < closest[1]) { const t = closest[1]; closest[1] = closest[2]; closest[2] = t; }
+                if (closest[1] < closest[0]) { const t = closest[0]; closest[0] = closest[1]; closest[1] = t; }
+            }
+        }
+
+        const base = i * ENCOUNTER_TOP_K;
+        if (seeding) {
+            // First frame: fill table with current distances, no beep
+            for (let k = 0; k < ENCOUNTER_TOP_K; k++) {
+                closeEncounters[base + k] = closest[k];
+                encounterAge[base + k] = 0;
+            }
+        } else {
+            // Check if any current closest beats worst record
+            for (let k = 0; k < ENCOUNTER_TOP_K; k++) {
+                const worstIdx = base + ENCOUNTER_TOP_K - 1;
+                if (closest[k] < closeEncounters[worstIdx]) {
+                    const improvement = closeEncounters[worstIdx] - closest[k];
+                    // Replace worst record
+                    closeEncounters[worstIdx] = closest[k];
+                    encounterAge[worstIdx] = 0;
+                    // Re-sort the 3 entries (simple bubble for 3 elements)
+                    for (let a = ENCOUNTER_TOP_K - 1; a > 0; a--) {
+                        if (closeEncounters[base + a] < closeEncounters[base + a - 1]) {
+                            const td = closeEncounters[base + a]; closeEncounters[base + a] = closeEncounters[base + a - 1]; closeEncounters[base + a - 1] = td;
+                            const ta = encounterAge[base + a]; encounterAge[base + a] = encounterAge[base + a - 1]; encounterAge[base + a - 1] = ta;
+                        }
+                    }
+                    if (improvement > bestImprovement) {
+                        bestImprovement = improvement;
+                        bestRoot = i;
+                    }
+                }
+            }
+        }
+    }
+
+    // Fire beep for the root with the most dramatic new record
+    if (bestRoot >= 0 && now - lastBeepTime > ENCOUNTER_COOLDOWN) {
         lastBeepTime = now;
-        const beepFreq = 600 + 2000 * (1 - dmin / beepThresh);
-        audioNodes.beepOsc.frequency.setTargetAtTime(beepFreq, now, 0.01);
+        const midi = 60 + ARP_SCALE[bestRoot % 5] + 12 * Math.floor(bestRoot / 5);
+        const freq = midiToHz(Math.min(midi, 96));
+        const improvNorm = audioClamp(bestImprovement / (range * 0.05), 0, 1);
+        const peak = 0.05 + 0.12 * improvNorm;
+
+        audioNodes.beepOsc.frequency.setTargetAtTime(freq, now, 0.01);
         audioNodes.beepGain.gain.cancelScheduledValues(now);
         audioNodes.beepGain.gain.setValueAtTime(0.0001, now);
-        audioNodes.beepGain.gain.exponentialRampToValueAtTime(0.15, now + 0.005);
+        audioNodes.beepGain.gain.exponentialRampToValueAtTime(peak, now + 0.005);
         audioNodes.beepGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
     }
+
+    // Decay all records (inflate distances so old records become beatable)
+    if (!seeding) {
+        for (let k = 0; k < closeEncounters.length; k++) {
+            closeEncounters[k] *= ENCOUNTER_DECAY;
+            encounterAge[k]++;
+        }
+    }
+
+    // --- Arpeggiator: one note per step, cycling through roots ---
+    if (audioNodes.arpOsc && audioNodes.arpGain) {
+        const stepHz = 24;
+        const tNow = performance.now();
+        const dt = lastAudioUpdateTime ? Math.max(0.001, Math.min((tNow - lastAudioUpdateTime) / 1000, 0.05)) : 1 / 60;
+        const prevArpStep = Math.floor(arpPhase);
+        arpPhase += stepHz * dt;
+        const k = Math.floor(arpPhase) % n;
+        const rk = currentRoots[k];
+
+        // angle → scale degree (pentatonic)
+        const theta = Math.atan2(rk.im - cy, rk.re - cx);
+        const u = frac01((theta + Math.PI) / (2 * Math.PI));
+        const degree = Math.floor(u * 12);
+        const qSemi = quantizeToScale(degree);
+
+        // radius → octave (0–2, 3 octaves)
+        const rad = Math.hypot(rk.re - cx, rk.im - cy);
+        const radNorm = audioClamp(rad / (range * 1.2), 0, 1);
+        const octave = Math.floor(radNorm * 3);
+
+        const baseMidi = 48; // C3
+        const hz = midiToHz(baseMidi + qSemi + 12 * octave);
+
+        // per-root velocity → amplitude (reuse prevRootsAudio)
+        let vel = 0;
+        if (prevRootsAudio && prevRootsAudio.length === n) {
+            vel = Math.hypot(rk.re - prevRootsAudio[k].re, rk.im - prevRootsAudio[k].im);
+        }
+        const velNorm = audioClamp(vel / (range * 0.03), 0, 1);
+        arpSmoothVel = arpSmoothVel * 0.85 + velNorm * 0.15;
+
+        audioNodes.arpOsc.frequency.setTargetAtTime(hz, now, 0.01);
+        audioNodes.arpFilter.frequency.setTargetAtTime(1200 + 3800 * arpSmoothVel, now, 0.02);
+
+        // pluck envelope on new step
+        const curArpStep = Math.floor(arpPhase);
+        if (curArpStep !== prevArpStep) {
+            const peak = 0.02 + 0.12 * arpSmoothVel;
+            const g = audioNodes.arpGain.gain;
+            g.cancelScheduledValues(now);
+            g.setValueAtTime(0.0001, now);
+            g.exponentialRampToValueAtTime(peak, now + 0.004);
+            g.exponentialRampToValueAtTime(0.0001, now + 0.064);
+        }
+    }
+    // Save state for next frame
     prevRootsAudio = currentRoots.map(r => ({ re: r.re, im: r.im }));
-    prevAnglesAudio = angles;
     lastAudioUpdateTime = performance.now();
 }
 
@@ -624,13 +808,15 @@ function audioWatchdog() {
     if (performance.now() - lastAudioUpdateTime > 150) {
         audioNodes.masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.15);
     }
-    audioWatchdogId = requestAnimationFrame(audioWatchdog);
 }
 
 function resetAudioState() {
     prevRootsAudio = null;
-    prevAnglesAudio = null;
-    smoothCx = 0; smoothCy = 0; smoothE = 0; smoothOmega = 0;
+    closeEncounters = null;
+    encounterAge = null;
+    arpPhase = 0;
+    arpSmoothVel = 0;
+    smoothE = 0; smoothR = 0; smoothSpread = 0; smoothCoherence = 0;
     if (audioNodes && audioCtx) {
         audioNodes.masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.08);
     }
@@ -1120,6 +1306,19 @@ function autoScaleCoeffPanel() {
 
 // --- Coefficient selection & animation ---
 
+function coeffExtent() {
+    const n = coefficients.length;
+    let maxDist = 0;
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            const d = Math.hypot(coefficients[i].re - coefficients[j].re,
+                                 coefficients[i].im - coefficients[j].im);
+            if (d > maxDist) maxDist = d;
+        }
+    }
+    return maxDist || 1;
+}
+
 const animBar = document.getElementById("anim-bar");
 const barTitle = document.getElementById("bar-title");
 const animPathSel = document.getElementById("anim-path");
@@ -1310,9 +1509,10 @@ function createPathFromSelection() {
     };
     // Compute per-coefficient absolute curves
     if (pType !== "random" && pType !== "none") {
+        const absRadius = pRadius / 100 * coeffExtent();
         for (const idx of newCoeffs) {
             const c = coefficients[idx];
-            c.curve = computeCurve(c.re, c.im, pType, pRadius, pAngle);
+            c.curve = computeCurve(c.re, c.im, pType, absRadius, pAngle);
         }
     }
     animState.elapsedAtPause = null;
@@ -1359,7 +1559,7 @@ function syncBarToPath() {
     barTitle.textContent = coeffListLabel(path.coeffs);
     animPathSel.value = path.pathType;
     animRadiusInput.value = path.radius;
-    animRadiusVal.textContent = path.radius.toFixed(2);
+    animRadiusVal.textContent = Math.round(path.radius) + "%";
     animSpeedInput.value = path.speed;
     animSpeedVal.textContent = path.speed.toFixed(2);
     animAngleInput.value = path.angle;
@@ -1437,7 +1637,7 @@ function updateAnimBar() {
 
 // Slider value displays — also sync to current path
 animRadiusInput.addEventListener("input", function () {
-    animRadiusVal.textContent = parseFloat(this.value).toFixed(2);
+    animRadiusVal.textContent = Math.round(parseFloat(this.value)) + "%";
     syncPathFromBar();
 });
 animSpeedInput.addEventListener("input", function () {
@@ -1885,9 +2085,10 @@ function computeCurve(homeRe, homeIm, pathType, radius, angle) {
 // Recompute curves using the coefficient's current position as home (curve[0]).
 // The coefficient is always on the new path. Angle and radius come from the path settings.
 function computePathCurves(path) {
+    const absRadius = path.radius / 100 * coeffExtent();
     for (const idx of path.coeffs) {
         const c = coefficients[idx];
-        c.curve = computeCurve(c.re, c.im, path.pathType, path.radius, path.angle);
+        c.curve = computeCurve(c.re, c.im, path.pathType, absRadius, path.angle);
     }
 }
 
@@ -1994,7 +2195,7 @@ function animLoop(now) {
         } else if (path.pathType === "random") {
             // Random walk: special case (not precomputed)
             for (const idx of path.coeffs) {
-                const step = path.radius * 0.02;
+                const step = (path.radius / 100 * coeffExtent()) * 0.02;
                 coefficients[idx].re += (Math.random() - 0.5) * step;
                 coefficients[idx].im += (Math.random() - 0.5) * step;
             }
@@ -2730,10 +2931,16 @@ document.getElementById("sound-toggle-btn").addEventListener("click", function (
     if (soundEnabled) {
         initAudio();
         if (audioCtx.state === "suspended") audioCtx.resume();
-        audioWatchdogId = requestAnimationFrame(audioWatchdog);
+        audioWatchdogId = setInterval(audioWatchdog, 100);
     } else {
-        if (audioWatchdogId) { cancelAnimationFrame(audioWatchdogId); audioWatchdogId = null; }
+        if (audioWatchdogId) { clearInterval(audioWatchdogId); audioWatchdogId = null; }
         resetAudioState();
+    }
+});
+
+document.addEventListener("visibilitychange", function () {
+    if (document.hidden && audioNodes && audioCtx) {
+        audioNodes.masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
     }
 });
 

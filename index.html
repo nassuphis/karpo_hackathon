@@ -176,6 +176,34 @@ body {
 .ops-pop .pop-row {
     display: flex; gap: 8px; font-size: 10px; color: var(--muted);
 }
+/* --- Audio config popover rows --- */
+.audio-row {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+}
+.audio-row .row-label {
+    font-size: 9px; color: var(--muted); width: 56px;
+    text-transform: uppercase; letter-spacing: 0.08em; flex-shrink: 0;
+}
+.audio-row .hslider { flex: 1; min-width: 80px; }
+.audio-row .row-val {
+    font-size: 10px; color: var(--accent); width: 52px;
+    text-align: right; font-variant-numeric: tabular-nums; flex-shrink: 0;
+}
+.audio-toggle {
+    display: flex; align-items: center; gap: 6px;
+    cursor: pointer; padding: 4px 0; user-select: none; width: 100%;
+}
+.audio-toggle .toggle-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    border: 1.5px solid var(--muted); transition: all 0.12s;
+}
+.audio-toggle.on .toggle-dot {
+    background: var(--accent); border-color: var(--accent);
+}
+.audio-toggle .toggle-label {
+    font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.audio-toggle.on .toggle-label { color: var(--text); }
 /* --- Panels --- */
 #panels { display: flex; justify-content: center; gap: 12px; padding: 8px 12px 12px 8px; flex: 1; min-height: 0; }
 .panel {
@@ -335,7 +363,9 @@ circle.coeff.selected, circle.root.selected {
             <div class="side-label">View</div>
             <button id="domain-toggle-btn" class="side-btn" title="Domain coloring">◐</button>
             <button id="root-color-btn" class="side-btn active" title="Color roots">🎨</button>
-            <button id="sound-toggle-btn" class="side-btn" title="Sound">🔇</button>
+            <button id="base-toggle-btn" class="side-btn" title="Base (drone)">B</button>
+            <button id="melody-toggle-btn" class="side-btn" title="Melody (arpeggio)">M</button>
+            <button id="voice-toggle-btn" class="side-btn" title="Voice (beeps)">V</button>
         </div>
         <div class="side-group">
             <div class="side-label">Tools</div>
@@ -422,6 +452,7 @@ circle.coeff.selected, circle.root.selected {
 <div class="tooltip" id="tooltip"></div>
 <div id="ops-pop" class="ops-pop"></div>
 <div id="degree-pop" class="ops-pop"></div>
+<div id="audio-pop" class="ops-pop" style="min-width:220px"></div>
 
 <script>
 const MIN_RANGE = 1.5;
@@ -492,7 +523,10 @@ let domainCtx = domainCanvas.getContext("2d");
 let domainPendingRender = false;
 const DOMAIN_RES_SCALE = 0.5; // render at half resolution for performance
 // Audio sonification state
-let soundEnabled = false;
+let baseEnabled = false;
+let melodyEnabled = false;
+let voiceEnabled = false;
+function anySoundEnabled() { return baseEnabled || melodyEnabled || voiceEnabled; }
 let audioCtx = null;
 let audioNodes = null;
 let prevRootsAudio = null;
@@ -506,11 +540,24 @@ let arpPhase = 0;
 let arpSmoothVel = 0;
 const AUDIO_ALPHA = 0.1;
 const ARP_SCALE = [0, 2, 4, 7, 9]; // pentatonic
+const ENCOUNTER_TOP_K = 3;         // track top 3 records per root (non-tunable)
 
-// Close encounter constants
-const ENCOUNTER_DECAY = 1.001;     // records inflate ~6%/sec at 60fps
-const ENCOUNTER_COOLDOWN = 0.08;   // minimum 80ms between beeps
-const ENCOUNTER_TOP_K = 3;         // track top 3 records per root
+// Tunable config objects (sliders modify these in real time)
+const baseConfig = {
+    freq: 110, octaves: 2.0, detune: 1.012,
+    filterLo: 250, filterHi: 3500,
+    gainFloor: 0.03, gainRange: 0.22,
+    vibDepth: 10, vibRate: 6.0,
+};
+const melodyConfig = {
+    rate: 24, peak: 0.12,
+    attack: 0.004, decay: 0.064,
+    filterLo: 1200, filterHi: 3800,
+};
+const voiceConfig = {
+    decay: 1.001, cooldown: 0.08,
+    peak: 0.12, attack: 0.005, ringdown: 0.08,
+};
 
 function audioClamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
 function frac01(x) { x = x % 1; return x < 0 ? x + 1 : x; }
@@ -533,12 +580,88 @@ function percentileSorted(sorted, q) {
     return sorted[lo] * (1 - (idx - lo)) + sorted[hi] * (idx - lo);
 }
 
+// --- Audio config popover helpers ---
+let activeAudioBtn = null;
+let audioDragMove = null;
+let audioDragUp = null;
+
+function buildAudioSlider(parent, label, min, max, value, logScale, fmt, onChange) {
+    const row = document.createElement("div");
+    row.className = "audio-row";
+    const lbl = document.createElement("span");
+    lbl.className = "row-label"; lbl.textContent = label;
+    const slider = document.createElement("div");
+    slider.className = "hslider";
+    const thumb = document.createElement("div");
+    thumb.className = "hslider-thumb";
+    slider.appendChild(thumb);
+    const val = document.createElement("span");
+    val.className = "row-val";
+
+    function valToU(v) {
+        if (logScale) return (Math.log(v) - Math.log(min)) / (Math.log(max) - Math.log(min));
+        return (v - min) / (max - min);
+    }
+    function uToVal(u) {
+        if (logScale) return Math.exp(Math.log(min) + u * (Math.log(max) - Math.log(min)));
+        return min + u * (max - min);
+    }
+
+    let u = Math.max(0, Math.min(1, valToU(value)));
+    function update() {
+        thumb.style.left = (u * 100) + "%";
+        const v = uToVal(u);
+        val.textContent = fmt(v);
+        onChange(v);
+    }
+    function setFromX(clientX) {
+        const rect = slider.getBoundingClientRect();
+        u = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        update();
+    }
+    let dragging = false;
+    slider.addEventListener("mousedown", e => { dragging = true; setFromX(e.clientX); e.preventDefault(); });
+    const moveFn = e => { if (dragging) setFromX(e.clientX); };
+    const upFn = () => { dragging = false; };
+    slider.addEventListener("mousemove", moveFn);
+    window.addEventListener("mousemove", moveFn);
+    window.addEventListener("mouseup", upFn);
+
+    update();
+    row.appendChild(lbl);
+    row.appendChild(slider);
+    row.appendChild(val);
+    parent.appendChild(row);
+    return { row, setU: newU => { u = newU; update(); } };
+}
+
+function buildAudioToggle(parent, label, isOn, onChange) {
+    const row = document.createElement("div");
+    row.className = "audio-toggle" + (isOn ? " on" : "");
+    const dot = document.createElement("span");
+    dot.className = "toggle-dot";
+    const lbl = document.createElement("span");
+    lbl.className = "toggle-label"; lbl.textContent = label;
+    row.appendChild(dot);
+    row.appendChild(lbl);
+    row.addEventListener("click", () => {
+        const nowOn = !row.classList.contains("on");
+        row.classList.toggle("on", nowOn);
+        onChange(nowOn);
+    });
+    parent.appendChild(row);
+    return row;
+}
+
 function initAudio() {
     if (audioCtx) return;
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const masterGain = audioCtx.createGain();
     masterGain.gain.value = 0;
     masterGain.connect(audioCtx.destination);
+    // Tap audio graph for recording (MediaStreamDestination)
+    const mediaDest = audioCtx.createMediaStreamDestination();
+    masterGain.connect(mediaDest);
     const osc1 = audioCtx.createOscillator();
     osc1.type = "sine";
     osc1.frequency.value = 220;
@@ -588,11 +711,11 @@ function initAudio() {
     lfo.start();
     beepOsc.start();
     arpOsc.start();
-    audioNodes = { osc1, osc2, lfo, lfoGain, filter, gainNode, masterGain, beepOsc, beepGain, arpOsc, arpGain, arpFilter };
+    audioNodes = { osc1, osc2, lfo, lfoGain, filter, gainNode, masterGain, beepOsc, beepGain, arpOsc, arpGain, arpFilter, mediaDest };
 }
 
 function updateAudio() {
-    if (!soundEnabled || !audioCtx || !audioNodes) return;
+    if (!anySoundEnabled() || !audioCtx || !audioNodes) return;
     const n = currentRoots.length;
     if (n === 0) return;
     const range = panels.roots.range;
@@ -651,114 +774,104 @@ function updateAudio() {
     smoothSpread  += AUDIO_ALPHA * (sNorm - smoothSpread);
     smoothCoherence += AUDIO_ALPHA * (coherence - smoothCoherence);
 
-    // --- Pitch: median radius → ±1 octave around 110Hz ---
-    const baseFreq = 110;
-    const pitch = baseFreq * Math.pow(2, (smoothR - 0.5) * 2.0);
-    audioNodes.osc1.frequency.setTargetAtTime(pitch, now, 0.05);
-    audioNodes.osc2.frequency.setTargetAtTime(pitch * 1.012, now, 0.05);
-
-    // --- Filter cutoff: spread + median energy → brightness ---
-    const cutoff = 250 + 3500 * smoothSpread + 1500 * eNormMed;
-    audioNodes.filter.frequency.setTargetAtTime(audioClamp(cutoff, 150, 8000), now, 0.05);
-
-    // --- Gain: small floor + E_hi so it's not dead silent ---
-    const gain = 0.03 + 0.22 * smoothE;
-    audioNodes.gainNode.gain.setTargetAtTime(gain, now, 0.05);
-
-    // --- Vibrato: angular coherence (clustered = clearer vibrato) ---
-    const vibDepthHz = 2 + 10 * smoothCoherence;
-    audioNodes.lfoGain.gain.setTargetAtTime(vibDepthHz, now, 0.05);
-
-    // --- LFO speed reacts to energy ---
-    audioNodes.lfo.frequency.setTargetAtTime(1.5 + 6.0 * eNormMed, now, 0.05);
-
-    // --- Close encounters: per-root record tracking ---
-    let seeding = false;
-    if (!closeEncounters || closeEncounters.length !== n * ENCOUNTER_TOP_K) {
-        closeEncounters = new Float64Array(n * ENCOUNTER_TOP_K).fill(Infinity);
-        encounterAge = new Float64Array(n * ENCOUNTER_TOP_K).fill(0);
-        seeding = true; // seed with current distances, no beep
+    // --- Base (drone): pitch, filter, gain, vibrato ---
+    if (baseEnabled) {
+        const pitch = baseConfig.freq * Math.pow(2, (smoothR - 0.5) * baseConfig.octaves);
+        audioNodes.osc1.frequency.setTargetAtTime(pitch, now, 0.05);
+        audioNodes.osc2.frequency.setTargetAtTime(pitch * baseConfig.detune, now, 0.05);
+        const cutoff = baseConfig.filterLo + baseConfig.filterHi * smoothSpread + 1500 * eNormMed;
+        audioNodes.filter.frequency.setTargetAtTime(audioClamp(cutoff, 150, 8000), now, 0.05);
+        const gain = baseConfig.gainFloor + baseConfig.gainRange * smoothE;
+        audioNodes.gainNode.gain.setTargetAtTime(gain, now, 0.05);
+        const vibDepthHz = 2 + baseConfig.vibDepth * smoothCoherence;
+        audioNodes.lfoGain.gain.setTargetAtTime(vibDepthHz, now, 0.05);
+        audioNodes.lfo.frequency.setTargetAtTime(1.5 + baseConfig.vibRate * eNormMed, now, 0.05);
+    } else {
+        audioNodes.gainNode.gain.setTargetAtTime(0, now, 0.05);
+        audioNodes.lfoGain.gain.setTargetAtTime(0, now, 0.05);
     }
 
-    let bestImprovement = 0;
-    let bestRoot = -1;
-
-    for (let i = 0; i < n; i++) {
-        // Find 3 closest neighbors for root i (partial sort)
-        const closest = [Infinity, Infinity, Infinity];
-        for (let j = 0; j < n; j++) {
-            if (j === i) continue;
-            const d = Math.hypot(currentRoots[i].re - currentRoots[j].re,
-                                 currentRoots[i].im - currentRoots[j].im);
-            if (d < closest[2]) {
-                closest[2] = d;
-                if (closest[2] < closest[1]) { const t = closest[1]; closest[1] = closest[2]; closest[2] = t; }
-                if (closest[1] < closest[0]) { const t = closest[0]; closest[0] = closest[1]; closest[1] = t; }
-            }
+    // --- Voice (beeps): close encounters per-root record tracking ---
+    if (voiceEnabled) {
+        let seeding = false;
+        if (!closeEncounters || closeEncounters.length !== n * ENCOUNTER_TOP_K) {
+            closeEncounters = new Float64Array(n * ENCOUNTER_TOP_K).fill(Infinity);
+            encounterAge = new Float64Array(n * ENCOUNTER_TOP_K).fill(0);
+            seeding = true;
         }
 
-        const base = i * ENCOUNTER_TOP_K;
-        if (seeding) {
-            // First frame: fill table with current distances, no beep
-            for (let k = 0; k < ENCOUNTER_TOP_K; k++) {
-                closeEncounters[base + k] = closest[k];
-                encounterAge[base + k] = 0;
+        let bestImprovement = 0;
+        let bestRoot = -1;
+
+        for (let i = 0; i < n; i++) {
+            const closest = [Infinity, Infinity, Infinity];
+            for (let j = 0; j < n; j++) {
+                if (j === i) continue;
+                const d = Math.hypot(currentRoots[i].re - currentRoots[j].re,
+                                     currentRoots[i].im - currentRoots[j].im);
+                if (d < closest[2]) {
+                    closest[2] = d;
+                    if (closest[2] < closest[1]) { const t = closest[1]; closest[1] = closest[2]; closest[2] = t; }
+                    if (closest[1] < closest[0]) { const t = closest[0]; closest[0] = closest[1]; closest[1] = t; }
+                }
             }
-        } else {
-            // Check if any current closest beats worst record
-            for (let k = 0; k < ENCOUNTER_TOP_K; k++) {
-                const worstIdx = base + ENCOUNTER_TOP_K - 1;
-                if (closest[k] < closeEncounters[worstIdx]) {
-                    const improvement = closeEncounters[worstIdx] - closest[k];
-                    // Replace worst record
-                    closeEncounters[worstIdx] = closest[k];
-                    encounterAge[worstIdx] = 0;
-                    // Re-sort the 3 entries (simple bubble for 3 elements)
-                    for (let a = ENCOUNTER_TOP_K - 1; a > 0; a--) {
-                        if (closeEncounters[base + a] < closeEncounters[base + a - 1]) {
-                            const td = closeEncounters[base + a]; closeEncounters[base + a] = closeEncounters[base + a - 1]; closeEncounters[base + a - 1] = td;
-                            const ta = encounterAge[base + a]; encounterAge[base + a] = encounterAge[base + a - 1]; encounterAge[base + a - 1] = ta;
+
+            const base = i * ENCOUNTER_TOP_K;
+            if (seeding) {
+                for (let k = 0; k < ENCOUNTER_TOP_K; k++) {
+                    closeEncounters[base + k] = closest[k];
+                    encounterAge[base + k] = 0;
+                }
+            } else {
+                for (let k = 0; k < ENCOUNTER_TOP_K; k++) {
+                    const worstIdx = base + ENCOUNTER_TOP_K - 1;
+                    if (closest[k] < closeEncounters[worstIdx]) {
+                        const improvement = closeEncounters[worstIdx] - closest[k];
+                        closeEncounters[worstIdx] = closest[k];
+                        encounterAge[worstIdx] = 0;
+                        for (let a = ENCOUNTER_TOP_K - 1; a > 0; a--) {
+                            if (closeEncounters[base + a] < closeEncounters[base + a - 1]) {
+                                const td = closeEncounters[base + a]; closeEncounters[base + a] = closeEncounters[base + a - 1]; closeEncounters[base + a - 1] = td;
+                                const ta = encounterAge[base + a]; encounterAge[base + a] = encounterAge[base + a - 1]; encounterAge[base + a - 1] = ta;
+                            }
                         }
-                    }
-                    if (improvement > bestImprovement) {
-                        bestImprovement = improvement;
-                        bestRoot = i;
+                        if (improvement > bestImprovement) {
+                            bestImprovement = improvement;
+                            bestRoot = i;
+                        }
                     }
                 }
             }
         }
-    }
 
-    // Fire beep for the root with the most dramatic new record
-    if (bestRoot >= 0 && now - lastBeepTime > ENCOUNTER_COOLDOWN) {
-        lastBeepTime = now;
-        const midi = 60 + ARP_SCALE[bestRoot % 5] + 12 * Math.floor(bestRoot / 5);
-        const freq = midiToHz(Math.min(midi, 96));
-        const improvNorm = audioClamp(bestImprovement / (range * 0.05), 0, 1);
-        const peak = 0.05 + 0.12 * improvNorm;
+        if (bestRoot >= 0 && now - lastBeepTime > voiceConfig.cooldown) {
+            lastBeepTime = now;
+            const midi = 60 + ARP_SCALE[bestRoot % 5] + 12 * Math.floor(bestRoot / 5);
+            const freq = midiToHz(Math.min(midi, 96));
+            const improvNorm = audioClamp(bestImprovement / (range * 0.05), 0, 1);
+            const peak = 0.05 + voiceConfig.peak * improvNorm;
 
-        audioNodes.beepOsc.frequency.setTargetAtTime(freq, now, 0.01);
-        audioNodes.beepGain.gain.cancelScheduledValues(now);
-        audioNodes.beepGain.gain.setValueAtTime(0.0001, now);
-        audioNodes.beepGain.gain.exponentialRampToValueAtTime(peak, now + 0.005);
-        audioNodes.beepGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
-    }
+            audioNodes.beepOsc.frequency.setTargetAtTime(freq, now, 0.01);
+            audioNodes.beepGain.gain.cancelScheduledValues(now);
+            audioNodes.beepGain.gain.setValueAtTime(0.0001, now);
+            audioNodes.beepGain.gain.exponentialRampToValueAtTime(peak, now + voiceConfig.attack);
+            audioNodes.beepGain.gain.exponentialRampToValueAtTime(0.0001, now + voiceConfig.attack + voiceConfig.ringdown);
+        }
 
-    // Decay all records (inflate distances so old records become beatable)
-    if (!seeding) {
-        for (let k = 0; k < closeEncounters.length; k++) {
-            closeEncounters[k] *= ENCOUNTER_DECAY;
-            encounterAge[k]++;
+        if (!seeding) {
+            for (let k = 0; k < closeEncounters.length; k++) {
+                closeEncounters[k] *= voiceConfig.decay;
+                encounterAge[k]++;
+            }
         }
     }
 
-    // --- Arpeggiator: one note per step, cycling through roots ---
-    if (audioNodes.arpOsc && audioNodes.arpGain) {
-        const stepHz = 24;
+    // --- Melody (arpeggiator): one note per step, cycling through roots ---
+    if (melodyEnabled && audioNodes.arpOsc && audioNodes.arpGain) {
         const tNow = performance.now();
         const dt = lastAudioUpdateTime ? Math.max(0.001, Math.min((tNow - lastAudioUpdateTime) / 1000, 0.05)) : 1 / 60;
         const prevArpStep = Math.floor(arpPhase);
-        arpPhase += stepHz * dt;
+        arpPhase += melodyConfig.rate * dt;
         const k = Math.floor(arpPhase) % n;
         const rk = currentRoots[k];
 
@@ -785,17 +898,17 @@ function updateAudio() {
         arpSmoothVel = arpSmoothVel * 0.85 + velNorm * 0.15;
 
         audioNodes.arpOsc.frequency.setTargetAtTime(hz, now, 0.01);
-        audioNodes.arpFilter.frequency.setTargetAtTime(1200 + 3800 * arpSmoothVel, now, 0.02);
+        audioNodes.arpFilter.frequency.setTargetAtTime(melodyConfig.filterLo + melodyConfig.filterHi * arpSmoothVel, now, 0.02);
 
         // pluck envelope on new step
         const curArpStep = Math.floor(arpPhase);
         if (curArpStep !== prevArpStep) {
-            const peak = 0.02 + 0.12 * arpSmoothVel;
+            const peak = 0.02 + melodyConfig.peak * arpSmoothVel;
             const g = audioNodes.arpGain.gain;
             g.cancelScheduledValues(now);
             g.setValueAtTime(0.0001, now);
-            g.exponentialRampToValueAtTime(peak, now + 0.004);
-            g.exponentialRampToValueAtTime(0.0001, now + 0.064);
+            g.exponentialRampToValueAtTime(peak, now + melodyConfig.attack);
+            g.exponentialRampToValueAtTime(0.0001, now + melodyConfig.attack + melodyConfig.decay);
         }
     }
     // Save state for next frame
@@ -804,7 +917,7 @@ function updateAudio() {
 }
 
 function audioWatchdog() {
-    if (!soundEnabled || !audioNodes || !audioCtx) return;
+    if (!anySoundEnabled() || !audioNodes || !audioCtx) return;
     if (performance.now() - lastAudioUpdateTime > 150) {
         audioNodes.masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.15);
     }
@@ -2233,7 +2346,7 @@ function stopAnimation() {
         cancelAnimationFrame(animState.rafId);
         animState.rafId = null;
     }
-    if (soundEnabled) resetAudioState();
+    if (anySoundEnabled()) resetAudioState();
 }
 
 // --- Render coefficients ---
@@ -2422,7 +2535,7 @@ function renderRoots(newRoots) {
         }
         renderTrails();
     }
-    if (soundEnabled) updateAudio();
+    if (anySoundEnabled()) updateAudio();
 }
 
 function renderTrails() {
@@ -2924,19 +3037,94 @@ rootColorBtn.addEventListener("click", function () {
         .attr("fill", (_, i) => rootColor(i, currentRoots.length));
 });
 
-document.getElementById("sound-toggle-btn").addEventListener("click", function () {
-    soundEnabled = !soundEnabled;
-    this.classList.toggle("active", soundEnabled);
-    this.textContent = soundEnabled ? "🔊" : "🔇";
-    if (soundEnabled) {
+// --- Audio instrument config popovers ---
+const audioPop = document.getElementById("audio-pop");
+
+function closeAudioPop() {
+    audioPop.classList.remove("open");
+    audioPop.innerHTML = "";
+    if (activeAudioBtn) activeAudioBtn.classList.remove("tool-active");
+    activeAudioBtn = null;
+}
+
+function openAudioPop(btnEl, buildFn) {
+    if (activeAudioBtn === btnEl) { closeAudioPop(); return; }
+    closeAudioPop();
+    if (typeof closeOpTool === "function") closeOpTool();
+    if (typeof closeDegreePopover === "function") closeDegreePopover();
+    activeAudioBtn = btnEl;
+    btnEl.classList.add("tool-active");
+    audioPop.innerHTML = "";
+    buildFn(audioPop);
+    audioPop.classList.add("open");
+    const r = btnEl.getBoundingClientRect();
+    audioPop.style.left = (r.right + 8) + "px";
+    audioPop.style.top = r.top + "px";
+}
+
+function toggleSound(flag, setFn, btnEl) {
+    const wasAny = anySoundEnabled();
+    setFn(flag);
+    btnEl.classList.toggle("active", flag);
+    const isAny = anySoundEnabled();
+    if (isAny && !wasAny) {
         initAudio();
         if (audioCtx.state === "suspended") audioCtx.resume();
         audioWatchdogId = setInterval(audioWatchdog, 100);
-    } else {
+    } else if (!isAny && wasAny) {
         if (audioWatchdogId) { clearInterval(audioWatchdogId); audioWatchdogId = null; }
         resetAudioState();
     }
-});
+}
+
+const fmtHz = v => v < 100 ? v.toFixed(1) + " Hz" : Math.round(v) + " Hz";
+const fmtMs = v => (v * 1000).toFixed(1) + " ms";
+const fmtF = (d) => v => v.toFixed(d);
+const fmtPct = v => (v * 100).toFixed(0) + "%";
+
+function buildBasePop(pop) {
+    const title = document.createElement("div");
+    title.className = "pop-title"; title.textContent = "Base";
+    pop.appendChild(title);
+    const btn = document.getElementById("base-toggle-btn");
+    buildAudioToggle(pop, "Enabled", baseEnabled, on => toggleSound(on, v => { baseEnabled = v; }, btn));
+    buildAudioSlider(pop, "Pitch",      55,    440,  baseConfig.freq,      true,  fmtHz,     v => { baseConfig.freq = v; });
+    buildAudioSlider(pop, "Range",      0.5,   4.0,  baseConfig.octaves,   false, fmtF(1),   v => { baseConfig.octaves = v; });
+    buildAudioSlider(pop, "Detune",     1.000, 1.050, baseConfig.detune,   false, fmtF(3),   v => { baseConfig.detune = v; });
+    buildAudioSlider(pop, "Bright",     50,    1000, baseConfig.filterLo,  true,  fmtHz,     v => { baseConfig.filterLo = v; });
+    buildAudioSlider(pop, "Volume",     0.05,  0.50, baseConfig.gainRange, false, fmtF(2),   v => { baseConfig.gainRange = v; });
+    buildAudioSlider(pop, "Vibrato",    0,     25,   baseConfig.vibDepth,  false, fmtF(1),   v => { baseConfig.vibDepth = v; });
+}
+
+function buildMelodyPop(pop) {
+    const title = document.createElement("div");
+    title.className = "pop-title"; title.textContent = "Melody";
+    pop.appendChild(title);
+    const btn = document.getElementById("melody-toggle-btn");
+    buildAudioToggle(pop, "Enabled", melodyEnabled, on => toggleSound(on, v => { melodyEnabled = v; }, btn));
+    buildAudioSlider(pop, "Rate",       2,     60,   melodyConfig.rate,     true,  v => Math.round(v) + "/s", v => { melodyConfig.rate = v; });
+    buildAudioSlider(pop, "Volume",     0.02,  0.30, melodyConfig.peak,     false, fmtF(2),   v => { melodyConfig.peak = v; });
+    buildAudioSlider(pop, "Attack",     0.001, 0.020, melodyConfig.attack,  true,  fmtMs,     v => { melodyConfig.attack = v; });
+    buildAudioSlider(pop, "Decay",      0.010, 0.200, melodyConfig.decay,   true,  fmtMs,     v => { melodyConfig.decay = v; });
+    buildAudioSlider(pop, "Bright",     200,   4000, melodyConfig.filterLo, true,  fmtHz,     v => { melodyConfig.filterLo = v; });
+}
+
+function buildVoicePop(pop) {
+    const title = document.createElement("div");
+    title.className = "pop-title"; title.textContent = "Voice";
+    pop.appendChild(title);
+    const btn = document.getElementById("voice-toggle-btn");
+    buildAudioToggle(pop, "Enabled", voiceEnabled, on => toggleSound(on, v => { voiceEnabled = v; }, btn));
+    buildAudioSlider(pop, "Memory",     1.0001, 1.010, voiceConfig.decay,    true,  fmtF(4),  v => { voiceConfig.decay = v; });
+    buildAudioSlider(pop, "Cooldown",   0.01,  0.50,  voiceConfig.cooldown, true,  fmtMs,     v => { voiceConfig.cooldown = v; });
+    buildAudioSlider(pop, "Volume",     0.02,  0.30,  voiceConfig.peak,     false, fmtF(2),   v => { voiceConfig.peak = v; });
+    buildAudioSlider(pop, "Attack",     0.001, 0.020, voiceConfig.attack,   true,  fmtMs,     v => { voiceConfig.attack = v; });
+    buildAudioSlider(pop, "Decay",      0.01,  0.30,  voiceConfig.ringdown, true,  fmtMs,     v => { voiceConfig.ringdown = v; });
+}
+
+document.getElementById("base-toggle-btn").addEventListener("click", function () { openAudioPop(this, buildBasePop); });
+document.getElementById("melody-toggle-btn").addEventListener("click", function () { openAudioPop(this, buildMelodyPop); });
+document.getElementById("voice-toggle-btn").addEventListener("click", function () { openAudioPop(this, buildVoicePop); });
 
 document.addEventListener("visibilitychange", function () {
     if (document.hidden && audioNodes && audioCtx) {
@@ -2947,6 +3135,7 @@ document.addEventListener("visibilitychange", function () {
 document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") {
         if (typeof activeToolBtn !== "undefined" && activeToolBtn) { closeOpTool(); return; }
+        if (activeAudioBtn) { closeAudioPop(); return; }
         clearAllSelection();
     }
 });
@@ -3029,6 +3218,7 @@ function openOpTool(btnEl, buildFn) {
     if (activeToolBtn === btnEl) { closeOpTool(); return; }
     closeOpTool();
     closeDegreePopover();
+    if (typeof closeAudioPop === "function") closeAudioPop();
     opSnapshot = snapshotSelection();
     if (!opSnapshot) return;
     activeToolBtn = btnEl;
@@ -3213,11 +3403,18 @@ document.getElementById("add-tool-btn").addEventListener("click", function() {
 
 // Close popover on click outside
 document.addEventListener("mousedown", e => {
-    if (!activeToolBtn) return;
-    if (opsPop.contains(e.target)) return;
-    // Check if clicking an ops button (toggle handled by its own listener)
-    if (e.target.id && e.target.id.endsWith("-tool-btn")) return;
-    closeOpTool();
+    // Close ops popover
+    if (activeToolBtn) {
+        if (!opsPop.contains(e.target) && !(e.target.id && e.target.id.endsWith("-tool-btn"))) {
+            closeOpTool();
+        }
+    }
+    // Close audio popover
+    if (activeAudioBtn) {
+        if (!audioPop.contains(e.target) && !(e.target.id && e.target.id.endsWith("-toggle-btn"))) {
+            closeAudioPop();
+        }
+    }
 });
 
 // --- Video recording (MediaRecorder → WebM) ---
@@ -3380,6 +3577,12 @@ function startRecording() {
     vidRec.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const stream = vidRec.canvas.captureStream(60);
+    // Merge audio track if sound is active
+    if (audioNodes && audioNodes.mediaDest) {
+        for (const track of audioNodes.mediaDest.stream.getAudioTracks()) {
+            stream.addTrack(track);
+        }
+    }
     vidRec.stream = stream;
     vidRec.chunks = [];
 

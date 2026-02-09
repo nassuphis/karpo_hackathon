@@ -17,7 +17,7 @@ PolyPaint makes this relationship tangible. Two side-by-side complex-plane panel
 - **Multi-select:** Click individual dots to toggle selection, or **marquee-select** by clicking and dragging on empty canvas to select all nodes inside the rectangle. Drag any selected item and the entire group moves together, maintaining relative positions.
 - **Animate:** Define multiple simultaneous animation paths — each path drives a different subset of coefficients along its own curve (circle, figure-8, spiral, etc.) with independent radius, speed, and direction. Hit Play and all paths activate at once, creating rich interference patterns as the roots respond to the combined perturbation.
 - **Transform:** Select coefficients or roots and use interactive gesture tools — **Scale** (vertical slider with exponential mapping), **Rotate** (horizontal slider in turns), and **Translate** (2D vector pad) — all with live preview as you drag. Ops work on both coefficient and root selections — the target label turns green for coefficients, red for roots.
-- **Sonify:** Toggle sound on and the app becomes an instrument — root motion drives a theremin-like drone in real time, whether from animation or manual drag. Pitch tracks the root centroid, brightness follows vertical position and kinetic energy, and near-collision events trigger sci-fi beeps. See [Sonification](#sonification) for the full algorithm.
+- **Sonify:** Three independent sound layers — **Base** (theremin drone), **Melody** (pentatonic arpeggiator), and **Voice** (close-encounter beeps) — each with its own sidebar button and config popover. Click any button to open a panel of tuning sliders (pitch, brightness, volume, rate, etc.) that reshape the sound in real time. See [Sonification](#sonification) for the full algorithm.
 
 Everything runs client-side in a single HTML file. No server, no build step, no dependencies to install.
 
@@ -96,14 +96,14 @@ The polynomial is evaluated via Horner's method. The canvas renders at half reso
 
 ## Sonification
 
-When enabled (off by default, toggle via the 🔇 sidebar button), root motion is mapped to sound in real time using the [Web Audio API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API). Sound is generated whenever roots update — both during animation playback and during interactive drag of coefficients or roots.
+Three independent instrument layers — **B** (Base), **M** (Melody), **V** (Voice) — can be toggled individually via sidebar buttons. Each button opens a config popover with an on/off toggle and tuning sliders that modify the sound in real time. Sound is generated whenever roots update — both during animation playback and during interactive drag of coefficients or roots.
 
 ### Audio Graph
 
 ```
-[osc1: sine 110Hz] ──┐
-                      ├──► [gainNode] ──► [lowpass filter] ──► [masterGain] ──► speakers
-[osc2: triangle ~111Hz] ──┘
+[osc1: sine 110Hz] ──┐                                                    ┌──► speakers
+                      ├──► [gainNode] ──► [lowpass filter] ──► [masterGain]┤
+[osc2: triangle ~111Hz] ──┘                                                └──► [mediaDest] ──► recording
 
 [beepOsc: sine] ──► [beepGain] ──► [masterGain]
 
@@ -113,6 +113,41 @@ When enabled (off by default, toggle via the 🔇 sidebar button), root motion i
 ```
 
 Two main oscillators (sine + slightly detuned triangle at ×1.012) produce a thick, beating theremin tone. They pass through a gain stage, then a lowpass filter whose cutoff tracks the root constellation's spread and kinetic energy, then a master gain node that acts as the definitive gate. A separate beep oscillator, gated by its own gain envelope, handles close encounter events. An arpeggiator oscillator (triangle wave) cycles through roots at 24 notes/sec, mapping each root's angle to a pentatonic pitch and radius to an octave, with pluck-style envelopes gated by per-root velocity. An LFO provides vibrato on both main oscillators, with both rate and depth modulated by the root distribution.
+
+### Instrument Config Popovers
+
+Each instrument button (**B**, **M**, **V**) opens a popover with an on/off toggle and tuning sliders. All parameters take effect immediately — drag a slider during animation and hear the change in real time.
+
+**Base** (6 sliders):
+
+| Slider | Range | Default | Controls |
+|--------|-------|---------|----------|
+| Pitch | 55–440 Hz | 110 Hz | Center frequency of the drone |
+| Range | 0.5–4.0 oct | 2.0 | How many octaves the pitch swings with root spread |
+| Detune | 1.000–1.050 | 1.012 | Frequency ratio between the two oscillators (beating) |
+| Bright | 50–1000 Hz | 250 Hz | Filter cutoff floor (higher = brighter at rest) |
+| Volume | 0.05–0.50 | 0.22 | Gain swing driven by kinetic energy |
+| Vibrato | 0–25 Hz | 10 Hz | LFO depth driven by angular coherence |
+
+**Melody** (5 sliders):
+
+| Slider | Range | Default | Controls |
+|--------|-------|---------|----------|
+| Rate | 2–60 /s | 24 /s | Arpeggiator step speed (notes per second) |
+| Volume | 0.02–0.30 | 0.12 | Peak note gain |
+| Attack | 1–20 ms | 4 ms | Pluck attack time |
+| Decay | 10–200 ms | 64 ms | Pluck decay time |
+| Bright | 200–4000 Hz | 1200 Hz | Filter cutoff floor |
+
+**Voice** (5 sliders):
+
+| Slider | Range | Default | Controls |
+|--------|-------|---------|----------|
+| Memory | 1.0001–1.010 | 1.001 | Record decay rate (higher = records expire faster, more beeps) |
+| Cooldown | 10–500 ms | 80 ms | Minimum gap between beeps |
+| Volume | 0.02–0.30 | 0.12 | Beep peak gain |
+| Attack | 1–20 ms | 5 ms | Beep attack time |
+| Decay | 10–300 ms | 80 ms | Beep ring-down time |
 
 ### Feature Extraction
 
@@ -211,7 +246,7 @@ The UI is organized around a left sidebar with three groups and a compact header
 
 **Header:** App title, clickable **Degree** label (click to open slider, range 3–30), and **Pattern** dropdown.
 
-**Sidebar — View:** ◐ Domain coloring toggle, 🎨 Root coloring toggle, 🔇/🔊 Sound toggle.
+**Sidebar — View:** ◐ Domain coloring toggle, 🎨 Root coloring toggle, **B** Base / **M** Melody / **V** Voice sound toggles (each opens a config popover).
 
 **Sidebar — Tools:** ✕ Deselect all, ⬇ Export snapshot.
 
@@ -229,7 +264,7 @@ The UI is organized around a left sidebar with three groups and a compact header
 | **×** delete button | Removes the currently viewed path. |
 | **⏺** record (roots header) | Records to WebM video. Mode selector: Roots, Coefficients, or Both (side-by-side). Auto-stops on loop completion. |
 | **⌂ Home** button | Returns all animated coefficients to their start positions (curve[0]) — resets the animation clock without changing path shapes. |
-| **🔇/🔊** sound toggle | Enables WebAudio sonification of root motion. See [Sonification](#sonification). |
+| **B / M / V** sound buttons | Toggle and configure the three sound layers. Click to open config popover with on/off toggle + tuning sliders. See [Sonification](#sonification). |
 | **Selection count** (panel headers) | Shows the number of selected items next to "Coefficients" (green) and "Roots" (red) panel titles. |
 
 ### Selection

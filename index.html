@@ -544,18 +544,19 @@ const ENCOUNTER_TOP_K = 3;         // track top 3 records per root (non-tunable)
 
 // Tunable config objects (sliders modify these in real time)
 const baseConfig = {
-    freq: 110, octaves: 2.0, detune: 1.012,
+    freq: 110, octaves: 2.0,
+    modRatio: 2.0, modDepth: 300,
     filterLo: 250, filterHi: 3500,
     gainFloor: 0.03, gainRange: 0.22,
     vibDepth: 10, vibRate: 6.0,
 };
 const melodyConfig = {
-    rate: 24, peak: 0.12,
+    rate: 24, peak: 0.12, cutoff: 30,
     attack: 0.004, decay: 0.064,
     filterLo: 1200, filterHi: 3800,
 };
 const voiceConfig = {
-    decay: 1.001, cooldown: 0.08,
+    decay: 1.001, novelty: 1.0, cooldown: 0.08,
     peak: 0.12, attack: 0.005, ringdown: 0.08,
 };
 
@@ -662,12 +663,17 @@ function initAudio() {
     // Tap audio graph for recording (MediaStreamDestination)
     const mediaDest = audioCtx.createMediaStreamDestination();
     masterGain.connect(mediaDest);
-    const osc1 = audioCtx.createOscillator();
+    // FM synthesis: carrier (osc1) + modulator (osc2) → modGain → carrier.frequency
+    const osc1 = audioCtx.createOscillator();   // carrier
     osc1.type = "sine";
-    osc1.frequency.value = 220;
-    const osc2 = audioCtx.createOscillator();
-    osc2.type = "triangle";
-    osc2.frequency.value = 223;
+    osc1.frequency.value = 110;
+    const osc2 = audioCtx.createOscillator();   // FM modulator
+    osc2.type = "sine";
+    osc2.frequency.value = 220;
+    const modGain = audioCtx.createGain();       // FM depth (Hz)
+    modGain.gain.value = 0;
+    osc2.connect(modGain);
+    modGain.connect(osc1.frequency);
     const filter = audioCtx.createBiquadFilter();
     filter.type = "lowpass";
     filter.frequency.value = 800;
@@ -681,14 +687,12 @@ function initAudio() {
     lfoGain.gain.value = 0;
     lfo.connect(lfoGain);
     lfoGain.connect(osc1.frequency);
-    lfoGain.connect(osc2.frequency);
     const beepOsc = audioCtx.createOscillator();
     beepOsc.type = "sine";
     beepOsc.frequency.value = 800;
     const beepGain = audioCtx.createGain();
     beepGain.gain.value = 0;
-    osc1.connect(gainNode);
-    osc2.connect(gainNode);
+    osc1.connect(gainNode);  // carrier → gain → filter (osc2 routes to osc1.frequency via modGain)
     gainNode.connect(filter);
     filter.connect(masterGain);
     beepOsc.connect(beepGain);
@@ -711,7 +715,7 @@ function initAudio() {
     lfo.start();
     beepOsc.start();
     arpOsc.start();
-    audioNodes = { osc1, osc2, lfo, lfoGain, filter, gainNode, masterGain, beepOsc, beepGain, arpOsc, arpGain, arpFilter, mediaDest };
+    audioNodes = { osc1, osc2, modGain, lfo, lfoGain, filter, gainNode, masterGain, beepOsc, beepGain, arpOsc, arpGain, arpFilter, mediaDest };
 }
 
 function updateAudio() {
@@ -774,11 +778,14 @@ function updateAudio() {
     smoothSpread  += AUDIO_ALPHA * (sNorm - smoothSpread);
     smoothCoherence += AUDIO_ALPHA * (coherence - smoothCoherence);
 
-    // --- Base (drone): pitch, filter, gain, vibrato ---
+    // --- Base (FM drone): carrier pitch, modulator ratio + depth, filter, gain, vibrato ---
     if (baseEnabled) {
         const pitch = baseConfig.freq * Math.pow(2, (smoothR - 0.5) * baseConfig.octaves);
         audioNodes.osc1.frequency.setTargetAtTime(pitch, now, 0.05);
-        audioNodes.osc2.frequency.setTargetAtTime(pitch * baseConfig.detune, now, 0.05);
+        // FM modulator: frequency tracks carrier × ratio, depth driven by energy
+        audioNodes.osc2.frequency.setTargetAtTime(pitch * baseConfig.modRatio, now, 0.05);
+        const fmDepth = baseConfig.modDepth * smoothE;
+        audioNodes.modGain.gain.setTargetAtTime(fmDepth, now, 0.05);
         const cutoff = baseConfig.filterLo + baseConfig.filterHi * smoothSpread + 1500 * eNormMed;
         audioNodes.filter.frequency.setTargetAtTime(audioClamp(cutoff, 150, 8000), now, 0.05);
         const gain = baseConfig.gainFloor + baseConfig.gainRange * smoothE;
@@ -789,6 +796,7 @@ function updateAudio() {
     } else {
         audioNodes.gainNode.gain.setTargetAtTime(0, now, 0.05);
         audioNodes.lfoGain.gain.setTargetAtTime(0, now, 0.05);
+        audioNodes.modGain.gain.setTargetAtTime(0, now, 0.05);
     }
 
     // --- Voice (beeps): close encounters per-root record tracking ---
@@ -827,7 +835,7 @@ function updateAudio() {
                     const worstIdx = base + ENCOUNTER_TOP_K - 1;
                     if (closest[k] < closeEncounters[worstIdx]) {
                         const improvement = closeEncounters[worstIdx] - closest[k];
-                        closeEncounters[worstIdx] = closest[k];
+                        closeEncounters[worstIdx] = closest[k] * voiceConfig.novelty;
                         encounterAge[worstIdx] = 0;
                         for (let a = ENCOUNTER_TOP_K - 1; a > 0; a--) {
                             if (closeEncounters[base + a] < closeEncounters[base + a - 1]) {
@@ -866,14 +874,32 @@ function updateAudio() {
         }
     }
 
-    // --- Melody (arpeggiator): one note per step, cycling through roots ---
+    // --- Melody (arpeggiator): one note per step, cycling through top-N fastest roots ---
     if (melodyEnabled && audioNodes.arpOsc && audioNodes.arpGain) {
         const tNow = performance.now();
         const dt = lastAudioUpdateTime ? Math.max(0.001, Math.min((tNow - lastAudioUpdateTime) / 1000, 0.05)) : 1 / 60;
+
+        // Build per-root velocity array and sort indices by speed (descending)
+        const vels = new Array(n);
+        for (let i = 0; i < n; i++) {
+            if (prevRootsAudio && prevRootsAudio.length === n) {
+                vels[i] = Math.hypot(currentRoots[i].re - prevRootsAudio[i].re,
+                                     currentRoots[i].im - prevRootsAudio[i].im);
+            } else {
+                vels[i] = 0;
+            }
+        }
+        const indices = Array.from({ length: n }, (_, i) => i);
+        indices.sort((a, b) => vels[b] - vels[a]);
+
+        // cutoff: top N fastest roots to arpeggio (clamped to [2, n])
+        const N = Math.min(Math.max(Math.round(melodyConfig.cutoff), 2), n);
+
         const prevArpStep = Math.floor(arpPhase);
         arpPhase += melodyConfig.rate * dt;
-        const k = Math.floor(arpPhase) % n;
-        const rk = currentRoots[k];
+        const rank = Math.floor(arpPhase) % N;
+        const rootIdx = indices[rank];
+        const rk = currentRoots[rootIdx];
 
         // angle → scale degree (pentatonic)
         const theta = Math.atan2(rk.im - cy, rk.re - cx);
@@ -889,25 +915,22 @@ function updateAudio() {
         const baseMidi = 48; // C3
         const hz = midiToHz(baseMidi + qSemi + 12 * octave);
 
-        // per-root velocity → amplitude (reuse prevRootsAudio)
-        let vel = 0;
-        if (prevRootsAudio && prevRootsAudio.length === n) {
-            vel = Math.hypot(rk.re - prevRootsAudio[k].re, rk.im - prevRootsAudio[k].im);
-        }
-        const velNorm = audioClamp(vel / (range * 0.03), 0, 1);
+        // velocity of this root → filter brightness
+        const velNorm = audioClamp(vels[rootIdx] / (range * 0.03), 0, 1);
         arpSmoothVel = arpSmoothVel * 0.85 + velNorm * 0.15;
 
         audioNodes.arpOsc.frequency.setTargetAtTime(hz, now, 0.01);
         audioNodes.arpFilter.frequency.setTargetAtTime(melodyConfig.filterLo + melodyConfig.filterHi * arpSmoothVel, now, 0.02);
 
-        // pluck envelope on new step
+        // pluck envelope on new step — volume scales with rank (fastest = loudest)
         const curArpStep = Math.floor(arpPhase);
         if (curArpStep !== prevArpStep) {
-            const peak = 0.02 + melodyConfig.peak * arpSmoothVel;
+            const rankScale = 1 - rank / N;  // 1.0 for rank 0 (fastest), ~0 for rank N-1
+            const peak = (0.02 + melodyConfig.peak * arpSmoothVel) * rankScale;
             const g = audioNodes.arpGain.gain;
             g.cancelScheduledValues(now);
             g.setValueAtTime(0.0001, now);
-            g.exponentialRampToValueAtTime(peak, now + melodyConfig.attack);
+            g.exponentialRampToValueAtTime(Math.max(peak, 0.0001), now + melodyConfig.attack);
             g.exponentialRampToValueAtTime(0.0001, now + melodyConfig.attack + melodyConfig.decay);
         }
     }
@@ -3090,7 +3113,8 @@ function buildBasePop(pop) {
     buildAudioToggle(pop, "Enabled", baseEnabled, on => toggleSound(on, v => { baseEnabled = v; }, btn));
     buildAudioSlider(pop, "Pitch",      55,    440,  baseConfig.freq,      true,  fmtHz,     v => { baseConfig.freq = v; });
     buildAudioSlider(pop, "Range",      0.5,   4.0,  baseConfig.octaves,   false, fmtF(1),   v => { baseConfig.octaves = v; });
-    buildAudioSlider(pop, "Detune",     1.000, 1.050, baseConfig.detune,   false, fmtF(3),   v => { baseConfig.detune = v; });
+    buildAudioSlider(pop, "FM Ratio",   0.5,   8.0,  baseConfig.modRatio,  false, v => "×" + v.toFixed(1), v => { baseConfig.modRatio = v; });
+    buildAudioSlider(pop, "FM Depth",   0,     800,  baseConfig.modDepth,  false, fmtHz,     v => { baseConfig.modDepth = v; });
     buildAudioSlider(pop, "Bright",     50,    1000, baseConfig.filterLo,  true,  fmtHz,     v => { baseConfig.filterLo = v; });
     buildAudioSlider(pop, "Volume",     0.05,  0.50, baseConfig.gainRange, false, fmtF(2),   v => { baseConfig.gainRange = v; });
     buildAudioSlider(pop, "Vibrato",    0,     25,   baseConfig.vibDepth,  false, fmtF(1),   v => { baseConfig.vibDepth = v; });
@@ -3103,6 +3127,7 @@ function buildMelodyPop(pop) {
     const btn = document.getElementById("melody-toggle-btn");
     buildAudioToggle(pop, "Enabled", melodyEnabled, on => toggleSound(on, v => { melodyEnabled = v; }, btn));
     buildAudioSlider(pop, "Rate",       2,     60,   melodyConfig.rate,     true,  v => Math.round(v) + "/s", v => { melodyConfig.rate = v; });
+    buildAudioSlider(pop, "Cutoff",     2,  currentDegree, Math.min(melodyConfig.cutoff, currentDegree), false, v => Math.round(v) + "",  v => { melodyConfig.cutoff = v; });
     buildAudioSlider(pop, "Volume",     0.02,  0.30, melodyConfig.peak,     false, fmtF(2),   v => { melodyConfig.peak = v; });
     buildAudioSlider(pop, "Attack",     0.001, 0.020, melodyConfig.attack,  true,  fmtMs,     v => { melodyConfig.attack = v; });
     buildAudioSlider(pop, "Decay",      0.010, 0.200, melodyConfig.decay,   true,  fmtMs,     v => { melodyConfig.decay = v; });
@@ -3115,7 +3140,8 @@ function buildVoicePop(pop) {
     pop.appendChild(title);
     const btn = document.getElementById("voice-toggle-btn");
     buildAudioToggle(pop, "Enabled", voiceEnabled, on => toggleSound(on, v => { voiceEnabled = v; }, btn));
-    buildAudioSlider(pop, "Memory",     1.0001, 1.010, voiceConfig.decay,    true,  fmtF(4),  v => { voiceConfig.decay = v; });
+    buildAudioSlider(pop, "Memory",     1.0,    1.02,  voiceConfig.decay,    true,  fmtF(4),  v => { voiceConfig.decay = v; });
+    buildAudioSlider(pop, "Novelty",    0.3,   1.0,   voiceConfig.novelty,  false, fmtF(2),   v => { voiceConfig.novelty = v; });
     buildAudioSlider(pop, "Cooldown",   0.01,  0.50,  voiceConfig.cooldown, true,  fmtMs,     v => { voiceConfig.cooldown = v; });
     buildAudioSlider(pop, "Volume",     0.02,  0.30,  voiceConfig.peak,     false, fmtF(2),   v => { voiceConfig.peak = v; });
     buildAudioSlider(pop, "Attack",     0.001, 0.020, voiceConfig.attack,   true,  fmtMs,     v => { voiceConfig.attack = v; });

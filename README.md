@@ -17,7 +17,9 @@ PolyPaint makes this relationship tangible. Two side-by-side complex-plane panel
 - **Multi-select:** Click individual dots to toggle selection, or **marquee-select** by clicking and dragging on empty canvas to select all nodes inside the rectangle. Drag any selected item and the entire group moves together, maintaining relative positions.
 - **Animate:** Define multiple simultaneous animation paths — each path drives a different subset of coefficients along its own curve (circle, figure-8, spiral, etc.) with independent radius, speed, and direction. Hit Play and all paths activate at once, creating rich interference patterns as the roots respond to the combined perturbation.
 - **Transform:** Select coefficients or roots and use interactive gesture tools — **Scale** (vertical slider with exponential mapping), **Rotate** (horizontal slider in turns), and **Translate** (2D vector pad) — all with live preview as you drag. Ops work on both coefficient and root selections — the target label turns green for coefficients, red for roots.
-- **Sonify:** Three independent sound layers — **Base** (theremin drone), **Melody** (pentatonic arpeggiator), and **Voice** (close-encounter beeps) — each with its own sidebar button and config popover. Click any button to open a panel of tuning sliders (pitch, brightness, volume, rate, etc.) that reshape the sound in real time. See [Sonification](docs/sonification.md) for the full algorithm.
+- **Sonify:** Three independent sound layers — **Base** (FM drone), **Melody** (pentatonic arpeggiator), and **Voice** (close-encounter beeps) — each with its own sidebar button and config popover. Click any button to open a panel of tuning sliders (pitch, FM depth, volume, cutoff, etc.) that reshape the sound in real time. See [Sonification](docs/sonification.md) for the full algorithm.
+
+<video controls loop playsinline width="720" src="https://github.com/user-attachments/assets/f2141904-eef3-433f-81fa-7ac0a1a61bb5"></video>
 
 Everything runs client-side in a single HTML file. No server, no build step, no dependencies to install.
 

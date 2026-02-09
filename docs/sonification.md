@@ -5,49 +5,53 @@ Three independent instrument layers — **B** (Base), **M** (Melody), **V** (Voi
 ## Audio Graph
 
 ```
-[osc1: sine 110Hz] ──┐                                                    ┌──► speakers
-                      ├──► [gainNode] ──► [lowpass filter] ──► [masterGain]┤
-[osc2: triangle ~111Hz] ──┘                                                └──► [mediaDest] ──► recording
+[modulator: sine] ──► [modGain] ──► carrier.frequency
+                                                                           ┌──► speakers
+[carrier: sine 110Hz] ──► [gainNode] ──► [lowpass filter] ──► [masterGain]┤
+                                                                           └──► [mediaDest] ──► recording
 
 [beepOsc: sine] ──► [beepGain] ──► [masterGain]
 
 [arpOsc: triangle] ──► [arpGain] ──► [arpFilter: lowpass] ──► [masterGain]
 
-[lfo: sine 1.5–7.5Hz] ──► [lfoGain] ──► osc1.frequency + osc2.frequency
+[lfo: sine 1.5–7.5Hz] ──► [lfoGain] ──► carrier.frequency
 ```
 
-Two main oscillators (sine + slightly detuned triangle at ×1.012) produce a thick, beating theremin tone. They pass through a gain stage, then a lowpass filter whose cutoff tracks the root constellation's spread and kinetic energy, then a master gain node that acts as the definitive gate. A separate beep oscillator, gated by its own gain envelope, handles close encounter events. An arpeggiator oscillator (triangle wave) cycles through roots at 24 notes/sec, mapping each root's angle to a pentatonic pitch and radius to an octave, with pluck-style envelopes gated by per-root velocity. An LFO provides vibrato on both main oscillators, with both rate and depth modulated by the root distribution.
+The Base layer uses **FM synthesis**: a sine carrier whose frequency is modulated by a second sine oscillator. The modulator's frequency tracks the carrier at a configurable ratio (default ×2), and its depth (via `modGain`) is driven by root kinetic energy — at rest the tone is a pure sine, and as roots move the timbre blooms into increasingly rich harmonics. The carrier passes through a gain stage, then a lowpass filter whose cutoff tracks the root constellation's spread and energy, then a master gain node. A separate beep oscillator, gated by its own gain envelope, handles close encounter events. An arpeggiator oscillator (triangle wave) cycles through the top-N fastest roots, mapping each root's angle to a pentatonic pitch and radius to an octave, with pluck-style envelopes scaled by velocity rank. An LFO provides vibrato on the carrier, with both rate and depth modulated by the root distribution.
 
 ## Instrument Config Popovers
 
 Each instrument button (**B**, **M**, **V**) opens a popover with an on/off toggle and tuning sliders. All parameters take effect immediately — drag a slider during animation and hear the change in real time.
 
-**Base** (6 sliders):
+**Base** (7 sliders):
 
 | Slider | Range | Default | Controls |
 |--------|-------|---------|----------|
-| Pitch | 55–440 Hz | 110 Hz | Center frequency of the drone |
+| Pitch | 55–440 Hz | 110 Hz | Carrier center frequency |
 | Range | 0.5–4.0 oct | 2.0 | How many octaves the pitch swings with root spread |
-| Detune | 1.000–1.050 | 1.012 | Frequency ratio between the two oscillators (beating) |
+| FM Ratio | ×0.5–×8.0 | ×2.0 | Modulator frequency relative to carrier (integer = harmonic, non-integer = metallic) |
+| FM Depth | 0–800 Hz | 300 Hz | Maximum FM modulation depth, scaled by energy (0 = pure sine) |
 | Bright | 50–1000 Hz | 250 Hz | Filter cutoff floor (higher = brighter at rest) |
 | Volume | 0.05–0.50 | 0.22 | Gain swing driven by kinetic energy |
 | Vibrato | 0–25 Hz | 10 Hz | LFO depth driven by angular coherence |
 
-**Melody** (5 sliders):
+**Melody** (6 sliders):
 
 | Slider | Range | Default | Controls |
 |--------|-------|---------|----------|
 | Rate | 2–60 /s | 24 /s | Arpeggiator step speed (notes per second) |
-| Volume | 0.02–0.30 | 0.12 | Peak note gain |
+| Cutoff | 2–degree | degree | Top-N fastest roots to arpeggio (lower = fewer, more focused notes) |
+| Volume | 0.02–0.30 | 0.12 | Peak note gain (scaled by velocity rank: fastest = loudest) |
 | Attack | 1–20 ms | 4 ms | Pluck attack time |
 | Decay | 10–200 ms | 64 ms | Pluck decay time |
 | Bright | 200–4000 Hz | 1200 Hz | Filter cutoff floor |
 
-**Voice** (5 sliders):
+**Voice** (7 sliders):
 
 | Slider | Range | Default | Controls |
 |--------|-------|---------|----------|
-| Memory | 1.0001–1.010 | 1.001 | Record decay rate (higher = records expire faster, more beeps) |
+| Memory | 1.0–1.02 | 1.001 | Record decay rate per frame (1.0 = records permanent, higher = expire faster, more beeps) |
+| Novelty | 0.30–1.00 | 1.00 | Record hysteresis — stored distance is multiplied by this (lower = next approach must be much closer to trigger) |
 | Cooldown | 10–500 ms | 80 ms | Minimum gap between beeps |
 | Volume | 0.02–0.30 | 0.12 | Beep peak gain |
 | Attack | 1–20 ms | 5 ms | Beep attack time |
@@ -82,11 +86,13 @@ This prevents audible discontinuities from frame-to-frame noise while remaining 
 
 ## Sound Mapping
 
-**Pitch (theremin):**
+**Pitch (FM carrier):**
 ```
-frequency = 110 × 2^((r50_norm − 0.5) × 2.0)
+carrier_freq = 110 × 2^((r50_norm − 0.5) × 2.0)
+mod_freq     = carrier_freq × modRatio
+mod_depth    = modDepth × E_hi_smoothed
 ```
-where `r50_norm = clamp(r50 / panel_range, 0, 1)`. The median radius maps to ±1 octave around A2 (110 Hz). When the root constellation expands, pitch rises; when it contracts, pitch falls. This is more stable than centroid-based pitch because the median radius resists centroid drift. The second oscillator tracks at `frequency × 1.012` for a slow beating effect.
+where `r50_norm = clamp(r50 / panel_range, 0, 1)`. The median radius maps to ±1 octave around A2 (110 Hz). When the root constellation expands, pitch rises; when it contracts, pitch falls. The FM modulator tracks the carrier at the configured ratio (default ×2.0), and its depth scales with kinetic energy — at rest the output is a pure sine, and as roots move the modulation index increases, producing progressively richer harmonics (bells at low depth, brass/metallic at high depth).
 
 **Filter cutoff (brightness):**
 ```
@@ -105,7 +111,7 @@ where `E_hi_norm = clamp(E_hi / (range × 0.05), 0, 1)`. The 85th-percentile ene
 lfo_depth = 2 + 10 × R_smoothed  Hz
 lfo_rate  = 1.5 + 6.0 × E_med_norm  Hz
 ```
-The LFO modulates both oscillators' frequencies. When roots cluster angularly (high R), vibrato depth increases up to 12 Hz — the sound "wobbles" as the clump moves. When roots form a balanced ring (low R), vibrato settles to a gentle 2 Hz baseline. Additionally, the LFO *rate* itself increases with median energy: calm scenes get slow vibrato (1.5 Hz), active scenes get faster pulsing (up to 7.5 Hz).
+The LFO modulates the carrier's frequency. When roots cluster angularly (high R), vibrato depth increases up to 12 Hz — the sound "wobbles" as the clump moves. When roots form a balanced ring (low R), vibrato settles to a gentle 2 Hz baseline. Additionally, the LFO *rate* itself increases with median energy: calm scenes get slow vibrato (1.5 Hz), active scenes get faster pulsing (up to 7.5 Hz).
 
 **Close encounter beeps (novelty-based):**
 
@@ -113,9 +119,9 @@ Instead of a fixed or adaptive threshold, each root tracks its own **top 3 close
 
 Each root's encounter table is seeded with current distances on the first frame (no startup burst). On subsequent frames:
 1. Each root finds its 3 closest neighbors via partial sort
-2. If any distance is smaller than the root's worst record, the record is replaced
+2. If any distance is smaller than the root's worst record, the record is replaced with `distance × novelty` — when novelty < 1, the stored record is tighter than the actual approach, requiring the next trigger to be proportionally closer (e.g., novelty = 0.8 means the next approach must be 20% closer)
 3. The root with the most dramatic improvement fires a beep at its own **pentatonic pitch** (root 0 = C4, root 1 = D4, ..., ascending through octaves via the scale [C, D, E, G, A])
-4. All records slowly **decay** (`×1.001` per frame, ~6%/sec at 60fps), so old records gradually become beatable again
+4. All records slowly **decay** (`×memory` per frame, default 1.001 ≈ 6%/sec at 60fps), so old records gradually become beatable again — set memory to 1.0 for permanent records (beeps trail off completely)
 
 ```
 pitch = midiToHz(60 + pentatonic[i % 5] + 12 × floor(i / 5))
@@ -124,7 +130,11 @@ envelope: 0.0001 → peak (5ms attack) → 0.0001 (80ms decay)
 cooldown: 80ms between beeps
 ```
 
-This approach is inherently adaptive: tight configurations set low records early, so only truly exceptional approaches trigger; loose configurations keep records high, so moderate approaches still register. No threshold constants to tune.
+This approach is inherently adaptive: tight configurations set low records early, so only truly exceptional approaches trigger; loose configurations keep records high, so moderate approaches still register. The novelty and memory sliders provide direct control over beep density without changing the fundamental algorithm.
+
+**Melody cutoff (velocity ranking):**
+
+The arpeggiator sorts all roots by velocity (frame-to-frame displacement) each frame and only cycles through the top N fastest. The `cutoff` slider controls N — at maximum (= degree) all roots participate as before; at minimum (= 2) only the two fastest-moving roots get arpeggiated. Volume scales linearly with rank: the fastest root plays at full volume, the Nth plays near-silent. This focuses the melody on the most active parts of the constellation.
 
 ## Silence Management
 

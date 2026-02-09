@@ -404,7 +404,7 @@ circle.coeff.selected, circle.root.selected {
         </div>
     </div>
     <div class="panel">
-        <h3><span>Roots</span><span style="display:flex;gap:4px;"><button id="rec-roots-btn" class="icon-btn" title="Record roots (webm)">⏺</button><button id="stop-roots-btn" class="icon-btn" title="Stop recording" style="display:none;">⏹</button></span></h3>
+        <h3><span>Roots</span><span style="display:flex;gap:4px;align-items:center;"><select id="rec-mode" title="Recording mode" style="font-size:10px;padding:1px 2px;background:rgba(255,255,255,0.06);color:var(--muted);border:1px solid var(--stroke);border-radius:4px;cursor:pointer;"><option value="roots">Roots</option><option value="coeffs">Coeffs</option><option value="both">Both</option></select><button id="rec-roots-btn" class="icon-btn" title="Record (webm)">⏺</button><button id="stop-roots-btn" class="icon-btn" title="Stop recording" style="display:none;">⏹</button></span></h3>
         <div id="roots-container">
             <canvas id="domain-canvas"></canvas>
             <svg id="roots-panel"></svg>
@@ -1833,7 +1833,7 @@ function animLoop(now) {
     autoScaleCoeffPanel();
     solveRootsThrottled();
     renderDomainColoringThrottled();
-    rootsRecordTick();
+    recordTick();
 
     animState.rafId = requestAnimationFrame(animLoop);
 }
@@ -2030,7 +2030,7 @@ function renderRoots(newRoots) {
             }
             if (closed) {
                 trailComplete = true;
-                if (rootsRec.recording) stopRootsRecording();
+                if (vidRec.recording) stopRecording();
             }
         }
         renderTrails();
@@ -2806,10 +2806,11 @@ document.addEventListener("mousedown", e => {
     closeOpTool();
 });
 
-// --- Roots video recording (MediaRecorder → WebM) ---
+// --- Video recording (MediaRecorder → WebM) ---
 
-let rootsRec = {
+let vidRec = {
     recording: false,
+    mode: "roots",   // "roots" | "coeffs" | "both"
     canvas: null,
     ctx: null,
     stream: null,
@@ -2817,40 +2818,43 @@ let rootsRec = {
     chunks: []
 };
 
-function drawRootsToCtx(ctx, W, H) {
-    const range = panels.roots.range;
-    const xs = v => MARGIN + (v + range) / (2 * range) * (W - 2 * MARGIN);
-    const ys = v => (H - MARGIN) - (v + range) / (2 * range) * (H - 2 * MARGIN);
+// --- Panel drawing helpers for recording ---
 
-    // Background
-    if (domainColoringEnabled) {
-        ctx.fillStyle = "#16213e";
-        ctx.fillRect(0, 0, W, H);
-        const plot = W - 2 * MARGIN;
-        ctx.drawImage(domainCanvas, MARGIN, MARGIN, plot, plot);
-    } else {
-        ctx.fillStyle = "#16213e";
-        ctx.fillRect(0, 0, W, H);
-    }
+function drawPanelGrid(ctx, x0, y0, pW, pH, range) {
+    const xs = v => MARGIN + (v + range) / (2 * range) * (pW - 2 * MARGIN) + x0;
+    const ys = v => (pH - MARGIN) - (v + range) / (2 * range) * (pH - 2 * MARGIN) + y0;
 
     // Grid
-    ctx.strokeStyle = "#1f3354";
-    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = "#1f3354"; ctx.lineWidth = 0.5;
     const intMax = Math.floor(range);
     for (let v = -intMax; v <= intMax; v++) {
         ctx.beginPath(); ctx.moveTo(xs(v), ys(-range)); ctx.lineTo(xs(v), ys(range)); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(xs(-range), ys(v)); ctx.lineTo(xs(range), ys(v)); ctx.stroke();
     }
-
     // Axes
     ctx.strokeStyle = "#2a4a6b"; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(xs(-range), ys(0)); ctx.lineTo(xs(range), ys(0)); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(xs(0), ys(-range)); ctx.lineTo(xs(0), ys(range)); ctx.stroke();
-
     // Unit circle
     ctx.setLineDash([4, 3]);
     ctx.beginPath(); ctx.arc(xs(0), ys(0), Math.abs(xs(1) - xs(0)), 0, 2 * Math.PI); ctx.stroke();
     ctx.setLineDash([]);
+
+    return { xs, ys };
+}
+
+function drawRootsToCtx(ctx, x0, y0, pW, pH) {
+    const range = panels.roots.range;
+
+    // Background + domain coloring
+    if (domainColoringEnabled) {
+        ctx.fillStyle = "#16213e"; ctx.fillRect(x0, y0, pW, pH);
+        ctx.drawImage(domainCanvas, x0 + MARGIN, y0 + MARGIN, pW - 2 * MARGIN, pH - 2 * MARGIN);
+    } else {
+        ctx.fillStyle = "#16213e"; ctx.fillRect(x0, y0, pW, pH);
+    }
+
+    const { xs, ys } = drawPanelGrid(ctx, x0, y0, pW, pH, range);
 
     // Trails
     if (trailData.length > 0) {
@@ -2881,70 +2885,131 @@ function drawRootsToCtx(ctx, W, H) {
     }
 }
 
-function rootsRecordTick() {
-    if (!rootsRec.recording) return;
-    rootsRec.ctx.clearRect(0, 0, S, S);
-    drawRootsToCtx(rootsRec.ctx, S, S);
+function drawCoeffsToCtx(ctx, x0, y0, pW, pH) {
+    const range = panels.coeff.range;
+
+    ctx.fillStyle = "#16213e"; ctx.fillRect(x0, y0, pW, pH);
+
+    const { xs, ys } = drawPanelGrid(ctx, x0, y0, pW, pH, range);
+
+    // Coefficient curve paths
+    const nC = coefficients.length;
+    if (animPaths.length > 0) {
+        ctx.lineWidth = 1.5; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.globalAlpha = 0.6;
+        for (const path of animPaths) {
+            if (path.pathType === "random" || path.pathType === "none") continue;
+            for (const idx of path.coeffs) {
+                const curve = coefficients[idx].curve;
+                if (!curve) continue;
+                const N = curve.length;
+                ctx.strokeStyle = coeffColor(idx, nC);
+                ctx.beginPath();
+                for (let k = 0; k <= N; k++) {
+                    const pt = curve[k % N];
+                    if (k === 0) ctx.moveTo(xs(pt.re), ys(pt.im)); else ctx.lineTo(xs(pt.re), ys(pt.im));
+                }
+                ctx.closePath(); ctx.stroke();
+            }
+        }
+        ctx.globalAlpha = 1.0;
+    }
+
+    // Coefficient dots + labels
+    for (let i = 0; i < nC; i++) {
+        const c = coefficients[i];
+        ctx.beginPath(); ctx.arc(xs(c.re), ys(c.im), 7, 0, 2 * Math.PI);
+        ctx.fillStyle = coeffColor(i, nC); ctx.fill();
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = "#aaa"; ctx.font = "10px sans-serif"; ctx.textAlign = "left";
+        ctx.fillText("c" + subscript(nC - 1 - i), xs(c.re) + 10, ys(c.im) + 4);
+    }
 }
 
-function startRootsRecording() {
-    if (rootsRec.recording) return;
+function recordTick() {
+    if (!vidRec.recording) return;
+    const ctx = vidRec.ctx;
+    const mode = vidRec.mode;
 
-    // Create / resize canvas
-    const dpr = window.devicePixelRatio || 1;
-    if (!rootsRec.canvas) {
-        rootsRec.canvas = document.createElement("canvas");
-        rootsRec.ctx = rootsRec.canvas.getContext("2d");
+    if (mode === "roots") {
+        ctx.clearRect(0, 0, S, S);
+        drawRootsToCtx(ctx, 0, 0, S, S);
+    } else if (mode === "coeffs") {
+        ctx.clearRect(0, 0, S, S);
+        drawCoeffsToCtx(ctx, 0, 0, S, S);
+    } else {
+        // both — side by side
+        const gap = 8;
+        const totalW = S * 2 + gap;
+        ctx.fillStyle = "#0f1026"; ctx.fillRect(0, 0, totalW, S);
+        drawCoeffsToCtx(ctx, 0, 0, S, S);
+        drawRootsToCtx(ctx, S + gap, 0, S, S);
     }
-    rootsRec.canvas.width = Math.floor(S * dpr);
-    rootsRec.canvas.height = Math.floor(S * dpr);
-    rootsRec.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
 
-    const stream = rootsRec.canvas.captureStream(60);
-    rootsRec.stream = stream;
-    rootsRec.chunks = [];
+function startRecording() {
+    if (vidRec.recording) return;
+
+    const mode = document.getElementById("rec-mode").value;
+    vidRec.mode = mode;
+
+    const dpr = window.devicePixelRatio || 1;
+    const gap = 8;
+    const logW = mode === "both" ? S * 2 + gap : S;
+    const logH = S;
+
+    if (!vidRec.canvas) {
+        vidRec.canvas = document.createElement("canvas");
+        vidRec.ctx = vidRec.canvas.getContext("2d");
+    }
+    vidRec.canvas.width = Math.floor(logW * dpr);
+    vidRec.canvas.height = Math.floor(logH * dpr);
+    vidRec.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const stream = vidRec.canvas.captureStream(60);
+    vidRec.stream = stream;
+    vidRec.chunks = [];
 
     const candidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
     let mimeType = "";
     for (const c of candidates) { if (MediaRecorder.isTypeSupported(c)) { mimeType = c; break; } }
 
     const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    rootsRec.mr = mr;
+    vidRec.mr = mr;
 
-    mr.ondataavailable = e => { if (e.data && e.data.size) rootsRec.chunks.push(e.data); };
+    mr.ondataavailable = e => { if (e.data && e.data.size) vidRec.chunks.push(e.data); };
     mr.onstop = () => {
-        const blob = new Blob(rootsRec.chunks, { type: mr.mimeType || "video/webm" });
+        const blob = new Blob(vidRec.chunks, { type: mr.mimeType || "video/webm" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const suffix = mode === "both" ? "both" : mode === "coeffs" ? "coeffs" : "roots";
         a.href = url;
-        a.download = `polypaint-roots-${ts}.webm`;
+        a.download = `polypaint-${suffix}-${ts}.webm`;
         a.click();
         URL.revokeObjectURL(url);
     };
 
-    rootsRec.recording = true;
+    vidRec.recording = true;
+    recordTick();          // draw first frame before recorder starts
     mr.start(200);
 
     document.getElementById("rec-roots-btn").classList.add("recording");
-    document.getElementById("rec-roots-btn").style.display = "none";
     document.getElementById("stop-roots-btn").style.display = "";
 }
 
-function stopRootsRecording() {
-    if (!rootsRec.recording) return;
-    rootsRec.recording = false;
-    if (rootsRec.mr && rootsRec.mr.state !== "inactive") rootsRec.mr.stop();
-    rootsRec.mr = null;
-    rootsRec.stream = null;
+function stopRecording() {
+    if (!vidRec.recording) return;
+    vidRec.recording = false;
+    if (vidRec.mr && vidRec.mr.state !== "inactive") vidRec.mr.stop();
+    vidRec.mr = null;
+    vidRec.stream = null;
 
     document.getElementById("rec-roots-btn").classList.remove("recording");
     document.getElementById("stop-roots-btn").style.display = "none";
-    document.getElementById("rec-roots-btn").style.display = "";
 }
 
-document.getElementById("rec-roots-btn").addEventListener("click", startRootsRecording);
-document.getElementById("stop-roots-btn").addEventListener("click", stopRootsRecording);
+document.getElementById("rec-roots-btn").addEventListener("click", startRecording);
+document.getElementById("stop-roots-btn").addEventListener("click", stopRecording);
 
 // --- Snap (capture) ---
 

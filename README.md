@@ -29,7 +29,7 @@ Or visit the **[live demo](https://nassuphis.github.io/karpo_hackathon/)**.
 ## Architecture
 
 ```
-Single HTML file (~3000 lines)
+Single HTML file (~3300 lines)
 ├── d3.js v7 (CDN)          — SVG rendering, drag interactions
 ├── Ehrlich-Aberth solver    — polynomial root finding in pure JS
 ├── Horner evaluator         — domain coloring + derivative computation
@@ -84,7 +84,7 @@ Dragging roots works in the opposite direction: the polynomial is reconstructed 
 
 ## Domain Coloring
 
-When enabled (off by default, toggle via pill button), the roots panel background is painted using [domain coloring](https://en.wikipedia.org/wiki/Domain_coloring). For each pixel at position z in the complex plane, the polynomial p(z) is evaluated and mapped to a color:
+When enabled (off by default, toggle via the ◐ sidebar button), the roots panel background is painted using [domain coloring](https://en.wikipedia.org/wiki/Domain_coloring). For each pixel at position z in the complex plane, the polynomial p(z) is evaluated and mapped to a color:
 
 - **Hue** = arg(p(z)) — the phase of the polynomial's value. Roots appear as points where all colors converge (all phases meet at a zero).
 - **Lightness** = 0.5 + 0.4·cos(2π·frac(log₂|p(z)|)) — contour lines at powers-of-2 modulus. Zeros appear as dark points.
@@ -100,7 +100,7 @@ The space of degree-*n* polynomials with distinct roots is topologically the [co
 
 This is not a solver artifact; it is a topological invariant of the loop. Different loops around different "holes" in coefficient space produce different permutations. The [cohomology](https://en.wikipedia.org/wiki/Cohomology) of the configuration space (computed by Arnol'd and Cohen) classifies these possibilities.
 
-**What you see in PolyPaint:** the trail patterns are visual braids. When roots swap indices mid-trail, the jump detection breaks the path rather than drawing a false connecting line. A future improvement could track roots by continuity (solving a frame-to-frame assignment problem) rather than by array index, which would eliminate index swaps entirely and reveal the true braid structure.
+**What you see in PolyPaint:** the trail patterns are visual braids. Root identity is preserved across frames using a greedy nearest-neighbor assignment (`matchRootOrder`), which reorders each new solver output to best match the previous frame's root positions. This keeps trails tracking the same root continuously. When roots still swap indices (e.g. during fast near-collisions), jump detection breaks the path rather than drawing a false connecting line.
 
 ## Interface
 
@@ -124,7 +124,7 @@ The UI is organized around a left sidebar with three groups and a compact header
 | **A (Angle)** slider | Rotates the path shape around the coefficient (0–1 → 0–360°). |
 | **CW / CCW** toggle | Sets clockwise or counter-clockwise direction for the current path. |
 | **×** delete button | Removes the currently viewed path. |
-| **⏺** record (roots header) | Records the roots panel to a WebM video. Auto-stops on loop completion. |
+| **⏺** record (roots header) | Records to WebM video. Mode selector: Roots, Coefficients, or Both (side-by-side). Auto-stops on loop completion. |
 
 ### Selection
 
@@ -260,7 +260,7 @@ Heart, Circle, Star, Spiral, Cross, Diamond, Chessboard, Smiley, Figure-8, Butte
 
 ```
 karpo_hackathon/
-├── index.html            # Entire app (~3000 lines): CSS, JS, HTML all inline
+├── index.html            # Entire app (~3300 lines): CSS, JS, HTML all inline
 ├── snaps/                # Snap captures (PNG + JSON metadata)
 └── README.md
 ```

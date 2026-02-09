@@ -122,6 +122,7 @@ The UI is organized around a left sidebar with three groups and a compact header
 | **A (Angle)** slider | Rotates the path shape around the coefficient (0–1 → 0–360°). |
 | **CW / CCW** toggle | Sets clockwise or counter-clockwise direction for the current path. |
 | **×** delete button | Removes the currently viewed path. |
+| **⏺** record (roots header) | Records the roots panel to a WebM video. Auto-stops on loop completion. |
 
 ### Selection
 

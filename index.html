@@ -189,6 +189,8 @@ body {
     display: flex; align-items: center; justify-content: space-between;
 }
 .panel h3 .icon-btn { width: 22px; height: 22px; font-size: 11px; border-radius: 6px; }
+#rec-roots-btn.recording { color: #e94560; animation: rec-blink 1s ease-in-out infinite alternate; }
+@keyframes rec-blink { from { opacity: 1; } to { opacity: 0.4; } }
 svg { background: var(--panel); border: 0; border-radius: 0; flex: 1; position: relative; }
 .grid line { stroke: #1f3354; stroke-width: 0.5; }
 .axis line { stroke: #2a4a6b; stroke-width: 1; }
@@ -402,7 +404,7 @@ circle.coeff.selected, circle.root.selected {
         </div>
     </div>
     <div class="panel">
-        <h3><span>Roots</span></h3>
+        <h3><span>Roots</span><span style="display:flex;gap:4px;"><button id="rec-roots-btn" class="icon-btn" title="Record roots (webm)">⏺</button><button id="stop-roots-btn" class="icon-btn" title="Stop recording" style="display:none;">⏹</button></span></h3>
         <div id="roots-container">
             <canvas id="domain-canvas"></canvas>
             <svg id="roots-panel"></svg>
@@ -1831,6 +1833,7 @@ function animLoop(now) {
     autoScaleCoeffPanel();
     solveRootsThrottled();
     renderDomainColoringThrottled();
+    rootsRecordTick();
 
     animState.rafId = requestAnimationFrame(animLoop);
 }
@@ -2025,7 +2028,10 @@ function renderRoots(newRoots) {
                 const dist = Math.hypot(cur.re - start.re, cur.im - start.im);
                 if (dist > panels.roots.range * 0.01) { closed = false; break; }
             }
-            if (closed) trailComplete = true;
+            if (closed) {
+                trailComplete = true;
+                if (rootsRec.recording) stopRootsRecording();
+            }
         }
         renderTrails();
     }
@@ -2799,6 +2805,146 @@ document.addEventListener("mousedown", e => {
     if (e.target.id && e.target.id.endsWith("-tool-btn")) return;
     closeOpTool();
 });
+
+// --- Roots video recording (MediaRecorder → WebM) ---
+
+let rootsRec = {
+    recording: false,
+    canvas: null,
+    ctx: null,
+    stream: null,
+    mr: null,
+    chunks: []
+};
+
+function drawRootsToCtx(ctx, W, H) {
+    const range = panels.roots.range;
+    const xs = v => MARGIN + (v + range) / (2 * range) * (W - 2 * MARGIN);
+    const ys = v => (H - MARGIN) - (v + range) / (2 * range) * (H - 2 * MARGIN);
+
+    // Background
+    if (domainColoringEnabled) {
+        ctx.fillStyle = "#16213e";
+        ctx.fillRect(0, 0, W, H);
+        const plot = W - 2 * MARGIN;
+        ctx.drawImage(domainCanvas, MARGIN, MARGIN, plot, plot);
+    } else {
+        ctx.fillStyle = "#16213e";
+        ctx.fillRect(0, 0, W, H);
+    }
+
+    // Grid
+    ctx.strokeStyle = "#1f3354";
+    ctx.lineWidth = 0.5;
+    const intMax = Math.floor(range);
+    for (let v = -intMax; v <= intMax; v++) {
+        ctx.beginPath(); ctx.moveTo(xs(v), ys(-range)); ctx.lineTo(xs(v), ys(range)); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(xs(-range), ys(v)); ctx.lineTo(xs(range), ys(v)); ctx.stroke();
+    }
+
+    // Axes
+    ctx.strokeStyle = "#2a4a6b"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(xs(-range), ys(0)); ctx.lineTo(xs(range), ys(0)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(xs(0), ys(-range)); ctx.lineTo(xs(0), ys(range)); ctx.stroke();
+
+    // Unit circle
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.arc(xs(0), ys(0), Math.abs(xs(1) - xs(0)), 0, 2 * Math.PI); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Trails
+    if (trailData.length > 0) {
+        const jumpThresh = range * 0.3;
+        ctx.lineWidth = 1.5; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.globalAlpha = 0.6;
+        for (let i = 0; i < trailData.length; i++) {
+            const pts = trailData[i];
+            if (pts.length < 2) continue;
+            ctx.strokeStyle = rootColor(i, trailData.length);
+            ctx.beginPath(); ctx.moveTo(xs(pts[0].re), ys(pts[0].im));
+            for (let j = 1; j < pts.length; j++) {
+                const dist = Math.hypot(pts[j].re - pts[j-1].re, pts[j].im - pts[j-1].im);
+                if (dist > jumpThresh) { ctx.stroke(); ctx.beginPath(); ctx.moveTo(xs(pts[j].re), ys(pts[j].im)); }
+                else ctx.lineTo(xs(pts[j].re), ys(pts[j].im));
+            }
+            ctx.stroke();
+        }
+        ctx.globalAlpha = 1.0;
+    }
+
+    // Root dots
+    const nRoots = currentRoots.length;
+    for (let i = 0; i < nRoots; i++) {
+        const r = currentRoots[i];
+        ctx.beginPath(); ctx.arc(xs(r.re), ys(r.im), 7, 0, 2 * Math.PI);
+        ctx.fillStyle = rootColor(i, nRoots); ctx.fill();
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.stroke();
+    }
+}
+
+function rootsRecordTick() {
+    if (!rootsRec.recording) return;
+    rootsRec.ctx.clearRect(0, 0, S, S);
+    drawRootsToCtx(rootsRec.ctx, S, S);
+}
+
+function startRootsRecording() {
+    if (rootsRec.recording) return;
+
+    // Create / resize canvas
+    const dpr = window.devicePixelRatio || 1;
+    if (!rootsRec.canvas) {
+        rootsRec.canvas = document.createElement("canvas");
+        rootsRec.ctx = rootsRec.canvas.getContext("2d");
+    }
+    rootsRec.canvas.width = Math.floor(S * dpr);
+    rootsRec.canvas.height = Math.floor(S * dpr);
+    rootsRec.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const stream = rootsRec.canvas.captureStream(60);
+    rootsRec.stream = stream;
+    rootsRec.chunks = [];
+
+    const candidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+    let mimeType = "";
+    for (const c of candidates) { if (MediaRecorder.isTypeSupported(c)) { mimeType = c; break; } }
+
+    const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    rootsRec.mr = mr;
+
+    mr.ondataavailable = e => { if (e.data && e.data.size) rootsRec.chunks.push(e.data); };
+    mr.onstop = () => {
+        const blob = new Blob(rootsRec.chunks, { type: mr.mimeType || "video/webm" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        a.href = url;
+        a.download = `polypaint-roots-${ts}.webm`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    rootsRec.recording = true;
+    mr.start(200);
+
+    document.getElementById("rec-roots-btn").classList.add("recording");
+    document.getElementById("rec-roots-btn").style.display = "none";
+    document.getElementById("stop-roots-btn").style.display = "";
+}
+
+function stopRootsRecording() {
+    if (!rootsRec.recording) return;
+    rootsRec.recording = false;
+    if (rootsRec.mr && rootsRec.mr.state !== "inactive") rootsRec.mr.stop();
+    rootsRec.mr = null;
+    rootsRec.stream = null;
+
+    document.getElementById("rec-roots-btn").classList.remove("recording");
+    document.getElementById("stop-roots-btn").style.display = "none";
+    document.getElementById("rec-roots-btn").style.display = "";
+}
+
+document.getElementById("rec-roots-btn").addEventListener("click", startRootsRecording);
+document.getElementById("stop-roots-btn").addEventListener("click", stopRootsRecording);
 
 // --- Snap (capture) ---
 

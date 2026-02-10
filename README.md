@@ -32,7 +32,7 @@ Or visit the **[live demo](https://nassuphis.github.io/karpo_hackathon/)**.
 ## Architecture
 
 ```
-Single HTML file (~5800 lines)
+Single HTML file (~6600 lines)
 ├── d3.js v7 (CDN)          — SVG rendering, drag interactions
 ├── Ehrlich-Aberth solver    — polynomial root finding in pure JS
 ├── Horner evaluator         — domain coloring + derivative computation
@@ -82,6 +82,7 @@ The UI is organized around a left sidebar with two groups and a compact header:
 | **Roots / Stats / Sound** tabs | Roots panel tab bar — switch between root visualization, stats dashboard, and sound routing. |
 | **Stats** dropdowns | Each of the 16 stat plots has a dropdown: 23 time-series, 5 phase-space plots, and 4 spectrum charts. Sonification features (MedianR, Spread, EMed, EHi, Coherence, Encounters) mirror the audio pipeline with matching EMA smoothing. |
 | **⏺** record (tab bar) | Records to WebM video. Mode selector: Roots, Coefficients, or Both (side-by-side). Auto-stops on loop completion. |
+| **Bitmap** tab | Accumulates root positions as permanent pixel stamps on a black canvas. **start** initializes the canvas, **save** downloads a hi-res PNG, **clear** resets to black. **fastmode** recomputes all coefficient curves at 10,000 points and blasts through them as fast as the CPU allows — no stats, no audio, no SVG — painting each root position onto the bitmap. UI greys out during fast mode; click **imode** to return to interactive. Each click runs one 10,000-step pass; click again to accumulate more density. |
 | **B / M / V** (Sound tab toolbar) | Toggle and configure the three sound layers. Click to open config popover with on/off toggle + tuning sliders. See [Sonification](docs/sonification.md). |
 | **Selection count** (panel headers) | Shows the number of selected items next to "Coefficients" (green) and "Roots" (red) panel titles. |
 
@@ -118,7 +119,7 @@ Right-click any coefficient to open a context menu with trajectory settings for 
 
 ```
 karpo_hackathon/
-├── index.html            # Entire app (~5800 lines): CSS, JS, HTML all inline
+├── index.html            # Entire app (~6600 lines): CSS, JS, HTML all inline
 ├── docs/
 │   ├── solver.md         # Ehrlich-Aberth method + domain coloring
 │   ├── sonification.md   # Audio graph, feature extraction, sound mapping
@@ -158,3 +159,4 @@ All three generate perfectly uniform step sizes and are cached on first use.
 - Domain coloring rendered to half-resolution canvas, CSS-scaled with `devicePixelRatio` support
 - No d3 transitions on dots — positions update instantly to avoid animation conflicts during rapid drag
 - Warm-started Ehrlich-Aberth typically converges in 1–3 iterations during interactive drag
+- **Bitmap fast mode** bypasses all rendering, stats, and audio overhead — runs a `setTimeout(0)` chunked loop with 10,000-point hi-res curves, warm-started solver, `fillRect` pixel stamps, and pre-computed colors. Chunk size is tuned by degree to keep the browser responsive

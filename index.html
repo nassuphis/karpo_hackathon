@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v8</title>
+<title>PolyPaint v13</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
 :root {
@@ -238,6 +238,10 @@ body {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cpick-row .cpick-path .cpick-detail { opacity: 0.6; margin-left: 3px; font-size: 7px; }
+.cpick-row .cpick-pts {
+    font-size: 8px; color: var(--muted); opacity: 0.5; flex-shrink: 0;
+    min-width: 28px; text-align: right; font-variant-numeric: tabular-nums;
+}
 .cpick-row .cpick-coords {
     font-size: 9px; color: var(--muted); flex: 1; text-align: right;
     font-variant-numeric: tabular-nums;
@@ -376,6 +380,7 @@ circle.coeff.selected, circle.root.selected {
 }
 #anim-bar input[type="range"] { width: 52px; accent-color: var(--accent); }
 #anim-bar .bar-val { color: var(--accent); min-width: 20px; text-align: right; font-size: 10px; }
+#bar-dynamic { display: grid; grid-template-columns: repeat(6, auto); gap: 4px 8px; align-items: center; }
 #play-btn {
     background: var(--accent); color: #fff; border: none; border-radius: 6px;
     padding: 2px 8px; font-size: 10px; cursor: pointer; font-weight: 500;
@@ -417,6 +422,29 @@ circle.coeff.selected, circle.root.selected {
 }
 #sel2path-btn:hover { background: var(--accent); color: #fff; }
 #sel2path-btn:disabled { opacity: 0.3; cursor: default; background: transparent; color: var(--accent); }
+.bitmap-btn {
+    background: transparent; color: var(--accent); border: 1px solid var(--accent-border); border-radius: 6px;
+    padding: 3px 8px; font-size: 10px; cursor: pointer; font-weight: 600; transition: all 0.12s;
+}
+.bitmap-btn:hover { background: var(--accent); color: #fff; }
+.bitmap-btn:disabled { opacity: 0.3; cursor: default; background: transparent; color: var(--accent); }
+body.fast-mode #header,
+body.fast-mode #sidebar,
+body.fast-mode .tab-bar,
+body.fast-mode #roots-content,
+body.fast-mode #stats-content,
+body.fast-mode #sound-content,
+body.fast-mode #anim-bar,
+body.fast-mode .panel:first-child {
+    opacity: 0.15; pointer-events: none; filter: grayscale(1);
+    transition: opacity 0.3s, filter 0.3s;
+}
+body.fast-mode #bitmap-toolbar .bitmap-btn:not(#bitmap-fast-btn) {
+    opacity: 0.3; pointer-events: none;
+}
+body.fast-mode #bitmap-fast-btn {
+    background: var(--accent); color: #fff;
+}
 #anim-bar .bar-controls { opacity: 1; transition: opacity 0.15s; }
 #anim-bar .bar-controls.dimmed { opacity: 0.3; pointer-events: none; }
 #path-nav { display: flex; align-items: center; gap: 4px; }
@@ -451,7 +479,7 @@ circle.coeff.selected, circle.root.selected {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v8</span>
+    <span class="app-title">PolyPaint v13</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -497,6 +525,8 @@ circle.coeff.selected, circle.root.selected {
         <div class="side-group">
             <div class="side-label">Tools</div>
             <button id="snap-btn" class="side-btn" title="Export snapshot">⬇</button>
+            <button id="save-btn" class="side-btn" title="Save state">💾</button>
+            <button id="load-btn" class="side-btn" title="Load state">📂</button>
         </div>
         <div class="side-group ops disabled" id="ops-group">
             <div class="side-label">Ops <span id="ops-target"></span></div>
@@ -526,10 +556,10 @@ circle.coeff.selected, circle.root.selected {
                             <option value="horizontal">Horizontal</option>
                             <option value="vertical">Vertical</option>
                             <option value="spiral">Spiral</option>
-                            <option value="random">Random walk</option>
+                            <option value="random">Gaussian cloud</option>
                         </optgroup>
                         <optgroup label="Curves">
-                            <option value="lissajous">Lissajous (3:2)</option>
+                            <option value="lissajous">Lissajous</option>
                             <option value="figure8">Figure-8</option>
                             <option value="cardioid">Cardioid</option>
                             <option value="astroid">Astroid</option>
@@ -547,10 +577,7 @@ circle.coeff.selected, circle.root.selected {
                             <option value="sierpinski">Sierpinski</option>
                         </optgroup>
                     </select>
-                    <button id="ccw-btn">CW</button>
-                    <label>R <input type="range" id="anim-radius" min="1" max="100" step="1" value="25"> <span class="bar-val" id="anim-radius-val">25%</span></label>
-                    <label>S <input type="range" id="anim-speed" min="0.01" max="1.0" step="0.01" value="1.0"> <span class="bar-val" id="anim-speed-val">1.0</span></label>
-                    <label>A <input type="range" id="anim-angle" min="0" max="1.0" step="0.01" value="0"> <span class="bar-val" id="anim-angle-val">0.00</span></label>
+                    <div id="bar-dynamic"></div>
                 </div>
             </div>
         </div>
@@ -563,6 +590,7 @@ circle.coeff.selected, circle.root.selected {
             <button class="tab active" data-tab="roots">Roots <span id="roots-sel-count" style="font-size:9px;color:#e94560;opacity:0.85;"></span></button>
             <button class="tab" data-tab="stats">Stats</button>
             <button class="tab" data-tab="sound">Sound</button>
+            <button class="tab" data-tab="bitmap">Bitmap</button>
             <span class="tab-bar-controls">
                 <select id="rec-mode" title="Recording mode" style="font-size:10px;padding:1px 2px;background:rgba(255,255,255,0.06);color:var(--muted);border:1px solid var(--stroke);border-radius:4px;cursor:pointer;"><option value="roots">Roots</option><option value="coeffs">Coeffs</option><option value="both">Both</option></select>
                 <button id="rec-roots-btn" class="icon-btn" title="Record (webm)">⏺</button>
@@ -611,6 +639,18 @@ circle.coeff.selected, circle.root.selected {
                 </div>
                 <div class="config-panel" id="config-sliders"></div>
             </div>
+            <div id="bitmap-content" class="tab-content">
+                <div id="bitmap-toolbar" style="display:flex;gap:6px;padding:4px 6px;align-items:center;">
+                    <button id="bitmap-start-btn" class="bitmap-btn">start</button>
+                    <button id="bitmap-save-btn" class="bitmap-btn" disabled>save</button>
+                    <button id="bitmap-clear-btn" class="bitmap-btn" disabled>clear</button>
+                    <button id="bitmap-fast-btn" class="bitmap-btn" disabled>fastmode</button>
+                    <span id="bitmap-info" style="font-size:9px;color:var(--muted);margin-left:auto;"></span>
+                </div>
+                <div id="bitmap-container" style="flex:1;min-height:0;position:relative;background:#000;">
+                    <canvas id="bitmap-canvas" style="width:100%;height:100%;"></canvas>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -622,7 +662,7 @@ circle.coeff.selected, circle.root.selected {
 <div id="degree-pop" class="ops-pop"></div>
 <div id="audio-pop" class="ops-pop" style="min-width:220px"></div>
 <div id="color-pop" class="ops-pop" style="min-width:160px"></div>
-<div id="coeff-pick-pop" class="ops-pop" style="min-width:240px"></div>
+<div id="coeff-pick-pop" class="ops-pop" style="min-width:300px"></div>
 <div id="coeff-ctx" class="ops-pop"></div>
 
 <script>
@@ -712,6 +752,20 @@ let domainCanvas = document.getElementById("domain-canvas");
 let domainCtx = domainCanvas.getContext("2d");
 let domainPendingRender = false;
 const DOMAIN_RES_SCALE = 0.5; // render at half resolution for performance
+// Bitmap trail tab state
+let bitmapActive = false;
+let bitmapCtx = null;
+let bitmapRange = null;   // frozen bounding box from roots panel
+let bitmapFrameCount = 0;
+// Fast mode state
+const COEFF_TRAIL_SAMPLES_FAST = 10000;
+const FAST_PASS_SECONDS = 1.0; // virtual duration of one fast pass
+let fastModeActive = false;
+let fastModeCurves = null;      // Map<coeffIndex, hi-res curve>
+let fastModeStepIndex = 0;
+let fastModeTotalSteps = 0;
+let fastModeTimerId = null;
+let fastModeRootColors = null;  // pre-computed CSS color strings
 // Stats tab state
 let activeTab = "roots";
 const STAT_TYPES = ["Force", "MinForce", "MaxForce", "Speed", "MinSpeed", "MaxSpeed", "MinDist", "MaxDist", "Records", "MeanDist", "\u0394MeanDist", "AngularMom", "\u03c3Speed", "EMASpeed", "\u03c3Dist", "Odometer", "CycleCount", "MedianR", "Spread", "EMed", "EHi", "Coherence", "Encounters"];
@@ -1702,6 +1756,7 @@ function initCoefficients(degree) {
         c.speed = 1.0;
         c.angle = 0;
         c.ccw = false;
+        c.extra = {};
     }
 }
 
@@ -1974,17 +2029,117 @@ function coeffExtent() {
 const animBar = document.getElementById("anim-bar");
 const barTitle = document.getElementById("bar-title");
 const animPathSel = document.getElementById("anim-path");
-const animRadiusInput = document.getElementById("anim-radius");
-const animSpeedInput = document.getElementById("anim-speed");
-const animRadiusVal = document.getElementById("anim-radius-val");
-const animSpeedVal = document.getElementById("anim-speed-val");
-const animAngleInput = document.getElementById("anim-angle");
-const animAngleVal = document.getElementById("anim-angle-val");
 const playBtn = document.getElementById("play-btn");
 const trailsBtn = document.getElementById("trails-btn");
 const sel2pathBtn = document.getElementById("sel2path-btn");
-const ccwBtn = document.getElementById("ccw-btn");
 const barControls = document.getElementById("bar-controls");
+const barDynamic = document.getElementById("bar-dynamic");
+
+// --- Path parameter schemas ---
+
+const _P = {
+    radius: { key: "radius", label: "R", min: 1, max: 100, step: 1, default: 25, fmt: v => Math.round(v) + "%" },
+    speed:  { key: "speed",  label: "S", min: 0.01, max: 1.0, step: 0.01, default: 1.0, fmt: v => v.toFixed(2) },
+    angle:  { key: "angle",  label: "A", min: 0, max: 1.0, step: 0.01, default: 0, fmt: v => v.toFixed(2) },
+    ccw:    { key: "ccw", type: "toggle", labels: ["CW", "CCW"], default: false },
+};
+const _RSAD = [_P.speed, _P.radius, _P.angle, _P.ccw];
+const _RSD  = [_P.speed, _P.radius, _P.ccw];
+const _STD_KEYS = new Set(["radius", "speed", "angle", "ccw"]);
+
+const PATH_PARAMS = {
+    none:          [],
+    circle:        _RSAD,
+    horizontal:    _RSD,
+    vertical:      _RSD,
+    spiral:        [_P.speed,
+        { key: "mult", label: "R", min: 0, max: 2.0, step: 0.05, default: 1.5, fmt: v => v.toFixed(2) + "×" },
+        { key: "turns", label: "T", min: 0.5, max: 5, step: 0.5, default: 2, fmt: v => v.toFixed(1) },
+        _P.ccw],
+    random:        [_P.speed,
+        { key: "radius", label: "σ", min: 0, max: 10, step: 0.5, default: 2, fmt: v => v.toFixed(1) + "%" }],
+    lissajous:     [..._RSAD,
+        { key: "freqA", label: "a", min: 1, max: 8, step: 1, default: 3, fmt: v => String(Math.round(v)) },
+        { key: "freqB", label: "b", min: 1, max: 8, step: 1, default: 2, fmt: v => String(Math.round(v)) },
+    ],
+    figure8:       _RSAD,
+    cardioid:      _RSAD,
+    astroid:       _RSAD,
+    deltoid:       _RSAD,
+    rose:          _RSAD,
+    epitrochoid:   _RSAD,
+    hypotrochoid:  _RSAD,
+    butterfly:     _RSAD,
+    star:          _RSAD,
+    square:        _RSAD,
+    hilbert:       _RSAD,
+    peano:         _RSAD,
+    sierpinski:    _RSAD,
+};
+
+function getCoeffParam(c, key, schema) {
+    if (_STD_KEYS.has(key)) return c[key];
+    if (c.extra && c.extra[key] !== undefined) return c.extra[key];
+    if (schema) return schema.default;
+    return 0;
+}
+
+function setCoeffParam(c, key, value) {
+    if (_STD_KEYS.has(key)) { c[key] = value; return; }
+    if (!c.extra) c.extra = {};
+    c.extra[key] = value;
+}
+
+// Dynamic bar controls — rebuilt when path type changes
+let barInputs = {};       // { key: <input element>, ... }
+let barCurrentPath = "";  // track which path type is currently shown
+
+function rebuildBarControls(pathType) {
+    if (pathType === barCurrentPath) return;
+    barCurrentPath = pathType;
+    barDynamic.innerHTML = "";
+    barInputs = {};
+    const schema = PATH_PARAMS[pathType] || [];
+    // Render sliders first, toggles last (CW/CCW always at end)
+    const sliders = schema.filter(p => p.type !== "toggle");
+    const toggles = schema.filter(p => p.type === "toggle");
+    for (const p of sliders) {
+        const lbl = document.createElement("label");
+        const inp = document.createElement("input");
+        inp.type = "range"; inp.min = p.min; inp.max = p.max; inp.step = p.step; inp.value = p.default;
+        const valSpan = document.createElement("span");
+        valSpan.className = "bar-val";
+        valSpan.textContent = p.fmt(p.default);
+        inp.addEventListener("input", function () {
+            valSpan.textContent = p.fmt(parseFloat(this.value));
+            applyBarToSelection();
+        });
+        lbl.textContent = p.label + " ";
+        lbl.appendChild(inp);
+        lbl.appendChild(valSpan);
+        barDynamic.appendChild(lbl);
+        barInputs[p.key] = inp;
+        barInputs[p.key + "_val"] = valSpan;
+        barInputs[p.key + "_fmt"] = p.fmt;
+    }
+    for (const p of toggles) {
+        const btn = document.createElement("button");
+        btn.id = "ccw-btn";
+        btn.textContent = p.labels[0];
+        btn.addEventListener("click", function () {
+            if (selectedCoeffs.size === 0) return;
+            const isActive = !this.classList.contains("active");
+            this.textContent = isActive ? p.labels[1] : p.labels[0];
+            this.classList.toggle("active", isActive);
+            applyBarToSelection();
+        });
+        barDynamic.appendChild(btn);
+        barInputs[p.key] = btn;
+    }
+}
+
+// Initialize with "none" (empty)
+rebuildBarControls("none");
 
 function toggleCoeffSelect(idx) {
     // If animation is playing and user clicks a coefficient, stop animation
@@ -2147,6 +2302,7 @@ function closeCoeffCtx(revert) {
         c.speed = ctxSnapshot.speed;
         c.angle = ctxSnapshot.angle;
         c.ccw = ctxSnapshot.ccw;
+        c.extra = ctxSnapshot.extra || {};
         c.curve = ctxSnapshot.curve;
         updateAnimBar();
         renderCoeffTrails();
@@ -2170,7 +2326,7 @@ function openCoeffCtx(event, coeffIdx) {
     const cc = coefficients[coeffIdx];
     ctxSnapshot = {
         pathType: cc.pathType, radius: cc.radius, speed: cc.speed,
-        angle: cc.angle, ccw: cc.ccw,
+        angle: cc.angle, ccw: cc.ccw, extra: cc.extra ? { ...cc.extra } : {},
         curve: cc.curve ? cc.curve.map(pt => ({ ...pt })) : null,
     };
 
@@ -2209,43 +2365,60 @@ function openCoeffCtx(event, coeffIdx) {
     pathRow.appendChild(pathSel);
     ctx.appendChild(pathRow);
 
-    // Labeled slider helper
-    function addSlider(label, min, max, step, value, fmt) {
-        const row = document.createElement("label");
-        const valSpan = document.createElement("span");
-        valSpan.className = "ctx-val";
-        valSpan.textContent = fmt(value);
-        const inp = document.createElement("input");
-        inp.type = "range"; inp.min = min; inp.max = max; inp.step = step; inp.value = value;
-        inp.addEventListener("input", () => {
-            valSpan.textContent = fmt(parseFloat(inp.value));
-            previewCtx();
-        });
-        row.textContent = label + " ";
-        row.appendChild(inp);
-        row.appendChild(valSpan);
-        ctx.appendChild(row);
-        return inp;
+    // Dynamic controls container
+    const ctxDynamic = document.createElement("div");
+    ctx.appendChild(ctxDynamic);
+    const ctxInputs = {};
+
+    function buildCtxControls(pathType) {
+        ctxDynamic.innerHTML = "";
+        for (const k in ctxInputs) delete ctxInputs[k];
+        const schema = PATH_PARAMS[pathType] || [];
+        const c = coefficients[coeffIdx];
+        for (const p of schema) {
+            const val = getCoeffParam(c, p.key, p);
+            if (p.type === "toggle") {
+                const dirRow = document.createElement("div");
+                dirRow.className = "ctx-row";
+                const btn = document.createElement("button");
+                btn.className = "ctx-dir" + (val ? " active" : "");
+                btn.textContent = val ? p.labels[1] : p.labels[0];
+                btn.addEventListener("click", () => {
+                    const isActive = !btn.classList.contains("active");
+                    btn.classList.toggle("active", isActive);
+                    btn.textContent = isActive ? p.labels[1] : p.labels[0];
+                    previewCtx();
+                });
+                dirRow.appendChild(btn);
+                ctxDynamic.appendChild(dirRow);
+                ctxInputs[p.key] = btn;
+            } else {
+                const row = document.createElement("label");
+                const valSpan = document.createElement("span");
+                valSpan.className = "ctx-val";
+                valSpan.textContent = p.fmt(val);
+                const inp = document.createElement("input");
+                inp.type = "range"; inp.min = p.min; inp.max = p.max; inp.step = p.step; inp.value = val;
+                inp.addEventListener("input", () => {
+                    valSpan.textContent = p.fmt(parseFloat(inp.value));
+                    previewCtx();
+                });
+                row.textContent = p.label + " ";
+                row.appendChild(inp);
+                row.appendChild(valSpan);
+                ctxDynamic.appendChild(row);
+                ctxInputs[p.key] = inp;
+            }
+        }
     }
 
-    const radiusInp = addSlider("R", 1, 100, 1, existing.radius, v => Math.round(v) + "%");
-    const speedInp  = addSlider("S", 0.01, 1.0, 0.01, existing.speed, v => parseFloat(v).toFixed(2));
-    const angleInp  = addSlider("A", 0, 1.0, 0.01, existing.angle, v => parseFloat(v).toFixed(2));
+    buildCtxControls(existing.pathType);
 
-    // Direction toggle
-    const dirRow = document.createElement("div");
-    dirRow.className = "ctx-row";
-    const dirBtn = document.createElement("button");
-    dirBtn.className = "ctx-dir" + (existing.ccw ? " active" : "");
-    dirBtn.textContent = existing.ccw ? "CCW" : "CW";
-    dirBtn.addEventListener("click", () => {
-        const isCCW = !dirBtn.classList.contains("active");
-        dirBtn.classList.toggle("active", isCCW);
-        dirBtn.textContent = isCCW ? "CCW" : "CW";
+    // Rebuild controls when path type changes in context menu
+    pathSel.addEventListener("change", () => {
+        buildCtxControls(pathSel.value);
         previewCtx();
     });
-    dirRow.appendChild(dirBtn);
-    ctx.appendChild(dirRow);
 
     // Accept button
     const acceptBtn = document.createElement("button");
@@ -2261,16 +2434,20 @@ function openCoeffCtx(event, coeffIdx) {
     function previewCtx() {
         const c = coefficients[coeffIdx];
         c.pathType = pathSel.value;
-        c.radius = parseFloat(radiusInp.value);
-        c.speed = parseFloat(speedInp.value);
-        c.angle = parseFloat(angleInp.value);
-        c.ccw = dirBtn.classList.contains("active");
+        const schema = PATH_PARAMS[c.pathType] || [];
+        for (const p of schema) {
+            if (p.type === "toggle") {
+                setCoeffParam(c, p.key, ctxInputs[p.key] ? ctxInputs[p.key].classList.contains("active") : p.default);
+            } else {
+                setCoeffParam(c, p.key, ctxInputs[p.key] ? parseFloat(ctxInputs[p.key].value) : p.default);
+            }
+        }
 
-        if (c.pathType === "none" || c.pathType === "random") {
+        if (c.pathType === "none") {
             c.curve = null;
         } else {
             const absRadius = c.radius / 100 * coeffExtent();
-            c.curve = computeCurve(c.re, c.im, c.pathType, absRadius, c.angle);
+            c.curve = computeCurve(c.re, c.im, c.pathType, absRadius, c.angle, c.extra);
         }
 
         animState.elapsedAtPause = null;
@@ -2334,49 +2511,74 @@ function allAnimatedCoeffs() {
 
 function syncBarFromCoeff() {
     if (lastSelectedCoeff < 0 || !selectedCoeffs.has(lastSelectedCoeff)) {
-        // Fallback: pick first selected
         if (selectedCoeffs.size > 0) lastSelectedCoeff = [...selectedCoeffs][0];
         else return;
     }
     const c = coefficients[lastSelectedCoeff];
     barTitle.textContent = coeffListLabel(selectedCoeffs);
     animPathSel.value = c.pathType;
-    animRadiusInput.value = c.radius;
-    animRadiusVal.textContent = Math.round(c.radius) + "%";
-    animSpeedInput.value = c.speed;
-    animSpeedVal.textContent = c.speed.toFixed(2);
-    animAngleInput.value = c.angle;
-    animAngleVal.textContent = c.angle.toFixed(2);
-    ccwBtn.textContent = c.ccw ? "CCW" : "CW";
-    ccwBtn.classList.toggle("active", c.ccw);
+    rebuildBarControls(c.pathType);
+    const schema = PATH_PARAMS[c.pathType] || [];
+    for (const p of schema) {
+        const val = getCoeffParam(c, p.key, p);
+        if (p.type === "toggle") {
+            const btn = barInputs[p.key];
+            if (btn) { btn.textContent = val ? p.labels[1] : p.labels[0]; btn.classList.toggle("active", !!val); }
+        } else {
+            const inp = barInputs[p.key];
+            if (inp) { inp.value = val; const vs = barInputs[p.key + "_val"]; const fm = barInputs[p.key + "_fmt"]; if (vs && fm) vs.textContent = fm(val); }
+        }
+    }
+}
+
+function readBarParams(pathType) {
+    const schema = PATH_PARAMS[pathType] || [];
+    const vals = {};
+    for (const p of schema) {
+        if (p.type === "toggle") {
+            vals[p.key] = barInputs[p.key] ? barInputs[p.key].classList.contains("active") : p.default;
+        } else {
+            vals[p.key] = barInputs[p.key] ? parseFloat(barInputs[p.key].value) : p.default;
+        }
+    }
+    return vals;
 }
 
 function applyBarToSelection() {
     if (selectedCoeffs.size === 0) return;
     const pt = animPathSel.value;
-    const r = parseFloat(animRadiusInput.value);
-    const s = parseFloat(animSpeedInput.value);
-    const a = parseFloat(animAngleInput.value);
-    const ccw = ccwBtn.classList.contains("active");
+    rebuildBarControls(pt);
+    const vals = readBarParams(pt);
 
     for (const idx of selectedCoeffs) {
         const c = coefficients[idx];
         const oldType = c.pathType, oldR = c.radius, oldA = c.angle;
-        c.pathType = pt; c.radius = r; c.speed = s; c.angle = a; c.ccw = ccw;
+        const oldExtra = c.extra ? { ...c.extra } : {};
 
-        if (pt === "random" || pt === "none") {
+        // Write all params
+        c.pathType = pt;
+        const schema = PATH_PARAMS[pt] || [];
+        for (const p of schema) setCoeffParam(c, p.key, vals[p.key] !== undefined ? vals[p.key] : p.default);
+
+        const r = c.radius, a = c.angle;
+        // Determine if extra params changed
+        let extraChanged = false;
+        for (const p of schema) {
+            if (!_STD_KEYS.has(p.key) && c.extra[p.key] !== oldExtra[p.key]) { extraChanged = true; break; }
+        }
+
+        if (pt === "none") {
             c.curve = null;
             animState.elapsedAtPause = null;
-        } else if (pt !== oldType) {
+        } else if (pt === "random" || pt !== oldType || extraChanged) {
             const absR = r / 100 * coeffExtent();
-            c.curve = computeCurve(c.re, c.im, pt, absR, a);
+            c.curve = computeCurve(c.re, c.im, pt, absR, a, c.extra);
             animState.elapsedAtPause = null;
         } else if (r !== oldR || a !== oldA) {
             transformCoeffCurve(c, oldR, oldA);
         }
     }
 
-    // Update dot positions
     coeffLayer.selectAll("circle.coeff")
         .filter(cd => selectedCoeffs.has(cd._idx))
         .attr("cx", cd => cxs()(cd.re)).attr("cy", cd => cys()(cd.im));
@@ -2389,6 +2591,12 @@ function applyBarToSelection() {
 
 function transformCoeffCurve(c, oldRadius, oldAngle) {
     if (!c.curve) return;
+    // For cloud (random) or orbital (spiral) paths, regenerate instead of transforming
+    if (c.curve._isCloud || c.curve._isOrbital) {
+        const absR = c.radius / 100 * coeffExtent();
+        c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+        return;
+    }
     const home = c.curve[0];
     const newRadius = c.radius;
     const newAngle = c.angle;
@@ -2428,32 +2636,14 @@ function updateAnimBar() {
     syncBarFromCoeff();
 }
 
-// Slider value displays — apply to all selected coefficients
-animRadiusInput.addEventListener("input", function () {
-    animRadiusVal.textContent = Math.round(parseFloat(this.value)) + "%";
+// Path dropdown change — rebuild controls and apply
+animPathSel.addEventListener("change", function () {
+    rebuildBarControls(this.value);
     applyBarToSelection();
 });
-animSpeedInput.addEventListener("input", function () {
-    animSpeedVal.textContent = parseFloat(this.value).toFixed(2);
-    applyBarToSelection();
-});
-animAngleInput.addEventListener("input", function () {
-    animAngleVal.textContent = parseFloat(this.value).toFixed(2);
-    applyBarToSelection();
-});
-animPathSel.addEventListener("change", applyBarToSelection);
 
 // Update Selection button
 sel2pathBtn.addEventListener("click", applyBarToSelection);
-
-// CCW toggle — apply to all selected
-ccwBtn.addEventListener("click", function () {
-    if (selectedCoeffs.size === 0) return;
-    const isCCW = !this.classList.contains("active");
-    this.textContent = isCCW ? "CCW" : "CW";
-    this.classList.toggle("active", isCCW);
-    applyBarToSelection();
-});
 
 // Play/Pause button
 playBtn.addEventListener("click", function () {
@@ -2497,6 +2687,7 @@ document.getElementById("home-btn").addEventListener("click", function () {
         trailLayer.selectAll("path.trail-path").remove();
     }
     resetAudioState();
+    resetBitmap();
     clearStatsData();
     renderCoeffTrails();
     autoScaleCoeffPanel();
@@ -2514,7 +2705,7 @@ trailsBtn.addEventListener("click", function () {
 
 // --- Path functions ---
 
-function animPathFn(name, t, center, radius) {
+function animPathFn(name, t, center, radius, extra) {
     const w = 2 * Math.PI; // one full cycle per second (scaled by speed)
     const wt = w * t;
     switch (name) {
@@ -2524,10 +2715,9 @@ function animPathFn(name, t, center, radius) {
             return { re: center.re + radius * Math.cos(wt), im: center.im };
         case "vertical":
             return { re: center.re, im: center.im + radius * Math.cos(wt) };
-        case "spiral": {
-            const r = radius * (0.5 + 0.5 * Math.sin(wt / 4));
-            return { re: center.re + r * Math.cos(wt), im: center.im + r * Math.sin(wt) };
-        }
+        case "spiral":
+            // Orbital spiral — handled directly in computeCurve
+            return center;
         case "figure8": {
             const d = 1 + Math.sin(wt) * Math.sin(wt);
             return {
@@ -2535,12 +2725,14 @@ function animPathFn(name, t, center, radius) {
                 im: center.im + radius * Math.sin(wt) * Math.cos(wt) / d
             };
         }
-        case "lissajous":
-            // 3:2 Lissajous with phase offset
+        case "lissajous": {
+            const la = (extra && extra.freqA) || 3;
+            const lb = (extra && extra.freqB) || 2;
             return {
-                re: center.re + radius * Math.sin(3 * wt + Math.PI / 4),
-                im: center.im + radius * Math.sin(2 * wt)
+                re: center.re + radius * Math.sin(la * wt + Math.PI / 4),
+                im: center.im + radius * Math.sin(lb * wt)
             };
+        }
         case "cardioid": {
             // r_polar = 0.5*(1 + cos(θ)), parametric
             const s = 0.5 * (1 + Math.cos(wt));
@@ -2672,11 +2864,9 @@ function animPathFn(name, t, center, radius) {
             };
         }
         case "random": {
-            const step = radius * 0.02;
-            return {
-                re: center.re + (Math.random() - 0.5) * step,
-                im: center.im + (Math.random() - 0.5) * step
-            };
+            // Pre-generated Gaussian cloud — return the same point for a given t
+            // (actual generation happens in computeCurve; animPathFn just places a point at center)
+            return { re: center.re, im: center.im };
         }
         default:
             return center;
@@ -2819,20 +3009,80 @@ function _sierpinskiXY(d, order) {
 
 const COEFF_TRAIL_SAMPLES = 200; // points per analytical curve (basic paths)
 const COEFF_TRAIL_SAMPLES_HI = 1500; // points for space-filling curves (need more to capture zigzags)
-const _HIRES_PATHS = new Set(["hilbert", "peano", "sierpinski"]);
+const _HIRES_PATHS = new Set(["hilbert", "peano", "sierpinski", "spiral"]);
+
+// Box-Muller transform for Gaussian random numbers
+function _gaussRand() {
+    let u, v;
+    do { u = Math.random(); } while (u === 0);
+    v = Math.random();
+    return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
 
 // Compute a closed curve of absolute positions for a coefficient.
 // curve[0] = {homeRe, homeIm} (the "home" position). Angle rotates the shape.
-function computeCurve(homeRe, homeIm, pathType, radius, angle) {
+function computeCurve(homeRe, homeIm, pathType, radius, angle, extra) {
     const N = _HIRES_PATHS.has(pathType) ? COEFF_TRAIL_SAMPLES_HI : COEFF_TRAIL_SAMPLES;
+    return computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N);
+}
+
+function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
+    // Random path: pre-generate Gaussian point cloud (no connecting lines)
+    if (pathType === "random") {
+        const sigma = radius; // already scaled to absolute units by caller
+        const curve = new Array(N);
+        for (let k = 0; k < N; k++) {
+            curve[k] = { re: homeRe + _gaussRand() * sigma,
+                          im: homeIm + _gaussRand() * sigma };
+        }
+        curve._isCloud = true; // flag for rendering as dots
+        return curve;
+    }
+
+    // Spiral path: orbital around the origin (0+0i)
+    // Coefficient spirals from its current orbit to a wider/tighter orbit and back.
+    if (pathType === "spiral") {
+        const mult = (extra && extra.mult != null) ? extra.mult : 1.5;
+        const turns = (extra && extra.turns) || 2;
+        const R0 = Math.sqrt(homeRe * homeRe + homeIm * homeIm);
+        const theta0 = Math.atan2(homeIm, homeRe);
+        const R1 = R0 * mult;
+        const totalTurns = 2 * turns + 1;
+        const t1 = turns / totalTurns;        // end of outward spiral
+        const t2 = (turns + 1) / totalTurns;  // end of revolution at target
+        const W = 2 * Math.PI;
+
+        const curve = new Array(N);
+        for (let k = 0; k < N; k++) {
+            const t = k / N;
+            let r, theta;
+            if (t <= t1) {
+                const frac = t1 > 0 ? t / t1 : 0;
+                r = R0 + (R1 - R0) * frac;
+                theta = theta0 + frac * turns * W;
+            } else if (t <= t2) {
+                const frac = (t2 > t1) ? (t - t1) / (t2 - t1) : 0;
+                r = R1;
+                theta = theta0 + (turns + frac) * W;
+            } else {
+                const frac = (1 > t2) ? (t - t2) / (1 - t2) : 0;
+                r = R1 + (R0 - R1) * frac;
+                theta = theta0 + (turns + 1 + frac * turns) * W;
+            }
+            curve[k] = { re: r * Math.cos(theta), im: r * Math.sin(theta) };
+        }
+        curve._isOrbital = true; // flag: absolute positions, not relative to home
+        return curve;
+    }
+
     const origin = { re: 0, im: 0 };
-    const d0 = animPathFn(pathType, 0, origin, radius);
+    const d0 = animPathFn(pathType, 0, origin, radius, extra);
     const cosA = Math.cos(angle * 2 * Math.PI);
     const sinA = Math.sin(angle * 2 * Math.PI);
     const curve = new Array(N);
     for (let k = 0; k < N; k++) {
         const t = k / N;
-        const pt = animPathFn(pathType, t, origin, radius);
+        const pt = animPathFn(pathType, t, origin, radius, extra);
         const dx = pt.re - d0.re, dy = pt.im - d0.im;
         curve[k] = { re: homeRe + dx * cosA - dy * sinA,
                       im: homeIm + dx * sinA + dy * cosA };
@@ -2843,6 +3093,7 @@ function computeCurve(homeRe, homeIm, pathType, radius, angle) {
 // Recompute curves using the coefficient's current position as home (curve[0]).
 // The coefficient is always on the new path. Angle and radius come from the path settings.
 function startAnimation() {
+    if (fastModeActive) return;
     const animated = allAnimatedCoeffs();
     if (animated.size === 0) return;
 
@@ -2867,24 +3118,28 @@ function startAnimation() {
 
 function animLoop(now) {
     if (!animState.playing) return;
+    if (fastModeActive) return;
     const elapsed = (now - animState.startTime) / 1000;
 
     for (let i = 0; i < coefficients.length; i++) {
         const c = coefficients[i];
         if (c.pathType === "none") continue;
-        if (c.pathType === "random") {
-            const step = (c.radius / 100 * coeffExtent()) * 0.02;
-            c.re += (Math.random() - 0.5) * step;
-            c.im += (Math.random() - 0.5) * step;
-        } else if (c.curve) {
+        if (c.curve) {
             const N = c.curve.length;
             const t = elapsed * c.speed * (c.ccw ? -1 : 1);
             const rawIdx = ((t % 1) + 1) % 1 * N;
-            const lo = Math.floor(rawIdx) % N;
-            const hi = (lo + 1) % N;
-            const frac = rawIdx - Math.floor(rawIdx);
-            c.re = c.curve[lo].re * (1 - frac) + c.curve[hi].re * frac;
-            c.im = c.curve[lo].im * (1 - frac) + c.curve[hi].im * frac;
+            if (c.curve._isCloud) {
+                // Random cloud: snap to nearest point (no interpolation)
+                const idx = Math.floor(rawIdx) % N;
+                c.re = c.curve[idx].re;
+                c.im = c.curve[idx].im;
+            } else {
+                const lo = Math.floor(rawIdx) % N;
+                const hi = (lo + 1) % N;
+                const frac = rawIdx - Math.floor(rawIdx);
+                c.re = c.curve[lo].re * (1 - frac) + c.curve[hi].re * frac;
+                c.im = c.curve[lo].im * (1 - frac) + c.curve[hi].im * frac;
+            }
         }
     }
 
@@ -3021,13 +3276,11 @@ const rootDrag = d3.drag()
                 }
             }
         }
-        renderCoeffTrails();
-        renderCoefficients();
-        // Show coefficient chain line during single-root drag
-        if (!(selectedRoots.has(idx) && selectedRoots.size > 1)) {
-            coeffChainLine.style("display", null);
-            updateCoeffChainLine();
-        }
+        renderCoefficients();  // auto-scales panel (may change scale)
+        renderCoeffTrails();   // must come AFTER scale update
+        // Show coefficient chain line during root drag
+        coeffChainLine.style("display", null);
+        updateCoeffChainLine();
         renderDomainColoringThrottled();
         if (anySoundEnabled()) updateAudio();
     })
@@ -3073,29 +3326,36 @@ function renderRoots(newRoots) {
     let needed = computeRange(currentRoots);
     if (animState.playing) needed = Math.max(needed, panels.roots.range);
     updatePanelRange(rootsSvg, panels.roots, needed);
-    renderDomainColoringThrottled();
 
     const n = currentRoots.length;
     for (let i = 0; i < n; i++) currentRoots[i]._idx = i;
 
-    if (rootColorMode === "derivative") computeRootSensitivities();
+    // Bitmap painting (always runs when active, regardless of which tab is visible)
+    if (bitmapActive) paintBitmapFrame();
 
-    const circles = rootsLayer.selectAll("circle.root").data(currentRoots, d => d._idx);
-    circles.enter()
-        .append("circle")
-        .attr("class", "root")
-        .attr("r", 7)
-        .attr("stroke", "#fff")
-        .attr("stroke-width", 1)
-        .call(rootDrag)
-        .on("mouseover", function (event, d) { showTooltip(event, d.re, d.im); })
-        .on("mouseout", hideTooltip)
-      .merge(circles)
-        .attr("cx", d => rxs()(d.re))
-        .attr("cy", d => rys()(d.im))
-        .attr("fill", (_, i) => rootColor(i, n));
+    // Skip SVG rendering when bitmap tab is active (performance)
+    if (activeTab !== "bitmap") {
+        renderDomainColoringThrottled();
 
-    circles.exit().remove();
+        if (rootColorMode === "derivative") computeRootSensitivities();
+
+        const circles = rootsLayer.selectAll("circle.root").data(currentRoots, d => d._idx);
+        circles.enter()
+            .append("circle")
+            .attr("class", "root")
+            .attr("r", 7)
+            .attr("stroke", "#fff")
+            .attr("stroke-width", 1)
+            .call(rootDrag)
+            .on("mouseover", function (event, d) { showTooltip(event, d.re, d.im); })
+            .on("mouseout", hideTooltip)
+          .merge(circles)
+            .attr("cx", d => rxs()(d.re))
+            .attr("cy", d => rys()(d.im))
+            .attr("fill", (_, i) => rootColor(i, n));
+
+        circles.exit().remove();
+    }
 
     // Collect stats snapshot
     collectStatsSnapshot();
@@ -3125,7 +3385,7 @@ function renderRoots(newRoots) {
                 if (vidRec.recording) stopRecording();
             }
         }
-        renderTrails();
+        if (activeTab !== "bitmap") renderTrails();
     }
 
 
@@ -3158,17 +3418,20 @@ function renderTrails() {
 function renderCoeffTrails() {
     // Draw the absolute curve points for each coefficient that has a curve.
     const xScale = cxs(), yScale = cys();
-    const curveData = [];
+    const lineData = [];
+    const cloudData = [];
 
     for (let i = 0; i < coefficients.length; i++) {
         const c = coefficients[i];
-        if (c.pathType !== "none" && c.pathType !== "random" && c.curve) {
-            curveData.push({ idx: i });
-        }
+        if (c.pathType === "none" || !c.curve) continue;
+        if (c.curve._isCloud) cloudData.push({ idx: i });
+        else lineData.push({ idx: i });
     }
 
     const nCoeff = coefficients.length;
-    const paths = coeffTrailLayer.selectAll("path.trail-path").data(curveData, d => d.idx);
+
+    // Line paths (closed curves)
+    const paths = coeffTrailLayer.selectAll("path.trail-path").data(lineData, d => d.idx);
     paths.enter()
         .append("path")
         .attr("class", "trail-path")
@@ -3185,6 +3448,26 @@ function renderCoeffTrails() {
         })
         .attr("stroke", ({ idx }) => coeffColor(idx, nCoeff));
     paths.exit().remove();
+
+    // Dot clouds (random/Gaussian paths)
+    const clouds = coeffTrailLayer.selectAll("g.trail-cloud").data(cloudData, d => d.idx);
+    const cloudEnter = clouds.enter().append("g").attr("class", "trail-cloud");
+    const cloudMerge = cloudEnter.merge(clouds);
+    cloudMerge.each(function({ idx }) {
+        const curve = coefficients[idx].curve;
+        const color = coeffColor(idx, nCoeff);
+        const g = d3.select(this);
+        const dots = g.selectAll("circle").data(curve);
+        dots.enter().append("circle")
+            .attr("r", 1.5)
+            .attr("fill", color)
+            .attr("opacity", 0.5)
+          .merge(dots)
+            .attr("cx", d => xScale(d.re))
+            .attr("cy", d => yScale(d.im));
+        dots.exit().remove();
+    });
+    clouds.exit().remove();
 }
 
 function clearTrails() {
@@ -3465,6 +3748,7 @@ function solveRoots() {
 }
 
 function solveRootsThrottled() {
+    if (fastModeActive) return;
     if (!pendingSolve) {
         pendingSolve = true;
         requestAnimationFrame(() => {
@@ -3487,6 +3771,7 @@ function applyPattern() {
     clearTrails();
     clearStatsData();
     resetAudioState();
+    resetBitmap();
     renderCoeffTrails(); // remove stale coefficient path SVGs
     currentRoots = [];
     rootsLayer.selectAll("circle.root").remove();
@@ -3762,6 +4047,15 @@ function buildCoeffPickPop(pop) {
             pathSpan.textContent = "—";
         }
 
+        // Point count for path curves
+        const ptsSpan = document.createElement("span");
+        ptsSpan.className = "cpick-pts";
+        if (ci.pathType !== "none" && ci.curve) {
+            ptsSpan.textContent = ci.curve.length;
+        } else {
+            ptsSpan.textContent = "";
+        }
+
         const coords = document.createElement("span");
         coords.className = "cpick-coords";
         const c = coefficients[i];
@@ -3777,6 +4071,7 @@ function buildCoeffPickPop(pop) {
         row.appendChild(label);
         row.appendChild(power);
         row.appendChild(pathSpan);
+        row.appendChild(ptsSpan);
         row.appendChild(coords);
 
         const idx = i;
@@ -4095,8 +4390,8 @@ function applyPreview(snap, fn) {
             c.re = r.re; c.im = r.im;
         }
         for (const c of coefficients) {
-            if (c.pathType !== "none" && c.pathType !== "random") {
-                c.curve = computeCurve(c.re, c.im, c.pathType, c.radius / 100 * coeffExtent(), c.angle);
+            if (c.pathType !== "none") {
+                c.curve = computeCurve(c.re, c.im, c.pathType, c.radius / 100 * coeffExtent(), c.angle, c.extra);
             }
         }
         autoScaleCoeffPanel();
@@ -4113,8 +4408,8 @@ function applyPreview(snap, fn) {
         autoScaleRootsPanel();
         coefficients = rootsToCoefficients(currentRoots.map(r => ({ re: r.re, im: r.im })));
         for (const c of coefficients) {
-            if (c.pathType !== "none" && c.pathType !== "random") {
-                c.curve = computeCurve(c.re, c.im, c.pathType, c.radius / 100 * coeffExtent(), c.angle);
+            if (c.pathType !== "none") {
+                c.curve = computeCurve(c.re, c.im, c.pathType, c.radius / 100 * coeffExtent(), c.angle, c.extra);
             }
         }
         renderCoefficients();
@@ -4459,15 +4754,23 @@ function drawCoeffsToCtx(ctx, x0, y0, pW, pH) {
     ctx.lineWidth = 1.5; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.globalAlpha = 0.6;
     for (let idx = 0; idx < nC; idx++) {
         const c = coefficients[idx];
-        if (c.pathType === "none" || c.pathType === "random" || !c.curve) continue;
-        const N = c.curve.length;
-        ctx.strokeStyle = coeffColor(idx, nC);
-        ctx.beginPath();
-        for (let k = 0; k <= N; k++) {
-            const pt = c.curve[k % N];
-            if (k === 0) ctx.moveTo(xs(pt.re), ys(pt.im)); else ctx.lineTo(xs(pt.re), ys(pt.im));
+        if (c.pathType === "none" || !c.curve) continue;
+        if (c.curve._isCloud) {
+            // Dot cloud rendering
+            ctx.fillStyle = coeffColor(idx, nC);
+            for (const pt of c.curve) {
+                ctx.beginPath(); ctx.arc(xs(pt.re), ys(pt.im), 1.5, 0, 2 * Math.PI); ctx.fill();
+            }
+        } else {
+            const N = c.curve.length;
+            ctx.strokeStyle = coeffColor(idx, nC);
+            ctx.beginPath();
+            for (let k = 0; k <= N; k++) {
+                const pt = c.curve[k % N];
+                if (k === 0) ctx.moveTo(xs(pt.re), ys(pt.im)); else ctx.lineTo(xs(pt.re), ys(pt.im));
+            }
+            ctx.closePath(); ctx.stroke();
         }
-        ctx.closePath(); ctx.stroke();
     }
     ctx.globalAlpha = 1.0;
 
@@ -4540,7 +4843,12 @@ function startRecording() {
     vidRec.mr = mr;
 
     mr.ondataavailable = e => { if (e.data && e.data.size) vidRec.chunks.push(e.data); };
+    mr.onerror = e => console.warn("MediaRecorder error:", e.error || e);
     mr.onstop = () => {
+        if (!vidRec.chunks.length) {
+            console.warn("Recording produced no data — not saving.");
+            return;
+        }
         const blob = new Blob(vidRec.chunks, { type: mr.mimeType || "video/webm" });
         const url = URL.createObjectURL(blob);
         const now = new Date();
@@ -4588,8 +4896,8 @@ function startRecording() {
     };
 
     vidRec.recording = true;
-    recordTick();          // draw first frame before recorder starts
     mr.start(200);
+    recordTick();          // draw first frame AFTER recorder starts
 
     document.getElementById("rec-roots-btn").classList.add("recording");
     document.getElementById("stop-roots-btn").style.display = "";
@@ -4598,7 +4906,10 @@ function startRecording() {
 function stopRecording() {
     if (!vidRec.recording) return;
     vidRec.recording = false;
-    if (vidRec.mr && vidRec.mr.state !== "inactive") vidRec.mr.stop();
+    if (vidRec.mr && vidRec.mr.state !== "inactive") {
+        try { vidRec.mr.requestData(); } catch (_) {}  // flush pending data
+        vidRec.mr.stop();
+    }
     vidRec.mr = null;
     vidRec.stream = null;
 
@@ -4608,6 +4919,35 @@ function stopRecording() {
 
 document.getElementById("rec-roots-btn").addEventListener("click", startRecording);
 document.getElementById("stop-roots-btn").addEventListener("click", stopRecording);
+
+// --- State metadata ---
+
+function buildStateMetadata(timestamp) {
+    return {
+        timestamp: timestamp || new Date().toISOString(),
+        degree: coefficients.length - 1,
+        pattern: document.getElementById("pattern").value,
+        domainColoring: domainColoringEnabled,
+        rootColoring: rootColorMode !== "none",
+        trails: trailsEnabled,
+        trailComplete: trailComplete,
+        animPlaying: animState.playing,
+        selectedCoeffs: [...selectedCoeffs],
+        selectedRoots: [...selectedRoots],
+        coefficients: coefficients.map(c => ({
+            pos: [c.re, c.im],
+            home: c.curve ? [c.curve[0].re, c.curve[0].im] : [c.re, c.im],
+            pathType: c.pathType, radius: c.radius, speed: c.speed,
+            angle: c.angle, ccw: c.ccw, extra: c.extra || {}
+        })),
+        roots: currentRoots.map(r => [r.re, r.im]),
+        panels: {
+            coeff: { range: panels.coeff.range },
+            roots: { range: panels.roots.range }
+        },
+        trailData: trailData.map(pts => pts.map(p => [p.re, p.im]))
+    };
+}
 
 // --- Snap (capture) ---
 
@@ -4693,18 +5033,25 @@ function snapCapture() {
         ctx.globalAlpha = 0.6;
         for (let idx = 0; idx < nC; idx++) {
             const c = coefficients[idx];
-            if (c.pathType === "none" || c.pathType === "random" || !c.curve) continue;
-            const N = c.curve.length;
-            ctx.strokeStyle = coeffColor(idx, nC);
-            ctx.beginPath();
-            for (let k = 0; k <= N; k++) {
-                const pt = c.curve[k % N];
-                const px = cp.xs(pt.re);
-                const py = cp.ys(pt.im);
-                if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            if (c.pathType === "none" || !c.curve) continue;
+            if (c.curve._isCloud) {
+                ctx.fillStyle = coeffColor(idx, nC);
+                for (const pt of c.curve) {
+                    ctx.beginPath(); ctx.arc(cp.xs(pt.re), cp.ys(pt.im), 1.5, 0, 2 * Math.PI); ctx.fill();
+                }
+            } else {
+                const N = c.curve.length;
+                ctx.strokeStyle = coeffColor(idx, nC);
+                ctx.beginPath();
+                for (let k = 0; k <= N; k++) {
+                    const pt = c.curve[k % N];
+                    const px = cp.xs(pt.re);
+                    const py = cp.ys(pt.im);
+                    if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+                }
+                ctx.closePath();
+                ctx.stroke();
             }
-            ctx.closePath();
-            ctx.stroke();
         }
         ctx.globalAlpha = 1.0;
     }
@@ -4798,30 +5145,7 @@ function snapCapture() {
     const ts = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
 
     // Build metadata
-    const meta = {
-        timestamp: now.toISOString(),
-        degree: coefficients.length - 1,
-        pattern: document.getElementById("pattern").value,
-        domainColoring: domainColoringEnabled,
-        rootColoring: rootColorMode !== "none",
-        trails: trailsEnabled,
-        trailComplete: trailComplete,
-        animPlaying: animState.playing,
-        selectedCoeffs: [...selectedCoeffs],
-        selectedRoots: [...selectedRoots],
-        coefficients: coefficients.map(c => ({
-            pos: [c.re, c.im],
-            home: c.curve ? [c.curve[0].re, c.curve[0].im] : [c.re, c.im],
-            pathType: c.pathType, radius: c.radius, speed: c.speed,
-            angle: c.angle, ccw: c.ccw
-        })),
-        roots: currentRoots.map(r => [r.re, r.im]),
-        panels: {
-            coeff: { range: panels.coeff.range },
-            roots: { range: panels.roots.range }
-        },
-        trailData: trailData.map(pts => pts.map(p => [p.re, p.im]))
-    };
+    const meta = buildStateMetadata(now.toISOString());
 
     // Download PNG
     canvas.toBlob(function (blob) {
@@ -4842,6 +5166,151 @@ function snapCapture() {
 }
 
 document.getElementById("snap-btn").addEventListener("click", snapCapture);
+
+// --- Save / Load state ---
+
+async function saveState() {
+    const meta = buildStateMetadata();
+    const json = JSON.stringify(meta, null, 2);
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    if (window.showSaveFilePicker) {
+        try {
+            const handle = await window.showSaveFilePicker({
+                suggestedName: `polypaint-${ts}.json`,
+                types: [{ description: "JSON", accept: { "application/json": [".json"] } }]
+            });
+            const w = await handle.createWritable();
+            await w.write(json);
+            await w.close();
+            return;
+        } catch (e) { if (e.name === "AbortError") return; }
+    }
+    const blob = new Blob([json], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `polypaint-${ts}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+async function loadState() {
+    let text;
+    if (window.showOpenFilePicker) {
+        try {
+            const [handle] = await window.showOpenFilePicker({
+                types: [{ description: "JSON", accept: { "application/json": [".json"] } }]
+            });
+            const file = await handle.getFile();
+            text = await file.text();
+        } catch (e) { if (e.name === "AbortError") return; throw e; }
+    } else {
+        text = await new Promise((resolve, reject) => {
+            const input = document.createElement("input");
+            input.type = "file"; input.accept = ".json";
+            input.onchange = async () => {
+                if (input.files[0]) resolve(await input.files[0].text());
+                else reject(new Error("No file selected"));
+            };
+            input.click();
+        });
+    }
+    applyLoadedState(JSON.parse(text));
+}
+
+function applyLoadedState(meta) {
+    // 1. Stop animation, clear everything
+    stopAnimation();
+    playBtn.textContent = "\u25b6 Play";
+    lastSelectedCoeff = -1;
+    clearAllSelection();
+    clearTrails();
+    clearStatsData();
+    resetAudioState();
+    renderCoeffTrails();
+    currentRoots = [];
+    rootsLayer.selectAll("circle.root").remove();
+
+    // 2. Set degree + pattern (without triggering applyPattern)
+    const deg = meta.degree || 5;
+    currentDegree = deg;
+    degreeNumber.textContent = deg;
+    if (meta.pattern) document.getElementById("pattern").value = meta.pattern;
+
+    // 3. Rebuild coefficients array from saved data
+    const n = deg + 1;
+    coefficients = [];
+    for (let i = 0; i < n; i++) {
+        const saved = meta.coefficients[i];
+        if (!saved) { coefficients.push({ re: 0, im: 0, curve: null, pathType: "none", radius: 25, speed: 1, angle: 0, ccw: false, extra: {} }); continue; }
+        const home = saved.home || saved.pos;
+        coefficients.push({
+            re: home[0], im: home[1],
+            curve: null,
+            pathType: saved.pathType || "none",
+            radius: saved.radius ?? 25,
+            speed: saved.speed ?? 1,
+            angle: saved.angle ?? 0,
+            ccw: saved.ccw ?? false,
+            extra: saved.extra || {}
+        });
+    }
+
+    // 4. Set panel ranges (must happen before computeCurve so coeffExtent works with correct scale)
+    if (meta.panels) {
+        if (meta.panels.coeff) { panels.coeff.range = meta.panels.coeff.range; initPanelScales(panels.coeff); drawGrid(coeffSvg, panels.coeff); }
+        if (meta.panels.roots) { panels.roots.range = meta.panels.roots.range; initPanelScales(panels.roots); drawGrid(rootsSvg, panels.roots); }
+    }
+
+    // 5. Regenerate curves for animated coefficients
+    for (const c of coefficients) {
+        if (c.pathType !== "none") {
+            c.curve = computeCurve(c.re, c.im, c.pathType, c.radius / 100 * coeffExtent(), c.angle, c.extra);
+        }
+    }
+
+    // 6. Restore roots
+    if (meta.roots && meta.roots.length) {
+        currentRoots = meta.roots.map(r => ({ re: r[0], im: r[1] }));
+    } else {
+        solveRoots();
+    }
+
+    // 7. Restore UI flags + sync buttons
+    trailsEnabled = meta.trails || false;
+    trailsBtn.classList.toggle("active", trailsEnabled);
+    trailComplete = meta.trailComplete || false;
+
+    domainColoringEnabled = meta.domainColoring || false;
+    domainToggleBtn.classList.toggle("active", domainColoringEnabled);
+    domainCanvas.style.display = domainColoringEnabled ? "block" : "none";
+    rootsSvg.classed("domain-active", domainColoringEnabled);
+
+    if (meta.rootColoring !== undefined) {
+        rootColorMode = meta.rootColoring ? "rainbow" : "none";
+        rootColorBtn.classList.toggle("active", rootColorMode !== "none");
+    }
+
+    // 8. Restore trail data
+    if (meta.trailData && meta.trailData.length) {
+        trailData = meta.trailData.map(pts => pts.map(p => ({ re: p[0], im: p[1] })));
+    }
+
+    // 9. Restore selections
+    if (meta.selectedCoeffs) for (const idx of meta.selectedCoeffs) selectedCoeffs.add(idx);
+    if (meta.selectedRoots) for (const idx of meta.selectedRoots) selectedRoots.add(idx);
+
+    // 10. Re-render everything
+    renderCoefficients();
+    renderRoots(currentRoots);
+    renderCoeffTrails();
+    if (trailData.length) renderTrails();
+    if (domainColoringEnabled) renderDomainColoring();
+    updateCoeffSelectionVisual();
+    updateRootSelectionVisual();
+}
+
+document.getElementById("save-btn").addEventListener("click", saveState);
+document.getElementById("load-btn").addEventListener("click", loadState);
 
 // --- Resize handler ---
 
@@ -5800,22 +6269,269 @@ function drawAllStatsPlots() {
     for (let i = 0; i < 16; i++) drawStatsPlot(i);
 }
 
+// --- Bitmap trail canvas ---
+
+function initBitmapCanvas() {
+    const canvas = document.getElementById("bitmap-canvas");
+    const container = document.getElementById("bitmap-container");
+    const rect = container.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.floor(rect.width * dpr);
+    canvas.height = Math.floor(rect.height * dpr);
+    bitmapCtx = canvas.getContext("2d");
+    bitmapCtx.fillStyle = "#000";
+    bitmapCtx.fillRect(0, 0, canvas.width, canvas.height);
+    bitmapRange = panels.roots.range;
+    bitmapFrameCount = 0;
+    bitmapActive = true;
+    document.getElementById("bitmap-info").textContent = canvas.width + "\u00d7" + canvas.height + "px";
+}
+
+function paintBitmapFrame() {
+    if (!bitmapCtx || !bitmapRange) return;
+    const w = bitmapCtx.canvas.width, h = bitmapCtx.canvas.height;
+    const range = bitmapRange;
+    const n = currentRoots.length;
+    for (let i = 0; i < n; i++) {
+        const r = currentRoots[i];
+        const px = (r.re / range + 1) * 0.5 * w;
+        const py = (1 - r.im / range) * 0.5 * h;
+        if (px < -2 || px > w + 2 || py < -2 || py > h + 2) continue;
+        bitmapCtx.fillStyle = rootColor(i, n);
+        bitmapCtx.beginPath();
+        bitmapCtx.arc(px, py, 1.5, 0, 2 * Math.PI);
+        bitmapCtx.fill();
+    }
+    bitmapFrameCount++;
+    document.getElementById("bitmap-info").textContent = w + "\u00d7" + h + "px \u2022 " + bitmapFrameCount + " frames";
+}
+
+// --- Fast mode: high-res bitmap rendering ---
+
+function paintBitmapFrameFast() {
+    if (!bitmapCtx || !bitmapRange) return;
+    const w = bitmapCtx.canvas.width, h = bitmapCtx.canvas.height;
+    const range = bitmapRange;
+    const n = currentRoots.length;
+    const colors = fastModeRootColors;
+    for (let i = 0; i < n; i++) {
+        const r = currentRoots[i];
+        const px = (r.re / range + 1) * 0.5 * w;
+        const py = (1 - r.im / range) * 0.5 * h;
+        if (px < 0 || px >= w || py < 0 || py >= h) continue;
+        bitmapCtx.fillStyle = colors[i];
+        bitmapCtx.fillRect(px | 0, py | 0, 2, 2);
+    }
+    bitmapFrameCount++;
+}
+
+function setCurrentRootsInPlace(newRoots) {
+    while (currentRoots.length < newRoots.length) currentRoots.push({ re: 0, im: 0 });
+    currentRoots.length = newRoots.length;
+    for (let i = 0; i < newRoots.length; i++) {
+        currentRoots[i].re = newRoots[i].re;
+        currentRoots[i].im = newRoots[i].im;
+    }
+}
+
+function enterFastMode() {
+    if (fastModeActive) return;
+
+    // Stop interactive animation
+    stopAnimation();
+    playBtn.textContent = "\u25b6 Play";
+
+    // Ensure bitmap canvas exists + range frozen
+    if (!bitmapCtx || !bitmapActive) {
+        initBitmapCanvas();
+        document.getElementById("bitmap-save-btn").disabled = false;
+        document.getElementById("bitmap-clear-btn").disabled = false;
+        document.getElementById("bitmap-start-btn").textContent = "restart";
+    }
+
+    // Precompute hi-res curves for all animated coefficients
+    fastModeCurves = new Map();
+    const animated = allAnimatedCoeffs();
+    for (const idx of animated) {
+        const c = coefficients[idx];
+        const absR = (c.radius / 100) * coeffExtent();
+        const curve = computeCurveN(c.re, c.im, c.pathType, absR, c.angle, c.extra, COEFF_TRAIL_SAMPLES_FAST);
+        fastModeCurves.set(idx, curve);
+    }
+
+    // Precompute root colors once
+    const nRoots = currentRoots.length;
+    fastModeRootColors = new Array(nRoots);
+    for (let i = 0; i < nRoots; i++) fastModeRootColors[i] = rootColor(i, nRoots);
+
+    fastModeActive = true;
+    fastModeStepIndex = 0;
+    fastModeTotalSteps = COEFF_TRAIL_SAMPLES_FAST;
+
+    document.body.classList.add("fast-mode");
+    document.getElementById("bitmap-fast-btn").textContent = "imode";
+
+    fastModeTimerId = setTimeout(fastModeChunk, 0);
+}
+
+function exitFastMode() {
+    if (!fastModeActive) return;
+    if (fastModeTimerId) { clearTimeout(fastModeTimerId); fastModeTimerId = null; }
+
+    fastModeActive = false;
+    fastModeCurves = null;
+    fastModeRootColors = null;
+
+    document.body.classList.remove("fast-mode");
+    document.getElementById("bitmap-fast-btn").textContent = "fastmode";
+
+    // Bring interactive UI back in sync
+    renderCoefficients();
+    renderCoeffTrails();
+    solveRoots();
+}
+
+function fastModeChunk() {
+    if (!fastModeActive) return;
+
+    const deg = coefficients.length - 1;
+    const chunkSize = Math.max(10, Math.floor(200 / Math.max(3, deg)));
+
+    const animated = fastModeCurves;
+    const total = fastModeTotalSteps;
+    let step = fastModeStepIndex;
+
+    for (let s = 0; s < chunkSize && step < total; s++, step++) {
+        // Virtual elapsed seconds for this step
+        const elapsed = (step / total) * FAST_PASS_SECONDS;
+
+        // Step coefficients on their hi-res curves
+        if (animated && animated.size) {
+            for (const [idx, curve] of animated.entries()) {
+                const c = coefficients[idx];
+                const N = curve.length;
+                const dir = c.ccw ? -1 : 1;
+                const t = elapsed * c.speed * dir;
+                const u = ((t % 1) + 1) % 1;
+                const rawIdx = u * N;
+
+                if (curve._isCloud) {
+                    const k = (rawIdx | 0) % N;
+                    c.re = curve[k].re;
+                    c.im = curve[k].im;
+                } else {
+                    const lo = (rawIdx | 0) % N;
+                    const hi = (lo + 1) % N;
+                    const frac = rawIdx - (rawIdx | 0);
+                    c.re = curve[lo].re * (1 - frac) + curve[hi].re * frac;
+                    c.im = curve[lo].im * (1 - frac) + curve[hi].im * frac;
+                }
+            }
+        }
+
+        // Solve roots (warm-start), preserve identity, update in-place
+        let roots = solveRootsEA(coefficients, currentRoots);
+        roots = matchRootOrder(roots, currentRoots);
+        setCurrentRootsInPlace(roots);
+
+        // Paint
+        paintBitmapFrameFast();
+    }
+
+    fastModeStepIndex = step;
+
+    // Update progress (cheap DOM update once per chunk)
+    const info = document.getElementById("bitmap-info");
+    if (info) {
+        const w = bitmapCtx ? bitmapCtx.canvas.width : 0;
+        const h = bitmapCtx ? bitmapCtx.canvas.height : 0;
+        info.textContent = w + "\u00d7" + h + "px \u2022 " + bitmapFrameCount + " frames \u2022 " + fastModeStepIndex + "/" + fastModeTotalSteps + " steps";
+    }
+
+    if (fastModeStepIndex >= fastModeTotalSteps) {
+        exitFastMode();
+        return;
+    }
+
+    fastModeTimerId = setTimeout(fastModeChunk, 0);
+}
+
+function resetBitmap() {
+    if (fastModeActive) exitFastMode();
+    bitmapActive = false;
+    bitmapCtx = null;
+    bitmapRange = null;
+    bitmapFrameCount = 0;
+    const startBtn = document.getElementById("bitmap-start-btn");
+    const saveBtn = document.getElementById("bitmap-save-btn");
+    const clearBtn = document.getElementById("bitmap-clear-btn");
+    const fastBtn = document.getElementById("bitmap-fast-btn");
+    const info = document.getElementById("bitmap-info");
+    if (startBtn) startBtn.textContent = "start";
+    if (saveBtn) saveBtn.disabled = true;
+    if (clearBtn) clearBtn.disabled = true;
+    if (fastBtn) { fastBtn.disabled = true; fastBtn.textContent = "fastmode"; }
+    if (info) info.textContent = "";
+}
+
 // Tab switching
 const tabButtons = document.querySelectorAll(".tab-bar .tab");
 const tabContents = {
     roots: document.getElementById("roots-content"),
     stats: document.getElementById("stats-content"),
-    sound: document.getElementById("sound-content")
+    sound: document.getElementById("sound-content"),
+    bitmap: document.getElementById("bitmap-content")
 };
 
 function switchTab(tabName) {
     if (tabName === activeTab) return;
+    const prevTab = activeTab;
     activeTab = tabName;
     tabButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tabName));
     for (const [key, el] of Object.entries(tabContents)) el.classList.toggle("active", key === tabName);
     if (tabName === "stats") { resizeStatsCanvases(); drawAllStatsPlots(); }
+    // Re-render SVG roots when switching back from bitmap (they were skipped)
+    if (prevTab === "bitmap" && tabName === "roots") {
+        renderDomainColoring();
+        solveRoots();
+    }
 }
 tabButtons.forEach(btn => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
+
+// Bitmap tab buttons
+document.getElementById("bitmap-start-btn").addEventListener("click", function () {
+    initBitmapCanvas();
+    document.getElementById("bitmap-save-btn").disabled = false;
+    document.getElementById("bitmap-clear-btn").disabled = false;
+    document.getElementById("bitmap-fast-btn").disabled = false;
+    this.textContent = "restart";
+});
+
+document.getElementById("bitmap-save-btn").addEventListener("click", function () {
+    const canvas = document.getElementById("bitmap-canvas");
+    canvas.toBlob(function (blob) {
+        const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "polypaint-bitmap-" + ts + ".png";
+        a.click();
+        URL.revokeObjectURL(a.href);
+    }, "image/png");
+});
+
+document.getElementById("bitmap-clear-btn").addEventListener("click", function () {
+    if (bitmapCtx) {
+        bitmapCtx.fillStyle = "#000";
+        bitmapCtx.fillRect(0, 0, bitmapCtx.canvas.width, bitmapCtx.canvas.height);
+        bitmapFrameCount = 0;
+        document.getElementById("bitmap-info").textContent = "";
+    }
+});
+
+document.getElementById("bitmap-fast-btn").addEventListener("click", function () {
+    if (fastModeActive) exitFastMode();
+    else enterFastMode();
+});
 
 function rebuild() {
     S = getPanelSize();
@@ -5876,16 +6592,16 @@ installMarqueeSelection(rootsSvg, () => rootsLayer.selectAll("circle.root"), "ro
 // Default trajectory: C3 (index 2) — circle, R50%, S0.5, A0.33, CW
 {
     const c = coefficients[2];
-    c.pathType = "circle"; c.radius = 50; c.speed = 0.5; c.angle = 0.33; c.ccw = false;
-    c.curve = computeCurve(c.re, c.im, "circle", 50 / 100 * coeffExtent(), 0.33);
+    c.pathType = "circle"; c.radius = 50; c.speed = 0.5; c.angle = 0.33; c.ccw = false; c.extra = {};
+    c.curve = computeCurve(c.re, c.im, "circle", 50 / 100 * coeffExtent(), 0.33, c.extra);
     selectedCoeffs.add(2);
     lastSelectedCoeff = 2;
 }
 // Default trajectory: C0 (index 5) — circle, R15%, S0.85, A0.85, CW
 {
     const c2 = coefficients[5];
-    c2.pathType = "circle"; c2.radius = 15; c2.speed = 0.85; c2.angle = 0.85; c2.ccw = false;
-    c2.curve = computeCurve(c2.re, c2.im, "circle", 15 / 100 * coeffExtent(), 0.85);
+    c2.pathType = "circle"; c2.radius = 15; c2.speed = 0.85; c2.angle = 0.85; c2.ccw = false; c2.extra = {};
+    c2.curve = computeCurve(c2.re, c2.im, "circle", 15 / 100 * coeffExtent(), 0.85, c2.extra);
 }
 updateCoeffSelectionVisual();
 updateAnimBar();

@@ -1379,6 +1379,13 @@ setupPanel(rootsSvg, panels.roots);
 
 let coeffTrailLayer = coeffSvg.append("g").attr("class", "trail-layer");
 let coeffLayer = coeffSvg.append("g");
+let coeffChainLine = coeffLayer.append("polyline")
+    .attr("class", "coeff-chain")
+    .attr("fill", "none")
+    .attr("stroke", "rgba(255,255,255,0.35)")
+    .attr("stroke-width", 1.5)
+    .attr("stroke-dasharray", "4,3")
+    .style("display", "none");
 let trailLayer = rootsSvg.append("g").attr("class", "trail-layer");
 let rootsLayer = rootsSvg.append("g");
 
@@ -2877,6 +2884,14 @@ function stopAnimation() {
     if (anySoundEnabled()) resetAudioState();
 }
 
+// --- Coefficient chain line (shown during single-root drag) ---
+
+function updateCoeffChainLine() {
+    const xScale = cxs(), yScale = cys();
+    const pts = coefficients.map(c => xScale(c.re) + "," + yScale(c.im)).join(" ");
+    coeffChainLine.attr("points", pts);
+}
+
 // --- Render coefficients ---
 
 function renderCoefficients() {
@@ -2976,10 +2991,16 @@ const rootDrag = d3.drag()
         }
         renderCoeffTrails();
         renderCoefficients();
+        // Show coefficient chain line during single-root drag
+        if (!(selectedRoots.has(idx) && selectedRoots.size > 1)) {
+            coeffChainLine.style("display", null);
+            updateCoeffChainLine();
+        }
         renderDomainColoringThrottled();
         if (anySoundEnabled()) updateAudio();
     })
     .on("end", function (event, d) {
+        coeffChainLine.style("display", "none");
         d3.select(this).classed("dragging", false);
         hideTooltip();
         // Click detection: if mouse didn't move, toggle root selection
@@ -5768,6 +5789,13 @@ function rebuild() {
     // Recreate layers
     coeffTrailLayer = coeffSvg.append("g").attr("class", "trail-layer");
     coeffLayer = coeffSvg.append("g");
+    coeffChainLine = coeffLayer.append("polyline")
+        .attr("class", "coeff-chain")
+        .attr("fill", "none")
+        .attr("stroke", "rgba(255,255,255,0.35)")
+        .attr("stroke-width", 1.5)
+        .attr("stroke-dasharray", "4,3")
+        .style("display", "none");
     trailLayer = rootsSvg.append("g").attr("class", "trail-layer");
     rootsLayer = rootsSvg.append("g");
 

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v14</title>
+<title>PolyPaint v15</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
 :root {
@@ -484,7 +484,7 @@ body.fast-mode #bitmap-fast-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v14</span>
+    <span class="app-title">PolyPaint v15</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -772,6 +772,10 @@ let fastModeStepIndex = 0;
 let fastModeTotalSteps = 0;
 let fastModeTimerId = null;
 let fastModeRootColors = null;  // pre-computed CSS color strings
+let fastModeWorker = null;      // Web Worker instance
+let fastModeLastPixels = null;  // last received pixel ArrayBuffer snapshot
+let fastModeLastRoots = null;   // last received root positions
+let fastModeLastStep = 0;       // last reported step count
 // Stats tab state
 let activeTab = "roots";
 const STAT_TYPES = ["Force", "MinForce", "MaxForce", "Speed", "MinSpeed", "MaxSpeed", "MinDist", "MaxDist", "Records", "MeanDist", "\u0394MeanDist", "AngularMom", "\u03c3Speed", "EMASpeed", "\u03c3Dist", "Odometer", "CycleCount", "MedianR", "Spread", "EMed", "EHi", "Coherence", "Encounters"];
@@ -1510,6 +1514,21 @@ function rootColor(i, n) {
         return sensitivityColor(rootSensitivities[i]);
     }
     return "#e94560";
+}
+
+function rootColorRGB(i, n) {
+    const css = rootColor(i, n);
+    // Handle hex format (#rrggbb)
+    if (css[0] === "#") {
+        const hex = css.length === 4
+            ? css[1]+css[1]+css[2]+css[2]+css[3]+css[3]
+            : css.slice(1);
+        return [parseInt(hex.slice(0,2),16), parseInt(hex.slice(2,4),16), parseInt(hex.slice(4,6),16)];
+    }
+    // Handle rgb() format from d3
+    const m = css.match(/(\d+)/g);
+    if (m && m.length >= 3) return [+m[0], +m[1], +m[2]];
+    return [233, 69, 96];
 }
 
 function sensitivityColor(normVal) {
@@ -6336,6 +6355,209 @@ function setCurrentRootsInPlace(newRoots) {
     }
 }
 
+// --- Web Worker fast mode ---
+
+function createFastModeWorkerBlob() {
+    const code = `'use strict';
+
+// Flat-array Ehrlich-Aberth solver (same algorithm as main thread)
+function solveEA(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots) {
+    // Strip leading near-zero coefficients
+    var start = 0;
+    while (start < nCoeffs - 1 && Math.hypot(cRe[start], cIm[start]) < 1e-15) start++;
+    var degree = nCoeffs - 1 - start;
+    if (degree <= 0) return;
+
+    // Degree 1: direct
+    if (degree === 1) {
+        var aR = cRe[start], aI = cIm[start], bR = cRe[start+1], bI = cIm[start+1];
+        var d = aR*aR + aI*aI;
+        if (d < 1e-30) return;
+        warmRe[0] = -(bR*aR + bI*aI) / d;
+        warmIm[0] = -(bI*aR - bR*aI) / d;
+        return;
+    }
+
+    // Build coefficient sub-array (from start)
+    var n = nCoeffs - start;
+    var cr = new Float64Array(n), ci = new Float64Array(n);
+    for (var k = 0; k < n; k++) { cr[k] = cRe[start+k]; ci[k] = cIm[start+k]; }
+
+    // Init roots from warm start
+    var rRe = new Float64Array(degree), rIm = new Float64Array(degree);
+    for (var i = 0; i < degree; i++) { rRe[i] = warmRe[i]; rIm[i] = warmIm[i]; }
+
+    // Iterate
+    for (var iter = 0; iter < 100; iter++) {
+        var maxCorr = 0;
+        for (var i = 0; i < degree; i++) {
+            var zR = rRe[i], zI = rIm[i];
+            // Horner: p(z) and p'(z)
+            var pR = cr[0], pI = ci[0], dpR = 0, dpI = 0;
+            for (var k = 1; k < n; k++) {
+                var ndR = dpR*zR - dpI*zI + pR, ndI = dpR*zI + dpI*zR + pI;
+                dpR = ndR; dpI = ndI;
+                var npR = pR*zR - pI*zI + cr[k], npI = pR*zI + pI*zR + ci[k];
+                pR = npR; pI = npI;
+            }
+            // Newton step w = p/p'
+            var dpM = dpR*dpR + dpI*dpI;
+            if (dpM < 1e-60) continue;
+            var wR = (pR*dpR + pI*dpI)/dpM, wI = (pI*dpR - pR*dpI)/dpM;
+            // Aberth sum
+            var sR = 0, sI = 0;
+            for (var j = 0; j < degree; j++) {
+                if (j === i) continue;
+                var dR = zR - rRe[j], dI = zI - rIm[j];
+                var dM = dR*dR + dI*dI;
+                if (dM < 1e-60) continue;
+                sR += dR/dM; sI += -dI/dM;
+            }
+            // Correction
+            var wsR = wR*sR - wI*sI, wsI = wR*sI + wI*sR;
+            var dnR = 1 - wsR, dnI = -wsI;
+            var dnM = dnR*dnR + dnI*dnI;
+            if (dnM < 1e-60) continue;
+            var crrR = (wR*dnR + wI*dnI)/dnM, crrI = (wI*dnR - wR*dnI)/dnM;
+            rRe[i] -= crrR; rIm[i] -= crrI;
+            var h = Math.hypot(crrR, crrI);
+            if (h > maxCorr) maxCorr = h;
+        }
+        if (maxCorr < 1e-12) break;
+    }
+    // Write back (filter NaN/Inf — keep warm-start value)
+    for (var i = 0; i < degree; i++) {
+        if (isFinite(rRe[i]) && isFinite(rIm[i])) {
+            warmRe[i] = rRe[i]; warmIm[i] = rIm[i];
+        }
+    }
+}
+
+// Greedy nearest-neighbor root matching (flat arrays, in-place reorder of new into old order)
+function matchRoots(newRe, newIm, oldRe, oldIm, n) {
+    var used = new Uint8Array(n);
+    var tmpRe = new Float64Array(n), tmpIm = new Float64Array(n);
+    for (var i = 0; i < n; i++) {
+        var bestJ = 0, bestD = Infinity;
+        for (var j = 0; j < n; j++) {
+            if (used[j]) continue;
+            var d = (newRe[j]-oldRe[i])*(newRe[j]-oldRe[i]) + (newIm[j]-oldIm[i])*(newIm[j]-oldIm[i]);
+            if (d < bestD) { bestD = d; bestJ = j; }
+        }
+        tmpRe[i] = newRe[bestJ]; tmpIm[i] = newIm[bestJ];
+        used[bestJ] = 1;
+    }
+    for (var i = 0; i < n; i++) { newRe[i] = tmpRe[i]; newIm[i] = tmpIm[i]; }
+}
+
+// Paint 2x2 pixel blocks directly into ImageData buffer
+function paintPixels(px, w, h, rRe, rIm, nR, range, cR, cG, cB) {
+    for (var i = 0; i < nR; i++) {
+        var x = (rRe[i] / range + 1) * 0.5 * w;
+        var y = (1 - rIm[i] / range) * 0.5 * h;
+        var ix = x | 0, iy = y | 0;
+        if (ix < 0 || ix >= w-1 || iy < 0 || iy >= h-1) continue;
+        var r = cR[i], g = cG[i], b = cB[i];
+        for (var dy = 0; dy < 2; dy++) {
+            var off = ((iy+dy)*w + ix) * 4;
+            px[off]=r; px[off+1]=g; px[off+2]=b; px[off+3]=255;
+            px[off+4]=r; px[off+5]=g; px[off+6]=b; px[off+7]=255;
+        }
+    }
+}
+
+self.onmessage = function(e) {
+    var d = e.data;
+    var coeffsRe = new Float64Array(d.coeffsRe);
+    var coeffsIm = new Float64Array(d.coeffsIm);
+    var nCoeffs = d.nCoeffs, degree = d.degree, nRoots = d.nRoots;
+    var rootsRe = new Float64Array(d.rootsRe);
+    var rootsIm = new Float64Array(d.rootsIm);
+    var colorsR = new Uint8Array(d.colorsR);
+    var colorsG = new Uint8Array(d.colorsG);
+    var colorsB = new Uint8Array(d.colorsB);
+    var pixels = new Uint8ClampedArray(d.pixels);
+    var W = d.canvasW, H = d.canvasH, range = d.bitmapRange;
+    var total = d.totalSteps, FPS = d.FAST_PASS_SECONDS;
+    var frameMs = d.frameIntervalMs || 2000;
+    var curvesFlat = new Float64Array(d.curvesFlat);
+    var entries = d.animEntries;
+    var offsets = d.curveOffsets;
+    var lengths = d.curveLengths;
+    var isCloud = d.curveIsCloud;
+
+    // Temp arrays for solver output
+    var tmpRe = new Float64Array(nRoots), tmpIm = new Float64Array(nRoots);
+
+    var lastFrame = performance.now();
+
+    for (var step = 0; step < total; step++) {
+        var elapsed = (step / total) * FPS;
+
+        // Interpolate animated coefficients
+        for (var a = 0; a < entries.length; a++) {
+            var idx = entries[a].idx;
+            var dir = entries[a].ccw ? -1 : 1;
+            var t = elapsed * entries[a].speed * dir;
+            var u = ((t % 1) + 1) % 1;
+            var N = lengths[a];
+            var rawIdx = u * N;
+            var base = offsets[a] * 2;
+
+            if (isCloud[a]) {
+                var k = (rawIdx | 0) % N;
+                coeffsRe[idx] = curvesFlat[base + k*2];
+                coeffsIm[idx] = curvesFlat[base + k*2 + 1];
+            } else {
+                var lo = (rawIdx | 0) % N;
+                var hi = (lo + 1) % N;
+                var frac = rawIdx - (rawIdx | 0);
+                coeffsRe[idx] = curvesFlat[base+lo*2]*(1-frac) + curvesFlat[base+hi*2]*frac;
+                coeffsIm[idx] = curvesFlat[base+lo*2+1]*(1-frac) + curvesFlat[base+hi*2+1]*frac;
+            }
+        }
+
+        // Copy warm start
+        tmpRe.set(rootsRe); tmpIm.set(rootsIm);
+        // Solve
+        solveEA(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots);
+        // Match root order
+        matchRoots(tmpRe, tmpIm, rootsRe, rootsIm, nRoots);
+        // Update warm start
+        rootsRe.set(tmpRe); rootsIm.set(tmpIm);
+
+        // Paint
+        paintPixels(pixels, W, H, rootsRe, rootsIm, nRoots, range, colorsR, colorsG, colorsB);
+
+        // Progress every 500 steps
+        if (step % 500 === 0) {
+            self.postMessage({type: 'progress', step: step});
+        }
+
+        // Frame snapshot periodically
+        var now = performance.now();
+        if (now - lastFrame >= frameMs) {
+            lastFrame = now;
+            self.postMessage({
+                type: 'frame', step: step+1,
+                pixels: pixels.buffer.slice(0),
+                rootsRe: new Float64Array(rootsRe).buffer,
+                rootsIm: new Float64Array(rootsIm).buffer
+            });
+        }
+    }
+
+    // Done — transfer final buffers
+    self.postMessage({
+        type: 'done', step: total,
+        pixels: pixels.buffer,
+        rootsRe: rootsRe.buffer,
+        rootsIm: rootsIm.buffer
+    }, [pixels.buffer, rootsRe.buffer, rootsIm.buffer]);
+};`;
+    return URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
+}
+
 function enterFastMode() {
     if (fastModeActive) return;
 
@@ -6364,8 +6586,16 @@ function enterFastMode() {
         fastModeCurves.set(idx, curve);
     }
 
-    // Precompute root colors once
+    // Precompute root colors as RGB byte arrays
     const nRoots = currentRoots.length;
+    const colorsR = new Uint8Array(nRoots);
+    const colorsG = new Uint8Array(nRoots);
+    const colorsB = new Uint8Array(nRoots);
+    for (let i = 0; i < nRoots; i++) {
+        const [r, g, b] = rootColorRGB(i, nRoots);
+        colorsR[i] = r; colorsG[i] = g; colorsB[i] = b;
+    }
+    // Keep CSS colors for legacy fallback
     fastModeRootColors = new Array(nRoots);
     for (let i = 0; i < nRoots; i++) fastModeRootColors[i] = rootColor(i, nRoots);
 
@@ -6378,16 +6608,168 @@ function enterFastMode() {
     const prog = document.getElementById("bitmap-progress");
     if (prog) { prog.style.display = ""; document.getElementById("bitmap-progress-bar").style.width = "0%"; }
 
-    fastModeTimerId = setTimeout(fastModeChunk, 0);
+    // Legacy fallback for browsers without Worker
+    if (typeof Worker === "undefined") {
+        fastModeTimerId = setTimeout(fastModeChunkLegacy, 0);
+        return;
+    }
+
+    // Serialize coefficients into flat Float64Arrays
+    const nCoeffs = coefficients.length;
+    const degree = nCoeffs - 1;
+    const coeffsRe = new Float64Array(nCoeffs);
+    const coeffsIm = new Float64Array(nCoeffs);
+    for (let i = 0; i < nCoeffs; i++) {
+        coeffsRe[i] = coefficients[i].re;
+        coeffsIm[i] = coefficients[i].im;
+    }
+
+    // Serialize curves into one flat Float64Array + metadata
+    const animEntries = [];
+    const curveOffsets = [];
+    const curveLengths = [];
+    const curveIsCloud = [];
+    let totalPts = 0;
+    for (const [idx, curve] of fastModeCurves.entries()) {
+        const c = coefficients[idx];
+        animEntries.push({ idx, ccw: !!c.ccw, speed: c.speed });
+        curveOffsets.push(totalPts);
+        curveLengths.push(curve.length);
+        curveIsCloud.push(!!curve._isCloud);
+        totalPts += curve.length;
+    }
+    const curvesFlat = new Float64Array(totalPts * 2);
+    let off = 0;
+    for (const [, curve] of fastModeCurves.entries()) {
+        for (let k = 0; k < curve.length; k++) {
+            curvesFlat[off++] = curve[k].re;
+            curvesFlat[off++] = curve[k].im;
+        }
+    }
+
+    // Serialize current roots
+    const rootsRe = new Float64Array(nRoots);
+    const rootsIm = new Float64Array(nRoots);
+    for (let i = 0; i < nRoots; i++) {
+        rootsRe[i] = currentRoots[i].re;
+        rootsIm[i] = currentRoots[i].im;
+    }
+
+    // Get existing canvas pixels for multi-pass accumulation
+    const w = bitmapCtx.canvas.width, h = bitmapCtx.canvas.height;
+    const existingData = bitmapCtx.getImageData(0, 0, w, h);
+    const pixelBuf = existingData.data.buffer.slice(0); // detachable copy
+
+    // Safety net: cache current pixels for early exit
+    fastModeLastPixels = pixelBuf.slice(0);
+    fastModeLastRoots = null;
+    fastModeLastStep = 0;
+
+    // Create and launch Worker
+    const blobUrl = createFastModeWorkerBlob();
+    fastModeWorker = new Worker(blobUrl);
+    URL.revokeObjectURL(blobUrl);
+
+    fastModeWorker.onmessage = handleFastModeWorkerMessage;
+    fastModeWorker.onerror = function(err) {
+        console.error("Fast mode worker error:", err);
+        exitFastMode();
+    };
+
+    fastModeWorker.postMessage({
+        coeffsRe: coeffsRe.buffer, coeffsIm: coeffsIm.buffer,
+        nCoeffs, degree, nRoots,
+        animEntries, curvesFlat: curvesFlat.buffer,
+        curveOffsets, curveLengths, curveIsCloud,
+        rootsRe: rootsRe.buffer, rootsIm: rootsIm.buffer,
+        colorsR: colorsR.buffer, colorsG: colorsG.buffer, colorsB: colorsB.buffer,
+        pixels: pixelBuf,
+        canvasW: w, canvasH: h, bitmapRange,
+        totalSteps: stepsVal, FAST_PASS_SECONDS,
+        frameIntervalMs: 2000
+    }, [
+        coeffsRe.buffer, coeffsIm.buffer, curvesFlat.buffer,
+        rootsRe.buffer, rootsIm.buffer,
+        colorsR.buffer, colorsG.buffer, colorsB.buffer, pixelBuf
+    ]);
+}
+
+function applyPixelSnapshot(arrayBuffer) {
+    if (!bitmapCtx) return;
+    const w = bitmapCtx.canvas.width, h = bitmapCtx.canvas.height;
+    if (arrayBuffer.byteLength !== w * h * 4) return;
+    const imgData = new ImageData(new Uint8ClampedArray(arrayBuffer), w, h);
+    bitmapCtx.putImageData(imgData, 0, 0);
+}
+
+function handleFastModeWorkerMessage(e) {
+    const msg = e.data;
+    if (!fastModeActive) return;
+
+    if (msg.type === "progress") {
+        fastModeStepIndex = msg.step;
+        fastModeLastStep = msg.step;
+        const bar = document.getElementById("bitmap-progress-bar");
+        if (bar) bar.style.width = (msg.step / fastModeTotalSteps * 100) + "%";
+    }
+    else if (msg.type === "frame") {
+        fastModeStepIndex = msg.step;
+        fastModeLastStep = msg.step;
+        fastModeLastPixels = msg.pixels;
+        if (msg.rootsRe) fastModeLastRoots = { re: msg.rootsRe, im: msg.rootsIm };
+        applyPixelSnapshot(msg.pixels);
+        const bar = document.getElementById("bitmap-progress-bar");
+        if (bar) bar.style.width = (msg.step / fastModeTotalSteps * 100) + "%";
+    }
+    else if (msg.type === "done") {
+        fastModeStepIndex = msg.step;
+        fastModeLastPixels = msg.pixels;
+        if (msg.rootsRe) fastModeLastRoots = { re: msg.rootsRe, im: msg.rootsIm };
+        applyPixelSnapshot(msg.pixels);
+        // Restore root state for warm-start continuity
+        if (msg.rootsRe && msg.rootsIm) {
+            const rRe = new Float64Array(msg.rootsRe);
+            const rIm = new Float64Array(msg.rootsIm);
+            for (let i = 0; i < currentRoots.length && i < rRe.length; i++) {
+                currentRoots[i].re = rRe[i];
+                currentRoots[i].im = rIm[i];
+            }
+        }
+        const bar = document.getElementById("bitmap-progress-bar");
+        if (bar) bar.style.width = "100%";
+        exitFastMode();
+    }
 }
 
 function exitFastMode() {
     if (!fastModeActive) return;
+
+    // Terminate Worker if running
+    if (fastModeWorker) { fastModeWorker.terminate(); fastModeWorker = null; }
+    // Legacy fallback cleanup
     if (fastModeTimerId) { clearTimeout(fastModeTimerId); fastModeTimerId = null; }
+
+    // Apply last received pixel snapshot (covers early "imode" exit)
+    if (fastModeLastPixels && bitmapCtx) {
+        applyPixelSnapshot(fastModeLastPixels);
+    }
+
+    // Restore root state from last snapshot
+    if (fastModeLastRoots) {
+        const rRe = new Float64Array(fastModeLastRoots.re);
+        const rIm = new Float64Array(fastModeLastRoots.im);
+        for (let i = 0; i < currentRoots.length && i < rRe.length; i++) {
+            currentRoots[i].re = rRe[i];
+            currentRoots[i].im = rIm[i];
+        }
+    }
 
     fastModeActive = false;
     fastModeCurves = null;
     fastModeRootColors = null;
+    fastModeLastPixels = null;
+    fastModeLastRoots = null;
+    fastModeLastStep = 0;
 
     document.body.classList.remove("fast-mode");
     document.getElementById("bitmap-fast-btn").textContent = "fastmode";
@@ -6400,7 +6782,7 @@ function exitFastMode() {
     solveRoots();
 }
 
-function fastModeChunk() {
+function fastModeChunkLegacy() {
     if (!fastModeActive) return;
 
     const deg = coefficients.length - 1;
@@ -6458,7 +6840,7 @@ function fastModeChunk() {
         return;
     }
 
-    fastModeTimerId = setTimeout(fastModeChunk, 0);
+    fastModeTimerId = setTimeout(fastModeChunkLegacy, 0);
 }
 
 function resetBitmap() {

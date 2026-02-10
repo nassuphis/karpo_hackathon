@@ -159,4 +159,4 @@ All three generate perfectly uniform step sizes and are cached on first use.
 - Domain coloring rendered to half-resolution canvas, CSS-scaled with `devicePixelRatio` support
 - No d3 transitions on dots — positions update instantly to avoid animation conflicts during rapid drag
 - Warm-started Ehrlich-Aberth typically converges in 1–3 iterations during interactive drag
-- **Bitmap fast mode** bypasses all rendering, stats, and audio overhead — runs a `setTimeout(0)` chunked loop with configurable step count (10K/50K/100K), warm-started solver, `fillRect` pixel stamps, and pre-computed colors. Canvas resolution selectable at 1000/2000/5000 px (square). Chunk size is tuned by degree to keep the browser responsive
+- **Bitmap fast mode** runs the solver in a Web Worker for 3-6x speedup — the entire hot loop (Ehrlich-Aberth solver, root matching, pixel painting) executes off the main thread with zero `setTimeout` yielding. Pixels are written directly to an ImageData buffer and transferred back periodically. Configurable step count (10K/50K/100K) and canvas resolution (1000/2000/5000 px square). Falls back to chunked main-thread loop if Workers are unavailable

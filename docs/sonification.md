@@ -86,6 +86,8 @@ smoothed += α × (raw − smoothed),  α = 0.1
 
 This prevents audible discontinuities from frame-to-frame noise while remaining responsive enough to track real motion.
 
+All six features are also available as **Stats dashboard** time-series plots (MedianR, Spread, EMed, EHi, Coherence, Encounters) with matching EMA smoothing, so you can visually track exactly what drives the sound.
+
 ## Sound Mapping
 
 **Pitch (FM carrier):**

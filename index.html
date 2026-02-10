@@ -277,15 +277,15 @@ circle.root.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
 .tab-content { position:absolute; top:0; left:0; right:0; bottom:0;
                visibility:hidden; display:flex; flex-direction:column; }
 .tab-content.active { visibility:visible; }
-.stats-grid { display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr;
+.stats-grid { display:grid; grid-template-columns:1fr 1fr 1fr 1fr; grid-template-rows:1fr 1fr 1fr 1fr;
               flex:1; gap:0; min-height:0; }
 .stats-cell { display:flex; flex-direction:column; min-height:0; border:1px solid var(--stroke);
               margin:-0.5px; overflow:hidden; }
 .stats-cell:first-child { border-radius:0; }
-.stats-select { flex-shrink:0; width:100%; padding:3px 6px; font-size:10px;
+.stats-select { flex-shrink:0; width:100%; padding:1px 3px; font-size:8px;
                 background:rgba(10,12,30,0.6); color:var(--muted); border:none;
                 border-bottom:1px solid var(--stroke); cursor:pointer;
-                font-family:inherit; letter-spacing:0.5px; outline:none; }
+                font-family:inherit; letter-spacing:0.3px; outline:none; }
 .stats-select:focus { color:var(--text); }
 .stats-canvas { flex:1; width:100%; min-height:0; background:var(--panel); }
 #roots-container { position: relative; flex: 1; min-height: 0; }
@@ -522,6 +522,18 @@ circle.coeff.selected, circle.root.selected {
                     <div class="stats-cell"><select class="stats-select" data-plot="1"></select><canvas class="stats-canvas" data-plot="1"></canvas></div>
                     <div class="stats-cell"><select class="stats-select" data-plot="2"></select><canvas class="stats-canvas" data-plot="2"></canvas></div>
                     <div class="stats-cell"><select class="stats-select" data-plot="3"></select><canvas class="stats-canvas" data-plot="3"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="4"></select><canvas class="stats-canvas" data-plot="4"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="5"></select><canvas class="stats-canvas" data-plot="5"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="6"></select><canvas class="stats-canvas" data-plot="6"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="7"></select><canvas class="stats-canvas" data-plot="7"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="8"></select><canvas class="stats-canvas" data-plot="8"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="9"></select><canvas class="stats-canvas" data-plot="9"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="10"></select><canvas class="stats-canvas" data-plot="10"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="11"></select><canvas class="stats-canvas" data-plot="11"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="12"></select><canvas class="stats-canvas" data-plot="12"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="13"></select><canvas class="stats-canvas" data-plot="13"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="14"></select><canvas class="stats-canvas" data-plot="14"></canvas></div>
+                    <div class="stats-cell"><select class="stats-select" data-plot="15"></select><canvas class="stats-canvas" data-plot="15"></canvas></div>
                 </div>
             </div>
         </div>
@@ -608,8 +620,8 @@ let domainPendingRender = false;
 const DOMAIN_RES_SCALE = 0.5; // render at half resolution for performance
 // Stats tab state
 let activeTab = "roots";
-const STAT_TYPES = ["Force", "MinForce", "MaxForce", "Speed", "MinSpeed", "MaxSpeed", "MinDist", "MaxDist", "Records", "MeanDist", "\u0394MeanDist", "AngularMom", "\u03c3Speed", "EMASpeed", "\u03c3Dist"];
-const STAT_COLORS = { Force: "#e94560", MinForce: "#f7a1b5", MaxForce: "#c0392b", Speed: "#5b6abf", MinSpeed: "#7eb8da", MaxSpeed: "#ff7b54", MinDist: "#2ecc71", MaxDist: "#f39c12", Records: "#ff6b9d", MeanDist: "#4ecdc4", "\u0394MeanDist": "#a8e6cf", AngularMom: "#e0aaff", "\u03c3Speed": "#48bfe3", EMASpeed: "#64dfdf", "\u03c3Dist": "#f4a261" };
+const STAT_TYPES = ["Force", "MinForce", "MaxForce", "Speed", "MinSpeed", "MaxSpeed", "MinDist", "MaxDist", "Records", "MeanDist", "\u0394MeanDist", "AngularMom", "\u03c3Speed", "EMASpeed", "\u03c3Dist", "Odometer", "CycleCount", "MedianR", "Spread", "EMed", "EHi", "Coherence", "Encounters"];
+const STAT_COLORS = { Force: "#e94560", MinForce: "#f7a1b5", MaxForce: "#c0392b", Speed: "#5b6abf", MinSpeed: "#7eb8da", MaxSpeed: "#ff7b54", MinDist: "#2ecc71", MaxDist: "#f39c12", Records: "#ff6b9d", MeanDist: "#4ecdc4", "\u0394MeanDist": "#a8e6cf", AngularMom: "#e0aaff", "\u03c3Speed": "#48bfe3", EMASpeed: "#64dfdf", "\u03c3Dist": "#f4a261", Odometer: "#d4a373", CycleCount: "#80ed99", MedianR: "#f0a6ca", Spread: "#b8c0ff", EMed: "#a7c957", EHi: "#f77f00", Coherence: "#7209b7", Encounters: "#ff85a1" };
 // Phase-space (XY) plot definitions: { label, xStat, yStat, color }
 const PHASE_PLOTS = [
     { label: "Force v Speed", xStat: "Force", yStat: "Speed", color: "#c77dff" },
@@ -620,7 +632,10 @@ const PHASE_PLOTS = [
 ];
 // Spectrum plots: special bar-chart visualizations (not time-series)
 const SPECTRUM_PLOTS = [
-    { label: "SpeedSpectrum" }
+    { label: "SpeedSpectrum" },
+    { label: "OdometerSpectrum" },
+    { label: "WindingSpectrum" },
+    { label: "TortuositySpectrum" }
 ];
 // Total dropdown options: time-series, then phase-space, then spectrum
 const PLOT_OPTIONS = [...STAT_TYPES, ...PHASE_PLOTS.map(p => p.label), ...SPECTRUM_PLOTS.map(p => p.label)];
@@ -633,10 +648,29 @@ const statsState = {
     prevRoots: null,    // for Speed computation
     prevMeanDist: null, // for ΔMeanDist computation
     emaSpeed: 0,        // exponential moving average of Speed
-    rootSpeeds: null,   // Float64Array: cached per-root speeds for SpeedSpectrum
+    rootSpeeds: null,   // Float64Array: cached per-root speeds (displacement per tick)
     rootForces: null,   // Float64Array: cached per-root force (sensitivity) for MinForce/MaxForce
-    spectrumPeaks: null, // Float64Array: decaying peak heights for SpeedSpectrum dots
-    plotConfigs: [0, 1, 2, 3], // index into PLOT_OPTIONS for each of the 4 plots
+    spectrumPeaks: null, // Float64Array: all-time max per-root speed for SpeedSpectrum dots
+    rootOdometers: null, // Float64Array: cumulative per-root distance traveled
+    odometerCycleLengths: null, // Float64Array: snapshot of odometers at loop completion (cycle arc lengths)
+    odometerStartRoots: null, // [{re,im}]: per-root start positions for cycle detection
+    odometerFrameCounts: null, // Int32Array: per-root frame count since last reset
+    odometerMaxDisps: null, // Float64Array: per-root max displacement from start
+    odometerCycleCount: 0, // cumulative number of cycle detections triggered
+    rootWindings: null,    // Float64Array: cumulative winding angle per root (in turns, signed)
+    rootTortuosityOdo: null, // Float64Array: per-root path length for tortuosity (resets on cycle)
+    rootTortuosityNetDx: null, // Float64Array: per-root cumulative signed dx for tortuosity
+    rootTortuosityNetDy: null, // Float64Array: per-root cumulative signed dy for tortuosity
+    // Sonification feature smoothing (one-pole EMA, same α as audio)
+    smoothMedianR: 0,
+    smoothSpread: 0,
+    smoothEMed: 0,
+    smoothEHi: 0,
+    smoothCoherence: 0,
+    smoothEncounters: 0,
+    // Per-root encounter records for Encounters stat (mirrors audio close encounters)
+    statsEncounters: null,    // Float64Array(n * 3): per-root top-3 closest distances
+    plotConfigs: [0, 3, 6, 8, 17, 18, 19, 20, 21, 22, 11, 9, 28, 29, 30, 31], // index into PLOT_OPTIONS for each of the 16 plots
     canvases: [],       // 4 canvas elements
     ctxs: [],           // 4 canvas 2D contexts
     dirty: true
@@ -2820,6 +2854,8 @@ function renderRoots(newRoots) {
         }
         renderTrails();
     }
+
+
     if (anySoundEnabled()) updateAudio();
 }
 
@@ -4418,7 +4454,7 @@ document.getElementById("snap-btn").addEventListener("click", snapCapture);
 
 function resizeStatsCanvases() {
     const dpr = window.devicePixelRatio || 1;
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 16; i++) {
         const c = statsState.canvases[i];
         if (!c) continue;
         const rect = c.getBoundingClientRect();
@@ -4682,13 +4718,151 @@ function computeSigmaDist() {
     return Math.sqrt(var_ / count);
 }
 
-const statComputeFns = [computeForce, computeMinForce, computeMaxForce, computeSpeed, computeMinSpeed, computeMaxSpeed, computeMinDist, computeMaxDist, computeRecords, computeMeanDist, computeDeltaMeanDist, computeAngularMom, computeSigmaSpeed, computeEMASpeed, computeSigmaDist];
+function computeOdometer() {
+    const od = statsState.rootOdometers;
+    if (!od) return 0;
+    let total = 0;
+    for (let i = 0; i < od.length; i++) total += od[i];
+    return total;
+}
+function computeCycleCount() {
+    return statsState.odometerCycleCount;
+}
+
+function computeMedianR() {
+    // Median radius from centroid (same as audio r50), smoothed
+    const n = currentRoots.length;
+    if (n === 0) return 0;
+    let cx = 0, cy = 0;
+    for (let i = 0; i < n; i++) { cx += currentRoots[i].re; cy += currentRoots[i].im; }
+    cx /= n; cy /= n;
+    const radii = new Array(n);
+    for (let i = 0; i < n; i++) radii[i] = Math.hypot(currentRoots[i].re - cx, currentRoots[i].im - cy);
+    radii.sort((a, b) => a - b);
+    const raw = percentileSorted(radii, 0.50);
+    statsState.smoothMedianR += AUDIO_ALPHA * (raw - statsState.smoothMedianR);
+    return statsState.smoothMedianR;
+}
+
+function computeSpread() {
+    // r90 - r10 radius spread from centroid, smoothed
+    const n = currentRoots.length;
+    if (n === 0) return 0;
+    let cx = 0, cy = 0;
+    for (let i = 0; i < n; i++) { cx += currentRoots[i].re; cy += currentRoots[i].im; }
+    cx /= n; cy /= n;
+    const radii = new Array(n);
+    for (let i = 0; i < n; i++) radii[i] = Math.hypot(currentRoots[i].re - cx, currentRoots[i].im - cy);
+    radii.sort((a, b) => a - b);
+    const raw = percentileSorted(radii, 0.90) - percentileSorted(radii, 0.10);
+    statsState.smoothSpread += AUDIO_ALPHA * (raw - statsState.smoothSpread);
+    return statsState.smoothSpread;
+}
+
+function computeEMed() {
+    // 50th percentile of per-root speeds, smoothed
+    const s = statsState.rootSpeeds;
+    if (!s || s.length === 0) return 0;
+    const sorted = Array.from(s).sort((a, b) => a - b);
+    const raw = percentileSorted(sorted, 0.50);
+    statsState.smoothEMed += AUDIO_ALPHA * (raw - statsState.smoothEMed);
+    return statsState.smoothEMed;
+}
+
+function computeEHi() {
+    // 85th percentile of per-root speeds, smoothed
+    const s = statsState.rootSpeeds;
+    if (!s || s.length === 0) return 0;
+    const sorted = Array.from(s).sort((a, b) => a - b);
+    const raw = percentileSorted(sorted, 0.85);
+    statsState.smoothEHi += AUDIO_ALPHA * (raw - statsState.smoothEHi);
+    return statsState.smoothEHi;
+}
+
+function computeCoherence() {
+    // Angular coherence R = |mean(e^{iθ})| around centroid, smoothed
+    const n = currentRoots.length;
+    if (n === 0) return 0;
+    let cx = 0, cy = 0;
+    for (let i = 0; i < n; i++) { cx += currentRoots[i].re; cy += currentRoots[i].im; }
+    cx /= n; cy /= n;
+    let au = 0, av = 0;
+    for (let i = 0; i < n; i++) {
+        const th = Math.atan2(currentRoots[i].im - cy, currentRoots[i].re - cx);
+        au += Math.cos(th); av += Math.sin(th);
+    }
+    const raw = Math.hypot(au / n, av / n);
+    statsState.smoothCoherence += AUDIO_ALPHA * (raw - statsState.smoothCoherence);
+    return statsState.smoothCoherence;
+}
+
+function computeEncounters() {
+    // Per-root top-3 closest distance records (mirrors audio close encounters), smoothed count
+    const n = currentRoots.length;
+    if (n < 2) return 0;
+    const K = 3;
+
+    let seeding = false;
+    if (!statsState.statsEncounters || statsState.statsEncounters.length !== n * K) {
+        statsState.statsEncounters = new Float64Array(n * K).fill(Infinity);
+        seeding = true;
+    }
+
+    let count = 0;
+    for (let i = 0; i < n; i++) {
+        const closest = [Infinity, Infinity, Infinity];
+        for (let j = 0; j < n; j++) {
+            if (j === i) continue;
+            const d = Math.hypot(currentRoots[i].re - currentRoots[j].re,
+                                 currentRoots[i].im - currentRoots[j].im);
+            if (d < closest[2]) {
+                closest[2] = d;
+                if (closest[2] < closest[1]) { const t = closest[1]; closest[1] = closest[2]; closest[2] = t; }
+                if (closest[1] < closest[0]) { const t = closest[0]; closest[0] = closest[1]; closest[1] = t; }
+            }
+        }
+
+        const base = i * K;
+        if (seeding) {
+            for (let k = 0; k < K; k++) statsState.statsEncounters[base + k] = closest[k];
+        } else {
+            for (let k = 0; k < K; k++) {
+                const worstIdx = base + K - 1;
+                if (closest[k] < statsState.statsEncounters[worstIdx]) {
+                    count++;
+                    statsState.statsEncounters[worstIdx] = closest[k] * voiceConfig.novelty;
+                    // Bubble sort to maintain order
+                    for (let a = K - 1; a > 0; a--) {
+                        if (statsState.statsEncounters[base + a] < statsState.statsEncounters[base + a - 1]) {
+                            const td = statsState.statsEncounters[base + a];
+                            statsState.statsEncounters[base + a] = statsState.statsEncounters[base + a - 1];
+                            statsState.statsEncounters[base + a - 1] = td;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Decay all records
+    if (!seeding) {
+        for (let k = 0; k < statsState.statsEncounters.length; k++) {
+            statsState.statsEncounters[k] *= voiceConfig.decay;
+        }
+    }
+
+    // Smooth the count with one-pole filter
+    statsState.smoothEncounters += AUDIO_ALPHA * (count - statsState.smoothEncounters);
+    return statsState.smoothEncounters;
+}
+
+const statComputeFns = [computeForce, computeMinForce, computeMaxForce, computeSpeed, computeMinSpeed, computeMaxSpeed, computeMinDist, computeMaxDist, computeRecords, computeMeanDist, computeDeltaMeanDist, computeAngularMom, computeSigmaSpeed, computeEMASpeed, computeSigmaDist, computeOdometer, computeCycleCount, computeMedianR, computeSpread, computeEMed, computeEHi, computeCoherence, computeEncounters];
 
 function collectStatsSnapshot() {
     const n = currentRoots.length;
     if (n === 0) return;
 
-    // Cache per-root speeds first (before prevRoots is overwritten, and before stat fns that read rootSpeeds)
+    // Per-root displacement this tick (= speed in ticks-as-time units)
     if (!statsState.rootSpeeds || statsState.rootSpeeds.length !== n) {
         statsState.rootSpeeds = new Float64Array(n);
     }
@@ -4703,12 +4877,86 @@ function collectStatsSnapshot() {
         statsState.rootSpeeds.fill(0);
     }
 
-    // Update spectrum peak heights (decaying max)
+    // Update spectrum peak heights (all-time max per root)
     if (!statsState.spectrumPeaks || statsState.spectrumPeaks.length !== n) {
         statsState.spectrumPeaks = new Float64Array(n);
     }
     for (let i = 0; i < n; i++) {
-        statsState.spectrumPeaks[i] = Math.max(statsState.rootSpeeds[i], statsState.spectrumPeaks[i] * 0.993);
+        statsState.spectrumPeaks[i] = Math.max(statsState.rootSpeeds[i], statsState.spectrumPeaks[i]);
+    }
+
+    // Accumulate per-root odometers (cumulative distance)
+    if (!statsState.rootOdometers || statsState.rootOdometers.length !== n) {
+        statsState.rootOdometers = new Float64Array(n);
+    }
+    for (let i = 0; i < n; i++) {
+        statsState.rootOdometers[i] += statsState.rootSpeeds[i];
+    }
+
+    // Accumulate per-root winding number (cumulative signed angle in turns, around origin)
+    if (!statsState.rootWindings || statsState.rootWindings.length !== n) {
+        statsState.rootWindings = new Float64Array(n);
+    }
+    if (statsState.prevRoots && statsState.prevRoots.length === n) {
+        for (let i = 0; i < n; i++) {
+            const x0 = statsState.prevRoots[i].re, y0 = statsState.prevRoots[i].im;
+            const x1 = currentRoots[i].re, y1 = currentRoots[i].im;
+            // Cross product and dot product of (prev, current) vectors from origin
+            const cross = x0 * y1 - y0 * x1;
+            const dot = x0 * x1 + y0 * y1;
+            statsState.rootWindings[i] += Math.atan2(cross, dot) / (2 * Math.PI);
+        }
+    }
+
+    // Accumulate per-root tortuosity components (path length + net displacement)
+    if (!statsState.rootTortuosityOdo || statsState.rootTortuosityOdo.length !== n) {
+        statsState.rootTortuosityOdo = new Float64Array(n);
+        statsState.rootTortuosityNetDx = new Float64Array(n);
+        statsState.rootTortuosityNetDy = new Float64Array(n);
+    }
+    if (statsState.prevRoots && statsState.prevRoots.length === n) {
+        for (let i = 0; i < n; i++) {
+            const dx = currentRoots[i].re - statsState.prevRoots[i].re;
+            const dy = currentRoots[i].im - statsState.prevRoots[i].im;
+            statsState.rootTortuosityOdo[i] += statsState.rootSpeeds[i];
+            statsState.rootTortuosityNetDx[i] += dx;
+            statsState.rootTortuosityNetDy[i] += dy;
+        }
+    }
+
+    // Per-root odometer cycle detection (each root independently detects its own cycle)
+    if (animState.playing && n > 0) {
+        if (!statsState.odometerStartRoots || statsState.odometerStartRoots.length !== n) {
+            statsState.odometerStartRoots = currentRoots.map(r => ({ re: r.re, im: r.im }));
+            statsState.odometerFrameCounts = new Int32Array(n);
+            statsState.odometerMaxDisps = new Float64Array(n);
+            if (!statsState.odometerCycleLengths || statsState.odometerCycleLengths.length !== n) {
+                statsState.odometerCycleLengths = new Float64Array(n);
+            }
+        } else {
+            const thresh = panels.roots.range * 0.02;
+            for (let i = 0; i < n; i++) {
+                statsState.odometerFrameCounts[i]++;
+                const d = Math.hypot(
+                    currentRoots[i].re - statsState.odometerStartRoots[i].re,
+                    currentRoots[i].im - statsState.odometerStartRoots[i].im
+                );
+                if (d > statsState.odometerMaxDisps[i]) statsState.odometerMaxDisps[i] = d;
+                // Check closure: root must have moved significantly and returned near start
+                if (statsState.odometerFrameCounts[i] > 5 &&
+                    statsState.odometerMaxDisps[i] > thresh * 5 &&
+                    d < thresh) {
+                    // This root completed a cycle
+                    statsState.odometerCycleCount++;
+                    statsState.odometerCycleLengths[i] = statsState.rootOdometers[i];
+                    statsState.rootOdometers[i] = 0;
+                    statsState.odometerFrameCounts[i] = 0;
+                    statsState.odometerMaxDisps[i] = 0;
+                    statsState.odometerStartRoots[i].re = currentRoots[i].re;
+                    statsState.odometerStartRoots[i].im = currentRoots[i].im;
+                }
+            }
+        }
     }
 
     // Cache per-root forces before stat compute loop (MinForce/MaxForce read from cache)
@@ -4743,6 +4991,23 @@ function clearStatsData() {
     statsState.emaSpeed = 0;
     statsState.spectrumPeaks = null;
     statsState.rootForces = null;
+    statsState.rootOdometers = null;
+    statsState.odometerCycleLengths = null;
+    statsState.odometerStartRoots = null;
+    statsState.odometerFrameCounts = null;
+    statsState.odometerMaxDisps = null;
+    statsState.odometerCycleCount = 0;
+    statsState.rootWindings = null;
+    statsState.rootTortuosityOdo = null;
+    statsState.rootTortuosityNetDx = null;
+    statsState.rootTortuosityNetDy = null;
+    statsState.smoothMedianR = 0;
+    statsState.smoothSpread = 0;
+    statsState.smoothEMed = 0;
+    statsState.smoothEHi = 0;
+    statsState.smoothCoherence = 0;
+    statsState.smoothEncounters = 0;
+    statsState.statsEncounters = null;
     pairRecords = null;
     statsState.dirty = true;
     if (activeTab === "stats") drawAllStatsPlots();
@@ -4771,75 +5036,191 @@ function drawStatsPlot(plotIdx) {
     const spectrumIdx = optIdx - STAT_TYPES.length - PHASE_PLOTS.length;
     if (spectrumIdx >= 0) {
         const n = currentRoots.length;
-        const speeds = statsState.rootSpeeds;
-        if (n === 0 || !speeds || speeds.length !== n) return;
+        if (n === 0) return;
 
         // Extra bottom margin for index labels
         const sMB = 10;
-        const sPlotH = plotH - sMB + MB; // reclaim original MB, add sMB
-
-        // Find max across speeds and peaks for normalization
-        let sMax = 0;
-        const peaks = statsState.spectrumPeaks;
-        for (let i = 0; i < n; i++) {
-            if (speeds[i] > sMax) sMax = speeds[i];
-            if (peaks && peaks.length === n && peaks[i] > sMax) sMax = peaks[i];
-        }
-        if (sMax < 1e-12) sMax = 1;
-
-        // Grid
-        ctx.strokeStyle = "rgba(255,255,255,0.04)";
-        ctx.lineWidth = 0.5;
-        for (const frac of [0.25, 0.5, 0.75]) {
-            const y = MT + sPlotH * (1 - frac);
-            ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML + plotW, y); ctx.stroke();
-        }
-        // Bottom axis
-        ctx.strokeStyle = "rgba(255,255,255,0.08)";
-        ctx.lineWidth = 0.5;
-        ctx.beginPath(); ctx.moveTo(ML, MT + sPlotH); ctx.lineTo(ML + plotW, MT + sPlotH); ctx.stroke();
-
-        // Draw vertical bars per root
+        const sPlotH = plotH - sMB + MB;
         const barW = Math.max(1, plotW / n - 1);
         const gap = plotW / n;
-        for (let i = 0; i < n; i++) {
-            const x = ML + gap * (i + 0.5);
-            const h = (speeds[i] / sMax) * sPlotH;
-            ctx.strokeStyle = rootColor(i, n);
-            ctx.lineWidth = Math.min(barW, 4);
-            ctx.lineCap = "butt";
-            ctx.globalAlpha = 0.9;
-            ctx.beginPath();
-            ctx.moveTo(x, MT + sPlotH);
-            ctx.lineTo(x, MT + sPlotH - h);
-            ctx.stroke();
-        }
 
-        // Draw decaying peak dots
-        if (peaks && peaks.length === n) {
-            const dotR = Math.min(barW * 0.6, 3);
-            for (let i = 0; i < n; i++) {
-                const ph = (peaks[i] / sMax) * sPlotH;
-                const y = MT + sPlotH - ph;
-                ctx.fillStyle = rootColor(i, n);
-                ctx.globalAlpha = 0.95;
-                ctx.beginPath();
-                ctx.arc(ML + gap * (i + 0.5), y, dotR, 0, Math.PI * 2);
-                ctx.fill();
+        // Shared spectrum helper: grid + axis + index labels
+        function drawSpectrumFrame() {
+            ctx.strokeStyle = "rgba(255,255,255,0.04)";
+            ctx.lineWidth = 0.5;
+            for (const frac of [0.25, 0.5, 0.75]) {
+                const y = MT + sPlotH * (1 - frac);
+                ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML + plotW, y); ctx.stroke();
             }
+            ctx.strokeStyle = "rgba(255,255,255,0.08)";
+            ctx.lineWidth = 0.5;
+            ctx.beginPath(); ctx.moveTo(ML, MT + sPlotH); ctx.lineTo(ML + plotW, MT + sPlotH); ctx.stroke();
+        }
+        function drawSpectrumLabels() {
+            ctx.globalAlpha = 0.6;
+            ctx.font = `${Math.min(8, gap * 0.8)}px system-ui`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "top";
+            for (let i = 0; i < n; i++) {
+                ctx.fillStyle = rootColor(i, n);
+                ctx.fillText(i, ML + gap * (i + 0.5), MT + sPlotH + 1);
+            }
+            ctx.globalAlpha = 1.0;
         }
 
-        // Root index labels below axis
-        ctx.globalAlpha = 0.6;
-        ctx.font = `${Math.min(8, gap * 0.8)}px system-ui`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "top";
-        for (let i = 0; i < n; i++) {
-            ctx.fillStyle = rootColor(i, n);
-            ctx.fillText(i, ML + gap * (i + 0.5), MT + sPlotH + 1);
+        if (spectrumIdx === 0) {
+            // SpeedSpectrum
+            const speeds = statsState.rootSpeeds;
+            if (!speeds || speeds.length !== n) return;
+            let sMax = 0;
+            const peaks = statsState.spectrumPeaks;
+            for (let i = 0; i < n; i++) {
+                if (speeds[i] > sMax) sMax = speeds[i];
+                if (peaks && peaks.length === n && peaks[i] > sMax) sMax = peaks[i];
+            }
+            if (sMax < 1e-12) sMax = 1;
+
+            drawSpectrumFrame();
+            for (let i = 0; i < n; i++) {
+                const x = ML + gap * (i + 0.5);
+                const h = (speeds[i] / sMax) * sPlotH;
+                ctx.strokeStyle = rootColor(i, n);
+                ctx.lineWidth = Math.min(barW, 4);
+                ctx.lineCap = "butt";
+                ctx.globalAlpha = 0.9;
+                ctx.beginPath();
+                ctx.moveTo(x, MT + sPlotH);
+                ctx.lineTo(x, MT + sPlotH - h);
+                ctx.stroke();
+            }
+            if (peaks && peaks.length === n) {
+                const dotR = Math.min(barW * 0.6, 3);
+                for (let i = 0; i < n; i++) {
+                    const ph = (peaks[i] / sMax) * sPlotH;
+                    const y = MT + sPlotH - ph;
+                    ctx.fillStyle = rootColor(i, n);
+                    ctx.globalAlpha = 0.95;
+                    ctx.beginPath();
+                    ctx.arc(ML + gap * (i + 0.5), y, dotR, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            drawSpectrumLabels();
+
+        } else if (spectrumIdx === 1) {
+            // OdometerSpectrum
+            const od = statsState.rootOdometers;
+            if (!od || od.length !== n) return;
+            const cl = statsState.odometerCycleLengths;
+            let sMax = 0;
+            for (let i = 0; i < n; i++) {
+                if (od[i] > sMax) sMax = od[i];
+                if (cl && cl.length === n && cl[i] > sMax) sMax = cl[i];
+            }
+            if (sMax < 1e-12) sMax = 1;
+
+            drawSpectrumFrame();
+            for (let i = 0; i < n; i++) {
+                const x = ML + gap * (i + 0.5);
+                const h = (od[i] / sMax) * sPlotH;
+                ctx.strokeStyle = rootColor(i, n);
+                ctx.lineWidth = Math.min(barW, 4);
+                ctx.lineCap = "butt";
+                ctx.globalAlpha = 0.9;
+                ctx.beginPath();
+                ctx.moveTo(x, MT + sPlotH);
+                ctx.lineTo(x, MT + sPlotH - h);
+                ctx.stroke();
+            }
+            // Cycle-length dots (max from last completed loop)
+            if (cl && cl.length === n) {
+                const dotR = Math.min(barW * 0.6, 3);
+                for (let i = 0; i < n; i++) {
+                    const ch = (cl[i] / sMax) * sPlotH;
+                    const y = MT + sPlotH - ch;
+                    ctx.fillStyle = rootColor(i, n);
+                    ctx.globalAlpha = 0.95;
+                    ctx.beginPath();
+                    ctx.arc(ML + gap * (i + 0.5), y, dotR, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            drawSpectrumLabels();
+
+        } else if (spectrumIdx === 2) {
+            // WindingSpectrum — cumulative winding number per root (signed, in turns)
+            const w = statsState.rootWindings;
+            if (!w || w.length !== n) return;
+            // Find max absolute winding for symmetric scale
+            let wMax = 0;
+            for (let i = 0; i < n; i++) {
+                const a = Math.abs(w[i]);
+                if (a > wMax) wMax = a;
+            }
+            if (wMax < 1e-6) wMax = 1;
+            const halfH = sPlotH / 2;
+
+            drawSpectrumFrame();
+            // Draw zero line at center
+            ctx.strokeStyle = "rgba(255,255,255,0.12)";
+            ctx.lineWidth = 0.5;
+            ctx.beginPath(); ctx.moveTo(ML, MT + halfH); ctx.lineTo(ML + plotW, MT + halfH); ctx.stroke();
+            // Draw bars (positive = up from center, negative = down from center)
+            for (let i = 0; i < n; i++) {
+                const x = ML + gap * (i + 0.5);
+                const h = (w[i] / wMax) * halfH;
+                ctx.strokeStyle = rootColor(i, n);
+                ctx.lineWidth = Math.min(barW, 4);
+                ctx.lineCap = "butt";
+                ctx.globalAlpha = 0.9;
+                ctx.beginPath();
+                ctx.moveTo(x, MT + halfH);
+                ctx.lineTo(x, MT + halfH - h);
+                ctx.stroke();
+            }
+            // Y-axis labels: show max winding value
+            ctx.fillStyle = "rgba(255,255,255,0.35)";
+            ctx.font = "8px system-ui";
+            ctx.textAlign = "right";
+            ctx.textBaseline = "middle";
+            ctx.globalAlpha = 1.0;
+            ctx.fillText("+" + wMax.toFixed(1), ML - 2, MT + 4);
+            ctx.fillText("-" + wMax.toFixed(1), ML - 2, MT + sPlotH - 4);
+            ctx.fillText("0", ML - 2, MT + halfH);
+            drawSpectrumLabels();
+
+        } else if (spectrumIdx === 3) {
+            // TortuositySpectrum — net displacement / path length (directness)
+            // Auto-scaled y-axis to largest value so differences are visible
+            const odo = statsState.rootTortuosityOdo;
+            const ndx = statsState.rootTortuosityNetDx;
+            const ndy = statsState.rootTortuosityNetDy;
+            if (!odo || odo.length !== n) return;
+            const dir = new Float64Array(n);
+            let dMax = 0;
+            for (let i = 0; i < n; i++) {
+                const netD = Math.hypot(ndx[i], ndy[i]);
+                dir[i] = odo[i] > 1e-8 ? netD / odo[i] : 1;
+                if (dir[i] > dMax) dMax = dir[i];
+            }
+            if (dMax < 1e-12) dMax = 1;
+
+            drawSpectrumFrame();
+            for (let i = 0; i < n; i++) {
+                const x = ML + gap * (i + 0.5);
+                const h = (dir[i] / dMax) * sPlotH;
+                ctx.strokeStyle = rootColor(i, n);
+                ctx.lineWidth = Math.min(barW, 4);
+                ctx.lineCap = "butt";
+                ctx.globalAlpha = 0.9;
+                ctx.beginPath();
+                ctx.moveTo(x, MT + sPlotH);
+                ctx.lineTo(x, MT + sPlotH - h);
+                ctx.stroke();
+            }
+            drawSpectrumLabels();
         }
 
-        ctx.globalAlpha = 1.0;
         return;
     }
 
@@ -4978,7 +5359,7 @@ function drawStatsPlot(plotIdx) {
 
     // Draw stat line
     ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.globalAlpha = 0.9;
@@ -4996,14 +5377,14 @@ function drawStatsPlot(plotIdx) {
     const lastIdx = (startIdx + nFrames - 1) % statsState.maxFrames;
     const curVal = buf[lastIdx];
     ctx.fillStyle = color;
-    ctx.font = "bold 9px system-ui";
+    ctx.font = "bold 7px system-ui";
     ctx.textAlign = "right";
     ctx.fillText(curVal < 100 ? curVal.toFixed(3) : curVal.toFixed(1), W - MR - 2, MT + 10);
 }
 
 function drawAllStatsPlots() {
     statsState.dirty = false;
-    for (let i = 0; i < 4; i++) drawStatsPlot(i);
+    for (let i = 0; i < 16; i++) drawStatsPlot(i);
 }
 
 // Tab switching

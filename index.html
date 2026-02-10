@@ -575,6 +575,8 @@ circle.coeff.selected, circle.root.selected {
                     <button id="trails-btn">Trails</button>
                     <button id="root-color-btn" class="roots-tool-btn active" title="Color roots">🎨</button>
                     <button id="domain-toggle-btn" class="roots-tool-btn" title="Domain coloring">◐</button>
+                    <button id="select-all-roots-btn" class="roots-tool-btn" title="Select all roots">⊕ All</button>
+                    <button id="deselect-all-roots-btn" class="roots-tool-btn" title="Deselect all roots">✕ None</button>
                 </div>
                 <div id="roots-container">
                     <canvas id="domain-canvas"></canvas>
@@ -3589,6 +3591,16 @@ domainToggleBtn.addEventListener("click", function () {
     domainCanvas.style.display = domainColoringEnabled ? "block" : "none";
     rootsSvg.classed("domain-active", domainColoringEnabled);
     if (domainColoringEnabled) renderDomainColoring();
+});
+
+document.getElementById("select-all-roots-btn").addEventListener("click", function () {
+    clearCoeffSelection();
+    for (let i = 0; i < currentRoots.length; i++) selectedRoots.add(i);
+    updateRootSelectionVisual();
+});
+
+document.getElementById("deselect-all-roots-btn").addEventListener("click", function () {
+    clearRootSelection();
 });
 
 // --- Root color popover ---

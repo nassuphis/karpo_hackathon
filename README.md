@@ -51,11 +51,9 @@ No server. No WebSocket. No build tools. The entire app is one self-contained HT
 
 ## Interface
 
-The UI is organized around a left sidebar with three groups and a compact header:
+The UI is organized around a left sidebar with two groups and a compact header:
 
 **Header:** App title, clickable **Degree** label (click to open slider, range 3–30), and **Pattern** dropdown.
-
-**Sidebar — View:** **B** Base / **M** Melody / **V** Voice sound toggles (each opens a config popover).
 
 **Sidebar — Tools:** ⬇ Export snapshot.
 
@@ -84,7 +82,7 @@ The UI is organized around a left sidebar with three groups and a compact header
 | **Roots / Stats / Sound** tabs | Roots panel tab bar — switch between root visualization, stats dashboard, and sound routing. |
 | **Stats** dropdowns | Each of the 16 stat plots has a dropdown: 23 time-series, 5 phase-space plots, and 4 spectrum charts. Sonification features (MedianR, Spread, EMed, EHi, Coherence, Encounters) mirror the audio pipeline with matching EMA smoothing. |
 | **⏺** record (tab bar) | Records to WebM video. Mode selector: Roots, Coefficients, or Both (side-by-side). Auto-stops on loop completion. |
-| **B / M / V** sound buttons | Toggle and configure the three sound layers. Click to open config popover with on/off toggle + tuning sliders. See [Sonification](docs/sonification.md). |
+| **B / M / V** (Sound tab toolbar) | Toggle and configure the three sound layers. Click to open config popover with on/off toggle + tuning sliders. See [Sonification](docs/sonification.md). |
 | **Selection count** (panel headers) | Shows the number of selected items next to "Coefficients" (green) and "Roots" (red) panel titles. |
 
 ### Selection

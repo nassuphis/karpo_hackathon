@@ -399,6 +399,13 @@ circle.coeff.selected, circle.root.selected {
 }
 #trails-btn.active, .roots-tool-btn.active { background: var(--accent-dim); color: #fff; border-color: var(--accent-border); }
 #trails-btn:hover:not(.active), .roots-tool-btn:hover:not(.active) { color: var(--text); border-color: var(--stroke2); }
+#sound-toolbar { display: flex; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--stroke); }
+.sound-tool-btn {
+    background: rgba(255,255,255,0.04); color: var(--muted); border: 1px solid var(--stroke); border-radius: 6px;
+    padding: 4px 10px; font-size: 11px; cursor: pointer; font-weight: 500; transition: all 0.12s;
+}
+.sound-tool-btn:hover { color: var(--text); border-color: var(--stroke2); }
+.sound-tool-btn.active { background: var(--accent-dim); color: #fff; border-color: var(--accent-border); }
 .bar-sel-btn {
     background: transparent; color: var(--muted); border: 1px solid var(--stroke); border-radius: 5px;
     padding: 2px 7px; font-size: 10px; cursor: pointer; transition: all 0.12s;
@@ -487,12 +494,6 @@ circle.coeff.selected, circle.root.selected {
 </div>
 <div id="content">
     <div id="sidebar">
-        <div class="side-group">
-            <div class="side-label">View</div>
-            <button id="base-toggle-btn" class="side-btn" title="Base (drone)">B</button>
-            <button id="melody-toggle-btn" class="side-btn" title="Melody (arpeggio)">M</button>
-            <button id="voice-toggle-btn" class="side-btn" title="Voice (beeps)">V</button>
-        </div>
         <div class="side-group">
             <div class="side-label">Tools</div>
             <button id="snap-btn" class="side-btn" title="Export snapshot">⬇</button>
@@ -601,6 +602,11 @@ circle.coeff.selected, circle.root.selected {
                 </div>
             </div>
             <div id="sound-content" class="tab-content">
+                <div id="sound-toolbar">
+                    <button id="base-toggle-btn" class="sound-tool-btn" title="Base (drone)">B Base</button>
+                    <button id="melody-toggle-btn" class="sound-tool-btn" title="Melody (arpeggio)">M Melody</button>
+                    <button id="voice-toggle-btn" class="sound-tool-btn" title="Voice (beeps)">V Voice</button>
+                </div>
                 <div class="config-panel" id="config-sliders"></div>
             </div>
         </div>
@@ -3776,8 +3782,8 @@ function openAudioPop(btnEl, buildFn) {
     buildFn(audioPop);
     audioPop.classList.add("open");
     const r = btnEl.getBoundingClientRect();
-    audioPop.style.left = (r.right + 8) + "px";
-    audioPop.style.top = r.top + "px";
+    audioPop.style.left = r.left + "px";
+    audioPop.style.top = (r.bottom + 6) + "px";
 }
 
 function toggleSound(flag, setFn, btnEl) {

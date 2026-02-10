@@ -13,7 +13,7 @@ PolyPaint makes this relationship tangible. Two side-by-side complex-plane panel
 <video controls loop muted playsinline width="720" src="https://github.com/user-attachments/assets/7ab7733b-4a6f-47b2-b8fe-a9f650cd9c22"></video>
 
 - **Left panel (Coefficients):** Drag any coefficient dot and watch the roots respond instantly on the right. The domain coloring background shifts in real time, revealing how the polynomial's complex landscape reshapes.
-- **Right panel (Roots):** Drag any root dot and the coefficients on the left update to match — the polynomial is reconstructed from its roots via (z − r₀)(z − r₁)···(z − rₙ₋₁).
+- **Right panel (Roots):** Drag any root dot and the coefficients on the left update to match — the polynomial is reconstructed from its roots via (z − r₀)(z − r₁)···(z − rₙ₋₁). During a single-root drag, a dashed polyline connects all coefficient anchor points (c₀ through cₙ) on the left panel, visualizing the coefficient constellation as a chain.
 - **Multi-select:** Click individual dots to toggle selection, or **marquee-select** by clicking and dragging on empty canvas to select all nodes inside the rectangle. Drag any selected item and the entire group moves together, maintaining relative positions.
 - **Animate:** Each coefficient has its own trajectory — assign a curve (circle, figure-8, spiral, etc.) with independent radius, speed, and direction. Select coefficients and configure them via the always-visible trajectory editor. Hit Play and all animated coefficients follow their trajectories simultaneously, creating rich interference patterns as the roots respond to the combined perturbation.
 - **Transform:** Select coefficients or roots and use interactive gesture tools — **Scale** (vertical slider with exponential mapping), **Rotate** (horizontal slider in turns), and **Translate** (2D vector pad) — all with live preview as you drag. Ops work on both coefficient and root selections — the target label turns green for coefficients, red for roots.
@@ -53,7 +53,7 @@ No server. No WebSocket. No build tools. The entire app is one self-contained HT
 
 The UI is organized around a left sidebar with two groups and a compact header:
 
-**Header:** App title, clickable **Degree** label (click to open slider, range 3–30), and **Pattern** dropdown.
+**Header:** App title with version number, clickable **Degree** label (click to open slider, range 3–30), and **Pattern** dropdown.
 
 **Sidebar — Tools:** ⬇ Export snapshot.
 
@@ -63,7 +63,7 @@ The UI is organized around a left sidebar with two groups and a compact header:
 
 **Trajectory editor** (always visible below the header): ☰ Coefficient picker, ⊕ All / ✕ None selection buttons, selection label, and **Update Sel** button on the first row. Path type dropdown, CW/CCW toggle, and R/S/A sliders on the second row. Controls dim when no coefficients are selected.
 
-**Roots toolbar** (overlay on the roots canvas): **Trails** toggle, 🎨 Root coloring toggle, ◐ Domain coloring toggle.
+**Roots toolbar** (overlay on the roots canvas): **Trails** toggle, 🎨 Root coloring toggle, ◐ Domain coloring toggle, ⊕ All / ✕ None root selection buttons.
 
 | Control | Description |
 |---------|-------------|
@@ -89,7 +89,7 @@ The UI is organized around a left sidebar with two groups and a compact header:
 
 - **Click** any dot to toggle it into the selection.
 - **Marquee select:** Click and drag on empty canvas to draw a selection rectangle — all nodes inside are added to the selection.
-- **⊕ All / ✕ None:** Quick select/deselect all coefficients from the trajectory editor bar.
+- **⊕ All / ✕ None:** Quick select/deselect all coefficients from the trajectory editor bar, or all roots from the roots toolbar.
 - Selected nodes pulse with a bright glow to clearly indicate membership.
 - Clicking a coefficient clears any root selection and vice versa. Press **Escape** to close any open tool, or deselect all if no tool is open.
 - The trajectory editor displays the last-selected coefficient's settings. Twiddling any control or clicking **Update Sel** applies the editor's settings to all selected coefficients.
@@ -134,6 +134,7 @@ karpo_hackathon/
 
 - **Leading coefficient at origin**: near-zero leading coefficients are stripped before solving
 - **NaN/Inf roots**: filtered out before rendering
+- **Huge coefficients during root drag**: `rootsToCoefficients` can produce coefficients with magnitudes up to ~10¹¹ at high degree; grid step computation uses a dynamic 1-2-5 × 10ᵏ formula to keep ≤20 grid lines per axis at any scale, and `computeRange` caps overflow to prevent infinite loops
 - **Window resize**: panels dynamically resize, solver re-runs
 - **Degree change**: coefficients reinitialized, both panels reset
 

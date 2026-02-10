@@ -20,11 +20,20 @@ for webm in "$SNAPS_DIR"/*.webm; do
         echo "skip (mp4 exists): $(basename "$webm")"
         continue
     fi
+    # Skip empty files (failed recordings)
+    if [ ! -s "$webm" ]; then
+        echo "skip (0 bytes, deleting): $(basename "$webm")"
+        rm "$webm"
+        continue
+    fi
     echo "converting: $(basename "$webm")"
-    ffmpeg -y -i "$webm" -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -movflags +faststart "$mp4" </dev/null 2>/dev/null
-    rm "$webm"
-    echo "  -> $(basename "$mp4") ($(du -h "$mp4" | cut -f1))"
-    count=$((count + 1))
+    if ffmpeg -y -i "$webm" -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -movflags +faststart "$mp4" </dev/null 2>/dev/null; then
+        rm "$webm"
+        echo "  -> $(basename "$mp4") ($(du -h "$mp4" | cut -f1))"
+        count=$((count + 1))
+    else
+        echo "  FAILED: $(basename "$webm") — ffmpeg error (run manually to debug)" >&2
+    fi
 done
 
 if [ "$count" -eq 0 ]; then

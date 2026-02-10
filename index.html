@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v7</title>
+<title>PolyPaint v8</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
 :root {
@@ -451,7 +451,7 @@ circle.coeff.selected, circle.root.selected {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v7</span>
+    <span class="app-title">PolyPaint v8</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -626,6 +626,26 @@ circle.coeff.selected, circle.root.selected {
 <div id="coeff-ctx" class="ops-pop"></div>
 
 <script>
+// ============================================================================
+// COEFFICIENT INDEXING CONVENTION
+//
+// The polynomial is p(z) = cₙzⁿ + cₙ₋₁zⁿ⁻¹ + ··· + c₁z + c₀
+//
+// Subscript = power of z:
+//   cₙ  = leading coefficient (always 1+0i for monic polynomials from roots)
+//   c₀  = constant term
+//
+// Internal array storage is in DESCENDING power order:
+//   coefficients[0]   = cₙ   (leading, z^n)
+//   coefficients[1]   = cₙ₋₁ (z^(n-1))
+//   ...
+//   coefficients[n]   = c₀   (constant, z^0)
+//
+// So array index i corresponds to cₖ where k = degree - i.
+// All user-facing labels (SVG dots, picker, bar title, recording canvas)
+// display the power-based subscript k, NOT the array index i.
+// ============================================================================
+
 const MIN_RANGE = 1.5;
 const MARGIN = 30;
 const RANGE_PAD = 1.3; // 30% padding around data
@@ -3717,7 +3737,7 @@ function buildCoeffPickPop(pop) {
 
         const label = document.createElement("span");
         label.className = "cpick-label";
-        label.textContent = "c" + i;
+        label.textContent = "c" + (deg - i);
 
         const power = document.createElement("span");
         power.className = "cpick-power";

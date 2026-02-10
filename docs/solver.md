@@ -4,7 +4,7 @@ The core computational engine is a pure JavaScript implementation of the [Ehrlic
 
 ## How It Works
 
-Given a degree-*n* polynomial with coefficients c₀, ..., cₙ, the algorithm maintains *n* root approximations z₁, ..., zₙ and refines them all simultaneously:
+Given a degree-*n* polynomial p(z) = cₙzⁿ + ··· + c₁z + c₀ (subscript = power of z), the algorithm maintains *n* root approximations z₁, ..., zₙ and refines them all simultaneously:
 
 1. **Evaluate** p(zᵢ) and p'(zᵢ) at each current root estimate using [Horner's method](https://en.wikipedia.org/wiki/Horner%27s_method) — this computes both the polynomial value and its derivative in a single O(n) pass per root.
 
@@ -36,7 +36,7 @@ The solver (`solveRootsEA` in `index.html`) uses:
   p  = p · z + cₖ      // polynomial accumulator
   ```
 - **Guard clauses** for degenerate cases: near-zero derivative (skip update), near-coincident roots (skip Aberth term), leading zero coefficients (strip before solving), degree 1 (direct formula)
-- **Radius heuristic** for cold-start initialization: initial guesses are spread on a circle of radius (|cₙ|/|c₀|)^(1/n), derived from the polynomial's coefficient ratio, with an angular offset of 0.37 radians to break symmetry
+- **Radius heuristic** for cold-start initialization: initial guesses are spread on a circle of radius (|c₀|/|cₙ|)^(1/n), derived from the constant-to-leading coefficient ratio, with an angular offset of 0.37 radians to break symmetry
 
 ## Bidirectional Editing
 

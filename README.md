@@ -6,14 +6,14 @@ Interactive polynomial root visualizer. Drag coefficients *or* roots in the comp
 
 ## What It Does
 
-A degree-*n* polynomial p(z) = c₀zⁿ + c₁zⁿ⁻¹ + ··· + cₙ has *n*+1 complex coefficients and *n* complex roots. The relationship between them is rich, nonlinear, and often surprising — small changes to one coefficient can send roots flying across the plane, while other perturbations barely move them.
+A degree-*n* polynomial p(z) = cₙzⁿ + cₙ₋₁zⁿ⁻¹ + ··· + c₁z + c₀ has *n*+1 complex coefficients and *n* complex roots. The subscript is the power of *z*: cₙ is the leading coefficient, c₀ is the constant term. The relationship between them is rich, nonlinear, and often surprising — small changes to one coefficient can send roots flying across the plane, while other perturbations barely move them.
 
 PolyPaint makes this relationship tangible. Two side-by-side complex-plane panels let you explore it from both directions.
 
 <video controls loop muted playsinline width="720" src="https://github.com/user-attachments/assets/7ab7733b-4a6f-47b2-b8fe-a9f650cd9c22"></video>
 
 - **Left panel (Coefficients):** Drag any coefficient dot and watch the roots respond instantly on the right. The domain coloring background shifts in real time, revealing how the polynomial's complex landscape reshapes.
-- **Right panel (Roots):** Drag any root dot and the coefficients on the left update to match — the polynomial is reconstructed from its roots via (z − r₀)(z − r₁)···(z − rₙ₋₁). During a single-root drag, a dashed polyline connects all coefficient anchor points (c₀ through cₙ) on the left panel, visualizing the coefficient constellation as a chain.
+- **Right panel (Roots):** Drag any root dot and the coefficients on the left update to match — the polynomial is reconstructed from its roots via (z − r₀)(z − r₁)···(z − rₙ₋₁). During a single-root drag, a dashed polyline connects all coefficient dots on the left panel, visualizing the coefficient constellation as a chain.
 - **Multi-select:** Click individual dots to toggle selection, or **marquee-select** by clicking and dragging on empty canvas to select all nodes inside the rectangle. Drag any selected item and the entire group moves together, maintaining relative positions.
 - **Animate:** Each coefficient has its own trajectory — assign a curve (circle, figure-8, spiral, etc.) with independent radius, speed, and direction. Select coefficients and configure them via the always-visible trajectory editor. Hit Play and all animated coefficients follow their trajectories simultaneously, creating rich interference patterns as the roots respond to the combined perturbation.
 - **Transform:** Select coefficients or roots and use interactive gesture tools — **Scale** (vertical slider with exponential mapping), **Rotate** (horizontal slider in turns), and **Translate** (2D vector pad) — all with live preview as you drag. Ops work on both coefficient and root selections — the target label turns green for coefficients, red for roots.

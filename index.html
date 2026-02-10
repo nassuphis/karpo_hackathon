@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v13</title>
+<title>PolyPaint v14</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
 :root {
@@ -428,6 +428,10 @@ circle.coeff.selected, circle.root.selected {
 }
 .bitmap-btn:hover { background: var(--accent); color: #fff; }
 .bitmap-btn:disabled { opacity: 0.3; cursor: default; background: transparent; color: var(--accent); }
+.bitmap-select {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--accent-border); border-radius: 6px;
+    padding: 2px 4px; font-size: 10px; font-weight: 600; cursor: pointer;
+}
 body.fast-mode #header,
 body.fast-mode #sidebar,
 body.fast-mode .tab-bar,
@@ -439,7 +443,8 @@ body.fast-mode .panel:first-child {
     opacity: 0.15; pointer-events: none; filter: grayscale(1);
     transition: opacity 0.3s, filter 0.3s;
 }
-body.fast-mode #bitmap-toolbar .bitmap-btn:not(#bitmap-fast-btn) {
+body.fast-mode #bitmap-toolbar .bitmap-btn:not(#bitmap-fast-btn),
+body.fast-mode #bitmap-toolbar .bitmap-select {
     opacity: 0.3; pointer-events: none;
 }
 body.fast-mode #bitmap-fast-btn {
@@ -479,7 +484,7 @@ body.fast-mode #bitmap-fast-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v13</span>
+    <span class="app-title">PolyPaint v14</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -640,12 +645,14 @@ body.fast-mode #bitmap-fast-btn {
                 <div class="config-panel" id="config-sliders"></div>
             </div>
             <div id="bitmap-content" class="tab-content">
-                <div id="bitmap-toolbar" style="display:flex;gap:6px;padding:4px 6px;align-items:center;">
+                <div id="bitmap-toolbar" style="display:flex;gap:6px;padding:4px 6px;align-items:center;flex-wrap:wrap;">
                     <button id="bitmap-start-btn" class="bitmap-btn">start</button>
                     <button id="bitmap-save-btn" class="bitmap-btn" disabled>save</button>
                     <button id="bitmap-clear-btn" class="bitmap-btn" disabled>clear</button>
+                    <select id="bitmap-res-select" class="bitmap-select"><option value="1000">1000px</option><option value="2000" selected>2000px</option><option value="5000">5000px</option></select>
                     <button id="bitmap-fast-btn" class="bitmap-btn" disabled>fastmode</button>
-                    <span id="bitmap-info" style="font-size:9px;color:var(--muted);margin-left:auto;"></span>
+                    <select id="bitmap-steps-select" class="bitmap-select"><option value="10000">10K</option><option value="50000">50K</option><option value="100000">100K</option></select>
+                    <div id="bitmap-progress" style="display:none;flex:1;min-width:60px;height:6px;background:var(--stroke);border-radius:3px;margin-left:4px;overflow:hidden;"><div id="bitmap-progress-bar" style="height:100%;width:0%;background:var(--accent);border-radius:3px;transition:width 0.1s;"></div></div>
                 </div>
                 <div id="bitmap-container" style="flex:1;min-height:0;position:relative;background:#000;">
                     <canvas id="bitmap-canvas" style="width:100%;height:100%;"></canvas>
@@ -758,7 +765,6 @@ let bitmapCtx = null;
 let bitmapRange = null;   // frozen bounding box from roots panel
 let bitmapFrameCount = 0;
 // Fast mode state
-const COEFF_TRAIL_SAMPLES_FAST = 10000;
 const FAST_PASS_SECONDS = 1.0; // virtual duration of one fast pass
 let fastModeActive = false;
 let fastModeCurves = null;      // Map<coeffIndex, hi-res curve>
@@ -6273,18 +6279,15 @@ function drawAllStatsPlots() {
 
 function initBitmapCanvas() {
     const canvas = document.getElementById("bitmap-canvas");
-    const container = document.getElementById("bitmap-container");
-    const rect = container.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.floor(rect.width * dpr);
-    canvas.height = Math.floor(rect.height * dpr);
+    const res = parseInt(document.getElementById("bitmap-res-select").value, 10) || 2000;
+    canvas.width = res;
+    canvas.height = res;
     bitmapCtx = canvas.getContext("2d");
     bitmapCtx.fillStyle = "#000";
     bitmapCtx.fillRect(0, 0, canvas.width, canvas.height);
     bitmapRange = panels.roots.range;
     bitmapFrameCount = 0;
     bitmapActive = true;
-    document.getElementById("bitmap-info").textContent = canvas.width + "\u00d7" + canvas.height + "px";
 }
 
 function paintBitmapFrame() {
@@ -6303,7 +6306,6 @@ function paintBitmapFrame() {
         bitmapCtx.fill();
     }
     bitmapFrameCount++;
-    document.getElementById("bitmap-info").textContent = w + "\u00d7" + h + "px \u2022 " + bitmapFrameCount + " frames";
 }
 
 // --- Fast mode: high-res bitmap rendering ---
@@ -6349,13 +6351,16 @@ function enterFastMode() {
         document.getElementById("bitmap-start-btn").textContent = "restart";
     }
 
+    // Read steps from dropdown
+    const stepsVal = parseInt(document.getElementById("bitmap-steps-select").value, 10) || 10000;
+
     // Precompute hi-res curves for all animated coefficients
     fastModeCurves = new Map();
     const animated = allAnimatedCoeffs();
     for (const idx of animated) {
         const c = coefficients[idx];
         const absR = (c.radius / 100) * coeffExtent();
-        const curve = computeCurveN(c.re, c.im, c.pathType, absR, c.angle, c.extra, COEFF_TRAIL_SAMPLES_FAST);
+        const curve = computeCurveN(c.re, c.im, c.pathType, absR, c.angle, c.extra, stepsVal);
         fastModeCurves.set(idx, curve);
     }
 
@@ -6366,10 +6371,12 @@ function enterFastMode() {
 
     fastModeActive = true;
     fastModeStepIndex = 0;
-    fastModeTotalSteps = COEFF_TRAIL_SAMPLES_FAST;
+    fastModeTotalSteps = stepsVal;
 
     document.body.classList.add("fast-mode");
     document.getElementById("bitmap-fast-btn").textContent = "imode";
+    const prog = document.getElementById("bitmap-progress");
+    if (prog) { prog.style.display = ""; document.getElementById("bitmap-progress-bar").style.width = "0%"; }
 
     fastModeTimerId = setTimeout(fastModeChunk, 0);
 }
@@ -6384,6 +6391,8 @@ function exitFastMode() {
 
     document.body.classList.remove("fast-mode");
     document.getElementById("bitmap-fast-btn").textContent = "fastmode";
+    const prog = document.getElementById("bitmap-progress");
+    if (prog) prog.style.display = "none";
 
     // Bring interactive UI back in sync
     renderCoefficients();
@@ -6440,13 +6449,9 @@ function fastModeChunk() {
 
     fastModeStepIndex = step;
 
-    // Update progress (cheap DOM update once per chunk)
-    const info = document.getElementById("bitmap-info");
-    if (info) {
-        const w = bitmapCtx ? bitmapCtx.canvas.width : 0;
-        const h = bitmapCtx ? bitmapCtx.canvas.height : 0;
-        info.textContent = w + "\u00d7" + h + "px \u2022 " + bitmapFrameCount + " frames \u2022 " + fastModeStepIndex + "/" + fastModeTotalSteps + " steps";
-    }
+    // Update progress bar (cheap DOM update once per chunk)
+    const bar = document.getElementById("bitmap-progress-bar");
+    if (bar) bar.style.width = (fastModeStepIndex / fastModeTotalSteps * 100) + "%";
 
     if (fastModeStepIndex >= fastModeTotalSteps) {
         exitFastMode();
@@ -6466,12 +6471,12 @@ function resetBitmap() {
     const saveBtn = document.getElementById("bitmap-save-btn");
     const clearBtn = document.getElementById("bitmap-clear-btn");
     const fastBtn = document.getElementById("bitmap-fast-btn");
-    const info = document.getElementById("bitmap-info");
+    const prog = document.getElementById("bitmap-progress");
     if (startBtn) startBtn.textContent = "start";
     if (saveBtn) saveBtn.disabled = true;
     if (clearBtn) clearBtn.disabled = true;
     if (fastBtn) { fastBtn.disabled = true; fastBtn.textContent = "fastmode"; }
-    if (info) info.textContent = "";
+    if (prog) prog.style.display = "none";
 }
 
 // Tab switching
@@ -6524,7 +6529,6 @@ document.getElementById("bitmap-clear-btn").addEventListener("click", function (
         bitmapCtx.fillStyle = "#000";
         bitmapCtx.fillRect(0, 0, bitmapCtx.canvas.width, bitmapCtx.canvas.height);
         bitmapFrameCount = 0;
-        document.getElementById("bitmap-info").textContent = "";
     }
 });
 

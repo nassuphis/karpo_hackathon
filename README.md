@@ -17,7 +17,7 @@ PolyPaint makes this relationship tangible. Two side-by-side complex-plane panel
 - **Multi-select:** Click individual dots to toggle selection, or **marquee-select** by clicking and dragging on empty canvas to select all nodes inside the rectangle. Drag any selected item and the entire group moves together, maintaining relative positions.
 - **Animate:** Define multiple simultaneous animation paths — each path drives a different subset of coefficients along its own curve (circle, figure-8, spiral, etc.) with independent radius, speed, and direction. Hit Play and all paths activate at once, creating rich interference patterns as the roots respond to the combined perturbation.
 - **Transform:** Select coefficients or roots and use interactive gesture tools — **Scale** (vertical slider with exponential mapping), **Rotate** (horizontal slider in turns), and **Translate** (2D vector pad) — all with live preview as you drag. Ops work on both coefficient and root selections — the target label turns green for coefficients, red for roots.
-- **Sonify:** Three independent sound layers — **Base** (FM drone), **Melody** (pentatonic arpeggiator), and **Voice** (close-encounter beeps) — each with its own sidebar button and config popover. Click any button to open a panel of tuning sliders (pitch, FM depth, volume, cutoff, etc.) that reshape the sound in real time. See [Sonification](docs/sonification.md) for the full algorithm.
+- **Sonify:** Three independent sound layers — **Base** (FM drone), **Melody** (pentatonic arpeggiator), and **Voice** (close-encounter beeps) — each with its own sidebar button and config popover. Click any button to open a panel of tuning sliders (pitch, FM depth, volume, cutoff, etc.) that reshape the sound in real time. The **Sound** tab exposes a signal routing matrix: any of the 25 computed stats (speed, distance, angular momentum, etc.) can be patched into any of the 14 audio parameters across all three instruments, with per-route normalization (Fixed or adaptive RunMax) and EMA smoothing. See [Sonification](docs/sonification.md) for the full algorithm.
 - **Sensitivity coloring:** Switch root coloring to **Derivative** mode to color each root by how sensitive it is to coefficient perturbation — blue (stable) through white to red (volatile). Uses the Jacobian ∂rⱼ/∂cₖ = −rⱼⁿ⁻ᵏ / p'(rⱼ) with rank-based normalization. The coefficient picker also shows per-coefficient sensitivity dots.
 - **Stats dashboard:** The roots panel has a **Stats** tab with a 4×4 grid of 16 configurable plots, each selectable from 23 time-series stats, 5 phase-space plots, and 4 spectrum charts. Time-series include **Force/MinForce/MaxForce** (Jacobian sensitivity per root), **Speed/MinSpeed/MaxSpeed** (root displacements), **MinDist/MaxDist/MeanDist/ΔMeanDist/σDist** (pairwise distances), **Records** (closeness record-breaking events), **AngularMom** (signed rotational momentum), **σSpeed/EMASpeed** (speed statistics), **Odometer/CycleCount** (cumulative distance and cycle detection), and 6 **sonification features** — **MedianR** (median radius from centroid), **Spread** (r90−r10), **EMed/EHi** (50th/85th percentile speeds), **Coherence** (angular clustering), **Encounters** (per-root record-breaking close approaches) — all with one-pole EMA smoothing matching the audio pipeline. Phase plots show correlations (e.g. MaxForce v MaxSpeed, MeanDist v σDist). Spectrum charts: **SpeedSpectrum** (per-root bar chart with all-time peak dots), **OdometerSpectrum**, **WindingSpectrum** (signed cumulative angle), **TortuositySpectrum** (directness ratio). Data is collected every frame into a 4000-frame ring buffer.
 
@@ -32,7 +32,7 @@ Or visit the **[live demo](https://nassuphis.github.io/karpo_hackathon/)**.
 ## Architecture
 
 ```
-Single HTML file (~4700 lines)
+Single HTML file (~5800 lines)
 ├── d3.js v7 (CDN)          — SVG rendering, drag interactions
 ├── Ehrlich-Aberth solver    — polynomial root finding in pure JS
 ├── Horner evaluator         — domain coloring + derivative computation
@@ -45,7 +45,7 @@ No server. No WebSocket. No build tools. The entire app is one self-contained HT
 ## Deep Dives
 
 - **[Root Finding: Ehrlich-Aberth Method & Domain Coloring](docs/solver.md)** — the simultaneous iterative solver with cubic convergence, warm-starting for interactive use, and HSL domain coloring
-- **[Sonification](docs/sonification.md)** — audio graph, feature extraction from root distributions, sound mapping formulas, instrument config popovers, and silence management
+- **[Sonification](docs/sonification.md)** — audio graph, feature extraction from root distributions, sound mapping formulas, instrument config popovers, signal routing matrix, and silence management
 - **[Root Braids and Monodromy](docs/braids.md)** — why closed loops in coefficient space permute roots, and how trail rendering visualizes it
 - **[Patterns & Trail Gallery](docs/patterns.md)** — the 26 initial patterns (basic, coefficient, root shapes) and annotated trail screenshots
 
@@ -71,7 +71,7 @@ The UI is organized around a left sidebar with three groups and a compact header
 | **A (Angle)** slider | Rotates the path shape around the coefficient (0–1 → 0–360°). |
 | **CW / CCW** toggle | Sets clockwise or counter-clockwise direction for the current path. |
 | **×** delete button | Removes the currently viewed path. |
-| **Roots / Stats** tabs | Roots panel tab bar — switch between root visualization and stats dashboard. |
+| **Roots / Stats / Sound** tabs | Roots panel tab bar — switch between root visualization, stats dashboard, and sound routing. |
 | **Stats** dropdowns | Each of the 16 stat plots has a dropdown: 23 time-series, 5 phase-space plots, and 4 spectrum charts. Sonification features (MedianR, Spread, EMed, EHi, Coherence, Encounters) mirror the audio pipeline with matching EMA smoothing. |
 | **⏺** record (tab bar) | Records to WebM video. Mode selector: Roots, Coefficients, or Both (side-by-side). Auto-stops on loop completion. |
 | **⌂ Home** button | Returns all animated coefficients to their start positions (curve[0]) — resets the animation clock, clears stats data, without changing path shapes. |
@@ -113,7 +113,7 @@ When a coefficient is assigned to a new path, it is automatically removed from a
 
 ```
 karpo_hackathon/
-├── index.html            # Entire app (~4700 lines): CSS, JS, HTML all inline
+├── index.html            # Entire app (~5800 lines): CSS, JS, HTML all inline
 ├── docs/
 │   ├── solver.md         # Ehrlich-Aberth method + domain coloring
 │   ├── sonification.md   # Audio graph, feature extraction, sound mapping

@@ -147,3 +147,86 @@ A **watchdog timer** runs via `setInterval` (100ms) while sound is enabled. If `
 A **visibilitychange** listener immediately ramps `masterGain` to zero (20ms time constant) when the page becomes hidden, preventing orphaned audio when the user switches tabs.
 
 Additionally, `resetAudioState()` is called on: animation stop, Home button, pattern change, degree change, and sound toggle off. It zeroes all smoothing accumulators and ramps `masterGain` to zero, ensuring clean silence in all state transitions.
+
+## Sound Tab — Signal Routing
+
+The roots panel's **Sound** tab exposes a modular routing matrix that connects any computed statistic to any audio parameter. Each of the three instruments (Base, Melody, Voice) has its own routing table with independently configurable signal chains.
+
+### Architecture
+
+Each route is a single signal chain:
+
+```
+[input signal] → [normalization] → [EMA smoothing] → [audio parameter]
+```
+
+Routes are evaluated every frame inside `updateAudio()`, even during interactive drag.
+
+### Input Signals (25 sources)
+
+Any of the 23 stats computed by the stats pipeline can drive any audio parameter, plus two constants for testing:
+
+| Group | Signals |
+|-------|---------|
+| **Sonification features** | MedianR, Spread, EMed, EHi, Coherence |
+| **Speed stats** | Speed, MinSpeed, MaxSpeed, σSpeed, EMASpeed |
+| **Distance stats** | MeanDist, MinDist, MaxDist, σDist, ΔMeanDist |
+| **Dynamics** | AngularMom, Force, MinForce, MaxForce |
+| **Events** | Records, Encounters, Odometer, CycleCount |
+| **Constants** | Const0 (always 0), Const1 (always 1) |
+
+Setting a route's input to **—** disconnects it; Voice and Melody routes default to a neutral `smoothed = 0.5` (which maps to ×1.0 scaling), preserving unmodified behavior.
+
+### Normalization
+
+Two modes are available per route (default: **RunMax**):
+
+| Mode | Algorithm |
+|------|-----------|
+| **Fixed** | Pre-computed bounds based on panel range and degree — `raw = clamp(value / reference, 0, 1)` |
+| **RunMax** | Tracks a running maximum with exponential decay (0.9995/frame ≈ 3%/sec at 60fps) — `runMax = max(runMax × 0.9995, |value|)`, then `raw = value / runMax`. Adapts automatically to the dynamic range of the current animation. |
+
+Bipolar sources (AngularMom) map to [0, 1] via `value / runMax × 0.5 + 0.5` so that zero maps to 0.5 (neutral center).
+
+### EMA Smoothing
+
+Each route has an independent **α** slider (0.01–1.0, log scale) controlling its one-pole exponential moving average:
+
+```
+smoothed += α × (raw − smoothed)
+```
+
+Low α (0.01) = slow, heavily smoothed response. High α (1.0) = near-instant tracking.
+
+### Routable Targets (14 parameters)
+
+**Base** (6 targets — default wiring shown):
+
+| Target | Default source | Effect |
+|--------|---------------|--------|
+| Carrier pitch | MedianR | Octave scaling around center frequency: `freq × 2^((smoothed − 0.5) × octaves)` |
+| FM mod depth | EHi | Modulation index: `modDepth × smoothed` (0 = pure sine, 1 = full FM) |
+| Filter cutoff | Spread | Brightness: `filterLo + filterHi × smoothed`, clamped 150–8000 Hz |
+| Gain | EHi | Loudness: `gainFloor + gainRange × smoothed` |
+| Vibrato depth | Coherence | LFO amplitude: `2 + vibDepth × smoothed` Hz |
+| Vibrato rate | EMed | LFO speed: `1.5 + vibRate × smoothed` Hz |
+
+**Voice** (4 targets — all disconnected by default):
+
+| Target | Effect |
+|--------|--------|
+| Pitch bias | ±12 semitone shift: `(smoothed − 0.5) × 24` added to MIDI note |
+| Volume | Beep peak gain: `peak × smoothed × 2` (neutral at 0.5 → ×1.0) |
+| Ringdown | Beep decay time: `ringdown × smoothed × 2` |
+| Cooldown | Minimum beep interval: `cooldown × smoothed × 2` |
+
+**Melody** (4 targets — all disconnected by default):
+
+| Target | Effect |
+|--------|--------|
+| Rate | Arpeggiator speed: `rate × smoothed × 2` (neutral at 0.5 → ×1.0) |
+| Brightness | Filter cutoff: `cutoff × smoothed × 2` |
+| Volume | Note peak gain: `peak × smoothed × 2` |
+| Decay | Pluck decay time: `decay × smoothed × 2` |
+
+Voice and Melody routes use a **×2 scaling** convention: disconnected routes sit at smoothed = 0.5, giving a ×1.0 multiplier (no change). Connecting a source that swings 0–1 gives a 0×–2× modulation range.

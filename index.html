@@ -288,6 +288,39 @@ circle.root.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
                 font-family:inherit; letter-spacing:0.3px; outline:none; }
 .stats-select:focus { color:var(--text); }
 .stats-canvas { flex:1; width:100%; min-height:0; background:var(--panel); }
+.config-panel { padding:12px 16px; display:flex; flex-direction:column; gap:8px; overflow-y:auto; }
+.config-section { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; padding:6px 0 2px; border-bottom:1px solid var(--stroke); }
+.config-row-pair { display:flex; gap:12px; }
+.config-row-pair .audio-row { flex:1; min-width:0; }
+.config-row-pair .audio-row .row-label { width:42px; font-size:8px; }
+.config-row-pair .audio-row .row-val { width:40px; font-size:9px; }
+.config-panel .hslider {
+    height:6px; border-radius:3px; background:rgba(255,255,255,0.06);
+    position:relative; cursor:pointer; touch-action:none;
+}
+.config-panel .hslider .hslider-thumb {
+    position:absolute; top:50%; width:14px; height:14px;
+    margin-left:-7px; margin-top:-7px; border-radius:50%;
+    background:var(--accent); border:2px solid #fff;
+    box-shadow:0 0 6px rgba(233,69,96,0.4); pointer-events:none;
+}
+.route-table { width:100%; border-collapse:collapse; }
+.route-table th { font-size:7px; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em;
+    padding:3px 4px; text-align:left; border-bottom:1px solid var(--stroke); font-weight:500; }
+.route-table td { padding:3px 4px; vertical-align:middle; }
+.route-table select { width:100%; padding:2px 4px; font-size:9px;
+    background:rgba(10,12,30,0.6); color:var(--text); border:1px solid var(--stroke);
+    border-radius:var(--radius); font-family:inherit; cursor:pointer; outline:none; }
+.route-table select:focus { border-color:var(--accent); }
+.route-table .target-label { font-size:8px; color:var(--muted); white-space:nowrap; }
+.cell-slider-wrap { display:flex; align-items:center; gap:3px; min-width:60px; }
+.cell-slider { flex:1; height:4px; border-radius:2px; background:rgba(255,255,255,0.06);
+    position:relative; cursor:pointer; touch-action:none; min-width:32px; }
+.cell-slider-thumb { position:absolute; top:50%; width:10px; height:10px;
+    margin-left:-5px; margin-top:-5px; border-radius:50%;
+    background:var(--accent); border:1.5px solid #fff; pointer-events:none; }
+.cell-slider-val { font-size:7px; color:var(--accent); width:24px;
+    text-align:right; font-variant-numeric:tabular-nums; flex-shrink:0; }
 #roots-container { position: relative; flex: 1; min-height: 0; }
 #domain-canvas { position: absolute; top: 0; left: 0; border-radius: 0; }
 #roots-panel.domain-active { background: transparent !important; }
@@ -503,6 +536,7 @@ circle.coeff.selected, circle.root.selected {
         <div class="tab-bar">
             <button class="tab active" data-tab="roots">Roots <span id="roots-sel-count" style="font-size:9px;color:#e94560;opacity:0.85;"></span></button>
             <button class="tab" data-tab="stats">Stats</button>
+            <button class="tab" data-tab="config">Config</button>
             <span class="tab-bar-controls">
                 <select id="rec-mode" title="Recording mode" style="font-size:10px;padding:1px 2px;background:rgba(255,255,255,0.06);color:var(--muted);border:1px solid var(--stroke);border-radius:4px;cursor:pointer;"><option value="roots">Roots</option><option value="coeffs">Coeffs</option><option value="both">Both</option></select>
                 <button id="rec-roots-btn" class="icon-btn" title="Record (webm)">⏺</button>
@@ -535,6 +569,9 @@ circle.coeff.selected, circle.root.selected {
                     <div class="stats-cell"><select class="stats-select" data-plot="14"></select><canvas class="stats-canvas" data-plot="14"></canvas></div>
                     <div class="stats-cell"><select class="stats-select" data-plot="15"></select><canvas class="stats-canvas" data-plot="15"></canvas></div>
                 </div>
+            </div>
+            <div id="config-content" class="tab-content">
+                <div class="config-panel" id="config-sliders"></div>
             </div>
         </div>
     </div>
@@ -683,7 +720,7 @@ function anySoundEnabled() { return baseEnabled || melodyEnabled || voiceEnabled
 let audioCtx = null;
 let audioNodes = null;
 let prevRootsAudio = null;
-let smoothE = 0, smoothR = 0, smoothSpread = 0, smoothCoherence = 0;
+let prevAnglesAudio = null; // per-root angles from centroid (for angular momentum)
 let lastBeepTime = 0;
 let lastAudioUpdateTime = 0;
 let audioWatchdogId = null;
@@ -703,6 +740,15 @@ const baseConfig = {
     gainFloor: 0.03, gainRange: 0.22,
     vibDepth: 10, vibRate: 6.0,
 };
+const ROUTE_SOURCES = ["MedianR", "Spread", "EMed", "EHi", "Coherence", "Speed", "MaxSpeed", "MeanDist", "σDist", "AngularMom"];
+const baseRoutes = [
+    { source: "MedianR",   alpha: 0.10, target: "Carrier pitch",  smoothed: 0 },
+    { source: "EHi",       alpha: 0.10, target: "FM mod depth",   smoothed: 0 },
+    { source: "Spread",    alpha: 0.10, target: "Filter cutoff",  smoothed: 0 },
+    { source: "EHi",       alpha: 0.10, target: "Gain",           smoothed: 0 },
+    { source: "Coherence", alpha: 0.10, target: "Vibrato depth",  smoothed: 0 },
+    { source: "EMed",      alpha: 0.10, target: "Vibrato rate",   smoothed: 0 },
+];
 const melodyConfig = {
     rate: 5, peak: 0.12, cutoff: 5,
     attack: 0.004, decay: 0.064,
@@ -885,7 +931,7 @@ function updateAudio() {
     cx /= n; cy /= n;
 
     // --- Dual energy: E_med (stability) and E_hi (excitement) ---
-    let eMed = 0, eHi = 0;
+    let eMed = 0, eHi = 0, meanSpeed = 0, maxSpeed = 0;
     if (prevRootsAudio && prevRootsAudio.length === n) {
         const v = new Array(n);
         for (let i = 0; i < n; i++) {
@@ -897,12 +943,18 @@ function updateAudio() {
         v.sort((a, b) => a - b);
         eMed = percentileSorted(v, 0.50);
         eHi  = percentileSorted(v, 0.85);
+        maxSpeed = v[n - 1];
+        for (let i = 0; i < n; i++) meanSpeed += v[i];
+        meanSpeed /= n;
     }
 
     // --- Radius distribution around centroid ---
     const radii = new Array(n);
+    const angles = new Array(n);
     for (let i = 0; i < n; i++) {
-        radii[i] = Math.hypot(currentRoots[i].re - cx, currentRoots[i].im - cy);
+        const dx = currentRoots[i].re - cx, dy = currentRoots[i].im - cy;
+        radii[i] = Math.hypot(dx, dy);
+        angles[i] = Math.atan2(dy, dx);
     }
     radii.sort((a, b) => a - b);
     const r50 = percentileSorted(radii, 0.50);
@@ -912,40 +964,68 @@ function updateAudio() {
 
     // --- Angular coherence R in [0,1] ---
     let au = 0, av = 0;
-    for (let i = 0; i < n; i++) {
-        const th = Math.atan2(currentRoots[i].im - cy, currentRoots[i].re - cx);
-        au += Math.cos(th);
-        av += Math.sin(th);
-    }
+    for (let i = 0; i < n; i++) { au += Math.cos(angles[i]); av += Math.sin(angles[i]); }
     au /= n; av /= n;
     const coherence = Math.hypot(au, av); // 1 = clustered, 0 = uniform ring
 
-    // --- Normalize and smooth ---
+    // --- Pairwise distances: MeanDist & σDist ---
+    let pairSum = 0, pairSqSum = 0, pairCount = 0;
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            const d = Math.hypot(currentRoots[i].re - currentRoots[j].re,
+                                 currentRoots[i].im - currentRoots[j].im);
+            pairSum += d; pairSqSum += d * d; pairCount++;
+        }
+    }
+    const meanPairDist = pairCount > 0 ? pairSum / pairCount : 0;
+    const sigmaPairDist = pairCount > 0 ? Math.sqrt(Math.max(0, pairSqSum / pairCount - meanPairDist * meanPairDist)) : 0;
+
+    // --- Angular momentum: signed rotational velocity ---
+    let angMomRaw = 0;
+    if (prevAnglesAudio && prevAnglesAudio.length === n) {
+        for (let i = 0; i < n; i++) {
+            let dth = angles[i] - prevAnglesAudio[i];
+            if (dth > Math.PI) dth -= 2 * Math.PI;
+            if (dth < -Math.PI) dth += 2 * Math.PI;
+            angMomRaw += dth;
+        }
+        angMomRaw /= n;
+    }
+    prevAnglesAudio = angles.slice();
+
+    // --- Raw normalized features (unsmoothed) ---
     const eNormMed = audioClamp(eMed / (range * 0.05), 0, 1);
     const eNormHi  = audioClamp(eHi  / (range * 0.05), 0, 1);
-    const rNorm    = audioClamp(r50 / range, 0, 1);
-    const sNorm    = audioClamp(spread / range, 0, 1);
+    const rawF = {
+        MedianR:    audioClamp(r50 / range, 0, 1),
+        Spread:     audioClamp(spread / range, 0, 1),
+        EMed:       eNormMed,
+        EHi:        eNormHi,
+        Coherence:  coherence,
+        Speed:      audioClamp(meanSpeed / (range * 0.05), 0, 1),
+        MaxSpeed:   audioClamp(maxSpeed / (range * 0.05), 0, 1),
+        MeanDist:   audioClamp(meanPairDist / range, 0, 1),
+        "σDist":    audioClamp(sigmaPairDist / range, 0, 1),
+        AngularMom: audioClamp(angMomRaw / 0.15 * 0.5 + 0.5, 0, 1),
+    };
 
-    smoothE       += AUDIO_ALPHA * (eNormHi - smoothE);
-    smoothR       += AUDIO_ALPHA * (rNorm - smoothR);
-    smoothSpread  += AUDIO_ALPHA * (sNorm - smoothSpread);
-    smoothCoherence += AUDIO_ALPHA * (coherence - smoothCoherence);
+    // --- Per-route EMA smoothing ---
+    for (const route of baseRoutes) {
+        const raw = rawF[route.source] || 0;
+        route.smoothed += route.alpha * (raw - route.smoothed);
+    }
 
-    // --- Base (FM drone): carrier pitch, modulator ratio + depth, filter, gain, vibrato ---
+    // --- Base (FM drone): all 6 params driven by routed + smoothed features ---
     if (baseEnabled) {
-        const pitch = baseConfig.freq * Math.pow(2, (smoothR - 0.5) * baseConfig.octaves);
+        const pitch = baseConfig.freq * Math.pow(2, (baseRoutes[0].smoothed - 0.5) * baseConfig.octaves);
         audioNodes.osc1.frequency.setTargetAtTime(pitch, now, 0.05);
-        // FM modulator: frequency tracks carrier × ratio, depth driven by energy
         audioNodes.osc2.frequency.setTargetAtTime(pitch * baseConfig.modRatio, now, 0.05);
-        const fmDepth = baseConfig.modDepth * smoothE;
-        audioNodes.modGain.gain.setTargetAtTime(fmDepth, now, 0.05);
-        const cutoff = baseConfig.filterLo + baseConfig.filterHi * smoothSpread + 1500 * eNormMed;
+        audioNodes.modGain.gain.setTargetAtTime(baseConfig.modDepth * baseRoutes[1].smoothed, now, 0.05);
+        const cutoff = baseConfig.filterLo + baseConfig.filterHi * baseRoutes[2].smoothed;
         audioNodes.filter.frequency.setTargetAtTime(audioClamp(cutoff, 150, 8000), now, 0.05);
-        const gain = baseConfig.gainFloor + baseConfig.gainRange * smoothE;
-        audioNodes.gainNode.gain.setTargetAtTime(gain, now, 0.05);
-        const vibDepthHz = 2 + baseConfig.vibDepth * smoothCoherence;
-        audioNodes.lfoGain.gain.setTargetAtTime(vibDepthHz, now, 0.05);
-        audioNodes.lfo.frequency.setTargetAtTime(1.5 + baseConfig.vibRate * eNormMed, now, 0.05);
+        audioNodes.gainNode.gain.setTargetAtTime(baseConfig.gainFloor + baseConfig.gainRange * baseRoutes[3].smoothed, now, 0.05);
+        audioNodes.lfoGain.gain.setTargetAtTime(2 + baseConfig.vibDepth * baseRoutes[4].smoothed, now, 0.05);
+        audioNodes.lfo.frequency.setTargetAtTime(1.5 + baseConfig.vibRate * baseRoutes[5].smoothed, now, 0.05);
     } else {
         audioNodes.gainNode.gain.setTargetAtTime(0, now, 0.05);
         audioNodes.lfoGain.gain.setTargetAtTime(0, now, 0.05);
@@ -1105,7 +1185,8 @@ function resetAudioState() {
     encounterAge = null;
     arpPhase = 0;
     arpSmoothVel = 0;
-    smoothE = 0; smoothR = 0; smoothSpread = 0; smoothCoherence = 0;
+    for (const route of baseRoutes) route.smoothed = 0;
+    prevAnglesAudio = null;
     if (audioNodes && audioCtx) {
         audioNodes.masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.08);
     }
@@ -3609,8 +3690,6 @@ function buildVoicePop(pop) {
     pop.appendChild(title);
     const btn = document.getElementById("voice-toggle-btn");
     buildAudioToggle(pop, "Enabled", voiceEnabled, on => toggleSound(on, v => { voiceEnabled = v; }, btn));
-    buildAudioSlider(pop, "Memory",     1.0,    1.02,  voiceConfig.decay,    true,  fmtF(4),  v => { voiceConfig.decay = v; });
-    buildAudioSlider(pop, "Novelty",    0.3,   1.0,   voiceConfig.novelty,  false, fmtF(2),   v => { voiceConfig.novelty = v; });
     buildAudioSlider(pop, "Cooldown",   0.01,  0.50,  voiceConfig.cooldown, true,  fmtMs,     v => { voiceConfig.cooldown = v; });
     buildAudioSlider(pop, "Volume",     0.02,  0.30,  voiceConfig.peak,     false, fmtF(2),   v => { voiceConfig.peak = v; });
     buildAudioSlider(pop, "Attack",     0.001, 0.020, voiceConfig.attack,   true,  fmtMs,     v => { voiceConfig.attack = v; });
@@ -3620,6 +3699,108 @@ function buildVoicePop(pop) {
 document.getElementById("base-toggle-btn").addEventListener("click", function () { openAudioPop(this, buildBasePop); });
 document.getElementById("melody-toggle-btn").addEventListener("click", function () { openAudioPop(this, buildMelodyPop); });
 document.getElementById("voice-toggle-btn").addEventListener("click", function () { openAudioPop(this, buildVoicePop); });
+
+// --- Config tab ---
+(function initConfigTab() {
+    const container = document.getElementById("config-sliders");
+
+    // -- Encounters / Records --
+    const sec1 = document.createElement("div");
+    sec1.className = "config-section"; sec1.textContent = "Encounters · Records";
+    container.appendChild(sec1);
+    const pair = document.createElement("div");
+    pair.className = "config-row-pair";
+    buildAudioSlider(pair, "Memory",  1.0,  1.02, voiceConfig.decay,   true,  fmtF(4), v => { voiceConfig.decay = v; });
+    buildAudioSlider(pair, "Novelty", 0.3,  1.0,  voiceConfig.novelty, false, fmtF(2), v => { voiceConfig.novelty = v; });
+    container.appendChild(pair);
+
+    // -- Base Routing Table --
+    const sec2 = document.createElement("div");
+    sec2.className = "config-section"; sec2.textContent = "Base Routing";
+    container.appendChild(sec2);
+
+    // Mini slider builder for table cells
+    function buildCellSlider(parent, min, max, value, logScale, fmt, onChange) {
+        const wrap = document.createElement("div");
+        wrap.className = "cell-slider-wrap";
+        const track = document.createElement("div");
+        track.className = "cell-slider";
+        const thumb = document.createElement("div");
+        thumb.className = "cell-slider-thumb";
+        track.appendChild(thumb);
+        const val = document.createElement("span");
+        val.className = "cell-slider-val";
+        function valToU(v) {
+            if (logScale) return (Math.log(v) - Math.log(min)) / (Math.log(max) - Math.log(min));
+            return (v - min) / (max - min);
+        }
+        function uToVal(u) {
+            if (logScale) return Math.exp(Math.log(min) + u * (Math.log(max) - Math.log(min)));
+            return min + u * (max - min);
+        }
+        let u = Math.max(0, Math.min(1, valToU(value)));
+        function update() {
+            thumb.style.left = (u * 100) + "%";
+            const v = uToVal(u);
+            val.textContent = fmt(v);
+            onChange(v);
+        }
+        function setFromX(clientX) {
+            const rect = track.getBoundingClientRect();
+            u = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+            update();
+        }
+        let dragging = false;
+        track.addEventListener("mousedown", e => { dragging = true; setFromX(e.clientX); e.preventDefault(); });
+        window.addEventListener("mousemove", e => { if (dragging) setFromX(e.clientX); });
+        window.addEventListener("mouseup", () => { dragging = false; });
+        update();
+        wrap.appendChild(track);
+        wrap.appendChild(val);
+        parent.appendChild(wrap);
+    }
+
+    const table = document.createElement("table");
+    table.className = "route-table";
+    const thead = document.createElement("thead");
+    const hrow = document.createElement("tr");
+    ["Input signal", "Smoothing", "Feeding into"].forEach(t => {
+        const th = document.createElement("th"); th.textContent = t; hrow.appendChild(th);
+    });
+    thead.appendChild(hrow); table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    for (let i = 0; i < baseRoutes.length; i++) {
+        const route = baseRoutes[i];
+        const tr = document.createElement("tr");
+
+        // Col 1: Input signal dropdown
+        const td1 = document.createElement("td");
+        const sel = document.createElement("select");
+        for (const src of ROUTE_SOURCES) {
+            const opt = document.createElement("option");
+            opt.value = src; opt.textContent = src;
+            if (src === route.source) opt.selected = true;
+            sel.appendChild(opt);
+        }
+        sel.addEventListener("change", () => { route.source = sel.value; });
+        td1.appendChild(sel); tr.appendChild(td1);
+
+        // Col 2: Smoothing slider (alpha 0.01–1.0, log scale)
+        const td2 = document.createElement("td");
+        buildCellSlider(td2, 0.01, 1.0, route.alpha, true, v => v.toFixed(2), v => { route.alpha = v; });
+        tr.appendChild(td2);
+
+        // Col 3: Target label
+        const td3 = document.createElement("td");
+        td3.className = "target-label"; td3.textContent = route.target;
+        tr.appendChild(td3);
+
+        tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    container.appendChild(table);
+})();
 
 document.addEventListener("visibilitychange", function () {
     if (document.hidden && audioNodes && audioCtx) {
@@ -5391,7 +5572,8 @@ function drawAllStatsPlots() {
 const tabButtons = document.querySelectorAll(".tab-bar .tab");
 const tabContents = {
     roots: document.getElementById("roots-content"),
-    stats: document.getElementById("stats-content")
+    stats: document.getElementById("stats-content"),
+    config: document.getElementById("config-content")
 };
 
 function switchTab(tabName) {

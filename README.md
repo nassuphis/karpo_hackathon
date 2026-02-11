@@ -32,7 +32,7 @@ Or visit the **[live demo](https://nassuphis.github.io/karpo_hackathon/)**.
 ## Architecture
 
 ```
-Single HTML file (~6600 lines)
+Single HTML file (~7300 lines)
 ├── d3.js v7 (CDN)          — SVG rendering, drag interactions
 ├── Ehrlich-Aberth solver    — polynomial root finding in pure JS
 ├── Horner evaluator         — domain coloring + derivative computation
@@ -51,13 +51,11 @@ No server. No WebSocket. No build tools. The entire app is one self-contained HT
 
 ## Interface
 
-The UI is organized around a left sidebar with two groups and a compact header:
+The UI is organized around a compact header bar and two side-by-side panels with a mid-bar between them:
 
-**Header:** App title with version number, clickable **Degree** label (click to open slider, range 3–30), and **Pattern** dropdown.
+**Header:** App title with version number, clickable **Degree** label (click to open slider, range 3–30), **Pattern** dropdown, ↺ **Reset** button, and file/export buttons — 💾 **Save**, 📂 **Load**, ⬇ **Export** (opens a popup with 7 export modes: Both, Coeffs, Roots, Stats, Sound, Bitmap, Full).
 
-**Sidebar — Tools:** ⬇ Export snapshot.
-
-**Sidebar — Ops** (enabled when nodes are selected — buttons brighten from dim to full when a selection exists): ⇕ **Scale** (vertical slider, exponential 0.1×–10×), ⟲ **Rotate** (horizontal slider, ±0.5 turns), ✛ **Translate** (2D vector pad, ±2 in each axis). Each opens a transient popover with live preview — drag to scrub, click outside or press Escape to commit and close. A colored target label below Ops shows "· coeffs" (green) or "· roots" (red) to indicate what the operations will affect.
+**Mid-bar — Ops** (between left and right panels; enabled when nodes are selected — buttons brighten from dim to full when a selection exists): ⇕ **Scale** (vertical slider, exponential 0.1×–10×), ⟲ **Rotate** (horizontal slider, ±0.5 turns), ✛ **Translate** (2D vector pad, ±2 in each axis). Each opens a transient popover with live preview — drag to scrub, click outside or press Escape to commit and close. A colored target label below Ops shows "· coeffs" (green) or "· roots" (red) to indicate what the operations will affect.
 
 **Coefficients header:** ▶ **Play** and **Home** buttons sit in the panel header for quick access.
 
@@ -77,12 +75,12 @@ The UI is organized around a left sidebar with two groups and a compact header:
 | **CW / CCW** toggle | Sets clockwise or counter-clockwise direction for selected coefficients. |
 | **R / S / A** sliders | Radius (1–100%), Speed (0.01–1.0), Angle (0–1.0 → 0–360° rotation) — per-coefficient trajectory settings. |
 | **Trails** (roots toolbar) | Enables root trail recording. Loop detection auto-stops after one full cycle. |
-| **🎨** (roots toolbar) | Toggle root coloring modes (index color vs. derivative sensitivity). |
+| **🎨** (roots toolbar) | Cycle root coloring modes: rainbow (index color), derivative sensitivity, or uniform (single color). In uniform mode, a color picker offers white and all coefficient colors. |
 | **◐** (roots toolbar) | Toggle domain coloring on the roots canvas background. |
 | **Roots / Stats / Sound** tabs | Roots panel tab bar — switch between root visualization, stats dashboard, and sound routing. |
 | **Stats** dropdowns | Each of the 16 stat plots has a dropdown: 23 time-series, 5 phase-space plots, and 4 spectrum charts. Sonification features (MedianR, Spread, EMed, EHi, Coherence, Encounters) mirror the audio pipeline with matching EMA smoothing. |
-| **⏺** record (tab bar) | Records to WebM video. Mode selector: Roots, Coefficients, or Both (side-by-side). Auto-stops on loop completion. |
-| **Bitmap** tab | Accumulates root positions as single-pixel stamps on a black canvas. **Resolution** dropdown (1000/2000/5000 px) sets the square canvas size — 5000 px is print-quality. **start** initializes the canvas (re-initializes if resolution changed), **save** downloads a hi-res PNG, **clear** resets to black. **Steps** dropdown (10K/50K/100K/1M) controls how many solver steps per fast-mode pass. **fastmode** runs in a Web Worker, looping automatically — a pass counter (e.g. `0003/0010`) shows progress toward the computed full cycle, which auto-stops when all animated coefficients return home simultaneously (LCM of periods via GCD of speeds). Click **imode** to stop early. When root coloring is "none", `matchRootOrder` is skipped and all roots paint white for faster throughput. |
+| **⏺** record (tab bar) | Records to WebM video. Mode selector: Roots, Coeffs, Both, Stats, Sound, Bitmap, or Full (both panels + info bar). "Both" is tab-aware — renders coefficients + the active right-side tab. Auto-stops on loop completion. |
+| **Bitmap** tab | Accumulates root positions as single-pixel stamps on a black canvas. **Resolution** dropdown (1000/2000/5000 px) sets the square canvas size — 5000 px is print-quality. **start** initializes the canvas (re-initializes if resolution changed), **save** downloads a hi-res PNG, **clear** resets to black. **Steps** dropdown (10K/50K/100K/1M) controls how many solver steps per fast-mode pass. **fastmode** runs in a Web Worker, looping automatically — a pass counter (e.g. `0003/0010`) shows progress toward the computed full cycle, which auto-stops when all animated coefficients return home simultaneously (LCM of periods via GCD of speeds). Click **imode** to stop early. When root coloring is "uniform", `matchRootOrder` is skipped and all roots paint the selected uniform color for faster throughput. |
 | **B / M / V** (Sound tab toolbar) | Toggle and configure the three sound layers. Click to open config popover with on/off toggle + tuning sliders. See [Sonification](docs/sonification.md). |
 | **Selection count** (panel headers) | Shows the number of selected items next to "Coefficients" (green) and "Roots" (red) panel titles. |
 
@@ -119,7 +117,7 @@ Right-click any coefficient to open a context menu with trajectory settings for 
 
 ```
 karpo_hackathon/
-├── index.html            # Entire app (~6600 lines): CSS, JS, HTML all inline
+├── index.html            # Entire app (~7300 lines): CSS, JS, HTML all inline
 ├── docs/
 │   ├── solver.md         # Ehrlich-Aberth method + domain coloring
 │   ├── sonification.md   # Audio graph, feature extraction, sound mapping

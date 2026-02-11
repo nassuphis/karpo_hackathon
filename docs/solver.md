@@ -44,7 +44,7 @@ Dragging roots works in the opposite direction: the polynomial is reconstructed 
 
 ## Domain Coloring
 
-When enabled (off by default, toggle via the ◐ sidebar button), the roots panel background is painted using [domain coloring](https://en.wikipedia.org/wiki/Domain_coloring). For each pixel at position z in the complex plane, the polynomial p(z) is evaluated and mapped to a color:
+When enabled (off by default, toggle via the ◐ toolbar button on the roots panel), the roots panel background is painted using [domain coloring](https://en.wikipedia.org/wiki/Domain_coloring). For each pixel at position z in the complex plane, the polynomial p(z) is evaluated and mapped to a color:
 
 - **Hue** = arg(p(z)) — the phase of the polynomial's value. Roots appear as points where all colors converge (all phases meet at a zero).
 - **Lightness** = 0.5 + 0.4·cos(2π·frac(log₂|p(z)|)) — contour lines at powers-of-2 modulus. Zeros appear as dark points.

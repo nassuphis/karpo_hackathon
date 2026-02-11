@@ -651,8 +651,9 @@ body.fast-mode #bitmap-fast-btn {
                     <button id="bitmap-clear-btn" class="bitmap-btn" disabled>clear</button>
                     <select id="bitmap-res-select" class="bitmap-select"><option value="1000">1000px</option><option value="2000" selected>2000px</option><option value="5000">5000px</option></select>
                     <button id="bitmap-fast-btn" class="bitmap-btn" disabled>fastmode</button>
-                    <select id="bitmap-steps-select" class="bitmap-select"><option value="10000">10K</option><option value="50000">50K</option><option value="100000">100K</option></select>
+                    <select id="bitmap-steps-select" class="bitmap-select"><option value="10000">10K</option><option value="50000">50K</option><option value="100000">100K</option><option value="1000000">1M</option></select>
                     <div id="bitmap-progress" style="display:none;flex:1;min-width:60px;height:6px;background:var(--stroke);border-radius:3px;margin-left:4px;overflow:hidden;"><div id="bitmap-progress-bar" style="height:100%;width:0%;background:var(--accent);border-radius:3px;transition:width 0.1s;"></div></div>
+                    <span id="bitmap-pass-count" style="display:none;font-family:monospace;font-size:10px;color:var(--muted);margin-left:4px;white-space:nowrap;"></span>
                 </div>
                 <div id="bitmap-container" style="flex:1;min-height:0;position:relative;background:#000;">
                     <canvas id="bitmap-canvas" style="width:100%;height:100%;"></canvas>
@@ -776,6 +777,9 @@ let fastModeWorker = null;      // Web Worker instance
 let fastModeLastPixels = null;  // last received pixel ArrayBuffer snapshot
 let fastModeLastRoots = null;   // last received root positions
 let fastModeLastStep = 0;       // last reported step count
+let fastModeElapsedOffset = 0;  // accumulated elapsed time across passes
+let fastModePassCount = 0;      // completed pass counter
+let fastModeTargetPasses = 0;   // passes for full cycle (0 = unlimited)
 // Stats tab state
 let activeTab = "roots";
 const STAT_TYPES = ["Force", "MinForce", "MaxForce", "Speed", "MinSpeed", "MaxSpeed", "MinDist", "MaxDist", "Records", "MeanDist", "\u0394MeanDist", "AngularMom", "\u03c3Speed", "EMASpeed", "\u03c3Dist", "Odometer", "CycleCount", "MedianR", "Spread", "EMed", "EHi", "Coherence", "Encounters"];
@@ -6306,6 +6310,7 @@ function initBitmapCanvas() {
     bitmapCtx.fillRect(0, 0, canvas.width, canvas.height);
     bitmapRange = panels.roots.range;
     bitmapFrameCount = 0;
+    fastModeElapsedOffset = 0;
     bitmapActive = true;
 }
 
@@ -6341,7 +6346,7 @@ function paintBitmapFrameFast() {
         const py = (1 - r.im / range) * 0.5 * h;
         if (px < 0 || px >= w || py < 0 || py >= h) continue;
         bitmapCtx.fillStyle = colors[i];
-        bitmapCtx.fillRect(px | 0, py | 0, 2, 2);
+        bitmapCtx.fillRect(px | 0, py | 0, 1, 1);
     }
     bitmapFrameCount++;
 }
@@ -6450,19 +6455,23 @@ function matchRoots(newRe, newIm, oldRe, oldIm, n) {
     for (var i = 0; i < n; i++) { newRe[i] = tmpRe[i]; newIm[i] = tmpIm[i]; }
 }
 
-// Paint 2x2 pixel blocks directly into ImageData buffer
+// Paint single pixels directly into ImageData buffer
 function paintPixels(px, w, h, rRe, rIm, nR, range, cR, cG, cB) {
     for (var i = 0; i < nR; i++) {
-        var x = (rRe[i] / range + 1) * 0.5 * w;
-        var y = (1 - rIm[i] / range) * 0.5 * h;
-        var ix = x | 0, iy = y | 0;
-        if (ix < 0 || ix >= w-1 || iy < 0 || iy >= h-1) continue;
-        var r = cR[i], g = cG[i], b = cB[i];
-        for (var dy = 0; dy < 2; dy++) {
-            var off = ((iy+dy)*w + ix) * 4;
-            px[off]=r; px[off+1]=g; px[off+2]=b; px[off+3]=255;
-            px[off+4]=r; px[off+5]=g; px[off+6]=b; px[off+7]=255;
-        }
+        var ix = ((rRe[i] / range + 1) * 0.5 * w) | 0;
+        var iy = ((1 - rIm[i] / range) * 0.5 * h) | 0;
+        if (ix < 0 || ix >= w || iy < 0 || iy >= h) continue;
+        var off = (iy * w + ix) * 4;
+        px[off] = cR[i]; px[off+1] = cG[i]; px[off+2] = cB[i]; px[off+3] = 255;
+    }
+}
+function paintWhite(px, w, h, rRe, rIm, nR, range) {
+    for (var i = 0; i < nR; i++) {
+        var ix = ((rRe[i] / range + 1) * 0.5 * w) | 0;
+        var iy = ((1 - rIm[i] / range) * 0.5 * h) | 0;
+        if (ix < 0 || ix >= w || iy < 0 || iy >= h) continue;
+        var off = (iy * w + ix) * 4;
+        px[off] = 255; px[off+1] = 255; px[off+2] = 255; px[off+3] = 255;
     }
 }
 
@@ -6479,7 +6488,9 @@ self.onmessage = function(e) {
     var pixels = new Uint8ClampedArray(d.pixels);
     var W = d.canvasW, H = d.canvasH, range = d.bitmapRange;
     var total = d.totalSteps, FPS = d.FAST_PASS_SECONDS;
+    var elapsedOff = d.elapsedOffset || 0;
     var frameMs = d.frameIntervalMs || 2000;
+    var noColor = !!d.noColor;
     var curvesFlat = new Float64Array(d.curvesFlat);
     var entries = d.animEntries;
     var offsets = d.curveOffsets;
@@ -6490,72 +6501,98 @@ self.onmessage = function(e) {
     var tmpRe = new Float64Array(nRoots), tmpIm = new Float64Array(nRoots);
 
     var lastFrame = performance.now();
+    var passNum = 0;
 
-    for (var step = 0; step < total; step++) {
-        var elapsed = (step / total) * FPS;
+    // Loop forever — main thread terminates Worker via imode
+    while (true) {
+        for (var step = 0; step < total; step++) {
+            var elapsed = elapsedOff + (step / total) * FPS;
 
-        // Interpolate animated coefficients
-        for (var a = 0; a < entries.length; a++) {
-            var idx = entries[a].idx;
-            var dir = entries[a].ccw ? -1 : 1;
-            var t = elapsed * entries[a].speed * dir;
-            var u = ((t % 1) + 1) % 1;
-            var N = lengths[a];
-            var rawIdx = u * N;
-            var base = offsets[a] * 2;
+            // Interpolate animated coefficients
+            for (var a = 0; a < entries.length; a++) {
+                var idx = entries[a].idx;
+                var dir = entries[a].ccw ? -1 : 1;
+                var t = elapsed * entries[a].speed * dir;
+                var u = ((t % 1) + 1) % 1;
+                var N = lengths[a];
+                var rawIdx = u * N;
+                var base = offsets[a] * 2;
 
-            if (isCloud[a]) {
-                var k = (rawIdx | 0) % N;
-                coeffsRe[idx] = curvesFlat[base + k*2];
-                coeffsIm[idx] = curvesFlat[base + k*2 + 1];
+                if (isCloud[a]) {
+                    var k = (rawIdx | 0) % N;
+                    coeffsRe[idx] = curvesFlat[base + k*2];
+                    coeffsIm[idx] = curvesFlat[base + k*2 + 1];
+                } else {
+                    var lo = (rawIdx | 0) % N;
+                    var hi = (lo + 1) % N;
+                    var frac = rawIdx - (rawIdx | 0);
+                    coeffsRe[idx] = curvesFlat[base+lo*2]*(1-frac) + curvesFlat[base+hi*2]*frac;
+                    coeffsIm[idx] = curvesFlat[base+lo*2+1]*(1-frac) + curvesFlat[base+hi*2+1]*frac;
+                }
+            }
+
+            // Copy warm start
+            tmpRe.set(rootsRe); tmpIm.set(rootsIm);
+            // Solve
+            solveEA(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots);
+            if (noColor) {
+                // No coloring — skip O(n²) matching, paint all white
+                rootsRe.set(tmpRe); rootsIm.set(tmpIm);
+                paintWhite(pixels, W, H, rootsRe, rootsIm, nRoots, range);
             } else {
-                var lo = (rawIdx | 0) % N;
-                var hi = (lo + 1) % N;
-                var frac = rawIdx - (rawIdx | 0);
-                coeffsRe[idx] = curvesFlat[base+lo*2]*(1-frac) + curvesFlat[base+hi*2]*frac;
-                coeffsIm[idx] = curvesFlat[base+lo*2+1]*(1-frac) + curvesFlat[base+hi*2+1]*frac;
+                // Match root order for per-root coloring
+                matchRoots(tmpRe, tmpIm, rootsRe, rootsIm, nRoots);
+                rootsRe.set(tmpRe); rootsIm.set(tmpIm);
+                paintPixels(pixels, W, H, rootsRe, rootsIm, nRoots, range, colorsR, colorsG, colorsB);
+            }
+
+            // Progress every 500 steps
+            if (step % 500 === 0) {
+                self.postMessage({type: 'progress', step: step, pass: passNum});
+            }
+
+            // Frame snapshot periodically
+            var now = performance.now();
+            if (now - lastFrame >= frameMs) {
+                lastFrame = now;
+                self.postMessage({
+                    type: 'frame', step: step+1, pass: passNum,
+                    pixels: pixels.buffer.slice(0),
+                    rootsRe: new Float64Array(rootsRe).buffer,
+                    rootsIm: new Float64Array(rootsIm).buffer
+                });
             }
         }
 
-        // Copy warm start
-        tmpRe.set(rootsRe); tmpIm.set(rootsIm);
-        // Solve
-        solveEA(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots);
-        // Match root order
-        matchRoots(tmpRe, tmpIm, rootsRe, rootsIm, nRoots);
-        // Update warm start
-        rootsRe.set(tmpRe); rootsIm.set(tmpIm);
-
-        // Paint
-        paintPixels(pixels, W, H, rootsRe, rootsIm, nRoots, range, colorsR, colorsG, colorsB);
-
-        // Progress every 500 steps
-        if (step % 500 === 0) {
-            self.postMessage({type: 'progress', step: step});
-        }
-
-        // Frame snapshot periodically
-        var now = performance.now();
-        if (now - lastFrame >= frameMs) {
-            lastFrame = now;
-            self.postMessage({
-                type: 'frame', step: step+1,
-                pixels: pixels.buffer.slice(0),
-                rootsRe: new Float64Array(rootsRe).buffer,
-                rootsIm: new Float64Array(rootsIm).buffer
-            });
-        }
+        // Pass complete — advance offset, send snapshot, continue
+        elapsedOff += FPS;
+        passNum++;
+        self.postMessage({
+            type: 'pass', pass: passNum,
+            pixels: pixels.buffer.slice(0),
+            rootsRe: new Float64Array(rootsRe).buffer,
+            rootsIm: new Float64Array(rootsIm).buffer
+        });
     }
-
-    // Done — transfer final buffers
-    self.postMessage({
-        type: 'done', step: total,
-        pixels: pixels.buffer,
-        rootsRe: rootsRe.buffer,
-        rootsIm: rootsIm.buffer
-    }, [pixels.buffer, rootsRe.buffer, rootsIm.buffer]);
 };`;
     return URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
+}
+
+// Compute passes needed for all animated coefficients to return home simultaneously.
+// Speed slider step = 0.01, so speed_i = s_i/100 (integer s_i).
+// Period_i = 100/s_i seconds. Full cycle = LCM of all periods = 100/GCD(s_1,...,s_k).
+// Each pass covers FAST_PASS_SECONDS (1.0s), so passes = 100/GCD(s_1,...,s_k).
+function computeFullCyclePasses() {
+    const animated = allAnimatedCoeffs();
+    if (animated.size === 0) return 0;
+    function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a; }
+    let g = 0;
+    for (const idx of animated) {
+        const s = Math.round(coefficients[idx].speed * 100);
+        if (s <= 0) continue;
+        g = g === 0 ? s : gcd(g, s);
+    }
+    return g > 0 ? 100 / g : 0;
 }
 
 function enterFastMode() {
@@ -6565,8 +6602,10 @@ function enterFastMode() {
     stopAnimation();
     playBtn.textContent = "\u25b6 Play";
 
-    // Ensure bitmap canvas exists + range frozen
-    if (!bitmapCtx || !bitmapActive) {
+    // Ensure bitmap canvas exists + range frozen, and resolution matches dropdown
+    const wantRes = parseInt(document.getElementById("bitmap-res-select").value, 10) || 2000;
+    const canvas = document.getElementById("bitmap-canvas");
+    if (!bitmapCtx || !bitmapActive || canvas.width !== wantRes) {
         initBitmapCanvas();
         document.getElementById("bitmap-save-btn").disabled = false;
         document.getElementById("bitmap-clear-btn").disabled = false;
@@ -6602,11 +6641,19 @@ function enterFastMode() {
     fastModeActive = true;
     fastModeStepIndex = 0;
     fastModeTotalSteps = stepsVal;
+    fastModePassCount = 0;
+    fastModeTargetPasses = computeFullCyclePasses();
 
     document.body.classList.add("fast-mode");
     document.getElementById("bitmap-fast-btn").textContent = "imode";
     const prog = document.getElementById("bitmap-progress");
     if (prog) { prog.style.display = ""; document.getElementById("bitmap-progress-bar").style.width = "0%"; }
+    const passEl = document.getElementById("bitmap-pass-count");
+    if (passEl) {
+        passEl.style.display = "";
+        const tgt = fastModeTargetPasses > 0 ? "/" + String(fastModeTargetPasses).padStart(4, "0") : "";
+        passEl.textContent = "0000" + tgt;
+    }
 
     // Legacy fallback for browsers without Worker
     if (typeof Worker === "undefined") {
@@ -6685,7 +6732,9 @@ function enterFastMode() {
         colorsR: colorsR.buffer, colorsG: colorsG.buffer, colorsB: colorsB.buffer,
         pixels: pixelBuf,
         canvasW: w, canvasH: h, bitmapRange,
+        noColor: rootColorMode === "none",
         totalSteps: stepsVal, FAST_PASS_SECONDS,
+        elapsedOffset: fastModeElapsedOffset,
         frameIntervalMs: 2000
     }, [
         coeffsRe.buffer, coeffsIm.buffer, curvesFlat.buffer,
@@ -6721,28 +6770,35 @@ function handleFastModeWorkerMessage(e) {
         const bar = document.getElementById("bitmap-progress-bar");
         if (bar) bar.style.width = (msg.step / fastModeTotalSteps * 100) + "%";
     }
-    else if (msg.type === "done") {
-        fastModeStepIndex = msg.step;
+    else if (msg.type === "pass") {
+        // One pass complete — update state, Worker auto-continues
+        fastModeElapsedOffset += FAST_PASS_SECONDS;
+        fastModeLastStep = 0;  // reset so exitFastMode doesn't double-count
         fastModeLastPixels = msg.pixels;
         if (msg.rootsRe) fastModeLastRoots = { re: msg.rootsRe, im: msg.rootsIm };
         applyPixelSnapshot(msg.pixels);
-        // Restore root state for warm-start continuity
-        if (msg.rootsRe && msg.rootsIm) {
-            const rRe = new Float64Array(msg.rootsRe);
-            const rIm = new Float64Array(msg.rootsIm);
-            for (let i = 0; i < currentRoots.length && i < rRe.length; i++) {
-                currentRoots[i].re = rRe[i];
-                currentRoots[i].im = rIm[i];
-            }
-        }
+        // Reset progress bar for next pass, update pass counter
         const bar = document.getElementById("bitmap-progress-bar");
-        if (bar) bar.style.width = "100%";
-        exitFastMode();
+        if (bar) bar.style.width = "0%";
+        const passEl = document.getElementById("bitmap-pass-count");
+        if (passEl) {
+            const tgt = fastModeTargetPasses > 0 ? "/" + String(fastModeTargetPasses).padStart(4, "0") : "";
+            passEl.textContent = String(msg.pass).padStart(4, "0") + tgt;
+        }
+        // Auto-stop when full cycle complete
+        if (fastModeTargetPasses > 0 && msg.pass >= fastModeTargetPasses) {
+            exitFastMode();
+        }
     }
 }
 
 function exitFastMode() {
     if (!fastModeActive) return;
+
+    // Advance elapsed offset so next pass continues where this one left off
+    if (fastModeLastStep > 0 && fastModeTotalSteps > 0) {
+        fastModeElapsedOffset += (fastModeLastStep / fastModeTotalSteps) * FAST_PASS_SECONDS;
+    }
 
     // Terminate Worker if running
     if (fastModeWorker) { fastModeWorker.terminate(); fastModeWorker = null; }
@@ -6775,6 +6831,8 @@ function exitFastMode() {
     document.getElementById("bitmap-fast-btn").textContent = "fastmode";
     const prog = document.getElementById("bitmap-progress");
     if (prog) prog.style.display = "none";
+    const passEl = document.getElementById("bitmap-pass-count");
+    if (passEl) passEl.style.display = "none";
 
     // Bring interactive UI back in sync
     renderCoefficients();
@@ -6793,8 +6851,8 @@ function fastModeChunkLegacy() {
     let step = fastModeStepIndex;
 
     for (let s = 0; s < chunkSize && step < total; s++, step++) {
-        // Virtual elapsed seconds for this step
-        const elapsed = (step / total) * FAST_PASS_SECONDS;
+        // Virtual elapsed seconds for this step (offset for multi-pass)
+        const elapsed = fastModeElapsedOffset + (step / total) * FAST_PASS_SECONDS;
 
         // Step coefficients on their hi-res curves
         if (animated && animated.size) {
@@ -6822,7 +6880,7 @@ function fastModeChunkLegacy() {
 
         // Solve roots (warm-start), preserve identity, update in-place
         let roots = solveRootsEA(coefficients, currentRoots);
-        roots = matchRootOrder(roots, currentRoots);
+        if (rootColorMode !== "none") roots = matchRootOrder(roots, currentRoots);
         setCurrentRootsInPlace(roots);
 
         // Paint
@@ -6836,8 +6894,23 @@ function fastModeChunkLegacy() {
     if (bar) bar.style.width = (fastModeStepIndex / fastModeTotalSteps * 100) + "%";
 
     if (fastModeStepIndex >= fastModeTotalSteps) {
-        exitFastMode();
-        return;
+        // Pass complete — advance offset, reset step counter, continue
+        fastModeElapsedOffset += FAST_PASS_SECONDS;
+        fastModePassCount++;
+        fastModeStepIndex = 0;
+        fastModeLastStep = 0;
+        const pbar = document.getElementById("bitmap-progress-bar");
+        if (pbar) pbar.style.width = "0%";
+        const passEl = document.getElementById("bitmap-pass-count");
+        if (passEl) {
+            const tgt = fastModeTargetPasses > 0 ? "/" + String(fastModeTargetPasses).padStart(4, "0") : "";
+            passEl.textContent = String(fastModePassCount).padStart(4, "0") + tgt;
+        }
+        // Auto-stop when full cycle complete
+        if (fastModeTargetPasses > 0 && fastModePassCount >= fastModeTargetPasses) {
+            exitFastMode();
+            return;
+        }
     }
 
     fastModeTimerId = setTimeout(fastModeChunkLegacy, 0);
@@ -6849,6 +6922,7 @@ function resetBitmap() {
     bitmapCtx = null;
     bitmapRange = null;
     bitmapFrameCount = 0;
+    fastModeElapsedOffset = 0;
     const startBtn = document.getElementById("bitmap-start-btn");
     const saveBtn = document.getElementById("bitmap-save-btn");
     const clearBtn = document.getElementById("bitmap-clear-btn");
@@ -6911,6 +6985,7 @@ document.getElementById("bitmap-clear-btn").addEventListener("click", function (
         bitmapCtx.fillStyle = "#000";
         bitmapCtx.fillRect(0, 0, bitmapCtx.canvas.width, bitmapCtx.canvas.height);
         bitmapFrameCount = 0;
+        fastModeElapsedOffset = 0;
     }
 });
 

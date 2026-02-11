@@ -530,52 +530,69 @@ body.fast-mode #bitmap-fast-btn {
 <div id="content">
     <div id="main">
         <div id="panels">
-    <div class="panel">
-        <h3><span>Coefficients <span id="coeff-sel-count" style="font-size:9px;color:#5ddb6a;opacity:0.85;"></span></span><span style="display:flex;align-items:center;gap:4px;"><button id="play-btn">▶ Play</button><button id="home-btn" title="Return to start position">Home</button></span></h3>
-        <div id="anim-bar">
-            <div class="bar-row">
-                <button id="coeff-picker-btn" class="bar-sel-btn" title="Coefficient picker">☰</button>
-                <button id="select-all-coeffs-btn" class="bar-sel-btn" title="Select all coefficients">⊕ All</button>
-                <button id="deselect-all-btn" class="bar-sel-btn" title="Deselect all (Esc)">✕ None</button>
-                <span class="bar-title empty" id="bar-title">&lt;no selection&gt;</span>
-                <button id="sel2path-btn">Update Sel</button>
-            </div>
-            <div class="bar-controls dimmed" id="bar-controls">
-                <div class="bar-row">
-                    <select id="anim-path">
-                        <option value="none">None</option>
-                        <optgroup label="Basic">
-                            <option value="circle">Circle</option>
-                            <option value="horizontal">Horizontal</option>
-                            <option value="vertical">Vertical</option>
-                            <option value="spiral">Spiral</option>
-                            <option value="random">Gaussian cloud</option>
-                        </optgroup>
-                        <optgroup label="Curves">
-                            <option value="lissajous">Lissajous</option>
-                            <option value="figure8">Figure-8</option>
-                            <option value="cardioid">Cardioid</option>
-                            <option value="astroid">Astroid</option>
-                            <option value="deltoid">Deltoid</option>
-                            <option value="rose">Rose (3-petal)</option>
-                            <option value="epitrochoid">Spirograph</option>
-                            <option value="hypotrochoid">Hypotrochoid</option>
-                            <option value="butterfly">Butterfly</option>
-                            <option value="star">Star (pentagram)</option>
-                            <option value="square">Square</option>
-                        </optgroup>
-                        <optgroup label="Space-filling">
-                            <option value="hilbert">Hilbert (Moore)</option>
-                            <option value="peano">Peano</option>
-                            <option value="sierpinski">Sierpinski</option>
-                        </optgroup>
-                    </select>
-                    <div id="bar-dynamic"></div>
+    <div class="panel" id="left-panel">
+        <div class="tab-bar" id="left-tab-bar">
+            <button class="tab active" data-ltab="coeffs">Coefficients <span id="coeff-sel-count" style="font-size:9px;color:#5ddb6a;opacity:0.85;"></span></button>
+            <button class="tab" data-ltab="list">List</button>
+            <span class="tab-bar-controls"><button id="play-btn">▶ Play</button><button id="home-btn" title="Return to start position">Home</button></span>
+        </div>
+        <div class="tab-panes" id="left-tab-panes">
+            <div id="coeffs-content" class="tab-content active">
+                <div id="anim-bar">
+                    <div class="bar-row">
+                        <button id="coeff-picker-btn" class="bar-sel-btn" title="Coefficient picker">☰</button>
+                        <button id="select-all-coeffs-btn" class="bar-sel-btn" title="Select all coefficients">⊕ All</button>
+                        <button id="deselect-all-btn" class="bar-sel-btn" title="Deselect all (Esc)">✕ None</button>
+                        <span class="bar-title empty" id="bar-title">&lt;no selection&gt;</span>
+                        <button id="sel2path-btn">Update Sel</button>
+                    </div>
+                    <div class="bar-controls dimmed" id="bar-controls">
+                        <div class="bar-row">
+                            <select id="anim-path">
+                                <option value="none">None</option>
+                                <optgroup label="Basic">
+                                    <option value="circle">Circle</option>
+                                    <option value="horizontal">Horizontal</option>
+                                    <option value="vertical">Vertical</option>
+                                    <option value="spiral">Spiral</option>
+                                    <option value="random">Gaussian cloud</option>
+                                </optgroup>
+                                <optgroup label="Curves">
+                                    <option value="lissajous">Lissajous</option>
+                                    <option value="figure8">Figure-8</option>
+                                    <option value="cardioid">Cardioid</option>
+                                    <option value="astroid">Astroid</option>
+                                    <option value="deltoid">Deltoid</option>
+                                    <option value="rose">Rose (3-petal)</option>
+                                    <option value="epitrochoid">Spirograph</option>
+                                    <option value="hypotrochoid">Hypotrochoid</option>
+                                    <option value="butterfly">Butterfly</option>
+                                    <option value="star">Star (pentagram)</option>
+                                    <option value="square">Square</option>
+                                </optgroup>
+                                <optgroup label="Space-filling">
+                                    <option value="hilbert">Hilbert (Moore)</option>
+                                    <option value="peano">Peano</option>
+                                    <option value="sierpinski">Sierpinski</option>
+                                </optgroup>
+                            </select>
+                            <div id="bar-dynamic"></div>
+                        </div>
+                    </div>
+                </div>
+                <div id="coeff-container">
+                    <svg id="coeff-panel"></svg>
                 </div>
             </div>
-        </div>
-        <div id="coeff-container">
-            <svg id="coeff-panel"></svg>
+            <div id="list-content" class="tab-content">
+                <div id="coeff-list-toolbar" style="display:flex;gap:6px;padding:4px 8px;align-items:center;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.45);flex-shrink:0;">
+                    <button id="list-select-all-btn" class="bar-sel-btn" title="Select all">⊕ All</button>
+                    <button id="list-deselect-all-btn" class="bar-sel-btn" title="Deselect all">✕ None</button>
+                    <span style="flex:1;"></span>
+                    <span id="list-count" style="font-size:9px;color:var(--muted);"></span>
+                </div>
+                <div id="coeff-list-scroll" style="flex:1;min-height:0;overflow-y:auto;padding:4px 8px;"></div>
+            </div>
         </div>
     </div>
     <div id="ops-group" class="mid-bar disabled">
@@ -2232,6 +2249,14 @@ function updateCoeffSelectionVisual() {
     if (rootColorMode === "derivative") {
         computeRootSensitivities();
         refreshRootColors();
+    }
+    // Sync list tab checkboxes
+    if (typeof leftTab !== "undefined" && leftTab === "list") {
+        const rows = document.querySelectorAll("#coeff-list-scroll .cpick-row");
+        rows.forEach((row, i) => {
+            const cb = row.querySelector(".cpick-cb");
+            if (cb) cb.classList.toggle("checked", selectedCoeffs.has(i));
+        });
     }
 }
 
@@ -7154,7 +7179,8 @@ function resetBitmap() {
 }
 
 // Tab switching
-const tabButtons = document.querySelectorAll(".tab-bar .tab");
+// --- Right panel tabs ---
+const tabButtons = [...document.querySelectorAll(".tab-bar [data-tab]")];
 const tabContents = {
     roots: document.getElementById("roots-content"),
     stats: document.getElementById("stats-content"),
@@ -7176,6 +7202,120 @@ function switchTab(tabName) {
     }
 }
 tabButtons.forEach(btn => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
+
+// --- Left panel tabs ---
+let leftTab = "coeffs";
+const leftTabButtons = [...document.querySelectorAll("#left-tab-bar [data-ltab]")];
+const leftTabContents = {
+    coeffs: document.getElementById("coeffs-content"),
+    list: document.getElementById("list-content")
+};
+
+function switchLeftTab(tabName) {
+    if (tabName === leftTab) return;
+    leftTab = tabName;
+    leftTabButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.ltab === tabName));
+    for (const [key, el] of Object.entries(leftTabContents)) el.classList.toggle("active", key === tabName);
+    if (tabName === "list") refreshCoeffList();
+}
+leftTabButtons.forEach(btn => btn.addEventListener("click", () => switchLeftTab(btn.dataset.ltab)));
+
+// --- Coefficient list tab ---
+function refreshCoeffList() {
+    const container = document.getElementById("coeff-list-scroll");
+    container.innerHTML = "";
+    const deg = coefficients.length - 1;
+    const n = coefficients.length;
+    const coeffSens = computeCoeffSensitivities();
+    document.getElementById("list-count").textContent = n + " coefficients";
+    for (let i = 0; i < n; i++) {
+        const row = document.createElement("div");
+        row.className = "cpick-row";
+
+        const cb = document.createElement("span");
+        cb.className = "cpick-cb" + (selectedCoeffs.has(i) ? " checked" : "");
+
+        const dot = document.createElement("span");
+        dot.className = "cpick-dot";
+        dot.style.background = coeffColor(i, n);
+
+        const sensDot = document.createElement("span");
+        sensDot.className = "cpick-dot";
+        sensDot.style.background = coeffSens ? sensitivityColor(coeffSens[i]) : "#555";
+
+        const label = document.createElement("span");
+        label.className = "cpick-label";
+        label.textContent = "c" + (deg - i);
+
+        const power = document.createElement("span");
+        power.className = "cpick-power";
+        const exp = deg - i;
+        power.textContent = exp === 0 ? "1" : exp === 1 ? "z" : "z" + superscript(exp);
+
+        const pathSpan = document.createElement("span");
+        pathSpan.className = "cpick-path";
+        const ci = coefficients[i];
+        if (ci.pathType !== "none") {
+            const t = ci.pathType;
+            const pName = t === "figure8" ? "Fig-8"
+                : t === "epitrochoid" ? "Spiro" : t === "hypotrochoid" ? "Hypo"
+                : t.charAt(0).toUpperCase() + t.slice(1);
+            pathSpan.textContent = pName;
+            const detail = document.createElement("span");
+            detail.className = "cpick-detail";
+            detail.textContent = ` R${Math.round(ci.radius)} S${ci.speed.toFixed(2)} A${ci.angle.toFixed(2)} ${ci.ccw ? "CCW" : "CW"}`;
+            pathSpan.appendChild(detail);
+        } else {
+            pathSpan.textContent = "\u2014";
+        }
+
+        const coords = document.createElement("span");
+        coords.className = "cpick-coords";
+        const c = coefficients[i];
+        const sign = c.im >= 0 ? "+" : "";
+        coords.textContent = c.re.toFixed(2) + sign + c.im.toFixed(2) + "i";
+
+        row.appendChild(cb);
+        row.appendChild(dot);
+        row.appendChild(sensDot);
+        row.appendChild(label);
+        row.appendChild(power);
+        row.appendChild(pathSpan);
+        row.appendChild(coords);
+
+        const idx = i;
+        row.addEventListener("click", () => {
+            clearRootSelection();
+            if (selectedCoeffs.has(idx)) {
+                selectedCoeffs.delete(idx);
+                cb.classList.remove("checked");
+            } else {
+                selectedCoeffs.add(idx);
+                cb.classList.add("checked");
+                lastSelectedCoeff = idx;
+            }
+            updateCoeffSelectionVisual();
+            updateAnimBar();
+        });
+
+        container.appendChild(row);
+    }
+}
+
+document.getElementById("list-select-all-btn").addEventListener("click", () => {
+    clearRootSelection();
+    for (let i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+    updateCoeffSelectionVisual();
+    updateAnimBar();
+    if (leftTab === "list") refreshCoeffList();
+});
+document.getElementById("list-deselect-all-btn").addEventListener("click", () => {
+    selectedCoeffs.clear();
+    lastSelectedCoeff = -1;
+    updateCoeffSelectionVisual();
+    updateAnimBar();
+    if (leftTab === "list") refreshCoeffList();
+});
 
 // Bitmap tab buttons
 document.getElementById("bitmap-start-btn").addEventListener("click", function () {

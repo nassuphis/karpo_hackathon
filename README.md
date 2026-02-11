@@ -13,7 +13,7 @@ PolyPaint makes this relationship tangible. Two side-by-side complex-plane panel
 <video controls loop muted playsinline width="720" src="https://github.com/user-attachments/assets/7ab7733b-4a6f-47b2-b8fe-a9f650cd9c22"></video>
 
 - **Left panel (Coefficients):** Drag any coefficient dot and watch the roots respond instantly on the right. The domain coloring background shifts in real time, revealing how the polynomial's complex landscape reshapes.
-- **Right panel (Roots):** Drag any root dot and the coefficients on the left update to match — the polynomial is reconstructed from its roots via (z − r₀)(z − r₁)···(z − rₙ₋₁). During a single-root drag, a dashed polyline connects all coefficient dots on the left panel, visualizing the coefficient constellation as a chain.
+- **Right panel (Roots):** Drag any root dot and the coefficients on the left update to match — the polynomial is reconstructed from its roots via (z − r₀)(z − r₁)···(z − rₙ₋₁). During root dragging (single or multi-selected group), a dashed polyline connects all coefficient dots on the left panel, visualizing the coefficient constellation as a chain.
 - **Multi-select:** Click individual dots to toggle selection, or **marquee-select** by clicking and dragging on empty canvas to select all nodes inside the rectangle. Drag any selected item and the entire group moves together, maintaining relative positions.
 - **Animate:** Each coefficient has its own trajectory — assign a curve (circle, figure-8, spiral, etc.) with independent radius, speed, and direction. Select coefficients and configure them via the always-visible trajectory editor. Hit Play and all animated coefficients follow their trajectories simultaneously, creating rich interference patterns as the roots respond to the combined perturbation.
 - **Transform:** Select coefficients or roots and use interactive gesture tools — **Scale** (vertical slider with exponential mapping), **Rotate** (horizontal slider in turns), and **Translate** (2D vector pad) — all with live preview as you drag. Ops work on both coefficient and root selections — the target label turns green for coefficients, red for roots.
@@ -34,13 +34,14 @@ Or visit the **[live demo](https://nassuphis.github.io/karpo_hackathon/)**.
 ```
 Single HTML file (~7300 lines)
 ├── d3.js v7 (CDN)          — SVG rendering, drag interactions
+├── html2canvas (CDN)       — "Full" snapshot export of the whole UI
 ├── Ehrlich-Aberth solver    — polynomial root finding in pure JS
 ├── Horner evaluator         — domain coloring + derivative computation
 ├── Canvas 2D API            — real-time domain coloring
 └── Web Audio API            — sonification of root motion
 ```
 
-No server. No WebSocket. No build tools. The entire app is one self-contained HTML file with inline CSS and JavaScript plus a single CDN dependency (d3.js).
+No server. No WebSocket. No build tools. The entire app is one self-contained HTML file with inline CSS and JavaScript plus two CDN deps: d3.js v7 and html2canvas (used only for Export → Full snapshots).
 
 ## Deep Dives
 
@@ -61,7 +62,7 @@ The UI is organized around a compact header bar and two side-by-side panels with
 
 **Trajectory editor** (always visible below the header): ☰ Coefficient picker, ⊕ All / ✕ None selection buttons, selection label, and **Update Sel** button on the first row. Path type dropdown, CW/CCW toggle, and R/S/A sliders on the second row. Controls dim when no coefficients are selected.
 
-**Roots toolbar** (overlay on the roots canvas): **Trails** toggle, 🎨 Root coloring toggle, ◐ Domain coloring toggle, ⊕ All / ✕ None root selection buttons.
+**Roots toolbar** (overlay on the roots canvas): **Trails** toggle, 🎨 Root coloring popover (Uniform / Index Rainbow / Derivative), ◐ Domain coloring toggle, ⊕ All / ✕ None root selection buttons.
 
 | Control | Description |
 |---------|-------------|
@@ -79,7 +80,7 @@ The UI is organized around a compact header bar and two side-by-side panels with
 | **◐** (roots toolbar) | Toggle domain coloring on the roots canvas background. |
 | **Roots / Stats / Sound** tabs | Roots panel tab bar — switch between root visualization, stats dashboard, and sound routing. |
 | **Stats** dropdowns | Each of the 16 stat plots has a dropdown: 23 time-series, 5 phase-space plots, and 4 spectrum charts. Sonification features (MedianR, Spread, EMed, EHi, Coherence, Encounters) mirror the audio pipeline with matching EMA smoothing. |
-| **⏺** record (tab bar) | Records to WebM video. Mode selector: Roots, Coeffs, Both, Stats, Sound, Bitmap, or Full (both panels + info bar). "Both" is tab-aware — renders coefficients + the active right-side tab. Auto-stops on loop completion. |
+| **⏺** record (tab bar) | Records to WebM video. Mode selector: Roots, Coeffs, Both, Stats, Sound, Bitmap, or Full (both panels + info bar). "Both" is tab-aware — renders coefficients + the active right-side tab. Auto-stops on loop completion when Trails are enabled. |
 | **Bitmap** tab | Accumulates root positions as single-pixel stamps on a black canvas. **Resolution** dropdown (1000/2000/5000 px) sets the square canvas size — 5000 px is print-quality. **start** initializes the canvas (re-initializes if resolution changed), **save** downloads a hi-res PNG, **clear** resets to black. **Steps** dropdown (10K/50K/100K/1M) controls how many solver steps per fast-mode pass. **fastmode** runs in a Web Worker, looping automatically — a pass counter (e.g. `0003/0010`) shows progress toward the computed full cycle, which auto-stops when all animated coefficients return home simultaneously (LCM of periods via GCD of speeds). Click **imode** to stop early. When root coloring is "uniform", `matchRootOrder` is skipped and all roots paint the selected uniform color for faster throughput. |
 | **B / M / V** (Sound tab toolbar) | Toggle and configure the three sound layers. Click to open config popover with on/off toggle + tuning sliders. See [Sonification](docs/sonification.md). |
 | **Selection count** (panel headers) | Shows the number of selected items next to "Coefficients" (green) and "Roots" (red) panel titles. |
@@ -104,11 +105,11 @@ Each coefficient stores its own trajectory settings: path type, radius, speed, a
 4. Click **▶ Play** → all coefficients with a trajectory animate simultaneously
 
 **20 path curves** (including None) in three groups:
-- **Basic:** None, Circle, Horizontal, Vertical, Spiral, Random walk
+- **Basic:** None, Circle, Horizontal, Vertical, Spiral, Random (Gaussian cloud)
 - **Curves:** Lissajous (3:2), Figure-8, Cardioid, Astroid, Deltoid, Rose (3-petal), Spirograph, Hypotrochoid, Butterfly, Star (pentagram), Square
 - **Space-filling:** Hilbert (Moore curve), Peano, Sierpinski arrowhead
 
-Right-click any coefficient to open a context menu with trajectory settings for that individual coefficient — preview changes in real time before committing.
+Right-click any coefficient to open a context menu with trajectory settings for that individual coefficient — changes preview live. Click "Accept" to commit; press Escape or click outside to cancel and revert.
 
 - **Coefficient paths** are always visible on the left panel when a trajectory is assigned — the colored curve shows exactly where each coefficient will travel during animation.
 - **Trails** toggle (roots toolbar): enables root trail recording on the right panel. Roots leave colored SVG path trails as they move. Loop detection auto-stops recording after one full cycle. Jump detection breaks trails at root-index swaps to avoid artifacts.
@@ -139,15 +140,15 @@ karpo_hackathon/
 
 ### Path Transform Model
 
-Each coefficient with a trajectory stores 200 absolute curve points. When radius or angle sliders change, the existing points are transformed in place — radius scales around the coefficient's position, angle rotates around it. The coefficient stays fixed and the path reshapes smoothly around it. This avoids regenerating the curve from scratch, which would cause visible jumps after play-pause.
+Each coefficient with a trajectory stores a sampled curve (typically 200 points, more for space-filling/spiral paths). When radius or angle sliders change, the curve is transformed in place (scale/rotate around the home position) and the coefficient is snapped to the nearest point on the updated curve so it remains on-trajectory. This avoids regenerating the curve from scratch, which would cause visible jumps after play-pause.
 
 ### Space-Filling Curve Paths
 
 Three space-filling curves are available as animation paths, all implemented via L-system turtle graphics with caching:
 
 - **Hilbert (Moore curve):** Closed variant of the Hilbert curve — 4 Hilbert sub-curves arranged in a loop. Order 4, 256 points. Fills a square with uniform step sizes. L-system: `LFL+F+LFL`, `L → -RF+LFL+FR-`, `R → +LF-RFR-FL+`.
-- **Peano:** Classic Peano space-filling curve. Order 3, 729 points. Not naturally closed — uses out-and-back traversal for closure. L-system: `L`, `L → LFRFL-F-RFLFR+F+LFRFL`, `R → RFLFR+F+LFRFL-F-RFLFR`.
-- **Sierpinski arrowhead:** Fills a Sierpinski triangle. Order 5, 243 segments. Also out-and-back. L-system: `A → B-A-B`, `B → A+B+A` with 60-degree turns.
+- **Peano:** Classic Peano space-filling curve. Order 3, 729 points, out-and-back traversal for closure (1458 steps total). L-system: `L`, `L → LFRFL-F-RFLFR+F+LFRFL`, `R → RFLFR+F+LFRFL-F-RFLFR`.
+- **Sierpinski arrowhead:** Fills a Sierpinski triangle. Order 5, 243 segments, out-and-back for closure (486 steps total). L-system: `A → B-A-B`, `B → A+B+A` with 60-degree turns.
 
 All three generate perfectly uniform step sizes and are cached on first use.
 
@@ -157,4 +158,4 @@ All three generate perfectly uniform step sizes and are cached on first use.
 - Domain coloring rendered to half-resolution canvas, CSS-scaled with `devicePixelRatio` support
 - No d3 transitions on dots — positions update instantly to avoid animation conflicts during rapid drag
 - Warm-started Ehrlich-Aberth typically converges in 1–3 iterations during interactive drag
-- **Bitmap fast mode** runs the solver in a Web Worker with zero yielding — the entire hot loop (Ehrlich-Aberth solver, root matching, single-pixel painting) executes off the main thread continuously. The Worker loops automatically across passes, posting periodic pixel snapshots back to the main thread for display. Configurable step count (10K/50K/100K/1M) and canvas resolution (1000/2000/5000 px square). Full-cycle auto-stop computes the LCM of all animated coefficient periods (via GCD of integer speeds) and terminates after exactly that many passes. When root coloring is "none", the O(n²) `matchRootOrder` step is skipped entirely, painting all roots as white pixels. Falls back to chunked main-thread loop if Workers are unavailable
+- **Bitmap fast mode** runs the solver in a Web Worker with zero yielding — the entire hot loop (Ehrlich-Aberth solver, root matching, single-pixel painting) executes off the main thread continuously. The Worker loops automatically across passes, posting periodic pixel snapshots back to the main thread for display. Configurable step count (10K/50K/100K/1M) and canvas resolution (1000/2000/5000 px square). Full-cycle auto-stop computes the LCM of all animated coefficient periods (via GCD of integer speeds) and terminates after exactly that many passes. When root coloring is Uniform, the O(n²) `matchRootOrder` step is skipped entirely, painting all roots using the selected uniform color. Falls back to chunked main-thread loop if Workers are unavailable

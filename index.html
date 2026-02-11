@@ -2851,7 +2851,7 @@ function animPathFn(name, t, center, radius, extra) {
             };
         }
         case "peano": {
-            // Peano curve (out-and-back for closure) — order 3, 512 points (256 forward + 256 back)
+            // Peano curve (out-and-back for closure) — order 3, 729 points (1458 total with out-and-back)
             const ORDER_P = 3, N_P = Math.pow(3, 2 * ORDER_P); // 729 points
             const TOTAL_P = N_P * 2; // out and back
             const seg_p = ((((wt / (2 * Math.PI)) % 1) + 1) % 1) * TOTAL_P;
@@ -3199,7 +3199,7 @@ function stopAnimation() {
     if (anySoundEnabled()) resetAudioState();
 }
 
-// --- Coefficient chain line (shown during single-root drag) ---
+// --- Coefficient chain line (shown during any root drag) ---
 
 function updateCoeffChainLine() {
     const xScale = cxs(), yScale = cys();

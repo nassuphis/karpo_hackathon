@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v15</title>
+<title>PolyPaint v22</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
@@ -508,7 +508,7 @@ body.fast-mode #bitmap-fast-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v15</span>
+    <span class="app-title">PolyPaint v22</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -755,7 +755,7 @@ body.fast-mode #bitmap-fast-btn {
                     <select id="bitmap-res-select" class="bitmap-select"><option value="1000">1000px</option><option value="2000" selected>2000px</option><option value="5000">5000px</option></select>
                     <button id="bitmap-fast-btn" class="bitmap-btn" disabled>fastmode</button>
                     <select id="bitmap-steps-select" class="bitmap-select"><option value="10">10</option><option value="100">100</option><option value="1000">1K</option><option value="10000">10K</option><option value="50000">50K</option><option value="100000">100K</option><option value="1000000">1M</option></select>
-                    <button id="jiggle-btn" class="bitmap-btn" disabled title="Jiggle — random offset per coefficient path">jiggle</button>
+                    <button id="jiggle-btn" class="bitmap-btn" disabled title="Jiggle — perturb coefficient paths between cycles">jiggle</button>
                     <button id="bitmap-bg-btn" class="bitmap-btn" title="Canvas background color">bg</button>
                     <div id="bitmap-progress" style="display:none;flex:1;min-width:60px;height:6px;background:var(--stroke);border-radius:3px;margin-left:4px;overflow:hidden;"><div id="bitmap-progress-bar" style="height:100%;width:0%;background:var(--accent);border-radius:3px;transition:width 0.1s;"></div></div>
                     <span id="bitmap-pass-count" style="display:none;font-family:monospace;font-size:10px;color:var(--muted);margin-left:4px;white-space:nowrap;"></span>
@@ -895,6 +895,11 @@ let fastModeTargetPasses = 0;   // passes for full cycle (0 = unlimited)
 let jiggleOffsets = null;       // Map<coeffIdx, {re, im}> or null
 let jiggleOnTarget = false;     // auto-regenerate on cycle completion
 let jiggleSigma = 10;          // σ as integer 0-100, read as jiggleSigma/100 %
+let jiggleMode = "none";       // "none" | "random" | "rotate" | "walk" | "scale"
+let jiggleTheta = 0.01;        // rotate: turns per trigger (0.001–0.500)
+let jiggleScaleStep = 5;       // scale: % per trigger (1–50)
+let jiggleCumulativeAngle = 0; // rotate: accumulated angle in radians
+let jiggleCumulativeScale = 1.0; // scale: accumulated scale factor
 let fastModeShowProgress = true; // show progress bar + pass counter during fastmode
 // Stats tab state
 let activeTab = "roots";
@@ -5484,7 +5489,8 @@ function buildStateMetadata(timestamp) {
             coeff: { range: panels.coeff.range },
             roots: { range: panels.roots.range }
         },
-        trailData: trailData.map(pts => pts.map(p => [p.re, p.im]))
+        trailData: trailData.map(pts => pts.map(p => [p.re, p.im])),
+        jiggle: { mode: jiggleMode, sigma: jiggleSigma, theta: jiggleTheta, scaleStep: jiggleScaleStep }
     };
 }
 
@@ -5846,7 +5852,18 @@ function applyLoadedState(meta) {
         trailData = meta.trailData.map(pts => pts.map(p => ({ re: p[0], im: p[1] })));
     }
 
-    // 9. Restore selections
+    // 9. Restore jiggle settings
+    if (meta.jiggle) {
+        jiggleMode = meta.jiggle.mode || "random";
+        jiggleSigma = meta.jiggle.sigma ?? 10;
+        jiggleTheta = meta.jiggle.theta ?? 0.01;
+        jiggleScaleStep = meta.jiggle.scaleStep ?? 5;
+    }
+    jiggleCumulativeAngle = 0;
+    jiggleCumulativeScale = 1.0;
+    jiggleOffsets = null;
+
+    // 10. Restore selections
     if (meta.selectedCoeffs) for (const idx of meta.selectedCoeffs) selectedCoeffs.add(idx);
     if (meta.selectedRoots) for (const idx of meta.selectedRoots) selectedRoots.add(idx);
 
@@ -8336,13 +8353,70 @@ function gaussRand() {
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-function generateJiggleOffsets() {
-    const sigma = (jiggleSigma / 100) * coeffExtent();
-    if (sigma <= 0) { jiggleOffsets = null; updateJiggleStatus(); return; }
-    jiggleOffsets = new Map();
+function computeAnimatedCentroid() {
     const animated = allAnimatedCoeffs();
+    if (animated.size === 0) return { re: 0, im: 0 };
+    let sre = 0, sim = 0;
     for (const idx of animated) {
-        jiggleOffsets.set(idx, { re: gaussRand() * sigma, im: gaussRand() * sigma });
+        const c = coefficients[idx];
+        sre += c.curve ? c.curve[0].re : c.re;
+        sim += c.curve ? c.curve[0].im : c.im;
+    }
+    return { re: sre / animated.size, im: sim / animated.size };
+}
+
+function generateJiggleOffsets() {
+    const animated = allAnimatedCoeffs();
+    if (animated.size === 0 || jiggleMode === "none") { jiggleOffsets = null; updateJiggleStatus(); return; }
+
+    if (jiggleMode === "random") {
+        const sigma = (jiggleSigma / 100) * coeffExtent();
+        if (sigma <= 0) { jiggleOffsets = null; updateJiggleStatus(); return; }
+        jiggleOffsets = new Map();
+        for (const idx of animated) {
+            jiggleOffsets.set(idx, { re: gaussRand() * sigma, im: gaussRand() * sigma });
+        }
+    } else if (jiggleMode === "rotate") {
+        jiggleCumulativeAngle += jiggleTheta * 2 * Math.PI;
+        const cen = computeAnimatedCentroid();
+        const cos_a = Math.cos(jiggleCumulativeAngle);
+        const sin_a = Math.sin(jiggleCumulativeAngle);
+        jiggleOffsets = new Map();
+        for (const idx of animated) {
+            const c = coefficients[idx];
+            const hre = c.curve ? c.curve[0].re : c.re;
+            const him = c.curve ? c.curve[0].im : c.im;
+            const dx = hre - cen.re, dy = him - cen.im;
+            jiggleOffsets.set(idx, {
+                re: dx * cos_a - dy * sin_a - dx,
+                im: dx * sin_a + dy * cos_a - dy
+            });
+        }
+    } else if (jiggleMode === "walk") {
+        const sigma = (jiggleSigma / 100) * coeffExtent();
+        if (sigma <= 0) { jiggleOffsets = null; updateJiggleStatus(); return; }
+        if (!jiggleOffsets) jiggleOffsets = new Map();
+        for (const idx of animated) {
+            const prev = jiggleOffsets.get(idx) || { re: 0, im: 0 };
+            jiggleOffsets.set(idx, {
+                re: prev.re + gaussRand() * sigma,
+                im: prev.im + gaussRand() * sigma
+            });
+        }
+    } else if (jiggleMode === "scale") {
+        jiggleCumulativeScale *= (1 + jiggleScaleStep / 100);
+        const cen = computeAnimatedCentroid();
+        jiggleOffsets = new Map();
+        for (const idx of animated) {
+            const c = coefficients[idx];
+            const hre = c.curve ? c.curve[0].re : c.re;
+            const him = c.curve ? c.curve[0].im : c.im;
+            const dx = hre - cen.re, dy = him - cen.im;
+            jiggleOffsets.set(idx, {
+                re: dx * (jiggleCumulativeScale - 1),
+                im: dy * (jiggleCumulativeScale - 1)
+            });
+        }
     }
     updateJiggleStatus();
 }
@@ -8367,36 +8441,108 @@ function closeJigglePop() {
 function openJigglePop() {
     if (jigglePopOpen) { closeJigglePop(); return; }
     jigglePop.innerHTML = "";
+    const inpStyle = "width:50px;background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
+    const lblStyle = "font-size:10px;color:var(--fg);";
+    const hintStyle = "font-size:9px;color:var(--muted);";
+    const rowStyle = "display:flex;align-items:center;gap:6px;margin:4px 0;";
 
+    // Title
     const title = document.createElement("div");
     title.className = "pop-title";
     title.textContent = "JIGGLE";
     jigglePop.appendChild(title);
 
-    // σ row — integer 0-100, displayed as-is, read as /100 → %
-    const sigmaRow = document.createElement("div");
-    sigmaRow.style.cssText = "display:flex;align-items:center;gap:6px;margin:4px 0;";
-    const sigmaLabel = document.createElement("span");
-    sigmaLabel.style.cssText = "font-size:10px;color:var(--fg);";
-    sigmaLabel.textContent = "σ";
-    const sigmaInp = document.createElement("input");
-    sigmaInp.type = "number";
-    sigmaInp.id = "jiggle-sigma";
-    sigmaInp.step = "1";
-    sigmaInp.min = "0";
-    sigmaInp.max = "100";
-    sigmaInp.value = jiggleSigma;
-    sigmaInp.style.cssText = "width:50px;background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
-    sigmaInp.addEventListener("input", () => {
-        jiggleSigma = Math.max(0, Math.min(100, parseInt(sigmaInp.value, 10) || 0));
+    // Mode dropdown row
+    const modeRow = document.createElement("div");
+    modeRow.style.cssText = rowStyle;
+    const modeLbl = document.createElement("span");
+    modeLbl.style.cssText = lblStyle;
+    modeLbl.textContent = "Mode";
+    const modeSel = document.createElement("select");
+    modeSel.style.cssText = "background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
+    for (const m of ["none", "random", "rotate", "walk", "scale"]) {
+        const opt = document.createElement("option");
+        opt.value = m;
+        opt.textContent = m.charAt(0).toUpperCase() + m.slice(1);
+        if (m === jiggleMode) opt.selected = true;
+        modeSel.appendChild(opt);
+    }
+    modeRow.appendChild(modeLbl);
+    modeRow.appendChild(modeSel);
+    jigglePop.appendChild(modeRow);
+
+    // Controls container — rebuilt when mode changes
+    const controlsDiv = document.createElement("div");
+    jigglePop.appendChild(controlsDiv);
+
+    function buildModeControls() {
+        controlsDiv.innerHTML = "";
+        if (jiggleMode === "random" || jiggleMode === "walk") {
+            // σ row
+            const row = document.createElement("div");
+            row.style.cssText = rowStyle;
+            const lbl = document.createElement("span");
+            lbl.style.cssText = lblStyle;
+            lbl.textContent = "σ";
+            const inp = document.createElement("input");
+            inp.type = "number"; inp.step = "1"; inp.min = "0"; inp.max = "100";
+            inp.value = jiggleSigma;
+            inp.style.cssText = inpStyle;
+            inp.addEventListener("input", () => {
+                jiggleSigma = Math.max(0, Math.min(100, parseInt(inp.value, 10) || 0));
+            });
+            const hint = document.createElement("span");
+            hint.style.cssText = hintStyle;
+            hint.textContent = "/ 100";
+            row.appendChild(lbl); row.appendChild(inp); row.appendChild(hint);
+            controlsDiv.appendChild(row);
+        } else if (jiggleMode === "rotate") {
+            // θ row
+            const row = document.createElement("div");
+            row.style.cssText = rowStyle;
+            const lbl = document.createElement("span");
+            lbl.style.cssText = lblStyle;
+            lbl.textContent = "θ";
+            const inp = document.createElement("input");
+            inp.type = "number"; inp.step = "0.001"; inp.min = "0.001"; inp.max = "0.500";
+            inp.value = jiggleTheta;
+            inp.style.cssText = inpStyle;
+            const hint = document.createElement("span");
+            hint.style.cssText = hintStyle;
+            hint.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
+            inp.addEventListener("input", () => {
+                jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(inp.value) || 0.01));
+                hint.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
+            });
+            row.appendChild(lbl); row.appendChild(inp); row.appendChild(hint);
+            controlsDiv.appendChild(row);
+        } else if (jiggleMode === "scale") {
+            // step row
+            const row = document.createElement("div");
+            row.style.cssText = rowStyle;
+            const lbl = document.createElement("span");
+            lbl.style.cssText = lblStyle;
+            lbl.textContent = "step";
+            const inp = document.createElement("input");
+            inp.type = "number"; inp.step = "1"; inp.min = "1"; inp.max = "50";
+            inp.value = jiggleScaleStep;
+            inp.style.cssText = inpStyle;
+            inp.addEventListener("input", () => {
+                jiggleScaleStep = Math.max(1, Math.min(50, parseInt(inp.value, 10) || 5));
+            });
+            const hint = document.createElement("span");
+            hint.style.cssText = hintStyle;
+            hint.textContent = "%";
+            row.appendChild(lbl); row.appendChild(inp); row.appendChild(hint);
+            controlsDiv.appendChild(row);
+        }
+    }
+    buildModeControls();
+
+    modeSel.addEventListener("change", () => {
+        jiggleMode = modeSel.value;
+        buildModeControls();
     });
-    const sigmaPct = document.createElement("span");
-    sigmaPct.style.cssText = "font-size:9px;color:var(--muted);";
-    sigmaPct.textContent = "/ 100";
-    sigmaRow.appendChild(sigmaLabel);
-    sigmaRow.appendChild(sigmaInp);
-    sigmaRow.appendChild(sigmaPct);
-    jigglePop.appendChild(sigmaRow);
 
     // Buttons row
     const btnRow = document.createElement("div");
@@ -8411,7 +8557,12 @@ function openJigglePop() {
     const clrBtn = document.createElement("button");
     clrBtn.textContent = "Clear";
     clrBtn.style.cssText = "font-size:9px;padding:2px 6px;background:transparent;color:var(--muted);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;";
-    clrBtn.addEventListener("click", () => { jiggleOffsets = null; updateJiggleStatus(); });
+    clrBtn.addEventListener("click", () => {
+        jiggleOffsets = null;
+        jiggleCumulativeAngle = 0;
+        jiggleCumulativeScale = 1.0;
+        updateJiggleStatus();
+    });
     btnRow.appendChild(genBtn);
     btnRow.appendChild(clrBtn);
     jigglePop.appendChild(btnRow);

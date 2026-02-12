@@ -141,39 +141,35 @@ elapsed × speed_i = passes × (s_i / 100) = (100 / GCD) × (s_i / 100) = s_i / 
 
 Since GCD divides every s_i by definition, `s_i / GCD` is always an integer. Therefore `u = 0` and `rawIdx = 0` — every coefficient is at `curve[0]`, its home position. The bitmap contains every root position from one complete cycle with no overlap or gap.
 
-## Jiggle — Stochastic Path Perturbation
+## Jiggle — Path Perturbation Between Cycles
 
-The **jiggle** button on the Bitmap tab opens a popup for applying random per-coefficient offsets to trajectory home positions during fast mode. This produces stochastically perturbed bitmaps — each cycle paints a slightly different version of the root pattern, building up density over many cycles.
+The **jiggle** button on the Bitmap tab opens a popup for perturbing coefficient trajectory home positions between fast-mode cycles. All modes produce the same `Map<coeffIdx, {re, im}>` additive offsets consumed by `enterFastMode()` — only the generation strategy differs.
 
-### How it works
+### Architecture
 
-Each animated coefficient gets an independent random offset `{δre, δim}` drawn from `N(0, σ)` (Box-Muller transform). The σ parameter is an integer 0–100 representing a percentage of `coeffExtent()` (the max pairwise distance between coefficients at their home positions):
-
-```
-σ_absolute = (jiggleSigma / 100) × coeffExtent()
-δre = gaussRand() × σ_absolute
-δim = gaussRand() × σ_absolute
-```
-
-This uses the same reference space as the radius slider (`absR = (c.radius / 100) × coeffExtent()`).
-
-When fast mode generates hi-res curves, the offset is added to the coefficient's home position:
+When fast mode generates hi-res curves, each animated coefficient's home position is shifted by its jiggle offset:
 
 ```
-homeRe += δre
-homeIm += δim
+homeRe += offset.re
+homeIm += offset.im
 ```
 
-The curve shape and parameters (path type, radius, angle, speed) are unchanged — only the center point shifts.
+The curve shape and parameters (path type, radius, angle, speed) are unchanged — only the center point shifts. Offsets are recomputed between cycles (via Generate or OnTarget auto-trigger).
 
-### Controls
+### Modes
 
-- **σ** (0–100): Standard deviation as % of coefficient extent. 0 = no perturbation, 10 = moderate, 100 = extreme.
-- **Generate**: Creates new random offsets for all animated coefficients.
-- **Clear**: Removes all offsets (reverts to exact trajectories).
-- **OnTarget**: When checked, automatically regenerates offsets each time a full cycle completes — fast mode exits, generates new offsets, and re-enters fast mode seamlessly. This builds up stochastic density over many cycles without manual intervention.
+The popup has a **Mode** dropdown with 5 options:
 
-### Typical σ values
+#### None (default)
+No perturbation. Generate is a no-op. Use this when you want jiggle disabled without having to remember parameter values.
+
+#### Random
+Fresh Gaussian offsets each trigger. Each trigger replaces all offsets independently.
+
+- **Control**: σ (0–100) — standard deviation as % of `coeffExtent()`
+- **Formula**: `offset = { re: gaussRand() × σ_abs, im: gaussRand() × σ_abs }` where `σ_abs = (σ / 100) × coeffExtent()`
+- Uses Box-Muller transform for proper Gaussian distribution
+- Same reference space as the radius slider (`absR = (c.radius / 100) × coeffExtent()`)
 
 | σ | Effect |
 |---|--------|
@@ -181,6 +177,55 @@ The curve shape and parameters (path type, radius, angle, speed) are unchanged �
 | 10 | ~10% — visible smearing, paths overlap |
 | 50 | ~50% — dramatic perturbation, root patterns significantly altered |
 | 100 | ~100% — extreme perturbation |
+
+#### Rotate
+Cumulative rotation of all animated coefficient home positions around their centroid by a fixed angle step.
+
+- **Control**: θ (0.001–0.500 turns), displayed with degree equivalent
+- **State**: `jiggleCumulativeAngle` — accumulated angle in radians, incremented by `θ × 2π` each trigger
+- **Formula**:
+  ```
+  centroid = mean of all animated coefficients' home positions
+  for each coefficient:
+    dx, dy = home − centroid
+    offset.re = dx×cos(angle) − dy×sin(angle) − dx
+    offset.im = dx×sin(angle) + dy×cos(angle) − dy
+  ```
+- Deterministic — produces a systematic angular sweep through coefficient space
+- With OnTarget, each cycle rotates further, painting a rosette of overlapping root patterns
+
+#### Walk
+Cumulative random walk — each trigger adds a small random step to the current offsets instead of replacing them.
+
+- **Control**: σ (0–100) — step size as % of `coeffExtent()`
+- **Formula**: `offset.re += gaussRand() × σ_abs`, `offset.im += gaussRand() × σ_abs`
+- If no offsets exist yet, creates fresh offsets like Random mode
+- Produces spatially correlated drift — nearby cycles paint nearby perturbations
+- With OnTarget, the bitmap accumulates a Brownian-motion exploration of coefficient space
+
+#### Scale
+Cumulative scaling of all animated coefficient home positions around their centroid.
+
+- **Control**: step (1–50) — percent scale per trigger
+- **State**: `jiggleCumulativeScale` — accumulated scale factor, multiplied by `(1 + step/100)` each trigger
+- **Formula**:
+  ```
+  centroid = mean of all animated coefficients' home positions
+  for each coefficient:
+    dx, dy = home − centroid
+    offset = { re: dx × (scale − 1), im: dy × (scale − 1) }
+  ```
+- With OnTarget, coefficients spread further apart each cycle, producing radial density patterns
+
+### Common Controls
+
+- **Generate**: Computes new offsets using the current mode. Plays a ping on success, a buzz when mode is None or no animated coefficients exist.
+- **Clear**: Removes all offsets and resets cumulative state (`jiggleCumulativeAngle = 0`, `jiggleCumulativeScale = 1.0`).
+- **OnTarget**: When checked, automatically calls Generate each time a full cycle completes — fast mode exits, generates new offsets, and re-enters fast mode seamlessly.
+
+### Persistence
+
+Mode, σ, θ, and scale step are saved/loaded with the project state. Cumulative state (angle, scale factor) and active offsets are transient — they reset on load.
 
 ## The "pos" Column in the List Tab
 

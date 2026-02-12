@@ -1114,6 +1114,24 @@ function buildAudioToggle(parent, label, isOn, onChange) {
     return row;
 }
 
+// Lightweight UI feedback ping — independent of the sonification audio graph
+function uiPing(freq = 880, dur = 0.08) {
+    try {
+        const ctx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        if (!audioCtx) audioCtx = ctx;
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = "sine";
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(0.12, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.start();
+        o.stop(ctx.currentTime + dur + 0.01);
+    } catch (e) { /* audio not available */ }
+}
+
 function initAudio() {
     if (audioCtx) return;
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -2303,6 +2321,7 @@ function rebuildBarControls(pathType) {
                 const fm = barInputs["speed_fmt"];
                 if (vs && fm) vs.textContent = fm(ps);
                 applyBarToSelection();
+                uiPing(1320, 0.06);
             }
         });
         barDynamic.appendChild(psBtn);
@@ -2619,6 +2638,7 @@ function openCoeffCtx(event, coeffIdx) {
             const vs = sInp.parentElement.querySelector(".ctx-val");
             if (vs) vs.textContent = _P.speed.fmt(ps);
             previewCtx();
+            uiPing(1320, 0.06);
         }
     });
     ctxBtnRow.appendChild(ctxPsBtn);
@@ -2857,7 +2877,8 @@ playBtn.addEventListener("click", function () {
         playBtn.textContent = "▶ Play";
     } else {
         if (allAnimatedCoeffs().size === 0) return;
-        if (trailsEnabled) {
+        const resuming = animState.elapsedAtPause != null;
+        if (trailsEnabled && !resuming) {
             trailData = [];
             trailComplete = false;
             trailLayer.selectAll("path.trail-path").remove();
@@ -3510,11 +3531,14 @@ const rootDrag = d3.drag()
 
 function autoScaleRootsPanel() {
     let needed = computeRange(currentRoots);
-    if (animState.playing) needed = Math.max(needed, panels.roots.range);
+    if (animState.playing || (trailsEnabled && trailData.length > 0)) {
+        needed = Math.max(needed, panels.roots.range);
+    }
     if (needed !== panels.roots.range) {
         updatePanelRange(rootsSvg, panels.roots, needed);
         rootsLayer.selectAll("circle.root")
             .attr("cx", d => rxs()(d.re)).attr("cy", d => rys()(d.im));
+        if (trailsEnabled && trailData.length > 0) renderTrails();
     }
 }
 
@@ -3529,9 +3553,12 @@ function renderRoots(newRoots) {
         currentRoots[i].im = newRoots[i].im;
     }
 
-    // Auto-scale roots panel (zoom-out only during animation)
+    // Auto-scale roots panel — zoom-out only while playing OR trails visible,
+    // so pausing never shrinks the range and detaches trails from root dots.
     let needed = computeRange(currentRoots);
-    if (animState.playing) needed = Math.max(needed, panels.roots.range);
+    if (animState.playing || (trailsEnabled && trailData.length > 0)) {
+        needed = Math.max(needed, panels.roots.range);
+    }
     updatePanelRange(rootsSvg, panels.roots, needed);
 
     const n = currentRoots.length;
@@ -3592,7 +3619,11 @@ function renderRoots(newRoots) {
                 if (vidRec.recording) stopRecording();
             }
         }
-        if (activeTab !== "bitmap") renderTrails();
+    }
+    // Always re-render trails when data exists — ensures coherence after
+    // pause (the pending throttled solve fires with playing=false).
+    if (trailsEnabled && trailData.length > 0 && activeTab !== "bitmap") {
+        renderTrails();
     }
 
 
@@ -7636,6 +7667,7 @@ function openPathPickPop(coeffIdx, anchorEl) {
             const vs = sInp.parentElement.querySelector(".ctx-val");
             if (vs) vs.textContent = _P.speed.fmt(ps);
             previewPP();
+            uiPing(1320, 0.06);
         }
     });
     ppBtnRow.appendChild(ppPsBtn);
@@ -8084,6 +8116,7 @@ document.getElementById("lce-ps-btn").addEventListener("click", () => {
         sInp.value = ps;
         const vs = sInp.parentElement.querySelector(".ctx-val");
         if (vs) vs.textContent = _P.speed.fmt(ps);
+        uiPing(1320, 0.06);
     }
 });
 
@@ -8329,7 +8362,7 @@ function openJigglePop() {
     const genBtn = document.createElement("button");
     genBtn.textContent = "Generate";
     genBtn.style.cssText = "font-size:9px;padding:2px 6px;background:var(--accent);color:#000;border:none;border-radius:3px;cursor:pointer;";
-    genBtn.addEventListener("click", () => { generateJiggleOffsets(); });
+    genBtn.addEventListener("click", () => { generateJiggleOffsets(); uiPing(880, 0.08); });
     const clrBtn = document.createElement("button");
     clrBtn.textContent = "Clear";
     clrBtn.style.cssText = "font-size:9px;padding:2px 6px;background:transparent;color:var(--muted);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;";

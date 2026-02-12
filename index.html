@@ -710,6 +710,7 @@ body.fast-mode #bitmap-fast-btn {
                     <button id="trails-btn">Trails</button>
                     <button id="root-color-btn" class="roots-tool-btn active" title="Color roots">🎨</button>
                     <button id="domain-toggle-btn" class="roots-tool-btn" title="Domain coloring">◐</button>
+                    <button id="roots-fit-btn" class="roots-tool-btn" title="Resize to fit all roots and trails">Fit</button>
                     <button id="select-all-roots-btn" class="roots-tool-btn" title="Select all roots">⊕ All</button>
                     <button id="deselect-all-roots-btn" class="roots-tool-btn" title="Deselect all roots">✕ None</button>
                 </div>
@@ -1114,7 +1115,7 @@ function buildAudioToggle(parent, label, isOn, onChange) {
     return row;
 }
 
-// Lightweight UI feedback ping — independent of the sonification audio graph
+// Lightweight UI feedback sounds — independent of the sonification audio graph
 function uiPing(freq = 880, dur = 0.08) {
     try {
         const ctx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
@@ -1129,6 +1130,24 @@ function uiPing(freq = 880, dur = 0.08) {
         g.connect(ctx.destination);
         o.start();
         o.stop(ctx.currentTime + dur + 0.01);
+    } catch (e) { /* audio not available */ }
+}
+// "Unhappy" buzz — short descending tone for "nothing to do"
+function uiBuzz() {
+    try {
+        const ctx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        if (!audioCtx) audioCtx = ctx;
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = "sawtooth";
+        o.frequency.setValueAtTime(340, ctx.currentTime);
+        o.frequency.exponentialRampToValueAtTime(160, ctx.currentTime + 0.15);
+        g.gain.setValueAtTime(0.07, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.start();
+        o.stop(ctx.currentTime + 0.16);
     } catch (e) { /* audio not available */ }
 }
 
@@ -2322,7 +2341,7 @@ function rebuildBarControls(pathType) {
                 if (vs && fm) vs.textContent = fm(ps);
                 applyBarToSelection();
                 uiPing(1320, 0.06);
-            }
+            } else { uiBuzz(); }
         });
         barDynamic.appendChild(psBtn);
     }
@@ -2639,7 +2658,7 @@ function openCoeffCtx(event, coeffIdx) {
             if (vs) vs.textContent = _P.speed.fmt(ps);
             previewCtx();
             uiPing(1320, 0.06);
-        }
+        } else { uiBuzz(); }
     });
     ctxBtnRow.appendChild(ctxPsBtn);
     const acceptBtn = document.createElement("button");
@@ -2883,6 +2902,9 @@ playBtn.addEventListener("click", function () {
             trailComplete = false;
             trailLayer.selectAll("path.trail-path").remove();
         }
+        // Always reset loop-complete flag so trail recording continues.
+        // The Trails button being ON means trails are collected — unconditionally.
+        if (trailsEnabled) trailComplete = false;
         startAnimation();
         renderCoeffTrails();
         playBtn.textContent = "⏸ Pause";
@@ -4177,6 +4199,26 @@ document.getElementById("select-all-roots-btn").addEventListener("click", functi
 
 document.getElementById("deselect-all-roots-btn").addEventListener("click", function () {
     clearRootSelection();
+});
+
+// Fit button — resize roots panel to fit all roots + trails
+document.getElementById("roots-fit-btn").addEventListener("click", function () {
+    const allPts = [...currentRoots];
+    if (trailsEnabled) {
+        for (const pts of trailData) {
+            for (const p of pts) allPts.push(p);
+        }
+    }
+    if (allPts.length === 0) { uiBuzz(); return; }
+    const needed = computeRange(allPts);
+    if (Math.abs(panels.roots.range - needed) < 0.01) { uiBuzz(); return; }
+    // Force range (bypasses zoom-out-only guard)
+    updatePanelRange(rootsSvg, panels.roots, needed);
+    rootsLayer.selectAll("circle.root")
+        .attr("cx", d => rxs()(d.re)).attr("cy", d => rys()(d.im));
+    if (trailsEnabled && trailData.length > 0) renderTrails();
+    renderDomainColoring();
+    uiPing(660, 0.08);
 });
 
 // --- Root color popover ---
@@ -7668,7 +7710,7 @@ function openPathPickPop(coeffIdx, anchorEl) {
             if (vs) vs.textContent = _P.speed.fmt(ps);
             previewPP();
             uiPing(1320, 0.06);
-        }
+        } else { uiBuzz(); }
     });
     ppBtnRow.appendChild(ppPsBtn);
     const acceptBtn = document.createElement("button");
@@ -8117,7 +8159,7 @@ document.getElementById("lce-ps-btn").addEventListener("click", () => {
         const vs = sInp.parentElement.querySelector(".ctx-val");
         if (vs) vs.textContent = _P.speed.fmt(ps);
         uiPing(1320, 0.06);
-    }
+    } else { uiBuzz(); }
 });
 
 // Bitmap tab buttons
@@ -8362,7 +8404,10 @@ function openJigglePop() {
     const genBtn = document.createElement("button");
     genBtn.textContent = "Generate";
     genBtn.style.cssText = "font-size:9px;padding:2px 6px;background:var(--accent);color:#000;border:none;border-radius:3px;cursor:pointer;";
-    genBtn.addEventListener("click", () => { generateJiggleOffsets(); uiPing(880, 0.08); });
+    genBtn.addEventListener("click", () => {
+        generateJiggleOffsets();
+        (jiggleOffsets && jiggleOffsets.size > 0) ? uiPing(880, 0.08) : uiBuzz();
+    });
     const clrBtn = document.createElement("button");
     clrBtn.textContent = "Clear";
     clrBtn.style.cssText = "font-size:9px;padding:2px 6px;background:transparent;color:var(--muted);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;";

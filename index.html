@@ -453,6 +453,8 @@ circle.coeff.selected, circle.root.selected {
 }
 .bitmap-btn:hover { background: var(--accent); color: #fff; }
 .bitmap-btn:disabled { opacity: 0.3; cursor: default; background: transparent; color: var(--accent); }
+#bitmap-coeff-btn { color: #e94560; font-weight: 700; }
+#bitmap-coeff-btn.active { color: #2ecc71; }
 .bitmap-select {
     background: var(--bg); color: var(--fg); border: 1px solid var(--accent-border); border-radius: 6px;
     padding: 2px 4px; font-size: 10px; font-weight: 600; cursor: pointer;
@@ -759,7 +761,7 @@ body.fast-mode #bitmap-fast-btn {
                     <button id="bitmap-clear-btn" class="bitmap-btn" disabled>clear</button>
                     <select id="bitmap-res-select" class="bitmap-select"><option value="1000">1000px</option><option value="2000" selected>2000px</option><option value="5000">5000px</option><option value="10000">10000px</option><option value="15000">15000px</option></select>
                     <button id="bitmap-fast-btn" class="bitmap-btn" disabled>fastmode</button>
-                    <button id="bitmap-coeff-btn" class="bitmap-btn" disabled title="Plot coefficient positions instead of roots">R|C</button>
+                    <button id="bitmap-coeff-btn" class="bitmap-btn" disabled title="Plot coefficient positions instead of roots">ROOT</button>
                     <select id="bitmap-steps-select" class="bitmap-select"><option value="10">10</option><option value="100">100</option><option value="1000">1K</option><option value="5000">5K</option><option value="10000">10K</option><option value="50000">50K</option><option value="100000">100K</option><option value="1000000">1M</option></select>
                     <button id="jiggle-btn" class="bitmap-btn" disabled title="Jiggle — perturb coefficient paths between cycles">jiggle</button>
                     <button id="jiggle-diag-btn" class="bitmap-btn" disabled title="Jiggle diagnostics" style="font-weight:700;min-width:20px;padding:2px 4px;">D</button>
@@ -6168,7 +6170,7 @@ function applyLoadedState(meta) {
     const bcBtn = document.getElementById("bitmap-coeff-btn");
     if (bcBtn) {
         bcBtn.classList.toggle("active", bitmapCoeffView);
-        bcBtn.textContent = bitmapCoeffView ? "C|R" : "R|C";
+        bcBtn.textContent = bitmapCoeffView ? "COEF" : "ROOT";
     }
 
     // 10. Restore selections
@@ -7468,6 +7470,12 @@ self.onmessage = function(e) {
 // Speed slider step = 0.01, so speed_i = s_i/100 (integer s_i).
 // Period_i = 100/s_i seconds. Full cycle = LCM of all periods = 100/GCD(s_1,...,s_k).
 // Each pass covers FAST_PASS_SECONDS (1.0s), so passes = 100/GCD(s_1,...,s_k).
+function fmtPassCount() {
+    const c = Math.round(fastModeCumulativeSec * 100) / 100;
+    const t = Math.round(fastModeTargetPasses * 100) / 100;
+    return t > 0 ? c + "/" + t + "s" : c + "s";
+}
+
 function computeFullCyclePasses() {
     const animated = allAnimatedCoeffs();
     if (animated.size === 0) return 0;
@@ -7657,9 +7665,7 @@ function enterFastMode() {
         const passEl = document.getElementById("bitmap-pass-count");
         if (passEl) {
             passEl.style.display = "";
-            passEl.textContent = fastModeTargetPasses > 0
-                ? fastModeCumulativeSec + "/" + fastModeTargetPasses + "s"
-                : fastModeCumulativeSec + "s";
+            passEl.textContent = fmtPassCount();
         }
     }
 
@@ -7672,7 +7678,7 @@ function enterFastMode() {
         fastModeCumulativeSec++;
         // Update pass counter display
         const passEl = document.getElementById("bitmap-pass-count");
-        if (passEl) passEl.textContent = fastModeCumulativeSec + "s";
+        if (passEl) passEl.textContent = fmtPassCount();
         // If jiggle cycling is set up, schedule next cycle
         if (jiggleMode !== "none" && fastModeActive) {
             function coeffJiggleCycle() {
@@ -7698,7 +7704,7 @@ function enterFastMode() {
                 plotCoeffCurvesOnBitmap(anim2, stepsVal);
                 fastModePassCount++;
                 fastModeCumulativeSec++;
-                if (passEl) passEl.textContent = fastModeCumulativeSec + "s";
+                if (passEl) passEl.textContent = fmtPassCount();
                 if (fastModeActive && jiggleMode !== "none") {
                     fastModeTimerId = setTimeout(coeffJiggleCycle, 0);
                 } else {
@@ -7976,9 +7982,7 @@ function advancePass() {
         }
         const passEl = document.getElementById("bitmap-pass-count");
         if (passEl) {
-            passEl.textContent = fastModeTargetPasses > 0
-                ? fastModeCumulativeSec + "/" + fastModeTargetPasses + "s"
-                : fastModeCumulativeSec + "s";
+            passEl.textContent = fmtPassCount();
         }
     }
 
@@ -8142,9 +8146,7 @@ function fastModeChunkLegacy() {
             }
             const passEl = document.getElementById("bitmap-pass-count");
             if (passEl) {
-                passEl.textContent = fastModeTargetPasses > 0
-                    ? fastModeCumulativeSec + "/" + fastModeTargetPasses + "s"
-                    : fastModeCumulativeSec + "s";
+                passEl.textContent = fmtPassCount();
             }
         }
         // Cycle complete — always continue, apply jiggle
@@ -8866,7 +8868,7 @@ document.getElementById("bitmap-fast-btn").addEventListener("click", function ()
 document.getElementById("bitmap-coeff-btn").addEventListener("click", function () {
     bitmapCoeffView = !bitmapCoeffView;
     this.classList.toggle("active", bitmapCoeffView);
-    this.textContent = bitmapCoeffView ? "C|R" : "R|C";
+    this.textContent = bitmapCoeffView ? "COEF" : "ROOT";
     uiPing(660, 0.08);
 });
 

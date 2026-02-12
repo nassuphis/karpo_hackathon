@@ -385,7 +385,7 @@ Workers index into `curvesFlat` as: `base = offsets[a] * 2; curvesFlat[base + k*
 | Clear | `bitmap-clear-btn` | Fill canvas with bg color, reset `fastModeElapsedOffset` |
 | Resolution | `bitmap-res-select` | 1000, 2000, 5000, 10000, 15000 px |
 | Fast/imode | `bitmap-fast-btn` | Toggle `enterFastMode()` / `exitFastMode()` |
-| R\|C / C\|R | `bitmap-coeff-btn` | Toggle coefficient view (plot coefficients instead of roots) |
+| ROOT / COEF | `bitmap-coeff-btn` | Toggle coefficient view (plot coefficients instead of roots) |
 | Steps | `bitmap-steps-select` | 10, 100, 1K, 5K, 10K, 50K, 100K, 1M steps per pass |
 | Jiggle | `jiggle-btn` | Opens jiggle configuration popup |
 | Diagnostics | `jiggle-diag-btn` | Opens jiggle diagnostics popup (mode, offsets, positions) |
@@ -506,7 +506,7 @@ Uniform mode is faster: no per-root color lookup, no root matching overhead.
 
 ## Coefficient View Mode
 
-When `bitmapCoeffView` is true (toggled via R|C button), fast mode plots **coefficient positions** on the bitmap canvas instead of solving for roots. This visualizes the actual coefficient curves and jiggle perturbations.
+When `bitmapCoeffView` is true (toggled via ROOT/COEF button), fast mode plots **coefficient positions** on the bitmap canvas instead of solving for roots. This visualizes the actual coefficient curves and jiggle perturbations.
 
 ### How It Works
 

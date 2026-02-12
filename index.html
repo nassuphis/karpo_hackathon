@@ -234,9 +234,37 @@ body {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cpick-row .cpick-path .cpick-detail { opacity: 0.6; margin-left: 3px; font-size: 7px; }
+.cpick-path-btn {
+    font-size: 8px; color: var(--text); background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 3px; padding: 1px 2px; cursor: pointer; flex-shrink: 0;
+    white-space: nowrap; width: 58px; text-align: center; transition: all 0.12s;
+    overflow: hidden; text-overflow: ellipsis;
+}
+.cpick-path-btn:hover { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.3); }
+#path-pick-pop { min-width: 180px; padding: 10px 12px; gap: 6px; }
+#path-pick-pop .ctx-title { font-size: 10px; color: var(--accent); font-weight: 600; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; width: 100%; }
+#path-pick-pop label { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--muted); white-space: nowrap; width: 100%; }
+#path-pick-pop select, #path-pick-pop input[type=range] { flex: 1; }
+#path-pick-pop select { font-size: 9px; background: var(--panel); color: var(--text); border: 1px solid var(--stroke); border-radius: 3px; padding: 2px 4px; }
+#path-pick-pop .ctx-val { font-size: 9px; color: var(--text); min-width: 32px; text-align: right; }
+#path-pick-pop .ctx-row { display: flex; align-items: center; gap: 6px; width: 100%; }
+#path-pick-pop .ctx-accept { margin-top: 4px; padding: 4px 16px; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; background: var(--accent); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; align-self: center; }
+#path-pick-pop .ctx-accept:hover { filter: brightness(1.2); }
+#path-pick-pop .ctx-dir { font-size: 9px; padding: 2px 8px; background: transparent; border: 1px solid var(--stroke); color: var(--muted); border-radius: 3px; cursor: pointer; }
+#path-pick-pop .ctx-dir.active { color: var(--text); border-color: var(--accent-dim); }
+#lce-controls { display: flex; align-items: center; gap: 4px; }
+#lce-controls label { display: flex; align-items: center; gap: 2px; font-size: 9px; color: var(--muted); white-space: nowrap; }
+#lce-controls input[type=range] { width: 48px; accent-color: var(--accent); }
+#lce-controls .ctx-val { font-size: 9px; color: var(--text); min-width: 20px; text-align: right; }
+#lce-controls .ctx-dir { font-size: 9px; padding: 1px 6px; background: transparent; border: 1px solid var(--stroke); color: var(--muted); border-radius: 3px; cursor: pointer; }
+#lce-controls .ctx-dir.active { color: var(--text); border-color: var(--accent-dim); }
 .cpick-row .cpick-pts {
     font-size: 8px; color: var(--muted); opacity: 0.5; flex-shrink: 0;
     min-width: 28px; text-align: right; font-variant-numeric: tabular-nums;
+}
+.cpick-row .cpick-speed, .cpick-row .cpick-plen, .cpick-row .cpick-pos {
+    font-size: 8px; color: var(--muted); opacity: 0.7; flex-shrink: 0;
+    min-width: 24px; text-align: right; font-variant-numeric: tabular-nums;
 }
 .cpick-row .cpick-coords {
     font-size: 9px; color: var(--muted); flex: 1; text-align: right;
@@ -588,18 +616,81 @@ body.fast-mode #bitmap-fast-btn {
                 <div id="coeff-list-toolbar" style="display:flex;gap:6px;padding:4px 8px;align-items:center;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.45);flex-shrink:0;">
                     <button id="list-select-all-btn" class="bar-sel-btn" title="Select all">⊕ All</button>
                     <button id="list-deselect-all-btn" class="bar-sel-btn" title="Deselect all">✕ None</button>
+                    <button id="list-all-curves-btn" class="bar-sel-btn" title="Select all coefficients with the displayed curve type">Same Curve</button>
+                    <button id="list-curve-prev" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9664;</button>
+                    <span id="list-curve-cycle" style="font-size:9px;color:var(--accent);min-width:36px;text-align:center;">—</span>
+                    <button id="list-curve-next" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9654;</button>
                     <span style="flex:1;"></span>
                     <span id="list-count" style="font-size:9px;color:var(--muted);"></span>
+                </div>
+                <div id="list-curve-editor" style="padding:4px 8px 6px;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.55);flex-shrink:0;opacity:0.3;pointer-events:none;transition:opacity 0.15s;">
+                    <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                        <select id="lce-path-sel" style="font-size:9px;font-weight:600;color:var(--accent);background:rgba(0,0,0,0.3);border:1px solid var(--stroke);border-radius:3px;padding:1px 2px;">
+                            <option value="none">&mdash;</option>
+                            <optgroup label="Basic">
+                                <option value="circle">Circle</option>
+                                <option value="horizontal">Horizontal</option>
+                                <option value="vertical">Vertical</option>
+                                <option value="spiral">Spiral</option>
+                                <option value="random">Gaussian cloud</option>
+                            </optgroup>
+                            <optgroup label="Curves">
+                                <option value="lissajous">Lissajous</option>
+                                <option value="figure8">Figure-8</option>
+                                <option value="cardioid">Cardioid</option>
+                                <option value="astroid">Astroid</option>
+                                <option value="deltoid">Deltoid</option>
+                                <option value="rose">Rose (3-petal)</option>
+                                <option value="epitrochoid">Spirograph</option>
+                                <option value="hypotrochoid">Hypotrochoid</option>
+                                <option value="butterfly">Butterfly</option>
+                                <option value="star">Star (pentagram)</option>
+                                <option value="square">Square</option>
+                            </optgroup>
+                            <optgroup label="Space-filling">
+                                <option value="hilbert">Hilbert (Moore)</option>
+                                <option value="peano">Peano</option>
+                                <option value="sierpinski">Sierpinski</option>
+                            </optgroup>
+                        </select>
+                        <button id="lce-prev" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9664;</button>
+                        <span id="lce-coeff-name" style="font-size:9px;color:var(--text);min-width:20px;text-align:center;"></span>
+                        <button id="lce-next" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9654;</button>
+                        <span style="width:6px;"></span>
+                        <div id="lce-controls"></div>
+                        <span style="width:4px;"></span>
+                        <button id="lce-ps-btn" class="bar-sel-btn" style="font-size:8px;" title="Prime Speed — set to nearest speed coprime with all others">PS</button>
+                        <button id="lce-update-one" class="bar-sel-btn" style="font-size:8px;">Update This</button>
+                        <button id="lce-update-sel" class="bar-sel-btn" style="font-size:8px;">Update Whole Selection</button>
+                    </div>
+                </div>
+                <div id="coeff-list-hdr" class="cpick-row" style="padding:1px 8px 1px;border-bottom:1px solid var(--stroke);flex-shrink:0;cursor:default;opacity:0.5;">
+                    <span class="cpick-cb" style="visibility:hidden;"></span>
+                    <span class="cpick-dot" style="visibility:hidden;"></span>
+                    <span class="cpick-dot" style="visibility:hidden;"></span>
+                    <span class="cpick-label" style="font-size:7px;">idx</span>
+                    <span class="cpick-power" style="font-size:7px;">term</span>
+                    <span style="font-size:7px;color:var(--muted);width:58px;text-align:center;flex-shrink:0;">path</span>
+                    <span class="cpick-speed" style="font-size:7px;">spd</span>
+                    <span class="cpick-plen" style="font-size:7px;">pts</span>
+                    <span class="cpick-pos" style="font-size:7px;">pos</span>
+                    <span class="cpick-coords" style="font-size:7px;">position</span>
                 </div>
                 <div id="coeff-list-scroll" style="flex:1;min-height:0;overflow-y:auto;padding:4px 8px;"></div>
             </div>
         </div>
     </div>
-    <div id="ops-group" class="mid-bar disabled">
-        <div class="mid-label">Ops <span id="ops-target"></span></div>
-        <button id="scale-tool-btn" class="mid-btn" title="Scale">⇕</button>
-        <button id="rotate-tool-btn" class="mid-btn" title="Rotate">⟲</button>
-        <button id="add-tool-btn" class="mid-btn" title="Translate">✛</button>
+    <div class="mid-bar">
+        <div id="ops-group" class="disabled" style="display:flex;flex-direction:column;gap:6px;align-items:center;">
+            <div class="mid-label">Ops <span id="ops-target"></span></div>
+            <button id="scale-tool-btn" class="mid-btn" title="Scale">⇕</button>
+            <button id="rotate-tool-btn" class="mid-btn" title="Rotate">⟲</button>
+            <button id="add-tool-btn" class="mid-btn" title="Translate">✛</button>
+        </div>
+        <div style="display:flex;gap:2px;margin-top:4px;">
+            <button id="mid-all-btn" class="mid-btn" style="width:auto;height:auto;font-size:8px;padding:1px 4px;border-radius:4px;" title="Select all (roots if any root selected, else coefficients)">⊕</button>
+            <button id="mid-none-btn" class="mid-btn" style="width:auto;height:auto;font-size:8px;padding:1px 4px;border-radius:4px;" title="Deselect all">✕</button>
+        </div>
     </div>
     <div class="panel">
         <div class="tab-bar">
@@ -662,7 +753,8 @@ body.fast-mode #bitmap-fast-btn {
                     <button id="bitmap-clear-btn" class="bitmap-btn" disabled>clear</button>
                     <select id="bitmap-res-select" class="bitmap-select"><option value="1000">1000px</option><option value="2000" selected>2000px</option><option value="5000">5000px</option></select>
                     <button id="bitmap-fast-btn" class="bitmap-btn" disabled>fastmode</button>
-                    <select id="bitmap-steps-select" class="bitmap-select"><option value="10000">10K</option><option value="50000">50K</option><option value="100000">100K</option><option value="1000000">1M</option></select>
+                    <select id="bitmap-steps-select" class="bitmap-select"><option value="10">10</option><option value="100">100</option><option value="1000">1K</option><option value="10000">10K</option><option value="50000">50K</option><option value="100000">100K</option><option value="1000000">1M</option></select>
+                    <button id="jiggle-btn" class="bitmap-btn" disabled title="Jiggle — random offset per coefficient path">jiggle</button>
                     <button id="bitmap-bg-btn" class="bitmap-btn" title="Canvas background color">bg</button>
                     <div id="bitmap-progress" style="display:none;flex:1;min-width:60px;height:6px;background:var(--stroke);border-radius:3px;margin-left:4px;overflow:hidden;"><div id="bitmap-progress-bar" style="height:100%;width:0%;background:var(--accent);border-radius:3px;transition:width 0.1s;"></div></div>
                     <span id="bitmap-pass-count" style="display:none;font-family:monospace;font-size:10px;color:var(--muted);margin-left:4px;white-space:nowrap;"></span>
@@ -686,6 +778,9 @@ body.fast-mode #bitmap-fast-btn {
 <div id="coeff-ctx" class="ops-pop"></div>
 <div id="snap-pop" class="ops-pop" style="min-width:100px"></div>
 <div id="bitmap-bg-pop" class="ops-pop" style="min-width:160px"></div>
+<div id="jiggle-pop" class="ops-pop" style="min-width:160px"></div>
+<div id="fastmode-pop" class="ops-pop" style="min-width:120px"></div>
+<div id="path-pick-pop" class="ops-pop"></div>
 
 <script>
 // ============================================================================
@@ -796,6 +891,10 @@ let fastModeLastStep = 0;       // last reported step count
 let fastModeElapsedOffset = 0;  // accumulated elapsed time across passes
 let fastModePassCount = 0;      // completed pass counter
 let fastModeTargetPasses = 0;   // passes for full cycle (0 = unlimited)
+let jiggleOffsets = null;       // Map<coeffIdx, {re, im}> or null
+let jiggleOnTarget = false;     // auto-regenerate on cycle completion
+let jiggleSigma = 10;          // σ as integer 0-100, read as jiggleSigma/100 %
+let fastModeShowProgress = true; // show progress bar + pass counter during fastmode
 // Stats tab state
 let activeTab = "roots";
 const STAT_TYPES = ["Force", "MinForce", "MaxForce", "Speed", "MinSpeed", "MaxSpeed", "MinDist", "MaxDist", "Records", "MeanDist", "\u0394MeanDist", "AngularMom", "\u03c3Speed", "EMASpeed", "\u03c3Dist", "Odometer", "CycleCount", "MedianR", "Spread", "EMed", "EHi", "Coherence", "Encounters"];
@@ -2031,6 +2130,7 @@ const drag = d3.drag()
         renderDomainColoringThrottled();
         // Update analytical coefficient path curves (they follow the coefficient)
         renderCoeffTrails();
+        updateListCoords();
     })
     .on("end", function (event, d) {
         d3.select(this).classed("dragging", false);
@@ -2087,7 +2187,7 @@ const barDynamic = document.getElementById("bar-dynamic");
 
 const _P = {
     radius: { key: "radius", label: "R", min: 1, max: 100, step: 1, default: 25, fmt: v => Math.round(v) + "%" },
-    speed:  { key: "speed",  label: "S", min: 0.01, max: 1.0, step: 0.01, default: 1.0, fmt: v => v.toFixed(2) },
+    speed:  { key: "speed",  label: "S", min: 1, max: 100, step: 1, default: 1.0, fmt: v => String(Math.round(v)), toUI: v => Math.round(v * 100), fromUI: v => v / 100 },
     angle:  { key: "angle",  label: "A", min: 0, max: 1.0, step: 0.01, default: 0, fmt: v => v.toFixed(2) },
     ccw:    { key: "ccw", type: "toggle", labels: ["CW", "CCW"], default: false },
 };
@@ -2154,10 +2254,11 @@ function rebuildBarControls(pathType) {
     for (const p of sliders) {
         const lbl = document.createElement("label");
         const inp = document.createElement("input");
-        inp.type = "range"; inp.min = p.min; inp.max = p.max; inp.step = p.step; inp.value = p.default;
+        const uiDef = p.toUI ? p.toUI(p.default) : p.default;
+        inp.type = "range"; inp.min = p.min; inp.max = p.max; inp.step = p.step; inp.value = uiDef;
         const valSpan = document.createElement("span");
         valSpan.className = "bar-val";
-        valSpan.textContent = p.fmt(p.default);
+        valSpan.textContent = p.fmt(uiDef);
         inp.addEventListener("input", function () {
             valSpan.textContent = p.fmt(parseFloat(this.value));
             applyBarToSelection();
@@ -2183,6 +2284,28 @@ function rebuildBarControls(pathType) {
         });
         barDynamic.appendChild(btn);
         barInputs[p.key] = btn;
+    }
+    // PS button (only if speed slider exists)
+    if (barInputs["speed"]) {
+        const psBtn = document.createElement("button");
+        psBtn.id = "bar-ps-btn";
+        psBtn.textContent = "PS";
+        psBtn.title = "Prime Speed — set to nearest speed coprime with all others";
+        psBtn.style.cssText = "font-size:8px;padding:1px 5px;background:transparent;border:1px solid var(--stroke);color:var(--muted);border-radius:3px;cursor:pointer;";
+        psBtn.addEventListener("click", () => {
+            if (selectedCoeffs.size === 0) return;
+            const sInp = barInputs["speed"];
+            const cur = parseInt(sInp.value, 10);
+            const ps = findPrimeSpeed(cur, new Set(selectedCoeffs));
+            if (ps !== cur) {
+                sInp.value = ps;
+                const vs = barInputs["speed_val"];
+                const fm = barInputs["speed_fmt"];
+                if (vs && fm) vs.textContent = fm(ps);
+                applyBarToSelection();
+            }
+        });
+        barDynamic.appendChild(psBtn);
     }
 }
 
@@ -2250,13 +2373,14 @@ function updateCoeffSelectionVisual() {
         computeRootSensitivities();
         refreshRootColors();
     }
-    // Sync list tab checkboxes
+    // Sync list tab checkboxes and curve editor
     if (typeof leftTab !== "undefined" && leftTab === "list") {
         const rows = document.querySelectorAll("#coeff-list-scroll .cpick-row");
         rows.forEach((row, i) => {
             const cb = row.querySelector(".cpick-cb");
             if (cb) cb.classList.toggle("checked", selectedCoeffs.has(i));
         });
+        if (typeof refreshListCurveEditor === "function") refreshListCurveEditor();
     }
 }
 
@@ -2450,11 +2574,12 @@ function openCoeffCtx(event, coeffIdx) {
                 ctxInputs[p.key] = btn;
             } else {
                 const row = document.createElement("label");
+                const uiVal = p.toUI ? p.toUI(val) : val;
                 const valSpan = document.createElement("span");
                 valSpan.className = "ctx-val";
-                valSpan.textContent = p.fmt(val);
+                valSpan.textContent = p.fmt(uiVal);
                 const inp = document.createElement("input");
-                inp.type = "range"; inp.min = p.min; inp.max = p.max; inp.step = p.step; inp.value = val;
+                inp.type = "range"; inp.min = p.min; inp.max = p.max; inp.step = p.step; inp.value = uiVal;
                 inp.addEventListener("input", () => {
                     valSpan.textContent = p.fmt(parseFloat(inp.value));
                     previewCtx();
@@ -2476,7 +2601,27 @@ function openCoeffCtx(event, coeffIdx) {
         previewCtx();
     });
 
-    // Accept button
+    // PS (prime speed) + Accept buttons row
+    const ctxBtnRow = document.createElement("div");
+    ctxBtnRow.style.cssText = "display:flex;gap:6px;align-items:center;justify-content:center;margin-top:4px;";
+    const ctxPsBtn = document.createElement("button");
+    ctxPsBtn.className = "ctx-accept";
+    ctxPsBtn.textContent = "PS";
+    ctxPsBtn.title = "Prime Speed — set to nearest speed coprime with all others";
+    ctxPsBtn.style.cssText = "padding:4px 8px;background:transparent;border:1px solid var(--stroke);color:var(--muted);";
+    ctxPsBtn.addEventListener("click", () => {
+        const sInp = ctxInputs["speed"];
+        if (!sInp) return;
+        const cur = parseInt(sInp.value, 10);
+        const ps = findPrimeSpeed(cur, new Set([coeffIdx]));
+        if (ps !== cur) {
+            sInp.value = ps;
+            const vs = sInp.parentElement.querySelector(".ctx-val");
+            if (vs) vs.textContent = _P.speed.fmt(ps);
+            previewCtx();
+        }
+    });
+    ctxBtnRow.appendChild(ctxPsBtn);
     const acceptBtn = document.createElement("button");
     acceptBtn.className = "ctx-accept";
     acceptBtn.textContent = "Accept";
@@ -2484,7 +2629,8 @@ function openCoeffCtx(event, coeffIdx) {
         ctxSnapshot = null; // discard snapshot — keep current state
         closeCoeffCtx(false);
     });
-    ctx.appendChild(acceptBtn);
+    ctxBtnRow.appendChild(acceptBtn);
+    ctx.appendChild(ctxBtnRow);
 
     // Live preview helper — applies current menu settings immediately
     function previewCtx() {
@@ -2495,7 +2641,8 @@ function openCoeffCtx(event, coeffIdx) {
             if (p.type === "toggle") {
                 setCoeffParam(c, p.key, ctxInputs[p.key] ? ctxInputs[p.key].classList.contains("active") : p.default);
             } else {
-                setCoeffParam(c, p.key, ctxInputs[p.key] ? parseFloat(ctxInputs[p.key].value) : p.default);
+                const ctxRaw = ctxInputs[p.key] ? parseFloat(ctxInputs[p.key].value) : null;
+                setCoeffParam(c, p.key, ctxRaw !== null ? (p.fromUI ? p.fromUI(ctxRaw) : ctxRaw) : p.default);
             }
         }
 
@@ -2582,7 +2729,7 @@ function syncBarFromCoeff() {
             if (btn) { btn.textContent = val ? p.labels[1] : p.labels[0]; btn.classList.toggle("active", !!val); }
         } else {
             const inp = barInputs[p.key];
-            if (inp) { inp.value = val; const vs = barInputs[p.key + "_val"]; const fm = barInputs[p.key + "_fmt"]; if (vs && fm) vs.textContent = fm(val); }
+            if (inp) { const uiVal = p.toUI ? p.toUI(val) : val; inp.value = uiVal; const vs = barInputs[p.key + "_val"]; const fm = barInputs[p.key + "_fmt"]; if (vs && fm) vs.textContent = fm(uiVal); }
         }
     }
 }
@@ -2594,7 +2741,8 @@ function readBarParams(pathType) {
         if (p.type === "toggle") {
             vals[p.key] = barInputs[p.key] ? barInputs[p.key].classList.contains("active") : p.default;
         } else {
-            vals[p.key] = barInputs[p.key] ? parseFloat(barInputs[p.key].value) : p.default;
+            const raw = barInputs[p.key] ? parseFloat(barInputs[p.key].value) : null;
+            vals[p.key] = raw !== null ? (p.fromUI ? p.fromUI(raw) : raw) : p.default;
         }
     }
     return vals;
@@ -2643,6 +2791,7 @@ function applyBarToSelection() {
         .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
 
     renderCoeffTrails();
+    if (typeof leftTab !== "undefined" && leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
 }
 
 function transformCoeffCurve(c, oldRadius, oldAngle) {
@@ -3211,6 +3360,7 @@ function animLoop(now) {
     solveRootsThrottled();
     renderDomainColoringThrottled();
     recordTick();
+    updateListCoords();
 
     animState.rafId = requestAnimationFrame(animLoop);
 }
@@ -3334,6 +3484,7 @@ const rootDrag = d3.drag()
         }
         renderCoefficients();  // auto-scales panel (may change scale)
         renderCoeffTrails();   // must come AFTER scale update
+        updateListCoords();
         // Show coefficient chain line during root drag
         coeffChainLine.style("display", null);
         updateCoeffChainLine();
@@ -3947,6 +4098,29 @@ document.getElementById("reset-btn").addEventListener("click", applyPattern);
 
 document.getElementById("deselect-all-btn").addEventListener("click", clearAllSelection);
 
+// Mid-bar All / None buttons — context-aware selection
+document.getElementById("mid-all-btn").addEventListener("click", function () {
+    if (selectedRoots.size > 0) {
+        // Roots context: select all roots
+        for (let i = 0; i < currentRoots.length; i++) selectedRoots.add(i);
+        updateRootSelectionVisual();
+    } else {
+        // Coefficients context (default): select all coefficients
+        clearRootSelection();
+        for (let i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+        if (coefficients.length > 0) lastSelectedCoeff = coefficients.length - 1;
+        updateCoeffSelectionVisual();
+        updateAnimBar();
+    }
+});
+document.getElementById("mid-none-btn").addEventListener("click", function () {
+    if (selectedRoots.size > 0) {
+        clearRootSelection();
+    } else {
+        clearCoeffSelection();
+    }
+});
+
 document.getElementById("select-all-coeffs-btn").addEventListener("click", function () {
     clearRootSelection();
     for (let i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
@@ -4151,7 +4325,7 @@ function buildCoeffPickPop(pop) {
             pathSpan.textContent = pName;
             const detail = document.createElement("span");
             detail.className = "cpick-detail";
-            detail.textContent = ` R${Math.round(ci.radius)} S${ci.speed.toFixed(2)} A${ci.angle.toFixed(2)} ${ci.ccw ? "CCW" : "CW"}`;
+            detail.textContent = ` R${Math.round(ci.radius)} S${Math.round(ci.speed * 100)} A${ci.angle.toFixed(2)} ${ci.ccw ? "CCW" : "CW"}`;
             pathSpan.appendChild(detail);
         } else {
             pathSpan.textContent = "—";
@@ -4465,6 +4639,9 @@ document.addEventListener("keydown", function (e) {
         if (coeffPickOpen) { closeCoeffPick(); return; }
         if (typeof snapPopOpen !== "undefined" && snapPopOpen) { closeSnapPop(); return; }
         if (typeof bitmapBgPopOpen !== "undefined" && bitmapBgPopOpen) { closeBitmapBgPop(); return; }
+        if (typeof jigglePopOpen !== "undefined" && jigglePopOpen) { closeJigglePop(); return; }
+        if (typeof fastmodePopOpen !== "undefined" && fastmodePopOpen) { closeFastmodePop(); return; }
+        if (typeof pathPickOpen !== "undefined" && pathPickOpen) { closePathPickPop(true); return; }
         clearAllSelection();
     }
 });
@@ -4510,6 +4687,7 @@ function applyPreview(snap, fn) {
         renderCoefficients();
         updateCoeffSelectionVisual();
         renderCoeffTrails();
+        updateListCoords();
         solveRootsThrottled();
     } else {
         for (const s of snap.items) {
@@ -4518,16 +4696,25 @@ function applyPreview(snap, fn) {
             r.re = res.re; r.im = res.im;
         }
         autoScaleRootsPanel();
-        coefficients = rootsToCoefficients(currentRoots.map(r => ({ re: r.re, im: r.im })));
-        for (const c of coefficients) {
-            if (c.pathType !== "none") {
-                c.curve = computeCurve(c.re, c.im, c.pathType, c.radius / 100 * coeffExtent(), c.angle, c.extra);
+        // Update coefficients in-place (preserving trajectory metadata), same as root drag
+        const newCoeffs = rootsToCoefficients(currentRoots.map(r => ({ re: r.re, im: r.im })));
+        for (let ci = 0; ci < newCoeffs.length; ci++) {
+            const deltaRe = newCoeffs[ci].re - coefficients[ci].re;
+            const deltaIm = newCoeffs[ci].im - coefficients[ci].im;
+            coefficients[ci].re = newCoeffs[ci].re;
+            coefficients[ci].im = newCoeffs[ci].im;
+            if (coefficients[ci].curve) {
+                for (const pt of coefficients[ci].curve) {
+                    pt.re += deltaRe;
+                    pt.im += deltaIm;
+                }
             }
         }
         renderCoefficients();
         renderCoeffTrails();
         renderRoots(currentRoots);
         updateRootSelectionVisual();
+        updateListCoords();
     }
 }
 
@@ -4785,6 +4972,27 @@ document.addEventListener("mousedown", e => {
         const bp = document.getElementById("bitmap-bg-pop");
         if (bp && !bp.contains(e.target) && e.target.id !== "bitmap-bg-btn") {
             if (typeof closeBitmapBgPop === "function") closeBitmapBgPop();
+        }
+    }
+    // Close jiggle popup
+    if (typeof jigglePopOpen !== "undefined" && jigglePopOpen) {
+        const jp = document.getElementById("jiggle-pop");
+        if (jp && !jp.contains(e.target) && e.target.id !== "jiggle-btn") {
+            if (typeof closeJigglePop === "function") closeJigglePop();
+        }
+    }
+    // Close fastmode popup
+    if (typeof fastmodePopOpen !== "undefined" && fastmodePopOpen) {
+        const fp = document.getElementById("fastmode-pop");
+        if (fp && !fp.contains(e.target) && e.target.id !== "bitmap-fast-btn") {
+            if (typeof closeFastmodePop === "function") closeFastmodePop();
+        }
+    }
+    // Close path picker popup (revert on outside click)
+    if (typeof pathPickOpen !== "undefined" && pathPickOpen) {
+        const pp = document.getElementById("path-pick-pop");
+        if (pp && !pp.contains(e.target) && !e.target.classList.contains("cpick-path-btn")) {
+            if (typeof closePathPickPop === "function") closePathPickPop(true);
         }
     }
 });
@@ -6837,6 +7045,32 @@ function computeFullCyclePasses() {
     return g > 0 ? 100 / g : 0;
 }
 
+// Find nearest integer speed (1–100) that is coprime with all other animated coefficients' speeds
+// and also different from all of them. excludeSet = indices to skip (the coefficient(s) being edited).
+function findPrimeSpeed(currentIntSpeed, excludeSet) {
+    function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a; }
+    const otherSpeeds = [];
+    for (let i = 0; i < coefficients.length; i++) {
+        if (excludeSet.has(i)) continue;
+        if (coefficients[i].pathType === "none") continue;
+        const s = Math.round(coefficients[i].speed * 100);
+        if (s > 0) otherSpeeds.push(s);
+    }
+    if (otherSpeeds.length === 0) return currentIntSpeed; // no others — keep current
+    function isValid(s) {
+        for (const o of otherSpeeds) {
+            if (s === o || gcd(s, o) > 1) return false;
+        }
+        return true;
+    }
+    // Search outward from current speed
+    for (let d = 0; d <= 100; d++) {
+        if (currentIntSpeed + d <= 100 && isValid(currentIntSpeed + d)) return currentIntSpeed + d;
+        if (d > 0 && currentIntSpeed - d >= 1 && isValid(currentIntSpeed - d)) return currentIntSpeed - d;
+    }
+    return currentIntSpeed; // fallback (1 is coprime with everything, so this shouldn't happen)
+}
+
 function enterFastMode() {
     if (fastModeActive) return;
 
@@ -6852,6 +7086,7 @@ function enterFastMode() {
         document.getElementById("bitmap-save-btn").disabled = false;
         document.getElementById("bitmap-clear-btn").disabled = false;
         document.getElementById("bitmap-start-btn").textContent = "restart";
+        document.getElementById("jiggle-btn").disabled = false;
     }
 
     // Read steps from dropdown
@@ -6860,10 +7095,28 @@ function enterFastMode() {
     // Precompute hi-res curves for all animated coefficients
     fastModeCurves = new Map();
     const animated = allAnimatedCoeffs();
+
+    // Snap animated coefficients to home so coeffExtent() matches interactive mode
+    const savedPos = [];
     for (const idx of animated) {
         const c = coefficients[idx];
-        const absR = (c.radius / 100) * coeffExtent();
-        const curve = computeCurveN(c.re, c.im, c.pathType, absR, c.angle, c.extra, stepsVal);
+        savedPos.push({ idx, re: c.re, im: c.im });
+        if (c.curve) { c.re = c.curve[0].re; c.im = c.curve[0].im; }
+    }
+    const extentAtHome = coeffExtent();
+    for (const s of savedPos) { coefficients[s.idx].re = s.re; coefficients[s.idx].im = s.im; }
+
+    for (const idx of animated) {
+        const c = coefficients[idx];
+        const absR = (c.radius / 100) * extentAtHome;
+        // Use home position (curve[0]), not current animated position (c.re/c.im)
+        let homeRe = c.curve ? c.curve[0].re : c.re;
+        let homeIm = c.curve ? c.curve[0].im : c.im;
+        if (jiggleOffsets && jiggleOffsets.has(idx)) {
+            homeRe += jiggleOffsets.get(idx).re;
+            homeIm += jiggleOffsets.get(idx).im;
+        }
+        const curve = computeCurveN(homeRe, homeIm, c.pathType, absR, c.angle, c.extra, stepsVal);
         fastModeCurves.set(idx, curve);
     }
 
@@ -6888,13 +7141,15 @@ function enterFastMode() {
 
     document.body.classList.add("fast-mode");
     document.getElementById("bitmap-fast-btn").textContent = "imode";
-    const prog = document.getElementById("bitmap-progress");
-    if (prog) { prog.style.display = ""; document.getElementById("bitmap-progress-bar").style.width = "0%"; }
-    const passEl = document.getElementById("bitmap-pass-count");
-    if (passEl) {
-        passEl.style.display = "";
-        const tgt = fastModeTargetPasses > 0 ? "/" + String(fastModeTargetPasses).padStart(4, "0") : "";
-        passEl.textContent = "0000" + tgt;
+    if (fastModeShowProgress) {
+        const prog = document.getElementById("bitmap-progress");
+        if (prog) { prog.style.display = ""; document.getElementById("bitmap-progress-bar").style.width = "0%"; }
+        const passEl = document.getElementById("bitmap-pass-count");
+        if (passEl) {
+            passEl.style.display = "";
+            const tgt = fastModeTargetPasses > 0 ? "/" + String(fastModeTargetPasses).padStart(4, "0") : "";
+            passEl.textContent = "0000" + tgt;
+        }
     }
 
     // Legacy fallback for browsers without Worker
@@ -7001,8 +7256,10 @@ function handleFastModeWorkerMessage(e) {
     if (msg.type === "progress") {
         fastModeStepIndex = msg.step;
         fastModeLastStep = msg.step;
-        const bar = document.getElementById("bitmap-progress-bar");
-        if (bar) bar.style.width = (msg.step / fastModeTotalSteps * 100) + "%";
+        if (fastModeShowProgress) {
+            const bar = document.getElementById("bitmap-progress-bar");
+            if (bar) bar.style.width = (msg.step / fastModeTotalSteps * 100) + "%";
+        }
     }
     else if (msg.type === "frame") {
         fastModeStepIndex = msg.step;
@@ -7010,8 +7267,10 @@ function handleFastModeWorkerMessage(e) {
         fastModeLastPixels = msg.pixels;
         if (msg.rootsRe) fastModeLastRoots = { re: msg.rootsRe, im: msg.rootsIm };
         applyPixelSnapshot(msg.pixels);
-        const bar = document.getElementById("bitmap-progress-bar");
-        if (bar) bar.style.width = (msg.step / fastModeTotalSteps * 100) + "%";
+        if (fastModeShowProgress) {
+            const bar = document.getElementById("bitmap-progress-bar");
+            if (bar) bar.style.width = (msg.step / fastModeTotalSteps * 100) + "%";
+        }
     }
     else if (msg.type === "pass") {
         // One pass complete — update state, Worker auto-continues
@@ -7020,17 +7279,26 @@ function handleFastModeWorkerMessage(e) {
         fastModeLastPixels = msg.pixels;
         if (msg.rootsRe) fastModeLastRoots = { re: msg.rootsRe, im: msg.rootsIm };
         applyPixelSnapshot(msg.pixels);
-        // Reset progress bar for next pass, update pass counter
-        const bar = document.getElementById("bitmap-progress-bar");
-        if (bar) bar.style.width = "0%";
-        const passEl = document.getElementById("bitmap-pass-count");
-        if (passEl) {
-            const tgt = fastModeTargetPasses > 0 ? "/" + String(fastModeTargetPasses).padStart(4, "0") : "";
-            passEl.textContent = String(msg.pass).padStart(4, "0") + tgt;
+        if (fastModeShowProgress) {
+            // Reset progress bar for next pass, update pass counter
+            const bar = document.getElementById("bitmap-progress-bar");
+            if (bar) bar.style.width = "0%";
+            const passEl = document.getElementById("bitmap-pass-count");
+            if (passEl) {
+                const tgt = fastModeTargetPasses > 0 ? "/" + String(fastModeTargetPasses).padStart(4, "0") : "";
+                passEl.textContent = String(msg.pass).padStart(4, "0") + tgt;
+            }
         }
         // Auto-stop when full cycle complete
         if (fastModeTargetPasses > 0 && msg.pass >= fastModeTargetPasses) {
-            exitFastMode();
+            if (jiggleOnTarget && jiggleOffsets) {
+                exitFastMode();
+                fastModeElapsedOffset = 0;
+                generateJiggleOffsets();
+                enterFastMode();
+            } else {
+                exitFastMode();
+            }
         }
     }
 }
@@ -7133,8 +7401,10 @@ function fastModeChunkLegacy() {
     fastModeStepIndex = step;
 
     // Update progress bar (cheap DOM update once per chunk)
-    const bar = document.getElementById("bitmap-progress-bar");
-    if (bar) bar.style.width = (fastModeStepIndex / fastModeTotalSteps * 100) + "%";
+    if (fastModeShowProgress) {
+        const bar = document.getElementById("bitmap-progress-bar");
+        if (bar) bar.style.width = (fastModeStepIndex / fastModeTotalSteps * 100) + "%";
+    }
 
     if (fastModeStepIndex >= fastModeTotalSteps) {
         // Pass complete — advance offset, reset step counter, continue
@@ -7143,11 +7413,13 @@ function fastModeChunkLegacy() {
         fastModeStepIndex = 0;
         fastModeLastStep = 0;
         const pbar = document.getElementById("bitmap-progress-bar");
-        if (pbar) pbar.style.width = "0%";
-        const passEl = document.getElementById("bitmap-pass-count");
-        if (passEl) {
-            const tgt = fastModeTargetPasses > 0 ? "/" + String(fastModeTargetPasses).padStart(4, "0") : "";
-            passEl.textContent = String(fastModePassCount).padStart(4, "0") + tgt;
+        if (fastModeShowProgress && pbar) pbar.style.width = "0%";
+        if (fastModeShowProgress) {
+            const passEl = document.getElementById("bitmap-pass-count");
+            if (passEl) {
+                const tgt = fastModeTargetPasses > 0 ? "/" + String(fastModeTargetPasses).padStart(4, "0") : "";
+                passEl.textContent = String(fastModePassCount).padStart(4, "0") + tgt;
+            }
         }
         // Auto-stop when full cycle complete
         if (fastModeTargetPasses > 0 && fastModePassCount >= fastModeTargetPasses) {
@@ -7216,12 +7488,220 @@ function switchLeftTab(tabName) {
     leftTab = tabName;
     leftTabButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.ltab === tabName));
     for (const [key, el] of Object.entries(leftTabContents)) el.classList.toggle("active", key === tabName);
-    if (tabName === "list") refreshCoeffList();
+    if (tabName === "list") { refreshCoeffList(); refreshListCurveEditor(); }
 }
 leftTabButtons.forEach(btn => btn.addEventListener("click", () => switchLeftTab(btn.dataset.ltab)));
 
+// --- Path display name helper ---
+function pathDisplayName(t) {
+    if (t === "none") return "\u2014";
+    if (t === "figure8") return "Fig-8";
+    if (t === "epitrochoid") return "Spiro";
+    if (t === "hypotrochoid") return "Hypo";
+    if (t === "rose") return "Rose";
+    if (t === "hilbert") return "Hilbert";
+    if (t === "peano") return "Peano";
+    if (t === "sierpinski") return "Sierpinski";
+    return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+// --- Path picker popup (full trajectory editor, mirrors right-click context menu) ---
+
+const pathPickPop = document.getElementById("path-pick-pop");
+let pathPickOpen = false;
+let pathPickCoeffIdx = -1;
+let pathPickSnapshot = null;
+
+function closePathPickPop(revert) {
+    pathPickPop.classList.remove("open");
+    if (revert && pathPickSnapshot && pathPickCoeffIdx >= 0) {
+        const c = coefficients[pathPickCoeffIdx];
+        c.pathType = pathPickSnapshot.pathType;
+        c.radius = pathPickSnapshot.radius;
+        c.speed = pathPickSnapshot.speed;
+        c.angle = pathPickSnapshot.angle;
+        c.ccw = pathPickSnapshot.ccw;
+        c.extra = pathPickSnapshot.extra || {};
+        c.curve = pathPickSnapshot.curve;
+        renderCoeffTrails();
+    }
+    pathPickOpen = false;
+    pathPickCoeffIdx = -1;
+    pathPickSnapshot = null;
+    if (typeof leftTab !== "undefined" && leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
+}
+
+function openPathPickPop(coeffIdx, anchorEl) {
+    if (pathPickOpen && pathPickCoeffIdx === coeffIdx) { closePathPickPop(true); return; }
+    if (pathPickOpen) closePathPickPop(true);
+    pathPickCoeffIdx = coeffIdx;
+
+    // Snapshot for cancel/revert
+    const cc = coefficients[coeffIdx];
+    pathPickSnapshot = {
+        pathType: cc.pathType, radius: cc.radius, speed: cc.speed,
+        angle: cc.angle, ccw: cc.ccw, extra: cc.extra ? { ...cc.extra } : {},
+        curve: cc.curve ? cc.curve.map(pt => ({ ...pt })) : null,
+    };
+
+    pathPickPop.innerHTML = "";
+    const n = coefficients.length;
+    const subIdx = n - 1 - coeffIdx;
+
+    // Title
+    const title = document.createElement("div");
+    title.className = "ctx-title";
+    title.textContent = "c" + subscript(subIdx) + " trajectory";
+    pathPickPop.appendChild(title);
+
+    // Path type select (clone from #anim-path)
+    const pathSel = document.createElement("select");
+    pathSel.innerHTML = document.getElementById("anim-path").innerHTML;
+    pathSel.value = cc.pathType;
+    const pathRow = document.createElement("label");
+    pathRow.textContent = "Path ";
+    pathRow.appendChild(pathSel);
+    pathPickPop.appendChild(pathRow);
+
+    // Dynamic controls container
+    const dynContainer = document.createElement("div");
+    pathPickPop.appendChild(dynContainer);
+    const ppInputs = {};
+
+    function buildPPControls(pathType) {
+        dynContainer.innerHTML = "";
+        for (const k in ppInputs) delete ppInputs[k];
+        const schema = PATH_PARAMS[pathType] || [];
+        const c = coefficients[coeffIdx];
+        for (const p of schema) {
+            const val = getCoeffParam(c, p.key, p);
+            if (p.type === "toggle") {
+                const dirRow = document.createElement("div");
+                dirRow.className = "ctx-row";
+                const btn = document.createElement("button");
+                btn.className = "ctx-dir" + (val ? " active" : "");
+                btn.textContent = val ? p.labels[1] : p.labels[0];
+                btn.addEventListener("click", () => {
+                    const isActive = !btn.classList.contains("active");
+                    btn.classList.toggle("active", isActive);
+                    btn.textContent = isActive ? p.labels[1] : p.labels[0];
+                    previewPP();
+                });
+                dirRow.appendChild(btn);
+                dynContainer.appendChild(dirRow);
+                ppInputs[p.key] = btn;
+            } else {
+                const row = document.createElement("label");
+                const ppUiVal = p.toUI ? p.toUI(val) : val;
+                const valSpan = document.createElement("span");
+                valSpan.className = "ctx-val";
+                valSpan.textContent = p.fmt(ppUiVal);
+                const inp = document.createElement("input");
+                inp.type = "range"; inp.min = p.min; inp.max = p.max; inp.step = p.step; inp.value = ppUiVal;
+                inp.addEventListener("input", () => {
+                    valSpan.textContent = p.fmt(parseFloat(inp.value));
+                    previewPP();
+                });
+                row.textContent = p.label + " ";
+                row.appendChild(inp);
+                row.appendChild(valSpan);
+                dynContainer.appendChild(row);
+                ppInputs[p.key] = inp;
+            }
+        }
+    }
+
+    buildPPControls(cc.pathType);
+
+    pathSel.addEventListener("change", () => {
+        buildPPControls(pathSel.value);
+        previewPP();
+    });
+
+    // PS + Accept buttons row
+    const ppBtnRow = document.createElement("div");
+    ppBtnRow.style.cssText = "display:flex;gap:6px;align-items:center;justify-content:center;margin-top:4px;";
+    const ppPsBtn = document.createElement("button");
+    ppPsBtn.className = "ctx-accept";
+    ppPsBtn.textContent = "PS";
+    ppPsBtn.title = "Prime Speed — set to nearest speed coprime with all others";
+    ppPsBtn.style.cssText = "padding:4px 8px;background:transparent;border:1px solid var(--stroke);color:var(--muted);";
+    ppPsBtn.addEventListener("click", () => {
+        const sInp = ppInputs["speed"];
+        if (!sInp) return;
+        const cur = parseInt(sInp.value, 10);
+        const ps = findPrimeSpeed(cur, new Set([coeffIdx]));
+        if (ps !== cur) {
+            sInp.value = ps;
+            const vs = sInp.parentElement.querySelector(".ctx-val");
+            if (vs) vs.textContent = _P.speed.fmt(ps);
+            previewPP();
+        }
+    });
+    ppBtnRow.appendChild(ppPsBtn);
+    const acceptBtn = document.createElement("button");
+    acceptBtn.className = "ctx-accept";
+    acceptBtn.textContent = "Accept";
+    acceptBtn.addEventListener("click", () => {
+        pathPickSnapshot = null; // discard snapshot — keep current state
+        closePathPickPop(false);
+    });
+    ppBtnRow.appendChild(acceptBtn);
+    pathPickPop.appendChild(ppBtnRow);
+
+    // Live preview — applies current settings immediately
+    function previewPP() {
+        const c = coefficients[coeffIdx];
+        c.pathType = pathSel.value;
+        const schema = PATH_PARAMS[c.pathType] || [];
+        for (const p of schema) {
+            if (p.type === "toggle") {
+                setCoeffParam(c, p.key, ppInputs[p.key] ? ppInputs[p.key].classList.contains("active") : p.default);
+            } else {
+                const ppRaw = ppInputs[p.key] ? parseFloat(ppInputs[p.key].value) : null;
+                setCoeffParam(c, p.key, ppRaw !== null ? (p.fromUI ? p.fromUI(ppRaw) : ppRaw) : p.default);
+            }
+        }
+        if (c.pathType === "none") {
+            c.curve = null;
+        } else {
+            const absRadius = c.radius / 100 * coeffExtent();
+            c.curve = computeCurve(c.re, c.im, c.pathType, absRadius, c.angle, c.extra);
+        }
+        animState.elapsedAtPause = null;
+        renderCoeffTrails();
+    }
+
+    // Show and position
+    pathPickPop.classList.add("open");
+    const r = anchorEl.getBoundingClientRect();
+    const popRect = pathPickPop.getBoundingClientRect();
+    let left = r.right + 6;
+    let top = r.top;
+    // Keep within viewport
+    if (left + popRect.width > window.innerWidth - 4) left = r.left - popRect.width - 6;
+    top = Math.max(4, Math.min(top, window.innerHeight - popRect.height - 4));
+    pathPickPop.style.left = left + "px";
+    pathPickPop.style.top = top + "px";
+    pathPickOpen = true;
+}
+
+// --- Coefficient list helpers ---
+function nearestCurveIndex(c) {
+    if (!c.curve || c.curve.length === 0) return -1;
+    let bestD = Infinity, bestK = 0;
+    for (let k = 0; k < c.curve.length; k++) {
+        const dx = c.re - c.curve[k].re, dy = c.im - c.curve[k].im;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; bestK = k; }
+    }
+    return bestK;
+}
+
 // --- Coefficient list tab ---
 function refreshCoeffList() {
+    buildCurveCycleTypes();
+    updateCurveCycleLabel();
     const container = document.getElementById("coeff-list-scroll");
     container.innerHTML = "";
     const deg = coefficients.length - 1;
@@ -7252,22 +7732,27 @@ function refreshCoeffList() {
         const exp = deg - i;
         power.textContent = exp === 0 ? "1" : exp === 1 ? "z" : "z" + superscript(exp);
 
-        const pathSpan = document.createElement("span");
-        pathSpan.className = "cpick-path";
+        const pathBtn = document.createElement("button");
+        pathBtn.className = "cpick-path-btn";
         const ci = coefficients[i];
         if (ci.pathType !== "none") {
-            const t = ci.pathType;
-            const pName = t === "figure8" ? "Fig-8"
-                : t === "epitrochoid" ? "Spiro" : t === "hypotrochoid" ? "Hypo"
-                : t.charAt(0).toUpperCase() + t.slice(1);
-            pathSpan.textContent = pName;
-            const detail = document.createElement("span");
-            detail.className = "cpick-detail";
-            detail.textContent = ` R${Math.round(ci.radius)} S${ci.speed.toFixed(2)} A${ci.angle.toFixed(2)} ${ci.ccw ? "CCW" : "CW"}`;
-            pathSpan.appendChild(detail);
+            pathBtn.textContent = pathDisplayName(ci.pathType);
         } else {
-            pathSpan.textContent = "\u2014";
+            pathBtn.textContent = "\u2014";
         }
+
+        const speedSpan = document.createElement("span");
+        speedSpan.className = "cpick-speed";
+        speedSpan.textContent = ci.pathType !== "none" ? String(Math.round(ci.speed * 100)) : "\u2014";
+
+        const plenSpan = document.createElement("span");
+        plenSpan.className = "cpick-plen";
+        plenSpan.textContent = ci.curve ? String(ci.curve.length) : "\u2014";
+
+        const posSpan = document.createElement("span");
+        posSpan.className = "cpick-pos";
+        const curIdx = nearestCurveIndex(ci);
+        posSpan.textContent = curIdx >= 0 ? String(curIdx) : "\u2014";
 
         const coords = document.createElement("span");
         coords.className = "cpick-coords";
@@ -7280,11 +7765,15 @@ function refreshCoeffList() {
         row.appendChild(sensDot);
         row.appendChild(label);
         row.appendChild(power);
-        row.appendChild(pathSpan);
+        row.appendChild(pathBtn);
+        row.appendChild(speedSpan);
+        row.appendChild(plenSpan);
+        row.appendChild(posSpan);
         row.appendChild(coords);
 
         const idx = i;
-        row.addEventListener("click", () => {
+        cb.addEventListener("click", (e) => {
+            e.stopPropagation();
             clearRootSelection();
             if (selectedCoeffs.has(idx)) {
                 selectedCoeffs.delete(idx);
@@ -7296,9 +7785,58 @@ function refreshCoeffList() {
             }
             updateCoeffSelectionVisual();
             updateAnimBar();
+            refreshListCurveEditor();
+        });
+        pathBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openPathPickPop(idx, pathBtn);
         });
 
         container.appendChild(row);
+    }
+}
+
+// Lightweight update: refresh coordinate text + pos in existing list rows (called every frame during anim/drag)
+function updateListCoords() {
+    if (typeof leftTab === "undefined" || leftTab !== "list") return;
+    const rows = document.querySelectorAll("#coeff-list-scroll .cpick-row");
+    const n = coefficients.length;
+    if (rows.length !== n) { refreshCoeffList(); return; } // size mismatch — full rebuild
+    for (let i = 0; i < n; i++) {
+        const c = coefficients[i];
+        const coordsEl = rows[i].querySelector(".cpick-coords");
+        if (coordsEl) {
+            const sign = c.im >= 0 ? "+" : "";
+            coordsEl.textContent = c.re.toFixed(2) + sign + c.im.toFixed(2) + "i";
+        }
+        const posEl = rows[i].querySelector(".cpick-pos");
+        if (posEl) {
+            const idx = nearestCurveIndex(c);
+            posEl.textContent = idx >= 0 ? String(idx) : "\u2014";
+        }
+    }
+}
+
+// Full column update: refresh path, speed, pts columns (called after trajectory changes)
+function updateListPathCols() {
+    if (typeof leftTab === "undefined" || leftTab !== "list") return;
+    const rows = document.querySelectorAll("#coeff-list-scroll .cpick-row");
+    const n = coefficients.length;
+    if (rows.length !== n) { refreshCoeffList(); return; }
+    for (let i = 0; i < n; i++) {
+        const c = coefficients[i];
+        const pathBtn = rows[i].querySelector(".cpick-path-btn");
+        if (pathBtn) {
+            pathBtn.textContent = c.pathType !== "none" ? pathDisplayName(c.pathType) : "\u2014";
+        }
+        const speedEl = rows[i].querySelector(".cpick-speed");
+        if (speedEl) {
+            speedEl.textContent = c.pathType !== "none" ? String(Math.round(c.speed * 100)) : "\u2014";
+        }
+        const plenEl = rows[i].querySelector(".cpick-plen");
+        if (plenEl) {
+            plenEl.textContent = c.curve ? String(c.curve.length) : "\u2014";
+        }
     }
 }
 
@@ -7307,14 +7845,246 @@ document.getElementById("list-select-all-btn").addEventListener("click", () => {
     for (let i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
     updateCoeffSelectionVisual();
     updateAnimBar();
-    if (leftTab === "list") refreshCoeffList();
+    if (leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
 });
 document.getElementById("list-deselect-all-btn").addEventListener("click", () => {
     selectedCoeffs.clear();
     lastSelectedCoeff = -1;
     updateCoeffSelectionVisual();
     updateAnimBar();
-    if (leftTab === "list") refreshCoeffList();
+    if (leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
+});
+// --- Curve type cycler ---
+let curveCycleTypes = [];  // sorted list of all unique path types across all coefficients
+let curveCycleIdx = 0;
+
+function buildCurveCycleTypes() {
+    const types = new Set();
+    for (const c of coefficients) types.add(c.pathType);
+    curveCycleTypes = [...types].sort();
+    if (curveCycleTypes.length === 0) curveCycleTypes = ["none"];
+}
+
+function updateCurveCycleLabel() {
+    const label = document.getElementById("list-curve-cycle");
+    if (curveCycleTypes.length === 0) { label.textContent = "\u2014"; return; }
+    if (curveCycleIdx >= curveCycleTypes.length) curveCycleIdx = 0;
+    if (curveCycleIdx < 0) curveCycleIdx = curveCycleTypes.length - 1;
+    label.textContent = pathDisplayName(curveCycleTypes[curveCycleIdx]);
+}
+
+function selectByCurveType(type) {
+    clearRootSelection();
+    selectedCoeffs.clear();
+    for (let i = 0; i < coefficients.length; i++) {
+        if (coefficients[i].pathType === type) selectedCoeffs.add(i);
+    }
+    updateCoeffSelectionVisual();
+    updateAnimBar();
+    if (leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
+}
+
+// "Same Curve" button: select all coefficients with the currently displayed curve type
+document.getElementById("list-all-curves-btn").addEventListener("click", () => {
+    if (curveCycleTypes.length === 0) return;
+    selectByCurveType(curveCycleTypes[curveCycleIdx]);
+});
+
+document.getElementById("list-curve-prev").addEventListener("click", () => {
+    buildCurveCycleTypes();
+    if (curveCycleTypes.length === 0) return;
+    curveCycleIdx = (curveCycleIdx - 1 + curveCycleTypes.length) % curveCycleTypes.length;
+    updateCurveCycleLabel();
+    selectByCurveType(curveCycleTypes[curveCycleIdx]);
+});
+
+document.getElementById("list-curve-next").addEventListener("click", () => {
+    buildCurveCycleTypes();
+    if (curveCycleTypes.length === 0) return;
+    curveCycleIdx = (curveCycleIdx + 1) % curveCycleTypes.length;
+    updateCurveCycleLabel();
+    selectByCurveType(curveCycleTypes[curveCycleIdx]);
+});
+
+// --- List curve editor ---
+const lcePanel = document.getElementById("list-curve-editor");
+const lcePathSel = document.getElementById("lce-path-sel");
+const lceCoeffName = document.getElementById("lce-coeff-name");
+const lceControls = document.getElementById("lce-controls");
+let lceInputs = {};       // { key: <input or button element> }
+let lceCurrentPath = "";  // path type currently shown in dropdown
+let lceCycleIdx = 0;      // index into selected coefficients list
+let lceCycleList = [];     // all selected coefficient indices
+
+function refreshListCurveEditor() {
+    if (selectedCoeffs.size === 0) {
+        lcePanel.style.opacity = "0.3";
+        lcePanel.style.pointerEvents = "none";
+        return;
+    }
+    lcePanel.style.opacity = "1";
+    lcePanel.style.pointerEvents = "";
+
+    // Build cycle list: ALL selected coefficients
+    lceCycleList = [...selectedCoeffs].sort((a, b) => a - b);
+
+    // Clamp cycle index
+    if (lceCycleIdx >= lceCycleList.length) lceCycleIdx = 0;
+    if (lceCycleIdx < 0) lceCycleIdx = lceCycleList.length - 1;
+
+    // Load current coefficient's path type into dropdown and build controls
+    const ci = lceCycleList[lceCycleIdx];
+    const c = coefficients[ci];
+    lcePathSel.value = c.pathType || "none";
+    lceCurrentPath = lcePathSel.value;
+
+    updateLceCyclerLabel();
+    buildLceControls(lceCurrentPath);
+}
+
+// When dropdown changes, rebuild controls with defaults for the new path type
+lcePathSel.addEventListener("change", () => {
+    lceCurrentPath = lcePathSel.value;
+    buildLceControls(lceCurrentPath);
+});
+
+function updateLceCyclerLabel() {
+    const updateOneBtn = document.getElementById("lce-update-one");
+    if (lceCycleList.length === 0) {
+        lceCoeffName.textContent = "—";
+        updateOneBtn.textContent = "Update —";
+        return;
+    }
+    const ci = lceCycleList[lceCycleIdx];
+    const n = coefficients.length;
+    const sub = n - 1 - ci;
+    const color = coeffColor(ci, n);
+    lceCoeffName.textContent = "c" + sub;
+    lceCoeffName.style.color = color;
+    updateOneBtn.textContent = "Update c" + sub;
+}
+
+function buildLceControls(pathType) {
+    lceControls.innerHTML = "";
+    lceInputs = {};
+    const schema = PATH_PARAMS[pathType] || [];
+    if (schema.length === 0) return;
+    const ci = lceCycleList[lceCycleIdx];
+    const c = coefficients[ci];
+    for (const p of schema) {
+        const val = getCoeffParam(c, p.key, p);
+        if (p.type === "toggle") {
+            const btn = document.createElement("button");
+            btn.className = "ctx-dir" + (val ? " active" : "");
+            btn.textContent = val ? p.labels[1] : p.labels[0];
+            btn.addEventListener("click", () => {
+                const isActive = !btn.classList.contains("active");
+                btn.classList.toggle("active", isActive);
+                btn.textContent = isActive ? p.labels[1] : p.labels[0];
+            });
+            lceControls.appendChild(btn);
+            lceInputs[p.key] = btn;
+        } else {
+            const row = document.createElement("label");
+            const lceUiVal = p.toUI ? p.toUI(val) : val;
+            const valSpan = document.createElement("span");
+            valSpan.className = "ctx-val";
+            valSpan.textContent = p.fmt(lceUiVal);
+            const inp = document.createElement("input");
+            inp.type = "range"; inp.min = p.min; inp.max = p.max; inp.step = p.step; inp.value = lceUiVal;
+            inp.addEventListener("input", () => {
+                valSpan.textContent = p.fmt(parseFloat(inp.value));
+            });
+            row.textContent = p.label + " ";
+            row.appendChild(inp);
+            row.appendChild(valSpan);
+            lceControls.appendChild(row);
+            lceInputs[p.key] = inp;
+        }
+    }
+}
+
+function lceReadParams() {
+    // Read current slider/toggle values into an object
+    const schema = PATH_PARAMS[lceCurrentPath] || [];
+    const params = {};
+    for (const p of schema) {
+        if (p.type === "toggle") {
+            params[p.key] = lceInputs[p.key] ? lceInputs[p.key].classList.contains("active") : p.default;
+        } else {
+            const lceRaw = lceInputs[p.key] ? parseFloat(lceInputs[p.key].value) : null;
+            params[p.key] = lceRaw !== null ? (p.fromUI ? p.fromUI(lceRaw) : lceRaw) : p.default;
+        }
+    }
+    return params;
+}
+
+function lceApplyToCoeff(ci, params) {
+    const c = coefficients[ci];
+    // Set path type from dropdown
+    c.pathType = lceCurrentPath;
+    const schema = PATH_PARAMS[lceCurrentPath] || [];
+    for (const p of schema) {
+        setCoeffParam(c, p.key, params[p.key]);
+    }
+    if (c.pathType === "none") {
+        c.curve = null;
+    } else {
+        const absRadius = c.radius / 100 * coeffExtent();
+        c.curve = computeCurve(c.re, c.im, c.pathType, absRadius, c.angle, c.extra);
+    }
+}
+
+function lceSyncToCurrentCoeff() {
+    const ci = lceCycleList[lceCycleIdx];
+    const c = coefficients[ci];
+    lcePathSel.value = c.pathType || "none";
+    lceCurrentPath = lcePathSel.value;
+    updateLceCyclerLabel();
+    buildLceControls(lceCurrentPath);
+}
+document.getElementById("lce-prev").addEventListener("click", () => {
+    if (lceCycleList.length === 0) return;
+    lceCycleIdx = (lceCycleIdx - 1 + lceCycleList.length) % lceCycleList.length;
+    lceSyncToCurrentCoeff();
+});
+document.getElementById("lce-next").addEventListener("click", () => {
+    if (lceCycleList.length === 0) return;
+    lceCycleIdx = (lceCycleIdx + 1) % lceCycleList.length;
+    lceSyncToCurrentCoeff();
+});
+document.getElementById("lce-update-sel").addEventListener("click", () => {
+    if (lceCycleList.length === 0) return;
+    const params = lceReadParams();
+    for (const ci of lceCycleList) {
+        lceApplyToCoeff(ci, params);
+    }
+    animState.elapsedAtPause = null;
+    renderCoeffTrails();
+    buildCurveCycleTypes(); updateCurveCycleLabel();
+    if (leftTab === "list") { updateListPathCols(); updateListCoords(); }
+});
+document.getElementById("lce-update-one").addEventListener("click", () => {
+    if (lceCycleList.length === 0) return;
+    const params = lceReadParams();
+    lceApplyToCoeff(lceCycleList[lceCycleIdx], params);
+    animState.elapsedAtPause = null;
+    renderCoeffTrails();
+    buildCurveCycleTypes(); updateCurveCycleLabel();
+    if (leftTab === "list") { updateListPathCols(); updateListCoords(); }
+});
+document.getElementById("lce-ps-btn").addEventListener("click", () => {
+    if (lceCycleList.length === 0) return;
+    const sInp = lceInputs["speed"];
+    if (!sInp) return;
+    const ci = lceCycleList[lceCycleIdx];
+    const cur = parseInt(sInp.value, 10);
+    const ps = findPrimeSpeed(cur, new Set([ci]));
+    if (ps !== cur) {
+        sInp.value = ps;
+        const vs = sInp.parentElement.querySelector(".ctx-val");
+        if (vs) vs.textContent = _P.speed.fmt(ps);
+    }
 });
 
 // Bitmap tab buttons
@@ -7323,6 +8093,7 @@ document.getElementById("bitmap-start-btn").addEventListener("click", function (
     document.getElementById("bitmap-save-btn").disabled = false;
     document.getElementById("bitmap-clear-btn").disabled = false;
     document.getElementById("bitmap-fast-btn").disabled = false;
+    document.getElementById("jiggle-btn").disabled = false;
     this.textContent = "restart";
 });
 
@@ -7347,9 +8118,61 @@ document.getElementById("bitmap-clear-btn").addEventListener("click", function (
     }
 });
 
+// --- Fastmode popup ---
+const fastmodePop = document.getElementById("fastmode-pop");
+let fastmodePopOpen = false;
+
+function closeFastmodePop() {
+    fastmodePop.classList.remove("open");
+    fastmodePopOpen = false;
+}
+
+function openFastmodePop() {
+    if (fastmodePopOpen) { closeFastmodePop(); return; }
+    fastmodePop.innerHTML = "";
+
+    const title = document.createElement("div");
+    title.className = "pop-title";
+    title.textContent = "FASTMODE";
+    fastmodePop.appendChild(title);
+
+    // Progress checkbox
+    const cbRow = document.createElement("div");
+    cbRow.style.cssText = "display:flex;align-items:center;gap:4px;margin:4px 0;";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.id = "fastmode-progress-cb";
+    cb.checked = fastModeShowProgress;
+    cb.style.cssText = "margin:0;";
+    cb.addEventListener("change", () => { fastModeShowProgress = cb.checked; });
+    const cbLabel = document.createElement("label");
+    cbLabel.htmlFor = "fastmode-progress-cb";
+    cbLabel.style.cssText = "font-size:10px;color:var(--fg);cursor:pointer;";
+    cbLabel.textContent = "Progress bar";
+    cbRow.appendChild(cb);
+    cbRow.appendChild(cbLabel);
+    fastmodePop.appendChild(cbRow);
+
+    // Go button
+    const goBtn = document.createElement("button");
+    goBtn.textContent = "Go!";
+    goBtn.style.cssText = "font-size:10px;padding:3px 10px;background:var(--accent);color:#000;border:none;border-radius:3px;cursor:pointer;margin-top:4px;width:100%;";
+    goBtn.addEventListener("click", () => {
+        closeFastmodePop();
+        enterFastMode();
+    });
+    fastmodePop.appendChild(goBtn);
+
+    fastmodePop.classList.add("open");
+    const r = document.getElementById("bitmap-fast-btn").getBoundingClientRect();
+    fastmodePop.style.left = r.left + "px";
+    fastmodePop.style.top = (r.bottom + 6) + "px";
+    fastmodePopOpen = true;
+}
+
 document.getElementById("bitmap-fast-btn").addEventListener("click", function () {
     if (fastModeActive) exitFastMode();
-    else enterFastMode();
+    else openFastmodePop();
 });
 
 // --- Bitmap canvas background color popup ---
@@ -7426,6 +8249,127 @@ function openBitmapBgPop() {
 }
 
 document.getElementById("bitmap-bg-btn").addEventListener("click", openBitmapBgPop);
+
+// --- Jiggle popup ---
+const jigglePop = document.getElementById("jiggle-pop");
+let jigglePopOpen = false;
+
+function gaussRand() {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+function generateJiggleOffsets() {
+    const sigma = (jiggleSigma / 100) * coeffExtent();
+    if (sigma <= 0) { jiggleOffsets = null; updateJiggleStatus(); return; }
+    jiggleOffsets = new Map();
+    const animated = allAnimatedCoeffs();
+    for (const idx of animated) {
+        jiggleOffsets.set(idx, { re: gaussRand() * sigma, im: gaussRand() * sigma });
+    }
+    updateJiggleStatus();
+}
+
+function updateJiggleStatus() {
+    const el = document.getElementById("jiggle-status");
+    if (!el) return;
+    if (jiggleOffsets && jiggleOffsets.size > 0) {
+        el.textContent = jiggleOffsets.size + " offsets active";
+        el.style.color = "var(--accent)";
+    } else {
+        el.textContent = "no offsets";
+        el.style.color = "var(--muted)";
+    }
+}
+
+function closeJigglePop() {
+    jigglePop.classList.remove("open");
+    jigglePopOpen = false;
+}
+
+function openJigglePop() {
+    if (jigglePopOpen) { closeJigglePop(); return; }
+    jigglePop.innerHTML = "";
+
+    const title = document.createElement("div");
+    title.className = "pop-title";
+    title.textContent = "JIGGLE";
+    jigglePop.appendChild(title);
+
+    // σ row — integer 0-100, displayed as-is, read as /100 → %
+    const sigmaRow = document.createElement("div");
+    sigmaRow.style.cssText = "display:flex;align-items:center;gap:6px;margin:4px 0;";
+    const sigmaLabel = document.createElement("span");
+    sigmaLabel.style.cssText = "font-size:10px;color:var(--fg);";
+    sigmaLabel.textContent = "σ";
+    const sigmaInp = document.createElement("input");
+    sigmaInp.type = "number";
+    sigmaInp.id = "jiggle-sigma";
+    sigmaInp.step = "1";
+    sigmaInp.min = "0";
+    sigmaInp.max = "100";
+    sigmaInp.value = jiggleSigma;
+    sigmaInp.style.cssText = "width:50px;background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
+    sigmaInp.addEventListener("input", () => {
+        jiggleSigma = Math.max(0, Math.min(100, parseInt(sigmaInp.value, 10) || 0));
+    });
+    const sigmaPct = document.createElement("span");
+    sigmaPct.style.cssText = "font-size:9px;color:var(--muted);";
+    sigmaPct.textContent = "/ 100";
+    sigmaRow.appendChild(sigmaLabel);
+    sigmaRow.appendChild(sigmaInp);
+    sigmaRow.appendChild(sigmaPct);
+    jigglePop.appendChild(sigmaRow);
+
+    // Buttons row
+    const btnRow = document.createElement("div");
+    btnRow.style.cssText = "display:flex;gap:4px;margin:4px 0;";
+    const genBtn = document.createElement("button");
+    genBtn.textContent = "Generate";
+    genBtn.style.cssText = "font-size:9px;padding:2px 6px;background:var(--accent);color:#000;border:none;border-radius:3px;cursor:pointer;";
+    genBtn.addEventListener("click", () => { generateJiggleOffsets(); });
+    const clrBtn = document.createElement("button");
+    clrBtn.textContent = "Clear";
+    clrBtn.style.cssText = "font-size:9px;padding:2px 6px;background:transparent;color:var(--muted);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;";
+    clrBtn.addEventListener("click", () => { jiggleOffsets = null; updateJiggleStatus(); });
+    btnRow.appendChild(genBtn);
+    btnRow.appendChild(clrBtn);
+    jigglePop.appendChild(btnRow);
+
+    // OnTarget checkbox
+    const otRow = document.createElement("div");
+    otRow.style.cssText = "display:flex;align-items:center;gap:4px;margin:4px 0;";
+    const otCb = document.createElement("input");
+    otCb.type = "checkbox";
+    otCb.id = "jiggle-ontarget";
+    otCb.checked = jiggleOnTarget;
+    otCb.style.cssText = "margin:0;";
+    otCb.addEventListener("change", () => { jiggleOnTarget = otCb.checked; });
+    const otLabel = document.createElement("label");
+    otLabel.htmlFor = "jiggle-ontarget";
+    otLabel.style.cssText = "font-size:10px;color:var(--fg);cursor:pointer;";
+    otLabel.textContent = "OnTarget";
+    otRow.appendChild(otCb);
+    otRow.appendChild(otLabel);
+    jigglePop.appendChild(otRow);
+
+    // Status
+    const status = document.createElement("div");
+    status.id = "jiggle-status";
+    status.style.cssText = "font-size:9px;margin-top:2px;";
+    jigglePop.appendChild(status);
+    updateJiggleStatus();
+
+    jigglePop.classList.add("open");
+    const r = document.getElementById("jiggle-btn").getBoundingClientRect();
+    jigglePop.style.left = r.left + "px";
+    jigglePop.style.top = (r.bottom + 6) + "px";
+    jigglePopOpen = true;
+}
+
+document.getElementById("jiggle-btn").addEventListener("click", openJigglePop);
 
 function rebuild() {
     S = getPanelSize();

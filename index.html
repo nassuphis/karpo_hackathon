@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v23</title>
+<title>PolyPaint v24</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
@@ -405,6 +405,7 @@ circle.coeff.selected, circle.root.selected {
 #anim-bar input[type="range"] { width: 52px; accent-color: var(--accent); }
 #anim-bar .bar-val { color: var(--accent); min-width: 20px; text-align: right; font-size: 10px; }
 #bar-dynamic { display: grid; grid-template-columns: repeat(6, auto); gap: 4px 8px; align-items: center; }
+#scrub-slider { width: 80px; accent-color: var(--accent); }
 #play-btn {
     background: var(--accent); color: #fff; border: none; border-radius: 6px;
     padding: 2px 8px; font-size: 10px; cursor: pointer; font-weight: 500;
@@ -467,7 +468,7 @@ body.fast-mode .panel:first-child {
     opacity: 0.15; pointer-events: none; filter: grayscale(1);
     transition: opacity 0.3s, filter 0.3s;
 }
-body.fast-mode #bitmap-toolbar .bitmap-btn:not(#bitmap-fast-btn),
+body.fast-mode #bitmap-toolbar .bitmap-btn:not(#bitmap-fast-btn):not(#bitmap-coeff-btn),
 body.fast-mode #bitmap-toolbar .bitmap-select {
     opacity: 0.3; pointer-events: none;
 }
@@ -508,7 +509,7 @@ body.fast-mode #bitmap-fast-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v23</span>
+    <span class="app-title">PolyPaint v24</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -554,6 +555,9 @@ body.fast-mode #bitmap-fast-btn {
         <button id="load-btn" class="icon-btn" title="Load state">📂</button>
         <button id="snap-btn" class="icon-btn" title="Export snapshot">⬇</button>
     </span>
+    <div class="header-sep"></div>
+    <button id="config-btn" class="icon-btn" title="Configuration" style="font-size:11px;font-weight:700;">C</button>
+    <button id="timing-btn" class="icon-btn" title="Timing" style="font-size:11px;font-weight:700;">T</button>
 </div>
 <div id="content">
     <div id="main">
@@ -562,7 +566,7 @@ body.fast-mode #bitmap-fast-btn {
         <div class="tab-bar" id="left-tab-bar">
             <button class="tab active" data-ltab="coeffs">Coefficients <span id="coeff-sel-count" style="font-size:9px;color:#5ddb6a;opacity:0.85;"></span></button>
             <button class="tab" data-ltab="list">List</button>
-            <span class="tab-bar-controls"><button id="play-btn">▶ Play</button><button id="home-btn" title="Return to start position">Home</button></span>
+            <span class="tab-bar-controls"><input id="scrub-slider" type="range" min="0" max="5000" value="0" step="1" title="Scrub coefficients along paths (0–5s)"><span id="scrub-val" style="font-size:9px;color:var(--muted);min-width:28px;text-align:right;">0.00s</span><button id="play-btn">▶ Play</button><button id="home-btn" title="Return to start position">Home</button></span>
         </div>
         <div class="tab-panes" id="left-tab-panes">
             <div id="coeffs-content" class="tab-content active">
@@ -691,6 +695,7 @@ body.fast-mode #bitmap-fast-btn {
             <button id="mid-all-btn" class="mid-btn" style="width:auto;height:auto;font-size:8px;padding:1px 4px;border-radius:4px;" title="Select all (roots if any root selected, else coefficients)">⊕</button>
             <button id="mid-none-btn" class="mid-btn" style="width:auto;height:auto;font-size:8px;padding:1px 4px;border-radius:4px;" title="Deselect all">✕</button>
         </div>
+        <button id="inverse-btn" class="mid-btn" style="width:auto;height:auto;font-size:9px;padding:2px 6px;border-radius:6px;margin-top:6px;" title="Reverse coefficient order (reflects roots around unit circle)">Inv</button>
     </div>
     <div class="panel">
         <div class="tab-bar">
@@ -752,11 +757,14 @@ body.fast-mode #bitmap-fast-btn {
                     <button id="bitmap-start-btn" class="bitmap-btn">start</button>
                     <button id="bitmap-save-btn" class="bitmap-btn" disabled>save</button>
                     <button id="bitmap-clear-btn" class="bitmap-btn" disabled>clear</button>
-                    <select id="bitmap-res-select" class="bitmap-select"><option value="1000">1000px</option><option value="2000" selected>2000px</option><option value="5000">5000px</option></select>
+                    <select id="bitmap-res-select" class="bitmap-select"><option value="1000">1000px</option><option value="2000" selected>2000px</option><option value="5000">5000px</option><option value="10000">10000px</option><option value="15000">15000px</option></select>
                     <button id="bitmap-fast-btn" class="bitmap-btn" disabled>fastmode</button>
-                    <select id="bitmap-steps-select" class="bitmap-select"><option value="10">10</option><option value="100">100</option><option value="1000">1K</option><option value="10000">10K</option><option value="50000">50K</option><option value="100000">100K</option><option value="1000000">1M</option></select>
+                    <button id="bitmap-coeff-btn" class="bitmap-btn" disabled title="Plot coefficient positions instead of roots">R|C</button>
+                    <select id="bitmap-steps-select" class="bitmap-select"><option value="10">10</option><option value="100">100</option><option value="1000">1K</option><option value="5000">5K</option><option value="10000">10K</option><option value="50000">50K</option><option value="100000">100K</option><option value="1000000">1M</option></select>
                     <button id="jiggle-btn" class="bitmap-btn" disabled title="Jiggle — perturb coefficient paths between cycles">jiggle</button>
+                    <button id="jiggle-diag-btn" class="bitmap-btn" disabled title="Jiggle diagnostics" style="font-weight:700;min-width:20px;padding:2px 4px;">D</button>
                     <button id="bitmap-bg-btn" class="bitmap-btn" title="Canvas background color">bg</button>
+                    <button id="bitmap-progress-toggle" class="bitmap-btn" title="Toggle progress bar display">prog</button>
                     <div id="bitmap-progress" style="display:none;flex:1;min-width:60px;height:6px;background:var(--stroke);border-radius:3px;margin-left:4px;overflow:hidden;"><div id="bitmap-progress-bar" style="height:100%;width:0%;background:var(--accent);border-radius:3px;transition:width 0.1s;"></div></div>
                     <span id="bitmap-pass-count" style="display:none;font-family:monospace;font-size:10px;color:var(--muted);margin-left:4px;white-space:nowrap;"></span>
                 </div>
@@ -780,8 +788,10 @@ body.fast-mode #bitmap-fast-btn {
 <div id="snap-pop" class="ops-pop" style="min-width:100px"></div>
 <div id="bitmap-bg-pop" class="ops-pop" style="min-width:160px"></div>
 <div id="jiggle-pop" class="ops-pop" style="min-width:160px"></div>
-<div id="fastmode-pop" class="ops-pop" style="min-width:120px"></div>
+<div id="jiggle-diag-pop" class="ops-pop" style="min-width:240px;max-height:400px;overflow-y:auto"></div>
 <div id="path-pick-pop" class="ops-pop"></div>
+<div id="config-pop" class="ops-pop" style="min-width:160px"></div>
+<div id="timing-pop" class="ops-pop" style="min-width:220px"></div>
 
 <script>
 // ============================================================================
@@ -864,9 +874,27 @@ const MAX_TRAIL_POINTS = 4000;
 const TRAIL_MIN_POINTS = 30; // minimum points before checking for loop closure
 // Domain coloring state
 let domainColoringEnabled = false;
-let rootColorMode = "rainbow";  // "uniform" | "rainbow" | "derivative"
+let rootColorMode = "rainbow";  // "uniform" | "rainbow" | "derivative" | "iteration"
 let uniformRootColor = [255, 255, 255];  // RGB for uniform mode (default white)
 let rootSensitivities = null;   // Float64Array for derivative mode
+// 16-color iteration palette: full rainbow for max contrast between adjacent values
+const ITER_PALETTE = (() => {
+    const pal = [];
+    for (let k = 0; k < 16; k++) {
+        const hue = (k / 16) * 360;
+        const h60 = hue / 60, x = Math.round((1 - Math.abs(h60 % 2 - 1)) * 255);
+        if (h60 < 1) pal.push([255, x, 0]);
+        else if (h60 < 2) pal.push([x, 255, 0]);
+        else if (h60 < 3) pal.push([0, 255, x]);
+        else if (h60 < 4) pal.push([0, x, 255]);
+        else if (h60 < 5) pal.push([x, 0, 255]);
+        else pal.push([255, 0, x]);
+    }
+    return pal;
+})();
+const ITER_PAL_R = new Uint8Array(ITER_PALETTE.map(c => c[0]));
+const ITER_PAL_G = new Uint8Array(ITER_PALETTE.map(c => c[1]));
+const ITER_PAL_B = new Uint8Array(ITER_PALETTE.map(c => c[2]));
 let domainCanvas = document.getElementById("domain-canvas");
 let domainCtx = domainCanvas.getContext("2d");
 let domainPendingRender = false;
@@ -877,6 +905,7 @@ let bitmapCtx = null;
 let bitmapRange = null;   // frozen bounding box from roots panel
 let bitmapFrameCount = 0;
 let bitmapCanvasColor = "#000000"; // canvas background color
+let bitmapCoeffView = false;     // when true, fast mode plots coefficient positions instead of roots
 // Fast mode state
 const FAST_PASS_SECONDS = 1.0; // virtual duration of one fast pass
 let fastModeActive = false;
@@ -885,22 +914,36 @@ let fastModeStepIndex = 0;
 let fastModeTotalSteps = 0;
 let fastModeTimerId = null;
 let fastModeRootColors = null;  // pre-computed CSS color strings
-let fastModeWorker = null;      // Web Worker instance
-let fastModeLastPixels = null;  // last received pixel ArrayBuffer snapshot
-let fastModeLastRoots = null;   // last received root positions
+let fastModeLastPixels = null;  // last received pixel ArrayBuffer snapshot (legacy)
+let fastModeLastRoots = null;   // last received root positions (legacy)
 let fastModeLastStep = 0;       // last reported step count
 let fastModeElapsedOffset = 0;  // accumulated elapsed time across passes
-let fastModePassCount = 0;      // completed pass counter
+let fastModePassCount = 0;      // completed pass counter (resets each cycle)
 let fastModeTargetPasses = 0;   // passes for full cycle (0 = unlimited)
+let fastModeCumulativeSec = 0;  // total seconds run across jiggle re-triggers
 let jiggleOffsets = null;       // Map<coeffIdx, {re, im}> or null
-let jiggleOnTarget = false;     // auto-regenerate on cycle completion
 let jiggleSigma = 10;          // σ as integer 0-100, read as jiggleSigma/100 %
 let jiggleMode = "none";       // "none" | "random" | "rotate" | "walk" | "scale"
 let jiggleTheta = 0.01;        // rotate: turns per trigger (0.001–0.500)
 let jiggleScaleStep = 5;       // scale: % per trigger (1–50)
 let jiggleCumulativeAngle = 0; // rotate: accumulated angle in radians
 let jiggleCumulativeScale = 1.0; // scale: accumulated scale factor
+let jigglePeriod = 20;         // breathe/wobble/lissajous: triggers for one oscillation
+let jiggleAmplitude = 10;      // breathe/lissajous: amplitude as % (of centroid distance or coeffExtent)
+let jiggleLissFreqX = 1;       // lissajous: X frequency multiplier
+let jiggleLissFreqY = 2;       // lissajous: Y frequency multiplier
+let jiggleTriggerCount = 0;    // incremented each generateJiggleOffsets() call
 let fastModeShowProgress = true; // show progress bar + pass counter during fastmode
+// Multi-worker state
+let numWorkers = Math.min(navigator.hardwareConcurrency || 4, 16);
+let fastModeWorkers = [];           // Array of Worker instances
+let fastModeWorkersComplete = 0;    // Count of workers that reported "done" for current pass
+let fastModeWorkerPixels = [];      // Collected pixel buffers from workers
+let fastModeWorkerRoots = null;     // Root positions from the last-range worker
+let fastModeWorkerProgress = [];    // Per-worker step counts for progress aggregation
+let fastModePassStartTime = 0;      // performance.now() when current pass started
+let fastModeCycleStartTime = 0;     // performance.now() when current cycle started
+let fastModeTimingHistory = [];     // Array of {passMs, stepsPerSec, workers, steps}
 // Stats tab state
 let activeTab = "roots";
 const STAT_TYPES = ["Force", "MinForce", "MaxForce", "Speed", "MinSpeed", "MaxSpeed", "MinDist", "MaxDist", "Records", "MeanDist", "\u0394MeanDist", "AngularMom", "\u03c3Speed", "EMASpeed", "\u03c3Dist", "Odometer", "CycleCount", "MedianR", "Spread", "EMed", "EHi", "Coherence", "Encounters"];
@@ -1671,6 +1714,7 @@ function coeffColor(i, n) {
 
 function rootColor(i, n) {
     if (rootColorMode === "rainbow") return d3.interpolateRainbow(i / n);
+    if (rootColorMode === "iteration") return d3.interpolateRainbow(i / n); // fallback for SVG
     if (rootColorMode === "derivative" && rootSensitivities && i < rootSensitivities.length) {
         return sensitivityColor(rootSensitivities[i]);
     }
@@ -1939,7 +1983,8 @@ function initCoefficients(degree) {
 
     // Initialize trajectory defaults (no path assigned yet)
     for (const c of coefficients) {
-        c.curve = null;
+        c.curve = [{ re: c.re, im: c.im }];
+        c.curveIndex = 0;
         c.pathType = "none";
         c.radius = 25;
         c.speed = 1.0;
@@ -2144,9 +2189,7 @@ const drag = d3.drag()
             for (const si of selectedCoeffs) {
                 coefficients[si].re += deltaRe;
                 coefficients[si].im += deltaIm;
-                if (coefficients[si].curve) {
-                    for (const pt of coefficients[si].curve) { pt.re += deltaRe; pt.im += deltaIm; }
-                }
+                for (const pt of coefficients[si].curve) { pt.re += deltaRe; pt.im += deltaIm; }
             }
             coeffLayer.selectAll("circle.coeff")
                 .attr("cx", cd => cxs()(cd.re)).attr("cy", cd => cys()(cd.im));
@@ -2158,9 +2201,7 @@ const drag = d3.drag()
             const deltaIm = newIm - d.im;
             d.re = newRe;
             d.im = newIm;
-            if (d.curve) {
-                for (const pt of d.curve) { pt.re += deltaRe; pt.im += deltaIm; }
-            }
+            for (const pt of d.curve) { pt.re += deltaRe; pt.im += deltaIm; }
             d3.select(this).attr("cx", cxs()(d.re)).attr("cy", cys()(d.im));
             coeffLayer.selectAll(".coeff-label")
                 .filter(ld => ld === d)
@@ -2527,6 +2568,7 @@ function closeCoeffCtx(revert) {
         c.ccw = ctxSnapshot.ccw;
         c.extra = ctxSnapshot.extra || {};
         c.curve = ctxSnapshot.curve;
+        c.curveIndex = ctxSnapshot.curveIndex;
         updateAnimBar();
         renderCoeffTrails();
     }
@@ -2550,7 +2592,8 @@ function openCoeffCtx(event, coeffIdx) {
     ctxSnapshot = {
         pathType: cc.pathType, radius: cc.radius, speed: cc.speed,
         angle: cc.angle, ccw: cc.ccw, extra: cc.extra ? { ...cc.extra } : {},
-        curve: cc.curve ? cc.curve.map(pt => ({ ...pt })) : null,
+        curve: cc.curve.map(pt => ({ ...pt })),
+        curveIndex: cc.curveIndex,
     };
 
     const ctx = document.getElementById("coeff-ctx");
@@ -2691,11 +2734,12 @@ function openCoeffCtx(event, coeffIdx) {
         }
 
         if (c.pathType === "none") {
-            c.curve = null;
+            c.curve = [{ re: c.re, im: c.im }];
         } else {
             const absRadius = c.radius / 100 * coeffExtent();
             c.curve = computeCurve(c.re, c.im, c.pathType, absRadius, c.angle, c.extra);
         }
+        c.curveIndex = 0;
 
         animState.elapsedAtPause = null;
         updateAnimBar();
@@ -2816,11 +2860,13 @@ function applyBarToSelection() {
         }
 
         if (pt === "none") {
-            c.curve = null;
+            c.curve = [{ re: c.re, im: c.im }];
+            c.curveIndex = 0;
             animState.elapsedAtPause = null;
         } else if (pt === "random" || pt !== oldType || extraChanged) {
             const absR = r / 100 * coeffExtent();
             c.curve = computeCurve(c.re, c.im, pt, absR, a, c.extra);
+            c.curveIndex = 0;
             animState.elapsedAtPause = null;
         } else if (r !== oldR || a !== oldA) {
             transformCoeffCurve(c, oldR, oldA);
@@ -2839,11 +2885,12 @@ function applyBarToSelection() {
 }
 
 function transformCoeffCurve(c, oldRadius, oldAngle) {
-    if (!c.curve) return;
+    if (c.pathType === "none") return;
     // For cloud (random) or orbital (spiral) paths, regenerate instead of transforming
     if (c.curve._isCloud || c.curve._isOrbital) {
         const absR = c.radius / 100 * coeffExtent();
         c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+        c.curveIndex = 0;
         return;
     }
     const home = c.curve[0];
@@ -2869,6 +2916,7 @@ function transformCoeffCurve(c, oldRadius, oldAngle) {
     }
     c.re = c.curve[bestK].re;
     c.im = c.curve[bestK].im;
+    c.curveIndex = bestK;
 }
 
 function updateAnimBar() {
@@ -2925,7 +2973,8 @@ document.getElementById("home-btn").addEventListener("click", function () {
     animState.elapsedAtPause = null;
     for (let i = 0; i < coefficients.length; i++) {
         const c = coefficients[i];
-        if (c.curve) { c.re = c.curve[0].re; c.im = c.curve[0].im; }
+        c.re = c.curve[0].re; c.im = c.curve[0].im;
+        c.curveIndex = 0;
     }
     const animated = allAnimatedCoeffs();
     coeffLayer.selectAll("circle.coeff")
@@ -2946,6 +2995,50 @@ document.getElementById("home-btn").addEventListener("click", function () {
     autoScaleCoeffPanel();
     solveRootsThrottled();
     renderDomainColoringThrottled();
+    uiBuzz();
+});
+
+// Scrub slider: manually move coefficients along paths
+const scrubSlider = document.getElementById("scrub-slider");
+const scrubVal = document.getElementById("scrub-val");
+scrubSlider.addEventListener("input", function () {
+    const elapsed = this.value / 1000; // ms → seconds
+    scrubVal.textContent = elapsed.toFixed(2) + "s";
+    if (animState.playing) {
+        stopAnimation();
+        playBtn.textContent = "▶ Play";
+    }
+    for (let i = 0; i < coefficients.length; i++) {
+        const c = coefficients[i];
+        if (c.pathType === "none") continue;
+        const N = c.curve.length;
+        const t = elapsed * c.speed * (c.ccw ? -1 : 1);
+        const rawIdx = ((t % 1) + 1) % 1 * N;
+        if (c.curve._isCloud) {
+            const idx = Math.floor(rawIdx) % N;
+            c.re = c.curve[idx].re;
+            c.im = c.curve[idx].im;
+            c.curveIndex = idx;
+        } else {
+            const lo = Math.floor(rawIdx) % N;
+            const hi = (lo + 1) % N;
+            const frac = rawIdx - Math.floor(rawIdx);
+            c.re = c.curve[lo].re * (1 - frac) + c.curve[hi].re * frac;
+            c.im = c.curve[lo].im * (1 - frac) + c.curve[hi].im * frac;
+            c.curveIndex = lo;
+        }
+    }
+    const animated = allAnimatedCoeffs();
+    coeffLayer.selectAll("circle.coeff")
+        .filter(cd => animated.has(cd._idx))
+        .attr("cx", cd => cxs()(cd.re)).attr("cy", cd => cys()(cd.im));
+    coeffLayer.selectAll(".coeff-label")
+        .filter(ld => animated.has(ld._idx))
+        .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
+    animState.elapsedAtPause = elapsed;
+    solveRootsThrottled();
+    renderDomainColoringThrottled();
+    updateListCoords();
 });
 
 // Trails toggle button
@@ -3355,7 +3448,8 @@ function startAnimation() {
     if (!resuming) {
         for (const idx of animated) {
             const c = coefficients[idx];
-            if (c.curve) { c.re = c.curve[0].re; c.im = c.curve[0].im; }
+            c.re = c.curve[0].re; c.im = c.curve[0].im;
+            c.curveIndex = 0;
         }
     }
 
@@ -3377,22 +3471,22 @@ function animLoop(now) {
     for (let i = 0; i < coefficients.length; i++) {
         const c = coefficients[i];
         if (c.pathType === "none") continue;
-        if (c.curve) {
-            const N = c.curve.length;
-            const t = elapsed * c.speed * (c.ccw ? -1 : 1);
-            const rawIdx = ((t % 1) + 1) % 1 * N;
-            if (c.curve._isCloud) {
-                // Random cloud: snap to nearest point (no interpolation)
-                const idx = Math.floor(rawIdx) % N;
-                c.re = c.curve[idx].re;
-                c.im = c.curve[idx].im;
-            } else {
-                const lo = Math.floor(rawIdx) % N;
-                const hi = (lo + 1) % N;
-                const frac = rawIdx - Math.floor(rawIdx);
-                c.re = c.curve[lo].re * (1 - frac) + c.curve[hi].re * frac;
-                c.im = c.curve[lo].im * (1 - frac) + c.curve[hi].im * frac;
-            }
+        const N = c.curve.length;
+        const t = elapsed * c.speed * (c.ccw ? -1 : 1);
+        const rawIdx = ((t % 1) + 1) % 1 * N;
+        if (c.curve._isCloud) {
+            // Random cloud: snap to nearest point (no interpolation)
+            const idx = Math.floor(rawIdx) % N;
+            c.re = c.curve[idx].re;
+            c.im = c.curve[idx].im;
+            c.curveIndex = idx;
+        } else {
+            const lo = Math.floor(rawIdx) % N;
+            const hi = (lo + 1) % N;
+            const frac = rawIdx - Math.floor(rawIdx);
+            c.re = c.curve[lo].re * (1 - frac) + c.curve[hi].re * frac;
+            c.im = c.curve[lo].im * (1 - frac) + c.curve[hi].im * frac;
+            c.curveIndex = lo;
         }
     }
 
@@ -3523,11 +3617,9 @@ const rootDrag = d3.drag()
             const deltaIm = newCoeffs[ci].im - coefficients[ci].im;
             coefficients[ci].re = newCoeffs[ci].re;
             coefficients[ci].im = newCoeffs[ci].im;
-            if (coefficients[ci].curve) {
-                for (const pt of coefficients[ci].curve) {
-                    pt.re += deltaRe;
-                    pt.im += deltaIm;
-                }
+            for (const pt of coefficients[ci].curve) {
+                pt.re += deltaRe;
+                pt.im += deltaIm;
             }
         }
         renderCoefficients();  // auto-scales panel (may change scale)
@@ -3688,7 +3780,7 @@ function renderCoeffTrails() {
 
     for (let i = 0; i < coefficients.length; i++) {
         const c = coefficients[i];
-        if (c.pathType === "none" || !c.curve) continue;
+        if (c.pathType === "none") continue;
         if (c.curve._isCloud) cloudData.push({ idx: i });
         else lineData.push({ idx: i });
     }
@@ -3861,10 +3953,11 @@ function renderDomainColoringThrottled() {
 
 // --- Ehrlich-Aberth client-side root solver ---
 
-function solveRootsEA(coeffs, warmStart) {
+function solveRootsEA(coeffs, warmStart, iterCounts) {
     // coeffs: array of {re, im} in descending degree order
     // warmStart: array of {re, im} initial guesses (or null)
-    // Returns: array of {re, im} roots
+    // iterCounts: optional Uint8Array to receive per-root iteration counts
+    // Returns: array of {re, im} roots (with _iter if iterCounts provided)
 
     // Strip leading near-zero coefficients
     let start = 0;
@@ -3881,7 +3974,9 @@ function solveRootsEA(coeffs, warmStart) {
         const bRe = c[1].re, bIm = c[1].im;
         const denom = aRe * aRe + aIm * aIm;
         if (denom < 1e-30) return [];
-        return [{ re: -(bRe * aRe + bIm * aIm) / denom, im: -(bIm * aRe - bRe * aIm) / denom }];
+        const root = { re: -(bRe * aRe + bIm * aIm) / denom, im: -(bIm * aRe - bRe * aIm) / denom };
+        if (iterCounts) { iterCounts[0] = 1; root._iter = 1; }
+        return [root];
     }
 
     const MAX_ITER = 100;
@@ -3916,10 +4011,13 @@ function solveRootsEA(coeffs, warmStart) {
     }
 
     // Iterate
+    const trackIter = !!iterCounts;
+    const conv = trackIter ? new Uint8Array(degree) : null;
     for (let iter = 0; iter < MAX_ITER; iter++) {
         let maxCorr = 0;
 
         for (let i = 0; i < degree; i++) {
+            if (trackIter && conv[i]) continue;
             const zRe = roots[i][0], zIm = roots[i][1];
 
             // Evaluate p(z) and p'(z) simultaneously via Horner
@@ -3970,17 +4068,25 @@ function solveRootsEA(coeffs, warmStart) {
             roots[i][0] -= corrRe;
             roots[i][1] -= corrIm;
 
-            maxCorr = Math.max(maxCorr, Math.hypot(corrRe, corrIm));
+            const corrMag = Math.hypot(corrRe, corrIm);
+            maxCorr = Math.max(maxCorr, corrMag);
+            if (trackIter && corrMag < TOL) { conv[i] = 1; iterCounts[i] = iter + 1; }
         }
 
-        if (maxCorr < TOL) break;
+        if (maxCorr < TOL) {
+            if (trackIter) { for (let i = 0; i < degree; i++) if (!conv[i]) { conv[i] = 1; iterCounts[i] = iter + 1; } }
+            break;
+        }
     }
+    if (trackIter) { for (let i = 0; i < degree; i++) if (!conv[i]) iterCounts[i] = 64; }
 
     // Filter NaN/Inf and return
     const result = [];
     for (let i = 0; i < degree; i++) {
         if (isFinite(roots[i][0]) && isFinite(roots[i][1])) {
-            result.push({ re: roots[i][0], im: roots[i][1] });
+            const r = { re: roots[i][0], im: roots[i][1] };
+            if (trackIter) r._iter = iterCounts[i];
+            result.push(r);
         }
     }
     return result;
@@ -4007,7 +4113,9 @@ function matchRootOrder(newRoots, oldRoots) {
 }
 
 function solveRoots() {
-    let roots = solveRootsEA(coefficients, currentRoots);
+    const iterMode = rootColorMode === "iteration";
+    const iters = iterMode ? new Uint8Array(coefficients.length - 1) : null;
+    let roots = solveRootsEA(coefficients, currentRoots, iters);
     roots = matchRootOrder(roots, currentRoots);
     renderRoots(roots);
 }
@@ -4037,11 +4145,11 @@ function applyPattern() {
     clearStatsData();
     resetAudioState();
     resetBitmap();
-    renderCoeffTrails(); // remove stale coefficient path SVGs
     currentRoots = [];
     rootsLayer.selectAll("circle.root").remove();
     updatePanelRange(rootsSvg, panels.roots, MIN_RANGE);
     initCoefficients(currentDegree);
+    renderCoeffTrails(); // remove stale coefficient path SVGs (must be after initCoefficients so pathType="none")
     renderCoefficients();
     solveRoots();
     renderDomainColoring();
@@ -4252,6 +4360,7 @@ function buildColorPop(pop) {
         { key: "uniform", label: "Uniform" },
         { key: "rainbow", label: "Index Rainbow" },
         { key: "derivative", label: "Derivative" },
+        { key: "iteration", label: "Iteration Count" },
     ];
     const rows = [];
     let swatchWrap = null;
@@ -4412,7 +4521,7 @@ function buildCoeffPickPop(pop) {
         // Point count for path curves
         const ptsSpan = document.createElement("span");
         ptsSpan.className = "cpick-pts";
-        if (ci.pathType !== "none" && ci.curve) {
+        if (ci.pathType !== "none") {
             ptsSpan.textContent = ci.curve.length;
         } else {
             ptsSpan.textContent = "";
@@ -4718,7 +4827,6 @@ document.addEventListener("keydown", function (e) {
         if (typeof snapPopOpen !== "undefined" && snapPopOpen) { closeSnapPop(); return; }
         if (typeof bitmapBgPopOpen !== "undefined" && bitmapBgPopOpen) { closeBitmapBgPop(); return; }
         if (typeof jigglePopOpen !== "undefined" && jigglePopOpen) { closeJigglePop(); return; }
-        if (typeof fastmodePopOpen !== "undefined" && fastmodePopOpen) { closeFastmodePop(); return; }
         if (typeof pathPickOpen !== "undefined" && pathPickOpen) { closePathPickPop(true); return; }
         clearAllSelection();
     }
@@ -4757,9 +4865,12 @@ function applyPreview(snap, fn) {
             c.re = r.re; c.im = r.im;
         }
         for (const c of coefficients) {
-            if (c.pathType !== "none") {
+            if (c.pathType === "none") {
+                c.curve = [{ re: c.re, im: c.im }];
+            } else {
                 c.curve = computeCurve(c.re, c.im, c.pathType, c.radius / 100 * coeffExtent(), c.angle, c.extra);
             }
+            c.curveIndex = 0;
         }
         autoScaleCoeffPanel();
         renderCoefficients();
@@ -4781,11 +4892,9 @@ function applyPreview(snap, fn) {
             const deltaIm = newCoeffs[ci].im - coefficients[ci].im;
             coefficients[ci].re = newCoeffs[ci].re;
             coefficients[ci].im = newCoeffs[ci].im;
-            if (coefficients[ci].curve) {
-                for (const pt of coefficients[ci].curve) {
-                    pt.re += deltaRe;
-                    pt.im += deltaIm;
-                }
+            for (const pt of coefficients[ci].curve) {
+                pt.re += deltaRe;
+                pt.im += deltaIm;
             }
         }
         renderCoefficients();
@@ -5005,6 +5114,36 @@ document.getElementById("add-tool-btn").addEventListener("click", function() {
     openOpTool(this, buildAddTool);
 });
 
+// Inverse button: reverse coefficient order (reflects roots around unit circle)
+document.getElementById("inverse-btn").addEventListener("click", function() {
+    const n = coefficients.length;
+    if (n < 2) return;
+    // Swap coefficients[i] ↔ coefficients[n-1-i] (all fields)
+    for (let i = 0; i < Math.floor(n / 2); i++) {
+        const j = n - 1 - i;
+        const tmp = { ...coefficients[i], curve: coefficients[i].curve };
+        Object.assign(coefficients[i], coefficients[j], { curve: coefficients[j].curve });
+        Object.assign(coefficients[j], tmp, { curve: tmp.curve });
+    }
+    // Recompute curves from new positions
+    for (const c of coefficients) {
+        if (c.pathType === "none") {
+            c.curve = [{ re: c.re, im: c.im }];
+        } else {
+            c.curve = computeCurve(c.re, c.im, c.pathType, c.radius / 100 * coeffExtent(), c.angle, c.extra);
+        }
+        c.curveIndex = 0;
+    }
+    autoScaleCoeffPanel();
+    renderCoefficients();
+    updateCoeffSelectionVisual();
+    renderCoeffTrails();
+    updateListCoords();
+    solveRootsThrottled();
+    renderDomainColoringThrottled();
+    uiBuzz();
+});
+
 // Close popover on click outside
 document.addEventListener("mousedown", e => {
     // Close ops popover
@@ -5045,6 +5184,20 @@ document.addEventListener("mousedown", e => {
             if (typeof closeSnapPop === "function") closeSnapPop();
         }
     }
+    // Close config popup
+    if (typeof configPopOpen !== "undefined" && configPopOpen) {
+        const cp = document.getElementById("config-pop");
+        if (cp && !cp.contains(e.target) && e.target.id !== "config-btn") {
+            if (typeof closeConfigPop === "function") closeConfigPop();
+        }
+    }
+    // Close timing popup
+    if (typeof timingPopOpen !== "undefined" && timingPopOpen) {
+        const tp = document.getElementById("timing-pop");
+        if (tp && !tp.contains(e.target) && e.target.id !== "timing-btn") {
+            if (typeof closeTimingPop === "function") closeTimingPop();
+        }
+    }
     // Close bitmap bg popup
     if (typeof bitmapBgPopOpen !== "undefined" && bitmapBgPopOpen) {
         const bp = document.getElementById("bitmap-bg-pop");
@@ -5059,11 +5212,11 @@ document.addEventListener("mousedown", e => {
             if (typeof closeJigglePop === "function") closeJigglePop();
         }
     }
-    // Close fastmode popup
-    if (typeof fastmodePopOpen !== "undefined" && fastmodePopOpen) {
-        const fp = document.getElementById("fastmode-pop");
-        if (fp && !fp.contains(e.target) && e.target.id !== "bitmap-fast-btn") {
-            if (typeof closeFastmodePop === "function") closeFastmodePop();
+    // Close jiggle diagnostics popup
+    if (typeof jiggleDiagOpen !== "undefined" && jiggleDiagOpen) {
+        const dp = document.getElementById("jiggle-diag-pop");
+        if (dp && !dp.contains(e.target) && e.target.id !== "jiggle-diag-btn") {
+            if (typeof closeJiggleDiag === "function") closeJiggleDiag();
         }
     }
     // Close path picker popup (revert on outside click)
@@ -5166,7 +5319,7 @@ function drawCoeffsToCtx(ctx, x0, y0, pW, pH) {
     ctx.lineWidth = 1.5; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.globalAlpha = 0.6;
     for (let idx = 0; idx < nC; idx++) {
         const c = coefficients[idx];
-        if (c.pathType === "none" || !c.curve) continue;
+        if (c.pathType === "none") continue;
         if (c.curve._isCloud) {
             // Dot cloud rendering
             ctx.fillStyle = coeffColor(idx, nC);
@@ -5417,7 +5570,7 @@ function startRecording() {
             selectedRoots: [...selectedRoots],
             coefficients: coefficients.map(c => ({
                 pos: [c.re, c.im],
-                home: c.curve ? [c.curve[0].re, c.curve[0].im] : [c.re, c.im],
+                home: [c.curve[0].re, c.curve[0].im],
                 pathType: c.pathType, radius: c.radius, speed: c.speed,
                 angle: c.angle, ccw: c.ccw
             })),
@@ -5480,7 +5633,7 @@ function buildStateMetadata(timestamp) {
         selectedRoots: [...selectedRoots],
         coefficients: coefficients.map(c => ({
             pos: [c.re, c.im],
-            home: c.curve ? [c.curve[0].re, c.curve[0].im] : [c.re, c.im],
+            home: [c.curve[0].re, c.curve[0].im],
             pathType: c.pathType, radius: c.radius, speed: c.speed,
             angle: c.angle, ccw: c.ccw, extra: c.extra || {}
         })),
@@ -5490,7 +5643,10 @@ function buildStateMetadata(timestamp) {
             roots: { range: panels.roots.range }
         },
         trailData: trailData.map(pts => pts.map(p => [p.re, p.im])),
-        jiggle: { mode: jiggleMode, sigma: jiggleSigma, theta: jiggleTheta, scaleStep: jiggleScaleStep }
+        jiggle: { mode: jiggleMode, sigma: jiggleSigma, theta: jiggleTheta, scaleStep: jiggleScaleStep, period: jigglePeriod, amplitude: jiggleAmplitude, lissFreqX: jiggleLissFreqX, lissFreqY: jiggleLissFreqY },
+        fastModeShowProgress: fastModeShowProgress,
+        numWorkers: numWorkers,
+        bitmapCoeffView: bitmapCoeffView
     };
 }
 
@@ -5715,6 +5871,129 @@ function openSnapPop() {
 
 document.getElementById("snap-btn").addEventListener("click", openSnapPop);
 
+// --- Config popup ---
+let configPopOpen = false;
+const configPop = document.getElementById("config-pop");
+
+function closeConfigPop() { configPop.classList.remove("open"); configPopOpen = false; }
+
+function openConfigPop() {
+    if (configPopOpen) { closeConfigPop(); return; }
+    configPop.innerHTML = "";
+    const title = document.createElement("div");
+    title.className = "pop-title";
+    title.textContent = "CONFIGURATION";
+    configPop.appendChild(title);
+    // Workers row
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;gap:6px;margin:4px 0;";
+    const lbl = document.createElement("span");
+    lbl.style.cssText = "font-size:10px;color:var(--fg);";
+    lbl.textContent = "Workers";
+    row.appendChild(lbl);
+    const opts = [1, 2, 4, 8, 16];
+    for (const n of opts) {
+        const btn = document.createElement("button");
+        btn.style.cssText = "min-width:26px;height:22px;border-radius:6px;border:1px solid var(--stroke);background:" + (n === numWorkers ? "var(--accent-dim)" : "transparent") + ";color:" + (n === numWorkers ? "#fff" : "var(--muted)") + ";font-size:10px;cursor:pointer;padding:0 4px;font-weight:600;";
+        btn.textContent = String(n);
+        btn.addEventListener("click", () => {
+            numWorkers = n;
+            fastModeTimingHistory = []; // clear stale timing data
+            openConfigPop(); // rebuild to update highlight
+        });
+        row.appendChild(btn);
+    }
+    configPop.appendChild(row);
+    // Hardware info
+    const info = document.createElement("div");
+    info.style.cssText = "font-size:9px;color:var(--muted);margin-top:2px;";
+    info.textContent = "selected: " + numWorkers + "  \u00b7  hw cores: " + (navigator.hardwareConcurrency || "?");
+    configPop.appendChild(info);
+    configPop.classList.add("open");
+    const r = document.getElementById("config-btn").getBoundingClientRect();
+    configPop.style.left = r.left + "px";
+    configPop.style.top = (r.bottom + 6) + "px";
+    configPopOpen = true;
+}
+document.getElementById("config-btn").addEventListener("click", openConfigPop);
+
+// --- Timing popup ---
+let timingPopOpen = false;
+const timingPop = document.getElementById("timing-pop");
+
+function closeTimingPop() { timingPop.classList.remove("open"); timingPopOpen = false; }
+
+function updateTimingPopup() {
+    if (!timingPopOpen) return;
+    const body = document.getElementById("timing-body");
+    if (!body) return;
+    body.innerHTML = "";
+    if (fastModeTimingHistory.length === 0) {
+        body.textContent = "No data yet. Run fast mode.";
+        body.style.cssText = "font-size:10px;color:var(--muted);padding:4px 0;";
+        return;
+    }
+    const last = fastModeTimingHistory[fastModeTimingHistory.length - 1];
+    const nPasses = fastModeTimingHistory.length;
+    const totalMs = fastModeTimingHistory.reduce((s, e) => s + e.passMs, 0);
+    const totalSteps = fastModeTimingHistory.reduce((s, e) => s + e.steps, 0);
+    const lines = [
+        ["Last pass", (last.passMs / 1000).toFixed(2) + "s"],
+        ["Steps/sec", last.stepsPerSec.toLocaleString()],
+        ["Workers", String(last.workers)],
+        ["Steps/pass", last.steps.toLocaleString()],
+    ];
+    if (fastModeTargetPasses > 0) {
+        lines.push(["Passes", nPasses + "/" + fastModeTargetPasses]);
+    } else {
+        lines.push(["Passes", String(nPasses)]);
+    }
+    lines.push(["Total time", (totalMs / 1000).toFixed(2) + "s"]);
+    lines.push(["Total steps", totalSteps.toLocaleString()]);
+    if (nPasses > 1) {
+        const avgSps = Math.round(totalSteps / (totalMs / 1000));
+        lines.push(["Avg steps/s", avgSps.toLocaleString()]);
+    }
+    const tbl = document.createElement("div");
+    tbl.style.cssText = "display:grid;grid-template-columns:auto auto;gap:2px 10px;font-size:10px;";
+    for (const [k, v] of lines) {
+        const kEl = document.createElement("span");
+        kEl.style.color = "var(--muted)";
+        kEl.textContent = k;
+        const vEl = document.createElement("span");
+        vEl.style.cssText = "color:var(--fg);text-align:right;font-variant-numeric:tabular-nums;";
+        vEl.textContent = v;
+        tbl.appendChild(kEl);
+        tbl.appendChild(vEl);
+    }
+    body.appendChild(tbl);
+}
+
+function openTimingPop() {
+    if (timingPopOpen) { closeTimingPop(); return; }
+    timingPop.innerHTML = "";
+    const title = document.createElement("div");
+    title.className = "pop-title";
+    title.textContent = "TIMING";
+    timingPop.appendChild(title);
+    const body = document.createElement("div");
+    body.id = "timing-body";
+    timingPop.appendChild(body);
+    // Clear button
+    const clearBtn = document.createElement("button");
+    clearBtn.style.cssText = "font-size:9px;color:var(--muted);background:transparent;border:1px solid var(--stroke);border-radius:4px;padding:2px 8px;cursor:pointer;margin-top:4px;";
+    clearBtn.textContent = "clear";
+    clearBtn.addEventListener("click", () => { fastModeTimingHistory = []; updateTimingPopup(); });
+    timingPop.appendChild(clearBtn);
+    timingPop.classList.add("open");
+    const r = document.getElementById("timing-btn").getBoundingClientRect();
+    timingPop.style.left = r.left + "px";
+    timingPop.style.top = (r.bottom + 6) + "px";
+    timingPopOpen = true;
+    updateTimingPopup();
+}
+document.getElementById("timing-btn").addEventListener("click", openTimingPop);
+
 // --- Save / Load state ---
 
 async function saveState() {
@@ -5789,11 +6068,12 @@ function applyLoadedState(meta) {
     coefficients = [];
     for (let i = 0; i < n; i++) {
         const saved = meta.coefficients[i];
-        if (!saved) { coefficients.push({ re: 0, im: 0, curve: null, pathType: "none", radius: 25, speed: 1, angle: 0, ccw: false, extra: {} }); continue; }
+        if (!saved) { coefficients.push({ re: 0, im: 0, curve: [{ re: 0, im: 0 }], curveIndex: 0, pathType: "none", radius: 25, speed: 1, angle: 0, ccw: false, extra: {} }); continue; }
         const home = saved.home || saved.pos;
         coefficients.push({
             re: home[0], im: home[1],
-            curve: null,
+            curve: [{ re: home[0], im: home[1] }],
+            curveIndex: 0,
             pathType: saved.pathType || "none",
             radius: saved.radius ?? 25,
             speed: saved.speed ?? 1,
@@ -5809,11 +6089,14 @@ function applyLoadedState(meta) {
         if (meta.panels.roots) { panels.roots.range = meta.panels.roots.range; initPanelScales(panels.roots); drawGrid(rootsSvg, panels.roots); }
     }
 
-    // 5. Regenerate curves for animated coefficients
+    // 5. Regenerate curves for all coefficients
     for (const c of coefficients) {
-        if (c.pathType !== "none") {
+        if (c.pathType === "none") {
+            c.curve = [{ re: c.re, im: c.im }];
+        } else {
             c.curve = computeCurve(c.re, c.im, c.pathType, c.radius / 100 * coeffExtent(), c.angle, c.extra);
         }
+        c.curveIndex = 0;
     }
 
     // 6. Restore roots
@@ -5858,10 +6141,35 @@ function applyLoadedState(meta) {
         jiggleSigma = meta.jiggle.sigma ?? 10;
         jiggleTheta = meta.jiggle.theta ?? 0.01;
         jiggleScaleStep = meta.jiggle.scaleStep ?? 5;
+        jigglePeriod = meta.jiggle.period ?? 20;
+        jiggleAmplitude = meta.jiggle.amplitude ?? 10;
+        jiggleLissFreqX = meta.jiggle.lissFreqX ?? 1;
+        jiggleLissFreqY = meta.jiggle.lissFreqY ?? 2;
     }
     jiggleCumulativeAngle = 0;
     jiggleCumulativeScale = 1.0;
+    jiggleTriggerCount = 0;
     jiggleOffsets = null;
+
+    // 9b. Restore fastModeShowProgress
+    if (typeof meta.fastModeShowProgress === "boolean") {
+        fastModeShowProgress = meta.fastModeShowProgress;
+        const togBtn = document.getElementById("bitmap-progress-toggle");
+        if (togBtn) togBtn.style.opacity = fastModeShowProgress ? "1" : "0.4";
+    }
+
+    // 9c. Restore numWorkers
+    if (typeof meta.numWorkers === "number" && meta.numWorkers >= 1 && meta.numWorkers <= 16) {
+        numWorkers = meta.numWorkers;
+    }
+
+    // 9d. Restore bitmap coefficient view toggle
+    bitmapCoeffView = !!meta.bitmapCoeffView;
+    const bcBtn = document.getElementById("bitmap-coeff-btn");
+    if (bcBtn) {
+        bcBtn.classList.toggle("active", bitmapCoeffView);
+        bcBtn.textContent = bitmapCoeffView ? "C|R" : "R|C";
+    }
 
     // 10. Restore selections
     if (meta.selectedCoeffs) for (const idx of meta.selectedCoeffs) selectedCoeffs.add(idx);
@@ -6850,20 +7158,33 @@ function initBitmapCanvas() {
     bitmapRange = panels.roots.range;
     bitmapFrameCount = 0;
     fastModeElapsedOffset = 0;
+    fastModeCumulativeSec = 0;
+    // Clear jiggle state for a clean slate
+    jiggleOffsets = null;
+    jiggleCumulativeAngle = 0;
+    jiggleCumulativeScale = 1.0;
+    jiggleTriggerCount = 0;
     bitmapActive = true;
 }
 
 function paintBitmapFrame() {
-    if (!bitmapCtx || !bitmapRange) return;
+    if (!bitmapCtx || !bitmapRange || bitmapCoeffView) return;
     const w = bitmapCtx.canvas.width, h = bitmapCtx.canvas.height;
     const range = bitmapRange;
     const n = currentRoots.length;
+    const iterMode = rootColorMode === "iteration";
     for (let i = 0; i < n; i++) {
         const r = currentRoots[i];
         const px = (r.re / range + 1) * 0.5 * w;
         const py = (1 - r.im / range) * 0.5 * h;
         if (px < -2 || px > w + 2 || py < -2 || py > h + 2) continue;
-        bitmapCtx.fillStyle = rootColor(i, n);
+        if (iterMode && r._iter !== undefined) {
+            const palIdx = Math.min(15, (r._iter * 15 / 8) | 0);
+            const c = ITER_PALETTE[palIdx];
+            bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+        } else {
+            bitmapCtx.fillStyle = rootColor(i, n);
+        }
         bitmapCtx.beginPath();
         bitmapCtx.arc(px, py, 1.5, 0, 2 * Math.PI);
         bitmapCtx.fill();
@@ -6879,12 +7200,19 @@ function paintBitmapFrameFast() {
     const range = bitmapRange;
     const n = currentRoots.length;
     const colors = fastModeRootColors;
+    const iterMode = rootColorMode === "iteration";
     for (let i = 0; i < n; i++) {
         const r = currentRoots[i];
         const px = (r.re / range + 1) * 0.5 * w;
         const py = (1 - r.im / range) * 0.5 * h;
         if (px < 0 || px >= w || py < 0 || py >= h) continue;
-        bitmapCtx.fillStyle = colors[i];
+        if (iterMode && r._iter !== undefined) {
+            const palIdx = Math.min(15, (r._iter * 15 / 8) | 0);
+            const c = ITER_PALETTE[palIdx];
+            bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+        } else {
+            bitmapCtx.fillStyle = colors[i];
+        }
         bitmapCtx.fillRect(px | 0, py | 0, 1, 1);
     }
     bitmapFrameCount++;
@@ -6905,38 +7233,32 @@ function createFastModeWorkerBlob() {
     const code = `'use strict';
 
 // Flat-array Ehrlich-Aberth solver (same algorithm as main thread)
-function solveEA(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots) {
-    // Strip leading near-zero coefficients
+function solveEA(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots, iterCounts) {
     var start = 0;
-    while (start < nCoeffs - 1 && Math.hypot(cRe[start], cIm[start]) < 1e-15) start++;
+    while (start < nCoeffs - 1 && cRe[start]*cRe[start] + cIm[start]*cIm[start] < 1e-30) start++;
     var degree = nCoeffs - 1 - start;
     if (degree <= 0) return;
-
-    // Degree 1: direct
     if (degree === 1) {
         var aR = cRe[start], aI = cIm[start], bR = cRe[start+1], bI = cIm[start+1];
         var d = aR*aR + aI*aI;
         if (d < 1e-30) return;
         warmRe[0] = -(bR*aR + bI*aI) / d;
         warmIm[0] = -(bI*aR - bR*aI) / d;
+        if (iterCounts) iterCounts[0] = 1;
         return;
     }
-
-    // Build coefficient sub-array (from start)
     var n = nCoeffs - start;
     var cr = new Float64Array(n), ci = new Float64Array(n);
     for (var k = 0; k < n; k++) { cr[k] = cRe[start+k]; ci[k] = cIm[start+k]; }
-
-    // Init roots from warm start
     var rRe = new Float64Array(degree), rIm = new Float64Array(degree);
     for (var i = 0; i < degree; i++) { rRe[i] = warmRe[i]; rIm[i] = warmIm[i]; }
-
-    // Iterate
-    for (var iter = 0; iter < 100; iter++) {
-        var maxCorr = 0;
+    var trackIter = !!iterCounts;
+    var conv = trackIter ? new Uint8Array(degree) : null;
+    for (var iter = 0; iter < 64; iter++) {
+        var maxCorr2 = 0;
         for (var i = 0; i < degree; i++) {
+            if (trackIter && conv[i]) continue;
             var zR = rRe[i], zI = rIm[i];
-            // Horner: p(z) and p'(z)
             var pR = cr[0], pI = ci[0], dpR = 0, dpI = 0;
             for (var k = 1; k < n; k++) {
                 var ndR = dpR*zR - dpI*zI + pR, ndI = dpR*zI + dpI*zR + pI;
@@ -6944,11 +7266,9 @@ function solveEA(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots) {
                 var npR = pR*zR - pI*zI + cr[k], npI = pR*zI + pI*zR + ci[k];
                 pR = npR; pI = npI;
             }
-            // Newton step w = p/p'
             var dpM = dpR*dpR + dpI*dpI;
             if (dpM < 1e-60) continue;
             var wR = (pR*dpR + pI*dpI)/dpM, wI = (pI*dpR - pR*dpI)/dpM;
-            // Aberth sum
             var sR = 0, sI = 0;
             for (var j = 0; j < degree; j++) {
                 if (j === i) continue;
@@ -6957,19 +7277,22 @@ function solveEA(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots) {
                 if (dM < 1e-60) continue;
                 sR += dR/dM; sI += -dI/dM;
             }
-            // Correction
             var wsR = wR*sR - wI*sI, wsI = wR*sI + wI*sR;
             var dnR = 1 - wsR, dnI = -wsI;
             var dnM = dnR*dnR + dnI*dnI;
             if (dnM < 1e-60) continue;
             var crrR = (wR*dnR + wI*dnI)/dnM, crrI = (wI*dnR - wR*dnI)/dnM;
             rRe[i] -= crrR; rIm[i] -= crrI;
-            var h = Math.hypot(crrR, crrI);
-            if (h > maxCorr) maxCorr = h;
+            var h2 = crrR*crrR + crrI*crrI;
+            if (h2 > maxCorr2) maxCorr2 = h2;
+            if (trackIter && h2 < 1e-16) { conv[i] = 1; iterCounts[i] = iter + 1; }
         }
-        if (maxCorr < 1e-12) break;
+        if (maxCorr2 < 1e-16) {
+            if (trackIter) { for (var i = 0; i < degree; i++) if (!conv[i]) { conv[i] = 1; iterCounts[i] = iter + 1; } }
+            break;
+        }
     }
-    // Write back (filter NaN/Inf — keep warm-start value)
+    if (trackIter) { for (var i = 0; i < degree; i++) if (!conv[i]) iterCounts[i] = 64; }
     for (var i = 0; i < degree; i++) {
         if (isFinite(rRe[i]) && isFinite(rIm[i])) {
             warmRe[i] = rRe[i]; warmIm[i] = rIm[i];
@@ -6977,7 +7300,6 @@ function solveEA(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots) {
     }
 }
 
-// Greedy nearest-neighbor root matching (flat arrays, in-place reorder of new into old order)
 function matchRoots(newRe, newIm, oldRe, oldIm, n) {
     var used = new Uint8Array(n);
     var tmpRe = new Float64Array(n), tmpIm = new Float64Array(n);
@@ -6994,126 +7316,150 @@ function matchRoots(newRe, newIm, oldRe, oldIm, n) {
     for (var i = 0; i < n; i++) { newRe[i] = tmpRe[i]; newIm[i] = tmpIm[i]; }
 }
 
-// Paint single pixels directly into ImageData buffer
-function paintPixels(px, w, h, rRe, rIm, nR, range, cR, cG, cB) {
-    for (var i = 0; i < nR; i++) {
-        var ix = ((rRe[i] / range + 1) * 0.5 * w) | 0;
-        var iy = ((1 - rIm[i] / range) * 0.5 * h) | 0;
-        if (ix < 0 || ix >= w || iy < 0 || iy >= h) continue;
-        var off = (iy * w + ix) * 4;
-        px[off] = cR[i]; px[off+1] = cG[i]; px[off+2] = cB[i]; px[off+3] = 255;
-    }
-}
-function paintUniform(px, w, h, rRe, rIm, nR, range, uR, uG, uB) {
-    for (var i = 0; i < nR; i++) {
-        var ix = ((rRe[i] / range + 1) * 0.5 * w) | 0;
-        var iy = ((1 - rIm[i] / range) * 0.5 * h) | 0;
-        if (ix < 0 || ix >= w || iy < 0 || iy >= h) continue;
-        var off = (iy * w + ix) * 4;
-        px[off] = uR; px[off+1] = uG; px[off+2] = uB; px[off+3] = 255;
-    }
-}
+// --- Persistent worker state (set by "init", reused across "run" calls) ---
+var S_coeffsRe, S_coeffsIm, S_nCoeffs, S_degree, S_nRoots;
+var S_colorsR, S_colorsG, S_colorsB;
+var S_W, S_H, S_range;
+var S_curvesFlat, S_entries, S_offsets, S_lengths, S_isCloud;
+var S_noColor, S_uniformR, S_uniformG, S_uniformB;
+var S_totalSteps, S_FPS;
+var S_iterColor, S_iterPalR, S_iterPalG, S_iterPalB;
 
 self.onmessage = function(e) {
     var d = e.data;
-    var coeffsRe = new Float64Array(d.coeffsRe);
-    var coeffsIm = new Float64Array(d.coeffsIm);
-    var nCoeffs = d.nCoeffs, degree = d.degree, nRoots = d.nRoots;
+
+    if (d.type === "init") {
+        S_coeffsRe = new Float64Array(d.coeffsRe);
+        S_coeffsIm = new Float64Array(d.coeffsIm);
+        S_nCoeffs = d.nCoeffs; S_degree = d.degree; S_nRoots = d.nRoots;
+        S_colorsR = new Uint8Array(d.colorsR);
+        S_colorsG = new Uint8Array(d.colorsG);
+        S_colorsB = new Uint8Array(d.colorsB);
+        S_W = d.canvasW; S_H = d.canvasH; S_range = d.bitmapRange;
+        S_curvesFlat = new Float64Array(d.curvesFlat);
+        S_entries = d.animEntries;
+        S_offsets = d.curveOffsets; S_lengths = d.curveLengths; S_isCloud = d.curveIsCloud;
+        S_noColor = !!d.noColor;
+        S_iterColor = !!d.iterColor;
+        S_iterPalR = d.iterPalR ? new Uint8Array(d.iterPalR) : null;
+        S_iterPalG = d.iterPalG ? new Uint8Array(d.iterPalG) : null;
+        S_iterPalB = d.iterPalB ? new Uint8Array(d.iterPalB) : null;
+        S_uniformR = d.uniformR || 255; S_uniformG = d.uniformG || 255; S_uniformB = d.uniformB || 255;
+        S_totalSteps = d.totalSteps; S_FPS = d.FAST_PASS_SECONDS;
+        return;
+    }
+
+    if (d.type !== "run") return;
+
+    var stepStart = d.stepStart, stepEnd = d.stepEnd, workerId = d.workerId;
+    var elapsedOff = d.elapsedOffset || 0;
     var rootsRe = new Float64Array(d.rootsRe);
     var rootsIm = new Float64Array(d.rootsIm);
-    var colorsR = new Uint8Array(d.colorsR);
-    var colorsG = new Uint8Array(d.colorsG);
-    var colorsB = new Uint8Array(d.colorsB);
-    var pixels = new Uint8ClampedArray(d.pixels);
-    var W = d.canvasW, H = d.canvasH, range = d.bitmapRange;
-    var total = d.totalSteps, FPS = d.FAST_PASS_SECONDS;
-    var elapsedOff = d.elapsedOffset || 0;
-    var frameMs = d.frameIntervalMs || 2000;
-    var noColor = !!d.noColor;
-    var uniformR = d.uniformR || 255, uniformG = d.uniformG || 255, uniformB = d.uniformB || 255;
-    var curvesFlat = new Float64Array(d.curvesFlat);
-    var entries = d.animEntries;
-    var offsets = d.curveOffsets;
-    var lengths = d.curveLengths;
-    var isCloud = d.curveIsCloud;
 
-    // Temp arrays for solver output
+    // Copy base coefficients (mutated during interpolation each step)
+    var coeffsRe = new Float64Array(S_coeffsRe);
+    var coeffsIm = new Float64Array(S_coeffsIm);
+    var nCoeffs = S_nCoeffs, nRoots = S_nRoots;
+    var W = S_W, H = S_H, range = S_range;
+    var entries = S_entries, offsets = S_offsets, lengths = S_lengths, isCloud = S_isCloud;
+    var curvesFlat = S_curvesFlat;
+    var total = S_totalSteps, FPS = S_FPS;
+    var noColor = S_noColor;
+    var iterColor = S_iterColor;
+    var iterPalR = S_iterPalR, iterPalG = S_iterPalG, iterPalB = S_iterPalB;
+    var colorsR = S_colorsR, colorsG = S_colorsG, colorsB = S_colorsB;
+    var uniformR = S_uniformR, uniformG = S_uniformG, uniformB = S_uniformB;
+
+    // Sparse pixel accumulation (avoids W*H*4 buffer per worker)
+    var maxPaints = (stepEnd - stepStart) * nRoots;
+    var paintIdx = new Int32Array(maxPaints);
+    var paintR = new Uint8Array(maxPaints);
+    var paintG = new Uint8Array(maxPaints);
+    var paintB = new Uint8Array(maxPaints);
+    var pc = 0;
+
     var tmpRe = new Float64Array(nRoots), tmpIm = new Float64Array(nRoots);
+    var iterCounts = iterColor ? new Uint8Array(nRoots) : null;
 
-    var lastFrame = performance.now();
-    var passNum = 0;
+    for (var step = stepStart; step < stepEnd; step++) {
+        var elapsed = elapsedOff + (step / total) * FPS;
 
-    // Loop forever — main thread terminates Worker via imode
-    while (true) {
-        for (var step = 0; step < total; step++) {
-            var elapsed = elapsedOff + (step / total) * FPS;
+        for (var a = 0; a < entries.length; a++) {
+            var idx = entries[a].idx;
+            var dir = entries[a].ccw ? -1 : 1;
+            var t = elapsed * entries[a].speed * dir;
+            var u = ((t % 1) + 1) % 1;
+            var N = lengths[a];
+            var rawIdx = u * N;
+            var base = offsets[a] * 2;
 
-            // Interpolate animated coefficients
-            for (var a = 0; a < entries.length; a++) {
-                var idx = entries[a].idx;
-                var dir = entries[a].ccw ? -1 : 1;
-                var t = elapsed * entries[a].speed * dir;
-                var u = ((t % 1) + 1) % 1;
-                var N = lengths[a];
-                var rawIdx = u * N;
-                var base = offsets[a] * 2;
-
-                if (isCloud[a]) {
-                    var k = (rawIdx | 0) % N;
-                    coeffsRe[idx] = curvesFlat[base + k*2];
-                    coeffsIm[idx] = curvesFlat[base + k*2 + 1];
-                } else {
-                    var lo = (rawIdx | 0) % N;
-                    var hi = (lo + 1) % N;
-                    var frac = rawIdx - (rawIdx | 0);
-                    coeffsRe[idx] = curvesFlat[base+lo*2]*(1-frac) + curvesFlat[base+hi*2]*frac;
-                    coeffsIm[idx] = curvesFlat[base+lo*2+1]*(1-frac) + curvesFlat[base+hi*2+1]*frac;
-                }
-            }
-
-            // Copy warm start
-            tmpRe.set(rootsRe); tmpIm.set(rootsIm);
-            // Solve
-            solveEA(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots);
-            if (noColor) {
-                // Uniform color — skip O(n²) matching
-                rootsRe.set(tmpRe); rootsIm.set(tmpIm);
-                paintUniform(pixels, W, H, rootsRe, rootsIm, nRoots, range, uniformR, uniformG, uniformB);
+            if (isCloud[a]) {
+                var k = (rawIdx | 0) % N;
+                coeffsRe[idx] = curvesFlat[base + k*2];
+                coeffsIm[idx] = curvesFlat[base + k*2 + 1];
             } else {
-                // Match root order for per-root coloring
-                matchRoots(tmpRe, tmpIm, rootsRe, rootsIm, nRoots);
-                rootsRe.set(tmpRe); rootsIm.set(tmpIm);
-                paintPixels(pixels, W, H, rootsRe, rootsIm, nRoots, range, colorsR, colorsG, colorsB);
-            }
-
-            // Progress every 500 steps
-            if (step % 500 === 0) {
-                self.postMessage({type: 'progress', step: step, pass: passNum});
-            }
-
-            // Frame snapshot periodically
-            var now = performance.now();
-            if (now - lastFrame >= frameMs) {
-                lastFrame = now;
-                self.postMessage({
-                    type: 'frame', step: step+1, pass: passNum,
-                    pixels: pixels.buffer.slice(0),
-                    rootsRe: new Float64Array(rootsRe).buffer,
-                    rootsIm: new Float64Array(rootsIm).buffer
-                });
+                var lo = (rawIdx | 0) % N;
+                var hi = (lo + 1) % N;
+                var frac = rawIdx - (rawIdx | 0);
+                coeffsRe[idx] = curvesFlat[base+lo*2]*(1-frac) + curvesFlat[base+hi*2]*frac;
+                coeffsIm[idx] = curvesFlat[base+lo*2+1]*(1-frac) + curvesFlat[base+hi*2+1]*frac;
             }
         }
 
-        // Pass complete — advance offset, send snapshot, continue
-        elapsedOff += FPS;
-        passNum++;
-        self.postMessage({
-            type: 'pass', pass: passNum,
-            pixels: pixels.buffer.slice(0),
-            rootsRe: new Float64Array(rootsRe).buffer,
-            rootsIm: new Float64Array(rootsIm).buffer
-        });
+        tmpRe.set(rootsRe); tmpIm.set(rootsIm);
+        solveEA(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots, iterCounts);
+
+        if (iterColor) {
+            rootsRe.set(tmpRe); rootsIm.set(tmpIm);
+            for (var i = 0; i < nRoots; i++) {
+                var ix = ((rootsRe[i] / range + 1) * 0.5 * W) | 0;
+                var iy = ((1 - rootsIm[i] / range) * 0.5 * H) | 0;
+                if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
+                var palIdx = iterCounts[i] < 8 ? (iterCounts[i] * 15 / 8) | 0 : 15;
+                paintIdx[pc] = iy * W + ix;
+                paintR[pc] = iterPalR[palIdx]; paintG[pc] = iterPalG[palIdx]; paintB[pc] = iterPalB[palIdx];
+                pc++;
+            }
+        } else if (noColor) {
+            rootsRe.set(tmpRe); rootsIm.set(tmpIm);
+            for (var i = 0; i < nRoots; i++) {
+                var ix = ((rootsRe[i] / range + 1) * 0.5 * W) | 0;
+                var iy = ((1 - rootsIm[i] / range) * 0.5 * H) | 0;
+                if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
+                paintIdx[pc] = iy * W + ix;
+                paintR[pc] = uniformR; paintG[pc] = uniformG; paintB[pc] = uniformB;
+                pc++;
+            }
+        } else {
+            // Match root order every 4th step (O(n^2)) — colors drift slightly between matches
+            if ((step - stepStart) % 4 === 0) {
+                matchRoots(tmpRe, tmpIm, rootsRe, rootsIm, nRoots);
+            }
+            rootsRe.set(tmpRe); rootsIm.set(tmpIm);
+            for (var i = 0; i < nRoots; i++) {
+                var ix = ((rootsRe[i] / range + 1) * 0.5 * W) | 0;
+                var iy = ((1 - rootsIm[i] / range) * 0.5 * H) | 0;
+                if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
+                paintIdx[pc] = iy * W + ix;
+                paintR[pc] = colorsR[i]; paintG[pc] = colorsG[i]; paintB[pc] = colorsB[i];
+                pc++;
+            }
+        }
+
+        if ((step - stepStart) % 2000 === 0) {
+            self.postMessage({type: 'progress', workerId: workerId, step: step - stepStart, total: stepEnd - stepStart});
+        }
     }
+
+    // Transfer sparse pixel data + final roots
+    self.postMessage({
+        type: 'done', workerId: workerId,
+        paintIdx: paintIdx.buffer, paintR: paintR.buffer,
+        paintG: paintG.buffer, paintB: paintB.buffer,
+        paintCount: pc,
+        rootsRe: new Float64Array(rootsRe).buffer,
+        rootsIm: new Float64Array(rootsIm).buffer
+    }, [paintIdx.buffer, paintR.buffer, paintG.buffer, paintB.buffer]);
 };`;
     return URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
 }
@@ -7161,6 +7507,85 @@ function findPrimeSpeed(currentIntSpeed, excludeSet) {
     return currentIntSpeed; // fallback (1 is coprime with everything, so this shouldn't happen)
 }
 
+function plotCoeffCurvesOnBitmap(animated, stepsVal) {
+    if (!bitmapCtx || !bitmapRange) return;
+    const w = bitmapCtx.canvas.width, h = bitmapCtx.canvas.height;
+    const range = bitmapRange;
+    const nCoeffs = coefficients.length;
+
+    // Pre-compute coefficient colors as CSS strings
+    const colors = [];
+    for (let i = 0; i < nCoeffs; i++) colors.push(coeffColor(i, nCoeffs));
+
+    // Build fixed positions for non-animated coefficients (with jiggle)
+    const fixedRe = new Float64Array(nCoeffs);
+    const fixedIm = new Float64Array(nCoeffs);
+    for (let i = 0; i < nCoeffs; i++) {
+        fixedRe[i] = coefficients[i].re;
+        fixedIm[i] = coefficients[i].im;
+        if (jiggleOffsets && jiggleOffsets.has(i) && !animated.has(i)) {
+            fixedRe[i] += jiggleOffsets.get(i).re;
+            fixedIm[i] += jiggleOffsets.get(i).im;
+        }
+    }
+
+    // Use ImageData for fast pixel writes
+    const imgData = bitmapCtx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+
+    // Parse hex colors to RGB for pixel writing
+    const colR = new Uint8Array(nCoeffs);
+    const colG = new Uint8Array(nCoeffs);
+    const colB = new Uint8Array(nCoeffs);
+    for (let i = 0; i < nCoeffs; i++) {
+        const c = colors[i];
+        // d3.interpolateRainbow returns "rgb(r, g, b)" strings
+        const m = c.match(/(\d+)/g);
+        if (m && m.length >= 3) {
+            colR[i] = +m[0]; colG[i] = +m[1]; colB[i] = +m[2];
+        } else {
+            colR[i] = 255; colG[i] = 255; colB[i] = 255;
+        }
+    }
+
+    for (let step = 0; step < stepsVal; step++) {
+        for (let ci = 0; ci < nCoeffs; ci++) {
+            let re, im;
+            const curve = fastModeCurves.get(ci);
+            if (curve) {
+                // Animated: read from pre-computed hi-res curve
+                const idx = step % curve.length;
+                re = curve[idx].re;
+                im = curve[idx].im;
+            } else {
+                // Non-animated: fixed position
+                re = fixedRe[ci];
+                im = fixedIm[ci];
+            }
+            const px = ((re / range + 1) * 0.5 * w) | 0;
+            const py = ((1 - im / range) * 0.5 * h) | 0;
+            if (px < -1 || px > w || py < -1 || py > h) continue;
+            // 3x3 square
+            for (let dy = -1; dy <= 1; dy++) {
+                const sy = py + dy;
+                if (sy < 0 || sy >= h) continue;
+                for (let dx = -1; dx <= 1; dx++) {
+                    const sx = px + dx;
+                    if (sx < 0 || sx >= w) continue;
+                    const off = (sy * w + sx) * 4;
+                    data[off] = colR[ci];
+                    data[off + 1] = colG[ci];
+                    data[off + 2] = colB[ci];
+                    data[off + 3] = 255;
+                }
+            }
+        }
+    }
+
+    bitmapCtx.putImageData(imgData, 0, 0);
+    bitmapFrameCount += stepsVal;
+}
+
 function enterFastMode() {
     if (fastModeActive) return;
 
@@ -7177,6 +7602,8 @@ function enterFastMode() {
         document.getElementById("bitmap-clear-btn").disabled = false;
         document.getElementById("bitmap-start-btn").textContent = "restart";
         document.getElementById("jiggle-btn").disabled = false;
+        document.getElementById("jiggle-diag-btn").disabled = false;
+        document.getElementById("bitmap-coeff-btn").disabled = false;
     }
 
     // Read steps from dropdown
@@ -7191,7 +7618,7 @@ function enterFastMode() {
     for (const idx of animated) {
         const c = coefficients[idx];
         savedPos.push({ idx, re: c.re, im: c.im });
-        if (c.curve) { c.re = c.curve[0].re; c.im = c.curve[0].im; }
+        c.re = c.curve[0].re; c.im = c.curve[0].im;
     }
     const extentAtHome = coeffExtent();
     for (const s of savedPos) { coefficients[s.idx].re = s.re; coefficients[s.idx].im = s.im; }
@@ -7200,8 +7627,8 @@ function enterFastMode() {
         const c = coefficients[idx];
         const absR = (c.radius / 100) * extentAtHome;
         // Use home position (curve[0]), not current animated position (c.re/c.im)
-        let homeRe = c.curve ? c.curve[0].re : c.re;
-        let homeIm = c.curve ? c.curve[0].im : c.im;
+        let homeRe = c.curve[0].re;
+        let homeIm = c.curve[0].im;
         if (jiggleOffsets && jiggleOffsets.has(idx)) {
             homeRe += jiggleOffsets.get(idx).re;
             homeIm += jiggleOffsets.get(idx).im;
@@ -7210,15 +7637,7 @@ function enterFastMode() {
         fastModeCurves.set(idx, curve);
     }
 
-    // Precompute root colors as RGB byte arrays
     const nRoots = currentRoots.length;
-    const colorsR = new Uint8Array(nRoots);
-    const colorsG = new Uint8Array(nRoots);
-    const colorsB = new Uint8Array(nRoots);
-    for (let i = 0; i < nRoots; i++) {
-        const [r, g, b] = rootColorRGB(i, nRoots);
-        colorsR[i] = r; colorsG[i] = g; colorsB[i] = b;
-    }
     // Keep CSS colors for legacy fallback
     fastModeRootColors = new Array(nRoots);
     for (let i = 0; i < nRoots; i++) fastModeRootColors[i] = rootColor(i, nRoots);
@@ -7227,6 +7646,7 @@ function enterFastMode() {
     fastModeStepIndex = 0;
     fastModeTotalSteps = stepsVal;
     fastModePassCount = 0;
+    fastModeCycleStartTime = performance.now();
     fastModeTargetPasses = computeFullCyclePasses();
 
     document.body.classList.add("fast-mode");
@@ -7237,9 +7657,59 @@ function enterFastMode() {
         const passEl = document.getElementById("bitmap-pass-count");
         if (passEl) {
             passEl.style.display = "";
-            const tgt = fastModeTargetPasses > 0 ? "/" + String(fastModeTargetPasses).padStart(4, "0") : "";
-            passEl.textContent = "0000" + tgt;
+            passEl.textContent = fastModeTargetPasses > 0
+                ? fastModeCumulativeSec + "/" + fastModeTargetPasses + "s"
+                : fastModeCumulativeSec + "s";
         }
+    }
+
+    // Coefficient view: plot coefficient curve positions directly (no solver, no workers)
+    if (bitmapCoeffView) {
+        // Use coefficient panel range so positions are visible
+        bitmapRange = panels.coeff.range;
+        plotCoeffCurvesOnBitmap(animated, stepsVal);
+        fastModePassCount++;
+        fastModeCumulativeSec++;
+        // Update pass counter display
+        const passEl = document.getElementById("bitmap-pass-count");
+        if (passEl) passEl.textContent = fastModeCumulativeSec + "s";
+        // If jiggle cycling is set up, schedule next cycle
+        if (jiggleMode !== "none" && fastModeActive) {
+            function coeffJiggleCycle() {
+                if (!fastModeActive) return;
+                generateJiggleOffsets();
+                // Recompute curves with new jiggle offsets
+                fastModeCurves = new Map();
+                const anim2 = allAnimatedCoeffs();
+                const savedPos2 = [];
+                for (const idx of anim2) {
+                    const c = coefficients[idx]; savedPos2.push({ idx, re: c.re, im: c.im });
+                    c.re = c.curve[0].re; c.im = c.curve[0].im;
+                }
+                const ext2 = coeffExtent();
+                for (const s of savedPos2) { coefficients[s.idx].re = s.re; coefficients[s.idx].im = s.im; }
+                for (const idx of anim2) {
+                    const c = coefficients[idx];
+                    const absR = (c.radius / 100) * ext2;
+                    let hRe = c.curve[0].re, hIm = c.curve[0].im;
+                    if (jiggleOffsets && jiggleOffsets.has(idx)) { hRe += jiggleOffsets.get(idx).re; hIm += jiggleOffsets.get(idx).im; }
+                    fastModeCurves.set(idx, computeCurveN(hRe, hIm, c.pathType, absR, c.angle, c.extra, stepsVal));
+                }
+                plotCoeffCurvesOnBitmap(anim2, stepsVal);
+                fastModePassCount++;
+                fastModeCumulativeSec++;
+                if (passEl) passEl.textContent = fastModeCumulativeSec + "s";
+                if (fastModeActive && jiggleMode !== "none") {
+                    fastModeTimerId = setTimeout(coeffJiggleCycle, 0);
+                } else {
+                    exitFastMode();
+                }
+            }
+            fastModeTimerId = setTimeout(coeffJiggleCycle, 0);
+        } else {
+            exitFastMode();
+        }
+        return;
     }
 
     // Legacy fallback for browsers without Worker
@@ -7248,7 +7718,15 @@ function enterFastMode() {
         return;
     }
 
-    // Serialize coefficients into flat Float64Arrays
+    // Serialize shared data (reused for all workers)
+    fastModeSharedData = serializeFastModeData(animated, stepsVal, nRoots);
+    fastModeLastRoots = null;
+    fastModeLastStep = 0;
+
+    initFastModeWorkers();
+}
+
+function serializeFastModeData(animated, stepsVal, nRoots) {
     const nCoeffs = coefficients.length;
     const degree = nCoeffs - 1;
     const coeffsRe = new Float64Array(nCoeffs);
@@ -7256,6 +7734,15 @@ function enterFastMode() {
     for (let i = 0; i < nCoeffs; i++) {
         coeffsRe[i] = coefficients[i].re;
         coeffsIm[i] = coefficients[i].im;
+    }
+    // Apply jiggle offsets to non-animated coefficients (animated ones have offsets baked into their curves)
+    if (jiggleOffsets) {
+        for (const [idx, off] of jiggleOffsets) {
+            if (!animated.has(idx)) {
+                coeffsRe[idx] += off.re;
+                coeffsIm[idx] += off.im;
+            }
+        }
     }
 
     // Serialize curves into one flat Float64Array + metadata
@@ -7281,62 +7768,115 @@ function enterFastMode() {
         }
     }
 
-    // Serialize current roots
+    // Serialize current roots (or use last-pass roots for warm start)
     const rootsRe = new Float64Array(nRoots);
     const rootsIm = new Float64Array(nRoots);
-    for (let i = 0; i < nRoots; i++) {
-        rootsRe[i] = currentRoots[i].re;
-        rootsIm[i] = currentRoots[i].im;
+    if (fastModeWorkerRoots) {
+        const prevRe = new Float64Array(fastModeWorkerRoots.re);
+        const prevIm = new Float64Array(fastModeWorkerRoots.im);
+        for (let i = 0; i < nRoots; i++) { rootsRe[i] = prevRe[i]; rootsIm[i] = prevIm[i]; }
+    } else {
+        for (let i = 0; i < nRoots; i++) {
+            rootsRe[i] = currentRoots[i].re;
+            rootsIm[i] = currentRoots[i].im;
+        }
     }
 
-    // Get existing canvas pixels for multi-pass accumulation
-    const w = bitmapCtx.canvas.width, h = bitmapCtx.canvas.height;
-    const existingData = bitmapCtx.getImageData(0, 0, w, h);
-    const pixelBuf = existingData.data.buffer.slice(0); // detachable copy
+    // Precompute RGB color arrays
+    const colorsR = new Uint8Array(nRoots);
+    const colorsG = new Uint8Array(nRoots);
+    const colorsB = new Uint8Array(nRoots);
+    for (let i = 0; i < nRoots; i++) {
+        const [r, g, b] = rootColorRGB(i, nRoots);
+        colorsR[i] = r; colorsG[i] = g; colorsB[i] = b;
+    }
 
-    // Safety net: cache current pixels for early exit
-    fastModeLastPixels = pixelBuf.slice(0);
-    fastModeLastRoots = null;
-    fastModeLastStep = 0;
-
-    // Create and launch Worker
-    const blobUrl = createFastModeWorkerBlob();
-    fastModeWorker = new Worker(blobUrl);
-    URL.revokeObjectURL(blobUrl);
-
-    fastModeWorker.onmessage = handleFastModeWorkerMessage;
-    fastModeWorker.onerror = function(err) {
-        console.error("Fast mode worker error:", err);
-        exitFastMode();
-    };
-
-    fastModeWorker.postMessage({
-        coeffsRe: coeffsRe.buffer, coeffsIm: coeffsIm.buffer,
-        nCoeffs, degree, nRoots,
-        animEntries, curvesFlat: curvesFlat.buffer,
-        curveOffsets, curveLengths, curveIsCloud,
-        rootsRe: rootsRe.buffer, rootsIm: rootsIm.buffer,
-        colorsR: colorsR.buffer, colorsG: colorsG.buffer, colorsB: colorsB.buffer,
-        pixels: pixelBuf,
-        canvasW: w, canvasH: h, bitmapRange,
+    return {
+        coeffsRe, coeffsIm, nCoeffs, degree, nRoots,
+        animEntries, curvesFlat, curveOffsets, curveLengths, curveIsCloud,
+        rootsRe, rootsIm,
+        colorsR, colorsG, colorsB,
+        canvasW: bitmapCtx.canvas.width, canvasH: bitmapCtx.canvas.height,
+        bitmapRange, stepsVal,
         noColor: rootColorMode === "uniform",
         uniformR: uniformRootColor[0], uniformG: uniformRootColor[1], uniformB: uniformRootColor[2],
-        totalSteps: stepsVal, FAST_PASS_SECONDS,
-        elapsedOffset: fastModeElapsedOffset,
-        frameIntervalMs: 2000
-    }, [
-        coeffsRe.buffer, coeffsIm.buffer, curvesFlat.buffer,
-        rootsRe.buffer, rootsIm.buffer,
-        colorsR.buffer, colorsG.buffer, colorsB.buffer, pixelBuf
-    ]);
+        iterColor: rootColorMode === "iteration",
+        iterPalR: ITER_PAL_R.buffer.slice(0), iterPalG: ITER_PAL_G.buffer.slice(0), iterPalB: ITER_PAL_B.buffer.slice(0),
+    };
 }
 
-function applyPixelSnapshot(arrayBuffer) {
-    if (!bitmapCtx) return;
-    const w = bitmapCtx.canvas.width, h = bitmapCtx.canvas.height;
-    if (arrayBuffer.byteLength !== w * h * 4) return;
-    const imgData = new ImageData(new Uint8ClampedArray(arrayBuffer), w, h);
-    bitmapCtx.putImageData(imgData, 0, 0);
+let fastModeSharedData = null; // serialized data for current pass
+
+function initFastModeWorkers() {
+    const sd = fastModeSharedData;
+    if (!sd) return;
+    const actualWorkers = Math.min(numWorkers, sd.stepsVal);
+
+    fastModeWorkers = [];
+    for (let w = 0; w < actualWorkers; w++) {
+        const blobUrl = createFastModeWorkerBlob();
+        const worker = new Worker(blobUrl);
+        URL.revokeObjectURL(blobUrl);
+
+        worker.onmessage = handleFastModeWorkerMessage;
+        worker.onerror = function(err) {
+            console.error("Fast mode worker", w, "error:", err);
+            exitFastMode();
+        };
+
+        // Send static data once (persists across runs within this cycle)
+        worker.postMessage({
+            type: "init",
+            coeffsRe: sd.coeffsRe.buffer.slice(0),
+            coeffsIm: sd.coeffsIm.buffer.slice(0),
+            nCoeffs: sd.nCoeffs, degree: sd.degree, nRoots: sd.nRoots,
+            animEntries: sd.animEntries,
+            curvesFlat: sd.curvesFlat.buffer.slice(0),
+            curveOffsets: sd.curveOffsets, curveLengths: sd.curveLengths, curveIsCloud: sd.curveIsCloud,
+            colorsR: sd.colorsR.buffer.slice(0),
+            colorsG: sd.colorsG.buffer.slice(0),
+            colorsB: sd.colorsB.buffer.slice(0),
+            canvasW: sd.canvasW, canvasH: sd.canvasH, bitmapRange: sd.bitmapRange,
+            noColor: sd.noColor,
+            uniformR: sd.uniformR, uniformG: sd.uniformG, uniformB: sd.uniformB,
+            iterColor: sd.iterColor,
+            iterPalR: sd.iterPalR, iterPalG: sd.iterPalG, iterPalB: sd.iterPalB,
+            totalSteps: sd.stepsVal, FAST_PASS_SECONDS,
+        });
+
+        fastModeWorkers.push(worker);
+    }
+
+    // Dispatch first pass immediately (worker processes init then run in order)
+    dispatchPassToWorkers();
+}
+
+function dispatchPassToWorkers() {
+    const sd = fastModeSharedData;
+    if (!sd || fastModeWorkers.length === 0) return;
+    const stepsVal = sd.stepsVal;
+    const nw = fastModeWorkers.length;
+    const stepsPerWorker = Math.ceil(stepsVal / nw);
+
+    fastModeWorkersComplete = 0;
+    fastModeWorkerPixels = new Array(nw);
+    fastModeWorkerProgress = new Array(nw).fill(0);
+    fastModePassStartTime = performance.now();
+
+    for (let w = 0; w < nw; w++) {
+        const stepStart = w * stepsPerWorker;
+        const stepEnd = Math.min(stepStart + stepsPerWorker, stepsVal);
+
+        // Only roots + elapsed change per pass (small data, structured clone is fine)
+        fastModeWorkers[w].postMessage({
+            type: "run",
+            workerId: w,
+            stepStart, stepEnd,
+            elapsedOffset: fastModeElapsedOffset,
+            rootsRe: sd.rootsRe.buffer.slice(0),
+            rootsIm: sd.rootsIm.buffer.slice(0),
+        });
+    }
 }
 
 function handleFastModeWorkerMessage(e) {
@@ -7344,75 +7884,155 @@ function handleFastModeWorkerMessage(e) {
     if (!fastModeActive) return;
 
     if (msg.type === "progress") {
-        fastModeStepIndex = msg.step;
-        fastModeLastStep = msg.step;
+        // Aggregate progress across workers
+        fastModeWorkerProgress[msg.workerId] = msg.step;
         if (fastModeShowProgress) {
+            const totalDone = fastModeWorkerProgress.reduce((a, b) => a + b, 0);
             const bar = document.getElementById("bitmap-progress-bar");
-            if (bar) bar.style.width = (msg.step / fastModeTotalSteps * 100) + "%";
-        }
-    }
-    else if (msg.type === "frame") {
-        fastModeStepIndex = msg.step;
-        fastModeLastStep = msg.step;
-        fastModeLastPixels = msg.pixels;
-        if (msg.rootsRe) fastModeLastRoots = { re: msg.rootsRe, im: msg.rootsIm };
-        applyPixelSnapshot(msg.pixels);
-        if (fastModeShowProgress) {
-            const bar = document.getElementById("bitmap-progress-bar");
-            if (bar) bar.style.width = (msg.step / fastModeTotalSteps * 100) + "%";
-        }
-    }
-    else if (msg.type === "pass") {
-        // One pass complete — update state, Worker auto-continues
-        fastModeElapsedOffset += FAST_PASS_SECONDS;
-        fastModeLastStep = 0;  // reset so exitFastMode doesn't double-count
-        fastModeLastPixels = msg.pixels;
-        if (msg.rootsRe) fastModeLastRoots = { re: msg.rootsRe, im: msg.rootsIm };
-        applyPixelSnapshot(msg.pixels);
-        if (fastModeShowProgress) {
-            // Reset progress bar for next pass, update pass counter
-            const bar = document.getElementById("bitmap-progress-bar");
-            if (bar) bar.style.width = "0%";
-            const passEl = document.getElementById("bitmap-pass-count");
-            if (passEl) {
-                const tgt = fastModeTargetPasses > 0 ? "/" + String(fastModeTargetPasses).padStart(4, "0") : "";
-                passEl.textContent = String(msg.pass).padStart(4, "0") + tgt;
+            if (bar) {
+                if (fastModeTargetPasses > 0) {
+                    bar.style.width = ((fastModePassCount + totalDone / fastModeTotalSteps) / fastModeTargetPasses * 100) + "%";
+                } else {
+                    bar.style.width = (totalDone / fastModeTotalSteps * 100) + "%";
+                }
             }
         }
-        // Auto-stop when full cycle complete
-        if (fastModeTargetPasses > 0 && msg.pass >= fastModeTargetPasses) {
-            if (jiggleOnTarget && jiggleOffsets) {
-                exitFastMode();
-                fastModeElapsedOffset = 0;
-                generateJiggleOffsets();
-                enterFastMode();
+    }
+    else if (msg.type === "done") {
+        // Collect this worker's sparse pixel data
+        fastModeWorkerPixels[msg.workerId] = {
+            paintIdx: msg.paintIdx, paintR: msg.paintR,
+            paintG: msg.paintG, paintB: msg.paintB,
+            paintCount: msg.paintCount
+        };
+
+        // Keep roots from the LAST range worker (highest step range) for next-pass warm start
+        if (msg.workerId === fastModeWorkers.length - 1) {
+            fastModeWorkerRoots = { re: msg.rootsRe, im: msg.rootsIm };
+        }
+
+        fastModeWorkersComplete++;
+
+        if (fastModeWorkersComplete === fastModeWorkers.length) {
+            // All workers done — composite, record timing, advance
+            compositeWorkerPixels();
+            recordPassTiming();
+            advancePass();
+        }
+    }
+}
+
+function compositeWorkerPixels() {
+    if (!bitmapCtx) return;
+    const w = bitmapCtx.canvas.width, h = bitmapCtx.canvas.height;
+    const existing = bitmapCtx.getImageData(0, 0, w, h);
+    const out = existing.data;
+
+    for (const result of fastModeWorkerPixels) {
+        if (!result) continue;
+        const idx = new Int32Array(result.paintIdx);
+        const r = new Uint8Array(result.paintR);
+        const g = new Uint8Array(result.paintG);
+        const b = new Uint8Array(result.paintB);
+        const count = result.paintCount;
+        for (let i = 0; i < count; i++) {
+            const off = idx[i] * 4;
+            out[off] = r[i];
+            out[off + 1] = g[i];
+            out[off + 2] = b[i];
+            out[off + 3] = 255;
+        }
+    }
+
+    bitmapCtx.putImageData(existing, 0, 0);
+    fastModeWorkerPixels = [];
+}
+
+function recordPassTiming() {
+    const ms = performance.now() - fastModePassStartTime;
+    fastModeTimingHistory.push({
+        passMs: ms,
+        stepsPerSec: Math.round(fastModeTotalSteps / (ms / 1000)),
+        workers: fastModeWorkers.length,
+        steps: fastModeTotalSteps
+    });
+    updateTimingPopup();
+}
+
+function advancePass() {
+    fastModeElapsedOffset += FAST_PASS_SECONDS;
+    fastModePassCount++;
+    fastModeCumulativeSec++;
+
+    // Update UI
+    if (fastModeShowProgress) {
+        const bar = document.getElementById("bitmap-progress-bar");
+        if (bar) {
+            if (fastModeTargetPasses > 0) {
+                bar.style.width = (fastModePassCount / fastModeTargetPasses * 100) + "%";
             } else {
-                exitFastMode();
+                bar.style.width = "0%";
             }
         }
+        const passEl = document.getElementById("bitmap-pass-count");
+        if (passEl) {
+            passEl.textContent = fastModeTargetPasses > 0
+                ? fastModeCumulativeSec + "/" + fastModeTargetPasses + "s"
+                : fastModeCumulativeSec + "s";
+        }
     }
+
+    // Cycle complete — apply jiggle and restart
+    if (fastModeTargetPasses > 0 && fastModePassCount >= fastModeTargetPasses) {
+        exitFastMode();
+        fastModeElapsedOffset = 0;
+        generateJiggleOffsets();
+        enterFastMode();
+        return;
+    }
+
+    // Update shared data with warm-start roots from last pass
+    if (fastModeWorkerRoots && fastModeSharedData) {
+        fastModeSharedData.rootsRe = new Float64Array(fastModeWorkerRoots.re);
+        fastModeSharedData.rootsIm = new Float64Array(fastModeWorkerRoots.im);
+    }
+
+    // Dispatch next pass to existing persistent workers (no re-creation)
+    dispatchPassToWorkers();
 }
 
 function exitFastMode() {
     if (!fastModeActive) return;
 
-    // Advance elapsed offset so next pass continues where this one left off
-    if (fastModeLastStep > 0 && fastModeTotalSteps > 0) {
-        fastModeElapsedOffset += (fastModeLastStep / fastModeTotalSteps) * FAST_PASS_SECONDS;
+    // Advance elapsed offset proportionally for mid-pass interruption
+    if (fastModeWorkerProgress.length > 0 && fastModeTotalSteps > 0) {
+        const totalDone = fastModeWorkerProgress.reduce((a, b) => a + b, 0);
+        if (totalDone > 0 && totalDone < fastModeTotalSteps) {
+            fastModeElapsedOffset += (totalDone / fastModeTotalSteps) * FAST_PASS_SECONDS;
+        }
     }
 
-    // Terminate Worker if running
-    if (fastModeWorker) { fastModeWorker.terminate(); fastModeWorker = null; }
+    // Terminate all workers
+    for (const wk of fastModeWorkers) wk.terminate();
+    fastModeWorkers = [];
+    fastModeWorkersComplete = 0;
+    fastModeWorkerPixels = [];
+    fastModeWorkerProgress = [];
+    fastModeSharedData = null;
+
     // Legacy fallback cleanup
     if (fastModeTimerId) { clearTimeout(fastModeTimerId); fastModeTimerId = null; }
 
-    // Apply last received pixel snapshot (covers early "imode" exit)
-    if (fastModeLastPixels && bitmapCtx) {
-        applyPixelSnapshot(fastModeLastPixels);
-    }
-
-    // Restore root state from last snapshot
-    if (fastModeLastRoots) {
+    // Restore root state from last worker snapshot
+    if (fastModeWorkerRoots) {
+        const rRe = new Float64Array(fastModeWorkerRoots.re);
+        const rIm = new Float64Array(fastModeWorkerRoots.im);
+        for (let i = 0; i < currentRoots.length && i < rRe.length; i++) {
+            currentRoots[i].re = rRe[i];
+            currentRoots[i].im = rIm[i];
+        }
+    } else if (fastModeLastRoots) {
+        // Legacy fallback
         const rRe = new Float64Array(fastModeLastRoots.re);
         const rIm = new Float64Array(fastModeLastRoots.im);
         for (let i = 0; i < currentRoots.length && i < rRe.length; i++) {
@@ -7480,8 +8100,10 @@ function fastModeChunkLegacy() {
         }
 
         // Solve roots (warm-start), preserve identity, update in-place
-        let roots = solveRootsEA(coefficients, currentRoots);
-        if (rootColorMode !== "uniform") roots = matchRootOrder(roots, currentRoots);
+        const iterMode = rootColorMode === "iteration";
+        const iters = iterMode ? new Uint8Array(coefficients.length - 1) : null;
+        let roots = solveRootsEA(coefficients, currentRoots, iters);
+        if (rootColorMode !== "uniform" && !iterMode) roots = matchRootOrder(roots, currentRoots);
         setCurrentRootsInPlace(roots);
 
         // Paint
@@ -7493,27 +8115,44 @@ function fastModeChunkLegacy() {
     // Update progress bar (cheap DOM update once per chunk)
     if (fastModeShowProgress) {
         const bar = document.getElementById("bitmap-progress-bar");
-        if (bar) bar.style.width = (fastModeStepIndex / fastModeTotalSteps * 100) + "%";
+        if (bar) {
+            if (fastModeTargetPasses > 0) {
+                bar.style.width = ((fastModePassCount + fastModeStepIndex / fastModeTotalSteps) / fastModeTargetPasses * 100) + "%";
+            } else {
+                bar.style.width = (fastModeStepIndex / fastModeTotalSteps * 100) + "%";
+            }
+        }
     }
 
     if (fastModeStepIndex >= fastModeTotalSteps) {
         // Pass complete — advance offset, reset step counter, continue
         fastModeElapsedOffset += FAST_PASS_SECONDS;
         fastModePassCount++;
+        fastModeCumulativeSec++;
         fastModeStepIndex = 0;
         fastModeLastStep = 0;
-        const pbar = document.getElementById("bitmap-progress-bar");
-        if (fastModeShowProgress && pbar) pbar.style.width = "0%";
         if (fastModeShowProgress) {
+            const bar = document.getElementById("bitmap-progress-bar");
+            if (bar) {
+                if (fastModeTargetPasses > 0) {
+                    bar.style.width = (fastModePassCount / fastModeTargetPasses * 100) + "%";
+                } else {
+                    bar.style.width = "0%";
+                }
+            }
             const passEl = document.getElementById("bitmap-pass-count");
             if (passEl) {
-                const tgt = fastModeTargetPasses > 0 ? "/" + String(fastModeTargetPasses).padStart(4, "0") : "";
-                passEl.textContent = String(fastModePassCount).padStart(4, "0") + tgt;
+                passEl.textContent = fastModeTargetPasses > 0
+                    ? fastModeCumulativeSec + "/" + fastModeTargetPasses + "s"
+                    : fastModeCumulativeSec + "s";
             }
         }
-        // Auto-stop when full cycle complete
+        // Cycle complete — always continue, apply jiggle
         if (fastModeTargetPasses > 0 && fastModePassCount >= fastModeTargetPasses) {
             exitFastMode();
+            fastModeElapsedOffset = 0;
+            generateJiggleOffsets();
+            enterFastMode();
             return;
         }
     }
@@ -7613,6 +8252,7 @@ function closePathPickPop(revert) {
         c.ccw = pathPickSnapshot.ccw;
         c.extra = pathPickSnapshot.extra || {};
         c.curve = pathPickSnapshot.curve;
+        c.curveIndex = pathPickSnapshot.curveIndex;
         renderCoeffTrails();
     }
     pathPickOpen = false;
@@ -7631,7 +8271,8 @@ function openPathPickPop(coeffIdx, anchorEl) {
     pathPickSnapshot = {
         pathType: cc.pathType, radius: cc.radius, speed: cc.speed,
         angle: cc.angle, ccw: cc.ccw, extra: cc.extra ? { ...cc.extra } : {},
-        curve: cc.curve ? cc.curve.map(pt => ({ ...pt })) : null,
+        curve: cc.curve.map(pt => ({ ...pt })),
+        curveIndex: cc.curveIndex,
     };
 
     pathPickPop.innerHTML = "";
@@ -7754,11 +8395,12 @@ function openPathPickPop(coeffIdx, anchorEl) {
             }
         }
         if (c.pathType === "none") {
-            c.curve = null;
+            c.curve = [{ re: c.re, im: c.im }];
         } else {
             const absRadius = c.radius / 100 * coeffExtent();
             c.curve = computeCurve(c.re, c.im, c.pathType, absRadius, c.angle, c.extra);
         }
+        c.curveIndex = 0;
         animState.elapsedAtPause = null;
         renderCoeffTrails();
     }
@@ -7778,16 +8420,6 @@ function openPathPickPop(coeffIdx, anchorEl) {
 }
 
 // --- Coefficient list helpers ---
-function nearestCurveIndex(c) {
-    if (!c.curve || c.curve.length === 0) return -1;
-    let bestD = Infinity, bestK = 0;
-    for (let k = 0; k < c.curve.length; k++) {
-        const dx = c.re - c.curve[k].re, dy = c.im - c.curve[k].im;
-        const d = dx * dx + dy * dy;
-        if (d < bestD) { bestD = d; bestK = k; }
-    }
-    return bestK;
-}
 
 // --- Coefficient list tab ---
 function refreshCoeffList() {
@@ -7838,12 +8470,11 @@ function refreshCoeffList() {
 
         const plenSpan = document.createElement("span");
         plenSpan.className = "cpick-plen";
-        plenSpan.textContent = ci.curve ? String(ci.curve.length) : "\u2014";
+        plenSpan.textContent = String(ci.curve.length);
 
         const posSpan = document.createElement("span");
         posSpan.className = "cpick-pos";
-        const curIdx = nearestCurveIndex(ci);
-        posSpan.textContent = curIdx >= 0 ? String(curIdx) : "\u2014";
+        posSpan.textContent = String(ci.curveIndex);
 
         const coords = document.createElement("span");
         coords.className = "cpick-coords";
@@ -7902,8 +8533,7 @@ function updateListCoords() {
         }
         const posEl = rows[i].querySelector(".cpick-pos");
         if (posEl) {
-            const idx = nearestCurveIndex(c);
-            posEl.textContent = idx >= 0 ? String(idx) : "\u2014";
+            posEl.textContent = String(c.curveIndex);
         }
     }
 }
@@ -7926,7 +8556,7 @@ function updateListPathCols() {
         }
         const plenEl = rows[i].querySelector(".cpick-plen");
         if (plenEl) {
-            plenEl.textContent = c.curve ? String(c.curve.length) : "\u2014";
+            plenEl.textContent = String(c.curve.length);
         }
     }
 }
@@ -8119,11 +8749,12 @@ function lceApplyToCoeff(ci, params) {
         setCoeffParam(c, p.key, params[p.key]);
     }
     if (c.pathType === "none") {
-        c.curve = null;
+        c.curve = [{ re: c.re, im: c.im }];
     } else {
         const absRadius = c.radius / 100 * coeffExtent();
         c.curve = computeCurve(c.re, c.im, c.pathType, absRadius, c.angle, c.extra);
     }
+    c.curveIndex = 0;
 }
 
 function lceSyncToCurrentCoeff() {
@@ -8185,7 +8816,9 @@ document.getElementById("bitmap-start-btn").addEventListener("click", function (
     document.getElementById("bitmap-save-btn").disabled = false;
     document.getElementById("bitmap-clear-btn").disabled = false;
     document.getElementById("bitmap-fast-btn").disabled = false;
+    document.getElementById("bitmap-coeff-btn").disabled = false;
     document.getElementById("jiggle-btn").disabled = false;
+        document.getElementById("jiggle-diag-btn").disabled = false;
     this.textContent = "restart";
 });
 
@@ -8210,61 +8843,31 @@ document.getElementById("bitmap-clear-btn").addEventListener("click", function (
     }
 });
 
-// --- Fastmode popup ---
-const fastmodePop = document.getElementById("fastmode-pop");
-let fastmodePopOpen = false;
-
-function closeFastmodePop() {
-    fastmodePop.classList.remove("open");
-    fastmodePopOpen = false;
-}
-
-function openFastmodePop() {
-    if (fastmodePopOpen) { closeFastmodePop(); return; }
-    fastmodePop.innerHTML = "";
-
-    const title = document.createElement("div");
-    title.className = "pop-title";
-    title.textContent = "FASTMODE";
-    fastmodePop.appendChild(title);
-
-    // Progress checkbox
-    const cbRow = document.createElement("div");
-    cbRow.style.cssText = "display:flex;align-items:center;gap:4px;margin:4px 0;";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.id = "fastmode-progress-cb";
-    cb.checked = fastModeShowProgress;
-    cb.style.cssText = "margin:0;";
-    cb.addEventListener("change", () => { fastModeShowProgress = cb.checked; });
-    const cbLabel = document.createElement("label");
-    cbLabel.htmlFor = "fastmode-progress-cb";
-    cbLabel.style.cssText = "font-size:10px;color:var(--fg);cursor:pointer;";
-    cbLabel.textContent = "Progress bar";
-    cbRow.appendChild(cb);
-    cbRow.appendChild(cbLabel);
-    fastmodePop.appendChild(cbRow);
-
-    // Go button
-    const goBtn = document.createElement("button");
-    goBtn.textContent = "Go!";
-    goBtn.style.cssText = "font-size:10px;padding:3px 10px;background:var(--accent);color:#000;border:none;border-radius:3px;cursor:pointer;margin-top:4px;width:100%;";
-    goBtn.addEventListener("click", () => {
-        closeFastmodePop();
-        enterFastMode();
-    });
-    fastmodePop.appendChild(goBtn);
-
-    fastmodePop.classList.add("open");
-    const r = document.getElementById("bitmap-fast-btn").getBoundingClientRect();
-    fastmodePop.style.left = r.left + "px";
-    fastmodePop.style.top = (r.bottom + 6) + "px";
-    fastmodePopOpen = true;
-}
+// --- Progress bar toggle button ---
+document.getElementById("bitmap-progress-toggle").addEventListener("click", function () {
+    fastModeShowProgress = !fastModeShowProgress;
+    this.style.opacity = fastModeShowProgress ? "1" : "0.4";
+    if (!fastModeShowProgress) {
+        const prog = document.getElementById("bitmap-progress");
+        if (prog) prog.style.display = "none";
+        const passEl = document.getElementById("bitmap-pass-count");
+        if (passEl) passEl.style.display = "none";
+    }
+});
 
 document.getElementById("bitmap-fast-btn").addEventListener("click", function () {
     if (fastModeActive) exitFastMode();
-    else openFastmodePop();
+    else {
+        fastModeCumulativeSec = 0;
+        enterFastMode();
+    }
+});
+
+document.getElementById("bitmap-coeff-btn").addEventListener("click", function () {
+    bitmapCoeffView = !bitmapCoeffView;
+    this.classList.toggle("active", bitmapCoeffView);
+    this.textContent = bitmapCoeffView ? "C|R" : "R|C";
+    uiPing(660, 0.08);
 });
 
 // --- Bitmap canvas background color popup ---
@@ -8353,39 +8956,44 @@ function gaussRand() {
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-function computeAnimatedCentroid() {
-    const animated = allAnimatedCoeffs();
-    if (animated.size === 0) return { re: 0, im: 0 };
+function jiggleTargetCoeffs() {
+    // Jiggle applies to all selected coefficients
+    return new Set(selectedCoeffs);
+}
+
+function computeJiggleCentroid(targets) {
+    if (targets.size === 0) return { re: 0, im: 0 };
     let sre = 0, sim = 0;
-    for (const idx of animated) {
+    for (const idx of targets) {
         const c = coefficients[idx];
-        sre += c.curve ? c.curve[0].re : c.re;
-        sim += c.curve ? c.curve[0].im : c.im;
+        sre += c.curve[0].re;
+        sim += c.curve[0].im;
     }
-    return { re: sre / animated.size, im: sim / animated.size };
+    return { re: sre / targets.size, im: sim / targets.size };
 }
 
 function generateJiggleOffsets() {
-    const animated = allAnimatedCoeffs();
-    if (animated.size === 0 || jiggleMode === "none") { jiggleOffsets = null; updateJiggleStatus(); return; }
+    const targets = jiggleTargetCoeffs();
+    if (targets.size === 0 || jiggleMode === "none") { updateJiggleStatus(); return; }
+    jiggleTriggerCount++;
 
     if (jiggleMode === "random") {
         const sigma = (jiggleSigma / 100) * coeffExtent();
-        if (sigma <= 0) { jiggleOffsets = null; updateJiggleStatus(); return; }
-        jiggleOffsets = new Map();
-        for (const idx of animated) {
+        if (sigma <= 0) { updateJiggleStatus(); return; }
+        if (!jiggleOffsets) jiggleOffsets = new Map();
+        for (const idx of targets) {
             jiggleOffsets.set(idx, { re: gaussRand() * sigma, im: gaussRand() * sigma });
         }
     } else if (jiggleMode === "rotate") {
         jiggleCumulativeAngle += jiggleTheta * 2 * Math.PI;
-        const cen = computeAnimatedCentroid();
+        const cen = computeJiggleCentroid(targets);
         const cos_a = Math.cos(jiggleCumulativeAngle);
         const sin_a = Math.sin(jiggleCumulativeAngle);
-        jiggleOffsets = new Map();
-        for (const idx of animated) {
+        if (!jiggleOffsets) jiggleOffsets = new Map();
+        for (const idx of targets) {
             const c = coefficients[idx];
-            const hre = c.curve ? c.curve[0].re : c.re;
-            const him = c.curve ? c.curve[0].im : c.im;
+            const hre = c.curve[0].re;
+            const him = c.curve[0].im;
             const dx = hre - cen.re, dy = him - cen.im;
             jiggleOffsets.set(idx, {
                 re: dx * cos_a - dy * sin_a - dx,
@@ -8394,9 +9002,9 @@ function generateJiggleOffsets() {
         }
     } else if (jiggleMode === "walk") {
         const sigma = (jiggleSigma / 100) * coeffExtent();
-        if (sigma <= 0) { jiggleOffsets = null; updateJiggleStatus(); return; }
+        if (sigma <= 0) { updateJiggleStatus(); return; }
         if (!jiggleOffsets) jiggleOffsets = new Map();
-        for (const idx of animated) {
+        for (const idx of targets) {
             const prev = jiggleOffsets.get(idx) || { re: 0, im: 0 };
             jiggleOffsets.set(idx, {
                 re: prev.re + gaussRand() * sigma,
@@ -8405,32 +9013,108 @@ function generateJiggleOffsets() {
         }
     } else if (jiggleMode === "scale") {
         jiggleCumulativeScale *= (1 + jiggleScaleStep / 100);
-        const cen = computeAnimatedCentroid();
-        jiggleOffsets = new Map();
-        for (const idx of animated) {
+        const cen = computeJiggleCentroid(targets);
+        if (!jiggleOffsets) jiggleOffsets = new Map();
+        for (const idx of targets) {
             const c = coefficients[idx];
-            const hre = c.curve ? c.curve[0].re : c.re;
-            const him = c.curve ? c.curve[0].im : c.im;
+            const hre = c.curve[0].re;
+            const him = c.curve[0].im;
             const dx = hre - cen.re, dy = him - cen.im;
             jiggleOffsets.set(idx, {
                 re: dx * (jiggleCumulativeScale - 1),
                 im: dy * (jiggleCumulativeScale - 1)
             });
         }
+    } else if (jiggleMode === "circle") {
+        // Rotation around origin: multiply all coeffs by e^(i·cumAngle)
+        jiggleCumulativeAngle += jiggleTheta * 2 * Math.PI;
+        const cos_a = Math.cos(jiggleCumulativeAngle);
+        const sin_a = Math.sin(jiggleCumulativeAngle);
+        if (!jiggleOffsets) jiggleOffsets = new Map();
+        for (const idx of targets) {
+            const hre = coefficients[idx].curve[0].re;
+            const him = coefficients[idx].curve[0].im;
+            jiggleOffsets.set(idx, {
+                re: hre * (cos_a - 1) - him * sin_a,
+                im: hre * sin_a + him * (cos_a - 1)
+            });
+        }
+    } else if (jiggleMode === "spiral") {
+        // Rotation + scaling around centroid
+        jiggleCumulativeAngle += jiggleTheta * 2 * Math.PI;
+        jiggleCumulativeScale *= (1 + jiggleScaleStep / 100);
+        const cen = computeJiggleCentroid(targets);
+        const s = jiggleCumulativeScale;
+        const cos_a = Math.cos(jiggleCumulativeAngle);
+        const sin_a = Math.sin(jiggleCumulativeAngle);
+        if (!jiggleOffsets) jiggleOffsets = new Map();
+        for (const idx of targets) {
+            const hre = coefficients[idx].curve[0].re;
+            const him = coefficients[idx].curve[0].im;
+            const dx = hre - cen.re, dy = him - cen.im;
+            jiggleOffsets.set(idx, {
+                re: s * (dx * cos_a - dy * sin_a) - dx,
+                im: s * (dx * sin_a + dy * cos_a) - dy
+            });
+        }
+    } else if (jiggleMode === "breathe") {
+        // Sinusoidal scaling from centroid
+        const t = jiggleTriggerCount;
+        const amp = jiggleAmplitude / 100;
+        const scale = 1 + amp * Math.sin(2 * Math.PI * t / jigglePeriod);
+        const cen = computeJiggleCentroid(targets);
+        if (!jiggleOffsets) jiggleOffsets = new Map();
+        for (const idx of targets) {
+            const hre = coefficients[idx].curve[0].re;
+            const him = coefficients[idx].curve[0].im;
+            const dx = hre - cen.re, dy = him - cen.im;
+            jiggleOffsets.set(idx, {
+                re: dx * (scale - 1),
+                im: dy * (scale - 1)
+            });
+        }
+    } else if (jiggleMode === "wobble") {
+        // Sinusoidal rotation around centroid
+        const t = jiggleTriggerCount;
+        const angle = jiggleTheta * 2 * Math.PI * Math.sin(2 * Math.PI * t / jigglePeriod);
+        const cen = computeJiggleCentroid(targets);
+        const cos_a = Math.cos(angle);
+        const sin_a = Math.sin(angle);
+        if (!jiggleOffsets) jiggleOffsets = new Map();
+        for (const idx of targets) {
+            const hre = coefficients[idx].curve[0].re;
+            const him = coefficients[idx].curve[0].im;
+            const dx = hre - cen.re, dy = him - cen.im;
+            jiggleOffsets.set(idx, {
+                re: dx * cos_a - dy * sin_a - dx,
+                im: dx * sin_a + dy * cos_a - dy
+            });
+        }
+    } else if (jiggleMode === "lissajous") {
+        // Translate along Lissajous figure
+        const t = jiggleTriggerCount;
+        const amp = (jiggleAmplitude / 100) * coeffExtent();
+        const dx = amp * Math.sin(2 * Math.PI * jiggleLissFreqX * t / jigglePeriod);
+        const dy = amp * Math.sin(2 * Math.PI * jiggleLissFreqY * t / jigglePeriod);
+        if (!jiggleOffsets) jiggleOffsets = new Map();
+        for (const idx of targets) {
+            jiggleOffsets.set(idx, { re: dx, im: dy });
+        }
     }
     updateJiggleStatus();
+    if (typeof updateJiggleDiag === "function") updateJiggleDiag();
 }
 
 function updateJiggleStatus() {
     const el = document.getElementById("jiggle-status");
     if (!el) return;
-    if (jiggleOffsets && jiggleOffsets.size > 0) {
-        el.textContent = jiggleOffsets.size + " offsets active";
-        el.style.color = "var(--accent)";
-    } else {
-        el.textContent = "no offsets";
-        el.style.color = "var(--muted)";
-    }
+    const targets = jiggleTargetCoeffs();
+    const offCount = jiggleOffsets ? jiggleOffsets.size : 0;
+    const parts = [];
+    parts.push(targets.size + " target" + (targets.size !== 1 ? "s" : ""));
+    if (offCount > 0) parts.push(offCount + " offset" + (offCount !== 1 ? "s" : ""));
+    el.textContent = parts.join(", ");
+    el.style.color = offCount > 0 ? "var(--accent)" : "var(--muted)";
 }
 
 function closeJigglePop() {
@@ -8460,7 +9144,7 @@ function openJigglePop() {
     modeLbl.textContent = "Mode";
     const modeSel = document.createElement("select");
     modeSel.style.cssText = "background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
-    for (const m of ["none", "random", "rotate", "walk", "scale"]) {
+    for (const m of ["none", "random", "rotate", "walk", "scale", "circle", "spiral", "breathe", "wobble", "lissajous"]) {
         const opt = document.createElement("option");
         opt.value = m;
         opt.textContent = m.charAt(0).toUpperCase() + m.slice(1);
@@ -8535,6 +9219,206 @@ function openJigglePop() {
             hint.textContent = "%";
             row.appendChild(lbl); row.appendChild(inp); row.appendChild(hint);
             controlsDiv.appendChild(row);
+        } else if (jiggleMode === "circle") {
+            // θ row (same as rotate — rotation around origin)
+            const row = document.createElement("div");
+            row.style.cssText = rowStyle;
+            const lbl = document.createElement("span");
+            lbl.style.cssText = lblStyle;
+            lbl.textContent = "θ";
+            const inp = document.createElement("input");
+            inp.type = "number"; inp.step = "0.001"; inp.min = "0.001"; inp.max = "0.500";
+            inp.value = jiggleTheta;
+            inp.style.cssText = inpStyle;
+            const hint = document.createElement("span");
+            hint.style.cssText = hintStyle;
+            hint.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
+            inp.addEventListener("input", () => {
+                jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(inp.value) || 0.01));
+                hint.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
+            });
+            row.appendChild(lbl); row.appendChild(inp); row.appendChild(hint);
+            controlsDiv.appendChild(row);
+        } else if (jiggleMode === "spiral") {
+            // θ row
+            const row1 = document.createElement("div");
+            row1.style.cssText = rowStyle;
+            const lbl1 = document.createElement("span");
+            lbl1.style.cssText = lblStyle;
+            lbl1.textContent = "θ";
+            const inp1 = document.createElement("input");
+            inp1.type = "number"; inp1.step = "0.001"; inp1.min = "0.001"; inp1.max = "0.500";
+            inp1.value = jiggleTheta;
+            inp1.style.cssText = inpStyle;
+            const hint1 = document.createElement("span");
+            hint1.style.cssText = hintStyle;
+            hint1.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
+            inp1.addEventListener("input", () => {
+                jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(inp1.value) || 0.01));
+                hint1.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
+            });
+            row1.appendChild(lbl1); row1.appendChild(inp1); row1.appendChild(hint1);
+            controlsDiv.appendChild(row1);
+            // growth row
+            const row2 = document.createElement("div");
+            row2.style.cssText = rowStyle;
+            const lbl2 = document.createElement("span");
+            lbl2.style.cssText = lblStyle;
+            lbl2.textContent = "growth";
+            const inp2 = document.createElement("input");
+            inp2.type = "number"; inp2.step = "1"; inp2.min = "1"; inp2.max = "50";
+            inp2.value = jiggleScaleStep;
+            inp2.style.cssText = inpStyle;
+            inp2.addEventListener("input", () => {
+                jiggleScaleStep = Math.max(1, Math.min(50, parseInt(inp2.value, 10) || 5));
+            });
+            const hint2 = document.createElement("span");
+            hint2.style.cssText = hintStyle;
+            hint2.textContent = "%";
+            row2.appendChild(lbl2); row2.appendChild(inp2); row2.appendChild(hint2);
+            controlsDiv.appendChild(row2);
+        } else if (jiggleMode === "breathe") {
+            // amplitude row
+            const row1 = document.createElement("div");
+            row1.style.cssText = rowStyle;
+            const lbl1 = document.createElement("span");
+            lbl1.style.cssText = lblStyle;
+            lbl1.textContent = "amp";
+            const inp1 = document.createElement("input");
+            inp1.type = "number"; inp1.step = "1"; inp1.min = "1"; inp1.max = "50";
+            inp1.value = jiggleAmplitude;
+            inp1.style.cssText = inpStyle;
+            inp1.addEventListener("input", () => {
+                jiggleAmplitude = Math.max(1, Math.min(50, parseInt(inp1.value, 10) || 10));
+            });
+            const hint1 = document.createElement("span");
+            hint1.style.cssText = hintStyle;
+            hint1.textContent = "%";
+            row1.appendChild(lbl1); row1.appendChild(inp1); row1.appendChild(hint1);
+            controlsDiv.appendChild(row1);
+            // period row
+            const row2 = document.createElement("div");
+            row2.style.cssText = rowStyle;
+            const lbl2 = document.createElement("span");
+            lbl2.style.cssText = lblStyle;
+            lbl2.textContent = "period";
+            const inp2 = document.createElement("input");
+            inp2.type = "number"; inp2.step = "1"; inp2.min = "2"; inp2.max = "1000";
+            inp2.value = jigglePeriod;
+            inp2.style.cssText = inpStyle;
+            inp2.addEventListener("input", () => {
+                jigglePeriod = Math.max(2, Math.min(1000, parseInt(inp2.value, 10) || 20));
+            });
+            const hint2 = document.createElement("span");
+            hint2.style.cssText = hintStyle;
+            hint2.textContent = "cycles";
+            row2.appendChild(lbl2); row2.appendChild(inp2); row2.appendChild(hint2);
+            controlsDiv.appendChild(row2);
+        } else if (jiggleMode === "wobble") {
+            // amplitude row (turns)
+            const row1 = document.createElement("div");
+            row1.style.cssText = rowStyle;
+            const lbl1 = document.createElement("span");
+            lbl1.style.cssText = lblStyle;
+            lbl1.textContent = "amp";
+            const inp1 = document.createElement("input");
+            inp1.type = "number"; inp1.step = "0.001"; inp1.min = "0.001"; inp1.max = "0.500";
+            inp1.value = jiggleTheta;
+            inp1.style.cssText = inpStyle;
+            const hint1 = document.createElement("span");
+            hint1.style.cssText = hintStyle;
+            hint1.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
+            inp1.addEventListener("input", () => {
+                jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(inp1.value) || 0.01));
+                hint1.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
+            });
+            row1.appendChild(lbl1); row1.appendChild(inp1); row1.appendChild(hint1);
+            controlsDiv.appendChild(row1);
+            // period row
+            const row2 = document.createElement("div");
+            row2.style.cssText = rowStyle;
+            const lbl2 = document.createElement("span");
+            lbl2.style.cssText = lblStyle;
+            lbl2.textContent = "period";
+            const inp2 = document.createElement("input");
+            inp2.type = "number"; inp2.step = "1"; inp2.min = "2"; inp2.max = "1000";
+            inp2.value = jigglePeriod;
+            inp2.style.cssText = inpStyle;
+            inp2.addEventListener("input", () => {
+                jigglePeriod = Math.max(2, Math.min(1000, parseInt(inp2.value, 10) || 20));
+            });
+            const hint2 = document.createElement("span");
+            hint2.style.cssText = hintStyle;
+            hint2.textContent = "cycles";
+            row2.appendChild(lbl2); row2.appendChild(inp2); row2.appendChild(hint2);
+            controlsDiv.appendChild(row2);
+        } else if (jiggleMode === "lissajous") {
+            // amplitude row
+            const row1 = document.createElement("div");
+            row1.style.cssText = rowStyle;
+            const lbl1 = document.createElement("span");
+            lbl1.style.cssText = lblStyle;
+            lbl1.textContent = "amp";
+            const inp1 = document.createElement("input");
+            inp1.type = "number"; inp1.step = "1"; inp1.min = "1"; inp1.max = "50";
+            inp1.value = jiggleAmplitude;
+            inp1.style.cssText = inpStyle;
+            inp1.addEventListener("input", () => {
+                jiggleAmplitude = Math.max(1, Math.min(50, parseInt(inp1.value, 10) || 10));
+            });
+            const hint1 = document.createElement("span");
+            hint1.style.cssText = hintStyle;
+            hint1.textContent = "%";
+            row1.appendChild(lbl1); row1.appendChild(inp1); row1.appendChild(hint1);
+            controlsDiv.appendChild(row1);
+            // period row
+            const row2 = document.createElement("div");
+            row2.style.cssText = rowStyle;
+            const lbl2 = document.createElement("span");
+            lbl2.style.cssText = lblStyle;
+            lbl2.textContent = "period";
+            const inp2 = document.createElement("input");
+            inp2.type = "number"; inp2.step = "1"; inp2.min = "2"; inp2.max = "1000";
+            inp2.value = jigglePeriod;
+            inp2.style.cssText = inpStyle;
+            inp2.addEventListener("input", () => {
+                jigglePeriod = Math.max(2, Math.min(1000, parseInt(inp2.value, 10) || 20));
+            });
+            const hint2 = document.createElement("span");
+            hint2.style.cssText = hintStyle;
+            hint2.textContent = "cycles";
+            row2.appendChild(lbl2); row2.appendChild(inp2); row2.appendChild(hint2);
+            controlsDiv.appendChild(row2);
+            // freqX row
+            const row3 = document.createElement("div");
+            row3.style.cssText = rowStyle;
+            const lbl3 = document.createElement("span");
+            lbl3.style.cssText = lblStyle;
+            lbl3.textContent = "fX";
+            const inp3 = document.createElement("input");
+            inp3.type = "number"; inp3.step = "1"; inp3.min = "1"; inp3.max = "10";
+            inp3.value = jiggleLissFreqX;
+            inp3.style.cssText = inpStyle;
+            inp3.addEventListener("input", () => {
+                jiggleLissFreqX = Math.max(1, Math.min(10, parseInt(inp3.value, 10) || 1));
+            });
+            row3.appendChild(lbl3); row3.appendChild(inp3);
+            controlsDiv.appendChild(row3);
+            // freqY row
+            const row4 = document.createElement("div");
+            row4.style.cssText = rowStyle;
+            const lbl4 = document.createElement("span");
+            lbl4.style.cssText = lblStyle;
+            lbl4.textContent = "fY";
+            const inp4 = document.createElement("input");
+            inp4.type = "number"; inp4.step = "1"; inp4.min = "1"; inp4.max = "10";
+            inp4.value = jiggleLissFreqY;
+            inp4.style.cssText = inpStyle;
+            inp4.addEventListener("input", () => {
+                jiggleLissFreqY = Math.max(1, Math.min(10, parseInt(inp4.value, 10) || 2));
+            });
+            row4.appendChild(lbl4); row4.appendChild(inp4);
+            controlsDiv.appendChild(row4);
         }
     }
     buildModeControls();
@@ -8544,50 +9428,24 @@ function openJigglePop() {
         buildModeControls();
     });
 
-    // Buttons row
-    const btnRow = document.createElement("div");
-    btnRow.style.cssText = "display:flex;gap:4px;margin:4px 0;";
-    const genBtn = document.createElement("button");
-    genBtn.textContent = "Generate";
-    genBtn.style.cssText = "font-size:9px;padding:2px 6px;background:var(--accent);color:#000;border:none;border-radius:3px;cursor:pointer;";
-    genBtn.addEventListener("click", () => {
-        generateJiggleOffsets();
-        (jiggleOffsets && jiggleOffsets.size > 0) ? uiPing(880, 0.08) : uiBuzz();
-    });
-    const clrBtn = document.createElement("button");
-    clrBtn.textContent = "Clear";
-    clrBtn.style.cssText = "font-size:9px;padding:2px 6px;background:transparent;color:var(--muted);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;";
-    clrBtn.addEventListener("click", () => {
-        jiggleOffsets = null;
-        jiggleCumulativeAngle = 0;
-        jiggleCumulativeScale = 1.0;
+    // Select All Coefficients button
+    const selAllBtn = document.createElement("button");
+    selAllBtn.textContent = "⊕ Select All Coefficients";
+    selAllBtn.style.cssText = "font-size:9px;padding:3px 8px;background:transparent;color:var(--fg);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;margin-top:6px;width:100%;";
+    selAllBtn.addEventListener("click", () => {
+        clearRootSelection();
+        for (let i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+        if (coefficients.length > 0) lastSelectedCoeff = coefficients.length - 1;
+        updateCoeffSelectionVisual();
+        updateAnimBar();
         updateJiggleStatus();
     });
-    btnRow.appendChild(genBtn);
-    btnRow.appendChild(clrBtn);
-    jigglePop.appendChild(btnRow);
-
-    // OnTarget checkbox
-    const otRow = document.createElement("div");
-    otRow.style.cssText = "display:flex;align-items:center;gap:4px;margin:4px 0;";
-    const otCb = document.createElement("input");
-    otCb.type = "checkbox";
-    otCb.id = "jiggle-ontarget";
-    otCb.checked = jiggleOnTarget;
-    otCb.style.cssText = "margin:0;";
-    otCb.addEventListener("change", () => { jiggleOnTarget = otCb.checked; });
-    const otLabel = document.createElement("label");
-    otLabel.htmlFor = "jiggle-ontarget";
-    otLabel.style.cssText = "font-size:10px;color:var(--fg);cursor:pointer;";
-    otLabel.textContent = "OnTarget";
-    otRow.appendChild(otCb);
-    otRow.appendChild(otLabel);
-    jigglePop.appendChild(otRow);
+    jigglePop.appendChild(selAllBtn);
 
     // Status
     const status = document.createElement("div");
     status.id = "jiggle-status";
-    status.style.cssText = "font-size:9px;margin-top:2px;";
+    status.style.cssText = "font-size:9px;margin-top:4px;";
     jigglePop.appendChild(status);
     updateJiggleStatus();
 
@@ -8599,6 +9457,110 @@ function openJigglePop() {
 }
 
 document.getElementById("jiggle-btn").addEventListener("click", openJigglePop);
+
+// --- Jiggle Diagnostics popup ---
+let jiggleDiagOpen = false;
+const jiggleDiagPop = document.getElementById("jiggle-diag-pop");
+
+function closeJiggleDiag() {
+    jiggleDiagPop.classList.remove("open");
+    jiggleDiagOpen = false;
+}
+
+function openJiggleDiag() {
+    if (jiggleDiagOpen) { closeJiggleDiag(); return; }
+    jiggleDiagPop.classList.add("open");
+    const r = document.getElementById("jiggle-diag-btn").getBoundingClientRect();
+    jiggleDiagPop.style.left = r.left + "px";
+    jiggleDiagPop.style.top = (r.bottom + 6) + "px";
+    jiggleDiagOpen = true;
+    updateJiggleDiag();
+}
+
+function updateJiggleDiag() {
+    if (!jiggleDiagOpen) return;
+    jiggleDiagPop.innerHTML = "";
+    const mono = "font-family:monospace;font-size:10px;";
+    const lbl = "font-size:10px;color:var(--muted);";
+    const val = "font-size:10px;color:var(--accent);";
+
+    // Title
+    const title = document.createElement("div");
+    title.className = "pop-title";
+    title.textContent = "JIGGLE DIAGNOSTICS";
+    jiggleDiagPop.appendChild(title);
+
+    // Mode + params summary
+    const info = document.createElement("div");
+    info.style.cssText = mono + "padding:4px 0;line-height:1.5;";
+    let html = `<span style="${lbl}">Mode:</span> <span style="${val}">${jiggleMode}</span><br>`;
+    html += `<span style="${lbl}">Trigger #:</span> <span style="${val}">${jiggleTriggerCount}</span><br>`;
+    if (jiggleMode === "random") {
+        html += `<span style="${lbl}">Sigma:</span> <span style="${val}">${jiggleSigma}%</span><br>`;
+    } else if (jiggleMode === "rotate" || jiggleMode === "circle") {
+        html += `<span style="${lbl}">θ step:</span> <span style="${val}">${jiggleTheta} turns</span><br>`;
+        html += `<span style="${lbl}">Cum angle:</span> <span style="${val}">${(jiggleCumulativeAngle / (2*Math.PI)).toFixed(4)} turns</span><br>`;
+    } else if (jiggleMode === "walk") {
+        html += `<span style="${lbl}">Sigma:</span> <span style="${val}">${jiggleSigma}%</span><br>`;
+    } else if (jiggleMode === "scale") {
+        html += `<span style="${lbl}">Scale step:</span> <span style="${val}">${jiggleScaleStep}%</span><br>`;
+        html += `<span style="${lbl}">Cum scale:</span> <span style="${val}">${jiggleCumulativeScale.toFixed(4)}</span><br>`;
+    } else if (jiggleMode === "spiral") {
+        html += `<span style="${lbl}">θ step:</span> <span style="${val}">${jiggleTheta} turns</span><br>`;
+        html += `<span style="${lbl}">Growth:</span> <span style="${val}">${jiggleScaleStep}%</span><br>`;
+        html += `<span style="${lbl}">Cum angle:</span> <span style="${val}">${(jiggleCumulativeAngle / (2*Math.PI)).toFixed(4)} turns</span><br>`;
+        html += `<span style="${lbl}">Cum scale:</span> <span style="${val}">${jiggleCumulativeScale.toFixed(4)}</span><br>`;
+    } else if (jiggleMode === "breathe") {
+        html += `<span style="${lbl}">Amplitude:</span> <span style="${val}">${jiggleAmplitude}%</span><br>`;
+        html += `<span style="${lbl}">Period:</span> <span style="${val}">${jigglePeriod} cycles</span><br>`;
+        const phase = (jiggleTriggerCount / jigglePeriod * 360).toFixed(1);
+        html += `<span style="${lbl}">Phase:</span> <span style="${val}">${phase}°</span><br>`;
+    } else if (jiggleMode === "wobble") {
+        html += `<span style="${lbl}">Amplitude:</span> <span style="${val}">${jiggleTheta} turns</span><br>`;
+        html += `<span style="${lbl}">Period:</span> <span style="${val}">${jigglePeriod} cycles</span><br>`;
+        const phase = (jiggleTriggerCount / jigglePeriod * 360).toFixed(1);
+        html += `<span style="${lbl}">Phase:</span> <span style="${val}">${phase}°</span><br>`;
+    } else if (jiggleMode === "lissajous") {
+        html += `<span style="${lbl}">Amplitude:</span> <span style="${val}">${jiggleAmplitude}%</span><br>`;
+        html += `<span style="${lbl}">Period:</span> <span style="${val}">${jigglePeriod} cycles</span><br>`;
+        html += `<span style="${lbl}">FreqX:</span> <span style="${val}">${jiggleLissFreqX}</span>  <span style="${lbl}">FreqY:</span> <span style="${val}">${jiggleLissFreqY}</span><br>`;
+    }
+    info.innerHTML = html;
+    jiggleDiagPop.appendChild(info);
+
+    // Per-coefficient offsets table
+    if (jiggleOffsets && jiggleOffsets.size > 0) {
+        const hdr = document.createElement("div");
+        hdr.style.cssText = "font-size:9px;color:var(--muted);border-bottom:1px solid var(--stroke);padding:2px 0;margin-top:4px;";
+        hdr.textContent = `Offsets (${jiggleOffsets.size} coefficients)`;
+        jiggleDiagPop.appendChild(hdr);
+
+        const tbl = document.createElement("div");
+        tbl.style.cssText = mono + "line-height:1.4;padding:2px 0;";
+        let rows = "";
+        for (const [idx, off] of jiggleOffsets) {
+            const c = coefficients[idx];
+            const posRe = (c.curve[0].re + off.re).toFixed(4);
+            const posIm = (c.curve[0].im + off.im).toFixed(4);
+            const mag = Math.hypot(off.re, off.im).toFixed(6);
+            rows += `<div style="padding:1px 0;border-bottom:1px solid rgba(255,255,255,0.05);">`;
+            rows += `<span style="${lbl}">c${idx}:</span> `;
+            rows += `<span style="${val}">Δ(${off.re.toFixed(4)}, ${off.im.toFixed(4)})</span> `;
+            rows += `<span style="font-size:9px;color:var(--muted);">|${mag}|</span><br>`;
+            rows += `<span style="font-size:9px;color:var(--muted);margin-left:24px;">→ (${posRe}, ${posIm})</span>`;
+            rows += `</div>`;
+        }
+        tbl.innerHTML = rows;
+        jiggleDiagPop.appendChild(tbl);
+    } else {
+        const none = document.createElement("div");
+        none.style.cssText = "font-size:10px;color:var(--muted);font-style:italic;padding:4px 0;";
+        none.textContent = jiggleMode === "none" ? "No jiggle active" : "No offsets yet — waiting for first trigger";
+        jiggleDiagPop.appendChild(none);
+    }
+}
+
+document.getElementById("jiggle-diag-btn").addEventListener("click", openJiggleDiag);
 
 function rebuild() {
     S = getPanelSize();
@@ -8661,6 +9623,7 @@ installMarqueeSelection(rootsSvg, () => rootsLayer.selectAll("circle.root"), "ro
     const c = coefficients[2];
     c.pathType = "circle"; c.radius = 50; c.speed = 0.5; c.angle = 0.33; c.ccw = false; c.extra = {};
     c.curve = computeCurve(c.re, c.im, "circle", 50 / 100 * coeffExtent(), 0.33, c.extra);
+    c.curveIndex = 0;
     selectedCoeffs.add(2);
     lastSelectedCoeff = 2;
 }
@@ -8669,6 +9632,7 @@ installMarqueeSelection(rootsSvg, () => rootsLayer.selectAll("circle.root"), "ro
     const c2 = coefficients[5];
     c2.pathType = "circle"; c2.radius = 15; c2.speed = 0.85; c2.angle = 0.85; c2.ccw = false; c2.extra = {};
     c2.curve = computeCurve(c2.re, c2.im, "circle", 15 / 100 * coeffExtent(), 0.85, c2.extra);
+    c2.curveIndex = 0;
 }
 updateCoeffSelectionVisual();
 updateAnimBar();

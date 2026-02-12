@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v24</title>
+<title>PolyPaint v25</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
@@ -511,7 +511,7 @@ body.fast-mode #bitmap-fast-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v24</span>
+    <span class="app-title">PolyPaint v25</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -907,6 +907,7 @@ let bitmapCtx = null;
 let bitmapRange = null;   // frozen bounding box from roots panel
 let bitmapFrameCount = 0;
 let bitmapCanvasColor = "#000000"; // canvas background color
+let bitmapPersistentBuffer = null; // persistent ImageData for fast mode compositing (avoids getImageData)
 let bitmapCoeffView = false;     // when true, fast mode plots coefficient positions instead of roots
 // Fast mode state
 const FAST_PASS_SECONDS = 1.0; // virtual duration of one fast pass
@@ -944,6 +945,7 @@ let fastModeWorkerPixels = [];      // Collected pixel buffers from workers
 let fastModeWorkerRoots = null;     // Root positions from the last-range worker
 let fastModeWorkerProgress = [];    // Per-worker step counts for progress aggregation
 let fastModePassStartTime = 0;      // performance.now() when current pass started
+let fastModeCompositeBreakdown = null; // Timing breakdown of compositeWorkerPixels phases
 let fastModeCycleStartTime = 0;     // performance.now() when current cycle started
 let fastModeTimingHistory = [];     // Array of {passMs, stepsPerSec, workers, steps}
 // Stats tab state
@@ -5946,7 +5948,7 @@ function updateTimingPopup() {
         ["Steps/pass", last.steps.toLocaleString()],
     ];
     if (fastModeTargetPasses > 0) {
-        lines.push(["Passes", nPasses + "/" + fastModeTargetPasses]);
+        lines.push(["Passes", nPasses + "/" + Math.round(fastModeTargetPasses * 100) / 100]);
     } else {
         lines.push(["Passes", String(nPasses)]);
     }
@@ -5955,6 +5957,16 @@ function updateTimingPopup() {
     if (nPasses > 1) {
         const avgSps = Math.round(totalSteps / (totalMs / 1000));
         lines.push(["Avg steps/s", avgSps.toLocaleString()]);
+    }
+    // Composite breakdown from last pass
+    if (last.composite) {
+        const c = last.composite;
+        lines.push(["", ""]);
+        lines.push(["Workers", last.workerMs.toFixed(1) + "ms"]);
+        lines.push(["getImageData", c.getMs.toFixed(1) + "ms"]);
+        lines.push(["pixel writes", c.writeMs.toFixed(1) + "ms (" + c.pixels.toLocaleString() + "px)"]);
+        lines.push(["putImageData", c.putMs.toFixed(1) + "ms"]);
+        lines.push(["composite", c.totalMs.toFixed(1) + "ms"]);
     }
     const tbl = document.createElement("div");
     tbl.style.cssText = "display:grid;grid-template-columns:auto auto;gap:2px 10px;font-size:10px;";
@@ -5969,6 +5981,35 @@ function updateTimingPopup() {
         tbl.appendChild(vEl);
     }
     body.appendChild(tbl);
+    // Copy button
+    const copyBtn = document.createElement("button");
+    copyBtn.textContent = "Copy";
+    copyBtn.style.cssText = "margin-top:6px;font-size:9px;padding:2px 8px;cursor:pointer;background:var(--bg);color:var(--accent);border:1px solid var(--accent-border);border-radius:4px;";
+    copyBtn.addEventListener("click", function() {
+        const data = {
+            resolution: bitmapCtx ? bitmapCtx.canvas.width : null,
+            workers: last.workers,
+            stepsPerPass: last.steps,
+            passes: fastModeTimingHistory.slice(-10).map(function(h) {
+                return {
+                    passMs: +h.passMs.toFixed(1),
+                    workerMs: h.workerMs ? +h.workerMs.toFixed(1) : null,
+                    stepsPerSec: h.stepsPerSec,
+                    composite: h.composite ? {
+                        getMs: +h.composite.getMs.toFixed(1),
+                        writeMs: +h.composite.writeMs.toFixed(1),
+                        putMs: +h.composite.putMs.toFixed(1),
+                        totalMs: +h.composite.totalMs.toFixed(1),
+                        pixels: h.composite.pixels
+                    } : null
+                };
+            })
+        };
+        navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+        copyBtn.textContent = "Copied!";
+        setTimeout(function() { copyBtn.textContent = "Copy"; }, 1000);
+    });
+    body.appendChild(copyBtn);
 }
 
 function openTimingPop() {
@@ -7149,6 +7190,21 @@ function drawAllStatsPlots() {
 
 // --- Bitmap trail canvas ---
 
+function fillPersistentBuffer(hexColor) {
+    if (!bitmapPersistentBuffer) return;
+    var data = bitmapPersistentBuffer.data;
+    var r = parseInt(hexColor.slice(1, 3), 16);
+    var g = parseInt(hexColor.slice(3, 5), 16);
+    var b = parseInt(hexColor.slice(5, 7), 16);
+    data[0] = r; data[1] = g; data[2] = b; data[3] = 255;
+    var len = data.length, filled = 4;
+    while (filled < len) {
+        var chunk = Math.min(filled, len - filled);
+        data.copyWithin(filled, 0, chunk);
+        filled += chunk;
+    }
+}
+
 function initBitmapCanvas() {
     const canvas = document.getElementById("bitmap-canvas");
     const res = parseInt(document.getElementById("bitmap-res-select").value, 10) || 2000;
@@ -7157,6 +7213,8 @@ function initBitmapCanvas() {
     bitmapCtx = canvas.getContext("2d");
     bitmapCtx.fillStyle = bitmapCanvasColor;
     bitmapCtx.fillRect(0, 0, canvas.width, canvas.height);
+    bitmapPersistentBuffer = bitmapCtx.createImageData(res, res);
+    fillPersistentBuffer(bitmapCanvasColor);
     bitmapRange = panels.roots.range;
     bitmapFrameCount = 0;
     fastModeElapsedOffset = 0;
@@ -7921,8 +7979,9 @@ function handleFastModeWorkerMessage(e) {
 
         if (fastModeWorkersComplete === fastModeWorkers.length) {
             // All workers done — composite, record timing, advance
+            const workerMs = performance.now() - fastModePassStartTime;
             compositeWorkerPixels();
-            recordPassTiming();
+            recordPassTiming(workerMs);
             advancePass();
         }
     }
@@ -7931,9 +7990,20 @@ function handleFastModeWorkerMessage(e) {
 function compositeWorkerPixels() {
     if (!bitmapCtx) return;
     const w = bitmapCtx.canvas.width, h = bitmapCtx.canvas.height;
-    const existing = bitmapCtx.getImageData(0, 0, w, h);
-    const out = existing.data;
 
+    // Ensure persistent buffer exists and matches canvas size
+    if (!bitmapPersistentBuffer || bitmapPersistentBuffer.width !== w || bitmapPersistentBuffer.height !== h) {
+        bitmapPersistentBuffer = bitmapCtx.createImageData(w, h);
+        fillPersistentBuffer(bitmapCanvasColor);
+    }
+
+    const t0 = performance.now();
+    // No getImageData — write directly to persistent buffer
+    const t1 = t0;
+
+    const out = bitmapPersistentBuffer.data;
+    let totalPainted = 0;
+    let minX = w, maxX = 0, minY = h, maxY = 0;
     for (const result of fastModeWorkerPixels) {
         if (!result) continue;
         const idx = new Int32Array(result.paintIdx);
@@ -7941,26 +8011,48 @@ function compositeWorkerPixels() {
         const g = new Uint8Array(result.paintG);
         const b = new Uint8Array(result.paintB);
         const count = result.paintCount;
+        totalPainted += count;
         for (let i = 0; i < count; i++) {
-            const off = idx[i] * 4;
+            const pixIdx = idx[i];
+            const off = pixIdx * 4;
             out[off] = r[i];
             out[off + 1] = g[i];
             out[off + 2] = b[i];
             out[off + 3] = 255;
+            const px = pixIdx % w;
+            const py = (pixIdx / w) | 0;
+            if (px < minX) minX = px;
+            if (px > maxX) maxX = px;
+            if (py < minY) minY = py;
+            if (py > maxY) maxY = py;
         }
     }
+    const t2 = performance.now();
 
-    bitmapCtx.putImageData(existing, 0, 0);
+    if (totalPainted > 0) {
+        bitmapCtx.putImageData(bitmapPersistentBuffer, 0, 0, minX, minY, maxX - minX + 1, maxY - minY + 1);
+    }
+    const t3 = performance.now();
+
+    fastModeCompositeBreakdown = {
+        getMs: t1 - t0,
+        writeMs: t2 - t1,
+        putMs: t3 - t2,
+        totalMs: t3 - t0,
+        pixels: totalPainted
+    };
     fastModeWorkerPixels = [];
 }
 
-function recordPassTiming() {
+function recordPassTiming(workerMs) {
     const ms = performance.now() - fastModePassStartTime;
     fastModeTimingHistory.push({
         passMs: ms,
         stepsPerSec: Math.round(fastModeTotalSteps / (ms / 1000)),
         workers: fastModeWorkers.length,
-        steps: fastModeTotalSteps
+        steps: fastModeTotalSteps,
+        workerMs: workerMs || ms,
+        composite: fastModeCompositeBreakdown
     });
     updateTimingPopup();
 }
@@ -8840,6 +8932,7 @@ document.getElementById("bitmap-clear-btn").addEventListener("click", function (
     if (bitmapCtx) {
         bitmapCtx.fillStyle = bitmapCanvasColor;
         bitmapCtx.fillRect(0, 0, bitmapCtx.canvas.width, bitmapCtx.canvas.height);
+        fillPersistentBuffer(bitmapCanvasColor);
         bitmapFrameCount = 0;
         fastModeElapsedOffset = 0;
     }

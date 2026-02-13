@@ -49,6 +49,7 @@ No server. No WebSocket. No build tools. The entire app is one self-contained HT
 
 - **[Root Finding: Ehrlich-Aberth Method & Domain Coloring](docs/solver.md)** — the simultaneous iterative solver with cubic convergence, warm-starting for interactive use, WASM compilation, and HSL domain coloring
 - **[Fast Mode Workers](docs/worker_implementation.md)** — multi-worker architecture, sparse pixel format, WASM solver integration, performance characteristics
+- **[Coefficient Paths & Jiggle](docs/paths.md)** — curve representation, 21 path types, fast-mode cycle sync, full-cycle auto-stop derivation, and 10 jiggle perturbation modes
 - **[Sonification](docs/sonification.md)** — audio graph, feature extraction from root distributions, sound mapping formulas, instrument config popovers, signal routing matrix, and silence management
 - **[Root Braids and Monodromy](docs/braids.md)** — why closed loops in coefficient space permute roots, and how trail rendering visualizes it
 - **[Patterns & Trail Gallery](docs/patterns.md)** — the 26 initial patterns (basic, coefficient, root shapes) and annotated trail screenshots
@@ -61,7 +62,7 @@ The UI is organized around a compact header bar and two side-by-side panels with
 
 **Mid-bar — Ops** (between left and right panels; enabled when nodes are selected — buttons brighten from dim to full when a selection exists): ⇕ **Scale** (vertical slider, exponential 0.1×–10×), ⟲ **Rotate** (horizontal slider, ±0.5 turns), ✛ **Translate** (2D vector pad, ±2 in each axis). Each opens a transient popover with live preview — drag to scrub, click outside or press Escape to commit and close. A colored target label below Ops shows "· coeffs" (green) or "· roots" (red) to indicate what the operations will affect. Below the transform tools: ⊕ / ✕ buttons for quick select/deselect (selects roots if any root is selected, otherwise coefficients), and **Inv** to reverse coefficient order (reflects roots around the unit circle).
 
-**Left panel** has two tabs: **Coefficients** (complex-plane visualization with drag interaction) and **List** (tabular view of all coefficients with per-row path editing, bulk speed/radius controls, and a curve navigator). The tab bar also contains a **scrub slider** (drag to manually move coefficients along their paths, 0–5 seconds), ▶ **Play** / ⏸ **Pause**, and **Home** (return to start positions).
+**Left panel** has two tabs: **Coefficients** (complex-plane visualization with drag interaction) and **List** (tabular view with per-coefficient columns for position, speed, radius, curve length, and curve index; a **Transform** dropdown with 20 bulk operations; and **Param1/Param2** sliders for transform parameters). The tab bar also contains a **scrub slider** (drag to manually move coefficients along their paths, 0–5 seconds), ▶ **Play** / ⏸ **Pause**, and **Home** (return to start positions).
 
 **Trajectory editor** (always visible below the Coefficients tab bar): ☰ Coefficient picker, ⊕ All / ✕ None selection buttons, selection label, and **Update Sel** button on the first row. Path type dropdown and path-specific controls on the second row — the available sliders depend on the chosen path type (e.g. R/S/A/CW-CCW for circular paths, S/σ for Gaussian cloud, S/W/CW-CCW for C-Ellipse). A **PS** (Prime Speed) button appears when the path has a speed parameter. Controls dim when no coefficients are selected.
 
@@ -115,8 +116,9 @@ Each coefficient stores its own trajectory settings: path type, radius, speed, a
 - **Curves:** Lissajous, Figure-8, Cardioid, Astroid, Deltoid, Rose (3-petal), Spirograph, Hypotrochoid, Butterfly, Star (pentagram), Square, C-Ellipse
 - **Space-filling:** Hilbert (Moore curve), Peano, Sierpinski arrowhead
 
-Right-click any coefficient to open a context menu with trajectory settings for that individual coefficient — changes preview live. Click "Accept" to commit; press Escape or click outside to cancel and revert.
+Right-click any coefficient to open a context menu with trajectory settings for that individual coefficient — changes preview live. Click "Accept" to commit; press Escape or click outside to cancel and revert. The context menu also has a **Delete** button to remove the coefficient (minimum degree 1).
 
+- **Add/Delete coefficients:** Right-click on empty canvas space to add a new coefficient at that position (as the new highest-power term). Right-click an existing coefficient to edit or delete it.
 - **Coefficient paths** are always visible on the left panel when a trajectory is assigned — the colored curve shows exactly where each coefficient will travel during animation.
 - **Trails** toggle (roots toolbar): enables root trail recording on the right panel. Roots leave colored SVG path trails as they move. Loop detection stops trail collection and auto-stops video recording after one full cycle. Jump detection breaks trails when consecutive points are far apart (>30% of visible range), avoiding visual artifacts from root-identity swaps.
 
@@ -131,11 +133,15 @@ karpo_hackathon/
 ├── docs/
 │   ├── solver.md         # Ehrlich-Aberth method + domain coloring + WASM
 │   ├── worker_implementation.md  # Fast mode workers + WASM integration
+│   ├── paths.md          # Coefficient path curves, cycle sync, jiggle
 │   ├── sonification.md   # Audio graph, feature extraction, sound mapping
 │   ├── braids.md         # Root braids and monodromy
 │   ├── patterns.md       # Pattern catalog + trail gallery
-│   ├── paths.md          # Coefficient path curves + jiggle formulas
-│   └── lessons.md        # Architecture notes + debugging war stories
+│   ├── lessons.md        # Architecture notes + debugging war stories
+│   ├── memory_timings.md # Persistent buffer optimization analysis
+│   ├── wasm_investigation.md  # WASM solver design + benchmarks
+│   └── test-results.md   # Playwright test results + JS/WASM benchmarks
+├── tests/                # Playwright Python tests (38 tests)
 ├── snaps/                # Snap captures (PNG + JSON metadata)
 └── README.md
 ```
@@ -145,7 +151,7 @@ karpo_hackathon/
 ### Edge Cases Handled
 
 - **Leading coefficient at origin**: near-zero leading coefficients are stripped before solving
-- **NaN/Inf roots**: filtered out before rendering
+- **NaN/Inf roots**: solver always returns exactly `degree` roots — non-finite results fall back to warm-start values, then to unit-circle seeds
 - **Huge coefficients during root drag**: `rootsToCoefficients` can produce coefficients with magnitudes up to ~10¹¹ at high degree; grid step computation uses a dynamic 1-2-5 × 10ᵏ formula to keep ≤20 grid lines per axis at any scale, and `computeRange` caps overflow to prevent infinite loops
 - **Window resize**: panels dynamically resize, solver re-runs
 - **Degree change**: coefficients reinitialized, both panels reset

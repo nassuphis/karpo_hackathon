@@ -8,7 +8,7 @@ Everything discovered while working on this codebase — architecture, conventio
 
 ### Single-File Design
 
-The entire application lives in one HTML file (`index.html`, ~9,750 lines). CSS is embedded in a `<style>` block (lines 8–513), HTML body is lines 515–787, and all JavaScript is inline in a single `<script>` block (lines 804–9757). There is no build step — serve the file directly.
+The entire application lives in one HTML file (`index.html`, ~10,400 lines). CSS is embedded in a `<style>` block (lines 8–513), HTML body is lines 515–787, and all JavaScript is inline in a single `<script>` block (lines 804–10439). There is no build step — serve the file directly.
 
 **Why it works**: Zero tooling overhead, instant deployment to GitHub Pages, no import/bundling issues. D3.js and html2canvas are loaded from CDN.
 
@@ -25,15 +25,17 @@ The entire application lives in one HTML file (`index.html`, ~9,750 lines). CSS 
 | Panel setup & scales | 830–900 | D3 scale initialization, grid drawing |
 | Coefficient data model | 868–880 | State arrays, selection sets, trail data |
 | Rendering functions | 1621–3960 | SVG circles, trails, domain coloring, grid |
-| Animation loop | 3420–3520 | `animLoop()`, path interpolation, throttled solve |
-| Root solver | 3966–4142 | Ehrlich-Aberth, root matching, warm start |
-| Event handlers | 4262–5200 | Mouse, keyboard, tab switch, popover toggle |
-| Ops tools | 4961–5135 | Scale, rotate, add — popover builders |
-| Recording & snapshots | 5440–6090 | Video capture, save/load JSON, PNG export |
-| Stats plotting | 6838–7207 | 16 time-series canvases, stat computation |
-| Bitmap & fast mode | 7200–8100 | Persistent buffer, worker coordination, compositing |
-| Web worker blob | 7311–7540 | Inline EA solver for workers |
-| Initialization | 9725–9757 | Default coefficients, first render, event wiring |
+| Add/delete coefficients | 2659–2710 | Right-click canvas to add, context menu delete |
+| Animation loop | 3631–3750 | `animLoop()`, path interpolation, throttled solve |
+| Root solver | 4121–4310 | Ehrlich-Aberth, root matching, warm start |
+| Event handlers | 4430–5400 | Mouse, keyboard, tab switch, popover toggle |
+| Ops tools | 5100–5350 | Scale, rotate, translate — popover builders |
+| Recording & snapshots | 5650–6310 | Video capture, save/load JSON, PNG export |
+| Stats plotting | 7050–7430 | 16 time-series canvases, stat computation |
+| Bitmap & fast mode | 7430–8500 | Persistent buffer, worker coordination, compositing |
+| Web worker blob | 7582–8100 | Inline EA solver for workers |
+| List tab & transforms | 9000–9400 | Coefficient table, Transform dropdown, bulk operations |
+| Initialization | 10400–10439 | Default coefficients, first render, event wiring |
 
 ### External Dependencies
 
@@ -85,6 +87,20 @@ Each coefficient is a plain object with these fields:
 
 Two `Set` objects: `selectedCoeffs` (indices into `coefficients[]`) and `selectedRoots` (indices into `currentRoots[]`). Most operations check `.size > 0` before enabling UI.
 
+### List Tab
+
+The List tab (`leftTab === "list"`) shows a tabular view of all coefficients with:
+- **Selection buttons**: All, None, SameCurve, and a curve-type cycler
+- **Transform dropdown** (20 transforms): Applies a one-shot transform to `selectedCoeffs`, then resets to "none". Includes PrimeSpeeds, SetAllSpeeds, RandomSpeed, RandomAngle, RandomRadius, LerpSpeed, LerpRadius, LerpAngle, RandomDirection, FlipAllDirections, ShuffleCurves, ShufflePositions, CircleLayout, RotatePositions, ScalePositions, JitterPositions, Conjugate, InvertPositions, SortByModulus, SortByArgument.
+- **Param1/Param2 sliders**: Passive inputs that transforms read when executed.
+- **Per-coefficient columns**: Index with color dot, position (re, im), speed (spd), radius (rad), curve length (pts), curve position (pos).
+
+### Add/Delete Coefficients
+
+- **Right-click on empty canvas space** → `addCoefficientAt(re, im, event)` creates a new highest-power coefficient via `unshift()`, adjusts selection indices +1, clears trails, opens context menu on index 0.
+- **Right-click on existing coefficient** → context menu with path editing. **Delete** button (red-styled) removes the coefficient, with a guard preventing deletion below degree 1 (2 coefficients minimum).
+- Both operations call `clearTrails()` and `solveRoots()` to keep the root display consistent.
+
 ---
 
 ## 3. Core Algorithms
@@ -95,9 +111,10 @@ Simultaneous iterative root finder with cubic convergence. Key parameters:
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| Max iterations | 40 (main), 64 (worker) | Reduced for speed; worker bumped for iteration color mode |
-| Tolerance squared | 1e-8 (main), 1e-16 (worker) | Worker uses tighter tolerance for accuracy |
-| Hot loop optimization | No `Math.hypot` | Uses `re*re + im*im` directly |
+| Max iterations | 100 (main), 64 (worker/WASM) | Worker uses 64 for iteration color mode range |
+| Tolerance | 1e-12 magnitude (main), 1e-16 squared (worker/WASM) | Worker uses tighter tolerance for accuracy |
+| Leading-zero test | `Math.hypot` < 1e-15 (main), magnitude² < 1e-30 (worker/WASM) | Main uses Math.hypot; workers use manual |
+| Hot loop optimization | No `Math.hypot` in worker/WASM | Workers use `re*re + im*im` directly |
 | WASM option | Compiled C solver | Selectable via cfg button in bitmap toolbar |
 
 **Warm starting** is critical: reusing previous roots as initial guesses cuts iterations from ~20 to ~3-5 for small coefficient movements. This is what makes interactive dragging feel instant.
@@ -460,6 +477,14 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 12. **Float64Array out-of-bounds reads return `undefined`, not an error** — and `undefined` silently converts to `NaN` when stored in another Float64Array. This makes dimension-mismatch bugs extremely hard to find: no exception, no console warning, just corrupted numbers propagating through computation. The `solveRootsEA` filter bug went undetected because it only triggered with specific polynomial configurations.
 
+13. **`Set` iteration order is insertion order, not sorted order** — `[...selectedCoeffs]` returns indices in the order they were added to the Set, not numerically sorted. When applying transforms like LerpRadius that need deterministic index ordering (first selected → last selected), always sort: `[...selectedCoeffs].sort((a, b) => a - b)`.
+
+14. **Coefficient array index = polynomial term power mapping** — `coefficients[0]` is the leading (highest power) term, `coefficients[n-1]` is the constant term. Subscript display is `c${n-1-i}` where `n = coefficients.length`. Adding a new coefficient via `unshift()` makes it the new highest power; adding via `push()` makes it the new constant term. Selection indices must be adjusted when coefficients are added/removed (all indices shift by ±1).
+
+15. **Root trails must be cleared on coefficient add/delete** — when the polynomial's degree changes, old root trails from the previous polynomial are meaningless and visually misleading. `clearTrails()` must be called in both `addCoefficientAt()` and `deleteCoefficient()`.
+
+16. **Transform dropdown pattern: execute-then-reset** — The List tab's Transform dropdown fires on `change`, applies the selected transform to `selectedCoeffs`, calls `solveRootsThrottled()` to update roots, then resets the dropdown back to `"none"`. This prevents accidental double-application and keeps the UI clean.
+
 ---
 
 ## 11. Conventions to Follow
@@ -474,13 +499,13 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 ### Adding New State to Save/Load
 
-1. Add serialization in `saveState()` (~line 6063)
-2. Add deserialization in `loadState()` (~line 6087) with a default fallback for old snapshots
+1. Add serialization in `saveState()` (~line 6281)
+2. Add deserialization in `loadState()` (~line 6305) with a default fallback for old snapshots
 3. Test with old snapshot files to verify backward compatibility
 
 ### Adding a New Statistic
 
-1. Add to `STAT_TYPES` array (line ~958)
+1. Add to `STAT_TYPES` array (line ~955)
 2. Add a color to `STAT_COLORS` map
 3. Compute in the stats update section of `renderRoots()` or `updateStats()`
 4. It automatically becomes available as an audio route source
@@ -502,9 +527,11 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 ## 12. Testing & Debugging
 
-### No Test Suite
+### Test Suite
 
-There are no automated tests. The application is tested manually by:
+Automated tests exist in `tests/` using Playwright Python (headless Chromium). 38 tests covering solver correctness, root matching, curve generation, integration, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
+
+Manual testing remains important for:
 - Dragging coefficients and roots
 - Playing animations with various path types
 - Toggling fast mode at different resolutions
@@ -539,33 +566,37 @@ There are no automated tests. The application is tested manually by:
 
 | File | Topic | Lines |
 |------|-------|-------|
-| [solver.md](solver.md) | Ehrlich-Aberth algorithm, warm start, Horner eval | ~54 |
+| [solver.md](solver.md) | Ehrlich-Aberth algorithm, warm start, Horner eval, WASM | ~109 |
 | [paths.md](paths.md) | Curve representation, path types, cycle sync, jiggle | ~237 |
 | [paths_nn.md](paths_nn.md) | Path notes (draft) | ~25 |
 | [sonification.md](sonification.md) | Audio graph, feature extraction, sound mapping, routing | ~233 |
 | [braids.md](braids.md) | Root monodromy, topological permutations | ~10 |
 | [patterns.md](patterns.md) | Coefficient/root patterns, gallery snapshots | ~99 |
-| [worker_implementation.md](worker_implementation.md) | Fast mode protocol, worker lifecycle, data format | ~538 |
+| [worker_implementation.md](worker_implementation.md) | Fast mode protocol, worker lifecycle, data format | ~546 |
 | [worker_speed_issues.md](worker_speed_issues.md) | Timing bug fix, resolution scaling analysis | ~189 |
 | [memory_timings.md](memory_timings.md) | Persistent buffer optimization: analysis + results | ~219 |
+| [wasm_investigation.md](wasm_investigation.md) | WASM solver design, build workflow, benchmarks | ~251 |
+| [test-results.md](test-results.md) | Playwright test results + JS/WASM benchmarks | ~122 |
 | [lessons.md](lessons.md) | This file | — |
 
 ### Key Code Locations
 
 | Component | Approx Lines |
 |-----------|-------------|
-| `initAudio()` | ~1212 |
-| `updateAudio()` | ~1276 |
-| `uiPing()` / `uiBuzz()` | ~1177 |
-| `renderRoots()` | ~3676 |
-| `animLoop()` | ~3473 |
-| `solveRootsEA()` | ~3966 |
-| `matchRootOrder()` | ~4107 |
-| `compositeWorkerPixels()` | ~7989 |
-| `fillPersistentBuffer()` | ~7193 |
-| `initBitmapCanvas()` | ~7209 |
-| `saveState()` | ~6063 |
-| `loadState()` | ~6087 |
-| `toggleSound()` | ~4637 |
-| Worker blob code | ~7488–7822 |
-| Global click handler (popover close) | ~5065 |
+| `initAudio()` | ~1208 |
+| `updateAudio()` | ~1272 |
+| `uiPing()` / `uiBuzz()` | ~1173 |
+| `addCoefficientAt()` | ~2659 |
+| `deleteCoefficient()` | ~2684 |
+| `animLoop()` | ~3631 |
+| `renderRoots()` | ~3831 |
+| `solveRootsEA()` | ~4121 |
+| `matchRootOrder()` | ~4272 |
+| `toggleSound()` | ~4803 |
+| `saveState()` | ~6281 |
+| `loadState()` | ~6305 |
+| `fillPersistentBuffer()` | ~7437 |
+| `initBitmapCanvas()` | ~7452 |
+| `createFastModeWorkerBlob()` | ~7582 |
+| `compositeWorkerPixels()` | ~8392 |
+| List tab transforms | ~9004 |

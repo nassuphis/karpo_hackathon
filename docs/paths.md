@@ -158,7 +158,7 @@ The curve shape and parameters (path type, radius, angle, speed) are unchanged �
 
 ### Modes
 
-The popup has a **Mode** dropdown with 5 options:
+The popup has a **Mode** dropdown with 10 options:
 
 #### None (default)
 No perturbation. Generate is a no-op. Use this when you want jiggle disabled without having to remember parameter values.
@@ -217,6 +217,53 @@ Cumulative scaling of all animated coefficient home positions around their centr
   ```
 - With OnTarget, coefficients spread further apart each cycle, producing radial density patterns
 
+#### Circle
+Cumulative rotation of all coefficient positions around the **origin** (not the centroid). Each coefficient's home position is multiplied by e^(i·θ), effectively rotating the entire polynomial.
+
+- **Control**: θ (0.001–0.500 turns)
+- **State**: `jiggleCumulativeAngle` — accumulated angle, incremented by `θ × 2π` each trigger
+- **Formula**:
+  ```
+  cos_a, sin_a = cos/sin(cumAngle)
+  offset.re = hre × (cos_a − 1) − him × sin_a
+  offset.im = hre × sin_a + him × (cos_a − 1)
+  ```
+- Unlike Rotate (which rotates around the centroid), Circle rotates around the origin — this changes the polynomial's coefficient magnitudes, not just their relative arrangement
+
+#### Spiral
+Combined cumulative rotation + scaling around the centroid. Combines the effects of Rotate and Scale.
+
+- **Controls**: θ (turns) + step (% scale per trigger)
+- **State**: `jiggleCumulativeAngle` + `jiggleCumulativeScale`
+- **Formula**: Applies both scale factor and rotation matrix to `(home − centroid)` offsets
+- With OnTarget, produces a logarithmic spiral exploration of coefficient space
+
+#### Breathe
+Sinusoidal scaling from the centroid — coefficients expand and contract periodically.
+
+- **Controls**: Amplitude (0–100, as % of centroid distance), Period (triggers per oscillation)
+- **Formula**: `scale = 1 + (amplitude/100) × sin(2π × t / period)` applied to centroid-relative offsets
+- Produces a pulsing/breathing effect. After one full period, offsets return near zero.
+
+#### Wobble
+Sinusoidal rotation around the centroid — coefficients oscillate angularly.
+
+- **Controls**: θ (max rotation in turns), Period (triggers per oscillation)
+- **Formula**: `angle = θ × 2π × sin(2π × t / period)` applied as rotation around centroid
+- Produces a rocking/wobbling effect. The rotation swings back and forth within ±θ turns.
+
+#### Lissajous
+Uniform translation along a Lissajous figure — all coefficients shift by the same offset.
+
+- **Controls**: Amplitude (0–100, as % of `coeffExtent()`), Period, FreqX, FreqY
+- **Formula**:
+  ```
+  dx = amp × sin(2π × freqX × t / period)
+  dy = amp × sin(2π × freqY × t / period)
+  ```
+  All coefficients get the same `{re: dx, im: dy}` offset.
+- Default frequencies 1:2 produce a classic figure-8 scan through coefficient space.
+
 ### Common Controls
 
 - **Generate**: Computes new offsets using the current mode. Plays a ping on success, a buzz when mode is None or no animated coefficients exist.
@@ -227,10 +274,15 @@ Cumulative scaling of all animated coefficient home positions around their centr
 
 Mode, σ, θ, and scale step are saved/loaded with the project state. Cumulative state (angle, scale factor) and active offsets are transient — they reset on load.
 
-## The "pos" Column in the List Tab
+## List Tab Columns
 
-The List tab shows a **pos** column for each coefficient. This displays `nearestCurveIndex(c)` — a brute-force search that finds which curve sample point is closest to the coefficient's current position. During animation it updates every frame, showing the coefficient's approximate index as it sweeps through 0 → N−1 → 0. When paused, it shows where on the curve the coefficient currently sits.
+The List tab shows a table with per-coefficient data:
 
-## The "pts" Column
-
-The **pts** column shows `curve.length` — the number of sample points in the coefficient's trajectory. For interactive mode this is 200 or 1500; it has no direct relationship to the Steps dropdown (which only applies to fast mode curve generation via `computeCurveN`).
+| Column | Content | Updates |
+|--------|---------|---------|
+| **Index** | Color dot + subscript label (c₀, c₁, ...) | Static |
+| **Position** | Complex coordinates (re, im) | Every frame during animation |
+| **spd** | Speed value (1–100 display) | On path change |
+| **rad** | Path radius (0–100) or "—" if pathType is "none" | On path change |
+| **pts** | `curve.length` — number of sample points in the trajectory. For interactive mode this is 200 or 1500; unrelated to the Steps dropdown (which only applies to fast mode via `computeCurveN`). | On path change |
+| **pos** | `nearestCurveIndex(c)` — brute-force search for which curve sample point is closest to the coefficient's current position. Sweeps 0 → N−1 → 0 during animation. | Every frame during animation |

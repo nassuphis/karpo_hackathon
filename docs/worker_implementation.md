@@ -173,7 +173,7 @@ Workers avoid allocating W×H×4 buffers (a 10K×10K canvas = 400MB per worker).
 
 Max allocation: `(stepEnd - stepStart) * nRoots` entries. Transferred back to main thread as `Transferable` buffers (zero-copy).
 
-Compositing on main thread reads existing canvas `ImageData`, overwrites painted pixels, puts it back. Pixel order is arbitrary (no blending, last-write-wins within overlapping workers).
+Compositing on main thread writes sparse pixels directly into a **persistent `ImageData` buffer** (no `getImageData` needed). Only the dirty rectangle region is flushed to canvas via `putImageData`. Pixel order is arbitrary (no blending, last-write-wins within overlapping workers).
 
 ---
 
@@ -432,7 +432,7 @@ Scaling is sub-linear due to: structured clone overhead, main-thread compositing
 
 1. **Ehrlich-Aberth solver**: O(n² × iters) per step, where n = degree. Dominates at degree > 10. WASM solver reduces this by eliminating JIT warmup, GC pauses, and leveraging tighter f64 codegen — biggest gains at high degree.
 2. **Root matching**: O(n²) every 4th step in colored mode. Skipped in uniform mode.
-3. **Compositing**: Single-threaded `getImageData` / `putImageData` cycle. Fast for sparse pixels, slow if total pixel count approaches canvas size.
+3. **Compositing**: Persistent `ImageData` buffer with dirty-rect `putImageData`. After the persistent buffer optimization, compositing is fast (~5ms at 10K) and no longer the bottleneck. See [memory_timings.md](memory_timings.md).
 
 ### Memory
 

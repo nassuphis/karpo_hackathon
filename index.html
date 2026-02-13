@@ -262,7 +262,7 @@ body {
     font-size: 8px; color: var(--muted); opacity: 0.5; flex-shrink: 0;
     min-width: 28px; text-align: right; font-variant-numeric: tabular-nums;
 }
-.cpick-row .cpick-speed, .cpick-row .cpick-plen, .cpick-row .cpick-pos {
+.cpick-row .cpick-speed, .cpick-row .cpick-radius, .cpick-row .cpick-plen, .cpick-row .cpick-pos {
     font-size: 8px; color: var(--muted); opacity: 0.7; flex-shrink: 0;
     min-width: 24px; text-align: right; font-variant-numeric: tabular-nums;
 }
@@ -604,15 +604,41 @@ body.fast-mode #stop-roots-btn {
                     <button id="list-curve-prev" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9664;</button>
                     <span id="list-curve-cycle" style="font-size:9px;color:var(--accent);min-width:36px;text-align:center;">—</span>
                     <button id="list-curve-next" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9654;</button>
-                    <span style="flex:1;"></span>
-                    <span style="display:inline-flex;align-items:center;gap:2px;" title="Set speed for all selected coefficients">
-                        <span style="font-size:7px;color:var(--muted);">S</span>
+                    <span id="list-count" style="font-size:9px;color:var(--muted);"></span>
+                    <span style="font-size:7px;color:var(--muted);">Transform</span>
+                    <select id="list-transform" style="font-size:8px;background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:1px 2px;">
+                        <option value="none">none</option>
+                        <option value="PrimeSpeeds">PrimeSpeeds</option>
+                        <option value="SetAllSpeeds">Set All Speeds</option>
+                        <option value="RandomSpeed">RandomSpeed</option>
+                        <option value="RandomAngle">RandomAngle</option>
+                        <option value="RandomRadius">RandomRadius</option>
+                        <option value="LerpSpeed">Lerp Speed</option>
+                        <option value="LerpRadius">Lerp Radius</option>
+                        <option value="LerpAngle">Lerp Angle</option>
+                        <option value="RandomDirection">RandomDirection</option>
+                        <option value="FlipAllDirections">FlipAllDirections</option>
+                        <option value="ShuffleCurves">ShuffleCurves</option>
+                        <option value="ShufflePositions">ShufflePositions</option>
+                        <option value="CircleLayout">CircleLayout</option>
+                        <option value="RotatePositions">RotatePositions</option>
+                        <option value="ScalePositions">ScalePositions</option>
+                        <option value="JitterPositions">JitterPositions</option>
+                        <option value="Conjugate">Conjugate</option>
+                        <option value="InvertPositions">InvertPositions</option>
+                        <option value="SortByModulus">SortByModulus</option>
+                        <option value="SortByArgument">SortByArgument</option>
+                    </select>
+                    <span style="display:inline-flex;align-items:center;gap:2px;" title="Parameter for transforms">
+                        <span style="font-size:7px;color:var(--muted);">Param1</span>
                         <input id="list-sel-speed" type="range" min="1" max="100" value="50" step="1" style="width:52px;height:10px;accent-color:var(--accent);">
                         <span id="list-sel-speed-val" style="font-size:7px;color:var(--muted);min-width:16px;">50</span>
                     </span>
-                    <button id="list-sel-ps-btn" class="bar-sel-btn" style="font-size:8px;" title="Prime Speed — desync all selected coefficients' speeds">selPS</button>
-                    <button id="list-rnd-r-btn" class="bar-sel-btn" style="font-size:8px;" title="Randomize radius for all selected coefficients">rndR</button>
-                    <span id="list-count" style="font-size:9px;color:var(--muted);"></span>
+                    <span style="display:inline-flex;align-items:center;gap:2px;" title="Parameter 2 for transforms">
+                        <span style="font-size:7px;color:var(--muted);">Param2</span>
+                        <input id="list-sel-param2" type="range" min="1" max="100" value="100" step="1" style="width:52px;height:10px;accent-color:var(--accent);">
+                        <span id="list-sel-param2-val" style="font-size:7px;color:var(--muted);min-width:16px;">100</span>
+                    </span>
                 </div>
                 <div id="list-curve-editor" style="padding:4px 8px 6px;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.55);flex-shrink:0;opacity:0.3;pointer-events:none;transition:opacity 0.15s;">
                     <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
@@ -636,6 +662,7 @@ body.fast-mode #stop-roots-btn {
                     <span class="cpick-power" style="font-size:7px;">term</span>
                     <span style="font-size:7px;color:var(--muted);width:58px;text-align:center;flex-shrink:0;">path</span>
                     <span class="cpick-speed" style="font-size:7px;">spd</span>
+                    <span class="cpick-radius" style="font-size:7px;">rad</span>
                     <span class="cpick-plen" style="font-size:7px;">pts</span>
                     <span class="cpick-pos" style="font-size:7px;">pos</span>
                     <span class="cpick-coords" style="font-size:7px;">position</span>
@@ -1668,6 +1695,16 @@ let coeffChainLine = coeffLayer.append("polyline")
 let trailLayer = rootsSvg.append("g").attr("class", "trail-layer");
 let rootsLayer = rootsSvg.append("g");
 
+// Right-click on empty canvas space → add new coefficient
+coeffSvg.on("contextmenu", function(event) {
+    if (event.target.classList && event.target.classList.contains("coeff")) return;
+    event.preventDefault();
+    const [mx, my] = d3.pointer(event);
+    const re = cxs().invert(mx);
+    const im = cys().invert(my);
+    addCoefficientAt(re, im, event);
+});
+
 // --- Tooltip ---
 
 const tooltip = document.getElementById("tooltip");
@@ -2619,6 +2656,52 @@ function closeCoeffCtx(revert) {
     ctxSnapshot = null;
 }
 
+function addCoefficientAt(re, im, event) {
+    if (ctxCoeffIdx >= 0) closeCoeffCtx(false);
+    const c = {
+        re, im, pathType: "none", radius: 25, speed: 1.0,
+        angle: 0, ccw: false, extra: {},
+        curve: [{ re, im }], curveIndex: 0,
+    };
+    // unshift: new coefficient = new highest power term
+    coefficients.unshift(c);
+    // Adjust selection indices (all shift up by 1)
+    const newSel = new Set();
+    for (const s of selectedCoeffs) newSel.add(s + 1);
+    selectedCoeffs.clear();
+    for (const s of newSel) selectedCoeffs.add(s);
+    currentDegree = coefficients.length - 1;
+    document.getElementById("degree-number").textContent = currentDegree;
+    currentRoots = [];
+    clearTrails();
+    renderCoefficients();
+    renderCoeffTrails();
+    solveRoots();
+    if (leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
+    openCoeffCtx(event, 0);
+}
+
+function deleteCoefficient(idx) {
+    if (coefficients.length <= 2) { uiBuzz(); return; }
+    selectedCoeffs.delete(idx);
+    const newSel = new Set();
+    for (const s of selectedCoeffs) {
+        if (s < idx) newSel.add(s);
+        else if (s > idx) newSel.add(s - 1);
+    }
+    selectedCoeffs.clear();
+    for (const s of newSel) selectedCoeffs.add(s);
+    coefficients.splice(idx, 1);
+    currentDegree = coefficients.length - 1;
+    document.getElementById("degree-number").textContent = currentDegree;
+    currentRoots = [];
+    clearTrails();
+    renderCoefficients();
+    renderCoeffTrails();
+    solveRoots();
+    if (leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
+}
+
 function openCoeffCtx(event, coeffIdx) {
     event.preventDefault();
     if (ctxCoeffIdx >= 0) closeCoeffCtx(false); // close previous without revert
@@ -2758,8 +2841,19 @@ function openCoeffCtx(event, coeffIdx) {
     acceptBtn.addEventListener("click", () => {
         ctxSnapshot = null; // discard snapshot — keep current state
         closeCoeffCtx(false);
+        solveRoots();
     });
     ctxBtnRow.appendChild(acceptBtn);
+    const delBtn = document.createElement("button");
+    delBtn.className = "ctx-accept";
+    delBtn.textContent = "Delete";
+    delBtn.style.cssText = "padding:4px 8px;background:transparent;border:1px solid #a33;color:#c55;";
+    delBtn.addEventListener("click", () => {
+        ctxSnapshot = null;
+        closeCoeffCtx(false);
+        deleteCoefficient(coeffIdx);
+    });
+    ctxBtnRow.appendChild(delBtn);
     ctx.appendChild(ctxBtnRow);
 
     // Live preview helper — applies current menu settings immediately
@@ -8871,6 +8965,10 @@ function refreshCoeffList() {
         speedSpan.className = "cpick-speed";
         speedSpan.textContent = ci.pathType !== "none" ? String(Math.round(ci.speed * 100)) : "\u2014";
 
+        const radiusSpan = document.createElement("span");
+        radiusSpan.className = "cpick-radius";
+        radiusSpan.textContent = ci.pathType !== "none" ? String(ci.radius) : "\u2014";
+
         const plenSpan = document.createElement("span");
         plenSpan.className = "cpick-plen";
         plenSpan.textContent = String(ci.curve.length);
@@ -8892,6 +8990,7 @@ function refreshCoeffList() {
         row.appendChild(power);
         row.appendChild(pathBtn);
         row.appendChild(speedSpan);
+        row.appendChild(radiusSpan);
         row.appendChild(plenSpan);
         row.appendChild(posSpan);
         row.appendChild(coords);
@@ -8957,6 +9056,10 @@ function updateListPathCols() {
         if (speedEl) {
             speedEl.textContent = c.pathType !== "none" ? String(Math.round(c.speed * 100)) : "\u2014";
         }
+        const radiusEl = rows[i].querySelector(".cpick-radius");
+        if (radiusEl) {
+            radiusEl.textContent = c.pathType !== "none" ? String(c.radius) : "\u2014";
+        }
         const plenEl = rows[i].querySelector(".cpick-plen");
         if (plenEl) {
             plenEl.textContent = String(c.curve.length);
@@ -8981,53 +9084,289 @@ document.getElementById("list-deselect-all-btn").addEventListener("click", () =>
 {
     const selSpd = document.getElementById("list-sel-speed");
     const selSpdVal = document.getElementById("list-sel-speed-val");
-    selSpd.addEventListener("input", () => {
-        const v = parseInt(selSpd.value, 10);
-        selSpdVal.textContent = v;
-        if (selectedCoeffs.size === 0) return;
+    selSpd.addEventListener("input", () => { selSpdVal.textContent = selSpd.value; });
+    const selP2 = document.getElementById("list-sel-param2");
+    const selP2Val = document.getElementById("list-sel-param2-val");
+    selP2.addEventListener("input", () => { selP2Val.textContent = selP2.value; });
+}
+document.getElementById("list-transform").addEventListener("change", function() {
+    const action = this.value;
+    this.value = "none";
+    if (action === "none") return;
+    if (selectedCoeffs.size === 0) { uiBuzz(); return; }
+    const param1 = parseInt(document.getElementById("list-sel-speed").value, 10);
+    const param2 = parseInt(document.getElementById("list-sel-param2").value, 10);
+    let changed = false;
+    if (action === "PrimeSpeeds") {
         for (const idx of selectedCoeffs) {
             const c = coefficients[idx];
             if (c.pathType === "none") continue;
-            c.speed = v / 100;
+            const cur = Math.round(c.speed * 100);
+            const ps = findPrimeSpeed(cur, new Set([idx]));
+            if (ps !== cur) { c.speed = ps / 100; changed = true; }
         }
-        renderCoeffTrails();
-        if (leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
-    });
-}
-document.getElementById("list-sel-ps-btn").addEventListener("click", () => {
-    if (selectedCoeffs.size === 0) { uiBuzz(); return; }
-    let changed = false;
-    for (const idx of selectedCoeffs) {
-        const c = coefficients[idx];
-        if (c.pathType === "none") continue;
-        const cur = Math.round(c.speed * 100);
-        const ps = findPrimeSpeed(cur, new Set([idx]));
-        if (ps !== cur) { c.speed = ps / 100; changed = true; }
-    }
-    if (changed) {
-        uiPing(1320, 0.06);
-        renderCoeffTrails();
-        if (leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
-    } else { uiBuzz(); }
-});
-document.getElementById("list-rnd-r-btn").addEventListener("click", () => {
-    if (selectedCoeffs.size === 0) { uiBuzz(); return; }
-    let changed = false;
-    for (const idx of selectedCoeffs) {
-        const c = coefficients[idx];
-        if (c.pathType === "none") continue;
-        const oldR = c.radius;
-        c.radius = Math.round(5 + Math.random() * 90); // 5–95
-        if (c.radius !== oldR) {
+    } else if (action === "SetAllSpeeds") {
+        for (const idx of selectedCoeffs) {
+            const c = coefficients[idx];
+            if (c.pathType === "none") continue;
+            c.speed = param1 / 100;
+            changed = true;
+        }
+    } else if (action === "RandomSpeed") {
+        for (const idx of selectedCoeffs) {
+            const c = coefficients[idx];
+            if (c.pathType === "none") continue;
+            c.speed = Math.round(Math.random() * param1) / 100;
+            changed = true;
+        }
+    } else if (action === "RandomAngle") {
+        for (const idx of selectedCoeffs) {
+            const c = coefficients[idx];
+            if (c.pathType === "none") continue;
+            const schema = PATH_PARAMS[c.pathType] || [];
+            if (schema.some(p => p.key === "angle")) {
+                c.angle = Math.random() * param1 / 100;
+                const absR = c.radius / 100 * coeffExtent();
+                c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+                c.curveIndex = 0;
+                changed = true;
+            }
+        }
+    } else if (action === "RandomRadius") {
+        const lo = Math.min(param1, param2), hi = Math.max(param1, param2);
+        for (const idx of selectedCoeffs) {
+            const c = coefficients[idx];
+            if (c.pathType === "none") continue;
+            c.radius = Math.round(lo + Math.random() * (hi - lo));
             const absR = c.radius / 100 * coeffExtent();
             c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
             c.curveIndex = 0;
             changed = true;
         }
+    } else if (action === "LerpSpeed") {
+        const idxArr = [...selectedCoeffs].filter(i => coefficients[i].pathType !== "none").sort((a, b) => a - b);
+        if (idxArr.length > 0) {
+            const lo = param1, hi = param2;
+            for (let k = 0; k < idxArr.length; k++) {
+                const c = coefficients[idxArr[k]];
+                c.speed = Math.round(idxArr.length === 1 ? lo : lo + k * (hi - lo) / (idxArr.length - 1)) / 100;
+                changed = true;
+            }
+        }
+    } else if (action === "LerpRadius") {
+        const idxArr = [...selectedCoeffs].filter(i => coefficients[i].pathType !== "none").sort((a, b) => a - b);
+        if (idxArr.length > 0) {
+            const lo = param1, hi = param2;
+            for (let k = 0; k < idxArr.length; k++) {
+                const c = coefficients[idxArr[k]];
+                c.radius = Math.round(idxArr.length === 1 ? lo : lo + k * (hi - lo) / (idxArr.length - 1));
+                const absR = c.radius / 100 * coeffExtent();
+                c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+                c.curveIndex = 0;
+                changed = true;
+            }
+        }
+    } else if (action === "LerpAngle") {
+        const idxArr = [...selectedCoeffs].filter(i => {
+            const c = coefficients[i];
+            if (c.pathType === "none") return false;
+            const schema = PATH_PARAMS[c.pathType] || [];
+            return schema.some(p => p.key === "angle");
+        }).sort((a, b) => a - b);
+        if (idxArr.length > 0) {
+            const lo = param1 / 100, hi = param2 / 100;
+            for (let k = 0; k < idxArr.length; k++) {
+                const c = coefficients[idxArr[k]];
+                c.angle = idxArr.length === 1 ? lo : lo + k * (hi - lo) / (idxArr.length - 1);
+                const absR = c.radius / 100 * coeffExtent();
+                c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+                c.curveIndex = 0;
+                changed = true;
+            }
+        }
+    } else if (action === "RandomDirection") {
+        for (const idx of selectedCoeffs) {
+            const c = coefficients[idx];
+            if (c.pathType === "none") continue;
+            const schema = PATH_PARAMS[c.pathType] || [];
+            if (schema.some(p => p.key === "ccw")) {
+                c.ccw = Math.random() < 0.5;
+                const absR = c.radius / 100 * coeffExtent();
+                c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+                c.curveIndex = 0;
+                changed = true;
+            }
+        }
+    } else if (action === "FlipAllDirections") {
+        for (const idx of selectedCoeffs) {
+            const c = coefficients[idx];
+            if (c.pathType === "none") continue;
+            const schema = PATH_PARAMS[c.pathType] || [];
+            if (schema.some(p => p.key === "ccw")) {
+                c.ccw = !c.ccw;
+                const absR = c.radius / 100 * coeffExtent();
+                c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+                c.curveIndex = 0;
+                changed = true;
+            }
+        }
+    } else if (action === "ShuffleCurves") {
+        const idxArr = [...selectedCoeffs].filter(i => coefficients[i].pathType !== "none");
+        if (idxArr.length >= 2) {
+            const curves = idxArr.map(i => {
+                const c = coefficients[i];
+                return { pathType: c.pathType, radius: c.radius, speed: c.speed,
+                         angle: c.angle, ccw: c.ccw, extra: JSON.parse(JSON.stringify(c.extra || {})) };
+            });
+            for (let k = curves.length - 1; k > 0; k--) {
+                const j = Math.floor(Math.random() * (k + 1));
+                [curves[k], curves[j]] = [curves[j], curves[k]];
+            }
+            for (let k = 0; k < idxArr.length; k++) {
+                const c = coefficients[idxArr[k]];
+                const s = curves[k];
+                c.pathType = s.pathType; c.radius = s.radius; c.speed = s.speed;
+                c.angle = s.angle; c.ccw = s.ccw; c.extra = s.extra;
+                const absR = c.radius / 100 * coeffExtent();
+                c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+                c.curveIndex = 0;
+            }
+            changed = true;
+        }
+    } else if (action === "ShufflePositions") {
+        const idxArr = [...selectedCoeffs];
+        if (idxArr.length >= 2) {
+            const positions = idxArr.map(i => ({ re: coefficients[i].re, im: coefficients[i].im }));
+            for (let k = positions.length - 1; k > 0; k--) {
+                const j = Math.floor(Math.random() * (k + 1));
+                [positions[k], positions[j]] = [positions[j], positions[k]];
+            }
+            for (let k = 0; k < idxArr.length; k++) {
+                const c = coefficients[idxArr[k]];
+                c.re = positions[k].re; c.im = positions[k].im;
+                const absR = c.radius / 100 * coeffExtent();
+                c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+                c.curveIndex = 0;
+            }
+            changed = true;
+        }
+    } else if (action === "CircleLayout") {
+        const idxArr = [...selectedCoeffs].sort((a, b) => a - b);
+        if (idxArr.length > 0) {
+            const r = param1 / 100 * coeffExtent();
+            for (let k = 0; k < idxArr.length; k++) {
+                const ang = 2 * Math.PI * k / idxArr.length;
+                const c = coefficients[idxArr[k]];
+                c.re = r * Math.cos(ang); c.im = r * Math.sin(ang);
+                const absR = c.radius / 100 * coeffExtent();
+                c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+                c.curveIndex = 0;
+            }
+            changed = true;
+        }
+    } else if (action === "RotatePositions") {
+        const idxArr = [...selectedCoeffs];
+        if (idxArr.length > 0) {
+            let cx = 0, cy = 0;
+            for (const i of idxArr) { cx += coefficients[i].re; cy += coefficients[i].im; }
+            cx /= idxArr.length; cy /= idxArr.length;
+            const theta = param1 / 100 * 2 * Math.PI;
+            const cosT = Math.cos(theta), sinT = Math.sin(theta);
+            for (const i of idxArr) {
+                const c = coefficients[i];
+                const dx = c.re - cx, dy = c.im - cy;
+                c.re = cx + dx * cosT - dy * sinT;
+                c.im = cy + dx * sinT + dy * cosT;
+                const absR = c.radius / 100 * coeffExtent();
+                c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+                c.curveIndex = 0;
+            }
+            changed = true;
+        }
+    } else if (action === "ScalePositions") {
+        const idxArr = [...selectedCoeffs];
+        if (idxArr.length > 0) {
+            let cx = 0, cy = 0;
+            for (const i of idxArr) { cx += coefficients[i].re; cy += coefficients[i].im; }
+            cx /= idxArr.length; cy /= idxArr.length;
+            const scale = param1 / 50; // 50=1x, 100=2x, 25=0.5x
+            for (const i of idxArr) {
+                const c = coefficients[i];
+                c.re = cx + (c.re - cx) * scale;
+                c.im = cy + (c.im - cy) * scale;
+                const absR = c.radius / 100 * coeffExtent();
+                c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+                c.curveIndex = 0;
+            }
+            changed = true;
+        }
+    } else if (action === "JitterPositions") {
+        const idxArr = [...selectedCoeffs];
+        if (idxArr.length > 0) {
+            const mag = param1 / 100 * coeffExtent();
+            for (const i of idxArr) {
+                const c = coefficients[i];
+                c.re += (Math.random() - 0.5) * 2 * mag;
+                c.im += (Math.random() - 0.5) * 2 * mag;
+                const absR = c.radius / 100 * coeffExtent();
+                c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+                c.curveIndex = 0;
+            }
+            changed = true;
+        }
+    } else if (action === "Conjugate") {
+        for (const idx of selectedCoeffs) {
+            const c = coefficients[idx];
+            c.im = -c.im;
+            const absR = c.radius / 100 * coeffExtent();
+            c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+            c.curveIndex = 0;
+            changed = true;
+        }
+    } else if (action === "InvertPositions") {
+        for (const idx of selectedCoeffs) {
+            const c = coefficients[idx];
+            const m2 = c.re * c.re + c.im * c.im;
+            if (m2 < 1e-30) continue;
+            c.re = c.re / m2; c.im = -c.im / m2;
+            const absR = c.radius / 100 * coeffExtent();
+            c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+            c.curveIndex = 0;
+            changed = true;
+        }
+    } else if (action === "SortByModulus") {
+        const idxArr = [...selectedCoeffs].sort((a, b) => a - b);
+        if (idxArr.length >= 2) {
+            const positions = idxArr.map(i => ({ re: coefficients[i].re, im: coefficients[i].im }));
+            positions.sort((a, b) => (a.re * a.re + a.im * a.im) - (b.re * b.re + b.im * b.im));
+            for (let k = 0; k < idxArr.length; k++) {
+                const c = coefficients[idxArr[k]];
+                c.re = positions[k].re; c.im = positions[k].im;
+                const absR = c.radius / 100 * coeffExtent();
+                c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+                c.curveIndex = 0;
+            }
+            changed = true;
+        }
+    } else if (action === "SortByArgument") {
+        const idxArr = [...selectedCoeffs].sort((a, b) => a - b);
+        if (idxArr.length >= 2) {
+            const positions = idxArr.map(i => ({ re: coefficients[i].re, im: coefficients[i].im }));
+            positions.sort((a, b) => Math.atan2(a.im, a.re) - Math.atan2(b.im, b.re));
+            for (let k = 0; k < idxArr.length; k++) {
+                const c = coefficients[idxArr[k]];
+                c.re = positions[k].re; c.im = positions[k].im;
+                const absR = c.radius / 100 * coeffExtent();
+                c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+                c.curveIndex = 0;
+            }
+            changed = true;
+        }
     }
     if (changed) {
-        uiPing(660, 0.06);
+        uiPing(1320, 0.06);
         renderCoeffTrails();
+        solveRootsThrottled();
         if (leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
     } else { uiBuzz(); }
 });

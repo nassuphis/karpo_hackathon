@@ -477,6 +477,11 @@ body.fast-mode #bitmap-toolbar .bitmap-select {
 body.fast-mode #bitmap-fast-btn {
     background: var(--accent); color: #fff;
 }
+body.fast-mode #rec-mode,
+body.fast-mode #rec-roots-btn,
+body.fast-mode #stop-roots-btn {
+    opacity: 1; pointer-events: auto; filter: none;
+}
 #anim-bar .bar-controls { opacity: 1; transition: opacity 0.15s; }
 #anim-bar .bar-controls.dimmed { opacity: 0.3; pointer-events: none; }
 #path-nav { display: flex; align-items: center; gap: 4px; }
@@ -718,6 +723,7 @@ body.fast-mode #bitmap-fast-btn {
                     <button id="root-color-btn" class="roots-tool-btn active" title="Color roots">🎨</button>
                     <button id="domain-toggle-btn" class="roots-tool-btn" title="Domain coloring">◐</button>
                     <button id="roots-fit-btn" class="roots-tool-btn" title="Resize to fit all roots and trails">Fit</button>
+                    <button id="roots-zoom-out-btn" class="roots-tool-btn" title="Zoom out 25%">+25%</button>
                     <button id="select-all-roots-btn" class="roots-tool-btn" title="Select all roots">⊕ All</button>
                     <button id="deselect-all-roots-btn" class="roots-tool-btn" title="Deselect all roots">✕ None</button>
                 </div>
@@ -4338,6 +4344,15 @@ document.getElementById("roots-fit-btn").addEventListener("click", function () {
     uiPing(660, 0.08);
 });
 
+// +25% zoom-out button
+document.getElementById("roots-zoom-out-btn").addEventListener("click", function () {
+    updatePanelRange(rootsSvg, panels.roots, panels.roots.range * 1.25);
+    rootsLayer.selectAll("circle.root")
+        .attr("cx", d => rxs()(d.re)).attr("cy", d => rys()(d.im));
+    if (trailsEnabled && trailData.length > 0) renderTrails();
+    renderDomainColoring();
+});
+
 // --- Root color popover ---
 const colorPop = document.getElementById("color-pop");
 const rootColorBtn = document.getElementById("root-color-btn");
@@ -5494,6 +5509,12 @@ function recordTick() {
         ctx.fillStyle = "#0f1026"; ctx.fillRect(0, 0, totalW, S);
         drawCoeffsToCtx(ctx, 0, 0, S, S);
         drawRightPanelToCtx(ctx, S + gap, 0, S, S);
+    }
+    // In fast mode, rAF isn't running so captureStream may not see canvas updates.
+    // Explicitly request a frame capture from the video track.
+    if (fastModeActive && vidRec.stream) {
+        var vt = vidRec.stream.getVideoTracks()[0];
+        if (vt && vt.requestFrame) vt.requestFrame();
     }
 }
 
@@ -7981,6 +8002,7 @@ function handleFastModeWorkerMessage(e) {
             // All workers done — composite, record timing, advance
             const workerMs = performance.now() - fastModePassStartTime;
             compositeWorkerPixels();
+            recordTick();
             recordPassTiming(workerMs);
             advancePass();
         }

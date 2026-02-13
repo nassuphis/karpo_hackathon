@@ -608,6 +608,7 @@ body.fast-mode #stop-roots-btn {
                                     <option value="butterfly">Butterfly</option>
                                     <option value="star">Star (pentagram)</option>
                                     <option value="square">Square</option>
+                                    <option value="c-ellipse">C-Ellipse</option>
                                 </optgroup>
                                 <optgroup label="Space-filling">
                                     <option value="hilbert">Hilbert (Moore)</option>
@@ -632,6 +633,13 @@ body.fast-mode #stop-roots-btn {
                     <span id="list-curve-cycle" style="font-size:9px;color:var(--accent);min-width:36px;text-align:center;">—</span>
                     <button id="list-curve-next" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9654;</button>
                     <span style="flex:1;"></span>
+                    <span style="display:inline-flex;align-items:center;gap:2px;" title="Set speed for all selected coefficients">
+                        <span style="font-size:7px;color:var(--muted);">S</span>
+                        <input id="list-sel-speed" type="range" min="1" max="100" value="50" step="1" style="width:52px;height:10px;accent-color:var(--accent);">
+                        <span id="list-sel-speed-val" style="font-size:7px;color:var(--muted);min-width:16px;">50</span>
+                    </span>
+                    <button id="list-sel-ps-btn" class="bar-sel-btn" style="font-size:8px;" title="Prime Speed — desync all selected coefficients' speeds">selPS</button>
+                    <button id="list-rnd-r-btn" class="bar-sel-btn" style="font-size:8px;" title="Randomize radius for all selected coefficients">rndR</button>
                     <span id="list-count" style="font-size:9px;color:var(--muted);"></span>
                 </div>
                 <div id="list-curve-editor" style="padding:4px 8px 6px;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.55);flex-shrink:0;opacity:0.3;pointer-events:none;transition:opacity 0.15s;">
@@ -768,7 +776,7 @@ body.fast-mode #stop-roots-btn {
                     <select id="bitmap-res-select" class="bitmap-select"><option value="1000">1000px</option><option value="2000" selected>2000px</option><option value="5000">5000px</option><option value="10000">10000px</option><option value="15000">15000px</option></select>
                     <button id="bitmap-fast-btn" class="bitmap-btn" disabled>fastmode</button>
                     <button id="bitmap-coeff-btn" class="bitmap-btn" disabled title="Plot coefficient positions instead of roots">ROOT</button>
-                    <select id="bitmap-steps-select" class="bitmap-select"><option value="10">10</option><option value="100">100</option><option value="1000">1K</option><option value="5000">5K</option><option value="10000">10K</option><option value="50000">50K</option><option value="100000">100K</option><option value="1000000">1M</option></select>
+                    <select id="bitmap-steps-select" class="bitmap-select"><option value="10">10</option><option value="100">100</option><option value="1000">1K</option><option value="5000">5K</option><option value="10000" selected>10K</option><option value="50000">50K</option><option value="100000">100K</option><option value="1000000">1M</option></select>
                     <button id="jiggle-btn" class="bitmap-btn" disabled title="Jiggle — perturb coefficient paths between cycles">jiggle</button>
                     <button id="jiggle-diag-btn" class="bitmap-btn" disabled title="Jiggle diagnostics" style="font-weight:700;min-width:20px;padding:2px 4px;">D</button>
                     <button id="bitmap-bg-btn" class="bitmap-btn" title="Canvas background color">bg</button>
@@ -2316,6 +2324,9 @@ const PATH_PARAMS = {
     hilbert:       _RSAD,
     peano:         _RSAD,
     sierpinski:    _RSAD,
+    "c-ellipse":   [_P.speed,
+        { key: "width", label: "W", min: 1, max: 100, step: 1, default: 50, fmt: v => Math.round(v) + "%" },
+        _P.ccw],
 };
 
 function getCoeffParam(c, key, schema) {
@@ -3431,6 +3442,34 @@ function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
         return curve;
     }
 
+    // C-Ellipse: ellipse with vertices at coefficient home and origin (0+0i)
+    if (pathType === "c-ellipse") {
+        const w = (extra && extra.width != null) ? extra.width : 50;
+        // Center = midpoint of home and origin
+        const cx = homeRe / 2, cy = homeIm / 2;
+        // Semi-major axis = half distance from home to origin
+        const a = Math.sqrt(homeRe * homeRe + homeIm * homeIm) / 2;
+        // Semi-minor axis = width% of semi-major
+        const b = a * (w / 100);
+        // Major axis direction: from origin to home
+        const ux = a > 0 ? homeRe / (2 * a) : 1;
+        const uy = a > 0 ? homeIm / (2 * a) : 0;
+        // Perpendicular direction
+        const vx = -uy, vy = ux;
+        const W = 2 * Math.PI;
+        const curve = new Array(N);
+        for (let k = 0; k < N; k++) {
+            const t = k / N;
+            const wt = W * t;
+            curve[k] = {
+                re: cx + a * Math.cos(wt) * ux + b * Math.sin(wt) * vx,
+                im: cy + a * Math.cos(wt) * uy + b * Math.sin(wt) * vy
+            };
+        }
+        curve._isOrbital = true;
+        return curve;
+    }
+
     const origin = { re: 0, im: 0 };
     const d0 = animPathFn(pathType, 0, origin, radius, extra);
     const cosA = Math.cos(angle * 2 * Math.PI);
@@ -4090,14 +4129,24 @@ function solveRootsEA(coeffs, warmStart, iterCounts) {
     }
     if (trackIter) { for (let i = 0; i < degree; i++) if (!conv[i]) iterCounts[i] = 64; }
 
-    // Filter NaN/Inf and return
-    const result = [];
+    // Always return exactly `degree` roots — replace non-finite with warm-start or unit circle
+    const result = new Array(degree);
     for (let i = 0; i < degree; i++) {
+        let re, im;
         if (isFinite(roots[i][0]) && isFinite(roots[i][1])) {
-            const r = { re: roots[i][0], im: roots[i][1] };
-            if (trackIter) r._iter = iterCounts[i];
-            result.push(r);
+            re = roots[i][0];
+            im = roots[i][1];
+        } else if (warmStart && warmStart[i] && isFinite(warmStart[i].re) && isFinite(warmStart[i].im)) {
+            re = warmStart[i].re;
+            im = warmStart[i].im;
+        } else {
+            const angle = (2 * Math.PI * i) / degree + 0.37;
+            re = Math.cos(angle);
+            im = Math.sin(angle);
         }
+        const r = { re, im };
+        if (trackIter) r._iter = iterCounts[i];
+        result[i] = r;
     }
     return result;
 }
@@ -7377,6 +7426,11 @@ function solveEA(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots, iterCounts) {
     for (var i = 0; i < degree; i++) {
         if (isFinite(rRe[i]) && isFinite(rIm[i])) {
             warmRe[i] = rRe[i]; warmIm[i] = rIm[i];
+        } else {
+            // Rescue: re-seed non-finite root on unit circle so next call has valid warm-start
+            var angle = (2 * Math.PI * i) / degree + 0.37;
+            warmRe[i] = Math.cos(angle);
+            warmIm[i] = Math.sin(angle);
         }
     }
 }
@@ -7675,6 +7729,9 @@ function plotCoeffCurvesOnBitmap(animated, stepsVal) {
 
 function enterFastMode() {
     if (fastModeActive) return;
+
+    // Clear stale warm-start roots from any previous fast mode session
+    fastModeWorkerRoots = null;
 
     // Stop interactive animation
     stopAnimation();
@@ -8347,6 +8404,7 @@ function pathDisplayName(t) {
     if (t === "hilbert") return "Hilbert";
     if (t === "peano") return "Peano";
     if (t === "sierpinski") return "Sierpinski";
+    if (t === "c-ellipse") return "C-Ellipse";
     return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
@@ -8691,6 +8749,59 @@ document.getElementById("list-deselect-all-btn").addEventListener("click", () =>
     updateAnimBar();
     if (leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
 });
+{
+    const selSpd = document.getElementById("list-sel-speed");
+    const selSpdVal = document.getElementById("list-sel-speed-val");
+    selSpd.addEventListener("input", () => {
+        const v = parseInt(selSpd.value, 10);
+        selSpdVal.textContent = v;
+        if (selectedCoeffs.size === 0) return;
+        for (const idx of selectedCoeffs) {
+            const c = coefficients[idx];
+            if (c.pathType === "none") continue;
+            c.speed = v / 100;
+        }
+        renderCoeffTrails();
+        if (leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
+    });
+}
+document.getElementById("list-sel-ps-btn").addEventListener("click", () => {
+    if (selectedCoeffs.size === 0) { uiBuzz(); return; }
+    let changed = false;
+    for (const idx of selectedCoeffs) {
+        const c = coefficients[idx];
+        if (c.pathType === "none") continue;
+        const cur = Math.round(c.speed * 100);
+        const ps = findPrimeSpeed(cur, new Set([idx]));
+        if (ps !== cur) { c.speed = ps / 100; changed = true; }
+    }
+    if (changed) {
+        uiPing(1320, 0.06);
+        renderCoeffTrails();
+        if (leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
+    } else { uiBuzz(); }
+});
+document.getElementById("list-rnd-r-btn").addEventListener("click", () => {
+    if (selectedCoeffs.size === 0) { uiBuzz(); return; }
+    let changed = false;
+    for (const idx of selectedCoeffs) {
+        const c = coefficients[idx];
+        if (c.pathType === "none") continue;
+        const oldR = c.radius;
+        c.radius = Math.round(5 + Math.random() * 90); // 5–95
+        if (c.radius !== oldR) {
+            const absR = c.radius / 100 * coeffExtent();
+            c.curve = computeCurve(c.re, c.im, c.pathType, absR, c.angle, c.extra);
+            c.curveIndex = 0;
+            changed = true;
+        }
+    }
+    if (changed) {
+        uiPing(660, 0.06);
+        renderCoeffTrails();
+        if (leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
+    } else { uiBuzz(); }
+});
 // --- Curve type cycler ---
 let curveCycleTypes = [];  // sorted list of all unique path types across all coefficients
 let curveCycleIdx = 0;
@@ -8976,6 +9087,7 @@ document.getElementById("bitmap-fast-btn").addEventListener("click", function ()
     if (fastModeActive) exitFastMode();
     else {
         fastModeCumulativeSec = 0;
+        fastModeElapsedOffset = 0;
         enterFastMode();
     }
 });

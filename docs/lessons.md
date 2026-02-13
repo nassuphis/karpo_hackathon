@@ -101,6 +101,8 @@ Simultaneous iterative root finder with cubic convergence. Key parameters:
 
 **Warm starting** is critical: reusing previous roots as initial guesses cuts iterations from ~20 to ~3-5 for small coefficient movements. This is what makes interactive dragging feel instant.
 
+**NaN handling**: The solver always returns exactly `degree` roots. Non-finite results (which occur in numerically difficult regimes, especially with many rapidly-moving coefficients) fall back to warm-start values, then to unit-circle seeding. This is essential because the Aberth correction couples all roots — a single NaN propagates to every root within one iteration. The worker solver also actively re-seeds non-finite roots in the warm-start buffer after each call.
+
 **Root matching** (`matchRootOrder`) uses greedy nearest-neighbor after each solve to preserve root identity across frames. Called every 4th step in colored mode because it's O(n^2).
 
 ### Animation Pipeline
@@ -300,6 +302,59 @@ function initAudio() {
 
 **Lesson**: When bypassing the normal rendering loop (as fast mode does), check what other side effects that loop was responsible for.
 
+### The NaN Root Poisoning Bug (Fast Mode "Sparse Dots")
+
+**Symptom**: Certain polynomial configurations produce almost nothing in fast mode bitmap — just ~22 scattered dots per pass instead of dense pixel coverage. Interactive animation of the same polynomial works perfectly. Configs with many animated coefficients (e.g., all 23 on circle paths) consistently fail; configs with fewer animated coefficients (e.g., 10 of 30) work fine.
+
+**Root cause**: `solveRootsEA()` **filters out non-finite roots** before returning:
+
+```javascript
+// THE BUG — old code
+const result = [];
+for (let i = 0; i < degree; i++) {
+    if (isFinite(roots[i][0]) && isFinite(roots[i][1])) {
+        result.push(r);  // Drops non-finite roots!
+    }
+}
+return result;  // result.length <= degree
+```
+
+This causes a cascade failure in fast mode:
+
+1. EA solver produces NaN/Inf for some roots (common with many animated coefficients pushing the solver into numerically nasty regimes)
+2. Those roots get silently dropped → `currentRoots.length < degree`
+3. Fast mode sets `nRoots = currentRoots.length` (too small)
+4. Worker's `solveEA` computes `degree = nCoeffs - 1` (correct), but reads warm-start from a buffer of size `nRoots` → `warmRe[i]` for `i >= nRoots` returns `undefined` → Float64Array stores `NaN`
+5. In the Aberth sum, every root depends on every other root: `Σ 1/(z_i - z_j)`. A single NaN root poisons the sum for ALL other roots within ONE iteration
+6. After solver: all roots are NaN → all pixel coordinates are NaN → `NaN | 0 = 0` → everything maps to pixel (0,0) → almost nothing visible
+
+**Why some configs work and others don't**: Configurations with all coefficients animated on circles (bug1.json) push the solver into regimes where NaN/Inf roots are more likely — the polynomial changes dramatically each step. Configs with many static coefficients (parallel_spirals.json) are more numerically stable, so the solver rarely produces non-finite roots and the filter has nothing to drop.
+
+**Fix (two parts)**:
+
+1. **Main thread `solveRootsEA`** — always return exactly `degree` roots. Non-finite roots fall back to warm-start values, then to unit-circle seeding:
+```javascript
+const result = new Array(degree);
+for (let i = 0; i < degree; i++) {
+    if (isFinite(roots[i][0]) && isFinite(roots[i][1])) {
+        re = roots[i][0]; im = roots[i][1];
+    } else if (warmStart && warmStart[i] && isFinite(warmStart[i].re) && isFinite(warmStart[i].im)) {
+        re = warmStart[i].re; im = warmStart[i].im;
+    } else {
+        re = Math.cos(angle); im = Math.sin(angle);  // unit circle seed
+    }
+    result[i] = { re, im };
+}
+```
+
+2. **Worker `solveEA`** — rescue non-finite roots after each solve call. Instead of only skipping the warm-start write for NaN roots, actively re-seed them on the unit circle so the next solver call has valid input.
+
+**Lessons**:
+- **Never silently change array length** in a function that feeds into a pipeline. Consumers assume `result.length === degree`. If you must handle invalid values, keep the array the same size and substitute fallback values.
+- **NaN is viral in coupled numerical systems**. In Ehrlich-Aberth, a single NaN root corrupts all other roots in one iteration because of the `Σ 1/(z_i - z_j)` coupling term. Any NaN-producing bug is catastrophic, not graceful degradation.
+- **Dimension mismatches between typed arrays produce silent NaN**. Reading `Float64Array[outOfBounds]` returns `undefined`, which silently becomes `NaN` when written to another Float64Array. No error, no warning — just corrupted computation.
+- **Test with worst-case configurations**. The bug was invisible with "nice" polynomials (few animated coefficients, gentle speeds). It only appeared with high-degree polynomials where ALL coefficients were animated, stressing the solver's numerical limits.
+
 ---
 
 ## 8. Performance Insights
@@ -385,6 +440,10 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 10. **The structured clone overhead for worker communication is negligible** — at 29,000 pixels per pass, the transfer is ~130KB. The real cost was always in the canvas operations, not the data transfer.
 
+11. **A single NaN root kills the entire Ehrlich-Aberth solver in one iteration** — because the Aberth correction sums `1/(z_i - z_j)` over all roots. If any `z_j` is NaN, the sum becomes NaN, the correction becomes NaN, and `z_i -= NaN` makes `z_i` NaN. After one iteration, all roots are NaN. This is fundamentally different from, say, Newton's method where one bad root wouldn't affect the others.
+
+12. **Float64Array out-of-bounds reads return `undefined`, not an error** — and `undefined` silently converts to `NaN` when stored in another Float64Array. This makes dimension-mismatch bugs extremely hard to find: no exception, no console warning, just corrupted numbers propagating through computation. The `solveRootsEA` filter bug went undetected because it only triggered with specific polynomial configurations.
+
 ---
 
 ## 11. Conventions to Follow
@@ -453,6 +512,8 @@ There are no automated tests. The application is tested manually by:
 **"Trails look wrong"**: Check root matching — if `matchRootOrder` is skipped or roots teleport, trails will have discontinuities. The jump threshold determines when a root is considered to have "teleported" vs moved continuously.
 
 **"Save/load lost my setting"**: The new field probably isn't in `loadState()` yet. Add it with a default fallback.
+
+**"Fast mode shows sparse dots / almost nothing"**: Check `currentRoots.length` vs `coefficients.length - 1` (degree). If they differ, the solver is dropping roots. Also check the worker's warm-start buffer size matches the expected degree. A dimension mismatch causes NaN poisoning in the EA solver — one NaN root kills all roots within one iteration due to the coupled Aberth sum. The fix is ensuring the solver always returns exactly `degree` roots, substituting fallback values for non-finite results.
 
 ---
 

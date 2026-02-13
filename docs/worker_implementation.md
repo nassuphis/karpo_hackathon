@@ -87,18 +87,23 @@ Workers are **persistent** within a cycle: created once at init, reused across p
 
 Created by `createFastModeWorkerBlob()` as an inline blob URL. Contains three components:
 
-### 1. Ehrlich-Aberth Solver (`solveEA`)
+### 1. Ehrlich-Aberth Solver (`solveEA` / `solveEA_wasm`)
 
-Flat-array implementation identical to the main-thread solver but tuned for throughput:
+Two solver implementations are available, selectable via the **cfg** button in the bitmap toolbar:
 
-| Parameter | Worker | Main Thread |
-|-----------|--------|-------------|
-| Max iterations | 64 | 100 |
-| Convergence threshold | 1e-16 (squared) | 1e-12 (magnitude) |
-| Leading-zero test | magnitude² < 1e-30 | `Math.hypot` < 1e-15 |
-| Hot-loop math | No `Math.hypot`, manual `d*d` | Uses `Math.hypot` |
+**JS solver** (`solveEA`): Flat-array implementation identical to the main-thread solver but tuned for throughput.
 
-The solver operates on flat `Float64Array` buffers for cache efficiency. Corrections are applied in-place.
+**WASM solver** (`solveEA_wasm`): Calls into a WebAssembly module compiled from C (`solver.c`). The WASM binary (~2KB) is base64-encoded and sent to workers during init. Eliminates JIT warmup, GC pauses, and leverages tighter register allocation for pure f64 arithmetic.
+
+| Parameter | JS Worker | WASM Worker | Main Thread |
+|-----------|-----------|-------------|-------------|
+| Max iterations | 64 | 64 | 100 |
+| Convergence threshold | 1e-16 (squared) | 1e-16 (squared) | 1e-12 (magnitude) |
+| Leading-zero test | magnitude² < 1e-30 | magnitude² < 1e-30 | `Math.hypot` < 1e-15 |
+| Hot-loop math | No `Math.hypot`, manual `d*d` | Native f64 ops | Uses `Math.hypot` |
+| NaN rescue | In solver (isFinite) | Post-call JS (x !== x) | In solver |
+
+Both solvers operate on flat `Float64Array` buffers for cache efficiency. The WASM solver copies data into/out of WASM linear memory (64KB) — negligible overhead relative to the O(n²) solver cost.
 
 ### 2. Root Matching (`matchRoots`)
 
@@ -118,6 +123,7 @@ S_curvesFlat               Float64Array  All curve points (re,im interleaved)
 S_entries                  object[]      Animation entries [{idx, ccw, speed}]
 S_offsets, S_lengths       int[]         Curve offset/length per entry
 S_isCloud                  bool[]        Random-cloud flag per entry
+S_useWasm                  bool          Use WASM solver (set from init message)
 S_noColor                  bool          Uniform color mode
 S_uniformR/G/B             int           Uniform color RGB
 S_totalSteps, S_FPS        int, number   Steps per pass, seconds per pass
@@ -138,7 +144,7 @@ For each step in `[stepStart, stepEnd)`:
    - Cloud curves: snap to nearest point (no interpolation)
    - Smooth curves: linear interpolation between adjacent points
 
-3. **Solve**: Call `solveEA(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots)`
+3. **Solve**: Call `solveEA()` (JS) or `solveEA_wasm()` (WASM) based on `S_useWasm` flag
 
 4. **Match roots** (colored mode, every 4th step): Reorder roots to track identity
 
@@ -424,7 +430,7 @@ Scaling is sub-linear due to: structured clone overhead, main-thread compositing
 
 ### Bottlenecks
 
-1. **Ehrlich-Aberth solver**: O(n² × iters) per step, where n = degree. Dominates at degree > 10.
+1. **Ehrlich-Aberth solver**: O(n² × iters) per step, where n = degree. Dominates at degree > 10. WASM solver reduces this by eliminating JIT warmup, GC pauses, and leveraging tighter f64 codegen — biggest gains at high degree.
 2. **Root matching**: O(n²) every 4th step in colored mode. Skipped in uniform mode.
 3. **Compositing**: Single-threaded `getImageData` / `putImageData` cycle. Fast for sparse pixels, slow if total pixel count approaches canvas size.
 
@@ -448,6 +454,8 @@ No per-worker W×H×4 canvas buffer. A 10K×10K canvas with 4 workers and 100K s
 | No SharedArrayBuffer | Requires COOP/COEP headers. GitHub Pages doesn't set them. Structured clone is fast enough for the small per-pass data (roots + step range). |
 | No OffscreenCanvas | Useful for single worker but complex for multi-worker merging. Sparse pixel approach is simpler and equally fast. |
 | All workers get same warm-start roots | Workers 1-N start with roots from time 0 (not their actual time). EA converges in 1-2 extra iters on first step. Negligible cost vs complexity of chaining roots across workers. |
+| WASM solver optional (not default) | JS solver is already fast and requires no compilation toolchain. WASM provides marginal gains at low degree but significant gains at degree 50+. Users can toggle via cfg button. |
+| WASM b64 sent per init (not shared) | Each worker decodes and compiles independently (~1ms). Avoids complexity of sharing compiled modules across workers. Only happens once per fast-mode session. |
 
 ---
 

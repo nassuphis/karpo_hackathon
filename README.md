@@ -32,20 +32,22 @@ Or visit the **[live demo](https://nassuphis.github.io/karpo_hackathon/)**.
 ## Architecture
 
 ```
-Single HTML file (~7300 lines)
+Single HTML file (~10K lines)
 ├── d3.js v7 (CDN)          — SVG rendering, drag interactions
 ├── html2canvas (CDN)       — "Full" snapshot export of the whole UI
-├── Ehrlich-Aberth solver    — polynomial root finding in pure JS
+├── Ehrlich-Aberth solver    — polynomial root finding (JS + optional WASM)
 ├── Horner evaluator         — domain coloring + derivative computation
 ├── Canvas 2D API            — real-time domain coloring
+├── Web Workers              — parallel fast-mode bitmap rendering
 └── Web Audio API            — sonification of root motion
 ```
 
-No server. No WebSocket. No build tools. The entire app is one self-contained HTML file with inline CSS and JavaScript plus two CDN deps: d3.js v7 and html2canvas (used only for Export → Full snapshots).
+No server. No WebSocket. No build tools. The entire app is one self-contained HTML file with inline CSS and JavaScript plus two CDN deps: d3.js v7 and html2canvas (used only for Export → Full snapshots). The WASM solver binary is base64-encoded and embedded directly in the HTML.
 
 ## Deep Dives
 
-- **[Root Finding: Ehrlich-Aberth Method & Domain Coloring](docs/solver.md)** — the simultaneous iterative solver with cubic convergence, warm-starting for interactive use, and HSL domain coloring
+- **[Root Finding: Ehrlich-Aberth Method & Domain Coloring](docs/solver.md)** — the simultaneous iterative solver with cubic convergence, warm-starting for interactive use, WASM compilation, and HSL domain coloring
+- **[Fast Mode Workers](docs/worker_implementation.md)** — multi-worker architecture, sparse pixel format, WASM solver integration, performance characteristics
 - **[Sonification](docs/sonification.md)** — audio graph, feature extraction from root distributions, sound mapping formulas, instrument config popovers, signal routing matrix, and silence management
 - **[Root Braids and Monodromy](docs/braids.md)** — why closed loops in coefficient space permute roots, and how trail rendering visualizes it
 - **[Patterns & Trail Gallery](docs/patterns.md)** — the 26 initial patterns (basic, coefficient, root shapes) and annotated trail screenshots
@@ -119,12 +121,18 @@ Right-click any coefficient to open a context menu with trajectory settings for 
 
 ```
 karpo_hackathon/
-├── index.html            # Entire app (~7300 lines): CSS, JS, HTML all inline
+├── index.html            # Entire app (~10K lines): CSS, JS, HTML, WASM all inline
+├── solver.c              # WASM solver source (Ehrlich-Aberth in pure C)
+├── build-wasm.sh         # Compile solver.c → solver.wasm → base64
+├── solver.wasm           # Compiled WASM binary (~2KB)
 ├── docs/
-│   ├── solver.md         # Ehrlich-Aberth method + domain coloring
+│   ├── solver.md         # Ehrlich-Aberth method + domain coloring + WASM
+│   ├── worker_implementation.md  # Fast mode workers + WASM integration
 │   ├── sonification.md   # Audio graph, feature extraction, sound mapping
 │   ├── braids.md         # Root braids and monodromy
-│   └── patterns.md       # Pattern catalog + trail gallery
+│   ├── patterns.md       # Pattern catalog + trail gallery
+│   ├── paths.md          # Coefficient path curves
+│   └── lessons.md        # Architecture notes + debugging war stories
 ├── snaps/                # Snap captures (PNG + JSON metadata)
 └── README.md
 ```
@@ -159,4 +167,5 @@ All three generate perfectly uniform step sizes and are cached on first use.
 - Domain coloring rendered to half-resolution canvas, CSS-scaled with `devicePixelRatio` support
 - No d3 transitions on dots — positions update instantly to avoid animation conflicts during rapid drag
 - Warm-started Ehrlich-Aberth typically converges in 1–3 iterations during interactive drag
-- **Bitmap fast mode** runs the solver in a Web Worker with zero yielding — the entire hot loop (Ehrlich-Aberth solver, root matching, single-pixel painting) executes off the main thread continuously. The Worker loops automatically across passes, posting periodic pixel snapshots back to the main thread for display. Configurable step count (10K/50K/100K/1M) and canvas resolution (1000/2000/5000 px square). Full-cycle auto-stop computes the LCM of all animated coefficient periods (via GCD of integer speeds) and terminates after exactly that many passes. When root coloring is Uniform, the O(n²) `matchRootOrder` step is skipped entirely, painting all roots using the selected uniform color. Falls back to chunked main-thread loop if Workers are unavailable. Progress bar display is optional (toggle in the fastmode popup) to reduce DOM overhead during rendering. Curve radii are computed using `coeffExtent()` evaluated at home positions, ensuring fast mode trajectories exactly match interactive mode regardless of when fastmode is started
+- **WASM solver** option for fast mode workers: the Ehrlich-Aberth algorithm compiled from C to WebAssembly (~2KB binary, base64-embedded). Eliminates JIT warmup, GC pauses, and leverages tighter register allocation for pure f64 arithmetic. Selectable via the **cfg** button in the bitmap toolbar.
+- **Bitmap fast mode** runs the solver in parallel Web Workers with zero yielding — the entire hot loop (Ehrlich-Aberth solver, root matching, single-pixel painting) executes off the main thread continuously. The Worker loops automatically across passes, posting periodic pixel snapshots back to the main thread for display. Configurable step count (10K/50K/100K/1M) and canvas resolution (1000/2000/5000 px square). Full-cycle auto-stop computes the LCM of all animated coefficient periods (via GCD of integer speeds) and terminates after exactly that many passes. The **cfg** button opens a popup to switch the solver engine between **JS** (pure JavaScript) and **WASM** (compiled C via WebAssembly) — WASM eliminates JIT warmup and GC pauses for more consistent frame times, with the biggest gains at high polynomial degrees. When root coloring is Uniform, the O(n²) `matchRootOrder` step is skipped entirely, painting all roots using the selected uniform color. Falls back to chunked main-thread loop if Workers are unavailable. Progress bar display is optional (toggle in the fastmode popup) to reduce DOM overhead during rendering. Curve radii are computed using `coeffExtent()` evaluated at home positions, ensuring fast mode trajectories exactly match interactive mode regardless of when fastmode is started

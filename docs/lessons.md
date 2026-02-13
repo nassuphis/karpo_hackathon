@@ -95,9 +95,10 @@ Simultaneous iterative root finder with cubic convergence. Key parameters:
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| Max iterations | 40 | Was 100, reduced for speed |
-| Tolerance squared | 1e-8 | Was 1e-12, tighter than needed |
+| Max iterations | 40 (main), 64 (worker) | Reduced for speed; worker bumped for iteration color mode |
+| Tolerance squared | 1e-8 (main), 1e-16 (worker) | Worker uses tighter tolerance for accuracy |
 | Hot loop optimization | No `Math.hypot` | Uses `re*re + im*im` directly |
+| WASM option | Compiled C solver | Selectable via cfg button in bitmap toolbar |
 
 **Warm starting** is critical: reusing previous roots as initial guesses cuts iterations from ~20 to ~3-5 for small coefficient movements. This is what makes interactive dragging feel instant.
 
@@ -170,6 +171,21 @@ Good for single worker, but compositing from multiple workers into one canvas re
 - Single shared `OffscreenCanvas` with synchronization (complex)
 
 Deferred as not worth the complexity given sparse pixels work well.
+
+### WASM Solver Integration
+
+The Ehrlich-Aberth solver was ported to C (`solver.c`) and compiled to WebAssembly via Homebrew LLVM + lld. The ~2KB WASM binary is base64-encoded and embedded in `index.html`.
+
+**Key design decisions**:
+- **Only workers use WASM** — main thread solver stays JS (single call per frame, marshalling overhead not worth it)
+- **No stdlib, no malloc, no math.h** — pure f64 arithmetic. NaN check via `x != x` (IEEE 754)
+- **NaN rescue stays in JS** — cos/sin for unit-circle re-seeding is a cold path, not worth the WASM complexity
+- **WASM memory: 64KB (1 page)** — data region ~8.25KB + 32KB shadow stack. No growth needed
+- **Data copied in/out** — not zero-copy, but copy overhead is negligible vs O(n² × iters) solver cost
+- **Each worker compiles independently** — avoids sharing compiled modules across workers (~1ms init cost)
+- **Selectable via cfg button** — users can compare JS vs WASM performance using the timing popup
+
+**Build workflow**: `./build-wasm.sh` compiles `solver.c` → `solver.wasm` → `solver.wasm.b64`. Paste the base64 into `WASM_SOLVER_B64` in `index.html`.
 
 ---
 
@@ -551,5 +567,5 @@ There are no automated tests. The application is tested manually by:
 | `saveState()` | ~6063 |
 | `loadState()` | ~6087 |
 | `toggleSound()` | ~4637 |
-| Worker blob code | ~7311–7540 |
+| Worker blob code | ~7488–7822 |
 | Global click handler (popover close) | ~5065 |

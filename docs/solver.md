@@ -1,6 +1,6 @@
 # Root Finding: Ehrlich-Aberth Method
 
-The core computational engine is a pure JavaScript implementation of the [Ehrlich-Aberth method](https://en.wikipedia.org/wiki/Aberth_method) — a simultaneous iterative root-finding algorithm with cubic convergence.
+The core computational engine implements the [Ehrlich-Aberth method](https://en.wikipedia.org/wiki/Aberth_method) — a simultaneous iterative root-finding algorithm with cubic convergence. Two implementations exist: a JavaScript version for interactive use (main thread) and a WASM version compiled from C for fast-mode workers.
 
 ## How It Works
 
@@ -18,7 +18,7 @@ Given a degree-*n* polynomial p(z) = cₙzⁿ + ··· + c₁z + c₀ (subscript
 
    The sum term accounts for the other roots, effectively deflating the polynomial so each root estimate repels from the others. This is what gives the method its cubic convergence and prevents multiple estimates from collapsing onto the same root.
 
-4. **Converge** when max |correction| < 10⁻¹².
+4. **Converge** when max |correction|² < tolerance (10⁻¹² magnitude for main thread, 10⁻¹⁶ squared for workers/WASM).
 
 ## Why It's Fast for Interactive Use
 
@@ -51,3 +51,58 @@ When enabled (off by default, toggle via the ◐ toolbar button on the roots pan
 - **Saturation** = 0.8 fixed.
 
 The polynomial is evaluated via Horner's method. The canvas renders at half resolution with `devicePixelRatio` support and is CSS-scaled to full size, keeping it smooth at 60fps even at degree 30.
+
+## WASM Solver
+
+Fast-mode workers can optionally use a WASM implementation of the same Ehrlich-Aberth algorithm, compiled from C (`solver.c` in the project root). The WASM binary (~2KB) is base64-encoded and embedded in `index.html` as the `WASM_SOLVER_B64` constant.
+
+### Why WASM
+
+The JS solver is already well-optimized (flat Float64Arrays, no `Math.hypot`, squared tolerance), but WASM provides:
+
+- **No JIT warmup**: Compiled ahead of time, consistent performance from the first call
+- **No GC pauses**: Pure stack allocation, no heap objects to collect
+- **Tighter codegen**: Direct f64 register operations without JS engine overhead
+
+The payoff scales with polynomial degree — at degree 100+, the O(n² × iters) solver dominates pass time.
+
+### Architecture
+
+Only workers use WASM. The main-thread solver stays in JS (called once per frame during interactive mode — marshalling overhead isn't worth it for a single call).
+
+The WASM solver (`solver.c`) is pure C with no stdlib, no malloc, no `math.h` — just `+`, `-`, `*`, `/` on `double`. NaN detection uses `x != x` (IEEE 754). NaN rescue (cos/sin for unit-circle re-seeding) stays in JS as a cold path after the WASM call returns.
+
+### Memory Layout
+
+Workers allocate WASM linear memory (64KB = 1 page):
+
+```
+0x0000  coeffsRe[256]    2KB    Float64Array view (input)
+0x0800  coeffsIm[256]    2KB    Float64Array view (input)
+0x1000  warmRe[255]      2KB    Float64Array view (in/out)
+0x1800  warmIm[255]      2KB    Float64Array view (in/out)
+0x2000  iterCounts[255]  0.25KB Uint8Array view (output)
+0x8000  C shadow stack   32KB   Solver local arrays (grows down)
+```
+
+Data is copied into WASM memory before each call and results are copied back — the copy overhead is negligible relative to the O(n²) solver cost.
+
+### Build Workflow
+
+```bash
+./build-wasm.sh    # Requires Homebrew LLVM + lld
+```
+
+This compiles `solver.c` → `solver.wasm` → `solver.wasm.b64`. The base64 string is then pasted into the `WASM_SOLVER_B64` constant in `index.html`. Only needed when the solver algorithm changes.
+
+### Selecting the Solver
+
+Click the **cfg** button in the bitmap toolbar to open the solver config popup. Choose **JS** or **WASM**. The selection takes effect on the next fast-mode start (workers are initialized with the chosen solver type). The setting is persisted in save/load snapshots.
+
+| Parameter | JS Worker | WASM |
+|-----------|-----------|------|
+| Max iterations | 64 | 64 |
+| Convergence threshold | 1e-16 (squared) | 1e-16 (squared) |
+| Leading-zero test | magnitude² < 1e-30 | magnitude² < 1e-30 |
+| NaN rescue | In solver (isFinite check) | Post-call JS (x !== x check) |
+| Iteration tracking | Optional (iterCounts array) | Optional (iterCounts array) |

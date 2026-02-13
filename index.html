@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v25</title>
+<title>PolyPaint v26</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
@@ -516,7 +516,7 @@ body.fast-mode #stop-roots-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v25</span>
+    <span class="app-title">PolyPaint v26</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -587,35 +587,7 @@ body.fast-mode #stop-roots-btn {
                     </div>
                     <div class="bar-controls dimmed" id="bar-controls">
                         <div class="bar-row">
-                            <select id="anim-path">
-                                <option value="none">None</option>
-                                <optgroup label="Basic">
-                                    <option value="circle">Circle</option>
-                                    <option value="horizontal">Horizontal</option>
-                                    <option value="vertical">Vertical</option>
-                                    <option value="spiral">Spiral</option>
-                                    <option value="random">Gaussian cloud</option>
-                                </optgroup>
-                                <optgroup label="Curves">
-                                    <option value="lissajous">Lissajous</option>
-                                    <option value="figure8">Figure-8</option>
-                                    <option value="cardioid">Cardioid</option>
-                                    <option value="astroid">Astroid</option>
-                                    <option value="deltoid">Deltoid</option>
-                                    <option value="rose">Rose (3-petal)</option>
-                                    <option value="epitrochoid">Spirograph</option>
-                                    <option value="hypotrochoid">Hypotrochoid</option>
-                                    <option value="butterfly">Butterfly</option>
-                                    <option value="star">Star (pentagram)</option>
-                                    <option value="square">Square</option>
-                                    <option value="c-ellipse">C-Ellipse</option>
-                                </optgroup>
-                                <optgroup label="Space-filling">
-                                    <option value="hilbert">Hilbert (Moore)</option>
-                                    <option value="peano">Peano</option>
-                                    <option value="sierpinski">Sierpinski</option>
-                                </optgroup>
-                            </select>
+                            <select id="anim-path"></select>
                             <div id="bar-dynamic"></div>
                         </div>
                     </div>
@@ -644,34 +616,7 @@ body.fast-mode #stop-roots-btn {
                 </div>
                 <div id="list-curve-editor" style="padding:4px 8px 6px;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.55);flex-shrink:0;opacity:0.3;pointer-events:none;transition:opacity 0.15s;">
                     <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
-                        <select id="lce-path-sel" style="font-size:9px;font-weight:600;color:var(--accent);background:rgba(0,0,0,0.3);border:1px solid var(--stroke);border-radius:3px;padding:1px 2px;">
-                            <option value="none">&mdash;</option>
-                            <optgroup label="Basic">
-                                <option value="circle">Circle</option>
-                                <option value="horizontal">Horizontal</option>
-                                <option value="vertical">Vertical</option>
-                                <option value="spiral">Spiral</option>
-                                <option value="random">Gaussian cloud</option>
-                            </optgroup>
-                            <optgroup label="Curves">
-                                <option value="lissajous">Lissajous</option>
-                                <option value="figure8">Figure-8</option>
-                                <option value="cardioid">Cardioid</option>
-                                <option value="astroid">Astroid</option>
-                                <option value="deltoid">Deltoid</option>
-                                <option value="rose">Rose (3-petal)</option>
-                                <option value="epitrochoid">Spirograph</option>
-                                <option value="hypotrochoid">Hypotrochoid</option>
-                                <option value="butterfly">Butterfly</option>
-                                <option value="star">Star (pentagram)</option>
-                                <option value="square">Square</option>
-                            </optgroup>
-                            <optgroup label="Space-filling">
-                                <option value="hilbert">Hilbert (Moore)</option>
-                                <option value="peano">Peano</option>
-                                <option value="sierpinski">Sierpinski</option>
-                            </optgroup>
-                        </select>
+                        <select id="lce-path-sel" style="font-size:9px;font-weight:600;color:var(--accent);background:rgba(0,0,0,0.3);border:1px solid var(--stroke);border-radius:3px;padding:1px 2px;"></select>
                         <button id="lce-prev" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9664;</button>
                         <span id="lce-coeff-name" style="font-size:9px;color:var(--text);min-width:20px;text-align:center;"></span>
                         <button id="lce-next" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9654;</button>
@@ -781,6 +726,7 @@ body.fast-mode #stop-roots-btn {
                     <button id="jiggle-diag-btn" class="bitmap-btn" disabled title="Jiggle diagnostics" style="font-weight:700;min-width:20px;padding:2px 4px;">D</button>
                     <button id="bitmap-bg-btn" class="bitmap-btn" title="Canvas background color">bg</button>
                     <button id="bitmap-progress-toggle" class="bitmap-btn" title="Toggle progress bar display">prog</button>
+                    <button id="bitmap-cfg-btn" class="bitmap-btn" title="Fast mode solver config">cfg</button>
                     <div id="bitmap-progress" style="display:none;flex:1;min-width:60px;height:6px;background:var(--stroke);border-radius:3px;margin-left:4px;overflow:hidden;"><div id="bitmap-progress-bar" style="height:100%;width:0%;background:var(--accent);border-radius:3px;transition:width 0.1s;"></div></div>
                     <span id="bitmap-pass-count" style="display:none;font-family:monospace;font-size:10px;color:var(--muted);margin-left:4px;white-space:nowrap;"></span>
                 </div>
@@ -808,6 +754,7 @@ body.fast-mode #stop-roots-btn {
 <div id="path-pick-pop" class="ops-pop"></div>
 <div id="config-pop" class="ops-pop" style="min-width:160px"></div>
 <div id="timing-pop" class="ops-pop" style="min-width:220px"></div>
+<div id="bitmap-cfg-pop" class="ops-pop" style="min-width:160px"></div>
 
 <script>
 // ============================================================================
@@ -890,7 +837,7 @@ const MAX_TRAIL_POINTS = 4000;
 const TRAIL_MIN_POINTS = 30; // minimum points before checking for loop closure
 // Domain coloring state
 let domainColoringEnabled = false;
-let rootColorMode = "rainbow";  // "uniform" | "rainbow" | "derivative" | "iteration"
+let rootColorMode = "rainbow";  // "uniform" | "rainbow" | "derivative" | "iteration" | "proximity"
 let uniformRootColor = [255, 255, 255];  // RGB for uniform mode (default white)
 let rootSensitivities = null;   // Float64Array for derivative mode
 // 16-color iteration palette: full rainbow for max contrast between adjacent values
@@ -911,6 +858,18 @@ const ITER_PALETTE = (() => {
 const ITER_PAL_R = new Uint8Array(ITER_PALETTE.map(c => c[0]));
 const ITER_PAL_G = new Uint8Array(ITER_PALETTE.map(c => c[1]));
 const ITER_PAL_B = new Uint8Array(ITER_PALETTE.map(c => c[2]));
+// 16-color proximity palette: sequential dark→bright (inferno) for min-distance visualization
+const PROX_PALETTE = (() => {
+    const pal = [];
+    for (let k = 0; k < 16; k++) {
+        const c = d3.color(d3.interpolateInferno(k / 15));
+        pal.push([c.r, c.g, c.b]);
+    }
+    return pal;
+})();
+const PROX_PAL_R = new Uint8Array(PROX_PALETTE.map(c => c[0]));
+const PROX_PAL_G = new Uint8Array(PROX_PALETTE.map(c => c[1]));
+const PROX_PAL_B = new Uint8Array(PROX_PALETTE.map(c => c[2]));
 let domainCanvas = document.getElementById("domain-canvas");
 let domainCtx = domainCanvas.getContext("2d");
 let domainPendingRender = false;
@@ -951,6 +910,8 @@ let jiggleLissFreqX = 1;       // lissajous: X frequency multiplier
 let jiggleLissFreqY = 2;       // lissajous: Y frequency multiplier
 let jiggleTriggerCount = 0;    // incremented each generateJiggleOffsets() call
 let fastModeShowProgress = true; // show progress bar + pass counter during fastmode
+let solverType = "js"; // "js" or "wasm" — which solver to use in fast mode workers
+const WASM_SOLVER_B64 = "AGFzbQEAAAABDAFgCH9/f39/f39/AAMCAQAEBQFwAQEBBQMBAAEGCAF/AUGAiAILBxQCBm1lbW9yeQIAB3NvbHZlRUEAAAqLDgGIDggFfwF8AX8EfAN/AnwBfwh8I4CAgIAAQYDCAGsiCCSAgICAACACQX9qIQlBACEKAkAgAkECSA0AQQAhCiAAIQsgASEMA0AgCysDACINIA2iIAwrAwAiDSANoqBEoMLr/ktItDljRQ0BIAtBCGohCyAMQQhqIQwgCSAKQQFqIgpHDQALIAkhCgsCQCAJIAprIg5BAUgNAAJAIA5BAUcNACAAIApBA3QiC2orAwAiDSANoiABIAtqKwMAIg8gD6KgIhBEoMLr/ktItDljDQEgAyAAIAtBCGoiC2orAwAiESANoiAPIAEgC2orAwAiEqKgmiAQozkDACAEIBIgDaIgESAPoqGaIBCjOQMAIAZFDQEgB0UNASAHQQE6AAAMAQsCQCACIAprIhNBAUgNACAKQQN0IQsCQCATQQN0IgxFIgoNACAIQYAyaiAAIAtqIAz8CgAACyAKDQAgCEGAImogASALaiAM/AoAAAsCQCAOQQN0IgtFIgwNACAIQYASaiADIAv8CgAACwJAIAwNACAIQYACaiAEIAv8CgAACwJAIAZFDQAgDkUNACAIQQAgDvwLAAsgCEGAMmpBCHIhACAIQYAiakEIciEUQQAhFSAIKwOAIiEWIAgrA4AyIRcDQCAVQQFqIRhEAAAAAAAAAAAhGUEAIQkDQAJAAkAgBkUNACAIIAlqLQAADQELIAhBgAJqIAlBA3QiC2oiAisDACEaIAhBgBJqIAtqIgErAwAhDUQAAAAAAAAAACEbRAAAAAAAAAAAIREgFiEcIBchHQJAIBNBAUwNACAamiEeRAAAAAAAAAAAIREgACELIBQhDCAOIQogFyEPIBYhEEQAAAAAAAAAACESA0AgDyAaoiEcIAwrAwAhHyALKwMAIR0gESAaoiANIBKioCAQoCEbIBEgDaIgEiAeoqAgD6AhESALQQhqIQsgDEEIaiEMIB0gDyANoiAQIB6ioKAiHSEPIB8gHCANIBCioKAiHCEQIBshEiAKQX9qIgoNAAsLIBEgEaIgGyAboqAiIEQmpqyqBLZ5M2MNAEQAAAAAAAAAACEeQQAhCyAIQYACaiEMIAhBgBJqIQpEAAAAAAAAAAAhHwNAAkAgCSALRg0AIA0gCisDAKEiDyAPoiAaIAwrAwChIhAgEKKgIhJEJqasqgS2eTNjDQAgHiAQIBKjoSEeIB8gDyASo6AhHwsgCkEIaiEKIAxBCGohDCAOIAtBAWoiC0cNAAtEAAAAAAAA8D8gHSARoiAbIByioCAgoyIPIB+iIBwgEaIgHSAboqEgIKMiECAeoqGhIhEgEaIgDyAeoiAQIB+ioCISIBKioCIbRCamrKoEtnkzYw0AIAIgGiAQIBGiIA8gEqKgIBujIh6hOQMAIAEgDSAPIBGiIBAgEqKhIBujIg+hOQMAIA8gD6IgHiAeoqAiDSAZIA0gGWQbIRkgBkUNACANRLyJ2Jey0pw8Y0UNACAIIAlqQQE6AAAgB0UNACAHIAlqIBg6AAALIAlBAWoiCSAORw0ACwJAAkAgGUS8idiXstKcPGNFDQAgBkUNASAHRQ0BIBVBAWohCSAOQQEgDkEBShsiDEEBcSECQQAhCwJAIAxBAUYNACAMQf7///8HcSEKQQAhCwNAAkAgCCALaiIMLQAADQAgDEEBOgAAIAcgC2ogCToAAAsCQCAMQQFqIgwtAAANACAMQQE6AAAgByALakEBaiAJOgAACyAKIAtBAmoiC0cNAAsLIAJFDQEgCCALaiIMLQAADQEgDEEBOgAAIAcgC2ogCToAAAwBCyAYIRUgGEHAAEcNAQsLAkAgBkUNACAHRQ0AIA5BASAOQQFKGyIMQQFxIQlBACELAkAgDEEBRg0AIAxB/v///wdxIQpBACELA0ACQCAIIAtqIgwtAAANACAHIAtqQcAAOgAACwJAIAxBAWotAAANACAHIAtqQQFqQcAAOgAACyAKIAtBAmoiC0cNAAsLIAlFDQAgCCALai0AAA0AIAcgC2pBwAA6AAALIA5BASAOQQFKGyILQQFxIQ5BACEMAkAgC0EBRg0AIAtB/v///wdxIQlBACELQQAhDANAAkAgCEGAEmogC2oiCisDACINIA1iDQAgCEGAAmogC2orAwAiDyAPYg0AIAMgC2ogDTkDACAEIAtqIA85AwALAkAgCkEIaisDACINIA1iDQAgCEGAAmogC2pBCGorAwAiDyAPYg0AIAMgC2pBCGogDTkDACAEIAtqQQhqIA85AwALIAtBEGohCyAJIAxBAmoiDEcNAAsLIA5FDQAgCEGAEmogDEEDdCILaisDACINIA1iDQAgCEGAAmogC2orAwAiDyAPYg0AIAMgDEEDdCILaiANOQMAIAQgC2ogDzkDAAsgCEGAwgBqJICAgIAACwAzBG5hbWUADAtzb2x2ZXIud2FzbQEKAQAHc29sdmVFQQcSAQAPX19zdGFja19wb2ludGVyAC8JcHJvZHVjZXJzAQxwcm9jZXNzZWQtYnkBDkhvbWVicmV3IGNsYW5nBjIxLjEuOACUAQ90YXJnZXRfZmVhdHVyZXMIKwtidWxrLW1lbW9yeSsPYnVsay1tZW1vcnktb3B0KxZjYWxsLWluZGlyZWN0LW92ZXJsb25nKwptdWx0aXZhbHVlKw9tdXRhYmxlLWdsb2JhbHMrE25vbnRyYXBwaW5nLWZwdG9pbnQrD3JlZmVyZW5jZS10eXBlcysIc2lnbi1leHQ=";
 // Multi-worker state
 let numWorkers = Math.min(navigator.hardwareConcurrency || 4, 16);
 let fastModeWorkers = [];           // Array of Worker instances
@@ -1733,6 +1694,7 @@ function coeffColor(i, n) {
 function rootColor(i, n) {
     if (rootColorMode === "rainbow") return d3.interpolateRainbow(i / n);
     if (rootColorMode === "iteration") return d3.interpolateRainbow(i / n); // fallback for SVG
+    if (rootColorMode === "proximity") return d3.interpolateRainbow(i / n); // fallback for SVG (bitmap does real proximity)
     if (rootColorMode === "derivative" && rootSensitivities && i < rootSensitivities.length) {
         return sensitivityColor(rootSensitivities[i]);
     }
@@ -2328,6 +2290,66 @@ const PATH_PARAMS = {
         { key: "width", label: "W", min: 1, max: 100, step: 1, default: 50, fmt: v => Math.round(v) + "%" },
         _P.ccw],
 };
+
+// Single source of truth for all path <select> elements.
+// Order here = display order.  Groups become <optgroup> labels.
+const PATH_CATALOG = [
+    { value: "none", label: "None" },
+    { group: "Basic", items: [
+        { value: "circle",     label: "Circle" },
+        { value: "horizontal", label: "Horizontal" },
+        { value: "vertical",   label: "Vertical" },
+        { value: "spiral",     label: "Spiral" },
+        { value: "random",     label: "Gaussian cloud" },
+    ]},
+    { group: "Curves", items: [
+        { value: "lissajous",    label: "Lissajous" },
+        { value: "figure8",      label: "Figure-8" },
+        { value: "cardioid",     label: "Cardioid" },
+        { value: "astroid",      label: "Astroid" },
+        { value: "deltoid",      label: "Deltoid" },
+        { value: "rose",         label: "Rose (3-petal)" },
+        { value: "epitrochoid",  label: "Spirograph" },
+        { value: "hypotrochoid", label: "Hypotrochoid" },
+        { value: "butterfly",    label: "Butterfly" },
+        { value: "star",         label: "Star (pentagram)" },
+        { value: "square",       label: "Square" },
+        { value: "c-ellipse",   label: "C-Ellipse" },
+    ]},
+    { group: "Space-filling", items: [
+        { value: "hilbert",    label: "Hilbert (Moore)" },
+        { value: "peano",      label: "Peano" },
+        { value: "sierpinski", label: "Sierpinski" },
+    ]},
+];
+
+/** Populate a <select> element from PATH_CATALOG. noneLabel overrides the "None" text. */
+function buildPathSelect(sel, noneLabel) {
+    sel.innerHTML = "";
+    for (const entry of PATH_CATALOG) {
+        if (entry.value !== undefined) {
+            // Top-level option (e.g. "none")
+            const opt = document.createElement("option");
+            opt.value = entry.value;
+            opt.textContent = noneLabel && entry.value === "none" ? noneLabel : entry.label;
+            sel.appendChild(opt);
+        } else {
+            const grp = document.createElement("optgroup");
+            grp.label = entry.group;
+            for (const item of entry.items) {
+                const opt = document.createElement("option");
+                opt.value = item.value;
+                opt.textContent = item.label;
+                grp.appendChild(opt);
+            }
+            sel.appendChild(grp);
+        }
+    }
+}
+
+// Build both path selectors from the single catalog
+buildPathSelect(document.getElementById("anim-path"));
+buildPathSelect(document.getElementById("lce-path-sel"), "\u2014");
 
 function getCoeffParam(c, key, schema) {
     if (_STD_KEYS.has(key)) return c[key];
@@ -4429,6 +4451,7 @@ function buildColorPop(pop) {
         { key: "rainbow", label: "Index Rainbow" },
         { key: "derivative", label: "Derivative" },
         { key: "iteration", label: "Iteration Count" },
+        { key: "proximity", label: "Root Proximity" },
     ];
     const rows = [];
     let swatchWrap = null;
@@ -5273,6 +5296,13 @@ document.addEventListener("mousedown", e => {
             if (typeof closeBitmapBgPop === "function") closeBitmapBgPop();
         }
     }
+    // Close bitmap cfg popup
+    if (typeof bitmapCfgPopOpen !== "undefined" && bitmapCfgPopOpen) {
+        const bcp = document.getElementById("bitmap-cfg-pop");
+        if (bcp && !bcp.contains(e.target) && e.target.id !== "bitmap-cfg-btn") {
+            if (typeof closeBitmapCfgPop === "function") closeBitmapCfgPop();
+        }
+    }
     // Close jiggle popup
     if (typeof jigglePopOpen !== "undefined" && jigglePopOpen) {
         const jp = document.getElementById("jiggle-pop");
@@ -5720,7 +5750,8 @@ function buildStateMetadata(timestamp) {
         jiggle: { mode: jiggleMode, sigma: jiggleSigma, theta: jiggleTheta, scaleStep: jiggleScaleStep, period: jigglePeriod, amplitude: jiggleAmplitude, lissFreqX: jiggleLissFreqX, lissFreqY: jiggleLissFreqY },
         fastModeShowProgress: fastModeShowProgress,
         numWorkers: numWorkers,
-        bitmapCoeffView: bitmapCoeffView
+        bitmapCoeffView: bitmapCoeffView,
+        solverType: solverType
     };
 }
 
@@ -5990,6 +6021,50 @@ function openConfigPop() {
     configPopOpen = true;
 }
 document.getElementById("config-btn").addEventListener("click", openConfigPop);
+
+// --- Bitmap cfg popup (solver selection) ---
+let bitmapCfgPopOpen = false;
+const bitmapCfgPop = document.getElementById("bitmap-cfg-pop");
+
+function closeBitmapCfgPop() { bitmapCfgPop.classList.remove("open"); bitmapCfgPopOpen = false; }
+
+function openBitmapCfgPop() {
+    if (bitmapCfgPopOpen) { closeBitmapCfgPop(); return; }
+    bitmapCfgPop.innerHTML = "";
+    const title = document.createElement("div");
+    title.className = "pop-title";
+    title.textContent = "SOLVER";
+    bitmapCfgPop.appendChild(title);
+    // Solver type row
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;gap:6px;margin:4px 0;";
+    const lbl = document.createElement("span");
+    lbl.style.cssText = "font-size:10px;color:var(--fg);";
+    lbl.textContent = "Engine";
+    row.appendChild(lbl);
+    for (const opt of ["js", "wasm"]) {
+        const btn = document.createElement("button");
+        btn.style.cssText = "min-width:40px;height:22px;border-radius:6px;border:1px solid var(--stroke);background:" + (opt === solverType ? "var(--accent-dim)" : "transparent") + ";color:" + (opt === solverType ? "#fff" : "var(--muted)") + ";font-size:10px;cursor:pointer;padding:0 6px;font-weight:600;text-transform:uppercase;";
+        btn.textContent = opt;
+        btn.addEventListener("click", () => {
+            solverType = opt;
+            openBitmapCfgPop(); // rebuild to update highlight
+        });
+        row.appendChild(btn);
+    }
+    bitmapCfgPop.appendChild(row);
+    // Info
+    const info = document.createElement("div");
+    info.style.cssText = "font-size:9px;color:var(--muted);margin-top:2px;";
+    info.textContent = solverType === "wasm" ? "WASM Ehrlich-Aberth (compiled C)" : "JavaScript Ehrlich-Aberth";
+    bitmapCfgPop.appendChild(info);
+    bitmapCfgPop.classList.add("open");
+    const r = document.getElementById("bitmap-cfg-btn").getBoundingClientRect();
+    bitmapCfgPop.style.left = r.left + "px";
+    bitmapCfgPop.style.top = (r.bottom + 6) + "px";
+    bitmapCfgPopOpen = true;
+}
+document.getElementById("bitmap-cfg-btn").addEventListener("click", openBitmapCfgPop);
 
 // --- Timing popup ---
 let timingPopOpen = false;
@@ -6274,6 +6349,11 @@ function applyLoadedState(meta) {
     // 9c. Restore numWorkers
     if (typeof meta.numWorkers === "number" && meta.numWorkers >= 1 && meta.numWorkers <= 16) {
         numWorkers = meta.numWorkers;
+    }
+
+    // 9c2. Restore solver type
+    if (meta.solverType === "js" || meta.solverType === "wasm") {
+        solverType = meta.solverType;
     }
 
     // 9d. Restore bitmap coefficient view toggle
@@ -7303,12 +7383,35 @@ function paintBitmapFrame() {
     const range = bitmapRange;
     const n = currentRoots.length;
     const iterMode = rootColorMode === "iteration";
+    const proxMode = rootColorMode === "proximity";
+    // Precompute proximity min-distances if needed
+    let proxDists = null, proxMax = 1;
+    if (proxMode && n > 1) {
+        proxDists = new Float64Array(n);
+        for (let i = 0; i < n; i++) {
+            let md = Infinity;
+            for (let j = 0; j < n; j++) {
+                if (j === i) continue;
+                const dx = currentRoots[i].re - currentRoots[j].re;
+                const dy = currentRoots[i].im - currentRoots[j].im;
+                const d2 = dx * dx + dy * dy;
+                if (d2 < md) md = d2;
+            }
+            proxDists[i] = Math.sqrt(md);
+        }
+        for (let i = 0; i < n; i++) if (proxDists[i] > proxMax) proxMax = proxDists[i];
+    }
     for (let i = 0; i < n; i++) {
         const r = currentRoots[i];
         const px = (r.re / range + 1) * 0.5 * w;
         const py = (1 - r.im / range) * 0.5 * h;
         if (px < -2 || px > w + 2 || py < -2 || py > h + 2) continue;
-        if (iterMode && r._iter !== undefined) {
+        if (proxMode && proxDists) {
+            const t = 1 - Math.min(1, proxDists[i] / proxMax);
+            const palIdx = (t * 15) | 0;
+            const c = PROX_PALETTE[palIdx];
+            bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+        } else if (iterMode && r._iter !== undefined) {
             const palIdx = Math.min(15, (r._iter * 15 / 8) | 0);
             const c = ITER_PALETTE[palIdx];
             bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
@@ -7331,12 +7434,35 @@ function paintBitmapFrameFast() {
     const n = currentRoots.length;
     const colors = fastModeRootColors;
     const iterMode = rootColorMode === "iteration";
+    const proxMode = rootColorMode === "proximity";
+    // Precompute proximity distances for this frame
+    let proxDists = null, proxMax = 1;
+    if (proxMode && n > 1) {
+        proxDists = new Float64Array(n);
+        for (let i = 0; i < n; i++) {
+            let md = Infinity;
+            for (let j = 0; j < n; j++) {
+                if (j === i) continue;
+                const dx = currentRoots[i].re - currentRoots[j].re;
+                const dy = currentRoots[i].im - currentRoots[j].im;
+                const d2 = dx * dx + dy * dy;
+                if (d2 < md) md = d2;
+            }
+            proxDists[i] = Math.sqrt(md);
+        }
+        for (let i = 0; i < n; i++) if (proxDists[i] > proxMax) proxMax = proxDists[i];
+    }
     for (let i = 0; i < n; i++) {
         const r = currentRoots[i];
         const px = (r.re / range + 1) * 0.5 * w;
         const py = (1 - r.im / range) * 0.5 * h;
         if (px < 0 || px >= w || py < 0 || py >= h) continue;
-        if (iterMode && r._iter !== undefined) {
+        if (proxMode && proxDists) {
+            const t = 1 - Math.min(1, proxDists[i] / proxMax);
+            const palIdx = (t * 15) | 0;
+            const c = PROX_PALETTE[palIdx];
+            bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+        } else if (iterMode && r._iter !== undefined) {
             const palIdx = Math.min(15, (r._iter * 15 / 8) | 0);
             const c = ITER_PALETTE[palIdx];
             bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
@@ -7451,6 +7577,57 @@ function matchRoots(newRe, newIm, oldRe, oldIm, n) {
     for (var i = 0; i < n; i++) { newRe[i] = tmpRe[i]; newIm[i] = tmpIm[i]; }
 }
 
+// --- WASM solver support ---
+var S_useWasm = false;
+var wasmExports = null;
+var wasmMemBuf = null;
+var W_coeffsRe, W_coeffsIm, W_warmRe, W_warmIm, W_iterCounts;
+var W_OFF_CR, W_OFF_CI, W_OFF_WR, W_OFF_WI, W_OFF_IT;
+
+function initWasm(b64, nCoeffs, nRoots) {
+    var raw = atob(b64);
+    var bytes = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    var mod = new WebAssembly.Module(bytes.buffer);
+    var inst = new WebAssembly.Instance(mod);
+    wasmExports = inst.exports;
+    wasmMemBuf = wasmExports.memory.buffer;
+    // Memory layout: coeffsRe, coeffsIm, warmRe, warmIm, iterCounts — all 8-byte aligned
+    W_OFF_CR = 0;
+    W_OFF_CI = nCoeffs * 8;
+    W_OFF_WR = nCoeffs * 2 * 8;
+    W_OFF_WI = (nCoeffs * 2 + nRoots) * 8;
+    W_OFF_IT = (nCoeffs * 2 + nRoots * 2) * 8;
+    W_coeffsRe = new Float64Array(wasmMemBuf, W_OFF_CR, nCoeffs);
+    W_coeffsIm = new Float64Array(wasmMemBuf, W_OFF_CI, nCoeffs);
+    W_warmRe = new Float64Array(wasmMemBuf, W_OFF_WR, nRoots);
+    W_warmIm = new Float64Array(wasmMemBuf, W_OFF_WI, nRoots);
+    W_iterCounts = new Uint8Array(wasmMemBuf, W_OFF_IT, nRoots);
+}
+
+function solveEA_wasm(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots, iterCounts) {
+    // Copy inputs into WASM memory
+    W_coeffsRe.set(cRe);
+    W_coeffsIm.set(cIm);
+    W_warmRe.set(warmRe);
+    W_warmIm.set(warmIm);
+    var trackIter = iterCounts ? 1 : 0;
+    wasmExports.solveEA(W_OFF_CR, W_OFF_CI, nCoeffs, W_OFF_WR, W_OFF_WI, nRoots, trackIter, W_OFF_IT);
+    // Copy results back
+    for (var i = 0; i < nRoots; i++) {
+        var rr = W_warmRe[i], ri = W_warmIm[i];
+        if (rr === rr && ri === ri) { // NaN check
+            warmRe[i] = rr; warmIm[i] = ri;
+        } else {
+            var angle = (2 * Math.PI * i) / nRoots + 0.37;
+            warmRe[i] = Math.cos(angle); warmIm[i] = Math.sin(angle);
+        }
+    }
+    if (iterCounts) {
+        for (var i = 0; i < nRoots; i++) iterCounts[i] = W_iterCounts[i];
+    }
+}
+
 // --- Persistent worker state (set by "init", reused across "run" calls) ---
 var S_coeffsRe, S_coeffsIm, S_nCoeffs, S_degree, S_nRoots;
 var S_colorsR, S_colorsG, S_colorsB;
@@ -7459,6 +7636,7 @@ var S_curvesFlat, S_entries, S_offsets, S_lengths, S_isCloud;
 var S_noColor, S_uniformR, S_uniformG, S_uniformB;
 var S_totalSteps, S_FPS;
 var S_iterColor, S_iterPalR, S_iterPalG, S_iterPalB;
+var S_proxColor, S_proxPalR, S_proxPalG, S_proxPalB;
 
 self.onmessage = function(e) {
     var d = e.data;
@@ -7479,8 +7657,17 @@ self.onmessage = function(e) {
         S_iterPalR = d.iterPalR ? new Uint8Array(d.iterPalR) : null;
         S_iterPalG = d.iterPalG ? new Uint8Array(d.iterPalG) : null;
         S_iterPalB = d.iterPalB ? new Uint8Array(d.iterPalB) : null;
+        S_proxColor = !!d.proxColor;
+        S_proxPalR = d.proxPalR ? new Uint8Array(d.proxPalR) : null;
+        S_proxPalG = d.proxPalG ? new Uint8Array(d.proxPalG) : null;
+        S_proxPalB = d.proxPalB ? new Uint8Array(d.proxPalB) : null;
         S_uniformR = d.uniformR || 255; S_uniformG = d.uniformG || 255; S_uniformB = d.uniformB || 255;
         S_totalSteps = d.totalSteps; S_FPS = d.FAST_PASS_SECONDS;
+        // WASM solver init
+        S_useWasm = !!d.useWasm;
+        if (S_useWasm && d.wasmB64) {
+            try { initWasm(d.wasmB64, d.nCoeffs, d.nRoots); } catch(e) { S_useWasm = false; }
+        }
         return;
     }
 
@@ -7502,6 +7689,8 @@ self.onmessage = function(e) {
     var noColor = S_noColor;
     var iterColor = S_iterColor;
     var iterPalR = S_iterPalR, iterPalG = S_iterPalG, iterPalB = S_iterPalB;
+    var proxColor = S_proxColor;
+    var proxPalR = S_proxPalR, proxPalG = S_proxPalG, proxPalB = S_proxPalB;
     var colorsR = S_colorsR, colorsG = S_colorsG, colorsB = S_colorsB;
     var uniformR = S_uniformR, uniformG = S_uniformG, uniformB = S_uniformB;
 
@@ -7515,6 +7704,8 @@ self.onmessage = function(e) {
 
     var tmpRe = new Float64Array(nRoots), tmpIm = new Float64Array(nRoots);
     var iterCounts = iterColor ? new Uint8Array(nRoots) : null;
+    var minDists = proxColor ? new Float64Array(nRoots) : null;
+    var proxRunMax = 1;
 
     for (var step = stepStart; step < stepEnd; step++) {
         var elapsed = elapsedOff + (step / total) * FPS;
@@ -7542,9 +7733,41 @@ self.onmessage = function(e) {
         }
 
         tmpRe.set(rootsRe); tmpIm.set(rootsIm);
-        solveEA(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots, iterCounts);
+        if (S_useWasm && wasmExports) {
+            solveEA_wasm(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots, iterCounts);
+        } else {
+            solveEA(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots, iterCounts);
+        }
 
-        if (iterColor) {
+        if (proxColor) {
+            // Compute per-root minimum distance to nearest neighbor
+            for (var i = 0; i < nRoots; i++) {
+                var md = Infinity;
+                for (var j = 0; j < nRoots; j++) {
+                    if (j === i) continue;
+                    var dx = tmpRe[i] - tmpRe[j], dy = tmpIm[i] - tmpIm[j];
+                    var d2 = dx * dx + dy * dy;
+                    if (d2 < md) md = d2;
+                }
+                minDists[i] = Math.sqrt(md);
+            }
+            // Update running max with slow decay for adaptive normalization
+            for (var i = 0; i < nRoots; i++) {
+                if (minDists[i] > proxRunMax) proxRunMax = minDists[i];
+            }
+            proxRunMax *= 0.999;
+            rootsRe.set(tmpRe); rootsIm.set(tmpIm);
+            for (var i = 0; i < nRoots; i++) {
+                var ix = ((rootsRe[i] / range + 1) * 0.5 * W) | 0;
+                var iy = ((1 - rootsIm[i] / range) * 0.5 * H) | 0;
+                if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
+                var t = 1 - Math.min(1, minDists[i] / proxRunMax);
+                var palIdx = (t * 15) | 0;
+                paintIdx[pc] = iy * W + ix;
+                paintR[pc] = proxPalR[palIdx]; paintG[pc] = proxPalG[palIdx]; paintB[pc] = proxPalB[palIdx];
+                pc++;
+            }
+        } else if (iterColor) {
             rootsRe.set(tmpRe); rootsIm.set(tmpIm);
             for (var i = 0; i < nRoots; i++) {
                 var ix = ((rootsRe[i] / range + 1) * 0.5 * W) | 0;
@@ -7944,6 +8167,8 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         uniformR: uniformRootColor[0], uniformG: uniformRootColor[1], uniformB: uniformRootColor[2],
         iterColor: rootColorMode === "iteration",
         iterPalR: ITER_PAL_R.buffer.slice(0), iterPalG: ITER_PAL_G.buffer.slice(0), iterPalB: ITER_PAL_B.buffer.slice(0),
+        proxColor: rootColorMode === "proximity",
+        proxPalR: PROX_PAL_R.buffer.slice(0), proxPalG: PROX_PAL_G.buffer.slice(0), proxPalB: PROX_PAL_B.buffer.slice(0),
     };
 }
 
@@ -7983,7 +8208,11 @@ function initFastModeWorkers() {
             uniformR: sd.uniformR, uniformG: sd.uniformG, uniformB: sd.uniformB,
             iterColor: sd.iterColor,
             iterPalR: sd.iterPalR, iterPalG: sd.iterPalG, iterPalB: sd.iterPalB,
+            proxColor: sd.proxColor,
+            proxPalR: sd.proxPalR, proxPalG: sd.proxPalG, proxPalB: sd.proxPalB,
             totalSteps: sd.stepsVal, FAST_PASS_SECONDS,
+            useWasm: solverType === "wasm",
+            wasmB64: solverType === "wasm" ? WASM_SOLVER_B64 : null,
         });
 
         fastModeWorkers.push(worker);

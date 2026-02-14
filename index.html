@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v26</title>
+<title>PolyPaint v27</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
@@ -306,6 +306,13 @@ circle.coeff.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
 circle.root { cursor: grab; stroke-width: 1.5; }
 circle.root.dragging { cursor: grabbing; stroke: #fff; stroke-width: 2.5; }
 .coeff-label { font-size: 10px; fill: #aaa; pointer-events: none; }
+circle.morph-ghost { pointer-events: none; opacity: 0.25; }
+circle.morph-coeff { cursor: grab; stroke-width: 1.5; }
+circle.morph-coeff.dragging { cursor: grabbing; stroke-width: 2.5; }
+.morph-label { font-size: 10px; fill: #aaa; pointer-events: none; }
+.morph-ghost-label { font-size: 9px; fill: #555; pointer-events: none; }
+line.morph-interp-line { pointer-events: none; }
+circle.morph-interp-marker { pointer-events: none; }
 /* --- Tabs (roots panel) --- */
 .tab-bar { display:flex; align-items:stretch; padding:0 8px; gap:0;
            flex-shrink:0; background:rgba(10,12,30,0.45);
@@ -516,7 +523,7 @@ body.fast-mode #stop-roots-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v26</span>
+    <span class="app-title">PolyPaint v27</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -573,6 +580,7 @@ body.fast-mode #stop-roots-btn {
         <div class="tab-bar" id="left-tab-bar">
             <button class="tab active" data-ltab="coeffs">Coefficients <span id="coeff-sel-count" style="font-size:9px;color:#5ddb6a;opacity:0.85;"></span></button>
             <button class="tab" data-ltab="list">List</button>
+            <button class="tab" data-ltab="morph">Morph</button>
             <span class="tab-bar-controls"><input id="scrub-slider" type="range" min="0" max="5000" value="0" step="1" title="Scrub coefficients along paths (0–5s)"><span id="scrub-val" style="font-size:9px;color:var(--muted);min-width:28px;text-align:right;">0.00s</span><button id="play-btn">▶ Play</button><button id="home-btn" title="Return to start position">Home</button></span>
         </div>
         <div class="tab-panes" id="left-tab-panes">
@@ -669,6 +677,23 @@ body.fast-mode #stop-roots-btn {
                 </div>
                 <div id="coeff-list-scroll" style="flex:1;min-height:0;overflow-y:auto;padding:4px 8px;"></div>
             </div>
+            <div id="morph-content" class="tab-content">
+                <div id="morph-bar" style="padding:4px 8px;display:flex;align-items:center;gap:8px;flex-shrink:0;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.45);">
+                    <label style="font-size:10px;display:flex;align-items:center;gap:3px;cursor:pointer;">
+                        <input type="checkbox" id="morph-enable"> Morph
+                    </label>
+                    <label style="font-size:9px;color:var(--muted);">Rate</label>
+                    <input id="morph-rate" type="range" min="1" max="200" value="25" step="1" style="width:60px;accent-color:var(--accent);">
+                    <span id="morph-rate-val" style="font-size:9px;color:var(--muted);min-width:36px;">0.25 Hz</span>
+                    <span id="morph-mu-val" style="font-size:9px;color:var(--accent);min-width:30px;">μ=0.50</span>
+                    <span style="flex:1;"></span>
+                    <button id="morph-copy-btn" class="bar-sel-btn" style="font-size:8px;">Copy C→D</button>
+                    <button id="morph-swap-btn" class="bar-sel-btn" style="font-size:8px;">Swap C↔D</button>
+                </div>
+                <div id="morph-container" style="flex:1;min-height:0;position:relative;">
+                    <svg id="morph-panel"></svg>
+                </div>
+            </div>
         </div>
     </div>
     <div class="mid-bar">
@@ -742,19 +767,17 @@ body.fast-mode #stop-roots-btn {
             </div>
             <div id="bitmap-content" class="tab-content">
                 <div id="bitmap-toolbar" style="display:flex;gap:6px;padding:4px 6px;align-items:center;flex-wrap:wrap;">
-                    <button id="bitmap-start-btn" class="bitmap-btn">start</button>
+                    <button id="bitmap-start-btn" class="bitmap-btn">init</button>
                     <button id="bitmap-save-btn" class="bitmap-btn" disabled>save</button>
                     <button id="bitmap-clear-btn" class="bitmap-btn" disabled>clear</button>
                     <select id="bitmap-res-select" class="bitmap-select"><option value="1000">1000px</option><option value="2000" selected>2000px</option><option value="5000">5000px</option><option value="10000">10000px</option><option value="15000">15000px</option></select>
-                    <button id="bitmap-fast-btn" class="bitmap-btn" disabled>fastmode</button>
+                    <button id="bitmap-fast-btn" class="bitmap-btn" disabled>start</button>
                     <button id="bitmap-coeff-btn" class="bitmap-btn" disabled title="Plot coefficient positions instead of roots">ROOT</button>
                     <select id="bitmap-steps-select" class="bitmap-select"><option value="10">10</option><option value="100">100</option><option value="1000">1K</option><option value="5000">5K</option><option value="10000" selected>10K</option><option value="50000">50K</option><option value="100000">100K</option><option value="1000000">1M</option></select>
                     <button id="jiggle-btn" class="bitmap-btn" disabled title="Jiggle — perturb coefficient paths between cycles">jiggle</button>
                     <button id="jiggle-diag-btn" class="bitmap-btn" disabled title="Jiggle diagnostics" style="font-weight:700;min-width:20px;padding:2px 4px;">D</button>
                     <button id="bitmap-bg-btn" class="bitmap-btn" title="Canvas background color">bg</button>
-                    <button id="bitmap-progress-toggle" class="bitmap-btn" title="Toggle progress bar display">prog</button>
                     <button id="bitmap-cfg-btn" class="bitmap-btn" title="Fast mode solver config">cfg</button>
-                    <div id="bitmap-progress" style="display:none;flex:1;min-width:60px;height:6px;background:var(--stroke);border-radius:3px;margin-left:4px;overflow:hidden;"><div id="bitmap-progress-bar" style="height:100%;width:0%;background:var(--accent);border-radius:3px;transition:width 0.1s;"></div></div>
                     <span id="bitmap-pass-count" style="display:none;font-family:monospace;font-size:10px;color:var(--muted);margin-left:4px;white-space:nowrap;"></span>
                 </div>
                 <div id="bitmap-container" style="flex:1;min-height:0;position:relative;background:#000;">
@@ -859,9 +882,7 @@ let lastSelectedCoeff = -1; // index of last coefficient added to selection (for
 // Trail state
 let trailsEnabled = false;
 let trailData = []; // array of arrays: trailData[i] = [{re, im}, ...] for root i
-let trailComplete = false; // true once one full loop is detected
 const MAX_TRAIL_POINTS = 4000;
-const TRAIL_MIN_POINTS = 30; // minimum points before checking for loop closure
 // Domain coloring state
 let domainColoringEnabled = false;
 let rootColorMode = "rainbow";  // "uniform" | "rainbow" | "derivative" | "iteration" | "proximity"
@@ -922,8 +943,8 @@ let fastModeLastRoots = null;   // last received root positions (legacy)
 let fastModeLastStep = 0;       // last reported step count
 let fastModeElapsedOffset = 0;  // accumulated elapsed time across passes
 let fastModePassCount = 0;      // completed pass counter (resets each cycle)
-let fastModeTargetPasses = 0;   // passes for full cycle (0 = unlimited)
-let fastModeCumulativeSec = 0;  // total seconds run across jiggle re-triggers
+let fastModeTargetPasses = 0;   // passes for jiggle cycle (= jiggleInterval since each pass = 1s)
+let jiggleInterval = 4;         // seconds between jiggle perturbations (1–100), shown in cfg popup
 let jiggleOffsets = null;       // Map<coeffIdx, {re, im}> or null
 let jiggleSigma = 10;          // σ as integer 0-100, read as jiggleSigma/100 %
 let jiggleMode = "none";       // "none" | "random" | "rotate" | "walk" | "scale"
@@ -936,7 +957,11 @@ let jiggleAmplitude = 10;      // breathe/lissajous: amplitude as % (of centroid
 let jiggleLissFreqX = 1;       // lissajous: X frequency multiplier
 let jiggleLissFreqY = 2;       // lissajous: Y frequency multiplier
 let jiggleTriggerCount = 0;    // incremented each generateJiggleOffsets() call
-let fastModeShowProgress = true; // show progress bar + pass counter during fastmode
+// Morph state: second coefficient set D blends with C via mu
+let morphTargetCoeffs = [];   // parallel to coefficients[], same {re,im,curve,...} structure
+let morphEnabled = false;
+let morphRate = 0.25;         // Hz (oscillation cycles/sec)
+let morphMu = 0;              // current blend factor [0,1] — 0 when morph disabled
 let solverType = "js"; // "js" or "wasm" — which solver to use in fast mode workers
 const WASM_SOLVER_B64 = "AGFzbQEAAAABDAFgCH9/f39/f39/AAMCAQAEBQFwAQEBBQMBAAEGCAF/AUGAiAILBxQCBm1lbW9yeQIAB3NvbHZlRUEAAAqLDgGIDggFfwF8AX8EfAN/AnwBfwh8I4CAgIAAQYDCAGsiCCSAgICAACACQX9qIQlBACEKAkAgAkECSA0AQQAhCiAAIQsgASEMA0AgCysDACINIA2iIAwrAwAiDSANoqBEoMLr/ktItDljRQ0BIAtBCGohCyAMQQhqIQwgCSAKQQFqIgpHDQALIAkhCgsCQCAJIAprIg5BAUgNAAJAIA5BAUcNACAAIApBA3QiC2orAwAiDSANoiABIAtqKwMAIg8gD6KgIhBEoMLr/ktItDljDQEgAyAAIAtBCGoiC2orAwAiESANoiAPIAEgC2orAwAiEqKgmiAQozkDACAEIBIgDaIgESAPoqGaIBCjOQMAIAZFDQEgB0UNASAHQQE6AAAMAQsCQCACIAprIhNBAUgNACAKQQN0IQsCQCATQQN0IgxFIgoNACAIQYAyaiAAIAtqIAz8CgAACyAKDQAgCEGAImogASALaiAM/AoAAAsCQCAOQQN0IgtFIgwNACAIQYASaiADIAv8CgAACwJAIAwNACAIQYACaiAEIAv8CgAACwJAIAZFDQAgDkUNACAIQQAgDvwLAAsgCEGAMmpBCHIhACAIQYAiakEIciEUQQAhFSAIKwOAIiEWIAgrA4AyIRcDQCAVQQFqIRhEAAAAAAAAAAAhGUEAIQkDQAJAAkAgBkUNACAIIAlqLQAADQELIAhBgAJqIAlBA3QiC2oiAisDACEaIAhBgBJqIAtqIgErAwAhDUQAAAAAAAAAACEbRAAAAAAAAAAAIREgFiEcIBchHQJAIBNBAUwNACAamiEeRAAAAAAAAAAAIREgACELIBQhDCAOIQogFyEPIBYhEEQAAAAAAAAAACESA0AgDyAaoiEcIAwrAwAhHyALKwMAIR0gESAaoiANIBKioCAQoCEbIBEgDaIgEiAeoqAgD6AhESALQQhqIQsgDEEIaiEMIB0gDyANoiAQIB6ioKAiHSEPIB8gHCANIBCioKAiHCEQIBshEiAKQX9qIgoNAAsLIBEgEaIgGyAboqAiIEQmpqyqBLZ5M2MNAEQAAAAAAAAAACEeQQAhCyAIQYACaiEMIAhBgBJqIQpEAAAAAAAAAAAhHwNAAkAgCSALRg0AIA0gCisDAKEiDyAPoiAaIAwrAwChIhAgEKKgIhJEJqasqgS2eTNjDQAgHiAQIBKjoSEeIB8gDyASo6AhHwsgCkEIaiEKIAxBCGohDCAOIAtBAWoiC0cNAAtEAAAAAAAA8D8gHSARoiAbIByioCAgoyIPIB+iIBwgEaIgHSAboqEgIKMiECAeoqGhIhEgEaIgDyAeoiAQIB+ioCISIBKioCIbRCamrKoEtnkzYw0AIAIgGiAQIBGiIA8gEqKgIBujIh6hOQMAIAEgDSAPIBGiIBAgEqKhIBujIg+hOQMAIA8gD6IgHiAeoqAiDSAZIA0gGWQbIRkgBkUNACANRLyJ2Jey0pw8Y0UNACAIIAlqQQE6AAAgB0UNACAHIAlqIBg6AAALIAlBAWoiCSAORw0ACwJAAkAgGUS8idiXstKcPGNFDQAgBkUNASAHRQ0BIBVBAWohCSAOQQEgDkEBShsiDEEBcSECQQAhCwJAIAxBAUYNACAMQf7///8HcSEKQQAhCwNAAkAgCCALaiIMLQAADQAgDEEBOgAAIAcgC2ogCToAAAsCQCAMQQFqIgwtAAANACAMQQE6AAAgByALakEBaiAJOgAACyAKIAtBAmoiC0cNAAsLIAJFDQEgCCALaiIMLQAADQEgDEEBOgAAIAcgC2ogCToAAAwBCyAYIRUgGEHAAEcNAQsLAkAgBkUNACAHRQ0AIA5BASAOQQFKGyIMQQFxIQlBACELAkAgDEEBRg0AIAxB/v///wdxIQpBACELA0ACQCAIIAtqIgwtAAANACAHIAtqQcAAOgAACwJAIAxBAWotAAANACAHIAtqQQFqQcAAOgAACyAKIAtBAmoiC0cNAAsLIAlFDQAgCCALai0AAA0AIAcgC2pBwAA6AAALIA5BASAOQQFKGyILQQFxIQ5BACEMAkAgC0EBRg0AIAtB/v///wdxIQlBACELQQAhDANAAkAgCEGAEmogC2oiCisDACINIA1iDQAgCEGAAmogC2orAwAiDyAPYg0AIAMgC2ogDTkDACAEIAtqIA85AwALAkAgCkEIaisDACINIA1iDQAgCEGAAmogC2pBCGorAwAiDyAPYg0AIAMgC2pBCGogDTkDACAEIAtqQQhqIA85AwALIAtBEGohCyAJIAxBAmoiDEcNAAsLIA5FDQAgCEGAEmogDEEDdCILaisDACINIA1iDQAgCEGAAmogC2orAwAiDyAPYg0AIAMgDEEDdCILaiANOQMAIAQgC2ogDzkDAAsgCEGAwgBqJICAgIAACwAzBG5hbWUADAtzb2x2ZXIud2FzbQEKAQAHc29sdmVFQQcSAQAPX19zdGFja19wb2ludGVyAC8JcHJvZHVjZXJzAQxwcm9jZXNzZWQtYnkBDkhvbWVicmV3IGNsYW5nBjIxLjEuOACUAQ90YXJnZXRfZmVhdHVyZXMIKwtidWxrLW1lbW9yeSsPYnVsay1tZW1vcnktb3B0KxZjYWxsLWluZGlyZWN0LW92ZXJsb25nKwptdWx0aXZhbHVlKw9tdXRhYmxlLWdsb2JhbHMrE25vbnRyYXBwaW5nLWZwdG9pbnQrD3JlZmVyZW5jZS10eXBlcysIc2lnbi1leHQ=";
 // Multi-worker state
@@ -1695,6 +1720,22 @@ let coeffChainLine = coeffLayer.append("polyline")
 let trailLayer = rootsSvg.append("g").attr("class", "trail-layer");
 let rootsLayer = rootsSvg.append("g");
 
+// Morph panel (lazy-initialized on first Morph tab switch)
+let morphSvg = null;
+let morphGhostLayer = null;
+let morphInterpLayer = null;
+let morphLayer = null;
+let morphPanelInited = false;
+
+function initMorphPanel() {
+    morphSvg = d3.select("#morph-panel");
+    setupPanel(morphSvg, panels.coeff);
+    morphGhostLayer = morphSvg.append("g");
+    morphInterpLayer = morphSvg.append("g");
+    morphLayer = morphSvg.append("g");
+    morphPanelInited = true;
+}
+
 // Right-click on empty canvas space → add new coefficient
 coeffSvg.on("contextmenu", function(event) {
     if (event.target.classList && event.target.classList.contains("coeff")) return;
@@ -2256,6 +2297,11 @@ function autoScaleCoeffPanel() {
         // Trail SVG paths contain absolute screen coordinates — must re-render
         // when the scale changes so trails stay aligned with coefficient dots
         renderCoeffTrails();
+        // Sync morph panel grid + dot positions when coeff scale changes
+        if (morphPanelInited) {
+            drawGrid(morphSvg, panels.coeff);
+            renderMorphPanel();
+        }
     }
 }
 
@@ -2674,6 +2720,7 @@ function addCoefficientAt(re, im, event) {
     document.getElementById("degree-number").textContent = currentDegree;
     currentRoots = [];
     clearTrails();
+    initMorphTarget();
     renderCoefficients();
     renderCoeffTrails();
     solveRoots();
@@ -2696,10 +2743,19 @@ function deleteCoefficient(idx) {
     document.getElementById("degree-number").textContent = currentDegree;
     currentRoots = [];
     clearTrails();
+    initMorphTarget();
     renderCoefficients();
     renderCoeffTrails();
     solveRoots();
     if (leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
+}
+
+function initMorphTarget() {
+    morphTargetCoeffs = coefficients.map(c => ({
+        re: c.re, im: c.im,
+        pathType: "none", radius: 25, speed: 1, angle: 0, ccw: false, extra: {},
+        curve: [{ re: c.re, im: c.im }], curveIndex: 0
+    }));
 }
 
 function openCoeffCtx(event, coeffIdx) {
@@ -3085,16 +3141,13 @@ playBtn.addEventListener("click", function () {
         stopAnimation();
         playBtn.textContent = "▶ Play";
     } else {
-        if (allAnimatedCoeffs().size === 0) return;
+        if (allAnimatedCoeffs().size === 0 && !morphEnabled) return;
         const resuming = animState.elapsedAtPause != null;
         if (trailsEnabled && !resuming) {
             trailData = [];
-            trailComplete = false;
+
             trailLayer.selectAll("path.trail-path").remove();
         }
-        // Always reset loop-complete flag so trail recording continues.
-        // The Trails button being ON means trails are collected — unconditionally.
-        if (trailsEnabled) trailComplete = false;
         startAnimation();
         renderCoeffTrails();
         playBtn.textContent = "⏸ Pause";
@@ -3122,7 +3175,6 @@ document.getElementById("home-btn").addEventListener("click", function () {
         .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
     if (trailsEnabled) {
         trailData = [];
-        trailComplete = false;
         trailLayer.selectAll("path.trail-path").remove();
     }
     resetAudioState();
@@ -3172,6 +3224,24 @@ scrubSlider.addEventListener("input", function () {
     coeffLayer.selectAll(".coeff-label")
         .filter(ld => animated.has(ld._idx))
         .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
+    if (morphEnabled) {
+        morphMu = 0.5 + 0.5 * Math.sin(2 * Math.PI * morphRate * elapsed);
+        const muEl = document.getElementById("morph-mu-val");
+        if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
+    }
+    if (morphPanelInited && leftTab === "morph") {
+        const nn = Math.min(coefficients.length, morphTargetCoeffs.length);
+        morphGhostLayer.selectAll("circle.morph-ghost")
+            .attr("cx", (_, i) => i < nn ? cxs()(coefficients[i].re) : 0)
+            .attr("cy", (_, i) => i < nn ? cys()(coefficients[i].im) : 0);
+        morphGhostLayer.selectAll(".morph-ghost-label")
+            .attr("x", (_, i) => i < nn ? cxs()(coefficients[i].re) + 10 : 0)
+            .attr("y", (_, i) => i < nn ? cys()(coefficients[i].im) + 3 : 0);
+        morphInterpLayer.selectAll("line.morph-interp-line")
+            .attr("x1", (_, i) => i < nn ? cxs()(coefficients[i].re) : 0)
+            .attr("y1", (_, i) => i < nn ? cys()(coefficients[i].im) : 0);
+        updateMorphMarkers();
+    }
     animState.elapsedAtPause = elapsed;
     solveRootsThrottled();
     renderDomainColoringThrottled();
@@ -3606,7 +3676,7 @@ function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
 function startAnimation() {
     if (fastModeActive) return;
     const animated = allAnimatedCoeffs();
-    if (animated.size === 0) return;
+    if (animated.size === 0 && !morphEnabled) return;
 
     const resuming = animState.elapsedAtPause != null;
 
@@ -3653,6 +3723,27 @@ function animLoop(now) {
             c.im = c.curve[lo].im * (1 - frac) + c.curve[hi].im * frac;
             c.curveIndex = lo;
         }
+    }
+
+    if (morphEnabled) {
+        morphMu = 0.5 + 0.5 * Math.sin(2 * Math.PI * morphRate * elapsed);
+        const muEl = document.getElementById("morph-mu-val");
+        if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
+    }
+
+    // Update morph panel visuals if visible
+    if (morphPanelInited && leftTab === "morph") {
+        const nn = Math.min(coefficients.length, morphTargetCoeffs.length);
+        morphGhostLayer.selectAll("circle.morph-ghost")
+            .attr("cx", (_, i) => i < nn ? cxs()(coefficients[i].re) : 0)
+            .attr("cy", (_, i) => i < nn ? cys()(coefficients[i].im) : 0);
+        morphGhostLayer.selectAll(".morph-ghost-label")
+            .attr("x", (_, i) => i < nn ? cxs()(coefficients[i].re) + 10 : 0)
+            .attr("y", (_, i) => i < nn ? cys()(coefficients[i].im) + 3 : 0);
+        morphInterpLayer.selectAll("line.morph-interp-line")
+            .attr("x1", (_, i) => i < nn ? cxs()(coefficients[i].re) : 0)
+            .attr("y1", (_, i) => i < nn ? cys()(coefficients[i].im) : 0);
+        updateMorphMarkers();
     }
 
     const animated = allAnimatedCoeffs();
@@ -3736,6 +3827,136 @@ function renderCoefficients() {
 function subscript(n) {
     const digits = "₀₁₂₃₄₅₆₇₈₉";
     return String(n).split("").map(d => digits[+d]).join("");
+}
+
+// --- Morph panel rendering ---
+
+const morphDrag = d3.drag()
+    .on("start", function () { d3.select(this).classed("dragging", true); })
+    .on("drag", function (event, d) {
+        d.re = cxs().invert(event.x);
+        d.im = cys().invert(event.y);
+        d.curve = [{ re: d.re, im: d.im }];
+        d3.select(this).attr("cx", event.x).attr("cy", event.y);
+        // Update label position
+        morphLayer.selectAll(".morph-label")
+            .filter(ld => ld._idx === d._idx)
+            .attr("x", event.x + 12).attr("y", event.y + 4);
+        // Update interp line endpoint (D end) and marker
+        if (morphInterpLayer) {
+            const i = d._idx;
+            morphInterpLayer.selectAll("line.morph-interp-line")
+                .filter((_, j) => j === i)
+                .attr("x2", event.x).attr("y2", event.y);
+            morphInterpLayer.selectAll("circle.morph-interp-marker")
+                .filter((_, j) => j === i)
+                .attr("cx", cxs()(coefficients[i].re * (1 - morphMu) + d.re * morphMu))
+                .attr("cy", cys()(coefficients[i].im * (1 - morphMu) + d.im * morphMu));
+        }
+        if (morphEnabled) solveRootsThrottled();
+    })
+    .on("end", function () { d3.select(this).classed("dragging", false); });
+
+function renderMorphPanel() {
+    if (!morphPanelInited) initMorphPanel();
+    if (!morphTargetCoeffs.length) return;
+
+    const n = coefficients.length;
+    const nD = morphTargetCoeffs.length;
+
+    // Tag with _idx for d3 key
+    for (let i = 0; i < n; i++) coefficients[i]._idx = i;
+    for (let i = 0; i < nD; i++) morphTargetCoeffs[i]._idx = i;
+
+    // Ghost layer: C coefficients (faint, non-interactive)
+    const ghosts = morphGhostLayer.selectAll("circle.morph-ghost").data(coefficients, d => d._idx);
+    ghosts.enter()
+        .append("circle")
+        .attr("class", "morph-ghost")
+        .attr("r", 8)
+      .merge(ghosts)
+        .attr("cx", d => cxs()(d.re))
+        .attr("cy", d => cys()(d.im))
+        .attr("fill", (_, i) => coeffColor(i, n))
+        .attr("stroke", (_, i) => coeffColor(i, n));
+    ghosts.exit().remove();
+
+    const ghostLabels = morphGhostLayer.selectAll(".morph-ghost-label").data(coefficients, d => d._idx);
+    ghostLabels.enter()
+        .append("text")
+        .attr("class", "morph-ghost-label")
+      .merge(ghostLabels)
+        .attr("x", d => cxs()(d.re) + 10)
+        .attr("y", d => cys()(d.im) + 3)
+        .text((_, i) => `c${subscript(n - 1 - i)}`);
+    ghostLabels.exit().remove();
+
+    // D layer: morph target coefficients (full color, draggable)
+    const dots = morphLayer.selectAll("circle.morph-coeff").data(morphTargetCoeffs, d => d._idx);
+    dots.enter()
+        .append("circle")
+        .attr("class", "morph-coeff")
+        .attr("r", 10)
+        .attr("stroke", "#fff")
+        .call(morphDrag)
+      .merge(dots)
+        .attr("cx", d => cxs()(d.re))
+        .attr("cy", d => cys()(d.im))
+        .attr("fill", (_, i) => coeffColor(i, nD));
+    dots.exit().remove();
+
+    const dLabels = morphLayer.selectAll(".morph-label").data(morphTargetCoeffs, d => d._idx);
+    dLabels.enter()
+        .append("text")
+        .attr("class", "morph-label")
+      .merge(dLabels)
+        .attr("x", d => cxs()(d.re) + 12)
+        .attr("y", d => cys()(d.im) + 4)
+        .text((_, i) => `d${subscript(nD - 1 - i)}`);
+    dLabels.exit().remove();
+
+    // Interpolation lines: dashed from C[i] to D[i]
+    const lines = morphInterpLayer.selectAll("line.morph-interp-line")
+        .data(coefficients.slice(0, nD), d => d._idx);
+    lines.enter()
+        .append("line")
+        .attr("class", "morph-interp-line")
+      .merge(lines)
+        .attr("x1", d => cxs()(d.re))
+        .attr("y1", d => cys()(d.im))
+        .attr("x2", (_, i) => cxs()(morphTargetCoeffs[i].re))
+        .attr("y2", (_, i) => cys()(morphTargetCoeffs[i].im))
+        .attr("stroke", (_, i) => coeffColor(i, n))
+        .attr("stroke-opacity", 0.3)
+        .attr("stroke-dasharray", "4,3");
+    lines.exit().remove();
+
+    // Interpolated position markers: small filled circles at C*(1-mu) + D*mu
+    const markers = morphInterpLayer.selectAll("circle.morph-interp-marker")
+        .data(coefficients.slice(0, nD), d => d._idx);
+    markers.enter()
+        .append("circle")
+        .attr("class", "morph-interp-marker")
+        .attr("r", 5)
+      .merge(markers)
+        .attr("cx", (d, i) => cxs()(d.re * (1 - morphMu) + morphTargetCoeffs[i].re * morphMu))
+        .attr("cy", (d, i) => cys()(d.im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu))
+        .attr("fill", (_, i) => coeffColor(i, n))
+        .attr("stroke", "#fff")
+        .attr("stroke-width", 1);
+    markers.exit().remove();
+
+    // Update mu display
+    const muEl = document.getElementById("morph-mu-val");
+    if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
+}
+
+function updateMorphMarkers() {
+    if (!morphPanelInited || !morphInterpLayer) return;
+    const nn = Math.min(coefficients.length, morphTargetCoeffs.length);
+    morphInterpLayer.selectAll("circle.morph-interp-marker")
+        .attr("cx", (_, i) => i < nn ? cxs()(coefficients[i].re * (1 - morphMu) + morphTargetCoeffs[i].re * morphMu) : 0)
+        .attr("cy", (_, i) => i < nn ? cys()(coefficients[i].im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu) : 0);
 }
 
 // --- Root drag behavior (roots → coefficients) ---
@@ -3880,28 +4101,13 @@ function renderRoots(newRoots) {
     if (activeTab === "stats" && statsState.dirty) drawAllStatsPlots();
 
     // Record trail points during animation
-    if (trailsEnabled && animState.playing && !trailComplete) {
+    if (trailsEnabled && animState.playing) {
         // Initialize trail arrays if needed
         while (trailData.length < n) trailData.push([]);
         trailData.length = n;
         for (let i = 0; i < n; i++) {
             trailData[i].push({ re: currentRoots[i].re, im: currentRoots[i].im });
             if (trailData[i].length > MAX_TRAIL_POINTS) trailData[i].shift();
-        }
-        // Check for loop closure: all roots back near their starting positions
-        const len = trailData[0].length;
-        if (len > TRAIL_MIN_POINTS) {
-            let closed = true;
-            for (let i = 0; i < n; i++) {
-                const start = trailData[i][0];
-                const cur = trailData[i][len - 1];
-                const dist = Math.hypot(cur.re - start.re, cur.im - start.im);
-                if (dist > panels.roots.range * 0.01) { closed = false; break; }
-            }
-            if (closed) {
-                trailComplete = true;
-                if (vidRec.recording) stopRecording();
-            }
         }
     }
     // Always re-render trails when data exists — ensures coherence after
@@ -3994,7 +4200,6 @@ function renderCoeffTrails() {
 
 function clearTrails() {
     trailData = [];
-    trailComplete = false;
     trailLayer.selectAll("path.trail-path").remove();
     // Coefficient paths are always visible — don't clear them here
 }
@@ -4289,8 +4494,15 @@ function matchRootOrder(newRoots, oldRoots) {
 
 function solveRoots() {
     const iterMode = rootColorMode === "iteration";
-    const iters = iterMode ? new Uint8Array(coefficients.length - 1) : null;
-    let roots = solveRootsEA(coefficients, currentRoots, iters);
+    let coeffsToSolve = coefficients;
+    if (morphEnabled && morphTargetCoeffs.length === coefficients.length) {
+        coeffsToSolve = coefficients.map((c, i) => ({
+            re: c.re * (1 - morphMu) + morphTargetCoeffs[i].re * morphMu,
+            im: c.im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu
+        }));
+    }
+    const iters = iterMode ? new Uint8Array(coeffsToSolve.length - 1) : null;
+    let roots = solveRootsEA(coeffsToSolve, currentRoots, iters);
     roots = matchRootOrder(roots, currentRoots);
     renderRoots(roots);
 }
@@ -4324,6 +4536,7 @@ function applyPattern() {
     rootsLayer.selectAll("circle.root").remove();
     updatePanelRange(rootsSvg, panels.roots, MIN_RANGE);
     initCoefficients(currentDegree);
+    initMorphTarget();
     renderCoeffTrails(); // remove stale coefficient path SVGs (must be after initCoefficients so pathType="none")
     renderCoefficients();
     solveRoots();
@@ -5824,7 +6037,6 @@ function buildStateMetadata(timestamp) {
         uniformRootColor: uniformRootColor.slice(),
         bitmapCanvasColor: bitmapCanvasColor,
         trails: trailsEnabled,
-        trailComplete: trailComplete,
         animPlaying: animState.playing,
         activeTab: activeTab,
         selectedCoeffs: [...selectedCoeffs],
@@ -5842,10 +6054,16 @@ function buildStateMetadata(timestamp) {
         },
         trailData: trailData.map(pts => pts.map(p => [p.re, p.im])),
         jiggle: { mode: jiggleMode, sigma: jiggleSigma, theta: jiggleTheta, scaleStep: jiggleScaleStep, period: jigglePeriod, amplitude: jiggleAmplitude, lissFreqX: jiggleLissFreqX, lissFreqY: jiggleLissFreqY },
-        fastModeShowProgress: fastModeShowProgress,
         numWorkers: numWorkers,
         bitmapCoeffView: bitmapCoeffView,
-        solverType: solverType
+        solverType: solverType,
+        targetSeconds: jiggleInterval,
+        morph: {
+            enabled: morphEnabled,
+            rate: morphRate,
+            mu: morphMu,
+            target: morphTargetCoeffs.map(d => ({ pos: [d.re, d.im] }))
+        }
     };
 }
 
@@ -6152,6 +6370,35 @@ function openBitmapCfgPop() {
     info.style.cssText = "font-size:9px;color:var(--muted);margin-top:2px;";
     info.textContent = solverType === "wasm" ? "WASM Ehrlich-Aberth (compiled C)" : "JavaScript Ehrlich-Aberth";
     bitmapCfgPop.appendChild(info);
+    // Cycle duration
+    const cycTitle = document.createElement("div");
+    cycTitle.className = "pop-title";
+    cycTitle.style.marginTop = "8px";
+    cycTitle.textContent = "JIGGLE";
+    bitmapCfgPop.appendChild(cycTitle);
+    const cycRow = document.createElement("div");
+    cycRow.style.cssText = "display:flex;align-items:center;gap:6px;margin:4px 0;";
+    const cycLbl = document.createElement("span");
+    cycLbl.style.cssText = "font-size:10px;color:var(--fg);";
+    cycLbl.textContent = "Interval";
+    cycRow.appendChild(cycLbl);
+    const cycSlider = document.createElement("input");
+    cycSlider.type = "range"; cycSlider.min = "1"; cycSlider.max = "100";
+    cycSlider.value = String(jiggleInterval);
+    cycSlider.style.cssText = "width:70px;accent-color:var(--accent);";
+    const cycVal = document.createElement("span");
+    cycVal.style.cssText = "font-size:9px;color:var(--muted);min-width:24px;";
+    cycVal.textContent = jiggleInterval + "s";
+    cycSlider.addEventListener("input", () => {
+        jiggleInterval = parseInt(cycSlider.value, 10);
+        cycVal.textContent = jiggleInterval + "s";
+    });
+    cycRow.appendChild(cycSlider); cycRow.appendChild(cycVal);
+    bitmapCfgPop.appendChild(cycRow);
+    const cycInfo = document.createElement("div");
+    cycInfo.style.cssText = "font-size:9px;color:var(--muted);margin-top:2px;";
+    cycInfo.textContent = "Seconds between jiggle perturbations";
+    bitmapCfgPop.appendChild(cycInfo);
     bitmapCfgPop.classList.add("open");
     const r = document.getElementById("bitmap-cfg-btn").getBoundingClientRect();
     bitmapCfgPop.style.left = r.left + "px";
@@ -6381,6 +6628,28 @@ function applyLoadedState(meta) {
         c.curveIndex = 0;
     }
 
+    // 5b. Restore morph state
+    if (meta.morph) {
+        morphEnabled = !!meta.morph.enabled;
+        morphRate = meta.morph.rate ?? 0.25;
+        morphMu = morphEnabled ? (meta.morph.mu ?? 0.5) : 0;
+        if (meta.morph.target && meta.morph.target.length === coefficients.length) {
+            morphTargetCoeffs = meta.morph.target.map(d => ({
+                re: d.pos[0], im: d.pos[1],
+                pathType: "none", radius: 25, speed: 1, angle: 0, ccw: false, extra: {},
+                curve: [{ re: d.pos[0], im: d.pos[1] }], curveIndex: 0
+            }));
+        } else {
+            initMorphTarget();
+        }
+        document.getElementById("morph-enable").checked = morphEnabled;
+        document.getElementById("morph-rate").value = Math.round(morphRate * 100);
+        document.getElementById("morph-rate-val").textContent = morphRate.toFixed(2) + " Hz";
+        document.getElementById("morph-mu-val").textContent = "μ=" + morphMu.toFixed(2);
+    } else {
+        initMorphTarget();
+    }
+
     // 6. Restore roots
     if (meta.roots && meta.roots.length) {
         currentRoots = meta.roots.map(r => ({ re: r[0], im: r[1] }));
@@ -6391,7 +6660,6 @@ function applyLoadedState(meta) {
     // 7. Restore UI flags + sync buttons
     trailsEnabled = meta.trails || false;
     trailsBtn.classList.toggle("active", trailsEnabled);
-    trailComplete = meta.trailComplete || false;
 
     domainColoringEnabled = meta.domainColoring || false;
     domainToggleBtn.classList.toggle("active", domainColoringEnabled);
@@ -6433,12 +6701,6 @@ function applyLoadedState(meta) {
     jiggleTriggerCount = 0;
     jiggleOffsets = null;
 
-    // 9b. Restore fastModeShowProgress
-    if (typeof meta.fastModeShowProgress === "boolean") {
-        fastModeShowProgress = meta.fastModeShowProgress;
-        const togBtn = document.getElementById("bitmap-progress-toggle");
-        if (togBtn) togBtn.style.opacity = fastModeShowProgress ? "1" : "0.4";
-    }
 
     // 9c. Restore numWorkers
     if (typeof meta.numWorkers === "number" && meta.numWorkers >= 1 && meta.numWorkers <= 16) {
@@ -6449,6 +6711,7 @@ function applyLoadedState(meta) {
     if (meta.solverType === "js" || meta.solverType === "wasm") {
         solverType = meta.solverType;
     }
+    if (typeof meta.targetSeconds === "number") jiggleInterval = meta.targetSeconds;
 
     // 9d. Restore bitmap coefficient view toggle
     bitmapCoeffView = !!meta.bitmapCoeffView;
@@ -7462,7 +7725,8 @@ function initBitmapCanvas() {
     bitmapRange = panels.roots.range;
     bitmapFrameCount = 0;
     fastModeElapsedOffset = 0;
-    fastModeCumulativeSec = 0;
+    fastModePassCount = 0;
+    fastModeWorkerRoots = null;
     // Clear jiggle state for a clean slate
     jiggleOffsets = null;
     jiggleCumulativeAngle = 0;
@@ -7731,6 +7995,7 @@ var S_noColor, S_uniformR, S_uniformG, S_uniformB;
 var S_totalSteps, S_FPS;
 var S_iterColor, S_iterPalR, S_iterPalG, S_iterPalB;
 var S_proxColor, S_proxPalR, S_proxPalG, S_proxPalB;
+var S_morphEnabled = false, S_morphRate = 0, S_morphTargetRe = null, S_morphTargetIm = null;
 
 self.onmessage = function(e) {
     var d = e.data;
@@ -7762,6 +8027,11 @@ self.onmessage = function(e) {
         if (S_useWasm && d.wasmB64) {
             try { initWasm(d.wasmB64, d.nCoeffs, d.nRoots); } catch(e) { S_useWasm = false; }
         }
+        // Morph init
+        S_morphEnabled = !!d.morphEnabled;
+        S_morphRate = d.morphRate || 0;
+        S_morphTargetRe = d.morphTargetRe ? new Float64Array(d.morphTargetRe) : null;
+        S_morphTargetIm = d.morphTargetIm ? new Float64Array(d.morphTargetIm) : null;
         return;
     }
 
@@ -7823,6 +8093,15 @@ self.onmessage = function(e) {
                 var frac = rawIdx - (rawIdx | 0);
                 coeffsRe[idx] = curvesFlat[base+lo*2]*(1-frac) + curvesFlat[base+hi*2]*frac;
                 coeffsIm[idx] = curvesFlat[base+lo*2+1]*(1-frac) + curvesFlat[base+hi*2+1]*frac;
+            }
+        }
+
+        if (S_morphEnabled) {
+            var mu = 0.5 + 0.5 * Math.sin(2 * Math.PI * S_morphRate * elapsed);
+            var omu = 1 - mu;
+            for (var m = 0; m < nCoeffs; m++) {
+                coeffsRe[m] = coeffsRe[m] * omu + S_morphTargetRe[m] * mu;
+                coeffsIm[m] = coeffsIm[m] * omu + S_morphTargetIm[m] * mu;
             }
         }
 
@@ -7916,27 +8195,8 @@ self.onmessage = function(e) {
     return URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
 }
 
-// Compute passes needed for all animated coefficients to return home simultaneously.
-// Speed slider step = 0.01, so speed_i = s_i/100 (integer s_i).
-// Period_i = 100/s_i seconds. Full cycle = LCM of all periods = 100/GCD(s_1,...,s_k).
-// Each pass covers FAST_PASS_SECONDS (1.0s), so passes = 100/GCD(s_1,...,s_k).
 function fmtPassCount() {
-    const c = Math.round(fastModeCumulativeSec * 100) / 100;
-    const t = Math.round(fastModeTargetPasses * 100) / 100;
-    return t > 0 ? c + "/" + t + "s" : c + "s";
-}
-
-function computeFullCyclePasses() {
-    const animated = allAnimatedCoeffs();
-    if (animated.size === 0) return 0;
-    function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a; }
-    let g = 0;
-    for (const idx of animated) {
-        const s = Math.round(coefficients[idx].speed * 100);
-        if (s <= 0) continue;
-        g = g === 0 ? s : gcd(g, s);
-    }
-    return g > 0 ? 100 / g : 0;
+    return String(Math.round(fastModeElapsedOffset)).padStart(6, "0") + "s";
 }
 
 // Find nearest integer speed (1–100) that is coprime with all other animated coefficients' speeds
@@ -8047,9 +8307,6 @@ function plotCoeffCurvesOnBitmap(animated, stepsVal) {
 function enterFastMode() {
     if (fastModeActive) return;
 
-    // Clear stale warm-start roots from any previous fast mode session
-    fastModeWorkerRoots = null;
-
     // Stop interactive animation
     stopAnimation();
     playBtn.textContent = "\u25b6 Play";
@@ -8061,7 +8318,6 @@ function enterFastMode() {
         initBitmapCanvas();
         document.getElementById("bitmap-save-btn").disabled = false;
         document.getElementById("bitmap-clear-btn").disabled = false;
-        document.getElementById("bitmap-start-btn").textContent = "restart";
         document.getElementById("jiggle-btn").disabled = false;
         document.getElementById("jiggle-diag-btn").disabled = false;
         document.getElementById("bitmap-coeff-btn").disabled = false;
@@ -8106,21 +8362,13 @@ function enterFastMode() {
     fastModeActive = true;
     fastModeStepIndex = 0;
     fastModeTotalSteps = stepsVal;
-    fastModePassCount = 0;
     fastModeCycleStartTime = performance.now();
-    fastModeTargetPasses = computeFullCyclePasses();
+    fastModeTargetPasses = jiggleInterval;
 
     document.body.classList.add("fast-mode");
-    document.getElementById("bitmap-fast-btn").textContent = "imode";
-    if (fastModeShowProgress) {
-        const prog = document.getElementById("bitmap-progress");
-        if (prog) { prog.style.display = ""; document.getElementById("bitmap-progress-bar").style.width = "0%"; }
-        const passEl = document.getElementById("bitmap-pass-count");
-        if (passEl) {
-            passEl.style.display = "";
-            passEl.textContent = fmtPassCount();
-        }
-    }
+    document.getElementById("bitmap-fast-btn").textContent = "stop";
+    const passEl0 = document.getElementById("bitmap-pass-count");
+    if (passEl0) { passEl0.style.display = ""; passEl0.textContent = fmtPassCount(); }
 
     // Coefficient view: plot coefficient curve positions directly (no solver, no workers)
     if (bitmapCoeffView) {
@@ -8128,14 +8376,17 @@ function enterFastMode() {
         bitmapRange = panels.coeff.range;
         plotCoeffCurvesOnBitmap(animated, stepsVal);
         fastModePassCount++;
-        fastModeCumulativeSec++;
+        fastModeElapsedOffset += FAST_PASS_SECONDS;
         // Update pass counter display
         const passEl = document.getElementById("bitmap-pass-count");
         if (passEl) passEl.textContent = fmtPassCount();
-        // If jiggle cycling is set up, schedule next cycle
-        if (jiggleMode !== "none" && fastModeActive) {
-            function coeffJiggleCycle() {
-                if (!fastModeActive) return;
+        // Continuous jiggle cycle
+        function coeffJiggleCycle() {
+            if (!fastModeActive) return;
+            // Check jiggle boundary
+            if (jiggleMode !== "none" && fastModeTargetPasses > 0
+                && fastModePassCount >= fastModeTargetPasses) {
+                fastModePassCount = 0;
                 generateJiggleOffsets();
                 // Recompute curves with new jiggle offsets
                 fastModeCurves = new Map();
@@ -8154,20 +8405,16 @@ function enterFastMode() {
                     if (jiggleOffsets && jiggleOffsets.has(idx)) { hRe += jiggleOffsets.get(idx).re; hIm += jiggleOffsets.get(idx).im; }
                     fastModeCurves.set(idx, computeCurveN(hRe, hIm, c.pathType, absR, c.angle, c.extra, stepsVal));
                 }
-                plotCoeffCurvesOnBitmap(anim2, stepsVal);
-                fastModePassCount++;
-                fastModeCumulativeSec++;
-                if (passEl) passEl.textContent = fmtPassCount();
-                if (fastModeActive && jiggleMode !== "none") {
-                    fastModeTimerId = setTimeout(coeffJiggleCycle, 0);
-                } else {
-                    exitFastMode();
-                }
             }
-            fastModeTimerId = setTimeout(coeffJiggleCycle, 0);
-        } else {
-            exitFastMode();
+            plotCoeffCurvesOnBitmap(allAnimatedCoeffs(), stepsVal);
+            fastModePassCount++;
+            fastModeElapsedOffset += FAST_PASS_SECONDS;
+            if (passEl) passEl.textContent = fmtPassCount();
+            if (fastModeActive) {
+                fastModeTimerId = setTimeout(coeffJiggleCycle, 0);
+            }
         }
+        fastModeTimerId = setTimeout(coeffJiggleCycle, 0);
         return;
     }
 
@@ -8263,6 +8510,10 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         iterPalR: ITER_PAL_R.buffer.slice(0), iterPalG: ITER_PAL_G.buffer.slice(0), iterPalB: ITER_PAL_B.buffer.slice(0),
         proxColor: rootColorMode === "proximity",
         proxPalR: PROX_PAL_R.buffer.slice(0), proxPalG: PROX_PAL_G.buffer.slice(0), proxPalB: PROX_PAL_B.buffer.slice(0),
+        morphEnabled: morphEnabled && morphTargetCoeffs.length === nCoeffs,
+        morphRate: morphRate,
+        morphTargetRe: morphEnabled ? Float64Array.from(morphTargetCoeffs, d => d.re) : null,
+        morphTargetIm: morphEnabled ? Float64Array.from(morphTargetCoeffs, d => d.im) : null,
     };
 }
 
@@ -8307,6 +8558,10 @@ function initFastModeWorkers() {
             totalSteps: sd.stepsVal, FAST_PASS_SECONDS,
             useWasm: solverType === "wasm",
             wasmB64: solverType === "wasm" ? WASM_SOLVER_B64 : null,
+            morphEnabled: sd.morphEnabled,
+            morphRate: sd.morphRate,
+            morphTargetRe: sd.morphTargetRe ? sd.morphTargetRe.buffer.slice(0) : null,
+            morphTargetIm: sd.morphTargetIm ? sd.morphTargetIm.buffer.slice(0) : null,
         });
 
         fastModeWorkers.push(worker);
@@ -8349,19 +8604,7 @@ function handleFastModeWorkerMessage(e) {
     if (!fastModeActive) return;
 
     if (msg.type === "progress") {
-        // Aggregate progress across workers
         fastModeWorkerProgress[msg.workerId] = msg.step;
-        if (fastModeShowProgress) {
-            const totalDone = fastModeWorkerProgress.reduce((a, b) => a + b, 0);
-            const bar = document.getElementById("bitmap-progress-bar");
-            if (bar) {
-                if (fastModeTargetPasses > 0) {
-                    bar.style.width = ((fastModePassCount + totalDone / fastModeTotalSteps) / fastModeTargetPasses * 100) + "%";
-                } else {
-                    bar.style.width = (totalDone / fastModeTotalSteps * 100) + "%";
-                }
-            }
-        }
     }
     else if (msg.type === "done") {
         // Collect this worker's sparse pixel data
@@ -8462,41 +8705,65 @@ function recordPassTiming(workerMs) {
 function advancePass() {
     fastModeElapsedOffset += FAST_PASS_SECONDS;
     fastModePassCount++;
-    fastModeCumulativeSec++;
+    const passEl = document.getElementById("bitmap-pass-count");
+    if (passEl) passEl.textContent = fmtPassCount();
 
-    // Update UI
-    if (fastModeShowProgress) {
-        const bar = document.getElementById("bitmap-progress-bar");
-        if (bar) {
-            if (fastModeTargetPasses > 0) {
-                bar.style.width = (fastModePassCount / fastModeTargetPasses * 100) + "%";
-            } else {
-                bar.style.width = "0%";
-            }
-        }
-        const passEl = document.getElementById("bitmap-pass-count");
-        if (passEl) {
-            passEl.textContent = fmtPassCount();
-        }
-    }
-
-    // Cycle complete — apply jiggle and restart
-    if (fastModeTargetPasses > 0 && fastModePassCount >= fastModeTargetPasses) {
-        exitFastMode();
-        fastModeElapsedOffset = 0;
-        generateJiggleOffsets();
-        enterFastMode();
+    // Jiggle boundary — reinit workers, elapsed continues
+    if (jiggleMode !== "none" && fastModeTargetPasses > 0
+        && fastModePassCount >= fastModeTargetPasses) {
+        fastModePassCount = 0;
+        reinitWorkersForJiggle();
         return;
     }
 
-    // Update shared data with warm-start roots from last pass
+    // Warm-start roots for next pass
     if (fastModeWorkerRoots && fastModeSharedData) {
         fastModeSharedData.rootsRe = new Float64Array(fastModeWorkerRoots.re);
         fastModeSharedData.rootsIm = new Float64Array(fastModeWorkerRoots.im);
     }
-
-    // Dispatch next pass to existing persistent workers (no re-creation)
     dispatchPassToWorkers();
+}
+
+function reinitWorkersForJiggle() {
+    const savedRoots = fastModeWorkerRoots;
+
+    for (const wk of fastModeWorkers) wk.terminate();
+    fastModeWorkers = [];
+    fastModeWorkersComplete = 0;
+    fastModeWorkerPixels = [];
+    fastModeWorkerProgress = [];
+    fastModeSharedData = null;
+
+    generateJiggleOffsets();
+    fastModeWorkerRoots = savedRoots;
+
+    const stepsVal = fastModeTotalSteps;
+    const animated = allAnimatedCoeffs();
+    fastModeCurves = new Map();
+    const savedPos = [];
+    for (const idx of animated) {
+        const c = coefficients[idx];
+        savedPos.push({ idx, re: c.re, im: c.im });
+        c.re = c.curve[0].re; c.im = c.curve[0].im;
+    }
+    const extentAtHome = coeffExtent();
+    for (const s of savedPos) { coefficients[s.idx].re = s.re; coefficients[s.idx].im = s.im; }
+    for (const idx of animated) {
+        const c = coefficients[idx];
+        const absR = (c.radius / 100) * extentAtHome;
+        let homeRe = c.curve[0].re, homeIm = c.curve[0].im;
+        if (jiggleOffsets && jiggleOffsets.has(idx)) {
+            homeRe += jiggleOffsets.get(idx).re;
+            homeIm += jiggleOffsets.get(idx).im;
+        }
+        fastModeCurves.set(idx, computeCurveN(homeRe, homeIm, c.pathType, absR, c.angle, c.extra, stepsVal));
+    }
+
+    const nRoots = currentRoots.length;
+    fastModeSharedData = serializeFastModeData(animated, stepsVal, nRoots);
+    fastModeStepIndex = 0;
+    fastModeCycleStartTime = performance.now();
+    initFastModeWorkers();
 }
 
 function exitFastMode() {
@@ -8547,9 +8814,7 @@ function exitFastMode() {
     fastModeLastStep = 0;
 
     document.body.classList.remove("fast-mode");
-    document.getElementById("bitmap-fast-btn").textContent = "fastmode";
-    const prog = document.getElementById("bitmap-progress");
-    if (prog) prog.style.display = "none";
+    document.getElementById("bitmap-fast-btn").textContent = "start";
     const passEl = document.getElementById("bitmap-pass-count");
     if (passEl) passEl.style.display = "none";
 
@@ -8610,46 +8875,39 @@ function fastModeChunkLegacy() {
 
     fastModeStepIndex = step;
 
-    // Update progress bar (cheap DOM update once per chunk)
-    if (fastModeShowProgress) {
-        const bar = document.getElementById("bitmap-progress-bar");
-        if (bar) {
-            if (fastModeTargetPasses > 0) {
-                bar.style.width = ((fastModePassCount + fastModeStepIndex / fastModeTotalSteps) / fastModeTargetPasses * 100) + "%";
-            } else {
-                bar.style.width = (fastModeStepIndex / fastModeTotalSteps * 100) + "%";
-            }
-        }
-    }
-
     if (fastModeStepIndex >= fastModeTotalSteps) {
         // Pass complete — advance offset, reset step counter, continue
         fastModeElapsedOffset += FAST_PASS_SECONDS;
         fastModePassCount++;
-        fastModeCumulativeSec++;
         fastModeStepIndex = 0;
         fastModeLastStep = 0;
-        if (fastModeShowProgress) {
-            const bar = document.getElementById("bitmap-progress-bar");
-            if (bar) {
-                if (fastModeTargetPasses > 0) {
-                    bar.style.width = (fastModePassCount / fastModeTargetPasses * 100) + "%";
-                } else {
-                    bar.style.width = "0%";
-                }
-            }
-            const passEl = document.getElementById("bitmap-pass-count");
-            if (passEl) {
-                passEl.textContent = fmtPassCount();
-            }
-        }
-        // Cycle complete — always continue, apply jiggle
-        if (fastModeTargetPasses > 0 && fastModePassCount >= fastModeTargetPasses) {
-            exitFastMode();
-            fastModeElapsedOffset = 0;
+        const passEl = document.getElementById("bitmap-pass-count");
+        if (passEl) passEl.textContent = fmtPassCount();
+        // Jiggle boundary — continuous, no exit/re-enter
+        if (jiggleMode !== "none" && fastModeTargetPasses > 0
+            && fastModePassCount >= fastModeTargetPasses) {
+            fastModePassCount = 0;
             generateJiggleOffsets();
-            enterFastMode();
-            return;
+            // Recompute curves with new jiggle offsets
+            const stepsVal2 = fastModeTotalSteps;
+            const animated2 = allAnimatedCoeffs();
+            fastModeCurves = new Map();
+            const savedPos2 = [];
+            for (const idx of animated2) {
+                const c = coefficients[idx]; savedPos2.push({ idx, re: c.re, im: c.im });
+                c.re = c.curve[0].re; c.im = c.curve[0].im;
+            }
+            const ext2 = coeffExtent();
+            for (const s of savedPos2) { coefficients[s.idx].re = s.re; coefficients[s.idx].im = s.im; }
+            for (const idx of animated2) {
+                const c = coefficients[idx];
+                const absR = (c.radius / 100) * ext2;
+                let hRe = c.curve[0].re, hIm = c.curve[0].im;
+                if (jiggleOffsets && jiggleOffsets.has(idx)) {
+                    hRe += jiggleOffsets.get(idx).re; hIm += jiggleOffsets.get(idx).im;
+                }
+                fastModeCurves.set(idx, computeCurveN(hRe, hIm, c.pathType, absR, c.angle, c.extra, stepsVal2));
+            }
         }
     }
 
@@ -8667,12 +8925,10 @@ function resetBitmap() {
     const saveBtn = document.getElementById("bitmap-save-btn");
     const clearBtn = document.getElementById("bitmap-clear-btn");
     const fastBtn = document.getElementById("bitmap-fast-btn");
-    const prog = document.getElementById("bitmap-progress");
-    if (startBtn) startBtn.textContent = "start";
+    if (startBtn) startBtn.textContent = "init";
     if (saveBtn) saveBtn.disabled = true;
     if (clearBtn) clearBtn.disabled = true;
-    if (fastBtn) { fastBtn.disabled = true; fastBtn.textContent = "fastmode"; }
-    if (prog) prog.style.display = "none";
+    if (fastBtn) { fastBtn.disabled = true; fastBtn.textContent = "start"; }
 }
 
 // Tab switching
@@ -8705,7 +8961,8 @@ let leftTab = "coeffs";
 const leftTabButtons = [...document.querySelectorAll("#left-tab-bar [data-ltab]")];
 const leftTabContents = {
     coeffs: document.getElementById("coeffs-content"),
-    list: document.getElementById("list-content")
+    list: document.getElementById("list-content"),
+    morph: document.getElementById("morph-content")
 };
 
 function switchLeftTab(tabName) {
@@ -8714,8 +8971,48 @@ function switchLeftTab(tabName) {
     leftTabButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.ltab === tabName));
     for (const [key, el] of Object.entries(leftTabContents)) el.classList.toggle("active", key === tabName);
     if (tabName === "list") { refreshCoeffList(); refreshListCurveEditor(); }
+    if (tabName === "morph") renderMorphPanel();
 }
 leftTabButtons.forEach(btn => btn.addEventListener("click", () => switchLeftTab(btn.dataset.ltab)));
+
+// --- Morph control event handlers ---
+document.getElementById("morph-enable").addEventListener("change", function () {
+    morphEnabled = this.checked;
+    morphMu = morphEnabled ? 0.5 : 0;
+    const muEl = document.getElementById("morph-mu-val");
+    if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
+    if (leftTab === "morph") renderMorphPanel();
+    solveRoots();
+});
+document.getElementById("morph-rate").addEventListener("input", function () {
+    morphRate = this.value / 100;
+    document.getElementById("morph-rate-val").textContent = morphRate.toFixed(2) + " Hz";
+});
+document.getElementById("morph-copy-btn").addEventListener("click", function () {
+    initMorphTarget();
+    if (leftTab === "morph") renderMorphPanel();
+    if (morphEnabled) solveRoots();
+});
+document.getElementById("morph-swap-btn").addEventListener("click", function () {
+    if (morphTargetCoeffs.length !== coefficients.length) return;
+    for (let i = 0; i < coefficients.length; i++) {
+        const c = coefficients[i], d = morphTargetCoeffs[i];
+        const tmpRe = c.re, tmpIm = c.im;
+        c.re = d.re; c.im = d.im;
+        d.re = tmpRe; d.im = tmpIm;
+        d.curve = [{ re: d.re, im: d.im }];
+        if (c.pathType === "none") {
+            c.curve = [{ re: c.re, im: c.im }];
+        } else {
+            c.curve = computeCurve(c.re, c.im, c.pathType, c.radius / 100 * coeffExtent(), c.angle, c.extra);
+            c.curveIndex = 0;
+        }
+    }
+    renderCoefficients();
+    renderCoeffTrails();
+    if (leftTab === "morph") renderMorphPanel();
+    solveRoots();
+});
 
 // --- Path display name helper ---
 function pathDisplayName(t) {
@@ -9607,14 +9904,14 @@ document.getElementById("lce-ps-btn").addEventListener("click", () => {
 
 // Bitmap tab buttons
 document.getElementById("bitmap-start-btn").addEventListener("click", function () {
+    if (fastModeActive) exitFastMode();
     initBitmapCanvas();
     document.getElementById("bitmap-save-btn").disabled = false;
     document.getElementById("bitmap-clear-btn").disabled = false;
     document.getElementById("bitmap-fast-btn").disabled = false;
     document.getElementById("bitmap-coeff-btn").disabled = false;
     document.getElementById("jiggle-btn").disabled = false;
-        document.getElementById("jiggle-diag-btn").disabled = false;
-    this.textContent = "restart";
+    document.getElementById("jiggle-diag-btn").disabled = false;
 });
 
 document.getElementById("bitmap-save-btn").addEventListener("click", function () {
@@ -9635,27 +9932,15 @@ document.getElementById("bitmap-clear-btn").addEventListener("click", function (
         bitmapCtx.fillRect(0, 0, bitmapCtx.canvas.width, bitmapCtx.canvas.height);
         fillPersistentBuffer(bitmapCanvasColor);
         bitmapFrameCount = 0;
-        fastModeElapsedOffset = 0;
+        // Do NOT reset fastModeElapsedOffset — just clear pixels
     }
 });
 
-// --- Progress bar toggle button ---
-document.getElementById("bitmap-progress-toggle").addEventListener("click", function () {
-    fastModeShowProgress = !fastModeShowProgress;
-    this.style.opacity = fastModeShowProgress ? "1" : "0.4";
-    if (!fastModeShowProgress) {
-        const prog = document.getElementById("bitmap-progress");
-        if (prog) prog.style.display = "none";
-        const passEl = document.getElementById("bitmap-pass-count");
-        if (passEl) passEl.style.display = "none";
-    }
-});
 
 document.getElementById("bitmap-fast-btn").addEventListener("click", function () {
-    if (fastModeActive) exitFastMode();
-    else {
-        fastModeCumulativeSec = 0;
-        fastModeElapsedOffset = 0;
+    if (fastModeActive) {
+        exitFastMode();
+    } else {
         enterFastMode();
     }
 });
@@ -10367,6 +10652,10 @@ function rebuild() {
     // Clear and rebuild both SVGs
     coeffSvg.selectAll("*").remove();
     rootsSvg.selectAll("*").remove();
+    if (morphPanelInited) {
+        morphSvg.selectAll("*").remove();
+        morphPanelInited = false;
+    }
     setupPanel(coeffSvg, panels.coeff);
     setupPanel(rootsSvg, panels.roots);
 
@@ -10407,6 +10696,7 @@ window.addEventListener("resize", () => {
 rootsSvg.classed("domain-active", domainColoringEnabled);
 domainCanvas.style.display = domainColoringEnabled ? "block" : "none";
 initCoefficients(currentDegree);
+initMorphTarget();
 renderCoefficients();
 solveRoots();
 renderDomainColoring();

@@ -26,7 +26,8 @@ The entire application lives in one HTML file (`index.html`, ~10,400 lines). CSS
 | Coefficient data model | 868–880 | State arrays, selection sets, trail data |
 | Rendering functions | 1621–3960 | SVG circles, trails, domain coloring, grid |
 | Add/delete coefficients | 2659–2710 | Right-click canvas to add, context menu delete |
-| Animation loop | 3631–3750 | `animLoop()`, path interpolation, throttled solve |
+| Morph panel & rendering | 3826–3960 | Ghost layer, D dots, interp lines/markers, drag handler |
+| Animation loop | 3631–3750 | `animLoop()`, path interpolation, morph mu, throttled solve |
 | Root solver | 4121–4310 | Ehrlich-Aberth, root matching, warm start |
 | Event handlers | 4430–5400 | Mouse, keyboard, tab switch, popover toggle |
 | Ops tools | 5100–5350 | Scale, rotate, translate — popover builders |
@@ -75,6 +76,18 @@ Each coefficient is a plain object with these fields:
 - `curveIndex` — Current integer index into `curve[]`
 
 **Important**: `"none"` path type means a 1-point curve at the coefficient's home position. It is NOT null — always check `pathType`, never check `curve == null`.
+
+### Morph System
+
+Coefficient morphing blends two coefficient sets: primary C (`coefficients[]`) and target D (`morphTargetCoeffs[]`). When enabled, the solver receives `C[i]*(1-mu) + D[i]*mu` where `mu = 0.5 + 0.5*sin(2π*morphRate*elapsed)`.
+
+Key state: `morphEnabled`, `morphRate` (Hz, 0.01–2.00), `morphMu` (0–1), `morphTargetCoeffs[]` (same structure as `coefficients[]`, but Phase 1 = static positions only, pathType always "none").
+
+**Design insight**: Morph is a "global path" — it affects all coefficients equally through a single parameter. Unlike per-coefficient paths which are independent, morph creates correlated perturbation across the entire polynomial. The blending happens BEFORE the solver call, making it transparent to both JS and WASM solvers.
+
+**Fast mode**: Workers receive D positions in the init message and compute mu per-step. The blending loop is 7 lines inserted between curve interpolation and solver call. No WASM changes needed.
+
+**Continuous fast mode**: Fast mode runs continuously until stopped. `jiggleInterval` (1–100s, cfg popup) controls how often jiggle perturbations fire — not a cycle length. "init" button snapshots animation state + clears bitmap + resets elapsed. "start"/"stop" toggles computation. Stopping preserves elapsed; resuming continues. "clear" only clears pixels. Elapsed seconds shown as zero-padded counter.
 
 ### Root State
 
@@ -128,19 +141,22 @@ Simultaneous iterative root finder with cubic convergence. Key parameters:
 ```
 animLoop()
   ├─ Update coefficient positions along curves (elapsed time → curveIndex)
+  ├─ Update morphMu (sinusoidal oscillation) if morphEnabled
   ├─ solveRootsThrottled()
   │   └─ requestAnimationFrame → solveRoots()
+  │       ├─ Blend C with D if morphEnabled: coeffs[i] = C[i]*(1-mu) + D[i]*mu
   │       └─ renderRoots(newRoots)
   │           ├─ Draw SVG circles
   │           ├─ Update trail data
   │           ├─ Compute stats
   │           └─ updateAudio()
+  ├─ Update morph panel visuals (ghosts, lines, markers) if morph tab visible
   ├─ renderCoefficients()
   ├─ renderCoeffTrails()
   └─ requestAnimationFrame(animLoop)  [next frame]
 ```
 
-**Fast mode is separate**: when `fastModeActive`, `animLoop()` returns early (line 3472). Workers drive the pipeline instead: `runFastModePass()` → workers solve → `handleFastModeWorkerMessage()` → `compositeWorkerPixels()` → `advancePass()`.
+**Fast mode is separate**: when `fastModeActive`, `animLoop()` returns early (line 3472). Workers drive the pipeline instead: `dispatchPassToWorkers()` → workers interpolate curves + blend morph + solve → `handleFastModeWorkerMessage()` → `compositeWorkerPixels()` → `advancePass()`. Fast mode runs continuously — `advancePass()` calls `reinitWorkersForJiggle()` every `jiggleInterval` passes (if jiggle enabled), which regenerates offsets and recomputes curves without resetting elapsed time.
 
 ---
 
@@ -477,13 +493,29 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 12. **Float64Array out-of-bounds reads return `undefined`, not an error** — and `undefined` silently converts to `NaN` when stored in another Float64Array. This makes dimension-mismatch bugs extremely hard to find: no exception, no console warning, just corrupted numbers propagating through computation. The `solveRootsEA` filter bug went undetected because it only triggered with specific polynomial configurations.
 
-13. **`Set` iteration order is insertion order, not sorted order** — `[...selectedCoeffs]` returns indices in the order they were added to the Set, not numerically sorted. When applying transforms like LerpRadius that need deterministic index ordering (first selected → last selected), always sort: `[...selectedCoeffs].sort((a, b) => a - b)`.
+13. **Cycle detection is fundamentally broken for discrete systems** — the GCD-based `computeFullCyclePasses()` assumed periodic coefficient paths with rational speed ratios. Adding morph oscillation on top breaks this: even though C positions and mu return to start, the roots DON'T (because the blended polynomial traces a different path through coefficient space each cycle due to floating-point accumulation). More broadly, with finite precision and discrete steps, you can never reliably detect when roots have "returned to start." The honest solution is a user-settable target seconds value. Removed `computeFullCyclePasses()` entirely.
 
-14. **Coefficient array index = polynomial term power mapping** — `coefficients[0]` is the leading (highest power) term, `coefficients[n-1]` is the constant term. Subscript display is `c${n-1-i}` where `n = coefficients.length`. Adding a new coefficient via `unshift()` makes it the new highest power; adding via `push()` makes it the new constant term. Selection indices must be adjusted when coefficients are added/removed (all indices shift by ±1).
+14. **Trail loop detection has the same fundamental flaw** — `trailComplete` checked if all roots returned within 1% of start positions after `TRAIL_MIN_POINTS` frames. With morph oscillation at 2 Hz, one cycle = 0.5s = 30 frames = exactly `TRAIL_MIN_POINTS`, so loop detection triggered immediately and killed trail collection. But even without morph, it was unreliable: floating-point drift, root identity swaps, and discrete sampling all create false positives/negatives. Removed entirely — trails now collect up to `MAX_TRAIL_POINTS` and stop only when the user disables them.
 
-15. **Root trails must be cleared on coefficient add/delete** — when the polynomial's degree changes, old root trails from the previous polynomial are meaningless and visually misleading. `clearTrails()` must be called in both `addCoefficientAt()` and `deleteCoefficient()`.
+15. **Worker integration for new features is simpler than expected** — adding morph to fast mode workers required only: (a) serialize D positions as Float64Arrays in `serializeFastModeData()`, (b) pass them in the worker init message, (c) a 7-line blending loop after curve interpolation. No worker architecture changes, no WASM changes, no protocol changes. The key: morph blending happens in JS BEFORE the solver call, making it transparent to both JS and WASM solvers.
 
-16. **Transform dropdown pattern: execute-then-reset** — The List tab's Transform dropdown fires on `change`, applies the selected transform to `selectedCoeffs`, calls `solveRootsThrottled()` to update roots, then resets the dropdown back to `"none"`. This prevents accidental double-application and keeps the UI clean.
+16. **SVG drag handlers must update ALL coupled visual elements** — when D dots are dragged in the morph panel, the interpolation lines (C→D) and markers (blended position) must also update. The initial implementation only updated the dot and its label, causing stale connecting lines. Each interactive element needs to consider what other elements depend on its position.
+
+17. **Animation guards accumulate** — when adding new animation sources (morph), every guard that checks `allAnimatedCoeffs().size === 0` must be relaxed with `&& !morphEnabled`. Both `startAnimation()` and the Play button handler had this guard. Easy to miss the second one.
+
+18. **`Set` iteration order is insertion order, not sorted order** — `[...selectedCoeffs]` returns indices in the order they were added to the Set, not numerically sorted. When applying transforms like LerpRadius that need deterministic index ordering (first selected → last selected), always sort: `[...selectedCoeffs].sort((a, b) => a - b)`.
+
+19. **Coefficient array index = polynomial term power mapping** — `coefficients[0]` is the leading (highest power) term, `coefficients[n-1]` is the constant term. Subscript display is `c${n-1-i}` where `n = coefficients.length`. Adding a new coefficient via `unshift()` makes it the new highest power; adding via `push()` makes it the new constant term. Selection indices must be adjusted when coefficients are added/removed (all indices shift by ±1).
+
+20. **Root trails must be cleared on coefficient add/delete** — when the polynomial's degree changes, old root trails from the previous polynomial are meaningless and visually misleading. `clearTrails()` must be called in both `addCoefficientAt()` and `deleteCoefficient()`.
+
+21. **Transform dropdown pattern: execute-then-reset** — The List tab's Transform dropdown fires on `change`, applies the selected transform to `selectedCoeffs`, calls `solveRootsThrottled()` to update roots, then resets the dropdown back to `"none"`. This prevents accidental double-application and keeps the UI clean.
+
+22. **Extensions must preserve original behavior when disabled** — `morphMu` defaulted to `0.5` because the plan optimized for "enable morph → immediately see 50/50 blend." But this meant that on startup (morph disabled), the morph panel displayed the interpolated marker at the midpoint between C and D instead of on C. The invariant: when a feature is OFF, all its state variables must reflect "as if the feature doesn't exist." For morph: `morphMu = 0` when disabled (marker on C, no blending). `morphMu = 0.5` only when explicitly enabled. Default values should match the disabled state, not the enabled state.
+
+23. **"Cycle complete → restart" is the wrong model for open-ended exploration** — the original fast mode ran fixed-length cycles: compute N passes, exit, jiggle, re-enter from elapsed=0. This replayed the same morph phase every cycle. The fix: make fast mode continuous — elapsed ticks forever, jiggle fires periodically as a perturbation (not a cycle boundary). Stop/resume preserves all state. The only reset is explicit "init". Separate concerns: "init" = snapshot + clear + reset elapsed; "start/stop" = toggle computation; "clear" = clear pixels only. Each button does exactly one thing.
+
+24. **Progress bars add complexity without proportional value** — the fast mode progress bar required a `fastModeShowProgress` variable, a toggle button, save/load support, conditional blocks in 6+ functions, and two HTML elements. All to show a bar that fills and resets every ~1 second. A zero-padded elapsed seconds counter (`000042s`) conveys more useful information (total computation time) with zero complexity. When the visual feedback to complexity ratio is low, remove the feature entirely rather than maintaining it.
 
 ---
 
@@ -499,9 +531,10 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 ### Adding New State to Save/Load
 
-1. Add serialization in `saveState()` (~line 6281)
-2. Add deserialization in `loadState()` (~line 6305) with a default fallback for old snapshots
+1. Add serialization in `buildStateMetadata()` (~line 6040)
+2. Add deserialization in `applyLoadedState()` (~line 6500) with a default fallback for old snapshots
 3. Test with old snapshot files to verify backward compatibility
+4. If the state affects fast mode workers, also add it to `serializeFastModeData()` and the worker init message
 
 ### Adding a New Statistic
 
@@ -529,7 +562,7 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 ### Test Suite
 
-Automated tests exist in `tests/` using Playwright Python (headless Chromium). 38 tests covering solver correctness, root matching, curve generation, integration, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
+Automated tests exist in `tests/` using Playwright Python (headless Chromium). 196 tests covering solver correctness, root matching, curve generation, path parametrics, shapes, polynomial operations, state save/load, stats, colors, utilities, integration, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
 
 Manual testing remains important for:
 - Dragging coefficients and roots
@@ -556,6 +589,12 @@ Manual testing remains important for:
 
 **"Save/load lost my setting"**: The new field probably isn't in `loadState()` yet. Add it with a default fallback.
 
+**"Morph enabled but Play does nothing"**: Both `startAnimation()` and the Play button handler guard with `allAnimatedCoeffs().size === 0`. When morph is the only animation source (no paths), these guards must be relaxed with `&& !morphEnabled`.
+
+**"Morph panel lines don't track during drag"**: The D-dot drag handler must update interpolation lines (x2/y2) and markers (blended position) in addition to the dot and label. Check the `morphDrag` handler.
+
+**"Fast mode ignores morph"**: Check that `morphEnabled` is true and `morphTargetCoeffs.length === coefficients.length` — both conditions must hold for `serializeFastModeData()` to include morph data. Also verify the worker init message includes `morphTargetRe`/`morphTargetIm`.
+
 **"Fast mode shows sparse dots / almost nothing"**: Check `currentRoots.length` vs `coefficients.length - 1` (degree). If they differ, the solver is dropping roots. Also check the worker's warm-start buffer size matches the expected degree. A dimension mismatch causes NaN poisoning in the EA solver — one NaN root kills all roots within one iteration due to the coupled Aberth sum. The fix is ensuring the solver always returns exactly `degree` roots, substituting fallback values for non-finite results.
 
 ---
@@ -577,6 +616,8 @@ Manual testing remains important for:
 | [memory_timings.md](memory_timings.md) | Persistent buffer optimization: analysis + results | ~219 |
 | [wasm_investigation.md](wasm_investigation.md) | WASM solver design, build workflow, benchmarks | ~251 |
 | [test-results.md](test-results.md) | Playwright test results + JS/WASM benchmarks | ~122 |
+| [morph.md](morph.md) | Morph feature design: Phase 1 (static D), Phase 2/3 (deferred) | ~279 |
+| [proof-read.md](proof-read.md) | Line-by-line README/docs audit results | ~214 |
 | [lessons.md](lessons.md) | This file | — |
 
 ### Key Code Locations
@@ -589,7 +630,10 @@ Manual testing remains important for:
 | `addCoefficientAt()` | ~2659 |
 | `deleteCoefficient()` | ~2684 |
 | `animLoop()` | ~3631 |
-| `renderRoots()` | ~3831 |
+| `morphDrag` handler | ~3838 |
+| `renderMorphPanel()` | ~3853 |
+| `updateMorphMarkers()` | ~3960 |
+| `renderRoots()` | ~3990 |
 | `solveRootsEA()` | ~4121 |
 | `matchRootOrder()` | ~4272 |
 | `toggleSound()` | ~4803 |

@@ -53,6 +53,7 @@ No server. No WebSocket. No build tools. The entire app is one self-contained HT
 - **[Sonification](docs/sonification.md)** — audio graph, feature extraction from root distributions, sound mapping formulas, instrument config popovers, signal routing matrix, and silence management
 - **[Root Braids and Monodromy](docs/braids.md)** — why closed loops in coefficient space permute roots, and how trail rendering visualizes it
 - **[Patterns & Trail Gallery](docs/patterns.md)** — the 26 initial patterns (basic, coefficient, root shapes) and annotated trail screenshots
+- **[Testing](docs/test-results.md)** — 259 Playwright tests covering solver, root tracking, paths, shapes, colors, stats, save/load, morph, jiggle, fast mode, and JS vs WASM benchmarks
 
 ## Interface
 
@@ -141,7 +142,7 @@ karpo_hackathon/
 │   ├── memory_timings.md # Persistent buffer optimization analysis
 │   ├── wasm_investigation.md  # WASM solver design + benchmarks
 │   └── test-results.md   # Playwright test results + JS/WASM benchmarks
-├── tests/                # Playwright Python tests (38 tests)
+├── tests/                # Playwright Python tests (259 tests, 15 files)
 ├── snaps/                # Snap captures (PNG + JSON metadata)
 └── README.md
 ```

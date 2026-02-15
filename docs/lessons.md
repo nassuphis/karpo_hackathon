@@ -524,6 +524,8 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 26. **Progress bars add complexity without proportional value** — the fast mode progress bar required a `fastModeShowProgress` variable, a toggle button, save/load support, conditional blocks in 6+ functions, and two HTML elements. All to show a bar that fills and resets every ~1 second. A zero-padded elapsed seconds counter (`000042s`) conveys more useful information (total computation time) with zero complexity. When the visual feedback to complexity ratio is low, remove the feature entirely rather than maintaining it.
 
+27. **Feature flags must cover all code paths, not just the obvious ones** — derivative coloring worked perfectly for SVG animation (`computeRootSensitivities()` → `sensitivityColor()`), but the bitmap pipeline was completely separate. When `bitmapColorMode === "derivative"` was selected, none of the worker flags (`noColor`, `iterColor`, `proxColor`) were true, so workers silently fell through to rainbow (per-root index) coloring. The fix required a complete parallel implementation: `DERIV_PALETTE` (16-entry blue→white→red), `rankNorm()` + `computeSens()` functions in the worker blob, a `derivColor` flag in serialization, and new branches in both `paintBitmapFrame()` and `paintBitmapFrameFast()`. The lesson: when adding a new color mode, trace every code path that reads the mode — main-thread painters, fast-mode painters, worker run loops, and serialization. A "mode" that only works in one pipeline is a bug, not a feature.
+
 ---
 
 ## 11. Conventions to Follow
@@ -579,7 +581,7 @@ The bitmap system uses a **split compute/display** model (see [off-canvas-render
 
 ### Test Suite
 
-Automated tests exist in `tests/` using Playwright Python (headless Chromium). 312 tests across 16 files covering solver correctness, root matching, curve generation, path parametrics, shapes, polynomial operations, state save/load, stats, colors, utilities, morph system, jiggle perturbation (10 modes), continuous fast mode, off-canvas render split, multi-format image export, bitmap/animation color decoupling, integration, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
+Automated tests exist in `tests/` using Playwright Python (headless Chromium). 339 tests across 16 files covering solver correctness, root matching, curve generation, path parametrics, shapes, polynomial operations, state save/load, stats, colors, utilities, morph system, jiggle perturbation (10 modes), continuous fast mode, off-canvas render split, multi-format image export, bitmap/animation color decoupling, derivative bitmap coloring, integration, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
 
 Manual testing remains important for:
 - Dragging coefficients and roots
@@ -669,4 +671,7 @@ Manual testing remains important for:
 | `ROOT_COLOR_SWATCHES` | ~894 |
 | `buildColorPop()` (animation) | ~4768 |
 | `buildBitmapCfgPop()` (bitmap cfg + root color) | ~6336 |
+| `DERIV_PALETTE` / `DERIV_PAL_R/G/B` | ~935 |
+| `rankNorm()` + `computeSens()` (worker blob) | ~8476 |
+| `computeRootSensitivities()` (main thread) | ~1917 |
 | List tab transforms | ~9004 |

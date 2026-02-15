@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v29</title>
+<title>PolyPaint v30</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
@@ -527,7 +527,7 @@ body.fast-mode #stop-roots-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v29</span>
+    <span class="app-title">PolyPaint v30</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -931,6 +931,24 @@ const PROX_PALETTE = (() => {
 const PROX_PAL_R = new Uint8Array(PROX_PALETTE.map(c => c[0]));
 const PROX_PAL_G = new Uint8Array(PROX_PALETTE.map(c => c[1]));
 const PROX_PAL_B = new Uint8Array(PROX_PALETTE.map(c => c[2]));
+// 16-color derivative palette: blue (stable) → white → red (volatile) for sensitivity visualization
+const DERIV_PALETTE = (() => {
+    const pal = [];
+    for (let k = 0; k < 16; k++) {
+        const normVal = k / 15;
+        if (normVal <= 0.5) {
+            const t = normVal * 2;
+            pal.push([Math.round(t * 255), Math.round(t * 255), 255]);
+        } else {
+            const t = (normVal - 0.5) * 2;
+            pal.push([255, Math.round((1 - t) * 255), Math.round((1 - t) * 255)]);
+        }
+    }
+    return pal;
+})();
+const DERIV_PAL_R = new Uint8Array(DERIV_PALETTE.map(c => c[0]));
+const DERIV_PAL_G = new Uint8Array(DERIV_PALETTE.map(c => c[1]));
+const DERIV_PAL_B = new Uint8Array(DERIV_PALETTE.map(c => c[2]));
 let domainCanvas = document.getElementById("domain-canvas");
 let domainCtx = domainCanvas.getContext("2d");
 let domainPendingRender = false;
@@ -8238,6 +8256,13 @@ function paintBitmapFrame() {
     const n = currentRoots.length;
     const iterMode = bitmapColorMode === "iteration";
     const proxMode = bitmapColorMode === "proximity";
+    const derivMode = bitmapColorMode === "derivative";
+    // Precompute derivative sensitivities if needed
+    let derivSens = null;
+    if (derivMode) {
+        computeRootSensitivities();
+        derivSens = rootSensitivities;
+    }
     // Precompute proximity min-distances if needed
     let proxDists = null, proxMax = 1;
     if (proxMode && n > 1) {
@@ -8260,7 +8285,11 @@ function paintBitmapFrame() {
         const px = (r.re / range + 1) * 0.5 * w;
         const py = (1 - r.im / range) * 0.5 * h;
         if (px < -2 || px > w + 2 || py < -2 || py > h + 2) continue;
-        if (proxMode && proxDists) {
+        if (derivMode && derivSens && i < derivSens.length) {
+            const palIdx = Math.min(15, Math.round(derivSens[i] * 15));
+            const c = DERIV_PALETTE[palIdx];
+            bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+        } else if (proxMode && proxDists) {
             const t = 1 - Math.min(1, proxDists[i] / proxMax);
             const palIdx = (t * 15) | 0;
             const c = PROX_PALETTE[palIdx];
@@ -8291,6 +8320,13 @@ function paintBitmapFrameFast() {
     const colors = fastModeRootColors;
     const iterMode = bitmapColorMode === "iteration";
     const proxMode = bitmapColorMode === "proximity";
+    const derivMode = bitmapColorMode === "derivative";
+    // Precompute derivative sensitivities if needed
+    let derivSens = null;
+    if (derivMode) {
+        computeRootSensitivities();
+        derivSens = rootSensitivities;
+    }
     // Precompute proximity distances for this frame
     let proxDists = null, proxMax = 1;
     if (proxMode && n > 1) {
@@ -8313,7 +8349,11 @@ function paintBitmapFrameFast() {
         const px = (r.re / range + 1) * 0.5 * w;
         const py = (1 - r.im / range) * 0.5 * h;
         if (px < 0 || px >= w || py < 0 || py >= h) continue;
-        if (proxMode && proxDists) {
+        if (derivMode && derivSens && i < derivSens.length) {
+            const palIdx = Math.min(15, Math.round(derivSens[i] * 15));
+            const c = DERIV_PALETTE[palIdx];
+            bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+        } else if (proxMode && proxDists) {
             const t = 1 - Math.min(1, proxDists[i] / proxMax);
             const palIdx = (t * 15) | 0;
             const c = PROX_PALETTE[palIdx];
@@ -8433,6 +8473,56 @@ function matchRoots(newRe, newIm, oldRe, oldIm, n) {
     for (var i = 0; i < n; i++) { newRe[i] = tmpRe[i]; newIm[i] = tmpIm[i]; }
 }
 
+function rankNorm(raw, n) {
+    var maxFinite = -Infinity;
+    for (var i = 0; i < n; i++)
+        if (raw[i] === raw[i] && raw[i] !== Infinity && raw[i] !== -Infinity && raw[i] > maxFinite)
+            maxFinite = raw[i];
+    if (maxFinite === -Infinity) return null;
+    var pairs = new Array(n);
+    for (var i = 0; i < n; i++)
+        pairs[i] = { v: (raw[i] === raw[i] && raw[i] !== Infinity && raw[i] !== -Infinity) ? raw[i] : maxFinite, i: i };
+    pairs.sort(function(a, b) { return a.v - b.v; });
+    var result = new Float64Array(n);
+    var rank = 0;
+    for (var p = 0; p < n; p++) {
+        if (p > 0 && pairs[p].v !== pairs[p - 1].v) rank = p;
+        result[pairs[p].i] = rank;
+    }
+    var maxRank = n - 1;
+    if (maxRank === 0) { result.fill(0.5); return result; }
+    for (var i = 0; i < n; i++) result[i] /= maxRank;
+    return result;
+}
+
+function computeSens(coeffsRe, coeffsIm, nCoeffs, rootsRe, rootsIm, nRoots, selIndices) {
+    var deg = nCoeffs - 1;
+    var raw = new Float64Array(nRoots);
+    for (var j = 0; j < nRoots; j++) {
+        var zRe = rootsRe[j], zIm = rootsIm[j];
+        var pRe = coeffsRe[0], pIm = coeffsIm[0];
+        var dpRe = 0, dpIm = 0;
+        for (var k = 1; k <= deg; k++) {
+            var ndRe = dpRe * zRe - dpIm * zIm + pRe;
+            var ndIm = dpRe * zIm + dpIm * zRe + pIm;
+            dpRe = ndRe; dpIm = ndIm;
+            var npRe = pRe * zRe - pIm * zIm + coeffsRe[k];
+            var npIm = pRe * zIm + pIm * zRe + coeffsIm[k];
+            pRe = npRe; pIm = npIm;
+        }
+        var dpMag2 = dpRe * dpRe + dpIm * dpIm;
+        if (dpMag2 < 1e-60) { raw[j] = Infinity; continue; }
+        var dpMag = Math.sqrt(dpMag2);
+        var rMag = Math.sqrt(zRe * zRe + zIm * zIm);
+        var sum = 0;
+        for (var s = 0; s < selIndices.length; s++) {
+            sum += Math.pow(rMag, deg - selIndices[s]);
+        }
+        raw[j] = sum / dpMag;
+    }
+    return rankNorm(raw, nRoots);
+}
+
 // --- WASM solver support ---
 var S_useWasm = false;
 var wasmExports = null;
@@ -8493,6 +8583,7 @@ var S_noColor, S_uniformR, S_uniformG, S_uniformB;
 var S_totalSteps, S_FPS;
 var S_iterColor, S_iterPalR, S_iterPalG, S_iterPalB;
 var S_proxColor, S_proxPalR, S_proxPalG, S_proxPalB;
+var S_derivColor, S_derivPalR, S_derivPalG, S_derivPalB, S_selIndices;
 var S_morphEnabled = false, S_morphRate = 0, S_morphTargetRe = null, S_morphTargetIm = null;
 
 self.onmessage = function(e) {
@@ -8518,6 +8609,11 @@ self.onmessage = function(e) {
         S_proxPalR = d.proxPalR ? new Uint8Array(d.proxPalR) : null;
         S_proxPalG = d.proxPalG ? new Uint8Array(d.proxPalG) : null;
         S_proxPalB = d.proxPalB ? new Uint8Array(d.proxPalB) : null;
+        S_derivColor = !!d.derivColor;
+        S_derivPalR = d.derivPalR ? new Uint8Array(d.derivPalR) : null;
+        S_derivPalG = d.derivPalG ? new Uint8Array(d.derivPalG) : null;
+        S_derivPalB = d.derivPalB ? new Uint8Array(d.derivPalB) : null;
+        S_selIndices = d.selectedCoeffIndices || null;
         S_uniformR = d.uniformR || 255; S_uniformG = d.uniformG || 255; S_uniformB = d.uniformB || 255;
         S_totalSteps = d.totalSteps; S_FPS = d.FAST_PASS_SECONDS;
         // WASM solver init
@@ -8553,6 +8649,9 @@ self.onmessage = function(e) {
     var iterPalR = S_iterPalR, iterPalG = S_iterPalG, iterPalB = S_iterPalB;
     var proxColor = S_proxColor;
     var proxPalR = S_proxPalR, proxPalG = S_proxPalG, proxPalB = S_proxPalB;
+    var derivColor = S_derivColor;
+    var derivPalR = S_derivPalR, derivPalG = S_derivPalG, derivPalB = S_derivPalB;
+    var selIndices = S_selIndices;
     var colorsR = S_colorsR, colorsG = S_colorsG, colorsB = S_colorsB;
     var uniformR = S_uniformR, uniformG = S_uniformG, uniformB = S_uniformB;
 
@@ -8610,7 +8709,26 @@ self.onmessage = function(e) {
             solveEA(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots, iterCounts);
         }
 
-        if (proxColor) {
+        if (derivColor) {
+            // Root matching every 4th step for stable identity
+            if ((step - stepStart) % 4 === 0) {
+                matchRoots(tmpRe, tmpIm, rootsRe, rootsIm, nRoots);
+            }
+            var sens = computeSens(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots, selIndices);
+            rootsRe.set(tmpRe); rootsIm.set(tmpIm);
+            if (sens) {
+                for (var i = 0; i < nRoots; i++) {
+                    var ix = ((rootsRe[i] / range + 1) * 0.5 * W) | 0;
+                    var iy = ((1 - rootsIm[i] / range) * 0.5 * H) | 0;
+                    if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
+                    var palIdx = (sens[i] * 15 + 0.5) | 0;
+                    if (palIdx > 15) palIdx = 15;
+                    paintIdx[pc] = iy * W + ix;
+                    paintR[pc] = derivPalR[palIdx]; paintG[pc] = derivPalG[palIdx]; paintB[pc] = derivPalB[palIdx];
+                    pc++;
+                }
+            }
+        } else if (proxColor) {
             // Compute per-root minimum distance to nearest neighbor
             for (var i = 0; i < nRoots; i++) {
                 var md = Infinity;
@@ -9021,6 +9139,11 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         iterPalR: ITER_PAL_R.buffer.slice(0), iterPalG: ITER_PAL_G.buffer.slice(0), iterPalB: ITER_PAL_B.buffer.slice(0),
         proxColor: bitmapColorMode === "proximity",
         proxPalR: PROX_PAL_R.buffer.slice(0), proxPalG: PROX_PAL_G.buffer.slice(0), proxPalB: PROX_PAL_B.buffer.slice(0),
+        derivColor: bitmapColorMode === "derivative",
+        derivPalR: DERIV_PAL_R.buffer.slice(0), derivPalG: DERIV_PAL_G.buffer.slice(0), derivPalB: DERIV_PAL_B.buffer.slice(0),
+        selectedCoeffIndices: selectedCoeffs.size > 0
+            ? [...selectedCoeffs].sort((a, b) => a - b)
+            : Array.from({length: nCoeffs}, (_, i) => i),
         morphEnabled: morphEnabled && morphTargetCoeffs.length === nCoeffs,
         morphRate: morphRate,
         morphTargetRe: morphEnabled ? Float64Array.from(morphTargetCoeffs, d => d.re) : null,
@@ -9066,6 +9189,9 @@ function initFastModeWorkers() {
             iterPalR: sd.iterPalR, iterPalG: sd.iterPalG, iterPalB: sd.iterPalB,
             proxColor: sd.proxColor,
             proxPalR: sd.proxPalR, proxPalG: sd.proxPalG, proxPalB: sd.proxPalB,
+            derivColor: sd.derivColor,
+            derivPalR: sd.derivPalR, derivPalG: sd.derivPalG, derivPalB: sd.derivPalB,
+            selectedCoeffIndices: sd.selectedCoeffIndices,
             totalSteps: sd.stepsVal, FAST_PASS_SECONDS,
             useWasm: solverType === "wasm",
             wasmB64: solverType === "wasm" ? WASM_SOLVER_B64 : null,

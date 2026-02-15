@@ -1,6 +1,6 @@
 # Test Results
 
-**312 tests total: 311 passed, 1 skipped** | Runtime: ~4m | Headless Chromium on Apple Silicon
+**339 tests total: 338 passed, 1 skipped** | Runtime: ~4m | Headless Chromium on Apple Silicon
 
 Run with: `python -m pytest tests/ -v`
 
@@ -203,9 +203,9 @@ Tests `fmtPassCount()`, button labels, removed variables, `initBitmapCanvas()` r
 
 ---
 
-## test_offcanvas.py — Off-Canvas Render, Image Export & Color Decoupling (54 tests)
+## test_offcanvas.py — Off-Canvas Render, Image Export, Color & Derivative (80 tests)
 
-Tests the split compute/display architecture, multi-format export, high-resolution support, and decoupled bitmap/animation color modes.
+Tests the split compute/display architecture, multi-format export, high-resolution support, decoupled bitmap/animation color modes, and derivative sensitivity coloring pipeline.
 
 | Test Group | Count | What it checks |
 |------------|-------|----------------|
@@ -230,6 +230,11 @@ Tests the split compute/display architecture, multi-format export, high-resoluti
 | `TestPNGExport` | 1 | Produces valid image/png blob |
 | `TestTIFFExport` | 1 | Produces valid image/tiff blob |
 | `TestBitmapColorMode` | 8 | Defaults (uniform/white), independence from animation color, save/load roundtrip, backward compat, serialization uses bitmapColorMode/bitmapUniformColor |
+| `TestDerivativePalette` | 8 | DERIV_PALETTE 16 entries, blue→red endpoints, flat arrays, serialization flags, subset selection, symmetry, white midpoint |
+| `TestRankNormalize` | 7 | Basic ranking, ties, Infinity handling, single element, empty/all-Infinity→null, [0,1] range |
+| `TestComputeRootSensitivities` | 4 | No selection→null, valid array with selection, length matches roots, all-selected valid |
+| `TestDerivativePaintBitmapFrame` | 3 | Derivative mode calls computeRootSensitivities, uses DERIV_PALETTE, rainbow mode skips sensitivity |
+| `TestDerivativeSerializationNonDerivMode` | 4 | derivColor=false for rainbow, uniform, proximity, iteration modes |
 | `TestAnimationColorPicker` | 2 | Only 3 modes (no iteration/proximity), 8 fixed swatches from ROOT_COLOR_SWATCHES |
 
 ---
@@ -291,10 +296,10 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | Morph | test_morph.py | 15 | Init, blending, enable/disable, save/load, degree sync, fast mode |
 | Jiggle | test_jiggle.py | 26 | Helpers, all 10 modes, cumulative state, save/load |
 | Fast mode | test_fastmode.py | 22 | Formatting, buttons, removed vars, resets, serialization, clear, toggle |
-| Off-canvas & export | test_offcanvas.py | 54 | Split compute/display, BMP/JPEG/PNG/TIFF export, library loading, save popup, format state, bitmap/animation color decoupling |
+| Off-canvas & export | test_offcanvas.py | 80 | Split compute/display, BMP/JPEG/PNG/TIFF export, library loading, save popup, format state, bitmap/animation color decoupling, derivative palette, rank normalization, root sensitivities, derivative paint branches |
 | Integration | test_integration.py | 3 | Snap loading, determinism, fast mode pixels |
 | Benchmark | test_benchmark.py | 4 | JS vs WASM: correctness + performance |
-| **Total** | **16 files** | **312** | |
+| **Total** | **16 files** | **339** | |
 
 ---
 

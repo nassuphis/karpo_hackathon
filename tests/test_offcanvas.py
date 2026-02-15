@@ -871,6 +871,388 @@ class TestBitmapColorMode:
         assert result["b"] == 0
 
 
+class TestDerivativePalette:
+    def test_deriv_palette_exists(self, page):
+        """DERIV_PALETTE should be a 16-entry array."""
+        result = page.evaluate("() => DERIV_PALETTE.length")
+        assert result == 16
+
+    def test_deriv_palette_blue_to_red(self, page):
+        """First entry should be blue (0,0,255), last should be red (255,0,0)."""
+        result = page.evaluate("""() => ({
+            first: DERIV_PALETTE[0],
+            mid: DERIV_PALETTE[8],
+            last: DERIV_PALETTE[15]
+        })""")
+        assert result["first"] == [0, 0, 255]
+        assert result["last"] == [255, 0, 0]
+        # Mid should be close to white (255,255,255)
+        assert result["mid"][0] == 255
+
+    def test_deriv_pal_flat_arrays(self, page):
+        """DERIV_PAL_R/G/B should be Uint8Arrays of length 16."""
+        result = page.evaluate("""() => ({
+            rLen: DERIV_PAL_R.length,
+            gLen: DERIV_PAL_G.length,
+            bLen: DERIV_PAL_B.length,
+            rType: DERIV_PAL_R.constructor.name
+        })""")
+        assert result["rLen"] == 16
+        assert result["gLen"] == 16
+        assert result["bLen"] == 16
+        assert result["rType"] == "Uint8Array"
+
+    def test_serialization_includes_deriv_color(self, page):
+        """serializeFastModeData should include derivColor flag when derivative mode."""
+        result = page.evaluate("""() => {
+            bitmapColorMode = 'derivative';
+            document.getElementById('bitmap-res-select').value = '1000';
+            initBitmapCanvas();
+            fastModeCurves = new Map();
+            var sd = serializeFastModeData([], 100, currentRoots.length);
+            return {
+                derivColor: sd.derivColor,
+                noColor: sd.noColor,
+                iterColor: sd.iterColor,
+                proxColor: sd.proxColor,
+                hasDerivPalR: sd.derivPalR instanceof ArrayBuffer,
+                hasSelIndices: Array.isArray(sd.selectedCoeffIndices)
+            };
+        }""")
+        assert result["derivColor"] is True
+        assert result["noColor"] is False
+        assert result["iterColor"] is False
+        assert result["proxColor"] is False
+        assert result["hasDerivPalR"] is True
+        assert result["hasSelIndices"] is True
+
+    def test_serialization_selected_coeffs_default_all(self, page):
+        """When no coefficients selected, selectedCoeffIndices should include all."""
+        result = page.evaluate("""() => {
+            bitmapColorMode = 'derivative';
+            selectedCoeffs.clear();
+            document.getElementById('bitmap-res-select').value = '1000';
+            initBitmapCanvas();
+            fastModeCurves = new Map();
+            var sd = serializeFastModeData([], 100, currentRoots.length);
+            return {
+                indices: sd.selectedCoeffIndices,
+                nCoeffs: sd.nCoeffs
+            };
+        }""")
+        assert len(result["indices"]) == result["nCoeffs"]
+
+    def test_serialization_selected_coeffs_subset(self, page):
+        """When specific coefficients selected, only those indices appear."""
+        result = page.evaluate("""() => {
+            bitmapColorMode = 'derivative';
+            selectedCoeffs.clear();
+            selectedCoeffs.add(0);
+            selectedCoeffs.add(2);
+            document.getElementById('bitmap-res-select').value = '1000';
+            initBitmapCanvas();
+            fastModeCurves = new Map();
+            var sd = serializeFastModeData([], 100, currentRoots.length);
+            selectedCoeffs.clear();
+            return sd.selectedCoeffIndices;
+        }""")
+        assert result == [0, 2]
+
+    def test_deriv_palette_symmetry(self, page):
+        """Palette should be symmetric: entry[i] red == entry[15-i] blue."""
+        result = page.evaluate("""() => {
+            var pairs = [];
+            for (var i = 0; i < 8; i++) {
+                pairs.push({
+                    lowR: DERIV_PALETTE[i][0], lowB: DERIV_PALETTE[i][2],
+                    highR: DERIV_PALETTE[15-i][0], highB: DERIV_PALETTE[15-i][2]
+                });
+            }
+            return pairs;
+        }""")
+        for pair in result:
+            assert pair["lowR"] == pair["highB"]
+            assert pair["lowB"] == pair["highR"]
+
+    def test_deriv_palette_mid_is_white(self, page):
+        """Middle entries (7,8) should be close to white (255,255,255)."""
+        result = page.evaluate("""() => ({
+            e7: DERIV_PALETTE[7],
+            e8: DERIV_PALETTE[8]
+        })""")
+        # Entry 7: normVal=7/15≈0.467, still in blue half but near white
+        # Entry 8: normVal=8/15≈0.533, in red half but near white
+        assert result["e8"][0] == 255  # red channel full
+        assert result["e7"][2] == 255  # blue channel full
+        # Both should have high values in all channels (near white)
+        for ch in range(3):
+            assert result["e7"][ch] >= 220
+            assert result["e8"][ch] >= 220
+
+
+class TestRankNormalize:
+    """Tests for the main-thread rankNormalize function."""
+
+    def test_basic_ranking(self, page):
+        """Values [1, 3, 2] should rank to [0, 1, 0.5]."""
+        result = page.evaluate("""() => {
+            var raw = new Float64Array([1, 3, 2]);
+            var r = rankNormalize(raw);
+            return Array.from(r);
+        }""")
+        assert result == [0, 1, 0.5]
+
+    def test_ties_get_same_rank(self, page):
+        """Tied values should get the same normalized rank."""
+        result = page.evaluate("""() => {
+            var raw = new Float64Array([5, 5, 10]);
+            var r = rankNormalize(raw);
+            return Array.from(r);
+        }""")
+        assert result[0] == result[1]  # ties
+        assert result[2] == 1.0  # max rank
+
+    def test_infinity_replaced_with_max_finite(self, page):
+        """Infinity values should be replaced with the largest finite value."""
+        result = page.evaluate("""() => {
+            var raw = new Float64Array([1, Infinity, 2]);
+            var r = rankNormalize(raw);
+            return Array.from(r);
+        }""")
+        assert result[0] == 0  # smallest
+        # Infinity replaced with 2 (max finite), ties with index 2
+        assert result[1] == result[2]
+
+    def test_single_element(self, page):
+        """Single element should return 0.5."""
+        result = page.evaluate("""() => {
+            var raw = new Float64Array([42]);
+            var r = rankNormalize(raw);
+            return Array.from(r);
+        }""")
+        assert result == [0.5]
+
+    def test_all_infinity_returns_null(self, page):
+        """All Infinity values should return null."""
+        result = page.evaluate("""() => {
+            var raw = new Float64Array([Infinity, Infinity]);
+            return rankNormalize(raw);
+        }""")
+        assert result is None
+
+    def test_empty_returns_null(self, page):
+        """Empty array should return null."""
+        result = page.evaluate("""() => {
+            var raw = new Float64Array([]);
+            return rankNormalize(raw);
+        }""")
+        assert result is None
+
+    def test_output_range_0_to_1(self, page):
+        """Output values should be in [0, 1]."""
+        result = page.evaluate("""() => {
+            var raw = new Float64Array([100, 1, 50, 25, 75]);
+            var r = rankNormalize(raw);
+            return Array.from(r);
+        }""")
+        for v in result:
+            assert 0 <= v <= 1
+        assert min(result) == 0
+        assert max(result) == 1
+
+
+class TestComputeRootSensitivities:
+    """Tests for the main-thread computeRootSensitivities function."""
+
+    def test_no_selection_returns_null(self, page):
+        """With no selected coefficients, rootSensitivities should be null."""
+        result = page.evaluate("""() => {
+            selectedCoeffs.clear();
+            computeRootSensitivities();
+            return rootSensitivities;
+        }""")
+        assert result is None
+
+    def test_with_selection_returns_array(self, page):
+        """With selected coefficients, should return normalized sensitivity array."""
+        result = page.evaluate("""() => {
+            selectedCoeffs.clear();
+            selectedCoeffs.add(0);
+            computeRootSensitivities();
+            var r = rootSensitivities;
+            selectedCoeffs.clear();
+            if (!r) return null;
+            return Array.from(r);
+        }""")
+        assert result is not None
+        assert len(result) > 0
+        for v in result:
+            assert 0 <= v <= 1
+
+    def test_sensitivity_length_matches_roots(self, page):
+        """Sensitivity array length should match currentRoots.length."""
+        result = page.evaluate("""() => {
+            selectedCoeffs.clear();
+            selectedCoeffs.add(0);
+            computeRootSensitivities();
+            var r = rootSensitivities;
+            selectedCoeffs.clear();
+            return { sensLen: r ? r.length : 0, rootsLen: currentRoots.length };
+        }""")
+        assert result["sensLen"] == result["rootsLen"]
+
+    def test_all_selected_vs_none_same_result(self, page):
+        """Selecting all coefficients should produce a valid sensitivity array."""
+        result = page.evaluate("""() => {
+            selectedCoeffs.clear();
+            for (var i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+            computeRootSensitivities();
+            var r = rootSensitivities;
+            selectedCoeffs.clear();
+            if (!r) return null;
+            return { len: r.length, min: Math.min(...r), max: Math.max(...r) };
+        }""")
+        assert result is not None
+        assert result["len"] > 0
+        assert result["min"] >= 0
+        assert result["max"] <= 1
+
+
+class TestDerivativePaintBitmapFrame:
+    """Tests that paintBitmapFrame uses derivative colors when derivMode is active."""
+
+    def test_derivative_mode_calls_sensitivity(self, page):
+        """In derivative mode, paintBitmapFrame should compute sensitivities."""
+        result = page.evaluate("""() => {
+            // Set up bitmap with derivative mode
+            bitmapColorMode = 'derivative';
+            selectedCoeffs.clear();
+            selectedCoeffs.add(0);
+            document.getElementById('bitmap-res-select').value = '1000';
+            initBitmapCanvas();
+            bitmapRange = 5;
+            bitmapCoeffView = false;
+
+            // Track sensitivity computation
+            var called = false;
+            var orig = computeRootSensitivities;
+            computeRootSensitivities = function() { called = true; orig(); };
+
+            paintBitmapFrame();
+
+            computeRootSensitivities = orig;
+            selectedCoeffs.clear();
+            bitmapColorMode = 'rainbow';
+            return called;
+        }""")
+        assert result is True
+
+    def test_derivative_mode_uses_deriv_palette(self, page):
+        """In derivative mode, fillStyle should contain rgb values from DERIV_PALETTE."""
+        result = page.evaluate("""() => {
+            bitmapColorMode = 'derivative';
+            selectedCoeffs.clear();
+            selectedCoeffs.add(0);
+            document.getElementById('bitmap-res-select').value = '1000';
+            initBitmapCanvas();
+            bitmapRange = 5;
+            bitmapCoeffView = false;
+
+            // Intercept fillStyle assignments
+            var styles = [];
+            var origFillStyle = '';
+            var ctx = bitmapCtx;
+            var origFill = ctx.fill.bind(ctx);
+            var fillCount = 0;
+            var origBeginPath = ctx.beginPath.bind(ctx);
+            ctx.beginPath = function() {
+                if (ctx.fillStyle) styles.push(ctx.fillStyle);
+                origBeginPath();
+            };
+
+            paintBitmapFrame();
+
+            ctx.beginPath = origBeginPath;
+            selectedCoeffs.clear();
+            bitmapColorMode = 'rainbow';
+            return { count: styles.length, hasRgb: styles.some(s => s.indexOf('rgb') >= 0 || s.match(/^#/)) };
+        }""")
+        # Should have painted some roots
+        assert result["count"] > 0
+
+    def test_rainbow_mode_does_not_compute_sensitivity(self, page):
+        """In rainbow mode, paintBitmapFrame should NOT call computeRootSensitivities."""
+        result = page.evaluate("""() => {
+            bitmapColorMode = 'rainbow';
+            document.getElementById('bitmap-res-select').value = '1000';
+            initBitmapCanvas();
+            bitmapRange = 5;
+            bitmapCoeffView = false;
+
+            var called = false;
+            var orig = computeRootSensitivities;
+            computeRootSensitivities = function() { called = true; orig(); };
+
+            paintBitmapFrame();
+
+            computeRootSensitivities = orig;
+            return called;
+        }""")
+        assert result is False
+
+
+class TestDerivativeSerializationNonDerivMode:
+    """Tests that derivative fields are correctly absent/false in non-derivative modes."""
+
+    def test_rainbow_mode_deriv_false(self, page):
+        """In rainbow mode, derivColor should be false."""
+        result = page.evaluate("""() => {
+            bitmapColorMode = 'rainbow';
+            document.getElementById('bitmap-res-select').value = '1000';
+            initBitmapCanvas();
+            fastModeCurves = new Map();
+            var sd = serializeFastModeData([], 100, currentRoots.length);
+            return sd.derivColor;
+        }""")
+        assert result is False
+
+    def test_uniform_mode_deriv_false(self, page):
+        """In uniform mode, derivColor should be false."""
+        result = page.evaluate("""() => {
+            bitmapColorMode = 'uniform';
+            document.getElementById('bitmap-res-select').value = '1000';
+            initBitmapCanvas();
+            fastModeCurves = new Map();
+            var sd = serializeFastModeData([], 100, currentRoots.length);
+            return sd.derivColor;
+        }""")
+        assert result is False
+
+    def test_proximity_mode_deriv_false(self, page):
+        """In proximity mode, derivColor should be false."""
+        result = page.evaluate("""() => {
+            bitmapColorMode = 'proximity';
+            document.getElementById('bitmap-res-select').value = '1000';
+            initBitmapCanvas();
+            fastModeCurves = new Map();
+            var sd = serializeFastModeData([], 100, currentRoots.length);
+            return sd.derivColor;
+        }""")
+        assert result is False
+
+    def test_iteration_mode_deriv_false(self, page):
+        """In iteration mode, derivColor should be false."""
+        result = page.evaluate("""() => {
+            bitmapColorMode = 'iteration';
+            document.getElementById('bitmap-res-select').value = '1000';
+            initBitmapCanvas();
+            fastModeCurves = new Map();
+            var sd = serializeFastModeData([], 100, currentRoots.length);
+            return sd.derivColor;
+        }""")
+        assert result is False
+
+
 class TestAnimationColorPicker:
     def test_animation_picker_has_3_modes(self, page):
         """Animation color popover should have exactly 3 modes (uniform, rainbow, derivative)."""

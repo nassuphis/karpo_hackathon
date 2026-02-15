@@ -1,6 +1,6 @@
 # Test Results
 
-**302 tests total: 301 passed, 1 skipped** | Runtime: ~4m | Headless Chromium on Apple Silicon
+**312 tests total: 311 passed, 1 skipped** | Runtime: ~4m | Headless Chromium on Apple Silicon
 
 Run with: `python -m pytest tests/ -v`
 
@@ -203,9 +203,9 @@ Tests `fmtPassCount()`, button labels, removed variables, `initBitmapCanvas()` r
 
 ---
 
-## test_offcanvas.py — Off-Canvas Render & Image Export (44 tests)
+## test_offcanvas.py — Off-Canvas Render, Image Export & Color Decoupling (54 tests)
 
-Tests the split compute/display architecture, multi-format export, and high-resolution support.
+Tests the split compute/display architecture, multi-format export, high-resolution support, and decoupled bitmap/animation color modes.
 
 | Test Group | Count | What it checks |
 |------------|-------|----------------|
@@ -229,6 +229,8 @@ Tests the split compute/display architecture, multi-format export, and high-reso
 | `TestJPEGExport` | 1 | Produces valid image/jpeg blob |
 | `TestPNGExport` | 1 | Produces valid image/png blob |
 | `TestTIFFExport` | 1 | Produces valid image/tiff blob |
+| `TestBitmapColorMode` | 8 | Defaults (uniform/white), independence from animation color, save/load roundtrip, backward compat, serialization uses bitmapColorMode/bitmapUniformColor |
+| `TestAnimationColorPicker` | 2 | Only 3 modes (no iteration/proximity), 8 fixed swatches from ROOT_COLOR_SWATCHES |
 
 ---
 
@@ -289,10 +291,10 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | Morph | test_morph.py | 15 | Init, blending, enable/disable, save/load, degree sync, fast mode |
 | Jiggle | test_jiggle.py | 26 | Helpers, all 10 modes, cumulative state, save/load |
 | Fast mode | test_fastmode.py | 22 | Formatting, buttons, removed vars, resets, serialization, clear, toggle |
-| Off-canvas & export | test_offcanvas.py | 44 | Split compute/display, BMP/JPEG/PNG/TIFF export, library loading, save popup, format state |
+| Off-canvas & export | test_offcanvas.py | 54 | Split compute/display, BMP/JPEG/PNG/TIFF export, library loading, save popup, format state, bitmap/animation color decoupling |
 | Integration | test_integration.py | 3 | Snap loading, determinism, fast mode pixels |
 | Benchmark | test_benchmark.py | 4 | JS vs WASM: correctness + performance |
-| **Total** | **16 files** | **302** | |
+| **Total** | **16 files** | **312** | |
 
 ---
 

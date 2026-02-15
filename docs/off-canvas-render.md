@@ -110,7 +110,7 @@ Export uses a pure-CPU BMP writer (`exportPersistentBufferAsBMP()`) that reads d
 - Rows stored bottom-up per BMP spec, each row padded to 4-byte boundary
 - Byte order: BGR (not RGB)
 
-**Future: UPNG.js** — a pure-JS PNG encoder could provide compressed output (~10-50x smaller files). Worth adding as a second export option later, but BMP gives us the "it always exports" guarantee immediately with zero dependencies.
+Multi-format export (JPEG, PNG, BMP, TIFF) is now implemented — see below.
 
 ### Memory budget
 
@@ -240,8 +240,8 @@ The save button opens a popup with format selection (JPEG, PNG, BMP, TIFF). All 
 | Format | Size | Encoding Time |
 |--------|------|---------------|
 | BMP | ~675 MB | ~2-5s |
-| JPEG (q=92) | ~5-30 MB | ~10-30s |
-| PNG | ~50-200 MB | ~30-120s |
+| JPEG (q=92) | ~5-35 MB | ~10-30s |
+| PNG | ~4-50 MB | ~30-120s |
 | TIFF | ~200-675 MB | ~5-15s |
 
-JPEG is the default — best file-size-to-speed ratio for art renders. Format preference persists in save/load state (`bitmapExportFormat`).
+**Note**: PNG is often the smallest format for PolyPaint bitmaps because they are very sparse (99%+ single background color). PNG's deflate compression handles uniform regions far better than JPEG's DCT blocks. At 15K, a typical sparse render: PNG ~4.5MB vs JPEG ~35MB. JPEG is the default export format. Format preference persists in save/load state (`bitmapExportFormat`).

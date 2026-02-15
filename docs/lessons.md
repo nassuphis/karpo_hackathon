@@ -520,7 +520,9 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 24. **GPU memory is the real constraint for large canvases, not CPU memory** — a 10K `<canvas>` allocates ~400MB of GPU memory (browser backing store) even though `ImageData` buffers are CPU-only. Chrome reclaims GPU contexts under memory pressure, causing the canvas to go white. The fix: decouple compute resolution from display resolution. The persistent buffer (`new ImageData(W, H)`) can be 15K or 25K (900MB–2.5GB CPU) because it never touches the GPU. The canvas only needs to be large enough for display (~2000px, 16MB GPU). Export writes BMP directly from CPU buffer — no GPU path at all. Key invariant: `serializeFastModeData()` must send `bitmapComputeRes` to workers, not `bitmapCtx.canvas.width` (which is now display-sized). The `new ImageData()` constructor creates a standalone buffer; `bitmapCtx.createImageData()` also works but `new ImageData()` makes the decoupling explicit.
 
-25. **Progress bars add complexity without proportional value** — the fast mode progress bar required a `fastModeShowProgress` variable, a toggle button, save/load support, conditional blocks in 6+ functions, and two HTML elements. All to show a bar that fills and resets every ~1 second. A zero-padded elapsed seconds counter (`000042s`) conveys more useful information (total computation time) with zero complexity. When the visual feedback to complexity ratio is low, remove the feature entirely rather than maintaining it.
+25. **Decouple display-only controls from computation controls** — `rootColorMode` was a single variable controlling both SVG animation root dots AND bitmap worker pixel coloring. When the animation picker offered "Iteration Count" and "Root Proximity" modes that only apply to bitmap rendering, users could select them and see no effect on the animation. The fix: separate `rootColorMode` (animation, 3 modes) from `bitmapColorMode` (bitmap, 5 modes) with independent uniform color variables. Workers receive flags (`noColor`, `iterColor`, `proxColor`) derived from `bitmapColorMode` — they never read the mode string directly, so no worker code changes were needed. The animation picker's swatches were simplified from a dynamic per-coefficient list to 8 fixed colors (`ROOT_COLOR_SWATCHES`), shared between both pickers. Backward compat: old snaps without `bitmapColorMode` fall back to mirroring `rootColorMode`.
+
+26. **Progress bars add complexity without proportional value** — the fast mode progress bar required a `fastModeShowProgress` variable, a toggle button, save/load support, conditional blocks in 6+ functions, and two HTML elements. All to show a bar that fills and resets every ~1 second. A zero-padded elapsed seconds counter (`000042s`) conveys more useful information (total computation time) with zero complexity. When the visual feedback to complexity ratio is low, remove the feature entirely rather than maintaining it.
 
 ---
 
@@ -577,7 +579,7 @@ The bitmap system uses a **split compute/display** model (see [off-canvas-render
 
 ### Test Suite
 
-Automated tests exist in `tests/` using Playwright Python (headless Chromium). 302 tests across 16 files covering solver correctness, root matching, curve generation, path parametrics, shapes, polynomial operations, state save/load, stats, colors, utilities, morph system, jiggle perturbation (10 modes), continuous fast mode, off-canvas render split, multi-format image export, integration, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
+Automated tests exist in `tests/` using Playwright Python (headless Chromium). 312 tests across 16 files covering solver correctness, root matching, curve generation, path parametrics, shapes, polynomial operations, state save/load, stats, colors, utilities, morph system, jiggle perturbation (10 modes), continuous fast mode, off-canvas render split, multi-format image export, bitmap/animation color decoupling, integration, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
 
 Manual testing remains important for:
 - Dragging coefficients and roots
@@ -663,4 +665,8 @@ Manual testing remains important for:
 | `initBitmapCanvas()` | ~7942 |
 | `createFastModeWorkerBlob()` | ~8076 |
 | `compositeWorkerPixels()` | ~8883 |
+| `bitmapColorMode` / `bitmapUniformColor` | ~891 |
+| `ROOT_COLOR_SWATCHES` | ~894 |
+| `buildColorPop()` (animation) | ~4768 |
+| `buildBitmapCfgPop()` (bitmap cfg + root color) | ~6336 |
 | List tab transforms | ~9004 |

@@ -54,7 +54,7 @@ No server. No WebSocket. No build tools. The entire app is one self-contained HT
 - **[Root Braids and Monodromy](docs/braids.md)** — why closed loops in coefficient space permute roots, and how trail rendering visualizes it
 - **[Patterns & Trail Gallery](docs/patterns.md)** — the 26 initial patterns (basic, coefficient, root shapes) and annotated trail screenshots
 - **[Off-Canvas Bitmap Rendering](docs/off-canvas-render.md)** — split compute/display architecture, BMP export, GPU memory management at 10K–25K
-- **[Testing](docs/test-results.md)** — 302 Playwright tests covering solver, root tracking, paths, shapes, colors, stats, save/load, morph, jiggle, fast mode, off-canvas render, multi-format image export, and JS vs WASM benchmarks
+- **[Testing](docs/test-results.md)** — 312 Playwright tests covering solver, root tracking, paths, shapes, colors, stats, save/load, morph, jiggle, fast mode, off-canvas render, multi-format image export, bitmap/animation color decoupling, and JS vs WASM benchmarks
 
 ## Interface
 
@@ -84,13 +84,13 @@ The UI is organized around a compact header bar and two side-by-side panels with
 | **Path-specific controls** | Sliders and toggles that change based on the selected path type: Speed (S), Radius (R), Angle (A), CW/CCW toggle, and path-specific parameters like frequency, width, or sigma. |
 | **PS** button | Prime Speed — sets the selected coefficient's speed to the nearest value coprime with all other animated coefficients' speeds, maximizing the full-cycle pass count. |
 | **Trails** (roots toolbar) | Enables root trail recording. Loop detection stops collecting new trail points and auto-stops video recording after one full cycle. |
-| **🎨** (roots toolbar) | Opens a root coloring popover with 5 modes: **Uniform** (single color — offers white and all coefficient colors), **Index Rainbow** (color by root index), **Derivative** (sensitivity coloring), **Iteration Count** (convergence speed, for bitmap), and **Root Proximity** (nearest-root distance, for bitmap). |
+| **🎨** (roots toolbar) | Opens a root coloring popover with 3 modes: **Uniform** (8 fixed color swatches), **Index Rainbow** (color by root index), **Derivative** (sensitivity coloring). Controls animation root dots only — bitmap root coloring is independent (see cfg popup). |
 | **◐** (roots toolbar) | Toggle domain coloring on the roots canvas background. |
 | **Fit** / **+25%** (roots toolbar) | Auto-zoom to fit all roots and trails, or zoom out by 25%. |
 | **Roots / Stats / Sound / Bitmap** tabs | Right panel tab bar — switch between root visualization, stats dashboard, sound routing, and bitmap rendering. |
 | **Stats** dropdowns | Each of the 16 stat plots has a dropdown: 23 time-series, 5 phase-space plots, and 4 spectrum charts. Sonification features (MedianR, Spread, EMed, EHi, Coherence, Encounters) mirror the audio pipeline with matching EMA smoothing. |
 | **⏺** record (tab bar) | Records to WebM video. Mode selector: Roots, Coeffs, Both, Stats, Sound, Bitmap, or Full (both panels + info bar). "Both" is tab-aware — renders coefficients + the active right-side tab. Auto-stops on loop completion when Trails are enabled. |
-| **Bitmap** tab | Accumulates root positions as single-pixel stamps on a canvas. Toolbar buttons (left to right): **init** snapshots animation state, clears bitmap, and resets elapsed to 0. **save** opens a format popup (JPEG/PNG/BMP/TIFF with quality slider for JPEG) and downloads the full-resolution image from the CPU buffer (no GPU involvement). **clear** resets the canvas pixels (elapsed unchanged). **Resolution** dropdown (1000/2000/5000/8000/10000/15000/25000 px) — above 2000px, the display canvas is capped at 2000px while computation runs at full resolution. **start**/**stop** toggles continuous fast mode (parallel Web Workers). Stopping preserves all state; resuming continues where it left off. **ROOT/COEF** toggles between plotting root or coefficient positions. **Steps** dropdown (10/100/1K/5K/10K/50K/100K/1M) sets solver steps per pass. **cfg** opens the config popup: solver engine (JS/WASM), jiggle perturbation (10 modes with mode-specific tuning, interval slider, select-all), and background color (24 preset colors). See [Paths](docs/paths.md) for jiggle formulas. A zero-padded elapsed seconds counter appears during computation. |
+| **Bitmap** tab | Accumulates root positions as single-pixel stamps on a canvas. Toolbar buttons (left to right): **init** snapshots animation state, clears bitmap, and resets elapsed to 0. **save** opens a format popup (JPEG/PNG/BMP/TIFF with quality slider for JPEG) and downloads the full-resolution image from the CPU buffer (no GPU involvement). **clear** resets the canvas pixels (elapsed unchanged). **Resolution** dropdown (1000/2000/5000/8000/10000/15000/25000 px) — above 2000px, the display canvas is capped at 2000px while computation runs at full resolution. **start**/**stop** toggles continuous fast mode (parallel Web Workers). Stopping preserves all state; resuming continues where it left off. **ROOT/COEF** toggles between plotting root or coefficient positions. **Steps** dropdown (10/100/1K/5K/10K/50K/100K/1M) sets solver steps per pass. **cfg** opens the config popup: solver engine (JS/WASM), jiggle perturbation (10 modes with mode-specific tuning, interval slider, select-all), background color (24 preset colors), and **root color** (5 modes: Uniform, Index Rainbow, Derivative, Iteration Count, Root Proximity — with 8 uniform swatches). Bitmap root coloring is independent from animation root coloring. See [Paths](docs/paths.md) for jiggle formulas. A zero-padded elapsed seconds counter appears during computation. |
 | **B / M / V** (Sound tab toolbar) | Toggle and configure the three sound layers: **B** Base (drone), **M** Melody (arpeggio), **V** Voice (beeps). Click to open config popover with on/off toggle + tuning sliders. See [Sonification](docs/sonification.md). |
 | **Selection count** (panel headers) | Shows the number of selected items next to "Coefficients" (green) and "Roots" (red) panel titles. |
 
@@ -144,7 +144,7 @@ karpo_hackathon/
 │   ├── memory_timings.md # Persistent buffer optimization analysis
 │   ├── wasm_investigation.md  # WASM solver design + benchmarks
 │   └── test-results.md   # Playwright test results + JS/WASM benchmarks
-├── tests/                # Playwright Python tests (302 tests, 16 files)
+├── tests/                # Playwright Python tests (312 tests, 16 files)
 ├── snaps/                # Snap captures (PNG + JSON metadata)
 └── README.md
 ```

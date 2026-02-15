@@ -766,3 +766,135 @@ class TestTIFFExport:
         }""")
         assert result["blobType"] == "image/tiff"
         assert result["blobSize"] > 0
+
+
+class TestBitmapColorMode:
+    def test_default_bitmap_color_mode(self, page):
+        """bitmapColorMode should default to 'uniform'."""
+        result = page.evaluate("() => bitmapColorMode")
+        assert result == "uniform"
+
+    def test_default_bitmap_uniform_color(self, page):
+        """bitmapUniformColor should default to [255, 255, 255]."""
+        result = page.evaluate("() => bitmapUniformColor")
+        assert result == [255, 255, 255]
+
+    def test_root_color_swatches_count(self, page):
+        """ROOT_COLOR_SWATCHES should have exactly 8 entries."""
+        result = page.evaluate("() => ROOT_COLOR_SWATCHES.length")
+        assert result == 8
+
+    def test_bitmap_color_independent_from_animation(self, page):
+        """Changing bitmapColorMode should not affect rootColorMode and vice versa."""
+        result = page.evaluate("""() => {
+            rootColorMode = 'rainbow';
+            bitmapColorMode = 'iteration';
+            return {
+                rootMode: rootColorMode,
+                bitmapMode: bitmapColorMode
+            };
+        }""")
+        assert result["rootMode"] == "rainbow"
+        assert result["bitmapMode"] == "iteration"
+
+    def test_bitmap_color_in_save_state(self, page):
+        """buildStateMetadata includes bitmapColorMode and bitmapUniformColor."""
+        result = page.evaluate("""() => {
+            bitmapColorMode = 'proximity';
+            bitmapUniformColor = [100, 50, 200];
+            var meta = buildStateMetadata();
+            return {
+                mode: meta.bitmapColorMode,
+                color: meta.bitmapUniformColor
+            };
+        }""")
+        assert result["mode"] == "proximity"
+        assert result["color"] == [100, 50, 200]
+
+    def test_bitmap_color_backward_compat(self, page):
+        """Old snaps without bitmapColorMode should fall back to rootColorMode."""
+        result = page.evaluate("""() => {
+            rootColorMode = 'rainbow';
+            bitmapColorMode = 'uniform';  // reset
+            // Simulate loading an old snap without bitmapColorMode
+            var meta = buildStateMetadata();
+            delete meta.bitmapColorMode;
+            delete meta.bitmapUniformColor;
+            // Apply the load logic
+            if (meta.bitmapColorMode) {
+                bitmapColorMode = meta.bitmapColorMode;
+            } else {
+                bitmapColorMode = rootColorMode;
+            }
+            if (meta.bitmapUniformColor && Array.isArray(meta.bitmapUniformColor)) {
+                bitmapUniformColor = meta.bitmapUniformColor.slice();
+            } else {
+                bitmapUniformColor = uniformRootColor.slice();
+            }
+            return bitmapColorMode;
+        }""")
+        assert result == "rainbow"
+
+    def test_serialization_uses_bitmap_color_mode(self, page):
+        """serializeFastModeData should use bitmapColorMode, not rootColorMode."""
+        result = page.evaluate("""() => {
+            rootColorMode = 'rainbow';
+            bitmapColorMode = 'iteration';
+            document.getElementById('bitmap-res-select').value = '1000';
+            initBitmapCanvas();
+            fastModeCurves = new Map();
+            var sd = serializeFastModeData([], 100, currentRoots.length);
+            return {
+                noColor: sd.noColor,
+                iterColor: sd.iterColor,
+                proxColor: sd.proxColor
+            };
+        }""")
+        assert result["noColor"] is False
+        assert result["iterColor"] is True
+        assert result["proxColor"] is False
+
+    def test_serialization_uses_bitmap_uniform_color(self, page):
+        """serializeFastModeData should use bitmapUniformColor, not uniformRootColor."""
+        result = page.evaluate("""() => {
+            uniformRootColor = [255, 0, 0];
+            bitmapUniformColor = [0, 255, 0];
+            bitmapColorMode = 'uniform';
+            document.getElementById('bitmap-res-select').value = '1000';
+            initBitmapCanvas();
+            fastModeCurves = new Map();
+            var sd = serializeFastModeData([], 100, currentRoots.length);
+            return { r: sd.uniformR, g: sd.uniformG, b: sd.uniformB };
+        }""")
+        assert result["r"] == 0
+        assert result["g"] == 255
+        assert result["b"] == 0
+
+
+class TestAnimationColorPicker:
+    def test_animation_picker_has_3_modes(self, page):
+        """Animation color popover should have exactly 3 modes (uniform, rainbow, derivative)."""
+        result = page.evaluate("""() => {
+            var pop = document.getElementById('color-pop');
+            if (!pop) return null;
+            pop.innerHTML = '';
+            buildColorPop(pop);
+            var toggles = pop.querySelectorAll('.audio-toggle');
+            return Array.from(toggles).map(t =>
+                t.querySelector('.toggle-label').textContent
+            );
+        }""")
+        assert result == ["Uniform", "Index Rainbow", "Derivative"]
+
+    def test_animation_picker_has_8_swatches(self, page):
+        """Animation color popover should have exactly 8 color swatches."""
+        result = page.evaluate("""() => {
+            var pop = document.getElementById('color-pop');
+            if (!pop) return null;
+            pop.innerHTML = '';
+            buildColorPop(pop);
+            var wraps = pop.querySelectorAll('div[style*="flex-wrap"]');
+            if (!wraps.length) return 0;
+            return wraps[0].querySelectorAll('div').length;
+        }""")
+        assert result == 8

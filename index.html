@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v28</title>
+<title>PolyPaint v29</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
@@ -527,7 +527,7 @@ body.fast-mode #stop-roots-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v28</span>
+    <span class="app-title">PolyPaint v29</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -887,6 +887,20 @@ let domainColoringEnabled = false;
 let rootColorMode = "rainbow";  // "uniform" | "rainbow" | "derivative" | "iteration" | "proximity"
 let uniformRootColor = [255, 255, 255];  // RGB for uniform mode (default white)
 let rootSensitivities = null;   // Float64Array for derivative mode
+// Bitmap-specific color mode (decoupled from animation rootColorMode)
+let bitmapColorMode = "uniform";  // "uniform" | "rainbow" | "derivative" | "iteration" | "proximity"
+let bitmapUniformColor = [255, 255, 255];
+// Fixed 8-color palette shared by animation and bitmap uniform pickers
+const ROOT_COLOR_SWATCHES = [
+    { label: "White",  rgb: [255, 255, 255] },
+    { label: "Red",    rgb: [233, 69, 96] },
+    { label: "Orange", rgb: [255, 165, 0] },
+    { label: "Yellow", rgb: [255, 255, 0] },
+    { label: "Green",  rgb: [0, 200, 83] },
+    { label: "Cyan",   rgb: [0, 210, 211] },
+    { label: "Blue",   rgb: [30, 144, 255] },
+    { label: "Purple", rgb: [155, 89, 182] },
+];
 // 16-color iteration palette: full rainbow for max contrast between adjacent values
 const ITER_PALETTE = (() => {
     const pal = [];
@@ -4760,8 +4774,6 @@ function buildColorPop(pop) {
         { key: "uniform", label: "Uniform" },
         { key: "rainbow", label: "Index Rainbow" },
         { key: "derivative", label: "Derivative" },
-        { key: "iteration", label: "Iteration Count" },
-        { key: "proximity", label: "Root Proximity" },
     ];
     const rows = [];
     let swatchWrap = null;
@@ -4797,18 +4809,7 @@ function buildColorPop(pop) {
             swatchWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:3px;padding:4px 2px 6px 20px;max-width:180px;";
             swatchWrap.style.opacity = rootColorMode === "uniform" ? "1" : "0.3";
 
-            // White swatch
-            const nCoeffs = coefficients.length;
-            const colorChoices = [{ label: "White", rgb: [255, 255, 255] }];
-            for (let ci = 0; ci < nCoeffs; ci++) {
-                const k = (nCoeffs - 1) - ci; // power-based subscript
-                const css = d3.interpolateRainbow(ci / nCoeffs);
-                const m2 = css.match(/(\d+)/g);
-                const rgb = m2 ? [+m2[0], +m2[1], +m2[2]] : [233, 69, 96];
-                colorChoices.push({ label: "c" + k, rgb });
-            }
-
-            colorChoices.forEach(ch => {
+            ROOT_COLOR_SWATCHES.forEach(ch => {
                 const sw = document.createElement("div");
                 const isActive = uniformRootColor[0] === ch.rgb[0] && uniformRootColor[1] === ch.rgb[1] && uniformRootColor[2] === ch.rgb[2];
                 sw.style.cssText = `width:16px;height:16px;border-radius:50%;cursor:pointer;` +
@@ -5963,6 +5964,8 @@ function startRecording() {
             rootColoring: rootColorMode !== "uniform",
             rootColorMode: rootColorMode,
             uniformRootColor: uniformRootColor.slice(),
+            bitmapColorMode: bitmapColorMode,
+            bitmapUniformColor: bitmapUniformColor.slice(),
             bitmapCanvasColor: bitmapCanvasColor,
             trails: trailsEnabled,
             selectedCoeffs: [...selectedCoeffs],
@@ -6023,6 +6026,8 @@ function buildStateMetadata(timestamp) {
         rootColoring: rootColorMode !== "uniform",
         rootColorMode: rootColorMode,
         uniformRootColor: uniformRootColor.slice(),
+        bitmapColorMode: bitmapColorMode,
+        bitmapUniformColor: bitmapUniformColor.slice(),
         bitmapCanvasColor: bitmapCanvasColor,
         bitmapExportFormat: bitmapExportFormat,
         trails: trailsEnabled,
@@ -6560,6 +6565,75 @@ function buildBitmapCfgPop() {
         bgGrid.appendChild(sw);
     }
     bitmapCfgPop.appendChild(bgGrid);
+
+    // --- ROOT COLOR section ---
+    const hr3 = document.createElement("hr");
+    hr3.style.cssText = "border:none;border-top:1px solid var(--stroke);margin:8px 0 4px;";
+    bitmapCfgPop.appendChild(hr3);
+    const rcTitle = document.createElement("div");
+    rcTitle.className = "pop-title"; rcTitle.textContent = "ROOT COLOR";
+    bitmapCfgPop.appendChild(rcTitle);
+
+    const bitmapModes = [
+        { key: "uniform",    label: "Uniform" },
+        { key: "rainbow",    label: "Index Rainbow" },
+        { key: "derivative", label: "Derivative" },
+        { key: "iteration",  label: "Iteration Count" },
+        { key: "proximity",  label: "Root Proximity" },
+    ];
+    const bmRows = [];
+    let bmSwatchWrap = null;
+    function refreshBmSwatches() {
+        if (bmSwatchWrap) bmSwatchWrap.style.opacity = bitmapColorMode === "uniform" ? "1" : "0.3";
+    }
+    bitmapModes.forEach(bm => {
+        const row = document.createElement("div");
+        row.className = "audio-toggle" + (bitmapColorMode === bm.key ? " on" : "");
+        const dot = document.createElement("span");
+        dot.className = "toggle-dot";
+        const lbl = document.createElement("span");
+        lbl.className = "toggle-label"; lbl.textContent = bm.label;
+        row.appendChild(dot);
+        row.appendChild(lbl);
+        row.addEventListener("click", () => {
+            bitmapColorMode = bm.key;
+            bmRows.forEach(r => r.classList.remove("on"));
+            row.classList.add("on");
+            refreshBmSwatches();
+        });
+        bitmapCfgPop.appendChild(row);
+        bmRows.push(row);
+
+        if (bm.key === "uniform") {
+            bmSwatchWrap = document.createElement("div");
+            bmSwatchWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:3px;padding:4px 2px 6px 20px;max-width:180px;";
+            bmSwatchWrap.style.opacity = bitmapColorMode === "uniform" ? "1" : "0.3";
+            ROOT_COLOR_SWATCHES.forEach(ch => {
+                const sw = document.createElement("div");
+                const isActive = bitmapUniformColor[0] === ch.rgb[0] && bitmapUniformColor[1] === ch.rgb[1] && bitmapUniformColor[2] === ch.rgb[2];
+                sw.style.cssText = `width:16px;height:16px;border-radius:50%;cursor:pointer;` +
+                    `background:rgb(${ch.rgb[0]},${ch.rgb[1]},${ch.rgb[2]});` +
+                    `border:2px solid ${isActive ? "#fff" : "rgba(255,255,255,0.15)"};` +
+                    `box-sizing:border-box;flex-shrink:0;`;
+                sw.title = ch.label;
+                sw.addEventListener("click", () => {
+                    bitmapUniformColor = ch.rgb.slice();
+                    bmSwatchWrap.querySelectorAll("div").forEach(s => {
+                        s.style.borderColor = "rgba(255,255,255,0.15)";
+                    });
+                    sw.style.borderColor = "#fff";
+                    if (bitmapColorMode !== "uniform") {
+                        bitmapColorMode = "uniform";
+                        bmRows.forEach(r => r.classList.remove("on"));
+                        bmRows[0].classList.add("on");
+                        refreshBmSwatches();
+                    }
+                });
+                bmSwatchWrap.appendChild(sw);
+            });
+            bitmapCfgPop.appendChild(bmSwatchWrap);
+        }
+    });
 }
 function openBitmapCfgPop() {
     if (bitmapCfgPopOpen) { closeBitmapCfgPop(); return; }
@@ -6640,21 +6714,39 @@ function buildBitmapSavePop() {
     dlBtn.className = "bitmap-btn";
     dlBtn.style.width = "100%";
     dlBtn.textContent = "Download";
+    var bitmapSaving = false;
     dlBtn.addEventListener("click", function() {
-        if (!bitmapPersistentBuffer) return;
-        var ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-        var base = "polypaint-bitmap-" + ts;
-        var rgba = bitmapPersistentBuffer.data;
-        var w = bitmapComputeRes, h = bitmapComputeRes;
-        switch (bitmapExportFormat) {
-            case "bmp":  exportPersistentBufferAsBMP(rgba, w, h, base + ".bmp"); break;
-            case "jpeg": exportPersistentBufferAsJPEG(rgba, w, h,
-                             +(document.getElementById("bitmap-jpg-quality").value || 92),
-                             base + ".jpg"); break;
-            case "png":  exportPersistentBufferAsPNG(rgba, w, h, base + ".png"); break;
-            case "tiff": exportPersistentBufferAsTIFF(rgba, w, h, base + ".tiff"); break;
-        }
-        closeBitmapSavePop();
+        if (bitmapSaving) { uiBuzz(); return; }
+        if (!bitmapPersistentBuffer) { uiBuzz(); return; }
+        bitmapSaving = true;
+        dlBtn.textContent = "Saving...";
+        dlBtn.style.opacity = "0.5";
+        uiPing(660, 0.08);
+        // Defer encoding so "Saving..." renders before blocking
+        setTimeout(function() {
+            try {
+                var ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+                var base = "polypaint-bitmap-" + ts;
+                var rgba = bitmapPersistentBuffer.data;
+                var w = bitmapComputeRes, h = bitmapComputeRes;
+                switch (bitmapExportFormat) {
+                    case "bmp":  exportPersistentBufferAsBMP(rgba, w, h, base + ".bmp"); break;
+                    case "jpeg": exportPersistentBufferAsJPEG(rgba, w, h,
+                                     +(document.getElementById("bitmap-jpg-quality").value || 92),
+                                     base + ".jpg"); break;
+                    case "png":  exportPersistentBufferAsPNG(rgba, w, h, base + ".png"); break;
+                    case "tiff": exportPersistentBufferAsTIFF(rgba, w, h, base + ".tiff"); break;
+                }
+                uiPing(1320, 0.06);
+            } catch (e) {
+                uiBuzz();
+                console.error("Export failed:", e);
+            }
+            dlBtn.textContent = "Download";
+            dlBtn.style.opacity = "";
+            bitmapSaving = false;
+            closeBitmapSavePop();
+        }, 30);
     });
     wrap.appendChild(dlBtn);
     bitmapSavePop.appendChild(wrap);
@@ -6936,6 +7028,16 @@ function applyLoadedState(meta) {
     }
     if (meta.uniformRootColor && Array.isArray(meta.uniformRootColor)) {
         uniformRootColor = meta.uniformRootColor.slice();
+    }
+    if (meta.bitmapColorMode) {
+        bitmapColorMode = meta.bitmapColorMode;
+    } else {
+        bitmapColorMode = rootColorMode; // backward compat: mirror animation mode
+    }
+    if (meta.bitmapUniformColor && Array.isArray(meta.bitmapUniformColor)) {
+        bitmapUniformColor = meta.bitmapUniformColor.slice();
+    } else {
+        bitmapUniformColor = uniformRootColor.slice();
     }
     if (meta.bitmapCanvasColor) {
         bitmapCanvasColor = meta.bitmapCanvasColor;
@@ -8078,8 +8180,7 @@ function exportPersistentBufferAsPNG(rgba, width, height, filename) {
 function exportPersistentBufferAsTIFF(rgba, width, height, filename) {
     filename = filename || "polypaint.tiff";
     if (typeof UTIF === "undefined") { alert("UTIF.js library not loaded"); return; }
-    var ifd = UTIF.encodeImage(rgba, width, height);
-    var tiff = UTIF.encode([ifd]);
+    var tiff = UTIF.encodeImage(rgba, width, height);
     var blob = new Blob([tiff], { type: "image/tiff" });
     downloadBlob(blob, filename);
 }
@@ -8135,8 +8236,8 @@ function paintBitmapFrame() {
     const w = bitmapCtx.canvas.width, h = bitmapCtx.canvas.height;
     const range = bitmapRange;
     const n = currentRoots.length;
-    const iterMode = rootColorMode === "iteration";
-    const proxMode = rootColorMode === "proximity";
+    const iterMode = bitmapColorMode === "iteration";
+    const proxMode = bitmapColorMode === "proximity";
     // Precompute proximity min-distances if needed
     let proxDists = null, proxMax = 1;
     if (proxMode && n > 1) {
@@ -8168,8 +8269,10 @@ function paintBitmapFrame() {
             const palIdx = Math.min(15, (r._iter * 15 / 8) | 0);
             const c = ITER_PALETTE[palIdx];
             bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+        } else if (bitmapColorMode === "uniform") {
+            bitmapCtx.fillStyle = `rgb(${bitmapUniformColor[0]},${bitmapUniformColor[1]},${bitmapUniformColor[2]})`;
         } else {
-            bitmapCtx.fillStyle = rootColor(i, n);
+            bitmapCtx.fillStyle = d3.interpolateRainbow(i / n);
         }
         bitmapCtx.beginPath();
         bitmapCtx.arc(px, py, 1.5, 0, 2 * Math.PI);
@@ -8186,8 +8289,8 @@ function paintBitmapFrameFast() {
     const range = bitmapRange;
     const n = currentRoots.length;
     const colors = fastModeRootColors;
-    const iterMode = rootColorMode === "iteration";
-    const proxMode = rootColorMode === "proximity";
+    const iterMode = bitmapColorMode === "iteration";
+    const proxMode = bitmapColorMode === "proximity";
     // Precompute proximity distances for this frame
     let proxDists = null, proxMax = 1;
     if (proxMode && n > 1) {
@@ -8748,9 +8851,15 @@ function enterFastMode() {
     }
 
     const nRoots = currentRoots.length;
-    // Keep CSS colors for legacy fallback
+    // Compute bitmap CSS colors from bitmapColorMode (only used by bitmap painters)
     fastModeRootColors = new Array(nRoots);
-    for (let i = 0; i < nRoots; i++) fastModeRootColors[i] = rootColor(i, nRoots);
+    for (let i = 0; i < nRoots; i++) {
+        if (bitmapColorMode === "uniform") {
+            fastModeRootColors[i] = `rgb(${bitmapUniformColor[0]},${bitmapUniformColor[1]},${bitmapUniformColor[2]})`;
+        } else {
+            fastModeRootColors[i] = d3.interpolateRainbow(i / nRoots);
+        }
+    }
 
     fastModeActive = true;
     fastModeStepIndex = 0;
@@ -8881,13 +8990,22 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         }
     }
 
-    // Precompute RGB color arrays
+    // Precompute RGB color arrays from bitmapColorMode
     const colorsR = new Uint8Array(nRoots);
     const colorsG = new Uint8Array(nRoots);
     const colorsB = new Uint8Array(nRoots);
     for (let i = 0; i < nRoots; i++) {
-        const [r, g, b] = rootColorRGB(i, nRoots);
-        colorsR[i] = r; colorsG[i] = g; colorsB[i] = b;
+        if (bitmapColorMode === "uniform") {
+            colorsR[i] = bitmapUniformColor[0];
+            colorsG[i] = bitmapUniformColor[1];
+            colorsB[i] = bitmapUniformColor[2];
+        } else {
+            const css = d3.interpolateRainbow(i / nRoots);
+            const m = css.match(/(\d+)/g);
+            colorsR[i] = m ? +m[0] : 233;
+            colorsG[i] = m ? +m[1] : 69;
+            colorsB[i] = m ? +m[2] : 96;
+        }
     }
 
     return {
@@ -8897,11 +9015,11 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         colorsR, colorsG, colorsB,
         canvasW: bitmapComputeRes, canvasH: bitmapComputeRes,
         bitmapRange, stepsVal,
-        noColor: rootColorMode === "uniform",
-        uniformR: uniformRootColor[0], uniformG: uniformRootColor[1], uniformB: uniformRootColor[2],
-        iterColor: rootColorMode === "iteration",
+        noColor: bitmapColorMode === "uniform",
+        uniformR: bitmapUniformColor[0], uniformG: bitmapUniformColor[1], uniformB: bitmapUniformColor[2],
+        iterColor: bitmapColorMode === "iteration",
         iterPalR: ITER_PAL_R.buffer.slice(0), iterPalG: ITER_PAL_G.buffer.slice(0), iterPalB: ITER_PAL_B.buffer.slice(0),
-        proxColor: rootColorMode === "proximity",
+        proxColor: bitmapColorMode === "proximity",
         proxPalR: PROX_PAL_R.buffer.slice(0), proxPalG: PROX_PAL_G.buffer.slice(0), proxPalB: PROX_PAL_B.buffer.slice(0),
         morphEnabled: morphEnabled && morphTargetCoeffs.length === nCoeffs,
         morphRate: morphRate,
@@ -9283,10 +9401,10 @@ function fastModeChunkLegacy() {
         }
 
         // Solve roots (warm-start), preserve identity, update in-place
-        const iterMode = rootColorMode === "iteration";
+        const iterMode = bitmapColorMode === "iteration";
         const iters = iterMode ? new Uint8Array(coefficients.length - 1) : null;
         let roots = solveRootsEA(coefficients, currentRoots, iters);
-        if (rootColorMode !== "uniform" && !iterMode) roots = matchRootOrder(roots, currentRoots);
+        if (bitmapColorMode !== "uniform" && !iterMode) roots = matchRootOrder(roots, currentRoots);
         setCurrentRootsInPlace(roots);
 
         // Paint

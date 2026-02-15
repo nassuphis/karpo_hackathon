@@ -260,12 +260,29 @@ body {
 #path-pick-pop .ctx-accept:hover { filter: brightness(1.2); }
 #path-pick-pop .ctx-dir { font-size: 9px; padding: 2px 8px; background: transparent; border: 1px solid var(--stroke); color: var(--muted); border-radius: 3px; cursor: pointer; }
 #path-pick-pop .ctx-dir.active { color: var(--text); border-color: var(--accent-dim); }
+#dpath-pick-pop { min-width: 180px; padding: 10px 12px; gap: 6px; }
+#dpath-pick-pop .ctx-title { font-size: 10px; color: var(--accent); font-weight: 600; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; width: 100%; }
+#dpath-pick-pop label { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--muted); white-space: nowrap; width: 100%; }
+#dpath-pick-pop select, #dpath-pick-pop input[type=range] { flex: 1; }
+#dpath-pick-pop select { font-size: 9px; background: var(--panel); color: var(--text); border: 1px solid var(--stroke); border-radius: 3px; padding: 2px 4px; }
+#dpath-pick-pop .ctx-val { font-size: 9px; color: var(--text); min-width: 32px; text-align: right; }
+#dpath-pick-pop .ctx-row { display: flex; align-items: center; gap: 6px; width: 100%; }
+#dpath-pick-pop .ctx-accept { margin-top: 4px; padding: 4px 16px; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; background: var(--accent); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; align-self: center; }
+#dpath-pick-pop .ctx-accept:hover { filter: brightness(1.2); }
+#dpath-pick-pop .ctx-dir { font-size: 9px; padding: 2px 8px; background: transparent; border: 1px solid var(--stroke); color: var(--muted); border-radius: 3px; cursor: pointer; }
+#dpath-pick-pop .ctx-dir.active { color: var(--text); border-color: var(--accent-dim); }
 #lce-controls { display: flex; align-items: center; gap: 4px; }
 #lce-controls label { display: flex; align-items: center; gap: 2px; font-size: 9px; color: var(--muted); white-space: nowrap; }
 #lce-controls input[type=range] { width: 48px; accent-color: var(--accent); }
 #lce-controls .ctx-val { font-size: 9px; color: var(--text); min-width: 20px; text-align: right; }
 #lce-controls .ctx-dir { font-size: 9px; padding: 1px 6px; background: transparent; border: 1px solid var(--stroke); color: var(--muted); border-radius: 3px; cursor: pointer; }
 #lce-controls .ctx-dir.active { color: var(--text); border-color: var(--accent-dim); }
+#dle-controls { display: flex; align-items: center; gap: 4px; }
+#dle-controls label { display: flex; align-items: center; gap: 2px; font-size: 9px; color: var(--muted); white-space: nowrap; }
+#dle-controls input[type=range] { width: 48px; accent-color: var(--accent); }
+#dle-controls .ctx-val { font-size: 9px; color: var(--text); min-width: 20px; text-align: right; }
+#dle-controls .ctx-dir { font-size: 9px; padding: 1px 6px; background: transparent; border: 1px solid var(--stroke); color: var(--muted); border-radius: 3px; cursor: pointer; }
+#dle-controls .ctx-dir.active { color: var(--text); border-color: var(--accent-dim); }
 .cpick-row .cpick-pts {
     font-size: 8px; color: var(--muted); opacity: 0.5; flex-shrink: 0;
     min-width: 28px; text-align: right; font-variant-numeric: tabular-nums;

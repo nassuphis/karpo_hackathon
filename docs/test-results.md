@@ -1,6 +1,6 @@
 # Test Results
 
-**259 tests total: 258 passed, 1 skipped** | Runtime: ~3m 25s | Headless Chromium on Apple Silicon
+**302 tests total: 301 passed, 1 skipped** | Runtime: ~4m | Headless Chromium on Apple Silicon
 
 Run with: `python -m pytest tests/ -v`
 
@@ -203,6 +203,35 @@ Tests `fmtPassCount()`, button labels, removed variables, `initBitmapCanvas()` r
 
 ---
 
+## test_offcanvas.py — Off-Canvas Render & Image Export (44 tests)
+
+Tests the split compute/display architecture, multi-format export, and high-resolution support.
+
+| Test Group | Count | What it checks |
+|------------|-------|----------------|
+| `TestStateVariables` | 4 | BITMAP_DISPLAY_CAP=2000, initial zeros/nulls for compute/display state |
+| `TestResolutionDropdown` | 2 | All 7 options (1K–25K) present, default is 2000 |
+| `TestInitNoSplit` | 2 | At 1000/2000px: no display buffer, canvas = compute res |
+| `TestInitWithSplit` | 2 | At 5000px: canvas=2000, persistent=5000, display buffer=2000 |
+| `TestSerializeComputeRes` | 2 | Workers get computeRes (not canvas.width) in canvasW/canvasH |
+| `TestEnterFastModeResCheck` | 1 | Resolution check compares bitmapComputeRes, not canvas.width |
+| `TestCompositeWorkerPixels` | 2 | No-split: writes to persistent buffer; split: writes to both + downsamples |
+| `TestFillDisplayBuffer` | 1 | Fills entire display buffer with correct color |
+| `TestResetBitmap` | 1 | Nulls all new state (persistent, display, computeRes, displayRes) |
+| `TestClearWithSplit` | 1 | Clear resets both persistent and display buffers |
+| `TestBMPExport` | 4 | Function exists, valid BMP header, BGR pixel order, bottom-up row order |
+| `TestPlotCoeffCurvesDisplayRes` | 1 | Uses display resolution for coefficient view |
+| `TestTimingCopyRes` | 1 | Shows compute resolution in timing data |
+| `TestExportFormatState` | 4 | Default JPEG, variable persistence, save/load roundtrip |
+| `TestSavePopup` | 5 | Popup exists, initially closed, opens/closes, has format dropdown |
+| `TestExportFunctions` | 4 | JPEG/PNG/TIFF/downloadBlob functions exist |
+| `TestLibraryLoading` | 4 | pako, UPNG, jpeg-js, UTIF globals available |
+| `TestJPEGExport` | 1 | Produces valid image/jpeg blob |
+| `TestPNGExport` | 1 | Produces valid image/png blob |
+| `TestTIFFExport` | 1 | Produces valid image/tiff blob |
+
+---
+
 ## test_integration.py — End-to-End (3 tests)
 
 | Test | Status | What it checks |
@@ -260,9 +289,10 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | Morph | test_morph.py | 15 | Init, blending, enable/disable, save/load, degree sync, fast mode |
 | Jiggle | test_jiggle.py | 26 | Helpers, all 10 modes, cumulative state, save/load |
 | Fast mode | test_fastmode.py | 22 | Formatting, buttons, removed vars, resets, serialization, clear, toggle |
+| Off-canvas & export | test_offcanvas.py | 44 | Split compute/display, BMP/JPEG/PNG/TIFF export, library loading, save popup, format state |
 | Integration | test_integration.py | 3 | Snap loading, determinism, fast mode pixels |
 | Benchmark | test_benchmark.py | 4 | JS vs WASM: correctness + performance |
-| **Total** | **15 files** | **259** | |
+| **Total** | **16 files** | **302** | |
 
 ---
 
@@ -286,6 +316,7 @@ tests/
   test_morph.py         — Coefficient morphing system
   test_jiggle.py        — Jiggle perturbation (10 modes)
   test_fastmode.py      — Continuous fast mode, buttons, serialization
+  test_offcanvas.py     — Off-canvas render split, multi-format export, high-res
   test_integration.py   — Snap loading, determinism, fast mode
   test_benchmark.py     — JS vs WASM speed + correctness
 ```

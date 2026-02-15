@@ -2,9 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v27</title>
+<title>PolyPaint v28</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/upng-js@2.1.0/UPNG.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jpeg-js@0.4.4/lib/encoder.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js"></script>
 <style>
 :root {
     --bg: #0f1026;
@@ -523,7 +527,7 @@ body.fast-mode #stop-roots-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v27</span>
+    <span class="app-title">PolyPaint v28</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -770,14 +774,11 @@ body.fast-mode #stop-roots-btn {
                     <button id="bitmap-start-btn" class="bitmap-btn">init</button>
                     <button id="bitmap-save-btn" class="bitmap-btn" disabled>save</button>
                     <button id="bitmap-clear-btn" class="bitmap-btn" disabled>clear</button>
-                    <select id="bitmap-res-select" class="bitmap-select"><option value="1000">1000px</option><option value="2000" selected>2000px</option><option value="5000">5000px</option><option value="10000">10000px</option><option value="15000">15000px</option></select>
+                    <select id="bitmap-res-select" class="bitmap-select"><option value="1000">1000px</option><option value="2000" selected>2000px</option><option value="5000">5000px</option><option value="8000">8000px</option><option value="10000">10000px</option><option value="15000">15000px</option><option value="25000">25000px</option></select>
                     <button id="bitmap-fast-btn" class="bitmap-btn" disabled>start</button>
                     <button id="bitmap-coeff-btn" class="bitmap-btn" disabled title="Plot coefficient positions instead of roots">ROOT</button>
                     <select id="bitmap-steps-select" class="bitmap-select"><option value="10">10</option><option value="100">100</option><option value="1000">1K</option><option value="5000">5K</option><option value="10000" selected>10K</option><option value="50000">50K</option><option value="100000">100K</option><option value="1000000">1M</option></select>
-                    <button id="jiggle-btn" class="bitmap-btn" disabled title="Jiggle — perturb coefficient paths between cycles">jiggle</button>
-                    <button id="jiggle-diag-btn" class="bitmap-btn" disabled title="Jiggle diagnostics" style="font-weight:700;min-width:20px;padding:2px 4px;">D</button>
-                    <button id="bitmap-bg-btn" class="bitmap-btn" title="Canvas background color">bg</button>
-                    <button id="bitmap-cfg-btn" class="bitmap-btn" title="Fast mode solver config">cfg</button>
+                    <button id="bitmap-cfg-btn" class="bitmap-btn" title="Fast mode config">cfg</button>
                     <span id="bitmap-pass-count" style="display:none;font-family:monospace;font-size:10px;color:var(--muted);margin-left:4px;white-space:nowrap;"></span>
                 </div>
                 <div id="bitmap-container" style="flex:1;min-height:0;position:relative;background:#000;">
@@ -798,13 +799,11 @@ body.fast-mode #stop-roots-btn {
 <div id="coeff-pick-pop" class="ops-pop" style="min-width:300px"></div>
 <div id="coeff-ctx" class="ops-pop"></div>
 <div id="snap-pop" class="ops-pop" style="min-width:100px"></div>
-<div id="bitmap-bg-pop" class="ops-pop" style="min-width:160px"></div>
-<div id="jiggle-pop" class="ops-pop" style="min-width:160px"></div>
-<div id="jiggle-diag-pop" class="ops-pop" style="min-width:240px;max-height:400px;overflow-y:auto"></div>
 <div id="path-pick-pop" class="ops-pop"></div>
 <div id="config-pop" class="ops-pop" style="min-width:160px"></div>
 <div id="timing-pop" class="ops-pop" style="min-width:220px"></div>
 <div id="bitmap-cfg-pop" class="ops-pop" style="min-width:160px"></div>
+<div id="bitmap-save-pop" class="ops-pop" style="min-width:160px"></div>
 
 <script>
 // ============================================================================
@@ -929,6 +928,10 @@ let bitmapRange = null;   // frozen bounding box from roots panel
 let bitmapFrameCount = 0;
 let bitmapCanvasColor = "#000000"; // canvas background color
 let bitmapPersistentBuffer = null; // persistent ImageData for fast mode compositing (avoids getImageData)
+const BITMAP_DISPLAY_CAP = 2000;   // max display canvas resolution (px)
+let bitmapComputeRes = 0;          // full computation resolution (from dropdown)
+let bitmapDisplayRes = 0;          // display canvas resolution = min(computeRes, DISPLAY_CAP)
+let bitmapDisplayBuffer = null;    // ImageData at display resolution (null when no split needed)
 let bitmapCoeffView = false;     // when true, fast mode plots coefficient positions instead of roots
 // Fast mode state
 const FAST_PASS_SECONDS = 1.0; // virtual duration of one fast pass
@@ -5223,8 +5226,7 @@ document.addEventListener("keydown", function (e) {
         if (colorPopOpen) { closeColorPop(); return; }
         if (coeffPickOpen) { closeCoeffPick(); return; }
         if (typeof snapPopOpen !== "undefined" && snapPopOpen) { closeSnapPop(); return; }
-        if (typeof bitmapBgPopOpen !== "undefined" && bitmapBgPopOpen) { closeBitmapBgPop(); return; }
-        if (typeof jigglePopOpen !== "undefined" && jigglePopOpen) { closeJigglePop(); return; }
+        if (typeof bitmapCfgPopOpen !== "undefined" && bitmapCfgPopOpen) { closeBitmapCfgPop(); return; }
         if (typeof pathPickOpen !== "undefined" && pathPickOpen) { closePathPickPop(true); return; }
         clearAllSelection();
     }
@@ -5596,13 +5598,6 @@ document.addEventListener("mousedown", e => {
             if (typeof closeTimingPop === "function") closeTimingPop();
         }
     }
-    // Close bitmap bg popup
-    if (typeof bitmapBgPopOpen !== "undefined" && bitmapBgPopOpen) {
-        const bp = document.getElementById("bitmap-bg-pop");
-        if (bp && !bp.contains(e.target) && e.target.id !== "bitmap-bg-btn") {
-            if (typeof closeBitmapBgPop === "function") closeBitmapBgPop();
-        }
-    }
     // Close bitmap cfg popup
     if (typeof bitmapCfgPopOpen !== "undefined" && bitmapCfgPopOpen) {
         const bcp = document.getElementById("bitmap-cfg-pop");
@@ -5610,18 +5605,11 @@ document.addEventListener("mousedown", e => {
             if (typeof closeBitmapCfgPop === "function") closeBitmapCfgPop();
         }
     }
-    // Close jiggle popup
-    if (typeof jigglePopOpen !== "undefined" && jigglePopOpen) {
-        const jp = document.getElementById("jiggle-pop");
-        if (jp && !jp.contains(e.target) && e.target.id !== "jiggle-btn") {
-            if (typeof closeJigglePop === "function") closeJigglePop();
-        }
-    }
-    // Close jiggle diagnostics popup
-    if (typeof jiggleDiagOpen !== "undefined" && jiggleDiagOpen) {
-        const dp = document.getElementById("jiggle-diag-pop");
-        if (dp && !dp.contains(e.target) && e.target.id !== "jiggle-diag-btn") {
-            if (typeof closeJiggleDiag === "function") closeJiggleDiag();
+    // Close bitmap save popup
+    if (typeof bitmapSavePopOpen !== "undefined" && bitmapSavePopOpen) {
+        const bsp = document.getElementById("bitmap-save-pop");
+        if (bsp && !bsp.contains(e.target) && e.target.id !== "bitmap-save-btn") {
+            if (typeof closeBitmapSavePop === "function") closeBitmapSavePop();
         }
     }
     // Close path picker popup (revert on outside click)
@@ -6036,6 +6024,7 @@ function buildStateMetadata(timestamp) {
         rootColorMode: rootColorMode,
         uniformRootColor: uniformRootColor.slice(),
         bitmapCanvasColor: bitmapCanvasColor,
+        bitmapExportFormat: bitmapExportFormat,
         trails: trailsEnabled,
         animPlaying: animState.playing,
         activeTab: activeTab,
@@ -6190,9 +6179,8 @@ function snapCapture(mode) {
     let cw, ch;
     const isSingle = mode === "coeffs" || mode === "roots" || mode === "stats" || mode === "sound";
     if (mode === "bitmap") {
-        const bc = document.getElementById("bitmap-canvas");
-        if (!bitmapCtx || !bitmapActive || bc.width === 0) return; // nothing to export
-        cw = bc.width; ch = bc.height;
+        if (!bitmapCtx || !bitmapActive || !bitmapPersistentBuffer) return; // nothing to export
+        cw = bitmapComputeRes; ch = bitmapComputeRes;
     } else if (isSingle) {
         cw = S; ch = S + headerH;
     } else {
@@ -6214,8 +6202,8 @@ function snapCapture(mode) {
     ctx.fillRect(0, 0, cw, ch);
 
     if (mode === "bitmap") {
-        // Direct copy at native resolution
-        ctx.drawImage(document.getElementById("bitmap-canvas"), 0, 0);
+        // Direct copy from persistent buffer at compute resolution
+        ctx.putImageData(bitmapPersistentBuffer, 0, 0);
     } else if (isSingle) {
         // Single panel
         const label = mode === "coeffs" ? "COEFFICIENTS" : mode === "roots" ? "ROOTS" : mode === "stats" ? "STATS" : "SOUND";
@@ -6340,8 +6328,7 @@ const bitmapCfgPop = document.getElementById("bitmap-cfg-pop");
 
 function closeBitmapCfgPop() { bitmapCfgPop.classList.remove("open"); bitmapCfgPopOpen = false; }
 
-function openBitmapCfgPop() {
-    if (bitmapCfgPopOpen) { closeBitmapCfgPop(); return; }
+function buildBitmapCfgPop() {
     bitmapCfgPop.innerHTML = "";
     const title = document.createElement("div");
     title.className = "pop-title";
@@ -6360,7 +6347,7 @@ function openBitmapCfgPop() {
         btn.textContent = opt;
         btn.addEventListener("click", () => {
             solverType = opt;
-            openBitmapCfgPop(); // rebuild to update highlight
+            buildBitmapCfgPop(); // rebuild to update highlight
         });
         row.appendChild(btn);
     }
@@ -6370,17 +6357,131 @@ function openBitmapCfgPop() {
     info.style.cssText = "font-size:9px;color:var(--muted);margin-top:2px;";
     info.textContent = solverType === "wasm" ? "WASM Ehrlich-Aberth (compiled C)" : "JavaScript Ehrlich-Aberth";
     bitmapCfgPop.appendChild(info);
-    // Cycle duration
-    const cycTitle = document.createElement("div");
-    cycTitle.className = "pop-title";
-    cycTitle.style.marginTop = "8px";
-    cycTitle.textContent = "JIGGLE";
-    bitmapCfgPop.appendChild(cycTitle);
+    // Jiggle section
+    const hr1 = document.createElement("hr");
+    hr1.style.cssText = "border:none;border-top:1px solid var(--stroke);margin:8px 0 4px;";
+    bitmapCfgPop.appendChild(hr1);
+    const jigTitle = document.createElement("div");
+    jigTitle.className = "pop-title";
+    jigTitle.textContent = "JIGGLE";
+    bitmapCfgPop.appendChild(jigTitle);
+    const inpStyle = "width:50px;background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
+    const jLblStyle = "font-size:10px;color:var(--fg);";
+    const hintStyle = "font-size:9px;color:var(--muted);";
+    const jRowStyle = "display:flex;align-items:center;gap:6px;margin:4px 0;";
+    // Mode dropdown
+    const modeRow = document.createElement("div");
+    modeRow.style.cssText = jRowStyle;
+    const modeLbl = document.createElement("span");
+    modeLbl.style.cssText = jLblStyle;
+    modeLbl.textContent = "Mode";
+    const modeSel = document.createElement("select");
+    modeSel.style.cssText = "background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
+    for (const m of ["none","random","rotate","walk","scale","circle","spiral","breathe","wobble","lissajous"]) {
+        const opt = document.createElement("option");
+        opt.value = m; opt.textContent = m.charAt(0).toUpperCase() + m.slice(1);
+        if (m === jiggleMode) opt.selected = true;
+        modeSel.appendChild(opt);
+    }
+    modeRow.appendChild(modeLbl); modeRow.appendChild(modeSel);
+    bitmapCfgPop.appendChild(modeRow);
+    // Mode-specific controls container
+    const controlsDiv = document.createElement("div");
+    bitmapCfgPop.appendChild(controlsDiv);
+    function buildModeControls() {
+        controlsDiv.innerHTML = "";
+        if (jiggleMode === "random" || jiggleMode === "walk") {
+            const r = document.createElement("div"); r.style.cssText = jRowStyle;
+            const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "\u03C3";
+            const i = document.createElement("input"); i.type = "number"; i.step = "1"; i.min = "0"; i.max = "100"; i.value = jiggleSigma; i.style.cssText = inpStyle;
+            i.addEventListener("input", () => { jiggleSigma = Math.max(0, Math.min(100, parseInt(i.value,10)||0)); });
+            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = "/ 100";
+            r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
+        } else if (jiggleMode === "rotate" || jiggleMode === "circle") {
+            const r = document.createElement("div"); r.style.cssText = jRowStyle;
+            const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "\u03B8";
+            const i = document.createElement("input"); i.type = "number"; i.step = "0.001"; i.min = "0.001"; i.max = "0.500"; i.value = jiggleTheta; i.style.cssText = inpStyle;
+            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0";
+            i.addEventListener("input", () => { jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(i.value)||0.01)); h.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0"; });
+            r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
+        } else if (jiggleMode === "scale") {
+            const r = document.createElement("div"); r.style.cssText = jRowStyle;
+            const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "step";
+            const i = document.createElement("input"); i.type = "number"; i.step = "1"; i.min = "1"; i.max = "50"; i.value = jiggleScaleStep; i.style.cssText = inpStyle;
+            i.addEventListener("input", () => { jiggleScaleStep = Math.max(1, Math.min(50, parseInt(i.value,10)||5)); });
+            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = "%";
+            r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
+        } else if (jiggleMode === "spiral") {
+            const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
+            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "\u03B8";
+            const i1 = document.createElement("input"); i1.type = "number"; i1.step = "0.001"; i1.min = "0.001"; i1.max = "0.500"; i1.value = jiggleTheta; i1.style.cssText = inpStyle;
+            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0";
+            i1.addEventListener("input", () => { jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(i1.value)||0.01)); h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0"; });
+            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
+            const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
+            const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "growth";
+            const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "1"; i2.max = "50"; i2.value = jiggleScaleStep; i2.style.cssText = inpStyle;
+            i2.addEventListener("input", () => { jiggleScaleStep = Math.max(1, Math.min(50, parseInt(i2.value,10)||5)); });
+            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "%";
+            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
+        } else if (jiggleMode === "breathe") {
+            const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
+            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "amp";
+            const i1 = document.createElement("input"); i1.type = "number"; i1.step = "1"; i1.min = "1"; i1.max = "50"; i1.value = jiggleAmplitude; i1.style.cssText = inpStyle;
+            i1.addEventListener("input", () => { jiggleAmplitude = Math.max(1, Math.min(50, parseInt(i1.value,10)||10)); });
+            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "%";
+            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
+            const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
+            const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "period";
+            const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "2"; i2.max = "1000"; i2.value = jigglePeriod; i2.style.cssText = inpStyle;
+            i2.addEventListener("input", () => { jigglePeriod = Math.max(2, Math.min(1000, parseInt(i2.value,10)||20)); });
+            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "cycles";
+            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
+        } else if (jiggleMode === "wobble") {
+            const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
+            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "amp";
+            const i1 = document.createElement("input"); i1.type = "number"; i1.step = "0.001"; i1.min = "0.001"; i1.max = "0.500"; i1.value = jiggleTheta; i1.style.cssText = inpStyle;
+            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0";
+            i1.addEventListener("input", () => { jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(i1.value)||0.01)); h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0"; });
+            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
+            const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
+            const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "period";
+            const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "2"; i2.max = "1000"; i2.value = jigglePeriod; i2.style.cssText = inpStyle;
+            i2.addEventListener("input", () => { jigglePeriod = Math.max(2, Math.min(1000, parseInt(i2.value,10)||20)); });
+            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "cycles";
+            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
+        } else if (jiggleMode === "lissajous") {
+            const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
+            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "amp";
+            const i1 = document.createElement("input"); i1.type = "number"; i1.step = "1"; i1.min = "1"; i1.max = "50"; i1.value = jiggleAmplitude; i1.style.cssText = inpStyle;
+            i1.addEventListener("input", () => { jiggleAmplitude = Math.max(1, Math.min(50, parseInt(i1.value,10)||10)); });
+            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "%";
+            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
+            const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
+            const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "period";
+            const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "2"; i2.max = "1000"; i2.value = jigglePeriod; i2.style.cssText = inpStyle;
+            i2.addEventListener("input", () => { jigglePeriod = Math.max(2, Math.min(1000, parseInt(i2.value,10)||20)); });
+            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "cycles";
+            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
+            const r3 = document.createElement("div"); r3.style.cssText = jRowStyle;
+            const l3 = document.createElement("span"); l3.style.cssText = jLblStyle; l3.textContent = "fX";
+            const i3 = document.createElement("input"); i3.type = "number"; i3.step = "1"; i3.min = "1"; i3.max = "10"; i3.value = jiggleLissFreqX; i3.style.cssText = inpStyle;
+            i3.addEventListener("input", () => { jiggleLissFreqX = Math.max(1, Math.min(10, parseInt(i3.value,10)||1)); });
+            r3.appendChild(l3); r3.appendChild(i3); controlsDiv.appendChild(r3);
+            const r4 = document.createElement("div"); r4.style.cssText = jRowStyle;
+            const l4 = document.createElement("span"); l4.style.cssText = jLblStyle; l4.textContent = "fY";
+            const i4 = document.createElement("input"); i4.type = "number"; i4.step = "1"; i4.min = "1"; i4.max = "10"; i4.value = jiggleLissFreqY; i4.style.cssText = inpStyle;
+            i4.addEventListener("input", () => { jiggleLissFreqY = Math.max(1, Math.min(10, parseInt(i4.value,10)||2)); });
+            r4.appendChild(l4); r4.appendChild(i4); controlsDiv.appendChild(r4);
+        }
+    }
+    buildModeControls();
+    modeSel.addEventListener("change", () => { jiggleMode = modeSel.value; buildModeControls(); });
+    // Interval slider
     const cycRow = document.createElement("div");
-    cycRow.style.cssText = "display:flex;align-items:center;gap:6px;margin:4px 0;";
+    cycRow.style.cssText = jRowStyle;
     const cycLbl = document.createElement("span");
-    cycLbl.style.cssText = "font-size:10px;color:var(--fg);";
-    cycLbl.textContent = "Interval";
+    cycLbl.style.cssText = jLblStyle; cycLbl.textContent = "Interval";
     cycRow.appendChild(cycLbl);
     const cycSlider = document.createElement("input");
     cycSlider.type = "range"; cycSlider.min = "1"; cycSlider.max = "100";
@@ -6389,16 +6490,80 @@ function openBitmapCfgPop() {
     const cycVal = document.createElement("span");
     cycVal.style.cssText = "font-size:9px;color:var(--muted);min-width:24px;";
     cycVal.textContent = jiggleInterval + "s";
-    cycSlider.addEventListener("input", () => {
-        jiggleInterval = parseInt(cycSlider.value, 10);
-        cycVal.textContent = jiggleInterval + "s";
-    });
+    cycSlider.addEventListener("input", () => { jiggleInterval = parseInt(cycSlider.value,10); cycVal.textContent = jiggleInterval + "s"; });
     cycRow.appendChild(cycSlider); cycRow.appendChild(cycVal);
+    // GCD button — compute cycle from coefficient speeds
+    const gcdBtn = document.createElement("button");
+    gcdBtn.textContent = "GCD";
+    gcdBtn.title = "Set interval to pattern repeat period (100 / GCD of integer speeds)";
+    gcdBtn.style.cssText = "font-size:9px;padding:1px 5px;background:transparent;color:var(--muted);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;margin-left:2px;";
+    gcdBtn.addEventListener("click", () => {
+        function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a; }
+        const intSpeeds = [];
+        for (const c of coefficients) {
+            if (c.pathType === "none") continue;
+            const s = Math.round(c.speed * 100);
+            if (s > 0) intSpeeds.push(s);
+        }
+        if (intSpeeds.length === 0) return;
+        let g = intSpeeds[0];
+        for (let i = 1; i < intSpeeds.length; i++) g = gcd(g, intSpeeds[i]);
+        const cycle = Math.round(100 / g);
+        const clamped = Math.max(1, Math.min(100, cycle));
+        jiggleInterval = clamped;
+        cycSlider.value = String(clamped);
+        cycVal.textContent = clamped + "s";
+    });
+    cycRow.appendChild(gcdBtn);
     bitmapCfgPop.appendChild(cycRow);
-    const cycInfo = document.createElement("div");
-    cycInfo.style.cssText = "font-size:9px;color:var(--muted);margin-top:2px;";
-    cycInfo.textContent = "Seconds between jiggle perturbations";
-    bitmapCfgPop.appendChild(cycInfo);
+    // Select All + status
+    const selAllBtn = document.createElement("button");
+    selAllBtn.textContent = "\u2295 Select All Coefficients";
+    selAllBtn.style.cssText = "font-size:9px;padding:3px 8px;background:transparent;color:var(--fg);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;margin-top:6px;width:100%;";
+    selAllBtn.addEventListener("click", () => {
+        clearRootSelection();
+        for (let i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+        if (coefficients.length > 0) lastSelectedCoeff = coefficients.length - 1;
+        updateCoeffSelectionVisual(); updateAnimBar(); updateJiggleStatus();
+    });
+    bitmapCfgPop.appendChild(selAllBtn);
+    const jStatus = document.createElement("div");
+    jStatus.id = "jiggle-status";
+    jStatus.style.cssText = "font-size:9px;margin-top:4px;";
+    bitmapCfgPop.appendChild(jStatus);
+    updateJiggleStatus();
+    // Background color
+    const hr2 = document.createElement("hr");
+    hr2.style.cssText = "border:none;border-top:1px solid var(--stroke);margin:8px 0 4px;";
+    bitmapCfgPop.appendChild(hr2);
+    const bgTitle = document.createElement("div");
+    bgTitle.className = "pop-title";
+    bgTitle.textContent = "BACKGROUND";
+    bitmapCfgPop.appendChild(bgTitle);
+    const bgGrid = document.createElement("div");
+    bgGrid.style.cssText = "display:flex;flex-wrap:wrap;gap:3px;padding:4px 0;max-width:180px;";
+    for (const c of CANVAS_BG_COLORS) {
+        const sw = document.createElement("div");
+        const isActive = bitmapCanvasColor.toLowerCase() === c.hex.toLowerCase();
+        const isDark = parseInt(c.hex.slice(1, 3), 16) * 0.299 +
+                       parseInt(c.hex.slice(3, 5), 16) * 0.587 +
+                       parseInt(c.hex.slice(5, 7), 16) * 0.114 < 128;
+        sw.style.cssText = `width:20px;height:20px;border-radius:50%;cursor:pointer;` +
+            `background:${c.hex};border:2px solid ${isActive ? "#fff" : (isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)")};` +
+            `flex-shrink:0;`;
+        sw.title = c.label;
+        sw.addEventListener("click", () => {
+            bitmapCanvasColor = c.hex;
+            document.getElementById("bitmap-container").style.background = c.hex;
+            buildBitmapCfgPop(); // rebuild to update highlight
+        });
+        bgGrid.appendChild(sw);
+    }
+    bitmapCfgPop.appendChild(bgGrid);
+}
+function openBitmapCfgPop() {
+    if (bitmapCfgPopOpen) { closeBitmapCfgPop(); return; }
+    buildBitmapCfgPop();
     bitmapCfgPop.classList.add("open");
     const r = document.getElementById("bitmap-cfg-btn").getBoundingClientRect();
     bitmapCfgPop.style.left = r.left + "px";
@@ -6406,6 +6571,104 @@ function openBitmapCfgPop() {
     bitmapCfgPopOpen = true;
 }
 document.getElementById("bitmap-cfg-btn").addEventListener("click", openBitmapCfgPop);
+
+// --- Bitmap save popup (format selection) ---
+let bitmapSavePopOpen = false;
+let bitmapExportFormat = "jpeg";
+const bitmapSavePop = document.getElementById("bitmap-save-pop");
+
+function closeBitmapSavePop() { bitmapSavePop.classList.remove("open"); bitmapSavePopOpen = false; }
+
+function buildBitmapSavePop() {
+    bitmapSavePop.innerHTML = "";
+    var wrap = document.createElement("div");
+    wrap.style.cssText = "display:flex;flex-direction:column;gap:6px;padding:8px;";
+
+    // Format label + select
+    var fmtLabel = document.createElement("label");
+    fmtLabel.style.cssText = "font-size:10px;color:var(--muted);";
+    fmtLabel.textContent = "Format";
+    wrap.appendChild(fmtLabel);
+
+    var fmtSel = document.createElement("select");
+    fmtSel.id = "bitmap-fmt-select";
+    fmtSel.className = "bitmap-select";
+    fmtSel.style.width = "100%";
+    ["jpeg", "png", "bmp", "tiff"].forEach(function(f) {
+        var opt = document.createElement("option");
+        opt.value = f; opt.textContent = f.toUpperCase();
+        if (f === bitmapExportFormat) opt.selected = true;
+        fmtSel.appendChild(opt);
+    });
+    wrap.appendChild(fmtSel);
+
+    // Quality row (JPEG only)
+    var qRow = document.createElement("div");
+    qRow.id = "bitmap-jpg-quality-row";
+    qRow.style.cssText = "display:flex;align-items:center;gap:4px;" +
+        (bitmapExportFormat !== "jpeg" ? "display:none;" : "");
+
+    var qLabel = document.createElement("label");
+    qLabel.style.cssText = "font-size:10px;color:var(--muted);white-space:nowrap;";
+    qLabel.textContent = "Quality";
+    qRow.appendChild(qLabel);
+
+    var qSlider = document.createElement("input");
+    qSlider.id = "bitmap-jpg-quality";
+    qSlider.type = "range"; qSlider.min = "50"; qSlider.max = "100"; qSlider.value = "92";
+    qSlider.style.flex = "1";
+    qRow.appendChild(qSlider);
+
+    var qVal = document.createElement("span");
+    qVal.id = "bitmap-jpg-quality-val";
+    qVal.style.cssText = "font-size:10px;color:var(--muted);width:24px;text-align:right;";
+    qVal.textContent = "92";
+    qRow.appendChild(qVal);
+    wrap.appendChild(qRow);
+
+    // Quality slider live update
+    qSlider.addEventListener("input", function() { qVal.textContent = this.value; });
+
+    // Format change → toggle quality row + save preference
+    fmtSel.addEventListener("change", function() {
+        bitmapExportFormat = this.value;
+        qRow.style.display = this.value === "jpeg" ? "" : "none";
+    });
+
+    // Download button
+    var dlBtn = document.createElement("button");
+    dlBtn.className = "bitmap-btn";
+    dlBtn.style.width = "100%";
+    dlBtn.textContent = "Download";
+    dlBtn.addEventListener("click", function() {
+        if (!bitmapPersistentBuffer) return;
+        var ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        var base = "polypaint-bitmap-" + ts;
+        var rgba = bitmapPersistentBuffer.data;
+        var w = bitmapComputeRes, h = bitmapComputeRes;
+        switch (bitmapExportFormat) {
+            case "bmp":  exportPersistentBufferAsBMP(rgba, w, h, base + ".bmp"); break;
+            case "jpeg": exportPersistentBufferAsJPEG(rgba, w, h,
+                             +(document.getElementById("bitmap-jpg-quality").value || 92),
+                             base + ".jpg"); break;
+            case "png":  exportPersistentBufferAsPNG(rgba, w, h, base + ".png"); break;
+            case "tiff": exportPersistentBufferAsTIFF(rgba, w, h, base + ".tiff"); break;
+        }
+        closeBitmapSavePop();
+    });
+    wrap.appendChild(dlBtn);
+    bitmapSavePop.appendChild(wrap);
+}
+
+function openBitmapSavePop() {
+    if (bitmapSavePopOpen) { closeBitmapSavePop(); return; }
+    buildBitmapSavePop();
+    bitmapSavePop.classList.add("open");
+    const r = document.getElementById("bitmap-save-btn").getBoundingClientRect();
+    bitmapSavePop.style.left = r.left + "px";
+    bitmapSavePop.style.top = (r.bottom + 6) + "px";
+    bitmapSavePopOpen = true;
+}
 
 // --- Timing popup ---
 let timingPopOpen = false;
@@ -6473,7 +6736,7 @@ function updateTimingPopup() {
     copyBtn.style.cssText = "margin-top:6px;font-size:9px;padding:2px 8px;cursor:pointer;background:var(--bg);color:var(--accent);border:1px solid var(--accent-border);border-radius:4px;";
     copyBtn.addEventListener("click", function() {
         const data = {
-            resolution: bitmapCtx ? bitmapCtx.canvas.width : null,
+            resolution: bitmapComputeRes || null,
             workers: last.workers,
             stepsPerPass: last.steps,
             passes: fastModeTimingHistory.slice(-10).map(function(h) {
@@ -6677,6 +6940,9 @@ function applyLoadedState(meta) {
     if (meta.bitmapCanvasColor) {
         bitmapCanvasColor = meta.bitmapCanvasColor;
         document.getElementById("bitmap-container").style.background = bitmapCanvasColor;
+    }
+    if (meta.bitmapExportFormat) {
+        bitmapExportFormat = meta.bitmapExportFormat;
     }
     rootColorBtn.classList.toggle("active", rootColorMode !== "uniform");
 
@@ -7712,16 +7978,145 @@ function fillPersistentBuffer(hexColor) {
     }
 }
 
+function fillDisplayBuffer(hexColor) {
+    if (!bitmapDisplayBuffer) return;
+    var data = bitmapDisplayBuffer.data;
+    var r = parseInt(hexColor.slice(1, 3), 16);
+    var g = parseInt(hexColor.slice(3, 5), 16);
+    var b = parseInt(hexColor.slice(5, 7), 16);
+    data[0] = r; data[1] = g; data[2] = b; data[3] = 255;
+    var len = data.length, filled = 4;
+    while (filled < len) {
+        var chunk = Math.min(filled, len - filled);
+        data.copyWithin(filled, 0, chunk);
+        filled += chunk;
+    }
+}
+
+function exportPersistentBufferAsBMP(rgba, width, height, filename) {
+    filename = filename || "polypaint.bmp";
+    var bytesPerPixel = 3;
+    var rowSize = (width * bytesPerPixel + 3) & ~3;
+    var pixelBytes = rowSize * height;
+    var fileHeaderSize = 14;
+    var dibHeaderSize = 40;
+    var offset = fileHeaderSize + dibHeaderSize;
+    var fileSize = offset + pixelBytes;
+
+    var header = new ArrayBuffer(offset);
+    var dv = new DataView(header);
+    // BITMAPFILEHEADER
+    dv.setUint8(0, 0x42); dv.setUint8(1, 0x4D); // "BM"
+    dv.setUint32(2, fileSize, true);
+    dv.setUint16(6, 0, true); dv.setUint16(8, 0, true);
+    dv.setUint32(10, offset, true);
+    // BITMAPINFOHEADER
+    dv.setUint32(14, dibHeaderSize, true);
+    dv.setInt32(18, width, true);
+    dv.setInt32(22, height, true);
+    dv.setUint16(26, 1, true);       // color planes
+    dv.setUint16(28, 24, true);      // bits per pixel
+    dv.setUint32(30, 0, true);       // no compression
+    dv.setUint32(34, pixelBytes, true);
+    dv.setInt32(38, 2835, true); dv.setInt32(42, 2835, true); // 72 DPI
+    dv.setUint32(46, 0, true); dv.setUint32(50, 0, true);
+
+    var parts = [header];
+    var TARGET_CHUNK_BYTES = 8 * 1024 * 1024;
+    var rowsPerChunk = Math.max(1, Math.floor(TARGET_CHUNK_BYTES / rowSize));
+    var pad = rowSize - width * bytesPerPixel;
+    var padBytes = pad ? new Uint8Array(pad) : null;
+
+    // BMP stores rows bottom-up
+    for (var y0 = height - 1; y0 >= 0; y0 -= rowsPerChunk) {
+        var y1 = Math.max(-1, y0 - rowsPerChunk);
+        var rows = y0 - y1;
+        var chunk = new Uint8Array(rows * rowSize);
+        var woff = 0;
+        for (var y = y0; y > y1; y--) {
+            var roff = (y * width) * 4;
+            for (var x = 0; x < width; x++) {
+                chunk[woff]     = rgba[roff + 2]; // B
+                chunk[woff + 1] = rgba[roff + 1]; // G
+                chunk[woff + 2] = rgba[roff];     // R
+                woff += 3; roff += 4;
+            }
+            if (padBytes) { chunk.set(padBytes, woff); woff += pad; }
+        }
+        parts.push(chunk);
+    }
+
+    var blob = new Blob(parts, { type: "image/bmp" });
+    downloadBlob(blob, filename);
+}
+
+function downloadBlob(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
+}
+
+function exportPersistentBufferAsJPEG(rgba, width, height, quality, filename) {
+    filename = filename || "polypaint.jpg";
+    var encoder = window["jpeg-js"] && window["jpeg-js"].encode;
+    if (!encoder) { alert("jpeg-js library not loaded"); return; }
+    var rawImageData = { data: rgba, width: width, height: height };
+    var jpegData = encoder(rawImageData, quality);
+    var blob = new Blob([jpegData.data], { type: "image/jpeg" });
+    downloadBlob(blob, filename);
+}
+
+function exportPersistentBufferAsPNG(rgba, width, height, filename) {
+    filename = filename || "polypaint.png";
+    if (typeof UPNG === "undefined") { alert("UPNG.js library not loaded"); return; }
+    var png = UPNG.encode([rgba.buffer], width, height, 0);
+    var blob = new Blob([png], { type: "image/png" });
+    downloadBlob(blob, filename);
+}
+
+function exportPersistentBufferAsTIFF(rgba, width, height, filename) {
+    filename = filename || "polypaint.tiff";
+    if (typeof UTIF === "undefined") { alert("UTIF.js library not loaded"); return; }
+    var ifd = UTIF.encodeImage(rgba, width, height);
+    var tiff = UTIF.encode([ifd]);
+    var blob = new Blob([tiff], { type: "image/tiff" });
+    downloadBlob(blob, filename);
+}
+
 function initBitmapCanvas() {
     const canvas = document.getElementById("bitmap-canvas");
     const res = parseInt(document.getElementById("bitmap-res-select").value, 10) || 2000;
-    canvas.width = res;
-    canvas.height = res;
+    bitmapComputeRes = res;
+    bitmapDisplayRes = Math.min(res, BITMAP_DISPLAY_CAP);
+
+    // Canvas gets DISPLAY resolution (small GPU footprint)
+    canvas.width = bitmapDisplayRes;
+    canvas.height = bitmapDisplayRes;
     bitmapCtx = canvas.getContext("2d");
     bitmapCtx.fillStyle = bitmapCanvasColor;
-    bitmapCtx.fillRect(0, 0, canvas.width, canvas.height);
-    bitmapPersistentBuffer = bitmapCtx.createImageData(res, res);
+    bitmapCtx.fillRect(0, 0, bitmapDisplayRes, bitmapDisplayRes);
+
+    // Persistent buffer at COMPUTE resolution (CPU-only, no GPU)
+    try {
+        bitmapPersistentBuffer = new ImageData(bitmapComputeRes, bitmapComputeRes);
+    } catch (e) {
+        alert("Cannot allocate " + bitmapComputeRes + "px buffer (" +
+              Math.round(bitmapComputeRes * bitmapComputeRes * 4 / 1e9 * 10) / 10 +
+              " GB). Try a lower resolution.");
+        bitmapPersistentBuffer = null;
+        return;
+    }
     fillPersistentBuffer(bitmapCanvasColor);
+
+    // Display buffer only needed when split is active
+    if (bitmapComputeRes > BITMAP_DISPLAY_CAP) {
+        bitmapDisplayBuffer = new ImageData(bitmapDisplayRes, bitmapDisplayRes);
+        fillDisplayBuffer(bitmapCanvasColor);
+    } else {
+        bitmapDisplayBuffer = null;
+    }
+
     bitmapRange = panels.roots.range;
     bitmapFrameCount = 0;
     fastModeElapsedOffset = 0;
@@ -8227,7 +8622,7 @@ function findPrimeSpeed(currentIntSpeed, excludeSet) {
 
 function plotCoeffCurvesOnBitmap(animated, stepsVal) {
     if (!bitmapCtx || !bitmapRange) return;
-    const w = bitmapCtx.canvas.width, h = bitmapCtx.canvas.height;
+    const w = bitmapDisplayRes || bitmapCtx.canvas.width, h = bitmapDisplayRes || bitmapCtx.canvas.height;
     const range = bitmapRange;
     const nCoeffs = coefficients.length;
 
@@ -8314,12 +8709,10 @@ function enterFastMode() {
     // Ensure bitmap canvas exists + range frozen, and resolution matches dropdown
     const wantRes = parseInt(document.getElementById("bitmap-res-select").value, 10) || 2000;
     const canvas = document.getElementById("bitmap-canvas");
-    if (!bitmapCtx || !bitmapActive || canvas.width !== wantRes) {
+    if (!bitmapCtx || !bitmapActive || bitmapComputeRes !== wantRes) {
         initBitmapCanvas();
         document.getElementById("bitmap-save-btn").disabled = false;
         document.getElementById("bitmap-clear-btn").disabled = false;
-        document.getElementById("jiggle-btn").disabled = false;
-        document.getElementById("jiggle-diag-btn").disabled = false;
         document.getElementById("bitmap-coeff-btn").disabled = false;
     }
 
@@ -8502,7 +8895,7 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         animEntries, curvesFlat, curveOffsets, curveLengths, curveIsCloud,
         rootsRe, rootsIm,
         colorsR, colorsG, colorsB,
-        canvasW: bitmapCtx.canvas.width, canvasH: bitmapCtx.canvas.height,
+        canvasW: bitmapComputeRes, canvasH: bitmapComputeRes,
         bitmapRange, stepsVal,
         noColor: rootColorMode === "uniform",
         uniformR: uniformRootColor[0], uniformG: uniformRootColor[1], uniformB: uniformRootColor[2],
@@ -8634,21 +9027,27 @@ function handleFastModeWorkerMessage(e) {
 
 function compositeWorkerPixels() {
     if (!bitmapCtx) return;
-    const w = bitmapCtx.canvas.width, h = bitmapCtx.canvas.height;
+    const cW = bitmapComputeRes;
+    const dW = bitmapDisplayRes;
+    const split = bitmapDisplayBuffer !== null;
 
-    // Ensure persistent buffer exists and matches canvas size
-    if (!bitmapPersistentBuffer || bitmapPersistentBuffer.width !== w || bitmapPersistentBuffer.height !== h) {
-        bitmapPersistentBuffer = bitmapCtx.createImageData(w, h);
+    // Ensure persistent buffer exists and matches compute size
+    if (!bitmapPersistentBuffer || bitmapPersistentBuffer.width !== cW || bitmapPersistentBuffer.height !== cW) {
+        try {
+            bitmapPersistentBuffer = new ImageData(cW, cW);
+        } catch (e) { return; }
         fillPersistentBuffer(bitmapCanvasColor);
     }
 
     const t0 = performance.now();
-    // No getImageData — write directly to persistent buffer
     const t1 = t0;
 
     const out = bitmapPersistentBuffer.data;
+    const dispData = split ? bitmapDisplayBuffer.data : null;
+    const invScale = split ? dW / cW : 1;
     let totalPainted = 0;
-    let minX = w, maxX = 0, minY = h, maxY = 0;
+    // Dirty rect tracked in display-space
+    let minX = dW, maxX = 0, minY = dW, maxY = 0;
     for (const result of fastModeWorkerPixels) {
         if (!result) continue;
         const idx = new Int32Array(result.paintIdx);
@@ -8660,22 +9059,43 @@ function compositeWorkerPixels() {
         for (let i = 0; i < count; i++) {
             const pixIdx = idx[i];
             const off = pixIdx * 4;
+            // Write to persistent buffer at compute resolution
             out[off] = r[i];
             out[off + 1] = g[i];
             out[off + 2] = b[i];
             out[off + 3] = 255;
-            const px = pixIdx % w;
-            const py = (pixIdx / w) | 0;
-            if (px < minX) minX = px;
-            if (px > maxX) maxX = px;
-            if (py < minY) minY = py;
-            if (py > maxY) maxY = py;
+
+            if (split) {
+                // Downsample to display buffer
+                const cx = pixIdx % cW;
+                const cy = (pixIdx / cW) | 0;
+                const dx = (cx * invScale) | 0;
+                const dy = (cy * invScale) | 0;
+                const dOff = (dy * dW + dx) * 4;
+                dispData[dOff] = r[i];
+                dispData[dOff + 1] = g[i];
+                dispData[dOff + 2] = b[i];
+                dispData[dOff + 3] = 255;
+                if (dx < minX) minX = dx;
+                if (dx > maxX) maxX = dx;
+                if (dy < minY) minY = dy;
+                if (dy > maxY) maxY = dy;
+            } else {
+                // No split: dirty rect in compute-space (= display-space)
+                const px = pixIdx % cW;
+                const py = (pixIdx / cW) | 0;
+                if (px < minX) minX = px;
+                if (px > maxX) maxX = px;
+                if (py < minY) minY = py;
+                if (py > maxY) maxY = py;
+            }
         }
     }
     const t2 = performance.now();
 
     if (totalPainted > 0) {
-        bitmapCtx.putImageData(bitmapPersistentBuffer, 0, 0, minX, minY, maxX - minX + 1, maxY - minY + 1);
+        const buf = split ? bitmapDisplayBuffer : bitmapPersistentBuffer;
+        bitmapCtx.putImageData(buf, 0, 0, minX, minY, maxX - minX + 1, maxY - minY + 1);
     }
     const t3 = performance.now();
 
@@ -8920,6 +9340,10 @@ function resetBitmap() {
     bitmapCtx = null;
     bitmapRange = null;
     bitmapFrameCount = 0;
+    bitmapPersistentBuffer = null;
+    bitmapDisplayBuffer = null;
+    bitmapComputeRes = 0;
+    bitmapDisplayRes = 0;
     fastModeElapsedOffset = 0;
     const startBtn = document.getElementById("bitmap-start-btn");
     const saveBtn = document.getElementById("bitmap-save-btn");
@@ -9910,27 +10334,16 @@ document.getElementById("bitmap-start-btn").addEventListener("click", function (
     document.getElementById("bitmap-clear-btn").disabled = false;
     document.getElementById("bitmap-fast-btn").disabled = false;
     document.getElementById("bitmap-coeff-btn").disabled = false;
-    document.getElementById("jiggle-btn").disabled = false;
-    document.getElementById("jiggle-diag-btn").disabled = false;
 });
 
-document.getElementById("bitmap-save-btn").addEventListener("click", function () {
-    const canvas = document.getElementById("bitmap-canvas");
-    canvas.toBlob(function (blob) {
-        const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = "polypaint-bitmap-" + ts + ".png";
-        a.click();
-        URL.revokeObjectURL(a.href);
-    }, "image/png");
-});
+document.getElementById("bitmap-save-btn").addEventListener("click", openBitmapSavePop);
 
 document.getElementById("bitmap-clear-btn").addEventListener("click", function () {
     if (bitmapCtx) {
         bitmapCtx.fillStyle = bitmapCanvasColor;
         bitmapCtx.fillRect(0, 0, bitmapCtx.canvas.width, bitmapCtx.canvas.height);
         fillPersistentBuffer(bitmapCanvasColor);
+        if (bitmapDisplayBuffer) fillDisplayBuffer(bitmapCanvasColor);
         bitmapFrameCount = 0;
         // Do NOT reset fastModeElapsedOffset — just clear pixels
     }
@@ -9951,10 +10364,6 @@ document.getElementById("bitmap-coeff-btn").addEventListener("click", function (
     this.textContent = bitmapCoeffView ? "COEF" : "ROOT";
     uiPing(660, 0.08);
 });
-
-// --- Bitmap canvas background color popup ---
-const bitmapBgPop = document.getElementById("bitmap-bg-pop");
-let bitmapBgPopOpen = false;
 
 const CANVAS_BG_COLORS = [
     { hex: "#000000", label: "Black" },
@@ -9983,54 +10392,7 @@ const CANVAS_BG_COLORS = [
     { hex: "#b0b0b0", label: "Mist" },
 ];
 
-function closeBitmapBgPop() {
-    bitmapBgPop.classList.remove("open");
-    bitmapBgPopOpen = false;
-}
-
-function openBitmapBgPop() {
-    if (bitmapBgPopOpen) { closeBitmapBgPop(); return; }
-    bitmapBgPop.innerHTML = "";
-    const title = document.createElement("div");
-    title.className = "pop-title";
-    title.textContent = "CANVAS BG";
-    bitmapBgPop.appendChild(title);
-
-    const grid = document.createElement("div");
-    grid.style.cssText = "display:flex;flex-wrap:wrap;gap:3px;padding:4px 0;";
-    for (const c of CANVAS_BG_COLORS) {
-        const sw = document.createElement("div");
-        const isActive = bitmapCanvasColor.toLowerCase() === c.hex.toLowerCase();
-        const isDark = parseInt(c.hex.slice(1, 3), 16) * 0.299 +
-                       parseInt(c.hex.slice(3, 5), 16) * 0.587 +
-                       parseInt(c.hex.slice(5, 7), 16) * 0.114 < 128;
-        sw.style.cssText = `width:20px;height:20px;border-radius:50%;cursor:pointer;` +
-            `background:${c.hex};border:2px solid ${isActive ? "#fff" : (isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)")};` +
-            `flex-shrink:0;`;
-        sw.title = c.label;
-        sw.addEventListener("click", () => {
-            bitmapCanvasColor = c.hex;
-            closeBitmapBgPop();
-            // Update container CSS background to match
-            document.getElementById("bitmap-container").style.background = c.hex;
-        });
-        grid.appendChild(sw);
-    }
-    bitmapBgPop.appendChild(grid);
-
-    bitmapBgPop.classList.add("open");
-    const r = document.getElementById("bitmap-bg-btn").getBoundingClientRect();
-    bitmapBgPop.style.left = r.left + "px";
-    bitmapBgPop.style.top = (r.bottom + 6) + "px";
-    bitmapBgPopOpen = true;
-}
-
-document.getElementById("bitmap-bg-btn").addEventListener("click", openBitmapBgPop);
-
-// --- Jiggle popup ---
-const jigglePop = document.getElementById("jiggle-pop");
-let jigglePopOpen = false;
-
+// --- Jiggle ---
 function gaussRand() {
     let u = 0, v = 0;
     while (u === 0) u = Math.random();
@@ -10184,7 +10546,6 @@ function generateJiggleOffsets() {
         }
     }
     updateJiggleStatus();
-    if (typeof updateJiggleDiag === "function") updateJiggleDiag();
 }
 
 function updateJiggleStatus() {
@@ -10198,451 +10559,6 @@ function updateJiggleStatus() {
     el.textContent = parts.join(", ");
     el.style.color = offCount > 0 ? "var(--accent)" : "var(--muted)";
 }
-
-function closeJigglePop() {
-    jigglePop.classList.remove("open");
-    jigglePopOpen = false;
-}
-
-function openJigglePop() {
-    if (jigglePopOpen) { closeJigglePop(); return; }
-    jigglePop.innerHTML = "";
-    const inpStyle = "width:50px;background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
-    const lblStyle = "font-size:10px;color:var(--fg);";
-    const hintStyle = "font-size:9px;color:var(--muted);";
-    const rowStyle = "display:flex;align-items:center;gap:6px;margin:4px 0;";
-
-    // Title
-    const title = document.createElement("div");
-    title.className = "pop-title";
-    title.textContent = "JIGGLE";
-    jigglePop.appendChild(title);
-
-    // Mode dropdown row
-    const modeRow = document.createElement("div");
-    modeRow.style.cssText = rowStyle;
-    const modeLbl = document.createElement("span");
-    modeLbl.style.cssText = lblStyle;
-    modeLbl.textContent = "Mode";
-    const modeSel = document.createElement("select");
-    modeSel.style.cssText = "background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
-    for (const m of ["none", "random", "rotate", "walk", "scale", "circle", "spiral", "breathe", "wobble", "lissajous"]) {
-        const opt = document.createElement("option");
-        opt.value = m;
-        opt.textContent = m.charAt(0).toUpperCase() + m.slice(1);
-        if (m === jiggleMode) opt.selected = true;
-        modeSel.appendChild(opt);
-    }
-    modeRow.appendChild(modeLbl);
-    modeRow.appendChild(modeSel);
-    jigglePop.appendChild(modeRow);
-
-    // Controls container — rebuilt when mode changes
-    const controlsDiv = document.createElement("div");
-    jigglePop.appendChild(controlsDiv);
-
-    function buildModeControls() {
-        controlsDiv.innerHTML = "";
-        if (jiggleMode === "random" || jiggleMode === "walk") {
-            // σ row
-            const row = document.createElement("div");
-            row.style.cssText = rowStyle;
-            const lbl = document.createElement("span");
-            lbl.style.cssText = lblStyle;
-            lbl.textContent = "σ";
-            const inp = document.createElement("input");
-            inp.type = "number"; inp.step = "1"; inp.min = "0"; inp.max = "100";
-            inp.value = jiggleSigma;
-            inp.style.cssText = inpStyle;
-            inp.addEventListener("input", () => {
-                jiggleSigma = Math.max(0, Math.min(100, parseInt(inp.value, 10) || 0));
-            });
-            const hint = document.createElement("span");
-            hint.style.cssText = hintStyle;
-            hint.textContent = "/ 100";
-            row.appendChild(lbl); row.appendChild(inp); row.appendChild(hint);
-            controlsDiv.appendChild(row);
-        } else if (jiggleMode === "rotate") {
-            // θ row
-            const row = document.createElement("div");
-            row.style.cssText = rowStyle;
-            const lbl = document.createElement("span");
-            lbl.style.cssText = lblStyle;
-            lbl.textContent = "θ";
-            const inp = document.createElement("input");
-            inp.type = "number"; inp.step = "0.001"; inp.min = "0.001"; inp.max = "0.500";
-            inp.value = jiggleTheta;
-            inp.style.cssText = inpStyle;
-            const hint = document.createElement("span");
-            hint.style.cssText = hintStyle;
-            hint.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
-            inp.addEventListener("input", () => {
-                jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(inp.value) || 0.01));
-                hint.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
-            });
-            row.appendChild(lbl); row.appendChild(inp); row.appendChild(hint);
-            controlsDiv.appendChild(row);
-        } else if (jiggleMode === "scale") {
-            // step row
-            const row = document.createElement("div");
-            row.style.cssText = rowStyle;
-            const lbl = document.createElement("span");
-            lbl.style.cssText = lblStyle;
-            lbl.textContent = "step";
-            const inp = document.createElement("input");
-            inp.type = "number"; inp.step = "1"; inp.min = "1"; inp.max = "50";
-            inp.value = jiggleScaleStep;
-            inp.style.cssText = inpStyle;
-            inp.addEventListener("input", () => {
-                jiggleScaleStep = Math.max(1, Math.min(50, parseInt(inp.value, 10) || 5));
-            });
-            const hint = document.createElement("span");
-            hint.style.cssText = hintStyle;
-            hint.textContent = "%";
-            row.appendChild(lbl); row.appendChild(inp); row.appendChild(hint);
-            controlsDiv.appendChild(row);
-        } else if (jiggleMode === "circle") {
-            // θ row (same as rotate — rotation around origin)
-            const row = document.createElement("div");
-            row.style.cssText = rowStyle;
-            const lbl = document.createElement("span");
-            lbl.style.cssText = lblStyle;
-            lbl.textContent = "θ";
-            const inp = document.createElement("input");
-            inp.type = "number"; inp.step = "0.001"; inp.min = "0.001"; inp.max = "0.500";
-            inp.value = jiggleTheta;
-            inp.style.cssText = inpStyle;
-            const hint = document.createElement("span");
-            hint.style.cssText = hintStyle;
-            hint.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
-            inp.addEventListener("input", () => {
-                jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(inp.value) || 0.01));
-                hint.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
-            });
-            row.appendChild(lbl); row.appendChild(inp); row.appendChild(hint);
-            controlsDiv.appendChild(row);
-        } else if (jiggleMode === "spiral") {
-            // θ row
-            const row1 = document.createElement("div");
-            row1.style.cssText = rowStyle;
-            const lbl1 = document.createElement("span");
-            lbl1.style.cssText = lblStyle;
-            lbl1.textContent = "θ";
-            const inp1 = document.createElement("input");
-            inp1.type = "number"; inp1.step = "0.001"; inp1.min = "0.001"; inp1.max = "0.500";
-            inp1.value = jiggleTheta;
-            inp1.style.cssText = inpStyle;
-            const hint1 = document.createElement("span");
-            hint1.style.cssText = hintStyle;
-            hint1.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
-            inp1.addEventListener("input", () => {
-                jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(inp1.value) || 0.01));
-                hint1.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
-            });
-            row1.appendChild(lbl1); row1.appendChild(inp1); row1.appendChild(hint1);
-            controlsDiv.appendChild(row1);
-            // growth row
-            const row2 = document.createElement("div");
-            row2.style.cssText = rowStyle;
-            const lbl2 = document.createElement("span");
-            lbl2.style.cssText = lblStyle;
-            lbl2.textContent = "growth";
-            const inp2 = document.createElement("input");
-            inp2.type = "number"; inp2.step = "1"; inp2.min = "1"; inp2.max = "50";
-            inp2.value = jiggleScaleStep;
-            inp2.style.cssText = inpStyle;
-            inp2.addEventListener("input", () => {
-                jiggleScaleStep = Math.max(1, Math.min(50, parseInt(inp2.value, 10) || 5));
-            });
-            const hint2 = document.createElement("span");
-            hint2.style.cssText = hintStyle;
-            hint2.textContent = "%";
-            row2.appendChild(lbl2); row2.appendChild(inp2); row2.appendChild(hint2);
-            controlsDiv.appendChild(row2);
-        } else if (jiggleMode === "breathe") {
-            // amplitude row
-            const row1 = document.createElement("div");
-            row1.style.cssText = rowStyle;
-            const lbl1 = document.createElement("span");
-            lbl1.style.cssText = lblStyle;
-            lbl1.textContent = "amp";
-            const inp1 = document.createElement("input");
-            inp1.type = "number"; inp1.step = "1"; inp1.min = "1"; inp1.max = "50";
-            inp1.value = jiggleAmplitude;
-            inp1.style.cssText = inpStyle;
-            inp1.addEventListener("input", () => {
-                jiggleAmplitude = Math.max(1, Math.min(50, parseInt(inp1.value, 10) || 10));
-            });
-            const hint1 = document.createElement("span");
-            hint1.style.cssText = hintStyle;
-            hint1.textContent = "%";
-            row1.appendChild(lbl1); row1.appendChild(inp1); row1.appendChild(hint1);
-            controlsDiv.appendChild(row1);
-            // period row
-            const row2 = document.createElement("div");
-            row2.style.cssText = rowStyle;
-            const lbl2 = document.createElement("span");
-            lbl2.style.cssText = lblStyle;
-            lbl2.textContent = "period";
-            const inp2 = document.createElement("input");
-            inp2.type = "number"; inp2.step = "1"; inp2.min = "2"; inp2.max = "1000";
-            inp2.value = jigglePeriod;
-            inp2.style.cssText = inpStyle;
-            inp2.addEventListener("input", () => {
-                jigglePeriod = Math.max(2, Math.min(1000, parseInt(inp2.value, 10) || 20));
-            });
-            const hint2 = document.createElement("span");
-            hint2.style.cssText = hintStyle;
-            hint2.textContent = "cycles";
-            row2.appendChild(lbl2); row2.appendChild(inp2); row2.appendChild(hint2);
-            controlsDiv.appendChild(row2);
-        } else if (jiggleMode === "wobble") {
-            // amplitude row (turns)
-            const row1 = document.createElement("div");
-            row1.style.cssText = rowStyle;
-            const lbl1 = document.createElement("span");
-            lbl1.style.cssText = lblStyle;
-            lbl1.textContent = "amp";
-            const inp1 = document.createElement("input");
-            inp1.type = "number"; inp1.step = "0.001"; inp1.min = "0.001"; inp1.max = "0.500";
-            inp1.value = jiggleTheta;
-            inp1.style.cssText = inpStyle;
-            const hint1 = document.createElement("span");
-            hint1.style.cssText = hintStyle;
-            hint1.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
-            inp1.addEventListener("input", () => {
-                jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(inp1.value) || 0.01));
-                hint1.textContent = "= " + (jiggleTheta * 360).toFixed(1) + "°";
-            });
-            row1.appendChild(lbl1); row1.appendChild(inp1); row1.appendChild(hint1);
-            controlsDiv.appendChild(row1);
-            // period row
-            const row2 = document.createElement("div");
-            row2.style.cssText = rowStyle;
-            const lbl2 = document.createElement("span");
-            lbl2.style.cssText = lblStyle;
-            lbl2.textContent = "period";
-            const inp2 = document.createElement("input");
-            inp2.type = "number"; inp2.step = "1"; inp2.min = "2"; inp2.max = "1000";
-            inp2.value = jigglePeriod;
-            inp2.style.cssText = inpStyle;
-            inp2.addEventListener("input", () => {
-                jigglePeriod = Math.max(2, Math.min(1000, parseInt(inp2.value, 10) || 20));
-            });
-            const hint2 = document.createElement("span");
-            hint2.style.cssText = hintStyle;
-            hint2.textContent = "cycles";
-            row2.appendChild(lbl2); row2.appendChild(inp2); row2.appendChild(hint2);
-            controlsDiv.appendChild(row2);
-        } else if (jiggleMode === "lissajous") {
-            // amplitude row
-            const row1 = document.createElement("div");
-            row1.style.cssText = rowStyle;
-            const lbl1 = document.createElement("span");
-            lbl1.style.cssText = lblStyle;
-            lbl1.textContent = "amp";
-            const inp1 = document.createElement("input");
-            inp1.type = "number"; inp1.step = "1"; inp1.min = "1"; inp1.max = "50";
-            inp1.value = jiggleAmplitude;
-            inp1.style.cssText = inpStyle;
-            inp1.addEventListener("input", () => {
-                jiggleAmplitude = Math.max(1, Math.min(50, parseInt(inp1.value, 10) || 10));
-            });
-            const hint1 = document.createElement("span");
-            hint1.style.cssText = hintStyle;
-            hint1.textContent = "%";
-            row1.appendChild(lbl1); row1.appendChild(inp1); row1.appendChild(hint1);
-            controlsDiv.appendChild(row1);
-            // period row
-            const row2 = document.createElement("div");
-            row2.style.cssText = rowStyle;
-            const lbl2 = document.createElement("span");
-            lbl2.style.cssText = lblStyle;
-            lbl2.textContent = "period";
-            const inp2 = document.createElement("input");
-            inp2.type = "number"; inp2.step = "1"; inp2.min = "2"; inp2.max = "1000";
-            inp2.value = jigglePeriod;
-            inp2.style.cssText = inpStyle;
-            inp2.addEventListener("input", () => {
-                jigglePeriod = Math.max(2, Math.min(1000, parseInt(inp2.value, 10) || 20));
-            });
-            const hint2 = document.createElement("span");
-            hint2.style.cssText = hintStyle;
-            hint2.textContent = "cycles";
-            row2.appendChild(lbl2); row2.appendChild(inp2); row2.appendChild(hint2);
-            controlsDiv.appendChild(row2);
-            // freqX row
-            const row3 = document.createElement("div");
-            row3.style.cssText = rowStyle;
-            const lbl3 = document.createElement("span");
-            lbl3.style.cssText = lblStyle;
-            lbl3.textContent = "fX";
-            const inp3 = document.createElement("input");
-            inp3.type = "number"; inp3.step = "1"; inp3.min = "1"; inp3.max = "10";
-            inp3.value = jiggleLissFreqX;
-            inp3.style.cssText = inpStyle;
-            inp3.addEventListener("input", () => {
-                jiggleLissFreqX = Math.max(1, Math.min(10, parseInt(inp3.value, 10) || 1));
-            });
-            row3.appendChild(lbl3); row3.appendChild(inp3);
-            controlsDiv.appendChild(row3);
-            // freqY row
-            const row4 = document.createElement("div");
-            row4.style.cssText = rowStyle;
-            const lbl4 = document.createElement("span");
-            lbl4.style.cssText = lblStyle;
-            lbl4.textContent = "fY";
-            const inp4 = document.createElement("input");
-            inp4.type = "number"; inp4.step = "1"; inp4.min = "1"; inp4.max = "10";
-            inp4.value = jiggleLissFreqY;
-            inp4.style.cssText = inpStyle;
-            inp4.addEventListener("input", () => {
-                jiggleLissFreqY = Math.max(1, Math.min(10, parseInt(inp4.value, 10) || 2));
-            });
-            row4.appendChild(lbl4); row4.appendChild(inp4);
-            controlsDiv.appendChild(row4);
-        }
-    }
-    buildModeControls();
-
-    modeSel.addEventListener("change", () => {
-        jiggleMode = modeSel.value;
-        buildModeControls();
-    });
-
-    // Select All Coefficients button
-    const selAllBtn = document.createElement("button");
-    selAllBtn.textContent = "⊕ Select All Coefficients";
-    selAllBtn.style.cssText = "font-size:9px;padding:3px 8px;background:transparent;color:var(--fg);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;margin-top:6px;width:100%;";
-    selAllBtn.addEventListener("click", () => {
-        clearRootSelection();
-        for (let i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
-        if (coefficients.length > 0) lastSelectedCoeff = coefficients.length - 1;
-        updateCoeffSelectionVisual();
-        updateAnimBar();
-        updateJiggleStatus();
-    });
-    jigglePop.appendChild(selAllBtn);
-
-    // Status
-    const status = document.createElement("div");
-    status.id = "jiggle-status";
-    status.style.cssText = "font-size:9px;margin-top:4px;";
-    jigglePop.appendChild(status);
-    updateJiggleStatus();
-
-    jigglePop.classList.add("open");
-    const r = document.getElementById("jiggle-btn").getBoundingClientRect();
-    jigglePop.style.left = r.left + "px";
-    jigglePop.style.top = (r.bottom + 6) + "px";
-    jigglePopOpen = true;
-}
-
-document.getElementById("jiggle-btn").addEventListener("click", openJigglePop);
-
-// --- Jiggle Diagnostics popup ---
-let jiggleDiagOpen = false;
-const jiggleDiagPop = document.getElementById("jiggle-diag-pop");
-
-function closeJiggleDiag() {
-    jiggleDiagPop.classList.remove("open");
-    jiggleDiagOpen = false;
-}
-
-function openJiggleDiag() {
-    if (jiggleDiagOpen) { closeJiggleDiag(); return; }
-    jiggleDiagPop.classList.add("open");
-    const r = document.getElementById("jiggle-diag-btn").getBoundingClientRect();
-    jiggleDiagPop.style.left = r.left + "px";
-    jiggleDiagPop.style.top = (r.bottom + 6) + "px";
-    jiggleDiagOpen = true;
-    updateJiggleDiag();
-}
-
-function updateJiggleDiag() {
-    if (!jiggleDiagOpen) return;
-    jiggleDiagPop.innerHTML = "";
-    const mono = "font-family:monospace;font-size:10px;";
-    const lbl = "font-size:10px;color:var(--muted);";
-    const val = "font-size:10px;color:var(--accent);";
-
-    // Title
-    const title = document.createElement("div");
-    title.className = "pop-title";
-    title.textContent = "JIGGLE DIAGNOSTICS";
-    jiggleDiagPop.appendChild(title);
-
-    // Mode + params summary
-    const info = document.createElement("div");
-    info.style.cssText = mono + "padding:4px 0;line-height:1.5;";
-    let html = `<span style="${lbl}">Mode:</span> <span style="${val}">${jiggleMode}</span><br>`;
-    html += `<span style="${lbl}">Trigger #:</span> <span style="${val}">${jiggleTriggerCount}</span><br>`;
-    if (jiggleMode === "random") {
-        html += `<span style="${lbl}">Sigma:</span> <span style="${val}">${jiggleSigma}%</span><br>`;
-    } else if (jiggleMode === "rotate" || jiggleMode === "circle") {
-        html += `<span style="${lbl}">θ step:</span> <span style="${val}">${jiggleTheta} turns</span><br>`;
-        html += `<span style="${lbl}">Cum angle:</span> <span style="${val}">${(jiggleCumulativeAngle / (2*Math.PI)).toFixed(4)} turns</span><br>`;
-    } else if (jiggleMode === "walk") {
-        html += `<span style="${lbl}">Sigma:</span> <span style="${val}">${jiggleSigma}%</span><br>`;
-    } else if (jiggleMode === "scale") {
-        html += `<span style="${lbl}">Scale step:</span> <span style="${val}">${jiggleScaleStep}%</span><br>`;
-        html += `<span style="${lbl}">Cum scale:</span> <span style="${val}">${jiggleCumulativeScale.toFixed(4)}</span><br>`;
-    } else if (jiggleMode === "spiral") {
-        html += `<span style="${lbl}">θ step:</span> <span style="${val}">${jiggleTheta} turns</span><br>`;
-        html += `<span style="${lbl}">Growth:</span> <span style="${val}">${jiggleScaleStep}%</span><br>`;
-        html += `<span style="${lbl}">Cum angle:</span> <span style="${val}">${(jiggleCumulativeAngle / (2*Math.PI)).toFixed(4)} turns</span><br>`;
-        html += `<span style="${lbl}">Cum scale:</span> <span style="${val}">${jiggleCumulativeScale.toFixed(4)}</span><br>`;
-    } else if (jiggleMode === "breathe") {
-        html += `<span style="${lbl}">Amplitude:</span> <span style="${val}">${jiggleAmplitude}%</span><br>`;
-        html += `<span style="${lbl}">Period:</span> <span style="${val}">${jigglePeriod} cycles</span><br>`;
-        const phase = (jiggleTriggerCount / jigglePeriod * 360).toFixed(1);
-        html += `<span style="${lbl}">Phase:</span> <span style="${val}">${phase}°</span><br>`;
-    } else if (jiggleMode === "wobble") {
-        html += `<span style="${lbl}">Amplitude:</span> <span style="${val}">${jiggleTheta} turns</span><br>`;
-        html += `<span style="${lbl}">Period:</span> <span style="${val}">${jigglePeriod} cycles</span><br>`;
-        const phase = (jiggleTriggerCount / jigglePeriod * 360).toFixed(1);
-        html += `<span style="${lbl}">Phase:</span> <span style="${val}">${phase}°</span><br>`;
-    } else if (jiggleMode === "lissajous") {
-        html += `<span style="${lbl}">Amplitude:</span> <span style="${val}">${jiggleAmplitude}%</span><br>`;
-        html += `<span style="${lbl}">Period:</span> <span style="${val}">${jigglePeriod} cycles</span><br>`;
-        html += `<span style="${lbl}">FreqX:</span> <span style="${val}">${jiggleLissFreqX}</span>  <span style="${lbl}">FreqY:</span> <span style="${val}">${jiggleLissFreqY}</span><br>`;
-    }
-    info.innerHTML = html;
-    jiggleDiagPop.appendChild(info);
-
-    // Per-coefficient offsets table
-    if (jiggleOffsets && jiggleOffsets.size > 0) {
-        const hdr = document.createElement("div");
-        hdr.style.cssText = "font-size:9px;color:var(--muted);border-bottom:1px solid var(--stroke);padding:2px 0;margin-top:4px;";
-        hdr.textContent = `Offsets (${jiggleOffsets.size} coefficients)`;
-        jiggleDiagPop.appendChild(hdr);
-
-        const tbl = document.createElement("div");
-        tbl.style.cssText = mono + "line-height:1.4;padding:2px 0;";
-        let rows = "";
-        for (const [idx, off] of jiggleOffsets) {
-            const c = coefficients[idx];
-            const posRe = (c.curve[0].re + off.re).toFixed(4);
-            const posIm = (c.curve[0].im + off.im).toFixed(4);
-            const mag = Math.hypot(off.re, off.im).toFixed(6);
-            rows += `<div style="padding:1px 0;border-bottom:1px solid rgba(255,255,255,0.05);">`;
-            rows += `<span style="${lbl}">c${idx}:</span> `;
-            rows += `<span style="${val}">Δ(${off.re.toFixed(4)}, ${off.im.toFixed(4)})</span> `;
-            rows += `<span style="font-size:9px;color:var(--muted);">|${mag}|</span><br>`;
-            rows += `<span style="font-size:9px;color:var(--muted);margin-left:24px;">→ (${posRe}, ${posIm})</span>`;
-            rows += `</div>`;
-        }
-        tbl.innerHTML = rows;
-        jiggleDiagPop.appendChild(tbl);
-    } else {
-        const none = document.createElement("div");
-        none.style.cssText = "font-size:10px;color:var(--muted);font-style:italic;padding:4px 0;";
-        none.textContent = jiggleMode === "none" ? "No jiggle active" : "No offsets yet — waiting for first trigger";
-        jiggleDiagPop.appendChild(none);
-    }
-}
-
-document.getElementById("jiggle-diag-btn").addEventListener("click", openJiggleDiag);
 
 function rebuild() {
     S = getPanelSize();

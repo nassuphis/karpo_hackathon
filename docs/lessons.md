@@ -40,9 +40,12 @@ The entire application lives in one HTML file (`index.html`, ~10,400 lines). CSS
 
 ### External Dependencies
 
-Only two, both from CDN:
+All from CDN:
 - **D3.js v7** — SVG scaling, axes, drag behavior, selections
 - **html2canvas v1.4.1** — PNG export of panels
+- **Pako v2.1.0** + **UPNG.js v2.1.0** — PNG encoding from RGBA data (Pako provides deflate)
+- **jpeg-js v0.4.4** — JPEG encoding from RGBA data (global: `window['jpeg-js'].encode`)
+- **UTIF.js v3.1.0** — TIFF encoding from RGBA data (uses `self.pako` if available)
 
 ### Canvas Architecture
 
@@ -50,7 +53,7 @@ Four distinct canvas systems coexist:
 
 1. **SVG panels** (D3-managed) — Coefficient and root circles, trails, grid. Interactive (draggable).
 2. **Domain canvas** (`#domain-canvas`) — Complex plane coloring overlay behind root SVG. Rendered at 50% resolution for performance.
-3. **Bitmap canvas** (`#bitmap-canvas`) — High-res accumulation canvas (1K–15K px) for fast mode. Uses persistent `ImageData` buffer.
+3. **Bitmap canvas** (`#bitmap-canvas`) — High-res accumulation canvas (1K–25K px) for fast mode. Uses a **split compute/display** architecture: at resolutions above 2000px, the canvas is capped at 2000px (display) while a CPU-only `ImageData` persistent buffer holds the full compute resolution. Workers always compute in compute-space; `compositeWorkerPixels()` downsamples to the display buffer. Export supports JPEG/PNG/BMP/TIFF via pure-JS encoders directly from the CPU buffer — no GPU involvement. The save button opens a format popup with quality slider for JPEG. See [off-canvas-render.md](off-canvas-render.md).
 4. **Stats canvases** — 16 small canvases in a 4x4 grid, each plotting a time-series statistic.
 
 ---
@@ -515,7 +518,9 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 23. **"Cycle complete → restart" is the wrong model for open-ended exploration** — the original fast mode ran fixed-length cycles: compute N passes, exit, jiggle, re-enter from elapsed=0. This replayed the same morph phase every cycle. The fix: make fast mode continuous — elapsed ticks forever, jiggle fires periodically as a perturbation (not a cycle boundary). Stop/resume preserves all state. The only reset is explicit "init". Separate concerns: "init" = snapshot + clear + reset elapsed; "start/stop" = toggle computation; "clear" = clear pixels only. Each button does exactly one thing.
 
-24. **Progress bars add complexity without proportional value** — the fast mode progress bar required a `fastModeShowProgress` variable, a toggle button, save/load support, conditional blocks in 6+ functions, and two HTML elements. All to show a bar that fills and resets every ~1 second. A zero-padded elapsed seconds counter (`000042s`) conveys more useful information (total computation time) with zero complexity. When the visual feedback to complexity ratio is low, remove the feature entirely rather than maintaining it.
+24. **GPU memory is the real constraint for large canvases, not CPU memory** — a 10K `<canvas>` allocates ~400MB of GPU memory (browser backing store) even though `ImageData` buffers are CPU-only. Chrome reclaims GPU contexts under memory pressure, causing the canvas to go white. The fix: decouple compute resolution from display resolution. The persistent buffer (`new ImageData(W, H)`) can be 15K or 25K (900MB–2.5GB CPU) because it never touches the GPU. The canvas only needs to be large enough for display (~2000px, 16MB GPU). Export writes BMP directly from CPU buffer — no GPU path at all. Key invariant: `serializeFastModeData()` must send `bitmapComputeRes` to workers, not `bitmapCtx.canvas.width` (which is now display-sized). The `new ImageData()` constructor creates a standalone buffer; `bitmapCtx.createImageData()` also works but `new ImageData()` makes the decoupling explicit.
+
+25. **Progress bars add complexity without proportional value** — the fast mode progress bar required a `fastModeShowProgress` variable, a toggle button, save/load support, conditional blocks in 6+ functions, and two HTML elements. All to show a bar that fills and resets every ~1 second. A zero-padded elapsed seconds counter (`000042s`) conveys more useful information (total computation time) with zero complexity. When the visual feedback to complexity ratio is low, remove the feature entirely rather than maintaining it.
 
 ---
 
@@ -549,6 +554,16 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 2. Add the parameter application in `updateAudio()` inside the appropriate instrument section
 3. The routing UI auto-generates from the routes array
 
+### Adding Higher Resolutions / Off-Canvas Changes
+
+The bitmap system uses a **split compute/display** model (see [off-canvas-render.md](off-canvas-render.md)). Key invariants:
+
+1. `bitmapComputeRes` is the source of truth for computation size — never use `bitmapCtx.canvas.width` for anything that workers or the persistent buffer depend on
+2. `bitmapDisplayRes = Math.min(bitmapComputeRes, BITMAP_DISPLAY_CAP)` — the canvas and display buffer use this
+3. `bitmapDisplayBuffer` is `null` when no split is needed (compute <= 2000px) — check this before using it
+4. Worker pixel indices (`paintIdx`) are always in compute-space — the composite function handles downsampling
+5. Export goes through format-specific functions (`exportPersistentBufferAs{BMP,JPEG,PNG,TIFF}()`) which read directly from the CPU persistent buffer — no GPU path. The save button opens a popup with format selection.
+
 ### Performance-Sensitive Code
 
 - **No `Math.hypot` in hot loops** — use `re*re + im*im` directly
@@ -562,7 +577,7 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 ### Test Suite
 
-Automated tests exist in `tests/` using Playwright Python (headless Chromium). 259 tests across 15 files covering solver correctness, root matching, curve generation, path parametrics, shapes, polynomial operations, state save/load, stats, colors, utilities, morph system, jiggle perturbation (10 modes), continuous fast mode, integration, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
+Automated tests exist in `tests/` using Playwright Python (headless Chromium). 302 tests across 16 files covering solver correctness, root matching, curve generation, path parametrics, shapes, polynomial operations, state save/load, stats, colors, utilities, morph system, jiggle perturbation (10 modes), continuous fast mode, off-canvas render split, multi-format image export, integration, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
 
 Manual testing remains important for:
 - Dragging coefficients and roots
@@ -615,6 +630,7 @@ Manual testing remains important for:
 | [worker_speed_issues.md](worker_speed_issues.md) | Timing bug fix, resolution scaling analysis | ~189 |
 | [memory_timings.md](memory_timings.md) | Persistent buffer optimization: analysis + results | ~219 |
 | [wasm_investigation.md](wasm_investigation.md) | WASM solver design, build workflow, benchmarks | ~251 |
+| [off-canvas-render.md](off-canvas-render.md) | Split compute/display architecture, BMP export, GPU memory | ~224 |
 | [test-results.md](test-results.md) | Playwright test results + JS/WASM benchmarks | ~122 |
 | [morph.md](morph.md) | Morph feature design: Phase 1 (static D), Phase 2/3 (deferred) | ~279 |
 | [proof-read.md](proof-read.md) | Line-by-line README/docs audit results | ~214 |
@@ -639,8 +655,12 @@ Manual testing remains important for:
 | `toggleSound()` | ~4803 |
 | `saveState()` | ~6281 |
 | `loadState()` | ~6305 |
-| `fillPersistentBuffer()` | ~7437 |
-| `initBitmapCanvas()` | ~7452 |
-| `createFastModeWorkerBlob()` | ~7582 |
-| `compositeWorkerPixels()` | ~8392 |
+| `fillPersistentBuffer()` | ~7852 |
+| `fillDisplayBuffer()` | ~7867 |
+| `exportPersistentBufferAsBMP()` | ~7882 |
+| `exportPersistentBufferAs{JPEG,PNG,TIFF}()` | ~7950 |
+| `buildBitmapSavePop()` | ~6590 |
+| `initBitmapCanvas()` | ~7942 |
+| `createFastModeWorkerBlob()` | ~8076 |
+| `compositeWorkerPixels()` | ~8883 |
 | List tab transforms | ~9004 |

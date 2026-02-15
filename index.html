@@ -605,7 +605,7 @@ body.fast-mode #stop-roots-btn {
             <button class="tab active" data-ltab="coeffs">Coefficients <span id="coeff-sel-count" style="font-size:9px;color:#5ddb6a;opacity:0.85;"></span></button>
             <button class="tab" data-ltab="list">C-List</button>
             <button class="tab" data-ltab="dlist">D-List</button>
-            <button class="tab" data-ltab="morph">Morph</button>
+            <button class="tab" data-ltab="morph">D-Nodes</button>
             <span class="tab-bar-controls"><input id="scrub-slider" type="range" min="0" max="5000" value="0" step="1" title="Scrub coefficients along paths (0–5s)"><span id="scrub-val" style="font-size:9px;color:var(--muted);min-width:28px;text-align:right;">0.00s</span><button id="play-btn">▶ Play</button><button id="home-btn" title="Return to start position">Home</button></span>
         </div>
         <div class="tab-panes" id="left-tab-panes">
@@ -1327,7 +1327,9 @@ function buildAudioToggle(parent, label, isOn, onChange) {
 }
 
 // Lightweight UI feedback sounds — independent of the sonification audio graph
+let _uiSoundActive = false; // prevents global click from doubling with specific ping/buzz
 function uiPing(freq = 880, dur = 0.08) {
+    _uiSoundActive = true;
     try {
         const ctx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
         if (!audioCtx) audioCtx = ctx;
@@ -1345,6 +1347,7 @@ function uiPing(freq = 880, dur = 0.08) {
 }
 // "Unhappy" buzz — short descending tone for "nothing to do"
 function uiBuzz() {
+    _uiSoundActive = true;
     try {
         const ctx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
         if (!audioCtx) audioCtx = ctx;
@@ -1361,6 +1364,33 @@ function uiBuzz() {
         o.stop(ctx.currentTime + 0.16);
     } catch (e) { /* audio not available */ }
 }
+// Subtle click — global fallback for buttons without specific ping/buzz
+function uiClick() {
+    try {
+        const ctx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        if (!audioCtx) audioCtx = ctx;
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = "sine";
+        o.frequency.value = 1600;
+        g.gain.setValueAtTime(0.06, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.025);
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.start();
+        o.stop(ctx.currentTime + 0.035);
+    } catch (e) { /* audio not available */ }
+}
+// Global button click audio — plays uiClick for any button unless handler already played ping/buzz
+document.addEventListener("click", function(e) {
+    const btn = e.target.closest("button, .swatch, .cpick-label, .chip");
+    if (!btn) return;
+    // Let the handler run first (sync), then check if it already made a sound
+    requestAnimationFrame(function() {
+        if (_uiSoundActive) { _uiSoundActive = false; return; }
+        uiClick();
+    });
+}, true);
 
 function initAudio() {
     if (audioNodes) return;
@@ -3226,7 +3256,7 @@ function readBarParams(pathType) {
 }
 
 function applyBarToSelection() {
-    if (selectedCoeffs.size === 0) return;
+    if (selectedCoeffs.size === 0) { uiBuzz(); return; }
     const pt = animPathSel.value;
     rebuildBarControls(pt);
     const vals = readBarParams(pt);
@@ -3337,7 +3367,7 @@ playBtn.addEventListener("click", function () {
         stopAnimation();
         playBtn.textContent = "▶ Play";
     } else {
-        if (allAnimatedCoeffs().size === 0 && allAnimatedDCoeffs().size === 0 && !morphEnabled) return;
+        if (allAnimatedCoeffs().size === 0 && allAnimatedDCoeffs().size === 0 && !morphEnabled) { uiBuzz(); return; }
         const resuming = animState.elapsedAtPause != null;
         if (trailsEnabled && !resuming) {
             trailData = [];
@@ -5584,7 +5614,7 @@ function openOpTool(btnEl, buildFn) {
     if (typeof closeColorPop === "function") closeColorPop();
     if (typeof closeCoeffPick === "function") closeCoeffPick();
     opSnapshot = snapshotSelection();
-    if (!opSnapshot) return;
+    if (!opSnapshot) { uiBuzz(); return; }
     activeToolBtn = btnEl;
     btnEl.classList.add("tool-active");
     opsPop.innerHTML = "";
@@ -5768,7 +5798,7 @@ document.getElementById("add-tool-btn").addEventListener("click", function() {
 // Inverse button: reverse coefficient order (reflects roots around unit circle)
 document.getElementById("inverse-btn").addEventListener("click", function() {
     const n = coefficients.length;
-    if (n < 2) return;
+    if (n < 2) { uiBuzz(); return; }
     // Swap coefficients[i] ↔ coefficients[n-1-i] (all fields)
     for (let i = 0; i < Math.floor(n / 2); i++) {
         const j = n - 1 - i;
@@ -6137,7 +6167,7 @@ function recordTick() {
 }
 
 function startRecording() {
-    if (vidRec.recording) return;
+    if (vidRec.recording) { uiBuzz(); return; }
 
     const mode = document.getElementById("rec-mode").value;
     vidRec.mode = mode;
@@ -6243,7 +6273,7 @@ function startRecording() {
 }
 
 function stopRecording() {
-    if (!vidRec.recording) return;
+    if (!vidRec.recording) { uiBuzz(); return; }
     vidRec.recording = false;
     if (vidRec.mr && vidRec.mr.state !== "inactive") {
         try { vidRec.mr.requestData(); } catch (_) {}  // flush pending data
@@ -9290,7 +9320,7 @@ function plotCoeffCurvesOnBitmap(animated, stepsVal) {
 }
 
 function enterFastMode() {
-    if (fastModeActive) return;
+    if (fastModeActive) { uiBuzz(); return; }
 
     // Stop interactive animation
     stopAnimation();
@@ -9859,7 +9889,7 @@ function reinitWorkersForJiggle() {
 }
 
 function exitFastMode() {
-    if (!fastModeActive) return;
+    if (!fastModeActive) { uiBuzz(); return; }
 
     // Advance elapsed offset proportionally for mid-pass interruption
     if (fastModeWorkerProgress.length > 0 && fastModeTotalSteps > 0) {
@@ -10137,7 +10167,7 @@ document.getElementById("morph-copy-btn").addEventListener("click", function () 
     if (morphEnabled) solveRoots();
 });
 document.getElementById("morph-swap-btn").addEventListener("click", function () {
-    if (morphTargetCoeffs.length !== coefficients.length) return;
+    if (morphTargetCoeffs.length !== coefficients.length) { uiBuzz(); return; }
     for (let i = 0; i < coefficients.length; i++) {
         const c = coefficients[i], d = morphTargetCoeffs[i];
         const tmpRe = c.re, tmpIm = c.im;
@@ -11001,17 +11031,17 @@ function lceSyncToCurrentCoeff() {
     buildLceControls(lceCurrentPath);
 }
 document.getElementById("lce-prev").addEventListener("click", () => {
-    if (lceCycleList.length === 0) return;
+    if (lceCycleList.length === 0) { uiBuzz(); return; }
     lceCycleIdx = (lceCycleIdx - 1 + lceCycleList.length) % lceCycleList.length;
     lceSyncToCurrentCoeff();
 });
 document.getElementById("lce-next").addEventListener("click", () => {
-    if (lceCycleList.length === 0) return;
+    if (lceCycleList.length === 0) { uiBuzz(); return; }
     lceCycleIdx = (lceCycleIdx + 1) % lceCycleList.length;
     lceSyncToCurrentCoeff();
 });
 document.getElementById("lce-update-sel").addEventListener("click", () => {
-    if (lceCycleList.length === 0) return;
+    if (lceCycleList.length === 0) { uiBuzz(); return; }
     const params = lceReadParams();
     for (const ci of lceCycleList) {
         lceApplyToCoeff(ci, params);
@@ -11022,7 +11052,7 @@ document.getElementById("lce-update-sel").addEventListener("click", () => {
     if (leftTab === "list") { updateListPathCols(); updateListCoords(); }
 });
 document.getElementById("lce-update-one").addEventListener("click", () => {
-    if (lceCycleList.length === 0) return;
+    if (lceCycleList.length === 0) { uiBuzz(); return; }
     const params = lceReadParams();
     lceApplyToCoeff(lceCycleList[lceCycleIdx], params);
     animState.elapsedAtPause = null;
@@ -11031,7 +11061,7 @@ document.getElementById("lce-update-one").addEventListener("click", () => {
     if (leftTab === "list") { updateListPathCols(); updateListCoords(); }
 });
 document.getElementById("lce-ps-btn").addEventListener("click", () => {
-    if (lceCycleList.length === 0) return;
+    if (lceCycleList.length === 0) { uiBuzz(); return; }
     const sInp = lceInputs["speed"];
     if (!sInp) return;
     const ci = lceCycleList[lceCycleIdx];
@@ -11849,17 +11879,17 @@ function dleSyncToCurrentCoeff() {
 }
 
 document.getElementById("dle-prev").addEventListener("click", () => {
-    if (dleCycleList.length === 0) return;
+    if (dleCycleList.length === 0) { uiBuzz(); return; }
     dleCycleIdx = (dleCycleIdx - 1 + dleCycleList.length) % dleCycleList.length;
     dleSyncToCurrentCoeff();
 });
 document.getElementById("dle-next").addEventListener("click", () => {
-    if (dleCycleList.length === 0) return;
+    if (dleCycleList.length === 0) { uiBuzz(); return; }
     dleCycleIdx = (dleCycleIdx + 1) % dleCycleList.length;
     dleSyncToCurrentCoeff();
 });
 document.getElementById("dle-update-sel").addEventListener("click", () => {
-    if (dleCycleList.length === 0) return;
+    if (dleCycleList.length === 0) { uiBuzz(); return; }
     const params = dleReadParams();
     for (const di of dleCycleList) {
         dleApplyToCoeff(di, params);
@@ -11870,7 +11900,7 @@ document.getElementById("dle-update-sel").addEventListener("click", () => {
     if (leftTab === "dlist") { updateDListPathCols(); updateDListCoords(); }
 });
 document.getElementById("dle-update-one").addEventListener("click", () => {
-    if (dleCycleList.length === 0) return;
+    if (dleCycleList.length === 0) { uiBuzz(); return; }
     const params = dleReadParams();
     dleApplyToCoeff(dleCycleList[dleCycleIdx], params);
     buildDCurveCycleTypes(); updateDCurveCycleLabel();
@@ -11879,7 +11909,7 @@ document.getElementById("dle-update-one").addEventListener("click", () => {
     if (leftTab === "dlist") { updateDListPathCols(); updateDListCoords(); }
 });
 document.getElementById("dle-ps-btn").addEventListener("click", () => {
-    if (dleCycleList.length === 0) return;
+    if (dleCycleList.length === 0) { uiBuzz(); return; }
     const sInp = dleInputs["speed"];
     if (!sInp) return;
     const di = dleCycleList[dleCycleIdx];
@@ -11911,14 +11941,13 @@ document.getElementById("bitmap-start-btn").addEventListener("click", function (
 document.getElementById("bitmap-save-btn").addEventListener("click", openBitmapSavePop);
 
 document.getElementById("bitmap-clear-btn").addEventListener("click", function () {
-    if (bitmapCtx) {
-        bitmapCtx.fillStyle = bitmapCanvasColor;
-        bitmapCtx.fillRect(0, 0, bitmapCtx.canvas.width, bitmapCtx.canvas.height);
-        fillPersistentBuffer(bitmapCanvasColor);
-        if (bitmapDisplayBuffer) fillDisplayBuffer(bitmapCanvasColor);
-        bitmapFrameCount = 0;
-        // Do NOT reset fastModeElapsedOffset — just clear pixels
-    }
+    if (!bitmapCtx) { uiBuzz(); return; }
+    bitmapCtx.fillStyle = bitmapCanvasColor;
+    bitmapCtx.fillRect(0, 0, bitmapCtx.canvas.width, bitmapCtx.canvas.height);
+    fillPersistentBuffer(bitmapCanvasColor);
+    if (bitmapDisplayBuffer) fillDisplayBuffer(bitmapCanvasColor);
+    bitmapFrameCount = 0;
+    // Do NOT reset fastModeElapsedOffset — just clear pixels
 });
 
 

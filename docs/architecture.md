@@ -1,6 +1,6 @@
-# Lessons Learned: PolyPaint Codebase
+# Architecture Notes
 
-Everything discovered while working on this codebase — architecture, conventions, pitfalls, performance insights, and debugging war stories.
+Architecture, conventions, performance insights, and debugging notes for the PolyPaint codebase.
 
 ---
 
@@ -632,20 +632,19 @@ Manual testing remains important for:
 |------|-------|-------|
 | [solver.md](solver.md) | Ehrlich-Aberth algorithm, warm start, Horner eval, WASM | ~109 |
 | [paths.md](paths.md) | Curve representation, path types, cycle sync, jiggle | ~237 |
-| [paths_nn.md](paths_nn.md) | Path notes (draft) | ~25 |
 | [sonification.md](sonification.md) | Audio graph, feature extraction, sound mapping, routing | ~233 |
 | [braids.md](braids.md) | Root monodromy, topological permutations | ~10 |
 | [patterns.md](patterns.md) | Coefficient/root patterns, gallery snapshots | ~99 |
 | [worker_implementation.md](worker_implementation.md) | Fast mode protocol, worker lifecycle, data format | ~546 |
-| [worker_speed_issues.md](worker_speed_issues.md) | Timing bug fix, resolution scaling analysis | ~189 |
 | [memory_timings.md](memory_timings.md) | Persistent buffer optimization: analysis + results | ~219 |
 | [wasm_investigation.md](wasm_investigation.md) | WASM solver design, build workflow, benchmarks | ~251 |
 | [off-canvas-render.md](off-canvas-render.md) | Split compute/display architecture, BMP export, GPU memory | ~224 |
 | [d-node-paths.md](d-node-paths.md) | D-List tab, D-node path animation, fast mode workers, save/load | ~119 |
 | [test-results.md](test-results.md) | Playwright test results + JS/WASM benchmarks | ~122 |
 | [morph.md](morph.md) | Morph feature design: Phase 1 (static D), Phase 2/3 (deferred) | ~279 |
-| [proof-read.md](proof-read.md) | Line-by-line README/docs audit results | ~214 |
-| [lessons.md](lessons.md) | This file | — |
+| [interface.md](interface.md) | Complete UI control reference | ~250 |
+| [architecture.md](architecture.md) | This file | — |
+| [archive/](archive/) | Archived docs: proof-read.md, worker_speed_issues.md | — |
 
 ### Key Code Locations
 

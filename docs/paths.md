@@ -274,6 +274,16 @@ Uniform translation along a Lissajous figure — all coefficients shift by the s
 
 Mode, σ, θ, and scale step are saved/loaded with the project state. Cumulative state (angle, scale factor) and active offsets are transient — they reset on load.
 
+## Space-Filling Curve Paths
+
+Three space-filling curves are available as animation paths, all implemented via L-system turtle graphics with caching:
+
+- **Hilbert (Moore curve):** Closed variant of the Hilbert curve -- 4 Hilbert sub-curves arranged in a loop. Order 4, 256 points. Fills a square with uniform step sizes. L-system: `LFL+F+LFL`, `L -> -RF+LFL+FR-`, `R -> +LF-RFR-FL+`.
+- **Peano:** Classic Peano space-filling curve. Order 3, 729 points, out-and-back traversal for closure (1458 steps total). L-system: `L`, `L -> LFRFL-F-RFLFR+F+LFRFL`, `R -> RFLFR+F+LFRFL-F-RFLFR`.
+- **Sierpinski arrowhead:** Fills a Sierpinski triangle. Order 5, 243 segments, out-and-back for closure (486 steps total). L-system: `A -> B-A-B`, `B -> A+B+A` with 60-degree turns.
+
+All three generate perfectly uniform step sizes and are cached on first use.
+
 ## List Tab Columns
 
 The List tab shows a table with per-coefficient data:

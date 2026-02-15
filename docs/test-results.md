@@ -1,6 +1,6 @@
 # Test Results
 
-**339 tests total: 338 passed, 1 skipped** | Runtime: ~4m | Headless Chromium on Apple Silicon
+**430 tests total: 429 passed, 1 skipped** | Runtime: ~6m | Headless Chromium on Apple Silicon
 
 Run with: `python -m pytest tests/ -v`
 
@@ -239,6 +239,72 @@ Tests the split compute/display architecture, multi-format export, high-resoluti
 
 ---
 
+## test_match_strategy.py — Root-Matching Strategies (16 tests)
+
+Tests the Hungarian algorithm, greedy strategy options, serialization, save/load, UI chips, and worker blob contents.
+
+| Test Group | Count | What it checks |
+|------------|-------|----------------|
+| `TestStateVariable` | 1 | Default bitmapMatchStrategy is "assign4" |
+| `TestHungarianAlgorithm` | 5 | Identity, reversed roots, 2×2 optimal, valid permutation, single root |
+| `TestSerializationStrategy` | 3 | matchStrategy in serialized data for assign4, hungarian1, assign1 |
+| `TestSaveLoadRoundtrip` | 2 | Roundtrip preserves strategy, missing field defaults to assign4 |
+| `TestUIChips` | 3 | 3 chips in popup, default highlighted, click updates variable |
+| `TestWorkerBlobContents` | 2 | Worker blob contains hungarianMatch function and S_matchStrategy variable |
+
+---
+
+## test_dnode.py — D-Node Paths (33 tests)
+
+Tests D-List tab HTML, `allAnimatedDCoeffs()`, `advanceDNodesAlongCurves()`, D-node save/load with paths, D-curve serialization for fast mode, backward compatibility, and jiggle immunity.
+
+| Test Group | Count | What it checks |
+|------------|-------|----------------|
+| `TestDListTabHTML` | 6 | Tab button, content panel, toolbar elements, scroll container, path picker popup, tab switching |
+| `TestDListRefresh` | 2 | Row creation with `cpick-row` class, d-prefix labels |
+| `TestAllAnimatedDCoeffs` | 4 | Empty by default, returns animated indices, Set type, ignores "none" |
+| `TestAdvanceDNodesAlongCurves` | 6 | None path unchanged, circle moves, elapsed=0 at start, ccw reversal, speed effect, multiple independent |
+| `TestDNodeSaveLoad` | 5 | Path fields saved, circle roundtrip, none roundtrip, home vs pos, mixed paths |
+| `TestDNodeBackwardCompat` | 4 | Old snap pos-only, default values, missing morph section, target length mismatch |
+| `TestDCurveSerialization` | 3 | Empty when no animated, populated when animated, offsets/lengths consistency |
+| `TestDNodeJiggleImmunity` | 1 | Jiggle offsets not applied to D-nodes in serialization |
+| `TestExitFastModeCleanup` | 1 | fastModeDCurves nulled on exit |
+| `TestDListTransform` | 1 | Transform dropdown exists with options |
+
+---
+
+## test_state_fields.py — Extended Save/Load (28 tests)
+
+Tests save/load roundtrip for bitmap settings, solver type, selected coefficients, trail data, jiggle sub-fields, worker count, domain coloring, and backward compatibility for missing fields.
+
+| Test Group | Count | What it checks |
+|------------|-------|----------------|
+| `TestBitmapFieldsRoundtrip` | 6 | Canvas color, color mode, uniform color, match strategy, export format, coeff view |
+| `TestSolverTypeRoundtrip` | 1 | Solver type preserved |
+| `TestSelectedCoeffsRoundtrip` | 2 | Non-empty and empty selected coefficients |
+| `TestTrailDataRoundtrip` | 1 | Trail data arrays with points |
+| `TestJiggleFieldsRoundtrip` | 4 | Scale step, period, amplitude, Lissajous freqs |
+| `TestNumWorkersRoundtrip` | 1 | Worker count preserved |
+| `TestBackwardCompatMissingFields` | 9 | Missing bitmap color mode, match strategy, export format, solver type, num workers, jiggle, selected coeffs, trail data, canvas color |
+| `TestDomainColoringRoundtrip` | 2 | Domain coloring enabled, trails enabled |
+
+---
+
+## test_animation.py — Animation Entry Points (16 tests)
+
+Tests animation state management, play guard (C and D animated nodes), home button reset for C and D nodes, scrub slider advancement, and allAnimatedCoeffs.
+
+| Test Group | Count | What it checks |
+|------------|-------|----------------|
+| `TestAnimationState` | 4 | Initial not playing, play button exists, home button exists, scrub slider exists |
+| `TestStartAnimationGuard` | 3 | No animated = no start, animated C allows start, animated D allows start |
+| `TestHomeButton` | 3 | Resets C to curve start, resets D to curve start, resets curveIndex |
+| `TestScrubSlider` | 4 | Advances C, advances D, zero returns to start, label updates |
+| `TestStopAnimation` | 1 | Sets playing to false |
+| `TestAllAnimatedCoeffs` | 2 | Empty when no paths, returns animated indices |
+
+---
+
 ## test_integration.py — End-to-End (3 tests)
 
 | Test | Status | What it checks |
@@ -297,9 +363,13 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | Jiggle | test_jiggle.py | 26 | Helpers, all 10 modes, cumulative state, save/load |
 | Fast mode | test_fastmode.py | 22 | Formatting, buttons, removed vars, resets, serialization, clear, toggle |
 | Off-canvas & export | test_offcanvas.py | 80 | Split compute/display, BMP/JPEG/PNG/TIFF export, library loading, save popup, format state, bitmap/animation color decoupling, derivative palette, rank normalization, root sensitivities, derivative paint branches |
+| Match strategies | test_match_strategy.py | 16 | Hungarian algorithm, greedy strategies, serialization, save/load, UI chips, worker blob |
+| D-node paths | test_dnode.py | 33 | D-List tab, allAnimatedDCoeffs, advanceDNodesAlongCurves, save/load with paths, D-curve serialization, backward compat, jiggle immunity |
+| Extended state | test_state_fields.py | 28 | Bitmap settings, solver type, selected coeffs, trails, jiggle sub-fields, worker count, backward compat for missing fields |
+| Animation | test_animation.py | 16 | Start/stop/home/scrub, play guard with D-nodes, allAnimatedCoeffs |
 | Integration | test_integration.py | 3 | Snap loading, determinism, fast mode pixels |
 | Benchmark | test_benchmark.py | 4 | JS vs WASM: correctness + performance |
-| **Total** | **16 files** | **339** | |
+| **Total** | **20 files** | **430** | |
 
 ---
 
@@ -324,6 +394,10 @@ tests/
   test_jiggle.py        — Jiggle perturbation (10 modes)
   test_fastmode.py      — Continuous fast mode, buttons, serialization
   test_offcanvas.py     — Off-canvas render split, multi-format export, high-res
+  test_match_strategy.py — Root-matching strategies (Hungarian, greedy, UI)
+  test_dnode.py         — D-node paths (D-List tab, animation, save/load, fast mode)
+  test_state_fields.py  — Extended save/load roundtrip (bitmap, jiggle, backward compat)
+  test_animation.py     — Animation entry points (start, stop, home, scrub, play guard)
   test_integration.py   — Snap loading, determinism, fast mode
   test_benchmark.py     — JS vs WASM speed + correctness
 ```

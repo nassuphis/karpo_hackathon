@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v30</title>
+<title>PolyPaint v31</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
@@ -387,7 +387,7 @@ circle.morph-interp-marker { pointer-events: none; }
 #roots-container { position: relative; flex: 1; min-height: 0; }
 #domain-canvas { position: absolute; top: 0; left: 0; border-radius: 0; }
 #roots-panel.domain-active { background: transparent !important; }
-circle.coeff.selected, circle.root.selected {
+circle.coeff.selected, circle.root.selected, circle.morph-coeff.selected {
     stroke: #fff; stroke-width: 3;
     filter: drop-shadow(0 0 4px var(--accent)) drop-shadow(0 0 10px var(--accent)) drop-shadow(0 0 18px rgba(233,69,96,0.4));
     animation: sel-pulse 1.2s ease-in-out infinite alternate;
@@ -531,7 +531,7 @@ body.fast-mode #stop-roots-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v30</span>
+    <span class="app-title">PolyPaint v31</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -578,7 +578,6 @@ body.fast-mode #stop-roots-btn {
         <button id="snap-btn" class="icon-btn" title="Export snapshot">⬇</button>
     </span>
     <div class="header-sep"></div>
-    <button id="config-btn" class="icon-btn" title="Configuration" style="font-size:11px;font-weight:700;">C</button>
     <button id="timing-btn" class="icon-btn" title="Timing" style="font-size:11px;font-weight:700;">T</button>
 </div>
 <div id="content">
@@ -587,7 +586,8 @@ body.fast-mode #stop-roots-btn {
     <div class="panel" id="left-panel">
         <div class="tab-bar" id="left-tab-bar">
             <button class="tab active" data-ltab="coeffs">Coefficients <span id="coeff-sel-count" style="font-size:9px;color:#5ddb6a;opacity:0.85;"></span></button>
-            <button class="tab" data-ltab="list">List</button>
+            <button class="tab" data-ltab="list">C-List</button>
+            <button class="tab" data-ltab="dlist">D-List</button>
             <button class="tab" data-ltab="morph">Morph</button>
             <span class="tab-bar-controls"><input id="scrub-slider" type="range" min="0" max="5000" value="0" step="1" title="Scrub coefficients along paths (0–5s)"><span id="scrub-val" style="font-size:9px;color:var(--muted);min-width:28px;text-align:right;">0.00s</span><button id="play-btn">▶ Play</button><button id="home-btn" title="Return to start position">Home</button></span>
         </div>
@@ -684,6 +684,79 @@ body.fast-mode #stop-roots-btn {
                     <span class="cpick-coords" style="font-size:7px;">position</span>
                 </div>
                 <div id="coeff-list-scroll" style="flex:1;min-height:0;overflow-y:auto;padding:4px 8px;"></div>
+            </div>
+            <div id="dlist-content" class="tab-content">
+                <div id="dcoeff-list-toolbar" style="display:flex;gap:6px;padding:4px 8px;align-items:center;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.45);flex-shrink:0;">
+                    <button id="dlist-select-all-btn" class="bar-sel-btn" title="Select all">⊕ All</button>
+                    <button id="dlist-deselect-all-btn" class="bar-sel-btn" title="Deselect all">✕ None</button>
+                    <button id="dlist-all-curves-btn" class="bar-sel-btn" title="Select all D-nodes with the displayed curve type">Same Curve</button>
+                    <button id="dlist-curve-prev" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9664;</button>
+                    <span id="dlist-curve-cycle" style="font-size:9px;color:var(--accent);min-width:36px;text-align:center;">—</span>
+                    <button id="dlist-curve-next" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9654;</button>
+                    <span id="dlist-count" style="font-size:9px;color:var(--muted);"></span>
+                    <span style="font-size:7px;color:var(--muted);">Transform</span>
+                    <select id="dlist-transform" style="font-size:8px;background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:1px 2px;">
+                        <option value="none">none</option>
+                        <option value="PrimeSpeeds">PrimeSpeeds</option>
+                        <option value="SetAllSpeeds">Set All Speeds</option>
+                        <option value="RandomSpeed">RandomSpeed</option>
+                        <option value="RandomAngle">RandomAngle</option>
+                        <option value="RandomRadius">RandomRadius</option>
+                        <option value="LerpSpeed">Lerp Speed</option>
+                        <option value="LerpRadius">Lerp Radius</option>
+                        <option value="LerpAngle">Lerp Angle</option>
+                        <option value="RandomDirection">RandomDirection</option>
+                        <option value="FlipAllDirections">FlipAllDirections</option>
+                        <option value="ShuffleCurves">ShuffleCurves</option>
+                        <option value="ShufflePositions">ShufflePositions</option>
+                        <option value="CircleLayout">CircleLayout</option>
+                        <option value="RotatePositions">RotatePositions</option>
+                        <option value="ScalePositions">ScalePositions</option>
+                        <option value="JitterPositions">JitterPositions</option>
+                        <option value="Conjugate">Conjugate</option>
+                        <option value="InvertPositions">InvertPositions</option>
+                        <option value="SortByModulus">SortByModulus</option>
+                        <option value="SortByArgument">SortByArgument</option>
+                    </select>
+                    <span style="display:inline-flex;align-items:center;gap:2px;" title="Parameter for transforms">
+                        <span style="font-size:7px;color:var(--muted);">Param1</span>
+                        <input id="dlist-sel-speed" type="range" min="1" max="100" value="50" step="1" style="width:52px;height:10px;accent-color:var(--accent);">
+                        <span id="dlist-sel-speed-val" style="font-size:7px;color:var(--muted);min-width:16px;">50</span>
+                    </span>
+                    <span style="display:inline-flex;align-items:center;gap:2px;" title="Parameter 2 for transforms">
+                        <span style="font-size:7px;color:var(--muted);">Param2</span>
+                        <input id="dlist-sel-param2" type="range" min="1" max="100" value="100" step="1" style="width:52px;height:10px;accent-color:var(--accent);">
+                        <span id="dlist-sel-param2-val" style="font-size:7px;color:var(--muted);min-width:16px;">100</span>
+                    </span>
+                </div>
+                <div id="dlist-curve-editor" style="padding:4px 8px 6px;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.55);flex-shrink:0;opacity:0.3;pointer-events:none;transition:opacity 0.15s;">
+                    <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                        <select id="dle-path-sel" style="font-size:9px;font-weight:600;color:var(--accent);background:rgba(0,0,0,0.3);border:1px solid var(--stroke);border-radius:3px;padding:1px 2px;"></select>
+                        <button id="dle-prev" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9664;</button>
+                        <span id="dle-coeff-name" style="font-size:9px;color:var(--text);min-width:20px;text-align:center;"></span>
+                        <button id="dle-next" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9654;</button>
+                        <span style="width:6px;"></span>
+                        <div id="dle-controls"></div>
+                        <span style="width:4px;"></span>
+                        <button id="dle-ps-btn" class="bar-sel-btn" style="font-size:8px;" title="Prime Speed — set to nearest speed coprime with all others">PS</button>
+                        <button id="dle-update-one" class="bar-sel-btn" style="font-size:8px;">Update This</button>
+                        <button id="dle-update-sel" class="bar-sel-btn" style="font-size:8px;">Update Whole Selection</button>
+                    </div>
+                </div>
+                <div id="dcoeff-list-hdr" class="cpick-row" style="padding:1px 8px 1px;border-bottom:1px solid var(--stroke);flex-shrink:0;cursor:default;opacity:0.5;">
+                    <span class="cpick-cb" style="visibility:hidden;"></span>
+                    <span class="cpick-dot" style="visibility:hidden;"></span>
+                    <span class="cpick-dot" style="visibility:hidden;"></span>
+                    <span class="cpick-label" style="font-size:7px;">idx</span>
+                    <span class="cpick-power" style="font-size:7px;">term</span>
+                    <span style="font-size:7px;color:var(--muted);width:58px;text-align:center;flex-shrink:0;">path</span>
+                    <span class="cpick-speed" style="font-size:7px;">spd</span>
+                    <span class="cpick-radius" style="font-size:7px;">rad</span>
+                    <span class="cpick-plen" style="font-size:7px;">pts</span>
+                    <span class="cpick-pos" style="font-size:7px;">pos</span>
+                    <span class="cpick-coords" style="font-size:7px;">position</span>
+                </div>
+                <div id="dcoeff-list-scroll" style="flex:1;min-height:0;overflow-y:auto;padding:4px 8px;"></div>
             </div>
             <div id="morph-content" class="tab-content">
                 <div id="morph-bar" style="padding:4px 8px;display:flex;align-items:center;gap:8px;flex-shrink:0;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.45);">
@@ -804,7 +877,7 @@ body.fast-mode #stop-roots-btn {
 <div id="coeff-ctx" class="ops-pop"></div>
 <div id="snap-pop" class="ops-pop" style="min-width:100px"></div>
 <div id="path-pick-pop" class="ops-pop"></div>
-<div id="config-pop" class="ops-pop" style="min-width:160px"></div>
+<div id="dpath-pick-pop" class="ops-pop"></div>
 <div id="timing-pop" class="ops-pop" style="min-width:220px"></div>
 <div id="bitmap-cfg-pop" class="ops-pop" style="min-width:160px"></div>
 <div id="bitmap-save-pop" class="ops-pop" style="min-width:160px"></div>
@@ -880,6 +953,7 @@ let pendingSolve = false;
 // Selection & animation state
 const selectedCoeffs = new Set(); // indices into coefficients[]
 const selectedRoots = new Set();  // indices into currentRoots[]
+const selectedMorphCoeffs = new Set(); // indices into morphTargetCoeffs[]
 const animState = { playing: false, startTime: 0, rafId: null, elapsedAtPause: null };
 let lastSelectedCoeff = -1; // index of last coefficient added to selection (for editor display)
 // Trail state
@@ -894,6 +968,7 @@ let rootSensitivities = null;   // Float64Array for derivative mode
 // Bitmap-specific color mode (decoupled from animation rootColorMode)
 let bitmapColorMode = "uniform";  // "uniform" | "rainbow" | "derivative" | "iteration" | "proximity"
 let bitmapUniformColor = [255, 255, 255];
+let bitmapMatchStrategy = "assign4"; // "assign4" | "assign1" | "hungarian1"
 // Fixed 8-color palette shared by animation and bitmap uniform pickers
 const ROOT_COLOR_SWATCHES = [
     { label: "White",  rgb: [255, 255, 255] },
@@ -973,6 +1048,7 @@ let bitmapCoeffView = false;     // when true, fast mode plots coefficient posit
 const FAST_PASS_SECONDS = 1.0; // virtual duration of one fast pass
 let fastModeActive = false;
 let fastModeCurves = null;      // Map<coeffIndex, hi-res curve>
+let fastModeDCurves = null;     // Map<dNodeIndex, hi-res curve> for animated D-nodes
 let fastModeStepIndex = 0;
 let fastModeTotalSteps = 0;
 let fastModeTimerId = null;
@@ -2472,6 +2548,7 @@ function buildPathSelect(sel, noneLabel) {
 // Build both path selectors from the single catalog
 buildPathSelect(document.getElementById("anim-path"));
 buildPathSelect(document.getElementById("lce-path-sel"), "\u2014");
+buildPathSelect(document.getElementById("dle-path-sel"), "\u2014");
 
 function getCoeffParam(c, key, schema) {
     if (_STD_KEYS.has(key)) return c[key];
@@ -2593,9 +2670,15 @@ function clearRootSelection() {
     updateRootSelectionVisual();
 }
 
+function clearMorphSelection() {
+    selectedMorphCoeffs.clear();
+    updateMorphSelectionVisual();
+}
+
 function clearAllSelection() {
     clearCoeffSelection();
     clearRootSelection();
+    clearMorphSelection();
 }
 
 function updateTransformGroupVisibility() {
@@ -2641,6 +2724,12 @@ function updateRootSelectionVisual() {
     updateTransformGroupVisibility();
 }
 
+function updateMorphSelectionVisual() {
+    if (!morphPanelInited || !morphLayer) return;
+    morphLayer.selectAll("circle.morph-coeff")
+        .classed("selected", d => selectedMorphCoeffs.has(d._idx));
+}
+
 // --- Marquee (area) selection ---
 
 function installMarqueeSelection(svgSel, getCirclesSel, which) {
@@ -2654,8 +2743,9 @@ function installMarqueeSelection(svgSel, getCirclesSel, which) {
         if (t && t.tagName === "circle") return;
         if (event.button != null && event.button !== 0) return;
 
-        if (which === "coeff") clearRootSelection();
-        else clearCoeffSelection();
+        if (which === "coeff") { clearRootSelection(); clearMorphSelection(); }
+        else if (which === "roots") { clearCoeffSelection(); clearMorphSelection(); }
+        else { clearCoeffSelection(); clearRootSelection(); }
 
         dragging = true;
         const p = d3.pointer(event, svgNode);
@@ -2697,6 +2787,8 @@ function installMarqueeSelection(svgSel, getCirclesSel, which) {
                 if (which === "coeff") {
                     selectedCoeffs.add(d._idx);
                     lastSelectedCoeff = d._idx;
+                } else if (which === "morph") {
+                    selectedMorphCoeffs.add(d._idx);
                 } else {
                     selectedRoots.add(d._idx);
                 }
@@ -2706,6 +2798,8 @@ function installMarqueeSelection(svgSel, getCirclesSel, which) {
         if (which === "coeff") {
             updateCoeffSelectionVisual();
             updateAnimBar();
+        } else if (which === "morph") {
+            updateMorphSelectionVisual();
         } else {
             updateRootSelectionVisual();
         }
@@ -2795,6 +2889,7 @@ function initMorphTarget() {
         pathType: "none", radius: 25, speed: 1, angle: 0, ccw: false, extra: {},
         curve: [{ re: c.re, im: c.im }], curveIndex: 0
     }));
+    selectedMorphCoeffs.clear();
 }
 
 function openCoeffCtx(event, coeffIdx) {
@@ -3032,6 +3127,51 @@ function allAnimatedCoeffs() {
     return s;
 }
 
+function allAnimatedDCoeffs() {
+    const s = new Set();
+    for (let i = 0; i < morphTargetCoeffs.length; i++) {
+        if (morphTargetCoeffs[i].pathType !== "none") s.add(i);
+    }
+    return s;
+}
+
+function advanceDNodesAlongCurves(elapsed) {
+    for (let i = 0; i < morphTargetCoeffs.length; i++) {
+        const d = morphTargetCoeffs[i];
+        if (d.pathType === "none") continue;
+        const N = d.curve.length;
+        const t = elapsed * d.speed * (d.ccw ? -1 : 1);
+        const rawIdx = ((t % 1) + 1) % 1 * N;
+        if (d.curve._isCloud) {
+            const idx = Math.floor(rawIdx) % N;
+            d.re = d.curve[idx].re;
+            d.im = d.curve[idx].im;
+            d.curveIndex = idx;
+        } else {
+            const lo = Math.floor(rawIdx) % N;
+            const hi = (lo + 1) % N;
+            const frac = rawIdx - Math.floor(rawIdx);
+            d.re = d.curve[lo].re * (1 - frac) + d.curve[hi].re * frac;
+            d.im = d.curve[lo].im * (1 - frac) + d.curve[hi].im * frac;
+            d.curveIndex = lo;
+        }
+    }
+}
+
+function updateMorphPanelDDots() {
+    if (!morphPanelInited || !morphLayer) return;
+    const nn = Math.min(coefficients.length, morphTargetCoeffs.length);
+    morphLayer.selectAll("circle.morph-coeff")
+        .attr("cx", (_, i) => i < nn ? cxs()(morphTargetCoeffs[i].re) : 0)
+        .attr("cy", (_, i) => i < nn ? cys()(morphTargetCoeffs[i].im) : 0);
+    morphLayer.selectAll(".morph-label")
+        .attr("x", (_, i) => i < nn ? cxs()(morphTargetCoeffs[i].re) + 10 : 0)
+        .attr("y", (_, i) => i < nn ? cys()(morphTargetCoeffs[i].im) + 3 : 0);
+    morphInterpLayer.selectAll("line.morph-interp-line")
+        .attr("x2", (_, i) => i < nn ? cxs()(morphTargetCoeffs[i].re) : 0)
+        .attr("y2", (_, i) => i < nn ? cys()(morphTargetCoeffs[i].im) : 0);
+}
+
 function syncBarFromCoeff() {
     if (lastSelectedCoeff < 0 || !selectedCoeffs.has(lastSelectedCoeff)) {
         if (selectedCoeffs.size > 0) lastSelectedCoeff = [...selectedCoeffs][0];
@@ -3180,7 +3320,7 @@ playBtn.addEventListener("click", function () {
         stopAnimation();
         playBtn.textContent = "▶ Play";
     } else {
-        if (allAnimatedCoeffs().size === 0 && !morphEnabled) return;
+        if (allAnimatedCoeffs().size === 0 && allAnimatedDCoeffs().size === 0 && !morphEnabled) return;
         const resuming = animState.elapsedAtPause != null;
         if (trailsEnabled && !resuming) {
             trailData = [];
@@ -3205,6 +3345,11 @@ document.getElementById("home-btn").addEventListener("click", function () {
         c.re = c.curve[0].re; c.im = c.curve[0].im;
         c.curveIndex = 0;
     }
+    for (let i = 0; i < morphTargetCoeffs.length; i++) {
+        const d = morphTargetCoeffs[i];
+        d.re = d.curve[0].re; d.im = d.curve[0].im;
+        d.curveIndex = 0;
+    }
     const animated = allAnimatedCoeffs();
     coeffLayer.selectAll("circle.coeff")
         .filter(cd => animated.has(cd._idx))
@@ -3212,6 +3357,10 @@ document.getElementById("home-btn").addEventListener("click", function () {
     coeffLayer.selectAll(".coeff-label")
         .filter(ld => animated.has(ld._idx))
         .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
+    if (morphPanelInited && leftTab === "morph") {
+        updateMorphPanelDDots();
+        updateMorphMarkers();
+    }
     if (trailsEnabled) {
         trailData = [];
         trailLayer.selectAll("path.trail-path").remove();
@@ -3256,6 +3405,8 @@ scrubSlider.addEventListener("input", function () {
             c.curveIndex = lo;
         }
     }
+    // Advance D-nodes along their paths
+    advanceDNodesAlongCurves(elapsed);
     const animated = allAnimatedCoeffs();
     coeffLayer.selectAll("circle.coeff")
         .filter(cd => animated.has(cd._idx))
@@ -3279,12 +3430,14 @@ scrubSlider.addEventListener("input", function () {
         morphInterpLayer.selectAll("line.morph-interp-line")
             .attr("x1", (_, i) => i < nn ? cxs()(coefficients[i].re) : 0)
             .attr("y1", (_, i) => i < nn ? cys()(coefficients[i].im) : 0);
+        updateMorphPanelDDots();
         updateMorphMarkers();
     }
     animState.elapsedAtPause = elapsed;
     solveRootsThrottled();
     renderDomainColoringThrottled();
     updateListCoords();
+    updateDListCoords();
 });
 
 // Trails toggle button
@@ -3715,7 +3868,8 @@ function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
 function startAnimation() {
     if (fastModeActive) return;
     const animated = allAnimatedCoeffs();
-    if (animated.size === 0 && !morphEnabled) return;
+    const animatedD = allAnimatedDCoeffs();
+    if (animated.size === 0 && animatedD.size === 0 && !morphEnabled) return;
 
     const resuming = animState.elapsedAtPause != null;
 
@@ -3724,6 +3878,11 @@ function startAnimation() {
             const c = coefficients[idx];
             c.re = c.curve[0].re; c.im = c.curve[0].im;
             c.curveIndex = 0;
+        }
+        for (const idx of animatedD) {
+            const d = morphTargetCoeffs[idx];
+            d.re = d.curve[0].re; d.im = d.curve[0].im;
+            d.curveIndex = 0;
         }
     }
 
@@ -3764,6 +3923,9 @@ function animLoop(now) {
         }
     }
 
+    // Advance D-nodes along their paths
+    advanceDNodesAlongCurves(elapsed);
+
     if (morphEnabled) {
         morphMu = 0.5 + 0.5 * Math.sin(2 * Math.PI * morphRate * elapsed);
         const muEl = document.getElementById("morph-mu-val");
@@ -3782,6 +3944,7 @@ function animLoop(now) {
         morphInterpLayer.selectAll("line.morph-interp-line")
             .attr("x1", (_, i) => i < nn ? cxs()(coefficients[i].re) : 0)
             .attr("y1", (_, i) => i < nn ? cys()(coefficients[i].im) : 0);
+        updateMorphPanelDDots();
         updateMorphMarkers();
     }
 
@@ -3798,6 +3961,7 @@ function animLoop(now) {
     renderDomainColoringThrottled();
     recordTick();
     updateListCoords();
+    updateDListCoords();
 
     animState.rafId = requestAnimationFrame(animLoop);
 }
@@ -3870,31 +4034,77 @@ function subscript(n) {
 
 // --- Morph panel rendering ---
 
+let morphDragMoved = false;
+let morphDragStartX = 0, morphDragStartY = 0;
 const morphDrag = d3.drag()
-    .on("start", function () { d3.select(this).classed("dragging", true); })
+    .on("start", function (event) {
+        morphDragMoved = false;
+        morphDragStartX = event.x;
+        morphDragStartY = event.y;
+        d3.select(this).raise().classed("dragging", true);
+    })
     .on("drag", function (event, d) {
-        d.re = cxs().invert(event.x);
-        d.im = cys().invert(event.y);
-        d.curve = [{ re: d.re, im: d.im }];
-        d3.select(this).attr("cx", event.x).attr("cy", event.y);
-        // Update label position
-        morphLayer.selectAll(".morph-label")
-            .filter(ld => ld._idx === d._idx)
-            .attr("x", event.x + 12).attr("y", event.y + 4);
-        // Update interp line endpoint (D end) and marker
-        if (morphInterpLayer) {
-            const i = d._idx;
-            morphInterpLayer.selectAll("line.morph-interp-line")
-                .filter((_, j) => j === i)
-                .attr("x2", event.x).attr("y2", event.y);
-            morphInterpLayer.selectAll("circle.morph-interp-marker")
-                .filter((_, j) => j === i)
-                .attr("cx", cxs()(coefficients[i].re * (1 - morphMu) + d.re * morphMu))
-                .attr("cy", cys()(coefficients[i].im * (1 - morphMu) + d.im * morphMu));
+        if (!morphDragMoved && Math.hypot(event.x - morphDragStartX, event.y - morphDragStartY) < CLICK_DEAD_ZONE) return;
+        morphDragMoved = true;
+        const idx = d._idx;
+        const newRe = cxs().invert(event.x);
+        const newIm = cys().invert(event.y);
+        if (selectedMorphCoeffs.has(idx) && selectedMorphCoeffs.size > 1) {
+            // Group drag: apply delta to all selected D-nodes
+            const deltaRe = newRe - d.re;
+            const deltaIm = newIm - d.im;
+            for (const si of selectedMorphCoeffs) {
+                const mc = morphTargetCoeffs[si];
+                mc.re += deltaRe; mc.im += deltaIm;
+                mc.curve = [{ re: mc.re, im: mc.im }];
+            }
+            morphLayer.selectAll("circle.morph-coeff")
+                .attr("cx", dd => cxs()(dd.re)).attr("cy", dd => cys()(dd.im));
+            morphLayer.selectAll(".morph-label")
+                .attr("x", dd => cxs()(dd.re) + 12).attr("y", dd => cys()(dd.im) + 4);
+            if (morphInterpLayer) {
+                const nD = morphTargetCoeffs.length;
+                morphInterpLayer.selectAll("line.morph-interp-line")
+                    .attr("x2", (_, j) => j < nD ? cxs()(morphTargetCoeffs[j].re) : 0)
+                    .attr("y2", (_, j) => j < nD ? cys()(morphTargetCoeffs[j].im) : 0);
+                morphInterpLayer.selectAll("circle.morph-interp-marker")
+                    .attr("cx", (_, j) => j < nD ? cxs()(coefficients[j].re * (1 - morphMu) + morphTargetCoeffs[j].re * morphMu) : 0)
+                    .attr("cy", (_, j) => j < nD ? cys()(coefficients[j].im * (1 - morphMu) + morphTargetCoeffs[j].im * morphMu) : 0);
+            }
+        } else {
+            // Single drag
+            d.re = newRe; d.im = newIm;
+            d.curve = [{ re: d.re, im: d.im }];
+            d3.select(this).attr("cx", event.x).attr("cy", event.y);
+            morphLayer.selectAll(".morph-label")
+                .filter(ld => ld._idx === d._idx)
+                .attr("x", event.x + 12).attr("y", event.y + 4);
+            if (morphInterpLayer) {
+                const i = d._idx;
+                morphInterpLayer.selectAll("line.morph-interp-line")
+                    .filter((_, j) => j === i)
+                    .attr("x2", event.x).attr("y2", event.y);
+                morphInterpLayer.selectAll("circle.morph-interp-marker")
+                    .filter((_, j) => j === i)
+                    .attr("cx", cxs()(coefficients[i].re * (1 - morphMu) + d.re * morphMu))
+                    .attr("cy", cys()(coefficients[i].im * (1 - morphMu) + d.im * morphMu));
+            }
         }
         if (morphEnabled) solveRootsThrottled();
     })
-    .on("end", function () { d3.select(this).classed("dragging", false); });
+    .on("end", function (event, d) {
+        d3.select(this).classed("dragging", false);
+        if (!morphDragMoved) {
+            // Click: toggle selection
+            const idx = d._idx;
+            if (selectedMorphCoeffs.has(idx)) {
+                selectedMorphCoeffs.delete(idx);
+            } else {
+                selectedMorphCoeffs.add(idx);
+            }
+            updateMorphSelectionVisual();
+        }
+    });
 
 function renderMorphPanel() {
     if (!morphPanelInited) initMorphPanel();
@@ -3941,7 +4151,8 @@ function renderMorphPanel() {
       .merge(dots)
         .attr("cx", d => cxs()(d.re))
         .attr("cy", d => cys()(d.im))
-        .attr("fill", (_, i) => coeffColor(i, nD));
+        .attr("fill", (_, i) => coeffColor(i, nD))
+        .classed("selected", d => selectedMorphCoeffs.has(d._idx));
     dots.exit().remove();
 
     const dLabels = morphLayer.selectAll(".morph-label").data(morphTargetCoeffs, d => d._idx);
@@ -5607,13 +5818,6 @@ document.addEventListener("mousedown", e => {
             if (typeof closeSnapPop === "function") closeSnapPop();
         }
     }
-    // Close config popup
-    if (typeof configPopOpen !== "undefined" && configPopOpen) {
-        const cp = document.getElementById("config-pop");
-        if (cp && !cp.contains(e.target) && e.target.id !== "config-btn") {
-            if (typeof closeConfigPop === "function") closeConfigPop();
-        }
-    }
     // Close timing popup
     if (typeof timingPopOpen !== "undefined" && timingPopOpen) {
         const tp = document.getElementById("timing-pop");
@@ -5989,6 +6193,7 @@ function startRecording() {
             bitmapColorMode: bitmapColorMode,
             bitmapUniformColor: bitmapUniformColor.slice(),
             bitmapCanvasColor: bitmapCanvasColor,
+            bitmapMatchStrategy: bitmapMatchStrategy,
             trails: trailsEnabled,
             selectedCoeffs: [...selectedCoeffs],
             selectedRoots: [...selectedRoots],
@@ -6051,6 +6256,7 @@ function buildStateMetadata(timestamp) {
         bitmapColorMode: bitmapColorMode,
         bitmapUniformColor: bitmapUniformColor.slice(),
         bitmapCanvasColor: bitmapCanvasColor,
+        bitmapMatchStrategy: bitmapMatchStrategy,
         bitmapExportFormat: bitmapExportFormat,
         trails: trailsEnabled,
         animPlaying: animState.playing,
@@ -6078,7 +6284,12 @@ function buildStateMetadata(timestamp) {
             enabled: morphEnabled,
             rate: morphRate,
             mu: morphMu,
-            target: morphTargetCoeffs.map(d => ({ pos: [d.re, d.im] }))
+            target: morphTargetCoeffs.map(d => ({
+                pos: [d.re, d.im],
+                home: [d.curve[0].re, d.curve[0].im],
+                pathType: d.pathType, radius: d.radius, speed: d.speed,
+                angle: d.angle, ccw: d.ccw, extra: d.extra || {}
+            }))
         }
     };
 }
@@ -6303,53 +6514,7 @@ function openSnapPop() {
 
 document.getElementById("snap-btn").addEventListener("click", openSnapPop);
 
-// --- Config popup ---
-let configPopOpen = false;
-const configPop = document.getElementById("config-pop");
-
-function closeConfigPop() { configPop.classList.remove("open"); configPopOpen = false; }
-
-function openConfigPop() {
-    if (configPopOpen) { closeConfigPop(); return; }
-    configPop.innerHTML = "";
-    const title = document.createElement("div");
-    title.className = "pop-title";
-    title.textContent = "CONFIGURATION";
-    configPop.appendChild(title);
-    // Workers row
-    const row = document.createElement("div");
-    row.style.cssText = "display:flex;align-items:center;gap:6px;margin:4px 0;";
-    const lbl = document.createElement("span");
-    lbl.style.cssText = "font-size:10px;color:var(--fg);";
-    lbl.textContent = "Workers";
-    row.appendChild(lbl);
-    const opts = [1, 2, 4, 8, 16];
-    for (const n of opts) {
-        const btn = document.createElement("button");
-        btn.style.cssText = "min-width:26px;height:22px;border-radius:6px;border:1px solid var(--stroke);background:" + (n === numWorkers ? "var(--accent-dim)" : "transparent") + ";color:" + (n === numWorkers ? "#fff" : "var(--muted)") + ";font-size:10px;cursor:pointer;padding:0 4px;font-weight:600;";
-        btn.textContent = String(n);
-        btn.addEventListener("click", () => {
-            numWorkers = n;
-            fastModeTimingHistory = []; // clear stale timing data
-            openConfigPop(); // rebuild to update highlight
-        });
-        row.appendChild(btn);
-    }
-    configPop.appendChild(row);
-    // Hardware info
-    const info = document.createElement("div");
-    info.style.cssText = "font-size:9px;color:var(--muted);margin-top:2px;";
-    info.textContent = "selected: " + numWorkers + "  \u00b7  hw cores: " + (navigator.hardwareConcurrency || "?");
-    configPop.appendChild(info);
-    configPop.classList.add("open");
-    const r = document.getElementById("config-btn").getBoundingClientRect();
-    configPop.style.left = r.left + "px";
-    configPop.style.top = (r.bottom + 6) + "px";
-    configPopOpen = true;
-}
-document.getElementById("config-btn").addEventListener("click", openConfigPop);
-
-// --- Bitmap cfg popup (solver selection) ---
+// --- Bitmap cfg popup (solver + workers + jiggle + color) ---
 let bitmapCfgPopOpen = false;
 const bitmapCfgPop = document.getElementById("bitmap-cfg-pop");
 
@@ -6359,7 +6524,7 @@ function buildBitmapCfgPop() {
     bitmapCfgPop.innerHTML = "";
     const title = document.createElement("div");
     title.className = "pop-title";
-    title.textContent = "SOLVER";
+    title.textContent = "SOLVER ENGINE (" + numWorkers + ")";
     bitmapCfgPop.appendChild(title);
     // Solver type row
     const row = document.createElement("div");
@@ -6384,13 +6549,36 @@ function buildBitmapCfgPop() {
     info.style.cssText = "font-size:9px;color:var(--muted);margin-top:2px;";
     info.textContent = solverType === "wasm" ? "WASM Ehrlich-Aberth (compiled C)" : "JavaScript Ehrlich-Aberth";
     bitmapCfgPop.appendChild(info);
+    // Workers row
+    const wRow = document.createElement("div");
+    wRow.style.cssText = "display:flex;align-items:center;gap:6px;margin:6px 0 2px;";
+    const wLbl = document.createElement("span");
+    wLbl.style.cssText = "font-size:10px;color:var(--fg);";
+    wLbl.textContent = "Workers";
+    wRow.appendChild(wLbl);
+    for (const wn of [1, 2, 4, 8, 16]) {
+        const wBtn = document.createElement("button");
+        wBtn.style.cssText = "min-width:26px;height:22px;border-radius:6px;border:1px solid var(--stroke);background:" + (wn === numWorkers ? "var(--accent-dim)" : "transparent") + ";color:" + (wn === numWorkers ? "#fff" : "var(--muted)") + ";font-size:10px;cursor:pointer;padding:0 4px;font-weight:600;";
+        wBtn.textContent = String(wn);
+        wBtn.addEventListener("click", () => {
+            numWorkers = wn;
+            fastModeTimingHistory = [];
+            buildBitmapCfgPop();
+        });
+        wRow.appendChild(wBtn);
+    }
+    bitmapCfgPop.appendChild(wRow);
+    const wInfo = document.createElement("div");
+    wInfo.style.cssText = "font-size:9px;color:var(--muted);margin-top:2px;";
+    wInfo.textContent = "hw cores: " + (navigator.hardwareConcurrency || "?");
+    bitmapCfgPop.appendChild(wInfo);
     // Jiggle section
     const hr1 = document.createElement("hr");
     hr1.style.cssText = "border:none;border-top:1px solid var(--stroke);margin:8px 0 4px;";
     bitmapCfgPop.appendChild(hr1);
     const jigTitle = document.createElement("div");
     jigTitle.className = "pop-title";
-    jigTitle.textContent = "JIGGLE";
+    jigTitle.textContent = "JIGGLE (" + selectedCoeffs.size + ")";
     bitmapCfgPop.appendChild(jigTitle);
     const inpStyle = "width:50px;background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
     const jLblStyle = "font-size:10px;color:var(--fg);";
@@ -6551,14 +6739,9 @@ function buildBitmapCfgPop() {
         clearRootSelection();
         for (let i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
         if (coefficients.length > 0) lastSelectedCoeff = coefficients.length - 1;
-        updateCoeffSelectionVisual(); updateAnimBar(); updateJiggleStatus();
+        updateCoeffSelectionVisual(); updateAnimBar();
     });
     bitmapCfgPop.appendChild(selAllBtn);
-    const jStatus = document.createElement("div");
-    jStatus.id = "jiggle-status";
-    jStatus.style.cssText = "font-size:9px;margin-top:4px;";
-    bitmapCfgPop.appendChild(jStatus);
-    updateJiggleStatus();
     // Background color
     const hr2 = document.createElement("hr");
     hr2.style.cssText = "border:none;border-top:1px solid var(--stroke);margin:8px 0 4px;";
@@ -6592,8 +6775,9 @@ function buildBitmapCfgPop() {
     const hr3 = document.createElement("hr");
     hr3.style.cssText = "border:none;border-top:1px solid var(--stroke);margin:8px 0 4px;";
     bitmapCfgPop.appendChild(hr3);
+    const colorModeLabels = { uniform: "Uniform", rainbow: "Rainbow", derivative: "Derivative", iteration: "Iteration", proximity: "Proximity" };
     const rcTitle = document.createElement("div");
-    rcTitle.className = "pop-title"; rcTitle.textContent = "ROOT COLOR";
+    rcTitle.className = "pop-title"; rcTitle.textContent = "COLOR (" + (colorModeLabels[bitmapColorMode] || bitmapColorMode) + ")";
     bitmapCfgPop.appendChild(rcTitle);
 
     const bitmapModes = [
@@ -6605,8 +6789,13 @@ function buildBitmapCfgPop() {
     ];
     const bmRows = [];
     let bmSwatchWrap = null;
+    let bmMatchWrap = null;
+    function refreshMatchChips() {
+        if (bmMatchWrap) bmMatchWrap.style.opacity = bitmapColorMode === "rainbow" ? "1" : "0.3";
+    }
     function refreshBmSwatches() {
         if (bmSwatchWrap) bmSwatchWrap.style.opacity = bitmapColorMode === "uniform" ? "1" : "0.3";
+        refreshMatchChips();
     }
     bitmapModes.forEach(bm => {
         const row = document.createElement("div");
@@ -6621,6 +6810,7 @@ function buildBitmapCfgPop() {
             bitmapColorMode = bm.key;
             bmRows.forEach(r => r.classList.remove("on"));
             row.classList.add("on");
+            rcTitle.textContent = "COLOR (" + (colorModeLabels[bm.key] || bm.key) + ")";
             refreshBmSwatches();
         });
         bitmapCfgPop.appendChild(row);
@@ -6648,12 +6838,55 @@ function buildBitmapCfgPop() {
                         bitmapColorMode = "uniform";
                         bmRows.forEach(r => r.classList.remove("on"));
                         bmRows[0].classList.add("on");
+                        rcTitle.textContent = "COLOR (Uniform)";
                         refreshBmSwatches();
                     }
                 });
                 bmSwatchWrap.appendChild(sw);
             });
             bitmapCfgPop.appendChild(bmSwatchWrap);
+        }
+
+        if (bm.key === "rainbow") {
+            bmMatchWrap = document.createElement("div");
+            bmMatchWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;padding:4px 2px 6px 20px;max-width:220px;";
+            bmMatchWrap.style.opacity = bitmapColorMode === "rainbow" ? "1" : "0.3";
+            const strategies = [
+                { key: "hungarian1", label: "Hungarian", tip: "Optimal assignment every step (slower, perfect tracking)" },
+                { key: "assign1",   label: "Greedy\u00d71", tip: "Nearest-neighbor every step" },
+                { key: "assign4",   label: "Greedy\u00d74", tip: "Nearest-neighbor every 4th step (fastest)" },
+            ];
+            strategies.forEach(st => {
+                const chip = document.createElement("div");
+                const isActive = bitmapMatchStrategy === st.key;
+                chip.style.cssText = `padding:2px 7px;border-radius:8px;cursor:pointer;font-size:9px;` +
+                    `text-transform:uppercase;letter-spacing:0.06em;user-select:none;flex-shrink:0;` +
+                    `background:${isActive ? "var(--accent)" : "rgba(255,255,255,0.08)"};` +
+                    `color:${isActive ? "#000" : "var(--muted)"};` +
+                    `border:1px solid ${isActive ? "var(--accent)" : "rgba(255,255,255,0.15)"};`;
+                chip.textContent = st.label;
+                chip.title = st.tip;
+                chip.addEventListener("click", () => {
+                    bitmapMatchStrategy = st.key;
+                    bmMatchWrap.querySelectorAll("div").forEach(c => {
+                        c.style.background = "rgba(255,255,255,0.08)";
+                        c.style.color = "var(--muted)";
+                        c.style.borderColor = "rgba(255,255,255,0.15)";
+                    });
+                    chip.style.background = "var(--accent)";
+                    chip.style.color = "#000";
+                    chip.style.borderColor = "var(--accent)";
+                    if (bitmapColorMode !== "rainbow") {
+                        bitmapColorMode = "rainbow";
+                        bmRows.forEach(r => r.classList.remove("on"));
+                        bmRows[1].classList.add("on");
+                        rcTitle.textContent = "COLOR (Rainbow)";
+                        refreshBmSwatches();
+                    }
+                });
+                bmMatchWrap.appendChild(chip);
+            });
+            bitmapCfgPop.appendChild(bmMatchWrap);
         }
     });
 }
@@ -7011,11 +7244,28 @@ function applyLoadedState(meta) {
         morphRate = meta.morph.rate ?? 0.25;
         morphMu = morphEnabled ? (meta.morph.mu ?? 0.5) : 0;
         if (meta.morph.target && meta.morph.target.length === coefficients.length) {
-            morphTargetCoeffs = meta.morph.target.map(d => ({
-                re: d.pos[0], im: d.pos[1],
-                pathType: "none", radius: 25, speed: 1, angle: 0, ccw: false, extra: {},
-                curve: [{ re: d.pos[0], im: d.pos[1] }], curveIndex: 0
-            }));
+            morphTargetCoeffs = meta.morph.target.map(d => {
+                const hasPath = d.pathType && d.pathType !== "none";
+                const home = hasPath ? (d.home || d.pos) : d.pos;
+                return {
+                    re: home[0], im: home[1],
+                    pathType: d.pathType || "none",
+                    radius: d.radius ?? 25,
+                    speed: d.speed ?? 1,
+                    angle: d.angle ?? 0,
+                    ccw: d.ccw ?? false,
+                    extra: d.extra || {},
+                    curve: [{ re: home[0], im: home[1] }],
+                    curveIndex: 0
+                };
+            });
+            // Regenerate curves for D-nodes with paths
+            for (const d of morphTargetCoeffs) {
+                if (d.pathType !== "none") {
+                    d.curve = computeCurve(d.curve[0].re, d.curve[0].im, d.pathType, d.radius / 100 * coeffExtent(), d.angle, d.extra);
+                }
+                d.curveIndex = 0;
+            }
         } else {
             initMorphTarget();
         }
@@ -7067,6 +7317,11 @@ function applyLoadedState(meta) {
     }
     if (meta.bitmapExportFormat) {
         bitmapExportFormat = meta.bitmapExportFormat;
+    }
+    if (meta.bitmapMatchStrategy && ["assign4","assign1","hungarian1"].includes(meta.bitmapMatchStrategy)) {
+        bitmapMatchStrategy = meta.bitmapMatchStrategy;
+    } else {
+        bitmapMatchStrategy = "assign4";
     }
     rootColorBtn.classList.toggle("active", rootColorMode !== "uniform");
 
@@ -8477,6 +8732,52 @@ function matchRoots(newRe, newIm, oldRe, oldIm, n) {
     for (var i = 0; i < n; i++) { newRe[i] = tmpRe[i]; newIm[i] = tmpIm[i]; }
 }
 
+function hungarianMatch(newRe, newIm, oldRe, oldIm, n) {
+    // Build n×n squared-distance cost matrix
+    var cost = new Float64Array(n * n);
+    for (var i = 0; i < n; i++)
+        for (var j = 0; j < n; j++) {
+            var dr = newRe[j] - oldRe[i], di = newIm[j] - oldIm[i];
+            cost[i * n + j] = dr * dr + di * di;
+        }
+    // Kuhn-Munkres O(n³) — 1-indexed potentials
+    var INF = 1e18;
+    var u = new Float64Array(n + 1);
+    var v = new Float64Array(n + 1);
+    var p = new Int32Array(n + 1);   // p[j] = row assigned to col j
+    var way = new Int32Array(n + 1);
+    for (var i = 1; i <= n; i++) {
+        p[0] = i;
+        var j0 = 0;
+        var minv = new Float64Array(n + 1);
+        var used = new Uint8Array(n + 1);
+        for (var jj = 0; jj <= n; jj++) { minv[jj] = INF; used[jj] = 0; }
+        do {
+            used[j0] = 1;
+            var i0 = p[j0], delta = INF, j1 = -1;
+            for (var j = 1; j <= n; j++) {
+                if (used[j]) continue;
+                var cur = cost[(i0 - 1) * n + (j - 1)] - u[i0] - v[j];
+                if (cur < minv[j]) { minv[j] = cur; way[j] = j0; }
+                if (minv[j] < delta) { delta = minv[j]; j1 = j; }
+            }
+            for (var j = 0; j <= n; j++) {
+                if (used[j]) { u[p[j]] += delta; v[j] -= delta; }
+                else { minv[j] -= delta; }
+            }
+            j0 = j1;
+        } while (p[j0] !== 0);
+        do { var jj = way[j0]; p[j0] = p[jj]; j0 = jj; } while (j0);
+    }
+    // Apply: p[j]=i means old root i-1 matched to new root j-1
+    var tmpRe = new Float64Array(n), tmpIm = new Float64Array(n);
+    for (var j = 1; j <= n; j++) {
+        tmpRe[p[j] - 1] = newRe[j - 1];
+        tmpIm[p[j] - 1] = newIm[j - 1];
+    }
+    for (var i = 0; i < n; i++) { newRe[i] = tmpRe[i]; newIm[i] = tmpIm[i]; }
+}
+
 function rankNorm(raw, n) {
     var maxFinite = -Infinity;
     for (var i = 0; i < n; i++)
@@ -8589,6 +8890,8 @@ var S_iterColor, S_iterPalR, S_iterPalG, S_iterPalB;
 var S_proxColor, S_proxPalR, S_proxPalG, S_proxPalB;
 var S_derivColor, S_derivPalR, S_derivPalG, S_derivPalB, S_selIndices;
 var S_morphEnabled = false, S_morphRate = 0, S_morphTargetRe = null, S_morphTargetIm = null;
+var S_matchStrategy = "assign4";
+var S_dCurvesFlat = null, S_dEntries = null, S_dOffsets = null, S_dLengths = null, S_dIsCloud = null;
 
 self.onmessage = function(e) {
     var d = e.data;
@@ -8630,6 +8933,13 @@ self.onmessage = function(e) {
         S_morphRate = d.morphRate || 0;
         S_morphTargetRe = d.morphTargetRe ? new Float64Array(d.morphTargetRe) : null;
         S_morphTargetIm = d.morphTargetIm ? new Float64Array(d.morphTargetIm) : null;
+        S_matchStrategy = d.matchStrategy || "assign4";
+        // D-curve init (animated morph targets)
+        S_dEntries = d.dAnimEntries || [];
+        S_dCurvesFlat = d.dCurvesFlat ? new Float64Array(d.dCurvesFlat) : null;
+        S_dOffsets = d.dCurveOffsets || [];
+        S_dLengths = d.dCurveLengths || [];
+        S_dIsCloud = d.dCurveIsCloud || [];
         return;
     }
 
@@ -8658,6 +8968,12 @@ self.onmessage = function(e) {
     var selIndices = S_selIndices;
     var colorsR = S_colorsR, colorsG = S_colorsG, colorsB = S_colorsB;
     var uniformR = S_uniformR, uniformG = S_uniformG, uniformB = S_uniformB;
+    // D-curve locals (animated morph targets)
+    var dEntries = S_dEntries, dOffsets = S_dOffsets, dLengths = S_dLengths, dIsCloud = S_dIsCloud;
+    var dCurvesFlat = S_dCurvesFlat;
+    // Pre-allocate morph target arrays (copy base, overwrite animated D each step)
+    var morphRe = S_morphTargetRe ? new Float64Array(S_morphTargetRe) : null;
+    var morphIm = S_morphTargetIm ? new Float64Array(S_morphTargetIm) : null;
 
     // Sparse pixel accumulation (avoids W*H*4 buffer per worker)
     var maxPaints = (stepEnd - stepStart) * nRoots;
@@ -8697,12 +9013,37 @@ self.onmessage = function(e) {
             }
         }
 
+        // Advance animated D-nodes along D-curves
+        if (dEntries && dEntries.length > 0 && dCurvesFlat) {
+            for (var da = 0; da < dEntries.length; da++) {
+                var dIdx = dEntries[da].idx;
+                var dDir = dEntries[da].ccw ? -1 : 1;
+                var dT = elapsed * dEntries[da].speed * dDir;
+                var dU = ((dT % 1) + 1) % 1;
+                var dN = dLengths[da];
+                var dRawIdx = dU * dN;
+                var dBase = dOffsets[da] * 2;
+
+                if (dIsCloud[da]) {
+                    var dK = (dRawIdx | 0) % dN;
+                    morphRe[dIdx] = dCurvesFlat[dBase + dK*2];
+                    morphIm[dIdx] = dCurvesFlat[dBase + dK*2 + 1];
+                } else {
+                    var dLo = (dRawIdx | 0) % dN;
+                    var dHi = (dLo + 1) % dN;
+                    var dFrac = dRawIdx - (dRawIdx | 0);
+                    morphRe[dIdx] = dCurvesFlat[dBase+dLo*2]*(1-dFrac) + dCurvesFlat[dBase+dHi*2]*dFrac;
+                    morphIm[dIdx] = dCurvesFlat[dBase+dLo*2+1]*(1-dFrac) + dCurvesFlat[dBase+dHi*2+1]*dFrac;
+                }
+            }
+        }
+
         if (S_morphEnabled) {
             var mu = 0.5 + 0.5 * Math.sin(2 * Math.PI * S_morphRate * elapsed);
             var omu = 1 - mu;
             for (var m = 0; m < nCoeffs; m++) {
-                coeffsRe[m] = coeffsRe[m] * omu + S_morphTargetRe[m] * mu;
-                coeffsIm[m] = coeffsIm[m] * omu + S_morphTargetIm[m] * mu;
+                coeffsRe[m] = coeffsRe[m] * omu + morphRe[m] * mu;
+                coeffsIm[m] = coeffsIm[m] * omu + morphIm[m] * mu;
             }
         }
 
@@ -8782,9 +9123,16 @@ self.onmessage = function(e) {
                 pc++;
             }
         } else {
-            // Match root order every 4th step (O(n^2)) — colors drift slightly between matches
-            if ((step - stepStart) % 4 === 0) {
+            // Root matching controlled by bitmapMatchStrategy
+            var ms = S_matchStrategy;
+            if (ms === "hungarian1") {
+                hungarianMatch(tmpRe, tmpIm, rootsRe, rootsIm, nRoots);
+            } else if (ms === "assign1") {
                 matchRoots(tmpRe, tmpIm, rootsRe, rootsIm, nRoots);
+            } else {
+                if ((step - stepStart) % 4 === 0) {
+                    matchRoots(tmpRe, tmpIm, rootsRe, rootsIm, nRoots);
+                }
             }
             rootsRe.set(tmpRe); rootsIm.set(tmpIm);
             for (var i = 0; i < nRoots; i++) {
@@ -8972,6 +9320,19 @@ function enterFastMode() {
         fastModeCurves.set(idx, curve);
     }
 
+    // Precompute hi-res D-curves for animated morph targets
+    fastModeDCurves = new Map();
+    if (morphEnabled && morphTargetCoeffs.length === coefficients.length) {
+        const animatedD = allAnimatedDCoeffs();
+        for (const idx of animatedD) {
+            const d = morphTargetCoeffs[idx];
+            const absR = (d.radius / 100) * extentAtHome;
+            let homeRe = d.curve[0].re, homeIm = d.curve[0].im;
+            const dCurve = computeCurveN(homeRe, homeIm, d.pathType, absR, d.angle, d.extra, stepsVal);
+            fastModeDCurves.set(idx, dCurve);
+        }
+    }
+
     const nRoots = currentRoots.length;
     // Compute bitmap CSS colors from bitmapColorMode (only used by bitmap painters)
     fastModeRootColors = new Array(nRoots);
@@ -8990,7 +9351,7 @@ function enterFastMode() {
     fastModeTargetPasses = jiggleInterval;
 
     document.body.classList.add("fast-mode");
-    document.getElementById("bitmap-fast-btn").textContent = "stop";
+    document.getElementById("bitmap-fast-btn").textContent = "pause";
     const passEl0 = document.getElementById("bitmap-pass-count");
     if (passEl0) { passEl0.style.display = ""; passEl0.textContent = fmtPassCount(); }
 
@@ -9098,6 +9459,33 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         }
     }
 
+    // Serialize D-curves (animated morph targets)
+    const dAnimEntries = [];
+    const dCurveOffsets = [];
+    const dCurveLengths = [];
+    const dCurveIsCloud = [];
+    let dTotalPts = 0;
+    if (fastModeDCurves && fastModeDCurves.size > 0) {
+        for (const [idx, curve] of fastModeDCurves.entries()) {
+            const d = morphTargetCoeffs[idx];
+            dAnimEntries.push({ idx, ccw: !!d.ccw, speed: d.speed });
+            dCurveOffsets.push(dTotalPts);
+            dCurveLengths.push(curve.length);
+            dCurveIsCloud.push(!!curve._isCloud);
+            dTotalPts += curve.length;
+        }
+    }
+    const dCurvesFlat = new Float64Array(dTotalPts * 2);
+    if (fastModeDCurves) {
+        let dOff = 0;
+        for (const [, curve] of fastModeDCurves.entries()) {
+            for (let k = 0; k < curve.length; k++) {
+                dCurvesFlat[dOff++] = curve[k].re;
+                dCurvesFlat[dOff++] = curve[k].im;
+            }
+        }
+    }
+
     // Serialize current roots (or use last-pass roots for warm start)
     const rootsRe = new Float64Array(nRoots);
     const rootsIm = new Float64Array(nRoots);
@@ -9152,6 +9540,8 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         morphRate: morphRate,
         morphTargetRe: morphEnabled ? Float64Array.from(morphTargetCoeffs, d => d.re) : null,
         morphTargetIm: morphEnabled ? Float64Array.from(morphTargetCoeffs, d => d.im) : null,
+        matchStrategy: bitmapMatchStrategy,
+        dAnimEntries, dCurvesFlat, dCurveOffsets, dCurveLengths, dCurveIsCloud,
     };
 }
 
@@ -9203,6 +9593,12 @@ function initFastModeWorkers() {
             morphRate: sd.morphRate,
             morphTargetRe: sd.morphTargetRe ? sd.morphTargetRe.buffer.slice(0) : null,
             morphTargetIm: sd.morphTargetIm ? sd.morphTargetIm.buffer.slice(0) : null,
+            matchStrategy: sd.matchStrategy,
+            dAnimEntries: sd.dAnimEntries,
+            dCurvesFlat: sd.dCurvesFlat.buffer.slice(0),
+            dCurveOffsets: sd.dCurveOffsets,
+            dCurveLengths: sd.dCurveLengths,
+            dCurveIsCloud: sd.dCurveIsCloud,
         });
 
         fastModeWorkers.push(worker);
@@ -9426,6 +9822,17 @@ function reinitWorkersForJiggle() {
         }
         fastModeCurves.set(idx, computeCurveN(homeRe, homeIm, c.pathType, absR, c.angle, c.extra, stepsVal));
     }
+    // Recompute D-curves (no jiggle applied to D-nodes)
+    fastModeDCurves = new Map();
+    if (morphEnabled && morphTargetCoeffs.length === coefficients.length) {
+        const animatedD = allAnimatedDCoeffs();
+        for (const idx of animatedD) {
+            const d = morphTargetCoeffs[idx];
+            const absR = (d.radius / 100) * extentAtHome;
+            let hRe = d.curve[0].re, hIm = d.curve[0].im;
+            fastModeDCurves.set(idx, computeCurveN(hRe, hIm, d.pathType, absR, d.angle, d.extra, stepsVal));
+        }
+    }
 
     const nRoots = currentRoots.length;
     fastModeSharedData = serializeFastModeData(animated, stepsVal, nRoots);
@@ -9476,13 +9883,14 @@ function exitFastMode() {
 
     fastModeActive = false;
     fastModeCurves = null;
+    fastModeDCurves = null;
     fastModeRootColors = null;
     fastModeLastPixels = null;
     fastModeLastRoots = null;
     fastModeLastStep = 0;
 
     document.body.classList.remove("fast-mode");
-    document.getElementById("bitmap-fast-btn").textContent = "start";
+    document.getElementById("bitmap-fast-btn").textContent = "cont";
     const passEl = document.getElementById("bitmap-pass-count");
     if (passEl) passEl.style.display = "none";
 
@@ -9530,10 +9938,43 @@ function fastModeChunkLegacy() {
             }
         }
 
+        // Advance animated D-nodes along D-curves
+        if (fastModeDCurves && fastModeDCurves.size) {
+            for (const [idx, curve] of fastModeDCurves.entries()) {
+                const d = morphTargetCoeffs[idx];
+                const N = curve.length;
+                const dir = d.ccw ? -1 : 1;
+                const t = elapsed * d.speed * dir;
+                const u = ((t % 1) + 1) % 1;
+                const rawIdx = u * N;
+                if (curve._isCloud) {
+                    const k = (rawIdx | 0) % N;
+                    d.re = curve[k].re; d.im = curve[k].im;
+                } else {
+                    const lo = (rawIdx | 0) % N;
+                    const hi = (lo + 1) % N;
+                    const frac = rawIdx - (rawIdx | 0);
+                    d.re = curve[lo].re * (1 - frac) + curve[hi].re * frac;
+                    d.im = curve[lo].im * (1 - frac) + curve[hi].im * frac;
+                }
+            }
+        }
+
+        // Morph blending (legacy) — build blended coefficients
+        let coeffsToSolve = coefficients;
+        if (morphEnabled && morphTargetCoeffs.length === coefficients.length) {
+            const mu = 0.5 + 0.5 * Math.sin(2 * Math.PI * morphRate * elapsed);
+            const omu = 1 - mu;
+            coeffsToSolve = coefficients.map((c, i) => ({
+                re: c.re * omu + morphTargetCoeffs[i].re * mu,
+                im: c.im * omu + morphTargetCoeffs[i].im * mu
+            }));
+        }
+
         // Solve roots (warm-start), preserve identity, update in-place
         const iterMode = bitmapColorMode === "iteration";
         const iters = iterMode ? new Uint8Array(coefficients.length - 1) : null;
-        let roots = solveRootsEA(coefficients, currentRoots, iters);
+        let roots = solveRootsEA(coeffsToSolve, currentRoots, iters);
         if (bitmapColorMode !== "uniform" && !iterMode) roots = matchRootOrder(roots, currentRoots);
         setCurrentRootsInPlace(roots);
 
@@ -9575,6 +10016,17 @@ function fastModeChunkLegacy() {
                     hRe += jiggleOffsets.get(idx).re; hIm += jiggleOffsets.get(idx).im;
                 }
                 fastModeCurves.set(idx, computeCurveN(hRe, hIm, c.pathType, absR, c.angle, c.extra, stepsVal2));
+            }
+            // Recompute D-curves (no jiggle applied to D-nodes)
+            fastModeDCurves = new Map();
+            if (morphEnabled && morphTargetCoeffs.length === coefficients.length) {
+                const animatedD2 = allAnimatedDCoeffs();
+                for (const idx of animatedD2) {
+                    const d = morphTargetCoeffs[idx];
+                    const absR = (d.radius / 100) * ext2;
+                    let hRe = d.curve[0].re, hIm = d.curve[0].im;
+                    fastModeDCurves.set(idx, computeCurveN(hRe, hIm, d.pathType, absR, d.angle, d.extra, stepsVal2));
+                }
             }
         }
     }
@@ -9634,6 +10086,7 @@ const leftTabButtons = [...document.querySelectorAll("#left-tab-bar [data-ltab]"
 const leftTabContents = {
     coeffs: document.getElementById("coeffs-content"),
     list: document.getElementById("list-content"),
+    dlist: document.getElementById("dlist-content"),
     morph: document.getElementById("morph-content")
 };
 
@@ -9643,6 +10096,7 @@ function switchLeftTab(tabName) {
     leftTabButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.ltab === tabName));
     for (const [key, el] of Object.entries(leftTabContents)) el.classList.toggle("active", key === tabName);
     if (tabName === "list") { refreshCoeffList(); refreshListCurveEditor(); }
+    if (tabName === "dlist") { refreshDCoeffList(); refreshDListCurveEditor(); }
     if (tabName === "morph") renderMorphPanel();
 }
 leftTabButtons.forEach(btn => btn.addEventListener("click", () => switchLeftTab(btn.dataset.ltab)));
@@ -10574,6 +11028,858 @@ document.getElementById("lce-ps-btn").addEventListener("click", () => {
     } else { uiBuzz(); }
 });
 
+// ============================================================================
+// D-LIST TAB — mirrors C-List for morphTargetCoeffs / selectedMorphCoeffs
+// ============================================================================
+
+const dpathPickPop = document.getElementById("dpath-pick-pop");
+let dpathPickOpen = false;
+let dpathPickCoeffIdx = -1;
+let dpathPickSnapshot = null;
+
+function closeDPathPickPop(revert) {
+    dpathPickPop.classList.remove("open");
+    if (revert && dpathPickSnapshot && dpathPickCoeffIdx >= 0) {
+        const d = morphTargetCoeffs[dpathPickCoeffIdx];
+        d.pathType = dpathPickSnapshot.pathType;
+        d.radius = dpathPickSnapshot.radius;
+        d.speed = dpathPickSnapshot.speed;
+        d.angle = dpathPickSnapshot.angle;
+        d.ccw = dpathPickSnapshot.ccw;
+        d.extra = dpathPickSnapshot.extra || {};
+        d.curve = dpathPickSnapshot.curve;
+        d.curveIndex = dpathPickSnapshot.curveIndex;
+    }
+    dpathPickOpen = false;
+    dpathPickCoeffIdx = -1;
+    dpathPickSnapshot = null;
+    if (typeof leftTab !== "undefined" && leftTab === "dlist") { refreshDCoeffList(); refreshDListCurveEditor(); }
+}
+
+function openDPathPickPop(dIdx, anchorEl) {
+    if (dpathPickOpen && dpathPickCoeffIdx === dIdx) { closeDPathPickPop(true); return; }
+    if (dpathPickOpen) closeDPathPickPop(true);
+    dpathPickCoeffIdx = dIdx;
+
+    const dd = morphTargetCoeffs[dIdx];
+    dpathPickSnapshot = {
+        pathType: dd.pathType, radius: dd.radius, speed: dd.speed,
+        angle: dd.angle, ccw: dd.ccw, extra: dd.extra ? { ...dd.extra } : {},
+        curve: dd.curve.map(pt => ({ ...pt })),
+        curveIndex: dd.curveIndex,
+    };
+
+    dpathPickPop.innerHTML = "";
+
+    const title = document.createElement("div");
+    title.className = "ctx-title";
+    title.textContent = "d" + subscript(dIdx) + " trajectory";
+    dpathPickPop.appendChild(title);
+
+    const pathSel = document.createElement("select");
+    pathSel.innerHTML = document.getElementById("anim-path").innerHTML;
+    pathSel.value = dd.pathType;
+    const pathRow = document.createElement("label");
+    pathRow.textContent = "Path ";
+    pathRow.appendChild(pathSel);
+    dpathPickPop.appendChild(pathRow);
+
+    const dynContainer = document.createElement("div");
+    dpathPickPop.appendChild(dynContainer);
+    const ppInputs = {};
+
+    function buildPPControls(pathType) {
+        dynContainer.innerHTML = "";
+        for (const k in ppInputs) delete ppInputs[k];
+        const schema = PATH_PARAMS[pathType] || [];
+        const d = morphTargetCoeffs[dIdx];
+        for (const p of schema) {
+            const val = getCoeffParam(d, p.key, p);
+            if (p.type === "toggle") {
+                const dirRow = document.createElement("div");
+                dirRow.className = "ctx-row";
+                const btn = document.createElement("button");
+                btn.className = "ctx-dir" + (val ? " active" : "");
+                btn.textContent = val ? p.labels[1] : p.labels[0];
+                btn.addEventListener("click", () => {
+                    const isActive = !btn.classList.contains("active");
+                    btn.classList.toggle("active", isActive);
+                    btn.textContent = isActive ? p.labels[1] : p.labels[0];
+                    previewDPP();
+                });
+                dirRow.appendChild(btn);
+                dynContainer.appendChild(dirRow);
+                ppInputs[p.key] = btn;
+            } else {
+                const row = document.createElement("label");
+                const ppUiVal = p.toUI ? p.toUI(val) : val;
+                const valSpan = document.createElement("span");
+                valSpan.className = "ctx-val";
+                valSpan.textContent = p.fmt(ppUiVal);
+                const inp = document.createElement("input");
+                inp.type = "range"; inp.min = p.min; inp.max = p.max; inp.step = p.step; inp.value = ppUiVal;
+                inp.addEventListener("input", () => {
+                    valSpan.textContent = p.fmt(parseFloat(inp.value));
+                    previewDPP();
+                });
+                row.textContent = p.label + " ";
+                row.appendChild(inp);
+                row.appendChild(valSpan);
+                dynContainer.appendChild(row);
+                ppInputs[p.key] = inp;
+            }
+        }
+    }
+
+    buildPPControls(dd.pathType);
+
+    pathSel.addEventListener("change", () => {
+        buildPPControls(pathSel.value);
+        previewDPP();
+    });
+
+    const ppBtnRow = document.createElement("div");
+    ppBtnRow.style.cssText = "display:flex;gap:6px;align-items:center;justify-content:center;margin-top:4px;";
+    const ppPsBtn = document.createElement("button");
+    ppPsBtn.className = "ctx-accept";
+    ppPsBtn.textContent = "PS";
+    ppPsBtn.title = "Prime Speed — set to nearest speed coprime with all others";
+    ppPsBtn.style.cssText = "padding:4px 8px;background:transparent;border:1px solid var(--stroke);color:var(--muted);";
+    ppPsBtn.addEventListener("click", () => {
+        const sInp = ppInputs["speed"];
+        if (!sInp) return;
+        const cur = parseInt(sInp.value, 10);
+        const ps = findDPrimeSpeed(cur, new Set([dIdx]));
+        if (ps !== cur) {
+            sInp.value = ps;
+            const vs = sInp.parentElement.querySelector(".ctx-val");
+            if (vs) vs.textContent = _P.speed.fmt(ps);
+            previewDPP();
+            uiPing(1320, 0.06);
+        } else { uiBuzz(); }
+    });
+    ppBtnRow.appendChild(ppPsBtn);
+    const acceptBtn = document.createElement("button");
+    acceptBtn.className = "ctx-accept";
+    acceptBtn.textContent = "Accept";
+    acceptBtn.addEventListener("click", () => {
+        dpathPickSnapshot = null;
+        closeDPathPickPop(false);
+    });
+    ppBtnRow.appendChild(acceptBtn);
+    dpathPickPop.appendChild(ppBtnRow);
+
+    function previewDPP() {
+        const d = morphTargetCoeffs[dIdx];
+        d.pathType = pathSel.value;
+        const schema = PATH_PARAMS[d.pathType] || [];
+        for (const p of schema) {
+            if (p.type === "toggle") {
+                setCoeffParam(d, p.key, ppInputs[p.key] ? ppInputs[p.key].classList.contains("active") : p.default);
+            } else {
+                const ppRaw = ppInputs[p.key] ? parseFloat(ppInputs[p.key].value) : null;
+                setCoeffParam(d, p.key, ppRaw !== null ? (p.fromUI ? p.fromUI(ppRaw) : ppRaw) : p.default);
+            }
+        }
+        if (d.pathType === "none") {
+            d.curve = [{ re: d.re, im: d.im }];
+        } else {
+            const absRadius = d.radius / 100 * coeffExtent();
+            d.curve = computeCurve(d.re, d.im, d.pathType, absRadius, d.angle, d.extra);
+        }
+        d.curveIndex = 0;
+        if (morphEnabled) solveRootsThrottled();
+    }
+
+    dpathPickPop.classList.add("open");
+    const r = anchorEl.getBoundingClientRect();
+    const popRect = dpathPickPop.getBoundingClientRect();
+    let left = r.right + 6;
+    let top = r.top;
+    if (left + popRect.width > window.innerWidth - 4) left = r.left - popRect.width - 6;
+    top = Math.max(4, Math.min(top, window.innerHeight - popRect.height - 4));
+    dpathPickPop.style.left = left + "px";
+    dpathPickPop.style.top = top + "px";
+    dpathPickOpen = true;
+}
+
+// Prime speed for D-nodes (excludes given set, checks only D-node speeds)
+function findDPrimeSpeed(currentIntSpeed, excludeSet) {
+    const others = [];
+    for (let i = 0; i < morphTargetCoeffs.length; i++) {
+        if (excludeSet && excludeSet.has(i)) continue;
+        const d = morphTargetCoeffs[i];
+        if (d.pathType === "none") continue;
+        others.push(Math.round(d.speed * 100));
+    }
+    if (others.length === 0) return currentIntSpeed;
+    function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a; }
+    function coprime(x) { return others.every(o => gcd(Math.abs(x), Math.abs(o)) === 1); }
+    if (coprime(currentIntSpeed)) return currentIntSpeed;
+    for (let delta = 1; delta < 200; delta++) {
+        if (currentIntSpeed + delta <= 200 && coprime(currentIntSpeed + delta)) return currentIntSpeed + delta;
+        if (currentIntSpeed - delta >= 1 && coprime(currentIntSpeed - delta)) return currentIntSpeed - delta;
+    }
+    return currentIntSpeed;
+}
+
+// --- D-List core functions ---
+function refreshDCoeffList() {
+    buildDCurveCycleTypes();
+    updateDCurveCycleLabel();
+    const container = document.getElementById("dcoeff-list-scroll");
+    container.innerHTML = "";
+    const n = morphTargetCoeffs.length;
+    document.getElementById("dlist-count").textContent = n + " D-nodes";
+    for (let i = 0; i < n; i++) {
+        const row = document.createElement("div");
+        row.className = "cpick-row";
+
+        const cb = document.createElement("span");
+        cb.className = "cpick-cb" + (selectedMorphCoeffs.has(i) ? " checked" : "");
+
+        const dot = document.createElement("span");
+        dot.className = "cpick-dot";
+        dot.style.background = coeffColor(i, n);
+
+        const sensDot = document.createElement("span");
+        sensDot.className = "cpick-dot";
+        sensDot.style.background = "#555";
+
+        const label = document.createElement("span");
+        label.className = "cpick-label";
+        label.textContent = "d" + i;
+
+        const power = document.createElement("span");
+        power.className = "cpick-power";
+        power.textContent = "";
+
+        const pathBtn = document.createElement("button");
+        pathBtn.className = "cpick-path-btn";
+        const di = morphTargetCoeffs[i];
+        pathBtn.textContent = di.pathType !== "none" ? pathDisplayName(di.pathType) : "\u2014";
+
+        const speedSpan = document.createElement("span");
+        speedSpan.className = "cpick-speed";
+        speedSpan.textContent = di.pathType !== "none" ? String(Math.round(di.speed * 100)) : "\u2014";
+
+        const radiusSpan = document.createElement("span");
+        radiusSpan.className = "cpick-radius";
+        radiusSpan.textContent = di.pathType !== "none" ? String(di.radius) : "\u2014";
+
+        const plenSpan = document.createElement("span");
+        plenSpan.className = "cpick-plen";
+        plenSpan.textContent = String(di.curve.length);
+
+        const posSpan = document.createElement("span");
+        posSpan.className = "cpick-pos";
+        posSpan.textContent = String(di.curveIndex);
+
+        const coords = document.createElement("span");
+        coords.className = "cpick-coords";
+        const sign = di.im >= 0 ? "+" : "";
+        coords.textContent = di.re.toFixed(2) + sign + di.im.toFixed(2) + "i";
+
+        row.appendChild(cb);
+        row.appendChild(dot);
+        row.appendChild(sensDot);
+        row.appendChild(label);
+        row.appendChild(power);
+        row.appendChild(pathBtn);
+        row.appendChild(speedSpan);
+        row.appendChild(radiusSpan);
+        row.appendChild(plenSpan);
+        row.appendChild(posSpan);
+        row.appendChild(coords);
+
+        const idx = i;
+        cb.addEventListener("click", (e) => {
+            e.stopPropagation();
+            clearRootSelection();
+            if (selectedMorphCoeffs.has(idx)) {
+                selectedMorphCoeffs.delete(idx);
+                cb.classList.remove("checked");
+            } else {
+                selectedMorphCoeffs.add(idx);
+                cb.classList.add("checked");
+            }
+            updateMorphSelectionVisual();
+            refreshDListCurveEditor();
+        });
+        pathBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openDPathPickPop(idx, pathBtn);
+        });
+
+        container.appendChild(row);
+    }
+}
+
+function updateDListCoords() {
+    if (typeof leftTab === "undefined" || leftTab !== "dlist") return;
+    const rows = document.querySelectorAll("#dcoeff-list-scroll .cpick-row");
+    const n = morphTargetCoeffs.length;
+    if (rows.length !== n) { refreshDCoeffList(); return; }
+    for (let i = 0; i < n; i++) {
+        const d = morphTargetCoeffs[i];
+        const coordsEl = rows[i].querySelector(".cpick-coords");
+        if (coordsEl) {
+            const sign = d.im >= 0 ? "+" : "";
+            coordsEl.textContent = d.re.toFixed(2) + sign + d.im.toFixed(2) + "i";
+        }
+        const posEl = rows[i].querySelector(".cpick-pos");
+        if (posEl) posEl.textContent = String(d.curveIndex);
+    }
+}
+
+function updateDListPathCols() {
+    if (typeof leftTab === "undefined" || leftTab !== "dlist") return;
+    const rows = document.querySelectorAll("#dcoeff-list-scroll .cpick-row");
+    const n = morphTargetCoeffs.length;
+    if (rows.length !== n) { refreshDCoeffList(); return; }
+    for (let i = 0; i < n; i++) {
+        const d = morphTargetCoeffs[i];
+        const pathBtn = rows[i].querySelector(".cpick-path-btn");
+        if (pathBtn) pathBtn.textContent = d.pathType !== "none" ? pathDisplayName(d.pathType) : "\u2014";
+        const speedEl = rows[i].querySelector(".cpick-speed");
+        if (speedEl) speedEl.textContent = d.pathType !== "none" ? String(Math.round(d.speed * 100)) : "\u2014";
+        const radiusEl = rows[i].querySelector(".cpick-radius");
+        if (radiusEl) radiusEl.textContent = d.pathType !== "none" ? String(d.radius) : "\u2014";
+        const plenEl = rows[i].querySelector(".cpick-plen");
+        if (plenEl) plenEl.textContent = String(d.curve.length);
+    }
+}
+
+// --- D-List toolbar event handlers ---
+document.getElementById("dlist-select-all-btn").addEventListener("click", () => {
+    clearRootSelection();
+    for (let i = 0; i < morphTargetCoeffs.length; i++) selectedMorphCoeffs.add(i);
+    updateMorphSelectionVisual();
+    if (leftTab === "dlist") { refreshDCoeffList(); refreshDListCurveEditor(); }
+});
+document.getElementById("dlist-deselect-all-btn").addEventListener("click", () => {
+    selectedMorphCoeffs.clear();
+    updateMorphSelectionVisual();
+    if (leftTab === "dlist") { refreshDCoeffList(); refreshDListCurveEditor(); }
+});
+{
+    const dSelSpd = document.getElementById("dlist-sel-speed");
+    const dSelSpdVal = document.getElementById("dlist-sel-speed-val");
+    dSelSpd.addEventListener("input", () => { dSelSpdVal.textContent = dSelSpd.value; });
+    const dSelP2 = document.getElementById("dlist-sel-param2");
+    const dSelP2Val = document.getElementById("dlist-sel-param2-val");
+    dSelP2.addEventListener("input", () => { dSelP2Val.textContent = dSelP2.value; });
+}
+
+document.getElementById("dlist-transform").addEventListener("change", function() {
+    const action = this.value;
+    this.value = "none";
+    if (action === "none") return;
+    if (selectedMorphCoeffs.size === 0) { uiBuzz(); return; }
+    const param1 = parseInt(document.getElementById("dlist-sel-speed").value, 10);
+    const param2 = parseInt(document.getElementById("dlist-sel-param2").value, 10);
+    let changed = false;
+    if (action === "PrimeSpeeds") {
+        for (const idx of selectedMorphCoeffs) {
+            const d = morphTargetCoeffs[idx];
+            if (d.pathType === "none") continue;
+            const cur = Math.round(d.speed * 100);
+            const ps = findDPrimeSpeed(cur, new Set([idx]));
+            if (ps !== cur) { d.speed = ps / 100; changed = true; }
+        }
+    } else if (action === "SetAllSpeeds") {
+        for (const idx of selectedMorphCoeffs) {
+            const d = morphTargetCoeffs[idx];
+            if (d.pathType === "none") continue;
+            d.speed = param1 / 100;
+            changed = true;
+        }
+    } else if (action === "RandomSpeed") {
+        for (const idx of selectedMorphCoeffs) {
+            const d = morphTargetCoeffs[idx];
+            if (d.pathType === "none") continue;
+            d.speed = Math.round(Math.random() * param1) / 100;
+            changed = true;
+        }
+    } else if (action === "RandomAngle") {
+        for (const idx of selectedMorphCoeffs) {
+            const d = morphTargetCoeffs[idx];
+            if (d.pathType === "none") continue;
+            const schema = PATH_PARAMS[d.pathType] || [];
+            if (schema.some(p => p.key === "angle")) {
+                d.angle = Math.random() * param1 / 100;
+                const absR = d.radius / 100 * coeffExtent();
+                d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+                d.curveIndex = 0;
+                changed = true;
+            }
+        }
+    } else if (action === "RandomRadius") {
+        const lo = Math.min(param1, param2), hi = Math.max(param1, param2);
+        for (const idx of selectedMorphCoeffs) {
+            const d = morphTargetCoeffs[idx];
+            if (d.pathType === "none") continue;
+            d.radius = Math.round(lo + Math.random() * (hi - lo));
+            const absR = d.radius / 100 * coeffExtent();
+            d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+            d.curveIndex = 0;
+            changed = true;
+        }
+    } else if (action === "LerpSpeed") {
+        const idxArr = [...selectedMorphCoeffs].filter(i => morphTargetCoeffs[i].pathType !== "none").sort((a, b) => a - b);
+        if (idxArr.length > 0) {
+            const lo = param1, hi = param2;
+            for (let k = 0; k < idxArr.length; k++) {
+                const d = morphTargetCoeffs[idxArr[k]];
+                d.speed = Math.round(idxArr.length === 1 ? lo : lo + k * (hi - lo) / (idxArr.length - 1)) / 100;
+                changed = true;
+            }
+        }
+    } else if (action === "LerpRadius") {
+        const idxArr = [...selectedMorphCoeffs].filter(i => morphTargetCoeffs[i].pathType !== "none").sort((a, b) => a - b);
+        if (idxArr.length > 0) {
+            const lo = param1, hi = param2;
+            for (let k = 0; k < idxArr.length; k++) {
+                const d = morphTargetCoeffs[idxArr[k]];
+                d.radius = Math.round(idxArr.length === 1 ? lo : lo + k * (hi - lo) / (idxArr.length - 1));
+                const absR = d.radius / 100 * coeffExtent();
+                d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+                d.curveIndex = 0;
+                changed = true;
+            }
+        }
+    } else if (action === "LerpAngle") {
+        const idxArr = [...selectedMorphCoeffs].filter(i => {
+            const d = morphTargetCoeffs[i];
+            if (d.pathType === "none") return false;
+            return (PATH_PARAMS[d.pathType] || []).some(p => p.key === "angle");
+        }).sort((a, b) => a - b);
+        if (idxArr.length > 0) {
+            const lo = param1 / 100, hi = param2 / 100;
+            for (let k = 0; k < idxArr.length; k++) {
+                const d = morphTargetCoeffs[idxArr[k]];
+                d.angle = idxArr.length === 1 ? lo : lo + k * (hi - lo) / (idxArr.length - 1);
+                const absR = d.radius / 100 * coeffExtent();
+                d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+                d.curveIndex = 0;
+                changed = true;
+            }
+        }
+    } else if (action === "RandomDirection") {
+        for (const idx of selectedMorphCoeffs) {
+            const d = morphTargetCoeffs[idx];
+            if (d.pathType === "none") continue;
+            if ((PATH_PARAMS[d.pathType] || []).some(p => p.key === "ccw")) {
+                d.ccw = Math.random() < 0.5;
+                const absR = d.radius / 100 * coeffExtent();
+                d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+                d.curveIndex = 0;
+                changed = true;
+            }
+        }
+    } else if (action === "FlipAllDirections") {
+        for (const idx of selectedMorphCoeffs) {
+            const d = morphTargetCoeffs[idx];
+            if (d.pathType === "none") continue;
+            if ((PATH_PARAMS[d.pathType] || []).some(p => p.key === "ccw")) {
+                d.ccw = !d.ccw;
+                const absR = d.radius / 100 * coeffExtent();
+                d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+                d.curveIndex = 0;
+                changed = true;
+            }
+        }
+    } else if (action === "ShuffleCurves") {
+        const idxArr = [...selectedMorphCoeffs].filter(i => morphTargetCoeffs[i].pathType !== "none");
+        if (idxArr.length >= 2) {
+            const curves = idxArr.map(i => {
+                const d = morphTargetCoeffs[i];
+                return { pathType: d.pathType, radius: d.radius, speed: d.speed,
+                         angle: d.angle, ccw: d.ccw, extra: JSON.parse(JSON.stringify(d.extra || {})) };
+            });
+            for (let k = curves.length - 1; k > 0; k--) {
+                const j = Math.floor(Math.random() * (k + 1));
+                [curves[k], curves[j]] = [curves[j], curves[k]];
+            }
+            for (let k = 0; k < idxArr.length; k++) {
+                const d = morphTargetCoeffs[idxArr[k]];
+                const s = curves[k];
+                d.pathType = s.pathType; d.radius = s.radius; d.speed = s.speed;
+                d.angle = s.angle; d.ccw = s.ccw; d.extra = s.extra;
+                const absR = d.radius / 100 * coeffExtent();
+                d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+                d.curveIndex = 0;
+            }
+            changed = true;
+        }
+    } else if (action === "ShufflePositions") {
+        const idxArr = [...selectedMorphCoeffs];
+        if (idxArr.length >= 2) {
+            const positions = idxArr.map(i => ({ re: morphTargetCoeffs[i].re, im: morphTargetCoeffs[i].im }));
+            for (let k = positions.length - 1; k > 0; k--) {
+                const j = Math.floor(Math.random() * (k + 1));
+                [positions[k], positions[j]] = [positions[j], positions[k]];
+            }
+            for (let k = 0; k < idxArr.length; k++) {
+                const d = morphTargetCoeffs[idxArr[k]];
+                d.re = positions[k].re; d.im = positions[k].im;
+                const absR = d.radius / 100 * coeffExtent();
+                d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+                d.curveIndex = 0;
+            }
+            changed = true;
+        }
+    } else if (action === "CircleLayout") {
+        const idxArr = [...selectedMorphCoeffs].sort((a, b) => a - b);
+        if (idxArr.length > 0) {
+            const r = param1 / 100 * coeffExtent();
+            for (let k = 0; k < idxArr.length; k++) {
+                const ang = 2 * Math.PI * k / idxArr.length;
+                const d = morphTargetCoeffs[idxArr[k]];
+                d.re = r * Math.cos(ang); d.im = r * Math.sin(ang);
+                const absR = d.radius / 100 * coeffExtent();
+                d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+                d.curveIndex = 0;
+            }
+            changed = true;
+        }
+    } else if (action === "RotatePositions") {
+        const idxArr = [...selectedMorphCoeffs];
+        if (idxArr.length > 0) {
+            let cx = 0, cy = 0;
+            for (const i of idxArr) { cx += morphTargetCoeffs[i].re; cy += morphTargetCoeffs[i].im; }
+            cx /= idxArr.length; cy /= idxArr.length;
+            const theta = param1 / 100 * 2 * Math.PI;
+            const cosT = Math.cos(theta), sinT = Math.sin(theta);
+            for (const i of idxArr) {
+                const d = morphTargetCoeffs[i];
+                const dx = d.re - cx, dy = d.im - cy;
+                d.re = cx + dx * cosT - dy * sinT;
+                d.im = cy + dx * sinT + dy * cosT;
+                const absR = d.radius / 100 * coeffExtent();
+                d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+                d.curveIndex = 0;
+            }
+            changed = true;
+        }
+    } else if (action === "ScalePositions") {
+        const idxArr = [...selectedMorphCoeffs];
+        if (idxArr.length > 0) {
+            let cx = 0, cy = 0;
+            for (const i of idxArr) { cx += morphTargetCoeffs[i].re; cy += morphTargetCoeffs[i].im; }
+            cx /= idxArr.length; cy /= idxArr.length;
+            const scale = param1 / 50;
+            for (const i of idxArr) {
+                const d = morphTargetCoeffs[i];
+                d.re = cx + (d.re - cx) * scale;
+                d.im = cy + (d.im - cy) * scale;
+                const absR = d.radius / 100 * coeffExtent();
+                d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+                d.curveIndex = 0;
+            }
+            changed = true;
+        }
+    } else if (action === "JitterPositions") {
+        const idxArr = [...selectedMorphCoeffs];
+        if (idxArr.length > 0) {
+            const mag = param1 / 100 * coeffExtent();
+            for (const i of idxArr) {
+                const d = morphTargetCoeffs[i];
+                d.re += (Math.random() - 0.5) * 2 * mag;
+                d.im += (Math.random() - 0.5) * 2 * mag;
+                const absR = d.radius / 100 * coeffExtent();
+                d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+                d.curveIndex = 0;
+            }
+            changed = true;
+        }
+    } else if (action === "Conjugate") {
+        for (const idx of selectedMorphCoeffs) {
+            const d = morphTargetCoeffs[idx];
+            d.im = -d.im;
+            const absR = d.radius / 100 * coeffExtent();
+            d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+            d.curveIndex = 0;
+            changed = true;
+        }
+    } else if (action === "InvertPositions") {
+        for (const idx of selectedMorphCoeffs) {
+            const d = morphTargetCoeffs[idx];
+            const m2 = d.re * d.re + d.im * d.im;
+            if (m2 < 1e-30) continue;
+            d.re = d.re / m2; d.im = -d.im / m2;
+            const absR = d.radius / 100 * coeffExtent();
+            d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+            d.curveIndex = 0;
+            changed = true;
+        }
+    } else if (action === "SortByModulus") {
+        const idxArr = [...selectedMorphCoeffs].sort((a, b) => a - b);
+        if (idxArr.length >= 2) {
+            const positions = idxArr.map(i => ({ re: morphTargetCoeffs[i].re, im: morphTargetCoeffs[i].im }));
+            positions.sort((a, b) => (a.re * a.re + a.im * a.im) - (b.re * b.re + b.im * b.im));
+            for (let k = 0; k < idxArr.length; k++) {
+                const d = morphTargetCoeffs[idxArr[k]];
+                d.re = positions[k].re; d.im = positions[k].im;
+                const absR = d.radius / 100 * coeffExtent();
+                d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+                d.curveIndex = 0;
+            }
+            changed = true;
+        }
+    } else if (action === "SortByArgument") {
+        const idxArr = [...selectedMorphCoeffs].sort((a, b) => a - b);
+        if (idxArr.length >= 2) {
+            const positions = idxArr.map(i => ({ re: morphTargetCoeffs[i].re, im: morphTargetCoeffs[i].im }));
+            positions.sort((a, b) => Math.atan2(a.im, a.re) - Math.atan2(b.im, b.re));
+            for (let k = 0; k < idxArr.length; k++) {
+                const d = morphTargetCoeffs[idxArr[k]];
+                d.re = positions[k].re; d.im = positions[k].im;
+                const absR = d.radius / 100 * coeffExtent();
+                d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+                d.curveIndex = 0;
+            }
+            changed = true;
+        }
+    }
+    if (changed) {
+        uiPing(1320, 0.06);
+        if (morphEnabled) solveRootsThrottled();
+        if (leftTab === "morph") renderMorphPanel();
+        if (leftTab === "dlist") { refreshDCoeffList(); refreshDListCurveEditor(); }
+    } else { uiBuzz(); }
+});
+
+// --- D-List curve type cycler ---
+let dCurveCycleTypes = [];
+let dCurveCycleIdx = 0;
+
+function buildDCurveCycleTypes() {
+    const types = new Set();
+    for (const d of morphTargetCoeffs) types.add(d.pathType);
+    dCurveCycleTypes = [...types].sort();
+    if (dCurveCycleTypes.length === 0) dCurveCycleTypes = ["none"];
+}
+
+function updateDCurveCycleLabel() {
+    const label = document.getElementById("dlist-curve-cycle");
+    if (dCurveCycleTypes.length === 0) { label.textContent = "\u2014"; return; }
+    if (dCurveCycleIdx >= dCurveCycleTypes.length) dCurveCycleIdx = 0;
+    if (dCurveCycleIdx < 0) dCurveCycleIdx = dCurveCycleTypes.length - 1;
+    label.textContent = pathDisplayName(dCurveCycleTypes[dCurveCycleIdx]);
+}
+
+function selectByDCurveType(type) {
+    clearRootSelection();
+    selectedMorphCoeffs.clear();
+    for (let i = 0; i < morphTargetCoeffs.length; i++) {
+        if (morphTargetCoeffs[i].pathType === type) selectedMorphCoeffs.add(i);
+    }
+    updateMorphSelectionVisual();
+    if (leftTab === "dlist") { refreshDCoeffList(); refreshDListCurveEditor(); }
+}
+
+document.getElementById("dlist-all-curves-btn").addEventListener("click", () => {
+    if (dCurveCycleTypes.length === 0) return;
+    selectByDCurveType(dCurveCycleTypes[dCurveCycleIdx]);
+});
+
+document.getElementById("dlist-curve-prev").addEventListener("click", () => {
+    buildDCurveCycleTypes();
+    if (dCurveCycleTypes.length === 0) return;
+    dCurveCycleIdx = (dCurveCycleIdx - 1 + dCurveCycleTypes.length) % dCurveCycleTypes.length;
+    updateDCurveCycleLabel();
+    selectByDCurveType(dCurveCycleTypes[dCurveCycleIdx]);
+});
+
+document.getElementById("dlist-curve-next").addEventListener("click", () => {
+    buildDCurveCycleTypes();
+    if (dCurveCycleTypes.length === 0) return;
+    dCurveCycleIdx = (dCurveCycleIdx + 1) % dCurveCycleTypes.length;
+    updateDCurveCycleLabel();
+    selectByDCurveType(dCurveCycleTypes[dCurveCycleIdx]);
+});
+
+// --- D-List curve editor ---
+const dlePanel = document.getElementById("dlist-curve-editor");
+const dlePathSel = document.getElementById("dle-path-sel");
+const dleCoeffName = document.getElementById("dle-coeff-name");
+const dleControls = document.getElementById("dle-controls");
+let dleInputs = {};
+let dleCurrentPath = "";
+let dleCycleIdx = 0;
+let dleCycleList = [];
+
+function refreshDListCurveEditor() {
+    if (selectedMorphCoeffs.size === 0) {
+        dlePanel.style.opacity = "0.3";
+        dlePanel.style.pointerEvents = "none";
+        return;
+    }
+    dlePanel.style.opacity = "1";
+    dlePanel.style.pointerEvents = "";
+
+    dleCycleList = [...selectedMorphCoeffs].sort((a, b) => a - b);
+    if (dleCycleIdx >= dleCycleList.length) dleCycleIdx = 0;
+    if (dleCycleIdx < 0) dleCycleIdx = dleCycleList.length - 1;
+
+    const di = dleCycleList[dleCycleIdx];
+    const d = morphTargetCoeffs[di];
+    dlePathSel.value = d.pathType || "none";
+    dleCurrentPath = dlePathSel.value;
+
+    updateDleCyclerLabel();
+    buildDleControls(dleCurrentPath);
+}
+
+dlePathSel.addEventListener("change", () => {
+    dleCurrentPath = dlePathSel.value;
+    buildDleControls(dleCurrentPath);
+});
+
+function updateDleCyclerLabel() {
+    const updateOneBtn = document.getElementById("dle-update-one");
+    if (dleCycleList.length === 0) {
+        dleCoeffName.textContent = "\u2014";
+        updateOneBtn.textContent = "Update \u2014";
+        return;
+    }
+    const di = dleCycleList[dleCycleIdx];
+    const n = morphTargetCoeffs.length;
+    const color = coeffColor(di, n);
+    dleCoeffName.textContent = "d" + di;
+    dleCoeffName.style.color = color;
+    updateOneBtn.textContent = "Update d" + di;
+}
+
+function buildDleControls(pathType) {
+    dleControls.innerHTML = "";
+    dleInputs = {};
+    const schema = PATH_PARAMS[pathType] || [];
+    if (schema.length === 0) return;
+    const di = dleCycleList[dleCycleIdx];
+    const d = morphTargetCoeffs[di];
+    for (const p of schema) {
+        const val = getCoeffParam(d, p.key, p);
+        if (p.type === "toggle") {
+            const btn = document.createElement("button");
+            btn.className = "ctx-dir" + (val ? " active" : "");
+            btn.textContent = val ? p.labels[1] : p.labels[0];
+            btn.addEventListener("click", () => {
+                const isActive = !btn.classList.contains("active");
+                btn.classList.toggle("active", isActive);
+                btn.textContent = isActive ? p.labels[1] : p.labels[0];
+            });
+            dleControls.appendChild(btn);
+            dleInputs[p.key] = btn;
+        } else {
+            const row = document.createElement("label");
+            const dleUiVal = p.toUI ? p.toUI(val) : val;
+            const valSpan = document.createElement("span");
+            valSpan.className = "ctx-val";
+            valSpan.textContent = p.fmt(dleUiVal);
+            const inp = document.createElement("input");
+            inp.type = "range"; inp.min = p.min; inp.max = p.max; inp.step = p.step; inp.value = dleUiVal;
+            inp.addEventListener("input", () => {
+                valSpan.textContent = p.fmt(parseFloat(inp.value));
+            });
+            row.textContent = p.label + " ";
+            row.appendChild(inp);
+            row.appendChild(valSpan);
+            dleControls.appendChild(row);
+            dleInputs[p.key] = inp;
+        }
+    }
+}
+
+function dleReadParams() {
+    const schema = PATH_PARAMS[dleCurrentPath] || [];
+    const params = {};
+    for (const p of schema) {
+        if (p.type === "toggle") {
+            params[p.key] = dleInputs[p.key] ? dleInputs[p.key].classList.contains("active") : p.default;
+        } else {
+            const dleRaw = dleInputs[p.key] ? parseFloat(dleInputs[p.key].value) : null;
+            params[p.key] = dleRaw !== null ? (p.fromUI ? p.fromUI(dleRaw) : dleRaw) : p.default;
+        }
+    }
+    return params;
+}
+
+function dleApplyToCoeff(di, params) {
+    const d = morphTargetCoeffs[di];
+    d.pathType = dleCurrentPath;
+    const schema = PATH_PARAMS[dleCurrentPath] || [];
+    for (const p of schema) {
+        setCoeffParam(d, p.key, params[p.key]);
+    }
+    if (d.pathType === "none") {
+        d.curve = [{ re: d.re, im: d.im }];
+    } else {
+        const absRadius = d.radius / 100 * coeffExtent();
+        d.curve = computeCurve(d.re, d.im, d.pathType, absRadius, d.angle, d.extra);
+    }
+    d.curveIndex = 0;
+}
+
+function dleSyncToCurrentCoeff() {
+    const di = dleCycleList[dleCycleIdx];
+    const d = morphTargetCoeffs[di];
+    dlePathSel.value = d.pathType || "none";
+    dleCurrentPath = dlePathSel.value;
+    updateDleCyclerLabel();
+    buildDleControls(dleCurrentPath);
+}
+
+document.getElementById("dle-prev").addEventListener("click", () => {
+    if (dleCycleList.length === 0) return;
+    dleCycleIdx = (dleCycleIdx - 1 + dleCycleList.length) % dleCycleList.length;
+    dleSyncToCurrentCoeff();
+});
+document.getElementById("dle-next").addEventListener("click", () => {
+    if (dleCycleList.length === 0) return;
+    dleCycleIdx = (dleCycleIdx + 1) % dleCycleList.length;
+    dleSyncToCurrentCoeff();
+});
+document.getElementById("dle-update-sel").addEventListener("click", () => {
+    if (dleCycleList.length === 0) return;
+    const params = dleReadParams();
+    for (const di of dleCycleList) {
+        dleApplyToCoeff(di, params);
+    }
+    buildDCurveCycleTypes(); updateDCurveCycleLabel();
+    if (morphEnabled) solveRootsThrottled();
+    if (leftTab === "morph") renderMorphPanel();
+    if (leftTab === "dlist") { updateDListPathCols(); updateDListCoords(); }
+});
+document.getElementById("dle-update-one").addEventListener("click", () => {
+    if (dleCycleList.length === 0) return;
+    const params = dleReadParams();
+    dleApplyToCoeff(dleCycleList[dleCycleIdx], params);
+    buildDCurveCycleTypes(); updateDCurveCycleLabel();
+    if (morphEnabled) solveRootsThrottled();
+    if (leftTab === "morph") renderMorphPanel();
+    if (leftTab === "dlist") { updateDListPathCols(); updateDListCoords(); }
+});
+document.getElementById("dle-ps-btn").addEventListener("click", () => {
+    if (dleCycleList.length === 0) return;
+    const sInp = dleInputs["speed"];
+    if (!sInp) return;
+    const di = dleCycleList[dleCycleIdx];
+    const cur = parseInt(sInp.value, 10);
+    const ps = findDPrimeSpeed(cur, new Set([di]));
+    if (ps !== cur) {
+        sInp.value = ps;
+        const vs = sInp.parentElement.querySelector(".ctx-val");
+        if (vs) vs.textContent = _P.speed.fmt(ps);
+        uiPing(1320, 0.06);
+    } else { uiBuzz(); }
+});
+
+// ============================================================================
+// END D-LIST TAB
+// ============================================================================
+
 // Bitmap tab buttons
 document.getElementById("bitmap-start-btn").addEventListener("click", function () {
     if (fastModeActive) exitFastMode();
@@ -10581,6 +11887,7 @@ document.getElementById("bitmap-start-btn").addEventListener("click", function (
     document.getElementById("bitmap-save-btn").disabled = false;
     document.getElementById("bitmap-clear-btn").disabled = false;
     document.getElementById("bitmap-fast-btn").disabled = false;
+    document.getElementById("bitmap-fast-btn").textContent = "start";
     document.getElementById("bitmap-coeff-btn").disabled = false;
 });
 
@@ -10868,6 +12175,7 @@ renderDomainColoring();
 // Install marquee selection (once — survives rebuild since SVG element persists)
 installMarqueeSelection(coeffSvg, () => coeffLayer.selectAll("circle.coeff"), "coeff");
 installMarqueeSelection(rootsSvg, () => rootsLayer.selectAll("circle.root"), "roots");
+installMarqueeSelection(d3.select("#morph-panel"), () => morphLayer ? morphLayer.selectAll("circle.morph-coeff") : d3.selectAll(".morph-coeff-none"), "morph");
 
 // Default trajectory: C3 (index 2) — circle, R50%, S0.5, A0.33, CW
 {

@@ -84,7 +84,7 @@ Each coefficient is a plain object with these fields:
 
 Coefficient morphing blends two coefficient sets: primary C (`coefficients[]`) and target D (`morphTargetCoeffs[]`). When enabled, the solver receives `C[i]*(1-mu) + D[i]*mu` where `mu = 0.5 + 0.5*sin(2π*morphRate*elapsed)`.
 
-Key state: `morphEnabled`, `morphRate` (Hz, 0.01–2.00), `morphMu` (0–1), `morphTargetCoeffs[]` (same structure as `coefficients[]`, but Phase 1 = static positions only, pathType always "none").
+Key state: `morphEnabled`, `morphRate` (Hz, 0.01–2.00), `morphMu` (0–1), `morphTargetCoeffs[]` (same structure as `coefficients[]`). D-nodes can be assigned paths via the D-List tab, making the morph target itself dynamic.
 
 **Design insight**: Morph is a "global path" — it affects all coefficients equally through a single parameter. Unlike per-coefficient paths which are independent, morph creates correlated perturbation across the entire polynomial. The blending happens BEFORE the solver call, making it transparent to both JS and WASM solvers.
 
@@ -526,6 +526,10 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 27. **Feature flags must cover all code paths, not just the obvious ones** — derivative coloring worked perfectly for SVG animation (`computeRootSensitivities()` → `sensitivityColor()`), but the bitmap pipeline was completely separate. When `bitmapColorMode === "derivative"` was selected, none of the worker flags (`noColor`, `iterColor`, `proxColor`) were true, so workers silently fell through to rainbow (per-root index) coloring. The fix required a complete parallel implementation: `DERIV_PALETTE` (16-entry blue→white→red), `rankNorm()` + `computeSens()` functions in the worker blob, a `derivColor` flag in serialization, and new branches in both `paintBitmapFrame()` and `paintBitmapFrameFast()`. The lesson: when adding a new color mode, trace every code path that reads the mode — main-thread painters, fast-mode painters, worker run loops, and serialization. A "mode" that only works in one pipeline is a bug, not a feature.
 
+28. **Mirror features by mirroring ALL entry points, not just the obvious ones** — when adding D-node (morph target) path animation, the obvious entry point was `animLoop()`. But there are 5 places that advance/reset coefficient positions: `animLoop()`, `startAnimation()` (fresh-start snap), scrub slider handler, home button handler, and fast mode workers. Missing any one creates a sync bug: e.g., scrubbing would move C but freeze D, or home would reset C but leave D mid-path. The approach: enumerate ALL code paths that touch coefficient positions (search for `curve[0]`, `curveIndex`, `advanceDNodesAlongCurves`), then add D-node handling to each. For workers, D-curves must be pre-computed in `enterFastMode()`, serialized in `serializeFastModeData()`, parsed in the worker init handler, and advanced in the inner loop — each step must handle D independently from C. Pre-allocate `morphRe`/`morphIm` as copies of static D positions outside the step loop, then overwrite animated indices each step (avoids per-step full-array copy while keeping non-animated D positions correct).
+
+29. **Expose algorithm choices as user-selectable strategies** — root matching for Index Rainbow mode was hardcoded to greedy nearest-neighbor every 4th step. This is a quality/speed tradeoff the user should control. The fix: add `bitmapMatchStrategy` with three options — Hungarian (O(n³), optimal, every step), Greedy×1 (O(n²), every step), Greedy×4 (O(n²), every 4th step, default). The Hungarian algorithm (Kuhn-Munkres) was added to the worker blob using `var`-only ES5-style syntax. The strategy is serialized as a simple string field, dispatched in the worker's rainbow branch via `S_matchStrategy`, and persisted in save/load with backward-compatible default. UI: small labeled chips under the "Index Rainbow" toggle in the bitmap cfg popup, following the same sub-option pattern as uniform color swatches. Key: the strategy only affects the rainbow branch — derivative mode keeps its own fixed matching logic.
+
 ---
 
 ## 11. Conventions to Follow
@@ -572,7 +576,7 @@ The bitmap system uses a **split compute/display** model (see [off-canvas-render
 
 - **No `Math.hypot` in hot loops** — use `re*re + im*im` directly
 - **Avoid creating objects in tight loops** — reuse arrays, use flat typed arrays
-- **Throttle expensive operations** — root matching every 4th step, domain coloring once per rAF
+- **Throttle expensive operations** — root matching configurable (Hungarian every step, greedy every step, or greedy every 4th step), domain coloring once per rAF
 - **Profile before optimizing** — the timing popup (T button) shows per-pass breakdown
 
 ---
@@ -581,7 +585,7 @@ The bitmap system uses a **split compute/display** model (see [off-canvas-render
 
 ### Test Suite
 
-Automated tests exist in `tests/` using Playwright Python (headless Chromium). 339 tests across 16 files covering solver correctness, root matching, curve generation, path parametrics, shapes, polynomial operations, state save/load, stats, colors, utilities, morph system, jiggle perturbation (10 modes), continuous fast mode, off-canvas render split, multi-format image export, bitmap/animation color decoupling, derivative bitmap coloring, integration, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
+Automated tests exist in `tests/` using Playwright Python (headless Chromium). 430 tests across 20 files covering solver correctness, root matching, curve generation, path parametrics, shapes, polynomial operations, state save/load, stats, colors, utilities, morph system, jiggle perturbation (10 modes), continuous fast mode, off-canvas render split, multi-format image export, bitmap/animation color decoupling, derivative bitmap coloring, root-matching strategies (Hungarian algorithm, serialization, UI chips), D-node paths (D-List tab, animation helpers, D-curve serialization, backward compat), extended save/load fields, animation entry points (start/stop/home/scrub with D-nodes), integration, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
 
 Manual testing remains important for:
 - Dragging coefficients and roots
@@ -635,6 +639,7 @@ Manual testing remains important for:
 | [memory_timings.md](memory_timings.md) | Persistent buffer optimization: analysis + results | ~219 |
 | [wasm_investigation.md](wasm_investigation.md) | WASM solver design, build workflow, benchmarks | ~251 |
 | [off-canvas-render.md](off-canvas-render.md) | Split compute/display architecture, BMP export, GPU memory | ~224 |
+| [d-node-paths.md](d-node-paths.md) | D-List tab, D-node path animation, fast mode workers, save/load | ~119 |
 | [test-results.md](test-results.md) | Playwright test results + JS/WASM benchmarks | ~122 |
 | [morph.md](morph.md) | Morph feature design: Phase 1 (static D), Phase 2/3 (deferred) | ~279 |
 | [proof-read.md](proof-read.md) | Line-by-line README/docs audit results | ~214 |
@@ -674,4 +679,11 @@ Manual testing remains important for:
 | `DERIV_PALETTE` / `DERIV_PAL_R/G/B` | ~935 |
 | `rankNorm()` + `computeSens()` (worker blob) | ~8476 |
 | `computeRootSensitivities()` (main thread) | ~1917 |
+| `hungarianMatch()` (worker blob) | ~8534 |
+| `bitmapMatchStrategy` | ~897 |
 | List tab transforms | ~9004 |
+| `allAnimatedDCoeffs()` | ~3130 |
+| `advanceDNodesAlongCurves()` | ~3138 |
+| `updateMorphPanelDDots()` | ~3161 |
+| `refreshDCoeffList()` | ~11227 |
+| `fastModeDCurves` | ~1051 |

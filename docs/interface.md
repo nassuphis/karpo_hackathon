@@ -4,47 +4,15 @@ Complete control reference for PolyPaint. For a quick overview, see the [README]
 
 ## Layout Overview
 
-```mermaid
-graph LR
-    subgraph Header["Header Bar"]
-        direction LR
-        H1["Degree"]
-        H2["Pattern"]
-        H3["Reset"]
-        H4["Save / Load / Export"]
-        H5["C / T"]
-    end
-
-    subgraph Left["Left Panel"]
-        direction TB
-        L1["Coefficients | List | D-List | Morph"]
-        L2["Trajectory Editor"]
-        L3["Scrub | Play | Home"]
-    end
-
-    subgraph Ops["Mid-bar"]
-        direction TB
-        O1["Scale | Rotate | Translate"]
-        O2["Select / Invert"]
-    end
-
-    subgraph Right["Right Panel"]
-        direction TB
-        R1["Roots | Stats | Sound | Bitmap"]
-        R2["Roots toolbar"]
-        R3["Record"]
-    end
-
-    Header --- Left
-    Left --- Ops
-    Ops --- Right
-```
+![Full app layout](images/iface_layout.png)
 
 The UI is organized around a compact header bar and two side-by-side complex-plane panels (left: coefficients, right: roots) with an operations mid-bar between them.
 
 ---
 
 ## Header Bar
+
+![Header bar](images/iface_header.png)
 
 | Control | Description |
 |---------|-------------|
@@ -53,9 +21,14 @@ The UI is organized around a compact header bar and two side-by-side complex-pla
 | **Reset** (&#8634;) | Reset to initial state for the current degree and pattern. |
 | **Save** | Save full application state as a JSON file. |
 | **Load** | Load a previously saved JSON snapshot. |
-| **Export** (&#11015;) | Opens a popup with 7 export modes: Both, Coeffs, Roots, Stats, Sound, Bitmap, Full. |
-| **C** | Worker count config (1 / 2 / 4 / 8 / 16). |
+| **Export** (&#11015;) | Opens a popup with 7 export modes (see below). |
 | **T** | Timing stats: steps/sec, pass times, composite breakdown. Clears when worker count changes. |
+
+### Export Popup
+
+![Export popup](images/iface_export_popup.png)
+
+Seven capture modes: Both, Coeffs, Roots, Stats, Sound, Bitmap, Full. Each downloads a PNG screenshot plus a JSON snapshot of the full app state.
 
 ---
 
@@ -63,15 +36,9 @@ The UI is organized around a compact header bar and two side-by-side complex-pla
 
 The left panel has four tabs and a shared animation bar.
 
-### Animation Bar (below tabs)
-
-| Control | Description |
-|---------|-------------|
-| **Scrub slider** | Drag to manually advance C and D coefficients along their paths (0-5 seconds). |
-| **Play / Pause** | Start or pause animation of all coefficients with assigned trajectories. |
-| **Home** | Return all animated C and D nodes to their start positions (curve[0]). |
-
 ### Coefficients Tab
+
+![Coefficients tab with circle paths](images/iface_coeffs_paths.png)
 
 Interactive SVG complex-plane visualization of polynomial coefficients.
 
@@ -82,11 +49,21 @@ Interactive SVG complex-plane visualization of polynomial coefficients.
 
 ### Trajectory Editor
 
+![Trajectory editor / animation bar](images/iface_anim_bar.png)
+
 Located below the Coefficients tab bar. Controls the animation path for selected coefficients.
 
 **First row:** Coefficient picker, Select All / Deselect, selection label, **Update Sel** button.
 
 **Second row:** Path type dropdown and path-specific controls. Sliders change based on the chosen path type (e.g. R/S/A/CW-CCW for circles, S/sigma for Gaussian). A **PS** (Prime Speed) button appears when the path has a speed parameter -- it sets the speed to the nearest value coprime with all other animated coefficients. Controls dim when no coefficients are selected.
+
+#### Animation Bar
+
+| Control | Description |
+|---------|-------------|
+| **Scrub slider** | Drag to manually advance C and D coefficients along their paths (0-5 seconds). |
+| **Play / Pause** | Start or pause animation of all coefficients with assigned trajectories. |
+| **Home** | Return all animated C and D nodes to their start positions (curve[0]). |
 
 #### Path Types (21)
 
@@ -107,6 +84,8 @@ Each coefficient stores its own path type, radius, speed, angle, and direction i
 
 ### List Tab
 
+![List tab](images/iface_list_tab.png)
+
 Tabular view of all coefficients with per-row columns:
 
 | Column | Content |
@@ -123,7 +102,13 @@ Tabular view of all coefficients with per-row columns:
 | Curve index | Current position along path |
 | Coordinates | Complex value (re + im*i) |
 
-**Transform dropdown** (21 bulk operations):
+#### List Curve Editor
+
+![List curve editor](images/iface_list_editor.png)
+
+The curve editor at the top of the List tab lets you edit the path for the selected coefficient. Navigate between coefficients with the arrow buttons, change path type, and adjust parameters.
+
+#### Transform dropdown (21 bulk operations)
 
 | Transform | Description |
 |-----------|-------------|
@@ -152,9 +137,13 @@ Tabular view of all coefficients with per-row columns:
 
 ### D-List Tab
 
+![D-List tab](images/iface_dlist_tab.png)
+
 Identical structure to the List tab, but for morph target D-nodes. Assign paths, speeds, and transforms to D-nodes independently from C-coefficients. See [D-Node Paths](d-node-paths.md).
 
 ### Morph Tab
+
+![Morph tab](images/iface_morph_tab.png)
 
 Interactive morph panel with C/D coefficient visualization and blending controls. See [Morph](morph.md).
 
@@ -165,6 +154,8 @@ Interactive morph panel with C/D coefficient visualization and blending controls
 ---
 
 ## Mid-bar Operations
+
+![Mid-bar operations](images/iface_midbar.png)
 
 Located between the left and right panels. Buttons brighten when a selection exists.
 
@@ -188,9 +179,13 @@ Additional controls:
 
 ### Roots Tab
 
+![Roots tab with toolbar](images/iface_roots_tab.png)
+
 Interactive SVG complex-plane visualization of polynomial roots.
 
 **Roots toolbar** (overlay on canvas):
+
+![Roots toolbar](images/iface_roots_toolbar.png)
 
 | Control | Description |
 |---------|-------------|
@@ -201,6 +196,10 @@ Interactive SVG complex-plane visualization of polynomial roots.
 | **+25%** | Zoom out by 25%. |
 | **Select All / Deselect** | Select or deselect all roots. |
 
+#### Root Color Popup
+
+![Root color popup](images/iface_root_color_pop.png)
+
 **Animation root color modes** (3):
 
 | Mode | Description |
@@ -209,11 +208,25 @@ Interactive SVG complex-plane visualization of polynomial roots.
 | Index Rainbow | Color by root index using d3 rainbow spectrum |
 | Derivative | Jacobian sensitivity: blue (stable) through white to red (volatile) |
 
+#### Domain Coloring
+
+![Domain coloring](images/iface_domain_coloring.png)
+
+HSL-mapped complex landscape on the roots panel background. Hue represents the argument (phase) of p(z) and brightness represents the magnitude. Roots appear as points where all colors converge.
+
+#### Trails
+
+![Root trails](images/iface_trails.png)
+
+Root trails record positions as colored SVG paths during animation. Loop detection auto-stops after one full cycle. Jump detection breaks trails at root-identity swaps.
+
 - **Drag any root** to move it; coefficients update on the left via inverse reconstruction.
 - During root drag, a dashed polyline connects coefficient dots, visualizing the coefficient chain.
 - **Marquee select** works the same as on the coefficients panel.
 
 ### Stats Tab
+
+![Stats tab](images/iface_stats_tab.png)
 
 A 4x4 grid of 16 configurable plots. Each plot has a dropdown to select from 32 chart types:
 
@@ -244,6 +257,8 @@ Data is collected every frame into a 4000-frame ring buffer.
 
 ### Sound Tab
 
+![Sound tab](images/iface_sound_tab.png)
+
 Three independent audio layers, each with a toggle button and config popover. See [Sonification](sonification.md) for the full algorithm, audio graph, and signal routing matrix.
 
 | Voice | Type | Key Parameters |
@@ -256,9 +271,13 @@ The Sound tab also exposes a **signal routing matrix**: any of 25 computed stats
 
 ### Bitmap Tab
 
+![Bitmap tab](images/iface_bitmap_tab.png)
+
 Accumulates root (or coefficient) positions as single-pixel stamps on a high-resolution canvas.
 
-**Toolbar** (left to right):
+**Toolbar:**
+
+![Bitmap toolbar](images/iface_bitmap_toolbar.png)
 
 | Control | Description |
 |---------|-------------|
@@ -273,7 +292,21 @@ Accumulates root (or coefficient) positions as single-pixel stamps on a high-res
 
 A zero-padded elapsed-seconds counter appears during computation.
 
-**Configuration popup** (cfg):
+#### Bitmap Rendering
+
+![Bitmap after rendering](images/iface_bitmap_rendered.png)
+
+After clicking **init** and **start**, parallel Web Workers continuously solve the polynomial and plot root positions as pixels on the bitmap canvas.
+
+#### Bitmap Save Popup
+
+![Bitmap save popup](images/iface_bitmap_save.png)
+
+Four export formats: JPEG (with quality slider), PNG, BMP, TIFF. The image is exported at full compute resolution, not the display-capped resolution.
+
+#### Configuration Popup (cfg)
+
+![Bitmap configuration popup](images/iface_bitmap_cfg.png)
 
 | Setting | Options |
 |---------|---------|
@@ -322,6 +355,8 @@ See [Paths](paths.md) for jiggle formulas.
 
 ## Selection Model
 
+![Selection with glow](images/iface_selection.png)
+
 - **Click** any dot to toggle it into the selection.
 - **Marquee select:** Click and drag on empty canvas to draw a selection rectangle.
 - **Select All / Deselect** buttons in both the trajectory editor bar and roots toolbar.
@@ -347,3 +382,13 @@ See [Paths](paths.md) for jiggle formulas.
 | Key | Action |
 |-----|--------|
 | **Escape** | Close any open popup/popover. If none open, deselect all. Cascading: context menu, tool popover, audio popup, color picker, coefficient picker, snap popup, bitmap cfg, path picker. |
+
+---
+
+## Regenerating Screenshots
+
+The screenshots in this guide were captured programmatically using Playwright. To regenerate them:
+
+```bash
+python docs/capture_interface.py
+```

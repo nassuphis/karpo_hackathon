@@ -68,37 +68,7 @@ See the [Interface Guide](docs/interface.md) for the complete control reference.
 
 ## Interface Overview
 
-```mermaid
-graph LR
-    subgraph Header["Header Bar"]
-        direction LR
-        H1["Degree (3-30)"]
-        H2["Pattern (26)"]
-        H3["Reset"]
-        H4["Save / Load / Export"]
-        H5["C / T"]
-    end
-    subgraph Left["Left Panel"]
-        direction TB
-        L1["Coefficients | List | D-List | Morph"]
-        L2["Trajectory Editor (21 paths)"]
-        L3["Scrub | Play | Home"]
-    end
-    subgraph Ops["Mid-bar"]
-        direction TB
-        O1["Scale | Rotate | Translate"]
-        O2["Select All / Invert"]
-    end
-    subgraph Right["Right Panel"]
-        direction TB
-        R1["Roots | Stats | Sound | Bitmap"]
-        R2["Trails | Color | Domain | Fit"]
-        R3["Record (7 modes)"]
-    end
-    Header --- Left
-    Left --- Ops
-    Ops --- Right
-```
+![App layout](docs/images/iface_layout.png)
 
 | Area | Key Controls |
 |------|-------------|

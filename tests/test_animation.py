@@ -218,8 +218,10 @@ class TestScrubSlider:
             c.extra = {};
             c.curve = computeCurve(c.re, c.im, "circle", c.radius / 100 * coeffExtent(), 0, {});
             var homeRe = c.curve[0].re;
+            animState.elapsedAtPause = null;
+            scrubBase = 0;
 
-            // Scrub to 1.25 seconds (avoid integer which wraps back to start)
+            // Scrub to add 1.25 seconds (avoid integer which wraps back to start)
             var slider = document.getElementById('scrub-slider');
             slider.value = 1250;
             slider.dispatchEvent(new Event('input'));
@@ -227,8 +229,7 @@ class TestScrubSlider:
             var afterRe = c.re;
 
             // Restore
-            slider.value = 0;
-            slider.dispatchEvent(new Event('input'));
+            document.getElementById('home-btn').click();
             c.pathType = "none";
             c.curve = [{re: c.re, im: c.im}];
             return { homeRe, afterRe, moved: homeRe !== afterRe };
@@ -248,8 +249,10 @@ class TestScrubSlider:
             d.extra = {};
             d.curve = computeCurve(d.re, d.im, "circle", d.radius / 100 * coeffExtent(), 0, {});
             var homeRe = d.curve[0].re;
+            animState.elapsedAtPause = null;
+            scrubBase = 0;
 
-            // Scrub to 1.25 seconds (avoid integer which wraps back to start)
+            // Scrub to add 1.25 seconds (avoid integer which wraps back to start)
             var slider = document.getElementById('scrub-slider');
             slider.value = 1250;
             slider.dispatchEvent(new Event('input'));
@@ -257,15 +260,14 @@ class TestScrubSlider:
             var afterRe = d.re;
 
             // Restore
-            slider.value = 0;
-            slider.dispatchEvent(new Event('input'));
+            document.getElementById('home-btn').click();
             initMorphTarget();
             return { homeRe, afterRe, moved: homeRe !== afterRe };
         }""")
         assert result["moved"] is True
 
-    def test_scrub_zero_returns_to_start(self, page):
-        """Scrubbing to 0 should put nodes at curve[0]."""
+    def test_scrub_with_zero_offset_stays_at_base(self, page):
+        """Scrubbing with offset 0 should keep nodes at current elapsed position."""
         result = page.evaluate("""() => {
             var c = coefficients[0];
             c.pathType = "circle";
@@ -277,8 +279,10 @@ class TestScrubSlider:
             c.curve = computeCurve(c.re, c.im, "circle", c.radius / 100 * coeffExtent(), 0, {});
             var homeRe = c.curve[0].re;
             var homeIm = c.curve[0].im;
+            animState.elapsedAtPause = null;
+            scrubBase = 0;
 
-            // Scrub to 0
+            // Scrub with 0 offset from base 0 — should stay at curve start
             var slider = document.getElementById('scrub-slider');
             slider.value = 0;
             slider.dispatchEvent(new Event('input'));
@@ -287,6 +291,7 @@ class TestScrubSlider:
             var atZeroIm = c.im;
 
             // Restore
+            document.getElementById('home-btn').click();
             c.pathType = "none";
             c.curve = [{re: c.re, im: c.im}];
             return { homeRe, homeIm, atZeroRe, atZeroIm };
@@ -294,18 +299,32 @@ class TestScrubSlider:
         assert abs(result["atZeroRe"] - result["homeRe"]) < 1e-6
         assert abs(result["atZeroIm"] - result["homeIm"]) < 1e-6
 
-    def test_scrub_value_label_updates(self, page):
-        """Scrub value label should update when slider changes."""
+    def test_anim_seconds_label_updates(self, page):
+        """Animation seconds label should update when scrubbing."""
         result = page.evaluate("""() => {
+            var c = coefficients[0];
+            c.pathType = "circle";
+            c.radius = 50;
+            c.speed = 1;
+            c.angle = 0;
+            c.ccw = false;
+            c.extra = {};
+            c.curve = computeCurve(c.re, c.im, "circle", c.radius / 100 * coeffExtent(), 0, {});
+            animState.elapsedAtPause = null;
+            scrubBase = 0;
+
             var slider = document.getElementById('scrub-slider');
             slider.value = 2500;
             slider.dispatchEvent(new Event('input'));
-            var label = document.getElementById('scrub-val').textContent;
-            slider.value = 0;
-            slider.dispatchEvent(new Event('input'));
+            var label = document.getElementById('anim-seconds').textContent;
+
+            // Restore
+            document.getElementById('home-btn').click();
+            c.pathType = "none";
+            c.curve = [{re: c.re, im: c.im}];
             return label;
         }""")
-        # 2500 / 1000 = 2.5s
+        # scrubBase=0, offset 2500/1000 = 2.5s
         assert "2.50" in result
 
 

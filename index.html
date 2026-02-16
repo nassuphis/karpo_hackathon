@@ -618,10 +618,10 @@ body.fast-mode #stop-roots-btn {
         <div class="tab-bar" id="left-tab-bar">
             <button class="tab active" data-ltab="coeffs">C-Nodes <span id="coeff-sel-count" style="font-size:9px;color:#5ddb6a;opacity:0.85;"></span></button>
             <button class="tab" data-ltab="list">C-List</button>
-            <button class="tab" data-ltab="morph">D-Nodes</button>
+            <button class="tab" data-ltab="morph">D-Nodes <span id="morph-sel-count" style="font-size:9px;color:#5ddb6a;opacity:0.85;"></span></button>
             <button class="tab" data-ltab="dlist">D-List</button>
             <button class="tab" data-ltab="final">Final</button>
-            <span class="tab-bar-controls"><input id="scrub-slider" type="range" min="0" max="5000" value="0" step="1" title="Scrub coefficients along paths (0–5s)"><span id="scrub-val" style="font-size:9px;color:var(--muted);min-width:28px;text-align:right;">0.00s</span><button id="play-btn">▶ Play</button><button id="home-btn" title="Return to start position">Home</button></span>
+            <span class="tab-bar-controls"><input id="scrub-slider" type="range" min="0" max="5000" value="0" step="1" title="Scrub coefficients along paths (adds seconds when paused)"><button id="play-btn">▶ Play</button><span id="anim-seconds" style="font-size:10px;color:var(--accent);min-width:36px;text-align:right;font-variant-numeric:tabular-nums;">0.00s</span><button id="home-btn" title="Return to start position">Home</button></span>
         </div>
         <div class="tab-panes" id="left-tab-panes">
             <div id="coeffs-content" class="tab-content active">
@@ -2683,7 +2683,7 @@ function toggleCoeffSelect(idx) {
     // If animation is playing and user clicks a coefficient, stop animation
     if (animState.playing) {
         stopAnimation();
-        playBtn.textContent = "▶ Play";
+        playBtn.textContent = "▶ Resume";
     }
 
     if (selectedCoeffs.has(idx)) {
@@ -2699,7 +2699,7 @@ function toggleCoeffSelect(idx) {
 function clearCoeffSelection() {
     if (animState.playing) {
         stopAnimation();
-        playBtn.textContent = "▶ Play";
+        playBtn.textContent = "▶ Resume";
     }
     selectedCoeffs.clear();
     updateCoeffSelectionVisual();
@@ -2769,6 +2769,8 @@ function updateMorphSelectionVisual() {
     if (!morphPanelInited || !morphLayer) return;
     morphLayer.selectAll("circle.morph-coeff")
         .classed("selected", d => selectedMorphCoeffs.has(d._idx));
+    const mc = document.getElementById("morph-sel-count");
+    if (mc) mc.textContent = selectedMorphCoeffs.size > 0 ? `(${selectedMorphCoeffs.size})` : "";
 }
 
 // --- Marquee (area) selection ---
@@ -3045,6 +3047,8 @@ function openDNodeCtx(event, dIdx) {
         }
         d.curveIndex = 0;
         animState.elapsedAtPause = null;
+        updateAnimSeconds(0);
+        playBtn.textContent = "▶ Play";
         updateAnimBar();
     }
 
@@ -3294,6 +3298,8 @@ function openCoeffCtx(event, coeffIdx) {
         c.curveIndex = 0;
 
         animState.elapsedAtPause = null;
+        updateAnimSeconds(0);
+        playBtn.textContent = "▶ Play";
         updateAnimBar();
         renderCoeffTrails();
     }
@@ -3470,6 +3476,11 @@ function applyBarToSelection() {
         }
     }
 
+    if (animState.elapsedAtPause == null) {
+        updateAnimSeconds(0);
+        playBtn.textContent = "▶ Play";
+    }
+
     coeffLayer.selectAll("circle.coeff")
         .filter(cd => selectedCoeffs.has(cd._idx))
         .attr("cx", cd => cxs()(cd.re)).attr("cy", cd => cys()(cd.im));
@@ -3559,6 +3570,8 @@ function revertBarPreview() {
 function commitBarPreview() {
     barSnapshots = null;
     animState.elapsedAtPause = null;
+    updateAnimSeconds(0);
+    playBtn.textContent = "▶ Play";
     renderCoeffTrails();
     if (typeof leftTab !== "undefined" && leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
 }
@@ -3627,11 +3640,11 @@ sel2pathBtn.addEventListener("click", function () {
     }
 });
 
-// Play/Pause button
+// Play/Pause button — cycle: Play → Pause → Resume → Pause → …
 playBtn.addEventListener("click", function () {
     if (animState.playing) {
         stopAnimation();
-        playBtn.textContent = "▶ Play";
+        playBtn.textContent = "▶ Resume";
     } else {
         if (allAnimatedCoeffs().size === 0 && allAnimatedDCoeffs().size === 0 && !morphEnabled) { uiBuzz(); return; }
         const resuming = animState.elapsedAtPause != null;
@@ -3688,19 +3701,16 @@ document.getElementById("home-btn").addEventListener("click", function () {
     autoScaleCoeffPanel();
     solveRootsThrottled();
     renderDomainColoringThrottled();
+    updateAnimSeconds(0);
+    scrubSlider.value = 0;
     uiBuzz();
 });
 
-// Scrub slider: manually move coefficients along paths
+// Scrub slider: adds seconds to current elapsed time (only when paused)
 const scrubSlider = document.getElementById("scrub-slider");
-const scrubVal = document.getElementById("scrub-val");
-scrubSlider.addEventListener("input", function () {
-    const elapsed = this.value / 1000; // ms → seconds
-    scrubVal.textContent = elapsed.toFixed(2) + "s";
-    if (animState.playing) {
-        stopAnimation();
-        playBtn.textContent = "▶ Play";
-    }
+const animSecondsEl = document.getElementById("anim-seconds");
+
+function advanceToElapsed(elapsed) {
     for (let i = 0; i < coefficients.length; i++) {
         const c = coefficients[i];
         if (c.pathType === "none") continue;
@@ -3721,8 +3731,12 @@ scrubSlider.addEventListener("input", function () {
             c.curveIndex = lo;
         }
     }
-    // Advance D-nodes along their paths
     advanceDNodesAlongCurves(elapsed);
+    if (morphEnabled) {
+        morphMu = 0.5 + 0.5 * Math.sin(2 * Math.PI * morphRate * elapsed);
+        const muEl = document.getElementById("morph-mu-val");
+        if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
+    }
     const animated = allAnimatedCoeffs();
     coeffLayer.selectAll("circle.coeff")
         .filter(cd => animated.has(cd._idx))
@@ -3730,11 +3744,6 @@ scrubSlider.addEventListener("input", function () {
     coeffLayer.selectAll(".coeff-label")
         .filter(ld => animated.has(ld._idx))
         .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
-    if (morphEnabled) {
-        morphMu = 0.5 + 0.5 * Math.sin(2 * Math.PI * morphRate * elapsed);
-        const muEl = document.getElementById("morph-mu-val");
-        if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
-    }
     if (morphPanelInited && leftTab === "morph") {
         const nn = Math.min(coefficients.length, morphTargetCoeffs.length);
         morphGhostLayer.selectAll("circle.morph-ghost")
@@ -3750,10 +3759,35 @@ scrubSlider.addEventListener("input", function () {
         updateMorphMarkers();
     }
     animState.elapsedAtPause = elapsed;
+    updateAnimSeconds(elapsed);
     solveRootsThrottled();
     renderDomainColoringThrottled();
     updateListCoords();
     updateDListCoords();
+}
+
+function updateAnimSeconds(elapsed) {
+    if (animSecondsEl) animSecondsEl.textContent = elapsed.toFixed(2) + "s";
+}
+
+let scrubBase = 0; // elapsed at start of scrub drag
+scrubSlider.addEventListener("mousedown", function () {
+    scrubBase = animState.elapsedAtPause || 0;
+});
+scrubSlider.addEventListener("touchstart", function () {
+    scrubBase = animState.elapsedAtPause || 0;
+});
+scrubSlider.addEventListener("input", function () {
+    // Only works when animation is not running
+    if (animState.playing) { this.value = 0; return; }
+    const scrubOffset = this.value / 1000; // slider value in ms → seconds
+    const elapsed = scrubBase + scrubOffset;
+    advanceToElapsed(elapsed);
+    if (elapsed > 0) playBtn.textContent = "▶ Resume";
+});
+scrubSlider.addEventListener("change", function () {
+    // On release, reset slider to 0 (elapsed already committed by advanceToElapsed)
+    this.value = 0;
 });
 
 // Trails toggle button
@@ -4278,6 +4312,7 @@ function animLoop(now) {
     recordTick();
     updateListCoords();
     updateDListCoords();
+    updateAnimSeconds(elapsed);
 
     animState.rafId = requestAnimationFrame(animLoop);
 }
@@ -5182,7 +5217,10 @@ let currentDegree = 5;
 
 function applyPattern() {
     stopAnimation();
+    animState.elapsedAtPause = null;
     playBtn.textContent = "▶ Play";
+    updateAnimSeconds(0);
+    scrubSlider.value = 0;
     lastSelectedCoeff = -1;
     clearAllSelection();
     clearTrails();
@@ -7637,7 +7675,10 @@ async function loadState() {
 function applyLoadedState(meta) {
     // 1. Stop animation, clear everything
     stopAnimation();
+    animState.elapsedAtPause = null;
     playBtn.textContent = "\u25b6 Play";
+    updateAnimSeconds(0);
+    scrubSlider.value = 0;
     lastSelectedCoeff = -1;
     clearAllSelection();
     clearTrails();
@@ -9633,7 +9674,10 @@ function enterFastMode() {
 
     // Stop interactive animation
     stopAnimation();
+    animState.elapsedAtPause = null;
     playBtn.textContent = "\u25b6 Play";
+    updateAnimSeconds(0);
+    scrubSlider.value = 0;
 
     // Ensure bitmap canvas exists + range frozen, and resolution matches dropdown
     const wantRes = parseInt(document.getElementById("bitmap-res-select").value, 10) || 2000;
@@ -10674,6 +10718,8 @@ function openPathPickPop(coeffIdx, anchorEl) {
         }
         c.curveIndex = 0;
         animState.elapsedAtPause = null;
+        updateAnimSeconds(0);
+        playBtn.textContent = "▶ Play";
         renderCoeffTrails();
     }
 
@@ -11307,6 +11353,8 @@ document.getElementById("lce-update-sel").addEventListener("click", () => {
         lceApplyToCoeff(ci, params);
     }
     animState.elapsedAtPause = null;
+    updateAnimSeconds(0);
+    playBtn.textContent = "▶ Play";
     renderCoeffTrails();
     buildCurveCycleTypes(); updateCurveCycleLabel();
     if (leftTab === "list") { updateListPathCols(); updateListCoords(); }

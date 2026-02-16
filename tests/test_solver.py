@@ -4,18 +4,16 @@ import math
 import pytest
 
 
-def solve(page, coeffs, warm_start=None, track_iter=False):
+def solve(page, coeffs, warm_start=None):
     """Call solveRootsEA in the browser and return results."""
-    return page.evaluate("""([coeffs, warmStart, trackIter]) => {
-        var iterCounts = trackIter ? new Uint8Array(coeffs.length - 1) : null;
+    return page.evaluate("""([coeffs, warmStart]) => {
         var ws = warmStart ? warmStart.map(r => ({re: r[0], im: r[1]})) : null;
         var c = coeffs.map(r => ({re: r[0], im: r[1]}));
-        var roots = solveRootsEA(c, ws, iterCounts);
+        var roots = solveRootsEA(c, ws);
         return {
-            roots: roots.map(r => [r.re, r.im]),
-            iters: iterCounts ? Array.from(iterCounts) : null
+            roots: roots.map(r => [r.re, r.im])
         };
-    }""", [coeffs, warm_start, track_iter])
+    }""", [coeffs, warm_start])
 
 
 def roots_close_to(actual, expected, tol=1e-6):
@@ -108,13 +106,10 @@ class TestWarmStart:
     def test_warm_start_converges(self, page):
         # z^2 - 1 with warm start near the actual roots
         warm = [[0.99, 0.01], [-1.01, -0.01]]
-        result = solve(page, [[1, 0], [0, 0], [-1, 0]], warm_start=warm, track_iter=True)
+        result = solve(page, [[1, 0], [0, 0], [-1, 0]], warm_start=warm)
         roots = result["roots"]
         assert len(roots) == 2
         assert roots_close_to(roots, [[1, 0], [-1, 0]])
-        # With warm start near roots, should converge fast
-        for ic in result["iters"]:
-            assert 0 < ic < 10
 
 
 class TestNaNResilience:
@@ -136,11 +131,3 @@ class TestNaNResilience:
             assert math.isfinite(r[0]) and math.isfinite(r[1])
 
 
-class TestIterationCounting:
-    def test_iter_counts_populated(self, page):
-        result = solve(page, [[1, 0], [0, 0], [-1, 0]], track_iter=True)
-        iters = result["iters"]
-        assert iters is not None
-        assert len(iters) == 2
-        for ic in iters:
-            assert ic > 0

@@ -54,7 +54,7 @@ Pure C solver, no stdlib dependencies. ~80 lines.
 __attribute__((export_name("solveEA")))
 void solveEA(double *cRe, double *cIm, int nCoeffs,
              double *warmRe, double *warmIm, int nRoots,
-             int trackIter, unsigned char *iterCounts) {
+             int unused1, unsigned char *unused2) {
     // Strip leading zeros
     int start = 0;
     while (start < nCoeffs - 1 && cRe[start]*cRe[start] + cIm[start]*cIm[start] < 1e-30) start++;
@@ -67,7 +67,6 @@ void solveEA(double *cRe, double *cIm, int nCoeffs,
     // Copy stripped coefficients to local arrays
     double cr[256], ci[256];
     double rRe[255], rIm[255];
-    unsigned char conv[255] = {0};
     // ... copy from inputs ...
 
     // Main iteration loop (identical algorithm to JS)
@@ -127,9 +126,9 @@ var wasmExports = null;
 var wasmMemory = null;
 
 // Memory layout (byte offsets into WASM linear memory):
-// 0x0000: data region (coeffs, roots, iterCounts)
+// 0x0000: data region (coeffs, roots)
 // 0x8000: C shadow stack (grows downward from 0xFFFF)
-var MEM_COEFFS_RE, MEM_COEFFS_IM, MEM_WARM_RE, MEM_WARM_IM, MEM_ITER;
+var MEM_COEFFS_RE, MEM_COEFFS_IM, MEM_WARM_RE, MEM_WARM_IM;
 
 function initWasm(nCoeffs, nRoots) {
     var bytes = Uint8Array.from(atob(WASM_B64), function(c) { return c.charCodeAt(0); });
@@ -143,7 +142,6 @@ function initWasm(nCoeffs, nRoots) {
     MEM_COEFFS_IM = nCoeffs * 8;
     MEM_WARM_RE = nCoeffs * 2 * 8;
     MEM_WARM_IM = (nCoeffs * 2 + nRoots) * 8;
-    MEM_ITER = (nCoeffs * 2 + nRoots * 2) * 8;
 }
 ```
 
@@ -165,15 +163,12 @@ for (var i = 0; i < S_nCoeffs; i++) {
 **Change 5** — In the step loop, replace `solveEA(...)` call with WASM call:
 
 ```javascript
-// Old:
-// solveEA(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots, iterCounts);
-
-// New — rootsRe/rootsIm are already views into WASM memory:
+// rootsRe/rootsIm are already views into WASM memory:
 tmpRe.set(rootsRe); tmpIm.set(rootsIm);  // tmpRe/tmpIm are views at MEM_WARM_RE/IM
 wasmExports.solveEA(
     MEM_COEFFS_RE, MEM_COEFFS_IM, nCoeffs,
     MEM_WARM_RE, MEM_WARM_IM, nRoots,
-    iterColor ? 1 : 0, MEM_ITER
+    0, 0
 );
 // Results are already in tmpRe/tmpIm (same memory)
 ```
@@ -199,8 +194,7 @@ for (var i = 0; i < nRoots; i++) {
 0x0800 │ coeffsIm[256]  (2 KB)   │  Float64Array view
 0x1000 │ warmRe[255]    (2 KB)   │  Float64Array view (in/out)
 0x1800 │ warmIm[255]    (2 KB)   │  Float64Array view (in/out)
-0x2000 │ iterCounts[255](0.25KB) │  Uint8Array view
-0x2100 │ (padding)               │
+0x2000 │ (unused)                │
        ├─────────────────────────┤
 0x8000 │ C shadow stack (32 KB)  │  Grows downward from 0xFFFF
        │ (solver local arrays)   │
@@ -238,7 +232,7 @@ This is a manual step (not automated), but only needed when the solver algorithm
 2. Run fast mode at 2K, 10K steps — bitmap should fill densely (same as JS version)
 3. Compare timing popup: worker time should be ~1.5-2x faster
 4. Test with degree 5 (simple) and degree 50+ (stress test)
-5. Test iteration coloring mode (uses `iterCounts`)
+5. Test proximity and derivative coloring modes
 6. Verify NaN rescue works: load a config that produces NaN roots
 7. Compare bitmap output pixel-for-pixel between JS and WASM versions (should be identical or near-identical due to floating point)
 

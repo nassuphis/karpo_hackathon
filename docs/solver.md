@@ -81,7 +81,7 @@ Workers allocate WASM linear memory (64KB = 1 page):
 0x0800  coeffsIm[256]    2KB    Float64Array view (input)
 0x1000  warmRe[255]      2KB    Float64Array view (in/out)
 0x1800  warmIm[255]      2KB    Float64Array view (in/out)
-0x2000  iterCounts[255]  0.25KB Uint8Array view (output)
+0x2000  (unused)
 0x8000  C shadow stack   32KB   Solver local arrays (grows down)
 ```
 
@@ -105,4 +105,4 @@ Click the **cfg** button in the bitmap toolbar to open the solver config popup. 
 | Convergence threshold | 1e-16 (squared) | 1e-16 (squared) |
 | Leading-zero test | magnitude² < 1e-30 | magnitude² < 1e-30 |
 | NaN rescue | In solver (isFinite check) | Post-call JS (x !== x check) |
-| Iteration tracking | Optional (iterCounts array) | Optional (iterCounts array) |
+| Iteration tracking | None (removed) | None (removed) |

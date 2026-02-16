@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v31</title>
+<title>PolyPaint v32</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
@@ -548,7 +548,7 @@ body.fast-mode #stop-roots-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v31</span>
+    <span class="app-title">PolyPaint v32</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -979,13 +979,14 @@ let trailData = []; // array of arrays: trailData[i] = [{re, im}, ...] for root 
 const MAX_TRAIL_POINTS = 4000;
 // Domain coloring state
 let domainColoringEnabled = false;
-let rootColorMode = "rainbow";  // "uniform" | "rainbow" | "derivative" | "iteration" | "proximity"
+let rootColorMode = "rainbow";  // "uniform" | "rainbow" | "derivative" | "proximity"
 let uniformRootColor = [255, 255, 255];  // RGB for uniform mode (default white)
 let rootSensitivities = null;   // Float64Array for derivative mode
 // Bitmap-specific color mode (decoupled from animation rootColorMode)
-let bitmapColorMode = "uniform";  // "uniform" | "rainbow" | "derivative" | "iteration" | "proximity"
+let bitmapColorMode = "uniform";  // "uniform" | "rainbow" | "derivative" | "proximity"
 let bitmapUniformColor = [255, 255, 255];
 let bitmapMatchStrategy = "assign4"; // "assign4" | "assign1" | "hungarian1"
+let bitmapProxPaletteName = "inferno"; // key into PROX_PALETTE_CATALOG
 // Fixed 8-color palette shared by animation and bitmap uniform pickers
 const ROOT_COLOR_SWATCHES = [
     { label: "White",  rgb: [255, 255, 255] },
@@ -997,36 +998,39 @@ const ROOT_COLOR_SWATCHES = [
     { label: "Blue",   rgb: [30, 144, 255] },
     { label: "Purple", rgb: [155, 89, 182] },
 ];
-// 16-color iteration palette: full rainbow for max contrast between adjacent values
-const ITER_PALETTE = (() => {
+// Proximity palette catalog: name → d3 interpolator
+const PROX_PALETTE_CATALOG = [
+    { key: "inferno",  label: "Inferno",  fn: d3.interpolateInferno },
+    { key: "viridis",  label: "Viridis",  fn: d3.interpolateViridis },
+    { key: "magma",    label: "Magma",    fn: d3.interpolateMagma },
+    { key: "plasma",   label: "Plasma",   fn: d3.interpolatePlasma },
+    { key: "turbo",    label: "Turbo",    fn: d3.interpolateTurbo },
+    { key: "cividis",  label: "Cividis",  fn: d3.interpolateCividis },
+    { key: "warm",     label: "Warm",     fn: d3.interpolateWarm },
+    { key: "cool",     label: "Cool",     fn: d3.interpolateCool },
+];
+function buildProxPaletteFrom(interpolator) {
     const pal = [];
     for (let k = 0; k < 16; k++) {
-        const hue = (k / 16) * 360;
-        const h60 = hue / 60, x = Math.round((1 - Math.abs(h60 % 2 - 1)) * 255);
-        if (h60 < 1) pal.push([255, x, 0]);
-        else if (h60 < 2) pal.push([x, 255, 0]);
-        else if (h60 < 3) pal.push([0, 255, x]);
-        else if (h60 < 4) pal.push([0, x, 255]);
-        else if (h60 < 5) pal.push([x, 0, 255]);
-        else pal.push([255, 0, x]);
-    }
-    return pal;
-})();
-const ITER_PAL_R = new Uint8Array(ITER_PALETTE.map(c => c[0]));
-const ITER_PAL_G = new Uint8Array(ITER_PALETTE.map(c => c[1]));
-const ITER_PAL_B = new Uint8Array(ITER_PALETTE.map(c => c[2]));
-// 16-color proximity palette: sequential dark→bright (inferno) for min-distance visualization
-const PROX_PALETTE = (() => {
-    const pal = [];
-    for (let k = 0; k < 16; k++) {
-        const c = d3.color(d3.interpolateInferno(k / 15));
+        const c = d3.color(interpolator(k / 15));
         pal.push([c.r, c.g, c.b]);
     }
     return pal;
-})();
-const PROX_PAL_R = new Uint8Array(PROX_PALETTE.map(c => c[0]));
-const PROX_PAL_G = new Uint8Array(PROX_PALETTE.map(c => c[1]));
-const PROX_PAL_B = new Uint8Array(PROX_PALETTE.map(c => c[2]));
+}
+// 16-color proximity palette: rebuildable from catalog selection
+let PROX_PALETTE = buildProxPaletteFrom(d3.interpolateInferno);
+let PROX_PAL_R = new Uint8Array(PROX_PALETTE.map(c => c[0]));
+let PROX_PAL_G = new Uint8Array(PROX_PALETTE.map(c => c[1]));
+let PROX_PAL_B = new Uint8Array(PROX_PALETTE.map(c => c[2]));
+function setProxPalette(key) {
+    const entry = PROX_PALETTE_CATALOG.find(p => p.key === key);
+    if (!entry) return;
+    bitmapProxPaletteName = key;
+    PROX_PALETTE = buildProxPaletteFrom(entry.fn);
+    PROX_PAL_R = new Uint8Array(PROX_PALETTE.map(c => c[0]));
+    PROX_PAL_G = new Uint8Array(PROX_PALETTE.map(c => c[1]));
+    PROX_PAL_B = new Uint8Array(PROX_PALETTE.map(c => c[2]));
+}
 // 16-color derivative palette: blue (stable) → white → red (volatile) for sensitivity visualization
 const DERIV_PALETTE = (() => {
     const pal = [];
@@ -1933,7 +1937,6 @@ function coeffColor(i, n) {
 
 function rootColor(i, n) {
     if (rootColorMode === "rainbow") return d3.interpolateRainbow(i / n);
-    if (rootColorMode === "iteration") return d3.interpolateRainbow(i / n); // fallback for SVG
     if (rootColorMode === "proximity") return d3.interpolateRainbow(i / n); // fallback for SVG (bitmap does real proximity)
     if (rootColorMode === "derivative" && rootSensitivities && i < rootSensitivities.length) {
         return sensitivityColor(rootSensitivities[i]);
@@ -4366,9 +4369,6 @@ function renderRoots(newRoots) {
     const n = currentRoots.length;
     for (let i = 0; i < n; i++) currentRoots[i]._idx = i;
 
-    // Bitmap painting (always runs when active, regardless of which tab is visible)
-    if (bitmapActive) paintBitmapFrame();
-
     // Skip SVG rendering when bitmap tab is active (performance)
     if (activeTab !== "bitmap") {
         renderDomainColoringThrottled();
@@ -4620,11 +4620,10 @@ function renderDomainColoringThrottled() {
 
 // --- Ehrlich-Aberth client-side root solver ---
 
-function solveRootsEA(coeffs, warmStart, iterCounts) {
+function solveRootsEA(coeffs, warmStart) {
     // coeffs: array of {re, im} in descending degree order
     // warmStart: array of {re, im} initial guesses (or null)
-    // iterCounts: optional Uint8Array to receive per-root iteration counts
-    // Returns: array of {re, im} roots (with _iter if iterCounts provided)
+    // Returns: array of {re, im} roots
 
     // Strip leading near-zero coefficients
     let start = 0;
@@ -4642,7 +4641,6 @@ function solveRootsEA(coeffs, warmStart, iterCounts) {
         const denom = aRe * aRe + aIm * aIm;
         if (denom < 1e-30) return [];
         const root = { re: -(bRe * aRe + bIm * aIm) / denom, im: -(bIm * aRe - bRe * aIm) / denom };
-        if (iterCounts) { iterCounts[0] = 1; root._iter = 1; }
         return [root];
     }
 
@@ -4678,13 +4676,10 @@ function solveRootsEA(coeffs, warmStart, iterCounts) {
     }
 
     // Iterate
-    const trackIter = !!iterCounts;
-    const conv = trackIter ? new Uint8Array(degree) : null;
     for (let iter = 0; iter < MAX_ITER; iter++) {
         let maxCorr = 0;
 
         for (let i = 0; i < degree; i++) {
-            if (trackIter && conv[i]) continue;
             const zRe = roots[i][0], zIm = roots[i][1];
 
             // Evaluate p(z) and p'(z) simultaneously via Horner
@@ -4737,15 +4732,10 @@ function solveRootsEA(coeffs, warmStart, iterCounts) {
 
             const corrMag = Math.hypot(corrRe, corrIm);
             maxCorr = Math.max(maxCorr, corrMag);
-            if (trackIter && corrMag < TOL) { conv[i] = 1; iterCounts[i] = iter + 1; }
         }
 
-        if (maxCorr < TOL) {
-            if (trackIter) { for (let i = 0; i < degree; i++) if (!conv[i]) { conv[i] = 1; iterCounts[i] = iter + 1; } }
-            break;
-        }
+        if (maxCorr < TOL) break;
     }
-    if (trackIter) { for (let i = 0; i < degree; i++) if (!conv[i]) iterCounts[i] = 64; }
 
     // Always return exactly `degree` roots — replace non-finite with warm-start or unit circle
     const result = new Array(degree);
@@ -4762,9 +4752,7 @@ function solveRootsEA(coeffs, warmStart, iterCounts) {
             re = Math.cos(angle);
             im = Math.sin(angle);
         }
-        const r = { re, im };
-        if (trackIter) r._iter = iterCounts[i];
-        result[i] = r;
+        result[i] = { re, im };
     }
     return result;
 }
@@ -4790,7 +4778,6 @@ function matchRootOrder(newRoots, oldRoots) {
 }
 
 function solveRoots() {
-    const iterMode = rootColorMode === "iteration";
     let coeffsToSolve = coefficients;
     if (morphEnabled && morphTargetCoeffs.length === coefficients.length) {
         coeffsToSolve = coefficients.map((c, i) => ({
@@ -4798,8 +4785,7 @@ function solveRoots() {
             im: c.im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu
         }));
     }
-    const iters = iterMode ? new Uint8Array(coeffsToSolve.length - 1) : null;
-    let roots = solveRootsEA(coeffsToSolve, currentRoots, iters);
+    let roots = solveRootsEA(coeffsToSolve, currentRoots);
     roots = matchRootOrder(roots, currentRoots);
     renderRoots(roots);
 }
@@ -6241,6 +6227,7 @@ function startRecording() {
             bitmapUniformColor: bitmapUniformColor.slice(),
             bitmapCanvasColor: bitmapCanvasColor,
             bitmapMatchStrategy: bitmapMatchStrategy,
+            bitmapProxPalette: bitmapProxPaletteName,
             trails: trailsEnabled,
             selectedCoeffs: [...selectedCoeffs],
             selectedRoots: [...selectedRoots],
@@ -6304,6 +6291,7 @@ function buildStateMetadata(timestamp) {
         bitmapUniformColor: bitmapUniformColor.slice(),
         bitmapCanvasColor: bitmapCanvasColor,
         bitmapMatchStrategy: bitmapMatchStrategy,
+        bitmapProxPalette: bitmapProxPaletteName,
         bitmapExportFormat: bitmapExportFormat,
         trails: trailsEnabled,
         animPlaying: animState.playing,
@@ -6615,10 +6603,6 @@ function buildBitmapCfgPop() {
         wRow.appendChild(wBtn);
     }
     bitmapCfgPop.appendChild(wRow);
-    const wInfo = document.createElement("div");
-    wInfo.style.cssText = "font-size:9px;color:var(--muted);margin-top:2px;";
-    wInfo.textContent = "hw cores: " + (navigator.hardwareConcurrency || "?");
-    bitmapCfgPop.appendChild(wInfo);
     // Jiggle section
     const hr1 = document.createElement("hr");
     hr1.style.cssText = "border:none;border-top:1px solid var(--stroke);margin:8px 0 4px;";
@@ -6778,17 +6762,6 @@ function buildBitmapCfgPop() {
     });
     cycRow.appendChild(gcdBtn);
     bitmapCfgPop.appendChild(cycRow);
-    // Select All + status
-    const selAllBtn = document.createElement("button");
-    selAllBtn.textContent = "\u2295 Select All Coefficients";
-    selAllBtn.style.cssText = "font-size:9px;padding:3px 8px;background:transparent;color:var(--fg);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;margin-top:6px;width:100%;";
-    selAllBtn.addEventListener("click", () => {
-        clearRootSelection();
-        for (let i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
-        if (coefficients.length > 0) lastSelectedCoeff = coefficients.length - 1;
-        updateCoeffSelectionVisual(); updateAnimBar();
-    });
-    bitmapCfgPop.appendChild(selAllBtn);
     // Background color
     const hr2 = document.createElement("hr");
     hr2.style.cssText = "border:none;border-top:1px solid var(--stroke);margin:8px 0 4px;";
@@ -6822,7 +6795,7 @@ function buildBitmapCfgPop() {
     const hr3 = document.createElement("hr");
     hr3.style.cssText = "border:none;border-top:1px solid var(--stroke);margin:8px 0 4px;";
     bitmapCfgPop.appendChild(hr3);
-    const colorModeLabels = { uniform: "Uniform", rainbow: "Rainbow", derivative: "Derivative", iteration: "Iteration", proximity: "Proximity" };
+    const colorModeLabels = { uniform: "Uniform", rainbow: "Rainbow", derivative: "Derivative", proximity: "Proximity" };
     const rcTitle = document.createElement("div");
     rcTitle.className = "pop-title"; rcTitle.textContent = "COLOR (" + (colorModeLabels[bitmapColorMode] || bitmapColorMode) + ")";
     bitmapCfgPop.appendChild(rcTitle);
@@ -6831,18 +6804,22 @@ function buildBitmapCfgPop() {
         { key: "uniform",    label: "Uniform" },
         { key: "rainbow",    label: "Index Rainbow" },
         { key: "derivative", label: "Derivative" },
-        { key: "iteration",  label: "Iteration Count" },
         { key: "proximity",  label: "Root Proximity" },
     ];
     const bmRows = [];
     let bmSwatchWrap = null;
     let bmMatchWrap = null;
+    let bmProxWrap = null;
     function refreshMatchChips() {
         if (bmMatchWrap) bmMatchWrap.style.opacity = bitmapColorMode === "rainbow" ? "1" : "0.3";
+    }
+    function refreshProxPalettes() {
+        if (bmProxWrap) bmProxWrap.style.opacity = bitmapColorMode === "proximity" ? "1" : "0.3";
     }
     function refreshBmSwatches() {
         if (bmSwatchWrap) bmSwatchWrap.style.opacity = bitmapColorMode === "uniform" ? "1" : "0.3";
         refreshMatchChips();
+        refreshProxPalettes();
     }
     bitmapModes.forEach(bm => {
         const row = document.createElement("div");
@@ -6934,6 +6911,43 @@ function buildBitmapCfgPop() {
                 bmMatchWrap.appendChild(chip);
             });
             bitmapCfgPop.appendChild(bmMatchWrap);
+        }
+
+        if (bm.key === "proximity") {
+            bmProxWrap = document.createElement("div");
+            bmProxWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;padding:4px 2px 6px 20px;max-width:220px;";
+            bmProxWrap.style.opacity = bitmapColorMode === "proximity" ? "1" : "0.3";
+            PROX_PALETTE_CATALOG.forEach(pal => {
+                const circle = document.createElement("div");
+                const isActive = bitmapProxPaletteName === pal.key;
+                // Build vertical gradient (bottom=0, top=1) with 8 stops
+                const stops = [];
+                for (let s = 0; s < 8; s++) {
+                    const t = s / 7;
+                    stops.push(pal.fn(t) + " " + Math.round(t * 100) + "%");
+                }
+                circle.style.cssText = `width:20px;height:20px;border-radius:50%;cursor:pointer;flex-shrink:0;` +
+                    `background:linear-gradient(to top, ${stops.join(", ")});` +
+                    `border:2px solid ${isActive ? "#fff" : "rgba(255,255,255,0.15)"};` +
+                    `box-sizing:border-box;`;
+                circle.title = pal.label;
+                circle.addEventListener("click", () => {
+                    setProxPalette(pal.key);
+                    bmProxWrap.querySelectorAll("div").forEach(c => {
+                        c.style.borderColor = "rgba(255,255,255,0.15)";
+                    });
+                    circle.style.borderColor = "#fff";
+                    if (bitmapColorMode !== "proximity") {
+                        bitmapColorMode = "proximity";
+                        bmRows.forEach(r => r.classList.remove("on"));
+                        bmRows[3].classList.add("on"); // proximity is index 3
+                        rcTitle.textContent = "COLOR (Proximity)";
+                        refreshBmSwatches();
+                    }
+                });
+                bmProxWrap.appendChild(circle);
+            });
+            bitmapCfgPop.appendChild(bmProxWrap);
         }
     });
 }
@@ -7369,6 +7383,11 @@ function applyLoadedState(meta) {
         bitmapMatchStrategy = meta.bitmapMatchStrategy;
     } else {
         bitmapMatchStrategy = "assign4";
+    }
+    if (meta.bitmapProxPalette && PROX_PALETTE_CATALOG.some(p => p.key === meta.bitmapProxPalette)) {
+        setProxPalette(meta.bitmapProxPalette);
+    } else {
+        setProxPalette("inferno");
     }
     rootColorBtn.classList.toggle("active", rootColorMode !== "uniform");
 
@@ -8555,67 +8574,6 @@ function initBitmapCanvas() {
     bitmapActive = true;
 }
 
-function paintBitmapFrame() {
-    if (!bitmapCtx || !bitmapRange || bitmapCoeffView) return;
-    const w = bitmapCtx.canvas.width, h = bitmapCtx.canvas.height;
-    const range = bitmapRange;
-    const n = currentRoots.length;
-    const iterMode = bitmapColorMode === "iteration";
-    const proxMode = bitmapColorMode === "proximity";
-    const derivMode = bitmapColorMode === "derivative";
-    // Precompute derivative sensitivities if needed
-    let derivSens = null;
-    if (derivMode) {
-        computeRootSensitivities();
-        derivSens = rootSensitivities;
-    }
-    // Precompute proximity min-distances if needed
-    let proxDists = null, proxMax = 1;
-    if (proxMode && n > 1) {
-        proxDists = new Float64Array(n);
-        for (let i = 0; i < n; i++) {
-            let md = Infinity;
-            for (let j = 0; j < n; j++) {
-                if (j === i) continue;
-                const dx = currentRoots[i].re - currentRoots[j].re;
-                const dy = currentRoots[i].im - currentRoots[j].im;
-                const d2 = dx * dx + dy * dy;
-                if (d2 < md) md = d2;
-            }
-            proxDists[i] = Math.sqrt(md);
-        }
-        for (let i = 0; i < n; i++) if (proxDists[i] > proxMax) proxMax = proxDists[i];
-    }
-    for (let i = 0; i < n; i++) {
-        const r = currentRoots[i];
-        const px = (r.re / range + 1) * 0.5 * w;
-        const py = (1 - r.im / range) * 0.5 * h;
-        if (px < -2 || px > w + 2 || py < -2 || py > h + 2) continue;
-        if (derivMode && derivSens && i < derivSens.length) {
-            const palIdx = Math.min(15, Math.round(derivSens[i] * 15));
-            const c = DERIV_PALETTE[palIdx];
-            bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
-        } else if (proxMode && proxDists) {
-            const t = 1 - Math.min(1, proxDists[i] / proxMax);
-            const palIdx = (t * 15) | 0;
-            const c = PROX_PALETTE[palIdx];
-            bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
-        } else if (iterMode && r._iter !== undefined) {
-            const palIdx = Math.min(15, (r._iter * 15 / 8) | 0);
-            const c = ITER_PALETTE[palIdx];
-            bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
-        } else if (bitmapColorMode === "uniform") {
-            bitmapCtx.fillStyle = `rgb(${bitmapUniformColor[0]},${bitmapUniformColor[1]},${bitmapUniformColor[2]})`;
-        } else {
-            bitmapCtx.fillStyle = d3.interpolateRainbow(i / n);
-        }
-        bitmapCtx.beginPath();
-        bitmapCtx.arc(px, py, 1.5, 0, 2 * Math.PI);
-        bitmapCtx.fill();
-    }
-    bitmapFrameCount++;
-}
-
 // --- Fast mode: high-res bitmap rendering ---
 
 function paintBitmapFrameFast() {
@@ -8624,7 +8582,6 @@ function paintBitmapFrameFast() {
     const range = bitmapRange;
     const n = currentRoots.length;
     const colors = fastModeRootColors;
-    const iterMode = bitmapColorMode === "iteration";
     const proxMode = bitmapColorMode === "proximity";
     const derivMode = bitmapColorMode === "derivative";
     // Precompute derivative sensitivities if needed
@@ -8664,10 +8621,6 @@ function paintBitmapFrameFast() {
             const palIdx = (t * 15) | 0;
             const c = PROX_PALETTE[palIdx];
             bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
-        } else if (iterMode && r._iter !== undefined) {
-            const palIdx = Math.min(15, (r._iter * 15 / 8) | 0);
-            const c = ITER_PALETTE[palIdx];
-            bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
         } else {
             bitmapCtx.fillStyle = colors[i];
         }
@@ -8691,7 +8644,7 @@ function createFastModeWorkerBlob() {
     const code = `'use strict';
 
 // Flat-array Ehrlich-Aberth solver (same algorithm as main thread)
-function solveEA(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots, iterCounts) {
+function solveEA(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots) {
     var start = 0;
     while (start < nCoeffs - 1 && cRe[start]*cRe[start] + cIm[start]*cIm[start] < 1e-30) start++;
     var degree = nCoeffs - 1 - start;
@@ -8702,7 +8655,6 @@ function solveEA(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots, iterCounts) {
         if (d < 1e-30) return;
         warmRe[0] = -(bR*aR + bI*aI) / d;
         warmIm[0] = -(bI*aR - bR*aI) / d;
-        if (iterCounts) iterCounts[0] = 1;
         return;
     }
     var n = nCoeffs - start;
@@ -8710,12 +8662,9 @@ function solveEA(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots, iterCounts) {
     for (var k = 0; k < n; k++) { cr[k] = cRe[start+k]; ci[k] = cIm[start+k]; }
     var rRe = new Float64Array(degree), rIm = new Float64Array(degree);
     for (var i = 0; i < degree; i++) { rRe[i] = warmRe[i]; rIm[i] = warmIm[i]; }
-    var trackIter = !!iterCounts;
-    var conv = trackIter ? new Uint8Array(degree) : null;
     for (var iter = 0; iter < 64; iter++) {
         var maxCorr2 = 0;
         for (var i = 0; i < degree; i++) {
-            if (trackIter && conv[i]) continue;
             var zR = rRe[i], zI = rIm[i];
             var pR = cr[0], pI = ci[0], dpR = 0, dpI = 0;
             for (var k = 1; k < n; k++) {
@@ -8743,14 +8692,9 @@ function solveEA(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots, iterCounts) {
             rRe[i] -= crrR; rIm[i] -= crrI;
             var h2 = crrR*crrR + crrI*crrI;
             if (h2 > maxCorr2) maxCorr2 = h2;
-            if (trackIter && h2 < 1e-16) { conv[i] = 1; iterCounts[i] = iter + 1; }
         }
-        if (maxCorr2 < 1e-16) {
-            if (trackIter) { for (var i = 0; i < degree; i++) if (!conv[i]) { conv[i] = 1; iterCounts[i] = iter + 1; } }
-            break;
-        }
+        if (maxCorr2 < 1e-16) break;
     }
-    if (trackIter) { for (var i = 0; i < degree; i++) if (!conv[i]) iterCounts[i] = 64; }
     for (var i = 0; i < degree; i++) {
         if (isFinite(rRe[i]) && isFinite(rIm[i])) {
             warmRe[i] = rRe[i]; warmIm[i] = rIm[i];
@@ -8879,8 +8823,8 @@ function computeSens(coeffsRe, coeffsIm, nCoeffs, rootsRe, rootsIm, nRoots, selI
 var S_useWasm = false;
 var wasmExports = null;
 var wasmMemBuf = null;
-var W_coeffsRe, W_coeffsIm, W_warmRe, W_warmIm, W_iterCounts;
-var W_OFF_CR, W_OFF_CI, W_OFF_WR, W_OFF_WI, W_OFF_IT;
+var W_coeffsRe, W_coeffsIm, W_warmRe, W_warmIm;
+var W_OFF_CR, W_OFF_CI, W_OFF_WR, W_OFF_WI;
 
 function initWasm(b64, nCoeffs, nRoots) {
     var raw = atob(b64);
@@ -8890,27 +8834,24 @@ function initWasm(b64, nCoeffs, nRoots) {
     var inst = new WebAssembly.Instance(mod);
     wasmExports = inst.exports;
     wasmMemBuf = wasmExports.memory.buffer;
-    // Memory layout: coeffsRe, coeffsIm, warmRe, warmIm, iterCounts — all 8-byte aligned
+    // Memory layout: coeffsRe, coeffsIm, warmRe, warmIm — all 8-byte aligned
     W_OFF_CR = 0;
     W_OFF_CI = nCoeffs * 8;
     W_OFF_WR = nCoeffs * 2 * 8;
     W_OFF_WI = (nCoeffs * 2 + nRoots) * 8;
-    W_OFF_IT = (nCoeffs * 2 + nRoots * 2) * 8;
     W_coeffsRe = new Float64Array(wasmMemBuf, W_OFF_CR, nCoeffs);
     W_coeffsIm = new Float64Array(wasmMemBuf, W_OFF_CI, nCoeffs);
     W_warmRe = new Float64Array(wasmMemBuf, W_OFF_WR, nRoots);
     W_warmIm = new Float64Array(wasmMemBuf, W_OFF_WI, nRoots);
-    W_iterCounts = new Uint8Array(wasmMemBuf, W_OFF_IT, nRoots);
 }
 
-function solveEA_wasm(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots, iterCounts) {
+function solveEA_wasm(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots) {
     // Copy inputs into WASM memory
     W_coeffsRe.set(cRe);
     W_coeffsIm.set(cIm);
     W_warmRe.set(warmRe);
     W_warmIm.set(warmIm);
-    var trackIter = iterCounts ? 1 : 0;
-    wasmExports.solveEA(W_OFF_CR, W_OFF_CI, nCoeffs, W_OFF_WR, W_OFF_WI, nRoots, trackIter, W_OFF_IT);
+    wasmExports.solveEA(W_OFF_CR, W_OFF_CI, nCoeffs, W_OFF_WR, W_OFF_WI, nRoots, 0, 0);
     // Copy results back
     for (var i = 0; i < nRoots; i++) {
         var rr = W_warmRe[i], ri = W_warmIm[i];
@@ -8921,9 +8862,6 @@ function solveEA_wasm(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots, iterCounts) {
             warmRe[i] = Math.cos(angle); warmIm[i] = Math.sin(angle);
         }
     }
-    if (iterCounts) {
-        for (var i = 0; i < nRoots; i++) iterCounts[i] = W_iterCounts[i];
-    }
 }
 
 // --- Persistent worker state (set by "init", reused across "run" calls) ---
@@ -8933,7 +8871,6 @@ var S_W, S_H, S_range;
 var S_curvesFlat, S_entries, S_offsets, S_lengths, S_isCloud;
 var S_noColor, S_uniformR, S_uniformG, S_uniformB;
 var S_totalSteps, S_FPS;
-var S_iterColor, S_iterPalR, S_iterPalG, S_iterPalB;
 var S_proxColor, S_proxPalR, S_proxPalG, S_proxPalB;
 var S_derivColor, S_derivPalR, S_derivPalG, S_derivPalB, S_selIndices;
 var S_morphEnabled = false, S_morphRate = 0, S_morphTargetRe = null, S_morphTargetIm = null;
@@ -8955,10 +8892,6 @@ self.onmessage = function(e) {
         S_entries = d.animEntries;
         S_offsets = d.curveOffsets; S_lengths = d.curveLengths; S_isCloud = d.curveIsCloud;
         S_noColor = !!d.noColor;
-        S_iterColor = !!d.iterColor;
-        S_iterPalR = d.iterPalR ? new Uint8Array(d.iterPalR) : null;
-        S_iterPalG = d.iterPalG ? new Uint8Array(d.iterPalG) : null;
-        S_iterPalB = d.iterPalB ? new Uint8Array(d.iterPalB) : null;
         S_proxColor = !!d.proxColor;
         S_proxPalR = d.proxPalR ? new Uint8Array(d.proxPalR) : null;
         S_proxPalG = d.proxPalG ? new Uint8Array(d.proxPalG) : null;
@@ -9006,8 +8939,6 @@ self.onmessage = function(e) {
     var curvesFlat = S_curvesFlat;
     var total = S_totalSteps, FPS = S_FPS;
     var noColor = S_noColor;
-    var iterColor = S_iterColor;
-    var iterPalR = S_iterPalR, iterPalG = S_iterPalG, iterPalB = S_iterPalB;
     var proxColor = S_proxColor;
     var proxPalR = S_proxPalR, proxPalG = S_proxPalG, proxPalB = S_proxPalB;
     var derivColor = S_derivColor;
@@ -9031,7 +8962,6 @@ self.onmessage = function(e) {
     var pc = 0;
 
     var tmpRe = new Float64Array(nRoots), tmpIm = new Float64Array(nRoots);
-    var iterCounts = iterColor ? new Uint8Array(nRoots) : null;
     var minDists = proxColor ? new Float64Array(nRoots) : null;
     var proxRunMax = 1;
 
@@ -9096,9 +9026,9 @@ self.onmessage = function(e) {
 
         tmpRe.set(rootsRe); tmpIm.set(rootsIm);
         if (S_useWasm && wasmExports) {
-            solveEA_wasm(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots, iterCounts);
+            solveEA_wasm(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots);
         } else {
-            solveEA(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots, iterCounts);
+            solveEA(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots);
         }
 
         if (derivColor) {
@@ -9146,17 +9076,6 @@ self.onmessage = function(e) {
                 var palIdx = (t * 15) | 0;
                 paintIdx[pc] = iy * W + ix;
                 paintR[pc] = proxPalR[palIdx]; paintG[pc] = proxPalG[palIdx]; paintB[pc] = proxPalB[palIdx];
-                pc++;
-            }
-        } else if (iterColor) {
-            rootsRe.set(tmpRe); rootsIm.set(tmpIm);
-            for (var i = 0; i < nRoots; i++) {
-                var ix = ((rootsRe[i] / range + 1) * 0.5 * W) | 0;
-                var iy = ((1 - rootsIm[i] / range) * 0.5 * H) | 0;
-                if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
-                var palIdx = iterCounts[i] < 8 ? (iterCounts[i] * 15 / 8) | 0 : 15;
-                paintIdx[pc] = iy * W + ix;
-                paintR[pc] = iterPalR[palIdx]; paintG[pc] = iterPalG[palIdx]; paintB[pc] = iterPalB[palIdx];
                 pc++;
             }
         } else if (noColor) {
@@ -9574,8 +9493,6 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         bitmapRange, stepsVal,
         noColor: bitmapColorMode === "uniform",
         uniformR: bitmapUniformColor[0], uniformG: bitmapUniformColor[1], uniformB: bitmapUniformColor[2],
-        iterColor: bitmapColorMode === "iteration",
-        iterPalR: ITER_PAL_R.buffer.slice(0), iterPalG: ITER_PAL_G.buffer.slice(0), iterPalB: ITER_PAL_B.buffer.slice(0),
         proxColor: bitmapColorMode === "proximity",
         proxPalR: PROX_PAL_R.buffer.slice(0), proxPalG: PROX_PAL_G.buffer.slice(0), proxPalB: PROX_PAL_B.buffer.slice(0),
         derivColor: bitmapColorMode === "derivative",
@@ -9626,8 +9543,6 @@ function initFastModeWorkers() {
             canvasW: sd.canvasW, canvasH: sd.canvasH, bitmapRange: sd.bitmapRange,
             noColor: sd.noColor,
             uniformR: sd.uniformR, uniformG: sd.uniformG, uniformB: sd.uniformB,
-            iterColor: sd.iterColor,
-            iterPalR: sd.iterPalR, iterPalG: sd.iterPalG, iterPalB: sd.iterPalB,
             proxColor: sd.proxColor,
             proxPalR: sd.proxPalR, proxPalG: sd.proxPalG, proxPalB: sd.proxPalB,
             derivColor: sd.derivColor,
@@ -10019,10 +9934,8 @@ function fastModeChunkLegacy() {
         }
 
         // Solve roots (warm-start), preserve identity, update in-place
-        const iterMode = bitmapColorMode === "iteration";
-        const iters = iterMode ? new Uint8Array(coefficients.length - 1) : null;
-        let roots = solveRootsEA(coeffsToSolve, currentRoots, iters);
-        if (bitmapColorMode !== "uniform" && !iterMode) roots = matchRootOrder(roots, currentRoots);
+        let roots = solveRootsEA(coeffsToSolve, currentRoots);
+        if (bitmapColorMode !== "uniform") roots = matchRootOrder(roots, currentRoots);
         setCurrentRootsInPlace(roots);
 
         // Paint

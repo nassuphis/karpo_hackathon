@@ -449,7 +449,7 @@ No per-worker W×H×4 canvas buffer. A 10K×10K canvas with 4 workers and 100K s
 |----------|-----------|
 | Persistent workers (init once) | Avoids re-sending ~KB of curve data per pass |
 | Sparse pixels over full buffers | 10K×10K canvas = 400MB per buffer. Sparse format is 13 bytes per painted pixel. |
-| 64 solver iterations (not 100) | Warm start from previous step makes convergence fast. Bumped from 40 to 64 for iteration color mode range. Per-root convergence tracking skips converged roots in inner loop for a net speedup. |
+| 64 solver iterations (not 100) | Warm start from previous step makes convergence fast. 64 iterations gives ample margin for high-degree polynomials. |
 | Root matching every 4th step | O(n²) matching costs ~25% of solver time at degree 20. Every-4th is a good tradeoff for color accuracy vs speed. |
 | No SharedArrayBuffer | Requires COOP/COEP headers. GitHub Pages doesn't set them. Structured clone is fast enough for the small per-pass data (roots + step range). |
 | No OffscreenCanvas | Useful for single worker but complex for multi-worker merging. Sparse pixel approach is simpler and equally fast. |
@@ -505,8 +505,8 @@ The formula is mathematically identical to the interactive-mode `animLoop()`.
 |------|----------------|
 | `"uniform"` | `noColor = true`. All roots painted with `uniformR/G/B`. No root matching needed. |
 | `"rainbow"` | `noColor = false`. Each root uses `colorsR[i]/G[i]/B[i]`. Root matching every 4th step. |
-| `"derivative"` | Treated as rainbow in fast mode (sensitivity not computed in workers). |
-| `"iteration"` | `iterColor = true`. Color each root by solver convergence iteration count using 16-color rainbow palette (0-8 iterations mapped to 16 bins). No root matching needed — performance win. |
+| `"derivative"` | `derivColor = true`. Workers compute Jacobian sensitivity via `computeSens()` + `rankNorm()`. Color from 16-entry blue-white-red derivative palette. |
+| `"proximity"` | `proxColor = true`. Workers compute min pairwise distance per root. Color from selectable 16-entry sequential palette (8 options: Inferno, Viridis, Magma, Plasma, Turbo, Cividis, Warm, Cool). |
 
 Uniform mode is faster: no per-root color lookup, no root matching overhead.
 
@@ -542,4 +542,4 @@ The timer is stored in `fastModeTimerId`, so `exitFastMode()` cleanly stops the 
 
 ### Interactive Root Suppression
 
-`paintBitmapFrame()` (called from `renderRoots()`) returns early when `bitmapCoeffView` is true, preventing root dots from appearing on the coefficient canvas.
+When `bitmapCoeffView` is true, bitmap rendering only plots coefficient positions — root painting is suppressed.

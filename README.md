@@ -1,4 +1,4 @@
-# PolyPaint
+# PolyPaint v32
 
 **[Try it live](https://nassuphis.github.io/karpo_hackathon/)**
 
@@ -108,7 +108,7 @@ graph LR
 | **Mid-bar** | Scale (0.1x-10x), Rotate (0.5 turns), Translate (2D pad), Select all/none, Invert |
 | **Roots toolbar** | Trails toggle, color mode (Uniform / Index Rainbow / Derivative), domain coloring, Fit, +25% |
 | **Right tabs** | Roots (visualization), Stats (16 plots, 32 chart types), Sound (3 voices + routing matrix), Bitmap (fast mode + export) |
-| **Bitmap** | init/save/clear, resolution (1K-25K), start/stop, steps (10-1M), cfg (solver, jiggle, 5 color modes, 3 match strategies) |
+| **Bitmap** | init/save/clear, resolution (1K-25K), start/stop, steps (10-1M), cfg (solver, jiggle, 4 color modes, 3 match strategies) |
 | **Recording** | WebM capture: Roots, Coeffs, Both, Stats, Sound, Bitmap, or Full. Auto-stop on loop completion. |
 
 For the full control reference with detailed tables, see the [Interface Guide](docs/interface.md).
@@ -162,7 +162,7 @@ No server, no WebSocket, no build tools. See [Solver](docs/solver.md) for the ro
 ### Developer Notes
 
 - [Architecture Notes](docs/architecture.md) -- section map, code conventions, key locations, debugging insights
-- [Testing](docs/test-results.md) -- 430 Playwright tests across 20 files, JS/WASM benchmarks
+- [Testing](docs/test-results.md) -- 425 Playwright tests across 20 files, JS/WASM benchmarks
 
 ## File Structure
 

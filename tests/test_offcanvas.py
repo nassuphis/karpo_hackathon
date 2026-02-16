@@ -788,14 +788,14 @@ class TestBitmapColorMode:
         """Changing bitmapColorMode should not affect rootColorMode and vice versa."""
         result = page.evaluate("""() => {
             rootColorMode = 'rainbow';
-            bitmapColorMode = 'iteration';
+            bitmapColorMode = 'proximity';
             return {
                 rootMode: rootColorMode,
                 bitmapMode: bitmapColorMode
             };
         }""")
         assert result["rootMode"] == "rainbow"
-        assert result["bitmapMode"] == "iteration"
+        assert result["bitmapMode"] == "proximity"
 
     def test_bitmap_color_in_save_state(self, page):
         """buildStateMetadata includes bitmapColorMode and bitmapUniformColor."""
@@ -839,20 +839,18 @@ class TestBitmapColorMode:
         """serializeFastModeData should use bitmapColorMode, not rootColorMode."""
         result = page.evaluate("""() => {
             rootColorMode = 'rainbow';
-            bitmapColorMode = 'iteration';
+            bitmapColorMode = 'proximity';
             document.getElementById('bitmap-res-select').value = '1000';
             initBitmapCanvas();
             fastModeCurves = new Map();
             var sd = serializeFastModeData([], 100, currentRoots.length);
             return {
                 noColor: sd.noColor,
-                iterColor: sd.iterColor,
                 proxColor: sd.proxColor
             };
         }""")
         assert result["noColor"] is False
-        assert result["iterColor"] is True
-        assert result["proxColor"] is False
+        assert result["proxColor"] is True
 
     def test_serialization_uses_bitmap_uniform_color(self, page):
         """serializeFastModeData should use bitmapUniformColor, not uniformRootColor."""
@@ -913,7 +911,6 @@ class TestDerivativePalette:
             return {
                 derivColor: sd.derivColor,
                 noColor: sd.noColor,
-                iterColor: sd.iterColor,
                 proxColor: sd.proxColor,
                 hasDerivPalR: sd.derivPalR instanceof ArrayBuffer,
                 hasSelIndices: Array.isArray(sd.selectedCoeffIndices)
@@ -921,7 +918,6 @@ class TestDerivativePalette:
         }""")
         assert result["derivColor"] is True
         assert result["noColor"] is False
-        assert result["iterColor"] is False
         assert result["proxColor"] is False
         assert result["hasDerivPalR"] is True
         assert result["hasSelIndices"] is True
@@ -1118,89 +1114,6 @@ class TestComputeRootSensitivities:
         assert result["max"] <= 1
 
 
-class TestDerivativePaintBitmapFrame:
-    """Tests that paintBitmapFrame uses derivative colors when derivMode is active."""
-
-    def test_derivative_mode_calls_sensitivity(self, page):
-        """In derivative mode, paintBitmapFrame should compute sensitivities."""
-        result = page.evaluate("""() => {
-            // Set up bitmap with derivative mode
-            bitmapColorMode = 'derivative';
-            selectedCoeffs.clear();
-            selectedCoeffs.add(0);
-            document.getElementById('bitmap-res-select').value = '1000';
-            initBitmapCanvas();
-            bitmapRange = 5;
-            bitmapCoeffView = false;
-
-            // Track sensitivity computation
-            var called = false;
-            var orig = computeRootSensitivities;
-            computeRootSensitivities = function() { called = true; orig(); };
-
-            paintBitmapFrame();
-
-            computeRootSensitivities = orig;
-            selectedCoeffs.clear();
-            bitmapColorMode = 'rainbow';
-            return called;
-        }""")
-        assert result is True
-
-    def test_derivative_mode_uses_deriv_palette(self, page):
-        """In derivative mode, fillStyle should contain rgb values from DERIV_PALETTE."""
-        result = page.evaluate("""() => {
-            bitmapColorMode = 'derivative';
-            selectedCoeffs.clear();
-            selectedCoeffs.add(0);
-            document.getElementById('bitmap-res-select').value = '1000';
-            initBitmapCanvas();
-            bitmapRange = 5;
-            bitmapCoeffView = false;
-
-            // Intercept fillStyle assignments
-            var styles = [];
-            var origFillStyle = '';
-            var ctx = bitmapCtx;
-            var origFill = ctx.fill.bind(ctx);
-            var fillCount = 0;
-            var origBeginPath = ctx.beginPath.bind(ctx);
-            ctx.beginPath = function() {
-                if (ctx.fillStyle) styles.push(ctx.fillStyle);
-                origBeginPath();
-            };
-
-            paintBitmapFrame();
-
-            ctx.beginPath = origBeginPath;
-            selectedCoeffs.clear();
-            bitmapColorMode = 'rainbow';
-            return { count: styles.length, hasRgb: styles.some(s => s.indexOf('rgb') >= 0 || s.match(/^#/)) };
-        }""")
-        # Should have painted some roots
-        assert result["count"] > 0
-
-    def test_rainbow_mode_does_not_compute_sensitivity(self, page):
-        """In rainbow mode, paintBitmapFrame should NOT call computeRootSensitivities."""
-        result = page.evaluate("""() => {
-            bitmapColorMode = 'rainbow';
-            document.getElementById('bitmap-res-select').value = '1000';
-            initBitmapCanvas();
-            bitmapRange = 5;
-            bitmapCoeffView = false;
-
-            var called = false;
-            var orig = computeRootSensitivities;
-            computeRootSensitivities = function() { called = true; orig(); };
-
-            paintBitmapFrame();
-
-            computeRootSensitivities = orig;
-            return called;
-        }""")
-        assert result is False
-
-
 class TestDerivativeSerializationNonDerivMode:
     """Tests that derivative fields are correctly absent/false in non-derivative modes."""
 
@@ -1239,19 +1152,6 @@ class TestDerivativeSerializationNonDerivMode:
             return sd.derivColor;
         }""")
         assert result is False
-
-    def test_iteration_mode_deriv_false(self, page):
-        """In iteration mode, derivColor should be false."""
-        result = page.evaluate("""() => {
-            bitmapColorMode = 'iteration';
-            document.getElementById('bitmap-res-select').value = '1000';
-            initBitmapCanvas();
-            fastModeCurves = new Map();
-            var sd = serializeFastModeData([], 100, currentRoots.length);
-            return sd.derivColor;
-        }""")
-        assert result is False
-
 
 class TestAnimationColorPicker:
     def test_animation_picker_has_3_modes(self, page):

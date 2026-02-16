@@ -77,7 +77,7 @@ class TestProximityColoring:
             for (var i = 0; i < n; i++) {
                 roots.push({re: Math.cos(2*Math.PI*i/n), im: Math.sin(2*Math.PI*i/n)});
             }
-            // Compute min distances (same algorithm as paintBitmapFrame)
+            // Compute min distances (same algorithm as proximity coloring)
             var dists = [];
             for (var i = 0; i < n; i++) {
                 var md = Infinity;

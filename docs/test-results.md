@@ -19,10 +19,9 @@ Tests `solveRootsEA()` — pure function, no global state needed.
 | `TestDegree2::test_z2_minus_4z_plus_4` | PASS | z² - 4z + 4 = 0 → double root at 2 |
 | `TestDegree3::test_cube_roots_of_unity` | PASS | z³ - 1 = 0 → three cube roots of unity |
 | `TestHigherDegree::test_degree_5_roots_of_unity` | PASS | z⁵ - 1 = 0 → five 5th roots of unity |
-| `TestWarmStart::test_warm_start_converges` | PASS | Warm start near roots converges in <10 iterations |
+| `TestWarmStart::test_warm_start_converges` | PASS | Warm start near roots converges quickly |
 | `TestNaNResilience::test_leading_zeros` | PASS | Leading near-zero coefficients stripped correctly |
 | `TestNaNResilience::test_always_returns_degree_roots` | PASS | z¹⁰ + 1: always returns exactly 10 finite roots |
-| `TestIterationCounting::test_iter_counts_populated` | PASS | iterCounts array filled with values > 0 |
 
 ---
 
@@ -233,9 +232,8 @@ Tests the split compute/display architecture, multi-format export, high-resoluti
 | `TestDerivativePalette` | 8 | DERIV_PALETTE 16 entries, blue→red endpoints, flat arrays, serialization flags, subset selection, symmetry, white midpoint |
 | `TestRankNormalize` | 7 | Basic ranking, ties, Infinity handling, single element, empty/all-Infinity→null, [0,1] range |
 | `TestComputeRootSensitivities` | 4 | No selection→null, valid array with selection, length matches roots, all-selected valid |
-| `TestDerivativePaintBitmapFrame` | 3 | Derivative mode calls computeRootSensitivities, uses DERIV_PALETTE, rainbow mode skips sensitivity |
-| `TestDerivativeSerializationNonDerivMode` | 4 | derivColor=false for rainbow, uniform, proximity, iteration modes |
-| `TestAnimationColorPicker` | 2 | Only 3 modes (no iteration/proximity), 8 fixed swatches from ROOT_COLOR_SWATCHES |
+| `TestDerivativeSerializationNonDerivMode` | 3 | derivColor=false for rainbow, uniform, proximity modes |
+| `TestAnimationColorPicker` | 2 | Only 3 modes (no proximity), 8 fixed swatches from ROOT_COLOR_SWATCHES |
 
 ---
 
@@ -349,7 +347,7 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 
 | Area | Test File | Tests | What's covered |
 |------|-----------|-------|----------------|
-| Solver | test_solver.py | 11 | Ehrlich-Aberth: degree 1-10, warm start, NaN resilience, iteration counts |
+| Solver | test_solver.py | 10 | Ehrlich-Aberth: degree 1-10, warm start, NaN resilience |
 | Root tracking | test_matching.py | 7 | Greedy matching: identity, permutations, close roots, edge cases |
 | Curves | test_curves.py | 13 | Circle, ellipse, none, point counts |
 | Paths | test_paths.py | 32 | 21 path types: parametric bounds, periodicity, space-filling connectivity |
@@ -362,14 +360,14 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | Morph | test_morph.py | 15 | Init, blending, enable/disable, save/load, degree sync, fast mode |
 | Jiggle | test_jiggle.py | 26 | Helpers, all 10 modes, cumulative state, save/load |
 | Fast mode | test_fastmode.py | 22 | Formatting, buttons, removed vars, resets, serialization, clear, toggle |
-| Off-canvas & export | test_offcanvas.py | 80 | Split compute/display, BMP/JPEG/PNG/TIFF export, library loading, save popup, format state, bitmap/animation color decoupling, derivative palette, rank normalization, root sensitivities, derivative paint branches |
+| Off-canvas & export | test_offcanvas.py | 76 | Split compute/display, BMP/JPEG/PNG/TIFF export, library loading, save popup, format state, bitmap/animation color decoupling, derivative palette, rank normalization, root sensitivities |
 | Match strategies | test_match_strategy.py | 16 | Hungarian algorithm, greedy strategies, serialization, save/load, UI chips, worker blob |
 | D-node paths | test_dnode.py | 33 | D-List tab, allAnimatedDCoeffs, advanceDNodesAlongCurves, save/load with paths, D-curve serialization, backward compat, jiggle immunity |
 | Extended state | test_state_fields.py | 28 | Bitmap settings, solver type, selected coeffs, trails, jiggle sub-fields, worker count, backward compat for missing fields |
 | Animation | test_animation.py | 16 | Start/stop/home/scrub, play guard with D-nodes, allAnimatedCoeffs |
 | Integration | test_integration.py | 3 | Snap loading, determinism, fast mode pixels |
 | Benchmark | test_benchmark.py | 4 | JS vs WASM: correctness + performance |
-| **Total** | **20 files** | **430** | |
+| **Total** | **20 files** | **425** | |
 
 ---
 

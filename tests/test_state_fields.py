@@ -22,13 +22,13 @@ class TestBitmapFieldsRoundtrip:
     def test_bitmap_color_mode_roundtrip(self, page):
         """bitmapColorMode should survive save/load."""
         result = page.evaluate("""() => {
-            bitmapColorMode = "iteration";
+            bitmapColorMode = "proximity";
             var meta = buildStateMetadata();
             bitmapColorMode = "uniform";
             applyLoadedState(meta);
             return bitmapColorMode;
         }""")
-        assert result == "iteration"
+        assert result == "proximity"
 
     def test_bitmap_uniform_color_roundtrip(self, page):
         """bitmapUniformColor should survive save/load."""

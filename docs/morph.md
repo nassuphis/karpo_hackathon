@@ -138,7 +138,6 @@ if (morphPanelInited) {
 When `morphEnabled && morphTargetCoeffs.length === coefficients.length`:
 ```javascript
 function solveRoots() {
-    const iterMode = rootColorMode === "iteration";
     let coeffsToSolve = coefficients;
     if (morphEnabled && morphTargetCoeffs.length === coefficients.length) {
         coeffsToSolve = coefficients.map((c, i) => ({
@@ -146,8 +145,7 @@ function solveRoots() {
             im: c.im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu
         }));
     }
-    const iters = iterMode ? new Uint8Array(coeffsToSolve.length - 1) : null;
-    let roots = solveRootsEA(coeffsToSolve, currentRoots, iters);
+    let roots = solveRootsEA(coeffsToSolve, currentRoots);
     roots = matchRootOrder(roots, currentRoots);
     renderRoots(roots);
 }

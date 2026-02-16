@@ -280,17 +280,18 @@ A zero-padded elapsed-seconds counter appears during computation.
 | **Solver engine** | JavaScript or WebAssembly. See [WASM](wasm_investigation.md). |
 | **Background color** | 24 preset colors (darks, lights, grays). |
 | **Jiggle** | 10 perturbation modes (see below). Mode-specific parameter sliders, interval control, select-all toggle. |
-| **Root color** | 5 bitmap color modes (see below). Independent from animation root coloring. |
+| **Root color** | 4 bitmap color modes (see below). Independent from animation root coloring. |
 
-**Bitmap color modes** (5):
+**Bitmap color modes** (4):
 
 | Mode | Description | Palette |
 |------|-------------|---------|
 | Uniform | Single fixed color | 8-color swatch |
 | Index Rainbow | Color by root index | d3 rainbow spectrum |
 | Derivative | Jacobian sensitivity | 16-entry blue-white-red |
-| Iteration Count | Solver convergence speed | 16-entry full rainbow |
-| Root Proximity | Min distance to nearest root | 16-entry Inferno (dark-bright) |
+| Root Proximity | Min distance to nearest root | 16-entry sequential palette from catalog (8 options) |
+
+**Proximity palette catalog** (Root Proximity mode): Inferno (default), Viridis, Magma, Plasma, Turbo, Cividis, Warm, Cool. Each renders as a gradient circle in the cfg popup; clicking selects the palette and switches to Proximity mode.
 
 **Root-matching strategies** (Index Rainbow mode only):
 

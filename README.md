@@ -155,6 +155,7 @@ No server, no WebSocket, no build tools. See [Solver](docs/solver.md) for the ro
 
 ### User Interface
 
+- [Tutorial](docs/tutorial.md) -- step-by-step guide to capturing root trajectory PNGs, with screenshots
 - [Interface Guide](docs/interface.md) -- complete control reference with tables for all controls, paths, stats, color modes, and jiggle modes
 - [Patterns & Gallery](docs/patterns.md) -- 26 initial patterns, annotated trail screenshots
 - [Sonification](docs/sonification.md) -- audio graph, feature extraction, sound mapping, signal routing

@@ -194,6 +194,20 @@ body {
 #coeff-ctx .ctx-accept:hover { filter: brightness(1.2); }
 #coeff-ctx .ctx-dir { font-size: 9px; padding: 2px 8px; background: transparent; border: 1px solid var(--stroke); color: var(--muted); border-radius: 3px; cursor: pointer; }
 #coeff-ctx .ctx-dir.active { color: var(--text); border-color: var(--accent-dim); }
+/* --- D-node context menu (shares coeff-ctx styles) --- */
+#dnode-ctx { min-width: 180px; padding: 10px 12px; gap: 6px; }
+#dnode-ctx .ctx-title { font-size: 10px; color: var(--accent); font-weight: 600; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; width: 100%; }
+#dnode-ctx .ctx-title .ctx-move { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--stroke); background: rgba(255,255,255,0.08); color: var(--muted); font-size: 9px; cursor: pointer; display: flex; align-items: center; justify-content: center; margin-left: auto; flex-shrink: 0; padding: 0; line-height: 1; }
+#dnode-ctx .ctx-title .ctx-move:hover { background: rgba(255,255,255,0.18); color: var(--text); }
+#dnode-ctx label { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--muted); white-space: nowrap; width: 100%; }
+#dnode-ctx select, #dnode-ctx input[type=range] { flex: 1; }
+#dnode-ctx select { font-size: 9px; background: var(--panel); color: var(--text); border: 1px solid var(--stroke); border-radius: 3px; padding: 2px 4px; }
+#dnode-ctx .ctx-val { font-size: 9px; color: var(--text); min-width: 32px; text-align: right; }
+#dnode-ctx .ctx-row { display: flex; align-items: center; gap: 6px; width: 100%; }
+#dnode-ctx .ctx-accept { margin-top: 4px; padding: 4px 16px; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; background: var(--accent); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; align-self: center; }
+#dnode-ctx .ctx-accept:hover { filter: brightness(1.2); }
+#dnode-ctx .ctx-dir { font-size: 9px; padding: 2px 8px; background: transparent; border: 1px solid var(--stroke); color: var(--muted); border-radius: 3px; cursor: pointer; }
+#dnode-ctx .ctx-dir.active { color: var(--text); border-color: var(--accent-dim); }
 /* --- Audio config popover rows --- */
 .audio-row {
     display: flex; align-items: center; gap: 8px; width: 100%;
@@ -602,10 +616,11 @@ body.fast-mode #stop-roots-btn {
         <div id="panels">
     <div class="panel" id="left-panel">
         <div class="tab-bar" id="left-tab-bar">
-            <button class="tab active" data-ltab="coeffs">Coefficients <span id="coeff-sel-count" style="font-size:9px;color:#5ddb6a;opacity:0.85;"></span></button>
+            <button class="tab active" data-ltab="coeffs">C-Nodes <span id="coeff-sel-count" style="font-size:9px;color:#5ddb6a;opacity:0.85;"></span></button>
             <button class="tab" data-ltab="list">C-List</button>
-            <button class="tab" data-ltab="dlist">D-List</button>
             <button class="tab" data-ltab="morph">D-Nodes</button>
+            <button class="tab" data-ltab="dlist">D-List</button>
+            <button class="tab" data-ltab="final">Final</button>
             <span class="tab-bar-controls"><input id="scrub-slider" type="range" min="0" max="5000" value="0" step="1" title="Scrub coefficients along paths (0–5s)"><span id="scrub-val" style="font-size:9px;color:var(--muted);min-width:28px;text-align:right;">0.00s</span><button id="play-btn">▶ Play</button><button id="home-btn" title="Return to start position">Home</button></span>
         </div>
         <div class="tab-panes" id="left-tab-panes">
@@ -702,6 +717,15 @@ body.fast-mode #stop-roots-btn {
                 </div>
                 <div id="coeff-list-scroll" style="flex:1;min-height:0;overflow-y:auto;padding:4px 8px;"></div>
             </div>
+            <div id="morph-content" class="tab-content">
+                <div id="morph-bar" style="padding:4px 8px;display:flex;align-items:center;gap:8px;flex-shrink:0;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.45);">
+                    <button id="morph-copy-btn" class="bar-sel-btn" style="font-size:8px;">Copy C→D</button>
+                    <button id="morph-swap-btn" class="bar-sel-btn" style="font-size:8px;">Swap C↔D</button>
+                </div>
+                <div id="morph-container" style="flex:1;min-height:0;position:relative;">
+                    <svg id="morph-panel"></svg>
+                </div>
+            </div>
             <div id="dlist-content" class="tab-content">
                 <div id="dcoeff-list-toolbar" style="display:flex;gap:6px;padding:4px 8px;align-items:center;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.45);flex-shrink:0;">
                     <button id="dlist-select-all-btn" class="bar-sel-btn" title="Select all">⊕ All</button>
@@ -775,8 +799,8 @@ body.fast-mode #stop-roots-btn {
                 </div>
                 <div id="dcoeff-list-scroll" style="flex:1;min-height:0;overflow-y:auto;padding:4px 8px;"></div>
             </div>
-            <div id="morph-content" class="tab-content">
-                <div id="morph-bar" style="padding:4px 8px;display:flex;align-items:center;gap:8px;flex-shrink:0;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.45);">
+            <div id="final-content" class="tab-content">
+                <div id="final-bar" style="padding:4px 8px;display:flex;align-items:center;gap:8px;flex-shrink:0;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.45);">
                     <label style="font-size:10px;display:flex;align-items:center;gap:3px;cursor:pointer;">
                         <input type="checkbox" id="morph-enable"> Morph
                     </label>
@@ -784,12 +808,9 @@ body.fast-mode #stop-roots-btn {
                     <input id="morph-rate" type="range" min="1" max="200" value="25" step="1" style="width:60px;accent-color:var(--accent);">
                     <span id="morph-rate-val" style="font-size:9px;color:var(--muted);min-width:36px;">0.25 Hz</span>
                     <span id="morph-mu-val" style="font-size:9px;color:var(--accent);min-width:30px;">μ=0.50</span>
-                    <span style="flex:1;"></span>
-                    <button id="morph-copy-btn" class="bar-sel-btn" style="font-size:8px;">Copy C→D</button>
-                    <button id="morph-swap-btn" class="bar-sel-btn" style="font-size:8px;">Swap C↔D</button>
                 </div>
-                <div id="morph-container" style="flex:1;min-height:0;position:relative;">
-                    <svg id="morph-panel"></svg>
+                <div id="final-container" style="flex:1;min-height:0;position:relative;overflow:hidden;">
+                    <svg id="final-panel" style="width:100%;height:100%;"></svg>
                 </div>
             </div>
         </div>
@@ -892,6 +913,7 @@ body.fast-mode #stop-roots-btn {
 <div id="color-pop" class="ops-pop" style="min-width:160px"></div>
 <div id="coeff-pick-pop" class="ops-pop" style="min-width:300px"></div>
 <div id="coeff-ctx" class="ops-pop"></div>
+<div id="dnode-ctx" class="ops-pop"></div>
 <div id="snap-pop" class="ops-pop" style="min-width:100px"></div>
 <div id="path-pick-pop" class="ops-pop"></div>
 <div id="dpath-pick-pop" class="ops-pop"></div>
@@ -976,6 +998,7 @@ let lastSelectedCoeff = -1; // index of last coefficient added to selection (for
 // Trail state
 let trailsEnabled = false;
 let trailData = []; // array of arrays: trailData[i] = [{re, im}, ...] for root i
+let finalTrailData = []; // array of arrays: finalTrailData[i] = [{re, im}, ...] for final coeff i
 const MAX_TRAIL_POINTS = 4000;
 // Domain coloring state
 let domainColoringEnabled = false;
@@ -2885,6 +2908,209 @@ function closeCoeffCtx(revert) {
     ctxSnapshot = null;
 }
 
+// --- D-node right-click context menu ---
+
+let ctxDNodeIdx = -1;
+let ctxDNodeSnapshot = null;
+let ctxDNodeQuadrant = 0;
+
+function closeDNodeCtx(revert) {
+    document.getElementById("dnode-ctx").classList.remove("open");
+    if (revert && ctxDNodeSnapshot) {
+        const d = morphTargetCoeffs[ctxDNodeIdx];
+        d.pathType = ctxDNodeSnapshot.pathType;
+        d.radius = ctxDNodeSnapshot.radius;
+        d.speed = ctxDNodeSnapshot.speed;
+        d.angle = ctxDNodeSnapshot.angle;
+        d.ccw = ctxDNodeSnapshot.ccw;
+        d.extra = ctxDNodeSnapshot.extra || {};
+        d.curve = ctxDNodeSnapshot.curve;
+        d.curveIndex = ctxDNodeSnapshot.curveIndex;
+        updateAnimBar();
+    }
+    ctxDNodeIdx = -1;
+    ctxDNodeSnapshot = null;
+}
+
+function openDNodeCtx(event, dIdx) {
+    event.preventDefault();
+    if (ctxDNodeIdx >= 0) closeDNodeCtx(false);
+    if (ctxCoeffIdx >= 0) closeCoeffCtx(false);
+    if (typeof closeOpTool === "function") closeOpTool();
+    if (typeof closeAudioPop === "function") closeAudioPop();
+    if (typeof closeDegreePopover === "function") closeDegreePopover();
+    if (typeof closeColorPop === "function") closeColorPop();
+    if (typeof closeCoeffPick === "function") closeCoeffPick();
+
+    ctxDNodeIdx = dIdx;
+
+    const dd = morphTargetCoeffs[dIdx];
+    ctxDNodeSnapshot = {
+        pathType: dd.pathType, radius: dd.radius, speed: dd.speed,
+        angle: dd.angle, ccw: dd.ccw, extra: dd.extra ? { ...dd.extra } : {},
+        curve: dd.curve.map(pt => ({ ...pt })),
+        curveIndex: dd.curveIndex,
+    };
+
+    const ctx = document.getElementById("dnode-ctx");
+    ctx.innerHTML = "";
+
+    const n = morphTargetCoeffs.length;
+    const subIdx = n - 1 - dIdx;
+
+    // Title with reposition button
+    const title = document.createElement("div");
+    title.className = "ctx-title";
+    const titleText = document.createElement("span");
+    titleText.textContent = `d${subscript(subIdx)} trajectory`;
+    title.appendChild(titleText);
+    const moveBtn = document.createElement("button");
+    moveBtn.className = "ctx-move";
+    moveBtn.textContent = "\u21BB";
+    moveBtn.title = "Move menu to another quadrant";
+    moveBtn.addEventListener("click", () => {
+        ctxDNodeQuadrant = (ctxDNodeQuadrant + 1) % 4;
+        repositionDNodeCtx(dIdx);
+    });
+    title.appendChild(moveBtn);
+    ctx.appendChild(title);
+
+    const existing = dd;
+
+    // Path type select (clone options from #anim-path)
+    const pathSel = document.createElement("select");
+    pathSel.innerHTML = document.getElementById("anim-path").innerHTML;
+    pathSel.value = existing.pathType;
+    const pathRow = document.createElement("label");
+    pathRow.textContent = "Path ";
+    pathRow.appendChild(pathSel);
+    ctx.appendChild(pathRow);
+
+    // Dynamic controls container
+    const ctxDynamic = document.createElement("div");
+    ctx.appendChild(ctxDynamic);
+    const ctxInputs = {};
+
+    function buildCtxControls(pathType) {
+        ctxDynamic.innerHTML = "";
+        for (const k in ctxInputs) delete ctxInputs[k];
+        const schema = PATH_PARAMS[pathType] || [];
+        const d = morphTargetCoeffs[dIdx];
+        for (const p of schema) {
+            const val = getCoeffParam(d, p.key, p);
+            if (p.type === "toggle") {
+                const dirRow = document.createElement("div");
+                dirRow.className = "ctx-row";
+                const btn = document.createElement("button");
+                btn.className = "ctx-dir" + (val ? " active" : "");
+                btn.textContent = val ? p.labels[1] : p.labels[0];
+                btn.addEventListener("click", () => {
+                    const isActive = !btn.classList.contains("active");
+                    btn.classList.toggle("active", isActive);
+                    btn.textContent = isActive ? p.labels[1] : p.labels[0];
+                    previewDNodeCtx();
+                });
+                dirRow.appendChild(btn);
+                ctxDynamic.appendChild(dirRow);
+                ctxInputs[p.key] = btn;
+            } else {
+                const row = document.createElement("label");
+                const uiVal = p.toUI ? p.toUI(val) : val;
+                const valSpan = document.createElement("span");
+                valSpan.className = "ctx-val";
+                valSpan.textContent = p.fmt(uiVal);
+                const inp = document.createElement("input");
+                inp.type = "range"; inp.min = p.min; inp.max = p.max; inp.step = p.step; inp.value = uiVal;
+                inp.addEventListener("input", () => {
+                    valSpan.textContent = p.fmt(parseFloat(inp.value));
+                    previewDNodeCtx();
+                });
+                row.textContent = p.label + " ";
+                row.appendChild(inp);
+                row.appendChild(valSpan);
+                ctxDynamic.appendChild(row);
+                ctxInputs[p.key] = inp;
+            }
+        }
+    }
+
+    buildCtxControls(existing.pathType);
+
+    pathSel.addEventListener("change", () => {
+        buildCtxControls(pathSel.value);
+        previewDNodeCtx();
+    });
+
+    // Accept button row
+    const ctxBtnRow = document.createElement("div");
+    ctxBtnRow.style.cssText = "display:flex;gap:6px;align-items:center;justify-content:center;margin-top:4px;";
+    const acceptBtn = document.createElement("button");
+    acceptBtn.className = "ctx-accept";
+    acceptBtn.textContent = "Accept";
+    acceptBtn.addEventListener("click", () => {
+        ctxDNodeSnapshot = null;
+        closeDNodeCtx(false);
+        updateAnimBar();
+        if (leftTab === "dlist") refreshDCoeffList();
+    });
+    ctxBtnRow.appendChild(acceptBtn);
+    ctx.appendChild(ctxBtnRow);
+
+    // Live preview — applies current menu settings immediately
+    function previewDNodeCtx() {
+        const d = morphTargetCoeffs[dIdx];
+        d.pathType = pathSel.value;
+        const schema = PATH_PARAMS[d.pathType] || [];
+        for (const p of schema) {
+            if (p.type === "toggle") {
+                setCoeffParam(d, p.key, ctxInputs[p.key] ? ctxInputs[p.key].classList.contains("active") : p.default);
+            } else {
+                const ctxRaw = ctxInputs[p.key] ? parseFloat(ctxInputs[p.key].value) : null;
+                setCoeffParam(d, p.key, ctxRaw !== null ? (p.fromUI ? p.fromUI(ctxRaw) : ctxRaw) : p.default);
+            }
+        }
+        if (d.pathType === "none") {
+            d.curve = [{ re: d.re, im: d.im }];
+        } else {
+            const absRadius = d.radius / 100 * coeffExtent();
+            d.curve = computeCurve(d.re, d.im, d.pathType, absRadius, d.angle, d.extra);
+        }
+        d.curveIndex = 0;
+        animState.elapsedAtPause = null;
+        updateAnimBar();
+    }
+
+    pathSel.addEventListener("change", previewDNodeCtx);
+
+    ctx.classList.add("open");
+    ctxDNodeQuadrant = 0;
+    repositionDNodeCtx(dIdx);
+}
+
+function repositionDNodeCtx(dIdx) {
+    const ctx = document.getElementById("dnode-ctx");
+    const d = morphTargetCoeffs[dIdx];
+    if (!morphSvg || !morphSvg.node()) { ctx.style.left = "100px"; ctx.style.top = "100px"; return; }
+    const sx = cxs()(d.re), sy = cys()(d.im);
+    const svgRect = morphSvg.node().getBoundingClientRect();
+    const cx = svgRect.left + sx, cy = svgRect.top + sy;
+    const GAP = 14;
+    const rect = ctx.getBoundingClientRect();
+    const w = rect.width, h = rect.height;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const offsets = [
+        { left: cx + GAP,     top: cy + GAP },
+        { left: cx - w - GAP, top: cy + GAP },
+        { left: cx - w - GAP, top: cy - h - GAP },
+        { left: cx + GAP,     top: cy - h - GAP },
+    ];
+    let pos = offsets[ctxDNodeQuadrant];
+    pos.left = Math.max(4, Math.min(pos.left, vw - w - 4));
+    pos.top  = Math.max(4, Math.min(pos.top,  vh - h - 4));
+    ctx.style.left = pos.left + "px";
+    ctx.style.top  = pos.top  + "px";
+}
+
 function addCoefficientAt(re, im, event) {
     if (ctxCoeffIdx >= 0) closeCoeffCtx(false);
     const c = {
@@ -3053,28 +3279,9 @@ function openCoeffCtx(event, coeffIdx) {
         previewCtx();
     });
 
-    // PS (prime speed) + Accept buttons row
+    // Accept + Delete buttons row
     const ctxBtnRow = document.createElement("div");
     ctxBtnRow.style.cssText = "display:flex;gap:6px;align-items:center;justify-content:center;margin-top:4px;";
-    const ctxPsBtn = document.createElement("button");
-    ctxPsBtn.className = "ctx-accept";
-    ctxPsBtn.textContent = "PS";
-    ctxPsBtn.title = "Prime Speed — set to nearest speed coprime with all others";
-    ctxPsBtn.style.cssText = "padding:4px 8px;background:transparent;border:1px solid var(--stroke);color:var(--muted);";
-    ctxPsBtn.addEventListener("click", () => {
-        const sInp = ctxInputs["speed"];
-        if (!sInp) return;
-        const cur = parseInt(sInp.value, 10);
-        const ps = findPrimeSpeed(cur, new Set([coeffIdx]));
-        if (ps !== cur) {
-            sInp.value = ps;
-            const vs = sInp.parentElement.querySelector(".ctx-val");
-            if (vs) vs.textContent = _P.speed.fmt(ps);
-            previewCtx();
-            uiPing(1320, 0.06);
-        } else { uiBuzz(); }
-    });
-    ctxBtnRow.appendChild(ctxPsBtn);
     const acceptBtn = document.createElement("button");
     acceptBtn.className = "ctx-accept";
     acceptBtn.textContent = "Accept";
@@ -3374,8 +3581,9 @@ playBtn.addEventListener("click", function () {
         const resuming = animState.elapsedAtPause != null;
         if (trailsEnabled && !resuming) {
             trailData = [];
-
+            finalTrailData = [];
             trailLayer.selectAll("path.trail-path").remove();
+            if (finalTrailLayer) finalTrailLayer.selectAll("path.trail-path").remove();
         }
         startAnimation();
         renderCoeffTrails();
@@ -3413,7 +3621,9 @@ document.getElementById("home-btn").addEventListener("click", function () {
     }
     if (trailsEnabled) {
         trailData = [];
+        finalTrailData = [];
         trailLayer.selectAll("path.trail-path").remove();
+        if (finalTrailLayer) finalTrailLayer.selectAll("path.trail-path").remove();
     }
     resetAudioState();
     resetBitmap();
@@ -4198,6 +4408,7 @@ function renderMorphPanel() {
         .attr("r", 10)
         .attr("stroke", "#fff")
         .call(morphDrag)
+        .on("contextmenu", function(event, d) { openDNodeCtx(event, d._idx); })
       .merge(dots)
         .attr("cx", d => cxs()(d.re))
         .attr("cy", d => cys()(d.im))
@@ -4249,6 +4460,97 @@ function renderMorphPanel() {
     // Update mu display
     const muEl = document.getElementById("morph-mu-val");
     if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
+}
+
+// --- Final panel: shows actual coefficients sent to the solver ---
+let finalPanelInited = false;
+let finalSvg, finalLayer, finalTrailLayer;
+
+function initFinalPanel() {
+    finalSvg = d3.select("#final-panel");
+    finalTrailLayer = finalSvg.append("g").attr("class", "final-trail-layer");
+    finalLayer = finalSvg.append("g");
+    finalPanelInited = true;
+}
+
+function renderFinalPanel() {
+    if (!finalPanelInited) initFinalPanel();
+    const n = coefficients.length;
+    const nD = morphTargetCoeffs.length;
+    const doBlend = morphEnabled && nD === n;
+
+    const finalCoeffs = [];
+    for (let i = 0; i < n; i++) {
+        const c = coefficients[i];
+        if (doBlend) {
+            const d = morphTargetCoeffs[i];
+            finalCoeffs.push({
+                re: c.re * (1 - morphMu) + d.re * morphMu,
+                im: c.im * (1 - morphMu) + d.im * morphMu,
+                _idx: i
+            });
+        } else {
+            finalCoeffs.push({ re: c.re, im: c.im, _idx: i });
+        }
+    }
+
+    // Resize SVG to container
+    const container = document.getElementById("final-container");
+    if (!container) return;
+    const w = container.clientWidth, h = container.clientHeight;
+    if (w <= 0 || h <= 0) return;
+    finalSvg.attr("width", w).attr("height", h);
+
+    // Dots (read-only, no drag)
+    const dots = finalLayer.selectAll("circle.final-coeff")
+        .data(finalCoeffs, d => d._idx);
+    dots.enter()
+        .append("circle").attr("class", "final-coeff")
+        .attr("r", 8).attr("stroke", "#fff").attr("stroke-width", 1)
+      .merge(dots)
+        .attr("cx", d => cxs()(d.re))
+        .attr("cy", d => cys()(d.im))
+        .attr("fill", (_, i) => coeffColor(i, n));
+    dots.exit().remove();
+
+    // Labels
+    const labels = finalLayer.selectAll("text.final-label")
+        .data(finalCoeffs, d => d._idx);
+    labels.enter()
+        .append("text").attr("class", "final-label")
+        .attr("font-size", 10).attr("fill", "#ccc")
+      .merge(labels)
+        .attr("x", d => cxs()(d.re) + 12)
+        .attr("y", d => cys()(d.im) + 4)
+        .text((_, i) => `c${subscript(n - 1 - i)}`);
+    labels.exit().remove();
+
+    // Render trails on the final panel
+    if (trailsEnabled && finalTrailData.length > 0) renderFinalTrails();
+}
+
+function renderFinalTrails() {
+    if (!finalTrailLayer) return;
+    const xScale = cxs(), yScale = cys();
+    const n = finalTrailData.length;
+    const jumpThresh = panels.coeff.range * 0.3;
+    const paths = finalTrailLayer.selectAll("path.trail-path").data(finalTrailData);
+    paths.enter()
+        .append("path")
+        .attr("class", "trail-path")
+      .merge(paths)
+        .attr("d", pts => {
+            if (pts.length < 2) return "";
+            let d = `M${xScale(pts[0].re)},${yScale(pts[0].im)}`;
+            for (let j = 1; j < pts.length; j++) {
+                const dist = Math.hypot(pts[j].re - pts[j-1].re, pts[j].im - pts[j-1].im);
+                const cmd = dist > jumpThresh ? "M" : "L";
+                d += `${cmd}${xScale(pts[j].re)},${yScale(pts[j].im)}`;
+            }
+            return d;
+        })
+        .attr("stroke", (_, i) => coeffColor(i, n));
+    paths.exit().remove();
 }
 
 function updateMorphMarkers() {
@@ -4406,6 +4708,19 @@ function renderRoots(newRoots) {
             trailData[i].push({ re: currentRoots[i].re, im: currentRoots[i].im });
             if (trailData[i].length > MAX_TRAIL_POINTS) trailData[i].shift();
         }
+        // Final coefficient trails (blended C/D positions)
+        const nC = coefficients.length;
+        const nD = morphTargetCoeffs.length;
+        const doBlend = morphEnabled && nD === nC;
+        while (finalTrailData.length < nC) finalTrailData.push([]);
+        finalTrailData.length = nC;
+        for (let i = 0; i < nC; i++) {
+            const c = coefficients[i];
+            const re = doBlend ? c.re * (1 - morphMu) + morphTargetCoeffs[i].re * morphMu : c.re;
+            const im = doBlend ? c.im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu : c.im;
+            finalTrailData[i].push({ re, im });
+            if (finalTrailData[i].length > MAX_TRAIL_POINTS) finalTrailData[i].shift();
+        }
     }
     // Always re-render trails when data exists — ensures coherence after
     // pause (the pending throttled solve fires with playing=false).
@@ -4497,7 +4812,9 @@ function renderCoeffTrails() {
 
 function clearTrails() {
     trailData = [];
+    finalTrailData = [];
     trailLayer.selectAll("path.trail-path").remove();
+    if (finalTrailLayer) finalTrailLayer.selectAll("path.trail-path").remove();
     // Coefficient paths are always visible — don't clear them here
 }
 
@@ -4788,6 +5105,7 @@ function solveRoots() {
     let roots = solveRootsEA(coeffsToSolve, currentRoots);
     roots = matchRootOrder(roots, currentRoots);
     renderRoots(roots);
+    if (leftTab === "final") renderFinalPanel();
 }
 
 function solveRootsThrottled() {
@@ -5488,6 +5806,7 @@ document.addEventListener("visibilitychange", function () {
 document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") {
         if (ctxCoeffIdx >= 0) { closeCoeffCtx(true); return; }
+        if (ctxDNodeIdx >= 0) { closeDNodeCtx(true); return; }
         if (typeof activeToolBtn !== "undefined" && activeToolBtn) { closeOpTool(); return; }
         if (activeAudioBtn) { closeAudioPop(); return; }
         if (colorPopOpen) { closeColorPop(); return; }
@@ -5842,6 +6161,13 @@ document.addEventListener("mousedown", e => {
         const ctxEl = document.getElementById("coeff-ctx");
         if (!ctxEl.contains(e.target)) {
             closeCoeffCtx(true);
+        }
+    }
+    // Close D-node context menu (revert on outside click)
+    if (ctxDNodeIdx >= 0) {
+        const dctxEl = document.getElementById("dnode-ctx");
+        if (!dctxEl.contains(e.target)) {
+            closeDNodeCtx(true);
         }
     }
     // Close snap popup
@@ -10046,8 +10372,9 @@ const leftTabButtons = [...document.querySelectorAll("#left-tab-bar [data-ltab]"
 const leftTabContents = {
     coeffs: document.getElementById("coeffs-content"),
     list: document.getElementById("list-content"),
+    morph: document.getElementById("morph-content"),
     dlist: document.getElementById("dlist-content"),
-    morph: document.getElementById("morph-content")
+    final: document.getElementById("final-content")
 };
 
 function switchLeftTab(tabName) {
@@ -10058,6 +10385,7 @@ function switchLeftTab(tabName) {
     if (tabName === "list") { refreshCoeffList(); refreshListCurveEditor(); }
     if (tabName === "dlist") { refreshDCoeffList(); refreshDListCurveEditor(); }
     if (tabName === "morph") renderMorphPanel();
+    if (tabName === "final") renderFinalPanel();
 }
 leftTabButtons.forEach(btn => btn.addEventListener("click", () => switchLeftTab(btn.dataset.ltab)));
 

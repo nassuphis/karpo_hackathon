@@ -74,7 +74,7 @@ See the [Interface Guide](docs/interface.md) for the complete control reference.
 |------|-------------|
 | **Header** | Degree slider (3-30), Pattern dropdown (26 options), Reset, Save/Load, Export (7 modes), C (workers), T (timing) |
 | **Left tabs** | Coefficients (SVG + drag), List (table + 21 transforms), D-List (morph targets), Morph (blend control) |
-| **Trajectory editor** | Path type (21 curves in 3 groups), per-path sliders (R/S/A/CW), PS (prime speed), Update Sel |
+| **Trajectory editor** | Path type (21 curves in 3 groups), per-path sliders (R/S/A/CW), preview/revert, Update Whole Selection |
 | **Mid-bar** | Scale (0.1x-10x), Rotate (0.5 turns), Translate (2D pad), Select all/none, Invert |
 | **Roots toolbar** | Trails toggle, color mode (Uniform / Index Rainbow / Derivative), domain coloring, Fit, +25% |
 | **Right tabs** | Roots (visualization), Stats (16 plots, 32 chart types), Sound (3 voices + routing matrix), Bitmap (fast mode + export) |
@@ -133,7 +133,7 @@ No server, no WebSocket, no build tools. See [Solver](docs/solver.md) for the ro
 ### Developer Notes
 
 - [Architecture Notes](docs/architecture.md) -- section map, code conventions, key locations, debugging insights
-- [Testing](docs/test-results.md) -- 425 Playwright tests across 20 files, JS/WASM benchmarks
+- [Testing](docs/test-results.md) -- 490 Playwright tests across 23 files, JS/WASM benchmarks
 
 ## File Structure
 
@@ -144,7 +144,7 @@ karpo_hackathon/
   solver.wasm         Compiled WASM binary (~2KB)
   build-wasm.sh       Compile solver.c -> base64-embedded WASM
   docs/               Technical documentation (14 files)
-  tests/              Playwright tests (430 tests, 20 files)
+  tests/              Playwright tests (490 tests, 23 files)
   snaps/              Saved snapshots (PNG + JSON)
 ```
 

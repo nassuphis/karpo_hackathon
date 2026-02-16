@@ -106,7 +106,7 @@ Two `Set` objects: `selectedCoeffs` (indices into `coefficients[]`) and `selecte
 ### List Tab
 
 The List tab (`leftTab === "list"`) shows a tabular view of all coefficients with:
-- **Selection buttons**: All, None, SameCurve, and a curve-type cycler
+- **Selection buttons**: All, None, SameCurve, and a curve-type cycler (cycles path types, not individual nodes)
 - **Transform dropdown** (20 transforms): Applies a one-shot transform to `selectedCoeffs`, then resets to "none". Includes PrimeSpeeds, SetAllSpeeds, RandomSpeed, RandomAngle, RandomRadius, LerpSpeed, LerpRadius, LerpAngle, RandomDirection, FlipAllDirections, ShuffleCurves, ShufflePositions, CircleLayout, RotatePositions, ScalePositions, JitterPositions, Conjugate, InvertPositions, SortByModulus, SortByArgument.
 - **Param1/Param2 sliders**: Passive inputs that transforms read when executed.
 - **Per-coefficient columns**: Index with color dot, position (re, im), speed (spd), radius (rad), curve length (pts), curve position (pos).

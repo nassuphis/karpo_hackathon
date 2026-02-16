@@ -34,7 +34,7 @@ All C-List functions mirrored for `morphTargetCoeffs[]` and `selectedMorphCoeffs
 - **Path picker popup**: `openDPathPickPop()`, `closeDPathPickPop()` with live preview and PS button
 - **Core list**: `refreshDCoeffList()`, `updateDListCoords()`, `updateDListPathCols()`
 - **Curve cycling**: `buildDCurveCycleTypes()`, `updateDCurveCycleLabel()`, `selectByDCurveType()`
-- **Curve editor**: `refreshDListCurveEditor()`, `buildDleControls()`, `dleReadParams()`, `dleApplyToCoeff()`, `dleSyncToCurrentCoeff()`
+- **Curve editor**: `refreshDListCurveEditor()`, `buildDleControls()`, `dleReadParams()`, `dleApplyToCoeff()`
 - **Transform dropdown**: All 22 transforms targeting `morphTargetCoeffs` + `selectedMorphCoeffs`
 - After D transforms: calls `solveRootsThrottled()` if `morphEnabled`, `renderMorphPanel()` if on morph tab
 

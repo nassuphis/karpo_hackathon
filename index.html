@@ -631,7 +631,7 @@ body.fast-mode #stop-roots-btn {
                         <button id="select-all-coeffs-btn" class="bar-sel-btn" title="Select all coefficients">⊕ All</button>
                         <button id="deselect-all-btn" class="bar-sel-btn" title="Deselect all (Esc)">✕ None</button>
                         <span class="bar-title empty" id="bar-title">&lt;no selection&gt;</span>
-                        <button id="sel2path-btn">Update Sel</button>
+                        <button id="sel2path-btn">Update Whole Selection</button>
                     </div>
                     <div class="bar-controls dimmed" id="bar-controls">
                         <div class="bar-row">
@@ -691,14 +691,9 @@ body.fast-mode #stop-roots-btn {
                 <div id="list-curve-editor" style="padding:4px 8px 6px;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.55);flex-shrink:0;opacity:0.3;pointer-events:none;transition:opacity 0.15s;">
                     <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
                         <select id="lce-path-sel" style="font-size:9px;font-weight:600;color:var(--accent);background:rgba(0,0,0,0.3);border:1px solid var(--stroke);border-radius:3px;padding:1px 2px;"></select>
-                        <button id="lce-prev" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9664;</button>
-                        <span id="lce-coeff-name" style="font-size:9px;color:var(--text);min-width:20px;text-align:center;"></span>
-                        <button id="lce-next" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9654;</button>
                         <span style="width:6px;"></span>
                         <div id="lce-controls"></div>
                         <span style="width:4px;"></span>
-                        <button id="lce-ps-btn" class="bar-sel-btn" style="font-size:8px;" title="Prime Speed — set to nearest speed coprime with all others">PS</button>
-                        <button id="lce-update-one" class="bar-sel-btn" style="font-size:8px;">Update This</button>
                         <button id="lce-update-sel" class="bar-sel-btn" style="font-size:8px;">Update Whole Selection</button>
                     </div>
                 </div>
@@ -773,14 +768,9 @@ body.fast-mode #stop-roots-btn {
                 <div id="dlist-curve-editor" style="padding:4px 8px 6px;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.55);flex-shrink:0;opacity:0.3;pointer-events:none;transition:opacity 0.15s;">
                     <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
                         <select id="dle-path-sel" style="font-size:9px;font-weight:600;color:var(--accent);background:rgba(0,0,0,0.3);border:1px solid var(--stroke);border-radius:3px;padding:1px 2px;"></select>
-                        <button id="dle-prev" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9664;</button>
-                        <span id="dle-coeff-name" style="font-size:9px;color:var(--text);min-width:20px;text-align:center;"></span>
-                        <button id="dle-next" class="bar-sel-btn" style="padding:0 4px;font-size:10px;line-height:1;">&#9654;</button>
                         <span style="width:6px;"></span>
                         <div id="dle-controls"></div>
                         <span style="width:4px;"></span>
-                        <button id="dle-ps-btn" class="bar-sel-btn" style="font-size:8px;" title="Prime Speed — set to nearest speed coprime with all others">PS</button>
-                        <button id="dle-update-one" class="bar-sel-btn" style="font-size:8px;">Update This</button>
                         <button id="dle-update-sel" class="bar-sel-btn" style="font-size:8px;">Update Whole Selection</button>
                     </div>
                 </div>
@@ -2639,6 +2629,7 @@ function setCoeffParam(c, key, value) {
 // Dynamic bar controls — rebuilt when path type changes
 let barInputs = {};       // { key: <input element>, ... }
 let barCurrentPath = "";  // track which path type is currently shown
+let barSnapshots = null;  // preview/revert: { idx: {pathType,radius,...}, ... } or null
 
 function rebuildBarControls(pathType) {
     if (pathType === barCurrentPath) return;
@@ -2659,7 +2650,7 @@ function rebuildBarControls(pathType) {
         valSpan.textContent = p.fmt(uiDef);
         inp.addEventListener("input", function () {
             valSpan.textContent = p.fmt(parseFloat(this.value));
-            applyBarToSelection();
+            previewBarToSelection();
         });
         lbl.textContent = p.label + " ";
         lbl.appendChild(inp);
@@ -2678,33 +2669,10 @@ function rebuildBarControls(pathType) {
             const isActive = !this.classList.contains("active");
             this.textContent = isActive ? p.labels[1] : p.labels[0];
             this.classList.toggle("active", isActive);
-            applyBarToSelection();
+            previewBarToSelection();
         });
         barDynamic.appendChild(btn);
         barInputs[p.key] = btn;
-    }
-    // PS button (only if speed slider exists)
-    if (barInputs["speed"]) {
-        const psBtn = document.createElement("button");
-        psBtn.id = "bar-ps-btn";
-        psBtn.textContent = "PS";
-        psBtn.title = "Prime Speed — set to nearest speed coprime with all others";
-        psBtn.style.cssText = "font-size:8px;padding:1px 5px;background:transparent;border:1px solid var(--stroke);color:var(--muted);border-radius:3px;cursor:pointer;";
-        psBtn.addEventListener("click", () => {
-            if (selectedCoeffs.size === 0) return;
-            const sInp = barInputs["speed"];
-            const cur = parseInt(sInp.value, 10);
-            const ps = findPrimeSpeed(cur, new Set(selectedCoeffs));
-            if (ps !== cur) {
-                sInp.value = ps;
-                const vs = barInputs["speed_val"];
-                const fm = barInputs["speed_fmt"];
-                if (vs && fm) vs.textContent = fm(ps);
-                applyBarToSelection();
-                uiPing(1320, 0.06);
-            } else { uiBuzz(); }
-        });
-        barDynamic.appendChild(psBtn);
     }
 }
 
@@ -3513,6 +3481,88 @@ function applyBarToSelection() {
     if (typeof leftTab !== "undefined" && leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
 }
 
+// Preview/revert pattern: sliders show a live preview, click-away reverts,
+// "Update Whole Selection" commits.
+
+function previewBarToSelection() {
+    if (selectedCoeffs.size === 0) { uiBuzz(); return; }
+    // Snapshot on first preview interaction
+    if (!barSnapshots) {
+        barSnapshots = {};
+        for (const idx of selectedCoeffs) {
+            const c = coefficients[idx];
+            barSnapshots[idx] = {
+                pathType: c.pathType, radius: c.radius, speed: c.speed,
+                angle: c.angle, ccw: c.ccw, extra: c.extra ? { ...c.extra } : {},
+                curve: c.curve.map(pt => ({ ...pt })),
+                curveIndex: c.curveIndex,
+            };
+        }
+    }
+    // Apply bar params as a preview (same logic as applyBarToSelection)
+    const pt = animPathSel.value;
+    rebuildBarControls(pt);
+    const vals = readBarParams(pt);
+    for (const idx of selectedCoeffs) {
+        const c = coefficients[idx];
+        const oldType = c.pathType, oldR = c.radius, oldA = c.angle;
+        const oldExtra = c.extra ? { ...c.extra } : {};
+        c.pathType = pt;
+        const schema = PATH_PARAMS[pt] || [];
+        for (const p of schema) setCoeffParam(c, p.key, vals[p.key] !== undefined ? vals[p.key] : p.default);
+        const r = c.radius, a = c.angle;
+        let extraChanged = false;
+        for (const p of schema) {
+            if (!_STD_KEYS.has(p.key) && c.extra[p.key] !== oldExtra[p.key]) { extraChanged = true; break; }
+        }
+        if (pt === "none") {
+            c.curve = [{ re: c.re, im: c.im }];
+            c.curveIndex = 0;
+        } else if (pt === "random" || pt !== oldType || extraChanged) {
+            const absR = r / 100 * coeffExtent();
+            c.curve = computeCurve(c.re, c.im, pt, absR, a, c.extra);
+            c.curveIndex = 0;
+        } else if (r !== oldR || a !== oldA) {
+            transformCoeffCurve(c, oldR, oldA);
+        }
+    }
+    coeffLayer.selectAll("circle.coeff")
+        .filter(cd => selectedCoeffs.has(cd._idx))
+        .attr("cx", cd => cxs()(cd.re)).attr("cy", cd => cys()(cd.im));
+    coeffLayer.selectAll(".coeff-label")
+        .filter(ld => selectedCoeffs.has(ld._idx))
+        .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
+    renderCoeffTrails();
+}
+
+function revertBarPreview() {
+    if (!barSnapshots) return;
+    for (const idx in barSnapshots) {
+        const i = parseInt(idx);
+        if (i >= coefficients.length) continue;
+        const snap = barSnapshots[idx];
+        const c = coefficients[i];
+        c.pathType = snap.pathType;
+        c.radius = snap.radius;
+        c.speed = snap.speed;
+        c.angle = snap.angle;
+        c.ccw = snap.ccw;
+        c.extra = snap.extra || {};
+        c.curve = snap.curve;
+        c.curveIndex = snap.curveIndex;
+    }
+    barSnapshots = null;
+    renderCoeffTrails();
+    syncBarFromCoeff();
+}
+
+function commitBarPreview() {
+    barSnapshots = null;
+    animState.elapsedAtPause = null;
+    renderCoeffTrails();
+    if (typeof leftTab !== "undefined" && leftTab === "list") { refreshCoeffList(); refreshListCurveEditor(); }
+}
+
 function transformCoeffCurve(c, oldRadius, oldAngle) {
     if (c.pathType === "none") return;
     // For cloud (random) or orbital (spiral) paths, regenerate instead of transforming
@@ -3549,6 +3599,7 @@ function transformCoeffCurve(c, oldRadius, oldAngle) {
 }
 
 function updateAnimBar() {
+    revertBarPreview();
     if (selectedCoeffs.size === 0) {
         barTitle.textContent = "<no selection>";
         barTitle.classList.add("empty");
@@ -3562,14 +3613,19 @@ function updateAnimBar() {
     syncBarFromCoeff();
 }
 
-// Path dropdown change — rebuild controls and apply
+// Path dropdown change — preview (not commit)
 animPathSel.addEventListener("change", function () {
-    rebuildBarControls(this.value);
-    applyBarToSelection();
+    previewBarToSelection();
 });
 
-// Update Selection button
-sel2pathBtn.addEventListener("click", applyBarToSelection);
+// Update Whole Selection button — commit preview or apply directly
+sel2pathBtn.addEventListener("click", function () {
+    if (barSnapshots) {
+        commitBarPreview();
+    } else {
+        applyBarToSelection();
+    }
+});
 
 // Play/Pause button
 playBtn.addEventListener("click", function () {
@@ -5805,6 +5861,7 @@ document.addEventListener("visibilitychange", function () {
 
 document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") {
+        if (barSnapshots) { revertBarPreview(); return; }
         if (ctxCoeffIdx >= 0) { closeCoeffCtx(true); return; }
         if (ctxDNodeIdx >= 0) { closeDNodeCtx(true); return; }
         if (typeof activeToolBtn !== "undefined" && activeToolBtn) { closeOpTool(); return; }
@@ -6132,6 +6189,13 @@ document.getElementById("inverse-btn").addEventListener("click", function() {
 
 // Close popover on click outside
 document.addEventListener("mousedown", e => {
+    // Revert anim-bar preview on outside click
+    if (barSnapshots) {
+        const animBar = document.getElementById("anim-bar");
+        if (!animBar.contains(e.target)) {
+            revertBarPreview();
+        }
+    }
     // Close ops popover
     if (activeToolBtn) {
         if (!opsPop.contains(e.target) && !(e.target.id && e.target.id.endsWith("-tool-btn"))) {
@@ -11136,36 +11200,26 @@ document.getElementById("list-curve-next").addEventListener("click", () => {
 // --- List curve editor ---
 const lcePanel = document.getElementById("list-curve-editor");
 const lcePathSel = document.getElementById("lce-path-sel");
-const lceCoeffName = document.getElementById("lce-coeff-name");
 const lceControls = document.getElementById("lce-controls");
 let lceInputs = {};       // { key: <input or button element> }
 let lceCurrentPath = "";  // path type currently shown in dropdown
-let lceCycleIdx = 0;      // index into selected coefficients list
-let lceCycleList = [];     // all selected coefficient indices
+let lceRefIdx = -1;       // first selected coefficient (reference for controls)
 
 function refreshListCurveEditor() {
     if (selectedCoeffs.size === 0) {
         lcePanel.style.opacity = "0.3";
         lcePanel.style.pointerEvents = "none";
+        lceRefIdx = -1;
         return;
     }
     lcePanel.style.opacity = "1";
     lcePanel.style.pointerEvents = "";
 
-    // Build cycle list: ALL selected coefficients
-    lceCycleList = [...selectedCoeffs].sort((a, b) => a - b);
-
-    // Clamp cycle index
-    if (lceCycleIdx >= lceCycleList.length) lceCycleIdx = 0;
-    if (lceCycleIdx < 0) lceCycleIdx = lceCycleList.length - 1;
-
-    // Load current coefficient's path type into dropdown and build controls
-    const ci = lceCycleList[lceCycleIdx];
-    const c = coefficients[ci];
+    lceRefIdx = [...selectedCoeffs].sort((a, b) => a - b)[0];
+    const c = coefficients[lceRefIdx];
     lcePathSel.value = c.pathType || "none";
     lceCurrentPath = lcePathSel.value;
 
-    updateLceCyclerLabel();
     buildLceControls(lceCurrentPath);
 }
 
@@ -11175,29 +11229,12 @@ lcePathSel.addEventListener("change", () => {
     buildLceControls(lceCurrentPath);
 });
 
-function updateLceCyclerLabel() {
-    const updateOneBtn = document.getElementById("lce-update-one");
-    if (lceCycleList.length === 0) {
-        lceCoeffName.textContent = "—";
-        updateOneBtn.textContent = "Update —";
-        return;
-    }
-    const ci = lceCycleList[lceCycleIdx];
-    const n = coefficients.length;
-    const sub = n - 1 - ci;
-    const color = coeffColor(ci, n);
-    lceCoeffName.textContent = "c" + sub;
-    lceCoeffName.style.color = color;
-    updateOneBtn.textContent = "Update c" + sub;
-}
-
 function buildLceControls(pathType) {
     lceControls.innerHTML = "";
     lceInputs = {};
     const schema = PATH_PARAMS[pathType] || [];
-    if (schema.length === 0) return;
-    const ci = lceCycleList[lceCycleIdx];
-    const c = coefficients[ci];
+    if (schema.length === 0 || lceRefIdx < 0) return;
+    const c = coefficients[lceRefIdx];
     for (const p of schema) {
         const val = getCoeffParam(c, p.key, p);
         if (p.type === "toggle") {
@@ -11263,57 +11300,16 @@ function lceApplyToCoeff(ci, params) {
     c.curveIndex = 0;
 }
 
-function lceSyncToCurrentCoeff() {
-    const ci = lceCycleList[lceCycleIdx];
-    const c = coefficients[ci];
-    lcePathSel.value = c.pathType || "none";
-    lceCurrentPath = lcePathSel.value;
-    updateLceCyclerLabel();
-    buildLceControls(lceCurrentPath);
-}
-document.getElementById("lce-prev").addEventListener("click", () => {
-    if (lceCycleList.length === 0) { uiBuzz(); return; }
-    lceCycleIdx = (lceCycleIdx - 1 + lceCycleList.length) % lceCycleList.length;
-    lceSyncToCurrentCoeff();
-});
-document.getElementById("lce-next").addEventListener("click", () => {
-    if (lceCycleList.length === 0) { uiBuzz(); return; }
-    lceCycleIdx = (lceCycleIdx + 1) % lceCycleList.length;
-    lceSyncToCurrentCoeff();
-});
 document.getElementById("lce-update-sel").addEventListener("click", () => {
-    if (lceCycleList.length === 0) { uiBuzz(); return; }
+    if (selectedCoeffs.size === 0) { uiBuzz(); return; }
     const params = lceReadParams();
-    for (const ci of lceCycleList) {
+    for (const ci of selectedCoeffs) {
         lceApplyToCoeff(ci, params);
     }
     animState.elapsedAtPause = null;
     renderCoeffTrails();
     buildCurveCycleTypes(); updateCurveCycleLabel();
     if (leftTab === "list") { updateListPathCols(); updateListCoords(); }
-});
-document.getElementById("lce-update-one").addEventListener("click", () => {
-    if (lceCycleList.length === 0) { uiBuzz(); return; }
-    const params = lceReadParams();
-    lceApplyToCoeff(lceCycleList[lceCycleIdx], params);
-    animState.elapsedAtPause = null;
-    renderCoeffTrails();
-    buildCurveCycleTypes(); updateCurveCycleLabel();
-    if (leftTab === "list") { updateListPathCols(); updateListCoords(); }
-});
-document.getElementById("lce-ps-btn").addEventListener("click", () => {
-    if (lceCycleList.length === 0) { uiBuzz(); return; }
-    const sInp = lceInputs["speed"];
-    if (!sInp) return;
-    const ci = lceCycleList[lceCycleIdx];
-    const cur = parseInt(sInp.value, 10);
-    const ps = findPrimeSpeed(cur, new Set([ci]));
-    if (ps !== cur) {
-        sInp.value = ps;
-        const vs = sInp.parentElement.querySelector(".ctx-val");
-        if (vs) vs.textContent = _P.speed.fmt(ps);
-        uiPing(1320, 0.06);
-    } else { uiBuzz(); }
 });
 
 // ============================================================================
@@ -11991,32 +11987,26 @@ document.getElementById("dlist-curve-next").addEventListener("click", () => {
 // --- D-List curve editor ---
 const dlePanel = document.getElementById("dlist-curve-editor");
 const dlePathSel = document.getElementById("dle-path-sel");
-const dleCoeffName = document.getElementById("dle-coeff-name");
 const dleControls = document.getElementById("dle-controls");
 let dleInputs = {};
 let dleCurrentPath = "";
-let dleCycleIdx = 0;
-let dleCycleList = [];
+let dleRefIdx = -1;       // first selected D-node (reference for controls)
 
 function refreshDListCurveEditor() {
     if (selectedMorphCoeffs.size === 0) {
         dlePanel.style.opacity = "0.3";
         dlePanel.style.pointerEvents = "none";
+        dleRefIdx = -1;
         return;
     }
     dlePanel.style.opacity = "1";
     dlePanel.style.pointerEvents = "";
 
-    dleCycleList = [...selectedMorphCoeffs].sort((a, b) => a - b);
-    if (dleCycleIdx >= dleCycleList.length) dleCycleIdx = 0;
-    if (dleCycleIdx < 0) dleCycleIdx = dleCycleList.length - 1;
-
-    const di = dleCycleList[dleCycleIdx];
-    const d = morphTargetCoeffs[di];
+    dleRefIdx = [...selectedMorphCoeffs].sort((a, b) => a - b)[0];
+    const d = morphTargetCoeffs[dleRefIdx];
     dlePathSel.value = d.pathType || "none";
     dleCurrentPath = dlePathSel.value;
 
-    updateDleCyclerLabel();
     buildDleControls(dleCurrentPath);
 }
 
@@ -12025,28 +12015,12 @@ dlePathSel.addEventListener("change", () => {
     buildDleControls(dleCurrentPath);
 });
 
-function updateDleCyclerLabel() {
-    const updateOneBtn = document.getElementById("dle-update-one");
-    if (dleCycleList.length === 0) {
-        dleCoeffName.textContent = "\u2014";
-        updateOneBtn.textContent = "Update \u2014";
-        return;
-    }
-    const di = dleCycleList[dleCycleIdx];
-    const n = morphTargetCoeffs.length;
-    const color = coeffColor(di, n);
-    dleCoeffName.textContent = "d" + di;
-    dleCoeffName.style.color = color;
-    updateOneBtn.textContent = "Update d" + di;
-}
-
 function buildDleControls(pathType) {
     dleControls.innerHTML = "";
     dleInputs = {};
     const schema = PATH_PARAMS[pathType] || [];
-    if (schema.length === 0) return;
-    const di = dleCycleList[dleCycleIdx];
-    const d = morphTargetCoeffs[di];
+    if (schema.length === 0 || dleRefIdx < 0) return;
+    const d = morphTargetCoeffs[dleRefIdx];
     for (const p of schema) {
         const val = getCoeffParam(d, p.key, p);
         if (p.type === "toggle") {
@@ -12110,58 +12084,16 @@ function dleApplyToCoeff(di, params) {
     d.curveIndex = 0;
 }
 
-function dleSyncToCurrentCoeff() {
-    const di = dleCycleList[dleCycleIdx];
-    const d = morphTargetCoeffs[di];
-    dlePathSel.value = d.pathType || "none";
-    dleCurrentPath = dlePathSel.value;
-    updateDleCyclerLabel();
-    buildDleControls(dleCurrentPath);
-}
-
-document.getElementById("dle-prev").addEventListener("click", () => {
-    if (dleCycleList.length === 0) { uiBuzz(); return; }
-    dleCycleIdx = (dleCycleIdx - 1 + dleCycleList.length) % dleCycleList.length;
-    dleSyncToCurrentCoeff();
-});
-document.getElementById("dle-next").addEventListener("click", () => {
-    if (dleCycleList.length === 0) { uiBuzz(); return; }
-    dleCycleIdx = (dleCycleIdx + 1) % dleCycleList.length;
-    dleSyncToCurrentCoeff();
-});
 document.getElementById("dle-update-sel").addEventListener("click", () => {
-    if (dleCycleList.length === 0) { uiBuzz(); return; }
+    if (selectedMorphCoeffs.size === 0) { uiBuzz(); return; }
     const params = dleReadParams();
-    for (const di of dleCycleList) {
+    for (const di of selectedMorphCoeffs) {
         dleApplyToCoeff(di, params);
     }
     buildDCurveCycleTypes(); updateDCurveCycleLabel();
     if (morphEnabled) solveRootsThrottled();
     if (leftTab === "morph") renderMorphPanel();
     if (leftTab === "dlist") { updateDListPathCols(); updateDListCoords(); }
-});
-document.getElementById("dle-update-one").addEventListener("click", () => {
-    if (dleCycleList.length === 0) { uiBuzz(); return; }
-    const params = dleReadParams();
-    dleApplyToCoeff(dleCycleList[dleCycleIdx], params);
-    buildDCurveCycleTypes(); updateDCurveCycleLabel();
-    if (morphEnabled) solveRootsThrottled();
-    if (leftTab === "morph") renderMorphPanel();
-    if (leftTab === "dlist") { updateDListPathCols(); updateDListCoords(); }
-});
-document.getElementById("dle-ps-btn").addEventListener("click", () => {
-    if (dleCycleList.length === 0) { uiBuzz(); return; }
-    const sInp = dleInputs["speed"];
-    if (!sInp) return;
-    const di = dleCycleList[dleCycleIdx];
-    const cur = parseInt(sInp.value, 10);
-    const ps = findDPrimeSpeed(cur, new Set([di]));
-    if (ps !== cur) {
-        sInp.value = ps;
-        const vs = sInp.parentElement.querySelector(".ctx-val");
-        if (vs) vs.textContent = _P.speed.fmt(ps);
-        uiPing(1320, 0.06);
-    } else { uiBuzz(); }
 });
 
 // ============================================================================

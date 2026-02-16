@@ -53,9 +53,9 @@ Interactive SVG complex-plane visualization of polynomial coefficients.
 
 Located below the Coefficients tab bar. Controls the animation path for selected coefficients.
 
-**First row:** Coefficient picker, Select All / Deselect, selection label, **Update Sel** button.
+**First row:** Coefficient picker, Select All / Deselect, selection label, **Update Whole Selection** button.
 
-**Second row:** Path type dropdown and path-specific controls. Sliders change based on the chosen path type (e.g. R/S/A/CW-CCW for circles, S/sigma for Gaussian). A **PS** (Prime Speed) button appears when the path has a speed parameter -- it sets the speed to the nearest value coprime with all other animated coefficients. Controls dim when no coefficients are selected.
+**Second row:** Path type dropdown and path-specific controls. Sliders change based on the chosen path type (e.g. R/S/A/CW-CCW for circles, S/sigma for Gaussian). Adjusting controls shows a live preview of the proposed paths. Click away or press Escape to revert; click **Update Whole Selection** to commit. Controls dim when no coefficients are selected.
 
 #### Animation Bar
 
@@ -78,8 +78,8 @@ Each coefficient stores its own path type, radius, speed, angle, and direction i
 #### Trajectory Workflow
 
 1. Select one or more coefficients (click, marquee, or Select All)
-2. Choose a path type, adjust controls in the trajectory editor
-3. Settings apply immediately to all selected coefficients (or click **Update Sel**)
+2. Choose a path type and adjust controls -- a live preview shows the proposed paths
+3. Click **Update Whole Selection** to commit, or click away / press Escape to revert
 4. Press **Play** -- all coefficients with a trajectory animate simultaneously
 
 ### List Tab
@@ -106,7 +106,7 @@ Tabular view of all coefficients with per-row columns:
 
 ![List curve editor](images/iface_list_editor.png)
 
-The curve editor at the top of the List tab lets you edit the path for the selected coefficient. Navigate between coefficients with the arrow buttons, change path type, and adjust parameters.
+The curve editor at the top of the List tab lets you edit the path for the selection. Choose a path type, adjust parameters, and click **Update Whole Selection** to apply to all selected coefficients.
 
 #### Transform dropdown (21 bulk operations)
 
@@ -362,7 +362,7 @@ See [Paths](paths.md) for jiggle formulas.
 - **Select All / Deselect** buttons in both the trajectory editor bar and roots toolbar.
 - Selected nodes pulse with a bright glow.
 - Clicking a coefficient clears any root selection and vice versa.
-- The trajectory editor displays the last-selected coefficient's settings. Adjusting any control applies immediately to all selected coefficients.
+- The trajectory editor displays the last-selected coefficient's settings. Adjusting controls shows a live preview; click **Update Whole Selection** to commit or click away to revert.
 - Selection count appears in panel headers: green for coefficients, red for roots.
 
 ---

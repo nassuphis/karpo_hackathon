@@ -1,6 +1,6 @@
 # Test Results
 
-**430 tests total: 429 passed, 1 skipped** | Runtime: ~6m | Headless Chromium on Apple Silicon
+**490 tests total: 489 passed, 1 skipped** | Runtime: ~6m | Headless Chromium on Apple Silicon
 
 Run with: `python -m pytest tests/ -v`
 
@@ -252,7 +252,7 @@ Tests the Hungarian algorithm, greedy strategy options, serialization, save/load
 
 ---
 
-## test_dnode.py — D-Node Paths (33 tests)
+## test_dnode.py — D-Node Paths (32 tests)
 
 Tests D-List tab HTML, `allAnimatedDCoeffs()`, `advanceDNodesAlongCurves()`, D-node save/load with paths, D-curve serialization for fast mode, backward compatibility, and jiggle immunity.
 
@@ -271,7 +271,7 @@ Tests D-List tab HTML, `allAnimatedDCoeffs()`, `advanceDNodesAlongCurves()`, D-n
 
 ---
 
-## test_state_fields.py — Extended Save/Load (28 tests)
+## test_state_fields.py — Extended Save/Load (26 tests)
 
 Tests save/load roundtrip for bitmap settings, solver type, selected coefficients, trail data, jiggle sub-fields, worker count, domain coloring, and backward compatibility for missing fields.
 
@@ -288,7 +288,7 @@ Tests save/load roundtrip for bitmap settings, solver type, selected coefficient
 
 ---
 
-## test_animation.py — Animation Entry Points (16 tests)
+## test_animation.py — Animation Entry Points (17 tests)
 
 Tests animation state management, play guard (C and D animated nodes), home button reset for C and D nodes, scrub slider advancement, and allAnimatedCoeffs.
 
@@ -300,6 +300,53 @@ Tests animation state management, play guard (C and D animated nodes), home butt
 | `TestScrubSlider` | 4 | Advances C, advances D, zero returns to start, label updates |
 | `TestStopAnimation` | 1 | Sets playing to false |
 | `TestAllAnimatedCoeffs` | 2 | Empty when no paths, returns animated indices |
+
+---
+
+## test_anim_bar.py — Trajectory Editor Simplification (29 tests)
+
+Tests anim-bar preview/revert/commit pattern, PS button removal, Update Whole Selection naming, C-List and D-List curve editor button/cycler removal, and editor functionality.
+
+| Test Group | Count | What it checks |
+|------------|-------|----------------|
+| `TestAnimBarButtons` | 2 | Update button text, no PS button in bar |
+| `TestAnimBarPreview` | 3 | Snapshot creation, path change during preview, curve preservation in snapshot |
+| `TestAnimBarRevert` | 4 | Path restoration, snapshot clearing, selection change revert, noop when no preview |
+| `TestAnimBarCommit` | 2 | Keep new path on commit, Update button commits preview |
+| `TestCListEditorButtons` | 7 | No PS, no Update This, no prev/next cycler, no coeff name label, has Update Whole Selection, has path dropdown |
+| `TestDListEditorButtons` | 7 | No PS, no Update This, no prev/next cycler, no coeff name label, has Update Whole Selection, has path dropdown |
+| `TestCListEditorFunction` | 2 | Update Whole Selection applies to all selected, editor shows first selected path |
+| `TestDListEditorFunction` | 2 | Update Whole Selection applies to all selected D-nodes, editor shows first selected path |
+
+---
+
+## test_final_tab.py — Final Tab (20 tests)
+
+Tests Final tab DOM, rendering, trail data accumulation, trail SVG paths, and integration with solveRoots and animation.
+
+| Test Group | Count | What it checks |
+|------------|-------|----------------|
+| `TestFinalTabExists` | 4 | Tab button, content div, panel SVG, tab switching |
+| `TestFinalPanelRendering` | 4 | Dot count, labels, C-node positions without morph, blended positions with morph |
+| `TestFinalTrailData` | 4 | Array declared, empty initially, accumulates during animation, cleared on clearTrails |
+| `TestFinalTrailRendering` | 3 | Correct panel key (panels.coeff), renders trail paths, paths have valid d attribute |
+| `TestSolveRootsWithFinalTab` | 3 | solveRoots succeeds with Final tab, roots valid, pendingSolve resets |
+| `TestAnimationWithFinalTrails` | 2 | Roots move during animation, final dots update during solve |
+
+---
+
+## test_dnode_ctx.py — D-Node Context Menu (16 tests)
+
+Tests D-node right-click context menu: popup existence, open/close, snapshot/revert, accept button, path changes, and morph panel integration.
+
+| Test Group | Count | What it checks |
+|------------|-------|----------------|
+| `TestDNodeCtxPopupExists` | 2 | Popup div exists, initially hidden |
+| `TestOpenDNodeCtx` | 5 | Sets ctxDNodeIdx, shows popup, creates path select, d-prefix title, snapshots state |
+| `TestCloseDNodeCtx` | 3 | Revert restores path, no-revert keeps changes, resets idx to -1 |
+| `TestDNodeCtxAccept` | 3 | Accept button exists, no Delete button, no PS button |
+| `TestDNodeCtxPathChange` | 2 | Change path via select, revert undoes path change |
+| `TestDNodeCtxOnMorphPanel` | 1 | Right-click morph dot opens dnode-ctx |
 
 ---
 
@@ -362,12 +409,15 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | Fast mode | test_fastmode.py | 22 | Formatting, buttons, removed vars, resets, serialization, clear, toggle |
 | Off-canvas & export | test_offcanvas.py | 76 | Split compute/display, BMP/JPEG/PNG/TIFF export, library loading, save popup, format state, bitmap/animation color decoupling, derivative palette, rank normalization, root sensitivities |
 | Match strategies | test_match_strategy.py | 16 | Hungarian algorithm, greedy strategies, serialization, save/load, UI chips, worker blob |
-| D-node paths | test_dnode.py | 33 | D-List tab, allAnimatedDCoeffs, advanceDNodesAlongCurves, save/load with paths, D-curve serialization, backward compat, jiggle immunity |
-| Extended state | test_state_fields.py | 28 | Bitmap settings, solver type, selected coeffs, trails, jiggle sub-fields, worker count, backward compat for missing fields |
-| Animation | test_animation.py | 16 | Start/stop/home/scrub, play guard with D-nodes, allAnimatedCoeffs |
+| D-node paths | test_dnode.py | 32 | D-List tab, allAnimatedDCoeffs, advanceDNodesAlongCurves, save/load with paths, D-curve serialization, backward compat, jiggle immunity |
+| Extended state | test_state_fields.py | 26 | Bitmap settings, solver type, selected coeffs, trails, jiggle sub-fields, worker count, backward compat for missing fields |
+| Animation | test_animation.py | 17 | Start/stop/home/scrub, play guard with D-nodes, allAnimatedCoeffs |
+| Trajectory editors | test_anim_bar.py | 29 | Preview/revert/commit, PS removal, cycler removal, Update Whole Selection, C-List/D-List editors |
+| Final tab | test_final_tab.py | 20 | Tab DOM, rendering, trail data, trail SVG, solveRoots integration, animation |
+| D-node ctx menu | test_dnode_ctx.py | 16 | Popup, open/close, snapshot/revert, accept, path changes, morph panel |
 | Integration | test_integration.py | 3 | Snap loading, determinism, fast mode pixels |
 | Benchmark | test_benchmark.py | 4 | JS vs WASM: correctness + performance |
-| **Total** | **20 files** | **425** | |
+| **Total** | **23 files** | **490** | |
 
 ---
 
@@ -396,6 +446,9 @@ tests/
   test_dnode.py         — D-node paths (D-List tab, animation, save/load, fast mode)
   test_state_fields.py  — Extended save/load roundtrip (bitmap, jiggle, backward compat)
   test_animation.py     — Animation entry points (start, stop, home, scrub, play guard)
+  test_anim_bar.py      — Trajectory editor simplification (preview/revert, cycler/PS removal)
+  test_final_tab.py     — Final tab (rendering, trails, solveRoots integration)
+  test_dnode_ctx.py     — D-node right-click context menu (popup, path editing, morph panel)
   test_integration.py   — Snap loading, determinism, fast mode
   test_benchmark.py     — JS vs WASM speed + correctness
 ```

@@ -190,8 +190,8 @@ class TestSerializeFastModeData:
         assert result["hasRootsIm"] is True
         assert result["steps"] == 100
 
-    def test_jiggle_offsets_applied_to_nonanimate(self, page):
-        """Non-animated coefficients get jiggle offsets baked into serialized data."""
+    def test_jiggle_offsets_serialized_separately(self, page):
+        """Jiggle offsets are serialized as separate arrays (applied post-interpolation)."""
         result = page.evaluate("""() => {
             initBitmapCanvas();
             // Set all coefficients to "none" path (non-animated)
@@ -204,10 +204,14 @@ class TestSerializeFastModeData:
             var sd = serializeFastModeData(animated, 100, currentRoots.length);
             var origRe = coefficients[0].re;
             var serializedRe = sd.coeffsRe[0];
+            var jigRe = sd.jiggleRe[0];
+            var jigIm = sd.jiggleIm[0];
             jiggleOffsets = null;
-            return { origRe, serializedRe, diff: serializedRe - origRe };
+            return { origRe, serializedRe, jigRe, jigIm, coeffDiff: serializedRe - origRe };
         }""")
-        assert abs(result["diff"] - 5.0) < 1e-10, "Jiggle offset not applied"
+        assert abs(result["coeffDiff"]) < 1e-10, "Jiggle should NOT be baked into coeffsRe"
+        assert abs(result["jigRe"] - 5.0) < 1e-10, "Jiggle Re offset not in jiggleRe array"
+        assert abs(result["jigIm"] - 3.0) < 1e-10, "Jiggle Im offset not in jiggleIm array"
 
 
 class TestClearButtonNoElapsedReset:

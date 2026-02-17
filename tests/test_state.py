@@ -64,7 +64,7 @@ class TestSaveLoadRoundtrip:
         result = page.evaluate("""() => {
             jiggleMode = "rotate";
             jiggleSigma = 15;
-            jiggleTheta = 0.05;
+            jiggleAngleSteps = 200;
             var state1 = buildStateMetadata();
             applyLoadedState(state1);
             var state2 = buildStateMetadata();
@@ -74,7 +74,7 @@ class TestSaveLoadRoundtrip:
         j2 = result["j2"]
         assert j1["mode"] == j2["mode"] == "rotate"
         assert j1["sigma"] == j2["sigma"]
-        assert j1["theta"] == j2["theta"]
+        assert j1["angleSteps"] == j2["angleSteps"] == 200
 
     def test_panel_ranges_preserved(self, page):
         """Panel ranges survive roundtrip."""

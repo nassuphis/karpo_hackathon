@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v33</title>
+<title>PolyPaint v34</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
@@ -562,7 +562,7 @@ body.fast-mode #stop-roots-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v33</span>
+    <span class="app-title">PolyPaint v34</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -846,6 +846,7 @@ body.fast-mode #stop-roots-btn {
                     <button id="root-color-btn" class="roots-tool-btn active" title="Color roots">🎨</button>
                     <button id="domain-toggle-btn" class="roots-tool-btn" title="Domain coloring">◐</button>
                     <button id="roots-fit-btn" class="roots-tool-btn" title="Resize to fit all roots and trails">Fit</button>
+                    <button id="roots-zoom-in-btn" class="roots-tool-btn" title="Zoom in 25%">−25%</button>
                     <button id="roots-zoom-out-btn" class="roots-tool-btn" title="Zoom out 25%">+25%</button>
                     <button id="select-all-roots-btn" class="roots-tool-btn" title="Select all roots">⊕ All</button>
                     <button id="deselect-all-roots-btn" class="roots-tool-btn" title="Deselect all roots">✕ None</button>
@@ -992,7 +993,7 @@ let pendingSolve = false;
 const selectedCoeffs = new Set(); // indices into coefficients[]
 const selectedRoots = new Set();  // indices into currentRoots[]
 const selectedMorphCoeffs = new Set(); // indices into morphTargetCoeffs[]
-const animState = { playing: false, startTime: 0, rafId: null, elapsedAtPause: null, jiggleNextTime: 0 };
+const animState = { playing: false, startTime: 0, rafId: null, elapsedAtPause: null };
 let lastSelectedCoeff = -1; // index of last coefficient added to selection (for editor display)
 // Trail state
 let trailsEnabled = false;
@@ -1103,18 +1104,18 @@ let fastModeElapsedOffset = 0;  // accumulated elapsed time across passes
 let fastModePassCount = 0;      // completed pass counter (resets each cycle)
 let fastModeTargetPasses = 0;   // passes for jiggle cycle (= jiggleInterval since each pass = 1s)
 let jiggleInterval = 4;         // seconds between jiggle perturbations (1–100), shown in cfg popup
-let jiggleOffsets = null;       // Map<coeffIdx, {re, im}> or null
+let jiggleOffsets = null;       // Map<coeffIdx, {re, im}> or null — cached output of computeJiggleForStep
 let jiggleSigma = 10;          // σ as integer 0-100, read as jiggleSigma/100 %
-let jiggleMode = "none";       // "none" | "random" | "rotate" | "walk" | "scale"
-let jiggleTheta = 0.01;        // rotate: turns per trigger (0.001–0.500)
-let jiggleScaleStep = 5;       // scale: % per trigger (1–50)
-let jiggleCumulativeAngle = 0; // rotate: accumulated angle in radians
-let jiggleCumulativeScale = 1.0; // scale: accumulated scale factor
+let jiggleMode = "none";       // "none" | "random" | "rotate" | "walk" | "scale" | etc.
+let jiggleAngleSteps = 100;    // rotate/spiral/wobble: jiggle steps for one full revolution (10–500)
+let jiggleScaleStep = 0.1;     // scale: % of extent per step (0.01–1.0)
 let jigglePeriod = 20;         // breathe/wobble/lissajous: triggers for one oscillation
 let jiggleAmplitude = 10;      // breathe/lissajous: amplitude as % (of centroid distance or coeffExtent)
 let jiggleLissFreqX = 1;       // lissajous: X frequency multiplier
 let jiggleLissFreqY = 2;       // lissajous: Y frequency multiplier
-let jiggleTriggerCount = 0;    // incremented each generateJiggleOffsets() call
+let jiggleCircleSteps = 60;   // circle: number of jiggle steps for a full revolution (10–500)
+let jiggleStep = -1;           // current jiggle step = floor(elapsed / interval), -1 = no jiggle yet
+let jiggleWalkCache = null;    // Map<coeffIdx, {re,im}> — walk mode running totals, keyed by step count
 // Morph state: second coefficient set D blends with C via mu
 let morphTargetCoeffs = [];   // parallel to coefficients[], same {re,im,curve,...} structure
 let morphEnabled = false;
@@ -2473,6 +2474,18 @@ const drag = d3.drag()
 
 function autoScaleCoeffPanel() {
     let needed = computeRange(coefficients);
+    // Include jiggle-offset positions so the Final tab doesn't clip
+    if (jiggleOffsets && jiggleOffsets.size > 0) {
+        for (const [idx, off] of jiggleOffsets) {
+            if (idx < coefficients.length) {
+                const c = coefficients[idx];
+                const absRe = Math.abs(c.re + off.re);
+                const absIm = Math.abs(c.im + off.im);
+                const raw = Math.max(absRe, absIm) * RANGE_PAD * 2;
+                if (isFinite(raw)) needed = Math.max(needed, Math.ceil(raw) / 2);
+            }
+        }
+    }
     // During animation, only zoom out — never shrink back
     if (animState.playing) needed = Math.max(needed, panels.coeff.range);
     if (needed !== panels.coeff.range) {
@@ -2694,6 +2707,9 @@ function toggleCoeffSelect(idx) {
         stopAnimation();
         playBtn.textContent = "▶ Resume";
     }
+    // Mutually exclusive: clear D-nodes and roots
+    clearRootSelection();
+    clearMorphSelection();
 
     if (selectedCoeffs.has(idx)) {
         selectedCoeffs.delete(idx);
@@ -2734,14 +2750,16 @@ function clearAllSelection() {
 function updateTransformGroupVisibility() {
     const hasCoeff = selectedCoeffs.size > 0;
     const hasRoot = selectedRoots.size > 0;
-    const hasSel = hasCoeff || hasRoot;
+    const hasMorph = selectedMorphCoeffs.size > 0;
+    const hasSel = hasCoeff || hasRoot || hasMorph;
     document.getElementById("ops-group").classList.toggle("disabled", !hasSel);
     const t = document.getElementById("ops-target");
     if (!hasSel) {
-        t.textContent = "";
+        t.textContent = "· none"; t.style.color = "#888";
         if (typeof closeOpTool === "function") closeOpTool();
     }
-    else if (hasCoeff) { t.textContent = "· coeffs"; t.style.color = "#5ddb6a"; }
+    else if (hasCoeff) { t.textContent = "· C"; t.style.color = "#5ddb6a"; }
+    else if (hasMorph) { t.textContent = "· D"; t.style.color = "#4ea8de"; }
     else { t.textContent = "· roots"; t.style.color = "#e94560"; }
 }
 
@@ -2777,11 +2795,13 @@ function updateRootSelectionVisual() {
 }
 
 function updateMorphSelectionVisual() {
-    if (!morphPanelInited || !morphLayer) return;
-    morphLayer.selectAll("circle.morph-coeff")
-        .classed("selected", d => selectedMorphCoeffs.has(d._idx));
+    if (morphPanelInited && morphLayer) {
+        morphLayer.selectAll("circle.morph-coeff")
+            .classed("selected", d => selectedMorphCoeffs.has(d._idx));
+    }
     const mc = document.getElementById("morph-sel-count");
     if (mc) mc.textContent = selectedMorphCoeffs.size > 0 ? `(${selectedMorphCoeffs.size})` : "";
+    updateTransformGroupVisibility();
 }
 
 // --- Marquee (area) selection ---
@@ -3675,9 +3695,9 @@ playBtn.addEventListener("click", function () {
 document.getElementById("home-btn").addEventListener("click", function () {
     if (animState.playing) {
         stopAnimation();
-        playBtn.textContent = "▶ Play";
     }
     animState.elapsedAtPause = null;
+    playBtn.textContent = "▶ Play";
     for (let i = 0; i < coefficients.length; i++) {
         const c = coefficients[i];
         c.re = c.curve[0].re; c.im = c.curve[0].im;
@@ -3688,14 +3708,10 @@ document.getElementById("home-btn").addEventListener("click", function () {
         d.re = d.curve[0].re; d.im = d.curve[0].im;
         d.curveIndex = 0;
     }
-    const animated = allAnimatedCoeffs();
-    coeffLayer.selectAll("circle.coeff")
-        .filter(cd => animated.has(cd._idx))
-        .attr("cx", cd => cxs()(cd.re)).attr("cy", cd => cys()(cd.im));
-    coeffLayer.selectAll(".coeff-label")
-        .filter(ld => animated.has(ld._idx))
-        .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
+    morphMu = 0;
     if (morphPanelInited && leftTab === "morph") {
+        const muEl = document.getElementById("morph-mu-val");
+        if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
         updateMorphPanelDDots();
         updateMorphMarkers();
     }
@@ -3705,12 +3721,18 @@ document.getElementById("home-btn").addEventListener("click", function () {
         trailLayer.selectAll("path.trail-path").remove();
         if (finalTrailLayer) finalTrailLayer.selectAll("path.trail-path").remove();
     }
+    // Reset jiggle state
+    jiggleOffsets = null;
+    jiggleStep = -1;
+    jiggleWalkCache = null;
+    updateJiggleStatus();
+
     resetAudioState();
     resetBitmap();
     clearStatsData();
     renderCoeffTrails();
-    autoScaleCoeffPanel();
-    solveRootsThrottled();
+    renderCoefficients(); // full re-render (not just animated) so scale + positions are always correct
+    solveRoots();
     renderDomainColoringThrottled();
     updateAnimSeconds(0);
     scrubSlider.value = 0;
@@ -3744,7 +3766,7 @@ function advanceToElapsed(elapsed) {
     }
     advanceDNodesAlongCurves(elapsed);
     if (morphEnabled) {
-        morphMu = 0.5 + 0.5 * Math.sin(2 * Math.PI * morphRate * elapsed);
+        morphMu = 0.5 - 0.5 * Math.cos(2 * Math.PI * morphRate * elapsed);
         const muEl = document.getElementById("morph-mu-val");
         if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
     }
@@ -4256,8 +4278,7 @@ function startAnimation() {
     }
     // Initialize jiggle for non-fast-mode animation
     if (jiggleMode !== "none") {
-        generateJiggleOffsets();
-        animState.jiggleNextTime = jiggleInterval;
+        computeJiggleForStep(0);
     }
     animState.rafId = requestAnimationFrame(animLoop);
 }
@@ -4292,14 +4313,13 @@ function animLoop(now) {
     // Advance D-nodes along their paths
     advanceDNodesAlongCurves(elapsed);
 
-    // Jiggle boundary check
-    if (jiggleMode !== "none" && jiggleInterval > 0 && elapsed >= animState.jiggleNextTime) {
-        generateJiggleOffsets();
-        animState.jiggleNextTime = elapsed + jiggleInterval;
+    // Jiggle: recompute if step changed (pure function of elapsed time)
+    if (jiggleMode !== "none") {
+        computeJiggleForStep(jiggleStepFromElapsed(elapsed));
     }
 
     if (morphEnabled) {
-        morphMu = 0.5 + 0.5 * Math.sin(2 * Math.PI * morphRate * elapsed);
+        morphMu = 0.5 - 0.5 * Math.cos(2 * Math.PI * morphRate * elapsed);
         const muEl = document.getElementById("morph-mu-val");
         if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
     }
@@ -4468,7 +4488,9 @@ const morphDrag = d3.drag()
     .on("end", function (event, d) {
         d3.select(this).classed("dragging", false);
         if (!morphDragMoved) {
-            // Click: toggle selection
+            // Click: toggle selection (mutually exclusive: clear C-nodes and roots)
+            clearCoeffSelection();
+            clearRootSelection();
             const idx = d._idx;
             if (selectedMorphCoeffs.has(idx)) {
                 selectedMorphCoeffs.delete(idx);
@@ -4742,6 +4764,7 @@ const rootDrag = d3.drag()
         if (!rootDragMoved) {
             const idx = d._idx;
             clearCoeffSelection();
+            clearMorphSelection();
             if (selectedRoots.has(idx)) {
                 selectedRoots.delete(idx);
             } else {
@@ -5265,6 +5288,11 @@ function applyPattern() {
     clearStatsData();
     resetAudioState();
     resetBitmap();
+    // Reset jiggle state so stale offsets don't affect scale/solve
+    jiggleOffsets = null;
+    jiggleStep = -1;
+    jiggleWalkCache = null;
+    updateJiggleStatus();
     currentRoots = [];
     rootsLayer.selectAll("circle.root").remove();
     updatePanelRange(rootsSvg, panels.roots, MIN_RANGE);
@@ -5387,13 +5415,17 @@ document.getElementById("deselect-all-btn").addEventListener("click", clearAllSe
 
 // Mid-bar All / None buttons — context-aware selection
 document.getElementById("mid-all-btn").addEventListener("click", function () {
-    if (selectedRoots.size > 0) {
+    if (selectedMorphCoeffs.size > 0) {
+        // D-nodes context: select all D-nodes
+        for (let i = 0; i < morphTargetCoeffs.length; i++) selectedMorphCoeffs.add(i);
+        updateMorphSelectionVisual();
+    } else if (selectedRoots.size > 0) {
         // Roots context: select all roots
         for (let i = 0; i < currentRoots.length; i++) selectedRoots.add(i);
         updateRootSelectionVisual();
     } else {
         // Coefficients context (default): select all coefficients
-        clearRootSelection();
+        clearRootSelection(); clearMorphSelection();
         for (let i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
         if (coefficients.length > 0) lastSelectedCoeff = coefficients.length - 1;
         updateCoeffSelectionVisual();
@@ -5401,7 +5433,9 @@ document.getElementById("mid-all-btn").addEventListener("click", function () {
     }
 });
 document.getElementById("mid-none-btn").addEventListener("click", function () {
-    if (selectedRoots.size > 0) {
+    if (selectedMorphCoeffs.size > 0) {
+        clearMorphSelection();
+    } else if (selectedRoots.size > 0) {
         clearRootSelection();
     } else {
         clearCoeffSelection();
@@ -5410,6 +5444,7 @@ document.getElementById("mid-none-btn").addEventListener("click", function () {
 
 document.getElementById("select-all-coeffs-btn").addEventListener("click", function () {
     clearRootSelection();
+    clearMorphSelection();
     for (let i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
     if (coefficients.length > 0) lastSelectedCoeff = coefficients.length - 1;
     updateCoeffSelectionVisual();
@@ -5453,6 +5488,15 @@ document.getElementById("roots-fit-btn").addEventListener("click", function () {
     if (trailsEnabled && trailData.length > 0) renderTrails();
     renderDomainColoring();
     uiPing(660, 0.08);
+});
+
+// -25% zoom-in button
+document.getElementById("roots-zoom-in-btn").addEventListener("click", function () {
+    updatePanelRange(rootsSvg, panels.roots, panels.roots.range * 0.75);
+    rootsLayer.selectAll("circle.root")
+        .attr("cx", d => rxs()(d.re)).attr("cy", d => rys()(d.im));
+    if (trailsEnabled && trailData.length > 0) renderTrails();
+    renderDomainColoring();
 });
 
 // +25% zoom-out button
@@ -5965,6 +6009,12 @@ function snapshotSelection() {
             items.push({ idx, re: c.re, im: c.im });
         }
         return { which: "coeff", items };
+    } else if (selectedMorphCoeffs.size > 0) {
+        for (const idx of selectedMorphCoeffs) {
+            const d = morphTargetCoeffs[idx];
+            items.push({ idx, re: d.re, im: d.im });
+        }
+        return { which: "morph", items };
     } else if (selectedRoots.size > 0) {
         for (const idx of selectedRoots) {
             const r = currentRoots[idx];
@@ -5997,7 +6047,7 @@ function applyPreview(snap, fn) {
         renderCoeffTrails();
         updateListCoords();
         solveRootsThrottled();
-    } else {
+    } else if (snap.which === "roots") {
         for (const s of snap.items) {
             const r = currentRoots[s.idx];
             const res = fn(s.re, s.im);
@@ -6021,6 +6071,24 @@ function applyPreview(snap, fn) {
         renderRoots(currentRoots);
         updateRootSelectionVisual();
         updateListCoords();
+    } else if (snap.which === "morph") {
+        for (const s of snap.items) {
+            const d = morphTargetCoeffs[s.idx];
+            const r = fn(s.re, s.im);
+            d.re = r.re; d.im = r.im;
+        }
+        for (const d of morphTargetCoeffs) {
+            if (d.pathType === "none") {
+                d.curve = [{ re: d.re, im: d.im }];
+            } else {
+                d.curve = computeCurve(d.re, d.im, d.pathType, d.radius / 100 * coeffExtent(), d.angle, d.extra);
+            }
+            d.curveIndex = 0;
+        }
+        if (leftTab === "morph") renderMorphPanel();
+        updateMorphSelectionVisual();
+        if (leftTab === "dlist") { refreshDCoeffList(); refreshDListCurveEditor(); }
+        if (morphEnabled) solveRootsThrottled();
     }
 }
 
@@ -6776,7 +6844,7 @@ function buildStateMetadata(timestamp) {
             roots: { range: panels.roots.range }
         },
         trailData: trailData.map(pts => pts.map(p => [p.re, p.im])),
-        jiggle: { mode: jiggleMode, sigma: jiggleSigma, theta: jiggleTheta, scaleStep: jiggleScaleStep, period: jigglePeriod, amplitude: jiggleAmplitude, lissFreqX: jiggleLissFreqX, lissFreqY: jiggleLissFreqY },
+        jiggle: { mode: jiggleMode, sigma: jiggleSigma, angleSteps: jiggleAngleSteps, scaleStep: jiggleScaleStep, period: jigglePeriod, amplitude: jiggleAmplitude, lissFreqX: jiggleLissFreqX, lissFreqY: jiggleLissFreqY, circleSteps: jiggleCircleSteps },
         numWorkers: numWorkers,
         bitmapCoeffView: bitmapCoeffView,
         solverType: solverType,
@@ -7271,7 +7339,7 @@ document.getElementById("bitmap-cfg-btn").addEventListener("click", openBitmapCf
 
 // --- Bitmap save popup (format selection) ---
 let bitmapSavePopOpen = false;
-let bitmapExportFormat = "jpeg";
+let bitmapExportFormat = "png";
 const bitmapSavePop = document.getElementById("bitmap-save-pop");
 
 function closeBitmapSavePop() { bitmapSavePop.classList.remove("open"); bitmapSavePopOpen = false; }
@@ -7710,17 +7778,24 @@ function applyLoadedState(meta) {
     if (meta.jiggle) {
         jiggleMode = meta.jiggle.mode || "random";
         if (jiggleMode === "spiral") jiggleMode = "spiral-centroid"; // backward compat
+        if (jiggleMode === "scale") jiggleMode = "scale-center"; // backward compat
         jiggleSigma = meta.jiggle.sigma ?? 10;
-        jiggleTheta = meta.jiggle.theta ?? 0.01;
-        jiggleScaleStep = meta.jiggle.scaleStep ?? 5;
+        // angleSteps is new; backward compat: convert old theta (turns) → steps = round(1/theta)
+        if (meta.jiggle.angleSteps != null) {
+            jiggleAngleSteps = meta.jiggle.angleSteps;
+        } else if (meta.jiggle.theta != null) {
+            jiggleAngleSteps = Math.max(10, Math.min(500, Math.round(1 / meta.jiggle.theta)));
+        }
+        jiggleScaleStep = meta.jiggle.scaleStep ?? 0.1;
+        if (jiggleScaleStep > 1) jiggleScaleStep = 0.1; // backward compat: old snaps had integer values like 5
         jigglePeriod = meta.jiggle.period ?? 20;
         jiggleAmplitude = meta.jiggle.amplitude ?? 10;
         jiggleLissFreqX = meta.jiggle.lissFreqX ?? 1;
         jiggleLissFreqY = meta.jiggle.lissFreqY ?? 2;
+        jiggleCircleSteps = meta.jiggle.circleSteps ?? 60;
     }
-    jiggleCumulativeAngle = 0;
-    jiggleCumulativeScale = 1.0;
-    jiggleTriggerCount = 0;
+    jiggleStep = -1;
+    jiggleWalkCache = null;
     jiggleOffsets = null;
 
 
@@ -8879,9 +8954,8 @@ function initBitmapCanvas() {
     fastModeWorkerRoots = null;
     // Clear jiggle state for a clean slate
     jiggleOffsets = null;
-    jiggleCumulativeAngle = 0;
-    jiggleCumulativeScale = 1.0;
-    jiggleTriggerCount = 0;
+    jiggleStep = -1;
+    jiggleWalkCache = null;
     bitmapActive = true;
 }
 
@@ -9283,6 +9357,12 @@ self.onmessage = function(e) {
     for (var step = stepStart; step < stepEnd; step++) {
         var elapsed = elapsedOff + (step / total) * FPS;
 
+        // Reset non-animated coefficients to base values before jiggle
+        if (S_jiggleRe) {
+            coeffsRe.set(S_coeffsRe);
+            coeffsIm.set(S_coeffsIm);
+        }
+
         for (var a = 0; a < entries.length; a++) {
             var idx = entries[a].idx;
             var dir = entries[a].ccw ? -1 : 1;
@@ -9331,7 +9411,7 @@ self.onmessage = function(e) {
         }
 
         if (S_morphEnabled) {
-            var mu = 0.5 + 0.5 * Math.sin(2 * Math.PI * S_morphRate * elapsed);
+            var mu = 0.5 - 0.5 * Math.cos(2 * Math.PI * S_morphRate * elapsed);
             var omu = 1 - mu;
             for (var m = 0; m < nCoeffs; m++) {
                 coeffsRe[m] = coeffsRe[m] * omu + morphRe[m] * mu;
@@ -9661,8 +9741,7 @@ function enterFastMode() {
             if (jiggleMode !== "none" && fastModeTargetPasses > 0
                 && fastModePassCount >= fastModeTargetPasses) {
                 fastModePassCount = 0;
-                generateJiggleOffsets();
-                // No curve recomputation needed — jiggle applied post-interpolation
+                computeJiggleForStep(jiggleStepFromElapsed(fastModeElapsedOffset));
             }
             plotCoeffCurvesOnBitmap(allAnimatedCoeffs(), stepsVal);
             fastModePassCount++;
@@ -10046,10 +10125,12 @@ function advancePass() {
     const passEl = document.getElementById("bitmap-pass-count");
     if (passEl) passEl.textContent = fmtPassCount();
 
-    // Jiggle boundary — reinit workers, elapsed continues
+    // Jiggle boundary — check if step changed, reinit workers with new offsets
     if (jiggleMode !== "none" && fastModeTargetPasses > 0
         && fastModePassCount >= fastModeTargetPasses) {
         fastModePassCount = 0;
+        const newStep = jiggleStepFromElapsed(fastModeElapsedOffset);
+        computeJiggleForStep(newStep);
         reinitWorkersForJiggle();
         return;
     }
@@ -10072,10 +10153,9 @@ function reinitWorkersForJiggle() {
     fastModeWorkerProgress = [];
     fastModeSharedData = null;
 
-    generateJiggleOffsets();
+    // Jiggle offsets already computed by caller via computeJiggleForStep()
     fastModeWorkerRoots = savedRoots;
 
-    // No curve recomputation needed — jiggle applied post-interpolation in workers
     const animated = allAnimatedCoeffs();
     const nRoots = currentRoots.length;
     fastModeSharedData = serializeFastModeData(animated, fastModeTotalSteps, nRoots);
@@ -10206,7 +10286,7 @@ function fastModeChunkLegacy() {
         // Morph blending (legacy) — build blended coefficients
         let coeffsToSolve = coefficients;
         if (morphEnabled && morphTargetCoeffs.length === coefficients.length) {
-            const mu = 0.5 + 0.5 * Math.sin(2 * Math.PI * morphRate * elapsed);
+            const mu = 0.5 - 0.5 * Math.cos(2 * Math.PI * morphRate * elapsed);
             const omu = 1 - mu;
             coeffsToSolve = coefficients.map((c, i) => ({
                 re: c.re * omu + morphTargetCoeffs[i].re * mu,
@@ -10250,8 +10330,7 @@ function fastModeChunkLegacy() {
         if (jiggleMode !== "none" && fastModeTargetPasses > 0
             && fastModePassCount >= fastModeTargetPasses) {
             fastModePassCount = 0;
-            generateJiggleOffsets();
-            // No curve recomputation needed — jiggle applied post-interpolation
+            computeJiggleForStep(jiggleStepFromElapsed(fastModeElapsedOffset));
         }
     }
 
@@ -12070,28 +12149,37 @@ function computeJiggleCentroid(targets) {
     return { re: sre / targets.size, im: sim / targets.size };
 }
 
-function generateJiggleOffsets() {
+// Compute jiggle offsets as a pure function of step number.
+// For most modes, offset = f(step, params, home positions) with no accumulated state.
+// For walk mode, offsets are built incrementally and cached in jiggleWalkCache.
+// For random mode, each step gets fresh random values (cached until step changes).
+function computeJiggleForStep(step) {
     const targets = jiggleTargetCoeffs();
-    if (targets.size === 0 || jiggleMode === "none") { updateJiggleStatus(); return; }
-    jiggleTriggerCount++;
+    if (targets.size === 0 || jiggleMode === "none") {
+        jiggleOffsets = null;
+        jiggleStep = -1;
+        updateJiggleStatus();
+        return;
+    }
+    if (step === jiggleStep) return; // same step, cached offsets still valid
+    jiggleStep = step;
+
+    // step is 1-based for offset computation (step 0 = no perturbation yet)
+    const t = step;
+    if (!jiggleOffsets) jiggleOffsets = new Map();
 
     if (jiggleMode === "random") {
         const sigma = (jiggleSigma / 100) * coeffExtent();
-        if (sigma <= 0) { updateJiggleStatus(); return; }
-        if (!jiggleOffsets) jiggleOffsets = new Map();
+        if (sigma <= 0) { jiggleOffsets = null; updateJiggleStatus(); return; }
         for (const idx of targets) {
             jiggleOffsets.set(idx, { re: gaussRand() * sigma, im: gaussRand() * sigma });
         }
     } else if (jiggleMode === "rotate") {
-        jiggleCumulativeAngle += jiggleTheta * 2 * Math.PI;
+        const angle = 2 * Math.PI * t / jiggleAngleSteps;
         const cen = computeJiggleCentroid(targets);
-        const cos_a = Math.cos(jiggleCumulativeAngle);
-        const sin_a = Math.sin(jiggleCumulativeAngle);
-        if (!jiggleOffsets) jiggleOffsets = new Map();
+        const cos_a = Math.cos(angle), sin_a = Math.sin(angle);
         for (const idx of targets) {
-            const c = coefficients[idx];
-            const hre = c.curve[0].re;
-            const him = c.curve[0].im;
+            const hre = coefficients[idx].curve[0].re, him = coefficients[idx].curve[0].im;
             const dx = hre - cen.re, dy = him - cen.im;
             jiggleOffsets.set(idx, {
                 re: dx * cos_a - dy * sin_a - dx,
@@ -12100,104 +12188,97 @@ function generateJiggleOffsets() {
         }
     } else if (jiggleMode === "walk") {
         const sigma = (jiggleSigma / 100) * coeffExtent();
-        if (sigma <= 0) { updateJiggleStatus(); return; }
-        if (!jiggleOffsets) jiggleOffsets = new Map();
-        for (const idx of targets) {
-            const prev = jiggleOffsets.get(idx) || { re: 0, im: 0 };
-            jiggleOffsets.set(idx, {
-                re: prev.re + gaussRand() * sigma,
-                im: prev.im + gaussRand() * sigma
-            });
+        if (sigma <= 0) { jiggleOffsets = null; updateJiggleStatus(); return; }
+        // Walk is inherently sequential — extend cache from last known step
+        if (!jiggleWalkCache) jiggleWalkCache = { step: 0, offsets: new Map() };
+        // If requested step is before cached step, reset (shouldn't happen normally)
+        if (t < jiggleWalkCache.step) {
+            jiggleWalkCache = { step: 0, offsets: new Map() };
         }
-    } else if (jiggleMode === "scale") {
-        jiggleCumulativeScale *= (1 + jiggleScaleStep / 100);
-        const cen = computeJiggleCentroid(targets);
-        if (!jiggleOffsets) jiggleOffsets = new Map();
+        // Build forward from cached step to current step
+        for (let s = jiggleWalkCache.step + 1; s <= t; s++) {
+            for (const idx of targets) {
+                const prev = jiggleWalkCache.offsets.get(idx) || { re: 0, im: 0 };
+                jiggleWalkCache.offsets.set(idx, {
+                    re: prev.re + gaussRand() * sigma,
+                    im: prev.im + gaussRand() * sigma
+                });
+            }
+        }
+        jiggleWalkCache.step = t;
         for (const idx of targets) {
-            const c = coefficients[idx];
-            const hre = c.curve[0].re;
-            const him = c.curve[0].im;
+            const off = jiggleWalkCache.offsets.get(idx) || { re: 0, im: 0 };
+            jiggleOffsets.set(idx, { re: off.re, im: off.im });
+        }
+    } else if (jiggleMode === "scale-center") {
+        const grow = jiggleScaleStep / 100 * coeffExtent();
+        for (const idx of targets) {
+            const hre = coefficients[idx].curve[0].re, him = coefficients[idx].curve[0].im;
+            const d = Math.hypot(hre, him) || 1;
+            jiggleOffsets.set(idx, { re: hre / d * grow * t, im: him / d * grow * t });
+        }
+    } else if (jiggleMode === "scale-centroid") {
+        const grow = jiggleScaleStep / 100 * coeffExtent();
+        const cen = computeJiggleCentroid(targets);
+        for (const idx of targets) {
+            const hre = coefficients[idx].curve[0].re, him = coefficients[idx].curve[0].im;
             const dx = hre - cen.re, dy = him - cen.im;
-            jiggleOffsets.set(idx, {
-                re: dx * (jiggleCumulativeScale - 1),
-                im: dy * (jiggleCumulativeScale - 1)
-            });
+            const d = Math.hypot(dx, dy) || 1;
+            jiggleOffsets.set(idx, { re: dx / d * grow * t, im: dy / d * grow * t });
         }
     } else if (jiggleMode === "circle") {
-        // Rotation around origin: multiply all coeffs by e^(i·cumAngle)
-        jiggleCumulativeAngle += jiggleTheta * 2 * Math.PI;
-        const cos_a = Math.cos(jiggleCumulativeAngle);
-        const sin_a = Math.sin(jiggleCumulativeAngle);
-        if (!jiggleOffsets) jiggleOffsets = new Map();
+        const angle = 2 * Math.PI * t / jiggleCircleSteps;
+        const cos_a = Math.cos(angle), sin_a = Math.sin(angle);
         for (const idx of targets) {
-            const hre = coefficients[idx].curve[0].re;
-            const him = coefficients[idx].curve[0].im;
+            const hre = coefficients[idx].curve[0].re, him = coefficients[idx].curve[0].im;
             jiggleOffsets.set(idx, {
                 re: hre * (cos_a - 1) - him * sin_a,
                 im: hre * sin_a + him * (cos_a - 1)
             });
         }
     } else if (jiggleMode === "spiral-centroid") {
-        // Rotation + scaling around centroid of selected coefficients
-        jiggleCumulativeAngle += jiggleTheta * 2 * Math.PI;
-        jiggleCumulativeScale *= (1 + jiggleScaleStep / 100);
+        const angle = 2 * Math.PI * t / jiggleAngleSteps;
+        const grow = jiggleScaleStep / 100 * coeffExtent();
         const cen = computeJiggleCentroid(targets);
-        const s = jiggleCumulativeScale;
-        const cos_a = Math.cos(jiggleCumulativeAngle);
-        const sin_a = Math.sin(jiggleCumulativeAngle);
-        if (!jiggleOffsets) jiggleOffsets = new Map();
+        const cos_a = Math.cos(angle), sin_a = Math.sin(angle);
         for (const idx of targets) {
-            const hre = coefficients[idx].curve[0].re;
-            const him = coefficients[idx].curve[0].im;
+            const hre = coefficients[idx].curve[0].re, him = coefficients[idx].curve[0].im;
             const dx = hre - cen.re, dy = him - cen.im;
+            const d = Math.hypot(dx, dy) || 1;
+            const r = 1 + grow * t / d;
             jiggleOffsets.set(idx, {
-                re: s * (dx * cos_a - dy * sin_a) - dx,
-                im: s * (dx * sin_a + dy * cos_a) - dy
+                re: r * (dx * cos_a - dy * sin_a) - dx,
+                im: r * (dx * sin_a + dy * cos_a) - dy
             });
         }
     } else if (jiggleMode === "spiral-center") {
-        // Rotation + scaling around origin (0,0)
-        jiggleCumulativeAngle += jiggleTheta * 2 * Math.PI;
-        jiggleCumulativeScale *= (1 + jiggleScaleStep / 100);
-        const s = jiggleCumulativeScale;
-        const cos_a = Math.cos(jiggleCumulativeAngle);
-        const sin_a = Math.sin(jiggleCumulativeAngle);
-        if (!jiggleOffsets) jiggleOffsets = new Map();
+        const angle = 2 * Math.PI * t / jiggleAngleSteps;
+        const grow = jiggleScaleStep / 100 * coeffExtent();
+        const cos_a = Math.cos(angle), sin_a = Math.sin(angle);
         for (const idx of targets) {
-            const hre = coefficients[idx].curve[0].re;
-            const him = coefficients[idx].curve[0].im;
+            const hre = coefficients[idx].curve[0].re, him = coefficients[idx].curve[0].im;
+            const d = Math.hypot(hre, him) || 1;
+            const r = 1 + grow * t / d;
             jiggleOffsets.set(idx, {
-                re: s * (hre * cos_a - him * sin_a) - hre,
-                im: s * (hre * sin_a + him * cos_a) - him
+                re: r * (hre * cos_a - him * sin_a) - hre,
+                im: r * (hre * sin_a + him * cos_a) - him
             });
         }
     } else if (jiggleMode === "breathe") {
-        // Sinusoidal scaling from centroid
-        const t = jiggleTriggerCount;
         const amp = jiggleAmplitude / 100;
         const scale = 1 + amp * Math.sin(2 * Math.PI * t / jigglePeriod);
         const cen = computeJiggleCentroid(targets);
-        if (!jiggleOffsets) jiggleOffsets = new Map();
         for (const idx of targets) {
-            const hre = coefficients[idx].curve[0].re;
-            const him = coefficients[idx].curve[0].im;
+            const hre = coefficients[idx].curve[0].re, him = coefficients[idx].curve[0].im;
             const dx = hre - cen.re, dy = him - cen.im;
-            jiggleOffsets.set(idx, {
-                re: dx * (scale - 1),
-                im: dy * (scale - 1)
-            });
+            jiggleOffsets.set(idx, { re: dx * (scale - 1), im: dy * (scale - 1) });
         }
     } else if (jiggleMode === "wobble") {
-        // Sinusoidal rotation around centroid
-        const t = jiggleTriggerCount;
-        const angle = jiggleTheta * 2 * Math.PI * Math.sin(2 * Math.PI * t / jigglePeriod);
+        const angle = (2 * Math.PI / jiggleAngleSteps) * Math.sin(2 * Math.PI * t / jigglePeriod);
         const cen = computeJiggleCentroid(targets);
-        const cos_a = Math.cos(angle);
-        const sin_a = Math.sin(angle);
-        if (!jiggleOffsets) jiggleOffsets = new Map();
+        const cos_a = Math.cos(angle), sin_a = Math.sin(angle);
         for (const idx of targets) {
-            const hre = coefficients[idx].curve[0].re;
-            const him = coefficients[idx].curve[0].im;
+            const hre = coefficients[idx].curve[0].re, him = coefficients[idx].curve[0].im;
             const dx = hre - cen.re, dy = him - cen.im;
             jiggleOffsets.set(idx, {
                 re: dx * cos_a - dy * sin_a - dx,
@@ -12205,17 +12286,20 @@ function generateJiggleOffsets() {
             });
         }
     } else if (jiggleMode === "lissajous") {
-        // Translate along Lissajous figure
-        const t = jiggleTriggerCount;
         const amp = (jiggleAmplitude / 100) * coeffExtent();
-        const dx = amp * Math.sin(2 * Math.PI * jiggleLissFreqX * t / jigglePeriod);
+        const dx = amp * Math.sin(2 * Math.PI * jiggleLissFreqX * t / jigglePeriod + Math.PI / 2);
         const dy = amp * Math.sin(2 * Math.PI * jiggleLissFreqY * t / jigglePeriod);
-        if (!jiggleOffsets) jiggleOffsets = new Map();
         for (const idx of targets) {
             jiggleOffsets.set(idx, { re: dx, im: dy });
         }
     }
     updateJiggleStatus();
+}
+
+// Convenience: compute jiggle step from elapsed time
+function jiggleStepFromElapsed(elapsed) {
+    if (jiggleMode === "none" || jiggleInterval <= 0) return 0;
+    return Math.max(0, Math.floor(elapsed / jiggleInterval));
 }
 
 function updateJiggleStatus() {
@@ -12251,7 +12335,7 @@ function buildJigglePanel() {
     modeSel.style.cssText = "background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
     const jiggleModes = [
         ["none","None"],["random","Random"],["rotate","Rotate"],["walk","Walk"],
-        ["scale","Scale"],["circle","Circle"],["spiral-centroid","Spiral (centroid)"],
+        ["scale-center","Scale (center)"],["scale-centroid","Scale (centroid)"],["circle","Circle"],["spiral-centroid","Spiral (centroid)"],
         ["spiral-center","Spiral (center)"],["breathe","Breathe"],["wobble","Wobble"],["lissajous","Lissajous"]
     ];
     for (const [val, label] of jiggleModes) {
@@ -12275,32 +12359,39 @@ function buildJigglePanel() {
             i.addEventListener("input", () => { jiggleSigma = Math.max(0, Math.min(100, parseInt(i.value,10)||0)); });
             const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = "/ 100";
             r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
-        } else if (jiggleMode === "rotate" || jiggleMode === "circle") {
+        } else if (jiggleMode === "rotate") {
             const r = document.createElement("div"); r.style.cssText = jRowStyle;
-            const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "\u03B8";
-            const i = document.createElement("input"); i.type = "number"; i.step = "0.001"; i.min = "0.001"; i.max = "0.500"; i.value = jiggleTheta; i.style.cssText = inpStyle;
-            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0";
-            i.addEventListener("input", () => { jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(i.value)||0.01)); h.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0"; });
+            const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "steps";
+            const i = document.createElement("input"); i.type = "range"; i.min = "10"; i.max = "500"; i.step = "1"; i.value = jiggleAngleSteps; i.style.cssText = "width:100px;";
+            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = jiggleAngleSteps;
+            i.addEventListener("input", () => { jiggleAngleSteps = parseInt(i.value, 10) || 100; h.textContent = jiggleAngleSteps; });
             r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
-        } else if (jiggleMode === "scale") {
+        } else if (jiggleMode === "circle") {
             const r = document.createElement("div"); r.style.cssText = jRowStyle;
-            const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "step";
-            const i = document.createElement("input"); i.type = "number"; i.step = "1"; i.min = "1"; i.max = "50"; i.value = jiggleScaleStep; i.style.cssText = inpStyle;
-            i.addEventListener("input", () => { jiggleScaleStep = Math.max(1, Math.min(50, parseInt(i.value,10)||5)); });
-            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = "%";
+            const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "steps";
+            const i = document.createElement("input"); i.type = "range"; i.min = "10"; i.max = "500"; i.step = "1"; i.value = jiggleCircleSteps; i.style.cssText = "width:100px;";
+            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = jiggleCircleSteps;
+            i.addEventListener("input", () => { jiggleCircleSteps = parseInt(i.value, 10) || 60; h.textContent = jiggleCircleSteps; });
+            r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
+        } else if (jiggleMode === "scale-center" || jiggleMode === "scale-centroid") {
+            const r = document.createElement("div"); r.style.cssText = jRowStyle;
+            const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "growth";
+            const i = document.createElement("input"); i.type = "range"; i.min = "0.01"; i.max = "1"; i.step = "0.01"; i.value = jiggleScaleStep; i.style.cssText = "width:100px;";
+            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = jiggleScaleStep.toFixed(2) + "%";
+            i.addEventListener("input", () => { jiggleScaleStep = parseFloat(i.value) || 0.1; h.textContent = jiggleScaleStep.toFixed(2) + "%"; });
             r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
         } else if (jiggleMode === "spiral-centroid" || jiggleMode === "spiral-center") {
             const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
-            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "\u03B8";
-            const i1 = document.createElement("input"); i1.type = "number"; i1.step = "0.001"; i1.min = "0.001"; i1.max = "0.500"; i1.value = jiggleTheta; i1.style.cssText = inpStyle;
-            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0";
-            i1.addEventListener("input", () => { jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(i1.value)||0.01)); h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0"; });
+            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "steps";
+            const i1 = document.createElement("input"); i1.type = "range"; i1.min = "10"; i1.max = "500"; i1.step = "1"; i1.value = jiggleAngleSteps; i1.style.cssText = "width:100px;";
+            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = jiggleAngleSteps;
+            i1.addEventListener("input", () => { jiggleAngleSteps = parseInt(i1.value, 10) || 100; h1.textContent = jiggleAngleSteps; });
             r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
             const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
             const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "growth";
-            const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "1"; i2.max = "50"; i2.value = jiggleScaleStep; i2.style.cssText = inpStyle;
-            i2.addEventListener("input", () => { jiggleScaleStep = Math.max(1, Math.min(50, parseInt(i2.value,10)||5)); });
-            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "%";
+            const i2 = document.createElement("input"); i2.type = "range"; i2.min = "0.01"; i2.max = "1"; i2.step = "0.01"; i2.value = jiggleScaleStep; i2.style.cssText = "width:100px;";
+            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = jiggleScaleStep.toFixed(2) + "%";
+            i2.addEventListener("input", () => { jiggleScaleStep = parseFloat(i2.value) || 0.1; h2.textContent = jiggleScaleStep.toFixed(2) + "%"; });
             r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
         } else if (jiggleMode === "breathe") {
             const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
@@ -12317,10 +12408,10 @@ function buildJigglePanel() {
             r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
         } else if (jiggleMode === "wobble") {
             const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
-            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "amp";
-            const i1 = document.createElement("input"); i1.type = "number"; i1.step = "0.001"; i1.min = "0.001"; i1.max = "0.500"; i1.value = jiggleTheta; i1.style.cssText = inpStyle;
-            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0";
-            i1.addEventListener("input", () => { jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(i1.value)||0.01)); h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0"; });
+            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "steps";
+            const i1 = document.createElement("input"); i1.type = "range"; i1.min = "10"; i1.max = "500"; i1.step = "1"; i1.value = jiggleAngleSteps; i1.style.cssText = "width:100px;";
+            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = jiggleAngleSteps;
+            i1.addEventListener("input", () => { jiggleAngleSteps = parseInt(i1.value, 10) || 100; h1.textContent = jiggleAngleSteps; });
             r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
             const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
             const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "period";

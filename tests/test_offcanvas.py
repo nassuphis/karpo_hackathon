@@ -534,10 +534,10 @@ class TestTimingCopyRes:
 
 
 class TestExportFormatState:
-    def test_default_format_is_jpeg(self, page):
-        """bitmapExportFormat should default to 'jpeg'."""
+    def test_default_format_is_png(self, page):
+        """bitmapExportFormat should default to 'png'."""
         result = page.evaluate("() => bitmapExportFormat")
-        assert result == "jpeg"
+        assert result == "png"
 
     def test_format_persists_in_variable(self, page):
         """Changing format updates bitmapExportFormat."""

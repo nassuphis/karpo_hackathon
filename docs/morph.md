@@ -224,7 +224,7 @@ if (meta.morph) {
     morphMu = morphEnabled ? (meta.morph.mu ?? 0.5) : 0;
     if (meta.morph.target && meta.morph.target.length === coefficients.length) {
         morphTargetCoeffs = meta.morph.target.map(d => {
-            const hasPath = d.pathType && d.pathType !== "none";
+            const hasPath = d.pathType && d.pathType !== "none" && d.pathType !== "follow-c";
             const home = hasPath ? (d.home || d.pos) : d.pos;
             return {
                 re: home[0], im: home[1],
@@ -235,9 +235,9 @@ if (meta.morph) {
                 curve: [{ re: home[0], im: home[1] }], curveIndex: 0
             };
         });
-        // Regenerate curves for D-nodes with paths
+        // Regenerate curves for D-nodes with paths (skip "follow-c" — no own curve)
         for (const d of morphTargetCoeffs) {
-            if (d.pathType !== "none") {
+            if (d.pathType !== "none" && d.pathType !== "follow-c") {
                 d.curve = computeCurve(d.curve[0].re, d.curve[0].im, d.pathType,
                     d.radius / 100 * coeffExtent(), d.angle, d.extra);
             }
@@ -284,7 +284,8 @@ Degree changes (pattern/slider/add/delete) all reinitialize D via `initMorphTarg
 Both phases are now implemented:
 
 - **Phase 2 (D Trajectories)**: D-nodes support full trajectory paths (circle, ellipse, figure8, spiral, cloud, etc.) via the "D-List" tab (`data-ltab="dlist"`, ~line 624). Functions include `allAnimatedDCoeffs()`, `advanceDNodesAlongCurves(elapsed)` (~line 3745 in `advanceToElapsed()`), and the D-List trajectory editor (~line 11390+). D-node path fields are saved/loaded with backward compatibility.
-- **Phase 3 (Fast Mode Morphing)**: Workers receive morph state via `serializeFastModeData()`. Fast mode D-curve serialization, worker blob D-curve advancement per step, and pre-allocated `morphRe`/`morphIm` copies in the worker morph blend (avoiding mutation of persistent state).
+- **"Follow C" path type**: D-only path (`dOnly: true` in `PATH_CATALOG`, ~line 2582) where D[i] mirrors C[i]'s current position each frame. `PATH_PARAMS["follow-c"]` is `[]` (no parameters). Treated like "none" for `hasPath` checks: `allAnimatedDCoeffs()` skips it (`pt !== "none" && pt !== "follow-c"`), save/load `hasPath` excludes it, curve regeneration skips it. In `advanceDNodesAlongCurves()`, follow-c copies from C: `d.re = coefficients[i].re; d.im = coefficients[i].im`. `applyPreview()` for morph snaps treats follow-c like none: `d.curve = [{re: d.re, im: d.im}]`.
+- **Phase 3 (Fast Mode Morphing)**: Workers receive morph state via `serializeFastModeData()`. Fast mode D-curve serialization, worker blob D-curve advancement per step, and pre-allocated `morphRe`/`morphIm` copies in the worker morph blend (avoiding mutation of persistent state). `dFollowCIndices` is serialized in `serializeFastModeData()` (~line 9919) and stored as `S_dFollowC` in the worker blob. During each step, the worker copies `coeffsRe[fci]`/`coeffsIm[fci]` into `morphRe[fci]`/`morphIm[fci]` for each follow-c index.
 
 ---
 
@@ -299,19 +300,25 @@ Both phases are now implemented:
 | Global state (~line 1118) | morphTargetCoeffs, morphEnabled, morphRate, morphMu |
 | Panel vars (~line 1912) | morphSvg, morphGhostLayer, morphLayer, morphPanelInited |
 | autoScaleCoeffPanel() (~line 2474) | Sync morph panel grid + positions on coeff range change |
+| PATH_PARAMS / PATH_CATALOG (~line 2544) | `"follow-c": []` (no params), `dOnly: true` in catalog |
 | addCoefficientAt() (~line 3097) | Call initMorphTarget() after state adjustments |
 | deleteCoefficient() (~line 3123) | Call initMorphTarget() after state adjustments |
 | initMorphTarget() (~line 3145) | Create D from C, clear selectedMorphCoeffs |
+| allAnimatedDCoeffs() (~line 3397) | Excludes "follow-c" from animated set |
+| advanceDNodesAlongCurves() (~line 3406) | Follow-c D-nodes copy from C[i] position |
 | advanceToElapsed() (~line 3724) | Update morphMu, advance D-nodes along curves, update morph panel |
 | animLoop() (~line 4265) | Mu update + display when morphEnabled |
 | renderMorphPanel() (~line 4482) | Ghost C + draggable D on morph SVG |
 | renderFinalPanel() (~line 4589) | Final panel showing blended coefficients |
 | solveRoots() (~line 5214) | Blend coefficients when morphEnabled |
 | applyPattern() (~line 5256) | Call initMorphTarget() |
+| applyPreview() (~line 6037) | Follow-c treated like none for morph snap curve rebuild |
 | buildStateMetadata() (~line 6747) | Serialize morph state (including D-node path fields) |
-| applyLoadedState() (~line 7554) | Restore morph state (including D-node trajectories) |
+| applyLoadedState() (~line 7554) | Restore morph state (including D-node trajectories, follow-c hasPath exclusion) |
+| Worker blob (~line 9274) | `S_dFollowC` state, copies C→D per step for follow-c indices |
+| serializeFastModeData() (~line 9919) | `dFollowCIndices` array for follow-c D-nodes |
 | leftTabContents (~line 10310) | morph, dlist, final entries |
 | switchLeftTab() (~line 10319) | Handle morph, dlist, final tabs |
 | Event listeners (~line 10332) | Morph control handlers |
-| D-List functions (~line 11390) | D-node trajectory editor |
+| D-List functions (~line 11390) | D-node trajectory editor (follow-c skipped in bulk ops) |
 | rebuild() (~line 12400) | Invalidate morph panel (set morphPanelInited=false) |

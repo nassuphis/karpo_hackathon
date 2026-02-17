@@ -63,7 +63,7 @@ class TestSaveLoadRoundtrip:
         """Jiggle settings survive roundtrip."""
         result = page.evaluate("""() => {
             jiggleMode = "rotate";
-            jiggleSigma = 15;
+            jiggleSigma = 5;
             jiggleAngleSteps = 200;
             var state1 = buildStateMetadata();
             applyLoadedState(state1);

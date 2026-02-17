@@ -119,7 +119,7 @@ GPU savings: 384MB (10K), 884MB (15K), 2.48GB (25K). The 16MB display buffer add
 
 All changes in `index.html`. All steps below have been implemented.
 
-### State variables (~line 1085)
+### State variables (~line 1086)
 
 After `let bitmapPersistentBuffer = null;`:
 
@@ -134,11 +134,11 @@ let bitmapDisplayBuffer = null;    // ImageData at display resolution (null when
 
 Options: 1000, 2000 (default), 5000, 8000, 10000, 15000, 25000.
 
-### `fillDisplayBuffer()` helper (~line 8737)
+### `fillDisplayBuffer()` helper (~line 8822)
 
 Same exponential `copyWithin` pattern as `fillPersistentBuffer()`, operates on `bitmapDisplayBuffer`.
 
-### `initBitmapCanvas()` (~line 8842)
+### `initBitmapCanvas()` (~line 8927)
 
 - `bitmapComputeRes = res` (from dropdown)
 - `bitmapDisplayRes = Math.min(res, BITMAP_DISPLAY_CAP)`
@@ -146,7 +146,7 @@ Same exponential `copyWithin` pattern as `fillPersistentBuffer()`, operates on `
 - **Persistent buffer**: `new ImageData(bitmapComputeRes, bitmapComputeRes)` — direct constructor, NOT `createImageData` (decoupled from canvas size). Wrapped in try/catch with user-friendly OOM alert.
 - **Display buffer**: `new ImageData(bitmapDisplayRes, bitmapDisplayRes)` only when `bitmapComputeRes > BITMAP_DISPLAY_CAP`, otherwise null
 
-### `serializeFastModeData()` (~line 9801) — MOST CRITICAL
+### `serializeFastModeData()` (~line 9794) — MOST CRITICAL
 
 ```javascript
 canvasW: bitmapComputeRes, canvasH: bitmapComputeRes,
@@ -154,22 +154,22 @@ canvasW: bitmapComputeRes, canvasH: bitmapComputeRes,
 
 Workers always receive the compute resolution, not the display canvas size.
 
-### `enterFastMode()` resolution check (~line 9578)
+### `enterFastMode()` resolution check (~line 9667)
 
 `bitmapComputeRes !== wantRes` instead of `canvas.width !== wantRes`.
 
-### `compositeWorkerPixels()` (~line 9946)
+### `compositeWorkerPixels()` (~line 10052)
 
 - Writes to persistent buffer in compute-space (unchanged)
 - When split active (`bitmapDisplayBuffer !== null`): downsamples each pixel to display buffer using `invScale = dW / cW`
 - Tracks dirty rect in display-space
 - `putImageData` uses display buffer (or persistent buffer when no split)
 
-### `plotCoeffCurvesOnBitmap()` (~line 9485)
+### `plotCoeffCurvesOnBitmap()` (~line 9587)
 
 Uses `bitmapDisplayRes || bitmapCtx.canvas.width` for width/height (display-only function that paints to the display canvas).
 
-### Export functions (~line 8752)
+### Export functions (~line 8837)
 
 Four pure-CPU encoders, each taking `(rgba, width, height, filename)` (JPEG adds quality):
 - `exportPersistentBufferAsBMP()` — 24-bit BMP, chunked Blob
@@ -177,23 +177,23 @@ Four pure-CPU encoders, each taking `(rgba, width, height, filename)` (JPEG adds
 - `exportPersistentBufferAsPNG()` — lossless via UPNG.js + pako
 - `exportPersistentBufferAsTIFF()` — uncompressed via UTIF.js
 
-### Save popup handler (~line 7340)
+### Save popup handler (~line 7352)
 
 Save popup with format dropdown, quality slider (JPEG only), and Download button. Reads from `bitmapPersistentBuffer.data` at `bitmapComputeRes`.
 
-### Clear handler (~line 11996)
+### Clear handler (~line 12113)
 
 Clears canvas, persistent buffer, and display buffer (when split active via `if (bitmapDisplayBuffer) fillDisplayBuffer()`).
 
-### `resetBitmap()` (~line 10261)
+### `resetBitmap()` (~line 10374)
 
 Nulls out: `bitmapPersistentBuffer`, `bitmapDisplayBuffer`, `bitmapComputeRes = 0`, `bitmapDisplayRes = 0`.
 
-### Snap "bitmap" export (~line 6920)
+### Snap "bitmap" export (~line 6997)
 
 Creates temp canvas at `bitmapComputeRes` dimensions, uses `ctx.putImageData(bitmapPersistentBuffer, 0, 0)` to copy full-resolution data, then `canvas.toBlob("image/png")` for the snap PNG download.
 
-### Timing copy resolution (~line 7454)
+### Timing copy resolution (~line 7531)
 
 `bitmapComputeRes || null` instead of `bitmapCtx.canvas.width`.
 

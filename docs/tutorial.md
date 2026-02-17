@@ -42,7 +42,7 @@ With all coefficients selected, open the **path type dropdown** (bottom-left, cu
 
 ![Circle paths assigned](images/04_circle_path.png)
 
-Each coefficient now has its own circular orbit. The sliders to the right of the dropdown control **S** (speed), **R** (radius), and **A** (starting angle). You can adjust these per-coefficient or for the whole selection at once.
+Each coefficient now has its own circular orbit. The sliders to the right of the dropdown control **S** (speed, 1–1000), **R** (radius), and **A** (starting angle). You can adjust these per-coefficient or for the whole selection at once.
 
 ---
 
@@ -54,7 +54,7 @@ To make the animation more interesting, give each coefficient a different speed 
 2. Click **All** in the list header
 3. Open the **Transform** dropdown and choose **PrimeSpeeds**
 
-This sets each coefficient's speed to a different prime number, ensuring their orbits never synchronize and the root trajectories fill more of the plane.
+This sets each coefficient's speed to a value coprime with all others, ensuring their orbits never synchronize and the root trajectories fill more of the plane.
 
 Switch back to the **C-Nodes** tab to see the coefficient paths.
 
@@ -122,7 +122,7 @@ The Export method above captures the screen at display resolution. For publicati
 
 ![Bitmap initialized](images/11_bitmap_init.png)
 
-The bitmap canvas appears as a black rectangle. The toolbar shows resolution (default 2000px), step count, and start/pause controls. You can change the resolution dropdown before or after init -- options range from 1,000 to 25,000 pixels.
+The bitmap canvas appears as a black rectangle. The toolbar shows resolution (default 2000px), step count, and start/pause controls. You can change the resolution dropdown before or after init -- options range from 1,000 to 25,000 pixels. Changing the resolution or step count while fast mode is running will automatically restart rendering with the new settings.
 
 ### Render
 
@@ -172,7 +172,7 @@ For Index Rainbow mode, you can also choose a **matching strategy** (Hungarian, 
 
 ### Jiggle
 
-Jiggle adds small perturbations to coefficients between animation cycles, causing the root trajectories to explore nearby parameter space. This fills in sparse areas and creates richer textures. Try **Random** or **Spiral** jiggle with a small sigma.
+Jiggle adds small perturbations to coefficients between animation cycles, causing the root trajectories to explore nearby parameter space. This fills in sparse areas and creates richer textures. Try **Random** or **Spiral** jiggle with a small sigma. Key parameters: **sigma** (0–10, perturbation magnitude as a fraction of coefficient extent divided by 10), **interval** (0.1–100 seconds between perturbation cycles), and **angle/circle steps** (10–5000, controlling rotational resolution for directional jiggle modes).
 
 ---
 
@@ -190,6 +190,7 @@ Hue represents the argument (phase) of p(z) and brightness represents the magnit
 
 - **Higher degree = richer patterns.** Try degree 10-15 with the Spiral pattern and prime speeds for elaborate braids.
 - **Mix path types.** Not every coefficient needs a circle -- try setting some to Lissajous, Figure-8, or Hilbert for more complex dynamics.
+- **Use D-nodes for morphing.** The D-List tab defines morph-target coefficients. D-nodes support a **Follow C** path type that mirrors the corresponding C-node's position, making it easy to set up morph targets that track the main coefficients.
 - **Use the scrub slider** (in the header bar) to preview the animation before committing to a long bitmap render. The scrub is additive -- it adds seconds to the current elapsed time when paused.
 - **PNG is usually smallest** for bitmap exports of sparse root trajectories (a 15K render can be 4.5 MB as PNG vs 35 MB as JPEG).
 - **Save your state** (floppy disk icon) before experimenting -- the JSON snapshot lets you return to any setup instantly.

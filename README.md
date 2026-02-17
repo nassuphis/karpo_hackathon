@@ -1,4 +1,4 @@
-# PolyPaint v33
+# PolyPaint v35
 
 **[Try it live](https://nassuphis.github.io/karpo_hackathon/)**
 
@@ -26,9 +26,9 @@ Everything runs client-side in a single HTML file. No server, no build step, no 
 
 ### Animate
 
-- **Per-coefficient trajectories** -- 21 path types including circle, spiral, figure-8, Hilbert, and Sierpinski ([Paths](docs/paths.md))
-- **Independent settings** -- each coefficient has its own path type, radius, speed, angle, and direction
-- **Morph blending** -- a second coefficient set (D-nodes) animates alongside the primary set with independent paths ([Morph](docs/morph.md), [D-Node Paths](docs/d-node-paths.md))
+- **Per-coefficient trajectories** -- 22 path types including circle, spiral, figure-8, Hilbert, Sierpinski, and Follow C ([Paths](docs/paths.md))
+- **Independent settings** -- each coefficient has its own path type, radius, speed (1-1000 resolution), angle, and direction
+- **Morph blending** -- a second coefficient set (D-nodes) animates alongside the primary set with independent paths; D-nodes support a "Follow C" path that mirrors the corresponding C-node position ([Morph](docs/morph.md), [D-Node Paths](docs/d-node-paths.md))
 
 ### Visualize
 
@@ -39,9 +39,9 @@ Everything runs client-side in a single HTML file. No server, no build step, no 
 ### Compute
 
 - **Bitmap rendering** -- accumulate root positions as pixels at up to 25,000 x 25,000 resolution with off-canvas compute/display split ([Off-Canvas](docs/off-canvas-render.md))
-- **Fast mode** -- parallel Web Workers distribute the solver across 1-16 threads for continuous off-main-thread computation ([Workers](docs/worker_implementation.md))
+- **Fast mode** -- parallel Web Workers distribute the solver across 1-16 threads with balanced step distribution; changing steps or resolution auto-restarts ([Workers](docs/worker_implementation.md))
 - **WASM solver** -- Ehrlich-Aberth algorithm compiled from C, base64-embedded, ~2KB ([WASM](docs/wasm_investigation.md))
-- **10 jiggle modes** -- explore nearby parameter space between cycles: random, rotate, walk, scale, circle, spiral, breathe, wobble, lissajous ([Paths](docs/paths.md#jiggle--path-perturbation-between-cycles))
+- **10 jiggle modes** -- explore nearby parameter space between cycles: random, rotate, walk, scale, circle, spiral, breathe, wobble, lissajous; refined controls with sigma 0-10, interval step 0.1s, angle steps up to 5000 ([Paths](docs/paths.md#jiggle--path-perturbation-between-cycles))
 - **Multi-format export** -- JPEG, PNG, BMP, TIFF images + WebM video recording in 7 capture modes
 
 ### Analyze
@@ -72,9 +72,9 @@ See the [Interface Guide](docs/interface.md) for the complete control reference.
 
 | Area | Key Controls |
 |------|-------------|
-| **Header** | Degree (3-30), Pattern dropdown (26 options), Reset, Save/Load, Export (7 modes), T (timing), Play/Pause/Resume, Scrub, Seconds counter, Home |
+| **Header** | Degree (2-30), Pattern dropdown (26 options), Reset, Save/Load, Export (7 modes), T (timing), Play/Pause/Resume, Scrub, Seconds counter, Home |
 | **Left tabs** | C-Nodes (SVG + drag), C-List (table + 20 transforms), D-Nodes (morph target SVG), D-List (morph target table), Jiggle (mode + params), Final (morph controls + combined view) |
-| **Trajectory editor** | Path type (21 curves in 3 groups), per-path sliders (R/S/A/CW), preview/revert, Update Whole Selection |
+| **Trajectory editor** | Path type (22 curves in 3 groups + Follow C), per-path sliders (R/S/A/CW), preview/revert, Update Whole Selection |
 | **Mid-bar** | Scale (0.1x-10x), Rotate (0.5 turns), Translate (2D pad), Select all/none, Invert |
 | **Roots toolbar** | Trails toggle, color mode (Uniform / Index Rainbow / Derivative), domain coloring, Fit, +25% |
 | **Right tabs** | Roots (visualization), Stats (16 plots, 32 chart types), Sound (3 voices + routing matrix), Bitmap (fast mode + export) |
@@ -112,7 +112,7 @@ No server, no WebSocket, no build tools. See [Solver](docs/solver.md) for the ro
 
 ### Animation & Paths
 
-- [Paths & Curves](docs/paths.md) -- 21 path types, curve representation, cycle sync, jiggle modes, space-filling curves
+- [Paths & Curves](docs/paths.md) -- 22 path types, curve representation, cycle sync, jiggle modes, space-filling curves
 - [Morph Blending](docs/morph.md) -- dual coefficient sets, mu oscillation
 - [D-Node Paths](docs/d-node-paths.md) -- morph target animation, fast mode integration
 - [Root Braids](docs/braids.md) -- monodromy, braid topology, trail visualization

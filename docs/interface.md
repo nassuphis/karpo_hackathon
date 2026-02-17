@@ -16,7 +16,7 @@ The UI is organized around a compact header bar and two side-by-side complex-pla
 
 | Control | Description |
 |---------|-------------|
-| **Degree** | Click the number to open a slider popover (3-30). Reinitializes coefficients on change. |
+| **Degree** | Click the number to open a slider popover (2-30). Reinitializes coefficients on change. |
 | **Pattern** | Initial arrangement of coefficients or roots. 26 patterns in 3 categories: Basic, Coefficient shapes, Root shapes. See [Patterns](patterns.md). |
 | **Reset** (&#8634;) | Reset to initial state for the current degree and pattern. |
 | **Save** | Save full application state as a JSON file. |
@@ -48,7 +48,7 @@ Interactive SVG complex-plane visualization of polynomial coefficients.
 
 - **Drag** any coefficient dot to move it; roots update instantly on the right panel.
 - **Right-click empty canvas** to add a new coefficient at that position (becomes the new highest-power term).
-- **Right-click an existing coefficient** to open a context menu with trajectory settings, live preview, and a Delete button. Click "Accept" to commit or press Escape to revert.
+- **Right-click an existing coefficient** to open a context menu with trajectory settings, live preview, and a Delete button (disabled when only 3 coefficients remain, since minimum degree is 2). Click "Accept" to commit or press Escape to revert.
 - Assigned trajectory curves are always visible as colored paths on the canvas.
 
 ### Trajectory Editor
@@ -70,13 +70,14 @@ The trajectory editor uses a preview/revert workflow. When you change the path d
 
 This replaces the previous immediate-apply behavior, giving you a chance to experiment without permanently changing paths.
 
-#### Path Types (21)
+#### Path Types (21 for C-nodes, 22 for D-nodes)
 
 | Group | Paths |
 |-------|-------|
 | **Basic** | None, Circle, Horizontal, Vertical, Spiral, Random (Gaussian cloud) |
 | **Curves** | Lissajous, Figure-8, Cardioid, Astroid, Deltoid, Rose, Epitrochoid, Hypotrochoid, Butterfly, Star, Square, C-Ellipse |
 | **Space-filling** | Hilbert (Moore curve), Peano, Sierpinski arrowhead |
+| **D-only** | Follow C (mirrors the corresponding C-node position; no speed/radius parameters) |
 
 Each coefficient stores its own path type, radius, speed, angle, and direction independently. See [Paths](paths.md) for curve formulas, cycle sync, and space-filling curve details.
 
@@ -140,7 +141,7 @@ The curve editor below the toolbar lets you edit the path for the selection. It 
 | SortByModulus | Reorder by distance from origin |
 | SortByArgument | Reorder by angle from positive real axis |
 
-**Param1 / Param2** sliders supply arguments to transforms that need them (e.g. Lerp endpoints, rotation angle).
+**Param1 / Param2** sliders (range 1-1000) supply arguments to transforms that need them (e.g. Lerp endpoints, rotation angle). Speed values use thousandths (e.g. Param1=500 means speed 0.500).
 
 ### D-Nodes Tab
 
@@ -156,32 +157,33 @@ Interactive SVG complex-plane visualization of morph target D-nodes. See [Morph]
 
 ![D-List tab](images/iface_dlist_tab.png)
 
-Identical structure to the C-List tab, but for morph target D-nodes. Assign paths, speeds, and transforms to D-nodes independently from C-coefficients. The toolbar has the same controls: Select All / Deselect, Same Curve, curve type cycler, Transform dropdown, and Param1/Param2 sliders. The curve editor uses the same pattern: select D-nodes, adjust parameters, and click **Update Whole Selection** to apply. See [D-Node Paths](d-node-paths.md).
+Identical structure to the C-List tab, but for morph target D-nodes. Assign paths, speeds, and transforms to D-nodes independently from C-coefficients. The toolbar has the same controls: Select All / Deselect, Same Curve, curve type cycler, Transform dropdown, and Param1/Param2 sliders. The curve editor uses the same pattern: select D-nodes, adjust parameters, and click **Update Whole Selection** to apply. D-nodes have an additional **Follow C** path type that mirrors the corresponding C-node's position (no speed or radius displayed). See [D-Node Paths](d-node-paths.md).
 
 ### Jiggle Tab
 
 Dedicated tab for coefficient perturbation controls (previously embedded in the bitmap cfg popup).
 
-- **Mode** dropdown (11 modes, see below)
-- Mode-specific parameter controls (sigma, theta, amplitude, period, etc.)
-- **Interval** slider (1-100 seconds between perturbation triggers)
+- **Mode** dropdown (12 modes, see below)
+- Mode-specific parameter controls (sigma, steps, amplitude, period, etc.)
+- **Interval** slider (0.1-100 seconds, step 0.1, between perturbation triggers) with +/-0.1s precision buttons
 - **GCD** button: auto-compute interval from the GCD of coefficient speeds
 
-**Jiggle modes** (11):
+**Jiggle modes** (12):
 
 | Mode | Description | Parameters |
 |------|-------------|------------|
 | None | No perturbation | -- |
-| Random | Gaussian offsets each trigger | sigma |
-| Rotate | Rotate selected around centroid | theta (turns) |
-| Walk | Random walk accumulating offsets | sigma |
-| Scale | Scale from centroid | % per trigger |
-| Circle | Rotate around origin | theta (turns) |
-| Spiral (centroid) | Rotate + scale around centroid | theta, growth % |
-| Spiral (center) | Rotate + scale around origin | theta, growth % |
-| Breathe | Sinusoidal scaling from centroid | amplitude, period |
-| Wobble | Sinusoidal rotation around centroid | amplitude, period |
-| Lissajous | Translate along Lissajous figure | amplitude, period, freqX, freqY |
+| Random | Gaussian offsets each trigger | sigma (range slider 0-10, +/-0.01 buttons) |
+| Rotate | Rotate selected around centroid | steps (range slider 10-5000) |
+| Walk | Random walk accumulating offsets | sigma (range slider 0-10, +/-0.01 buttons) |
+| Scale (center) | Scale from origin | growth % per trigger |
+| Scale (centroid) | Scale from centroid | growth % per trigger |
+| Circle | Rotate around origin | steps (range slider 10-5000) |
+| Spiral (centroid) | Rotate + scale around centroid | steps (10-5000), growth % |
+| Spiral (center) | Rotate + scale around origin | steps (10-5000), growth % |
+| Breathe | Sinusoidal scaling from centroid | amplitude, period (cycles) |
+| Wobble | Sinusoidal rotation around centroid | steps (10-5000), period (cycles) |
+| Lissajous | Translate along Lissajous figure | amplitude, steps (range slider 10-5000), freqX, freqY |
 
 See [Paths](paths.md) for jiggle formulas.
 
@@ -329,10 +331,10 @@ Accumulates root (or coefficient) positions as single-pixel stamps on a high-res
 | **init** | Snapshot animation state, create bitmap canvas, reset elapsed to 0. |
 | **save** | Open format popup: JPEG (with quality slider), PNG, BMP, TIFF. Downloads from CPU buffer at full resolution. |
 | **clear** | Reset canvas pixels. Elapsed time unchanged. |
-| **Resolution** | Canvas size: 1000 / 2000 / 5000 / 8000 / 10000 / 15000 / 25000 px. Above 2000px, display is capped at 2000px while computation runs at full resolution. |
+| **Resolution** | Canvas size: 1000 / 2000 / 5000 / 8000 / 10000 / 15000 / 25000 px. Above 2000px, display is capped at 2000px while computation runs at full resolution. Auto-restarts fast mode if changed during active rendering. |
 | **start / stop** | Toggle continuous fast mode (parallel Web Workers). Stop preserves state; start resumes where it left off. |
 | **ROOT / COEF** | Toggle between plotting root or coefficient positions. |
-| **Steps** | Solver steps per pass: 10 / 100 / 1K / 5K / 10K / 50K / 100K / 1M. |
+| **Steps** | Solver steps per pass: 10 / 100 / 1K / 5K / 10K / 50K / 100K / 1M. Auto-restarts fast mode if changed during active rendering. |
 | **cfg** | Open configuration popup (see below). |
 
 A zero-padded elapsed-seconds counter appears during computation.

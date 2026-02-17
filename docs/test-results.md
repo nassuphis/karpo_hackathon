@@ -1,6 +1,6 @@
 # Test Results
 
-**492 tests total: 491 passed, 1 skipped** | Runtime: ~9m | Headless Chromium on Apple Silicon
+**496 tests total: 495 passed, 1 skipped** | Runtime: ~9m | Headless Chromium on Apple Silicon
 
 Run with: `python -m pytest tests/ -v`
 
@@ -170,17 +170,17 @@ Tests `initMorphTarget()`, blending formula, enable/disable state, save/load, de
 
 ---
 
-## test_jiggle.py — Jiggle Perturbation System (28 tests)
+## test_jiggle.py — Jiggle Perturbation System (32 tests)
 
-Tests `gaussRand()`, `jiggleTargetCoeffs()`, `computeJiggleCentroid()`, `generateJiggleOffsets()` across all 11 modes, cumulative state, and save/load.
+Tests `gaussRand()`, `jiggleTargetCoeffs()`, `computeJiggleCentroid()`, `computeJiggleForStep()` across all 11 modes, pure function behavior, caching, and save/load.
 
 | Test Group | Count | What it checks |
 |------------|-------|----------------|
 | `TestJiggleHelpers` | 3 | gaussRand distribution (mean≈0, variance≈1), target coeffs = selected, centroid = center of mass |
-| `TestJiggleModes::test_mode_produces_offsets` | 10 | Each of 10 modes (random, rotate, walk, scale, circle, spiral-centroid, spiral-center, breathe, wobble, lissajous) produces offsets |
-| `TestJiggleModes::test_mode_offsets_are_finite` | 10 | All offsets from each mode are finite |
+| `TestJiggleModes::test_mode_produces_offsets` | 11 | Each of 11 modes (random, rotate, walk, scale-center, scale-centroid, circle, spiral-centroid, spiral-center, breathe, wobble, lissajous) produces offsets |
+| `TestJiggleModes::test_mode_offsets_are_finite` | 11 | All offsets from each mode are finite |
 | `TestJiggleModes::test_none_mode_no_offsets` | 1 | "none" mode produces no offsets |
-| `TestJiggleCumulative` | 3 | Rotate accumulates angle (θ×2π per call), scale accumulates (×(1+step/100)), trigger count increments |
+| `TestJigglePureFunction` | 5 | Rotate/scale/breathe are pure functions of step (no accumulation), same step cached, jiggleStepFromElapsed floors correctly |
 | `TestJiggleSaveLoad` | 1 | Mode + parameters survive save/load |
 
 ---
@@ -405,7 +405,7 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | Utilities | test_utils.py | 29 | Formatting, path catalog, prime speeds, audio helpers, ranges |
 | Save/load | test_state.py | 8 | Roundtrip serialization, partial state |
 | Morph | test_morph.py | 15 | Init, blending, enable/disable, save/load, degree sync, fast mode |
-| Jiggle | test_jiggle.py | 28 | Helpers, all 11 modes, cumulative state, save/load |
+| Jiggle | test_jiggle.py | 32 | Helpers, all 11 modes, pure function behavior, caching, save/load |
 | Fast mode | test_fastmode.py | 22 | Formatting, buttons, removed vars, resets, serialization, clear, toggle |
 | Off-canvas & export | test_offcanvas.py | 76 | Split compute/display, BMP/JPEG/PNG/TIFF export, library loading, save popup, format state, bitmap/animation color decoupling, derivative palette, rank normalization, root sensitivities |
 | Match strategies | test_match_strategy.py | 16 | Hungarian algorithm, greedy strategies, serialization, save/load, UI chips, worker blob |
@@ -417,7 +417,7 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | D-node ctx menu | test_dnode_ctx.py | 16 | Popup, open/close, snapshot/revert, accept, path changes, morph panel |
 | Integration | test_integration.py | 3 | Snap loading, determinism, fast mode pixels |
 | Benchmark | test_benchmark.py | 4 | JS vs WASM: correctness + performance |
-| **Total** | **23 files** | **492** | |
+| **Total** | **23 files** | **496** | |
 
 ---
 

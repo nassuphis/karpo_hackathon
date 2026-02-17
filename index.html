@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v34</title>
+<title>PolyPaint v35</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
@@ -562,7 +562,7 @@ body.fast-mode #stop-roots-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v34</span>
+    <span class="app-title">PolyPaint v35</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -681,13 +681,13 @@ body.fast-mode #stop-roots-btn {
                     </select>
                     <span style="display:inline-flex;align-items:center;gap:2px;" title="Parameter for transforms">
                         <span style="font-size:7px;color:var(--muted);">Param1</span>
-                        <input id="list-sel-speed" type="range" min="1" max="100" value="50" step="1" style="width:52px;height:10px;accent-color:var(--accent);">
-                        <span id="list-sel-speed-val" style="font-size:7px;color:var(--muted);min-width:16px;">50</span>
+                        <input id="list-sel-speed" type="range" min="1" max="1000" value="500" step="1" style="width:52px;height:10px;accent-color:var(--accent);">
+                        <span id="list-sel-speed-val" style="font-size:7px;color:var(--muted);min-width:16px;">500</span>
                     </span>
                     <span style="display:inline-flex;align-items:center;gap:2px;" title="Parameter 2 for transforms">
                         <span style="font-size:7px;color:var(--muted);">Param2</span>
-                        <input id="list-sel-param2" type="range" min="1" max="100" value="100" step="1" style="width:52px;height:10px;accent-color:var(--accent);">
-                        <span id="list-sel-param2-val" style="font-size:7px;color:var(--muted);min-width:16px;">100</span>
+                        <input id="list-sel-param2" type="range" min="1" max="1000" value="1000" step="1" style="width:52px;height:10px;accent-color:var(--accent);">
+                        <span id="list-sel-param2-val" style="font-size:7px;color:var(--muted);min-width:16px;">1000</span>
                     </span>
                 </div>
                 <div id="list-curve-editor" style="padding:4px 8px 6px;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.55);flex-shrink:0;opacity:0.3;pointer-events:none;transition:opacity 0.15s;">
@@ -758,13 +758,13 @@ body.fast-mode #stop-roots-btn {
                     </select>
                     <span style="display:inline-flex;align-items:center;gap:2px;" title="Parameter for transforms">
                         <span style="font-size:7px;color:var(--muted);">Param1</span>
-                        <input id="dlist-sel-speed" type="range" min="1" max="100" value="50" step="1" style="width:52px;height:10px;accent-color:var(--accent);">
-                        <span id="dlist-sel-speed-val" style="font-size:7px;color:var(--muted);min-width:16px;">50</span>
+                        <input id="dlist-sel-speed" type="range" min="1" max="1000" value="500" step="1" style="width:52px;height:10px;accent-color:var(--accent);">
+                        <span id="dlist-sel-speed-val" style="font-size:7px;color:var(--muted);min-width:16px;">500</span>
                     </span>
                     <span style="display:inline-flex;align-items:center;gap:2px;" title="Parameter 2 for transforms">
                         <span style="font-size:7px;color:var(--muted);">Param2</span>
-                        <input id="dlist-sel-param2" type="range" min="1" max="100" value="100" step="1" style="width:52px;height:10px;accent-color:var(--accent);">
-                        <span id="dlist-sel-param2-val" style="font-size:7px;color:var(--muted);min-width:16px;">100</span>
+                        <input id="dlist-sel-param2" type="range" min="1" max="1000" value="1000" step="1" style="width:52px;height:10px;accent-color:var(--accent);">
+                        <span id="dlist-sel-param2-val" style="font-size:7px;color:var(--muted);min-width:16px;">1000</span>
                     </span>
                 </div>
                 <div id="dlist-curve-editor" style="padding:4px 8px 6px;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.55);flex-shrink:0;opacity:0.3;pointer-events:none;transition:opacity 0.15s;">
@@ -1103,17 +1103,17 @@ let fastModeLastStep = 0;       // last reported step count
 let fastModeElapsedOffset = 0;  // accumulated elapsed time across passes
 let fastModePassCount = 0;      // completed pass counter (resets each cycle)
 let fastModeTargetPasses = 0;   // passes for jiggle cycle (= jiggleInterval since each pass = 1s)
-let jiggleInterval = 4;         // seconds between jiggle perturbations (1–100), shown in cfg popup
+let jiggleInterval = 4;         // seconds between jiggle perturbations (0.1–100), shown in cfg popup
 let jiggleOffsets = null;       // Map<coeffIdx, {re, im}> or null — cached output of computeJiggleForStep
-let jiggleSigma = 10;          // σ as integer 0-100, read as jiggleSigma/100 %
+let jiggleSigma = 1;           // σ as 0–10, read as jiggleSigma/10 (fraction of coeffExtent)
 let jiggleMode = "none";       // "none" | "random" | "rotate" | "walk" | "scale" | etc.
-let jiggleAngleSteps = 100;    // rotate/spiral/wobble: jiggle steps for one full revolution (10–500)
+let jiggleAngleSteps = 100;    // rotate/spiral/wobble: jiggle steps for one full revolution (10–5000)
 let jiggleScaleStep = 0.1;     // scale: % of extent per step (0.01–1.0)
 let jigglePeriod = 20;         // breathe/wobble/lissajous: triggers for one oscillation
 let jiggleAmplitude = 10;      // breathe/lissajous: amplitude as % (of centroid distance or coeffExtent)
 let jiggleLissFreqX = 1;       // lissajous: X frequency multiplier
 let jiggleLissFreqY = 2;       // lissajous: Y frequency multiplier
-let jiggleCircleSteps = 60;   // circle: number of jiggle steps for a full revolution (10–500)
+let jiggleCircleSteps = 60;   // circle: number of jiggle steps for a full revolution (10–5000)
 let jiggleStep = -1;           // current jiggle step = floor(elapsed / interval), -1 = no jiggle yet
 let jiggleWalkCache = null;    // Map<coeffIdx, {re,im}> — walk mode running totals, keyed by step count
 // Morph state: second coefficient set D blends with C via mu
@@ -2533,7 +2533,7 @@ const barDynamic = document.getElementById("bar-dynamic");
 
 const _P = {
     radius: { key: "radius", label: "R", min: 1, max: 100, step: 1, default: 25, fmt: v => Math.round(v) + "%" },
-    speed:  { key: "speed",  label: "S", min: 1, max: 100, step: 1, default: 1.0, fmt: v => String(Math.round(v)), toUI: v => Math.round(v * 100), fromUI: v => v / 100 },
+    speed:  { key: "speed",  label: "S", min: 1, max: 1000, step: 1, default: 1.0, fmt: v => String(Math.round(v)), toUI: v => Math.round(v * 1000), fromUI: v => v / 1000 },
     angle:  { key: "angle",  label: "A", min: 0, max: 1.0, step: 0.01, default: 0, fmt: v => v.toFixed(2) },
     ccw:    { key: "ccw", type: "toggle", labels: ["CW", "CCW"], default: false },
 };
@@ -2543,7 +2543,9 @@ const _STD_KEYS = new Set(["radius", "speed", "angle", "ccw"]);
 
 const PATH_PARAMS = {
     none:          [],
+    "follow-c":    [],
     circle:        _RSAD,
+    "circle-dither": [..._RSAD, { key: "sigma", label: "\u03C3", min: 0, max: 10, step: 0.5, default: 2, fmt: v => v.toFixed(1) + "%" }],
     horizontal:    _RSD,
     vertical:      _RSD,
     spiral:        [_P.speed,
@@ -2578,8 +2580,10 @@ const PATH_PARAMS = {
 // Order here = display order.  Groups become <optgroup> labels.
 const PATH_CATALOG = [
     { value: "none", label: "None" },
+    { value: "follow-c", label: "Follow C", dOnly: true },
     { group: "Basic", items: [
         { value: "circle",     label: "Circle" },
+        { value: "circle-dither", label: "Circle (dither)" },
         { value: "horizontal", label: "Horizontal" },
         { value: "vertical",   label: "Vertical" },
         { value: "spiral",     label: "Spiral" },
@@ -2606,10 +2610,11 @@ const PATH_CATALOG = [
     ]},
 ];
 
-/** Populate a <select> element from PATH_CATALOG. noneLabel overrides the "None" text. */
-function buildPathSelect(sel, noneLabel) {
+/** Populate a <select> element from PATH_CATALOG. noneLabel overrides the "None" text. dNode includes D-only options. */
+function buildPathSelect(sel, noneLabel, dNode) {
     sel.innerHTML = "";
     for (const entry of PATH_CATALOG) {
+        if (entry.dOnly && !dNode) continue;
         if (entry.value !== undefined) {
             // Top-level option (e.g. "none")
             const opt = document.createElement("option");
@@ -2633,7 +2638,7 @@ function buildPathSelect(sel, noneLabel) {
 // Build both path selectors from the single catalog
 buildPathSelect(document.getElementById("anim-path"));
 buildPathSelect(document.getElementById("lce-path-sel"), "\u2014");
-buildPathSelect(document.getElementById("dle-path-sel"), "\u2014");
+buildPathSelect(document.getElementById("dle-path-sel"), "\u2014", true);
 
 function getCoeffParam(c, key, schema) {
     if (_STD_KEYS.has(key)) return c[key];
@@ -2978,9 +2983,11 @@ function openDNodeCtx(event, dIdx) {
 
     const existing = dd;
 
-    // Path type select (clone options from #anim-path)
+    // Path type select (clone options from #anim-path, plus D-only "Follow C")
     const pathSel = document.createElement("select");
     pathSel.innerHTML = document.getElementById("anim-path").innerHTML;
+    const _noneOpt = pathSel.querySelector('option[value="none"]');
+    if (_noneOpt) { const _fc = document.createElement("option"); _fc.value = "follow-c"; _fc.textContent = "Follow C"; _noneOpt.after(_fc); }
     pathSel.value = existing.pathType;
     const pathRow = document.createElement("label");
     pathRow.textContent = "Path ";
@@ -3070,7 +3077,7 @@ function openDNodeCtx(event, dIdx) {
                 setCoeffParam(d, p.key, ctxRaw !== null ? (p.fromUI ? p.fromUI(ctxRaw) : ctxRaw) : p.default);
             }
         }
-        if (d.pathType === "none") {
+        if (d.pathType === "none" || d.pathType === "follow-c") {
             d.curve = [{ re: d.re, im: d.im }];
         } else {
             const absRadius = d.radius / 100 * coeffExtent();
@@ -3141,7 +3148,7 @@ function addCoefficientAt(re, im, event) {
 }
 
 function deleteCoefficient(idx) {
-    if (coefficients.length <= 2) { uiBuzz(); return; }
+    if (coefficients.length <= 3) { uiBuzz(); return; }
     selectedCoeffs.delete(idx);
     const newSel = new Set();
     for (const s of selectedCoeffs) {
@@ -3392,7 +3399,8 @@ function allAnimatedCoeffs() {
 function allAnimatedDCoeffs() {
     const s = new Set();
     for (let i = 0; i < morphTargetCoeffs.length; i++) {
-        if (morphTargetCoeffs[i].pathType !== "none") s.add(i);
+        const pt = morphTargetCoeffs[i].pathType;
+        if (pt !== "none" && pt !== "follow-c") s.add(i);
     }
     return s;
 }
@@ -3400,6 +3408,9 @@ function allAnimatedDCoeffs() {
 function advanceDNodesAlongCurves(elapsed) {
     for (let i = 0; i < morphTargetCoeffs.length; i++) {
         const d = morphTargetCoeffs[i];
+        if (d.pathType === "follow-c" && i < coefficients.length) {
+            d.re = coefficients[i].re; d.im = coefficients[i].im; continue;
+        }
         if (d.pathType === "none") continue;
         const N = d.curve.length;
         const t = elapsed * d.speed * (d.ccw ? -1 : 1);
@@ -3416,6 +3427,10 @@ function advanceDNodesAlongCurves(elapsed) {
             d.re = d.curve[lo].re * (1 - frac) + d.curve[hi].re * frac;
             d.im = d.curve[lo].im * (1 - frac) + d.curve[hi].im * frac;
             d.curveIndex = lo;
+        }
+        if (d.curve._ditherSigmaPct) {
+            const ds = d.curve._ditherSigmaPct / 100 * coeffExtent();
+            d.re += _gaussRand() * ds; d.im += _gaussRand() * ds;
         }
     }
 }
@@ -3763,6 +3778,10 @@ function advanceToElapsed(elapsed) {
             c.im = c.curve[lo].im * (1 - frac) + c.curve[hi].im * frac;
             c.curveIndex = lo;
         }
+        if (c.curve._ditherSigmaPct) {
+            const ds = c.curve._ditherSigmaPct / 100 * coeffExtent();
+            c.re += _gaussRand() * ds; c.im += _gaussRand() * ds;
+        }
     }
     advanceDNodesAlongCurves(elapsed);
     if (morphEnabled) {
@@ -3837,6 +3856,7 @@ function animPathFn(name, t, center, radius, extra) {
     const w = 2 * Math.PI; // one full cycle per second (scaled by speed)
     const wt = w * t;
     switch (name) {
+        case "circle-dither":
         case "circle":
             return { re: center.re + radius * Math.cos(wt), im: center.im + radius * Math.sin(wt) };
         case "horizontal":
@@ -4243,6 +4263,9 @@ function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
         curve[k] = { re: homeRe + dx * cosA - dy * sinA,
                       im: homeIm + dx * sinA + dy * cosA };
     }
+    if (pathType === "circle-dither") {
+        curve._ditherSigmaPct = (extra && extra.sigma != null) ? extra.sigma : 2;
+    }
     return curve;
 }
 
@@ -4307,6 +4330,10 @@ function animLoop(now) {
             c.re = c.curve[lo].re * (1 - frac) + c.curve[hi].re * frac;
             c.im = c.curve[lo].im * (1 - frac) + c.curve[hi].im * frac;
             c.curveIndex = lo;
+        }
+        if (c.curve._ditherSigmaPct) {
+            const ds = c.curve._ditherSigmaPct / 100 * coeffExtent();
+            c.re += _gaussRand() * ds; c.im += _gaussRand() * ds;
         }
     }
 
@@ -5305,14 +5332,14 @@ function applyPattern() {
 }
 
 function setDegree(v) {
-    v = Math.max(3, Math.min(30, Math.round(v)));
+    v = Math.max(2, Math.min(30, Math.round(v)));
     if (v === currentDegree) return;
     currentDegree = v;
     degreeNumber.textContent = v;
     applyPattern();
 }
 
-// Degree popover (horizontal slider 3–30)
+// Degree popover (horizontal slider 2–30)
 let degreePopEl = null;
 let degreeToolActive = false;
 
@@ -5356,10 +5383,10 @@ degreeNumber.addEventListener("click", function(e) {
     tickRow.style.justifyContent = "space-between";
     tickRow.style.width = "180px";
     tickRow.style.fontSize = "9px";
-    tickRow.textContent = "3 — 30";
+    tickRow.textContent = "2 — 30";
 
-    function uFromDeg(d) { return (d - 3) / (30 - 3); }
-    function degFromU(u) { return Math.round(3 + u * (30 - 3)); }
+    function uFromDeg(d) { return (d - 2) / (30 - 2); }
+    function degFromU(u) { return Math.round(2 + u * (30 - 2)); }
     let u = uFromDeg(currentDegree);
 
     function updateVisual() {
@@ -5674,7 +5701,7 @@ function buildCoeffPickPop(pop) {
             pathSpan.textContent = pName;
             const detail = document.createElement("span");
             detail.className = "cpick-detail";
-            detail.textContent = ` R${Math.round(ci.radius)} S${Math.round(ci.speed * 100)} A${ci.angle.toFixed(2)} ${ci.ccw ? "CCW" : "CW"}`;
+            detail.textContent = ` R${Math.round(ci.radius)} S${Math.round(ci.speed * 1000)} A${ci.angle.toFixed(2)} ${ci.ccw ? "CCW" : "CW"}`;
             pathSpan.appendChild(detail);
         } else {
             pathSpan.textContent = "—";
@@ -6078,7 +6105,7 @@ function applyPreview(snap, fn) {
             d.re = r.re; d.im = r.im;
         }
         for (const d of morphTargetCoeffs) {
-            if (d.pathType === "none") {
+            if (d.pathType === "none" || d.pathType === "follow-c") {
                 d.curve = [{ re: d.re, im: d.im }];
             } else {
                 d.curve = computeCurve(d.re, d.im, d.pathType, d.radius / 100 * coeffExtent(), d.angle, d.extra);
@@ -7684,7 +7711,7 @@ function applyLoadedState(meta) {
         morphMu = morphEnabled ? (meta.morph.mu ?? 0.5) : 0;
         if (meta.morph.target && meta.morph.target.length === coefficients.length) {
             morphTargetCoeffs = meta.morph.target.map(d => {
-                const hasPath = d.pathType && d.pathType !== "none";
+                const hasPath = d.pathType && d.pathType !== "none" && d.pathType !== "follow-c";
                 const home = hasPath ? (d.home || d.pos) : d.pos;
                 return {
                     re: home[0], im: home[1],
@@ -7700,7 +7727,7 @@ function applyLoadedState(meta) {
             });
             // Regenerate curves for D-nodes with paths
             for (const d of morphTargetCoeffs) {
-                if (d.pathType !== "none") {
+                if (d.pathType !== "none" && d.pathType !== "follow-c") {
                     d.curve = computeCurve(d.curve[0].re, d.curve[0].im, d.pathType, d.radius / 100 * coeffExtent(), d.angle, d.extra);
                 }
                 d.curveIndex = 0;
@@ -7779,12 +7806,13 @@ function applyLoadedState(meta) {
         jiggleMode = meta.jiggle.mode || "random";
         if (jiggleMode === "spiral") jiggleMode = "spiral-centroid"; // backward compat
         if (jiggleMode === "scale") jiggleMode = "scale-center"; // backward compat
-        jiggleSigma = meta.jiggle.sigma ?? 10;
+        jiggleSigma = meta.jiggle.sigma ?? 1;
+        if (jiggleSigma > 10) jiggleSigma = jiggleSigma / 10; // backward compat: old 0–100 → new 0–10
         // angleSteps is new; backward compat: convert old theta (turns) → steps = round(1/theta)
         if (meta.jiggle.angleSteps != null) {
             jiggleAngleSteps = meta.jiggle.angleSteps;
         } else if (meta.jiggle.theta != null) {
-            jiggleAngleSteps = Math.max(10, Math.min(500, Math.round(1 / meta.jiggle.theta)));
+            jiggleAngleSteps = Math.max(10, Math.min(5000, Math.round(1 / meta.jiggle.theta)));
         }
         jiggleScaleStep = meta.jiggle.scaleStep ?? 0.1;
         if (jiggleScaleStep > 1) jiggleScaleStep = 0.1; // backward compat: old snaps had integer values like 5
@@ -9249,6 +9277,13 @@ function solveEA_wasm(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots) {
     }
 }
 
+function wGaussRand() {
+    var u, v;
+    do { u = Math.random(); } while (u === 0);
+    v = Math.random();
+    return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
 // --- Persistent worker state (set by "init", reused across "run" calls) ---
 var S_coeffsRe, S_coeffsIm, S_nCoeffs, S_degree, S_nRoots;
 var S_colorsR, S_colorsG, S_colorsB;
@@ -9261,6 +9296,7 @@ var S_derivColor, S_derivPalR, S_derivPalG, S_derivPalB, S_selIndices;
 var S_morphEnabled = false, S_morphRate = 0, S_morphTargetRe = null, S_morphTargetIm = null;
 var S_matchStrategy = "assign4";
 var S_dCurvesFlat = null, S_dEntries = null, S_dOffsets = null, S_dLengths = null, S_dIsCloud = null;
+var S_dFollowC = null;
 var S_jiggleRe = null, S_jiggleIm = null;
 
 self.onmessage = function(e) {
@@ -9306,6 +9342,7 @@ self.onmessage = function(e) {
         S_dOffsets = d.dCurveOffsets || [];
         S_dLengths = d.dCurveLengths || [];
         S_dIsCloud = d.dCurveIsCloud || [];
+        S_dFollowC = d.dFollowCIndices || [];
         // Jiggle offsets (applied post-interpolation)
         S_jiggleRe = d.jiggleRe ? new Float64Array(d.jiggleRe) : null;
         S_jiggleIm = d.jiggleIm ? new Float64Array(d.jiggleIm) : null;
@@ -9338,6 +9375,7 @@ self.onmessage = function(e) {
     // D-curve locals (animated morph targets)
     var dEntries = S_dEntries, dOffsets = S_dOffsets, dLengths = S_dLengths, dIsCloud = S_dIsCloud;
     var dCurvesFlat = S_dCurvesFlat;
+    var dFollowC = S_dFollowC;
     // Pre-allocate morph target arrays (copy base, overwrite animated D each step)
     var morphRe = S_morphTargetRe ? new Float64Array(S_morphTargetRe) : null;
     var morphIm = S_morphTargetIm ? new Float64Array(S_morphTargetIm) : null;
@@ -9383,6 +9421,10 @@ self.onmessage = function(e) {
                 coeffsRe[idx] = curvesFlat[base+lo*2]*(1-frac) + curvesFlat[base+hi*2]*frac;
                 coeffsIm[idx] = curvesFlat[base+lo*2+1]*(1-frac) + curvesFlat[base+hi*2+1]*frac;
             }
+            if (entries[a].ditherSigma) {
+                coeffsRe[idx] += wGaussRand() * entries[a].ditherSigma;
+                coeffsIm[idx] += wGaussRand() * entries[a].ditherSigma;
+            }
         }
 
         // Advance animated D-nodes along D-curves
@@ -9407,6 +9449,19 @@ self.onmessage = function(e) {
                     morphRe[dIdx] = dCurvesFlat[dBase+dLo*2]*(1-dFrac) + dCurvesFlat[dBase+dHi*2]*dFrac;
                     morphIm[dIdx] = dCurvesFlat[dBase+dLo*2+1]*(1-dFrac) + dCurvesFlat[dBase+dHi*2+1]*dFrac;
                 }
+                if (dEntries[da].ditherSigma) {
+                    morphRe[dIdx] += wGaussRand() * dEntries[da].ditherSigma;
+                    morphIm[dIdx] += wGaussRand() * dEntries[da].ditherSigma;
+                }
+            }
+        }
+
+        // Follow-C: D-nodes that mirror current C-node position
+        if (dFollowC && dFollowC.length > 0 && morphRe) {
+            for (var fc = 0; fc < dFollowC.length; fc++) {
+                var fci = dFollowC[fc];
+                morphRe[fci] = coeffsRe[fci];
+                morphIm[fci] = coeffsIm[fci];
             }
         }
 
@@ -9544,7 +9599,7 @@ function findPrimeSpeed(currentIntSpeed, excludeSet) {
     for (let i = 0; i < coefficients.length; i++) {
         if (excludeSet.has(i)) continue;
         if (coefficients[i].pathType === "none") continue;
-        const s = Math.round(coefficients[i].speed * 100);
+        const s = Math.round(coefficients[i].speed * 1000);
         if (s > 0) otherSpeeds.push(s);
     }
     if (otherSpeeds.length === 0) return currentIntSpeed; // no others — keep current
@@ -9555,8 +9610,8 @@ function findPrimeSpeed(currentIntSpeed, excludeSet) {
         return true;
     }
     // Search outward from current speed
-    for (let d = 0; d <= 100; d++) {
-        if (currentIntSpeed + d <= 100 && isValid(currentIntSpeed + d)) return currentIntSpeed + d;
+    for (let d = 0; d <= 1000; d++) {
+        if (currentIntSpeed + d <= 1000 && isValid(currentIntSpeed + d)) return currentIntSpeed + d;
         if (d > 0 && currentIntSpeed - d >= 1 && isValid(currentIntSpeed - d)) return currentIntSpeed - d;
     }
     return currentIntSpeed; // fallback (1 is coprime with everything, so this shouldn't happen)
@@ -9798,7 +9853,7 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
     let totalPts = 0;
     for (const [idx, curve] of fastModeCurves.entries()) {
         const c = coefficients[idx];
-        animEntries.push({ idx, ccw: !!c.ccw, speed: c.speed });
+        animEntries.push({ idx, ccw: !!c.ccw, speed: c.speed, ditherSigma: curve._ditherSigmaPct ? (curve._ditherSigmaPct / 100 * coeffExtent()) : 0 });
         curveOffsets.push(totalPts);
         curveLengths.push(curve.length);
         curveIsCloud.push(!!curve._isCloud);
@@ -9822,7 +9877,7 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
     if (fastModeDCurves && fastModeDCurves.size > 0) {
         for (const [idx, curve] of fastModeDCurves.entries()) {
             const d = morphTargetCoeffs[idx];
-            dAnimEntries.push({ idx, ccw: !!d.ccw, speed: d.speed });
+            dAnimEntries.push({ idx, ccw: !!d.ccw, speed: d.speed, ditherSigma: curve._ditherSigmaPct ? (curve._ditherSigmaPct / 100 * coeffExtent()) : 0 });
             dCurveOffsets.push(dTotalPts);
             dCurveLengths.push(curve.length);
             dCurveIsCloud.push(!!curve._isCloud);
@@ -9894,6 +9949,7 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         morphTargetIm: morphEnabled ? Float64Array.from(morphTargetCoeffs, d => d.im) : null,
         matchStrategy: bitmapMatchStrategy,
         dAnimEntries, dCurvesFlat, dCurveOffsets, dCurveLengths, dCurveIsCloud,
+        dFollowCIndices: morphEnabled ? morphTargetCoeffs.reduce((a, d, i) => { if (d.pathType === "follow-c") a.push(i); return a; }, []) : [],
         jiggleRe, jiggleIm,
     };
 }
@@ -9966,16 +10022,20 @@ function dispatchPassToWorkers() {
     if (!sd || fastModeWorkers.length === 0) return;
     const stepsVal = sd.stepsVal;
     const nw = fastModeWorkers.length;
-    const stepsPerWorker = Math.ceil(stepsVal / nw);
+    const base = Math.floor(stepsVal / nw);
+    const extra = stepsVal % nw;
 
     fastModeWorkersComplete = 0;
     fastModeWorkerPixels = new Array(nw);
     fastModeWorkerProgress = new Array(nw).fill(0);
     fastModePassStartTime = performance.now();
 
+    let offset = 0;
     for (let w = 0; w < nw; w++) {
-        const stepStart = w * stepsPerWorker;
-        const stepEnd = Math.min(stepStart + stepsPerWorker, stepsVal);
+        const count = base + (w < extra ? 1 : 0);
+        const stepStart = offset;
+        const stepEnd = offset + count;
+        offset = stepEnd;
 
         // Only roots + elapsed change per pass (small data, structured clone is fine)
         fastModeWorkers[w].postMessage({
@@ -10258,6 +10318,10 @@ function fastModeChunkLegacy() {
                     c.re = curve[lo].re * (1 - frac) + curve[hi].re * frac;
                     c.im = curve[lo].im * (1 - frac) + curve[hi].im * frac;
                 }
+                if (curve._ditherSigmaPct) {
+                    const ds = curve._ditherSigmaPct / 100 * coeffExtent();
+                    c.re += _gaussRand() * ds; c.im += _gaussRand() * ds;
+                }
             }
         }
 
@@ -10280,6 +10344,17 @@ function fastModeChunkLegacy() {
                     d.re = curve[lo].re * (1 - frac) + curve[hi].re * frac;
                     d.im = curve[lo].im * (1 - frac) + curve[hi].im * frac;
                 }
+                if (curve._ditherSigmaPct) {
+                    const ds = curve._ditherSigmaPct / 100 * coeffExtent();
+                    d.re += _gaussRand() * ds; d.im += _gaussRand() * ds;
+                }
+            }
+        }
+        // Follow-C D-nodes: copy from current C-node position
+        for (let fi = 0; fi < morphTargetCoeffs.length; fi++) {
+            if (morphTargetCoeffs[fi].pathType === "follow-c" && fi < coefficients.length) {
+                morphTargetCoeffs[fi].re = coefficients[fi].re;
+                morphTargetCoeffs[fi].im = coefficients[fi].im;
             }
         }
 
@@ -10450,6 +10525,8 @@ document.getElementById("morph-swap-btn").addEventListener("click", function () 
 // --- Path display name helper ---
 function pathDisplayName(t) {
     if (t === "none") return "\u2014";
+    if (t === "follow-c") return "Follow C";
+    if (t === "circle-dither") return "Dither";
     if (t === "figure8") return "Fig-8";
     if (t === "epitrochoid") return "Spiro";
     if (t === "hypotrochoid") return "Hypo";
@@ -10695,7 +10772,7 @@ function refreshCoeffList() {
 
         const speedSpan = document.createElement("span");
         speedSpan.className = "cpick-speed";
-        speedSpan.textContent = ci.pathType !== "none" ? String(Math.round(ci.speed * 100)) : "\u2014";
+        speedSpan.textContent = ci.pathType !== "none" ? String(Math.round(ci.speed * 1000)) : "\u2014";
 
         const radiusSpan = document.createElement("span");
         radiusSpan.className = "cpick-radius";
@@ -10786,7 +10863,7 @@ function updateListPathCols() {
         }
         const speedEl = rows[i].querySelector(".cpick-speed");
         if (speedEl) {
-            speedEl.textContent = c.pathType !== "none" ? String(Math.round(c.speed * 100)) : "\u2014";
+            speedEl.textContent = c.pathType !== "none" ? String(Math.round(c.speed * 1000)) : "\u2014";
         }
         const radiusEl = rows[i].querySelector(".cpick-radius");
         if (radiusEl) {
@@ -10833,22 +10910,22 @@ document.getElementById("list-transform").addEventListener("change", function() 
         for (const idx of selectedCoeffs) {
             const c = coefficients[idx];
             if (c.pathType === "none") continue;
-            const cur = Math.round(c.speed * 100);
+            const cur = Math.round(c.speed * 1000);
             const ps = findPrimeSpeed(cur, new Set([idx]));
-            if (ps !== cur) { c.speed = ps / 100; changed = true; }
+            if (ps !== cur) { c.speed = ps / 1000; changed = true; }
         }
     } else if (action === "SetAllSpeeds") {
         for (const idx of selectedCoeffs) {
             const c = coefficients[idx];
             if (c.pathType === "none") continue;
-            c.speed = param1 / 100;
+            c.speed = param1 / 1000;
             changed = true;
         }
     } else if (action === "RandomSpeed") {
         for (const idx of selectedCoeffs) {
             const c = coefficients[idx];
             if (c.pathType === "none") continue;
-            c.speed = Math.round(Math.random() * param1) / 100;
+            c.speed = Math.round(Math.random() * param1) / 1000;
             changed = true;
         }
     } else if (action === "RandomAngle") {
@@ -10881,7 +10958,7 @@ document.getElementById("list-transform").addEventListener("change", function() 
             const lo = param1, hi = param2;
             for (let k = 0; k < idxArr.length; k++) {
                 const c = coefficients[idxArr[k]];
-                c.speed = Math.round(idxArr.length === 1 ? lo : lo + k * (hi - lo) / (idxArr.length - 1)) / 100;
+                c.speed = Math.round(idxArr.length === 1 ? lo : lo + k * (hi - lo) / (idxArr.length - 1)) / 1000;
                 changed = true;
             }
         }
@@ -11321,6 +11398,7 @@ function openDPathPickPop(dIdx, anchorEl) {
 
     const pathSel = document.createElement("select");
     pathSel.innerHTML = document.getElementById("anim-path").innerHTML;
+    { const _n = pathSel.querySelector('option[value="none"]'); if (_n) { const _f = document.createElement("option"); _f.value = "follow-c"; _f.textContent = "Follow C"; _n.after(_f); } }
     pathSel.value = dd.pathType;
     const pathRow = document.createElement("label");
     pathRow.textContent = "Path ";
@@ -11424,7 +11502,7 @@ function openDPathPickPop(dIdx, anchorEl) {
                 setCoeffParam(d, p.key, ppRaw !== null ? (p.fromUI ? p.fromUI(ppRaw) : ppRaw) : p.default);
             }
         }
-        if (d.pathType === "none") {
+        if (d.pathType === "none" || d.pathType === "follow-c") {
             d.curve = [{ re: d.re, im: d.im }];
         } else {
             const absRadius = d.radius / 100 * coeffExtent();
@@ -11452,15 +11530,15 @@ function findDPrimeSpeed(currentIntSpeed, excludeSet) {
     for (let i = 0; i < morphTargetCoeffs.length; i++) {
         if (excludeSet && excludeSet.has(i)) continue;
         const d = morphTargetCoeffs[i];
-        if (d.pathType === "none") continue;
-        others.push(Math.round(d.speed * 100));
+        if (d.pathType === "none" || d.pathType === "follow-c") continue;
+        others.push(Math.round(d.speed * 1000));
     }
     if (others.length === 0) return currentIntSpeed;
     function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a; }
     function coprime(x) { return others.every(o => gcd(Math.abs(x), Math.abs(o)) === 1); }
     if (coprime(currentIntSpeed)) return currentIntSpeed;
-    for (let delta = 1; delta < 200; delta++) {
-        if (currentIntSpeed + delta <= 200 && coprime(currentIntSpeed + delta)) return currentIntSpeed + delta;
+    for (let delta = 1; delta < 2000; delta++) {
+        if (currentIntSpeed + delta <= 2000 && coprime(currentIntSpeed + delta)) return currentIntSpeed + delta;
         if (currentIntSpeed - delta >= 1 && coprime(currentIntSpeed - delta)) return currentIntSpeed - delta;
     }
     return currentIntSpeed;
@@ -11500,15 +11578,16 @@ function refreshDCoeffList() {
         const pathBtn = document.createElement("button");
         pathBtn.className = "cpick-path-btn";
         const di = morphTargetCoeffs[i];
-        pathBtn.textContent = di.pathType !== "none" ? pathDisplayName(di.pathType) : "\u2014";
+        const dHasPath = di.pathType !== "none" && di.pathType !== "follow-c";
+        pathBtn.textContent = dHasPath ? pathDisplayName(di.pathType) : (di.pathType === "follow-c" ? "Follow C" : "\u2014");
 
         const speedSpan = document.createElement("span");
         speedSpan.className = "cpick-speed";
-        speedSpan.textContent = di.pathType !== "none" ? String(Math.round(di.speed * 100)) : "\u2014";
+        speedSpan.textContent = dHasPath ? String(Math.round(di.speed * 1000)) : "\u2014";
 
         const radiusSpan = document.createElement("span");
         radiusSpan.className = "cpick-radius";
-        radiusSpan.textContent = di.pathType !== "none" ? String(di.radius) : "\u2014";
+        radiusSpan.textContent = dHasPath ? String(di.radius) : "\u2014";
 
         const plenSpan = document.createElement("span");
         plenSpan.className = "cpick-plen";
@@ -11582,12 +11661,13 @@ function updateDListPathCols() {
     if (rows.length !== n) { refreshDCoeffList(); return; }
     for (let i = 0; i < n; i++) {
         const d = morphTargetCoeffs[i];
+        const dHasP = d.pathType !== "none" && d.pathType !== "follow-c";
         const pathBtn = rows[i].querySelector(".cpick-path-btn");
-        if (pathBtn) pathBtn.textContent = d.pathType !== "none" ? pathDisplayName(d.pathType) : "\u2014";
+        if (pathBtn) pathBtn.textContent = dHasP ? pathDisplayName(d.pathType) : (d.pathType === "follow-c" ? "Follow C" : "\u2014");
         const speedEl = rows[i].querySelector(".cpick-speed");
-        if (speedEl) speedEl.textContent = d.pathType !== "none" ? String(Math.round(d.speed * 100)) : "\u2014";
+        if (speedEl) speedEl.textContent = dHasP ? String(Math.round(d.speed * 1000)) : "\u2014";
         const radiusEl = rows[i].querySelector(".cpick-radius");
-        if (radiusEl) radiusEl.textContent = d.pathType !== "none" ? String(d.radius) : "\u2014";
+        if (radiusEl) radiusEl.textContent = dHasP ? String(d.radius) : "\u2014";
         const plenEl = rows[i].querySelector(".cpick-plen");
         if (plenEl) plenEl.textContent = String(d.curve.length);
     }
@@ -11625,29 +11705,29 @@ document.getElementById("dlist-transform").addEventListener("change", function()
     if (action === "PrimeSpeeds") {
         for (const idx of selectedMorphCoeffs) {
             const d = morphTargetCoeffs[idx];
-            if (d.pathType === "none") continue;
-            const cur = Math.round(d.speed * 100);
+            if (d.pathType === "none" || d.pathType === "follow-c") continue;
+            const cur = Math.round(d.speed * 1000);
             const ps = findDPrimeSpeed(cur, new Set([idx]));
-            if (ps !== cur) { d.speed = ps / 100; changed = true; }
+            if (ps !== cur) { d.speed = ps / 1000; changed = true; }
         }
     } else if (action === "SetAllSpeeds") {
         for (const idx of selectedMorphCoeffs) {
             const d = morphTargetCoeffs[idx];
-            if (d.pathType === "none") continue;
-            d.speed = param1 / 100;
+            if (d.pathType === "none" || d.pathType === "follow-c") continue;
+            d.speed = param1 / 1000;
             changed = true;
         }
     } else if (action === "RandomSpeed") {
         for (const idx of selectedMorphCoeffs) {
             const d = morphTargetCoeffs[idx];
-            if (d.pathType === "none") continue;
-            d.speed = Math.round(Math.random() * param1) / 100;
+            if (d.pathType === "none" || d.pathType === "follow-c") continue;
+            d.speed = Math.round(Math.random() * param1) / 1000;
             changed = true;
         }
     } else if (action === "RandomAngle") {
         for (const idx of selectedMorphCoeffs) {
             const d = morphTargetCoeffs[idx];
-            if (d.pathType === "none") continue;
+            if (d.pathType === "none" || d.pathType === "follow-c") continue;
             const schema = PATH_PARAMS[d.pathType] || [];
             if (schema.some(p => p.key === "angle")) {
                 d.angle = Math.random() * param1 / 100;
@@ -11661,7 +11741,7 @@ document.getElementById("dlist-transform").addEventListener("change", function()
         const lo = Math.min(param1, param2), hi = Math.max(param1, param2);
         for (const idx of selectedMorphCoeffs) {
             const d = morphTargetCoeffs[idx];
-            if (d.pathType === "none") continue;
+            if (d.pathType === "none" || d.pathType === "follow-c") continue;
             d.radius = Math.round(lo + Math.random() * (hi - lo));
             const absR = d.radius / 100 * coeffExtent();
             d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
@@ -11669,17 +11749,17 @@ document.getElementById("dlist-transform").addEventListener("change", function()
             changed = true;
         }
     } else if (action === "LerpSpeed") {
-        const idxArr = [...selectedMorphCoeffs].filter(i => morphTargetCoeffs[i].pathType !== "none").sort((a, b) => a - b);
+        const idxArr = [...selectedMorphCoeffs].filter(i => { const pt = morphTargetCoeffs[i].pathType; return pt !== "none" && pt !== "follow-c"; }).sort((a, b) => a - b);
         if (idxArr.length > 0) {
             const lo = param1, hi = param2;
             for (let k = 0; k < idxArr.length; k++) {
                 const d = morphTargetCoeffs[idxArr[k]];
-                d.speed = Math.round(idxArr.length === 1 ? lo : lo + k * (hi - lo) / (idxArr.length - 1)) / 100;
+                d.speed = Math.round(idxArr.length === 1 ? lo : lo + k * (hi - lo) / (idxArr.length - 1)) / 1000;
                 changed = true;
             }
         }
     } else if (action === "LerpRadius") {
-        const idxArr = [...selectedMorphCoeffs].filter(i => morphTargetCoeffs[i].pathType !== "none").sort((a, b) => a - b);
+        const idxArr = [...selectedMorphCoeffs].filter(i => { const pt = morphTargetCoeffs[i].pathType; return pt !== "none" && pt !== "follow-c"; }).sort((a, b) => a - b);
         if (idxArr.length > 0) {
             const lo = param1, hi = param2;
             for (let k = 0; k < idxArr.length; k++) {
@@ -11694,7 +11774,7 @@ document.getElementById("dlist-transform").addEventListener("change", function()
     } else if (action === "LerpAngle") {
         const idxArr = [...selectedMorphCoeffs].filter(i => {
             const d = morphTargetCoeffs[i];
-            if (d.pathType === "none") return false;
+            if (d.pathType === "none" || d.pathType === "follow-c") return false;
             return (PATH_PARAMS[d.pathType] || []).some(p => p.key === "angle");
         }).sort((a, b) => a - b);
         if (idxArr.length > 0) {
@@ -11711,7 +11791,7 @@ document.getElementById("dlist-transform").addEventListener("change", function()
     } else if (action === "RandomDirection") {
         for (const idx of selectedMorphCoeffs) {
             const d = morphTargetCoeffs[idx];
-            if (d.pathType === "none") continue;
+            if (d.pathType === "none" || d.pathType === "follow-c") continue;
             if ((PATH_PARAMS[d.pathType] || []).some(p => p.key === "ccw")) {
                 d.ccw = Math.random() < 0.5;
                 const absR = d.radius / 100 * coeffExtent();
@@ -11723,7 +11803,7 @@ document.getElementById("dlist-transform").addEventListener("change", function()
     } else if (action === "FlipAllDirections") {
         for (const idx of selectedMorphCoeffs) {
             const d = morphTargetCoeffs[idx];
-            if (d.pathType === "none") continue;
+            if (d.pathType === "none" || d.pathType === "follow-c") continue;
             if ((PATH_PARAMS[d.pathType] || []).some(p => p.key === "ccw")) {
                 d.ccw = !d.ccw;
                 const absR = d.radius / 100 * coeffExtent();
@@ -11733,7 +11813,7 @@ document.getElementById("dlist-transform").addEventListener("change", function()
             }
         }
     } else if (action === "ShuffleCurves") {
-        const idxArr = [...selectedMorphCoeffs].filter(i => morphTargetCoeffs[i].pathType !== "none");
+        const idxArr = [...selectedMorphCoeffs].filter(i => { const pt = morphTargetCoeffs[i].pathType; return pt !== "none" && pt !== "follow-c"; });
         if (idxArr.length >= 2) {
             const curves = idxArr.map(i => {
                 const d = morphTargetCoeffs[i];
@@ -12034,7 +12114,7 @@ function dleApplyToCoeff(di, params) {
     for (const p of schema) {
         setCoeffParam(d, p.key, params[p.key]);
     }
-    if (d.pathType === "none") {
+    if (d.pathType === "none" || d.pathType === "follow-c") {
         d.curve = [{ re: d.re, im: d.im }];
     } else {
         const absRadius = d.radius / 100 * coeffExtent();
@@ -12089,6 +12169,14 @@ document.getElementById("bitmap-fast-btn").addEventListener("click", function ()
     } else {
         enterFastMode();
     }
+});
+
+document.getElementById("bitmap-steps-select").addEventListener("change", function () {
+    if (fastModeActive) { exitFastMode(); enterFastMode(); }
+});
+
+document.getElementById("bitmap-res-select").addEventListener("change", function () {
+    if (fastModeActive) { exitFastMode(); enterFastMode(); }
 });
 
 document.getElementById("bitmap-coeff-btn").addEventListener("click", function () {
@@ -12169,7 +12257,7 @@ function computeJiggleForStep(step) {
     if (!jiggleOffsets) jiggleOffsets = new Map();
 
     if (jiggleMode === "random") {
-        const sigma = (jiggleSigma / 100) * coeffExtent();
+        const sigma = (jiggleSigma / 10) * coeffExtent();
         if (sigma <= 0) { jiggleOffsets = null; updateJiggleStatus(); return; }
         for (const idx of targets) {
             jiggleOffsets.set(idx, { re: gaussRand() * sigma, im: gaussRand() * sigma });
@@ -12187,7 +12275,7 @@ function computeJiggleForStep(step) {
             });
         }
     } else if (jiggleMode === "walk") {
-        const sigma = (jiggleSigma / 100) * coeffExtent();
+        const sigma = (jiggleSigma / 10) * coeffExtent();
         if (sigma <= 0) { jiggleOffsets = null; updateJiggleStatus(); return; }
         // Walk is inherently sequential — extend cache from last known step
         if (!jiggleWalkCache) jiggleWalkCache = { step: 0, offsets: new Map() };
@@ -12355,21 +12443,27 @@ function buildJigglePanel() {
         if (jiggleMode === "random" || jiggleMode === "walk") {
             const r = document.createElement("div"); r.style.cssText = jRowStyle;
             const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "\u03C3";
-            const i = document.createElement("input"); i.type = "number"; i.step = "1"; i.min = "0"; i.max = "100"; i.value = jiggleSigma; i.style.cssText = inpStyle;
-            i.addEventListener("input", () => { jiggleSigma = Math.max(0, Math.min(100, parseInt(i.value,10)||0)); });
-            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = "/ 100";
-            r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
+            const i = document.createElement("input"); i.type = "range"; i.min = "0"; i.max = "10"; i.step = "0.01"; i.value = jiggleSigma; i.style.cssText = "width:100px;";
+            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = jiggleSigma;
+            i.addEventListener("input", () => { jiggleSigma = parseFloat(i.value) || 0; h.textContent = jiggleSigma; });
+            const sigBtnStyle = "font-size:8px;padding:0 3px;background:transparent;color:var(--muted);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;margin-left:2px;line-height:14px;";
+            function setSigma(v) { jiggleSigma = Math.round(Math.max(0, Math.min(10, v)) * 100) / 100; i.value = String(jiggleSigma); h.textContent = jiggleSigma; }
+            const sigMinus = document.createElement("button"); sigMinus.textContent = "\u22120.01"; sigMinus.style.cssText = sigBtnStyle;
+            sigMinus.addEventListener("click", () => setSigma(jiggleSigma - 0.01));
+            const sigPlus = document.createElement("button"); sigPlus.textContent = "+0.01"; sigPlus.style.cssText = sigBtnStyle;
+            sigPlus.addEventListener("click", () => setSigma(jiggleSigma + 0.01));
+            r.appendChild(l); r.appendChild(i); r.appendChild(h); r.appendChild(sigMinus); r.appendChild(sigPlus); controlsDiv.appendChild(r);
         } else if (jiggleMode === "rotate") {
             const r = document.createElement("div"); r.style.cssText = jRowStyle;
             const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "steps";
-            const i = document.createElement("input"); i.type = "range"; i.min = "10"; i.max = "500"; i.step = "1"; i.value = jiggleAngleSteps; i.style.cssText = "width:100px;";
+            const i = document.createElement("input"); i.type = "range"; i.min = "10"; i.max = "5000"; i.step = "1"; i.value = jiggleAngleSteps; i.style.cssText = "width:100px;";
             const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = jiggleAngleSteps;
             i.addEventListener("input", () => { jiggleAngleSteps = parseInt(i.value, 10) || 100; h.textContent = jiggleAngleSteps; });
             r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
         } else if (jiggleMode === "circle") {
             const r = document.createElement("div"); r.style.cssText = jRowStyle;
             const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "steps";
-            const i = document.createElement("input"); i.type = "range"; i.min = "10"; i.max = "500"; i.step = "1"; i.value = jiggleCircleSteps; i.style.cssText = "width:100px;";
+            const i = document.createElement("input"); i.type = "range"; i.min = "10"; i.max = "5000"; i.step = "1"; i.value = jiggleCircleSteps; i.style.cssText = "width:100px;";
             const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = jiggleCircleSteps;
             i.addEventListener("input", () => { jiggleCircleSteps = parseInt(i.value, 10) || 60; h.textContent = jiggleCircleSteps; });
             r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
@@ -12383,7 +12477,7 @@ function buildJigglePanel() {
         } else if (jiggleMode === "spiral-centroid" || jiggleMode === "spiral-center") {
             const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
             const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "steps";
-            const i1 = document.createElement("input"); i1.type = "range"; i1.min = "10"; i1.max = "500"; i1.step = "1"; i1.value = jiggleAngleSteps; i1.style.cssText = "width:100px;";
+            const i1 = document.createElement("input"); i1.type = "range"; i1.min = "10"; i1.max = "5000"; i1.step = "1"; i1.value = jiggleAngleSteps; i1.style.cssText = "width:100px;";
             const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = jiggleAngleSteps;
             i1.addEventListener("input", () => { jiggleAngleSteps = parseInt(i1.value, 10) || 100; h1.textContent = jiggleAngleSteps; });
             r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
@@ -12409,7 +12503,7 @@ function buildJigglePanel() {
         } else if (jiggleMode === "wobble") {
             const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
             const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "steps";
-            const i1 = document.createElement("input"); i1.type = "range"; i1.min = "10"; i1.max = "500"; i1.step = "1"; i1.value = jiggleAngleSteps; i1.style.cssText = "width:100px;";
+            const i1 = document.createElement("input"); i1.type = "range"; i1.min = "10"; i1.max = "5000"; i1.step = "1"; i1.value = jiggleAngleSteps; i1.style.cssText = "width:100px;";
             const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = jiggleAngleSteps;
             i1.addEventListener("input", () => { jiggleAngleSteps = parseInt(i1.value, 10) || 100; h1.textContent = jiggleAngleSteps; });
             r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
@@ -12427,10 +12521,10 @@ function buildJigglePanel() {
             const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "%";
             r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
             const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
-            const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "period";
-            const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "2"; i2.max = "1000"; i2.value = jigglePeriod; i2.style.cssText = inpStyle;
-            i2.addEventListener("input", () => { jigglePeriod = Math.max(2, Math.min(1000, parseInt(i2.value,10)||20)); });
-            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "cycles";
+            const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "steps";
+            const i2 = document.createElement("input"); i2.type = "range"; i2.min = "10"; i2.max = "5000"; i2.step = "1"; i2.value = jigglePeriod; i2.style.cssText = "width:100px;";
+            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = jigglePeriod;
+            i2.addEventListener("input", () => { jigglePeriod = parseInt(i2.value, 10) || 20; h2.textContent = jigglePeriod; });
             r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
             const r3 = document.createElement("div"); r3.style.cssText = jRowStyle;
             const l3 = document.createElement("span"); l3.style.cssText = jLblStyle; l3.textContent = "fX";
@@ -12454,32 +12548,41 @@ function buildJigglePanel() {
     cycLbl.style.cssText = jLblStyle; cycLbl.textContent = "Interval";
     cycRow.appendChild(cycLbl);
     const cycSlider = document.createElement("input");
-    cycSlider.type = "range"; cycSlider.min = "1"; cycSlider.max = "100";
+    cycSlider.type = "range"; cycSlider.min = "0.1"; cycSlider.max = "100"; cycSlider.step = "0.1";
     cycSlider.value = String(jiggleInterval);
     cycSlider.style.cssText = "width:70px;accent-color:var(--accent);";
     const cycVal = document.createElement("span");
     cycVal.style.cssText = "font-size:9px;color:var(--muted);min-width:24px;";
     cycVal.textContent = jiggleInterval + "s";
-    cycSlider.addEventListener("input", () => { jiggleInterval = parseInt(cycSlider.value,10); cycVal.textContent = jiggleInterval + "s"; });
+    cycSlider.addEventListener("input", () => { jiggleInterval = parseFloat(cycSlider.value); cycVal.textContent = jiggleInterval + "s"; });
     cycRow.appendChild(cycSlider); cycRow.appendChild(cycVal);
+    // +/- 0.1s precision buttons
+    const cycBtnStyle = "font-size:8px;padding:0 3px;background:transparent;color:var(--muted);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;margin-left:2px;line-height:14px;";
+    function setCycInterval(v) { jiggleInterval = Math.round(Math.max(0.1, Math.min(100, v)) * 10) / 10; cycSlider.value = String(jiggleInterval); cycVal.textContent = jiggleInterval + "s"; }
+    const cycMinus = document.createElement("button"); cycMinus.textContent = "\u22120.1"; cycMinus.title = "Decrease interval by 0.1s"; cycMinus.style.cssText = cycBtnStyle;
+    cycMinus.addEventListener("click", () => setCycInterval(jiggleInterval - 0.1));
+    cycRow.appendChild(cycMinus);
+    const cycPlus = document.createElement("button"); cycPlus.textContent = "+0.1"; cycPlus.title = "Increase interval by 0.1s"; cycPlus.style.cssText = cycBtnStyle;
+    cycPlus.addEventListener("click", () => setCycInterval(jiggleInterval + 0.1));
+    cycRow.appendChild(cycPlus);
     // GCD button
     const gcdBtn = document.createElement("button");
     gcdBtn.textContent = "GCD";
-    gcdBtn.title = "Set interval to pattern repeat period (100 / GCD of integer speeds)";
+    gcdBtn.title = "Set interval to pattern repeat period (1000 / GCD of integer speeds)";
     gcdBtn.style.cssText = "font-size:9px;padding:1px 5px;background:transparent;color:var(--muted);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;margin-left:2px;";
     gcdBtn.addEventListener("click", () => {
         function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a; }
         const intSpeeds = [];
         for (const c of coefficients) {
             if (c.pathType === "none") continue;
-            const s = Math.round(c.speed * 100);
+            const s = Math.round(c.speed * 1000);
             if (s > 0) intSpeeds.push(s);
         }
         if (intSpeeds.length === 0) return;
         let g = intSpeeds[0];
         for (let i = 1; i < intSpeeds.length; i++) g = gcd(g, intSpeeds[i]);
-        const cycle = Math.round(100 / g);
-        const clamped = Math.max(1, Math.min(100, cycle));
+        const cycle = Math.round(1000 / g);
+        const clamped = Math.max(0.1, Math.min(100, cycle));
         jiggleInterval = clamped;
         cycSlider.value = String(clamped);
         cycVal.textContent = clamped + "s";

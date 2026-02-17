@@ -9,7 +9,7 @@ Technical reference for the fast-mode subsystem in PolyPaint (`index.html`).
 Fast mode renders polynomial root trajectories onto a high-resolution bitmap canvas (up to 15,000x15,000px) using parallel Web Workers. Each pass simulates 1.0 second of virtual animation time, distributed across N workers that each handle a contiguous block of steps.
 
 ```
-Pass (100K steps, 4 workers):
+Pass (100K steps, 4 workers — balanced distribution):
 
   Worker 0: steps [0, 25K)       ──→  sparse pixels_0
   Worker 1: steps [25K, 50K)     ──→  sparse pixels_1
@@ -150,6 +150,7 @@ S_dCurvesFlat              Float64Array  D-node curve points (re,im interleaved)
 S_dEntries                 object[]      D-node animation entries [{idx, ccw, speed}]
 S_dOffsets, S_dLengths     int[]         D-curve offset/length per entry
 S_dIsCloud                 bool[]        D-curve random-cloud flag per entry
+S_dFollowC                 int[]         D-node indices with "follow-c" pathType (copy from C-node)
 S_jiggleRe, S_jiggleIm     Float64Array  Per-coefficient jiggle offsets (applied post-interpolation)
 ```
 
@@ -170,22 +171,24 @@ For each step in `[stepStart, stepEnd)`:
 
 3. **Advance D-node curves** (if morph enabled): Same interpolation as step 2 but for `S_dEntries`/`S_dCurvesFlat`, updating `morphRe`/`morphIm` arrays
 
-4. **Morph blend** (if `S_morphEnabled`): Sinusoidal blend `mu = 0.5 + 0.5 * sin(2π * morphRate * elapsed)` between C-coefficients and morph target D-coefficients
+4. **Follow-C D-nodes**: For each index in `S_dFollowC`, copy the current C-node position (`coeffsRe[fci]`/`coeffsIm[fci]`) into `morphRe[fci]`/`morphIm[fci]`. Applied after D-curve advance, before morph blend — so follow-c D-nodes track the (possibly animated) C-coefficient position at each step.
 
-5. **Apply jiggle offsets**: If `S_jiggleRe`/`S_jiggleIm` present, add per-coefficient offsets post-interpolation
+5. **Morph blend** (if `S_morphEnabled`): Sinusoidal blend `mu = 0.5 + 0.5 * sin(2π * morphRate * elapsed)` between C-coefficients and morph target D-coefficients
 
-6. **Solve**: Call `solveEA()` (JS) or `solveEA_wasm()` (WASM) based on `S_useWasm` flag
+6. **Apply jiggle offsets**: If `S_jiggleRe`/`S_jiggleIm` present, add per-coefficient offsets post-interpolation
 
-7. **Match roots** (colored mode, per `S_matchStrategy`): Reorder roots to track identity
+7. **Solve**: Call `solveEA()` (JS) or `solveEA_wasm()` (WASM) based on `S_useWasm` flag
 
-8. **Paint pixel**: Map root position to canvas coordinates:
+8. **Match roots** (colored mode, per `S_matchStrategy`): Reorder roots to track identity
+
+9. **Paint pixel**: Map root position to canvas coordinates:
    ```
    ix = ((rootRe / range + 1) * 0.5 * W) | 0
    iy = ((1 - rootIm / range) * 0.5 * H) | 0
    ```
    Append to sparse pixel arrays if in bounds.
 
-9. **Report progress** every 2000 steps.
+10. **Report progress** every 2000 steps.
 
 ---
 
@@ -255,6 +258,7 @@ Compositing on main thread writes sparse pixels directly into a **persistent `Im
     dCurveOffsets: [int, ...],
     dCurveLengths: [int, ...],
     dCurveIsCloud: [bool, ...],
+    dFollowCIndices: [int, ...],   // D-node indices with "follow-c" pathType
     jiggleRe: ArrayBuffer,         // Float64Array, per-coefficient jiggle offsets (or null)
     jiggleIm: ArrayBuffer,
 }
@@ -343,7 +347,7 @@ Then immediately call `dispatchPassToWorkers()`.
 
 ### dispatchPassToWorkers()
 
-1. Calculate `stepsPerWorker = ceil(stepsVal / numWorkers)`
+1. Calculate balanced step distribution: `base = floor(stepsVal / numWorkers)`, `extra = stepsVal % numWorkers`. Each worker gets `base + (w < extra ? 1 : 0)` steps, using a running offset for `stepStart`/`stepEnd`.
 2. Reset completion counter and pixel/progress arrays
 3. Record `fastModePassStartTime`
 4. For each worker: send "run" message with `{stepStart, stepEnd, elapsedOffset, rootsRe, rootsIm}`
@@ -429,6 +433,7 @@ Workers index into `curvesFlat` as: `base = offsets[a] * 2; curvesFlat[base + k*
 - `morphEnabled`, `morphRate`: morph blending configuration
 - `morphTargetRe`, `morphTargetIm`: Float64Array of morph target positions
 - D-curves serialized identically to C-curves: `dAnimEntries`, `dCurvesFlat`, `dCurveOffsets`, `dCurveLengths`, `dCurveIsCloud`
+- `dFollowCIndices`: array of D-node indices where `pathType === "follow-c"`. Built by `morphTargetCoeffs.reduce()` in `serializeFastModeData()`. Workers use this to copy the current C-node position into the morph target at each step.
 
 ### Root Matching
 - `matchStrategy`: `"assign4"` (default), `"assign1"`, or `"hungarian1"`
@@ -447,7 +452,7 @@ Workers index into `curvesFlat` as: `base = offsets[a] * 2; curvesFlat[base + k*
 | Start/Restart | `bitmap-start-btn` | `initBitmapCanvas()`, enables other buttons |
 | Save | `bitmap-save-btn` | PNG export with timestamp filename |
 | Clear | `bitmap-clear-btn` | Fill canvas with bg color, reset `fastModeElapsedOffset` |
-| Resolution | `bitmap-res-select` | 1000, 2000, 5000, 10000, 15000 px |
+| Resolution | `bitmap-res-select` | 1000, 2000, 5000, 8000, 10000, 15000, 25000 px |
 | Fast/imode | `bitmap-fast-btn` | Toggle `enterFastMode()` / `exitFastMode()` |
 | ROOT / COEF | `bitmap-coeff-btn` | Toggle coefficient view (plot coefficients instead of roots) |
 | Steps | `bitmap-steps-select` | 10, 100, 1K, 5K, 10K, 50K, 100K, 1M steps per pass |
@@ -455,6 +460,8 @@ Workers index into `curvesFlat` as: `base = offsets[a] * 2; curvesFlat[base + k*
 | Diagnostics | `jiggle-diag-btn` | Opens jiggle diagnostics popup (mode, offsets, positions) |
 | Background | `bitmap-bg-btn` | Color picker for canvas background |
 | Progress | `bitmap-progress-toggle` | Toggle progress bar visibility |
+
+Changing the **Steps** or **Resolution** dropdowns while fast mode is active triggers an automatic restart (`exitFastMode(); enterFastMode()`), re-serializing data and re-creating workers with the new parameters.
 
 During fast mode, all controls except Fast/imode and R\|C are disabled (CSS `pointer-events: none`).
 
@@ -484,7 +491,7 @@ Displays after each pass:
 | 4 | ~8M |
 | 16 | ~15M |
 
-Scaling is sub-linear due to: structured clone overhead, main-thread compositing, and uneven step distribution when `stepsVal` is not divisible by worker count.
+Scaling is sub-linear due to: structured clone overhead and main-thread compositing. Step distribution is balanced (`floor` + remainder allocation), so worker load imbalance is at most 1 step.
 
 ### Bottlenecks
 
@@ -523,9 +530,9 @@ For browsers without `Worker` support. Runs on main thread via `setTimeout(fastM
 
 Chunk size: `max(10, floor(200 / max(3, degree)))` steps per setTimeout callback. This keeps each chunk under ~16ms to avoid blocking the UI event loop.
 
-Uses the same animation interpolation and solver logic but calls `paintBitmapFrameFast()` (canvas `fillRect` 1x1 pixel writes) instead of sparse pixel buffers.
+Uses the same animation interpolation and solver logic but calls `paintBitmapFrameFast()` (canvas `fillRect` 1x1 pixel writes) instead of sparse pixel buffers. Follow-c D-nodes are handled per step: for each D-node with `pathType === "follow-c"`, its position is copied from the corresponding C-coefficient (`coefficients[fi]`).
 
-Jiggle boundary logic mirrors worker mode: when `jiggleMode !== "none"` and `passCount >= targetPasses`, reset pass count and call `generateJiggleOffsets()`. No curve recomputation needed since jiggle is applied post-interpolation. Unlike worker mode, the legacy fallback does not exit/re-enter fast mode at jiggle boundaries.
+Jiggle boundary logic mirrors worker mode: when `jiggleMode !== "none"` and `passCount >= targetPasses`, reset pass count and call `computeJiggleForStep()`. No curve recomputation needed since jiggle is applied post-interpolation. Unlike worker mode, the legacy fallback does not exit/re-enter fast mode at jiggle boundaries.
 
 ---
 

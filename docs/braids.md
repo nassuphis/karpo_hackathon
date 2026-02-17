@@ -14,4 +14,4 @@ This is not a solver artifact; it is a topological invariant of the loop. Differ
 - **Greedy x1** (`assign1`): Greedy nearest-neighbor every step. Same algorithm as `matchRootOrder` but using typed arrays (`matchRoots` in the worker blob).
 - **Greedy x4** (`assign4`): Greedy nearest-neighbor every 4th step. Default — balances accuracy and speed since O(n^2) matching is expensive at high frame rates.
 
-These strategies only apply to non-uniform bitmap color modes (Index Rainbow, Derivative, Root Proximity) where root identity matters for coloring.
+These strategies only apply to the **Index Rainbow** bitmap color mode, where root identity determines pixel color. Derivative mode uses its own hardcoded greedy-every-4th-step matching, and Root Proximity does not require root-identity tracking at all.

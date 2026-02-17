@@ -71,16 +71,16 @@ Each coefficient is a plain object with these fields:
 ```
 
 - `re`, `im` — Current complex position
-- `pathType` — Animation type: `"none"`, `"circle"`, `"spiral"`, `"lissajous"`, etc.
+- `pathType` — Animation type: `"none"`, `"follow-c"` (D-nodes only), `"circle"`, `"spiral"`, `"lissajous"`, etc.
 - `radius` — Path radius (0–100, as % of panel extent)
-- `speed` — Animation speed multiplier
+- `speed` — Animation speed (internal 0–1.0 float, displayed as integer 0–1000 via `speed * 1000`)
 - `angle` — Starting phase (0–1 turns)
 - `ccw` — Counter-clockwise flag
 - `extra` — Path-specific params (object, varies by pathType)
 - `curve` — Pre-computed array of `{re, im}` points (N samples of the closed path)
 - `curveIndex` — Current integer index into `curve[]`
 
-**Important**: `"none"` path type means a 1-point curve at the coefficient's home position. It is NOT null — always check `pathType`, never check `curve == null`.
+**Important**: `"none"` path type means a 1-point curve at the coefficient's home position. It is NOT null — always check `pathType`, never check `curve == null`. `"follow-c"` is a D-node-only path type that mirrors the corresponding C-node's current position — treated like `"none"` for curve generation (1-point curve), but workers track `S_dFollowC` indices to copy C positions into D each step.
 
 ### Morph System
 
@@ -92,7 +92,7 @@ Key state: `morphEnabled`, `morphRate` (Hz, 0.01–2.00), `morphMu` (0–1), `mo
 
 **Fast mode**: Workers receive D positions in the init message and compute mu per-step. The blending loop is 7 lines inserted between curve interpolation and solver call. No WASM changes needed.
 
-**Continuous fast mode**: Fast mode runs continuously until stopped. `jiggleInterval` (1–100s, cfg popup) controls how often jiggle perturbations fire — not a cycle length. "init" button snapshots animation state + clears bitmap + resets elapsed. "start"/"stop" toggles computation. Stopping preserves elapsed; resuming continues. "clear" only clears pixels. Elapsed seconds shown as zero-padded counter.
+**Continuous fast mode**: Fast mode runs continuously until stopped. `jiggleInterval` (0.1–100s, cfg popup) controls how often jiggle perturbations fire — not a cycle length. "init" button snapshots animation state + clears bitmap + resets elapsed. "start"/"stop" toggles computation. Stopping preserves elapsed; resuming continues. "clear" only clears pixels. Elapsed seconds shown as zero-padded counter. Changing the bitmap steps or resolution selects (`bitmap-steps-select`, `bitmap-res-select`) while fast mode is active triggers an automatic restart (`exitFastMode()` + `enterFastMode()`).
 
 ### Root State
 
@@ -116,7 +116,7 @@ The C-List tab (`leftTab === "list"`) shows a tabular view of all coefficients w
 ### Add/Delete Coefficients
 
 - **Right-click on empty canvas space** → `addCoefficientAt(re, im, event)` creates a new highest-power coefficient via `unshift()`, adjusts selection indices +1, clears trails, opens context menu on index 0.
-- **Right-click on existing coefficient** → context menu with path editing. **Delete** button (red-styled) removes the coefficient, with a guard preventing deletion below degree 1 (2 coefficients minimum).
+- **Right-click on existing coefficient** → context menu with path editing. **Delete** button (red-styled) removes the coefficient, with a guard preventing deletion below degree 2 (3 coefficients minimum).
 - Both operations call `clearTrails()` and `solveRoots()` to keep the root display consistent.
 
 ---
@@ -169,7 +169,7 @@ animLoop()
 
 ### Architecture
 
-Workers are created as blob URLs from inline code (no separate `.js` file). Each worker receives the full polynomial on `init`, then gets `{stepStart, stepEnd}` ranges on each `run` message.
+Workers are created as blob URLs from inline code (no separate `.js` file). Each worker receives the full polynomial on `init`, then gets `{stepStart, stepEnd}` ranges on each `run` message. Steps are distributed using balanced floor division: `base = Math.floor(stepsVal / nw)` with the remainder distributed one extra step to the first `stepsVal % nw` workers.
 
 **Data flow per pass**:
 ```

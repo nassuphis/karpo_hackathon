@@ -14,6 +14,9 @@ D-nodes (morph targets in `morphTargetCoeffs[]`) have the full coefficient data 
 - **D radius uses C's `coeffExtent()`** — shared coordinate space. Morph blends C↔D in the same unit system.
 - **`bitmapCoeffView` unchanged** — currently plots C coefficient positions only. Adding a C/D toggle is deferred.
 - **No jiggle offsets for D-nodes** — jiggle only applies to C-coefficients.
+- **"Follow C" path type**: D-only path type (`"follow-c"`) that mirrors the corresponding C-node position at every step. Listed in `PATH_CATALOG` with `dOnly: true`, has empty params in `PATH_PARAMS`. `buildPathSelect()` accepts a `dNode` parameter to include D-only options. Treated like `"none"` for curve generation (single-point curve at home). See Phase 3 and Phase 4 for animation details.
+- **Speed resolution**: Speed values use 1–1000 integer range internally (stored as `speed * 1000`). The `_P.speed` schema defines `min: 1, max: 1000`, with `toUI: v => Math.round(v * 1000)` and `fromUI: v => v / 1000`. All UI displays use `Math.round(ci.speed * 1000)`.
+- **`findDPrimeSpeed()` range**: Searches up to 2000 for coprime speeds (vs `findPrimeSpeed()` which searches up to 1000 for C-nodes).
 
 ---
 
@@ -23,7 +26,7 @@ D-nodes (morph targets in `morphTargetCoeffs[]`) have the full coefficient data 
 - Full `#dlist-content` panel mirroring `#list-content` with `dlist-`/`dle-` prefixes
 - `dpath-pick-pop` popup element
 - Tab switching: `dlist` in `leftTabContents`, calls `refreshDCoeffList()` and `refreshDListCurveEditor()`
-- `dle-path-sel` initialized with `buildPathSelect()`
+- `dle-path-sel` initialized with `buildPathSelect(sel, noneLabel, dNode)` — `dNode=true` includes the "Follow C" option
 
 ---
 
@@ -32,10 +35,11 @@ D-nodes (morph targets in `morphTargetCoeffs[]`) have the full coefficient data 
 All C-List functions mirrored for `morphTargetCoeffs[]` and `selectedMorphCoeffs`:
 
 - **Path picker popup**: `openDPathPickPop()`, `closeDPathPickPop()` with live preview and PS button (PS remains in per-coefficient path picker popups only)
-- **Core list**: `refreshDCoeffList()`, `updateDListCoords()`, `updateDListPathCols()`
+- **Core list**: `refreshDCoeffList()`, `updateDListCoords()`, `updateDListPathCols()`. D-List UI shows "Follow C" text for follow-c nodes; speed/radius columns show "—" for `none` and `follow-c` types
 - **Curve cycling**: `buildDCurveCycleTypes()`, `updateDCurveCycleLabel()`, `selectByDCurveType()`
-- **Curve editor**: `refreshDListCurveEditor()`, `buildDleControls()`, `dleReadParams()`, `dleApplyToCoeff()`. Uses `dleRefIdx` (first selected D-node) as reference for control values. Node cycler (prev/next) and PS button removed; only **Update Whole Selection** remains.
-- **Transform dropdown**: All 20 transforms targeting `morphTargetCoeffs` + `selectedMorphCoeffs`
+- **Curve editor**: `refreshDListCurveEditor()`, `buildDleControls()`, `dleReadParams()`, `dleApplyToCoeff()`. Uses `dleRefIdx` (first selected D-node) as reference for control values. Node cycler (prev/next) and PS button removed; only **Update Whole Selection** remains. `dleApplyToCoeff()` treats `follow-c` like `"none"` for curve generation (single-point curve at home).
+- **Prime speed**: `findDPrimeSpeed(currentIntSpeed, excludeSet)` — finds nearest coprime integer speed among D-nodes. Searches up to delta 2000, range 1–2000. Skips `none` and `follow-c` nodes. Analogous to `findPrimeSpeed()` for C-nodes (which searches up to 1000).
+- **Transform dropdown**: All 20 transforms targeting `morphTargetCoeffs` + `selectedMorphCoeffs`. All D-List transforms skip `follow-c` nodes (filter `pt !== "none" && pt !== "follow-c"` before applying speed, angle, direction, etc.)
 - After D transforms: calls `solveRootsThrottled()` if `morphEnabled`, `renderMorphPanel()` if on D-Nodes tab (`leftTab === "morph"`)
 
 ---
@@ -43,8 +47,8 @@ All C-List functions mirrored for `morphTargetCoeffs[]` and `selectedMorphCoeffs
 ## Phase 3: D-Node Animation — All 5 Entry Points ✓
 
 Helper functions:
-- `allAnimatedDCoeffs()` — returns Set of D-node indices with `pathType !== "none"`
-- `advanceDNodesAlongCurves(elapsed)` — advances all animated D-nodes along their curves
+- `allAnimatedDCoeffs()` — returns Set of D-node indices with `pathType !== "none"` and `pathType !== "follow-c"` (follow-c nodes are not considered "animated" for curve purposes)
+- `advanceDNodesAlongCurves(elapsed)` — advances all animated D-nodes along their curves. For `follow-c` nodes, copies the corresponding C-node position (`d.re = coefficients[i].re`, `d.im = coefficients[i].im`) before processing other path types
 - `updateMorphPanelDDots()` — updates D-dot positions, labels, and interp line endpoints in morph panel SVG
 
 ### Entry Points:
@@ -66,18 +70,21 @@ Helper functions:
 
 ### serializeFastModeData()
 - Serializes `dAnimEntries`, `dCurvesFlat` (Float64Array), `dCurveOffsets`, `dCurveLengths`, `dCurveIsCloud`
+- Serializes `dFollowCIndices`: array of D-node indices with `pathType === "follow-c"` (collected via `morphTargetCoeffs.reduce()`)
 - `morphTargetRe/Im` still contains home positions for non-animated D-nodes
 
 ### Worker blob
-- **Persistent state**: `S_dCurvesFlat`, `S_dEntries`, `S_dOffsets`, `S_dLengths`, `S_dIsCloud`
-- **Init handler**: Parses D-curve data from init message
+- **Persistent state**: `S_dCurvesFlat`, `S_dEntries`, `S_dOffsets`, `S_dLengths`, `S_dIsCloud`, `S_dFollowC`
+- **Init handler**: Parses D-curve data from init message, including `S_dFollowC = d.dFollowCIndices || []`
 - **Run handler**: Pre-allocates `morphRe`/`morphIm` as copies of `S_morphTargetRe`/`S_morphTargetIm`. Each step:
   1. Advance C-curves → overwrite `coeffsRe`/`coeffsIm`
   2. Advance D-curves → overwrite animated D indices in `morphRe`/`morphIm`
-  3. Morph blend: `coeffs = C*(1-mu) + morphRe/Im*mu`
+  3. Follow-C: copy `coeffsRe[fci]`/`coeffsIm[fci]` → `morphRe[fci]`/`morphIm[fci]` for each index in `dFollowC`
+  4. Morph blend: `coeffs = C*(1-mu) + morphRe/Im*mu`
 
 ### Legacy fallback (fastModeChunkLegacy)
 - Advances D-nodes along `fastModeDCurves` each step
+- Follow-C D-nodes: copies current C-node position (`morphTargetCoeffs[fi].re = coefficients[fi].re`) for each `follow-c` node
 - Morph blending creates `coeffsToSolve` with animated C+D positions
 
 ### Cleanup
@@ -90,10 +97,10 @@ Helper functions:
 ## Phase 5: Save/Load ✓
 
 ### buildStateMetadata()
-D-node serialization extended from `{ pos }` to `{ pos, home, pathType, radius, speed, angle, ccw, extra }`.
+D-node serialization extended from `{ pos }` to `{ pos, home, pathType, radius, speed, angle, ccw, extra }`. `follow-c` nodes are serialized with `pathType: "follow-c"`.
 
 ### applyLoadedState()
-Restores path fields with backward compat: `d.pathType || "none"`, `d.radius ?? 25`, etc. Regenerates curves via `computeCurve()` for non-"none" paths.
+Restores path fields with backward compat: `d.pathType || "none"`, `d.radius ?? 25`, etc. Regenerates curves via `computeCurve()` for non-`"none"` and non-`"follow-c"` paths. `follow-c` nodes get a single-point curve at home position (same as `"none"`).
 
 **Backward compat**: Old saves with only `{pos}` load as `pathType: "none"`, `home = pos`, single-point curve.
 
@@ -114,6 +121,8 @@ Restores path fields with backward compat: `d.pathType || "none"`, `d.radius ?? 
 4. Scrub slider (header bar) → D-nodes move along paths in sync with C
 5. Home button → D-nodes reset to curve[0]
 6. Fast mode (bitmap) with animated D-nodes → verify pixels accumulate correctly
-7. Save/Load roundtrip → D-node paths preserved
+7. Save/Load roundtrip → D-node paths preserved (including follow-c)
 8. Backward compat: load old snap → D-nodes default to "none" paths
-9. Run existing test suite: `python -m pytest tests/ -v`
+9. Assign "Follow C" to a D-node → verify it mirrors the C-node position during animation and in fast mode
+10. Verify D-List transforms skip follow-c nodes (e.g., PrimeSpeeds, SetAllSpeeds)
+11. Run existing test suite: `python -m pytest tests/ -v`

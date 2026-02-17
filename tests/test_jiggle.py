@@ -267,12 +267,12 @@ class TestJiggleSaveLoad:
         """Jiggle mode and parameters survive save/load."""
         result = page.evaluate("""() => {
             jiggleMode = "lissajous";
-            jiggleSigma = 20;
+            jiggleSigma = 5.5;
             jiggleLissFreqX = 5;
             jiggleLissFreqY = 3;
             var state = buildStateMetadata();
             jiggleMode = "none";
-            jiggleSigma = 10;
+            jiggleSigma = 1;
             applyLoadedState(state);
             return {
                 mode: jiggleMode,
@@ -282,6 +282,6 @@ class TestJiggleSaveLoad:
             };
         }""")
         assert result["mode"] == "lissajous"
-        assert result["sigma"] == 20
+        assert result["sigma"] == 5.5
         assert result["freqX"] == 5
         assert result["freqY"] == 3

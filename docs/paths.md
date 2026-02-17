@@ -10,7 +10,7 @@ The number of sample points N depends on the path type:
 - **Standard paths** (circle, horizontal, vertical, random, lissajous, figure-8, cardioid, astroid, deltoid, rose, epitrochoid, hypotrochoid, butterfly, star, square, c-ellipse): N = 200 (interactive) or the Steps dropdown value (10K/50K/100K/1M) in fast mode
 - **High-resolution paths** (hilbert, peano, sierpinski, spiral): N = 1500 (interactive) or Steps value in fast mode
 
-Path types are organized in `PATH_CATALOG` into groups: None, Basic (circle, horizontal, vertical, spiral, random/Gaussian cloud), Curves (lissajous, figure-8, cardioid, astroid, deltoid, rose, epitrochoid, hypotrochoid, butterfly, star, square, c-ellipse), and Space-filling (hilbert, peano, sierpinski).
+Path types are organized in `PATH_CATALOG` into groups: None, Follow C (D-only, `dOnly: true`), Basic (circle, horizontal, vertical, spiral, random/Gaussian cloud), Curves (lissajous, figure-8, cardioid, astroid, deltoid, rose, epitrochoid, hypotrochoid, butterfly, star, square, c-ellipse), and Space-filling (hilbert, peano, sierpinski). The "Follow C" path type is a D-node-only option: the D-node copies the position of its corresponding C-coefficient each frame instead of following its own trajectory. It has no parameters (`PATH_PARAMS["follow-c"] = []`). `buildPathSelect(sel, noneLabel, dNode)` takes a `dNode` flag to include or exclude D-only options — called with `true` for the D-List path selector, `false`/omitted for C-List and anim-bar selectors.
 
 The curve is always closed: walking from index 0 through N−1 and wrapping back to 0 traces exactly one complete loop.
 
@@ -20,7 +20,7 @@ The Play, Scrub, and Home controls live in the **header bar** (not in the left t
 
 During animation, time is tracked as `elapsed` — seconds since Play was pressed (real wall-clock time divided by 1000). Each coefficient has three relevant parameters:
 
-- **speed** — how many full loops per second (slider displays 1–100 as integers; internally stored as 0.01–1.0)
+- **speed** — how many full loops per second (slider displays 1–1000 as integers; internally stored as 0.001–1.0 via `toUI: v * 1000`, `fromUI: v / 1000`)
 - **ccw** — direction flag: false = clockwise, true = counter-clockwise
 - **curve** — the N-point sampled trajectory
 
@@ -55,7 +55,7 @@ When `u = 0`, `rawIdx = 0`, so the coefficient is at `curve[0]` — its home pos
 
 ### Example
 
-A coefficient with speed = 0.50 and N = 200:
+A coefficient with speed = 0.50 (displayed as 500) and N = 200:
 - At elapsed = 0.0s → t = 0.0, u = 0.0, rawIdx = 0 → at curve[0] (home)
 - At elapsed = 0.5s → t = 0.25, u = 0.25, rawIdx = 50 → interpolating near curve[50]
 - At elapsed = 1.0s → t = 0.50, u = 0.50, rawIdx = 100 → halfway through the loop
@@ -102,44 +102,44 @@ Since each pass covers 1.0 second, the number of passes for a full cycle is `T_c
 
 ### Integer arithmetic
 
-The speed slider displays integers 1–100 (internally stored as `s_i / 100`), so every speed can be written as `s_i / 100` where `s_i` is a positive integer (e.g. speed 50 → s_i = 50, speed 7 → s_i = 7). Then:
+The speed slider displays integers 1–1000 (internally stored as `s_i / 1000`), so every speed can be written as `s_i / 1000` where `s_i` is a positive integer (e.g. speed 500 → s_i = 500, speed 7 → s_i = 7). Then:
 
 ```
-T_i = 1 / (s_i / 100) = 100 / s_i    seconds
+T_i = 1 / (s_i / 1000) = 1000 / s_i    seconds
 ```
 
-The LCM of fractions `100/s_1, 100/s_2, ...` equals `100 / GCD(s_1, s_2, ..., s_k)`:
+The LCM of fractions `1000/s_1, 1000/s_2, ...` equals `1000 / GCD(s_1, s_2, ..., s_k)`:
 
 ```
-passes = T_cycle = 100 / GCD(s_1, s_2, ..., s_k)
+passes = T_cycle = 1000 / GCD(s_1, s_2, ..., s_k)
 ```
 
-This is computed by the GCD button in the jiggle popup, which sets `jiggleInterval` to this value (clamped to 1–100).
+This is computed by the GCD button in the jiggle popup, which sets `jiggleInterval` to this value (clamped to 0.1–100).
 
 ### Examples
 
 | Coefficients | Speeds | Integer s_i | GCD | Passes | Meaning |
 |-------------|--------|-------------|-----|--------|---------|
-| 1 coeff | 0.50 | 50 | 50 | 2 | loops twice in 2s |
-| 1 coeff | 0.10 | 10 | 10 | 10 | loops once in 10s |
-| 2 coeffs | 0.50, 0.10 | 50, 10 | 10 | 10 | fast one loops 5×, slow one loops 1× |
-| 2 coeffs | 0.30, 0.20 | 30, 20 | 10 | 10 | first loops 3×, second loops 2× |
-| 2 coeffs | 0.07, 0.03 | 7, 3 | 1 | 100 | first loops 7×, second loops 3× |
-| 3 coeffs | 1.00, 0.50, 0.25 | 100, 50, 25 | 25 | 4 | loops 4×, 2×, 1× respectively |
-| 1 coeff | 1.00 | 100 | 100 | 1 | single pass = one full loop |
+| 1 coeff | 0.500 | 500 | 500 | 2 | loops twice in 2s |
+| 1 coeff | 0.100 | 100 | 100 | 10 | loops once in 10s |
+| 2 coeffs | 0.500, 0.100 | 500, 100 | 100 | 10 | fast one loops 5×, slow one loops 1× |
+| 2 coeffs | 0.300, 0.200 | 300, 200 | 100 | 10 | first loops 3×, second loops 2× |
+| 2 coeffs | 0.007, 0.003 | 7, 3 | 1 | 1000 | first loops 7×, second loops 3× |
+| 3 coeffs | 1.000, 0.500, 0.250 | 1000, 500, 250 | 250 | 4 | loops 4×, 2×, 1× respectively |
+| 1 coeff | 1.000 | 1000 | 1000 | 1 | single pass = one full loop |
 
 ### Edge cases
 
 - **No animated coefficients** (all paths are "none"): The GCD button has no speeds to compute, so `jiggleInterval` is unchanged. Fast mode runs until manually paused via the bitmap "pause" button.
 - **Speed = 0**: coefficients with zero speed are skipped in the GCD computation (they never move, so they're always "home").
-- **Single speed**: GCD = s, passes = 100/s. E.g. speed 0.01 → 10,000 passes (clamped to 100 by the jiggle interval slider).
-- **Coprime speeds**: e.g. 7 and 3 → GCD(7, 3) = 1 → 100 passes. This is the worst case for small speeds.
+- **Single speed**: GCD = s, passes = 1000/s. E.g. speed 0.001 (s=1) → 1,000 passes (clamped to 100 by the jiggle interval slider).
+- **Coprime speeds**: e.g. 7 and 3 → GCD(7, 3) = 1 → 1000 passes. This is the worst case for small speeds.
 
 ### Prime Speed (PS) Button
 
-The **PS** button finds the nearest integer speed (1–100) that is **coprime** with all other animated coefficients' speeds and also **different** from all of them. This maximizes the full-cycle pass count (`100 / GCD = 100 / 1 = 100` when all speeds are pairwise coprime), ensuring the densest possible bitmap coverage.
+The **PS** button finds the nearest integer speed (1–1000) that is **coprime** with all other animated coefficients' speeds and also **different** from all of them. This maximizes the full-cycle pass count (`1000 / GCD = 1000 / 1 = 1000` when all speeds are pairwise coprime), ensuring the densest possible bitmap coverage.
 
-The search starts at the current speed and radiates outward (±1, ±2, ...) until it finds a valid candidate. Since 1 is coprime with everything, it always terminates.
+`findPrimeSpeed()` searches outward from the current speed (±1, ±2, ...) up to ±1000, clamped to [1, 1000]. `findDPrimeSpeed()` searches the same way but with an expanded range up to ±2000, clamped to [1, 2000], and skips D-nodes with `pathType === "follow-c"`. Since 1 is coprime with everything, both always terminate.
 
 **Note:** The PS button was removed from the trajectory editor (anim-bar), C-List curve editor, and D-List curve editor. It is still available in per-coefficient path picker popups (click the path cell in a C-List or D-List row to open the popup). The PrimeSpeeds transform in the C-List/D-List Transform dropdown is also still available for bulk prime-speed assignment.
 
@@ -148,7 +148,7 @@ The search starts at the current speed and radiates outward (±1, ±2, ...) unti
 After exactly `passes` passes, every coefficient's elapsed time is `passes` seconds. For coefficient *i*:
 
 ```
-elapsed × speed_i = passes × (s_i / 100) = (100 / GCD) × (s_i / 100) = s_i / GCD
+elapsed × speed_i = passes × (s_i / 1000) = (1000 / GCD) × (s_i / 1000) = s_i / GCD
 ```
 
 Since GCD divides every s_i by definition, `s_i / GCD` is always an integer. Therefore `u = 0` and `rawIdx = 0` — every coefficient is at `curve[0]`, its home position. The bitmap contains every root position from one complete cycle with no overlap or gap.
@@ -308,7 +308,7 @@ The C-List tab shows a row per coefficient with the following elements (built by
 | **Label** | Subscript label (c₀, c₁, ...) where subscript = degree − index | Static |
 | **Power** | Monomial term (1, z, z², ...) | Static |
 | **Path** | Button showing path type name or "—" for none; click opens path picker popup | On path change |
-| **Speed** | Speed value (1–100 display) or "—" if none | On path change |
+| **Speed** | Speed value (1–1000 display) or "—" if none | On path change |
 | **Radius** | Path radius (0–100) or "—" if none | On path change |
 | **Pts** | `curve.length` — sample points in the trajectory (200 or 1500 for interactive; unrelated to the fast-mode Steps dropdown) | On path change |
 | **Pos** | `c.curveIndex` — the integer curve index last set during animation (floor of rawIdx). Sweeps 0 → N−1 → 0 during animation. | Every frame via `updateListCoords()` |

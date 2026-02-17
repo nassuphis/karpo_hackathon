@@ -1,18 +1,22 @@
 # Paths & Curve Indexing
 
-How coefficients move along their assigned trajectories during animation and fast mode, and how the full-cycle auto-stop target is computed.
+How coefficients move along their assigned trajectories during animation and fast mode, and how the full-cycle jiggle interval is computed.
 
 ## Curve Representation
 
 Each animated coefficient stores a **sampled closed curve** — an array of N complex points `curve[0], curve[1], ..., curve[N−1]` representing the trajectory in the complex plane. The first point `curve[0]` is the coefficient's **home position** (where it sits before animation starts).
 
 The number of sample points N depends on the path type:
-- **Standard paths** (circle, figure-8, cardioid, etc.): N = 200 (interactive) or the Steps dropdown value (10K/50K/100K/1M) in fast mode
+- **Standard paths** (circle, horizontal, vertical, random, lissajous, figure-8, cardioid, astroid, deltoid, rose, epitrochoid, hypotrochoid, butterfly, star, square, c-ellipse): N = 200 (interactive) or the Steps dropdown value (10K/50K/100K/1M) in fast mode
 - **High-resolution paths** (hilbert, peano, sierpinski, spiral): N = 1500 (interactive) or Steps value in fast mode
+
+Path types are organized in `PATH_CATALOG` into groups: None, Basic (circle, horizontal, vertical, spiral, random/Gaussian cloud), Curves (lissajous, figure-8, cardioid, astroid, deltoid, rose, epitrochoid, hypotrochoid, butterfly, star, square, c-ellipse), and Space-filling (hilbert, peano, sierpinski).
 
 The curve is always closed: walking from index 0 through N−1 and wrapping back to 0 traces exactly one complete loop.
 
 ## How the Curve Index Changes with Time
+
+The Play, Scrub, and Home controls live in the **header bar** (not in the left tab bar). The scrub slider is **additive**: dragging it adds seconds on top of the current elapsed time (stored in `scrubBase`). On mousedown/touchstart it captures `scrubBase = animState.elapsedAtPause || 0`, then during input computes `elapsed = scrubBase + sliderValue/1000`. On release the slider resets to 0 (the elapsed time is already committed via `advanceToElapsed()`). The Play button cycles through Play → Pause → Resume states.
 
 During animation, time is tracked as `elapsed` — seconds since Play was pressed (real wall-clock time divided by 1000). Each coefficient has three relevant parameters:
 
@@ -39,7 +43,11 @@ re = curve[lo].re × (1 − frac) + curve[hi].re × frac
 im = curve[lo].im × (1 − frac) + curve[hi].im × frac
 ```
 
-For random/cloud curves (Gaussian point cloud), no interpolation is done — the coefficient snaps to the nearest integer index.
+For random/cloud curves (Gaussian point cloud, flagged with `curve._isCloud`), no interpolation is done — the coefficient snaps to the nearest integer index.
+
+### Orbital paths (spiral, c-ellipse)
+
+Curves flagged with `curve._isOrbital` store **absolute** positions in the complex plane rather than home-relative offsets. The spiral path orbits around the origin (0+0i), spiraling out to a target radius and back. The c-ellipse path traces an ellipse whose vertices are the coefficient's home position and the origin, with a configurable width parameter. Both are regenerated (not transformed) when radius or angle changes.
 
 ### What u = 0 means
 
@@ -70,9 +78,11 @@ So pass 0 covers elapsed ∈ [0, 1), pass 1 covers [1, 2), pass 2 covers [2, 3),
 
 At each step, every animated coefficient's position is computed from `elapsed` using the same formula as interactive mode (with linear interpolation into the high-resolution curve), then the polynomial is solved and roots are painted onto the bitmap canvas as single pixels.
 
-## Full-Cycle Target (Auto-Stop)
+## Full-Cycle Target (Jiggle Interval)
 
-The **full cycle** is the smallest amount of time after which **every animated coefficient simultaneously returns to its home position** (curve index 0). Fast mode auto-stops after exactly this many passes.
+The **full cycle** is the smallest amount of time after which **every animated coefficient simultaneously returns to its home position** (curve index 0). Fast mode does **not** auto-stop — it runs indefinitely until manually paused via the bitmap "pause" button. The full-cycle value is used only by the **jiggle system**: the GCD button in the jiggle popup computes the cycle length and sets `jiggleInterval` so that jiggle perturbations are applied at exact cycle boundaries.
+
+The former `computeFullCyclePasses()` function has been removed. The GCD computation now lives inline in the jiggle popup's GCD button handler.
 
 ### Derivation
 
@@ -104,7 +114,7 @@ The LCM of fractions `100/s_1, 100/s_2, ...` equals `100 / GCD(s_1, s_2, ..., s_
 passes = T_cycle = 100 / GCD(s_1, s_2, ..., s_k)
 ```
 
-This is computed by `computeFullCyclePasses()`.
+This is computed by the GCD button in the jiggle popup, which sets `jiggleInterval` to this value (clamped to 1–100).
 
 ### Examples
 
@@ -120,16 +130,18 @@ This is computed by `computeFullCyclePasses()`.
 
 ### Edge cases
 
-- **No animated coefficients** (all paths are "none"): `computeFullCyclePasses()` returns 0, meaning unlimited — fast mode runs until manually stopped via "imode".
+- **No animated coefficients** (all paths are "none"): The GCD button has no speeds to compute, so `jiggleInterval` is unchanged. Fast mode runs until manually paused via the bitmap "pause" button.
 - **Speed = 0**: coefficients with zero speed are skipped in the GCD computation (they never move, so they're always "home").
-- **Single speed**: GCD = s, passes = 100/s. E.g. speed 0.01 → 10,000 passes.
+- **Single speed**: GCD = s, passes = 100/s. E.g. speed 0.01 → 10,000 passes (clamped to 100 by the jiggle interval slider).
 - **Coprime speeds**: e.g. 7 and 3 → GCD(7, 3) = 1 → 100 passes. This is the worst case for small speeds.
 
 ### Prime Speed (PS) Button
 
-The **PS** button in the trajectory editor finds the nearest integer speed (1–100) that is **coprime** with all other animated coefficients' speeds and also **different** from all of them. This maximizes the full-cycle pass count (`100 / GCD = 100 / 1 = 100` when all speeds are pairwise coprime), ensuring the densest possible bitmap coverage.
+The **PS** button finds the nearest integer speed (1–100) that is **coprime** with all other animated coefficients' speeds and also **different** from all of them. This maximizes the full-cycle pass count (`100 / GCD = 100 / 1 = 100` when all speeds are pairwise coprime), ensuring the densest possible bitmap coverage.
 
 The search starts at the current speed and radiates outward (±1, ±2, ...) until it finds a valid candidate. Since 1 is coprime with everything, it always terminates.
+
+**Note:** The PS button was removed from the trajectory editor (anim-bar), C-List curve editor, and D-List curve editor. It is still available in per-coefficient path picker popups (click the path cell in a C-List or D-List row to open the popup). The PrimeSpeeds transform in the C-List/D-List Transform dropdown is also still available for bulk prime-speed assignment.
 
 ### Verification
 
@@ -284,15 +296,20 @@ Three space-filling curves are available as animation paths, all implemented via
 
 All three generate perfectly uniform step sizes and are cached on first use.
 
-## List Tab Columns
+## C-List Tab Columns
 
-The List tab shows a table with per-coefficient data:
+The C-List tab shows a row per coefficient with the following elements (built by `refreshCoeffList()`):
 
-| Column | Content | Updates |
-|--------|---------|---------|
-| **Index** | Color dot + subscript label (c₀, c₁, ...) | Static |
-| **Position** | Complex coordinates (re, im) | Every frame during animation |
-| **spd** | Speed value (1–100 display) | On path change |
-| **rad** | Path radius (0–100) or "—" if pathType is "none" | On path change |
-| **pts** | `curve.length` — number of sample points in the trajectory. For interactive mode this is 200 or 1500; unrelated to the Steps dropdown (which only applies to fast mode via `computeCurveN`). | On path change |
-| **pos** | `nearestCurveIndex(c)` — brute-force search for which curve sample point is closest to the coefficient's current position. Sweeps 0 → N−1 → 0 during animation. | Every frame during animation |
+| Element | Content | Updates |
+|---------|---------|---------|
+| **Checkbox** | Selection toggle (`.cpick-cb`) | On click |
+| **Color dot** | Coefficient color from `coeffColor(i, n)` | Static |
+| **Sensitivity dot** | Derivative sensitivity color from `sensitivityColor(coeffSens[i])` | On rebuild |
+| **Label** | Subscript label (c₀, c₁, ...) where subscript = degree − index | Static |
+| **Power** | Monomial term (1, z, z², ...) | Static |
+| **Path** | Button showing path type name or "—" for none; click opens path picker popup | On path change |
+| **Speed** | Speed value (1–100 display) or "—" if none | On path change |
+| **Radius** | Path radius (0–100) or "—" if none | On path change |
+| **Pts** | `curve.length` — sample points in the trajectory (200 or 1500 for interactive; unrelated to the fast-mode Steps dropdown) | On path change |
+| **Pos** | `c.curveIndex` — the integer curve index last set during animation (floor of rawIdx). Sweeps 0 → N−1 → 0 during animation. | Every frame via `updateListCoords()` |
+| **Coords** | Complex coordinates (re ± im·i) | Every frame via `updateListCoords()` |

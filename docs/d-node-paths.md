@@ -10,7 +10,7 @@ D-nodes (morph targets in `morphTargetCoeffs[]`) have the full coefficient data 
 **File:** `index.html` (single file, all changes here)
 
 ### Design Decisions
-- **Separate C-List and D-List tabs** (not a single tab with C/D toggle). Clearer UX.
+- **Six left-panel tabs**: C-Nodes, C-List, D-Nodes (morph panel, `data-ltab="morph"`), D-List (`data-ltab="dlist"`), Jiggle, Final. The D-List tab mirrors C-List for path editing. D-Nodes is the morph visualization SVG panel.
 - **D radius uses C's `coeffExtent()`** — shared coordinate space. Morph blends C↔D in the same unit system.
 - **`bitmapCoeffView` unchanged** — currently plots C coefficient positions only. Adding a C/D toggle is deferred.
 - **No jiggle offsets for D-nodes** — jiggle only applies to C-coefficients.
@@ -19,7 +19,7 @@ D-nodes (morph targets in `morphTargetCoeffs[]`) have the full coefficient data 
 
 ## Phase 1: D-List Tab HTML + Tab Switching ✓
 
-- Tab button: `<button class="tab" data-ltab="dlist">D-List</button>` after C-List button
+- Tab button: `<button class="tab" data-ltab="dlist">D-List</button>` after D-Nodes button
 - Full `#dlist-content` panel mirroring `#list-content` with `dlist-`/`dle-` prefixes
 - `dpath-pick-pop` popup element
 - Tab switching: `dlist` in `leftTabContents`, calls `refreshDCoeffList()` and `refreshDListCurveEditor()`
@@ -31,12 +31,12 @@ D-nodes (morph targets in `morphTargetCoeffs[]`) have the full coefficient data 
 
 All C-List functions mirrored for `morphTargetCoeffs[]` and `selectedMorphCoeffs`:
 
-- **Path picker popup**: `openDPathPickPop()`, `closeDPathPickPop()` with live preview and PS button
+- **Path picker popup**: `openDPathPickPop()`, `closeDPathPickPop()` with live preview and PS button (PS remains in per-coefficient path picker popups only)
 - **Core list**: `refreshDCoeffList()`, `updateDListCoords()`, `updateDListPathCols()`
 - **Curve cycling**: `buildDCurveCycleTypes()`, `updateDCurveCycleLabel()`, `selectByDCurveType()`
-- **Curve editor**: `refreshDListCurveEditor()`, `buildDleControls()`, `dleReadParams()`, `dleApplyToCoeff()`
-- **Transform dropdown**: All 22 transforms targeting `morphTargetCoeffs` + `selectedMorphCoeffs`
-- After D transforms: calls `solveRootsThrottled()` if `morphEnabled`, `renderMorphPanel()` if on morph tab
+- **Curve editor**: `refreshDListCurveEditor()`, `buildDleControls()`, `dleReadParams()`, `dleApplyToCoeff()`. Uses `dleRefIdx` (first selected D-node) as reference for control values. Node cycler (prev/next) and PS button removed; only **Update Whole Selection** remains.
+- **Transform dropdown**: All 20 transforms targeting `morphTargetCoeffs` + `selectedMorphCoeffs`
+- After D transforms: calls `solveRootsThrottled()` if `morphEnabled`, `renderMorphPanel()` if on D-Nodes tab (`leftTab === "morph"`)
 
 ---
 
@@ -50,7 +50,7 @@ Helper functions:
 ### Entry Points:
 1. **`animLoop()`** — `advanceDNodesAlongCurves(elapsed)` after C-coefficient loop, `updateMorphPanelDDots()` in morph panel block, `updateDListCoords()` at end
 2. **`startAnimation()`** — snap animated D-nodes to `curve[0]` on fresh start; allow animation if animated D-nodes exist (not just C)
-3. **Scrub slider** — `advanceDNodesAlongCurves(elapsed)` after C-loop, `updateMorphPanelDDots()`, `updateDListCoords()`
+3. **Scrub slider** — additive scrubber in the header bar (`#anim-controls`). Adds seconds to `elapsedAtPause` while paused; resets to 0 on release. Calls `advanceToElapsed(elapsed)` which advances both C-coefficients and D-nodes via `advanceDNodesAlongCurves(elapsed)`, plus `updateMorphPanelDDots()`, `updateDListCoords()`
 4. **Home button** — reset all D-nodes to `curve[0]`, `updateMorphPanelDDots()`, `updateMorphMarkers()`
 5. **Fast mode workers** — see Phase 4
 
@@ -111,7 +111,7 @@ Restores path fields with backward compat: `d.pathType || "none"`, `d.radius ?? 
 1. Open D-List tab → see all D-nodes with labels d₀, d₁, ... and "none" paths
 2. Select D-nodes, assign circle/spiral paths → verify curves generated, path columns update
 3. Enable morph + Play → D-nodes animate along paths, morph blending produces moving target
-4. Scrub slider → D-nodes move along paths in sync with C
+4. Scrub slider (header bar) → D-nodes move along paths in sync with C
 5. Home button → D-nodes reset to curve[0]
 6. Fast mode (bitmap) with animated D-nodes → verify pixels accumulate correctly
 7. Save/Load roundtrip → D-node paths preserved

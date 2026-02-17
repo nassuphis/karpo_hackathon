@@ -9,7 +9,7 @@ Three independent instrument layers — **B** (Base), **M** (Melody), **V** (Voi
 ```
 [modulator: sine] ──► [modGain] ──► carrier.frequency
                                                                            ┌──► speakers
-[carrier: sine 110Hz] ──► [gainNode] ──► [lowpass filter] ──► [masterGain]┤
+[carrier: sine 85Hz] ──► [gainNode] ──► [lowpass filter] ──► [masterGain]┤
                                                                            └──► [mediaDest] ──► recording
 
 [beepOsc: sine] ──► [beepGain] ──► [masterGain]
@@ -19,7 +19,7 @@ Three independent instrument layers — **B** (Base), **M** (Melody), **V** (Voi
 [lfo: sine 1.5–7.5Hz] ──► [lfoGain] ──► carrier.frequency
 ```
 
-The Base layer uses **FM synthesis**: a sine carrier whose frequency is modulated by a second sine oscillator. The modulator's frequency tracks the carrier at a configurable ratio (default ×2), and its depth (via `modGain`) is driven by root kinetic energy — at rest the tone is a pure sine, and as roots move the timbre blooms into increasingly rich harmonics. The carrier passes through a gain stage, then a lowpass filter whose cutoff tracks the root constellation's spread and energy, then a master gain node. A separate beep oscillator, gated by its own gain envelope, handles close encounter events. An arpeggiator oscillator (triangle wave) cycles through the top-N fastest roots, mapping each root's angle to a pentatonic pitch and radius to an octave, with pluck-style envelopes scaled by velocity rank. An LFO provides vibrato on the carrier, with both rate and depth modulated by the root distribution.
+The Base layer uses **FM synthesis**: a sine carrier whose frequency is modulated by a second sine oscillator. The modulator's frequency tracks the carrier at a configurable ratio (default ×2), and its depth (via `modGain`) is driven by a routable signal (default: EHi — 85th-percentile kinetic energy) — at rest the tone is a pure sine, and as roots move the timbre blooms into increasingly rich harmonics. The carrier passes through a gain stage, then a lowpass filter whose cutoff is driven by a routable signal (default: Spread), then a master gain node. A separate beep oscillator, gated by its own gain envelope, handles close encounter events. An arpeggiator oscillator (triangle wave) cycles through the top-N fastest roots, mapping each root's angle to a pentatonic pitch and radius to an octave, with pluck-style envelopes scaled by velocity rank. An LFO provides vibrato on the carrier, with both rate and depth driven by routable signals (defaults: EMed and Coherence respectively).
 
 ## Instrument Config Popovers
 
@@ -29,8 +29,8 @@ Each instrument button (**B**, **M**, **V**) opens a popover with an on/off togg
 
 | Slider | Range | Default | Controls |
 |--------|-------|---------|----------|
-| Pitch | 55–440 Hz | 110 Hz | Carrier center frequency |
-| Range | 0.5–4.0 oct | 2.0 | How many octaves the pitch swings with root spread |
+| Pitch | 55–440 Hz | 85 Hz | Carrier center frequency |
+| Range | 0.5–4.0 oct | 1.8 | How many octaves the pitch swings with root spread |
 | FM Ratio | ×0.5–×8.0 | ×2.0 | Modulator frequency relative to carrier (integer = harmonic, non-integer = metallic) |
 | FM Depth | 0–800 Hz | 300 Hz | Maximum FM modulation depth, scaled by energy (0 = pure sine) |
 | Bright | 50–1000 Hz | 250 Hz | Filter cutoff floor (higher = brighter at rest) |
@@ -41,23 +41,28 @@ Each instrument button (**B**, **M**, **V**) opens a popover with an on/off togg
 
 | Slider | Range | Default | Controls |
 |--------|-------|---------|----------|
-| Rate | 2–60 /s | 24 /s | Arpeggiator step speed (notes per second) |
-| Cutoff | 2–degree | degree | Top-N fastest roots to arpeggio (lower = fewer, more focused notes) |
+| Rate | 2–60 /s | 5 /s | Arpeggiator step speed (notes per second) |
+| Cutoff | 2–degree | 5 | Top-N fastest roots to arpeggio (lower = fewer, more focused notes) |
 | Volume | 0.02–0.30 | 0.12 | Peak note gain (scaled by velocity rank: fastest = loudest) |
 | Attack | 1–20 ms | 4 ms | Pluck attack time |
 | Decay | 10–200 ms | 64 ms | Pluck decay time |
 | Bright | 200–4000 Hz | 1200 Hz | Filter cutoff floor |
 
-**Voice** (7 sliders):
+**Voice** (4 sliders):
+
+| Slider | Range | Default | Controls |
+|--------|-------|---------|----------|
+| Cooldown | 10–500 ms | 10 ms | Minimum gap between beeps |
+| Volume | 0.02–0.30 | 0.12 | Beep peak gain |
+| Attack | 1–20 ms | 5 ms | Beep attack time |
+| Decay | 10–300 ms | 80 ms | Beep ring-down time |
+
+Memory and Novelty sliders have moved to the **Config** tab under "Encounters / Records":
 
 | Slider | Range | Default | Controls |
 |--------|-------|---------|----------|
 | Memory | 1.0–1.02 | 1.001 | Record decay rate per frame (1.0 = records permanent, higher = expire faster, more beeps) |
-| Novelty | 0.30–1.00 | 1.00 | Record hysteresis — stored distance is multiplied by this (lower = next approach must be much closer to trigger) |
-| Cooldown | 10–500 ms | 80 ms | Minimum gap between beeps |
-| Volume | 0.02–0.30 | 0.12 | Beep peak gain |
-| Attack | 1–20 ms | 5 ms | Beep attack time |
-| Decay | 10–300 ms | 80 ms | Beep ring-down time |
+| Novelty | 0.30–1.00 | 0.85 | Record hysteresis — stored distance is multiplied by this (lower = next approach must be much closer to trigger) |
 
 ## Feature Extraction
 
@@ -67,7 +72,7 @@ Six features are extracted from `currentRoots` each frame, using distribution st
 |---------|---------|---------|
 | **Median radius** (`r50`) | 50th percentile of distances from centroid | Oscillator pitch |
 | **Spread** (`r90 − r10`) | 90th minus 10th percentile of radii | Filter cutoff (brightness) |
-| **Energy med** (`E_med`) | 50th percentile of per-root velocities | Filter cutoff boost, LFO speed |
+| **Energy med** (`E_med`) | 50th percentile of per-root velocities | LFO speed (vibrato rate) |
 | **Energy hi** (`E_hi`) | 85th percentile of per-root velocities | Gain (loudness) |
 | **Angular coherence** (`R`) | circular mean resultant length of root angles | LFO depth (vibrato) |
 | **Close encounters** | per-root top-3 closest distances ever seen | Beep on record-breaking approach |
@@ -92,30 +97,30 @@ All six features are also available as **Stats dashboard** time-series plots (Me
 
 **Pitch (FM carrier):**
 ```
-carrier_freq = 110 × 2^((r50_norm − 0.5) × 2.0)
+carrier_freq = freq × 2^((pitchRoute.smoothed − 0.5) × octaves)
 mod_freq     = carrier_freq × modRatio
-mod_depth    = modDepth × E_hi_smoothed
+mod_depth    = modDepth × fmRoute.smoothed
 ```
-where `r50_norm = clamp(r50 / panel_range, 0, 1)`. The median radius maps to ±1 octave around A2 (110 Hz). When the root constellation expands, pitch rises; when it contracts, pitch falls. The FM modulator tracks the carrier at the configured ratio (default ×2.0), and its depth scales with kinetic energy — at rest the output is a pure sine, and as roots move the modulation index increases, producing progressively richer harmonics (bells at low depth, brass/metallic at high depth).
+where `freq` defaults to 85 Hz and `octaves` defaults to 1.8. The pitch route's smoothed value (default source: MedianR) maps to ±0.9 octaves around the center frequency. When the root constellation expands, pitch rises; when it contracts, pitch falls. The FM modulator tracks the carrier at the configured ratio (default ×2.0), and its depth scales with the FM route's smoothed value (default source: EHi) — at rest the output is a pure sine, and as roots move the modulation index increases, producing progressively richer harmonics (bells at low depth, brass/metallic at high depth).
 
 **Filter cutoff (brightness):**
 ```
-cutoff = 250 + 3500 × spread_norm + 1500 × E_med_norm
+cutoff = filterLo + filterHi × filterRoute.smoothed
 ```
-Clamped to 150–8000 Hz, Q = 2. The constellation's spread opens the filter (wider cloud = brighter tone), and median kinetic energy adds further brightness. When roots are tightly clustered and still, only the fundamental comes through; when they're spread out and active, upper harmonics emerge.
+Clamped to 150–8000 Hz, Q = 2. `filterLo` defaults to 250 Hz, `filterHi` defaults to 3500 Hz, and the filter route defaults to Spread. When roots are tightly clustered, only the fundamental comes through; when they're spread out, upper harmonics emerge.
 
 **Gain (loudness):**
 ```
-gain = 0.03 + 0.22 × E_hi_smoothed
+gain = gainFloor + gainRange × gainRoute.smoothed
 ```
-where `E_hi_norm = clamp(E_hi / (range × 0.05), 0, 1)`. The 85th-percentile energy drives loudness — when even a few roots are moving fast, you hear it. The small floor (0.03) ensures the drone doesn't completely vanish during slow structural rearrangements. The smoothing filter provides a natural fade-out when motion stops, and the watchdog timer (see Silence Management) handles the final fade to true silence.
+where `gainFloor` defaults to 0.03 and `gainRange` defaults to 0.22. The gain route defaults to EHi (85th-percentile energy), so loudness rises when even a few roots are moving fast. The small floor ensures the drone doesn't completely vanish during slow structural rearrangements. The smoothing filter provides a natural fade-out when motion stops, and the watchdog timer (see Silence Management) handles the final fade to true silence.
 
 **Vibrato (coherence):**
 ```
-lfo_depth = 2 + 10 × R_smoothed  Hz
-lfo_rate  = 1.5 + 6.0 × E_med_norm  Hz
+lfo_depth = 2 + vibDepth × vibDepthRoute.smoothed  Hz
+lfo_rate  = 1.5 + vibRate × vibRateRoute.smoothed  Hz
 ```
-The LFO modulates the carrier's frequency. When roots cluster angularly (high R), vibrato depth increases up to 12 Hz — the sound "wobbles" as the clump moves. When roots form a balanced ring (low R), vibrato settles to a gentle 2 Hz baseline. Additionally, the LFO *rate* itself increases with median energy: calm scenes get slow vibrato (1.5 Hz), active scenes get faster pulsing (up to 7.5 Hz).
+where `vibDepth` defaults to 10 Hz and `vibRate` defaults to 6.0 Hz. The depth route defaults to Coherence and the rate route defaults to EMed. The LFO modulates the carrier's frequency. When roots cluster angularly (high coherence), vibrato depth increases up to 12 Hz — the sound "wobbles" as the clump moves. When roots form a balanced ring (low coherence), vibrato settles to a gentle 2 Hz baseline. Additionally, the LFO *rate* itself increases with median energy: calm scenes get slow vibrato (1.5 Hz), active scenes get faster pulsing (up to 7.5 Hz).
 
 **Close encounter beeps (novelty-based):**
 
@@ -123,18 +128,20 @@ Instead of a fixed or adaptive threshold, each root tracks its own **top 3 close
 
 Each root's encounter table is seeded with current distances on the first frame (no startup burst). On subsequent frames:
 1. Each root finds its 3 closest neighbors via partial sort
-2. If any distance is smaller than the root's worst record, the record is replaced with `distance × novelty` — when novelty < 1, the stored record is tighter than the actual approach, requiring the next trigger to be proportionally closer (e.g., novelty = 0.8 means the next approach must be 20% closer)
+2. If any distance is smaller than the root's worst record, the record is replaced with `distance × novelty` — when novelty < 1, the stored record is tighter than the actual approach, requiring the next trigger to be proportionally closer (e.g., novelty = 0.85 means the next approach must be ~15% closer)
 3. The root with the most dramatic improvement fires a beep at its own **pentatonic pitch** (root 0 = C4, root 1 = D4, ..., ascending through octaves via the scale [C, D, E, G, A])
 4. All records slowly **decay** (`×memory` per frame, default 1.001 ≈ 6%/sec at 60fps), so old records gradually become beatable again — set memory to 1.0 for permanent records (beeps trail off completely)
 
 ```
 pitch = midiToHz(60 + pentatonic[i % 5] + 12 × floor(i / 5))
-peak  = 0.05 + 0.12 × clamp(improvement / (range × 0.05), 0, 1)
-envelope: 0.0001 → peak (5ms attack) → 0.0001 (80ms decay)
-cooldown: 80ms between beeps
+peak  = clamp((0.05 + voiceConfig.peak × improvNorm) × volScale, 0.0001, 0.5)
+envelope: 0.0001 → peak (5ms attack) → 0.0001 (ringdown decay)
+cooldown: voiceConfig.cooldown × voiceRoutes[3].smoothed × 2
 ```
 
-This approach is inherently adaptive: tight configurations set low records early, so only truly exceptional approaches trigger; loose configurations keep records high, so moderate approaches still register. The novelty and memory sliders provide direct control over beep density without changing the fundamental algorithm.
+The cooldown, volume, ringdown, and pitch bias are all modulated by their respective Voice routes (see Signal Routing). When routes are disconnected (default), the ×2 scaling with neutral smoothed = 0.5 gives a ×1.0 multiplier, preserving the slider value as-is.
+
+This approach is inherently adaptive: tight configurations set low records early, so only truly exceptional approaches trigger; loose configurations keep records high, so moderate approaches still register. The novelty and memory sliders (in the Config tab) provide direct control over beep density without changing the fundamental algorithm.
 
 **Melody cutoff (velocity ranking):**
 
@@ -147,6 +154,18 @@ A **watchdog timer** runs via `setInterval` (100ms) while sound is enabled. If `
 A **visibilitychange** listener immediately ramps `masterGain` to zero (20ms time constant) when the page becomes hidden, preventing orphaned audio when the user switches tabs.
 
 Additionally, `resetAudioState()` is called on: animation stop, Home button, pattern change, degree change, and sound toggle off. It zeroes all smoothing accumulators and ramps `masterGain` to zero, ensuring clean silence in all state transitions.
+
+## UI Feedback Sounds
+
+Three lightweight feedback sounds run independently of the sonification audio graph, sharing the same `AudioContext` but bypassing `masterGain`:
+
+| Function | Sound | Purpose |
+|----------|-------|---------|
+| `uiPing(freq, dur)` | Sine blip at `freq` (default 880 Hz), 0.08s decay | Positive confirmation — successful save, commit, fit-to-view |
+| `uiBuzz()` | Sawtooth sweep 340 → 160 Hz over 0.15s | Negative feedback — "nothing to do" or precondition not met |
+| `uiClick()` | Sine tick at 1600 Hz, 0.025s decay | Subtle default for any button/swatch/chip click |
+
+A **global click listener** (`document.addEventListener("click", ...)`) fires `uiClick()` on the next animation frame for any `<button>`, `.swatch`, `.cpick-label`, or `.chip` element. If the button's own handler already played a `uiPing` or `uiBuzz` (tracked via the `_uiSoundActive` flag), the global listener skips the click to avoid doubling.
 
 ## Sound Tab — Signal Routing
 

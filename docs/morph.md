@@ -1,7 +1,7 @@
 # Plan: Morphing Feature — Blend Two Coefficient Systems
 
 ## Context
-Add coefficient morphing: a second coefficient set D (morphTargetCoeffs) blends with the primary set C (coefficients). When enabled, the polynomial solved each frame uses `C[i]*(1-mu) + D[i]*mu` where `mu = 0.5 + 0.5*sin(2π*rate*elapsed)`. D starts as a copy of C, lives in a new "Morph" tab, and can be edited independently (dragged). This creates rich interference patterns as roots respond to the blended perturbation.
+Add coefficient morphing: a second coefficient set D (morphTargetCoeffs) blends with the primary set C (coefficients). When enabled, the polynomial solved each frame uses `C[i]*(1-mu) + D[i]*mu` where `mu = 0.5 + 0.5*sin(2π*rate*elapsed)`. D starts as a copy of C, lives in the "D-Nodes" tab (with a companion "D-List" for trajectory editing), and can be edited independently (dragged). The morph enable/rate/mu controls live in the "Final" tab bar, which shows the blended coefficients sent to the solver. This creates rich interference patterns as roots respond to the blended perturbation.
 
 ## File Modified
 - `index.html` (only file — all phases)
@@ -10,13 +10,13 @@ Add coefficient morphing: a second coefficient set D (morphTargetCoeffs) blends 
 
 ## Review Notes (issues found during code audit)
 
-1. **morphMu=0 usability bug**: Initial mu=0 means enabling morph without playing shows NO blending — D drags have no effect until Play is pressed. **Fix**: set `morphMu = 0.5` on enable, so blending is immediately visible.
+1. **morphMu=0 default**: Initial mu=0 means no blending when morph is disabled. When the user enables morph, mu is set to 0.5 for an immediate 50/50 blend. When morph is disabled, mu resets to 0.
 
-2. **Scrub slider misses morph**: The scrub handler (line 3141) interpolates C along curves and calls `solveRootsThrottled()`, but doesn't update morphMu. **Fix**: add morphMu update in the scrub handler too.
+2. **Scrub slider misses morph**: The scrub handler interpolates C along curves and calls `solveRootsThrottled()`, but doesn't update morphMu. **Fix**: morphMu update is now handled inside `advanceToElapsed()`, which the scrub slider calls.
 
-3. **Morph panel scale sync**: When `autoScaleCoeffPanel()` (line 2246) changes `panels.coeff.range`, the morph panel becomes stale. **Fix**: also update morph panel grid + positions if initialized.
+3. **Morph panel scale sync**: When `autoScaleCoeffPanel()` (~line 2474) changes `panels.coeff.range`, the morph panel becomes stale. **Fix**: also update morph panel grid + positions if initialized.
 
-4. **rebuild() must invalidate morph panel**: `rebuild()` (line 10362) clears and rebuilds coeff/roots SVGs. Must also clear morph SVG layers and mark for lazy re-init.
+4. **rebuild() must invalidate morph panel**: `rebuild()` (~line 12400) clears and rebuilds coeff/roots SVGs. Must also clear morph SVG layers and mark for lazy re-init.
 
 5. **Swap C/D semantics**: Specified in step 1j — swap positions, recompute C curves from new homes, update D curves.
 
@@ -26,18 +26,17 @@ Add coefficient morphing: a second coefficient set D (morphTargetCoeffs) blends 
 
 ## Phase 1: Morph Tab + Interactive Morphing (D at fixed positions)
 
-### 1a. Global State (~line 939, after `fastModeShowProgress`)
-Insert after line 939 (`let fastModeShowProgress = true;`), before the `solverType` line:
+### 1a. Global State (~line 1118, before `solverType`)
 ```javascript
 let morphTargetCoeffs = [];   // parallel to coefficients[], same {re,im,curve,...} structure
 let morphEnabled = false;
 let morphRate = 0.25;         // Hz (oscillation cycles/sec)
-let morphMu = 0.5;            // current blend factor [0,1] — start at 0.5 so enabling morph immediately shows effect
+let morphMu = 0;              // current blend factor [0,1] — 0 when morph disabled
 ```
-**Note**: morphMu defaults to 0.5 (not 0) so that enabling morph without playing immediately shows a 50/50 blend.
+**Note**: morphMu defaults to 0. When the user enables morph, the enable handler sets `morphMu = 0.5` for an immediate 50/50 blend. When morph is disabled, mu resets to 0.
 
-### 1b. initMorphTarget() (after `deleteCoefficient`, ~line 2704)
-Place new function after `deleteCoefficient()` ends (line 2703). Creates D array as deep copy of C positions with pathType="none":
+### 1b. initMorphTarget() (~line 3145, after `deleteCoefficient`)
+Creates D array as deep copy of C positions with pathType="none":
 ```javascript
 function initMorphTarget() {
     morphTargetCoeffs = coefficients.map(c => ({
@@ -45,34 +44,33 @@ function initMorphTarget() {
         pathType: "none", radius: 25, speed: 1, angle: 0, ccw: false, extra: {},
         curve: [{ re: c.re, im: c.im }], curveIndex: 0
     }));
+    selectedMorphCoeffs.clear();
 }
 ```
 Called from:
-- `applyPattern()` (line 4326) — after `initCoefficients(currentDegree)` (line 4326)
-- `addCoefficientAt()` (line 2659) — after state adjustments, before `renderCoefficients()` (~line 2677)
-- `deleteCoefficient()` (line 2684) — after state adjustments, before `renderCoefficients()` (~line 2699)
-- `applyLoadedState()` (line 6329) — after curve regeneration (line 6382), as fallback if `meta.morph` missing
-- Init block (line 10409) — after `initCoefficients(currentDegree)`
+- `applyPattern()` (~line 5256)
+- `addCoefficientAt()` (~line 3097)
+- `deleteCoefficient()` (~line 3123)
+- `applyLoadedState()` (~line 7554) — as fallback if `meta.morph` missing
+- Init block
 
-### 1c. HTML: Morph Tab Button (line 575, in `#left-tab-bar`)
-Insert before the `<span class="tab-bar-controls">` on line 576:
+### 1c. HTML: Tab Buttons (line 620, in `#left-tab-bar`)
+The left tab bar contains six tabs. The morph-related tabs are "D-Nodes" and "D-List":
 ```html
-<button class="tab" data-ltab="morph">Morph</button>
+<button class="tab" data-ltab="coeffs">C-Nodes ...</button>
+<button class="tab" data-ltab="list">C-List</button>
+<button class="tab" data-ltab="morph">D-Nodes ...</button>
+<button class="tab" data-ltab="dlist">D-List</button>
+<button class="tab" data-ltab="jiggle">Jiggle ...</button>
+<button class="tab" data-ltab="final">Final</button>
 ```
+Note: `data-ltab="morph"` maps to the "D-Nodes" tab (interactive SVG panel for dragging D coefficients). "D-List" is the trajectory editor for D-nodes. "Final" shows blended coefficients and hosts the morph enable/rate/mu controls.
 
-### 1d. HTML: Morph Tab Content (between lines 671–672)
-Insert between `</div>` closing `#list-content` (line 671) and `</div>` closing `#left-tab-panes` (line 672):
+### 1d. HTML: D-Nodes Tab Content (~line 717)
+The "D-Nodes" tab (`morph-content`) has a simple toolbar with Copy/Swap buttons and the interactive SVG panel:
 ```html
 <div id="morph-content" class="tab-content">
-    <div id="morph-bar" style="padding:4px 8px;display:flex;align-items:center;gap:8px;flex-shrink:0;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.45);">
-        <label style="font-size:10px;display:flex;align-items:center;gap:3px;cursor:pointer;">
-            <input type="checkbox" id="morph-enable"> Morph
-        </label>
-        <label style="font-size:9px;color:var(--muted);">Rate</label>
-        <input id="morph-rate" type="range" min="1" max="200" value="25" step="1" style="width:60px;accent-color:var(--accent);">
-        <span id="morph-rate-val" style="font-size:9px;color:var(--muted);min-width:36px;">0.25 Hz</span>
-        <span id="morph-mu-val" style="font-size:9px;color:var(--accent);min-width:30px;">μ=0.50</span>
-        <span style="flex:1;"></span>
+    <div id="morph-bar" style="...">
         <button id="morph-copy-btn" class="bar-sel-btn" style="font-size:8px;">Copy C→D</button>
         <button id="morph-swap-btn" class="bar-sel-btn" style="font-size:8px;">Swap C↔D</button>
     </div>
@@ -81,19 +79,48 @@ Insert between `</div>` closing `#list-content` (line 671) and `</div>` closing 
     </div>
 </div>
 ```
+
+The morph enable/rate/mu controls live in the **Final tab** bar (`final-bar`, ~line 801):
+```html
+<div id="final-content" class="tab-content">
+    <div id="final-bar" style="...">
+        <label style="font-size:10px;...">
+            <input type="checkbox" id="morph-enable"> Morph
+        </label>
+        <label style="font-size:9px;color:var(--muted);">Rate</label>
+        <input id="morph-rate" type="range" min="1" max="200" value="25" step="1" style="width:60px;...">
+        <span id="morph-rate-val" style="...">0.25 Hz</span>
+        <span id="morph-mu-val" style="...">μ=0.50</span>
+    </div>
+    <div id="final-container" style="flex:1;min-height:0;position:relative;overflow:hidden;">
+        <svg id="final-panel" style="width:100%;height:100%;"></svg>
+    </div>
+</div>
+```
 Rate slider: integer 1–200 → display as value/100 Hz (0.01–2.00 Hz).
 
-### 1e. Tab Registration (lines 8706–8718)
-Add to `leftTabContents` (line 8706–8709):
+### 1e. Tab Registration (~line 10310)
+`leftTabContents` (~line 10310):
 ```javascript
-morph: document.getElementById("morph-content")
+const leftTabContents = {
+    coeffs: document.getElementById("coeffs-content"),
+    list: document.getElementById("list-content"),
+    morph: document.getElementById("morph-content"),
+    dlist: document.getElementById("dlist-content"),
+    jiggle: document.getElementById("jiggle-content"),
+    final: document.getElementById("final-content")
+};
 ```
-Extend `switchLeftTab()` (line 8711–8717):
+`switchLeftTab()` (~line 10319) handles all tabs:
 ```javascript
+if (tabName === "list") { refreshCoeffList(); refreshListCurveEditor(); }
+if (tabName === "dlist") { refreshDCoeffList(); refreshDListCurveEditor(); }
 if (tabName === "morph") renderMorphPanel();
+if (tabName === "jiggle") buildJigglePanel();
+if (tabName === "final") renderFinalPanel();
 ```
 
-### 1f. Morph SVG Panel Setup (~line 1685, after roots panel setup)
+### 1f. Morph SVG Panel Setup (~line 1912, after roots panel setup)
 Declare variables (lazy-initialized):
 ```javascript
 let morphSvg = null;
@@ -108,16 +135,16 @@ let morphPanelInited = false;
 - Creates ghost + draggable layers
 - Scale sync: `cxs()`/`cys()` from `panels.coeff` work because both SVGs have identical pixel dimensions (same panel container, `flex:1`)
 
-**Scale sync mechanism**: `autoScaleCoeffPanel()` (line 2246) already updates `panels.coeff.range` and calls `initPanelScales(panels.coeff)`. Since the morph panel shares `panels.coeff` scales, coordinates are automatically in sync. But grid lines and dot positions need updating:
+**Scale sync mechanism**: `autoScaleCoeffPanel()` (~line 2474) already updates `panels.coeff.range` and calls `initPanelScales(panels.coeff)`. Since the morph panel shares `panels.coeff` scales, coordinates are automatically in sync. But grid lines and dot positions need updating:
 ```javascript
-// Add to autoScaleCoeffPanel(), after line 2258:
+// In autoScaleCoeffPanel(), after initPanelScales(panels.coeff):
 if (morphPanelInited) {
     drawGrid(morphSvg, panels.coeff);
     renderMorphPanel();
 }
 ```
 
-**rebuild() handling**: In `rebuild()` (line 10362), add after existing SVG teardown:
+**rebuild() handling**: In `rebuild()` (~line 12400), after existing SVG teardown:
 ```javascript
 if (morphPanelInited) {
     morphSvg.selectAll("*").remove();
@@ -125,16 +152,16 @@ if (morphPanelInited) {
 }
 ```
 
-### 1g. renderMorphPanel() (~line 3735, after subscript function)
+### 1g. renderMorphPanel() (~line 4482)
 - Lazy-inits panel on first call: `if (!morphPanelInited) initMorphPanel();`
 - Ghost layer: C coefficients as faint colored circles (opacity 0.25), labels c₀..cₙ
 - D layer: full-color draggable circles with labels d₀..dₙ
 - Both use `cxs()` and `cys()` from `panels.coeff` for coordinate mapping
-- Colors: D[i] uses same color as C[i] via `coeffColor(i, n)` (line 1727)
+- Colors: D[i] uses same color as C[i] via `coeffColor(i, n)` (~line 1956)
 - Drag handler: updates `d.re`, `d.im`, `d.curve=[{re,im}]`; calls `solveRootsThrottled()` if morphEnabled
 - Update mu display: `document.getElementById("morph-mu-val").textContent = "μ=" + morphMu.toFixed(2);`
 
-### 1h. Modify solveRoots() (line 4290)
+### 1h. Modify solveRoots() (~line 5214)
 When `morphEnabled && morphTargetCoeffs.length === coefficients.length`:
 ```javascript
 function solveRoots() {
@@ -151,8 +178,8 @@ function solveRoots() {
 }
 ```
 
-### 1i. Modify animLoop() (line 3631)
-After C coefficient interpolation loop ends (line 3656), before SVG updates (line 3658):
+### 1i. Modify animLoop() (~line 4265)
+After C coefficient interpolation and D-node advancement, before SVG updates:
 ```javascript
 if (morphEnabled) {
     morphMu = 0.5 + 0.5 * Math.sin(2 * Math.PI * morphRate * elapsed);
@@ -161,19 +188,11 @@ if (morphEnabled) {
 }
 ```
 
-### 1i-extra. Modify scrub slider handler (line 3141)
-After the coefficient interpolation loop (line 3167), before `solveRootsThrottled()` (line 3176):
-```javascript
-if (morphEnabled) {
-    morphMu = 0.5 + 0.5 * Math.sin(2 * Math.PI * morphRate * elapsed);
-    const muEl = document.getElementById("morph-mu-val");
-    if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
-}
-```
-This ensures scrubbing also drives the morph oscillation.
+### 1i-extra. Scrub slider morph handling
+The scrub slider (~line 3721) lives in the header bar and calls `advanceToElapsed(elapsed)` (~line 3724) which handles morphMu update internally. The slider uses an additive model: it adds seconds to the current elapsed time when paused. `advanceToElapsed()` also advances C-nodes along curves, D-nodes along curves (via `advanceDNodesAlongCurves(elapsed)`), updates morph panel visuals, and calls `solveRootsThrottled()`.
 
-### 1j. Morph Controls Event Handlers (~line 8719, after leftTabButtons listener)
-- **Enable checkbox**: toggle `morphEnabled`; when enabling, set `morphMu = 0.5` (immediate 50/50 blend); call `solveRoots()` + update mu display
+### 1j. Morph Controls Event Handlers (~line 10332, after leftTabButtons listener)
+- **Enable checkbox**: toggle `morphEnabled`; when enabling, set `morphMu = 0.5` (immediate 50/50 blend); when disabling, set `morphMu = 0`; call `solveRoots()` + update mu display
 - **Rate slider**: `morphRate = this.value / 100`; update display span
 - **Copy C→D**: call `initMorphTarget()`; re-render morph panel; call `solveRoots()` if morphEnabled
 - **Swap C/D**: For each i, swap `(C[i].re, C[i].im)` with `(D[i].re, D[i].im)`. Then:
@@ -182,36 +201,52 @@ This ensures scrubbing also drives the morph oscillation.
   - Re-render: `renderCoefficients()`, `renderCoeffTrails()`, `renderMorphPanel()`, `solveRoots()`
 
 ### 1k. Save/Load
-**buildStateMetadata()** (line 5816): add to returned object:
+**buildStateMetadata()** (~line 6747): D-node path fields are fully serialized (not just positions):
 ```javascript
 morph: {
     enabled: morphEnabled,
     rate: morphRate,
     mu: morphMu,
-    target: morphTargetCoeffs.map(d => ({ pos: [d.re, d.im] }))
+    target: morphTargetCoeffs.map(d => ({
+        pos: [d.re, d.im],
+        home: [d.curve[0].re, d.curve[0].im],
+        pathType: d.pathType, radius: d.radius, speed: d.speed,
+        angle: d.angle, ccw: d.ccw, extra: d.extra || {}
+    }))
 }
 ```
-Phase 1 D coefficients have no trajectories — only positions saved. Forward-compatible for Phase 2.
 
-**applyLoadedState()** (line 6329): add after curve regeneration (after line 6382):
+**applyLoadedState()** (~line 7554): restores morph state including D-node trajectories. When `morphMu` is restored, it is set to 0 if morph is disabled:
 ```javascript
 if (meta.morph) {
     morphEnabled = !!meta.morph.enabled;
     morphRate = meta.morph.rate ?? 0.25;
-    morphMu = meta.morph.mu ?? 0.5;
+    morphMu = morphEnabled ? (meta.morph.mu ?? 0.5) : 0;
     if (meta.morph.target && meta.morph.target.length === coefficients.length) {
-        morphTargetCoeffs = meta.morph.target.map(d => ({
-            re: d.pos[0], im: d.pos[1],
-            pathType: "none", radius: 25, speed: 1, angle: 0, ccw: false, extra: {},
-            curve: [{ re: d.pos[0], im: d.pos[1] }], curveIndex: 0
-        }));
+        morphTargetCoeffs = meta.morph.target.map(d => {
+            const hasPath = d.pathType && d.pathType !== "none";
+            const home = hasPath ? (d.home || d.pos) : d.pos;
+            return {
+                re: home[0], im: home[1],
+                pathType: d.pathType || "none",
+                radius: d.radius ?? 25, speed: d.speed ?? 1,
+                angle: d.angle ?? 0, ccw: d.ccw ?? false,
+                extra: d.extra || {},
+                curve: [{ re: home[0], im: home[1] }], curveIndex: 0
+            };
+        });
+        // Regenerate curves for D-nodes with paths
+        for (const d of morphTargetCoeffs) {
+            if (d.pathType !== "none") {
+                d.curve = computeCurve(d.curve[0].re, d.curve[0].im, d.pathType,
+                    d.radius / 100 * coeffExtent(), d.angle, d.extra);
+            }
+            d.curveIndex = 0;
+        }
     } else {
         initMorphTarget();
     }
-    document.getElementById("morph-enable").checked = morphEnabled;
-    document.getElementById("morph-rate").value = Math.round(morphRate * 100);
-    document.getElementById("morph-rate-val").textContent = morphRate.toFixed(2) + " Hz";
-    document.getElementById("morph-mu-val").textContent = "μ=" + morphMu.toFixed(2);
+    // ... update UI elements ...
 } else {
     initMorphTarget();
 }
@@ -232,8 +267,8 @@ Degree changes (pattern/slider/add/delete) all reinitialize D via `initMorphTarg
 ---
 
 **Phase 1 verification:**
-1. Click Morph tab → see D dots (identical to C initially) + faint C ghosts + grid
-2. Enable morph checkbox → roots immediately shift to 50/50 blend (mu=0.5)
+1. Click D-Nodes tab → see D dots (identical to C initially) + faint C ghosts + grid
+2. Enable morph checkbox (in Final tab) → roots immediately shift to 50/50 blend (mu=0.5)
 3. Drag a D dot → roots shift in real time (blended polynomial updates)
 4. Play → mu oscillates sinusoidally; roots morph between C and D configurations
 5. Scrub → mu oscillates with scrub position; C moves along curves AND morph blends
@@ -244,8 +279,12 @@ Degree changes (pattern/slider/add/delete) all reinitialize D via `initMorphTarg
 
 ---
 
-## Future: Phase 2 (D Trajectories) + Phase 3 (Fast Mode Morphing)
-Deferred. Phase 2 adds trajectory support for D coefficients (path types, animation). Phase 3 adds worker-based morphing for hires bitmap output. Both build on the Phase 1 foundation without changing its API.
+## Phase 2 (D Trajectories) + Phase 3 (Fast Mode Morphing) — Implemented
+
+Both phases are now implemented:
+
+- **Phase 2 (D Trajectories)**: D-nodes support full trajectory paths (circle, ellipse, figure8, spiral, cloud, etc.) via the "D-List" tab (`data-ltab="dlist"`, ~line 624). Functions include `allAnimatedDCoeffs()`, `advanceDNodesAlongCurves(elapsed)` (~line 3745 in `advanceToElapsed()`), and the D-List trajectory editor (~line 11390+). D-node path fields are saved/loaded with backward compatibility.
+- **Phase 3 (Fast Mode Morphing)**: Workers receive morph state via `serializeFastModeData()`. Fast mode D-curve serialization, worker blob D-curve advancement per step, and pre-allocated `morphRe`/`morphIm` copies in the worker morph blend (avoiding mutation of persistent state).
 
 ---
 
@@ -254,23 +293,25 @@ Deferred. Phase 2 adds trajectory support for D coefficients (path types, animat
 | Location | Change |
 |----------|--------|
 | CSS (~line 304) | morph-ghost, morph-coeff, morph-label styles |
-| HTML tab bar (line 575) | Morph tab button |
-| HTML tab panes (between 671–672) | morph-content div with toolbar + SVG |
-| Global state (~line 939) | morphTargetCoeffs, morphEnabled, morphRate, morphMu |
-| Panel vars (~line 1685) | morphSvg, morphGhostLayer, morphLayer, morphPanelInited |
-| autoScaleCoeffPanel() (line 2246) | Sync morph panel grid + positions on coeff range change |
-| initMorphTarget() (~line 2704) | New function to create D from C |
-| addCoefficientAt (line 2659) | Call initMorphTarget() after state adjustments |
-| deleteCoefficient (line 2684) | Call initMorphTarget() after state adjustments |
-| scrub slider handler (line 3141) | Update morphMu when morphEnabled |
-| renderMorphPanel() (~line 3735) | New: ghost C + draggable D on morph SVG |
-| animLoop() (line 3631) | Mu update + display when morphEnabled |
-| solveRoots() (line 4290) | Blend coefficients when morphEnabled |
-| applyPattern() (line 4326) | Call initMorphTarget() |
-| buildStateMetadata() (line 5816) | Serialize morph state |
-| applyLoadedState() (line 6329) | Restore morph state |
-| leftTabContents (line 8706) | Add morph entry |
-| switchLeftTab() (line 8711) | Handle morph tab |
-| Event listeners (~line 8719) | Morph control handlers |
-| rebuild() (line 10362) | Invalidate morph panel (set morphPanelInited=false) |
-| Init block (line 10409) | Call initMorphTarget() |
+| HTML tab bar (~line 620) | "D-Nodes" tab (`data-ltab="morph"`), "D-List" tab (`data-ltab="dlist"`), "Final" tab (`data-ltab="final"`) |
+| HTML morph-content (~line 717) | D-Nodes SVG panel with Copy/Swap toolbar |
+| HTML final-content (~line 801) | Final panel with morph enable/rate/mu controls |
+| Global state (~line 1118) | morphTargetCoeffs, morphEnabled, morphRate, morphMu |
+| Panel vars (~line 1912) | morphSvg, morphGhostLayer, morphLayer, morphPanelInited |
+| autoScaleCoeffPanel() (~line 2474) | Sync morph panel grid + positions on coeff range change |
+| addCoefficientAt() (~line 3097) | Call initMorphTarget() after state adjustments |
+| deleteCoefficient() (~line 3123) | Call initMorphTarget() after state adjustments |
+| initMorphTarget() (~line 3145) | Create D from C, clear selectedMorphCoeffs |
+| advanceToElapsed() (~line 3724) | Update morphMu, advance D-nodes along curves, update morph panel |
+| animLoop() (~line 4265) | Mu update + display when morphEnabled |
+| renderMorphPanel() (~line 4482) | Ghost C + draggable D on morph SVG |
+| renderFinalPanel() (~line 4589) | Final panel showing blended coefficients |
+| solveRoots() (~line 5214) | Blend coefficients when morphEnabled |
+| applyPattern() (~line 5256) | Call initMorphTarget() |
+| buildStateMetadata() (~line 6747) | Serialize morph state (including D-node path fields) |
+| applyLoadedState() (~line 7554) | Restore morph state (including D-node trajectories) |
+| leftTabContents (~line 10310) | morph, dlist, final entries |
+| switchLeftTab() (~line 10319) | Handle morph, dlist, final tabs |
+| Event listeners (~line 10332) | Morph control handlers |
+| D-List functions (~line 11390) | D-node trajectory editor |
+| rebuild() (~line 12400) | Invalidate morph panel (set morphPanelInited=false) |

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v32</title>
+<title>PolyPaint v33</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
@@ -562,7 +562,7 @@ body.fast-mode #stop-roots-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v32</span>
+    <span class="app-title">PolyPaint v33</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -622,6 +622,7 @@ body.fast-mode #stop-roots-btn {
             <button class="tab" data-ltab="list">C-List</button>
             <button class="tab" data-ltab="morph">D-Nodes <span id="morph-sel-count" style="font-size:9px;color:#5ddb6a;opacity:0.85;"></span></button>
             <button class="tab" data-ltab="dlist">D-List</button>
+            <button class="tab" data-ltab="jiggle">Jiggle <span id="jiggle-sel-count" style="font-size:9px;color:#5ddb6a;opacity:0.85;"></span></button>
             <button class="tab" data-ltab="final">Final</button>
         </div>
         <div class="tab-panes" id="left-tab-panes">
@@ -789,6 +790,13 @@ body.fast-mode #stop-roots-btn {
                     <span class="cpick-coords" style="font-size:7px;">position</span>
                 </div>
                 <div id="dcoeff-list-scroll" style="flex:1;min-height:0;overflow-y:auto;padding:4px 8px;"></div>
+            </div>
+            <div id="jiggle-content" class="tab-content" style="display:flex;flex-direction:column;">
+                <div id="jiggle-bar" style="padding:4px 8px;display:flex;align-items:center;gap:8px;flex-shrink:0;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.45);">
+                    <span style="font-size:10px;font-weight:600;color:var(--fg);">JIGGLE</span>
+                    <span id="jiggle-status" style="font-size:9px;color:var(--muted);"></span>
+                </div>
+                <div id="jiggle-controls" style="flex:1;min-height:0;overflow-y:auto;padding:8px;"></div>
             </div>
             <div id="final-content" class="tab-content">
                 <div id="final-bar" style="padding:4px 8px;display:flex;align-items:center;gap:8px;flex-shrink:0;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.45);">
@@ -984,7 +992,7 @@ let pendingSolve = false;
 const selectedCoeffs = new Set(); // indices into coefficients[]
 const selectedRoots = new Set();  // indices into currentRoots[]
 const selectedMorphCoeffs = new Set(); // indices into morphTargetCoeffs[]
-const animState = { playing: false, startTime: 0, rafId: null, elapsedAtPause: null };
+const animState = { playing: false, startTime: 0, rafId: null, elapsedAtPause: null, jiggleNextTime: 0 };
 let lastSelectedCoeff = -1; // index of last coefficient added to selection (for editor display)
 // Trail state
 let trailsEnabled = false;
@@ -2742,6 +2750,8 @@ function updateCoeffSelectionVisual() {
         .classed("selected", d => selectedCoeffs.has(d._idx));
     const cc = document.getElementById("coeff-sel-count");
     cc.textContent = selectedCoeffs.size > 0 ? `(${selectedCoeffs.size})` : "";
+    const jc = document.getElementById("jiggle-sel-count");
+    if (jc) jc.textContent = selectedCoeffs.size > 0 ? `(${selectedCoeffs.size})` : "";
     updateTransformGroupVisibility();
     if (rootColorMode === "derivative") {
         computeRootSensitivities();
@@ -4244,6 +4254,11 @@ function startAnimation() {
     } else {
         animState.startTime = performance.now();
     }
+    // Initialize jiggle for non-fast-mode animation
+    if (jiggleMode !== "none") {
+        generateJiggleOffsets();
+        animState.jiggleNextTime = jiggleInterval;
+    }
     animState.rafId = requestAnimationFrame(animLoop);
 }
 
@@ -4276,6 +4291,12 @@ function animLoop(now) {
 
     // Advance D-nodes along their paths
     advanceDNodesAlongCurves(elapsed);
+
+    // Jiggle boundary check
+    if (jiggleMode !== "none" && jiggleInterval > 0 && elapsed >= animState.jiggleNextTime) {
+        generateJiggleOffsets();
+        animState.jiggleNextTime = elapsed + jiggleInterval;
+    }
 
     if (morphEnabled) {
         morphMu = 0.5 + 0.5 * Math.sin(2 * Math.PI * morphRate * elapsed);
@@ -4574,16 +4595,18 @@ function renderFinalPanel() {
     const finalCoeffs = [];
     for (let i = 0; i < n; i++) {
         const c = coefficients[i];
+        let re, im;
         if (doBlend) {
             const d = morphTargetCoeffs[i];
-            finalCoeffs.push({
-                re: c.re * (1 - morphMu) + d.re * morphMu,
-                im: c.im * (1 - morphMu) + d.im * morphMu,
-                _idx: i
-            });
+            re = c.re * (1 - morphMu) + d.re * morphMu;
+            im = c.im * (1 - morphMu) + d.im * morphMu;
         } else {
-            finalCoeffs.push({ re: c.re, im: c.im, _idx: i });
+            re = c.re;
+            im = c.im;
         }
+        const jOff = jiggleOffsets ? jiggleOffsets.get(i) : undefined;
+        if (jOff) { re += jOff.re; im += jOff.im; }
+        finalCoeffs.push({ re, im, _idx: i });
     }
 
     // Resize SVG to container
@@ -4808,8 +4831,10 @@ function renderRoots(newRoots) {
         finalTrailData.length = nC;
         for (let i = 0; i < nC; i++) {
             const c = coefficients[i];
-            const re = doBlend ? c.re * (1 - morphMu) + morphTargetCoeffs[i].re * morphMu : c.re;
-            const im = doBlend ? c.im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu : c.im;
+            let re = doBlend ? c.re * (1 - morphMu) + morphTargetCoeffs[i].re * morphMu : c.re;
+            let im = doBlend ? c.im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu : c.im;
+            const jOff = jiggleOffsets ? jiggleOffsets.get(i) : undefined;
+            if (jOff) { re += jOff.re; im += jOff.im; }
             finalTrailData[i].push({ re, im });
             if (finalTrailData[i].length > MAX_TRAIL_POINTS) finalTrailData[i].shift();
         }
@@ -5193,6 +5218,18 @@ function solveRoots() {
             re: c.re * (1 - morphMu) + morphTargetCoeffs[i].re * morphMu,
             im: c.im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu
         }));
+    }
+    // Apply jiggle offsets post-interpolation
+    if (jiggleOffsets && jiggleOffsets.size > 0) {
+        if (coeffsToSolve === coefficients) {
+            coeffsToSolve = coefficients.map(c => ({ re: c.re, im: c.im }));
+        }
+        for (const [idx, off] of jiggleOffsets) {
+            if (idx < coeffsToSolve.length) {
+                coeffsToSolve[idx].re += off.re;
+                coeffsToSolve[idx].im += off.im;
+            }
+        }
     }
     let roots = solveRootsEA(coeffsToSolve, currentRoots);
     roots = matchRootOrder(roots, currentRoots);
@@ -7032,165 +7069,6 @@ function buildBitmapCfgPop() {
         wRow.appendChild(wBtn);
     }
     bitmapCfgPop.appendChild(wRow);
-    // Jiggle section
-    const hr1 = document.createElement("hr");
-    hr1.style.cssText = "border:none;border-top:1px solid var(--stroke);margin:8px 0 4px;";
-    bitmapCfgPop.appendChild(hr1);
-    const jigTitle = document.createElement("div");
-    jigTitle.className = "pop-title";
-    jigTitle.textContent = "JIGGLE (" + selectedCoeffs.size + ")";
-    bitmapCfgPop.appendChild(jigTitle);
-    const inpStyle = "width:50px;background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
-    const jLblStyle = "font-size:10px;color:var(--fg);";
-    const hintStyle = "font-size:9px;color:var(--muted);";
-    const jRowStyle = "display:flex;align-items:center;gap:6px;margin:4px 0;";
-    // Mode dropdown
-    const modeRow = document.createElement("div");
-    modeRow.style.cssText = jRowStyle;
-    const modeLbl = document.createElement("span");
-    modeLbl.style.cssText = jLblStyle;
-    modeLbl.textContent = "Mode";
-    const modeSel = document.createElement("select");
-    modeSel.style.cssText = "background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
-    for (const m of ["none","random","rotate","walk","scale","circle","spiral","breathe","wobble","lissajous"]) {
-        const opt = document.createElement("option");
-        opt.value = m; opt.textContent = m.charAt(0).toUpperCase() + m.slice(1);
-        if (m === jiggleMode) opt.selected = true;
-        modeSel.appendChild(opt);
-    }
-    modeRow.appendChild(modeLbl); modeRow.appendChild(modeSel);
-    bitmapCfgPop.appendChild(modeRow);
-    // Mode-specific controls container
-    const controlsDiv = document.createElement("div");
-    bitmapCfgPop.appendChild(controlsDiv);
-    function buildModeControls() {
-        controlsDiv.innerHTML = "";
-        if (jiggleMode === "random" || jiggleMode === "walk") {
-            const r = document.createElement("div"); r.style.cssText = jRowStyle;
-            const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "\u03C3";
-            const i = document.createElement("input"); i.type = "number"; i.step = "1"; i.min = "0"; i.max = "100"; i.value = jiggleSigma; i.style.cssText = inpStyle;
-            i.addEventListener("input", () => { jiggleSigma = Math.max(0, Math.min(100, parseInt(i.value,10)||0)); });
-            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = "/ 100";
-            r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
-        } else if (jiggleMode === "rotate" || jiggleMode === "circle") {
-            const r = document.createElement("div"); r.style.cssText = jRowStyle;
-            const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "\u03B8";
-            const i = document.createElement("input"); i.type = "number"; i.step = "0.001"; i.min = "0.001"; i.max = "0.500"; i.value = jiggleTheta; i.style.cssText = inpStyle;
-            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0";
-            i.addEventListener("input", () => { jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(i.value)||0.01)); h.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0"; });
-            r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
-        } else if (jiggleMode === "scale") {
-            const r = document.createElement("div"); r.style.cssText = jRowStyle;
-            const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "step";
-            const i = document.createElement("input"); i.type = "number"; i.step = "1"; i.min = "1"; i.max = "50"; i.value = jiggleScaleStep; i.style.cssText = inpStyle;
-            i.addEventListener("input", () => { jiggleScaleStep = Math.max(1, Math.min(50, parseInt(i.value,10)||5)); });
-            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = "%";
-            r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
-        } else if (jiggleMode === "spiral") {
-            const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
-            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "\u03B8";
-            const i1 = document.createElement("input"); i1.type = "number"; i1.step = "0.001"; i1.min = "0.001"; i1.max = "0.500"; i1.value = jiggleTheta; i1.style.cssText = inpStyle;
-            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0";
-            i1.addEventListener("input", () => { jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(i1.value)||0.01)); h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0"; });
-            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
-            const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
-            const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "growth";
-            const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "1"; i2.max = "50"; i2.value = jiggleScaleStep; i2.style.cssText = inpStyle;
-            i2.addEventListener("input", () => { jiggleScaleStep = Math.max(1, Math.min(50, parseInt(i2.value,10)||5)); });
-            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "%";
-            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
-        } else if (jiggleMode === "breathe") {
-            const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
-            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "amp";
-            const i1 = document.createElement("input"); i1.type = "number"; i1.step = "1"; i1.min = "1"; i1.max = "50"; i1.value = jiggleAmplitude; i1.style.cssText = inpStyle;
-            i1.addEventListener("input", () => { jiggleAmplitude = Math.max(1, Math.min(50, parseInt(i1.value,10)||10)); });
-            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "%";
-            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
-            const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
-            const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "period";
-            const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "2"; i2.max = "1000"; i2.value = jigglePeriod; i2.style.cssText = inpStyle;
-            i2.addEventListener("input", () => { jigglePeriod = Math.max(2, Math.min(1000, parseInt(i2.value,10)||20)); });
-            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "cycles";
-            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
-        } else if (jiggleMode === "wobble") {
-            const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
-            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "amp";
-            const i1 = document.createElement("input"); i1.type = "number"; i1.step = "0.001"; i1.min = "0.001"; i1.max = "0.500"; i1.value = jiggleTheta; i1.style.cssText = inpStyle;
-            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0";
-            i1.addEventListener("input", () => { jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(i1.value)||0.01)); h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0"; });
-            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
-            const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
-            const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "period";
-            const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "2"; i2.max = "1000"; i2.value = jigglePeriod; i2.style.cssText = inpStyle;
-            i2.addEventListener("input", () => { jigglePeriod = Math.max(2, Math.min(1000, parseInt(i2.value,10)||20)); });
-            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "cycles";
-            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
-        } else if (jiggleMode === "lissajous") {
-            const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
-            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "amp";
-            const i1 = document.createElement("input"); i1.type = "number"; i1.step = "1"; i1.min = "1"; i1.max = "50"; i1.value = jiggleAmplitude; i1.style.cssText = inpStyle;
-            i1.addEventListener("input", () => { jiggleAmplitude = Math.max(1, Math.min(50, parseInt(i1.value,10)||10)); });
-            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "%";
-            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
-            const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
-            const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "period";
-            const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "2"; i2.max = "1000"; i2.value = jigglePeriod; i2.style.cssText = inpStyle;
-            i2.addEventListener("input", () => { jigglePeriod = Math.max(2, Math.min(1000, parseInt(i2.value,10)||20)); });
-            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "cycles";
-            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
-            const r3 = document.createElement("div"); r3.style.cssText = jRowStyle;
-            const l3 = document.createElement("span"); l3.style.cssText = jLblStyle; l3.textContent = "fX";
-            const i3 = document.createElement("input"); i3.type = "number"; i3.step = "1"; i3.min = "1"; i3.max = "10"; i3.value = jiggleLissFreqX; i3.style.cssText = inpStyle;
-            i3.addEventListener("input", () => { jiggleLissFreqX = Math.max(1, Math.min(10, parseInt(i3.value,10)||1)); });
-            r3.appendChild(l3); r3.appendChild(i3); controlsDiv.appendChild(r3);
-            const r4 = document.createElement("div"); r4.style.cssText = jRowStyle;
-            const l4 = document.createElement("span"); l4.style.cssText = jLblStyle; l4.textContent = "fY";
-            const i4 = document.createElement("input"); i4.type = "number"; i4.step = "1"; i4.min = "1"; i4.max = "10"; i4.value = jiggleLissFreqY; i4.style.cssText = inpStyle;
-            i4.addEventListener("input", () => { jiggleLissFreqY = Math.max(1, Math.min(10, parseInt(i4.value,10)||2)); });
-            r4.appendChild(l4); r4.appendChild(i4); controlsDiv.appendChild(r4);
-        }
-    }
-    buildModeControls();
-    modeSel.addEventListener("change", () => { jiggleMode = modeSel.value; buildModeControls(); });
-    // Interval slider
-    const cycRow = document.createElement("div");
-    cycRow.style.cssText = jRowStyle;
-    const cycLbl = document.createElement("span");
-    cycLbl.style.cssText = jLblStyle; cycLbl.textContent = "Interval";
-    cycRow.appendChild(cycLbl);
-    const cycSlider = document.createElement("input");
-    cycSlider.type = "range"; cycSlider.min = "1"; cycSlider.max = "100";
-    cycSlider.value = String(jiggleInterval);
-    cycSlider.style.cssText = "width:70px;accent-color:var(--accent);";
-    const cycVal = document.createElement("span");
-    cycVal.style.cssText = "font-size:9px;color:var(--muted);min-width:24px;";
-    cycVal.textContent = jiggleInterval + "s";
-    cycSlider.addEventListener("input", () => { jiggleInterval = parseInt(cycSlider.value,10); cycVal.textContent = jiggleInterval + "s"; });
-    cycRow.appendChild(cycSlider); cycRow.appendChild(cycVal);
-    // GCD button — compute cycle from coefficient speeds
-    const gcdBtn = document.createElement("button");
-    gcdBtn.textContent = "GCD";
-    gcdBtn.title = "Set interval to pattern repeat period (100 / GCD of integer speeds)";
-    gcdBtn.style.cssText = "font-size:9px;padding:1px 5px;background:transparent;color:var(--muted);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;margin-left:2px;";
-    gcdBtn.addEventListener("click", () => {
-        function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a; }
-        const intSpeeds = [];
-        for (const c of coefficients) {
-            if (c.pathType === "none") continue;
-            const s = Math.round(c.speed * 100);
-            if (s > 0) intSpeeds.push(s);
-        }
-        if (intSpeeds.length === 0) return;
-        let g = intSpeeds[0];
-        for (let i = 1; i < intSpeeds.length; i++) g = gcd(g, intSpeeds[i]);
-        const cycle = Math.round(100 / g);
-        const clamped = Math.max(1, Math.min(100, cycle));
-        jiggleInterval = clamped;
-        cycSlider.value = String(clamped);
-        cycVal.textContent = clamped + "s";
-    });
-    cycRow.appendChild(gcdBtn);
-    bitmapCfgPop.appendChild(cycRow);
     // Background color
     const hr2 = document.createElement("hr");
     hr2.style.cssText = "border:none;border-top:1px solid var(--stroke);margin:8px 0 4px;";
@@ -7831,6 +7709,7 @@ function applyLoadedState(meta) {
     // 9. Restore jiggle settings
     if (meta.jiggle) {
         jiggleMode = meta.jiggle.mode || "random";
+        if (jiggleMode === "spiral") jiggleMode = "spiral-centroid"; // backward compat
         jiggleSigma = meta.jiggle.sigma ?? 10;
         jiggleTheta = meta.jiggle.theta ?? 0.01;
         jiggleScaleStep = meta.jiggle.scaleStep ?? 5;
@@ -9308,6 +9187,7 @@ var S_derivColor, S_derivPalR, S_derivPalG, S_derivPalB, S_selIndices;
 var S_morphEnabled = false, S_morphRate = 0, S_morphTargetRe = null, S_morphTargetIm = null;
 var S_matchStrategy = "assign4";
 var S_dCurvesFlat = null, S_dEntries = null, S_dOffsets = null, S_dLengths = null, S_dIsCloud = null;
+var S_jiggleRe = null, S_jiggleIm = null;
 
 self.onmessage = function(e) {
     var d = e.data;
@@ -9352,6 +9232,9 @@ self.onmessage = function(e) {
         S_dOffsets = d.dCurveOffsets || [];
         S_dLengths = d.dCurveLengths || [];
         S_dIsCloud = d.dCurveIsCloud || [];
+        // Jiggle offsets (applied post-interpolation)
+        S_jiggleRe = d.jiggleRe ? new Float64Array(d.jiggleRe) : null;
+        S_jiggleIm = d.jiggleIm ? new Float64Array(d.jiggleIm) : null;
         return;
     }
 
@@ -9453,6 +9336,14 @@ self.onmessage = function(e) {
             for (var m = 0; m < nCoeffs; m++) {
                 coeffsRe[m] = coeffsRe[m] * omu + morphRe[m] * mu;
                 coeffsIm[m] = coeffsIm[m] * omu + morphIm[m] * mu;
+            }
+        }
+
+        // Apply jiggle offsets post-interpolation
+        if (S_jiggleRe) {
+            for (var j = 0; j < nCoeffs; j++) {
+                coeffsRe[j] += S_jiggleRe[j];
+                coeffsIm[j] += S_jiggleIm[j];
             }
         }
 
@@ -9601,16 +9492,12 @@ function plotCoeffCurvesOnBitmap(animated, stepsVal) {
     const colors = [];
     for (let i = 0; i < nCoeffs; i++) colors.push(coeffColor(i, nCoeffs));
 
-    // Build fixed positions for non-animated coefficients (with jiggle)
+    // Build fixed positions for non-animated coefficients
     const fixedRe = new Float64Array(nCoeffs);
     const fixedIm = new Float64Array(nCoeffs);
     for (let i = 0; i < nCoeffs; i++) {
         fixedRe[i] = coefficients[i].re;
         fixedIm[i] = coefficients[i].im;
-        if (jiggleOffsets && jiggleOffsets.has(i) && !animated.has(i)) {
-            fixedRe[i] += jiggleOffsets.get(i).re;
-            fixedIm[i] += jiggleOffsets.get(i).im;
-        }
     }
 
     // Use ImageData for fast pixel writes
@@ -9645,6 +9532,11 @@ function plotCoeffCurvesOnBitmap(animated, stepsVal) {
                 // Non-animated: fixed position
                 re = fixedRe[ci];
                 im = fixedIm[ci];
+            }
+            // Apply jiggle offsets post-interpolation
+            if (jiggleOffsets && jiggleOffsets.has(ci)) {
+                re += jiggleOffsets.get(ci).re;
+                im += jiggleOffsets.get(ci).im;
             }
             const px = ((re / range + 1) * 0.5 * w) | 0;
             const py = ((1 - im / range) * 0.5 * h) | 0;
@@ -9711,12 +9603,8 @@ function enterFastMode() {
         const c = coefficients[idx];
         const absR = (c.radius / 100) * extentAtHome;
         // Use home position (curve[0]), not current animated position (c.re/c.im)
-        let homeRe = c.curve[0].re;
-        let homeIm = c.curve[0].im;
-        if (jiggleOffsets && jiggleOffsets.has(idx)) {
-            homeRe += jiggleOffsets.get(idx).re;
-            homeIm += jiggleOffsets.get(idx).im;
-        }
+        const homeRe = c.curve[0].re;
+        const homeIm = c.curve[0].im;
         const curve = computeCurveN(homeRe, homeIm, c.pathType, absR, c.angle, c.extra, stepsVal);
         fastModeCurves.set(idx, curve);
     }
@@ -9774,23 +9662,7 @@ function enterFastMode() {
                 && fastModePassCount >= fastModeTargetPasses) {
                 fastModePassCount = 0;
                 generateJiggleOffsets();
-                // Recompute curves with new jiggle offsets
-                fastModeCurves = new Map();
-                const anim2 = allAnimatedCoeffs();
-                const savedPos2 = [];
-                for (const idx of anim2) {
-                    const c = coefficients[idx]; savedPos2.push({ idx, re: c.re, im: c.im });
-                    c.re = c.curve[0].re; c.im = c.curve[0].im;
-                }
-                const ext2 = coeffExtent();
-                for (const s of savedPos2) { coefficients[s.idx].re = s.re; coefficients[s.idx].im = s.im; }
-                for (const idx of anim2) {
-                    const c = coefficients[idx];
-                    const absR = (c.radius / 100) * ext2;
-                    let hRe = c.curve[0].re, hIm = c.curve[0].im;
-                    if (jiggleOffsets && jiggleOffsets.has(idx)) { hRe += jiggleOffsets.get(idx).re; hIm += jiggleOffsets.get(idx).im; }
-                    fastModeCurves.set(idx, computeCurveN(hRe, hIm, c.pathType, absR, c.angle, c.extra, stepsVal));
-                }
+                // No curve recomputation needed — jiggle applied post-interpolation
             }
             plotCoeffCurvesOnBitmap(allAnimatedCoeffs(), stepsVal);
             fastModePassCount++;
@@ -9827,12 +9699,14 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         coeffsRe[i] = coefficients[i].re;
         coeffsIm[i] = coefficients[i].im;
     }
-    // Apply jiggle offsets to non-animated coefficients (animated ones have offsets baked into their curves)
+    // Build jiggle offset arrays (applied post-interpolation in worker)
+    const jiggleRe = new Float64Array(nCoeffs);
+    const jiggleIm = new Float64Array(nCoeffs);
     if (jiggleOffsets) {
         for (const [idx, off] of jiggleOffsets) {
-            if (!animated.has(idx)) {
-                coeffsRe[idx] += off.re;
-                coeffsIm[idx] += off.im;
+            if (idx < nCoeffs) {
+                jiggleRe[idx] = off.re;
+                jiggleIm[idx] = off.im;
             }
         }
     }
@@ -9941,6 +9815,7 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         morphTargetIm: morphEnabled ? Float64Array.from(morphTargetCoeffs, d => d.im) : null,
         matchStrategy: bitmapMatchStrategy,
         dAnimEntries, dCurvesFlat, dCurveOffsets, dCurveLengths, dCurveIsCloud,
+        jiggleRe, jiggleIm,
     };
 }
 
@@ -9996,6 +9871,8 @@ function initFastModeWorkers() {
             dCurveOffsets: sd.dCurveOffsets,
             dCurveLengths: sd.dCurveLengths,
             dCurveIsCloud: sd.dCurveIsCloud,
+            jiggleRe: sd.jiggleRe ? sd.jiggleRe.buffer.slice(0) : null,
+            jiggleIm: sd.jiggleIm ? sd.jiggleIm.buffer.slice(0) : null,
         });
 
         fastModeWorkers.push(worker);
@@ -10198,41 +10075,10 @@ function reinitWorkersForJiggle() {
     generateJiggleOffsets();
     fastModeWorkerRoots = savedRoots;
 
-    const stepsVal = fastModeTotalSteps;
+    // No curve recomputation needed — jiggle applied post-interpolation in workers
     const animated = allAnimatedCoeffs();
-    fastModeCurves = new Map();
-    const savedPos = [];
-    for (const idx of animated) {
-        const c = coefficients[idx];
-        savedPos.push({ idx, re: c.re, im: c.im });
-        c.re = c.curve[0].re; c.im = c.curve[0].im;
-    }
-    const extentAtHome = coeffExtent();
-    for (const s of savedPos) { coefficients[s.idx].re = s.re; coefficients[s.idx].im = s.im; }
-    for (const idx of animated) {
-        const c = coefficients[idx];
-        const absR = (c.radius / 100) * extentAtHome;
-        let homeRe = c.curve[0].re, homeIm = c.curve[0].im;
-        if (jiggleOffsets && jiggleOffsets.has(idx)) {
-            homeRe += jiggleOffsets.get(idx).re;
-            homeIm += jiggleOffsets.get(idx).im;
-        }
-        fastModeCurves.set(idx, computeCurveN(homeRe, homeIm, c.pathType, absR, c.angle, c.extra, stepsVal));
-    }
-    // Recompute D-curves (no jiggle applied to D-nodes)
-    fastModeDCurves = new Map();
-    if (morphEnabled && morphTargetCoeffs.length === coefficients.length) {
-        const animatedD = allAnimatedDCoeffs();
-        for (const idx of animatedD) {
-            const d = morphTargetCoeffs[idx];
-            const absR = (d.radius / 100) * extentAtHome;
-            let hRe = d.curve[0].re, hIm = d.curve[0].im;
-            fastModeDCurves.set(idx, computeCurveN(hRe, hIm, d.pathType, absR, d.angle, d.extra, stepsVal));
-        }
-    }
-
     const nRoots = currentRoots.length;
-    fastModeSharedData = serializeFastModeData(animated, stepsVal, nRoots);
+    fastModeSharedData = serializeFastModeData(animated, fastModeTotalSteps, nRoots);
     fastModeStepIndex = 0;
     fastModeCycleStartTime = performance.now();
     initFastModeWorkers();
@@ -10368,6 +10214,19 @@ function fastModeChunkLegacy() {
             }));
         }
 
+        // Apply jiggle offsets post-interpolation
+        if (jiggleOffsets && jiggleOffsets.size > 0) {
+            if (coeffsToSolve === coefficients) {
+                coeffsToSolve = coefficients.map(c => ({ re: c.re, im: c.im }));
+            }
+            for (const [idx, off] of jiggleOffsets) {
+                if (idx < coeffsToSolve.length) {
+                    coeffsToSolve[idx].re += off.re;
+                    coeffsToSolve[idx].im += off.im;
+                }
+            }
+        }
+
         // Solve roots (warm-start), preserve identity, update in-place
         let roots = solveRootsEA(coeffsToSolve, currentRoots);
         if (bitmapColorMode !== "uniform") roots = matchRootOrder(roots, currentRoots);
@@ -10392,37 +10251,7 @@ function fastModeChunkLegacy() {
             && fastModePassCount >= fastModeTargetPasses) {
             fastModePassCount = 0;
             generateJiggleOffsets();
-            // Recompute curves with new jiggle offsets
-            const stepsVal2 = fastModeTotalSteps;
-            const animated2 = allAnimatedCoeffs();
-            fastModeCurves = new Map();
-            const savedPos2 = [];
-            for (const idx of animated2) {
-                const c = coefficients[idx]; savedPos2.push({ idx, re: c.re, im: c.im });
-                c.re = c.curve[0].re; c.im = c.curve[0].im;
-            }
-            const ext2 = coeffExtent();
-            for (const s of savedPos2) { coefficients[s.idx].re = s.re; coefficients[s.idx].im = s.im; }
-            for (const idx of animated2) {
-                const c = coefficients[idx];
-                const absR = (c.radius / 100) * ext2;
-                let hRe = c.curve[0].re, hIm = c.curve[0].im;
-                if (jiggleOffsets && jiggleOffsets.has(idx)) {
-                    hRe += jiggleOffsets.get(idx).re; hIm += jiggleOffsets.get(idx).im;
-                }
-                fastModeCurves.set(idx, computeCurveN(hRe, hIm, c.pathType, absR, c.angle, c.extra, stepsVal2));
-            }
-            // Recompute D-curves (no jiggle applied to D-nodes)
-            fastModeDCurves = new Map();
-            if (morphEnabled && morphTargetCoeffs.length === coefficients.length) {
-                const animatedD2 = allAnimatedDCoeffs();
-                for (const idx of animatedD2) {
-                    const d = morphTargetCoeffs[idx];
-                    const absR = (d.radius / 100) * ext2;
-                    let hRe = d.curve[0].re, hIm = d.curve[0].im;
-                    fastModeDCurves.set(idx, computeCurveN(hRe, hIm, d.pathType, absR, d.angle, d.extra, stepsVal2));
-                }
-            }
+            // No curve recomputation needed — jiggle applied post-interpolation
         }
     }
 
@@ -10483,6 +10312,7 @@ const leftTabContents = {
     list: document.getElementById("list-content"),
     morph: document.getElementById("morph-content"),
     dlist: document.getElementById("dlist-content"),
+    jiggle: document.getElementById("jiggle-content"),
     final: document.getElementById("final-content")
 };
 
@@ -10494,6 +10324,7 @@ function switchLeftTab(tabName) {
     if (tabName === "list") { refreshCoeffList(); refreshListCurveEditor(); }
     if (tabName === "dlist") { refreshDCoeffList(); refreshDListCurveEditor(); }
     if (tabName === "morph") renderMorphPanel();
+    if (tabName === "jiggle") buildJigglePanel();
     if (tabName === "final") renderFinalPanel();
 }
 leftTabButtons.forEach(btn => btn.addEventListener("click", () => switchLeftTab(btn.dataset.ltab)));
@@ -12306,8 +12137,8 @@ function generateJiggleOffsets() {
                 im: hre * sin_a + him * (cos_a - 1)
             });
         }
-    } else if (jiggleMode === "spiral") {
-        // Rotation + scaling around centroid
+    } else if (jiggleMode === "spiral-centroid") {
+        // Rotation + scaling around centroid of selected coefficients
         jiggleCumulativeAngle += jiggleTheta * 2 * Math.PI;
         jiggleCumulativeScale *= (1 + jiggleScaleStep / 100);
         const cen = computeJiggleCentroid(targets);
@@ -12322,6 +12153,22 @@ function generateJiggleOffsets() {
             jiggleOffsets.set(idx, {
                 re: s * (dx * cos_a - dy * sin_a) - dx,
                 im: s * (dx * sin_a + dy * cos_a) - dy
+            });
+        }
+    } else if (jiggleMode === "spiral-center") {
+        // Rotation + scaling around origin (0,0)
+        jiggleCumulativeAngle += jiggleTheta * 2 * Math.PI;
+        jiggleCumulativeScale *= (1 + jiggleScaleStep / 100);
+        const s = jiggleCumulativeScale;
+        const cos_a = Math.cos(jiggleCumulativeAngle);
+        const sin_a = Math.sin(jiggleCumulativeAngle);
+        if (!jiggleOffsets) jiggleOffsets = new Map();
+        for (const idx of targets) {
+            const hre = coefficients[idx].curve[0].re;
+            const him = coefficients[idx].curve[0].im;
+            jiggleOffsets.set(idx, {
+                re: s * (hre * cos_a - him * sin_a) - hre,
+                im: s * (hre * sin_a + him * cos_a) - him
             });
         }
     } else if (jiggleMode === "breathe") {
@@ -12381,6 +12228,173 @@ function updateJiggleStatus() {
     if (offCount > 0) parts.push(offCount + " offset" + (offCount !== 1 ? "s" : ""));
     el.textContent = parts.join(", ");
     el.style.color = offCount > 0 ? "var(--accent)" : "var(--muted)";
+}
+
+function buildJigglePanel() {
+    const container = document.getElementById("jiggle-controls");
+    if (!container) return;
+    container.innerHTML = "";
+    updateJiggleStatus();
+
+    const inpStyle = "width:50px;background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
+    const jLblStyle = "font-size:10px;color:var(--fg);";
+    const hintStyle = "font-size:9px;color:var(--muted);";
+    const jRowStyle = "display:flex;align-items:center;gap:6px;margin:4px 0;";
+
+    // Mode dropdown
+    const modeRow = document.createElement("div");
+    modeRow.style.cssText = jRowStyle;
+    const modeLbl = document.createElement("span");
+    modeLbl.style.cssText = jLblStyle;
+    modeLbl.textContent = "Mode";
+    const modeSel = document.createElement("select");
+    modeSel.style.cssText = "background:var(--bg);color:var(--fg);border:1px solid var(--stroke);border-radius:3px;padding:2px 4px;font-size:10px;";
+    const jiggleModes = [
+        ["none","None"],["random","Random"],["rotate","Rotate"],["walk","Walk"],
+        ["scale","Scale"],["circle","Circle"],["spiral-centroid","Spiral (centroid)"],
+        ["spiral-center","Spiral (center)"],["breathe","Breathe"],["wobble","Wobble"],["lissajous","Lissajous"]
+    ];
+    for (const [val, label] of jiggleModes) {
+        const opt = document.createElement("option");
+        opt.value = val; opt.textContent = label;
+        if (val === jiggleMode) opt.selected = true;
+        modeSel.appendChild(opt);
+    }
+    modeRow.appendChild(modeLbl); modeRow.appendChild(modeSel);
+    container.appendChild(modeRow);
+
+    // Mode-specific controls container
+    const controlsDiv = document.createElement("div");
+    container.appendChild(controlsDiv);
+    function buildModeControls() {
+        controlsDiv.innerHTML = "";
+        if (jiggleMode === "random" || jiggleMode === "walk") {
+            const r = document.createElement("div"); r.style.cssText = jRowStyle;
+            const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "\u03C3";
+            const i = document.createElement("input"); i.type = "number"; i.step = "1"; i.min = "0"; i.max = "100"; i.value = jiggleSigma; i.style.cssText = inpStyle;
+            i.addEventListener("input", () => { jiggleSigma = Math.max(0, Math.min(100, parseInt(i.value,10)||0)); });
+            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = "/ 100";
+            r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
+        } else if (jiggleMode === "rotate" || jiggleMode === "circle") {
+            const r = document.createElement("div"); r.style.cssText = jRowStyle;
+            const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "\u03B8";
+            const i = document.createElement("input"); i.type = "number"; i.step = "0.001"; i.min = "0.001"; i.max = "0.500"; i.value = jiggleTheta; i.style.cssText = inpStyle;
+            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0";
+            i.addEventListener("input", () => { jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(i.value)||0.01)); h.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0"; });
+            r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
+        } else if (jiggleMode === "scale") {
+            const r = document.createElement("div"); r.style.cssText = jRowStyle;
+            const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "step";
+            const i = document.createElement("input"); i.type = "number"; i.step = "1"; i.min = "1"; i.max = "50"; i.value = jiggleScaleStep; i.style.cssText = inpStyle;
+            i.addEventListener("input", () => { jiggleScaleStep = Math.max(1, Math.min(50, parseInt(i.value,10)||5)); });
+            const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = "%";
+            r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
+        } else if (jiggleMode === "spiral-centroid" || jiggleMode === "spiral-center") {
+            const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
+            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "\u03B8";
+            const i1 = document.createElement("input"); i1.type = "number"; i1.step = "0.001"; i1.min = "0.001"; i1.max = "0.500"; i1.value = jiggleTheta; i1.style.cssText = inpStyle;
+            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0";
+            i1.addEventListener("input", () => { jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(i1.value)||0.01)); h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0"; });
+            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
+            const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
+            const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "growth";
+            const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "1"; i2.max = "50"; i2.value = jiggleScaleStep; i2.style.cssText = inpStyle;
+            i2.addEventListener("input", () => { jiggleScaleStep = Math.max(1, Math.min(50, parseInt(i2.value,10)||5)); });
+            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "%";
+            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
+        } else if (jiggleMode === "breathe") {
+            const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
+            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "amp";
+            const i1 = document.createElement("input"); i1.type = "number"; i1.step = "1"; i1.min = "1"; i1.max = "50"; i1.value = jiggleAmplitude; i1.style.cssText = inpStyle;
+            i1.addEventListener("input", () => { jiggleAmplitude = Math.max(1, Math.min(50, parseInt(i1.value,10)||10)); });
+            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "%";
+            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
+            const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
+            const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "period";
+            const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "2"; i2.max = "1000"; i2.value = jigglePeriod; i2.style.cssText = inpStyle;
+            i2.addEventListener("input", () => { jigglePeriod = Math.max(2, Math.min(1000, parseInt(i2.value,10)||20)); });
+            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "cycles";
+            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
+        } else if (jiggleMode === "wobble") {
+            const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
+            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "amp";
+            const i1 = document.createElement("input"); i1.type = "number"; i1.step = "0.001"; i1.min = "0.001"; i1.max = "0.500"; i1.value = jiggleTheta; i1.style.cssText = inpStyle;
+            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0";
+            i1.addEventListener("input", () => { jiggleTheta = Math.max(0.001, Math.min(0.500, parseFloat(i1.value)||0.01)); h1.textContent = "= " + (jiggleTheta*360).toFixed(1) + "\u00B0"; });
+            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
+            const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
+            const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "period";
+            const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "2"; i2.max = "1000"; i2.value = jigglePeriod; i2.style.cssText = inpStyle;
+            i2.addEventListener("input", () => { jigglePeriod = Math.max(2, Math.min(1000, parseInt(i2.value,10)||20)); });
+            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "cycles";
+            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
+        } else if (jiggleMode === "lissajous") {
+            const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
+            const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "amp";
+            const i1 = document.createElement("input"); i1.type = "number"; i1.step = "1"; i1.min = "1"; i1.max = "50"; i1.value = jiggleAmplitude; i1.style.cssText = inpStyle;
+            i1.addEventListener("input", () => { jiggleAmplitude = Math.max(1, Math.min(50, parseInt(i1.value,10)||10)); });
+            const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = "%";
+            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
+            const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
+            const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "period";
+            const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "2"; i2.max = "1000"; i2.value = jigglePeriod; i2.style.cssText = inpStyle;
+            i2.addEventListener("input", () => { jigglePeriod = Math.max(2, Math.min(1000, parseInt(i2.value,10)||20)); });
+            const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "cycles";
+            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
+            const r3 = document.createElement("div"); r3.style.cssText = jRowStyle;
+            const l3 = document.createElement("span"); l3.style.cssText = jLblStyle; l3.textContent = "fX";
+            const i3 = document.createElement("input"); i3.type = "number"; i3.step = "1"; i3.min = "1"; i3.max = "10"; i3.value = jiggleLissFreqX; i3.style.cssText = inpStyle;
+            i3.addEventListener("input", () => { jiggleLissFreqX = Math.max(1, Math.min(10, parseInt(i3.value,10)||1)); });
+            r3.appendChild(l3); r3.appendChild(i3); controlsDiv.appendChild(r3);
+            const r4 = document.createElement("div"); r4.style.cssText = jRowStyle;
+            const l4 = document.createElement("span"); l4.style.cssText = jLblStyle; l4.textContent = "fY";
+            const i4 = document.createElement("input"); i4.type = "number"; i4.step = "1"; i4.min = "1"; i4.max = "10"; i4.value = jiggleLissFreqY; i4.style.cssText = inpStyle;
+            i4.addEventListener("input", () => { jiggleLissFreqY = Math.max(1, Math.min(10, parseInt(i4.value,10)||2)); });
+            r4.appendChild(l4); r4.appendChild(i4); controlsDiv.appendChild(r4);
+        }
+    }
+    buildModeControls();
+    modeSel.addEventListener("change", () => { jiggleMode = modeSel.value; buildModeControls(); });
+
+    // Interval slider
+    const cycRow = document.createElement("div");
+    cycRow.style.cssText = jRowStyle;
+    const cycLbl = document.createElement("span");
+    cycLbl.style.cssText = jLblStyle; cycLbl.textContent = "Interval";
+    cycRow.appendChild(cycLbl);
+    const cycSlider = document.createElement("input");
+    cycSlider.type = "range"; cycSlider.min = "1"; cycSlider.max = "100";
+    cycSlider.value = String(jiggleInterval);
+    cycSlider.style.cssText = "width:70px;accent-color:var(--accent);";
+    const cycVal = document.createElement("span");
+    cycVal.style.cssText = "font-size:9px;color:var(--muted);min-width:24px;";
+    cycVal.textContent = jiggleInterval + "s";
+    cycSlider.addEventListener("input", () => { jiggleInterval = parseInt(cycSlider.value,10); cycVal.textContent = jiggleInterval + "s"; });
+    cycRow.appendChild(cycSlider); cycRow.appendChild(cycVal);
+    // GCD button
+    const gcdBtn = document.createElement("button");
+    gcdBtn.textContent = "GCD";
+    gcdBtn.title = "Set interval to pattern repeat period (100 / GCD of integer speeds)";
+    gcdBtn.style.cssText = "font-size:9px;padding:1px 5px;background:transparent;color:var(--muted);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;margin-left:2px;";
+    gcdBtn.addEventListener("click", () => {
+        function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a; }
+        const intSpeeds = [];
+        for (const c of coefficients) {
+            if (c.pathType === "none") continue;
+            const s = Math.round(c.speed * 100);
+            if (s > 0) intSpeeds.push(s);
+        }
+        if (intSpeeds.length === 0) return;
+        let g = intSpeeds[0];
+        for (let i = 1; i < intSpeeds.length; i++) g = gcd(g, intSpeeds[i]);
+        const cycle = Math.round(100 / g);
+        const clamped = Math.max(1, Math.min(100, cycle));
+        jiggleInterval = clamped;
+        cycSlider.value = String(clamped);
+        cycVal.textContent = clamped + "s";
+    });
+    cycRow.appendChild(gcdBtn);
+    container.appendChild(cycRow);
 }
 
 function rebuild() {

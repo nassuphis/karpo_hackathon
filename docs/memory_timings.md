@@ -209,10 +209,10 @@ The bottleneck would shift back to worker computation, which is the correct beha
 
 | Component | File | Lines |
 |-----------|------|-------|
-| `compositeWorkerPixels()` | index.html | ~7989 |
-| `fillPersistentBuffer()` | index.html | ~7193 |
-| `initBitmapCanvas()` | index.html | ~7209 |
-| `recordPassTiming()` | index.html | ~8030 |
-| `updateTimingPopup()` | index.html | ~5930 |
-| Worker pixel generation | index.html (blob) | ~7375-7449 |
-| `bitmapPersistentBuffer` state | index.html | ~910 |
+| `compositeWorkerPixels()` | index.html | ~9946 |
+| `fillPersistentBuffer()` | index.html | ~8722 |
+| `initBitmapCanvas()` | index.html | ~8842 |
+| `recordPassTiming()` | index.html | ~10030 |
+| `updateTimingPopup()` | index.html | ~7394 |
+| Worker pixel generation | index.html (blob) | ~9273-9450 |
+| `bitmapPersistentBuffer` state | index.html | ~1084 |

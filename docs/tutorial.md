@@ -51,7 +51,7 @@ Each coefficient now has its own circular orbit. The sliders to the right of the
 To make the animation more interesting, give each coefficient a different speed so the roots trace complex, non-repeating patterns.
 
 1. Click the **C-List** tab to switch to the table view
-2. Click **Select All** in the list header
+2. Click **All** in the list header
 3. Open the **Transform** dropdown and choose **PrimeSpeeds**
 
 This sets each coefficient's speed to a different prime number, ensuring their orbits never synchronize and the root trajectories fill more of the plane.
@@ -74,7 +74,7 @@ Nothing visible changes yet -- trails appear once the animation starts.
 
 ## 7. Play the Animation
 
-Click the **Play** button (red triangle in the animation bar). The coefficients begin orbiting along their circle paths, and the roots respond by tracing colored trails on the right panel.
+Click the **Play** button in the header bar (right side, next to the scrub slider). The coefficients begin orbiting along their circle paths, and the roots respond by tracing colored trails on the right panel. The seconds counter next to the Play button shows elapsed animation time.
 
 ![Trails after 3 seconds](images/07_trails_running.png)
 
@@ -82,7 +82,7 @@ Let it run for several seconds. The trails grow into intricate braid-like patter
 
 ![Trails after 6 seconds](images/08_trails_complete.png)
 
-Click **Pause** when you're happy with the trail pattern, or let it run -- trails auto-stop after one complete cycle (when all coefficients return to their starting positions).
+Click **Pause** when you're happy with the trail pattern. You can click **Resume** to continue from where you paused, or **Home** to reset. Trails collect up to the maximum trail point limit.
 
 ---
 
@@ -122,7 +122,7 @@ The Export method above captures the screen at display resolution. For publicati
 
 ![Bitmap initialized](images/11_bitmap_init.png)
 
-The bitmap canvas appears as a black rectangle. The toolbar shows resolution (default 2000px), step count, and start/stop controls. You can change the resolution dropdown before or after init -- options range from 1,000 to 25,000 pixels.
+The bitmap canvas appears as a black rectangle. The toolbar shows resolution (default 2000px), step count, and start/pause controls. You can change the resolution dropdown before or after init -- options range from 1,000 to 25,000 pixels.
 
 ### Render
 
@@ -132,7 +132,7 @@ Click **start** to begin fast-mode rendering. This launches parallel Web Workers
 
 The elapsed counter ticks up as pixels accumulate. Let it run for 5-30 seconds depending on the resolution and level of detail you want. Higher step counts (configurable via the **steps** dropdown) mean more solver iterations per worker pass.
 
-Click **start** again (now labeled **Pause**) to stop rendering. The accumulated image is preserved.
+Click **pause** to halt rendering. The accumulated image is preserved. You can click **cont** (continue) to resume accumulating more pixels.
 
 ![Bitmap render complete](images/13_bitmap_done.png)
 
@@ -190,7 +190,7 @@ Hue represents the argument (phase) of p(z) and brightness represents the magnit
 
 - **Higher degree = richer patterns.** Try degree 10-15 with the Spiral pattern and prime speeds for elaborate braids.
 - **Mix path types.** Not every coefficient needs a circle -- try setting some to Lissajous, Figure-8, or Hilbert for more complex dynamics.
-- **Use the scrub slider** to preview the animation before committing to a long bitmap render.
+- **Use the scrub slider** (in the header bar) to preview the animation before committing to a long bitmap render. The scrub is additive -- it adds seconds to the current elapsed time when paused.
 - **PNG is usually smallest** for bitmap exports of sparse root trajectories (a 15K render can be 4.5 MB as PNG vs 35 MB as JPEG).
 - **Save your state** (floppy disk icon) before experimenting -- the JSON snapshot lets you return to any setup instantly.
 

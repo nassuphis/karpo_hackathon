@@ -1,4 +1,4 @@
-# PolyPaint v32
+# PolyPaint v33
 
 **[Try it live](https://nassuphis.github.io/karpo_hackathon/)**
 
@@ -72,8 +72,8 @@ See the [Interface Guide](docs/interface.md) for the complete control reference.
 
 | Area | Key Controls |
 |------|-------------|
-| **Header** | Degree slider (3-30), Pattern dropdown (26 options), Reset, Save/Load, Export (7 modes), C (workers), T (timing) |
-| **Left tabs** | Coefficients (SVG + drag), List (table + 21 transforms), D-List (morph targets), Morph (blend control) |
+| **Header** | Degree (3-30), Pattern dropdown (26 options), Reset, Save/Load, Export (7 modes), T (timing), Play/Pause/Resume, Scrub, Seconds counter, Home |
+| **Left tabs** | C-Nodes (SVG + drag), C-List (table + 20 transforms), D-Nodes (morph target SVG), D-List (morph target table), Jiggle (mode + params), Final (morph controls + combined view) |
 | **Trajectory editor** | Path type (21 curves in 3 groups), per-path sliders (R/S/A/CW), preview/revert, Update Whole Selection |
 | **Mid-bar** | Scale (0.1x-10x), Rotate (0.5 turns), Translate (2D pad), Select all/none, Invert |
 | **Roots toolbar** | Trails toggle, color mode (Uniform / Index Rainbow / Derivative), domain coloring, Fit, +25% |
@@ -86,7 +86,7 @@ For the full control reference with detailed tables, see the [Interface Guide](d
 ## Architecture
 
 ```
-Single HTML file (~12,200 lines)
+Single HTML file (~12,500 lines)
   CSS (inline)            Layout, popover positioning, animation styles
   HTML                    Header, panels, SVG containers, popovers
   JavaScript (inline)     All application logic:
@@ -139,11 +139,11 @@ No server, no WebSocket, no build tools. See [Solver](docs/solver.md) for the ro
 
 ```
 karpo_hackathon/
-  index.html          Entire app: CSS + HTML + JS + WASM (~12,200 lines)
+  index.html          Entire app: CSS + HTML + JS + WASM (~12,500 lines)
   solver.c            WASM solver source (Ehrlich-Aberth in C)
   solver.wasm         Compiled WASM binary (~2KB)
   build-wasm.sh       Compile solver.c -> base64-embedded WASM
-  docs/               Technical documentation (14 files)
+  docs/               Technical documentation (15 files)
   tests/              Playwright tests (490 tests, 23 files)
   snaps/              Saved snapshots (PNG + JSON)
 ```

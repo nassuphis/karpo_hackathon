@@ -29,7 +29,7 @@ The GPU memory allocation is **constant** — a 10K canvas uses 400MB whether 0 
 - **Other tabs/processes** competing for the same GPU memory pool.
 - **macOS unified memory** — GPU allocations compete with system RAM.
 
-### Current data flow
+### Original data flow (before off-canvas split)
 
 ```
 Workers compute pixels at canvas resolution (e.g., 10K)
@@ -43,11 +43,11 @@ Browser CSS-scales canvas → ~500px visible on screen
 Save: canvas.toBlob("image/png") → full-res PNG file
 ```
 
-The GPU allocation exists solely to display a CSS-downscaled preview and to serve as the source for `toBlob()` export.
+The GPU allocation existed solely to display a CSS-downscaled preview and to serve as the source for `toBlob()` export.
 
 ### The insight
 
-`ImageData` is CPU-only. We can keep the persistent buffer at any resolution without touching the GPU. The canvas only needs to be large enough for display — a 2000px canvas (16MB GPU) looks identical to a 10K canvas when CSS-scaled to 500px. For export, we write directly from the CPU persistent buffer as BMP — no GPU involvement at all.
+`ImageData` is CPU-only. We can keep the persistent buffer at any resolution without touching the GPU. The canvas only needs to be large enough for display — a 2000px canvas (16MB GPU) looks identical to a 10K canvas when CSS-scaled to 500px. For export, we encode directly from the CPU persistent buffer (BMP, JPEG, PNG, or TIFF) — no GPU involvement at all.
 
 ## Architecture
 
@@ -62,7 +62,7 @@ compositeWorkerPixels() writes to:
            ↓
        CSS scales canvas to container size (~500px visible)
 
-Export: exportPersistentBufferAsBMP() → 24-bit BMP directly from CPU buffer
+Export: exportPersistentBufferAs{BMP,JPEG,PNG,TIFF}(rgba, w, h, ...) from CPU buffer
 ```
 
 **Split activates only when computeRes > DISPLAY_CAP (2000px).** At 1000px or 2000px, `bitmapDisplayBuffer` is null and behavior is identical to today — zero overhead.
@@ -93,24 +93,11 @@ With nearest-neighbor downscaling (last-writer-wins), multiple compute pixels th
 
 The full-resolution persistent buffer is always available for export — export quality is unaffected.
 
-### BMP export
+### Export
 
-Export uses a pure-CPU BMP writer (`exportPersistentBufferAsBMP()`) that reads directly from `bitmapPersistentBuffer.data`. No canvas, no GPU, no `toBlob()`.
+All export formats use pure-CPU encoders that read from `bitmapPersistentBuffer.data`. No canvas, no GPU, no `toBlob()`. Each encoder takes `(rgba, width, height, filename)` parameters (JPEG also takes a quality parameter). See the Multi-Format Export section below for details.
 
-**Why BMP?**
-- Simplest format to write — 54-byte header + raw BGR pixel rows
-- No compression library needed (unlike PNG which requires deflate)
-- Zero risk of GPU context issues during export
-- macOS Preview opens BMP natively
-- Chunked Blob construction (8MB chunks) avoids single massive allocation
-
-**BMP format details:**
-- 24-bit uncompressed (no alpha channel)
-- 14-byte file header + 40-byte DIB header (BITMAPINFOHEADER)
-- Rows stored bottom-up per BMP spec, each row padded to 4-byte boundary
-- Byte order: BGR (not RGB)
-
-Multi-format export (JPEG, PNG, BMP, TIFF) is now implemented — see below.
+The save button opens a popup (`bitmap-save-pop`) with format selection and a Download button. Encoding is deferred with `setTimeout` so the "Saving..." label renders before the blocking encode runs.
 
 ### Memory budget
 
@@ -126,100 +113,106 @@ Multi-format export (JPEG, PNG, BMP, TIFF) is now implemented — see below.
 
 GPU savings: 384MB (10K), 884MB (15K), 2.48GB (25K). The 16MB display buffer added to CPU is negligible.
 
-**25K warning**: The 2.5GB persistent buffer needs 16GB+ system RAM. Should add try/catch around `new ImageData(25000, 25000)` with user-friendly error message.
+**25K warning**: The 2.5GB persistent buffer needs 16GB+ system RAM. `initBitmapCanvas()` wraps the allocation in try/catch with a user-friendly error alert.
 
-## Implementation Plan
+## Implementation Details
 
-All changes in `index.html`.
+All changes in `index.html`. All steps below have been implemented.
 
-### Step 1: Add state variables (near line 925)
+### State variables (~line 1085)
 
 After `let bitmapPersistentBuffer = null;`:
 
 ```javascript
-const BITMAP_DISPLAY_CAP = 2000;
-let bitmapComputeRes = 0;
-let bitmapDisplayRes = 0;
-let bitmapDisplayBuffer = null;  // ImageData at display res (null when no split)
+const BITMAP_DISPLAY_CAP = 2000;   // max display canvas resolution (px)
+let bitmapComputeRes = 0;          // full computation resolution (from dropdown)
+let bitmapDisplayRes = 0;          // display canvas resolution = min(computeRes, DISPLAY_CAP)
+let bitmapDisplayBuffer = null;    // ImageData at display resolution (null when no split needed)
 ```
 
-### Step 2: Add 8K and 25K to resolution dropdown (line 773)
+### Resolution dropdown
 
-Add `8000px` between 5000 and 10000, and `25000px` after 15000.
+Options: 1000, 2000 (default), 5000, 8000, 10000, 15000, 25000.
 
-### Step 3: Add `fillDisplayBuffer()` helper (after `fillPersistentBuffer`, ~line 7862)
+### `fillDisplayBuffer()` helper (~line 8737)
 
-Same exponential `copyWithin` pattern, operates on `bitmapDisplayBuffer`.
+Same exponential `copyWithin` pattern as `fillPersistentBuffer()`, operates on `bitmapDisplayBuffer`.
 
-### Step 4: Rewrite `initBitmapCanvas()` (lines 7864-7885)
+### `initBitmapCanvas()` (~line 8842)
 
 - `bitmapComputeRes = res` (from dropdown)
 - `bitmapDisplayRes = Math.min(res, BITMAP_DISPLAY_CAP)`
 - **Canvas** gets `bitmapDisplayRes` (small GPU footprint)
-- **Persistent buffer**: `new ImageData(bitmapComputeRes, bitmapComputeRes)` — direct constructor, NOT `createImageData` (decoupled from canvas size)
-- **Display buffer**: `new ImageData(bitmapDisplayRes, bitmapDisplayRes)` only when split active, otherwise null
+- **Persistent buffer**: `new ImageData(bitmapComputeRes, bitmapComputeRes)` — direct constructor, NOT `createImageData` (decoupled from canvas size). Wrapped in try/catch with user-friendly OOM alert.
+- **Display buffer**: `new ImageData(bitmapDisplayRes, bitmapDisplayRes)` only when `bitmapComputeRes > BITMAP_DISPLAY_CAP`, otherwise null
 
-### Step 5: Fix `serializeFastModeData()` (line 8652) — MOST CRITICAL
+### `serializeFastModeData()` (~line 9801) — MOST CRITICAL
 
 ```javascript
 canvasW: bitmapComputeRes, canvasH: bitmapComputeRes,
 ```
 
-### Step 6: Fix `enterFastMode()` resolution check (line 8466)
+Workers always receive the compute resolution, not the display canvas size.
 
-`bitmapComputeRes !== wantRes` instead of `canvas.width !== wantRes`
+### `enterFastMode()` resolution check (~line 9578)
 
-### Step 7: Rewrite `compositeWorkerPixels()` (lines 8782-8837)
+`bitmapComputeRes !== wantRes` instead of `canvas.width !== wantRes`.
 
-- Write to persistent buffer in compute-space (unchanged)
-- When split active: downsample each pixel to display buffer
-- Track dirty rect in display-space
+### `compositeWorkerPixels()` (~line 9946)
+
+- Writes to persistent buffer in compute-space (unchanged)
+- When split active (`bitmapDisplayBuffer !== null`): downsamples each pixel to display buffer using `invScale = dW / cW`
+- Tracks dirty rect in display-space
 - `putImageData` uses display buffer (or persistent buffer when no split)
 
-### Step 8: Fix `plotCoeffCurvesOnBitmap()` (line 8379)
+### `plotCoeffCurvesOnBitmap()` (~line 9485)
 
-Use `bitmapDisplayRes` for width/height (display-only function).
+Uses `bitmapDisplayRes || bitmapCtx.canvas.width` for width/height (display-only function that paints to the display canvas).
 
-### Step 9: Add `exportPersistentBufferAsBMP()` function
+### Export functions (~line 8752)
 
-24-bit BMP from RGBA data with chunked Blob construction.
+Four pure-CPU encoders, each taking `(rgba, width, height, filename)` (JPEG adds quality):
+- `exportPersistentBufferAsBMP()` — 24-bit BMP, chunked Blob
+- `exportPersistentBufferAsJPEG()` — lossy via jpeg-js
+- `exportPersistentBufferAsPNG()` — lossless via UPNG.js + pako
+- `exportPersistentBufferAsTIFF()` — uncompressed via UTIF.js
 
-### Step 10: Replace bitmap save handler (lines 10062-10072)
+### Save popup handler (~line 7340)
 
-BMP export from persistent buffer. Filename `.bmp`.
+Save popup with format dropdown, quality slider (JPEG only), and Download button. Reads from `bitmapPersistentBuffer.data` at `bitmapComputeRes`.
 
-### Step 11: Fix clear handler (lines 10074-10082)
+### Clear handler (~line 11996)
 
-Also clear display buffer when split active.
+Clears canvas, persistent buffer, and display buffer (when split active via `if (bitmapDisplayBuffer) fillDisplayBuffer()`).
 
-### Step 12: Fix `resetBitmap()` (lines 9064-9079)
+### `resetBitmap()` (~line 10261)
 
-Null out: `bitmapPersistentBuffer`, `bitmapDisplayBuffer`, `bitmapComputeRes`, `bitmapDisplayRes`.
+Nulls out: `bitmapPersistentBuffer`, `bitmapDisplayBuffer`, `bitmapComputeRes = 0`, `bitmapDisplayRes = 0`.
 
-### Step 13: Fix snap "bitmap" export (lines 6164-6190)
+### Snap "bitmap" export (~line 6920)
 
-Use `bitmapComputeRes` for dimensions, `putImageData(bitmapPersistentBuffer)` instead of `drawImage`.
+Creates temp canvas at `bitmapComputeRes` dimensions, uses `ctx.putImageData(bitmapPersistentBuffer, 0, 0)` to copy full-resolution data, then `canvas.toBlob("image/png")` for the snap PNG download.
 
-### Step 14: Fix timing copy resolution (line 6625)
+### Timing copy resolution (~line 7454)
 
 `bitmapComputeRes || null` instead of `bitmapCtx.canvas.width`.
 
-## Verification
+## Verified Behavior
 
-1. **2000px**: No split path active, behavior identical to current
+1. **2000px and below**: No split path active, `bitmapDisplayBuffer` is null, behavior identical to original
 2. **5000px**: Canvas 2000px, workers compute at 5000px, preview downsampled
-3. **10000px**: No GPU context loss (canvas is only 2000px)
-4. **15000px**: ~900MB RAM for persistent buffer, BMP export works
-5. **25000px**: Test on 16GB+ machine
-6. **BMP export**: Opens correctly in macOS Preview at full resolution
+3. **10000px**: No GPU context loss (canvas is only 2000px / 16MB GPU)
+4. **15000px**: ~900MB RAM for persistent buffer, multi-format export works
+5. **25000px**: Requires 16GB+ system RAM (2.5GB persistent buffer)
+6. **Export**: All four formats encode correctly from persistent buffer
 7. **Clear**: Both buffers reset to background color
-8. **Snap bitmap**: Exports at compute resolution
+8. **Snap bitmap**: Exports at compute resolution via temp canvas + `putImageData`
 
 ## Risks and Mitigations
 
-- **25K OOM**: `new ImageData(25000, 25000)` allocates 2.5GB. Wrap in try/catch, show user error suggesting lower resolution.
-- **BMP file sizes**: 675MB at 15K, 1.9GB at 25K. Mitigated by multi-format export (see below).
-- **Snap at compute-res**: Creates temp canvas at full compute resolution (momentary GPU use). Acceptable for one-shot export. Could fall back to BMP for snaps too if needed.
+- **25K OOM**: `new ImageData(25000, 25000)` allocates 2.5GB. `initBitmapCanvas()` wraps this in try/catch with an alert suggesting lower resolution.
+- **Large file sizes**: Mitigated by multi-format export — PNG is typically smallest for sparse bitmaps (e.g., 4.5MB vs JPEG 35MB at 15K).
+- **Snap at compute-res**: Creates temp canvas at full compute resolution (momentary GPU use). Acceptable for one-shot export.
 - **Display quality**: Nearest-neighbor downsampling is fine — CSS already downscales to ~500px, and the persistent buffer preserves full resolution for export.
 
 ## Multi-Format Export

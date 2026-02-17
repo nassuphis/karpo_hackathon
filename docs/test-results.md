@@ -1,12 +1,12 @@
 # Test Results
 
-**490 tests total: 489 passed, 1 skipped** | Runtime: ~6m | Headless Chromium on Apple Silicon
+**492 tests total: 491 passed, 1 skipped** | Runtime: ~9m | Headless Chromium on Apple Silicon
 
 Run with: `python -m pytest tests/ -v`
 
 ---
 
-## test_solver.py — Ehrlich-Aberth Solver Correctness (11 tests)
+## test_solver.py — Ehrlich-Aberth Solver Correctness (10 tests)
 
 Tests `solveRootsEA()` — pure function, no global state needed.
 
@@ -170,15 +170,15 @@ Tests `initMorphTarget()`, blending formula, enable/disable state, save/load, de
 
 ---
 
-## test_jiggle.py — Jiggle Perturbation System (26 tests)
+## test_jiggle.py — Jiggle Perturbation System (28 tests)
 
-Tests `gaussRand()`, `jiggleTargetCoeffs()`, `computeJiggleCentroid()`, `generateJiggleOffsets()` across all 10 modes, cumulative state, and save/load.
+Tests `gaussRand()`, `jiggleTargetCoeffs()`, `computeJiggleCentroid()`, `generateJiggleOffsets()` across all 11 modes, cumulative state, and save/load.
 
 | Test Group | Count | What it checks |
 |------------|-------|----------------|
 | `TestJiggleHelpers` | 3 | gaussRand distribution (mean≈0, variance≈1), target coeffs = selected, centroid = center of mass |
-| `TestJiggleModes::test_mode_produces_offsets` | 9 | Each of 9 modes (random, rotate, walk, scale, circle, spiral, breathe, wobble, lissajous) produces offsets |
-| `TestJiggleModes::test_mode_offsets_are_finite` | 9 | All offsets from each mode are finite |
+| `TestJiggleModes::test_mode_produces_offsets` | 10 | Each of 10 modes (random, rotate, walk, scale, circle, spiral-centroid, spiral-center, breathe, wobble, lissajous) produces offsets |
+| `TestJiggleModes::test_mode_offsets_are_finite` | 10 | All offsets from each mode are finite |
 | `TestJiggleModes::test_none_mode_no_offsets` | 1 | "none" mode produces no offsets |
 | `TestJiggleCumulative` | 3 | Rotate accumulates angle (θ×2π per call), scale accumulates (×(1+step/100)), trigger count increments |
 | `TestJiggleSaveLoad` | 1 | Mode + parameters survive save/load |
@@ -202,7 +202,7 @@ Tests `fmtPassCount()`, button labels, removed variables, `initBitmapCanvas()` r
 
 ---
 
-## test_offcanvas.py — Off-Canvas Render, Image Export, Color & Derivative (80 tests)
+## test_offcanvas.py — Off-Canvas Render, Image Export, Color & Derivative (76 tests)
 
 Tests the split compute/display architecture, multi-format export, high-resolution support, decoupled bitmap/animation color modes, and derivative sensitivity coloring pipeline.
 
@@ -405,7 +405,7 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | Utilities | test_utils.py | 29 | Formatting, path catalog, prime speeds, audio helpers, ranges |
 | Save/load | test_state.py | 8 | Roundtrip serialization, partial state |
 | Morph | test_morph.py | 15 | Init, blending, enable/disable, save/load, degree sync, fast mode |
-| Jiggle | test_jiggle.py | 26 | Helpers, all 10 modes, cumulative state, save/load |
+| Jiggle | test_jiggle.py | 28 | Helpers, all 11 modes, cumulative state, save/load |
 | Fast mode | test_fastmode.py | 22 | Formatting, buttons, removed vars, resets, serialization, clear, toggle |
 | Off-canvas & export | test_offcanvas.py | 76 | Split compute/display, BMP/JPEG/PNG/TIFF export, library loading, save popup, format state, bitmap/animation color decoupling, derivative palette, rank normalization, root sensitivities |
 | Match strategies | test_match_strategy.py | 16 | Hungarian algorithm, greedy strategies, serialization, save/load, UI chips, worker blob |
@@ -417,7 +417,7 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | D-node ctx menu | test_dnode_ctx.py | 16 | Popup, open/close, snapshot/revert, accept, path changes, morph panel |
 | Integration | test_integration.py | 3 | Snap loading, determinism, fast mode pixels |
 | Benchmark | test_benchmark.py | 4 | JS vs WASM: correctness + performance |
-| **Total** | **23 files** | **490** | |
+| **Total** | **23 files** | **492** | |
 
 ---
 
@@ -439,7 +439,7 @@ tests/
   test_utils.py         — Formatting, path catalog, audio helpers
   test_state.py         — Save/load roundtrip, backward compat
   test_morph.py         — Coefficient morphing system
-  test_jiggle.py        — Jiggle perturbation (10 modes)
+  test_jiggle.py        — Jiggle perturbation (11 modes)
   test_fastmode.py      — Continuous fast mode, buttons, serialization
   test_offcanvas.py     — Off-canvas render split, multi-format export, high-res
   test_match_strategy.py — Root-matching strategies (Hungarian, greedy, UI)

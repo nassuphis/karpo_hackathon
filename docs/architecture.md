@@ -8,7 +8,7 @@ Architecture, conventions, performance insights, and debugging notes for the Pol
 
 ### Single-File Design
 
-The entire application lives in one HTML file (`index.html`, ~10,400 lines). CSS is embedded in a `<style>` block (lines 8–513), HTML body is lines 515–787, and all JavaScript is inline in a single `<script>` block (lines 804–10439). There is no build step — serve the file directly.
+The entire application lives in one HTML file (`index.html`, ~12,500 lines). CSS is embedded in a `<style>` block (lines 12–560), HTML body is lines 562–922, and all JavaScript is inline in a single `<script>` block (lines 923–12481). There is no build step — serve the file directly.
 
 **Why it works**: Zero tooling overhead, instant deployment to GitHub Pages, no import/bundling issues. D3.js and html2canvas are loaded from CDN.
 
@@ -18,25 +18,27 @@ The entire application lives in one HTML file (`index.html`, ~10,400 lines). CSS
 
 | Section | Lines | What's There |
 |---------|-------|-------------|
-| CSS variables & layout | 8–513 | Colors, grid, popover, panel, animation styles |
-| HTML body | 515–787 | Header, panels, SVG containers, 12+ popovers |
-| Constants & config | 825–1100 | Audio params, stat types, color maps, defaults |
-| Audio/sonification | 1014–1580 | FM synth, arpeggiator, encounters, routing |
-| Panel setup & scales | 830–900 | D3 scale initialization, grid drawing |
-| Coefficient data model | 868–880 | State arrays, selection sets, trail data |
-| Rendering functions | 1621–3960 | SVG circles, trails, domain coloring, grid |
-| Add/delete coefficients | 2659–2710 | Right-click canvas to add, context menu delete |
-| Morph panel & rendering | 3826–3960 | Ghost layer, D dots, interp lines/markers, drag handler |
-| Animation loop | 3631–3750 | `animLoop()`, path interpolation, morph mu, throttled solve |
-| Root solver | 4121–4310 | Ehrlich-Aberth, root matching, warm start |
-| Event handlers | 4430–5400 | Mouse, keyboard, tab switch, popover toggle |
-| Ops tools | 5100–5350 | Scale, rotate, translate — popover builders |
-| Recording & snapshots | 5650–6310 | Video capture, save/load JSON, PNG export |
-| Stats plotting | 7050–7430 | 16 time-series canvases, stat computation |
-| Bitmap & fast mode | 7430–8500 | Persistent buffer, worker coordination, compositing |
-| Web worker blob | 7582–8100 | Inline EA solver for workers |
-| List tab & transforms | 9000–9400 | Coefficient table, Transform dropdown, bulk operations |
-| Initialization | 10400–10439 | Default coefficients, first render, event wiring |
+| CSS variables & layout | 12–560 | Colors, grid, popover, panel, animation styles |
+| HTML body | 562–922 | Header (incl. animation controls), panels, SVG containers, 13 popovers |
+| Constants & config | 925–1130 | Audio params, stat types, color maps, defaults |
+| Audio/sonification | 1200–1800 | FM synth, arpeggiator, encounters, routing |
+| Coefficient data model | 987–1000 | State arrays, selection sets, trail data |
+| Rendering functions | 1830–5050 | SVG circles, trails, domain coloring, grid |
+| Add/delete coefficients | 3097–3170 | Right-click canvas to add, context menu delete |
+| D-node animation helpers | 3372–3410 | `allAnimatedDCoeffs()`, `advanceDNodesAlongCurves()`, `updateMorphPanelDDots()` |
+| Morph panel & rendering | 4410–4680 | Ghost layer, D dots, interp lines/markers, drag handler |
+| Animation loop | 4265–4360 | `animLoop()`, path interpolation, morph mu, throttled solve |
+| Root solver | 5057–5250 | Ehrlich-Aberth, root matching, warm start |
+| Event handlers | 5250–5950 | Mouse, keyboard, tab switch, popover toggle |
+| Ops tools | 6047–6230 | Scale, rotate, add — popover builders |
+| Recording & snapshots | 6350–7530 | Video capture, save/load JSON, PNG export |
+| Stats plotting | 7767–8720 | 16 time-series canvases, stat computation |
+| Bitmap & fast mode | 8720–10000 | Persistent buffer, worker coordination, compositing |
+| Web worker blob | 8954–9550 | Inline EA solver for workers |
+| List tab & transforms | 10575–11390 | Coefficient table, Transform dropdown, bulk operations |
+| D-List tab | 11391–12000 | D-node table, D-list curve editor |
+| Jiggle panel | 12233–12400 | Jiggle configuration panel |
+| Initialization | 12400–12481 | Default coefficients, first render, event wiring |
 
 ### External Dependencies
 
@@ -103,9 +105,9 @@ Key state: `morphEnabled`, `morphRate` (Hz, 0.01–2.00), `morphMu` (0–1), `mo
 
 Two `Set` objects: `selectedCoeffs` (indices into `coefficients[]`) and `selectedRoots` (indices into `currentRoots[]`). Most operations check `.size > 0` before enabling UI.
 
-### List Tab
+### C-List Tab
 
-The List tab (`leftTab === "list"`) shows a tabular view of all coefficients with:
+The C-List tab (`leftTab === "list"`) shows a tabular view of all coefficients with:
 - **Selection buttons**: All, None, SameCurve, and a curve-type cycler (cycles path types, not individual nodes)
 - **Transform dropdown** (20 transforms): Applies a one-shot transform to `selectedCoeffs`, then resets to "none". Includes PrimeSpeeds, SetAllSpeeds, RandomSpeed, RandomAngle, RandomRadius, LerpSpeed, LerpRadius, LerpAngle, RandomDirection, FlipAllDirections, ShuffleCurves, ShufflePositions, CircleLayout, RotatePositions, ScalePositions, JitterPositions, Conjugate, InvertPositions, SortByModulus, SortByArgument.
 - **Param1/Param2 sliders**: Passive inputs that transforms read when executed.
@@ -159,7 +161,7 @@ animLoop()
   └─ requestAnimationFrame(animLoop)  [next frame]
 ```
 
-**Fast mode is separate**: when `fastModeActive`, `animLoop()` returns early (line 3472). Workers drive the pipeline instead: `dispatchPassToWorkers()` → workers interpolate curves + blend morph + solve → `handleFastModeWorkerMessage()` → `compositeWorkerPixels()` → `advancePass()`. Fast mode runs continuously — `advancePass()` calls `reinitWorkersForJiggle()` every `jiggleInterval` passes (if jiggle enabled), which regenerates offsets and recomputes curves without resetting elapsed time.
+**Fast mode is separate**: when `fastModeActive`, `animLoop()` returns early (line 4267). Workers drive the pipeline instead: `dispatchPassToWorkers()` → workers interpolate curves + blend morph + solve → `handleFastModeWorkerMessage()` → `compositeWorkerPixels()` → `advancePass()`. Fast mode runs continuously — `advancePass()` calls `reinitWorkersForJiggle()` every `jiggleInterval` passes (if jiggle enabled), which regenerates offsets and recomputes curves without resetting elapsed time.
 
 ---
 
@@ -290,9 +292,11 @@ pop.style.left = r.left + "px";
 pop.style.top = (r.bottom + 6) + "px";
 ```
 
-Toggle via `.open` class. A single global `document.addEventListener("click", ...)` handler (around line 5065) closes any open popover when clicking outside.
+Toggle via `.open` class. A global `document.addEventListener("mousedown", ...)` handler (around line 6267) closes open popovers when clicking outside.
 
 ### Tab System
+
+Left panel has 6 tabs: C-Nodes, C-List, D-Nodes, D-List, Jiggle, Final. Switching calls `switchLeftTab(name)` which updates CSS classes and triggers content-specific refresh (e.g., `refreshCoeffList()` for C-List, `refreshDCoeffList()` for D-List, `renderMorphPanel()` for D-Nodes, `buildJigglePanel()` for Jiggle, `renderFinalPanel()` for Final).
 
 Right panel has 4 tabs: Roots, Stats, Sound, Bitmap. Switching calls `switchTab(name)` which updates CSS classes and triggers resize/redraw for the newly visible tab.
 
@@ -538,22 +542,22 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 ### Adding a New Popover
 
-1. Add HTML in the body (near the other popovers, around line 770+)
+1. Add HTML in the body (near the other popovers, around line 909+)
 2. Use class `ops-pop` for consistent styling
 3. Position via `getBoundingClientRect()` on the trigger button
 4. Toggle `.open` class to show/hide
-5. Add close logic in the global click handler (~line 5065)
+5. Add close logic in the global mousedown handler (~line 6267)
 
 ### Adding New State to Save/Load
 
-1. Add serialization in `buildStateMetadata()` (~line 6040)
-2. Add deserialization in `applyLoadedState()` (~line 6500) with a default fallback for old snapshots
+1. Add serialization in `buildStateMetadata()` (~line 6747)
+2. Add deserialization in `applyLoadedState()` (~line 7554) with a default fallback for old snapshots
 3. Test with old snapshot files to verify backward compatibility
 4. If the state affects fast mode workers, also add it to `serializeFastModeData()` and the worker init message
 
 ### Adding a New Statistic
 
-1. Add to `STAT_TYPES` array (line ~955)
+1. Add to `STAT_TYPES` array (line ~1138)
 2. Add a color to `STAT_COLORS` map
 3. Compute in the stats update section of `renderRoots()` or `updateStats()`
 4. It automatically becomes available as an audio route source
@@ -587,7 +591,7 @@ The bitmap system uses a **split compute/display** model (see [off-canvas-render
 
 ### Test Suite
 
-Automated tests exist in `tests/` using Playwright Python (headless Chromium). 430 tests across 20 files covering solver correctness, root matching, curve generation, path parametrics, shapes, polynomial operations, state save/load, stats, colors, utilities, morph system, jiggle perturbation (10 modes), continuous fast mode, off-canvas render split, multi-format image export, bitmap/animation color decoupling, derivative bitmap coloring, root-matching strategies (Hungarian algorithm, serialization, UI chips), D-node paths (D-List tab, animation helpers, D-curve serialization, backward compat), extended save/load fields, animation entry points (start/stop/home/scrub with D-nodes), integration, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
+Automated tests exist in `tests/` using Playwright Python (headless Chromium). 492 tests across 23 files covering solver correctness, root matching, curve generation, path parametrics, shapes, polynomial operations, state save/load, stats, colors, utilities, morph system, jiggle perturbation (10 modes), continuous fast mode, off-canvas render split, multi-format image export, bitmap/animation color decoupling, derivative bitmap coloring, root-matching strategies (Hungarian algorithm, serialization, UI chips), D-node paths (D-List tab, animation helpers, D-curve serialization, backward compat), D-node context menu (open/close, path editing, revert), extended save/load fields, animation controls (play/pause/resume, home, scrub with D-nodes), trajectory editor simplification (preview/revert/commit, PS button removal, node cycler removal), Final tab (rendering, morph blending, trail data), integration, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
 
 Manual testing remains important for:
 - Dragging coefficients and roots
@@ -599,8 +603,8 @@ Manual testing remains important for:
 
 ### Debugging Tools Built In
 
-1. **Timing popup** (T button): Shows per-pass breakdown — worker time, composite time, getImageData, putImageData, pixels painted
-2. **Config popup** (C button): Runtime tuning of worker count, steps per pass
+1. **Timing popup** (T button in header): Shows per-pass breakdown — worker time, composite time, getImageData, putImageData, pixels painted
+2. **Config popup** (cfg button in bitmap toolbar): Runtime tuning of worker count, steps per pass
 3. **Stats tab**: 16 real-time plots of root constellation features
 4. **Console logging**: Various `console.log` statements for worker lifecycle events (can be noisy)
 
@@ -630,19 +634,19 @@ Manual testing remains important for:
 
 | File | Topic | Lines |
 |------|-------|-------|
-| [solver.md](solver.md) | Ehrlich-Aberth algorithm, warm start, Horner eval, WASM | ~109 |
-| [paths.md](paths.md) | Curve representation, path types, cycle sync, jiggle | ~237 |
-| [sonification.md](sonification.md) | Audio graph, feature extraction, sound mapping, routing | ~233 |
-| [braids.md](braids.md) | Root monodromy, topological permutations | ~10 |
-| [patterns.md](patterns.md) | Coefficient/root patterns, gallery snapshots | ~99 |
-| [worker_implementation.md](worker_implementation.md) | Fast mode protocol, worker lifecycle, data format | ~546 |
-| [memory_timings.md](memory_timings.md) | Persistent buffer optimization: analysis + results | ~219 |
-| [wasm_investigation.md](wasm_investigation.md) | WASM solver design, build workflow, benchmarks | ~251 |
-| [off-canvas-render.md](off-canvas-render.md) | Split compute/display architecture, BMP export, GPU memory | ~224 |
+| [solver.md](solver.md) | Ehrlich-Aberth algorithm, warm start, Horner eval, WASM | ~108 |
+| [paths.md](paths.md) | Curve representation, path types, cycle sync, jiggle | ~315 |
+| [sonification.md](sonification.md) | Audio graph, feature extraction, sound mapping, routing | ~251 |
+| [braids.md](braids.md) | Root monodromy, topological permutations | ~17 |
+| [patterns.md](patterns.md) | Coefficient/root patterns, gallery snapshots | ~98 |
+| [worker_implementation.md](worker_implementation.md) | Fast mode protocol, worker lifecycle, data format | ~603 |
+| [memory_timings.md](memory_timings.md) | Persistent buffer optimization: analysis + results | ~218 |
+| [wasm_investigation.md](wasm_investigation.md) | WASM solver design, build workflow, benchmarks | ~240 |
+| [off-canvas-render.md](off-canvas-render.md) | Split compute/display architecture, BMP export, GPU memory | ~240 |
 | [d-node-paths.md](d-node-paths.md) | D-List tab, D-node path animation, fast mode workers, save/load | ~119 |
-| [test-results.md](test-results.md) | Playwright test results + JS/WASM benchmarks | ~122 |
-| [morph.md](morph.md) | Morph feature design: Phase 1 (static D), Phase 2/3 (deferred) | ~279 |
-| [interface.md](interface.md) | Complete UI control reference | ~250 |
+| [test-results.md](test-results.md) | Playwright test results + JS/WASM benchmarks | ~458 |
+| [morph.md](morph.md) | Morph feature design: Phase 1 (static D), Phase 2/3 (deferred) | ~317 |
+| [interface.md](interface.md) | Complete UI control reference | ~424 |
 | [architecture.md](architecture.md) | This file | — |
 | [archive/](archive/) | Archived docs: proof-read.md, worker_speed_issues.md | — |
 
@@ -650,41 +654,62 @@ Manual testing remains important for:
 
 | Component | Approx Lines |
 |-----------|-------------|
-| `initAudio()` | ~1208 |
-| `updateAudio()` | ~1272 |
-| `uiPing()` / `uiBuzz()` | ~1173 |
-| `addCoefficientAt()` | ~2659 |
-| `deleteCoefficient()` | ~2684 |
-| `animLoop()` | ~3631 |
-| `morphDrag` handler | ~3838 |
-| `renderMorphPanel()` | ~3853 |
-| `updateMorphMarkers()` | ~3960 |
-| `renderRoots()` | ~3990 |
-| `solveRootsEA()` | ~4121 |
-| `matchRootOrder()` | ~4272 |
-| `toggleSound()` | ~4803 |
-| `saveState()` | ~6281 |
-| `loadState()` | ~6305 |
-| `fillPersistentBuffer()` | ~7852 |
-| `fillDisplayBuffer()` | ~7867 |
-| `exportPersistentBufferAsBMP()` | ~7882 |
-| `exportPersistentBufferAs{JPEG,PNG,TIFF}()` | ~7950 |
-| `buildBitmapSavePop()` | ~6590 |
-| `initBitmapCanvas()` | ~7942 |
-| `createFastModeWorkerBlob()` | ~8076 |
-| `compositeWorkerPixels()` | ~8883 |
-| `bitmapColorMode` / `bitmapUniformColor` | ~891 |
-| `ROOT_COLOR_SWATCHES` | ~894 |
-| `buildColorPop()` (animation) | ~4768 |
-| `buildBitmapCfgPop()` (bitmap cfg + root color) | ~6336 |
-| `DERIV_PALETTE` / `DERIV_PAL_R/G/B` | ~935 |
-| `rankNorm()` + `computeSens()` (worker blob) | ~8476 |
-| `computeRootSensitivities()` (main thread) | ~1917 |
-| `hungarianMatch()` (worker blob) | ~8534 |
-| `bitmapMatchStrategy` | ~897 |
-| List tab transforms | ~9004 |
-| `allAnimatedDCoeffs()` | ~3130 |
-| `advanceDNodesAlongCurves()` | ~3138 |
-| `updateMorphPanelDDots()` | ~3161 |
-| `refreshDCoeffList()` | ~11227 |
-| `fastModeDCurves` | ~1051 |
+| `uiPing()` / `uiBuzz()` | ~1357 |
+| `initAudio()` | ~1421 |
+| `updateAudio()` | ~1485 |
+| `drawGrid()` | ~1830 |
+| `computeRootSensitivities()` (main thread) | ~2069 |
+| `barSnapshots` / `previewBarToSelection()` | ~2641 / ~3509 |
+| `revertBarPreview()` / `commitBarPreview()` | ~3560 / ~3581 |
+| `addCoefficientAt()` | ~3097 |
+| `deleteCoefficient()` | ~3123 |
+| `allAnimatedDCoeffs()` | ~3372 |
+| `advanceDNodesAlongCurves()` | ~3380 |
+| `updateMorphPanelDDots()` | ~3403 |
+| `animLoop()` | ~4265 |
+| `renderCoefficients()` | ~4364 |
+| `morphDrag` handler | ~4412 |
+| `renderMorphPanel()` | ~4482 |
+| `renderFinalPanel()` | ~4589 |
+| `updateMorphMarkers()` | ~4671 |
+| `advanceToElapsed()` | ~3724 |
+| `updateAnimSeconds()` | ~3780 |
+| `renderRoots()` | ~4769 |
+| `renderCoeffTrails()` | ~4875 |
+| `renderDomainColoring()` | ~4961 |
+| `solveRootsEA()` | ~5057 |
+| `matchRootOrder()` | ~5196 |
+| `buildColorPop()` (animation) | ~5484 |
+| `toggleSound()` | ~5736 |
+| `openOpTool()` / `buildScaleTool()` / `buildRotateTool()` | ~6047 / ~6070 / ~6118 |
+| Global mousedown close handler | ~6267 |
+| `recordTick()` | ~6578 |
+| `buildStateMetadata()` | ~6747 |
+| `buildBitmapCfgPop()` (bitmap cfg + root color) | ~7024 |
+| `buildBitmapSavePop()` | ~7279 |
+| `saveState()` | ~7506 |
+| `loadState()` / `applyLoadedState()` | ~7530 / ~7554 |
+| `resizeStatsCanvases()` | ~7790 |
+| `drawStatsPlot()` | ~8346 |
+| `drawAllStatsPlots()` | ~8715 |
+| `fillPersistentBuffer()` | ~8722 |
+| `fillDisplayBuffer()` | ~8737 |
+| `exportPersistentBufferAsBMP()` | ~8752 |
+| `exportPersistentBufferAs{JPEG,PNG,TIFF}()` | ~8816 |
+| `initBitmapCanvas()` | ~8842 |
+| `createFastModeWorkerBlob()` | ~8954 |
+| `hungarianMatch()` (worker blob) | ~9037 |
+| `rankNorm()` + `computeSens()` (worker blob) | ~9083 |
+| `compositeWorkerPixels()` | ~9946 |
+| `bitmapColorMode` / `bitmapUniformColor` | ~1008 |
+| `bitmapMatchStrategy` | ~1010 |
+| `ROOT_COLOR_SWATCHES` | ~1013 |
+| `DERIV_PALETTE` / `DERIV_PAL_R/G/B` | ~1057 |
+| `fastModeDCurves` | ~1094 |
+| `refreshCoeffList()` | ~10575 |
+| `lceRefIdx` | ~11084 |
+| `refreshListCurveEditor()` | ~11086 |
+| `refreshDCoeffList()` | ~11391 |
+| `dleRefIdx` | ~11873 |
+| `refreshDListCurveEditor()` | ~11875 |
+| `buildJigglePanel()` | ~12233 |

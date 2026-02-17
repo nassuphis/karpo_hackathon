@@ -22,7 +22,7 @@ That's it. Homebrew LLVM (`/opt/homebrew/opt/llvm/bin/clang`) is already install
 |------|--------|
 | Apple Clang 17 | Installed — does NOT support wasm target |
 | Homebrew LLVM 20 | Installed at `/opt/homebrew/opt/llvm/bin/clang` — supports `--target=wasm32` |
-| wasm-ld (lld) | **NOT installed** — `brew install lld` needed |
+| wasm-ld (lld) | Installed at `/opt/homebrew/bin/wasm-ld` |
 | Node.js v23 | Installed — used for base64 encoding |
 | Emscripten | Not installed (fallback option) |
 | Rust | Not installed (fallback option) |
@@ -32,42 +32,37 @@ That's it. Homebrew LLVM (`/opt/homebrew/opt/llvm/bin/clang`) is already install
 
 **Scope**: Only the worker solver gets WASM. The main thread solver stays in JS (called once per frame for interactive mode — marshalling overhead not worth it).
 
-**Zero-copy integration**: Worker typed arrays (`coeffsRe`, `coeffsIm`, `rootsRe`, `rootsIm`) become views into WASM linear memory. Coefficient interpolation writes directly into WASM memory, solver reads/writes there, pixel painting reads from there. No copying in the hot path.
+**Copy-in/copy-out integration**: Worker typed arrays (`coeffsRe`, `coeffsIm`, `rootsRe`, `rootsIm`) remain standard JS `Float64Array`s. The `solveEA_wasm()` wrapper copies inputs into WASM linear memory, calls the solver, and copies results back (with NaN rescue). This avoids the complexity of making all worker arrays views into WASM memory while keeping the solver hot path in compiled code.
 
 ```
 Worker step loop (per step):
-  1. Interpolate coefficients → typed array views into WASM memory
-  2. wasmInstance.exports.solveEA(offsets...) → operates on same memory
-  3. Read root positions from same views → paint pixels
+  1. Interpolate coefficients → standard JS typed arrays
+  2. solveEA_wasm() copies coeffs/roots into WASM memory, calls solver, copies results back
+  3. Read root positions from JS typed arrays → paint pixels
 ```
 
 ## Files
 
 ### New: `solver.c` (project root)
 
-Pure C solver, no stdlib dependencies. ~80 lines.
+Pure C solver, no stdlib dependencies. ~167 lines.
 
 ```c
 #define MAX_ITER 64
+#define TOL2 1e-16
 
 // Exported to WASM — called from worker JS
 __attribute__((export_name("solveEA")))
 void solveEA(double *cRe, double *cIm, int nCoeffs,
              double *warmRe, double *warmIm, int nRoots,
-             int unused1, unsigned char *unused2) {
-    // Strip leading zeros
-    int start = 0;
-    while (start < nCoeffs - 1 && cRe[start]*cRe[start] + cIm[start]*cIm[start] < 1e-30) start++;
-    int degree = nCoeffs - 1 - start;
-    if (degree <= 0) return;
+             int trackIter, unsigned char *iterCounts) {
+    // Strip leading zeros, degree-1 direct solve
+    // Copy stripped coefficients to stack arrays: cr[256], ci[256]
+    // Copy warm-start roots to local arrays: rRe[255], rIm[255]
 
-    // Degree 1: direct
-    if (degree == 1) { /* -b/a */ return; }
-
-    // Copy stripped coefficients to local arrays
-    double cr[256], ci[256];
-    double rRe[255], rIm[255];
-    // ... copy from inputs ...
+    // Convergence tracking (only when trackIter != 0):
+    //   conv[255] array tracks per-root convergence
+    //   iterCounts[i] gets the iteration where root i converged
 
     // Main iteration loop (identical algorithm to JS)
     for (int iter = 0; iter < MAX_ITER; iter++) {
@@ -78,15 +73,15 @@ void solveEA(double *cRe, double *cIm, int nCoeffs,
             // Aberth: S = Σ 1/(z_i - z_j)
             // Correction: z -= w/(1 - w*S)
         }
-        if (maxCorr2 < 1e-16) break;
+        if (maxCorr2 < TOL2) break;
     }
 
-    // Write back to warmRe/warmIm (finite roots only)
-    // NaN rescue: skip in WASM, let JS handle after call
+    // Write back to warmRe/warmIm (only finite values)
+    // NaN check via x == x (IEEE 754): skip NaN roots, leave warm-start unchanged
 }
 ```
 
-Key: no `math.h`, no `malloc`, no libc. Pure `+`, `-`, `*`, `/` on `double`. NaN check via `x != x` (standard IEEE 754). NaN rescue (cos/sin for unit-circle seeding) stays in JS — it's a cold path.
+Key: no `math.h`, no `malloc`, no libc. Pure `+`, `-`, `*`, `/` on `double`. The `trackIter`/`iterCounts` parameters remain in the ABI for forward compatibility but are called with `0, 0` from JS (iteration count mode was removed from the UI). NaN check is in the C code (`x == x`); NaN rescue (cos/sin for unit-circle seeding) happens in the JS `solveEA_wasm()` wrapper during the copy-back step.
 
 ### New: `build-wasm.sh` (project root)
 
@@ -109,81 +104,82 @@ echo "Base64 string saved to solver.wasm.b64 — paste into index.html"
 
 ### Modified: `index.html`
 
-**Change 1** — Add base64 constant (near top of script block, ~line 825):
+**Change 1** — Add base64 constant (~line 1124):
 ```javascript
 const WASM_SOLVER_B64 = "AGFzbQ...";  // ~2-4KB base64 string
 ```
 
-**Change 2** — Modify `createFastModeWorkerBlob()` (~line 7352):
+**Change 2** — Modify `createFastModeWorkerBlob()` (~line 8954):
 
-Replace the JS `solveEA` function with WASM-backed version:
+Add a WASM solver alongside the existing JS `solveEA`:
 
 ```javascript
-// Inside worker blob string:
+// Inside worker blob string (~line 9133):
 
-const WASM_B64 = "${WASM_SOLVER_B64}";  // Injected from outer scope
+// --- WASM solver support ---
+var S_useWasm = false;
 var wasmExports = null;
-var wasmMemory = null;
+var wasmMemBuf = null;
+var W_coeffsRe, W_coeffsIm, W_warmRe, W_warmIm;
+var W_OFF_CR, W_OFF_CI, W_OFF_WR, W_OFF_WI;
 
-// Memory layout (byte offsets into WASM linear memory):
-// 0x0000: data region (coeffs, roots)
-// 0x8000: C shadow stack (grows downward from 0xFFFF)
-var MEM_COEFFS_RE, MEM_COEFFS_IM, MEM_WARM_RE, MEM_WARM_IM;
-
-function initWasm(nCoeffs, nRoots) {
-    var bytes = Uint8Array.from(atob(WASM_B64), function(c) { return c.charCodeAt(0); });
-    wasmMemory = new WebAssembly.Memory({ initial: 1 });  // 64KB
+function initWasm(b64, nCoeffs, nRoots) {
+    var raw = atob(b64);
+    var bytes = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
     var mod = new WebAssembly.Module(bytes.buffer);
-    var inst = new WebAssembly.Instance(mod, { env: { memory: wasmMemory } });
+    var inst = new WebAssembly.Instance(mod);  // WASM exports its own memory
     wasmExports = inst.exports;
-
+    wasmMemBuf = wasmExports.memory.buffer;
     // Compute fixed offsets (all 8-byte aligned)
-    MEM_COEFFS_RE = 0;
-    MEM_COEFFS_IM = nCoeffs * 8;
-    MEM_WARM_RE = nCoeffs * 2 * 8;
-    MEM_WARM_IM = (nCoeffs * 2 + nRoots) * 8;
+    W_OFF_CR = 0;
+    W_OFF_CI = nCoeffs * 8;
+    W_OFF_WR = nCoeffs * 2 * 8;
+    W_OFF_WI = (nCoeffs * 2 + nRoots) * 8;
+    W_coeffsRe = new Float64Array(wasmMemBuf, W_OFF_CR, nCoeffs);
+    W_coeffsIm = new Float64Array(wasmMemBuf, W_OFF_CI, nCoeffs);
+    W_warmRe = new Float64Array(wasmMemBuf, W_OFF_WR, nRoots);
+    W_warmIm = new Float64Array(wasmMemBuf, W_OFF_WI, nRoots);
 }
-```
 
-**Change 3** — Worker `init` handler: call `initWasm(nCoeffs, nRoots)` after receiving init data.
-
-**Change 4** — Replace worker typed arrays with WASM memory views:
-
-```javascript
-// In "init" handler, AFTER initWasm():
-S_coeffsRe = new Float64Array(wasmMemory.buffer, MEM_COEFFS_RE, S_nCoeffs);
-S_coeffsIm = new Float64Array(wasmMemory.buffer, MEM_COEFFS_IM, S_nCoeffs);
-// Copy initial coefficient values into WASM memory views
-for (var i = 0; i < S_nCoeffs; i++) {
-    S_coeffsRe[i] = initCoeffsRe[i];
-    S_coeffsIm[i] = initCoeffsIm[i];
-}
-```
-
-**Change 5** — In the step loop, replace `solveEA(...)` call with WASM call:
-
-```javascript
-// rootsRe/rootsIm are already views into WASM memory:
-tmpRe.set(rootsRe); tmpIm.set(rootsIm);  // tmpRe/tmpIm are views at MEM_WARM_RE/IM
-wasmExports.solveEA(
-    MEM_COEFFS_RE, MEM_COEFFS_IM, nCoeffs,
-    MEM_WARM_RE, MEM_WARM_IM, nRoots,
-    0, 0
-);
-// Results are already in tmpRe/tmpIm (same memory)
-```
-
-**Change 6** — NaN rescue after WASM call (cold path, JS):
-
-```javascript
-// After wasmExports.solveEA():
-for (var i = 0; i < nRoots; i++) {
-    if (tmpRe[i] !== tmpRe[i] || tmpIm[i] !== tmpIm[i]) {  // isNaN
-        var angle = (2 * Math.PI * i) / nRoots + 0.37;
-        tmpRe[i] = Math.cos(angle);
-        tmpIm[i] = Math.sin(angle);
+function solveEA_wasm(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots) {
+    // Copy inputs into WASM memory
+    W_coeffsRe.set(cRe);
+    W_coeffsIm.set(cIm);
+    W_warmRe.set(warmRe);
+    W_warmIm.set(warmIm);
+    wasmExports.solveEA(W_OFF_CR, W_OFF_CI, nCoeffs, W_OFF_WR, W_OFF_WI, nRoots, 0, 0);
+    // Copy results back with NaN rescue
+    for (var i = 0; i < nRoots; i++) {
+        var rr = W_warmRe[i], ri = W_warmIm[i];
+        if (rr === rr && ri === ri) {  // NaN check
+            warmRe[i] = rr; warmIm[i] = ri;
+        } else {
+            var angle = (2 * Math.PI * i) / nRoots + 0.37;
+            warmRe[i] = Math.cos(angle); warmIm[i] = Math.sin(angle);
+        }
     }
 }
+```
+
+**Change 3** — Worker `init` handler (~line 9218): call `initWasm(b64, nCoeffs, nRoots)` when `useWasm` flag is set. Falls back to JS solver on error.
+
+**Change 4** — In the step loop (~line 9351), select solver based on `S_useWasm`:
+
+```javascript
+tmpRe.set(rootsRe); tmpIm.set(rootsIm);
+if (S_useWasm && wasmExports) {
+    solveEA_wasm(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots);
+} else {
+    solveEA(coeffsRe, coeffsIm, nCoeffs, tmpRe, tmpIm, nRoots);
+}
+```
+
+**Change 5** — Main thread sends WASM flag and base64 data to workers (~line 9862):
+
+```javascript
+useWasm: solverType === "wasm",
+wasmB64: solverType === "wasm" ? WASM_SOLVER_B64 : null,
 ```
 
 ## WASM Memory Layout (64KB = 1 page)

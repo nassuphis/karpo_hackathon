@@ -23,6 +23,10 @@ The UI is organized around a compact header bar and two side-by-side complex-pla
 | **Load** | Load a previously saved JSON snapshot. |
 | **Export** (&#11015;) | Opens a popup with 7 export modes (see below). |
 | **T** | Timing stats: steps/sec, pass times, composite breakdown. Clears when worker count changes. |
+| **Scrub slider** | Additive scrubber: drag to add seconds to the current elapsed time (only works when animation is paused). Resets to zero on release. |
+| **Play / Pause / Resume** | 3-state cycle: Play starts from zero, Pause stops mid-animation, Resume continues from where it left off. |
+| **Seconds counter** | Displays current animation elapsed time (e.g. `3.14s`). Updates during playback and scrubbing. |
+| **Home** | Return all animated C and D nodes to their start positions (curve[0]) and reset elapsed to 0. |
 
 ### Export Popup
 
@@ -34,11 +38,11 @@ Seven capture modes: Both, Coeffs, Roots, Stats, Sound, Bitmap, Full. Each downl
 
 ## Left Panel
 
-The left panel has four tabs and a shared animation bar.
+The left panel has six tabs: C-Nodes, C-List, D-Nodes, D-List, Jiggle, and Final.
 
-### Coefficients Tab
+### C-Nodes Tab
 
-![Coefficients tab with circle paths](images/iface_coeffs_paths.png)
+![C-Nodes tab with circle paths](images/iface_coeffs_paths.png)
 
 Interactive SVG complex-plane visualization of polynomial coefficients.
 
@@ -51,19 +55,20 @@ Interactive SVG complex-plane visualization of polynomial coefficients.
 
 ![Trajectory editor / animation bar](images/iface_anim_bar.png)
 
-Located below the Coefficients tab bar. Controls the animation path for selected coefficients.
+Located at the top of the C-Nodes tab. Controls the animation path for selected coefficients.
 
 **First row:** Coefficient picker, Select All / Deselect, selection label, **Update Whole Selection** button.
 
 **Second row:** Path type dropdown and path-specific controls. Sliders change based on the chosen path type (e.g. R/S/A/CW-CCW for circles, S/sigma for Gaussian). Adjusting controls shows a live preview of the proposed paths. Click away or press Escape to revert; click **Update Whole Selection** to commit. Controls dim when no coefficients are selected.
 
-#### Animation Bar
+#### Preview / Revert / Commit Pattern
 
-| Control | Description |
-|---------|-------------|
-| **Scrub slider** | Drag to manually advance C and D coefficients along their paths (0-5 seconds). |
-| **Play / Pause** | Start or pause animation of all coefficients with assigned trajectories. |
-| **Home** | Return all animated C and D nodes to their start positions (curve[0]). |
+The trajectory editor uses a preview/revert workflow. When you change the path dropdown or adjust a slider, the changes are shown as a live preview on the canvas (backed by `barSnapshots` which stores the original state). You can:
+
+- Click **Update Whole Selection** to commit the previewed changes (`commitBarPreview()`)
+- Click outside the editor or press **Escape** to revert to the original state (`revertBarPreview()`)
+
+This replaces the previous immediate-apply behavior, giving you a chance to experiment without permanently changing paths.
 
 #### Path Types (21)
 
@@ -80,11 +85,11 @@ Each coefficient stores its own path type, radius, speed, angle, and direction i
 1. Select one or more coefficients (click, marquee, or Select All)
 2. Choose a path type and adjust controls -- a live preview shows the proposed paths
 3. Click **Update Whole Selection** to commit, or click away / press Escape to revert
-4. Press **Play** -- all coefficients with a trajectory animate simultaneously
+4. Press **Play** (in the header bar) -- all coefficients with a trajectory animate simultaneously
 
-### List Tab
+### C-List Tab
 
-![List tab](images/iface_list_tab.png)
+![C-List tab](images/iface_list_tab.png)
 
 Tabular view of all coefficients with per-row columns:
 
@@ -102,13 +107,15 @@ Tabular view of all coefficients with per-row columns:
 | Curve index | Current position along path |
 | Coordinates | Complex value (re + im*i) |
 
-#### List Curve Editor
+**Toolbar:** Select All / Deselect, **Same Curve** (select all coefficients with the displayed curve type), curve type cycler (prev/next arrows to cycle through path types present in the polynomial), selection count, Transform dropdown, Param1/Param2 sliders.
 
-![List curve editor](images/iface_list_editor.png)
+#### C-List Curve Editor
 
-The curve editor at the top of the List tab lets you edit the path for the selection. Choose a path type, adjust parameters, and click **Update Whole Selection** to apply to all selected coefficients.
+![C-List curve editor](images/iface_list_editor.png)
 
-#### Transform dropdown (21 bulk operations)
+The curve editor below the toolbar lets you edit the path for the selection. It shows controls based on the first selected coefficient's current path type. Choose a path type, adjust parameters, and click **Update Whole Selection** to apply to all selected coefficients. Controls dim when nothing is selected.
+
+#### Transform dropdown (20 bulk operations)
 
 | Transform | Description |
 |-----------|-------------|
@@ -135,21 +142,59 @@ The curve editor at the top of the List tab lets you edit the path for the selec
 
 **Param1 / Param2** sliders supply arguments to transforms that need them (e.g. Lerp endpoints, rotation angle).
 
+### D-Nodes Tab
+
+![D-Nodes tab](images/iface_morph_tab.png)
+
+Interactive SVG complex-plane visualization of morph target D-nodes. See [Morph](morph.md).
+
+- **Copy C->D** / **Swap C<->D** buttons in the toolbar
+- D-node dots with drag interaction (same as coefficient panel)
+- Selection count shown in the tab header
+
 ### D-List Tab
 
 ![D-List tab](images/iface_dlist_tab.png)
 
-Identical structure to the List tab, but for morph target D-nodes. Assign paths, speeds, and transforms to D-nodes independently from C-coefficients. See [D-Node Paths](d-node-paths.md).
+Identical structure to the C-List tab, but for morph target D-nodes. Assign paths, speeds, and transforms to D-nodes independently from C-coefficients. The toolbar has the same controls: Select All / Deselect, Same Curve, curve type cycler, Transform dropdown, and Param1/Param2 sliders. The curve editor uses the same pattern: select D-nodes, adjust parameters, and click **Update Whole Selection** to apply. See [D-Node Paths](d-node-paths.md).
 
-### Morph Tab
+### Jiggle Tab
 
-![Morph tab](images/iface_morph_tab.png)
+Dedicated tab for coefficient perturbation controls (previously embedded in the bitmap cfg popup).
 
-Interactive morph panel with C/D coefficient visualization and blending controls. See [Morph](morph.md).
+- **Mode** dropdown (11 modes, see below)
+- Mode-specific parameter controls (sigma, theta, amplitude, period, etc.)
+- **Interval** slider (1-100 seconds between perturbation triggers)
+- **GCD** button: auto-compute interval from the GCD of coefficient speeds
 
-- **Copy C to D** / **Swap C and D** buttons
-- Blend rate control
-- D-node dots with drag interaction
+**Jiggle modes** (11):
+
+| Mode | Description | Parameters |
+|------|-------------|------------|
+| None | No perturbation | -- |
+| Random | Gaussian offsets each trigger | sigma |
+| Rotate | Rotate selected around centroid | theta (turns) |
+| Walk | Random walk accumulating offsets | sigma |
+| Scale | Scale from centroid | % per trigger |
+| Circle | Rotate around origin | theta (turns) |
+| Spiral (centroid) | Rotate + scale around centroid | theta, growth % |
+| Spiral (center) | Rotate + scale around origin | theta, growth % |
+| Breathe | Sinusoidal scaling from centroid | amplitude, period |
+| Wobble | Sinusoidal rotation around centroid | amplitude, period |
+| Lissajous | Translate along Lissajous figure | amplitude, period, freqX, freqY |
+
+See [Paths](paths.md) for jiggle formulas.
+
+### Final Tab
+
+![Final tab](images/iface_morph_tab.png)
+
+Shows the actual coefficients sent to the solver (blended C/D positions when morphing is enabled).
+
+- **Morph** checkbox: enable/disable morph blending
+- **Rate** slider (0.01-2.00 Hz): morph oscillation frequency
+- **mu** display: current blend parameter (0=C, 1=D)
+- SVG complex-plane visualization of the final blended coefficients
 
 ---
 
@@ -311,9 +356,11 @@ Four export formats: JPEG (with quality slider), PNG, BMP, TIFF. The image is ex
 | Setting | Options |
 |---------|---------|
 | **Solver engine** | JavaScript or WebAssembly. See [WASM](wasm_investigation.md). |
+| **Workers** | Number of parallel Web Workers: 1, 2, 4, 8, 16. |
 | **Background color** | 24 preset colors (darks, lights, grays). |
-| **Jiggle** | 10 perturbation modes (see below). Mode-specific parameter sliders, interval control, select-all toggle. |
 | **Root color** | 4 bitmap color modes (see below). Independent from animation root coloring. |
+
+Jiggle controls have moved to the dedicated [Jiggle tab](#jiggle-tab) in the left panel.
 
 **Bitmap color modes** (4):
 
@@ -334,23 +381,6 @@ Four export formats: JPEG (with quality slider), PNG, BMP, TIFF. The image is ex
 | Greedy x1 | Nearest-neighbor | O(n^2) every step | Good |
 | Greedy x4 | Nearest-neighbor every 4th step | O(n^2) / 4 | Slight drift (default) |
 
-**Jiggle modes** (10):
-
-| Mode | Description | Parameters |
-|------|-------------|------------|
-| None | No perturbation | -- |
-| Random | Gaussian offsets each trigger | sigma |
-| Rotate | Rotate selected around centroid | theta (turns) |
-| Walk | Random walk accumulating offsets | sigma |
-| Scale | Scale from centroid | % per trigger |
-| Circle | Rotate around origin | theta (turns) |
-| Spiral | Rotate + scale around centroid | theta, % |
-| Breathe | Sinusoidal scaling from centroid | amplitude, period |
-| Wobble | Sinusoidal rotation around centroid | amplitude, period |
-| Lissajous | Translate along Lissajous figure | amplitude, period, freqX, freqY |
-
-See [Paths](paths.md) for jiggle formulas.
-
 ---
 
 ## Selection Model
@@ -362,8 +392,8 @@ See [Paths](paths.md) for jiggle formulas.
 - **Select All / Deselect** buttons in both the trajectory editor bar and roots toolbar.
 - Selected nodes pulse with a bright glow.
 - Clicking a coefficient clears any root selection and vice versa.
-- The trajectory editor displays the last-selected coefficient's settings. Adjusting controls shows a live preview; click **Update Whole Selection** to commit or click away to revert.
-- Selection count appears in panel headers: green for coefficients, red for roots.
+- The trajectory editor displays the first selected coefficient's settings (by index). Adjusting controls shows a live preview; click **Update Whole Selection** to commit or click away to revert.
+- Selection count appears in tab headers: green for coefficients (C-Nodes tab), D-nodes (D-Nodes tab), and jiggle targets (Jiggle tab); red for roots.
 
 ---
 

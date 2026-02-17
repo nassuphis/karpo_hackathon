@@ -23,14 +23,14 @@ Pass (100K steps, 4 workers):
                                         │
                               ┌─────────┴──────────┐
                               │                     │
-                         more passes         cycle complete
+                         more passes       jiggle boundary
                               │                     │
-                       dispatchPass()      exitFastMode()
+                       dispatchPass()   reinitWorkersForJiggle()
                                            generateJiggleOffsets()
-                                           enterFastMode()
+                                           initFastModeWorkers()
 ```
 
-Workers are **persistent** within a cycle: created once at init, reused across passes (only roots + elapsed offset change per pass). Terminated at cycle boundary or when user exits.
+Workers are **persistent** within a jiggle cycle: created once at init, reused across passes (only roots + elapsed offset change per pass). Terminated and recreated at jiggle boundaries (via `reinitWorkersForJiggle()`), or terminated when user exits fast mode.
 
 ---
 
@@ -55,8 +55,8 @@ Workers are **persistent** within a cycle: created once at init, reused across p
 | `fastModeActive` | bool | Fast mode currently running |
 | `fastModeElapsedOffset` | number | Accumulated virtual seconds across passes within one cycle |
 | `fastModePassCount` | number | Completed passes in current cycle (resets at boundary) |
-| `fastModeTargetPasses` | number | Passes for full cycle (0 = unlimited). Computed by `computeFullCyclePasses()` |
-| `fastModeCumulativeSec` | number | Total virtual seconds across all cycles (never resets during session) |
+| `fastModeTargetPasses` | number | Passes per jiggle cycle (= `jiggleInterval`, since each pass = 1s). 0 = unlimited. |
+| `fastModeCycleStartTime` | number | `performance.now()` when current cycle started |
 | `fastModeTotalSteps` | number | Steps per pass (from dropdown: 10 to 1M) |
 | `fastModeStepIndex` | number | Current step within pass (legacy fallback only) |
 
@@ -69,6 +69,7 @@ Workers are **persistent** within a cycle: created once at init, reused across p
 | `fastModeWorkersComplete` | number | Workers that reported "done" for current pass |
 | `fastModeWorkerPixels` | object[] | Collected sparse pixel buffers from workers |
 | `fastModeWorkerRoots` | {re, im} | Final root positions from last-range worker (warm start) |
+| `fastModeCompositeBreakdown` | object\|null | Timing breakdown of compositeWorkerPixels phases |
 | `fastModeWorkerProgress` | number[] | Per-worker step counts for progress aggregation |
 | `fastModePassStartTime` | number | `performance.now()` at pass start |
 | `fastModeTimingHistory` | object[] | Array of `{passMs, stepsPerSec, workers, steps}` |
@@ -78,8 +79,9 @@ Workers are **persistent** within a cycle: created once at init, reused across p
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `fastModeCurves` | Map\<int, curve\> | Hi-res curves for animated coefficients (N = stepsVal points) |
-| `fastModeRootColors` | string[] | CSS color strings per root (legacy fallback) |
+| `fastModeCurves` | Map\<int, curve\> | Hi-res curves for animated C-coefficients (N = stepsVal points) |
+| `fastModeDCurves` | Map\<int, curve\> | Hi-res curves for animated D-node morph targets |
+| `fastModeRootColors` | string[] | CSS color strings per root (legacy fallback and `paintBitmapFrameFast`) |
 
 ---
 
@@ -105,9 +107,17 @@ Two solver implementations are available, selectable via the **cfg** button in t
 
 Both solvers operate on flat `Float64Array` buffers for cache efficiency. The WASM solver copies data into/out of WASM linear memory (64KB) — negligible overhead relative to the O(n²) solver cost.
 
-### 2. Root Matching (`matchRoots`)
+### 2. Root Matching (`matchRoots` / `hungarianMatch`)
 
-Greedy nearest-neighbor matching: reorders new roots to best match previous step's ordering. O(n²) per call. Only invoked every 4th step in colored (rainbow) mode to limit overhead. Skipped entirely in uniform-color mode.
+Three strategies controlled by `S_matchStrategy`:
+
+| Strategy | Function | Frequency | Complexity |
+|----------|----------|-----------|------------|
+| `"assign4"` (default) | `matchRoots()` greedy | Every 4th step | O(n²) |
+| `"assign1"` | `matchRoots()` greedy | Every step | O(n²) |
+| `"hungarian1"` | `hungarianMatch()` Kuhn-Munkres | Every step | O(n³) |
+
+Matching is skipped entirely in uniform-color and proximity modes. In derivative mode, greedy matching runs every 4th step regardless of `S_matchStrategy`.
 
 ### 3. Message Handler (`self.onmessage`)
 
@@ -127,6 +137,20 @@ S_useWasm                  bool          Use WASM solver (set from init message)
 S_noColor                  bool          Uniform color mode
 S_uniformR/G/B             int           Uniform color RGB
 S_totalSteps, S_FPS        int, number   Steps per pass, seconds per pass
+S_proxColor                bool          Proximity color mode
+S_proxPalR/G/B             Uint8Array    16-entry proximity palette RGB
+S_derivColor               bool          Derivative color mode
+S_derivPalR/G/B            Uint8Array    16-entry derivative palette RGB
+S_selIndices               int[]|null    Selected coefficient indices (for derivative mode)
+S_morphEnabled             bool          Morph blending active
+S_morphRate                number        Morph oscillation rate (Hz)
+S_morphTargetRe/Im         Float64Array  Morph target coefficient values
+S_matchStrategy            string        Root matching strategy ("assign4"|"assign1"|"hungarian1")
+S_dCurvesFlat              Float64Array  D-node curve points (re,im interleaved)
+S_dEntries                 object[]      D-node animation entries [{idx, ccw, speed}]
+S_dOffsets, S_dLengths     int[]         D-curve offset/length per entry
+S_dIsCloud                 bool[]        D-curve random-cloud flag per entry
+S_jiggleRe, S_jiggleIm     Float64Array  Per-coefficient jiggle offsets (applied post-interpolation)
 ```
 
 #### Per-Step Computation (within "run" handler)
@@ -144,18 +168,24 @@ For each step in `[stepStart, stepEnd)`:
    - Cloud curves: snap to nearest point (no interpolation)
    - Smooth curves: linear interpolation between adjacent points
 
-3. **Solve**: Call `solveEA()` (JS) or `solveEA_wasm()` (WASM) based on `S_useWasm` flag
+3. **Advance D-node curves** (if morph enabled): Same interpolation as step 2 but for `S_dEntries`/`S_dCurvesFlat`, updating `morphRe`/`morphIm` arrays
 
-4. **Match roots** (colored mode, every 4th step): Reorder roots to track identity
+4. **Morph blend** (if `S_morphEnabled`): Sinusoidal blend `mu = 0.5 + 0.5 * sin(2π * morphRate * elapsed)` between C-coefficients and morph target D-coefficients
 
-5. **Paint pixel**: Map root position to canvas coordinates:
+5. **Apply jiggle offsets**: If `S_jiggleRe`/`S_jiggleIm` present, add per-coefficient offsets post-interpolation
+
+6. **Solve**: Call `solveEA()` (JS) or `solveEA_wasm()` (WASM) based on `S_useWasm` flag
+
+7. **Match roots** (colored mode, per `S_matchStrategy`): Reorder roots to track identity
+
+8. **Paint pixel**: Map root position to canvas coordinates:
    ```
    ix = ((rootRe / range + 1) * 0.5 * W) | 0
    iy = ((1 - rootIm / range) * 0.5 * H) | 0
    ```
    Append to sparse pixel arrays if in bounds.
 
-6. **Report progress** every 2000 steps.
+9. **Report progress** every 2000 steps.
 
 ---
 
@@ -202,8 +232,31 @@ Compositing on main thread writes sparse pixels directly into a **persistent `Im
     bitmapRange: number,
     noColor: bool,
     uniformR: int, uniformG: int, uniformB: int,
+    proxColor: bool,               // proximity color mode
+    proxPalR: ArrayBuffer,         // Uint8Array(16), proximity palette R
+    proxPalG: ArrayBuffer,
+    proxPalB: ArrayBuffer,
+    derivColor: bool,              // derivative color mode
+    derivPalR: ArrayBuffer,        // Uint8Array(16), derivative palette R
+    derivPalG: ArrayBuffer,
+    derivPalB: ArrayBuffer,
+    selectedCoeffIndices: [int, ...],  // which coefficients for derivative sensitivity
     totalSteps: int,
     FAST_PASS_SECONDS: number,     // always 1.0
+    useWasm: bool,                 // use WASM solver
+    wasmB64: string|null,          // base64-encoded WASM binary (if useWasm)
+    morphEnabled: bool,            // morph blending active
+    morphRate: number,             // morph oscillation rate (Hz)
+    morphTargetRe: ArrayBuffer,    // Float64Array, morph target real parts (or null)
+    morphTargetIm: ArrayBuffer,    // Float64Array, morph target imag parts (or null)
+    matchStrategy: string,         // "assign4"|"assign1"|"hungarian1"
+    dAnimEntries: [{idx, ccw, speed}, ...],  // D-node animation entries
+    dCurvesFlat: ArrayBuffer,      // Float64Array, D-node curve points
+    dCurveOffsets: [int, ...],
+    dCurveLengths: [int, ...],
+    dCurveIsCloud: [bool, ...],
+    jiggleRe: ArrayBuffer,         // Float64Array, per-coefficient jiggle offsets (or null)
+    jiggleIm: ArrayBuffer,
 }
 ```
 
@@ -232,6 +285,7 @@ All workers receive the same root positions. Worker 0 has perfect warm-start con
     type: "progress",
     workerId: int,
     step: int,                     // steps completed by this worker so far
+    total: int,                    // total steps assigned to this worker
 }
 ```
 
@@ -265,14 +319,16 @@ All workers receive the same root positions. Worker 0 has perfect warm-start con
 4. **Precompute hi-res curves** for all animated coefficients:
    - `allAnimatedCoeffs()` returns Set of indices where `pathType !== "none"`
    - Snap coefficients to home position (`curve[0]`) temporarily for `coeffExtent()` calculation
-   - For each animated coeff: `computeCurveN(home + jiggleOffset, pathType, absRadius, angle, extra, stepsVal)`
+   - For each animated coeff: `computeCurveN(home, pathType, absRadius, angle, extra, stepsVal)` (jiggle offsets are NOT baked into curves; they are applied post-interpolation in workers)
    - Store in `fastModeCurves` Map
-5. Precompute root colors (`rootColorRGB`)
-6. Set `fastModeActive = true`, reset counters
-7. Compute `fastModeTargetPasses` via `computeFullCyclePasses()`
-8. Show progress bar / pass counter if enabled
-9. **If no Worker support**: start legacy fallback (`setTimeout(fastModeChunkLegacy, 0)`)
-10. **Otherwise**: serialize data → `initFastModeWorkers()` → first `dispatchPassToWorkers()`
+5. **Precompute hi-res D-curves** for animated morph target coefficients (`allAnimatedDCoeffs()`), stored in `fastModeDCurves` Map
+6. Precompute root colors (`rootColorRGB`)
+7. Set `fastModeActive = true`, reset counters
+8. Set `fastModeTargetPasses = jiggleInterval`
+9. Show progress bar / pass counter if enabled
+10. **If coefficient view**: plot curves directly via `plotCoeffCurvesOnBitmap()` (no workers needed)
+11. **If no Worker support**: start legacy fallback (`setTimeout(fastModeChunkLegacy, 0)`)
+12. **Otherwise**: serialize data → `initFastModeWorkers()` → first `dispatchPassToWorkers()`
 
 ### initFastModeWorkers()
 
@@ -297,10 +353,10 @@ Then immediately call `dispatchPassToWorkers()`.
 1. `compositeWorkerPixels()` — merge sparse pixels onto canvas
 2. `recordPassTiming()` — push `{passMs, stepsPerSec, workers, steps}` to history
 3. `advancePass()`:
-   - `fastModeElapsedOffset += 1.0`, increment pass/sec counters
-   - Update progress bar and pass counter UI
-   - **Cycle boundary check**: if `passCount >= targetPasses`:
-     - `exitFastMode()` → `generateJiggleOffsets()` → `enterFastMode()` (new cycle with perturbed coefficients)
+   - `fastModeElapsedOffset += 1.0`, increment pass counter
+   - Update pass counter UI
+   - **Jiggle boundary check**: if `jiggleMode !== "none"` and `passCount >= targetPasses`:
+     - `reinitWorkersForJiggle()`: terminate workers → `generateJiggleOffsets()` → re-serialize data → `initFastModeWorkers()` (elapsed offset continues, no exit/re-enter)
    - Otherwise: update warm-start roots in shared data → `dispatchPassToWorkers()`
 
 ### exitFastMode()
@@ -308,43 +364,31 @@ Then immediately call `dispatchPassToWorkers()`.
 1. Proportionally advance elapsed offset for mid-pass interruption
 2. Terminate all workers, clear arrays
 3. Clear legacy fallback timer if set
-4. Restore `currentRoots` from last worker snapshot
-5. Reset UI (remove `fast-mode` class, restore button text, hide progress)
-6. Call `solveRoots()` to re-sync interactive display
+4. Restore `currentRoots` from last worker snapshot (or legacy fallback roots)
+5. Reset UI (remove `fast-mode` class, set button text to "cont", hide progress)
+6. Call `renderCoefficients()` and `renderCoeffTrails()` to re-sync interactive display
 
 ---
 
 ## Cycle Management
 
-### Full Cycle Calculation
+### Jiggle Interval
 
-`computeFullCyclePasses()`: Each animated coefficient has period `1/speed` seconds. The full cycle is the LCM of all periods.
+`fastModeTargetPasses` is set directly from `jiggleInterval` (a user-configurable value, 1-100 seconds, shown in the cfg popup). Since each pass is 1.0 virtual seconds, the number of passes per jiggle cycle equals the interval in seconds.
 
-Since speeds are stored as `s/100` (integer slider 1-100):
-- Period_i = `100 / s_i` seconds
-- Full cycle = `100 / GCD(s_1, s_2, ..., s_k)` passes
-
-Examples:
-
-| Speeds | GCD | Passes | Meaning |
-|--------|-----|--------|---------|
-| 0.50 | 50 | 2 | Single coeff loops twice |
-| 0.10 | 10 | 10 | Single coeff loops once |
-| 0.50, 0.10 | 10 | 10 | Fast loops 5x, slow loops 1x |
-| 0.17, 0.01 | 1 | 100 | Coprime speeds, maximum cycle |
-
-The **Prime Speed button** (PS) finds a speed coprime to all others, forcing GCD=1 and cycle length=100.
+The **PrimeSpeeds** transform (in the C-List/D-List Transform dropdown) sets speeds coprime to all others, forcing GCD=1 and maximum cycle diversity. The PS button is also available in per-coefficient path picker popups.
 
 ### Jiggle Integration
 
-At cycle boundary:
-1. `exitFastMode()` tears down workers
-2. `generateJiggleOffsets()` computes new perturbation offsets for selected coefficients
-3. `enterFastMode()` rebuilds everything with offsets baked into curves
+Jiggle offsets are applied **post-interpolation** in workers (not baked into precomputed curves). At each step, after coefficient interpolation and morph blending, `S_jiggleRe[i]`/`S_jiggleIm[i]` are added to each coefficient.
 
-**Animated coefficients**: jiggle offsets are added to the home position before `computeCurveN()`, so the entire precomputed curve shifts.
+At jiggle boundary (`passCount >= targetPasses` and `jiggleMode !== "none"`):
+1. `reinitWorkersForJiggle()` terminates current workers
+2. `generateJiggleOffsets()` computes new perturbation offsets
+3. Re-serialize data (new jiggle offsets included) → `initFastModeWorkers()` starts fresh workers
+4. Elapsed offset continues (no reset), warm-start roots are preserved
 
-**Non-animated coefficients**: offsets are added directly to `coeffsRe[i]`/`coeffsIm[i]` in `serializeFastModeData()`.
+No curve recomputation is needed since jiggle is applied post-interpolation.
 
 ---
 
@@ -353,8 +397,8 @@ At cycle boundary:
 `serializeFastModeData(animated, stepsVal, nRoots)` produces the shared data object:
 
 ### Coefficient Arrays
-- `coeffsRe`, `coeffsIm`: Float64Array of current coefficient positions
-- Jiggle offsets applied to non-animated coefficients only
+- `coeffsRe`, `coeffsIm`: Float64Array of current coefficient positions (base values, no jiggle applied)
+- Jiggle offsets are sent separately as `jiggleRe`/`jiggleIm` and applied post-interpolation in workers
 
 ### Curve Data (flattened)
 All animated curves concatenated into one `Float64Array`:
@@ -375,8 +419,22 @@ Workers index into `curvesFlat` as: `base = offsets[a] * 2; curvesFlat[base + k*
 
 ### Color Arrays
 - `colorsR`, `colorsG`, `colorsB`: Uint8Array, one entry per root
-- Computed via `rootColorRGB(i, nRoots)` which parses `rootColor(i, nRoots)` CSS strings
+- Computed from `d3.interpolateRainbow(i / nRoots)` (rainbow) or `bitmapUniformColor` (uniform)
 - `noColor` flag: if true, worker uses `uniformR/G/B` for all roots
+- `proxColor` flag + `proxPalR/G/B`: proximity palette (Uint8Array(16) each)
+- `derivColor` flag + `derivPalR/G/B`: derivative palette (Uint8Array(16) each)
+- `selectedCoeffIndices`: which coefficient indices to use for derivative sensitivity
+
+### Morph & D-Curve Data
+- `morphEnabled`, `morphRate`: morph blending configuration
+- `morphTargetRe`, `morphTargetIm`: Float64Array of morph target positions
+- D-curves serialized identically to C-curves: `dAnimEntries`, `dCurvesFlat`, `dCurveOffsets`, `dCurveLengths`, `dCurveIsCloud`
+
+### Root Matching
+- `matchStrategy`: `"assign4"` (default), `"assign1"`, or `"hungarian1"`
+
+### Jiggle Offsets
+- `jiggleRe`, `jiggleIm`: Float64Array, one entry per coefficient. Applied post-interpolation in workers. Zero for non-jiggled coefficients.
 
 ---
 
@@ -431,7 +489,7 @@ Scaling is sub-linear due to: structured clone overhead, main-thread compositing
 ### Bottlenecks
 
 1. **Ehrlich-Aberth solver**: O(n² × iters) per step, where n = degree. Dominates at degree > 10. WASM solver reduces this by eliminating JIT warmup, GC pauses, and leveraging tighter f64 codegen — biggest gains at high degree.
-2. **Root matching**: O(n²) every 4th step in colored mode. Skipped in uniform mode.
+2. **Root matching**: O(n²) per call (greedy) or O(n³) (Hungarian). Frequency depends on `matchStrategy`: every 4th step (default), every step, or Hungarian every step. Skipped in uniform and proximity modes.
 3. **Compositing**: Persistent `ImageData` buffer with dirty-rect `putImageData`. After the persistent buffer optimization, compositing is fast (~5ms at 10K) and no longer the bottleneck. See [memory_timings.md](memory_timings.md).
 
 ### Memory
@@ -450,7 +508,7 @@ No per-worker W×H×4 canvas buffer. A 10K×10K canvas with 4 workers and 100K s
 | Persistent workers (init once) | Avoids re-sending ~KB of curve data per pass |
 | Sparse pixels over full buffers | 10K×10K canvas = 400MB per buffer. Sparse format is 13 bytes per painted pixel. |
 | 64 solver iterations (not 100) | Warm start from previous step makes convergence fast. 64 iterations gives ample margin for high-degree polynomials. |
-| Root matching every 4th step | O(n²) matching costs ~25% of solver time at degree 20. Every-4th is a good tradeoff for color accuracy vs speed. |
+| Root matching every 4th step (default) | O(n²) matching costs ~25% of solver time at degree 20. Every-4th is a good tradeoff for color accuracy vs speed. Users can switch to every-step or Hungarian (O(n³)) for better accuracy at higher cost. |
 | No SharedArrayBuffer | Requires COOP/COEP headers. GitHub Pages doesn't set them. Structured clone is fast enough for the small per-pass data (roots + step range). |
 | No OffscreenCanvas | Useful for single worker but complex for multi-worker merging. Sparse pixel approach is simpler and equally fast. |
 | All workers get same warm-start roots | Workers 1-N start with roots from time 0 (not their actual time). EA converges in 1-2 extra iters on first step. Negligible cost vs complexity of chaining roots across workers. |
@@ -465,9 +523,9 @@ For browsers without `Worker` support. Runs on main thread via `setTimeout(fastM
 
 Chunk size: `max(10, floor(200 / max(3, degree)))` steps per setTimeout callback. This keeps each chunk under ~16ms to avoid blocking the UI event loop.
 
-Uses the same animation interpolation and solver logic but calls `paintBitmapFrameFast()` (canvas arc drawing) instead of sparse pixel buffers. Progress bar updates once per chunk.
+Uses the same animation interpolation and solver logic but calls `paintBitmapFrameFast()` (canvas `fillRect` 1x1 pixel writes) instead of sparse pixel buffers.
 
-Same cycle boundary / jiggle re-trigger logic as worker mode.
+Jiggle boundary logic mirrors worker mode: when `jiggleMode !== "none"` and `passCount >= targetPasses`, reset pass count and call `generateJiggleOffsets()`. No curve recomputation needed since jiggle is applied post-interpolation. Unlike worker mode, the legacy fallback does not exit/re-enter fast mode at jiggle boundaries.
 
 ---
 
@@ -477,9 +535,10 @@ Same cycle boundary / jiggle re-trigger logic as worker mode.
 
 In `enterFastMode()`, for each coefficient with `pathType !== "none"`:
 1. Home position = `curve[0]` (first point of interactive-mode curve)
-2. Jiggle offset added if present
-3. `computeCurveN(home, pathType, absRadius, angle, extra, stepsVal)` generates N points
-4. Stored in `fastModeCurves` Map
+2. `computeCurveN(home, pathType, absRadius, angle, extra, stepsVal)` generates N points (jiggle offsets are NOT baked in; they are applied post-interpolation in workers)
+3. Stored in `fastModeCurves` Map
+
+D-node curves are precomputed identically and stored in `fastModeDCurves` Map.
 
 The curve resolution matches `stepsVal` (steps per pass), so each step maps to approximately one curve point. With speed < 1.0, the coefficient traverses only a fraction of the curve per pass.
 
@@ -518,10 +577,10 @@ When `bitmapCoeffView` is true (toggled via ROOT/COEF button), fast mode plots *
 
 ### How It Works
 
-1. Curves are precomputed by `enterFastMode()` identically to normal mode (including jiggle offsets baked in)
+1. Curves are precomputed by `enterFastMode()` identically to normal mode (jiggle offsets are NOT baked in)
 2. `plotCoeffCurvesOnBitmap(animated, stepsVal)` iterates all steps:
-   - **Animated coefficients**: read position from `fastModeCurves.get(idx)[step % curveLength]`
-   - **Non-animated coefficients**: fixed at base position + jiggle offset
+   - **Animated coefficients**: read position from `fastModeCurves.get(idx)[step % curveLength]`, then add jiggle offset if present
+   - **Non-animated coefficients**: fixed at base position, then add jiggle offset if present
 3. Each coefficient plotted as a **3×3 pixel square** using `coeffColor(i, n)` rainbow palette
 4. Uses `ImageData` pixel writes for speed (no canvas arc calls)
 5. `bitmapRange` is set to `panels.coeff.range` (coefficient panel viewport) instead of root panel range
@@ -533,10 +592,9 @@ Coefficient plotting is pure coordinate projection — no Ehrlich-Aberth solver,
 ### Jiggle Cycling
 
 When jiggle is active, `coeffJiggleCycle` runs via `setTimeout(fn, 0)`:
-1. `generateJiggleOffsets()` — apply perturbation
-2. Recompute curves with new offsets
-3. Plot new curve points (accumulating on existing canvas)
-4. Schedule next cycle
+1. At jiggle boundary: `generateJiggleOffsets()` — compute new perturbation offsets (no curve recomputation needed since jiggle is applied post-interpolation)
+2. Plot new curve points via `plotCoeffCurvesOnBitmap()` (accumulating on existing canvas, jiggle offsets applied per-step)
+3. Schedule next cycle
 
 The timer is stored in `fastModeTimerId`, so `exitFastMode()` cleanly stops the cycle.
 

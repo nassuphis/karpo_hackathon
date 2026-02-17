@@ -18,7 +18,7 @@ Given a degree-*n* polynomial p(z) = cₙzⁿ + ··· + c₁z + c₀ (subscript
 
    The sum term accounts for the other roots, effectively deflating the polynomial so each root estimate repels from the others. This is what gives the method its cubic convergence and prevents multiple estimates from collapsing onto the same root.
 
-4. **Converge** when max |correction|² < tolerance (10⁻¹² magnitude for main thread, 10⁻¹⁶ squared for workers/WASM).
+4. **Converge** when the maximum correction magnitude drops below a tolerance. Main thread: max |correction| < 10⁻¹² (magnitude via `Math.hypot`). Workers/WASM: max |correction|² < 10⁻¹⁶ (squared magnitude, avoiding `Math.hypot`).
 
 ## Why It's Fast for Interactive Use
 

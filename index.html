@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v38</title>
+<title>PolyPaint v39</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
@@ -562,7 +562,7 @@ body.fast-mode #stop-roots-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v38</span>
+    <span class="app-title">PolyPaint v39</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -718,6 +718,7 @@ body.fast-mode #stop-roots-btn {
                 <div id="morph-bar" style="padding:4px 8px;display:flex;align-items:center;gap:8px;flex-shrink:0;border-bottom:1px solid var(--stroke);background:rgba(10,12,30,0.45);">
                     <button id="morph-copy-btn" class="bar-sel-btn" style="font-size:8px;">Copy C→D</button>
                     <button id="morph-swap-btn" class="bar-sel-btn" style="font-size:8px;">Swap C↔D</button>
+                    <button id="morph-cdpath-btn" class="bar-sel-btn" style="font-size:8px;">C-D Path</button>
                 </div>
                 <div id="morph-container" style="flex:1;min-height:0;position:relative;">
                     <svg id="morph-panel"></svg>
@@ -803,9 +804,6 @@ body.fast-mode #stop-roots-btn {
                     <label style="font-size:10px;display:flex;align-items:center;gap:3px;cursor:pointer;">
                         <input type="checkbox" id="morph-enable"> Morph
                     </label>
-                    <label style="font-size:9px;color:var(--muted);">Rate</label>
-                    <input id="morph-rate" type="range" min="1" max="200" value="25" step="1" style="width:60px;accent-color:var(--accent);">
-                    <span id="morph-rate-val" style="font-size:9px;color:var(--muted);min-width:36px;">0.25 Hz</span>
                     <span id="morph-mu-val" style="font-size:9px;color:var(--accent);min-width:30px;">μ=0.50</span>
                 </div>
                 <div id="final-container" style="flex:1;min-height:0;position:relative;overflow:hidden;">
@@ -927,6 +925,7 @@ body.fast-mode #stop-roots-btn {
 <div id="timing-pop" class="ops-pop" style="min-width:220px"></div>
 <div id="bitmap-cfg-pop" class="ops-pop" style="min-width:160px"></div>
 <div id="bitmap-save-pop" class="ops-pop" style="min-width:160px"></div>
+<div id="cdpath-pop" class="ops-pop" style="min-width:180px"></div>
 
 <script>
 // ============================================================================
@@ -1129,8 +1128,44 @@ let jiggleWalkCache = null;    // Map<coeffIdx, {re,im}> — walk mode running t
 // Morph state: second coefficient set D blends with C via mu
 let morphTargetCoeffs = [];   // parallel to coefficients[], same {re,im,curve,...} structure
 let morphEnabled = false;
-let morphRate = 0.25;         // Hz (oscillation cycles/sec)
+let morphRate = 0.01;         // Hz (oscillation cycles/sec), range 0–0.1
 let morphMu = 0;              // current blend factor [0,1] — 0 when morph disabled
+let morphPathType = "line";   // "line" | "circle" | "ellipse" | "figure8"
+let morphPathCcw = false;     // CW by default; applies to circle, ellipse, figure8
+let morphEllipseMinor = 0.5;  // minor axis as fraction of major (0.1–1.0), ellipse only
+
+// Compute interpolated position between C-node and D-node along the configured morph path.
+// theta = 2π * morphRate * elapsed (raw angle in radians)
+function morphInterpPoint(cRe, cIm, dRe, dIm, theta, pathType, ccw, minorPct) {
+    const dx = dRe - cRe, dy = dIm - cIm;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 1e-15) return { re: cRe, im: cIm };
+    if (pathType === "line") {
+        const mu = 0.5 - 0.5 * Math.cos(theta);
+        return { re: cRe * (1 - mu) + dRe * mu, im: cIm * (1 - mu) + dIm * mu };
+    }
+    // Local frame: u = unit C→D, v = perpendicular (90° CCW)
+    const ux = dx / len, uy = dy / len;
+    const vx = -uy, vy = ux;
+    const midRe = (cRe + dRe) * 0.5, midIm = (cIm + dIm) * 0.5;
+    const semi = len * 0.5;
+    const sign = ccw ? 1 : -1;
+    let lx, ly;
+    if (pathType === "circle") {
+        lx = -semi * Math.cos(theta);
+        ly = sign * semi * Math.sin(theta);
+    } else if (pathType === "ellipse") {
+        const semi_b = minorPct * semi;
+        lx = -semi * Math.cos(theta);
+        ly = sign * semi_b * Math.sin(theta);
+    } else { // figure8
+        lx = -semi * Math.cos(theta);
+        ly = sign * (semi * 0.5) * Math.sin(2 * theta);
+    }
+    return { re: midRe + lx * ux + ly * vx, im: midIm + lx * uy + ly * vy };
+}
+let morphTheta = 0;  // current morph phase angle = 2π * morphRate * elapsed
+
 let solverType = "js"; // "js" or "wasm" — which solver to use in fast mode workers
 const WASM_STEP_LOOP_B64 = "AGFzbQEAAAABGQVgAXwBfGABfwBgAABgAn9/AGADf398AX8CQgUDZW52Bm1lbW9yeQIAAgNlbnYDbG9nAAADZW52A2NvcwAAA2VudgNzaW4AAANlbnYOcmVwb3J0UHJvZ3Jlc3MAAQMEAwIDBAQFAXABAQEGDwJ/AUGAgAQLfwBBkIIECwckAwRpbml0AAULcnVuU3RlcExvb3AABgtfX2hlYXBfYmFzZQMBCAEECpBzAw4AQYCABEEAQYwC/AsAC/kHAQN/QQAgADYCgICEgABBACAAKAIANgKEgISAAEEAIAAoAiA2AqSAhIAAQQAgACgCHDYCoICEgABBACAAKAIYNgKcgISAAEEAIAAoAhQ2ApiAhIAAQQAgACgCEDYClICEgABBACAAKAIMNgKQgISAAEEAIAAoAgg2AoyAhIAAQQAgACgCBDYCiICEgABBACAAKAIkNgKogISAAEEAIAAoAig2AqyAhIAAQQAgACgCLDYCsICEgABBACAAKAIwNgK0gISAAEEAIAErAwA5A7iAhIAAQQAgASsDEDkDyICEgABBACABKwMIOQPAgISAAEEAIAAoAkAiATYC0ICEgABBACAAKAJEIgI2AtSAhIAAQQAgACgCSCIDNgLYgISAAEEAIAAoAkwiBDYC3ICEgAACQCABDQAgAg0AIAMNACAEDQBBAEH4rNGRATYC1ICEgABBAEHv/bb1fTYC0ICEgABBAEGB3rfeejYC2ICEgABBAEGhhpW7eDYC3ICEgAALQQAgACgCUDYC4ICEgABBACAAKAJUNgLkgISAAEEAIAAoAlg2AuiAhIAAQQAgACgCXDYC7ICEgABBACAAKAJgNgLwgISAAEEAIAAoAmQ2AvSAhIAAQQAgACgCaDYC+ICEgABBACAAKAJ0NgL8gISAAEEAIAAoAng2AoCBhIAAQQAgACgCfDYChIGEgABBACAAKAKAATYCiIGEgABBACAAKAKEATYCjIGEgABBACAAKAKIATYCkIGEgABBACAAKAKMATYClIGEgABBACAAKAKQATYCmIGEgABBACAAKAKUATYCnIGEgABBACAAKAKYATYCoIGEgABBACAAKAKcATYCpIGEgABBACAAKAKgATYCqIGEgABBACAAKAKkATYCrIGEgABBACAAKAKoATYCsIGEgABBACAAKAKsATYCtIGEgABBACAAKALMATYCuIGEgABBACAAKAKwATYCvIGEgABBACAAKAK0ATYCwIGEgABBACAAKAK4ATYCxIGEgABBACAAKAK8ATYCyIGEgABBACAAKALAATYCzIGEgABBACAAKALEATYC0IGEgABBACAAKALIATYC1IGEgABBACAAKALQATYC2IGEgABBACAAKALUATYC3IGEgABBACAAKALYATYC4IGEgABBACAAKALcATYC5IGEgABBACAAKALgATYC6IGEgABBACAAKALkATYC7IGEgABBACAAKALoATYC8IGEgABBACAAKALsATYC9IGEgABBACAAKALwATYC+IGEgABBACAAKAL0ATYC/IGEgABBACAAKAL4ATYCgIKEgABBACAAKAL8ATYChIKEgABBACAAKAKAAjYCiIKEgAALg2sQBH8BfB5/AXwGfwF8AX8CfAF/AXwBfwF8An8BfAZ/DXwjgICAgABBoPQAayIDJICAgIAAQQAhBEEAKAL4gYSAACEFQQAoAvSBhIAAIQZBACsDuICEgAAhBwJAQQAoAoiAhIAAIghBAUgNACAIQQFxIQlBACEKQQAoAuiBhIAAIQtBACgC5IGEgAAhDAJAIAhBAUYNACAIQf7///8HcSENQQAhDkEAIQoDQCAMIA5qIg8gBiAOaiIQKwMAOQMAIAsgDmoiESAFIA5qIhIrAwA5AwAgD0EIaiAQQQhqKwMAOQMAIBFBCGogEkEIaisDADkDACAOQRBqIQ4gDSAKQQJqIgpHDQALCyAJRQ0AIAwgCkEDdCIOaiAGIA5qKwMAOQMAIAsgDmogBSAOaisDADkDAAsCQCAAIAFODQBBACgChICEgAAiE0F/aiEUIAhBAXEhFSAIQQdxIRYgCEH+////B3EhFyAIQQNxIRggCEH4////B3EhGSAIQfz///8HcSEaIBNBAXEhGyATQf7///8HcSEcIBNBfmohHSAIQQFqIgxBeHEhHiAMQQdxIR8gCEF/aiIgQX5xISEgIEEBcSEiIAhBAnRBBGohIyAIQQN0IiRBCGohJSAguCEmIANBkDNqQQhyIScgA0GAMmpBBHIhKCADQaA0akEQaiEpIANBCHIhKiADQaA0akEIciEJIANBgCBqQQhyIStBACgCkICEgAAiLLchLUEAKAKMgISAACIutyEvIAi3ITAgCEEhSCExQQAhBEQAAAAA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";
 const WASM_SOLVER_B64 = "AGFzbQEAAAABDAFgCH9/f39/f39/AAMCAQAEBQFwAQEBBQMBAAEGCAF/AUGAiAILBxQCBm1lbW9yeQIAB3NvbHZlRUEAAAqLDgGIDggFfwF8AX8EfAN/AnwBfwh8I4CAgIAAQYDCAGsiCCSAgICAACACQX9qIQlBACEKAkAgAkECSA0AQQAhCiAAIQsgASEMA0AgCysDACINIA2iIAwrAwAiDSANoqBEoMLr/ktItDljRQ0BIAtBCGohCyAMQQhqIQwgCSAKQQFqIgpHDQALIAkhCgsCQCAJIAprIg5BAUgNAAJAIA5BAUcNACAAIApBA3QiC2orAwAiDSANoiABIAtqKwMAIg8gD6KgIhBEoMLr/ktItDljDQEgAyAAIAtBCGoiC2orAwAiESANoiAPIAEgC2orAwAiEqKgmiAQozkDACAEIBIgDaIgESAPoqGaIBCjOQMAIAZFDQEgB0UNASAHQQE6AAAMAQsCQCACIAprIhNBAUgNACAKQQN0IQsCQCATQQN0IgxFIgoNACAIQYAyaiAAIAtqIAz8CgAACyAKDQAgCEGAImogASALaiAM/AoAAAsCQCAOQQN0IgtFIgwNACAIQYASaiADIAv8CgAACwJAIAwNACAIQYACaiAEIAv8CgAACwJAIAZFDQAgDkUNACAIQQAgDvwLAAsgCEGAMmpBCHIhACAIQYAiakEIciEUQQAhFSAIKwOAIiEWIAgrA4AyIRcDQCAVQQFqIRhEAAAAAAAAAAAhGUEAIQkDQAJAAkAgBkUNACAIIAlqLQAADQELIAhBgAJqIAlBA3QiC2oiAisDACEaIAhBgBJqIAtqIgErAwAhDUQAAAAAAAAAACEbRAAAAAAAAAAAIREgFiEcIBchHQJAIBNBAUwNACAamiEeRAAAAAAAAAAAIREgACELIBQhDCAOIQogFyEPIBYhEEQAAAAAAAAAACESA0AgDyAaoiEcIAwrAwAhHyALKwMAIR0gESAaoiANIBKioCAQoCEbIBEgDaIgEiAeoqAgD6AhESALQQhqIQsgDEEIaiEMIB0gDyANoiAQIB6ioKAiHSEPIB8gHCANIBCioKAiHCEQIBshEiAKQX9qIgoNAAsLIBEgEaIgGyAboqAiIEQmpqyqBLZ5M2MNAEQAAAAAAAAAACEeQQAhCyAIQYACaiEMIAhBgBJqIQpEAAAAAAAAAAAhHwNAAkAgCSALRg0AIA0gCisDAKEiDyAPoiAaIAwrAwChIhAgEKKgIhJEJqasqgS2eTNjDQAgHiAQIBKjoSEeIB8gDyASo6AhHwsgCkEIaiEKIAxBCGohDCAOIAtBAWoiC0cNAAtEAAAAAAAA8D8gHSARoiAbIByioCAgoyIPIB+iIBwgEaIgHSAboqEgIKMiECAeoqGhIhEgEaIgDyAeoiAQIB+ioCISIBKioCIbRCamrKoEtnkzYw0AIAIgGiAQIBGiIA8gEqKgIBujIh6hOQMAIAEgDSAPIBGiIBAgEqKhIBujIg+hOQMAIA8gD6IgHiAeoqAiDSAZIA0gGWQbIRkgBkUNACANRLyJ2Jey0pw8Y0UNACAIIAlqQQE6AAAgB0UNACAHIAlqIBg6AAALIAlBAWoiCSAORw0ACwJAAkAgGUS8idiXstKcPGNFDQAgBkUNASAHRQ0BIBVBAWohCSAOQQEgDkEBShsiDEEBcSECQQAhCwJAIAxBAUYNACAMQf7///8HcSEKQQAhCwNAAkAgCCALaiIMLQAADQAgDEEBOgAAIAcgC2ogCToAAAsCQCAMQQFqIgwtAAANACAMQQE6AAAgByALakEBaiAJOgAACyAKIAtBAmoiC0cNAAsLIAJFDQEgCCALaiIMLQAADQEgDEEBOgAAIAcgC2ogCToAAAwBCyAYIRUgGEHAAEcNAQsLAkAgBkUNACAHRQ0AIA5BASAOQQFKGyIMQQFxIQlBACELAkAgDEEBRg0AIAxB/v///wdxIQpBACELA0ACQCAIIAtqIgwtAAANACAHIAtqQcAAOgAACwJAIAxBAWotAAANACAHIAtqQQFqQcAAOgAACyAKIAtBAmoiC0cNAAsLIAlFDQAgCCALai0AAA0AIAcgC2pBwAA6AAALIA5BASAOQQFKGyILQQFxIQ5BACEMAkAgC0EBRg0AIAtB/v///wdxIQlBACELQQAhDANAAkAgCEGAEmogC2oiCisDACINIA1iDQAgCEGAAmogC2orAwAiDyAPYg0AIAMgC2ogDTkDACAEIAtqIA85AwALAkAgCkEIaisDACINIA1iDQAgCEGAAmogC2pBCGorAwAiDyAPYg0AIAMgC2pBCGogDTkDACAEIAtqQQhqIA85AwALIAtBEGohCyAJIAxBAmoiDEcNAAsLIA5FDQAgCEGAEmogDEEDdCILaisDACINIA1iDQAgCEGAAmogC2orAwAiDyAPYg0AIAMgDEEDdCILaiANOQMAIAQgC2ogDzkDAAsgCEGAwgBqJICAgIAACwAzBG5hbWUADAtzb2x2ZXIud2FzbQEKAQAHc29sdmVFQQcSAQAPX19zdGFja19wb2ludGVyAC8JcHJvZHVjZXJzAQxwcm9jZXNzZWQtYnkBDkhvbWVicmV3IGNsYW5nBjIxLjEuOACUAQ90YXJnZXRfZmVhdHVyZXMIKwtidWxrLW1lbW9yeSsPYnVsay1tZW1vcnktb3B0KxZjYWxsLWluZGlyZWN0LW92ZXJsb25nKwptdWx0aXZhbHVlKw9tdXRhYmxlLWdsb2JhbHMrE25vbnRyYXBwaW5nLWZwdG9pbnQrD3JlZmVyZW5jZS10eXBlcysIc2lnbi1leHQ=";
@@ -3752,7 +3787,7 @@ document.getElementById("home-btn").addEventListener("click", function () {
         d.re = d.curve[0].re; d.im = d.curve[0].im;
         d.curveIndex = 0;
     }
-    morphMu = 0;
+    morphMu = 0; morphTheta = 0;
     if (morphPanelInited && leftTab === "morph") {
         const muEl = document.getElementById("morph-mu-val");
         if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
@@ -3814,7 +3849,8 @@ function advanceToElapsed(elapsed) {
     }
     advanceDNodesAlongCurves(elapsed);
     if (morphEnabled) {
-        morphMu = 0.5 - 0.5 * Math.cos(2 * Math.PI * morphRate * elapsed);
+        morphTheta = 2 * Math.PI * morphRate * elapsed;
+        morphMu = 0.5 - 0.5 * Math.cos(morphTheta);
         const muEl = document.getElementById("morph-mu-val");
         if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
     }
@@ -4390,7 +4426,8 @@ function animLoop(now) {
     }
 
     if (morphEnabled) {
-        morphMu = 0.5 - 0.5 * Math.cos(2 * Math.PI * morphRate * elapsed);
+        morphTheta = 2 * Math.PI * morphRate * elapsed;
+        morphMu = 0.5 - 0.5 * Math.cos(morphTheta);
         const muEl = document.getElementById("morph-mu-val");
         if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
     }
@@ -4532,8 +4569,8 @@ const morphDrag = d3.drag()
                     .attr("x2", (_, j) => j < nD ? cxs()(morphTargetCoeffs[j].re) : 0)
                     .attr("y2", (_, j) => j < nD ? cys()(morphTargetCoeffs[j].im) : 0);
                 morphInterpLayer.selectAll("circle.morph-interp-marker")
-                    .attr("cx", (_, j) => j < nD ? cxs()(coefficients[j].re * (1 - morphMu) + morphTargetCoeffs[j].re * morphMu) : 0)
-                    .attr("cy", (_, j) => j < nD ? cys()(coefficients[j].im * (1 - morphMu) + morphTargetCoeffs[j].im * morphMu) : 0);
+                    .attr("cx", (_, j) => { if (j >= nD) return 0; const p = morphInterpPoint(coefficients[j].re, coefficients[j].im, morphTargetCoeffs[j].re, morphTargetCoeffs[j].im, morphTheta, morphPathType, morphPathCcw, morphEllipseMinor); return cxs()(p.re); })
+                    .attr("cy", (_, j) => { if (j >= nD) return 0; const p = morphInterpPoint(coefficients[j].re, coefficients[j].im, morphTargetCoeffs[j].re, morphTargetCoeffs[j].im, morphTheta, morphPathType, morphPathCcw, morphEllipseMinor); return cys()(p.im); });
             }
         } else {
             // Single drag
@@ -4548,10 +4585,11 @@ const morphDrag = d3.drag()
                 morphInterpLayer.selectAll("line.morph-interp-line")
                     .filter((_, j) => j === i)
                     .attr("x2", event.x).attr("y2", event.y);
+                const _mp = morphInterpPoint(coefficients[i].re, coefficients[i].im, d.re, d.im, morphTheta, morphPathType, morphPathCcw, morphEllipseMinor);
                 morphInterpLayer.selectAll("circle.morph-interp-marker")
                     .filter((_, j) => j === i)
-                    .attr("cx", cxs()(coefficients[i].re * (1 - morphMu) + d.re * morphMu))
-                    .attr("cy", cys()(coefficients[i].im * (1 - morphMu) + d.im * morphMu));
+                    .attr("cx", cxs()(_mp.re))
+                    .attr("cy", cys()(_mp.im));
             }
         }
         if (morphEnabled) solveRootsThrottled();
@@ -4648,7 +4686,7 @@ function renderMorphPanel() {
         .attr("stroke-dasharray", "4,3");
     lines.exit().remove();
 
-    // Interpolated position markers: small filled circles at C*(1-mu) + D*mu
+    // Interpolated position markers: position along C-D path
     const markers = morphInterpLayer.selectAll("circle.morph-interp-marker")
         .data(coefficients.slice(0, nD), d => d._idx);
     markers.enter()
@@ -4656,8 +4694,8 @@ function renderMorphPanel() {
         .attr("class", "morph-interp-marker")
         .attr("r", 5)
       .merge(markers)
-        .attr("cx", (d, i) => cxs()(d.re * (1 - morphMu) + morphTargetCoeffs[i].re * morphMu))
-        .attr("cy", (d, i) => cys()(d.im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu))
+        .attr("cx", (d, i) => { const p = morphInterpPoint(d.re, d.im, morphTargetCoeffs[i].re, morphTargetCoeffs[i].im, morphTheta, morphPathType, morphPathCcw, morphEllipseMinor); return cxs()(p.re); })
+        .attr("cy", (d, i) => { const p = morphInterpPoint(d.re, d.im, morphTargetCoeffs[i].re, morphTargetCoeffs[i].im, morphTheta, morphPathType, morphPathCcw, morphEllipseMinor); return cys()(p.im); })
         .attr("fill", (_, i) => coeffColor(i, n))
         .attr("stroke", "#fff")
         .attr("stroke-width", 1);
@@ -4691,8 +4729,9 @@ function renderFinalPanel() {
         let re, im;
         if (doBlend) {
             const d = morphTargetCoeffs[i];
-            re = c.re * (1 - morphMu) + d.re * morphMu;
-            im = c.im * (1 - morphMu) + d.im * morphMu;
+            const mp = morphInterpPoint(c.re, c.im, d.re, d.im, morphTheta, morphPathType, morphPathCcw, morphEllipseMinor);
+            re = mp.re;
+            im = mp.im;
         } else {
             re = c.re;
             im = c.im;
@@ -4765,8 +4804,8 @@ function updateMorphMarkers() {
     if (!morphPanelInited || !morphInterpLayer) return;
     const nn = Math.min(coefficients.length, morphTargetCoeffs.length);
     morphInterpLayer.selectAll("circle.morph-interp-marker")
-        .attr("cx", (_, i) => i < nn ? cxs()(coefficients[i].re * (1 - morphMu) + morphTargetCoeffs[i].re * morphMu) : 0)
-        .attr("cy", (_, i) => i < nn ? cys()(coefficients[i].im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu) : 0);
+        .attr("cx", (_, i) => { if (i >= nn) return 0; const p = morphInterpPoint(coefficients[i].re, coefficients[i].im, morphTargetCoeffs[i].re, morphTargetCoeffs[i].im, morphTheta, morphPathType, morphPathCcw, morphEllipseMinor); return cxs()(p.re); })
+        .attr("cy", (_, i) => { if (i >= nn) return 0; const p = morphInterpPoint(coefficients[i].re, coefficients[i].im, morphTargetCoeffs[i].re, morphTargetCoeffs[i].im, morphTheta, morphPathType, morphPathCcw, morphEllipseMinor); return cys()(p.im); });
 }
 
 // --- Root drag behavior (roots → coefficients) ---
@@ -4925,8 +4964,9 @@ function renderRoots(newRoots) {
         finalTrailData.length = nC;
         for (let i = 0; i < nC; i++) {
             const c = coefficients[i];
-            let re = doBlend ? c.re * (1 - morphMu) + morphTargetCoeffs[i].re * morphMu : c.re;
-            let im = doBlend ? c.im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu : c.im;
+            const mp = doBlend ? morphInterpPoint(c.re, c.im, morphTargetCoeffs[i].re, morphTargetCoeffs[i].im, morphTheta, morphPathType, morphPathCcw, morphEllipseMinor) : c;
+            let re = mp.re;
+            let im = mp.im;
             const jOff = jiggleOffsets ? jiggleOffsets.get(i) : undefined;
             if (jOff) { re += jOff.re; im += jOff.im; }
             finalTrailData[i].push({ re, im });
@@ -5308,10 +5348,9 @@ function matchRootOrder(newRoots, oldRoots) {
 function solveRoots() {
     let coeffsToSolve = coefficients;
     if (morphEnabled && morphTargetCoeffs.length === coefficients.length) {
-        coeffsToSolve = coefficients.map((c, i) => ({
-            re: c.re * (1 - morphMu) + morphTargetCoeffs[i].re * morphMu,
-            im: c.im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu
-        }));
+        coeffsToSolve = coefficients.map((c, i) =>
+            morphInterpPoint(c.re, c.im, morphTargetCoeffs[i].re, morphTargetCoeffs[i].im,
+                             morphTheta, morphPathType, morphPathCcw, morphEllipseMinor));
     }
     // Apply jiggle offsets post-interpolation
     if (jiggleOffsets && jiggleOffsets.size > 0) {
@@ -6169,13 +6208,15 @@ function positionPopover(btnEl) {
     opsPop.style.top = r.top + "px";
 }
 
+let opCloseCallback = null;
+
 function closeOpTool() {
+    if (opCloseCallback) { opCloseCallback(); opCloseCallback = null; }
     opsPop.classList.remove("open");
     opsPop.innerHTML = "";
     if (activeToolBtn) activeToolBtn.classList.remove("tool-active");
     activeToolBtn = null;
     opSnapshot = null;
-    // remove drag listeners
     window.removeEventListener("mousemove", opToolMouseMove);
     window.removeEventListener("mouseup", opToolMouseUp);
 }
@@ -6426,10 +6467,11 @@ function distributeOnPath(n, verts, closed) {
     return pts;
 }
 
-function patternPositions(pattern, n, cRe, cIm, R) {
+function patternPositions(pattern, n, cRe, cIm, R, opts) {
     if (n <= 0) return [];
     if (R < 1e-15) R = 1;
     if (n === 1) return [{ re: cRe, im: cIm }];
+    if (!opts) opts = {};
     switch (pattern) {
         case "circle": {
             const pts = [];
@@ -6464,7 +6506,7 @@ function patternPositions(pattern, n, cRe, cIm, R) {
             return distributeOnPath(n, verts, true);
         }
         case "star": {
-            const inner = R * 0.38;
+            const inner = R * (opts.starInner !== undefined ? opts.starInner : 0.38);
             const verts = [];
             for (let i = 0; i < 10; i++) {
                 const a = Math.PI / 2 + Math.PI * i / 5;
@@ -6474,7 +6516,8 @@ function patternPositions(pattern, n, cRe, cIm, R) {
             return distributeOnPath(n, verts, true);
         }
         case "ellipse": {
-            const rx = R * 1.4, ry = R * 0.7;
+            const asp = opts.aspect !== undefined ? opts.aspect : 0.5;
+            const rx = R / Math.sqrt(asp), ry = R * Math.sqrt(asp);
             const nSamp = Math.max(n * 8, 200);
             const verts = [];
             for (let i = 0; i < nSamp; i++) {
@@ -6484,16 +6527,17 @@ function patternPositions(pattern, n, cRe, cIm, R) {
             return distributeOnPath(n, verts, true);
         }
         case "infinity": {
+            const infAmp = opts.amp !== undefined ? opts.amp : 0.5;
             const nSamp = Math.max(n * 8, 200);
             const verts = [];
             for (let i = 0; i < nSamp; i++) {
                 const t = 2 * Math.PI * i / nSamp;
-                verts.push({ re: cRe + R * Math.cos(t), im: cIm + R * 0.5 * Math.sin(2 * t) });
+                verts.push({ re: cRe + R * Math.cos(t), im: cIm + R * infAmp * Math.sin(2 * t) });
             }
             return distributeOnPath(n, verts, true);
         }
         case "spiral": {
-            const turns = 3;
+            const turns = opts.turns !== undefined ? opts.turns : 3;
             const nSamp = Math.max(n * 8, 300);
             const verts = [];
             for (let i = 0; i < nSamp; i++) {
@@ -6505,7 +6549,7 @@ function patternPositions(pattern, n, cRe, cIm, R) {
             return distributeOnPath(n, verts, false);
         }
         case "grid": {
-            let cols = Math.round(Math.sqrt(n));
+            let cols = opts.cols !== undefined ? opts.cols : Math.round(Math.sqrt(n));
             if (cols < 1) cols = 1;
             const rows = Math.ceil(n / cols);
             const dx = cols > 1 ? 2 * R / (cols - 1) : 0;
@@ -6523,23 +6567,27 @@ function patternPositions(pattern, n, cRe, cIm, R) {
             return pts;
         }
         case "line": {
+            const ang = (opts.angle !== undefined ? opts.angle : 0) * Math.PI / 180;
+            const dx = Math.cos(ang), dy = Math.sin(ang);
             const pts = [];
             for (let i = 0; i < n; i++) {
-                const t = n > 1 ? i / (n - 1) : 0.5;
-                pts.push({ re: cRe - R + 2 * R * t, im: cIm });
+                const f = n > 1 ? 2 * i / (n - 1) - 1 : 0;
+                pts.push({ re: cRe + R * f * dx, im: cIm + R * f * dy });
             }
             return pts;
         }
         case "wave": {
+            const wCycles = opts.cycles !== undefined ? opts.cycles : 1;
+            const wAmp = opts.amp !== undefined ? opts.amp : 0.5;
             const pts = [];
             for (let i = 0; i < n; i++) {
                 const t = n > 1 ? i / (n - 1) : 0.5;
-                pts.push({ re: cRe - R + 2 * R * t, im: cIm + R * 0.5 * Math.sin(2 * Math.PI * t) });
+                pts.push({ re: cRe - R + 2 * R * t, im: cIm + R * wAmp * Math.sin(2 * Math.PI * wCycles * t) });
             }
             return pts;
         }
         case "cross": {
-            const arm = R, w = R * 0.25;
+            const arm = R, w = R * (opts.armWidth !== undefined ? opts.armWidth : 0.25);
             const verts = [
                 { re: cRe - w, im: cIm + arm }, { re: cRe + w, im: cIm + arm },
                 { re: cRe + w, im: cIm + w },   { re: cRe + arm, im: cIm + w },
@@ -6562,55 +6610,63 @@ function patternPositions(pattern, n, cRe, cIm, R) {
             return distributeOnPath(n, verts, true);
         }
         case "lissajous": {
+            const lA = opts.freqA !== undefined ? opts.freqA : 3;
+            const lB = opts.freqB !== undefined ? opts.freqB : 2;
             const nSamp = Math.max(n * 8, 200);
             const verts = [];
             for (let i = 0; i < nSamp; i++) {
                 const t = 2 * Math.PI * i / nSamp;
-                verts.push({ re: cRe + R * Math.sin(3 * t), im: cIm + R * Math.sin(2 * t) });
+                verts.push({ re: cRe + R * Math.sin(lA * t), im: cIm + R * Math.sin(lB * t) });
             }
             return distributeOnPath(n, verts, true);
         }
         case "rose": {
+            const rK = opts.petals !== undefined ? opts.petals : 3;
             const nSamp = Math.max(n * 8, 200);
             const verts = [];
             for (let i = 0; i < nSamp; i++) {
                 const t = 2 * Math.PI * i / nSamp;
-                const r = R * Math.abs(Math.cos(3 * t));
+                const r = R * Math.abs(Math.cos(rK * t));
                 verts.push({ re: cRe + r * Math.cos(t), im: cIm + r * Math.sin(t) });
             }
             return distributeOnPath(n, verts, true);
         }
         case "2-circles": {
+            const d2c = opts.dist !== undefined ? opts.dist : 1.0;
             const half = Math.ceil(n / 2);
             const r = R * 0.45;
-            const gap = R * 0.1;
+            const baseOff = R * 0.55;
+            const off = baseOff * d2c;
             const pts = [];
             for (let i = 0; i < half; i++) {
                 const a = Math.PI / 2 + 2 * Math.PI * i / half;
-                pts.push({ re: cRe - r - gap + r * Math.cos(a), im: cIm + r * Math.sin(a) });
+                pts.push({ re: cRe - off + r * Math.cos(a), im: cIm + r * Math.sin(a) });
             }
             const rest = n - half;
             for (let i = 0; i < rest; i++) {
                 const a = Math.PI / 2 + 2 * Math.PI * i / rest;
-                pts.push({ re: cRe + r + gap + r * Math.cos(a), im: cIm + r * Math.sin(a) });
+                pts.push({ re: cRe + off + r * Math.cos(a), im: cIm + r * Math.sin(a) });
             }
             return pts;
         }
         case "2-squares": {
+            const d2s = opts.dist !== undefined ? opts.dist : 1.0;
             const half = Math.ceil(n / 2);
             const s = R * 0.42;
-            const gap = R * 0.08;
+            const baseOff = R * 0.5;
+            const off = baseOff * d2s;
             const leftV = [
-                { re: cRe - gap - 2 * s, im: cIm + s }, { re: cRe - gap, im: cIm + s },
-                { re: cRe - gap, im: cIm - s }, { re: cRe - gap - 2 * s, im: cIm - s }
+                { re: cRe - off - s, im: cIm + s }, { re: cRe - off + s, im: cIm + s },
+                { re: cRe - off + s, im: cIm - s }, { re: cRe - off - s, im: cIm - s }
             ];
             const rightV = [
-                { re: cRe + gap, im: cIm + s }, { re: cRe + gap + 2 * s, im: cIm + s },
-                { re: cRe + gap + 2 * s, im: cIm - s }, { re: cRe + gap, im: cIm - s }
+                { re: cRe + off - s, im: cIm + s }, { re: cRe + off + s, im: cIm + s },
+                { re: cRe + off + s, im: cIm - s }, { re: cRe + off - s, im: cIm - s }
             ];
             return distributeOnPath(half, leftV, true).concat(distributeOnPath(n - half, rightV, true));
         }
         case "ring": {
+            const rInner = opts.innerR !== undefined ? opts.innerR : 0.5;
             const half = Math.ceil(n / 2);
             const rest = n - half;
             const pts = [];
@@ -6620,7 +6676,7 @@ function patternPositions(pattern, n, cRe, cIm, R) {
             }
             for (let i = 0; i < rest; i++) {
                 const a = Math.PI / 2 + 2 * Math.PI * i / rest;
-                pts.push({ re: cRe + R * 0.5 * Math.cos(a), im: cIm + R * 0.5 * Math.sin(a) });
+                pts.push({ re: cRe + R * rInner * Math.cos(a), im: cIm + R * rInner * Math.sin(a) });
             }
             return pts;
         }
@@ -6652,11 +6708,27 @@ const PATTERN_LIST = [
     { key: "scatter", label: "Scatter" }
 ];
 
+const PTRN_PARAMS = {
+    "star":       [{ key: "starInner", label: "Inner R",   min: 0.1, max: 0.9,  step: 0.01, def: 0.38 }],
+    "ellipse":    [{ key: "aspect",    label: "Aspect",    min: 0.1, max: 3.0,  step: 0.1,  def: 0.5 }],
+    "infinity":   [{ key: "amp",       label: "Amp",       min: 0.1, max: 1.0,  step: 0.01, def: 0.5 }],
+    "spiral":     [{ key: "turns",     label: "Turns",     min: 0.5, max: 10,   step: 0.5,  def: 3 }],
+    "grid":       [{ key: "cols",      label: "Cols",      min: 1,   max: 30,   step: 1,    def: 0 }],
+    "line":       [{ key: "angle",     label: "Angle\u00b0", min: 0, max: 360,  step: 1,    def: 0 }],
+    "wave":       [{ key: "cycles",    label: "Cycles",    min: 0.5, max: 5.0,  step: 0.5,  def: 1 },
+                   { key: "amp",       label: "Amp",       min: 0.1, max: 1.0,  step: 0.05, def: 0.5 }],
+    "cross":      [{ key: "armWidth",  label: "Width",     min: 0.05,max: 0.5,  step: 0.01, def: 0.25 }],
+    "lissajous":  [{ key: "freqA",    label: "Freq A",    min: 1,   max: 8,    step: 1,    def: 3 },
+                   { key: "freqB",    label: "Freq B",    min: 1,   max: 8,    step: 1,    def: 2 }],
+    "rose":       [{ key: "petals",   label: "Petals",    min: 1,   max: 12,   step: 1,    def: 3 }],
+    "2-circles":  [{ key: "dist",     label: "Distance",  min: 0,   max: 2.0,  step: 0.01, def: 1.0 }],
+    "2-squares":  [{ key: "dist",     label: "Distance",  min: 0,   max: 2.0,  step: 0.01, def: 1.0 }],
+    "ring":       [{ key: "innerR",   label: "Inner R",   min: 0.1, max: 0.95, step: 0.01, def: 0.5 }]
+};
+
 function buildPatternTool(pop, snap) {
     const title = document.createElement("div");
     title.className = "pop-title"; title.textContent = "Pattern";
-    const valEl = document.createElement("div");
-    valEl.className = "pop-val"; valEl.textContent = "100%";
 
     const n = snap.items.length;
     let cRe = 0, cIm = 0;
@@ -6671,7 +6743,48 @@ function buildPatternTool(pop, snap) {
     const R = Math.sqrt(R2) || 1;
 
     let currentPattern = "circle";
-    let targets = patternPositions(currentPattern, n, cRe, cIm, R);
+    let opts = {};
+
+    const controlsDiv = document.createElement("div");
+    controlsDiv.style.cssText = "width:100%;";
+
+    function buildControls() {
+        controlsDiv.innerHTML = "";
+        const params = PTRN_PARAMS[currentPattern];
+        if (!params) return;
+        for (const p of params) {
+            const row = document.createElement("div");
+            row.style.cssText = "display:flex;align-items:center;gap:3px;margin:2px 0;font-size:9px;color:#aaa;";
+            const lbl = document.createElement("span");
+            lbl.textContent = p.label;
+            lbl.style.cssText = "width:44px;flex-shrink:0;";
+            const inp = document.createElement("input");
+            inp.type = "range";
+            let pMin = p.min, pMax = p.max;
+            if (p.key === "cols") { pMax = n; }
+            inp.min = pMin; inp.max = pMax; inp.step = p.step;
+            const defVal = p.key === "cols" && p.def === 0 ? Math.round(Math.sqrt(n)) : p.def;
+            inp.value = opts[p.key] !== undefined ? opts[p.key] : defVal;
+            if (opts[p.key] === undefined) opts[p.key] = defVal;
+            inp.style.cssText = "flex:1;height:12px;accent-color:var(--accent);";
+            const val = document.createElement("span");
+            val.textContent = Number(inp.value).toFixed(p.step < 1 ? (p.step < 0.1 ? 2 : 1) : 0);
+            val.style.cssText = "width:28px;text-align:right;font-size:8px;flex-shrink:0;";
+            inp.addEventListener("input", () => {
+                opts[p.key] = parseFloat(inp.value);
+                val.textContent = Number(inp.value).toFixed(p.step < 1 ? (p.step < 0.1 ? 2 : 1) : 0);
+                refresh();
+            });
+            row.appendChild(lbl); row.appendChild(inp); row.appendChild(val);
+            controlsDiv.appendChild(row);
+        }
+    }
+
+    function refresh() {
+        const targets = patternPositions(currentPattern, n, cRe, cIm, R, opts);
+        let ci = 0;
+        applyPreview(snap, () => targets[ci++]);
+    }
 
     const sel = document.createElement("select");
     sel.style.cssText = "width:100%;font-size:10px;margin:4px 0;background:#333;color:#fff;border:1px solid #666;border-radius:3px;padding:2px;";
@@ -6682,44 +6795,28 @@ function buildPatternTool(pop, snap) {
     }
     sel.addEventListener("change", () => {
         currentPattern = sel.value;
-        targets = patternPositions(currentPattern, n, cRe, cIm, R);
-        updateVisual();
+        opts = {};
+        buildControls();
+        refresh();
     });
 
-    const slider = document.createElement("div");
-    slider.className = "vslider";
-    const fill = document.createElement("div");
-    fill.className = "vslider-fill";
-    const thumb = document.createElement("div");
-    thumb.className = "vslider-thumb";
-    slider.appendChild(fill); slider.appendChild(thumb);
+    const acceptBtn = document.createElement("button");
+    acceptBtn.textContent = "\u2713 Accept";
+    acceptBtn.style.cssText = "width:100%;font-size:10px;padding:3px;margin-top:6px;background:#4a4;color:#fff;border:1px solid #6c6;border-radius:3px;cursor:pointer;";
+    let accepted = false;
+    acceptBtn.addEventListener("click", () => { accepted = true; closeOpTool(); });
 
-    let u = 1.0;
-    function updateVisual() {
-        const pct = u * 100;
-        fill.style.height = pct + "%"; thumb.style.bottom = pct + "%";
-        valEl.textContent = Math.round(pct) + "%";
-        let ci = 0;
-        applyPreview(snap, (re, im) => {
-            const t = targets[ci++];
-            return { re: re + u * (t.re - re), im: im + u * (t.im - im) };
-        });
-    }
-    function setFromY(clientY) {
-        const rect = slider.getBoundingClientRect();
-        u = Math.max(0, Math.min(1, 1 - (clientY - rect.top) / rect.height));
-        updateVisual();
-    }
-    let dragging = false;
-    slider.addEventListener("mousedown", e => { dragging = true; setFromY(e.clientY); e.preventDefault(); });
-    opToolMouseMove = e => { if (dragging) setFromY(e.clientY); };
-    opToolMouseUp = () => { dragging = false; };
-    window.addEventListener("mousemove", opToolMouseMove);
-    window.addEventListener("mouseup", opToolMouseUp);
+    opCloseCallback = () => {
+        if (!accepted && opSnapshot) {
+            applyPreview(opSnapshot, (re, im) => ({ re, im }));
+        }
+    };
 
-    updateVisual();
+    buildControls();
+    refresh();
+
     pop.appendChild(title); pop.appendChild(sel);
-    pop.appendChild(slider); pop.appendChild(valEl);
+    pop.appendChild(controlsDiv); pop.appendChild(acceptBtn);
 }
 
 function buildShapeTool(pop, snap) {
@@ -7059,6 +7156,13 @@ document.addEventListener("mousedown", e => {
         if (pp && !pp.contains(e.target) && !e.target.classList.contains("cpick-path-btn")) {
             if (typeof closePathPickPop === "function") closePathPickPop(true);
         }
+    }
+});
+
+// Close ops tool on Escape
+document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && activeToolBtn) {
+        closeOpTool();
     }
 });
 
@@ -7503,6 +7607,9 @@ function buildStateMetadata(timestamp) {
             enabled: morphEnabled,
             rate: morphRate,
             mu: morphMu,
+            cdPathType: morphPathType,
+            cdCcw: morphPathCcw,
+            cdEllipseMinor: morphEllipseMinor,
             target: morphTargetCoeffs.map(d => ({
                 pos: [d.re, d.im],
                 home: [d.curve[0].re, d.curve[0].im],
@@ -8467,8 +8574,12 @@ function applyLoadedState(meta) {
     // 5b. Restore morph state
     if (meta.morph) {
         morphEnabled = !!meta.morph.enabled;
-        morphRate = meta.morph.rate ?? 0.25;
+        morphRate = meta.morph.rate ?? 0.01;
         morphMu = morphEnabled ? (meta.morph.mu ?? 0.5) : 0;
+        morphPathType = meta.morph.cdPathType || "line";
+        morphPathCcw = !!meta.morph.cdCcw;
+        morphEllipseMinor = meta.morph.cdEllipseMinor ?? 0.5;
+        morphTheta = 0;
         if (meta.morph.target && meta.morph.target.length === coefficients.length) {
             morphTargetCoeffs = meta.morph.target.map(d => {
                 const hasPath = d.pathType && d.pathType !== "none" && d.pathType !== "follow-c";
@@ -8496,8 +8607,6 @@ function applyLoadedState(meta) {
             initMorphTarget();
         }
         document.getElementById("morph-enable").checked = morphEnabled;
-        document.getElementById("morph-rate").value = Math.round(morphRate * 100);
-        document.getElementById("morph-rate-val").textContent = morphRate.toFixed(2) + " Hz";
         document.getElementById("morph-mu-val").textContent = "μ=" + morphMu.toFixed(2);
     } else {
         initMorphTarget();
@@ -10295,7 +10404,33 @@ var S_proxColor, S_proxPalR, S_proxPalG, S_proxPalB;
 var S_derivColor, S_derivPalR, S_derivPalG, S_derivPalB, S_selIndices;
 var S_idxProxColor = false, S_idxProxGamma = 0.5, S_ratioColor = false, S_ratioGamma = 0.5;
 var S_morphEnabled = false, S_morphRate = 0, S_morphTargetRe = null, S_morphTargetIm = null;
+var S_morphPathType = "line", S_morphPathCcw = false, S_morphEllipseMinor = 0.5;
 var S_matchStrategy = "assign4";
+
+// Worker-side morph interpolation (mirrors main-thread morphInterpPoint)
+function morphInterpW(cRe, cIm, dRe, dIm, theta) {
+    var dx = dRe - cRe, dy = dIm - cIm;
+    var len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 1e-15) return [cRe, cIm];
+    if (S_morphPathType === "line") {
+        var mu = 0.5 - 0.5 * Math.cos(theta);
+        return [cRe * (1 - mu) + dRe * mu, cIm * (1 - mu) + dIm * mu];
+    }
+    var ux = dx / len, uy = dy / len;
+    var vx = -uy, vy = ux;
+    var midRe = (cRe + dRe) * 0.5, midIm = (cIm + dIm) * 0.5;
+    var semi = len * 0.5;
+    var sign = S_morphPathCcw ? 1 : -1;
+    var lx, ly;
+    if (S_morphPathType === "circle") {
+        lx = -semi * Math.cos(theta); ly = sign * semi * Math.sin(theta);
+    } else if (S_morphPathType === "ellipse") {
+        lx = -semi * Math.cos(theta); ly = sign * (S_morphEllipseMinor * semi) * Math.sin(theta);
+    } else { // figure8
+        lx = -semi * Math.cos(theta); ly = sign * (semi * 0.5) * Math.sin(2 * theta);
+    }
+    return [midRe + lx * ux + ly * vx, midIm + lx * uy + ly * vy];
+}
 var S_dCurvesFlat = null, S_dEntries = null, S_dOffsets = null, S_dLengths = null, S_dIsCloud = null;
 var S_dFollowC = null;
 var S_jiggleRe = null, S_jiggleIm = null;
@@ -10348,6 +10483,11 @@ self.onmessage = function(e) {
         S_morphRate = d.morphRate || 0;
         S_morphTargetRe = d.morphTargetRe ? new Float64Array(d.morphTargetRe) : null;
         S_morphTargetIm = d.morphTargetIm ? new Float64Array(d.morphTargetIm) : null;
+        S_morphPathType = d.morphPathType || "line";
+        S_morphPathCcw = !!d.morphPathCcw;
+        S_morphEllipseMinor = d.morphEllipseMinor ?? 0.5;
+        // Force JS step loop for non-linear morph (WASM only does linear)
+        if (S_useWasmLoop && S_morphEnabled && S_morphPathType !== "line") S_useWasmLoop = false;
         S_matchStrategy = d.matchStrategy || "assign4";
         // D-curve init (animated morph targets)
         S_dEntries = d.dAnimEntries || [];
@@ -10525,11 +10665,10 @@ self.onmessage = function(e) {
         }
 
         if (S_morphEnabled) {
-            var mu = 0.5 - 0.5 * Math.cos(2 * Math.PI * S_morphRate * elapsed);
-            var omu = 1 - mu;
+            var theta = 2 * Math.PI * S_morphRate * elapsed;
             for (var m = 0; m < nCoeffs; m++) {
-                coeffsRe[m] = coeffsRe[m] * omu + morphRe[m] * mu;
-                coeffsIm[m] = coeffsIm[m] * omu + morphIm[m] * mu;
+                var mp = morphInterpW(coeffsRe[m], coeffsIm[m], morphRe[m], morphIm[m], theta);
+                coeffsRe[m] = mp[0]; coeffsIm[m] = mp[1];
             }
         }
 
@@ -11067,6 +11206,9 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
             : Array.from({length: nCoeffs}, (_, i) => i),
         morphEnabled: morphEnabled && morphTargetCoeffs.length === nCoeffs,
         morphRate: morphRate,
+        morphPathType: morphPathType,
+        morphPathCcw: morphPathCcw,
+        morphEllipseMinor: morphEllipseMinor,
         morphTargetRe: morphEnabled ? Float64Array.from(morphTargetCoeffs, d => d.re) : null,
         morphTargetIm: morphEnabled ? Float64Array.from(morphTargetCoeffs, d => d.im) : null,
         matchStrategy: bitmapMatchStrategy,
@@ -11126,6 +11268,9 @@ function initFastModeWorkers() {
             wasmB64: solverType === "wasm" ? WASM_SOLVER_B64 : null,
             morphEnabled: sd.morphEnabled,
             morphRate: sd.morphRate,
+            morphPathType: sd.morphPathType,
+            morphPathCcw: sd.morphPathCcw,
+            morphEllipseMinor: sd.morphEllipseMinor,
             morphTargetRe: sd.morphTargetRe ? sd.morphTargetRe.buffer.slice(0) : null,
             morphTargetIm: sd.morphTargetIm ? sd.morphTargetIm.buffer.slice(0) : null,
             matchStrategy: sd.matchStrategy,
@@ -11494,15 +11639,13 @@ function fastModeChunkLegacy() {
             }
         }
 
-        // Morph blending (legacy) — build blended coefficients
+        // Morph blending — build blended coefficients along C-D path
         let coeffsToSolve = coefficients;
         if (morphEnabled && morphTargetCoeffs.length === coefficients.length) {
-            const mu = 0.5 - 0.5 * Math.cos(2 * Math.PI * morphRate * elapsed);
-            const omu = 1 - mu;
-            coeffsToSolve = coefficients.map((c, i) => ({
-                re: c.re * omu + morphTargetCoeffs[i].re * mu,
-                im: c.im * omu + morphTargetCoeffs[i].im * mu
-            }));
+            const theta = 2 * Math.PI * morphRate * elapsed;
+            coeffsToSolve = coefficients.map((c, i) =>
+                morphInterpPoint(c.re, c.im, morphTargetCoeffs[i].re, morphTargetCoeffs[i].im,
+                                 theta, morphPathType, morphPathCcw, morphEllipseMinor));
         }
 
         // Apply jiggle offsets post-interpolation
@@ -11630,10 +11773,130 @@ document.getElementById("morph-enable").addEventListener("change", function () {
     if (leftTab === "morph") renderMorphPanel();
     solveRoots();
 });
-document.getElementById("morph-rate").addEventListener("input", function () {
-    morphRate = this.value / 100;
-    document.getElementById("morph-rate-val").textContent = morphRate.toFixed(2) + " Hz";
-});
+
+// --- C-D Path popup ---
+let cdpathPopOpen = false;
+function buildCDPathPop() {
+    const pop = document.getElementById("cdpath-pop");
+    const btn = document.getElementById("morph-cdpath-btn");
+    if (cdpathPopOpen) { pop.classList.remove("open"); cdpathPopOpen = false; return; }
+    pop.innerHTML = "";
+
+    // Snapshot current values for revert on Escape/outside-click
+    const prevPathType = morphPathType, prevRate = morphRate, prevCcw = morphPathCcw, prevMinor = morphEllipseMinor;
+
+    const title = document.createElement("div");
+    title.className = "pop-title"; title.textContent = "C-D Path";
+    pop.appendChild(title);
+
+    // Path type dropdown
+    const sel = document.createElement("select");
+    sel.style.cssText = "width:100%;font-size:10px;margin:4px 0;background:#333;color:#fff;border:1px solid #666;border-radius:3px;padding:2px;";
+    for (const [val, label] of [["line","Line"],["circle","Circle"],["ellipse","Ellipse"],["figure8","Figure-8"]]) {
+        const opt = document.createElement("option");
+        opt.value = val; opt.textContent = label;
+        if (val === morphPathType) opt.selected = true;
+        sel.appendChild(opt);
+    }
+    pop.appendChild(sel);
+
+    // Rate slider: 0–100 → 0.000–0.100 Hz
+    const rateRow = document.createElement("div");
+    rateRow.style.cssText = "display:flex;align-items:center;gap:3px;margin:2px 0;font-size:9px;color:#aaa;";
+    const rateLbl = document.createElement("span"); rateLbl.textContent = "Rate"; rateLbl.style.cssText = "width:32px;flex-shrink:0;";
+    const rateInp = document.createElement("input");
+    rateInp.type = "range"; rateInp.min = "0"; rateInp.max = "100"; rateInp.step = "1";
+    rateInp.value = Math.round(morphRate * 1000);
+    rateInp.style.cssText = "flex:1;height:12px;accent-color:var(--accent);";
+    const rateVal = document.createElement("span");
+    rateVal.style.cssText = "width:44px;text-align:right;font-size:8px;flex-shrink:0;";
+    rateVal.textContent = morphRate.toFixed(3) + " Hz";
+    rateInp.addEventListener("input", () => {
+        morphRate = rateInp.value / 1000;
+        rateVal.textContent = morphRate.toFixed(3) + " Hz";
+    });
+    rateRow.appendChild(rateLbl); rateRow.appendChild(rateInp); rateRow.appendChild(rateVal);
+    pop.appendChild(rateRow);
+
+    // CW/CCW toggle (hidden for line)
+    const ccwRow = document.createElement("div");
+    ccwRow.style.cssText = "display:flex;align-items:center;gap:3px;margin:2px 0;font-size:9px;color:#aaa;";
+    const ccwBtn = document.createElement("button");
+    ccwBtn.style.cssText = "font-size:9px;padding:2px 8px;cursor:pointer;background:var(--bg);color:var(--accent);border:1px solid var(--accent-border);border-radius:3px;";
+    ccwBtn.textContent = morphPathCcw ? "CCW" : "CW";
+    ccwBtn.addEventListener("click", () => {
+        morphPathCcw = !morphPathCcw;
+        ccwBtn.textContent = morphPathCcw ? "CCW" : "CW";
+    });
+    ccwRow.appendChild(ccwBtn);
+    pop.appendChild(ccwRow);
+    ccwRow.style.display = morphPathType === "line" ? "none" : "flex";
+
+    // Minor axis slider (shown only for ellipse)
+    const minorRow = document.createElement("div");
+    minorRow.style.cssText = "display:flex;align-items:center;gap:3px;margin:2px 0;font-size:9px;color:#aaa;";
+    const minorLbl = document.createElement("span"); minorLbl.textContent = "Minor"; minorLbl.style.cssText = "width:32px;flex-shrink:0;";
+    const minorInp = document.createElement("input");
+    minorInp.type = "range"; minorInp.min = "10"; minorInp.max = "100"; minorInp.step = "1";
+    minorInp.value = Math.round(morphEllipseMinor * 100);
+    minorInp.style.cssText = "flex:1;height:12px;accent-color:var(--accent);";
+    const minorVal = document.createElement("span");
+    minorVal.style.cssText = "width:28px;text-align:right;font-size:8px;flex-shrink:0;";
+    minorVal.textContent = Math.round(morphEllipseMinor * 100) + "%";
+    minorInp.addEventListener("input", () => {
+        morphEllipseMinor = minorInp.value / 100;
+        minorVal.textContent = Math.round(morphEllipseMinor * 100) + "%";
+    });
+    minorRow.appendChild(minorLbl); minorRow.appendChild(minorInp); minorRow.appendChild(minorVal);
+    pop.appendChild(minorRow);
+    minorRow.style.display = morphPathType === "ellipse" ? "flex" : "none";
+
+    // Update visibility when path type changes
+    sel.addEventListener("change", () => {
+        morphPathType = sel.value;
+        ccwRow.style.display = morphPathType === "line" ? "none" : "flex";
+        minorRow.style.display = morphPathType === "ellipse" ? "flex" : "none";
+    });
+
+    // Accept button
+    const acceptBtn = document.createElement("button");
+    acceptBtn.textContent = "\u2713 Accept";
+    acceptBtn.style.cssText = "width:100%;font-size:10px;padding:3px;margin-top:6px;background:#4a4;color:#fff;border:1px solid #6c6;border-radius:3px;cursor:pointer;";
+    let accepted = false;
+    acceptBtn.addEventListener("click", () => {
+        accepted = true;
+        pop.classList.remove("open"); cdpathPopOpen = false;
+    });
+    pop.appendChild(acceptBtn);
+
+    // Position popup below button
+    const r = btn.getBoundingClientRect();
+    pop.style.left = r.left + "px";
+    pop.style.top = (r.bottom + 4) + "px";
+    pop.classList.add("open");
+    cdpathPopOpen = true;
+
+    // Outside-click / Escape to revert
+    function closeRevert(e) {
+        if (e && pop.contains(e.target)) return;
+        if (e && btn.contains(e.target)) return;
+        if (!accepted) {
+            morphPathType = prevPathType; morphRate = prevRate;
+            morphPathCcw = prevCcw; morphEllipseMinor = prevMinor;
+        }
+        pop.classList.remove("open"); cdpathPopOpen = false;
+        document.removeEventListener("mousedown", closeRevert, true);
+        document.removeEventListener("keydown", escHandler, true);
+    }
+    function escHandler(e) {
+        if (e.key === "Escape") { closeRevert(); e.stopPropagation(); }
+    }
+    setTimeout(() => {
+        document.addEventListener("mousedown", closeRevert, true);
+        document.addEventListener("keydown", escHandler, true);
+    }, 0);
+}
+document.getElementById("morph-cdpath-btn").addEventListener("click", buildCDPathPop);
 document.getElementById("morph-copy-btn").addEventListener("click", function () {
     initMorphTarget();
     if (leftTab === "morph") renderMorphPanel();
@@ -13528,6 +13791,25 @@ function updateJiggleStatus() {
     el.style.color = offCount > 0 ? "var(--accent)" : "var(--muted)";
 }
 
+function nearestPrime(n) {
+    n = Math.round(n);
+    if (n <= 2) return 2;
+    function ip(v) {
+        if (v < 2) return false;
+        if (v === 2) return true;
+        if (v % 2 === 0) return false;
+        for (let d = 3; d * d <= v; d += 2) if (v % d === 0) return false;
+        return true;
+    }
+    if (ip(n)) return n;
+    let lo = n - 1, hi = n + 1;
+    while (true) {
+        if (lo >= 2 && ip(lo)) return lo;
+        if (ip(hi)) return hi;
+        lo--; hi++;
+    }
+}
+
 function buildJigglePanel() {
     const container = document.getElementById("jiggle-controls");
     if (!container) return;
@@ -13566,6 +13848,17 @@ function buildJigglePanel() {
     container.appendChild(controlsDiv);
     function buildModeControls() {
         controlsDiv.innerHTML = "";
+        const stepBtnStyle = "font-size:8px;padding:0 3px;background:transparent;color:var(--muted);border:1px solid var(--stroke);border-radius:3px;cursor:pointer;margin-left:2px;line-height:14px;";
+        function addStepBtns(row, inp, hint, getV, setV, mn, mx) {
+            const sync = () => { const v = getV(); inp.value = v; if (hint) hint.textContent = v; };
+            const bm = document.createElement("button"); bm.textContent = "\u22121"; bm.style.cssText = stepBtnStyle;
+            bm.addEventListener("click", () => { setV(Math.max(mn, getV() - 1)); sync(); });
+            const bp = document.createElement("button"); bp.textContent = "+1"; bp.style.cssText = stepBtnStyle;
+            bp.addEventListener("click", () => { setV(Math.min(mx, getV() + 1)); sync(); });
+            const bP = document.createElement("button"); bP.textContent = "P"; bP.title = "nearest prime"; bP.style.cssText = stepBtnStyle;
+            bP.addEventListener("click", () => { setV(Math.max(mn, Math.min(mx, nearestPrime(getV())))); sync(); });
+            row.appendChild(bm); row.appendChild(bp); row.appendChild(bP);
+        }
         if (jiggleMode === "random" || jiggleMode === "walk") {
             const r = document.createElement("div"); r.style.cssText = jRowStyle;
             const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "\u03C3";
@@ -13585,14 +13878,18 @@ function buildJigglePanel() {
             const i = document.createElement("input"); i.type = "range"; i.min = "10"; i.max = "5000"; i.step = "1"; i.value = jiggleAngleSteps; i.style.cssText = "width:100px;";
             const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = jiggleAngleSteps;
             i.addEventListener("input", () => { jiggleAngleSteps = parseInt(i.value, 10) || 100; h.textContent = jiggleAngleSteps; });
-            r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
+            r.appendChild(l); r.appendChild(i); r.appendChild(h);
+            addStepBtns(r, i, h, () => jiggleAngleSteps, v => { jiggleAngleSteps = v; }, 10, 5000);
+            controlsDiv.appendChild(r);
         } else if (jiggleMode === "circle") {
             const r = document.createElement("div"); r.style.cssText = jRowStyle;
             const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "steps";
             const i = document.createElement("input"); i.type = "range"; i.min = "10"; i.max = "5000"; i.step = "1"; i.value = jiggleCircleSteps; i.style.cssText = "width:100px;";
             const h = document.createElement("span"); h.style.cssText = hintStyle; h.textContent = jiggleCircleSteps;
             i.addEventListener("input", () => { jiggleCircleSteps = parseInt(i.value, 10) || 60; h.textContent = jiggleCircleSteps; });
-            r.appendChild(l); r.appendChild(i); r.appendChild(h); controlsDiv.appendChild(r);
+            r.appendChild(l); r.appendChild(i); r.appendChild(h);
+            addStepBtns(r, i, h, () => jiggleCircleSteps, v => { jiggleCircleSteps = v; }, 10, 5000);
+            controlsDiv.appendChild(r);
         } else if (jiggleMode === "scale-center" || jiggleMode === "scale-centroid") {
             const r = document.createElement("div"); r.style.cssText = jRowStyle;
             const l = document.createElement("span"); l.style.cssText = jLblStyle; l.textContent = "growth";
@@ -13606,7 +13903,9 @@ function buildJigglePanel() {
             const i1 = document.createElement("input"); i1.type = "range"; i1.min = "10"; i1.max = "5000"; i1.step = "1"; i1.value = jiggleAngleSteps; i1.style.cssText = "width:100px;";
             const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = jiggleAngleSteps;
             i1.addEventListener("input", () => { jiggleAngleSteps = parseInt(i1.value, 10) || 100; h1.textContent = jiggleAngleSteps; });
-            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
+            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1);
+            addStepBtns(r1, i1, h1, () => jiggleAngleSteps, v => { jiggleAngleSteps = v; }, 10, 5000);
+            controlsDiv.appendChild(r1);
             const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
             const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "growth";
             const i2 = document.createElement("input"); i2.type = "range"; i2.min = "0.01"; i2.max = "1"; i2.step = "0.01"; i2.value = jiggleScaleStep; i2.style.cssText = "width:100px;";
@@ -13625,20 +13924,26 @@ function buildJigglePanel() {
             const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "2"; i2.max = "1000"; i2.value = jigglePeriod; i2.style.cssText = inpStyle;
             i2.addEventListener("input", () => { jigglePeriod = Math.max(2, Math.min(1000, parseInt(i2.value,10)||20)); });
             const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "cycles";
-            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
+            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2);
+            addStepBtns(r2, i2, null, () => jigglePeriod, v => { jigglePeriod = v; }, 2, 1000);
+            controlsDiv.appendChild(r2);
         } else if (jiggleMode === "wobble") {
             const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
             const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "steps";
             const i1 = document.createElement("input"); i1.type = "range"; i1.min = "10"; i1.max = "5000"; i1.step = "1"; i1.value = jiggleAngleSteps; i1.style.cssText = "width:100px;";
             const h1 = document.createElement("span"); h1.style.cssText = hintStyle; h1.textContent = jiggleAngleSteps;
             i1.addEventListener("input", () => { jiggleAngleSteps = parseInt(i1.value, 10) || 100; h1.textContent = jiggleAngleSteps; });
-            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1); controlsDiv.appendChild(r1);
+            r1.appendChild(l1); r1.appendChild(i1); r1.appendChild(h1);
+            addStepBtns(r1, i1, h1, () => jiggleAngleSteps, v => { jiggleAngleSteps = v; }, 10, 5000);
+            controlsDiv.appendChild(r1);
             const r2 = document.createElement("div"); r2.style.cssText = jRowStyle;
             const l2 = document.createElement("span"); l2.style.cssText = jLblStyle; l2.textContent = "period";
             const i2 = document.createElement("input"); i2.type = "number"; i2.step = "1"; i2.min = "2"; i2.max = "1000"; i2.value = jigglePeriod; i2.style.cssText = inpStyle;
             i2.addEventListener("input", () => { jigglePeriod = Math.max(2, Math.min(1000, parseInt(i2.value,10)||20)); });
             const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = "cycles";
-            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
+            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2);
+            addStepBtns(r2, i2, null, () => jigglePeriod, v => { jigglePeriod = v; }, 2, 1000);
+            controlsDiv.appendChild(r2);
         } else if (jiggleMode === "lissajous") {
             const r1 = document.createElement("div"); r1.style.cssText = jRowStyle;
             const l1 = document.createElement("span"); l1.style.cssText = jLblStyle; l1.textContent = "amp";
@@ -13651,7 +13956,9 @@ function buildJigglePanel() {
             const i2 = document.createElement("input"); i2.type = "range"; i2.min = "10"; i2.max = "5000"; i2.step = "1"; i2.value = jigglePeriod; i2.style.cssText = "width:100px;";
             const h2 = document.createElement("span"); h2.style.cssText = hintStyle; h2.textContent = jigglePeriod;
             i2.addEventListener("input", () => { jigglePeriod = parseInt(i2.value, 10) || 20; h2.textContent = jigglePeriod; });
-            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2); controlsDiv.appendChild(r2);
+            r2.appendChild(l2); r2.appendChild(i2); r2.appendChild(h2);
+            addStepBtns(r2, i2, h2, () => jigglePeriod, v => { jigglePeriod = v; }, 10, 5000);
+            controlsDiv.appendChild(r2);
             const r3 = document.createElement("div"); r3.style.cssText = jRowStyle;
             const l3 = document.createElement("span"); l3.style.cssText = jLblStyle; l3.textContent = "fX";
             const i3 = document.createElement("input"); i3.type = "number"; i3.step = "1"; i3.min = "1"; i3.max = "10"; i3.value = jiggleLissFreqX; i3.style.cssText = inpStyle;

@@ -1,6 +1,6 @@
 # Test Results
 
-**525 tests total: 524 passed, 1 skipped** | Runtime: ~9m | Headless Chromium on Apple Silicon
+**777 tests total: 776 passed, 1 skipped** | Runtime: ~12m | Headless Chromium on Apple Silicon
 
 Run with: `python -m pytest tests/ -v`
 
@@ -170,9 +170,9 @@ Tests `initMorphTarget()`, blending formula, enable/disable state, save/load, de
 
 ---
 
-## test_jiggle.py — Jiggle Perturbation System (32 tests)
+## test_jiggle.py — Jiggle Perturbation System (61 tests)
 
-Tests `gaussRand()`, `jiggleTargetCoeffs()`, `computeJiggleCentroid()`, `computeJiggleForStep()` across all 11 modes, pure function behavior, caching, and save/load.
+Tests `gaussRand()`, `jiggleTargetCoeffs()`, `computeJiggleCentroid()`, `computeJiggleForStep()` across all 11 modes, pure function behavior, caching, save/load, `nearestPrime()`, and step/period -1/+1/P button controls.
 
 | Test Group | Count | What it checks |
 |------------|-------|----------------|
@@ -182,6 +182,9 @@ Tests `gaussRand()`, `jiggleTargetCoeffs()`, `computeJiggleCentroid()`, `compute
 | `TestJiggleModes::test_none_mode_no_offsets` | 1 | "none" mode produces no offsets |
 | `TestJigglePureFunction` | 5 | Rotate/scale/breathe are pure functions of step (no accumulation), same step cached, jiggleStepFromElapsed floors correctly |
 | `TestJiggleSaveLoad` | 1 | Mode + parameters survive save/load |
+| `TestNearestPrime` | 5 | Prime returns itself, composite returns nearest, small values, result always prime, distance is minimal |
+| `TestStepButtons::test_buttons_exist` | 7 | Each step/period mode (rotate, circle, spiral-centroid, wobble, lissajous, breathe, wobble) has -1, +1, P buttons |
+| `TestStepButtons` (non-parametrized) | 17 | Rotate +1/-1/P/P-noop, circle +1/P, spiral +1, lissajous +1/P, min/max clamp, breathe period +1/P/min-clamp, slider sync, wobble dual rows, P button title |
 
 ---
 
@@ -369,6 +372,61 @@ Tests the WASM step loop module: loading, memory layout, solver correctness, col
 
 ---
 
+## test_shape_morph.py — Shape Morph Tool (30 tests)
+
+Tests the shape morph tool: `rayPolyHit()` ray-polygon intersection, `shapeTargets()` boundary projection for 4 shape types (box, triangle, pentagon, infinity), and morph interpolation at slider positions 0, 0.25, 0.5, and 1.
+
+| Test Group | Count | What it checks |
+|------------|-------|----------------|
+| `TestRayPolyHit` | 6 | Rightward ray hits triangle, upward ray hits triangle top, ray hits pentagon at correct distance, all 12 directions hit triangle, all 20 directions hit pentagon, rightward ray hits box |
+| `TestShapeTargets::test_all_targets_non_null` | 4 | Box/tri/pent/inf: every item gets a valid (non-fallback) target |
+| `TestShapeTargets` (specific shapes) | 4 | Box targets on bbox edges, tri targets on triangle edges, pent targets on pentagon edges, inf targets at R*(0.2+0.8*cos²θ) distance |
+| `TestShapeMorphInterpolation::test_slider_zero` | 4 | Box/tri/inf/pent: u=0 collapses all points to centroid |
+| `TestShapeMorphInterpolation::test_slider_half` | 4 | Box/tri/inf/pent: u=0.5 returns points to original positions |
+| `TestShapeMorphInterpolation::test_slider_one` | 4 | Box/tri/inf/pent: u=1 places points at shape boundary targets |
+| `TestShapeMorphInterpolation::test_slider_quarter` | 4 | Box/tri/inf/pent: u=0.25 places points halfway between centroid and original |
+
+---
+
+## test_pattern_arrange.py — Pattern Arrange Tool (193 tests)
+
+Tests the pattern arrange tool: `distributeOnPath()` helper, `patternPositions()` for all 21 patterns, per-pattern geometry validation, blend interpolation, centroid preservation, large-N scaling, parameterized options, and UI popup behavior.
+
+| Test Group | Count | What it checks |
+|------------|-------|----------------|
+| `TestDistributeOnPath` | 6 | Closed triangle 3 pts, closed square 4 pts, closed square 8 pts with midpoints, open path endpoints, single point, equal spacing on hexagon |
+| `TestPatternPositionsCount` | 63 | All 21 patterns: returns n points (n=10), returns 1 point at center, returns 2 points |
+| `TestPatternPositionsFinite` | 21 | All 21 patterns: every point is finite |
+| `TestCircle` | 2 | All points at correct radius, equally spaced angles |
+| `TestSquare` | 1 | Points on square perimeter |
+| `TestTriangle` | 1 | Points within radius R |
+| `TestPentagon` | 1 | Points within radius R |
+| `TestHexagon` | 1 | 6 points at regular hexagon vertices |
+| `TestDiamond` | 1 | First point at top vertex |
+| `TestStar` | 1 | Alternating inner/outer radii |
+| `TestEllipse` | 1 | Points satisfy ellipse equation |
+| `TestInfinity` | 1 | Points on both sides of x-axis |
+| `TestSpiral` | 2 | Starts near center/ends near R, roughly increasing radius |
+| `TestGrid` | 2 | Points within bounding box, 9 points form 3x3 grid |
+| `TestLine` | 2 | Constant imaginary part, spans cRe-R to cRe+R |
+| `TestWave` | 2 | Horizontal span correct, y-values vary |
+| `TestCross` | 2 | Within bounds, points in all 4 cardinal directions |
+| `TestHeart` | 1 | Wider at top than bottom |
+| `TestLissajous` | 2 | Within radius, crosses near origin |
+| `TestRose` | 2 | Within radius, has petals (passes through origin) |
+| `TestTwoCircles` | 1 | Points split into left/right groups |
+| `TestTwoSquares` | 1 | Points form two separate groups |
+| `TestRing` | 1 | Points at two distinct radii |
+| `TestScatter` | 2 | Within radius, fills area at various distances |
+| `TestPatternBlend` | 13 | 5 patterns: u=0 gives original, 5 patterns: u=1 gives target, 3 patterns: u=0.5 is midpoint |
+| `TestPatternCentroid` | 12 | 12 symmetric patterns: output centroid near input centroid |
+| `TestPatternUIExists` | 2 | Ptrn button exists, PATTERN_LIST has 21 entries |
+| `TestPatternLargeN` | 21 | All 21 patterns: handle 50 points without error |
+| `TestPatternOpts` | 15 | Star inner radius, ellipse aspect, infinity amplitude, spiral turns, grid cols, line angle, wave cycles/amplitude, cross arm width, lissajous freq, rose petals, 2-circles/2-squares distance, ring inner ratio, default opts match |
+| `TestPatternToolUI` | 8 | PTRN_PARAMS has 13 entries, accept keeps changes, close reverts, no morph slider, has accept button, select dropdown with 21 options, star shows Inner R, circle no controls, lissajous shows 2 freq sliders, pattern switch resets opts |
+
+---
+
 ## test_integration.py — End-to-End (3 tests)
 
 | Test | Status | What it checks |
@@ -427,7 +485,7 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | Utilities | test_utils.py | 29 | Formatting, path catalog, prime speeds, audio helpers, ranges |
 | Save/load | test_state.py | 8 | Roundtrip serialization, partial state |
 | Morph | test_morph.py | 15 | Init, blending, enable/disable, save/load, degree sync, fast mode |
-| Jiggle | test_jiggle.py | 32 | Helpers, all 11 modes, pure function behavior, caching, save/load |
+| Jiggle | test_jiggle.py | 61 | Helpers, all 11 modes, pure function behavior, caching, save/load, nearestPrime, step/period buttons |
 | Fast mode | test_fastmode.py | 22 | Formatting, buttons, removed vars, resets, serialization, clear, toggle |
 | Off-canvas & export | test_offcanvas.py | 76 | Split compute/display, BMP/JPEG/PNG/TIFF export, library loading, save popup, format state, bitmap/animation color decoupling, derivative palette, rank normalization, root sensitivities |
 | Match strategies | test_match_strategy.py | 16 | Hungarian algorithm, greedy strategies, serialization, save/load, UI chips, worker blob |
@@ -438,9 +496,11 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | Final tab | test_final_tab.py | 20 | Tab DOM, rendering, trail data, trail SVG, solveRoots integration, animation |
 | D-node ctx menu | test_dnode_ctx.py | 16 | Popup, open/close, snapshot/revert, accept, path changes, morph panel |
 | WASM step loop | test_wasm_step_loop.py | 26 | Module loading, memory layout, solver correctness, color modes, fast mode E2E, JS comparison, progress, edge cases |
+| Shape morph | test_shape_morph.py | 30 | Ray-polygon intersection, shape boundary targets (box/tri/pent/inf), morph slider interpolation |
+| Pattern arrange | test_pattern_arrange.py | 193 | 21 patterns: distributeOnPath, count/finite/centroid, per-shape geometry, blend interpolation, large-N, opts, UI popup |
 | Integration | test_integration.py | 3 | Snap loading, determinism, fast mode pixels |
 | Benchmark | test_benchmark.py | 7 | JS vs WASM: solver correctness + performance, step loop benchmarks |
-| **Total** | **24 files** | **525** | |
+| **Total** | **26 files** | **777** | |
 
 ---
 
@@ -450,31 +510,33 @@ All tests use **Playwright Python** running headless Chromium. Tests call functi
 
 ```
 tests/
-  conftest.py           — Fixtures: HTTP server, browser, page, wasm_b64
-  test_solver.py        — solveRootsEA correctness (pure function)
-  test_matching.py      — matchRootOrder correctness (pure function)
-  test_curves.py        — computeCurveN correctness (semi-pure)
-  test_paths.py         — Parametric path functions (21 path types)
-  test_polynomial.py    — rootsToCoefficients, rankNormalize
-  test_shapes.py        — Root shape generators (13 shapes)
-  test_colors.py        — HSL→RGB, sensitivity, proximity coloring
-  test_stats.py         — Distance stats, percentiles
-  test_utils.py         — Formatting, path catalog, audio helpers
-  test_state.py         — Save/load roundtrip, backward compat
-  test_morph.py         — Coefficient morphing system
-  test_jiggle.py        — Jiggle perturbation (11 modes)
-  test_fastmode.py      — Continuous fast mode, buttons, serialization
-  test_offcanvas.py     — Off-canvas render split, multi-format export, high-res
-  test_match_strategy.py — Root-matching strategies (Hungarian, greedy, UI)
-  test_dnode.py         — D-node paths (D-List tab, animation, save/load, fast mode)
-  test_state_fields.py  — Extended save/load roundtrip (bitmap, jiggle, backward compat)
-  test_animation.py     — Animation entry points (start, stop, home, scrub, play guard)
-  test_anim_bar.py      — Trajectory editor simplification (preview/revert, cycler/PS removal)
-  test_final_tab.py     — Final tab (rendering, trails, solveRoots integration)
-  test_dnode_ctx.py     — D-node right-click context menu (popup, path editing, morph panel)
-  test_wasm_step_loop.py — WASM step loop (module loading, memory layout, solver, color modes, E2E)
-  test_integration.py   — Snap loading, determinism, fast mode
-  test_benchmark.py     — JS vs WASM speed + correctness, step loop benchmarks
+  conftest.py              — Fixtures: HTTP server, browser, page, wasm_b64
+  test_solver.py           — solveRootsEA correctness (pure function)
+  test_matching.py         — matchRootOrder correctness (pure function)
+  test_curves.py           — computeCurveN correctness (semi-pure)
+  test_paths.py            — Parametric path functions (21 path types)
+  test_polynomial.py       — rootsToCoefficients, rankNormalize
+  test_shapes.py           — Root shape generators (13 shapes)
+  test_colors.py           — HSL→RGB, sensitivity, proximity coloring
+  test_stats.py            — Distance stats, percentiles
+  test_utils.py            — Formatting, path catalog, audio helpers
+  test_state.py            — Save/load roundtrip, backward compat
+  test_morph.py            — Coefficient morphing system
+  test_jiggle.py           — Jiggle perturbation (11 modes), nearestPrime, step/period buttons
+  test_fastmode.py         — Continuous fast mode, buttons, serialization
+  test_offcanvas.py        — Off-canvas render split, multi-format export, high-res
+  test_match_strategy.py   — Root-matching strategies (Hungarian, greedy, UI)
+  test_dnode.py            — D-node paths (D-List tab, animation, save/load, fast mode)
+  test_state_fields.py     — Extended save/load roundtrip (bitmap, jiggle, backward compat)
+  test_animation.py        — Animation entry points (start, stop, home, scrub, play guard)
+  test_anim_bar.py         — Trajectory editor simplification (preview/revert, cycler/PS removal)
+  test_final_tab.py        — Final tab (rendering, trails, solveRoots integration)
+  test_dnode_ctx.py        — D-node right-click context menu (popup, path editing, morph panel)
+  test_wasm_step_loop.py   — WASM step loop (module loading, memory layout, solver, color modes, E2E)
+  test_shape_morph.py      — Shape morph tool (rayPolyHit, shapeTargets, slider interpolation)
+  test_pattern_arrange.py  — Pattern arrange tool (21 patterns, distributeOnPath, blend, opts, UI)
+  test_integration.py      — Snap loading, determinism, fast mode
+  test_benchmark.py        — JS vs WASM speed + correctness, step loop benchmarks
 ```
 
 **Dependencies**: `uv pip install playwright pytest && playwright install chromium`

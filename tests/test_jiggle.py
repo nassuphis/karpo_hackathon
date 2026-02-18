@@ -285,3 +285,366 @@ class TestJiggleSaveLoad:
         assert result["sigma"] == 5.5
         assert result["freqX"] == 5
         assert result["freqY"] == 3
+
+
+class TestNearestPrime:
+    """Tests for the nearestPrime() utility function."""
+
+    def test_prime_returns_itself(self, page):
+        """A prime number should return itself."""
+        result = page.evaluate("() => [2,3,5,7,11,13,97,101,4999].map(n => nearestPrime(n))")
+        assert result == [2, 3, 5, 7, 11, 13, 97, 101, 4999]
+
+    def test_composite_returns_nearest(self, page):
+        """A composite should return the nearest prime."""
+        result = page.evaluate("""() => {
+            return {
+                n4: nearestPrime(4),
+                n6: nearestPrime(6),
+                n9: nearestPrime(9),
+                n10: nearestPrime(10),
+                n100: nearestPrime(100),
+                n1000: nearestPrime(1000)
+            };
+        }""")
+        assert result["n4"] == 3 or result["n4"] == 5  # equidistant, either ok
+        assert result["n6"] == 5 or result["n6"] == 7
+        assert result["n9"] == 7 or result["n9"] == 11
+        assert result["n10"] == 11
+        assert result["n100"] == 101
+        assert result["n1000"] == 997
+
+    def test_small_values(self, page):
+        """Values <= 2 should return 2."""
+        result = page.evaluate("() => [nearestPrime(0), nearestPrime(1), nearestPrime(2)]")
+        assert result == [2, 2, 2]
+
+    def test_result_is_always_prime(self, page):
+        """Result of nearestPrime should always be prime."""
+        result = page.evaluate("""() => {
+            function isPrime(v) {
+                if (v < 2) return false;
+                if (v === 2) return true;
+                if (v % 2 === 0) return false;
+                for (var d = 3; d * d <= v; d += 2) if (v % d === 0) return false;
+                return true;
+            }
+            var failures = [];
+            for (var n = 2; n <= 200; n++) {
+                var p = nearestPrime(n);
+                if (!isPrime(p)) failures.push({n, p});
+            }
+            return failures;
+        }""")
+        assert result == [], f"Non-prime results: {result}"
+
+    def test_distance_is_minimal(self, page):
+        """nearestPrime(n) should be at most as far as any other prime."""
+        result = page.evaluate("""() => {
+            function isPrime(v) {
+                if (v < 2) return false;
+                if (v === 2) return true;
+                if (v % 2 === 0) return false;
+                for (var d = 3; d * d <= v; d += 2) if (v % d === 0) return false;
+                return true;
+            }
+            var failures = [];
+            for (var n = 2; n <= 500; n++) {
+                var p = nearestPrime(n);
+                var dist = Math.abs(p - n);
+                // Check no prime is closer
+                for (var k = n - dist; k <= n + dist; k++) {
+                    if (k >= 2 && isPrime(k) && Math.abs(k - n) < dist) {
+                        failures.push({n, p, closer: k});
+                        break;
+                    }
+                }
+            }
+            return failures;
+        }""")
+        assert result == [], f"Found closer primes: {result}"
+
+
+class TestStepButtons:
+    """Tests for -1/+1/P buttons on jiggle step/period controls."""
+
+    MODES_WITH_STEPS = ["rotate", "circle", "spiral-centroid", "wobble", "lissajous"]
+
+    MODES_WITH_PERIOD = ["breathe", "wobble"]
+
+    @pytest.mark.parametrize("mode", MODES_WITH_STEPS + MODES_WITH_PERIOD)
+    def test_buttons_exist(self, page, mode):
+        """Each step/period control should have -1, +1, P buttons."""
+        result = page.evaluate("""(mode) => {
+            jiggleMode = mode;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var labels = [];
+            buttons.forEach(b => labels.push(b.textContent));
+            return labels;
+        }""", mode)
+        assert "\u22121" in result, f"Missing -1 button for {mode}"
+        assert "+1" in result, f"Missing +1 button for {mode}"
+        assert "P" in result, f"Missing P button for {mode}"
+
+    def test_rotate_plus_one(self, page):
+        """Clicking +1 on rotate should increment jiggleAngleSteps."""
+        result = page.evaluate("""() => {
+            jiggleMode = "rotate";
+            jiggleAngleSteps = 100;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var plusBtn = null;
+            buttons.forEach(b => { if (b.textContent === "+1") plusBtn = b; });
+            plusBtn.click();
+            return jiggleAngleSteps;
+        }""")
+        assert result == 101
+
+    def test_rotate_minus_one(self, page):
+        """Clicking -1 on rotate should decrement jiggleAngleSteps."""
+        result = page.evaluate("""() => {
+            jiggleMode = "rotate";
+            jiggleAngleSteps = 100;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var minusBtn = null;
+            buttons.forEach(b => { if (b.textContent === "\\u22121") minusBtn = b; });
+            minusBtn.click();
+            return jiggleAngleSteps;
+        }""")
+        assert result == 99
+
+    def test_rotate_prime(self, page):
+        """Clicking P on rotate should set jiggleAngleSteps to nearest prime."""
+        result = page.evaluate("""() => {
+            jiggleMode = "rotate";
+            jiggleAngleSteps = 100;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var primeBtn = null;
+            buttons.forEach(b => { if (b.textContent === "P") primeBtn = b; });
+            primeBtn.click();
+            return jiggleAngleSteps;
+        }""")
+        assert result == 101
+
+    def test_rotate_prime_noop_on_prime(self, page):
+        """P button on a prime value should keep it unchanged."""
+        result = page.evaluate("""() => {
+            jiggleMode = "rotate";
+            jiggleAngleSteps = 97;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var primeBtn = null;
+            buttons.forEach(b => { if (b.textContent === "P") primeBtn = b; });
+            primeBtn.click();
+            return jiggleAngleSteps;
+        }""")
+        assert result == 97
+
+    def test_circle_plus_one(self, page):
+        """Clicking +1 on circle should increment jiggleCircleSteps."""
+        result = page.evaluate("""() => {
+            jiggleMode = "circle";
+            jiggleCircleSteps = 60;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var plusBtn = null;
+            buttons.forEach(b => { if (b.textContent === "+1") plusBtn = b; });
+            plusBtn.click();
+            return jiggleCircleSteps;
+        }""")
+        assert result == 61
+
+    def test_circle_prime(self, page):
+        """Clicking P on circle should set jiggleCircleSteps to nearest prime."""
+        result = page.evaluate("""() => {
+            jiggleMode = "circle";
+            jiggleCircleSteps = 60;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var primeBtn = null;
+            buttons.forEach(b => { if (b.textContent === "P") primeBtn = b; });
+            primeBtn.click();
+            return jiggleCircleSteps;
+        }""")
+        assert result == 59 or result == 61
+
+    def test_spiral_plus_one(self, page):
+        """Clicking +1 on spiral-centroid should increment jiggleAngleSteps."""
+        result = page.evaluate("""() => {
+            jiggleMode = "spiral-centroid";
+            jiggleAngleSteps = 200;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var plusBtn = null;
+            buttons.forEach(b => { if (b.textContent === "+1") plusBtn = b; });
+            plusBtn.click();
+            return jiggleAngleSteps;
+        }""")
+        assert result == 201
+
+    def test_lissajous_plus_one(self, page):
+        """Clicking +1 on lissajous should increment jigglePeriod."""
+        result = page.evaluate("""() => {
+            jiggleMode = "lissajous";
+            jigglePeriod = 50;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var plusBtn = null;
+            buttons.forEach(b => { if (b.textContent === "+1") plusBtn = b; });
+            plusBtn.click();
+            return jigglePeriod;
+        }""")
+        assert result == 51
+
+    def test_lissajous_prime(self, page):
+        """Clicking P on lissajous should set jigglePeriod to nearest prime."""
+        result = page.evaluate("""() => {
+            jiggleMode = "lissajous";
+            jigglePeriod = 50;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var primeBtn = null;
+            buttons.forEach(b => { if (b.textContent === "P") primeBtn = b; });
+            primeBtn.click();
+            return jigglePeriod;
+        }""")
+        assert result == 47 or result == 53
+
+    def test_minus_respects_minimum(self, page):
+        """Clicking -1 should not go below the slider minimum."""
+        result = page.evaluate("""() => {
+            jiggleMode = "rotate";
+            jiggleAngleSteps = 10;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var minusBtn = null;
+            buttons.forEach(b => { if (b.textContent === "\\u22121") minusBtn = b; });
+            minusBtn.click();
+            return jiggleAngleSteps;
+        }""")
+        assert result == 10  # clamped at min=10
+
+    def test_plus_respects_maximum(self, page):
+        """Clicking +1 should not go above the slider maximum."""
+        result = page.evaluate("""() => {
+            jiggleMode = "rotate";
+            jiggleAngleSteps = 5000;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var plusBtn = null;
+            buttons.forEach(b => { if (b.textContent === "+1") plusBtn = b; });
+            plusBtn.click();
+            return jiggleAngleSteps;
+        }""")
+        assert result == 5000  # clamped at max=5000
+
+    def test_breathe_period_plus_one(self, page):
+        """Breathe period +1 increments jigglePeriod."""
+        result = page.evaluate("""() => {
+            jiggleMode = "breathe";
+            jigglePeriod = 50;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var plusBtn = null;
+            buttons.forEach(b => { if (b.textContent === "+1") plusBtn = b; });
+            plusBtn.click();
+            return jigglePeriod;
+        }""")
+        assert result == 51
+
+    def test_breathe_period_prime(self, page):
+        """Breathe period P sets jigglePeriod to nearest prime."""
+        result = page.evaluate("""() => {
+            jiggleMode = "breathe";
+            jigglePeriod = 50;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var primeBtn = null;
+            buttons.forEach(b => { if (b.textContent === "P") primeBtn = b; });
+            primeBtn.click();
+            return jigglePeriod;
+        }""")
+        assert result == 47 or result == 53
+
+    def test_breathe_period_min_clamp(self, page):
+        """Breathe period -1 should not go below 2."""
+        result = page.evaluate("""() => {
+            jiggleMode = "breathe";
+            jigglePeriod = 2;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var minusBtn = null;
+            buttons.forEach(b => { if (b.textContent === "\\u22121") minusBtn = b; });
+            minusBtn.click();
+            return jigglePeriod;
+        }""")
+        assert result == 2
+
+    def test_slider_value_syncs_with_buttons(self, page):
+        """After clicking a button, the slider/input value should match."""
+        result = page.evaluate("""() => {
+            jiggleMode = "rotate";
+            jiggleAngleSteps = 100;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var slider = container.querySelector('input[type="range"]');
+            var buttons = container.querySelectorAll("button");
+            var plusBtn = null;
+            buttons.forEach(b => { if (b.textContent === "+1") plusBtn = b; });
+            plusBtn.click();
+            return { variable: jiggleAngleSteps, sliderValue: parseInt(slider.value, 10) };
+        }""")
+        assert result["variable"] == 101
+        assert result["sliderValue"] == 101
+
+    def test_wobble_has_both_step_button_rows(self, page):
+        """Wobble mode should have buttons for both steps and period."""
+        result = page.evaluate("""() => {
+            jiggleMode = "wobble";
+            jiggleAngleSteps = 100;
+            jigglePeriod = 20;
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var count = { minus: 0, plus: 0, prime: 0 };
+            buttons.forEach(b => {
+                if (b.textContent === "\\u22121") count.minus++;
+                else if (b.textContent === "+1") count.plus++;
+                else if (b.textContent === "P") count.prime++;
+            });
+            return count;
+        }""")
+        assert result["minus"] == 2, "Should have 2 minus buttons (steps + period)"
+        assert result["plus"] == 2, "Should have 2 plus buttons (steps + period)"
+        assert result["prime"] == 2, "Should have 2 prime buttons (steps + period)"
+
+    def test_prime_button_title(self, page):
+        """P buttons should have title='nearest prime'."""
+        result = page.evaluate("""() => {
+            jiggleMode = "rotate";
+            buildJigglePanel();
+            var container = document.getElementById("jiggle-controls");
+            var buttons = container.querySelectorAll("button");
+            var titles = [];
+            buttons.forEach(b => { if (b.textContent === "P") titles.push(b.title); });
+            return titles;
+        }""")
+        assert result == ["nearest prime"]

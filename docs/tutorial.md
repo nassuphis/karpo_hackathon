@@ -12,7 +12,9 @@ Open [index.html](../index.html) in your browser, or visit the [live demo](https
 
 ![Initial app state](images/01_initial.png)
 
-The **left panel** shows the polynomial's coefficients as colored dots in the complex plane. Each dot can be dragged. The **right panel** shows the computed roots. Between them, the **mid-bar** has transform tools (scale, rotate, translate).
+The **left panel** shows the polynomial's coefficients (C-nodes) as colored dots in the complex plane. Each dot can be dragged. The **right panel** shows the computed roots. Between them, the **mid-bar** has transform tools (Scale, Scale Re, Scale Im, Rotate, Translate, Shape morph, Pattern arrange).
+
+The left panel has six tabs: **C-Nodes** (coefficient canvas), **C-List** (coefficient table with transforms), **D-Nodes** (morph target canvas), **D-List** (morph target table), **Jiggle** (perturbation controls), and **Final** (morph blending preview). The right panel has four tabs: **Roots**, **Stats**, **Sound**, and **Bitmap**.
 
 ---
 
@@ -22,13 +24,13 @@ Click the **Pattern** dropdown in the header bar and select **Spiral**. This arr
 
 ![Spiral pattern selected](images/02_spiral_pattern.png)
 
-The coefficients reposition themselves and the roots on the right update instantly. PolyPaint includes 26 patterns across three categories (Basic, Coefficient shapes, Root shapes) -- feel free to explore them later.
+The coefficients reposition themselves and the roots on the right update instantly. PolyPaint includes 26 patterns across three categories (Basic, Coeff patterns, Roots shapes) -- feel free to explore them later.
 
 ---
 
 ## 3. Select All Coefficients
 
-Click the **All** button in the trajectory editor bar (just below the tab row, on the left). All 6 coefficient dots light up with a selection glow, and the label shows **6 coeffs**.
+Click the **All** button in the trajectory editor bar (just below the tab row on the C-Nodes tab, labeled with a circle-plus icon). All coefficient dots light up with a selection glow, and the bar title updates to show the number of selected coefficients.
 
 ![All coefficients selected](images/03_select_all.png)
 
@@ -38,11 +40,13 @@ You can also click individual dots to toggle them, or drag on empty canvas to ma
 
 ## 4. Assign Circle Paths
 
-With all coefficients selected, open the **path type dropdown** (bottom-left, currently showing "Circle" or "None") and select **Circle**. Colored circle paths appear around each coefficient, showing the trajectory it will follow during animation.
+With all coefficients selected, open the **path type dropdown** in the trajectory editor bar (currently showing "None" or "Circle") and select **Circle**. Colored circle paths appear around each coefficient, showing the trajectory it will follow during animation.
 
 ![Circle paths assigned](images/04_circle_path.png)
 
-Each coefficient now has its own circular orbit. The sliders to the right of the dropdown control **S** (speed, 1–1000), **R** (radius), and **A** (starting angle). You can adjust these per-coefficient or for the whole selection at once.
+Each coefficient now has its own circular orbit. The sliders to the right of the dropdown control **S** (speed, 0.001-1.000), **R** (radius, 1-100% of panel range), **A** (starting angle, 0.00-1.00 as a fraction of a full turn), and a **CW/CCW** toggle for direction. You can adjust these per-coefficient or for the whole selection at once by clicking **Update Whole Selection**.
+
+Path types are organized into groups: Basic (Circle, Horizontal, Vertical, Spiral, Gaussian cloud), Curves (Lissajous, Figure-8, Cardioid, Astroid, Deltoid, Rose, Spirograph, Hypotrochoid, Butterfly, Star, Square, C-Ellipse), and Space-filling (Hilbert, Peano, Sierpinski). Each base path also has a dithered variant that adds small random perturbations along the curve.
 
 ---
 
@@ -51,7 +55,7 @@ Each coefficient now has its own circular orbit. The sliders to the right of the
 To make the animation more interesting, give each coefficient a different speed so the roots trace complex, non-repeating patterns.
 
 1. Click the **C-List** tab to switch to the table view
-2. Click **All** in the list header
+2. Click **All** in the list toolbar
 3. Open the **Transform** dropdown and choose **PrimeSpeeds**
 
 This sets each coefficient's speed to a value coprime with all others, ensuring their orbits never synchronize and the root trajectories fill more of the plane.
@@ -64,7 +68,7 @@ Switch back to the **C-Nodes** tab to see the coefficient paths.
 
 ## 6. Enable Trails
 
-Click the **Trails** button on the roots toolbar (top of the right panel). It highlights when active. This tells PolyPaint to record root positions as SVG paths as the animation plays.
+Click the **Trails** button on the roots toolbar (top of the right panel, on the Roots tab). It highlights when active. This tells PolyPaint to record root positions as SVG paths as the animation plays.
 
 ![Trails enabled](images/06_trails_on.png)
 
@@ -74,7 +78,7 @@ Nothing visible changes yet -- trails appear once the animation starts.
 
 ## 7. Play the Animation
 
-Click the **Play** button in the header bar (right side, next to the scrub slider). The coefficients begin orbiting along their circle paths, and the roots respond by tracing colored trails on the right panel. The seconds counter next to the Play button shows elapsed animation time.
+Click the **Play** button in the header bar. The header bar animation controls are laid out as: scrub slider, Play button, seconds counter, and Home button. The coefficients begin orbiting along their circle paths, and the roots respond by tracing colored trails on the right panel. The seconds counter next to the Play button shows elapsed animation time.
 
 ![Trails after 3 seconds](images/07_trails_running.png)
 
@@ -82,7 +86,7 @@ Let it run for several seconds. The trails grow into intricate braid-like patter
 
 ![Trails after 6 seconds](images/08_trails_complete.png)
 
-Click **Pause** when you're happy with the trail pattern. You can click **Resume** to continue from where you paused, or **Home** (also in the header bar) to reset all coefficients to their start positions. Trails collect up to the maximum trail point limit.
+Click the button again (now showing **Pause**) to halt the animation. The button label then changes to **Resume** so you can continue from where you paused. Click **Home** to reset all coefficients and D-nodes to their start positions and clear trails. The Play/Pause cycle is: Play -> Pause -> Resume -> Pause -> Resume -> ...
 
 ---
 
@@ -90,7 +94,7 @@ Click **Pause** when you're happy with the trail pattern. You can click **Resume
 
 For a quick screenshot of the current view:
 
-1. Click the **Export** button (down arrow) in the header bar
+1. Click the **Export** button (down arrow icon) in the header bar
 2. A popup appears with 7 capture modes
 
 ![Export popup](images/09_export_popup.png)
@@ -122,7 +126,9 @@ The Export method above captures the screen at display resolution. For publicati
 
 ![Bitmap initialized](images/11_bitmap_init.png)
 
-The bitmap canvas appears as a black rectangle. The toolbar shows resolution (default 2000px), step count, and start/pause controls. You can change the resolution dropdown before or after init -- options range from 1,000 to 25,000 pixels. Changing the resolution or step count while fast mode is running will automatically restart rendering with the new settings.
+The bitmap canvas appears as a black rectangle. The toolbar shows resolution (default 2000px), step count, and start/pause controls. You can change the resolution dropdown before or after init -- options are 1000, 2000, 5000, 8000, 10000, 15000, and 25000 pixels. The display canvas is capped at 2000px for performance, but the compute buffer runs at the full selected resolution. Changing the resolution or step count while fast mode is running will automatically restart rendering with the new settings.
+
+The toolbar also includes a **ROOT/COEFF** toggle button that switches between plotting root positions (default) and coefficient positions, as well as **zoom controls** (-25% / +25%) for adjusting the bitmap view.
 
 ### Render
 
@@ -130,9 +136,9 @@ Click **start** to begin fast-mode rendering. This launches parallel Web Workers
 
 ![Bitmap rendering in progress](images/12_bitmap_rendering.png)
 
-The elapsed counter ticks up as pixels accumulate. Let it run for 5-30 seconds depending on the resolution and level of detail you want. Higher step counts (configurable via the **steps** dropdown) mean more solver iterations per worker pass.
+The pass counter ticks up as pixels accumulate. Let it run for 5-30 seconds depending on the resolution and level of detail you want. Higher step counts (configurable via the **steps** dropdown, from 10 to 1M) mean more solver iterations per worker pass.
 
-Click **pause** to halt rendering. The accumulated image is preserved. You can click **cont** (continue) to resume accumulating more pixels.
+Click the button again (now showing **pause**) to halt rendering. The accumulated image is preserved. Click **cont** (continue) to resume accumulating more pixels.
 
 ![Bitmap render complete](images/13_bitmap_done.png)
 
@@ -145,7 +151,7 @@ Click **save** to open the format popup:
 | Format | Best for |
 |--------|---------|
 | **PNG** | Lossless, often smallest for sparse bitmaps |
-| **JPEG** | Lossy with quality slider (1-100) |
+| **JPEG** | Lossy with quality slider (50-100) |
 | **BMP** | Uncompressed, universal compatibility |
 | **TIFF** | Lossless, print workflows |
 
@@ -155,30 +161,96 @@ Select your format and click **Download**. The image is exported at full compute
 
 ## 10. Configure Bitmap Colors and Solver
 
-Click **cfg** on the bitmap toolbar to open the configuration popup. This controls the solver engine, background color, jiggle perturbation, and root coloring.
+Click **cfg** on the bitmap toolbar to open the configuration popup. This controls the solver engine, worker count, background color, and root coloring.
 
 ![Bitmap configuration popup](images/15_bitmap_cfg.png)
+
+### Solver Engine
+
+Choose between **JS** (JavaScript Ehrlich-Aberth) and **WASM** (compiled C Ehrlich-Aberth). Set the number of parallel **Workers** (1, 2, 4, 8, or 16). Timing data resets when the worker count changes.
+
+### Background Color
+
+Pick from 24 background colors spanning blacks, dark tones, warm whites, and grays. The default is black.
 
 ### Color Modes
 
 | Mode | Effect |
 |------|--------|
-| **Uniform** | All roots plot in a single color (pick from 8 swatches) |
+| **Uniform** | All roots plot in a single color (pick from 8 swatches: White, Red, Orange, Yellow, Green, Cyan, Blue, Purple) |
 | **Index Rainbow** | Each root gets a distinct rainbow color by index |
 | **Derivative** | Colors by Jacobian sensitivity: blue (stable) to red (volatile) |
-| **Root Proximity** | Colors by distance to nearest other root, using a selectable palette |
+| **Root Proximity** | Colors by distance to nearest other root, using a selectable d3 palette |
+| **Idx x Prox** | Combines index rainbow hue with proximity-based brightness, with adjustable gamma |
+| **Min/Max Ratio** | Colors by the ratio of minimum to maximum root distance, with adjustable gamma |
 
-For Index Rainbow mode, you can also choose a **matching strategy** (Hungarian, Greedy x1, Greedy x4) that determines how root identities are tracked between solver steps.
+For **Index Rainbow** mode, you can also choose a **matching strategy** (Hungarian, Greedy x1, Greedy x4) that determines how root identities are tracked between solver steps. Hungarian gives optimal tracking but is slower; Greedy x4 is the default and fastest.
 
-### Jiggle
+For **Root Proximity** mode, choose from 8 d3 palettes displayed as gradient circle swatches: Inferno (default), Viridis, Magma, Plasma, Turbo, Cividis, Warm, and Cool.
 
-Jiggle adds small perturbations to coefficients between animation cycles, causing the root trajectories to explore nearby parameter space. This fills in sparse areas and creates richer textures. Try **Random** or **Spiral** jiggle with a small sigma. Key parameters: **sigma** (0–10, perturbation magnitude as a fraction of coefficient extent divided by 10), **interval** (0.1–100 seconds between perturbation cycles), and **angle/circle steps** (10–5000, controlling rotational resolution for directional jiggle modes).
+For **Idx x Prox** mode, a matching strategy selector and a gamma slider (0.1-1.0) control brightness mapping. Lower gamma spreads the brightness across more of the range.
+
+For **Min/Max Ratio** mode, a proximity palette selector and a gamma slider control the color mapping.
+
+---
+
+## 11. Jiggle (Coefficient Perturbation)
+
+Jiggle adds small perturbations to coefficients between animation cycles, causing the root trajectories to explore nearby parameter space. This fills in sparse areas and creates richer textures in bitmap renders.
+
+Click the **Jiggle** tab on the left panel to access jiggle controls. The controls include:
+
+### Mode
+
+Choose from 12 jiggle modes:
+
+| Mode | Effect |
+|------|--------|
+| **None** | No perturbation |
+| **Random** | Gaussian random offset each cycle |
+| **Rotate** | Rotate coefficients around their centroid |
+| **Walk** | Random walk (cumulative offsets) |
+| **Scale (center)** | Scale from canvas center |
+| **Scale (centroid)** | Scale from coefficient centroid |
+| **Circle** | Circular offset pattern |
+| **Spiral (centroid)** | Spiral around centroid |
+| **Spiral (center)** | Spiral around canvas center |
+| **Breathe** | Oscillating expansion/contraction |
+| **Wobble** | Oscillating rotation |
+| **Lissajous** | Lissajous curve offset |
+
+Each mode has its own parameters. Common parameters include **sigma** (perturbation magnitude), **steps** (rotational resolution for directional modes), and period/amplitude controls for oscillating modes. The jiggle interval (seconds between perturbation cycles) is controlled by the fast-mode pass system.
+
+---
+
+## 12. Morph System (D-Nodes)
+
+The morph system lets you blend between two sets of coefficients. The **D-Nodes** tab on the left panel defines morph-target coefficients, mirroring the C-Nodes layout.
+
+### Setup
+
+1. Click **D-Nodes** to see the morph target canvas
+2. Click **Copy C->D** to copy current C-coefficients to D-nodes
+3. Modify the D-node positions by dragging, or assign different animation paths
+4. Switch to the **Final** tab to see the blended result
+
+### Enable Morphing
+
+On the **Final** tab:
+
+1. Check the **Morph** checkbox to enable blending
+2. Adjust the **Rate** slider (0.01-2.00 Hz) to control oscillation speed
+3. The **mu** value shows the current blend factor (0 = pure C, 1 = pure D)
+
+D-nodes support all the same path types as C-nodes, plus a **Follow C** path type that mirrors the corresponding C-node's position. This makes it easy to set up morph targets that track the main coefficients with offsets.
+
+The **D-List** tab provides the same table interface as C-List, with transforms, path editors, and bulk operations for D-nodes.
 
 ---
 
 ## Bonus: Domain Coloring
 
-Switch back to the **Roots** tab and click the **domain coloring** button (half-circle icon) to overlay an HSL-mapped visualization of the polynomial landscape on the roots panel background.
+Switch to the **Roots** tab and click the **domain coloring** button (half-circle icon) to overlay an HSL-mapped visualization of the polynomial landscape on the roots panel background.
 
 ![Domain coloring enabled](images/16_domain_coloring.png)
 
@@ -186,14 +258,30 @@ Hue represents the argument (phase) of p(z) and brightness represents the magnit
 
 ---
 
+## Bonus: Animation Root Colors
+
+Click the **color** button (palette icon) on the roots toolbar to open the root color picker. This controls how roots are colored in the animation panel (separate from bitmap colors):
+
+| Mode | Effect |
+|------|--------|
+| **Uniform** | All roots in a single color (8 swatches) |
+| **Index Rainbow** | Each root gets a distinct rainbow color |
+| **Derivative** | Colors by Jacobian sensitivity |
+
+---
+
 ## Tips
 
-- **Higher degree = richer patterns.** The degree slider ranges from 2 to 30 (minimum degree is 2). Try degree 10-15 with the Spiral pattern and prime speeds for elaborate braids.
-- **Mix path types.** Not every coefficient needs a circle -- try setting some to Lissajous, Figure-8, or Hilbert for more complex dynamics.
-- **Use D-nodes for morphing.** The D-List tab defines morph-target coefficients. D-nodes support a **Follow C** path type that mirrors the corresponding C-node's position, making it easy to set up morph targets that track the main coefficients.
-- **Use the scrub slider** (in the header bar) to preview the animation before committing to a long bitmap render. The scrub is additive -- it adds seconds to the current elapsed time when paused.
+- **Higher degree = richer patterns.** Click the degree number in the header bar to open a slider (range 2-30). Try degree 10-15 with the Spiral pattern and prime speeds for elaborate braids.
+- **Mix path types.** Not every coefficient needs a circle -- try setting some to Lissajous, Figure-8, or Hilbert for more complex dynamics. Dithered variants add subtle randomness along the curve.
+- **Use D-nodes for morphing.** The D-Nodes tab defines morph-target coefficients. D-nodes support a **Follow C** path type that mirrors the corresponding C-node's position, making it easy to set up morph targets that track the main coefficients.
+- **Use the scrub slider** (in the header bar, left of the Play button) to advance the animation forward when paused. The scrub adds seconds to the current elapsed time.
 - **PNG is usually smallest** for bitmap exports of sparse root trajectories (a 15K render can be 4.5 MB as PNG vs 35 MB as JPEG).
-- **Save your state** (floppy disk icon) before experimenting -- the JSON snapshot lets you return to any setup instantly.
+- **Save your state** (floppy disk icon in the header) before experimenting -- the JSON snapshot lets you return to any setup instantly. Load it back with the folder icon next to it.
+- **Jiggle fills sparse bitmaps.** Switch to the Jiggle tab and try Random jiggle with a small sigma to add perturbation between bitmap render cycles.
+- **The T button** in the header bar opens a timing popup showing performance metrics for fast-mode rendering.
+- **Right-click the canvas** to add a new coefficient at that position, or right-click an existing coefficient dot to open a context menu with options including Delete.
+- **Recording**: Use the record button (circle icon) on the right panel's tab bar to capture WebM video. Choose which panel to record from the dropdown next to it.
 
 ---
 

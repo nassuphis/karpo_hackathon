@@ -235,8 +235,8 @@ class TestEllipse:
     def test_on_ellipse(self, page):
         """Points should approximately satisfy (x/rx)^2 + (y/ry)^2 = 1."""
         result = page.evaluate("""() => {
-            var R = 2;
-            var rx = R * 1.4, ry = R * 0.7;
+            var R = 2, asp = 0.5;
+            var rx = R / Math.sqrt(asp), ry = R * Math.sqrt(asp);
             var pts = patternPositions("ellipse", 20, 0, 0, R);
             return pts.map(p => (p.re/rx)**2 + (p.im/ry)**2);
         }""")
@@ -609,3 +609,427 @@ class TestPatternLargeN:
         }""", pattern)
         assert result["n"] == 50
         assert result["allFinite"] is True
+
+
+class TestPatternOpts:
+    """Test the opts parameter changes pattern shape."""
+
+    def test_star_inner_radius(self, page):
+        """Changing starInner should change the inner vertex distance."""
+        result = page.evaluate("""() => {
+            var def_ = patternPositions("star", 10, 0, 0, 2);
+            var big = patternPositions("star", 10, 0, 0, 2, {starInner: 0.8});
+            var defInner = Math.sqrt(def_[1].re**2 + def_[1].im**2);
+            var bigInner = Math.sqrt(big[1].re**2 + big[1].im**2);
+            return { defInner, bigInner };
+        }""")
+        assert result["bigInner"] > result["defInner"]
+
+    def test_ellipse_aspect(self, page):
+        """Changing aspect should change ry/rx ratio."""
+        result = page.evaluate("""() => {
+            var wide = patternPositions("ellipse", 20, 0, 0, 2, {aspect: 0.25});
+            var tall = patternPositions("ellipse", 20, 0, 0, 2, {aspect: 2.0});
+            var wideMaxX = Math.max(...wide.map(p => Math.abs(p.re)));
+            var wideMaxY = Math.max(...wide.map(p => Math.abs(p.im)));
+            var tallMaxX = Math.max(...tall.map(p => Math.abs(p.re)));
+            var tallMaxY = Math.max(...tall.map(p => Math.abs(p.im)));
+            return { wideRatio: wideMaxX / wideMaxY, tallRatio: tallMaxX / tallMaxY };
+        }""")
+        assert result["wideRatio"] > 2.0  # wide ellipse
+        assert result["tallRatio"] < 1.0  # tall ellipse
+
+    def test_infinity_amplitude(self, page):
+        """Changing amp should change the y extent of the infinity."""
+        result = page.evaluate("""() => {
+            var low = patternPositions("infinity", 30, 0, 0, 2, {amp: 0.2});
+            var high = patternPositions("infinity", 30, 0, 0, 2, {amp: 0.9});
+            var lowMaxY = Math.max(...low.map(p => Math.abs(p.im)));
+            var highMaxY = Math.max(...high.map(p => Math.abs(p.im)));
+            return { lowMaxY, highMaxY };
+        }""")
+        assert result["highMaxY"] > result["lowMaxY"] * 2
+
+    def test_spiral_turns(self, page):
+        """More turns should create a tighter spiral."""
+        result = page.evaluate("""() => {
+            var few = patternPositions("spiral", 30, 0, 0, 2, {turns: 1});
+            var many = patternPositions("spiral", 30, 0, 0, 2, {turns: 8});
+            // Count how many times the angle wraps around
+            function countWraps(pts) {
+                var w = 0;
+                for (var i = 1; i < pts.length; i++) {
+                    var a0 = Math.atan2(pts[i-1].im, pts[i-1].re);
+                    var a1 = Math.atan2(pts[i].im, pts[i].re);
+                    var d = a1 - a0;
+                    if (d > Math.PI) w--;
+                    if (d < -Math.PI) w++;
+                }
+                return Math.abs(w);
+            }
+            return { fewWraps: countWraps(few), manyWraps: countWraps(many) };
+        }""")
+        assert result["manyWraps"] > result["fewWraps"]
+
+    def test_grid_cols(self, page):
+        """Setting cols should control the number of columns."""
+        result = page.evaluate("""() => {
+            var pts = patternPositions("grid", 12, 0, 0, 2, {cols: 4});
+            var reVals = [...new Set(pts.map(p => Math.round(p.re * 1000) / 1000))];
+            return reVals.length;
+        }""")
+        assert result == 4
+
+    def test_line_angle(self, page):
+        """Setting angle=90 should make a vertical line."""
+        result = page.evaluate("""() => {
+            var pts = patternPositions("line", 10, 0, 0, 2, {angle: 90});
+            var allNearZeroX = pts.every(p => Math.abs(p.re) < 0.01);
+            var yRange = Math.max(...pts.map(p => p.im)) - Math.min(...pts.map(p => p.im));
+            return { allNearZeroX, yRange };
+        }""")
+        assert result["allNearZeroX"] is True
+        assert result["yRange"] > 3.5
+
+    def test_wave_cycles(self, page):
+        """More cycles should produce more zero crossings."""
+        result = page.evaluate("""() => {
+            function zeroCrossings(pts) {
+                var c = 0;
+                for (var i = 1; i < pts.length; i++) {
+                    if (pts[i-1].im * pts[i].im < 0) c++;
+                }
+                return c;
+            }
+            var one = patternPositions("wave", 40, 0, 0, 2, {cycles: 1});
+            var three = patternPositions("wave", 40, 0, 0, 2, {cycles: 3});
+            return { oneCross: zeroCrossings(one), threeCross: zeroCrossings(three) };
+        }""")
+        assert result["threeCross"] > result["oneCross"]
+
+    def test_wave_amplitude(self, page):
+        """Higher amplitude should increase y extent."""
+        result = page.evaluate("""() => {
+            var low = patternPositions("wave", 20, 0, 0, 2, {amp: 0.2});
+            var high = patternPositions("wave", 20, 0, 0, 2, {amp: 1.0});
+            var lowMaxY = Math.max(...low.map(p => Math.abs(p.im)));
+            var highMaxY = Math.max(...high.map(p => Math.abs(p.im)));
+            return { lowMaxY, highMaxY };
+        }""")
+        assert result["highMaxY"] > result["lowMaxY"] * 2
+
+    def test_cross_arm_width(self, page):
+        """Wider arm should shift points further from axes."""
+        result = page.evaluate("""() => {
+            var thin = patternPositions("cross", 24, 0, 0, 2, {armWidth: 0.1});
+            var wide = patternPositions("cross", 24, 0, 0, 2, {armWidth: 0.45});
+            // Count points with both |x| and |y| > 0.3 (corner area of cross)
+            function cornerCount(pts) {
+                return pts.filter(p => Math.abs(p.re) > 0.3 && Math.abs(p.im) > 0.3).length;
+            }
+            return { thinCorners: cornerCount(thin), wideCorners: cornerCount(wide) };
+        }""")
+        assert result["wideCorners"] > result["thinCorners"]
+
+    def test_lissajous_freq(self, page):
+        """Different freq ratios should produce different curves."""
+        result = page.evaluate("""() => {
+            var a = patternPositions("lissajous", 30, 0, 0, 2, {freqA: 3, freqB: 2});
+            var b = patternPositions("lissajous", 30, 0, 0, 2, {freqA: 5, freqB: 4});
+            var diffs = 0;
+            for (var i = 0; i < 30; i++) {
+                if (Math.abs(a[i].re - b[i].re) > 0.1 || Math.abs(a[i].im - b[i].im) > 0.1) diffs++;
+            }
+            return diffs;
+        }""")
+        assert result > 10
+
+    def test_rose_petals(self, page):
+        """Changing petals should change the curve shape."""
+        result = page.evaluate("""() => {
+            var r3 = patternPositions("rose", 40, 0, 0, 2, {petals: 3});
+            var r5 = patternPositions("rose", 40, 0, 0, 2, {petals: 5});
+            var diffs = 0;
+            for (var i = 0; i < 40; i++) {
+                if (Math.abs(r3[i].re - r5[i].re) > 0.1 || Math.abs(r3[i].im - r5[i].im) > 0.1) diffs++;
+            }
+            return diffs;
+        }""")
+        assert result > 10
+
+    def test_two_circles_distance(self, page):
+        """dist=0 should overlap circles, dist=2 should spread them."""
+        result = page.evaluate("""() => {
+            var close = patternPositions("2-circles", 10, 0, 0, 2, {dist: 0});
+            var far = patternPositions("2-circles", 10, 0, 0, 2, {dist: 2.0});
+            var closeSpan = Math.max(...close.map(p => p.re)) - Math.min(...close.map(p => p.re));
+            var farSpan = Math.max(...far.map(p => p.re)) - Math.min(...far.map(p => p.re));
+            return { closeSpan, farSpan };
+        }""")
+        assert result["farSpan"] > result["closeSpan"] * 1.5
+
+    def test_two_squares_distance(self, page):
+        """dist=0 should overlap squares, dist=2 should spread them."""
+        result = page.evaluate("""() => {
+            var close = patternPositions("2-squares", 12, 0, 0, 2, {dist: 0});
+            var far = patternPositions("2-squares", 12, 0, 0, 2, {dist: 2.0});
+            var closeSpan = Math.max(...close.map(p => p.re)) - Math.min(...close.map(p => p.re));
+            var farSpan = Math.max(...far.map(p => p.re)) - Math.min(...far.map(p => p.re));
+            return { closeSpan, farSpan };
+        }""")
+        assert result["farSpan"] > result["closeSpan"] * 1.5
+
+    def test_ring_inner_ratio(self, page):
+        """Changing innerR should change the inner circle radius."""
+        result = page.evaluate("""() => {
+            var small = patternPositions("ring", 10, 0, 0, 2, {innerR: 0.2});
+            var big = patternPositions("ring", 10, 0, 0, 2, {innerR: 0.9});
+            var half = Math.ceil(10 / 2);
+            var smallInner = Math.sqrt(small[half].re**2 + small[half].im**2);
+            var bigInner = Math.sqrt(big[half].re**2 + big[half].im**2);
+            return { smallInner, bigInner };
+        }""")
+        assert result["bigInner"] > result["smallInner"] * 2
+
+    def test_default_opts_match_no_opts(self, page):
+        """Calling with default opts should match calling with no opts."""
+        result = page.evaluate("""() => {
+            var noOpts = patternPositions("star", 10, 0, 0, 2);
+            var defOpts = patternPositions("star", 10, 0, 0, 2, {starInner: 0.38});
+            var match = true;
+            for (var i = 0; i < 10; i++) {
+                if (Math.abs(noOpts[i].re - defOpts[i].re) > 1e-10 ||
+                    Math.abs(noOpts[i].im - defOpts[i].im) > 1e-10) match = false;
+            }
+            return match;
+        }""")
+        assert result is True
+
+
+class TestPatternToolUI:
+    """Test the pattern tool popup accept/revert behavior."""
+
+    def test_ptrn_params_constant(self, page):
+        """PTRN_PARAMS should have entries for parameterized shapes."""
+        result = page.evaluate("""() => {
+            return Object.keys(PTRN_PARAMS).sort();
+        }""")
+        assert "star" in result
+        assert "ellipse" in result
+        assert "2-circles" in result
+        assert "lissajous" in result
+        assert "ring" in result
+        assert len(result) == 13
+
+    def test_accept_keeps_changes(self, page):
+        """Clicking Accept should keep the pattern arrangement."""
+        result = page.evaluate("""() => {
+            // Select all coefficients
+            for (var i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+            var origPositions = coefficients.map(c => ({re: c.re, im: c.im}));
+
+            // Open pattern tool
+            var snap = snapshotSelection();
+            opSnapshot = snap;
+            var pop = document.getElementById("ops-pop");
+            pop.innerHTML = "";
+            buildPatternTool(pop, snap);
+
+            // Positions should have changed (applied to circle by default)
+            var afterApply = coefficients.map(c => ({re: c.re, im: c.im}));
+            var changed = false;
+            for (var i = 0; i < afterApply.length; i++) {
+                if (Math.abs(afterApply[i].re - origPositions[i].re) > 1e-8 ||
+                    Math.abs(afterApply[i].im - origPositions[i].im) > 1e-8) changed = true;
+            }
+
+            // Simulate Accept: set accepted flag via opCloseCallback
+            // The Accept button sets accepted=true before closeOpTool
+            // We'll call closeOpTool directly — but opCloseCallback should NOT revert
+            // Actually, let's click the accept button
+            var btns = pop.querySelectorAll("button");
+            var acceptBtn = null;
+            btns.forEach(b => { if (b.textContent.includes("Accept")) acceptBtn = b; });
+            if (acceptBtn) acceptBtn.click();
+
+            var afterAccept = coefficients.map(c => ({re: c.re, im: c.im}));
+            var keptChanges = false;
+            for (var i = 0; i < afterAccept.length; i++) {
+                if (Math.abs(afterAccept[i].re - origPositions[i].re) > 1e-8 ||
+                    Math.abs(afterAccept[i].im - origPositions[i].im) > 1e-8) keptChanges = true;
+            }
+            return { changed, keptChanges };
+        }""")
+        assert result["changed"] is True
+        assert result["keptChanges"] is True
+
+    def test_close_without_accept_reverts(self, page):
+        """Closing the popup without Accept should revert to original positions."""
+        result = page.evaluate("""() => {
+            for (var i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+            var origPositions = coefficients.map(c => ({re: c.re, im: c.im}));
+
+            var snap = snapshotSelection();
+            opSnapshot = snap;
+            var pop = document.getElementById("ops-pop");
+            pop.innerHTML = "";
+            buildPatternTool(pop, snap);
+
+            // Positions changed
+            var afterApply = coefficients.map(c => ({re: c.re, im: c.im}));
+            var changed = false;
+            for (var i = 0; i < afterApply.length; i++) {
+                if (Math.abs(afterApply[i].re - origPositions[i].re) > 1e-8 ||
+                    Math.abs(afterApply[i].im - origPositions[i].im) > 1e-8) changed = true;
+            }
+
+            // Close without accept (revert)
+            closeOpTool();
+
+            var afterClose = coefficients.map(c => ({re: c.re, im: c.im}));
+            var reverted = true;
+            for (var i = 0; i < afterClose.length; i++) {
+                if (Math.abs(afterClose[i].re - origPositions[i].re) > 1e-6 ||
+                    Math.abs(afterClose[i].im - origPositions[i].im) > 1e-6) reverted = false;
+            }
+            return { changed, reverted };
+        }""")
+        assert result["changed"] is True
+        assert result["reverted"] is True
+
+    def test_no_morph_slider(self, page):
+        """The pattern tool should NOT have a vertical morph slider."""
+        result = page.evaluate("""() => {
+            for (var i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+            var snap = snapshotSelection();
+            opSnapshot = snap;
+            var pop = document.getElementById("ops-pop");
+            pop.innerHTML = "";
+            buildPatternTool(pop, snap);
+            var hasVSlider = pop.querySelector(".vslider") !== null;
+            closeOpTool();
+            return hasVSlider;
+        }""")
+        assert result is False
+
+    def test_has_accept_button(self, page):
+        """The pattern tool should have an Accept button."""
+        result = page.evaluate("""() => {
+            for (var i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+            var snap = snapshotSelection();
+            opSnapshot = snap;
+            var pop = document.getElementById("ops-pop");
+            pop.innerHTML = "";
+            buildPatternTool(pop, snap);
+            var btns = pop.querySelectorAll("button");
+            var hasAccept = false;
+            btns.forEach(b => { if (b.textContent.includes("Accept")) hasAccept = true; });
+            closeOpTool();
+            return hasAccept;
+        }""")
+        assert result is True
+
+    def test_has_select_dropdown(self, page):
+        """The pattern tool should have a select dropdown with 21 options."""
+        result = page.evaluate("""() => {
+            for (var i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+            var snap = snapshotSelection();
+            opSnapshot = snap;
+            var pop = document.getElementById("ops-pop");
+            pop.innerHTML = "";
+            buildPatternTool(pop, snap);
+            var sel = pop.querySelector("select");
+            var optCount = sel ? sel.options.length : 0;
+            closeOpTool();
+            return optCount;
+        }""")
+        assert result == 21
+
+    def test_star_shows_controls(self, page):
+        """Selecting Star should show the Inner R slider."""
+        result = page.evaluate("""() => {
+            for (var i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+            var snap = snapshotSelection();
+            opSnapshot = snap;
+            var pop = document.getElementById("ops-pop");
+            pop.innerHTML = "";
+            buildPatternTool(pop, snap);
+
+            // Change to star
+            var sel = pop.querySelector("select");
+            sel.value = "star";
+            sel.dispatchEvent(new Event("change"));
+
+            var labels = [];
+            pop.querySelectorAll("span").forEach(s => { if (s.textContent) labels.push(s.textContent); });
+            closeOpTool();
+            return labels;
+        }""")
+        assert "Inner R" in result
+
+    def test_circle_shows_no_controls(self, page):
+        """Circle should show no parameter sliders."""
+        result = page.evaluate("""() => {
+            for (var i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+            var snap = snapshotSelection();
+            opSnapshot = snap;
+            var pop = document.getElementById("ops-pop");
+            pop.innerHTML = "";
+            buildPatternTool(pop, snap);
+
+            var inputs = pop.querySelectorAll('input[type="range"]');
+            closeOpTool();
+            return inputs.length;
+        }""")
+        assert result == 0
+
+    def test_lissajous_shows_two_freq_sliders(self, page):
+        """Lissajous should show Freq A and Freq B sliders."""
+        result = page.evaluate("""() => {
+            for (var i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+            var snap = snapshotSelection();
+            opSnapshot = snap;
+            var pop = document.getElementById("ops-pop");
+            pop.innerHTML = "";
+            buildPatternTool(pop, snap);
+
+            var sel = pop.querySelector("select");
+            sel.value = "lissajous";
+            sel.dispatchEvent(new Event("change"));
+
+            var labels = [];
+            pop.querySelectorAll("span").forEach(s => { if (s.textContent) labels.push(s.textContent); });
+            var rangeCount = pop.querySelectorAll('input[type="range"]').length;
+            closeOpTool();
+            return { labels, rangeCount };
+        }""")
+        assert "Freq A" in result["labels"]
+        assert "Freq B" in result["labels"]
+        assert result["rangeCount"] == 2
+
+    def test_switching_pattern_resets_opts(self, page):
+        """Switching pattern should reset parameters and update display."""
+        result = page.evaluate("""() => {
+            for (var i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
+            var snap = snapshotSelection();
+            opSnapshot = snap;
+            var pop = document.getElementById("ops-pop");
+            pop.innerHTML = "";
+            buildPatternTool(pop, snap);
+
+            // Switch to star
+            var sel = pop.querySelector("select");
+            sel.value = "star";
+            sel.dispatchEvent(new Event("change"));
+            var starRanges = pop.querySelectorAll('input[type="range"]').length;
+
+            // Switch to circle
+            sel.value = "circle";
+            sel.dispatchEvent(new Event("change"));
+            var circleRanges = pop.querySelectorAll('input[type="range"]').length;
+
+            closeOpTool();
+            return { starRanges, circleRanges };
+        }""")
+        assert result["starRanges"] == 1
+        assert result["circleRanges"] == 0

@@ -1,4 +1,4 @@
-# PolyPaint v38
+# PolyPaint v39
 
 **[Try it live](https://nassuphis.github.io/karpo_hackathon/)**
 
@@ -28,7 +28,7 @@ Everything runs client-side in a single HTML file. No server, no build step, no 
 
 - **Per-coefficient trajectories** -- 22 path types including circle, spiral, figure-8, Hilbert, Sierpinski, and Follow C ([Paths](docs/paths.md))
 - **Independent settings** -- each coefficient has its own path type, radius, speed (1-1000 resolution), angle, and direction
-- **Morph blending** -- a second coefficient set (D-nodes) animates alongside the primary set with independent paths; D-nodes support a "Follow C" path that mirrors the corresponding C-node position ([Morph](docs/morph.md), [D-Node Paths](docs/d-node-paths.md))
+- **Morph blending** -- a second coefficient set (D-nodes) animates alongside the primary set with independent paths; 4 C-D interpolation paths (line, circle, ellipse, figure-8) with CW/CCW control; D-nodes support a "Follow C" path that mirrors the corresponding C-node position ([Morph](docs/morph.md), [D-Node Paths](docs/d-node-paths.md))
 
 ### Visualize
 
@@ -74,7 +74,7 @@ See the [Interface Guide](docs/interface.md) for the complete control reference.
 | Area | Key Controls |
 |------|-------------|
 | **Header** | Degree (2-30), Pattern dropdown (26 options), Reset, Save/Load, Export (7 modes), T (timing), Play/Pause/Resume, Scrub, Seconds counter, Home |
-| **Left tabs** | C-Nodes (SVG + drag), C-List (table + 20 transforms), D-Nodes (morph target SVG), D-List (morph target table), Jiggle (mode + params), Final (morph controls + combined view) |
+| **Left tabs** | C-Nodes (SVG + drag), C-List (table + 20 transforms), D-Nodes (morph target SVG + C-D Path popup), D-List (morph target table), Jiggle (mode + params), Final (morph toggle + combined view) |
 | **Trajectory editor** | Path type (22 curves in 3 groups + Follow C), per-path sliders (R/S/A/CW), preview/revert, Update Whole Selection |
 | **Mid-bar** | Scale (0.1x-10x), Rotate (0.5 turns), Translate (2D pad), Select all/none, Invert |
 | **Roots toolbar** | Trails toggle, color mode (Uniform / Index Rainbow / Derivative), domain coloring, Fit, +25% |
@@ -87,7 +87,7 @@ For the full control reference with detailed tables, see the [Interface Guide](d
 ## Architecture
 
 ```
-Single HTML file (~13,200 lines)
+Single HTML file (~14,000 lines)
   CSS (inline)            Layout, popover positioning, animation styles
   HTML                    Header, panels, SVG containers, popovers
   JavaScript (inline)     All application logic:
@@ -114,7 +114,7 @@ No server, no WebSocket, no build tools. See [Solver](docs/solver.md) for the ro
 ### Animation & Paths
 
 - [Paths & Curves](docs/paths.md) -- 22 path types, curve representation, cycle sync, jiggle modes, space-filling curves
-- [Morph Blending](docs/morph.md) -- dual coefficient sets, mu oscillation
+- [Morph Blending](docs/morph.md) -- dual coefficient sets, 4 C-D interpolation paths, mu oscillation
 - [D-Node Paths](docs/d-node-paths.md) -- morph target animation, fast mode integration
 - [Root Braids](docs/braids.md) -- monodromy, braid topology, trail visualization
 
@@ -134,20 +134,20 @@ No server, no WebSocket, no build tools. See [Solver](docs/solver.md) for the ro
 ### Developer Notes
 
 - [Architecture Notes](docs/architecture.md) -- section map, code conventions, key locations, debugging insights
-- [Testing](docs/test-results.md) -- 525 Playwright tests across 24 files, JS/WASM benchmarks
+- [Testing](docs/test-results.md) -- 776 Playwright tests across 26 files, JS/WASM benchmarks
 
 ## File Structure
 
 ```
 karpo_hackathon/
-  index.html          Entire app: CSS + HTML + JS + WASM (~13,200 lines)
+  index.html          Entire app: CSS + HTML + JS + WASM (~14,000 lines)
   solver.c            WASM solver source (Ehrlich-Aberth in C, ~2KB)
   step_loop.c         WASM step loop source (full per-step pipeline in C, ~15KB)
   solver.wasm         Compiled solver binary
   step_loop.wasm      Compiled step loop binary
   build-wasm.sh       Compile C sources -> base64-embedded WASM
   docs/               Technical documentation (15 files)
-  tests/              Playwright tests (525 tests, 24 files)
+  tests/              Playwright tests (776 tests, 26 files)
   snaps/              Saved snapshots (PNG + JSON)
 ```
 

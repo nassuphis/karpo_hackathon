@@ -57,7 +57,7 @@ Each instrument button (**B**, **M**, **V**) opens a popover with an on/off togg
 | Attack | 1–20 ms | 5 ms | Beep attack time |
 | Decay | 10–300 ms | 80 ms | Beep ring-down time |
 
-Memory and Novelty sliders live in the **Sound** tab under "Encounters / Records":
+Memory and Novelty sliders live in the **Sound** tab under "Encounters · Records":
 
 | Slider | Range | Default | Controls |
 |--------|-------|---------|----------|
@@ -249,3 +249,11 @@ Low α (0.01) = slow, heavily smoothed response. High α (1.0) = near-instant tr
 | Decay | Pluck decay time: `decay × smoothed × 2` |
 
 Voice and Melody routes use a **×2 scaling** convention: disconnected routes sit at smoothed = 0.5, giving a ×1.0 multiplier (no change). Connecting a source that swings 0–1 gives a 0×–2× modulation range.
+
+## State Persistence
+
+Audio configuration (instrument enabled flags, slider values, route wiring) is **not** saved in the JSON state files produced by save/load or snap. The `buildStateMetadata()` function serializes coefficients, roots, panels, morph, jiggle, and bitmap settings, but audio parameters are transient — they reset to defaults on page reload. The `resetAudioState()` function (called on animation stop, Home, pattern change, degree change, sound toggle off, and state load) zeroes all smoothing accumulators and ramps `masterGain` to zero but does not alter config objects or routes.
+
+## Video Recording
+
+The audio graph feeds a `MediaStreamDestination` node (`mediaDest`) connected to `masterGain`. When video recording starts (`startRecording()`), audio tracks from `mediaDest.stream` are merged into the canvas capture stream, producing a WebM file with synchronized audio. If no instrument is enabled when recording begins, the video will have no audio track.

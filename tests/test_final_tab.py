@@ -88,6 +88,9 @@ class TestFinalPanelRendering:
         result = page.evaluate("""() => {
             initMorphTarget();
             morphEnabled = true;
+            // Set morphTheta to π so mu = (1 - cos(π))/2 = 1.0 → full D position
+            // Actually, set to π/2 so mu = (1 - cos(π/2))/2 = 0.5
+            morphTheta = Math.PI / 2;
             morphMu = 0.5;
             // Move D-node 0 far from C-node 0
             morphTargetCoeffs[0].re = coefficients[0].re + 2;
@@ -99,7 +102,7 @@ class TestFinalPanelRendering:
             var blendedRe = coefficients[0].re * 0.5 + morphTargetCoeffs[0].re * 0.5;
             var expectedX = cxs()(blendedRe);
             // Cleanup
-            morphEnabled = false;
+            morphEnabled = false; morphTheta = 0;
             initMorphTarget();
             switchLeftTab('coeffs');
             return { cx, expectedX };

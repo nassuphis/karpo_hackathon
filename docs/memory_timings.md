@@ -59,11 +59,18 @@ Bitmap export reads directly from `bitmapPersistentBuffer` at compute resolution
 
 ## Worker Partitioning
 
-Steps are distributed evenly across workers in `dispatchPassToWorkers()`:
+Worker count is clamped in `initFastModeWorkers()`:
 
 ```javascript
 const actualWorkers = Math.min(numWorkers, sd.stepsVal);
-// ...
+```
+
+This ensures we never spawn more workers than steps. At 10 steps with 16 configured workers, only 10 workers are created (1 step each). At 10K steps with 16 workers, each gets ~625 steps. Each worker's `maxPaintsPerWorker` buffer is sized to `ceil(stepsVal / actualWorkers) * nRoots`, guaranteeing sufficient space for its pixel output.
+
+Steps are then distributed evenly per pass in `dispatchPassToWorkers()`:
+
+```javascript
+const nw = fastModeWorkers.length;
 const base = Math.floor(stepsVal / nw);
 const extra = stepsVal % nw;
 for (let w = 0; w < nw; w++) {
@@ -71,10 +78,6 @@ for (let w = 0; w < nw; w++) {
     // worker w processes steps [offset, offset + count)
 }
 ```
-
-Key detail: `actualWorkers = Math.min(numWorkers, stepsVal)` ensures we never spawn more workers than steps. At 10 steps with 16 configured workers, only 10 workers are created (1 step each). At 10K steps with 16 workers, each gets ~625 steps.
-
-Each worker's `maxPaintsPerWorker` buffer is sized to `ceil(stepsVal / actualWorkers) * nRoots`, guaranteeing sufficient space for its pixel output.
 
 ---
 
@@ -268,19 +271,20 @@ The compute-resolution persistent buffer stays in JS heap (CPU-only) and is neve
 
 | Component | File | Lines |
 |-----------|------|-------|
-| `compositeWorkerPixels()` | index.html | ~10384 |
-| `fillPersistentBuffer()` | index.html | ~8853 |
-| `fillDisplayBuffer()` | index.html | ~8868 |
-| `initBitmapCanvas()` | index.html | ~8973 |
-| `serializeFastModeData()` | index.html | ~10116 |
-| `initFastModeWorkers()` | index.html | ~10250 |
-| `dispatchPassToWorkers()` | index.html | ~10316 |
-| `recordPassTiming()` | index.html | ~10468 |
-| `updateTimingPopup()` | index.html | ~7517 |
-| Worker pixel generation | index.html (blob) | ~9273–9450 |
-| `bitmapPersistentBuffer` state | index.html | ~1085 |
-| `BITMAP_DISPLAY_CAP` constant | index.html | ~1086 |
-| `bitmapComputeRes` / `bitmapDisplayRes` | index.html | ~1087–1088 |
-| `bitmapDisplayBuffer` state | index.html | ~1089 |
-| Steps/resolution dropdown listeners | index.html | ~12435–12441 |
-| `resetBitmap()` | index.html | ~10714 |
+| `compositeWorkerPixels()` | index.html | ~11286 |
+| `fillPersistentBuffer()` | index.html | ~9660 |
+| `fillDisplayBuffer()` | index.html | ~9675 |
+| `initBitmapCanvas()` | index.html | ~9780 |
+| `createFastModeWorkerBlob()` | index.html | ~9907 |
+| `serializeFastModeData()` | index.html | ~11010 |
+| `initFastModeWorkers()` | index.html | ~11148 |
+| `dispatchPassToWorkers()` | index.html | ~11218 |
+| `recordPassTiming()` | index.html | ~11370 |
+| `updateTimingPopup()` | index.html | ~8314 |
+| Worker pixel generation | index.html (blob) | ~10616–10756 |
+| `bitmapPersistentBuffer` state | index.html | ~1095 |
+| `BITMAP_DISPLAY_CAP` constant | index.html | ~1096 |
+| `bitmapComputeRes` / `bitmapDisplayRes` | index.html | ~1097–1098 |
+| `bitmapDisplayBuffer` state | index.html | ~1099 |
+| Steps/resolution dropdown listeners | index.html | ~13365–13369 |
+| `resetBitmap()` | index.html | ~11616 |

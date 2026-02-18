@@ -1,6 +1,6 @@
 # Root Finding: Ehrlich-Aberth Method
 
-The core computational engine implements the [Ehrlich-Aberth method](https://en.wikipedia.org/wiki/Aberth_method) — a simultaneous iterative root-finding algorithm with cubic convergence. Two implementations exist: a JavaScript version for interactive use (main thread) and a WASM version compiled from C for fast-mode workers.
+The core computational engine implements the [Ehrlich-Aberth method](https://en.wikipedia.org/wiki/Aberth_method) — a simultaneous iterative root-finding algorithm with cubic convergence. Three implementations exist: a JavaScript version for interactive use (main thread), a JavaScript version optimized for workers (flat arrays, inside the worker blob), and a WASM version compiled from C that runs the entire step loop (solver + curve interpolation + root matching + pixel output) in WASM.
 
 ## How It Works
 
@@ -24,19 +24,110 @@ Given a degree-*n* polynomial p(z) = cₙzⁿ + ··· + c₁z + c₀ (subscript
 
 The UI supports degree 2–30 (minimum degree 2 = quadratic). The key insight is **warm-starting**: when the user drags a coefficient slightly, the roots barely move. The previous frame's root positions are an excellent initial guess, so the solver converges in **1–3 iterations** during interactive drag (versus 15–30 iterations from a cold start). At degree 30, each iteration is O(n²) for the Aberth sums, making the total cost negligible compared to the domain coloring render.
 
-## Implementation Details
+## Three Solver Implementations
 
-The solver (`solveRootsEA` in `index.html`) uses:
+### 1. Main-Thread JS: `solveRootsEA` (~line 5151 in index.html)
 
-- **Flat arrays** `[re, im]` for root storage during iteration (avoids object allocation overhead in the hot loop)
-- **`Float64Array`** for coefficient storage (cache-friendly, typed-array fast paths in V8/SpiderMonkey)
-- **Simultaneous Horner evaluation** of p(z) and p'(z) — the derivative is accumulated alongside the polynomial value with zero extra cost:
-  ```
-  dp = dp · z + p      // derivative accumulator
-  p  = p · z + cₖ      // polynomial accumulator
-  ```
-- **Guard clauses** for degenerate cases: near-zero derivative (skip update), near-coincident roots (skip Aberth term), leading zero coefficients (strip before solving), degree 1 (direct formula)
-- **Radius heuristic** for cold-start initialization: initial guesses are spread on a circle of radius (|c₀|/|cₙ|)^(1/n), derived from the constant-to-leading coefficient ratio, with an angular offset of 0.37 radians to break symmetry
+Used for interactive mode (drag, animation preview). Called once per frame on the main thread.
+
+- **Input**: `coeffs` array of `{re, im}` objects (descending degree), optional `warmStart` array of `{re, im}` initial guesses
+- **Output**: Array of `{re, im}` root objects
+- **Parameters**: MAX_ITER=100, TOL=1e-12 (magnitude via `Math.hypot`)
+- Uses `[re, im]` pairs internally during iteration, then converts back to `{re, im}` objects for return
+- `Float64Array` for coefficient storage (cache-friendly, typed-array fast paths in V8/SpiderMonkey)
+- Simultaneous Horner evaluation of p(z) and p'(z)
+- Guard clauses for degenerate cases: near-zero derivative (skip update), near-coincident roots (skip Aberth term), leading zero coefficients (strip before solving), degree 1 (direct formula)
+- Radius heuristic for cold-start initialization: initial guesses spread on a circle of radius (|c₀|/|cₙ|)^(1/n), with angular offset of 0.37 radians to break symmetry
+- NaN rescue: non-finite results fall back to warm-start values, then to unit circle positions
+
+### 2. Worker Blob JS: `solveEA` (~line 9911 in index.html)
+
+Used in the JavaScript step loop inside fast-mode Web Workers. Called once per step per worker.
+
+- **Input**: Flat `Float64Array` views — `cRe`, `cIm` (coefficients), `warmRe`, `warmIm` (roots, in/out), plus `nCoeffs` and `nRoots` counts
+- **Output**: Mutates `warmRe`/`warmIm` in place
+- **Parameters**: MAX_ITER=64, TOL=1e-16 (squared magnitude, no `Math.hypot`)
+- Pure flat-array arithmetic — no object allocation in the hot loop
+- Leading-zero test uses squared magnitude < 1e-30 (avoids `Math.hypot`)
+- NaN rescue in-solver: non-finite roots are re-seeded on unit circle at angle `(2πi/degree + 0.37)` using `Math.cos`/`Math.sin`
+- Also provides `solveEA_wasm` (~line 10112) which marshals data to/from WASM memory and calls the old solver-only WASM (`solver.c`), used as a fallback when `step_loop.wasm` is unavailable
+
+### 3. WASM Step Loop: `step_loop.c` → `step_loop.wasm`
+
+The preferred WASM path. Rather than calling WASM for the solver alone (which would cross the JS-WASM boundary once per step), `step_loop.c` runs the **entire step loop** in WASM: curve interpolation, morph blending, jiggle offsets, EA solver, root matching, and pixel output. JS only calls into WASM twice per pass — `init()` then `runStepLoop()`.
+
+- **Source**: `step_loop.c` in the project root (~817 lines)
+- **Binary**: `step_loop.wasm` (~15KB), base64-encoded as `WASM_STEP_LOOP_B64` in `index.html`
+- **Exported functions**: `init(cfgIntOffset, cfgDblOffset)` and `runStepLoop(stepStart, stepEnd, elapsedOffset)` → returns pixel count
+- **Imported functions**: `cos`, `sin`, `log` (JS `Math.*`), `reportProgress` (for progress updates)
+- **Solver parameters**: SOLVER_MAX_ITER=64, SOLVER_TOL2=1e-16 (squared magnitude)
+- Pure C with no stdlib, no malloc — stack arrays for local solver state (up to MAX_DEG=255, MAX_COEFFS=256)
+- Includes full implementations of: `solveEA`, `matchRootsGreedy`, `hungarianMatch` (capped at HUNGARIAN_MAX=32 for stack safety), `computeSens`, `rankNorm`
+- Handles all four color modes (uniform, index-rainbow, proximity, derivative)
+- PRNG: xorshift128 for jiggle/dither, seeded from JS
+- NaN check uses `x != x` (IEEE 754); NaN rescue uses imported `cos`/`sin`
+- Progress reporting every 2000 steps via imported `reportProgress`
+
+#### Legacy Solver-Only WASM: `solver.c` → `solver.wasm`
+
+The old solver-only WASM (~2KB) still exists as a fallback. It exports a single `solveEA` function that takes the same flat-array interface as the worker JS solver. The JS wrapper `solveEA_wasm` copies data into WASM linear memory, calls the solver, and copies results back. The `solver.c` function signature still accepts `trackIter` and `iterCounts` parameters for ABI compatibility, but they are called with 0,0 (iteration counting was removed).
+
+This fallback is used when `step_loop.wasm` fails to initialize (e.g., insufficient memory). The init sequence tries `step_loop.wasm` first, then falls back to `solver.wasm`, then to pure JS.
+
+## WASM Initialization & Fallback Chain
+
+When a worker receives an `init` message with `useWasm: true`, it follows this priority:
+
+1. **Try `step_loop.wasm`**: If `wasmStepLoopB64` is provided, attempt `initWasmStepLoop()`. Sets `S_useWasmLoop = true` on success.
+2. **Fallback to `solver.wasm`**: If step loop init fails and `wasmB64` is provided, attempt `initWasm()`. Sets `S_useWasm = true` on success.
+3. **Pure JS**: If both WASM paths fail, the worker uses the JS `solveEA` function in a JS step loop.
+
+Additionally, `S_useWasmLoop` is forced to `false` for color modes not yet supported by `step_loop.c` (currently: index-proximity and ratio modes), in which case the worker falls back to the JS step loop (which may still use `solveEA_wasm` for the solver call if `S_useWasm` is true).
+
+## WASM Memory Layout
+
+### step_loop.wasm (full step loop)
+
+Uses imported memory with dynamic page allocation. The first 64KB is reserved for the C shadow stack (grows downward). Above `__heap_base`, JS computes a layout (`computeWasmLayout`) that packs:
+
+- Config arrays: 65 int32 config values + 3 float64 config values
+- Input data: coefficient arrays, color arrays, jiggle offsets, morph targets, palette arrays, selection indices
+- C-curve and D-curve entry arrays (parallel arrays for index, speed, ccw, dither, offsets, lengths, isCloud)
+- Curve point data (flat re/im pairs)
+- Working arrays: workCoeffsRe/Im, tmpRe/Im, morphWorkRe/Im, passRootsRe/Im
+- Output buffers: paintIdx (Int32), paintR/G/B (Uint8)
+
+Memory is grown to fit the computed layout. Total pages depend on polynomial degree, number of curve entries, and max paints per worker.
+
+### solver.wasm (legacy, solver-only)
+
+Fixed 64KB (1 page) layout:
+
+```
+Offset       Array          Size    Type
+0x0000       coeffsRe[N]    N×8B    Float64Array (input)
+N×8          coeffsIm[N]    N×8B    Float64Array (input)
+N×16         warmRe[R]      R×8B    Float64Array (in/out)
+N×16+R×8     warmIm[R]      R×8B    Float64Array (in/out)
+...
+C shadow stack (32KB, grows down from top)
+```
+
+Where N = nCoeffs, R = nRoots. Offsets are computed by JS at init time.
+
+## Build Workflow
+
+```bash
+./build-wasm.sh    # Requires Homebrew LLVM + lld (clang at /opt/homebrew/opt/llvm/bin/clang)
+```
+
+This compiles both:
+1. `solver.c` → `solver.wasm` → `solver.wasm.b64` (solver-only, ~2KB)
+2. `step_loop.c` → `step_loop.wasm` → `step_loop.wasm.b64` (full step loop, ~15KB)
+
+The base64 strings are pasted into `WASM_SOLVER_B64` and `WASM_STEP_LOOP_B64` constants in `index.html`. Compiler flags:
+- `step_loop.c`: `--import-memory`, `--stack-first`, `--stack-size=65536`, exports `init` + `runStepLoop` + `__heap_base`
+- `solver.c`: `--initial-memory=65536`, `--stack-size=32768`, exports `solveEA`
 
 ## Bidirectional Editing
 
@@ -44,7 +135,7 @@ Dragging roots works in the opposite direction: the polynomial is reconstructed 
 
 ## Domain Coloring
 
-When enabled (off by default, toggle via the ◐ toolbar button on the roots panel), the roots panel background is painted using [domain coloring](https://en.wikipedia.org/wiki/Domain_coloring). For each pixel at position z in the complex plane, the polynomial p(z) is evaluated and mapped to a color:
+When enabled (off by default, toggle via the toolbar button on the roots panel), the roots panel background is painted using [domain coloring](https://en.wikipedia.org/wiki/Domain_coloring). For each pixel at position z in the complex plane, the polynomial p(z) is evaluated and mapped to a color:
 
 - **Hue** = arg(p(z)) — the phase of the polynomial's value. Roots appear as points where all colors converge (all phases meet at a zero).
 - **Lightness** = 0.5 + 0.4·cos(2π·frac(log₂|p(z)|)) — contour lines at powers-of-2 modulus. Zeros appear as dark points.
@@ -52,59 +143,24 @@ When enabled (off by default, toggle via the ◐ toolbar button on the roots pan
 
 The polynomial is evaluated via Horner's method. The canvas renders at half resolution with `devicePixelRatio` support and is CSS-scaled to full size, keeping it smooth at 60fps even at degree 30.
 
-## WASM Solver
-
-Fast-mode workers can optionally use a WASM implementation of the same Ehrlich-Aberth algorithm, compiled from C (`solver.c` in the project root). The WASM binary (~2KB) is base64-encoded and embedded in `index.html` as the `WASM_SOLVER_B64` constant.
-
-### Why WASM
-
-The JS solver is already well-optimized (flat Float64Arrays, no `Math.hypot`, squared tolerance), but WASM provides:
-
-- **No JIT warmup**: Compiled ahead of time, consistent performance from the first call
-- **No GC pauses**: Pure stack allocation, no heap objects to collect
-- **Tighter codegen**: Direct f64 register operations without JS engine overhead
-
-The payoff scales with polynomial degree — at degree 100+, the O(n² × iters) solver dominates pass time.
-
-### Architecture
-
-Only workers use WASM. The main-thread solver stays in JS (called once per frame during interactive mode — marshalling overhead isn't worth it for a single call).
-
-The WASM solver (`solver.c`) is pure C with no stdlib, no malloc, no `math.h` — just `+`, `-`, `*`, `/` on `double`. NaN detection uses `x != x` (IEEE 754). NaN rescue (cos/sin for unit-circle re-seeding) stays in JS as a cold path after the WASM call returns.
-
-**Step partitioning**: The main thread distributes bitmap steps across workers using floor-division with remainder: each worker gets `floor(totalSteps / nWorkers)` steps, with the first `totalSteps % nWorkers` workers receiving one extra step. Worker count is clamped to `min(numWorkers, totalSteps)` so no worker runs with zero steps. Each worker's sparse paint buffer is pre-sized to `ceil(totalSteps / numWorkers) * nRoots` entries — the per-worker allocation avoids the old approach of sizing every buffer for the full step count.
-
-### Memory Layout
-
-Workers allocate WASM linear memory (64KB = 1 page):
-
-```
-0x0000  coeffsRe[256]    2KB    Float64Array view (input)
-0x0800  coeffsIm[256]    2KB    Float64Array view (input)
-0x1000  warmRe[255]      2KB    Float64Array view (in/out)
-0x1800  warmIm[255]      2KB    Float64Array view (in/out)
-0x2000  (unused)
-0x8000  C shadow stack   32KB   Solver local arrays (grows down)
-```
-
-Data is copied into WASM memory before each call and results are copied back — the copy overhead is negligible relative to the O(n²) solver cost.
-
-### Build Workflow
-
-```bash
-./build-wasm.sh    # Requires Homebrew LLVM + lld
-```
-
-This compiles `solver.c` → `solver.wasm` → `solver.wasm.b64`. The base64 string is then pasted into the `WASM_SOLVER_B64` constant in `index.html`. Only needed when the solver algorithm changes.
-
-### Selecting the Solver
+## Selecting the Solver
 
 Click the **cfg** button in the bitmap toolbar to open the solver config popup. Choose **JS** or **WASM**. The selection takes effect on the next fast-mode start (workers are initialized with the chosen solver type). The setting is persisted in save/load snapshots.
 
-| Parameter | JS Worker | WASM |
-|-----------|-----------|------|
-| Max iterations | 64 | 64 |
-| Convergence threshold | 1e-16 (squared) | 1e-16 (squared) |
-| Leading-zero test | magnitude² < 1e-30 | magnitude² < 1e-30 |
-| NaN rescue | In solver (isFinite check) | Post-call JS (x !== x check) |
-| Iteration tracking | None (removed) | None (removed) |
+When WASM is selected, workers prefer the full step-loop WASM (`step_loop.wasm`) and fall back to solver-only WASM (`solver.wasm`) then pure JS.
+
+## Parameter Comparison
+
+| Parameter | Main-Thread JS | Worker JS | WASM (both) |
+|-----------|---------------|-----------|-------------|
+| Max iterations | 100 | 64 | 64 |
+| Convergence threshold | 1e-12 (magnitude) | 1e-16 (squared) | 1e-16 (squared) |
+| Convergence check | `Math.hypot` | manual `re²+im²` | manual `re²+im²` |
+| Leading-zero test | `Math.hypot` < 1e-15 | magnitude² < 1e-30 | magnitude² < 1e-30 |
+| NaN rescue | `isFinite` → warm-start → unit circle | `isFinite` → unit circle reseed | `x != x` → unit circle (via imported cos/sin) |
+| Iteration tracking | None (removed) | None (removed) | None (removed) |
+| Stack arrays | MAX_COEFFS=256, MAX_DEG=255 | Dynamic (via `new Float64Array`) | MAX_COEFFS=256, MAX_DEG=255 |
+
+## Step Partitioning
+
+The main thread distributes bitmap steps across workers using floor-division with remainder: each worker gets `floor(totalSteps / nWorkers)` steps, with the first `totalSteps % nWorkers` workers receiving one extra step. Worker count is clamped to `min(numWorkers, totalSteps)` so no worker runs with zero steps. Each worker's sparse paint buffer is pre-sized to `ceil(totalSteps / numWorkers) * nRoots` entries.

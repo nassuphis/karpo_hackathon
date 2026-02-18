@@ -16,7 +16,7 @@ class TestMorphInit:
         assert result["nMorph"] == result["nCoeffs"]
         assert result["enabled"] is False
         assert result["mu"] == 0  # disabled → mu=0
-        assert result["rate"] == 0.25
+        assert result["rate"] == 0.01
 
     def test_init_morph_target_copies_positions(self, page):
         """initMorphTarget() copies C positions to D."""

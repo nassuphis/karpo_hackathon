@@ -6,12 +6,85 @@ The space of degree-*n* polynomials with distinct roots is topologically the [co
 
 This is not a solver artifact; it is a topological invariant of the loop. Different loops around different "holes" in coefficient space produce different permutations. The [cohomology](https://en.wikipedia.org/wiki/Cohomology) of the configuration space (computed by Arnol'd and Cohen) classifies these possibilities.
 
-**What you see in PolyPaint:** the trail patterns are visual braids. Root identity is preserved across frames by reordering each new solver output to best match the previous frame's root positions. This keeps trails tracking the same root continuously. When roots still swap indices (e.g. during fast near-collisions), jump detection (30% of visible range threshold) inserts a path break (SVG `M` move) rather than drawing a false connecting line.
+## What you see in PolyPaint
 
-**Root-matching strategies:** The main-thread animation path uses `matchRootOrder`, a greedy nearest-neighbor O(n^2) matcher. For bitmap fast-mode workers, root matching is configurable via `bitmapMatchStrategy`:
+The trail patterns are visual braids. Root identity is preserved across frames by reordering each new solver output to best match the previous frame's root positions. This keeps trails tracking the same root continuously. When roots still swap indices (e.g. during fast near-collisions), jump detection (30% of visible range threshold) inserts a path break (SVG `M` move or canvas `moveTo`) rather than drawing a false connecting line.
 
-- **Hungarian** (`hungarian1`): Kuhn-Munkres O(n^3) optimal assignment, run every step. Most accurate but slowest.
-- **Greedy x1** (`assign1`): Greedy nearest-neighbor every step. Same algorithm as `matchRootOrder` but using typed arrays (`matchRoots` in the worker blob).
+### Trail rendering
+
+Root trails are stored in `trailData[]` (line ~1007), an array of arrays where `trailData[i]` holds `{re, im}` points for root *i*. A parallel `finalTrailData[]` stores coefficient trails (blended C/D positions) for the Final tab. Both are capped at `MAX_TRAIL_POINTS = 4000` entries per root (line ~1009).
+
+Trails are rendered three ways depending on which panel is active:
+
+- **Roots SVG panel** (animation tab): `renderTrails()` (line ~4946) builds SVG `<path>` elements with `M`/`L` segments, colored per root via `rootColor()`.
+- **Final SVG panel**: `renderFinalTrails()` (line ~4744) renders coefficient trails on the Final tab's SVG.
+- **Bitmap canvas panel**: `drawRootsToCtx()` (line ~7180) renders trails as canvas strokes.
+
+All three renderers use the same jump-detection logic: if the distance between consecutive trail points exceeds 30% of the visible range, a path break (`M` move) is inserted instead of a connecting line (`L`).
+
+The Trails button in the roots toolbar header toggles trail recording on and off. Trails are cleared when animation starts (unless resuming) or when animation parameters change.
+
+## Root matching — preserving identity
+
+### Main-thread animation path
+
+`matchRootOrder()` (line ~5290) is a greedy nearest-neighbor O(n^2) matcher. It reorders each new set of solver roots so that root *i* in the new frame is the one closest to root *i* in the previous frame. This is called:
+
+- In `solveRoots()` (line ~5329): every interactive solve (dragging, manual updates).
+- In the main-thread fast-mode stepping loop (line ~11588): called for every bitmap color mode except Uniform, which does not need identity tracking.
+
+### Worker fast-mode path
+
+Workers use typed-array versions of the matching functions. The strategy is configurable via `bitmapMatchStrategy` (line ~1018) for modes that need root identity:
+
+- **Hungarian** (`hungarian1`): Kuhn-Munkres O(n^3) optimal assignment via `hungarianMatch()` (line ~9990), run every step. Most accurate but slowest.
+- **Greedy x1** (`assign1`): Greedy nearest-neighbor via `matchRoots()` (line ~9974), run every step.
 - **Greedy x4** (`assign4`): Greedy nearest-neighbor every 4th step. Default — balances accuracy and speed since O(n^2) matching is expensive at high frame rates.
 
-These strategies only apply to the **Index Rainbow** bitmap color mode, where root identity determines pixel color. Derivative mode uses its own hardcoded greedy-every-4th-step matching, and Root Proximity does not require root-identity tracking at all.
+The match strategy is stored persistently in worker state as `S_matchStrategy` (line ~10363) and is serialized via `matchStrategy` in the worker init data.
+
+### Which bitmap color modes use matching
+
+There are six bitmap color modes (`bitmapColorMode`, line ~1016):
+
+| Mode | Key | Root matching | Notes |
+|------|-----|--------------|-------|
+| Uniform | `uniform` | None | All roots painted the same color; identity irrelevant. |
+| Index Rainbow | `rainbow` | Configurable (`bitmapMatchStrategy`) | Root index determines color via rainbow palette. |
+| Derivative | `derivative` | Hardcoded greedy every 4th step | Uses `computeSens()` for Jacobian sensitivity coloring. Not configurable. |
+| Root Proximity | `proximity` | None | Color based on nearest-neighbor distance; identity irrelevant. |
+| Idx x Prox | `idx-prox` | Configurable (`bitmapMatchStrategy`) | Combines rainbow hue with proximity brightness. |
+| Min/Max Ratio | `ratio` | None | Color based on min/max inter-root distance ratio; identity irrelevant. |
+
+### UI for match strategy
+
+Match strategy chips (small labeled buttons: "Hungarian", "Greedy x1", "Greedy x4") appear in the bitmap config popup under two modes:
+
+- **Index Rainbow**: chips at line ~7977, nested under the rainbow row.
+- **Idx x Prox**: chips at line ~8056, nested under the idx-prox row.
+
+Clicking a chip sets `bitmapMatchStrategy` and, if the current mode is different, switches to the corresponding color mode.
+
+## Implementation details
+
+### `matchRootOrder(newRoots, oldRoots)` — line ~5290
+
+Main-thread greedy matcher operating on `{re, im}` object arrays. For each old root *i*, finds the closest unused new root *j* by squared Euclidean distance. Returns a reordered array.
+
+### `matchRoots(newRe, newIm, oldRe, oldIm, n)` — line ~9974
+
+Worker blob greedy matcher operating on parallel `Float64Array` typed arrays. Same algorithm as `matchRootOrder` but avoids object allocation. Modifies `newRe`/`newIm` in place.
+
+### `hungarianMatch(newRe, newIm, oldRe, oldIm, n)` — line ~9990
+
+Worker blob Kuhn-Munkres O(n^3) optimal assignment. Builds an n x n squared-distance cost matrix, applies the Hungarian algorithm with 1-indexed potentials, and reorders `newRe`/`newIm` in place. Produces the globally optimal assignment rather than the locally greedy one.
+
+### Jump threshold
+
+All trail renderers use the same formula:
+
+```
+jumpThresh = panelRange * 0.3
+```
+
+where `panelRange` is the visible extent of the roots or coefficient panel. A distance exceeding this between consecutive trail points is interpreted as a root-identity swap (the greedy matcher assigned the wrong root) rather than genuine root motion, and a path break is inserted.

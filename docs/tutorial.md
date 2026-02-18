@@ -32,7 +32,7 @@ Click the **All** button in the trajectory editor bar (just below the tab row, o
 
 ![All coefficients selected](images/03_select_all.png)
 
-You can also click individual dots to toggle them, or drag on empty canvas to marquee-select a group. For this tutorial, we want all of them animated.
+You can also click individual dots to toggle them, or drag on empty canvas to marquee-select a group. Note that C-node, D-node, and root selections are **mutually exclusive** -- selecting in one panel automatically clears any selection in the other panels. For this tutorial, we want all C-coefficients animated.
 
 ---
 
@@ -82,7 +82,7 @@ Let it run for several seconds. The trails grow into intricate braid-like patter
 
 ![Trails after 6 seconds](images/08_trails_complete.png)
 
-Click **Pause** when you're happy with the trail pattern. You can click **Resume** to continue from where you paused, or **Home** to reset. Trails collect up to the maximum trail point limit.
+Click **Pause** when you're happy with the trail pattern. You can click **Resume** to continue from where you paused, or **Home** (also in the header bar) to reset all coefficients to their start positions. Trails collect up to the maximum trail point limit.
 
 ---
 
@@ -188,7 +188,7 @@ Hue represents the argument (phase) of p(z) and brightness represents the magnit
 
 ## Tips
 
-- **Higher degree = richer patterns.** Try degree 10-15 with the Spiral pattern and prime speeds for elaborate braids.
+- **Higher degree = richer patterns.** The degree slider ranges from 2 to 30 (minimum degree is 2). Try degree 10-15 with the Spiral pattern and prime speeds for elaborate braids.
 - **Mix path types.** Not every coefficient needs a circle -- try setting some to Lissajous, Figure-8, or Hilbert for more complex dynamics.
 - **Use D-nodes for morphing.** The D-List tab defines morph-target coefficients. D-nodes support a **Follow C** path type that mirrors the corresponding C-node's position, making it easy to set up morph targets that track the main coefficients.
 - **Use the scrub slider** (in the header bar) to preview the animation before committing to a long bitmap render. The scrub is additive -- it adds seconds to the current elapsed time when paused.

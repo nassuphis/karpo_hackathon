@@ -1,7 +1,13 @@
-"""Benchmark: JS vs WASM Ehrlich-Aberth solver at various degrees."""
+"""Benchmark: JS vs WASM Ehrlich-Aberth solver at various degrees,
+plus full step loop (solver + pixel output) comparison."""
 
 import pytest
 from pathlib import Path
+
+# Import WASM step loop helpers from test_wasm_step_loop
+from test_wasm_step_loop import _CWL, _INST, _WRITE_CFG, _SETUP, wasm_step_loop_b64  # noqa: F401
+
+_HELPERS = _CWL + _INST + _WRITE_CFG + _SETUP
 
 # The JS worker solver source — copied verbatim from index.html line 7366
 # This is the flat-array optimized version used in Web Workers
@@ -421,3 +427,293 @@ def test_wasm_correctness(page, wasm_b64):
     }""", wasm_b64)
 
     assert len(result["errors"]) == 0, f"WASM/JS mismatch: {result['errors']}"
+
+
+# ============================================================
+# Full Step Loop Benchmark: JS vs WASM
+# ============================================================
+# Measures the entire per-pass pipeline: solver + pixel output
+# (no curve interpolation — static polynomial, uniform color)
+
+# JS step loop that replicates what the worker blob does per step:
+# solveEA → compute pixel coords → write to sparse output arrays
+JS_STEP_LOOP = JS_SOLVER_SOURCE + """
+function jsStepLoop(cRe, cIm, nCoeffs, rootsRe, rootsIm, nRoots,
+                    canvasW, canvasH, range, stepStart, stepEnd,
+                    paintIdx, paintR, paintG, paintB) {
+    var pc = 0;
+    var half = canvasW / 2, halfH = canvasH / 2;
+    var scale = half / range;
+    for (var step = stepStart; step < stepEnd; step++) {
+        solveEA_JS(cRe, cIm, nCoeffs, rootsRe, rootsIm, nRoots, null);
+        for (var r = 0; r < nRoots; r++) {
+            var px = Math.round(half + rootsRe[r] * scale);
+            var py = Math.round(halfH - rootsIm[r] * scale);
+            if (px >= 0 && px < canvasW && py >= 0 && py < canvasH) {
+                paintIdx[pc] = py * canvasW + px;
+                paintR[pc] = 255; paintG[pc] = 255; paintB[pc] = 255;
+                pc++;
+            }
+        }
+    }
+    return pc;
+}
+"""
+
+
+def test_step_loop_benchmark_js(page):
+    """Benchmark the JS step loop (solver + pixel gen) at various degrees and step counts."""
+    results = page.evaluate("""() => {
+        """ + JS_STEP_LOOP + """
+
+        var seed = 42;
+        function rng() { seed = (seed * 1664525 + 1013904223) & 0x7fffffff; return seed / 0x7fffffff; }
+
+        var configs = [
+            {deg: 5,  steps: 10000},
+            {deg: 5,  steps: 50000},
+            {deg: 10, steps: 10000},
+            {deg: 10, steps: 50000},
+            {deg: 20, steps: 5000},
+            {deg: 20, steps: 20000}
+        ];
+        var results = [];
+        for (var ci = 0; ci < configs.length; ci++) {
+            var deg = configs[ci].deg, N = configs[ci].steps;
+            var nc = deg + 1;
+            seed = 42 + ci * 1000;
+            var cRe = new Float64Array(nc), cIm = new Float64Array(nc);
+            for (var i = 0; i < nc; i++) { cRe[i] = rng() * 2 - 1; cIm[i] = rng() * 2 - 1; }
+
+            var maxP = N * deg;
+            var rRe = new Float64Array(deg), rIm = new Float64Array(deg);
+            for (var i = 0; i < deg; i++) {
+                var a = (2 * Math.PI * i) / deg + 0.37;
+                rRe[i] = Math.cos(a); rIm[i] = Math.sin(a);
+            }
+            var pI = new Int32Array(maxP), pR = new Uint8Array(maxP);
+            var pG = new Uint8Array(maxP), pB = new Uint8Array(maxP);
+
+            // Warmup (100 steps)
+            jsStepLoop(cRe, cIm, nc, rRe, rIm, deg, 500, 500, 2.0, 0, 100, pI, pR, pG, pB);
+            // Reset roots
+            for (var i = 0; i < deg; i++) {
+                var a = (2 * Math.PI * i) / deg + 0.37;
+                rRe[i] = Math.cos(a); rIm[i] = Math.sin(a);
+            }
+
+            var t0 = performance.now();
+            var pc = jsStepLoop(cRe, cIm, nc, rRe, rIm, deg, 500, 500, 2.0, 0, N, pI, pR, pG, pB);
+            var elapsed = performance.now() - t0;
+
+            results.push({
+                degree: deg, steps: N, totalMs: elapsed, pixels: pc,
+                stepsPerSec: Math.round(N / (elapsed / 1000)),
+                usPerStep: (elapsed / N) * 1000
+            });
+        }
+        return results;
+    }""")
+
+    print("\n=== JS Step Loop Benchmark (solver + pixel gen) ===")
+    print(f"{'Degree':>8} {'Steps':>8} {'Total ms':>10} {'Steps/s':>12} {'us/step':>10} {'Pixels':>10}")
+    print("-" * 62)
+    for r in results:
+        print(f"{r['degree']:>8} {r['steps']:>8} {r['totalMs']:>10.1f} "
+              f"{r['stepsPerSec']:>12,} {r['usPerStep']:>10.2f} {r['pixels']:>10,}")
+
+    for r in results:
+        assert r["stepsPerSec"] > 0
+        assert r["pixels"] > 0
+
+
+def test_step_loop_benchmark_wasm(page, wasm_step_loop_b64):
+    """Benchmark the WASM step loop at various degrees and step counts."""
+    if wasm_step_loop_b64 is None:
+        pytest.skip("step_loop.wasm not built")
+
+    results = page.evaluate("(b64) => {" + _HELPERS + """
+
+        var seed = 42;
+        function rng() { seed = (seed * 1664525 + 1013904223) & 0x7fffffff; return seed / 0x7fffffff; }
+
+        var configs = [
+            {deg: 5,  steps: 10000},
+            {deg: 5,  steps: 50000},
+            {deg: 10, steps: 10000},
+            {deg: 10, steps: 50000},
+            {deg: 20, steps: 5000},
+            {deg: 20, steps: 20000}
+        ];
+        var results = [];
+        for (var ci = 0; ci < configs.length; ci++) {
+            var deg = configs[ci].deg, N = configs[ci].steps;
+            var nc = deg + 1;
+            seed = 42 + ci * 1000;
+            var cRe = [], cIm = [];
+            for (var i = 0; i < nc; i++) { cRe.push(rng() * 2 - 1); cIm.push(rng() * 2 - 1); }
+
+            var maxP = N * deg;
+            var w = instantiateWasm(b64);
+            var L = computeWasmLayout(nc, deg, maxP, 0, 0, 0, 0, 0, 0, w.hb);
+            var curPages = w.mem.buffer.byteLength / 65536;
+            if (L.pages > curPages) w.mem.grow(L.pages - curPages);
+            var buf = w.mem.buffer;
+            writeCfg(buf, L, nc, deg, {
+                canvasW: 500, canvasH: 500, totalSteps: N, colorMode: 0,
+                uR: 255, uG: 255, uB: 255, range: 2.0
+            });
+            new Float64Array(buf, L.cRe, nc).set(cRe);
+            new Float64Array(buf, L.cIm, nc).set(cIm);
+            new Float64Array(buf, L.wCR, nc).set(cRe);
+            new Float64Array(buf, L.wCI, nc).set(cIm);
+
+            var pRR = new Float64Array(buf, L.pRR, deg);
+            var pRI = new Float64Array(buf, L.pRI, deg);
+            for (var i = 0; i < deg; i++) {
+                var a = (2 * Math.PI * i) / deg + 0.37;
+                pRR[i] = Math.cos(a); pRI[i] = Math.sin(a);
+            }
+            w.inst.exports.init(L.cfgI, L.cfgD);
+
+            // Warmup (100 steps)
+            w.inst.exports.runStepLoop(0, 100, 0.0);
+            // Reset roots
+            for (var i = 0; i < deg; i++) {
+                var a = (2 * Math.PI * i) / deg + 0.37;
+                pRR[i] = Math.cos(a); pRI[i] = Math.sin(a);
+            }
+
+            var t0 = performance.now();
+            var pc = w.inst.exports.runStepLoop(0, N, 0.0);
+            var elapsed = performance.now() - t0;
+
+            results.push({
+                degree: deg, steps: N, totalMs: elapsed, pixels: pc,
+                stepsPerSec: Math.round(N / (elapsed / 1000)),
+                usPerStep: (elapsed / N) * 1000
+            });
+        }
+        return results;
+    }""", wasm_step_loop_b64)
+
+    print("\n=== WASM Step Loop Benchmark (full loop in WASM) ===")
+    print(f"{'Degree':>8} {'Steps':>8} {'Total ms':>10} {'Steps/s':>12} {'us/step':>10} {'Pixels':>10}")
+    print("-" * 62)
+    for r in results:
+        print(f"{r['degree']:>8} {r['steps']:>8} {r['totalMs']:>10.1f} "
+              f"{r['stepsPerSec']:>12,} {r['usPerStep']:>10.2f} {r['pixels']:>10,}")
+
+    for r in results:
+        assert r["stepsPerSec"] > 0
+        assert r["pixels"] > 0
+
+
+def test_step_loop_benchmark_comparison(page, wasm_b64, wasm_step_loop_b64):
+    """Side-by-side JS step loop vs WASM step loop with speedup ratio."""
+    if wasm_step_loop_b64 is None:
+        pytest.skip("step_loop.wasm not built")
+
+    results = page.evaluate("(args) => {" + JS_STEP_LOOP + _HELPERS + """
+        var b64 = args.b64;
+
+        var seed = 42;
+        function rng() { seed = (seed * 1664525 + 1013904223) & 0x7fffffff; return seed / 0x7fffffff; }
+
+        var configs = [
+            {deg: 5,  steps: 10000},
+            {deg: 5,  steps: 50000},
+            {deg: 10, steps: 10000},
+            {deg: 10, steps: 50000},
+            {deg: 20, steps: 5000},
+            {deg: 20, steps: 20000}
+        ];
+        var results = [];
+        for (var ci = 0; ci < configs.length; ci++) {
+            var deg = configs[ci].deg, N = configs[ci].steps;
+            var nc = deg + 1;
+            seed = 42 + ci * 1000;
+            var cRe = new Float64Array(nc), cIm = new Float64Array(nc);
+            for (var i = 0; i < nc; i++) { cRe[i] = rng() * 2 - 1; cIm[i] = rng() * 2 - 1; }
+
+            // === JS step loop ===
+            var maxP = N * deg;
+            var rRe = new Float64Array(deg), rIm = new Float64Array(deg);
+            for (var i = 0; i < deg; i++) {
+                var a = (2 * Math.PI * i) / deg + 0.37;
+                rRe[i] = Math.cos(a); rIm[i] = Math.sin(a);
+            }
+            var pI = new Int32Array(maxP), pR = new Uint8Array(maxP);
+            var pG = new Uint8Array(maxP), pB = new Uint8Array(maxP);
+            // Warmup
+            jsStepLoop(cRe, cIm, nc, rRe, rIm, deg, 500, 500, 2.0, 0, 200, pI, pR, pG, pB);
+            for (var i = 0; i < deg; i++) {
+                var a = (2 * Math.PI * i) / deg + 0.37;
+                rRe[i] = Math.cos(a); rIm[i] = Math.sin(a);
+            }
+            var t0 = performance.now();
+            var jsPc = jsStepLoop(cRe, cIm, nc, rRe, rIm, deg, 500, 500, 2.0, 0, N, pI, pR, pG, pB);
+            var jsMs = performance.now() - t0;
+
+            // === WASM step loop ===
+            var cReArr = Array.from(cRe), cImArr = Array.from(cIm);
+            var w = instantiateWasm(b64);
+            var L = computeWasmLayout(nc, deg, maxP, 0, 0, 0, 0, 0, 0, w.hb);
+            var curPages = w.mem.buffer.byteLength / 65536;
+            if (L.pages > curPages) w.mem.grow(L.pages - curPages);
+            var buf = w.mem.buffer;
+            writeCfg(buf, L, nc, deg, {
+                canvasW: 500, canvasH: 500, totalSteps: N, colorMode: 0,
+                uR: 255, uG: 255, uB: 255, range: 2.0
+            });
+            new Float64Array(buf, L.cRe, nc).set(cReArr);
+            new Float64Array(buf, L.cIm, nc).set(cImArr);
+            new Float64Array(buf, L.wCR, nc).set(cReArr);
+            new Float64Array(buf, L.wCI, nc).set(cImArr);
+
+            var wpRR = new Float64Array(buf, L.pRR, deg);
+            var wpRI = new Float64Array(buf, L.pRI, deg);
+            for (var i = 0; i < deg; i++) {
+                var a = (2 * Math.PI * i) / deg + 0.37;
+                wpRR[i] = Math.cos(a); wpRI[i] = Math.sin(a);
+            }
+            w.inst.exports.init(L.cfgI, L.cfgD);
+            // Warmup
+            w.inst.exports.runStepLoop(0, 200, 0.0);
+            for (var i = 0; i < deg; i++) {
+                var a = (2 * Math.PI * i) / deg + 0.37;
+                wpRR[i] = Math.cos(a); wpRI[i] = Math.sin(a);
+            }
+            var t0w = performance.now();
+            var wasmPc = w.inst.exports.runStepLoop(0, N, 0.0);
+            var wasmMs = performance.now() - t0w;
+
+            results.push({
+                degree: deg, steps: N,
+                jsMs: jsMs, wasmMs: wasmMs,
+                jsPixels: jsPc, wasmPixels: wasmPc,
+                jsStepsPerSec: Math.round(N / (jsMs / 1000)),
+                wasmStepsPerSec: Math.round(N / (wasmMs / 1000)),
+                speedup: wasmMs > 0 ? jsMs / wasmMs : Infinity
+            });
+        }
+        return results;
+    }""", {"b64": wasm_step_loop_b64})
+
+    print("\n" + "=" * 80)
+    print("  Full Step Loop Benchmark: JS vs WASM (solver + pixel output)")
+    print("=" * 80)
+    print(f"{'Degree':>8} {'Steps':>8} {'JS ms':>10} {'WASM ms':>10} "
+          f"{'JS steps/s':>13} {'WASM steps/s':>13} {'Speedup':>9}")
+    print("-" * 80)
+    for r in results:
+        sp = f"{r['speedup']:.2f}x" if r['speedup'] != float('inf') else "inf"
+        print(f"{r['degree']:>8} {r['steps']:>8} {r['jsMs']:>10.1f} {r['wasmMs']:>10.1f} "
+              f"{r['jsStepsPerSec']:>13,} {r['wasmStepsPerSec']:>13,} {sp:>9}")
+    print("-" * 80)
+
+    for r in results:
+        assert r["jsStepsPerSec"] > 0
+        assert r["wasmStepsPerSec"] > 0
+        assert r["jsPixels"] > 0
+        assert r["wasmPixels"] > 0

@@ -57,7 +57,7 @@ Each instrument button (**B**, **M**, **V**) opens a popover with an on/off togg
 | Attack | 1–20 ms | 5 ms | Beep attack time |
 | Decay | 10–300 ms | 80 ms | Beep ring-down time |
 
-Memory and Novelty sliders have moved to the **Config** tab under "Encounters / Records":
+Memory and Novelty sliders live in the **Sound** tab under "Encounters / Records":
 
 | Slider | Range | Default | Controls |
 |--------|-------|---------|----------|
@@ -141,7 +141,7 @@ cooldown: voiceConfig.cooldown × voiceRoutes[3].smoothed × 2
 
 The cooldown, volume, ringdown, and pitch bias are all modulated by their respective Voice routes (see Signal Routing). When routes are disconnected (default), the ×2 scaling with neutral smoothed = 0.5 gives a ×1.0 multiplier, preserving the slider value as-is.
 
-This approach is inherently adaptive: tight configurations set low records early, so only truly exceptional approaches trigger; loose configurations keep records high, so moderate approaches still register. The novelty and memory sliders (in the Config tab) provide direct control over beep density without changing the fundamental algorithm.
+This approach is inherently adaptive: tight configurations set low records early, so only truly exceptional approaches trigger; loose configurations keep records high, so moderate approaches still register. The novelty and memory sliders (in the Sound tab) provide direct control over beep density without changing the fundamental algorithm.
 
 **Melody cutoff (velocity ranking):**
 
@@ -153,7 +153,7 @@ A **watchdog timer** runs via `setInterval` (100ms) while sound is enabled. If `
 
 A **visibilitychange** listener immediately ramps `masterGain` to zero (20ms time constant) when the page becomes hidden, preventing orphaned audio when the user switches tabs.
 
-Additionally, `resetAudioState()` is called on: animation stop, Home button, pattern change, degree change, and sound toggle off. It zeroes all smoothing accumulators and ramps `masterGain` to zero, ensuring clean silence in all state transitions.
+Additionally, `resetAudioState()` is called on: animation stop, Home button, pattern change, degree change, sound toggle off, and state load. It zeroes all smoothing accumulators and ramps `masterGain` to zero, ensuring clean silence in all state transitions.
 
 ## UI Feedback Sounds
 

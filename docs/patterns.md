@@ -29,6 +29,74 @@ These define the *roots* in a specific shape, then compute the coefficients by e
 
 Heart, Circle, Star, Spiral, Cross, Diamond, Chessboard, Smiley, Figure-8, Butterfly, Trefoil, Polygon, Infinity
 
+## Path Catalog
+
+Animation path types are defined in `PATH_CATALOG`, the single source of truth for all path `<select>` elements. Each entry is either a top-level option (`{ value, label }`) or an `<optgroup>` (`{ group, items: [...] }`). Entries may carry a `dOnly: true` flag, indicating they appear only in D-node path selectors.
+
+| Group | Paths |
+|-------|-------|
+| *(top-level)* | None |
+| *(top-level, D-only)* | Follow C |
+| Basic | Circle, Horizontal, Vertical, Spiral, Gaussian cloud |
+| Curves | Lissajous, Figure-8, Cardioid, Astroid, Deltoid, Rose (3-petal), Spirograph, Hypotrochoid, Butterfly, Star (pentagram), Square, C-Ellipse |
+| Space-filling | Hilbert (Moore), Peano, Sierpinski |
+
+Dithered variants (`-dither` suffix) are auto-inserted after each base path in catalog groups. Random and Follow-C have no dithered variant.
+
+### Follow-C (D-node only)
+
+The **Follow C** path type is exclusive to D-nodes (`dOnly: true`). A D-node with this path copies the position of its corresponding C-coefficient each frame instead of following its own trajectory. It has no parameters (`PATH_PARAMS["follow-c"] = []`) and no curve of its own — its curve is a single-point array at its current position. In fast-mode workers, Follow-C indices are serialized as `dFollowCIndices` and the worker copies `coeffsRe[i]`/`coeffsIm[i]` into the morph target arrays each step.
+
+### buildPathSelect(sel, noneLabel, dNode)
+
+Populates a `<select>` element from `PATH_CATALOG`. The optional `noneLabel` overrides the "None" text (e.g. "—" for list editors). The `dNode` flag (third parameter) includes D-only entries when `true`. Called three times at init:
+
+- `buildPathSelect(document.getElementById("anim-path"))` — anim-bar, no D-only
+- `buildPathSelect(document.getElementById("lce-path-sel"), "—")` — C-List editor, no D-only
+- `buildPathSelect(document.getElementById("dle-path-sel"), "—", true)` — D-List editor, includes Follow C
+
+## Selection Model
+
+Selection is **mutually exclusive** across three pools: C-coefficients (`selectedCoeffs`), D-nodes (`selectedMorphCoeffs`), and roots (`selectedRoots`). Clicking a node in one pool clears the other two. The three `Set` objects are managed by `clearCoeffSelection()`, `clearMorphSelection()`, `clearRootSelection()`, and `clearAllSelection()`.
+
+### Ops Bar Indicator
+
+The ops bar shows a colored target label (`#ops-target`) reflecting which pool is active:
+
+| State | Label | Color |
+|-------|-------|-------|
+| No selection | `· none` | gray `#888` |
+| C-coefficients selected | `· C` | green `#5ddb6a` |
+| D-nodes selected | `· D` | blue `#4ea8de` |
+| Roots selected | `· roots` | red `#e94560` |
+
+When no selection exists, the ops group is disabled (`#ops-group.disabled`).
+
+### Ops Tools on D-nodes
+
+The mid-bar **Scale**, **Rotate**, and **Translate** tools operate on whichever pool is active. `snapshotSelection()` returns `{ which: "coeff"|"morph"|"roots", items }` depending on which `Set` is non-empty (checked in priority order: C, then D, then roots). `applyPreview()` dispatches to the correct data array: `coefficients[]` for "coeff", `morphTargetCoeffs[]` for "morph", `currentRoots[]` for "roots". After transforming D-nodes, curves with `pathType === "follow-c"` get a single-point curve at the new position; all other D-node curves are recomputed via `computeCurve()`.
+
+## Parameter Ranges
+
+### Speed
+
+Speed is stored internally as a float (0.001–1.0) and displayed/edited as an integer (1–1000) via `toUI: v => Math.round(v * 1000)` and `fromUI: v => v / 1000`. Resolution is **1/1000** of a full loop per second. The speed slider in C-List and D-List selection bars has `min="1" max="1000" step="1"`.
+
+### Param2
+
+The param2 slider (used by LerpSpeed, LerpRadius, LerpAngle transforms) has range **1–1000** with step 1, in both C-List (`#list-sel-param2`) and D-List (`#dlist-sel-param2`).
+
+### Jiggle Controls
+
+| Control | Range | Step | Notes |
+|---------|-------|------|-------|
+| σ (sigma) | 0–10 | 0.01 | `jiggleSigma`; read as `jiggleSigma / 10` (fraction of `coeffExtent()`). Backward compat: old 0–100 values are divided by 10 on load. |
+| Steps (rotate/circle/spiral/wobble) | 10–5000 | 1 | `jiggleAngleSteps` or `jiggleCircleSteps`; number of jiggle steps for one full revolution. Replaces the old θ (turns) control. |
+| Interval | 0.1–100s | 0.1 | `jiggleInterval`; seconds between jiggle perturbations. |
+| Lissajous period | 10–5000 | 1 | `jigglePeriod`; measured in **steps** (not cycles). Slider with `min="10" max="5000"`. |
+| Amplitude | 1–50 | 1 | `jiggleAmplitude`; % of `coeffExtent()` or centroid distance. |
+| FreqX / FreqY | 1–10 | 1 | Lissajous frequency multipliers. |
+
 ## Trail Gallery
 
 <p align="center">

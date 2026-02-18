@@ -165,7 +165,7 @@ Dedicated tab for coefficient perturbation controls (previously embedded in the 
 
 - **Mode** dropdown (12 modes, see below)
 - Mode-specific parameter controls (sigma, steps, amplitude, period, etc.)
-- **Interval** slider (0.1-100 seconds, step 0.1, between perturbation triggers) with +/-0.1s precision buttons
+- **Interval** slider (0.1-100 seconds, step 0.1, between perturbation triggers) with **-0.1** / **+0.1** precision buttons
 - **GCD** button: auto-compute interval from the GCD of coefficient speeds
 
 **Jiggle modes** (12):
@@ -173,9 +173,9 @@ Dedicated tab for coefficient perturbation controls (previously embedded in the 
 | Mode | Description | Parameters |
 |------|-------------|------------|
 | None | No perturbation | -- |
-| Random | Gaussian offsets each trigger | sigma (range slider 0-10, +/-0.01 buttons) |
+| Random | Gaussian offsets each trigger | sigma (range slider 0-10, **-0.01** / **+0.01** buttons) |
 | Rotate | Rotate selected around centroid | steps (range slider 10-5000) |
-| Walk | Random walk accumulating offsets | sigma (range slider 0-10, +/-0.01 buttons) |
+| Walk | Random walk accumulating offsets | sigma (range slider 0-10, **-0.01** / **+0.01** buttons) |
 | Scale (center) | Scale from origin | growth % per trigger |
 | Scale (centroid) | Scale from centroid | growth % per trigger |
 | Circle | Rotate around origin | steps (range slider 10-5000) |
@@ -183,7 +183,7 @@ Dedicated tab for coefficient perturbation controls (previously embedded in the 
 | Spiral (center) | Rotate + scale around origin | steps (10-5000), growth % |
 | Breathe | Sinusoidal scaling from centroid | amplitude, period (cycles) |
 | Wobble | Sinusoidal rotation around centroid | steps (10-5000), period (cycles) |
-| Lissajous | Translate along Lissajous figure | amplitude, steps (range slider 10-5000), freqX, freqY |
+| Lissajous | Translate along Lissajous figure | amplitude, steps (range slider 10-5000 for period), freqX, freqY |
 
 See [Paths](paths.md) for jiggle formulas.
 
@@ -214,10 +214,10 @@ Located between the left and right panels. Buttons brighten when a selection exi
 
 Each tool opens a transient popover with live preview. Drag to apply; changes are immediate. Close by clicking outside or pressing Escape.
 
-A colored label below shows **coeffs** (green) or **roots** (red) to indicate the target.
+The tools operate on whichever node kind is currently selected (C-coefficients, D-nodes, or roots). A colored indicator label shows the target: **C** (green), **D** (blue), **roots** (red), or **none** (grey). See [Selection Model](#selection-model) for details.
 
 Additional controls:
-- **Select All / Deselect** -- selects roots if any root is selected, otherwise coefficients
+- **Select All / Deselect** -- context-aware: selects all D-nodes if any D-node is selected, all roots if any root is selected, otherwise all coefficients
 - **Inv** -- reverse coefficient order (reflects roots around the unit circle)
 
 ---
@@ -393,7 +393,12 @@ Jiggle controls have moved to the dedicated [Jiggle tab](#jiggle-tab) in the lef
 - **Marquee select:** Click and drag on empty canvas to draw a selection rectangle.
 - **Select All / Deselect** buttons in both the trajectory editor bar and roots toolbar.
 - Selected nodes pulse with a bright glow.
-- Clicking a coefficient clears any root selection and vice versa.
+- **Mutually exclusive selection:** Only one kind of node can be selected at a time. Clicking a C-node clears any D-node and root selections; clicking a D-node clears C-node and root selections; clicking a root clears C-node and D-node selections.
+- The **Ops** label in the mid-bar shows a colored indicator reflecting the active selection kind:
+  - **C** (green `#5ddb6a`) -- C-coefficients selected
+  - **D** (blue `#4ea8de`) -- D-nodes selected
+  - **roots** (red `#e94560`) -- roots selected
+  - **none** (grey `#888`) -- nothing selected
 - The trajectory editor displays the first selected coefficient's settings (by index). Adjusting controls shows a live preview; click **Update Whole Selection** to commit or click away to revert.
 - Selection count appears in tab headers: green for coefficients (C-Nodes tab), D-nodes (D-Nodes tab), and jiggle targets (Jiggle tab); red for roots.
 

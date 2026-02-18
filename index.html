@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v35</title>
+<title>PolyPaint v36</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
@@ -562,7 +562,7 @@ body.fast-mode #stop-roots-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v35</span>
+    <span class="app-title">PolyPaint v36</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -1122,6 +1122,7 @@ let morphEnabled = false;
 let morphRate = 0.25;         // Hz (oscillation cycles/sec)
 let morphMu = 0;              // current blend factor [0,1] — 0 when morph disabled
 let solverType = "js"; // "js" or "wasm" — which solver to use in fast mode workers
+const WASM_STEP_LOOP_B64 = "AGFzbQEAAAABGQVgAXwBfGABfwBgAABgAn9/AGADf398AX8CQgUDZW52Bm1lbW9yeQIAAgNlbnYDbG9nAAADZW52A2NvcwAAA2VudgNzaW4AAANlbnYOcmVwb3J0UHJvZ3Jlc3MAAQMEAwIDBAQFAXABAQEGDwJ/AUGAgAQLfwBBkIIECwckAwRpbml0AAULcnVuU3RlcExvb3AABgtfX2hlYXBfYmFzZQMBCAEECpBzAw4AQYCABEEAQYwC/AsAC/kHAQN/QQAgADYCgICEgABBACAAKAIANgKEgISAAEEAIAAoAiA2AqSAhIAAQQAgACgCHDYCoICEgABBACAAKAIYNgKcgISAAEEAIAAoAhQ2ApiAhIAAQQAgACgCEDYClICEgABBACAAKAIMNgKQgISAAEEAIAAoAgg2AoyAhIAAQQAgACgCBDYCiICEgABBACAAKAIkNgKogISAAEEAIAAoAig2AqyAhIAAQQAgACgCLDYCsICEgABBACAAKAIwNgK0gISAAEEAIAErAwA5A7iAhIAAQQAgASsDEDkDyICEgABBACABKwMIOQPAgISAAEEAIAAoAkAiATYC0ICEgABBACAAKAJEIgI2AtSAhIAAQQAgACgCSCIDNgLYgISAAEEAIAAoAkwiBDYC3ICEgAACQCABDQAgAg0AIAMNACAEDQBBAEH4rNGRATYC1ICEgABBAEHv/bb1fTYC0ICEgABBAEGB3rfeejYC2ICEgABBAEGhhpW7eDYC3ICEgAALQQAgACgCUDYC4ICEgABBACAAKAJUNgLkgISAAEEAIAAoAlg2AuiAhIAAQQAgACgCXDYC7ICEgABBACAAKAJgNgLwgISAAEEAIAAoAmQ2AvSAhIAAQQAgACgCaDYC+ICEgABBACAAKAJ0NgL8gISAAEEAIAAoAng2AoCBhIAAQQAgACgCfDYChIGEgABBACAAKAKAATYCiIGEgABBACAAKAKEATYCjIGEgABBACAAKAKIATYCkIGEgABBACAAKAKMATYClIGEgABBACAAKAKQATYCmIGEgABBACAAKAKUATYCnIGEgABBACAAKAKYATYCoIGEgABBACAAKAKcATYCpIGEgABBACAAKAKgATYCqIGEgABBACAAKAKkATYCrIGEgABBACAAKAKoATYCsIGEgABBACAAKAKsATYCtIGEgABBACAAKALMATYCuIGEgABBACAAKAKwATYCvIGEgABBACAAKAK0ATYCwIGEgABBACAAKAK4ATYCxIGEgABBACAAKAK8ATYCyIGEgABBACAAKALAATYCzIGEgABBACAAKALEATYC0IGEgABBACAAKALIATYC1IGEgABBACAAKALQATYC2IGEgABBACAAKALUATYC3IGEgABBACAAKALYATYC4IGEgABBACAAKALcATYC5IGEgABBACAAKALgATYC6IGEgABBACAAKALkATYC7IGEgABBACAAKALoATYC8IGEgABBACAAKALsATYC9IGEgABBACAAKALwATYC+IGEgABBACAAKAL0ATYC/IGEgABBACAAKAL4ATYCgIKEgABBACAAKAL8ATYChIKEgABBACAAKAKAAjYCiIKEgAALg2sQBH8BfB5/AXwGfwF8AX8CfAF/AXwBfwF8An8BfAZ/DXwjgICAgABBoPQAayIDJICAgIAAQQAhBEEAKAL4gYSAACEFQQAoAvSBhIAAIQZBACsDuICEgAAhBwJAQQAoAoiAhIAAIghBAUgNACAIQQFxIQlBACEKQQAoAuiBhIAAIQtBACgC5IGEgAAhDAJAIAhBAUYNACAIQf7///8HcSENQQAhDkEAIQoDQCAMIA5qIg8gBiAOaiIQKwMAOQMAIAsgDmoiESAFIA5qIhIrAwA5AwAgD0EIaiAQQQhqKwMAOQMAIBFBCGogEkEIaisDADkDACAOQRBqIQ4gDSAKQQJqIgpHDQALCyAJRQ0AIAwgCkEDdCIOaiAGIA5qKwMAOQMAIAsgDmogBSAOaisDADkDAAsCQCAAIAFODQBBACgChICEgAAiE0F/aiEUIAhBAXEhFSAIQQdxIRYgCEH+////B3EhFyAIQQNxIRggCEH4////B3EhGSAIQfz///8HcSEaIBNBAXEhGyATQf7///8HcSEcIBNBfmohHSAIQQFqIgxBeHEhHiAMQQdxIR8gCEF/aiIgQX5xISEgIEEBcSEiIAhBAnRBBGohIyAIQQN0IiRBCGohJSAguCEmIANBkDNqQQhyIScgA0GAMmpBBHIhKCADQaA0akEQaiEpIANBCHIhKiADQaA0akEIciEJIANBgCBqQQhyIStBACgCkICEgAAiLLchLUEAKAKMgISAACIutyEvIAi3ITAgCEEhSCExQQAhBEQAAAAA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";
 const WASM_SOLVER_B64 = "AGFzbQEAAAABDAFgCH9/f39/f39/AAMCAQAEBQFwAQEBBQMBAAEGCAF/AUGAiAILBxQCBm1lbW9yeQIAB3NvbHZlRUEAAAqLDgGIDggFfwF8AX8EfAN/AnwBfwh8I4CAgIAAQYDCAGsiCCSAgICAACACQX9qIQlBACEKAkAgAkECSA0AQQAhCiAAIQsgASEMA0AgCysDACINIA2iIAwrAwAiDSANoqBEoMLr/ktItDljRQ0BIAtBCGohCyAMQQhqIQwgCSAKQQFqIgpHDQALIAkhCgsCQCAJIAprIg5BAUgNAAJAIA5BAUcNACAAIApBA3QiC2orAwAiDSANoiABIAtqKwMAIg8gD6KgIhBEoMLr/ktItDljDQEgAyAAIAtBCGoiC2orAwAiESANoiAPIAEgC2orAwAiEqKgmiAQozkDACAEIBIgDaIgESAPoqGaIBCjOQMAIAZFDQEgB0UNASAHQQE6AAAMAQsCQCACIAprIhNBAUgNACAKQQN0IQsCQCATQQN0IgxFIgoNACAIQYAyaiAAIAtqIAz8CgAACyAKDQAgCEGAImogASALaiAM/AoAAAsCQCAOQQN0IgtFIgwNACAIQYASaiADIAv8CgAACwJAIAwNACAIQYACaiAEIAv8CgAACwJAIAZFDQAgDkUNACAIQQAgDvwLAAsgCEGAMmpBCHIhACAIQYAiakEIciEUQQAhFSAIKwOAIiEWIAgrA4AyIRcDQCAVQQFqIRhEAAAAAAAAAAAhGUEAIQkDQAJAAkAgBkUNACAIIAlqLQAADQELIAhBgAJqIAlBA3QiC2oiAisDACEaIAhBgBJqIAtqIgErAwAhDUQAAAAAAAAAACEbRAAAAAAAAAAAIREgFiEcIBchHQJAIBNBAUwNACAamiEeRAAAAAAAAAAAIREgACELIBQhDCAOIQogFyEPIBYhEEQAAAAAAAAAACESA0AgDyAaoiEcIAwrAwAhHyALKwMAIR0gESAaoiANIBKioCAQoCEbIBEgDaIgEiAeoqAgD6AhESALQQhqIQsgDEEIaiEMIB0gDyANoiAQIB6ioKAiHSEPIB8gHCANIBCioKAiHCEQIBshEiAKQX9qIgoNAAsLIBEgEaIgGyAboqAiIEQmpqyqBLZ5M2MNAEQAAAAAAAAAACEeQQAhCyAIQYACaiEMIAhBgBJqIQpEAAAAAAAAAAAhHwNAAkAgCSALRg0AIA0gCisDAKEiDyAPoiAaIAwrAwChIhAgEKKgIhJEJqasqgS2eTNjDQAgHiAQIBKjoSEeIB8gDyASo6AhHwsgCkEIaiEKIAxBCGohDCAOIAtBAWoiC0cNAAtEAAAAAAAA8D8gHSARoiAbIByioCAgoyIPIB+iIBwgEaIgHSAboqEgIKMiECAeoqGhIhEgEaIgDyAeoiAQIB+ioCISIBKioCIbRCamrKoEtnkzYw0AIAIgGiAQIBGiIA8gEqKgIBujIh6hOQMAIAEgDSAPIBGiIBAgEqKhIBujIg+hOQMAIA8gD6IgHiAeoqAiDSAZIA0gGWQbIRkgBkUNACANRLyJ2Jey0pw8Y0UNACAIIAlqQQE6AAAgB0UNACAHIAlqIBg6AAALIAlBAWoiCSAORw0ACwJAAkAgGUS8idiXstKcPGNFDQAgBkUNASAHRQ0BIBVBAWohCSAOQQEgDkEBShsiDEEBcSECQQAhCwJAIAxBAUYNACAMQf7///8HcSEKQQAhCwNAAkAgCCALaiIMLQAADQAgDEEBOgAAIAcgC2ogCToAAAsCQCAMQQFqIgwtAAANACAMQQE6AAAgByALakEBaiAJOgAACyAKIAtBAmoiC0cNAAsLIAJFDQEgCCALaiIMLQAADQEgDEEBOgAAIAcgC2ogCToAAAwBCyAYIRUgGEHAAEcNAQsLAkAgBkUNACAHRQ0AIA5BASAOQQFKGyIMQQFxIQlBACELAkAgDEEBRg0AIAxB/v///wdxIQpBACELA0ACQCAIIAtqIgwtAAANACAHIAtqQcAAOgAACwJAIAxBAWotAAANACAHIAtqQQFqQcAAOgAACyAKIAtBAmoiC0cNAAsLIAlFDQAgCCALai0AAA0AIAcgC2pBwAA6AAALIA5BASAOQQFKGyILQQFxIQ5BACEMAkAgC0EBRg0AIAtB/v///wdxIQlBACELQQAhDANAAkAgCEGAEmogC2oiCisDACINIA1iDQAgCEGAAmogC2orAwAiDyAPYg0AIAMgC2ogDTkDACAEIAtqIA85AwALAkAgCkEIaisDACINIA1iDQAgCEGAAmogC2pBCGorAwAiDyAPYg0AIAMgC2pBCGogDTkDACAEIAtqQQhqIA85AwALIAtBEGohCyAJIAxBAmoiDEcNAAsLIA5FDQAgCEGAEmogDEEDdCILaisDACINIA1iDQAgCEGAAmogC2orAwAiDyAPYg0AIAMgDEEDdCILaiANOQMAIAQgC2ogDzkDAAsgCEGAwgBqJICAgIAACwAzBG5hbWUADAtzb2x2ZXIud2FzbQEKAQAHc29sdmVFQQcSAQAPX19zdGFja19wb2ludGVyAC8JcHJvZHVjZXJzAQxwcm9jZXNzZWQtYnkBDkhvbWVicmV3IGNsYW5nBjIxLjEuOACUAQ90YXJnZXRfZmVhdHVyZXMIKwtidWxrLW1lbW9yeSsPYnVsay1tZW1vcnktb3B0KxZjYWxsLWluZGlyZWN0LW92ZXJsb25nKwptdWx0aXZhbHVlKw9tdXRhYmxlLWdsb2JhbHMrE25vbnRyYXBwaW5nLWZwdG9pbnQrD3JlZmVyZW5jZS10eXBlcysIc2lnbi1leHQ=";
 // Multi-worker state
 let numWorkers = Math.min(navigator.hardwareConcurrency || 4, 16);
@@ -2540,12 +2541,12 @@ const _P = {
 const _RSAD = [_P.speed, _P.radius, _P.angle, _P.ccw];
 const _RSD  = [_P.speed, _P.radius, _P.ccw];
 const _STD_KEYS = new Set(["radius", "speed", "angle", "ccw"]);
+const _SIGMA_PARAM = { key: "sigma", label: "\u03C3", min: 0, max: 10, step: 0.5, default: 2, fmt: v => v.toFixed(1) + "%" };
 
 const PATH_PARAMS = {
     none:          [],
     "follow-c":    [],
     circle:        _RSAD,
-    "circle-dither": [..._RSAD, { key: "sigma", label: "\u03C3", min: 0, max: 10, step: 0.5, default: 2, fmt: v => v.toFixed(1) + "%" }],
     horizontal:    _RSD,
     vertical:      _RSD,
     spiral:        [_P.speed,
@@ -2575,6 +2576,12 @@ const PATH_PARAMS = {
         { key: "width", label: "W", min: 1, max: 100, step: 1, default: 50, fmt: v => Math.round(v) + "%" },
         _P.ccw],
 };
+// Auto-generate dithered variants for all animated paths
+for (const key of Object.keys(PATH_PARAMS)) {
+    if (key !== "none" && key !== "follow-c" && key !== "random" && !key.endsWith("-dither")) {
+        PATH_PARAMS[key + "-dither"] = [...PATH_PARAMS[key], _SIGMA_PARAM];
+    }
+}
 
 // Single source of truth for all path <select> elements.
 // Order here = display order.  Groups become <optgroup> labels.
@@ -2583,7 +2590,6 @@ const PATH_CATALOG = [
     { value: "follow-c", label: "Follow C", dOnly: true },
     { group: "Basic", items: [
         { value: "circle",     label: "Circle" },
-        { value: "circle-dither", label: "Circle (dither)" },
         { value: "horizontal", label: "Horizontal" },
         { value: "vertical",   label: "Vertical" },
         { value: "spiral",     label: "Spiral" },
@@ -2609,6 +2615,19 @@ const PATH_CATALOG = [
         { value: "sierpinski", label: "Sierpinski" },
     ]},
 ];
+// Auto-insert dithered variants after each base path in catalog groups
+for (const entry of PATH_CATALOG) {
+    if (entry.items) {
+        const expanded = [];
+        for (const item of entry.items) {
+            expanded.push(item);
+            if (item.value !== "random") {
+                expanded.push({ value: item.value + "-dither", label: item.label + " (dither)" });
+            }
+        }
+        entry.items = expanded;
+    }
+}
 
 /** Populate a <select> element from PATH_CATALOG. noneLabel overrides the "None" text. dNode includes D-only options. */
 function buildPathSelect(sel, noneLabel, dNode) {
@@ -3853,10 +3872,10 @@ trailsBtn.addEventListener("click", function () {
 // --- Path functions ---
 
 function animPathFn(name, t, center, radius, extra) {
+    const baseName = name.endsWith("-dither") ? name.slice(0, -7) : name;
     const w = 2 * Math.PI; // one full cycle per second (scaled by speed)
     const wt = w * t;
-    switch (name) {
-        case "circle-dither":
+    switch (baseName) {
         case "circle":
             return { re: center.re + radius * Math.cos(wt), im: center.im + radius * Math.sin(wt) };
         case "horizontal":
@@ -4170,13 +4189,16 @@ function _gaussRand() {
 // Compute a closed curve of absolute positions for a coefficient.
 // curve[0] = {homeRe, homeIm} (the "home" position). Angle rotates the shape.
 function computeCurve(homeRe, homeIm, pathType, radius, angle, extra) {
-    const N = _HIRES_PATHS.has(pathType) ? COEFF_TRAIL_SAMPLES_HI : COEFF_TRAIL_SAMPLES;
+    const baseType = pathType.endsWith("-dither") ? pathType.slice(0, -7) : pathType;
+    const N = _HIRES_PATHS.has(baseType) ? COEFF_TRAIL_SAMPLES_HI : COEFF_TRAIL_SAMPLES;
     return computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N);
 }
 
 function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
+    const baseType = pathType.endsWith("-dither") ? pathType.slice(0, -7) : pathType;
+
     // Random path: pre-generate Gaussian point cloud (no connecting lines)
-    if (pathType === "random") {
+    if (baseType === "random") {
         const sigma = radius; // already scaled to absolute units by caller
         const curve = new Array(N);
         for (let k = 0; k < N; k++) {
@@ -4189,7 +4211,7 @@ function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
 
     // Spiral path: orbital around the origin (0+0i)
     // Coefficient spirals from its current orbit to a wider/tighter orbit and back.
-    if (pathType === "spiral") {
+    if (baseType === "spiral") {
         const mult = (extra && extra.mult != null) ? extra.mult : 1.5;
         const turns = (extra && extra.turns) || 2;
         const R0 = Math.sqrt(homeRe * homeRe + homeIm * homeIm);
@@ -4220,11 +4242,14 @@ function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
             curve[k] = { re: r * Math.cos(theta), im: r * Math.sin(theta) };
         }
         curve._isOrbital = true; // flag: absolute positions, not relative to home
+        if (pathType.endsWith("-dither")) {
+            curve._ditherSigmaPct = (extra && extra.sigma != null) ? extra.sigma : 2;
+        }
         return curve;
     }
 
     // C-Ellipse: ellipse with vertices at coefficient home and origin (0+0i)
-    if (pathType === "c-ellipse") {
+    if (baseType === "c-ellipse") {
         const w = (extra && extra.width != null) ? extra.width : 50;
         // Center = midpoint of home and origin
         const cx = homeRe / 2, cy = homeIm / 2;
@@ -4248,6 +4273,9 @@ function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
             };
         }
         curve._isOrbital = true;
+        if (pathType.endsWith("-dither")) {
+            curve._ditherSigmaPct = (extra && extra.sigma != null) ? extra.sigma : 2;
+        }
         return curve;
     }
 
@@ -4263,7 +4291,7 @@ function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
         curve[k] = { re: homeRe + dx * cosA - dy * sinA,
                       im: homeIm + dx * sinA + dy * cosA };
     }
-    if (pathType === "circle-dither") {
+    if (pathType.endsWith("-dither")) {
         curve._ditherSigmaPct = (extra && extra.sigma != null) ? extra.sigma : 2;
     }
     return curve;
@@ -9277,6 +9305,220 @@ function solveEA_wasm(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots) {
     }
 }
 
+// --- WASM step loop support ---
+var S_useWasmLoop = false;
+var wasmLoopExports = null;
+var wasmLoopMemory = null;
+var wasmLoopLayout = null;
+var wasmLoopNRoots = 0;
+var wasmLoopNCoeffs = 0;
+var wasmLoopWorkerId = 0;
+var wasmLoopTotalRunSteps = 0;
+
+function wasmReportProgress(step) {
+    self.postMessage({type: 'progress', workerId: wasmLoopWorkerId, step: step, total: wasmLoopTotalRunSteps});
+}
+
+function computeWasmLayout(nc, nr, maxP, nE, nDE, nFC, nSI, tCP, tDP, heapBase) {
+    var o = heapBase || 65536;
+    function a8(x) { return (x + 7) & ~7; }
+    var L = {};
+    L.cfgI = o; o = a8(o + 65 * 4);
+    L.cfgD = o; o = a8(o + 3 * 8);
+    L.cRe = o; o = a8(o + nc * 8);
+    L.cIm = o; o = a8(o + nc * 8);
+    L.clR = o; o = a8(o + nr);
+    L.clG = o; o = a8(o + nr);
+    L.clB = o; o = a8(o + nr);
+    L.jRe = o; o = a8(o + nc * 8);
+    L.jIm = o; o = a8(o + nc * 8);
+    L.mTR = o; o = a8(o + nc * 8);
+    L.mTI = o; o = a8(o + nc * 8);
+    L.ppR = o; o = a8(o + 16);
+    L.ppG = o; o = a8(o + 16);
+    L.ppB = o; o = a8(o + 16);
+    L.dpR = o; o = a8(o + 16);
+    L.dpG = o; o = a8(o + 16);
+    L.dpB = o; o = a8(o + 16);
+    L.sI = o; o = a8(o + Math.max(nSI, 1) * 4);
+    L.fCI = o; o = a8(o + Math.max(nFC, 1) * 4);
+    L.eIdx = o; o = a8(o + Math.max(nE, 1) * 4);
+    L.eSpd = o; o = a8(o + Math.max(nE, 1) * 8);
+    L.eCcw = o; o = a8(o + Math.max(nE, 1) * 4);
+    L.eDth = o; o = a8(o + Math.max(nE, 1) * 8);
+    L.cOff = o; o = a8(o + Math.max(nE, 1) * 4);
+    L.cLen = o; o = a8(o + Math.max(nE, 1) * 4);
+    L.cCld = o; o = a8(o + Math.max(nE, 1) * 4);
+    L.dIdx = o; o = a8(o + Math.max(nDE, 1) * 4);
+    L.dSpd = o; o = a8(o + Math.max(nDE, 1) * 8);
+    L.dCcw = o; o = a8(o + Math.max(nDE, 1) * 4);
+    L.dDth = o; o = a8(o + Math.max(nDE, 1) * 8);
+    L.dOff = o; o = a8(o + Math.max(nDE, 1) * 4);
+    L.dLen = o; o = a8(o + Math.max(nDE, 1) * 4);
+    L.dCld = o; o = a8(o + Math.max(nDE, 1) * 4);
+    L.cvF = o; o = a8(o + Math.max(tCP, 1) * 2 * 8);
+    L.dcF = o; o = a8(o + Math.max(tDP, 1) * 2 * 8);
+    L.wCR = o; o = a8(o + nc * 8);
+    L.wCI = o; o = a8(o + nc * 8);
+    L.tRe = o; o = a8(o + nr * 8);
+    L.tIm = o; o = a8(o + nr * 8);
+    L.mWR = o; o = a8(o + nc * 8);
+    L.mWI = o; o = a8(o + nc * 8);
+    L.pRR = o; o = a8(o + nr * 8);
+    L.pRI = o; o = a8(o + nr * 8);
+    L.piO = o; o = a8(o + maxP * 4);
+    L.prO = o; o = a8(o + maxP);
+    L.pgO = o; o = a8(o + maxP);
+    L.pbO = o; o = a8(o + maxP);
+    L.pages = Math.ceil(o / 65536);
+    return L;
+}
+
+function initWasmStepLoop(d) {
+    var nc = d.nCoeffs, nr = d.nRoots;
+    var entries = d.animEntries || [];
+    var dEntries = d.dAnimEntries || [];
+    var followC = d.dFollowCIndices || [];
+    var selIdx = d.selectedCoeffIndices || [];
+    var tCP = d.totalCPts || 0;
+    var tDP = d.totalDPts || 0;
+    var maxP = d.maxPaintsPerWorker || (d.totalSteps * nr);
+
+    var raw = atob(d.wasmStepLoopB64);
+    var bytes = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    var mod = new WebAssembly.Module(bytes.buffer);
+
+    /* Instantiate with small memory first to read __heap_base */
+    wasmLoopMemory = new WebAssembly.Memory({initial: 2});
+    var inst = new WebAssembly.Instance(mod, {
+        env: {
+            memory: wasmLoopMemory,
+            cos: Math.cos,
+            sin: Math.sin,
+            log: Math.log,
+            reportProgress: wasmReportProgress
+        }
+    });
+    wasmLoopExports = inst.exports;
+
+    /* Read __heap_base — this is where C's BSS ends and free memory begins */
+    var heapBase = 65536;
+    if (wasmLoopExports.__heap_base) heapBase = wasmLoopExports.__heap_base.value;
+
+    var L = computeWasmLayout(nc, nr, maxP, entries.length, dEntries.length, followC.length, selIdx.length, tCP, tDP, heapBase);
+
+    /* Grow memory to fit the full layout */
+    var curPages = wasmLoopMemory.buffer.byteLength / 65536;
+    if (L.pages > curPages) wasmLoopMemory.grow(L.pages - curPages);
+    var buf = wasmLoopMemory.buffer;
+
+    var colorMode = 1;
+    if (d.noColor) colorMode = 0;
+    else if (d.proxColor) colorMode = 2;
+    else if (d.derivColor) colorMode = 3;
+
+    var ms = 0;
+    var msStr = d.matchStrategy || "assign4";
+    if (msStr === "assign1") ms = 1;
+    else if (msStr === "hungarian1") ms = 2;
+
+    var cfgI32 = new Int32Array(buf, L.cfgI, 65);
+    cfgI32[0] = nc; cfgI32[1] = nr;
+    cfgI32[2] = d.canvasW; cfgI32[3] = d.canvasH;
+    cfgI32[4] = d.totalSteps; cfgI32[5] = colorMode; cfgI32[6] = ms;
+    cfgI32[7] = d.morphEnabled ? 1 : 0;
+    cfgI32[8] = entries.length; cfgI32[9] = dEntries.length;
+    cfgI32[10] = followC.length; cfgI32[11] = selIdx.length;
+    cfgI32[12] = (d.jiggleRe && d.jiggleIm) ? 1 : 0;
+    cfgI32[13] = d.uniformR || 255; cfgI32[14] = d.uniformG || 255; cfgI32[15] = d.uniformB || 255;
+    cfgI32[16] = (Math.random() * 0xFFFFFFFF) >>> 0;
+    cfgI32[17] = (Math.random() * 0xFFFFFFFF) >>> 0;
+    cfgI32[18] = (Math.random() * 0xFFFFFFFF) >>> 0;
+    cfgI32[19] = (Math.random() * 0xFFFFFFFF) >>> 0;
+    cfgI32[20] = L.cRe; cfgI32[21] = L.cIm;
+    cfgI32[22] = L.clR; cfgI32[23] = L.clG; cfgI32[24] = L.clB;
+    cfgI32[25] = L.jRe; cfgI32[26] = L.jIm;
+    cfgI32[27] = L.mTR; cfgI32[28] = L.mTI;
+    cfgI32[29] = L.ppR; cfgI32[30] = L.ppG; cfgI32[31] = L.ppB;
+    cfgI32[32] = L.dpR; cfgI32[33] = L.dpG; cfgI32[34] = L.dpB;
+    cfgI32[35] = L.sI; cfgI32[36] = L.fCI;
+    cfgI32[37] = L.eIdx; cfgI32[38] = L.eSpd; cfgI32[39] = L.eCcw; cfgI32[40] = L.eDth;
+    cfgI32[41] = L.cOff; cfgI32[42] = L.cLen; cfgI32[43] = L.cCld;
+    cfgI32[44] = L.dIdx; cfgI32[45] = L.dSpd; cfgI32[46] = L.dCcw; cfgI32[47] = L.dDth;
+    cfgI32[48] = L.dOff; cfgI32[49] = L.dLen; cfgI32[50] = L.dCld;
+    cfgI32[51] = L.cvF; cfgI32[52] = L.dcF;
+    cfgI32[53] = L.wCR; cfgI32[54] = L.wCI;
+    cfgI32[55] = L.tRe; cfgI32[56] = L.tIm;
+    cfgI32[57] = L.mWR; cfgI32[58] = L.mWI;
+    cfgI32[59] = L.pRR; cfgI32[60] = L.pRI;
+    cfgI32[61] = L.piO; cfgI32[62] = L.prO; cfgI32[63] = L.pgO; cfgI32[64] = L.pbO;
+
+    var cfgF64 = new Float64Array(buf, L.cfgD, 3);
+    cfgF64[0] = d.bitmapRange; cfgF64[1] = d.FAST_PASS_SECONDS; cfgF64[2] = d.morphRate || 0;
+
+    new Float64Array(buf, L.cRe, nc).set(new Float64Array(d.coeffsRe));
+    new Float64Array(buf, L.cIm, nc).set(new Float64Array(d.coeffsIm));
+    new Uint8Array(buf, L.clR, nr).set(new Uint8Array(d.colorsR));
+    new Uint8Array(buf, L.clG, nr).set(new Uint8Array(d.colorsG));
+    new Uint8Array(buf, L.clB, nr).set(new Uint8Array(d.colorsB));
+    if (d.jiggleRe) new Float64Array(buf, L.jRe, nc).set(new Float64Array(d.jiggleRe));
+    if (d.jiggleIm) new Float64Array(buf, L.jIm, nc).set(new Float64Array(d.jiggleIm));
+    if (d.morphTargetRe) {
+        new Float64Array(buf, L.mTR, nc).set(new Float64Array(d.morphTargetRe));
+        new Float64Array(buf, L.mTI, nc).set(new Float64Array(d.morphTargetIm));
+        new Float64Array(buf, L.mWR, nc).set(new Float64Array(d.morphTargetRe));
+        new Float64Array(buf, L.mWI, nc).set(new Float64Array(d.morphTargetIm));
+    }
+    if (d.proxPalR) new Uint8Array(buf, L.ppR, 16).set(new Uint8Array(d.proxPalR));
+    if (d.proxPalG) new Uint8Array(buf, L.ppG, 16).set(new Uint8Array(d.proxPalG));
+    if (d.proxPalB) new Uint8Array(buf, L.ppB, 16).set(new Uint8Array(d.proxPalB));
+    if (d.derivPalR) new Uint8Array(buf, L.dpR, 16).set(new Uint8Array(d.derivPalR));
+    if (d.derivPalG) new Uint8Array(buf, L.dpG, 16).set(new Uint8Array(d.derivPalG));
+    if (d.derivPalB) new Uint8Array(buf, L.dpB, 16).set(new Uint8Array(d.derivPalB));
+    if (selIdx.length > 0) new Int32Array(buf, L.sI, selIdx.length).set(selIdx);
+    if (followC.length > 0) new Int32Array(buf, L.fCI, followC.length).set(followC);
+
+    if (entries.length > 0) {
+        var eI = new Int32Array(buf, L.eIdx, entries.length);
+        var eS = new Float64Array(buf, L.eSpd, entries.length);
+        var eC = new Int32Array(buf, L.eCcw, entries.length);
+        var eD = new Float64Array(buf, L.eDth, entries.length);
+        var cO = new Int32Array(buf, L.cOff, entries.length);
+        var cL = new Int32Array(buf, L.cLen, entries.length);
+        var cC = new Int32Array(buf, L.cCld, entries.length);
+        for (var i = 0; i < entries.length; i++) {
+            eI[i] = entries[i].idx; eS[i] = entries[i].speed;
+            eC[i] = entries[i].ccw ? 1 : 0; eD[i] = entries[i].ditherSigma || 0;
+            cO[i] = d.curveOffsets[i]; cL[i] = d.curveLengths[i]; cC[i] = d.curveIsCloud[i] ? 1 : 0;
+        }
+    }
+    if (dEntries.length > 0) {
+        var dI = new Int32Array(buf, L.dIdx, dEntries.length);
+        var dS = new Float64Array(buf, L.dSpd, dEntries.length);
+        var dC2 = new Int32Array(buf, L.dCcw, dEntries.length);
+        var dD = new Float64Array(buf, L.dDth, dEntries.length);
+        var dO = new Int32Array(buf, L.dOff, dEntries.length);
+        var dL = new Int32Array(buf, L.dLen, dEntries.length);
+        var dCl = new Int32Array(buf, L.dCld, dEntries.length);
+        for (var i = 0; i < dEntries.length; i++) {
+            dI[i] = dEntries[i].idx; dS[i] = dEntries[i].speed;
+            dC2[i] = dEntries[i].ccw ? 1 : 0; dD[i] = dEntries[i].ditherSigma || 0;
+            dO[i] = d.dCurveOffsets[i]; dL[i] = d.dCurveLengths[i]; dCl[i] = d.dCurveIsCloud[i] ? 1 : 0;
+        }
+    }
+    if (tCP > 0) new Float64Array(buf, L.cvF, tCP * 2).set(new Float64Array(d.curvesFlat));
+    if (tDP > 0 && d.dCurvesFlat) new Float64Array(buf, L.dcF, tDP * 2).set(new Float64Array(d.dCurvesFlat));
+
+    new Float64Array(buf, L.wCR, nc).set(new Float64Array(d.coeffsRe));
+    new Float64Array(buf, L.wCI, nc).set(new Float64Array(d.coeffsIm));
+
+    wasmLoopExports.init(L.cfgI, L.cfgD);
+    wasmLoopLayout = L;
+    wasmLoopNRoots = nr;
+    wasmLoopNCoeffs = nc;
+}
+
 function wGaussRand() {
     var u, v;
     do { u = Math.random(); } while (u === 0);
@@ -9325,10 +9567,16 @@ self.onmessage = function(e) {
         S_selIndices = d.selectedCoeffIndices || null;
         S_uniformR = d.uniformR || 255; S_uniformG = d.uniformG || 255; S_uniformB = d.uniformB || 255;
         S_totalSteps = d.totalSteps; S_FPS = d.FAST_PASS_SECONDS;
-        // WASM solver init
-        S_useWasm = !!d.useWasm;
-        if (S_useWasm && d.wasmB64) {
-            try { initWasm(d.wasmB64, d.nCoeffs, d.nRoots); } catch(e) { S_useWasm = false; }
+        // WASM init: try full step loop first, fall back to solver-only, then pure JS
+        S_useWasm = false;
+        S_useWasmLoop = false;
+        if (d.useWasm) {
+            if (d.wasmStepLoopB64) {
+                try { initWasmStepLoop(d); S_useWasmLoop = true; } catch(e) { S_useWasmLoop = false; }
+            }
+            if (!S_useWasmLoop && d.wasmB64) {
+                try { initWasm(d.wasmB64, d.nCoeffs, d.nRoots); S_useWasm = true; } catch(e) { S_useWasm = false; }
+            }
         }
         // Morph init
         S_morphEnabled = !!d.morphEnabled;
@@ -9351,6 +9599,47 @@ self.onmessage = function(e) {
 
     if (d.type !== "run") return;
 
+    // --- WASM step loop fast path ---
+    if (S_useWasmLoop && wasmLoopExports) {
+        var stepStart = d.stepStart, stepEnd = d.stepEnd, workerId = d.workerId;
+        var elapsedOff = d.elapsedOffset || 0;
+        var nr = wasmLoopNRoots;
+        var L = wasmLoopLayout;
+        var buf = wasmLoopMemory.buffer;
+
+        wasmLoopWorkerId = workerId;
+        wasmLoopTotalRunSteps = stepEnd - stepStart;
+
+        new Float64Array(buf, L.pRR, nr).set(new Float64Array(d.rootsRe));
+        new Float64Array(buf, L.pRI, nr).set(new Float64Array(d.rootsIm));
+
+        var pc;
+        try {
+            pc = wasmLoopExports.runStepLoop(stepStart, stepEnd, elapsedOff);
+        } catch(wasmErr) {
+            self.postMessage({type: 'error', workerId: workerId, error: String(wasmErr)});
+            S_useWasmLoop = false;
+            return;
+        }
+
+        var paintIdx = new Int32Array(buf, L.piO, pc).slice();
+        var paintR = new Uint8Array(buf, L.prO, pc).slice();
+        var paintG = new Uint8Array(buf, L.pgO, pc).slice();
+        var paintB = new Uint8Array(buf, L.pbO, pc).slice();
+        var rootsReFinal = new Float64Array(buf, L.pRR, nr).slice();
+        var rootsImFinal = new Float64Array(buf, L.pRI, nr).slice();
+
+        self.postMessage({
+            type: 'done', workerId: workerId,
+            paintIdx: paintIdx.buffer, paintR: paintR.buffer,
+            paintG: paintG.buffer, paintB: paintB.buffer,
+            paintCount: pc,
+            rootsRe: rootsReFinal.buffer, rootsIm: rootsImFinal.buffer
+        }, [paintIdx.buffer, paintR.buffer, paintG.buffer, paintB.buffer]);
+        return;
+    }
+
+    // --- JS step loop fallback ---
     var stepStart = d.stepStart, stepEnd = d.stepEnd, workerId = d.workerId;
     var elapsedOff = d.elapsedOffset || 0;
     var rootsRe = new Float64Array(d.rootsRe);
@@ -9951,6 +10240,8 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         dAnimEntries, dCurvesFlat, dCurveOffsets, dCurveLengths, dCurveIsCloud,
         dFollowCIndices: morphEnabled ? morphTargetCoeffs.reduce((a, d, i) => { if (d.pathType === "follow-c") a.push(i); return a; }, []) : [],
         jiggleRe, jiggleIm,
+        totalCPts: totalPts,
+        totalDPts: dTotalPts,
     };
 }
 
@@ -10008,6 +10299,11 @@ function initFastModeWorkers() {
             dCurveIsCloud: sd.dCurveIsCloud,
             jiggleRe: sd.jiggleRe ? sd.jiggleRe.buffer.slice(0) : null,
             jiggleIm: sd.jiggleIm ? sd.jiggleIm.buffer.slice(0) : null,
+            dFollowCIndices: sd.dFollowCIndices || [],
+            wasmStepLoopB64: solverType === "wasm" ? WASM_STEP_LOOP_B64 : null,
+            totalCPts: sd.totalCPts || 0,
+            totalDPts: sd.totalDPts || 0,
+            maxPaintsPerWorker: Math.ceil(sd.stepsVal / actualWorkers) * sd.nRoots,
         });
 
         fastModeWorkers.push(worker);
@@ -10055,6 +10351,9 @@ function handleFastModeWorkerMessage(e) {
 
     if (msg.type === "progress") {
         fastModeWorkerProgress[msg.workerId] = msg.step;
+    }
+    else if (msg.type === "error") {
+        console.error("WASM worker " + msg.workerId + " error:", msg.error);
     }
     else if (msg.type === "done") {
         // Collect this worker's sparse pixel data
@@ -10526,7 +10825,7 @@ document.getElementById("morph-swap-btn").addEventListener("click", function () 
 function pathDisplayName(t) {
     if (t === "none") return "\u2014";
     if (t === "follow-c") return "Follow C";
-    if (t === "circle-dither") return "Dither";
+    if (t.endsWith("-dither")) return pathDisplayName(t.slice(0, -7)) + "~";
     if (t === "figure8") return "Fig-8";
     if (t === "epitrochoid") return "Spiro";
     if (t === "hypotrochoid") return "Hypo";
@@ -10653,28 +10952,9 @@ function openPathPickPop(coeffIdx, anchorEl) {
         previewPP();
     });
 
-    // PS + Accept buttons row
+    // Accept button row
     const ppBtnRow = document.createElement("div");
     ppBtnRow.style.cssText = "display:flex;gap:6px;align-items:center;justify-content:center;margin-top:4px;";
-    const ppPsBtn = document.createElement("button");
-    ppPsBtn.className = "ctx-accept";
-    ppPsBtn.textContent = "PS";
-    ppPsBtn.title = "Prime Speed — set to nearest speed coprime with all others";
-    ppPsBtn.style.cssText = "padding:4px 8px;background:transparent;border:1px solid var(--stroke);color:var(--muted);";
-    ppPsBtn.addEventListener("click", () => {
-        const sInp = ppInputs["speed"];
-        if (!sInp) return;
-        const cur = parseInt(sInp.value, 10);
-        const ps = findPrimeSpeed(cur, new Set([coeffIdx]));
-        if (ps !== cur) {
-            sInp.value = ps;
-            const vs = sInp.parentElement.querySelector(".ctx-val");
-            if (vs) vs.textContent = _P.speed.fmt(ps);
-            previewPP();
-            uiPing(1320, 0.06);
-        } else { uiBuzz(); }
-    });
-    ppBtnRow.appendChild(ppPsBtn);
     const acceptBtn = document.createElement("button");
     acceptBtn.className = "ctx-accept";
     acceptBtn.textContent = "Accept";
@@ -11461,25 +11741,6 @@ function openDPathPickPop(dIdx, anchorEl) {
 
     const ppBtnRow = document.createElement("div");
     ppBtnRow.style.cssText = "display:flex;gap:6px;align-items:center;justify-content:center;margin-top:4px;";
-    const ppPsBtn = document.createElement("button");
-    ppPsBtn.className = "ctx-accept";
-    ppPsBtn.textContent = "PS";
-    ppPsBtn.title = "Prime Speed — set to nearest speed coprime with all others";
-    ppPsBtn.style.cssText = "padding:4px 8px;background:transparent;border:1px solid var(--stroke);color:var(--muted);";
-    ppPsBtn.addEventListener("click", () => {
-        const sInp = ppInputs["speed"];
-        if (!sInp) return;
-        const cur = parseInt(sInp.value, 10);
-        const ps = findDPrimeSpeed(cur, new Set([dIdx]));
-        if (ps !== cur) {
-            sInp.value = ps;
-            const vs = sInp.parentElement.querySelector(".ctx-val");
-            if (vs) vs.textContent = _P.speed.fmt(ps);
-            previewDPP();
-            uiPing(1320, 0.06);
-        } else { uiBuzz(); }
-    });
-    ppBtnRow.appendChild(ppPsBtn);
     const acceptBtn = document.createElement("button");
     acceptBtn.className = "ctx-accept";
     acceptBtn.textContent = "Accept";

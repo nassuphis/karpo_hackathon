@@ -89,23 +89,25 @@ Workers are **persistent** within a jiggle cycle: created once at init, reused a
 
 Created by `createFastModeWorkerBlob()` as an inline blob URL. Contains three components:
 
-### 1. Ehrlich-Aberth Solver (`solveEA` / `solveEA_wasm`)
+### 1. Ehrlich-Aberth Solver (three-tier selection)
 
-Two solver implementations are available, selectable via the **cfg** button in the bitmap toolbar:
+Three solver tiers are available, selectable via the **cfg** button in the bitmap toolbar. Workers try the highest tier first and fall back automatically:
 
-**JS solver** (`solveEA`): Flat-array implementation identical to the main-thread solver but tuned for throughput.
+1. **WASM step loop** (`S_useWasmLoop`): The entire per-step loop (coefficient interpolation, D-curve advance, follow-C, morph blend, jiggle, solver, root matching, pixel painting) runs in a single WASM module (`step_loop.c`). The binary is base64-encoded as `WASM_STEP_LOOP_B64` and sent via `wasmStepLoopB64` in the init message. `initWasmStepLoop(d)` decodes, compiles, allocates WASM linear memory via `computeWasmLayout()`, and copies all persistent state into flat memory buffers. The `runStepLoop(stepStart, stepEnd, elapsedOffset)` export executes the full step range and returns the pixel count directly.
 
-**WASM solver** (`solveEA_wasm`): Calls into a WebAssembly module compiled from C (`solver.c`). The WASM binary (~2KB) is base64-encoded and sent to workers during init. Eliminates JIT warmup, GC pauses, and leverages tighter register allocation for pure f64 arithmetic.
+2. **WASM solver-only** (`S_useWasm`): Only the Ehrlich-Aberth solver runs in WASM (`solver.c`, ~2KB). The JS step loop handles interpolation, matching, and painting. Falls back here if the step loop module fails to compile.
 
-| Parameter | JS Worker | WASM Worker | Main Thread |
-|-----------|-----------|-------------|-------------|
+3. **JS solver** (`solveEA`): Pure JavaScript flat-array implementation. Used when WASM is disabled or unavailable.
+
+| Parameter | JS Worker | WASM (solver/loop) | Main Thread |
+|-----------|-----------|---------------------|-------------|
 | Max iterations | 64 | 64 | 100 |
 | Convergence threshold | 1e-16 (squared) | 1e-16 (squared) | 1e-12 (magnitude) |
 | Leading-zero test | magnitude² < 1e-30 | magnitude² < 1e-30 | `Math.hypot` < 1e-15 |
 | Hot-loop math | No `Math.hypot`, manual `d*d` | Native f64 ops | Uses `Math.hypot` |
 | NaN rescue | In solver (isFinite) | Post-call JS (x !== x) | In solver |
 
-Both solvers operate on flat `Float64Array` buffers for cache efficiency. The WASM solver copies data into/out of WASM linear memory (64KB) — negligible overhead relative to the O(n²) solver cost.
+All solvers operate on flat `Float64Array` buffers for cache efficiency. The WASM step loop allocates all buffers in WASM linear memory via `computeWasmLayout()`, which computes byte offsets for coefficients, roots, curves, palettes, follow-C indices, pixel output, and working arrays. Memory is grown to fit (`L.pages` pages). The solver-only WASM path copies data into/out of a smaller WASM linear memory (64KB).
 
 ### 2. Root Matching (`matchRoots` / `hungarianMatch`)
 
@@ -130,10 +132,11 @@ S_nRoots                   int           Root count (= degree)
 S_colorsR/G/B              Uint8Array    Per-root RGB
 S_W, S_H, S_range          int, number   Canvas dimensions and display range
 S_curvesFlat               Float64Array  All curve points (re,im interleaved)
-S_entries                  object[]      Animation entries [{idx, ccw, speed}]
+S_entries                  object[]      Animation entries [{idx, ccw, speed, ditherSigma}]
 S_offsets, S_lengths       int[]         Curve offset/length per entry
 S_isCloud                  bool[]        Random-cloud flag per entry
-S_useWasm                  bool          Use WASM solver (set from init message)
+S_useWasm                  bool          Use WASM solver-only (tier 2)
+S_useWasmLoop              bool          Use WASM step loop (tier 1, highest priority)
 S_noColor                  bool          Uniform color mode
 S_uniformR/G/B             int           Uniform color RGB
 S_totalSteps, S_FPS        int, number   Steps per pass, seconds per pass
@@ -147,14 +150,25 @@ S_morphRate                number        Morph oscillation rate (Hz)
 S_morphTargetRe/Im         Float64Array  Morph target coefficient values
 S_matchStrategy            string        Root matching strategy ("assign4"|"assign1"|"hungarian1")
 S_dCurvesFlat              Float64Array  D-node curve points (re,im interleaved)
-S_dEntries                 object[]      D-node animation entries [{idx, ccw, speed}]
+S_dEntries                 object[]      D-node animation entries [{idx, ccw, speed, ditherSigma}]
 S_dOffsets, S_dLengths     int[]         D-curve offset/length per entry
 S_dIsCloud                 bool[]        D-curve random-cloud flag per entry
 S_dFollowC                 int[]         D-node indices with "follow-c" pathType (copy from C-node)
 S_jiggleRe, S_jiggleIm     Float64Array  Per-coefficient jiggle offsets (applied post-interpolation)
+wasmLoopExports            object        WASM step loop exports (if S_useWasmLoop)
+wasmLoopMemory             WebAssembly.Memory  WASM linear memory for step loop
+wasmLoopLayout             object        Byte-offset layout computed by computeWasmLayout()
+wasmLoopNRoots             int           Root count cached for WASM loop
 ```
 
+Solver tier selection during init:
+1. If `useWasm` and `wasmStepLoopB64` present: try `initWasmStepLoop(d)` → set `S_useWasmLoop = true`
+2. If step loop failed and `wasmB64` present: try `initWasm(wasmB64)` → set `S_useWasm = true`
+3. Otherwise: pure JS (`S_useWasm = false, S_useWasmLoop = false`)
+
 #### Per-Step Computation (within "run" handler)
+
+When the WASM step loop is active (`S_useWasmLoop`), the "run" handler copies warm-start roots into WASM memory and calls `wasmLoopExports.runStepLoop(stepStart, stepEnd, elapsedOffset)`. The entire step loop executes in WASM — steps 1-10 below are handled natively. The returned pixel count is used to slice output arrays from WASM memory. If the WASM step loop is not active, the JS fallback executes:
 
 For each step in `[stepStart, stepEnd)`:
 
@@ -168,16 +182,17 @@ For each step in `[stepStart, stepEnd)`:
    ```
    - Cloud curves: snap to nearest point (no interpolation)
    - Smooth curves: linear interpolation between adjacent points
+   - If `ditherSigma > 0`: add Gaussian noise `wGaussRand() * ditherSigma` to both re/im after interpolation
 
-3. **Advance D-node curves** (if morph enabled): Same interpolation as step 2 but for `S_dEntries`/`S_dCurvesFlat`, updating `morphRe`/`morphIm` arrays
+3. **Advance D-node curves** (if morph enabled): Same interpolation as step 2 but for `S_dEntries`/`S_dCurvesFlat`, updating `morphRe`/`morphIm` arrays. D-entries also support `ditherSigma`.
 
 4. **Follow-C D-nodes**: For each index in `S_dFollowC`, copy the current C-node position (`coeffsRe[fci]`/`coeffsIm[fci]`) into `morphRe[fci]`/`morphIm[fci]`. Applied after D-curve advance, before morph blend — so follow-c D-nodes track the (possibly animated) C-coefficient position at each step.
 
-5. **Morph blend** (if `S_morphEnabled`): Sinusoidal blend `mu = 0.5 + 0.5 * sin(2π * morphRate * elapsed)` between C-coefficients and morph target D-coefficients
+5. **Morph blend** (if `S_morphEnabled`): Cosine blend `mu = 0.5 - 0.5 * cos(2π * morphRate * elapsed)` between C-coefficients and morph target D-coefficients. Starts at mu=0 (pure C) and oscillates to mu=1 (pure D).
 
 6. **Apply jiggle offsets**: If `S_jiggleRe`/`S_jiggleIm` present, add per-coefficient offsets post-interpolation
 
-7. **Solve**: Call `solveEA()` (JS) or `solveEA_wasm()` (WASM) based on `S_useWasm` flag
+7. **Solve**: Call `solveEA()` (JS) or `solveEA_wasm()` (WASM solver-only) based on `S_useWasm` flag. When `S_useWasmLoop` is active, the entire step loop including the solver runs in WASM and this JS path is not reached.
 
 8. **Match roots** (colored mode, per `S_matchStrategy`): Reorder roots to track identity
 
@@ -222,7 +237,7 @@ Compositing on main thread writes sparse pixels directly into a **persistent `Im
     nCoeffs: int,
     degree: int,
     nRoots: int,
-    animEntries: [{idx, ccw, speed}, ...],
+    animEntries: [{idx, ccw, speed, ditherSigma}, ...],
     curvesFlat: ArrayBuffer,       // Float64Array, all curve points re,im interleaved
     curveOffsets: [int, ...],      // start index in curvesFlat for each curve
     curveLengths: [int, ...],      // point count per curve
@@ -247,13 +262,14 @@ Compositing on main thread writes sparse pixels directly into a **persistent `Im
     totalSteps: int,
     FAST_PASS_SECONDS: number,     // always 1.0
     useWasm: bool,                 // use WASM solver
-    wasmB64: string|null,          // base64-encoded WASM binary (if useWasm)
+    wasmB64: string|null,          // base64-encoded WASM solver binary (if useWasm)
+    wasmStepLoopB64: string|null,  // base64-encoded WASM step loop binary (if useWasm)
     morphEnabled: bool,            // morph blending active
     morphRate: number,             // morph oscillation rate (Hz)
     morphTargetRe: ArrayBuffer,    // Float64Array, morph target real parts (or null)
     morphTargetIm: ArrayBuffer,    // Float64Array, morph target imag parts (or null)
     matchStrategy: string,         // "assign4"|"assign1"|"hungarian1"
-    dAnimEntries: [{idx, ccw, speed}, ...],  // D-node animation entries
+    dAnimEntries: [{idx, ccw, speed, ditherSigma}, ...],  // D-node animation entries
     dCurvesFlat: ArrayBuffer,      // Float64Array, D-node curve points
     dCurveOffsets: [int, ...],
     dCurveLengths: [int, ...],
@@ -261,6 +277,9 @@ Compositing on main thread writes sparse pixels directly into a **persistent `Im
     dFollowCIndices: [int, ...],   // D-node indices with "follow-c" pathType
     jiggleRe: ArrayBuffer,         // Float64Array, per-coefficient jiggle offsets (or null)
     jiggleIm: ArrayBuffer,
+    totalCPts: int,                // total C-curve points (for WASM layout)
+    totalDPts: int,                // total D-curve points (for WASM layout)
+    maxPaintsPerWorker: int,       // ceil(stepsVal / actualWorkers) * nRoots (for WASM pixel buffer sizing)
 }
 ```
 
@@ -336,18 +355,18 @@ All workers receive the same root positions. Worker 0 has perfect warm-start con
 
 ### initFastModeWorkers()
 
-For each of `min(numWorkers, stepsVal)` workers:
+Worker count is capped: `actualWorkers = Math.min(numWorkers, stepsVal)`. This prevents creating more workers than steps (e.g., 16 workers for 100 steps would leave most workers with 0 steps). For each of `actualWorkers` workers:
 1. Create blob URL via `createFastModeWorkerBlob()`
 2. `new Worker(blobUrl)`, then `URL.revokeObjectURL`
 3. Set `onmessage` and `onerror` handlers
-4. Send "init" message with all static data (buffer copies)
+4. Send "init" message with all static data (buffer copies), including `maxPaintsPerWorker = ceil(stepsVal / actualWorkers) * nRoots` for WASM pixel buffer sizing
 5. Push to `fastModeWorkers` array
 
 Then immediately call `dispatchPassToWorkers()`.
 
 ### dispatchPassToWorkers()
 
-1. Calculate balanced step distribution: `base = floor(stepsVal / numWorkers)`, `extra = stepsVal % numWorkers`. Each worker gets `base + (w < extra ? 1 : 0)` steps, using a running offset for `stepStart`/`stepEnd`.
+1. Calculate balanced step distribution: `base = floor(stepsVal / nw)`, `extra = stepsVal % nw` (where `nw = fastModeWorkers.length`, the actual worker count). Each worker gets `base + (w < extra ? 1 : 0)` steps, using a running offset for `stepStart`/`stepEnd`.
 2. Reset completion counter and pixel/progress arrays
 3. Record `fastModePassStartTime`
 4. For each worker: send "run" message with `{stepStart, stepEnd, elapsedOffset, rootsRe, rootsIm}`
@@ -380,7 +399,7 @@ Then immediately call `dispatchPassToWorkers()`.
 
 `fastModeTargetPasses` is set directly from `jiggleInterval` (a user-configurable value, 1-100 seconds, shown in the cfg popup). Since each pass is 1.0 virtual seconds, the number of passes per jiggle cycle equals the interval in seconds.
 
-The **PrimeSpeeds** transform (in the C-List/D-List Transform dropdown) sets speeds coprime to all others, forcing GCD=1 and maximum cycle diversity. The PS button is also available in per-coefficient path picker popups.
+The **PrimeSpeeds** transform (in the C-List/D-List Transform dropdown) sets speeds coprime to all others, forcing GCD=1 and maximum cycle diversity. `findPrimeSpeed()` operates on integer speed values (internal speed × 1000, range 1-1000) and finds the nearest coprime integer, then divides back by 1000 for the internal speed. The PS button is also available in per-coefficient path picker popups.
 
 ### Jiggle Integration
 
@@ -410,7 +429,7 @@ All animated curves concatenated into one `Float64Array`:
 curvesFlat: [re0_p0, im0_p0, re0_p1, im0_p1, ..., re1_p0, im1_p0, ...]
 ```
 With metadata arrays:
-- `animEntries`: `[{idx: coeffIndex, ccw: bool, speed: number}, ...]`
+- `animEntries`: `[{idx: coeffIndex, ccw: bool, speed: number, ditherSigma: number}, ...]`
 - `curveOffsets`: start index (in points, not floats) for each curve
 - `curveLengths`: point count per curve
 - `curveIsCloud`: random-cloud flag per curve
@@ -434,6 +453,8 @@ Workers index into `curvesFlat` as: `base = offsets[a] * 2; curvesFlat[base + k*
 - `morphTargetRe`, `morphTargetIm`: Float64Array of morph target positions
 - D-curves serialized identically to C-curves: `dAnimEntries`, `dCurvesFlat`, `dCurveOffsets`, `dCurveLengths`, `dCurveIsCloud`
 - `dFollowCIndices`: array of D-node indices where `pathType === "follow-c"`. Built by `morphTargetCoeffs.reduce()` in `serializeFastModeData()`. Workers use this to copy the current C-node position into the morph target at each step.
+- `totalCPts`, `totalDPts`: total curve point counts for C-curves and D-curves respectively. Used by `computeWasmLayout()` to size WASM memory buffers.
+- `ditherSigma` in each animation entry: absolute dither radius (converted from `_ditherSigmaPct / 100 * coeffExtent()`). Workers add Gaussian noise scaled by this value after interpolation.
 
 ### Root Matching
 - `matchStrategy`: `"assign4"` (default), `"assign1"`, or `"hungarian1"`
@@ -521,6 +542,8 @@ No per-worker W×H×4 canvas buffer. A 10K×10K canvas with 4 workers and 100K s
 | All workers get same warm-start roots | Workers 1-N start with roots from time 0 (not their actual time). EA converges in 1-2 extra iters on first step. Negligible cost vs complexity of chaining roots across workers. |
 | WASM solver optional (not default) | JS solver is already fast and requires no compilation toolchain. WASM provides marginal gains at low degree but significant gains at degree 50+. Users can toggle via cfg button. |
 | WASM b64 sent per init (not shared) | Each worker decodes and compiles independently (~1ms). Avoids complexity of sharing compiled modules across workers. Only happens once per fast-mode session. |
+| WASM step loop over solver-only | Moving the entire step loop into WASM eliminates JS↔WASM boundary crossing per step. The step loop WASM module handles interpolation, D-curves, follow-C, morph, jiggle, solver, matching, and pixel output natively. Three-tier fallback (step loop → solver-only → JS) ensures graceful degradation. |
+| `maxPaintsPerWorker` per-worker sizing | WASM step loop pre-allocates pixel output buffers in linear memory. `ceil(stepsVal / actualWorkers) * nRoots` gives the exact upper bound for each worker's pixel count, avoiding over-allocation when workers are capped below `numWorkers`. |
 
 ---
 
@@ -548,6 +571,12 @@ In `enterFastMode()`, for each coefficient with `pathType !== "none"`:
 D-node curves are precomputed identically and stored in `fastModeDCurves` Map.
 
 The curve resolution matches `stepsVal` (steps per pass), so each step maps to approximately one curve point. With speed < 1.0, the coefficient traverses only a fraction of the curve per pass.
+
+### Speed Resolution
+
+Speed values have 1/1000 resolution. The UI slider ranges from 1 to 1000 (integer), mapped to internal speed values via `toUI: v => Math.round(v * 1000)` and `fromUI: v => v / 1000`. So internal speed 1.0 = slider value 1000, and the minimum speed 0.001 = slider value 1. Display shows the raw integer slider value (e.g., "500" for speed 0.5).
+
+`findPrimeSpeed()` operates on integer speeds (multiplied by 1000) when computing coprimality for the PrimeSpeeds transform, searching the range [1, 1000].
 
 ### Worker Interpolation
 

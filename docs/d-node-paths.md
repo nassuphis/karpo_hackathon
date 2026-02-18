@@ -7,7 +7,7 @@ All phases complete. D-nodes (morph targets) can now be assigned paths and anima
 ## Context
 D-nodes (morph targets in `morphTargetCoeffs[]`) have the full coefficient data structure including `pathType`, `radius`, `speed`, `angle`, `ccw`, `extra`, `curve`, `curveIndex`. Previously all initialized to `pathType: "none"`. Now a "D-List" tab mirrors the C-List tab so D-nodes can be assigned paths (circles, spirals, etc.) and animate.
 
-**File:** `index.html` (single file, all changes here)
+**Files:** `index.html` (main app), `step_loop.c` (WASM step loop)
 
 ### Design Decisions
 - **Six left-panel tabs**: C-Nodes, C-List, D-Nodes (morph panel, `data-ltab="morph"`), D-List (`data-ltab="dlist"`), Jiggle, Final. The D-List tab mirrors C-List for path editing. D-Nodes is the morph visualization SVG panel.
@@ -40,6 +40,7 @@ All C-List functions mirrored for `morphTargetCoeffs[]` and `selectedMorphCoeffs
 - **Curve editor**: `refreshDListCurveEditor()`, `buildDleControls()`, `dleReadParams()`, `dleApplyToCoeff()`. Uses `dleRefIdx` (first selected D-node) as reference for control values. Node cycler (prev/next) and PS button removed; only **Update Whole Selection** remains. `dleApplyToCoeff()` treats `follow-c` like `"none"` for curve generation (single-point curve at home).
 - **Prime speed**: `findDPrimeSpeed(currentIntSpeed, excludeSet)` — finds nearest coprime integer speed among D-nodes. Searches up to delta 2000, range 1–2000. Skips `none` and `follow-c` nodes. Analogous to `findPrimeSpeed()` for C-nodes (which searches up to 1000).
 - **Transform dropdown**: All 20 transforms targeting `morphTargetCoeffs` + `selectedMorphCoeffs`. All D-List transforms skip `follow-c` nodes (filter `pt !== "none" && pt !== "follow-c"` before applying speed, angle, direction, etc.)
+- **Ops tools (Scale/Rotate/Translate)**: Work on D-nodes when `selectedMorphCoeffs` is non-empty. `snapshotSelection()` returns `{ which: "morph", items }`, `applyPreview()` handles the morph case: updates D positions, regenerates curves (follow-c nodes get single-point curve at current position like `"none"`)
 - After D transforms: calls `solveRootsThrottled()` if `morphEnabled`, `renderMorphPanel()` if on D-Nodes tab (`leftTab === "morph"`)
 
 ---
@@ -82,6 +83,12 @@ Helper functions:
   3. Follow-C: copy `coeffsRe[fci]`/`coeffsIm[fci]` → `morphRe[fci]`/`morphIm[fci]` for each index in `dFollowC`
   4. Morph blend: `coeffs = C*(1-mu) + morphRe/Im*mu`
 
+### WASM step loop (initWasmStepLoop / step_loop.c)
+- `computeWasmLayout()` includes `nFC` (follow-c count) parameter, allocates `L.fCI` region for Int32Array of follow-c indices
+- `initWasmStepLoop()` writes `followC.length` to `cfgI32[10]` and copies indices into `L.fCI`
+- `step_loop.c`: `followCIdx` pointer from `CI_OFF_FOLLOWC_IDX` (config slot 36), `nFollowC` from `CI_N_FOLLOWC` (config slot 10)
+- Step 5 in the per-step loop: copies `workCoeffsRe[fci]`/`workCoeffsIm[fci]` to `morphWorkRe[fci]`/`morphWorkIm[fci]` for each follow-c index, after D-curve advancement and before morph blend
+
 ### Legacy fallback (fastModeChunkLegacy)
 - Advances D-nodes along `fastModeDCurves` each step
 - Follow-C D-nodes: copies current C-node position (`morphTargetCoeffs[fi].re = coefficients[fi].re`) for each `follow-c` node
@@ -108,7 +115,6 @@ Restores path fields with backward compat: `d.pathType || "none"`, `d.radius ?? 
 
 ## Out of Scope (deferred)
 - **`bitmapCoeffView` D toggle**: Currently plots C coefficient positions only
-- **Ops tools (Scale/Rotate/Translate) for D-nodes**: Heavy, deferred
 - **`coeffExtent` override**: D uses C's extent; per-set option deferred
 - **Morph panel trail rendering**: Cosmetic, deferred
 

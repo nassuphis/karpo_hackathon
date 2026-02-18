@@ -15,9 +15,11 @@ Root matching (every 4)  │──→ structured clone ──→ handleFastModeW
 Sparse pixel gen         │    (paintIdx, R,G,B)         │
                          │                              ▼
                          │                     compositeWorkerPixels()
-                         │                       1. getImageData(0,0,W,H)  ← O(W×H)
-                         │                       2. write sparse pixels    ← O(painted)
-                         │                       3. putImageData(0,0,W,H)  ← O(W×H)
+                         │                       1. write sparse pixels to   ← O(painted)
+                         │                          persistent ImageData
+                         │                       2. if split: downsample to  ← O(painted)
+                         │                          display buffer
+                         │                       3. dirty-rect putImageData  ← O(dirty_rect)
                          │                              │
                          └──────────────────────────────▼
                                                   Canvas updated
@@ -25,25 +27,89 @@ Sparse pixel gen         │    (paintIdx, R,G,B)         │
 
 **Worker computation** (solver + root matching + pixel generation) does NOT depend on canvas resolution. Workers produce sparse index arrays sized to `steps × nRoots`, regardless of whether the canvas is 1K or 15K.
 
-**Compositing** calls `getImageData` and `putImageData` on the **entire** canvas, even though only a small fraction of pixels are modified. These are the resolution-dependent bottleneck.
+**Compositing** writes sparse pixels into a persistent `ImageData` buffer at **compute resolution** (no `getImageData` needed), then calls `putImageData` with a **dirty rect** covering only the painted region. When compute resolution exceeds `BITMAP_DISPLAY_CAP` (2000px), the canvas element stays at display resolution and a downsampled display buffer is used for `putImageData`.
+
+---
+
+## Off-Canvas Render Split
+
+When the user selects a resolution above 2000px, the system splits into two layers:
+
+| Layer | Resolution | Purpose | Storage |
+|-------|-----------|---------|---------|
+| Persistent buffer (`bitmapPersistentBuffer`) | `bitmapComputeRes` (from dropdown) | Full-fidelity pixel accumulation, export | CPU-only `ImageData` |
+| Display buffer (`bitmapDisplayBuffer`) | `bitmapDisplayRes` = min(computeRes, 2000) | On-screen preview | CPU-only `ImageData` |
+| Canvas element | `bitmapDisplayRes` | GPU-backed display | `<canvas>` |
+
+When compute ≤ 2000, `bitmapDisplayBuffer` is null and the persistent buffer is used directly for both accumulation and display.
+
+### Compositing with split
+
+In `compositeWorkerPixels()`:
+1. Sparse pixels are written into `bitmapPersistentBuffer` at compute resolution
+2. If split is active, each pixel is also downsampled (`invScale = dW / cW`) into `bitmapDisplayBuffer`
+3. Dirty rect is tracked in **display-space** coordinates
+4. `putImageData` is called on whichever buffer matches the canvas: `bitmapDisplayBuffer` when split, `bitmapPersistentBuffer` otherwise
+
+### Export at full resolution
+
+Bitmap export reads directly from `bitmapPersistentBuffer` at compute resolution, bypassing the display canvas entirely. This means a 15K bitmap export produces a 15K image even though the on-screen canvas is only 2000px.
+
+---
+
+## Worker Partitioning
+
+Steps are distributed evenly across workers in `dispatchPassToWorkers()`:
+
+```javascript
+const actualWorkers = Math.min(numWorkers, sd.stepsVal);
+// ...
+const base = Math.floor(stepsVal / nw);
+const extra = stepsVal % nw;
+for (let w = 0; w < nw; w++) {
+    const count = base + (w < extra ? 1 : 0);
+    // worker w processes steps [offset, offset + count)
+}
+```
+
+Key detail: `actualWorkers = Math.min(numWorkers, stepsVal)` ensures we never spawn more workers than steps. At 10 steps with 16 configured workers, only 10 workers are created (1 step each). At 10K steps with 16 workers, each gets ~625 steps.
+
+Each worker's `maxPaintsPerWorker` buffer is sized to `ceil(stepsVal / actualWorkers) * nRoots`, guaranteeing sufficient space for its pixel output.
+
+---
+
+## Dropdown Change Listeners
+
+The steps and resolution dropdowns trigger a full restart of fast mode when changed mid-run:
+
+```javascript
+document.getElementById("bitmap-steps-select").addEventListener("change", function () {
+    if (fastModeActive) { exitFastMode(); enterFastMode(); }
+});
+document.getElementById("bitmap-res-select").addEventListener("change", function () {
+    if (fastModeActive) { exitFastMode(); enterFastMode(); }
+});
+```
+
+`exitFastMode()` terminates all workers and clears state. `enterFastMode()` re-reads both dropdowns, reinitializes the bitmap canvas (rebuilding persistent/display buffers at the new resolution), recomputes curves at the new step count, and spawns fresh workers.
 
 ---
 
 ## Theoretical Analysis
 
-### Memory per getImageData/putImageData
+### Memory per putImageData (dirty rect)
 
-Each call copies a `Uint8ClampedArray` of size `W × H × 4` bytes between CPU and GPU memory.
+With the persistent buffer, only `putImageData` is called (no `getImageData`). The dirty rect limits the copy to the bounding box of painted pixels.
 
-| Resolution | Pixels | Buffer Size | get + put per pass |
-|------------|--------|-------------|-------------------|
-| 1,000 | 1M | 4 MB | 8 MB |
-| 2,000 | 4M | 16 MB | 32 MB |
-| 5,000 | 25M | 100 MB | 200 MB |
-| 10,000 | 100M | 400 MB | 800 MB |
-| 15,000 | 225M | 900 MB | 1.8 GB |
+| Resolution | Full buffer | Dirty rect (10% area) | Dirty rect (1% area) |
+|------------|------------|----------------------|---------------------|
+| 1,000 | 4 MB | 0.4 MB | 0.04 MB |
+| 2,000 | 16 MB | 1.6 MB | 0.16 MB |
+| 5,000 | 100 MB | 10 MB | 1 MB |
+| 10,000 | 400 MB | 40 MB | 4 MB |
+| 15,000 | 900 MB | 90 MB | 9 MB |
 
-Going from 1K to 10K is **100x more data** transferred per pass. Going from 1K to 15K is **225x**.
+Note: resolutions above `BITMAP_DISPLAY_CAP` (2000) only put the **display buffer** (max 16 MB), not the full compute buffer. The persistent buffer at compute resolution is CPU-only and never sent to the GPU via `putImageData`.
 
 ### What scales with resolution
 
@@ -53,9 +119,9 @@ Going from 1K to 10K is **100x more data** transferred per pass. Going from 1K t
 | Root matching | O(degree² × steps/4) | No |
 | Sparse pixel generation (workers) | O(steps × degree) | No (bounds check only) |
 | Structured clone transfer | O(steps × degree × 13 bytes) | No |
-| `getImageData(0,0,W,H)` | O(W × H × 4) | **Yes** |
-| Pixel write loop | O(painted_pixels) | No |
-| `putImageData(0,0,W,H)` | O(W × H × 4) | **Yes** |
+| Pixel write to persistent buffer | O(painted_pixels) | No |
+| Downsample to display buffer (split only) | O(painted_pixels) | No |
+| `putImageData` (dirty rect) | O(dirty_W × dirty_H × 4) | Partially (dirty rect size) |
 
 ---
 
@@ -69,7 +135,7 @@ Going from 1K to 10K is **100x more data** transferred per pass. Going from 1K t
 - Jiggle: active (produces periodic spike passes at cycle boundaries)
 - Machine: Apple Silicon Mac
 
-### Results (steady-state medians, excluding jiggle spike passes)
+### Pre-Optimization Results (with getImageData, steady-state medians)
 
 | Resolution | Total pass | Workers | getImageData | Pixel writes | putImageData | Composite | Comp % |
 |------------|-----------|---------|-------------|-------------|-------------|-----------|--------|
@@ -78,7 +144,7 @@ Going from 1K to 10K is **100x more data** transferred per pass. Going from 1K t
 | 5,000 | **34.0 ms** | 3.3 ms | 22.4 ms | 1.4 ms | 5.6 ms | **30.5 ms** | **90%** |
 | 10,000 | **125.0 ms** | 8.4 ms | 89.4 ms | 1.6 ms | 24.4 ms | **116.4 ms** | **93%** |
 
-### Scaling Ratios (relative to 1K)
+### Scaling Ratios (relative to 1K, pre-optimization)
 
 | Metric | 2K (4x px) | 5K (25x px) | 10K (100x px) |
 |--------|-----------|------------|--------------|
@@ -88,23 +154,25 @@ Going from 1K to 10K is **100x more data** transferred per pass. Going from 1K t
 | Worker computation | 1.2x | 1.1x | 2.9x |
 | Total pass | 2.0x | 8.5x | **31x** |
 
-### Key Findings
+### Key Pre-Optimization Findings
 
-1. **`getImageData` is the dominant bottleneck**: 89ms at 10K, consuming 72% of the total pass time by itself. It copies the entire 400MB canvas buffer from GPU → CPU memory every single pass.
+1. **`getImageData` was the dominant bottleneck**: 89ms at 10K, consuming 72% of the total pass time by itself. It copied the entire 400MB canvas buffer from GPU → CPU memory every single pass.
 
-2. **`putImageData` is second**: 24ms at 10K (20% of pass time). Also copies the full 400MB buffer back CPU → GPU.
+2. **`putImageData` was second**: 24ms at 10K (20% of pass time). Also copied the full 400MB buffer back CPU → GPU.
 
-3. **Composite scales exactly as theory predicts**: ~100x for 100x more pixels. The measured ratios (112x for get, 122x for put) match the O(W×H) cost model.
+3. **Composite scaled exactly as theory predicted**: ~100x for 100x more pixels. The measured ratios (112x for get, 122x for put) match the O(W×H) cost model.
 
-4. **Worker computation is nearly resolution-independent**: 2.9ms → 3.6ms → 3.3ms → 8.4ms. The small increase at 10K is likely from memory pressure or GC, not from resolution-dependent work.
+4. **Worker computation was nearly resolution-independent**: 2.9ms → 3.6ms → 3.3ms → 8.4ms. The small increase at 10K was likely from memory pressure or GC, not from resolution-dependent work.
 
-5. **At 5K+, over 90% of pass time is wasted on full-canvas memcpy** for a pass that only paints 29,000 pixels (0.03–0.12% of the canvas).
+5. **At 5K+, over 90% of pass time was wasted on full-canvas memcpy** for a pass that only paints 29,000 pixels (0.03–0.12% of the canvas).
 
 6. **The crossover point is ~2K**: below 2K, workers and composite are roughly equal; above 2K, composite dominates and grows linearly with pixel count.
 
 ---
 
-## Optimization Options
+## Optimization Options (Historical)
+
+These options were evaluated before implementing the solution. Option 3 was selected and implemented.
 
 ### Option 1: Persistent JS Pixel Buffer (eliminates getImageData)
 
@@ -126,7 +194,7 @@ Going from 1K to 10K is **100x more data** transferred per pass. Going from 1K t
 
 **Complexity**: Medium. Good for clustered roots, minimal win for spread-out roots.
 
-### Option 3: Persistent Buffer + Dirty Rect putImageData (recommended)
+### Option 3: Persistent Buffer + Dirty Rect putImageData (implemented)
 
 **Idea**: Combine options 1 and 2. Keep persistent `ImageData` buffer, use `putImageData(imgData, 0, 0, dirtyX, dirtyY, dirtyW, dirtyH)` to only flush the dirty region.
 
@@ -158,25 +226,6 @@ Going from 1K to 10K is **100x more data** transferred per pass. Going from 1K t
 
 ---
 
-## Recommendation
-
-**Option 3 (Persistent Buffer + Dirty Rect putImageData)** is the clear winner:
-
-1. **Eliminates getImageData entirely** (the 89ms bottleneck — 72% of pass time at 10K)
-2. **Reduces putImageData** to dirty region only (potentially 10-100x smaller than full canvas)
-3. **No worker changes** — workers already produce sparse pixel data; dirty rect is computed from pixel indices on main thread
-4. **Moderate complexity** — main changes are in `initBitmapCanvas()` (create persistent ImageData), `compositeWorkerPixels()` (write to persistent buffer, track dirty rect, partial putImageData), and clear button (fill buffer with bg color)
-5. **Memory cost is acceptable** — 400MB for a 10K persistent buffer is the same allocation that `getImageData` was creating and discarding every pass
-
-Expected improvement:
-- **1K**: 4.0ms → ~3.0ms (1.3x, already fast)
-- **5K**: 34ms → ~5-10ms (**3-7x speedup**)
-- **10K**: 125ms → ~10-30ms (**4-12x speedup** depending on root spread)
-
-The bottleneck would shift back to worker computation, which is the correct behavior — resolution should not significantly affect pass time.
-
----
-
 ## Post-Optimization Results (Option 3 Implemented)
 
 ### 10K Before vs After (steady-state medians, excluding jiggle spikes)
@@ -203,16 +252,35 @@ The bottleneck would shift back to worker computation, which is the correct beha
 
 6. **14.4x total speedup exceeded the 4-12x projection** due to the combined effect of eliminating getImageData + dirty rect + reduced GC pressure on workers.
 
+### Off-Canvas Render Split Impact
+
+For resolutions above 2000px, the off-canvas split provides an additional benefit: `putImageData` always operates on the **display buffer** (max 2000×2000 = 16MB), never the full compute buffer. This means:
+
+- At 5K compute: `putImageData` flushes at most 16MB (display buffer) instead of 100MB
+- At 10K compute: `putImageData` flushes at most 16MB instead of 400MB
+- At 15K compute: `putImageData` flushes at most 16MB instead of 900MB
+
+The compute-resolution persistent buffer stays in JS heap (CPU-only) and is never sent to the GPU during compositing. It is only used for full-resolution export.
+
 ---
 
 ## Appendix: Code Locations
 
 | Component | File | Lines |
 |-----------|------|-------|
-| `compositeWorkerPixels()` | index.html | ~9946 |
-| `fillPersistentBuffer()` | index.html | ~8722 |
-| `initBitmapCanvas()` | index.html | ~8842 |
-| `recordPassTiming()` | index.html | ~10030 |
-| `updateTimingPopup()` | index.html | ~7394 |
-| Worker pixel generation | index.html (blob) | ~9273-9450 |
-| `bitmapPersistentBuffer` state | index.html | ~1084 |
+| `compositeWorkerPixels()` | index.html | ~10384 |
+| `fillPersistentBuffer()` | index.html | ~8853 |
+| `fillDisplayBuffer()` | index.html | ~8868 |
+| `initBitmapCanvas()` | index.html | ~8973 |
+| `serializeFastModeData()` | index.html | ~10116 |
+| `initFastModeWorkers()` | index.html | ~10250 |
+| `dispatchPassToWorkers()` | index.html | ~10316 |
+| `recordPassTiming()` | index.html | ~10468 |
+| `updateTimingPopup()` | index.html | ~7517 |
+| Worker pixel generation | index.html (blob) | ~9273–9450 |
+| `bitmapPersistentBuffer` state | index.html | ~1085 |
+| `BITMAP_DISPLAY_CAP` constant | index.html | ~1086 |
+| `bitmapComputeRes` / `bitmapDisplayRes` | index.html | ~1087–1088 |
+| `bitmapDisplayBuffer` state | index.html | ~1089 |
+| Steps/resolution dropdown listeners | index.html | ~12435–12441 |
+| `resetBitmap()` | index.html | ~10714 |

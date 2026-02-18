@@ -134,6 +134,25 @@ let bitmapDisplayBuffer = null;    // ImageData at display resolution (null when
 
 Options: 1000, 2000 (default), 5000, 8000, 10000, 15000, 25000.
 
+### Steps dropdown (~line 895)
+
+`bitmap-steps-select` controls the number of time steps per fast-mode pass. Options: 10, 100, 1K, 5K, 10K (default), 50K, 100K, 1M. The value is read in `enterFastMode()` and passed through `serializeFastModeData()` as `stepsVal`.
+
+### Dropdown change listeners (~line 12435)
+
+Both the steps dropdown and the resolution dropdown have `change` event listeners that automatically restart fast mode when changed during an active run:
+
+```javascript
+document.getElementById("bitmap-steps-select").addEventListener("change", function () {
+    if (fastModeActive) { exitFastMode(); enterFastMode(); }
+});
+document.getElementById("bitmap-res-select").addEventListener("change", function () {
+    if (fastModeActive) { exitFastMode(); enterFastMode(); }
+});
+```
+
+This allows the user to adjust steps or resolution on the fly without manually pausing and restarting. The exit/re-enter cycle tears down existing workers, re-reads both dropdowns, re-serializes all fast-mode data, and spawns fresh workers at the new settings.
+
 ### `fillDisplayBuffer()` helper (~line 8822)
 
 Same exponential `copyWithin` pattern as `fillPersistentBuffer()`, operates on `bitmapDisplayBuffer`.
@@ -157,6 +176,34 @@ Workers always receive the compute resolution, not the display canvas size.
 ### `enterFastMode()` resolution check (~line 9667)
 
 `bitmapComputeRes !== wantRes` instead of `canvas.width !== wantRes`.
+
+### Worker partitioning (~line 10250)
+
+`initFastModeWorkers()` caps the number of spawned workers to avoid empty work ranges:
+
+```javascript
+const actualWorkers = Math.min(numWorkers, sd.stepsVal);
+```
+
+Without this, selecting 100 steps with 16 configured workers would spawn 16 workers but only 100 steps to distribute — 10 workers would receive zero steps (`stepEnd === stepStart`) and produce empty pixel buffers. The fix ensures at most `stepsVal` workers are created, so every worker gets at least one step.
+
+`dispatchPassToWorkers()` (~line 10316) distributes steps evenly across workers using integer division with remainder:
+
+```javascript
+const base = Math.floor(stepsVal / nw);
+const extra = stepsVal % nw;
+// Worker w gets: base + (w < extra ? 1 : 0) steps
+```
+
+Each worker receives a contiguous `[stepStart, stepEnd)` range. The first `extra` workers each get one additional step. This guarantees all `stepsVal` steps are covered exactly once with no gaps or overlaps.
+
+Worker paint buffers are pre-allocated at init time based on the per-worker step count:
+
+```javascript
+maxPaintsPerWorker: Math.ceil(sd.stepsVal / actualWorkers) * sd.nRoots,
+```
+
+Each step produces at most `nRoots` painted pixels, so `maxPaintsPerWorker` is the ceiling of steps-per-worker times `nRoots`. The worker blob uses this to size its `paintIdx`/`paintR`/`paintG`/`paintB` typed arrays, falling back to `totalSteps * nRoots` if not provided (backward compat).
 
 ### `compositeWorkerPixels()` (~line 10052)
 
@@ -207,6 +254,8 @@ Creates temp canvas at `bitmapComputeRes` dimensions, uses `ctx.putImageData(bit
 6. **Export**: All four formats encode correctly from persistent buffer
 7. **Clear**: Both buffers reset to background color
 8. **Snap bitmap**: Exports at compute resolution via temp canvas + `putImageData`
+9. **Low step counts**: 100 steps with 16 workers spawns only 100 workers (one step each), no empty-range workers
+10. **Dropdown hot-swap**: Changing steps or resolution dropdown during fast mode restarts cleanly (exit + re-enter)
 
 ## Risks and Mitigations
 

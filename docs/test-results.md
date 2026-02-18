@@ -1,6 +1,6 @@
 # Test Results
 
-**496 tests total: 495 passed, 1 skipped** | Runtime: ~9m | Headless Chromium on Apple Silicon
+**525 tests total: 524 passed, 1 skipped** | Runtime: ~9m | Headless Chromium on Apple Silicon
 
 Run with: `python -m pytest tests/ -v`
 
@@ -221,7 +221,7 @@ Tests the split compute/display architecture, multi-format export, high-resoluti
 | `TestBMPExport` | 4 | Function exists, valid BMP header, BGR pixel order, bottom-up row order |
 | `TestPlotCoeffCurvesDisplayRes` | 1 | Uses display resolution for coefficient view |
 | `TestTimingCopyRes` | 1 | Shows compute resolution in timing data |
-| `TestExportFormatState` | 4 | Default JPEG, variable persistence, save/load roundtrip |
+| `TestExportFormatState` | 4 | Default PNG, variable persistence, save/load roundtrip |
 | `TestSavePopup` | 5 | Popup exists, initially closed, opens/closes, has format dropdown |
 | `TestExportFunctions` | 4 | JPEG/PNG/TIFF/downloadBlob functions exist |
 | `TestLibraryLoading` | 4 | pako, UPNG, jpeg-js, UTIF globals available |
@@ -267,7 +267,6 @@ Tests D-List tab HTML, `allAnimatedDCoeffs()`, `advanceDNodesAlongCurves()`, D-n
 | `TestDCurveSerialization` | 3 | Empty when no animated, populated when animated, offsets/lengths consistency |
 | `TestDNodeJiggleImmunity` | 1 | Jiggle offsets not applied to D-nodes in serialization |
 | `TestExitFastModeCleanup` | 1 | fastModeDCurves nulled on exit |
-| `TestDListTransform` | 1 | Transform dropdown exists with options |
 
 ---
 
@@ -350,6 +349,26 @@ Tests D-node right-click context menu: popup existence, open/close, snapshot/rev
 
 ---
 
+## test_wasm_step_loop.py — WASM Step Loop (26 tests)
+
+Tests the WASM step loop module: loading, memory layout, solver correctness, color modes, fast mode end-to-end, WASM vs JS comparison, worker integration, progress reporting, and edge cases.
+
+| Test Group | Count | What it checks |
+|------------|-------|----------------|
+| `TestWasmModuleLoading` | 3 | Module instantiation, __heap_base exported, heap_base above stack |
+| `TestMemoryLayout` | 4 | Starts at heap_base, no BSS overlap, 8-byte alignment, no section overlap |
+| `TestWasmStepLoopInit` | 1 | Init reads config, produces correct pixel count and uniform color |
+| `TestWasmSolverCorrectness` | 3 | Roots of unity degree 3, degree 5, z^2+1 roots match known values |
+| `TestWasmFastModeEndToEnd` | 2 | WASM fast mode produces pixels, JS fast mode produces pixels (control) |
+| `TestWasmVsJsComparison` | 1 | WASM and JS produce similar pixel counts for same polynomial |
+| `TestWasmColorModes` | 3 | Uniform color output, index-rainbow per-root colors, uniform vs rainbow differ |
+| `TestWorkerWasmIntegration` | 3 | WASM_STEP_LOOP_B64 present, serialized data has curve counts, error message handled |
+| `TestWasmProgressReporting` | 1 | Progress callback fires during large step count |
+| `TestWasmEdgeCases` | 4 | Degree-2 polynomial, zero steps, large step count, pixel indices within canvas |
+| `TestWasmVsJsSolverDirect` | 1 | WASM and JS solvers find same roots for z^3 - 1 |
+
+---
+
 ## test_integration.py — End-to-End (3 tests)
 
 | Test | Status | What it checks |
@@ -360,9 +379,9 @@ Tests D-node right-click context menu: popup existence, open/close, snapshot/rev
 
 ---
 
-## test_benchmark.py — JS vs WASM Performance (4 tests)
+## test_benchmark.py — JS vs WASM Performance (7 tests)
 
-Tests correctness and speed of the WASM Ehrlich-Aberth solver (`solver.c` → `solver.wasm`).
+Tests correctness and speed of the WASM Ehrlich-Aberth solver (`solver.c` → `solver.wasm`) and full step loop (solver + pixel output) benchmarks.
 
 | Test | Status | What it checks |
 |------|--------|----------------|
@@ -370,6 +389,9 @@ Tests correctness and speed of the WASM Ehrlich-Aberth solver (`solver.c` → `s
 | `test_benchmark_wasm` | PASS | WASM solver completes at all degrees without hanging |
 | `test_benchmark_comparison` | PASS | Side-by-side JS vs WASM timing comparison |
 | `test_wasm_correctness` | PASS | WASM finds same 5th roots of unity as JS |
+| `test_step_loop_benchmark_js` | PASS | JS step loop (solver + pixel gen) at various degrees/step counts |
+| `test_step_loop_benchmark_wasm` | PASS | WASM step loop at various degrees/step counts |
+| `test_step_loop_benchmark_comparison` | PASS | Side-by-side JS vs WASM step loop speedup comparison |
 
 ### Benchmark Results (2026-02-13)
 
@@ -415,9 +437,10 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | Trajectory editors | test_anim_bar.py | 29 | Preview/revert/commit, PS removal, cycler removal, Update Whole Selection, C-List/D-List editors |
 | Final tab | test_final_tab.py | 20 | Tab DOM, rendering, trail data, trail SVG, solveRoots integration, animation |
 | D-node ctx menu | test_dnode_ctx.py | 16 | Popup, open/close, snapshot/revert, accept, path changes, morph panel |
+| WASM step loop | test_wasm_step_loop.py | 26 | Module loading, memory layout, solver correctness, color modes, fast mode E2E, JS comparison, progress, edge cases |
 | Integration | test_integration.py | 3 | Snap loading, determinism, fast mode pixels |
-| Benchmark | test_benchmark.py | 4 | JS vs WASM: correctness + performance |
-| **Total** | **23 files** | **496** | |
+| Benchmark | test_benchmark.py | 7 | JS vs WASM: solver correctness + performance, step loop benchmarks |
+| **Total** | **24 files** | **525** | |
 
 ---
 
@@ -449,8 +472,9 @@ tests/
   test_anim_bar.py      — Trajectory editor simplification (preview/revert, cycler/PS removal)
   test_final_tab.py     — Final tab (rendering, trails, solveRoots integration)
   test_dnode_ctx.py     — D-node right-click context menu (popup, path editing, morph panel)
+  test_wasm_step_loop.py — WASM step loop (module loading, memory layout, solver, color modes, E2E)
   test_integration.py   — Snap loading, determinism, fast mode
-  test_benchmark.py     — JS vs WASM speed + correctness
+  test_benchmark.py     — JS vs WASM speed + correctness, step loop benchmarks
 ```
 
 **Dependencies**: `uv pip install playwright pytest && playwright install chromium`

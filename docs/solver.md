@@ -22,7 +22,7 @@ Given a degree-*n* polynomial p(z) = cₙzⁿ + ··· + c₁z + c₀ (subscript
 
 ## Why It's Fast for Interactive Use
 
-The key insight is **warm-starting**: when the user drags a coefficient slightly, the roots barely move. The previous frame's root positions are an excellent initial guess, so the solver converges in **1–3 iterations** during interactive drag (versus 15–30 iterations from a cold start). At degree 30, each iteration is O(n²) for the Aberth sums, making the total cost negligible compared to the domain coloring render.
+The UI supports degree 2–30 (minimum degree 2 = quadratic). The key insight is **warm-starting**: when the user drags a coefficient slightly, the roots barely move. The previous frame's root positions are an excellent initial guess, so the solver converges in **1–3 iterations** during interactive drag (versus 15–30 iterations from a cold start). At degree 30, each iteration is O(n²) for the Aberth sums, making the total cost negligible compared to the domain coloring render.
 
 ## Implementation Details
 
@@ -71,6 +71,8 @@ The payoff scales with polynomial degree — at degree 100+, the O(n² × iters)
 Only workers use WASM. The main-thread solver stays in JS (called once per frame during interactive mode — marshalling overhead isn't worth it for a single call).
 
 The WASM solver (`solver.c`) is pure C with no stdlib, no malloc, no `math.h` — just `+`, `-`, `*`, `/` on `double`. NaN detection uses `x != x` (IEEE 754). NaN rescue (cos/sin for unit-circle re-seeding) stays in JS as a cold path after the WASM call returns.
+
+**Step partitioning**: The main thread distributes bitmap steps across workers using floor-division with remainder: each worker gets `floor(totalSteps / nWorkers)` steps, with the first `totalSteps % nWorkers` workers receiving one extra step. Worker count is clamped to `min(numWorkers, totalSteps)` so no worker runs with zero steps. Each worker's sparse paint buffer is pre-sized to `ceil(totalSteps / numWorkers) * nRoots` entries — the per-worker allocation avoids the old approach of sizing every buffer for the full step count.
 
 ### Memory Layout
 

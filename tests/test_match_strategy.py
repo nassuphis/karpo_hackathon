@@ -158,7 +158,7 @@ class TestSaveLoadRoundtrip:
 
 class TestUIChips:
     def test_chips_exist_in_popup(self, page):
-        """Bitmap cfg popup should show 3 match strategy chips."""
+        """Bitmap cfg popup should show match strategy chips (3 under Rainbow + 3 under Idx×Prox)."""
         result = page.evaluate("""() => {
             document.getElementById('bitmap-res-select').value = '1000';
             initBitmapCanvas();
@@ -175,7 +175,7 @@ class TestUIChips:
             closeBitmapCfgPop();
             return labels;
         }""")
-        assert len(result) == 3
+        assert len(result) == 6
 
     def test_default_chip_highlighted(self, page):
         """Greedy×4 chip should be highlighted by default (assign4)."""

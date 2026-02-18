@@ -1,4 +1,4 @@
-# PolyPaint v35
+# PolyPaint v37
 
 **[Try it live](https://nassuphis.github.io/karpo_hackathon/)**
 
@@ -38,10 +38,11 @@ Everything runs client-side in a single HTML file. No server, no build step, no 
 
 ### Compute
 
-- **Bitmap rendering** -- accumulate root positions as pixels at up to 25,000 x 25,000 resolution with off-canvas compute/display split ([Off-Canvas](docs/off-canvas-render.md))
+- **Bitmap rendering** -- accumulate root positions as pixels at up to 25,000 x 25,000 resolution with off-canvas compute/display split, zoom in/out controls ([Off-Canvas](docs/off-canvas-render.md))
+- **6 bitmap color modes** -- Uniform, Index Rainbow, Derivative, Root Proximity, Idx x Prox (hue from index, brightness from neighbor distance with adjustable gamma), Min/Max Ratio (nearest/farthest neighbor ratio mapped to palette)
 - **Fast mode** -- parallel Web Workers distribute the solver across 1-16 threads with balanced step distribution; changing steps or resolution auto-restarts ([Workers](docs/worker_implementation.md))
-- **WASM solver** -- Ehrlich-Aberth algorithm compiled from C, base64-embedded, ~2KB ([WASM](docs/wasm_investigation.md))
-- **10 jiggle modes** -- explore nearby parameter space between cycles: random, rotate, walk, scale, circle, spiral, breathe, wobble, lissajous; refined controls with sigma 0-10, interval step 0.1s, angle steps up to 5000 ([Paths](docs/paths.md#jiggle--path-perturbation-between-cycles))
+- **WASM acceleration** -- Ehrlich-Aberth solver (~2KB) and full step loop (~15KB) compiled from C, base64-embedded, with 3-tier fallback: WASM step loop > WASM solver + JS loop > pure JS ([WASM](docs/wasm_investigation.md))
+- **11 jiggle modes** -- explore nearby parameter space between cycles: random, rotate, walk, scale, circle, spiral, breathe, wobble, lissajous; refined controls with sigma 0-1%, interval step 0.1s, angle steps up to 5000 ([Paths](docs/paths.md#jiggle--path-perturbation-between-cycles))
 - **Multi-format export** -- JPEG, PNG, BMP, TIFF images + WebM video recording in 7 capture modes
 
 ### Analyze
@@ -78,7 +79,7 @@ See the [Interface Guide](docs/interface.md) for the complete control reference.
 | **Mid-bar** | Scale (0.1x-10x), Rotate (0.5 turns), Translate (2D pad), Select all/none, Invert |
 | **Roots toolbar** | Trails toggle, color mode (Uniform / Index Rainbow / Derivative), domain coloring, Fit, +25% |
 | **Right tabs** | Roots (visualization), Stats (16 plots, 32 chart types), Sound (3 voices + routing matrix), Bitmap (fast mode + export) |
-| **Bitmap** | init/save/clear, resolution (1K-25K), start/stop, steps (10-1M), cfg (solver, jiggle, 4 color modes, 3 match strategies) |
+| **Bitmap** | init/save/clear, resolution (1K-25K), zoom in/out, start/stop, steps (10-1M), cfg (solver, jiggle, 6 color modes, 3 match strategies, gamma) |
 | **Recording** | WebM capture: Roots, Coeffs, Both, Stats, Sound, Bitmap, or Full. Auto-stop on loop completion. |
 
 For the full control reference with detailed tables, see the [Interface Guide](docs/interface.md).
@@ -86,7 +87,7 @@ For the full control reference with detailed tables, see the [Interface Guide](d
 ## Architecture
 
 ```
-Single HTML file (~12,500 lines)
+Single HTML file (~13,200 lines)
   CSS (inline)            Layout, popover positioning, animation styles
   HTML                    Header, panels, SVG containers, popovers
   JavaScript (inline)     All application logic:
@@ -98,7 +99,7 @@ Single HTML file (~12,500 lines)
   CDN dependencies
     d3.js v7                SVG rendering, scales, drag interactions
     html2canvas             Full-page snapshot export
-  Embedded WASM           Base64-encoded Ehrlich-Aberth solver (~2KB)
+  Embedded WASM           Ehrlich-Aberth solver (~2KB) + step loop (~15KB)
 ```
 
 No server, no WebSocket, no build tools. See [Solver](docs/solver.md) for the root-finding algorithm and [Workers](docs/worker_implementation.md) for the multi-worker architecture.
@@ -133,18 +134,20 @@ No server, no WebSocket, no build tools. See [Solver](docs/solver.md) for the ro
 ### Developer Notes
 
 - [Architecture Notes](docs/architecture.md) -- section map, code conventions, key locations, debugging insights
-- [Testing](docs/test-results.md) -- 490 Playwright tests across 23 files, JS/WASM benchmarks
+- [Testing](docs/test-results.md) -- 525 Playwright tests across 24 files, JS/WASM benchmarks
 
 ## File Structure
 
 ```
 karpo_hackathon/
-  index.html          Entire app: CSS + HTML + JS + WASM (~12,500 lines)
-  solver.c            WASM solver source (Ehrlich-Aberth in C)
-  solver.wasm         Compiled WASM binary (~2KB)
-  build-wasm.sh       Compile solver.c -> base64-embedded WASM
+  index.html          Entire app: CSS + HTML + JS + WASM (~13,200 lines)
+  solver.c            WASM solver source (Ehrlich-Aberth in C, ~2KB)
+  step_loop.c         WASM step loop source (full per-step pipeline in C, ~15KB)
+  solver.wasm         Compiled solver binary
+  step_loop.wasm      Compiled step loop binary
+  build-wasm.sh       Compile C sources -> base64-embedded WASM
   docs/               Technical documentation (15 files)
-  tests/              Playwright tests (490 tests, 23 files)
+  tests/              Playwright tests (525 tests, 24 files)
   snaps/              Saved snapshots (PNG + JSON)
 ```
 

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PolyPaint v36</title>
+<title>PolyPaint v38</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
@@ -562,7 +562,7 @@ body.fast-mode #stop-roots-btn {
 <body>
 
 <div id="header">
-    <span class="app-title">PolyPaint v36</span>
+    <span class="app-title">PolyPaint v38</span>
     <div class="header-sep"></div>
     <span class="control-label">Degree</span>
     <span id="degree-number" class="degree-val">5</span>
@@ -818,8 +818,12 @@ body.fast-mode #stop-roots-btn {
         <div id="ops-group" class="disabled" style="display:flex;flex-direction:column;gap:6px;align-items:center;">
             <div class="mid-label">Ops <span id="ops-target"></span></div>
             <button id="scale-tool-btn" class="mid-btn" title="Scale">⇕</button>
+            <button id="scale-re-tool-btn" class="mid-btn" title="Scale Re" style="font-size:9px;font-weight:bold;">Re</button>
+            <button id="scale-im-tool-btn" class="mid-btn" title="Scale Im" style="font-size:9px;font-weight:bold;">Im</button>
             <button id="rotate-tool-btn" class="mid-btn" title="Rotate">⟲</button>
             <button id="add-tool-btn" class="mid-btn" title="Translate">✛</button>
+            <button id="shape-tool-btn" class="mid-btn" title="Shape morph" style="font-size:9px;font-weight:bold;">Shp</button>
+            <button id="ptrn-tool-btn" class="mid-btn" title="Pattern arrange" style="font-size:9px;font-weight:bold;">Ptrn</button>
         </div>
         <div style="display:flex;gap:2px;margin-top:4px;">
             <button id="mid-all-btn" class="mid-btn" style="width:auto;height:auto;font-size:8px;padding:1px 4px;border-radius:4px;" title="Select all (roots if any root selected, else coefficients)">⊕</button>
@@ -1014,6 +1018,7 @@ let bitmapUniformColor = [255, 255, 255];
 let bitmapMatchStrategy = "assign4"; // "assign4" | "assign1" | "hungarian1"
 let bitmapProxPaletteName = "inferno"; // key into PROX_PALETTE_CATALOG
 let bitmapIdxProxGamma = 0.5; // gamma correction for Idx×Prox brightness (0.1=bright, 1.0=linear)
+let bitmapRatioGamma = 0.5;   // gamma correction for Min/Max Ratio (0.1=spread low ratios, 1.0=linear)
 // Fixed 8-color palette shared by animation and bitmap uniform pickers
 const ROOT_COLOR_SWATCHES = [
     { label: "White",  rgb: [255, 255, 255] },
@@ -6247,6 +6252,570 @@ function buildScaleTool(pop, snap) {
     pop.appendChild(valEl);
 }
 
+// --- Scale Re tool: vertical slider, scales only real part ---
+function buildScaleReTool(pop, snap) {
+    const title = document.createElement("div");
+    title.className = "pop-title"; title.textContent = "Scale Re";
+    const valEl = document.createElement("div");
+    valEl.className = "pop-val"; valEl.textContent = "1.00×";
+
+    const slider = document.createElement("div");
+    slider.className = "vslider";
+    const fill = document.createElement("div");
+    fill.className = "vslider-fill";
+    const thumb = document.createElement("div");
+    thumb.className = "vslider-thumb";
+    slider.appendChild(fill);
+    slider.appendChild(thumb);
+
+    let u = 0.5;
+    function updateVisual() {
+        const pct = u * 100;
+        fill.style.height = pct + "%";
+        thumb.style.bottom = pct + "%";
+        const s = uToScale(u);
+        valEl.textContent = s.toFixed(2) + "×";
+        applyPreview(snap, (re, im) => ({ re: re * s, im: im }));
+    }
+
+    function setFromY(clientY) {
+        const rect = slider.getBoundingClientRect();
+        u = Math.max(0, Math.min(1, 1 - (clientY - rect.top) / rect.height));
+        updateVisual();
+    }
+
+    let dragging = false;
+    slider.addEventListener("mousedown", e => {
+        dragging = true; setFromY(e.clientY); e.preventDefault();
+    });
+    opToolMouseMove = e => { if (dragging) setFromY(e.clientY); };
+    opToolMouseUp = () => { dragging = false; };
+    window.addEventListener("mousemove", opToolMouseMove);
+    window.addEventListener("mouseup", opToolMouseUp);
+
+    updateVisual();
+    pop.appendChild(title);
+    pop.appendChild(slider);
+    pop.appendChild(valEl);
+}
+
+// --- Scale Im tool: vertical slider, scales only imaginary part ---
+function buildScaleImTool(pop, snap) {
+    const title = document.createElement("div");
+    title.className = "pop-title"; title.textContent = "Scale Im";
+    const valEl = document.createElement("div");
+    valEl.className = "pop-val"; valEl.textContent = "1.00×";
+
+    const slider = document.createElement("div");
+    slider.className = "vslider";
+    const fill = document.createElement("div");
+    fill.className = "vslider-fill";
+    const thumb = document.createElement("div");
+    thumb.className = "vslider-thumb";
+    slider.appendChild(fill);
+    slider.appendChild(thumb);
+
+    let u = 0.5;
+    function updateVisual() {
+        const pct = u * 100;
+        fill.style.height = pct + "%";
+        thumb.style.bottom = pct + "%";
+        const s = uToScale(u);
+        valEl.textContent = s.toFixed(2) + "×";
+        applyPreview(snap, (re, im) => ({ re: re, im: im * s }));
+    }
+
+    function setFromY(clientY) {
+        const rect = slider.getBoundingClientRect();
+        u = Math.max(0, Math.min(1, 1 - (clientY - rect.top) / rect.height));
+        updateVisual();
+    }
+
+    let dragging = false;
+    slider.addEventListener("mousedown", e => {
+        dragging = true; setFromY(e.clientY); e.preventDefault();
+    });
+    opToolMouseMove = e => { if (dragging) setFromY(e.clientY); };
+    opToolMouseUp = () => { dragging = false; };
+    window.addEventListener("mousemove", opToolMouseMove);
+    window.addEventListener("mouseup", opToolMouseUp);
+
+    updateVisual();
+    pop.appendChild(title);
+    pop.appendChild(slider);
+    pop.appendChild(valEl);
+}
+
+// --- Shape morph tool: unified shape selector + morph slider ---
+function regularPolyVerts(cRe, cIm, R, sides) {
+    const v = [];
+    for (let i = 0; i < sides; i++) {
+        const a = Math.PI / 2 + i * 2 * Math.PI / sides;
+        v.push({ re: cRe + R * Math.cos(a), im: cIm + R * Math.sin(a) });
+    }
+    return v;
+}
+function rayPolyHit(cRe, cIm, dx, dy, verts) {
+    let tMin = Infinity;
+    for (let i = 0, nv = verts.length; i < nv; i++) {
+        const j = (i + 1) % nv;
+        const eRe = verts[j].re - verts[i].re, eIm = verts[j].im - verts[i].im;
+        const den = dy * eRe - dx * eIm;
+        if (Math.abs(den) < 1e-15) continue;
+        const dRe = verts[i].re - cRe, dIm = verts[i].im - cIm;
+        const t = (dIm * eRe - dRe * eIm) / den;
+        const s = (dx * dIm - dy * dRe) / den;
+        if (t > 1e-9 && s >= -1e-9 && s <= 1 + 1e-9) tMin = Math.min(tMin, t);
+    }
+    if (tMin === Infinity) return null;
+    return { re: cRe + tMin * dx, im: cIm + tMin * dy };
+}
+function shapeTargets(shape, items, cRe, cIm, R, bbox) {
+    return items.map(s => {
+        const dx = s.re - cRe, dy = s.im - cIm;
+        if (Math.abs(dx) < 1e-15 && Math.abs(dy) < 1e-15) return { re: s.re, im: s.im };
+        if (shape === "box") {
+            const verts = [
+                { re: bbox[0], im: bbox[3] }, { re: bbox[1], im: bbox[3] },
+                { re: bbox[1], im: bbox[2] }, { re: bbox[0], im: bbox[2] }
+            ];
+            return rayPolyHit(cRe, cIm, dx, dy, verts) || { re: s.re, im: s.im };
+        } else if (shape === "inf") {
+            const theta = Math.atan2(dy, dx);
+            const c = Math.cos(theta);
+            const r = R * (0.2 + 0.8 * c * c);
+            const d = Math.sqrt(dx * dx + dy * dy);
+            return { re: cRe + dx * r / d, im: cIm + dy * r / d };
+        } else {
+            const sides = shape === "tri" ? 3 : shape === "pent" ? 5 : shape === "hex" ? 6 : 4;
+            const verts = regularPolyVerts(cRe, cIm, R, sides);
+            return rayPolyHit(cRe, cIm, dx, dy, verts) || { re: s.re, im: s.im };
+        }
+    });
+}
+
+// --- Pattern arrange: distribute n points equally on preset shapes ---
+function distributeOnPath(n, verts, closed) {
+    const nv = verts.length;
+    if (n <= 0 || nv === 0) return [];
+    if (n === 1) return [{ re: verts[0].re, im: verts[0].im }];
+    const nEdges = closed ? nv : nv - 1;
+    if (nEdges === 0) return Array.from({ length: n }, () => ({ re: verts[0].re, im: verts[0].im }));
+    const cumDist = [0];
+    for (let i = 0; i < nEdges; i++) {
+        const j = closed ? (i + 1) % nv : i + 1;
+        const dx = verts[j].re - verts[i].re, dy = verts[j].im - verts[i].im;
+        cumDist.push(cumDist[i] + Math.sqrt(dx * dx + dy * dy));
+    }
+    const totalLen = cumDist[nEdges];
+    if (totalLen < 1e-15) return Array.from({ length: n }, () => ({ re: verts[0].re, im: verts[0].im }));
+    const spacing = closed ? totalLen / n : totalLen / Math.max(n - 1, 1);
+    const pts = [];
+    let edge = 0;
+    for (let i = 0; i < n; i++) {
+        const target = i * spacing;
+        while (edge < nEdges - 1 && cumDist[edge + 1] < target - 1e-12) edge++;
+        const edgeLen = cumDist[edge + 1] - cumDist[edge];
+        const t = edgeLen > 1e-15 ? (target - cumDist[edge]) / edgeLen : 0;
+        const j = closed ? (edge + 1) % nv : edge + 1;
+        pts.push({
+            re: verts[edge].re + t * (verts[j].re - verts[edge].re),
+            im: verts[edge].im + t * (verts[j].im - verts[edge].im)
+        });
+    }
+    return pts;
+}
+
+function patternPositions(pattern, n, cRe, cIm, R) {
+    if (n <= 0) return [];
+    if (R < 1e-15) R = 1;
+    if (n === 1) return [{ re: cRe, im: cIm }];
+    switch (pattern) {
+        case "circle": {
+            const pts = [];
+            for (let i = 0; i < n; i++) {
+                const a = Math.PI / 2 + 2 * Math.PI * i / n;
+                pts.push({ re: cRe + R * Math.cos(a), im: cIm + R * Math.sin(a) });
+            }
+            return pts;
+        }
+        case "square": {
+            const s = R;
+            const verts = [
+                { re: cRe - s, im: cIm + s }, { re: cRe + s, im: cIm + s },
+                { re: cRe + s, im: cIm - s }, { re: cRe - s, im: cIm - s }
+            ];
+            return distributeOnPath(n, verts, true);
+        }
+        case "triangle": {
+            const verts = regularPolyVerts(cRe, cIm, R, 3);
+            return distributeOnPath(n, verts, true);
+        }
+        case "pentagon": {
+            const verts = regularPolyVerts(cRe, cIm, R, 5);
+            return distributeOnPath(n, verts, true);
+        }
+        case "hexagon": {
+            const verts = regularPolyVerts(cRe, cIm, R, 6);
+            return distributeOnPath(n, verts, true);
+        }
+        case "diamond": {
+            const verts = regularPolyVerts(cRe, cIm, R, 4);
+            return distributeOnPath(n, verts, true);
+        }
+        case "star": {
+            const inner = R * 0.38;
+            const verts = [];
+            for (let i = 0; i < 10; i++) {
+                const a = Math.PI / 2 + Math.PI * i / 5;
+                const r = i % 2 === 0 ? R : inner;
+                verts.push({ re: cRe + r * Math.cos(a), im: cIm + r * Math.sin(a) });
+            }
+            return distributeOnPath(n, verts, true);
+        }
+        case "ellipse": {
+            const rx = R * 1.4, ry = R * 0.7;
+            const nSamp = Math.max(n * 8, 200);
+            const verts = [];
+            for (let i = 0; i < nSamp; i++) {
+                const a = Math.PI / 2 + 2 * Math.PI * i / nSamp;
+                verts.push({ re: cRe + rx * Math.cos(a), im: cIm + ry * Math.sin(a) });
+            }
+            return distributeOnPath(n, verts, true);
+        }
+        case "infinity": {
+            const nSamp = Math.max(n * 8, 200);
+            const verts = [];
+            for (let i = 0; i < nSamp; i++) {
+                const t = 2 * Math.PI * i / nSamp;
+                verts.push({ re: cRe + R * Math.cos(t), im: cIm + R * 0.5 * Math.sin(2 * t) });
+            }
+            return distributeOnPath(n, verts, true);
+        }
+        case "spiral": {
+            const turns = 3;
+            const nSamp = Math.max(n * 8, 300);
+            const verts = [];
+            for (let i = 0; i < nSamp; i++) {
+                const f = i / (nSamp - 1);
+                const r = R * f;
+                const theta = turns * 2 * Math.PI * f + Math.PI / 2;
+                verts.push({ re: cRe + r * Math.cos(theta), im: cIm + r * Math.sin(theta) });
+            }
+            return distributeOnPath(n, verts, false);
+        }
+        case "grid": {
+            let cols = Math.round(Math.sqrt(n));
+            if (cols < 1) cols = 1;
+            const rows = Math.ceil(n / cols);
+            const dx = cols > 1 ? 2 * R / (cols - 1) : 0;
+            const dy = rows > 1 ? 2 * R / (rows - 1) : 0;
+            const pts = [];
+            let rem = n;
+            for (let r = 0; r < rows; r++) {
+                const inRow = Math.min(cols, rem);
+                const rowOff = (cols - inRow) * dx / 2;
+                for (let c = 0; c < inRow; c++) {
+                    pts.push({ re: cRe - R + rowOff + c * dx, im: cIm + R - r * dy });
+                }
+                rem -= inRow;
+            }
+            return pts;
+        }
+        case "line": {
+            const pts = [];
+            for (let i = 0; i < n; i++) {
+                const t = n > 1 ? i / (n - 1) : 0.5;
+                pts.push({ re: cRe - R + 2 * R * t, im: cIm });
+            }
+            return pts;
+        }
+        case "wave": {
+            const pts = [];
+            for (let i = 0; i < n; i++) {
+                const t = n > 1 ? i / (n - 1) : 0.5;
+                pts.push({ re: cRe - R + 2 * R * t, im: cIm + R * 0.5 * Math.sin(2 * Math.PI * t) });
+            }
+            return pts;
+        }
+        case "cross": {
+            const arm = R, w = R * 0.25;
+            const verts = [
+                { re: cRe - w, im: cIm + arm }, { re: cRe + w, im: cIm + arm },
+                { re: cRe + w, im: cIm + w },   { re: cRe + arm, im: cIm + w },
+                { re: cRe + arm, im: cIm - w },  { re: cRe + w, im: cIm - w },
+                { re: cRe + w, im: cIm - arm },  { re: cRe - w, im: cIm - arm },
+                { re: cRe - w, im: cIm - w },    { re: cRe - arm, im: cIm - w },
+                { re: cRe - arm, im: cIm + w },  { re: cRe - w, im: cIm + w }
+            ];
+            return distributeOnPath(n, verts, true);
+        }
+        case "heart": {
+            const nSamp = Math.max(n * 8, 200);
+            const verts = [];
+            for (let i = 0; i < nSamp; i++) {
+                const t = 2 * Math.PI * i / nSamp;
+                const x = 16 * Math.pow(Math.sin(t), 3);
+                const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+                verts.push({ re: cRe + x * R / 17, im: cIm + y * R / 17 });
+            }
+            return distributeOnPath(n, verts, true);
+        }
+        case "lissajous": {
+            const nSamp = Math.max(n * 8, 200);
+            const verts = [];
+            for (let i = 0; i < nSamp; i++) {
+                const t = 2 * Math.PI * i / nSamp;
+                verts.push({ re: cRe + R * Math.sin(3 * t), im: cIm + R * Math.sin(2 * t) });
+            }
+            return distributeOnPath(n, verts, true);
+        }
+        case "rose": {
+            const nSamp = Math.max(n * 8, 200);
+            const verts = [];
+            for (let i = 0; i < nSamp; i++) {
+                const t = 2 * Math.PI * i / nSamp;
+                const r = R * Math.abs(Math.cos(3 * t));
+                verts.push({ re: cRe + r * Math.cos(t), im: cIm + r * Math.sin(t) });
+            }
+            return distributeOnPath(n, verts, true);
+        }
+        case "2-circles": {
+            const half = Math.ceil(n / 2);
+            const r = R * 0.45;
+            const gap = R * 0.1;
+            const pts = [];
+            for (let i = 0; i < half; i++) {
+                const a = Math.PI / 2 + 2 * Math.PI * i / half;
+                pts.push({ re: cRe - r - gap + r * Math.cos(a), im: cIm + r * Math.sin(a) });
+            }
+            const rest = n - half;
+            for (let i = 0; i < rest; i++) {
+                const a = Math.PI / 2 + 2 * Math.PI * i / rest;
+                pts.push({ re: cRe + r + gap + r * Math.cos(a), im: cIm + r * Math.sin(a) });
+            }
+            return pts;
+        }
+        case "2-squares": {
+            const half = Math.ceil(n / 2);
+            const s = R * 0.42;
+            const gap = R * 0.08;
+            const leftV = [
+                { re: cRe - gap - 2 * s, im: cIm + s }, { re: cRe - gap, im: cIm + s },
+                { re: cRe - gap, im: cIm - s }, { re: cRe - gap - 2 * s, im: cIm - s }
+            ];
+            const rightV = [
+                { re: cRe + gap, im: cIm + s }, { re: cRe + gap + 2 * s, im: cIm + s },
+                { re: cRe + gap + 2 * s, im: cIm - s }, { re: cRe + gap, im: cIm - s }
+            ];
+            return distributeOnPath(half, leftV, true).concat(distributeOnPath(n - half, rightV, true));
+        }
+        case "ring": {
+            const half = Math.ceil(n / 2);
+            const rest = n - half;
+            const pts = [];
+            for (let i = 0; i < half; i++) {
+                const a = Math.PI / 2 + 2 * Math.PI * i / half;
+                pts.push({ re: cRe + R * Math.cos(a), im: cIm + R * Math.sin(a) });
+            }
+            for (let i = 0; i < rest; i++) {
+                const a = Math.PI / 2 + 2 * Math.PI * i / rest;
+                pts.push({ re: cRe + R * 0.5 * Math.cos(a), im: cIm + R * 0.5 * Math.sin(a) });
+            }
+            return pts;
+        }
+        case "scatter": {
+            const golden = Math.PI * (3 - Math.sqrt(5));
+            const pts = [];
+            for (let i = 0; i < n; i++) {
+                const a = golden * i;
+                const r = R * Math.sqrt((i + 0.5) / n);
+                pts.push({ re: cRe + r * Math.cos(a), im: cIm + r * Math.sin(a) });
+            }
+            return pts;
+        }
+        default: return Array.from({ length: n }, () => ({ re: cRe, im: cIm }));
+    }
+}
+
+const PATTERN_LIST = [
+    { key: "circle", label: "Circle" }, { key: "square", label: "Square" },
+    { key: "triangle", label: "Triangle" }, { key: "pentagon", label: "Pentagon" },
+    { key: "hexagon", label: "Hexagon" }, { key: "diamond", label: "Diamond" },
+    { key: "star", label: "Star" }, { key: "ellipse", label: "Ellipse" },
+    { key: "infinity", label: "Infinity (\u221e)" }, { key: "spiral", label: "Spiral" },
+    { key: "grid", label: "Grid" }, { key: "line", label: "Line" },
+    { key: "wave", label: "Wave" }, { key: "cross", label: "Cross" },
+    { key: "heart", label: "Heart" }, { key: "lissajous", label: "Lissajous" },
+    { key: "rose", label: "Rose" }, { key: "2-circles", label: "2 Circles" },
+    { key: "2-squares", label: "2 Squares" }, { key: "ring", label: "Ring" },
+    { key: "scatter", label: "Scatter" }
+];
+
+function buildPatternTool(pop, snap) {
+    const title = document.createElement("div");
+    title.className = "pop-title"; title.textContent = "Pattern";
+    const valEl = document.createElement("div");
+    valEl.className = "pop-val"; valEl.textContent = "100%";
+
+    const n = snap.items.length;
+    let cRe = 0, cIm = 0;
+    for (const s of snap.items) { cRe += s.re; cIm += s.im; }
+    cRe /= n; cIm /= n;
+
+    let R2 = 0;
+    for (const s of snap.items) {
+        const d2 = (s.re - cRe) ** 2 + (s.im - cIm) ** 2;
+        if (d2 > R2) R2 = d2;
+    }
+    const R = Math.sqrt(R2) || 1;
+
+    let currentPattern = "circle";
+    let targets = patternPositions(currentPattern, n, cRe, cIm, R);
+
+    const sel = document.createElement("select");
+    sel.style.cssText = "width:100%;font-size:10px;margin:4px 0;background:#333;color:#fff;border:1px solid #666;border-radius:3px;padding:2px;";
+    for (const p of PATTERN_LIST) {
+        const opt = document.createElement("option");
+        opt.value = p.key; opt.textContent = p.label;
+        sel.appendChild(opt);
+    }
+    sel.addEventListener("change", () => {
+        currentPattern = sel.value;
+        targets = patternPositions(currentPattern, n, cRe, cIm, R);
+        updateVisual();
+    });
+
+    const slider = document.createElement("div");
+    slider.className = "vslider";
+    const fill = document.createElement("div");
+    fill.className = "vslider-fill";
+    const thumb = document.createElement("div");
+    thumb.className = "vslider-thumb";
+    slider.appendChild(fill); slider.appendChild(thumb);
+
+    let u = 1.0;
+    function updateVisual() {
+        const pct = u * 100;
+        fill.style.height = pct + "%"; thumb.style.bottom = pct + "%";
+        valEl.textContent = Math.round(pct) + "%";
+        let ci = 0;
+        applyPreview(snap, (re, im) => {
+            const t = targets[ci++];
+            return { re: re + u * (t.re - re), im: im + u * (t.im - im) };
+        });
+    }
+    function setFromY(clientY) {
+        const rect = slider.getBoundingClientRect();
+        u = Math.max(0, Math.min(1, 1 - (clientY - rect.top) / rect.height));
+        updateVisual();
+    }
+    let dragging = false;
+    slider.addEventListener("mousedown", e => { dragging = true; setFromY(e.clientY); e.preventDefault(); });
+    opToolMouseMove = e => { if (dragging) setFromY(e.clientY); };
+    opToolMouseUp = () => { dragging = false; };
+    window.addEventListener("mousemove", opToolMouseMove);
+    window.addEventListener("mouseup", opToolMouseUp);
+
+    updateVisual();
+    pop.appendChild(title); pop.appendChild(sel);
+    pop.appendChild(slider); pop.appendChild(valEl);
+}
+
+function buildShapeTool(pop, snap) {
+    const title = document.createElement("div");
+    title.className = "pop-title"; title.textContent = "Shape";
+    const valEl = document.createElement("div");
+    valEl.className = "pop-val"; valEl.textContent = "50%";
+
+    const n = snap.items.length;
+    let cRe = 0, cIm = 0;
+    for (const s of snap.items) { cRe += s.re; cIm += s.im; }
+    cRe /= n; cIm /= n;
+
+    let R2 = 0;
+    for (const s of snap.items) {
+        const d2 = (s.re - cRe) ** 2 + (s.im - cIm) ** 2;
+        if (d2 > R2) R2 = d2;
+    }
+    const R = Math.sqrt(R2);
+
+    let bMinRe = Infinity, bMaxRe = -Infinity, bMinIm = Infinity, bMaxIm = -Infinity;
+    for (const s of snap.items) {
+        if (s.re < bMinRe) bMinRe = s.re;
+        if (s.re > bMaxRe) bMaxRe = s.re;
+        if (s.im < bMinIm) bMinIm = s.im;
+        if (s.im > bMaxIm) bMaxIm = s.im;
+    }
+    const bbox = [bMinRe, bMaxRe, bMinIm, bMaxIm];
+
+    let currentShape = "box";
+    let targets = shapeTargets(currentShape, snap.items, cRe, cIm, R, bbox);
+
+    // Shape selector chips
+    const chipRow = document.createElement("div");
+    chipRow.style.cssText = "display:flex;gap:3px;justify-content:center;margin:4px 0;";
+    const shapes = [
+        { key: "box", label: "Box" }, { key: "tri", label: "Tri" },
+        { key: "inf", label: "\u221e" }, { key: "pent", label: "Pent" }
+    ];
+    const chips = {};
+    for (const sh of shapes) {
+        const chip = document.createElement("button");
+        chip.textContent = sh.label;
+        chip.style.cssText = "font-size:8px;padding:1px 5px;border-radius:4px;border:1px solid #888;color:#fff;cursor:pointer;background:" + (sh.key === currentShape ? "#4af" : "#333");
+        chip.addEventListener("click", () => {
+            currentShape = sh.key;
+            targets = shapeTargets(currentShape, snap.items, cRe, cIm, R, bbox);
+            for (const k in chips) chips[k].style.background = k === currentShape ? "#4af" : "#333";
+            updateVisual();
+        });
+        chips[sh.key] = chip;
+        chipRow.appendChild(chip);
+    }
+
+    const slider = document.createElement("div");
+    slider.className = "vslider";
+    const fill = document.createElement("div");
+    fill.className = "vslider-fill";
+    const thumb = document.createElement("div");
+    thumb.className = "vslider-thumb";
+    slider.appendChild(fill); slider.appendChild(thumb);
+
+    let u = 0.5;
+    function updateVisual() {
+        const pct = u * 100;
+        fill.style.height = pct + "%"; thumb.style.bottom = pct + "%";
+        valEl.textContent = Math.round(pct) + "%";
+        let ci = 0;
+        applyPreview(snap, (re, im) => {
+            const bp = targets[ci++];
+            if (u <= 0.5) {
+                const f = u * 2;
+                return { re: cRe + f * (re - cRe), im: cIm + f * (im - cIm) };
+            } else {
+                const f = (u - 0.5) * 2;
+                return { re: re + f * (bp.re - re), im: im + f * (bp.im - im) };
+            }
+        });
+    }
+    function setFromY(clientY) {
+        const rect = slider.getBoundingClientRect();
+        u = Math.max(0, Math.min(1, 1 - (clientY - rect.top) / rect.height));
+        updateVisual();
+    }
+    let dragging = false;
+    slider.addEventListener("mousedown", e => { dragging = true; setFromY(e.clientY); e.preventDefault(); });
+    opToolMouseMove = e => { if (dragging) setFromY(e.clientY); };
+    opToolMouseUp = () => { dragging = false; };
+    window.addEventListener("mousemove", opToolMouseMove);
+    window.addEventListener("mouseup", opToolMouseUp);
+
+    updateVisual();
+    pop.appendChild(title); pop.appendChild(chipRow);
+    pop.appendChild(slider); pop.appendChild(valEl);
+}
+
 // --- Rotate tool: horizontal slider, -0.5 to 0.5 turns ---
 
 function buildRotateTool(pop, snap) {
@@ -6360,11 +6929,23 @@ function buildAddTool(pop, snap) {
 document.getElementById("scale-tool-btn").addEventListener("click", function() {
     openOpTool(this, buildScaleTool);
 });
+document.getElementById("scale-re-tool-btn").addEventListener("click", function() {
+    openOpTool(this, buildScaleReTool);
+});
+document.getElementById("scale-im-tool-btn").addEventListener("click", function() {
+    openOpTool(this, buildScaleImTool);
+});
 document.getElementById("rotate-tool-btn").addEventListener("click", function() {
     openOpTool(this, buildRotateTool);
 });
 document.getElementById("add-tool-btn").addEventListener("click", function() {
     openOpTool(this, buildAddTool);
+});
+document.getElementById("shape-tool-btn").addEventListener("click", function() {
+    openOpTool(this, buildShapeTool);
+});
+document.getElementById("ptrn-tool-btn").addEventListener("click", function() {
+    openOpTool(this, buildPatternTool);
 });
 
 // Inverse button: reverse coefficient order (reflects roots around unit circle)
@@ -6829,6 +7410,7 @@ function startRecording() {
             bitmapMatchStrategy: bitmapMatchStrategy,
             bitmapProxPalette: bitmapProxPaletteName,
             bitmapIdxProxGamma: bitmapIdxProxGamma,
+            bitmapRatioGamma: bitmapRatioGamma,
             trails: trailsEnabled,
             selectedCoeffs: [...selectedCoeffs],
             selectedRoots: [...selectedRoots],
@@ -7271,7 +7853,10 @@ function buildBitmapCfgPop() {
             bmIdxProxMatchWrap.style.opacity = bitmapColorMode === "idx-prox" ? "1" : "0.3";
             if (bmIdxProxMatchWrap._gammaWrap) bmIdxProxMatchWrap._gammaWrap.style.opacity = bitmapColorMode === "idx-prox" ? "1" : "0.3";
         }
-        if (bmRatioProxWrap) bmRatioProxWrap.style.opacity = bitmapColorMode === "ratio" ? "1" : "0.3";
+        if (bmRatioProxWrap) {
+            bmRatioProxWrap.style.opacity = bitmapColorMode === "ratio" ? "1" : "0.3";
+            if (bmRatioProxWrap._gammaWrap) bmRatioProxWrap._gammaWrap.style.opacity = bitmapColorMode === "ratio" ? "1" : "0.3";
+        }
     }
     bitmapModes.forEach(bm => {
         const row = document.createElement("div");
@@ -7502,6 +8087,29 @@ function buildBitmapCfgPop() {
                 bmRatioProxWrap.appendChild(circle);
             });
             bitmapCfgPop.appendChild(bmRatioProxWrap);
+            // Gamma slider for Min/Max Ratio
+            const rGammaWrap = document.createElement("div");
+            rGammaWrap.style.cssText = "display:flex;align-items:center;gap:6px;padding:0 2px 6px 20px;";
+            rGammaWrap.style.opacity = bitmapColorMode === "ratio" ? "1" : "0.3";
+            const rGammaLabel = document.createElement("span");
+            rGammaLabel.style.cssText = "font-size:9px;color:var(--muted);white-space:nowrap;";
+            rGammaLabel.textContent = "\u03b3";
+            const rGammaSlider = document.createElement("input");
+            rGammaSlider.type = "range"; rGammaSlider.min = "0.1"; rGammaSlider.max = "1.0"; rGammaSlider.step = "0.05";
+            rGammaSlider.value = bitmapRatioGamma;
+            rGammaSlider.style.cssText = "width:90px;height:12px;cursor:pointer;accent-color:var(--accent);";
+            const rGammaVal = document.createElement("span");
+            rGammaVal.style.cssText = "font-size:9px;color:var(--fg);font-family:monospace;min-width:28px;";
+            rGammaVal.textContent = bitmapRatioGamma.toFixed(2);
+            rGammaSlider.addEventListener("input", () => {
+                bitmapRatioGamma = parseFloat(rGammaSlider.value);
+                rGammaVal.textContent = bitmapRatioGamma.toFixed(2);
+            });
+            rGammaWrap.appendChild(rGammaLabel);
+            rGammaWrap.appendChild(rGammaSlider);
+            rGammaWrap.appendChild(rGammaVal);
+            bitmapCfgPop.appendChild(rGammaWrap);
+            bmRatioProxWrap._gammaWrap = rGammaWrap;
         }
     });
 }
@@ -7950,6 +8558,11 @@ function applyLoadedState(meta) {
         bitmapIdxProxGamma = meta.bitmapIdxProxGamma;
     } else {
         bitmapIdxProxGamma = 0.5;
+    }
+    if (meta.bitmapRatioGamma != null && meta.bitmapRatioGamma >= 0.1 && meta.bitmapRatioGamma <= 1.0) {
+        bitmapRatioGamma = meta.bitmapRatioGamma;
+    } else {
+        bitmapRatioGamma = 0.5;
     }
     rootColorBtn.classList.toggle("active", rootColorMode !== "uniform");
 
@@ -9203,7 +9816,7 @@ function paintBitmapFrameFast() {
             const c = PROX_PALETTE[palIdx];
             bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
         } else if (ratioMode && proxDists && maxDists) {
-            const ratio = maxDists[i] > 0 ? proxDists[i] / maxDists[i] : 0;
+            const ratio = maxDists[i] > 0 ? Math.pow(proxDists[i] / maxDists[i], bitmapRatioGamma) : 0;
             const palIdx = Math.min(15, (ratio * 15 + 0.5) | 0);
             const c = PROX_PALETTE[palIdx];
             bitmapCtx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
@@ -9680,7 +10293,7 @@ var S_noColor, S_uniformR, S_uniformG, S_uniformB;
 var S_totalSteps, S_FPS;
 var S_proxColor, S_proxPalR, S_proxPalG, S_proxPalB;
 var S_derivColor, S_derivPalR, S_derivPalG, S_derivPalB, S_selIndices;
-var S_idxProxColor = false, S_idxProxGamma = 0.5, S_ratioColor = false;
+var S_idxProxColor = false, S_idxProxGamma = 0.5, S_ratioColor = false, S_ratioGamma = 0.5;
 var S_morphEnabled = false, S_morphRate = 0, S_morphTargetRe = null, S_morphTargetIm = null;
 var S_matchStrategy = "assign4";
 var S_dCurvesFlat = null, S_dEntries = null, S_dOffsets = null, S_dLengths = null, S_dIsCloud = null;
@@ -9714,6 +10327,7 @@ self.onmessage = function(e) {
         S_idxProxColor = !!d.idxProxColor;
         S_idxProxGamma = d.idxProxGamma || 0.5;
         S_ratioColor = !!d.ratioColor;
+        S_ratioGamma = d.ratioGamma || 0.5;
         S_uniformR = d.uniformR || 255; S_uniformG = d.uniformG || 255; S_uniformB = d.uniformB || 255;
         S_totalSteps = d.totalSteps; S_FPS = d.FAST_PASS_SECONDS;
         // WASM init: try full step loop first, fall back to solver-only, then pure JS
@@ -9809,6 +10423,7 @@ self.onmessage = function(e) {
     var idxProxColor = S_idxProxColor;
     var idxProxGamma = S_idxProxGamma;
     var ratioColor = S_ratioColor;
+    var ratioGamma = S_ratioGamma;
     var proxPalR = S_proxPalR, proxPalG = S_proxPalG, proxPalB = S_proxPalB;
     var derivColor = S_derivColor;
     var derivPalR = S_derivPalR, derivPalG = S_derivPalG, derivPalB = S_derivPalB;
@@ -10030,7 +10645,7 @@ self.onmessage = function(e) {
                 var ix = ((rootsRe[i] / range + 1) * 0.5 * W) | 0;
                 var iy = ((1 - rootsIm[i] / range) * 0.5 * H) | 0;
                 if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
-                var ratio = maxDists[i] > 0 ? minDists[i] / maxDists[i] : 0;
+                var ratio = maxDists[i] > 0 ? Math.pow(minDists[i] / maxDists[i], ratioGamma) : 0;
                 var palIdx = (ratio * 15 + 0.5) | 0;
                 if (palIdx > 15) palIdx = 15;
                 paintIdx[pc] = iy * W + ix;
@@ -10446,6 +11061,7 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         idxProxColor: bitmapColorMode === "idx-prox",
         idxProxGamma: bitmapIdxProxGamma,
         ratioColor: bitmapColorMode === "ratio",
+        ratioGamma: bitmapRatioGamma,
         selectedCoeffIndices: selectedCoeffs.size > 0
             ? [...selectedCoeffs].sort((a, b) => a - b)
             : Array.from({length: nCoeffs}, (_, i) => i),
@@ -10503,6 +11119,7 @@ function initFastModeWorkers() {
             idxProxColor: sd.idxProxColor,
             idxProxGamma: sd.idxProxGamma,
             ratioColor: sd.ratioColor,
+            ratioGamma: sd.ratioGamma,
             selectedCoeffIndices: sd.selectedCoeffIndices,
             totalSteps: sd.stepsVal, FAST_PASS_SECONDS,
             useWasm: solverType === "wasm",

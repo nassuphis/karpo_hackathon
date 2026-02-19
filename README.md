@@ -114,6 +114,7 @@ No server, no WebSocket, no build tools. See [Solver](docs/solver.md) for the ro
 ### Animation & Paths
 
 - [Paths & Curves](docs/paths.md) -- 22 path types, curve representation, cycle sync, jiggle modes, space-filling curves
+- [Coefficient Path Calculation](docs/coefficient-path-calc.pdf) -- exact F-node formula: F = morph(C, D, theta) + jiggle ([source](docs/coefficient-path-calc.tex))
 - [Morph Blending](docs/morph.md) -- dual coefficient sets, 4 C-D interpolation paths, mu oscillation
 - [D-Node Paths](docs/d-node-paths.md) -- morph target animation, fast mode integration
 - [Root Braids](docs/braids.md) -- monodromy, braid topology, trail visualization

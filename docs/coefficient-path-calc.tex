@@ -1,0 +1,459 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+\geometry{margin=2.5cm}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textit{PolyPaint -- Coefficient Path Calculation}}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\titleformat{\section}{\Large\bfseries}{}{0em}{}[\vspace{-0.5em}\rule{\textwidth}{0.4pt}]
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\C}{\mathbb{C}}
+\newcommand{\N}{\mathcal{N}}
+\newcommand{\re}{\mathrm{Re}}
+\newcommand{\im}{\mathrm{Im}}
+\newcommand{\home}{\mathrm{H}}
+
+\title{\vspace{-1cm}\textbf{Coefficient Path Calculation}\\[0.3em]
+\large The F-Node Formula in PolyPaint}
+\author{PolyPaint Technical Documentation}
+\date{}
+
+\begin{document}
+\maketitle
+\thispagestyle{fancy}
+
+\begin{abstract}
+\noindent This document gives the exact formula for the \textbf{final coefficient vector} $\mathbf{F}(t) \in \C^n$ ---
+the complex polynomial coefficients fed to the Ehrlich--Aberth solver at each time step.
+Every root trajectory the application produces is determined entirely by this vector.
+A degree-$d$ polynomial has $n = d+1$ coefficients indexed $i = 0, \ldots, n{-}1$.
+\end{abstract}
+
+%──────────────────────────────────────────────────────────────────────
+\section{Master Formula}
+
+\begin{equation}
+\boxed{\;
+F_i(t) \;=\; M\!\bigl(\,C_i(t),\; D_i(t),\; \theta(t)\bigr) \;+\; J_i(s)\;\cdot\;\mathbf{1}_{[i \in S]}
+\;}
+\label{eq:master}
+\end{equation}
+
+\medskip
+
+\begin{center}
+\begin{tabular}{@{}cl@{}}
+\toprule
+\textbf{Symbol} & \textbf{Meaning} \\
+\midrule
+$F_i(t) \in \C$          & Final coefficient $i$ at time $t$. This is what the solver sees. \\
+$C_i(t) \in \C$          & C-node $i$ position at time $t$, sampled from its precomputed curve. \\
+$D_i(t) \in \C$          & D-node $i$ position at time $t$, sampled from its precomputed curve. \\
+$M(c,d,\theta)$          & Morph interpolation function (identity when morph disabled). \\
+$\theta(t)$              & Morph phase angle $= 2\pi \cdot r_{\mathrm{morph}} \cdot t$. \\
+$J_i(s) \in \C$          & Jiggle offset for coefficient $i$ at jiggle step $s$ (additive). \\
+$s$                       & Jiggle step $= \lfloor t / \Delta t_{\mathrm{jiggle}} \rfloor$. \\
+$S \subseteq \{0,\ldots,n{-}1\}$ & Set of selected coefficient indices (jiggle targets). \\
+$\mathbf{1}_{[i \in S]}$ & Iverson bracket: $1$ if $i \in S$, $0$ otherwise. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\bigskip
+
+The order of operations is:
+\[
+\text{animate } C \;\longrightarrow\;
+\text{animate } D \;\longrightarrow\;
+\text{morph blend} \;\longrightarrow\;
+\text{add jiggle} \;\longrightarrow\;
+\text{solve}
+\]
+Jiggle is never applied to $C$ or $D$ individually---it is applied to the already-blended result.
+When morph is disabled, $M$ is the identity on $C$: $M(c,d,\theta) = c$.
+When jiggle is off, the jiggle term is zero.
+
+
+%──────────────────────────────────────────────────────────────────────
+\section{$C_i(t)$: C-Node Animation}
+
+Each coefficient $i$ has a \textbf{home position} $\home_i = \gamma_i[0] \in \C$ and a precomputed
+closed curve $\gamma_i$ consisting of $N$ sample points in the complex plane.
+The curve is computed once from parameters $(\home_i, \text{pathType}, R, \alpha, \text{extra})$.
+
+\subsection*{Curve Sampling}
+
+Define the \textbf{phase} of coefficient $i$ at time $t$:
+\[
+\varphi_i(t) \;=\; t \cdot v_i \cdot \delta_i
+\qquad\text{where}\quad
+\delta_i = \begin{cases} -1 & \text{if CCW} \\ +1 & \text{if CW} \end{cases}
+\]
+and $v_i$ is the speed parameter. Then the normalized phase:
+\[
+u_i \;=\; \bigl((\varphi_i \bmod 1) + 1\bigr) \bmod 1 \;\in\; [0,1)
+\]
+and the raw index into the curve array:
+\[
+\rho \;=\; u_i \cdot N
+\]
+
+\paragraph{Smooth curves.}
+Linear interpolation between adjacent samples (wrapping at $N$):
+\begin{align}
+\ell &= \lfloor \rho \rfloor \bmod N, \qquad
+h = (\ell + 1) \bmod N, \qquad
+f = \rho - \lfloor \rho \rfloor \\[4pt]
+C_i(t) &= \gamma_i[\ell]\,(1-f) \;+\; \gamma_i[h]\,f
+\end{align}
+
+\paragraph{Cloud curves} (random path, \texttt{\_isCloud} flag):
+no interpolation---snap to the nearest point:
+\[
+C_i(t) = \gamma_i\bigl[\lfloor \rho \rfloor \bmod N\bigr]
+\]
+
+\paragraph{Dither.} If the curve carries a dither parameter $\sigma_{\%} > 0$:
+\[
+C_i(t) \;\leftarrow\; C_i(t) \;+\; \sigma_{\mathrm{abs}}\,\bigl(\N(0,1) + i\,\N(0,1)\bigr),
+\qquad
+\sigma_{\mathrm{abs}} = \frac{\sigma_{\%}}{100}\cdot E
+\]
+where $\N(0,1)$ is a standard Gaussian (Box--Muller) and $E = \texttt{coeffExtent}$
+is the maximum pairwise distance between any two coefficients.
+
+\paragraph{Static case.} When $\text{pathType} = \texttt{"none"}$: $C_i(t) = \home_i$ for all $t$.
+
+\paragraph{Curve resolution.} $N = 200$ for basic paths; $N = 1500$ for space-filling paths
+(Hilbert, Peano, Sierpi\'{n}ski, spiral).
+
+
+%──────────────────────────────────────────────────────────────────────
+\section{$D_i(t)$: D-Node Animation}
+
+D-nodes use the \textbf{identical curve-sampling formula} as C-nodes, with their own independent
+pathType, speed, radius, angle, direction, and precomputed curve.
+
+\paragraph{Follow~C.} When $D_i.\text{pathType} = \texttt{"follow-c"}$:
+\[
+D_i(t) = C_i(t)
+\]
+The D-node copies the already-animated C-node position.
+This is evaluated \emph{after} C-node advancement.
+
+\paragraph{Static case.} When pathType $=$ \texttt{"none"}: $D_i(t)$ stays at the D-node's
+home position (which may differ from $\home_i$ if the user has dragged it).
+
+
+%──────────────────────────────────────────────────────────────────────
+\section{$M(c, d, \theta)$: Morph Interpolation}
+
+When morph is \textbf{disabled}: $M(c,d,\theta) = c$ \,(D-nodes are ignored).
+
+When morph is \textbf{enabled}, the behaviour depends on the \textbf{C--D path type}.
+All paths share a local coordinate frame.
+
+\subsection*{Setup}
+
+Given $c, d \in \C$ (the animated C- and D-node positions):
+\begin{align}
+\boldsymbol{\delta} &= d - c &
+L &= |\boldsymbol{\delta}| \\
+\mathbf{u} &= \boldsymbol{\delta} / L &
+\mathbf{v} &= i\,\mathbf{u} \quad\text{(90\textdegree{} CCW rotation)} \\
+\mathbf{m} &= \tfrac{1}{2}(c + d) &
+a &= L/2 \quad\text{(semi-major)}
+\end{align}
+Let $\sigma = +1$ if CCW, $-1$ if CW. When $L < 10^{-15}$, all paths return $c$.
+
+The morph phase angle:
+\begin{equation}
+\theta(t) = 2\pi \cdot r_{\mathrm{morph}} \cdot t
+\end{equation}
+where $r_{\mathrm{morph}}$ is the morph rate in Hz (default $0.01$, range $[0, 0.1]$).
+
+\subsection*{Line (default)}
+
+\begin{equation}
+\mu = \frac{1 - \cos\theta}{2}
+\qquad\Longrightarrow\qquad
+M(c,d,\theta) = c\,(1-\mu) + d\,\mu
+\end{equation}
+
+Raised-cosine oscillation. $\mu$ sweeps smoothly from 0 (at $c$) to 1 (at $d$) and back.
+Period $= 1/r_{\mathrm{morph}}$ seconds. The path is a straight line segment.
+
+\subsection*{Circle}
+
+The $c$--$d$ segment is the \textbf{diameter} of a circle:
+\begin{equation}
+M = \mathbf{m} \;+\; \bigl(-a\cos\theta\bigr)\,\mathbf{u}
+                \;+\; \bigl(\sigma\, a\sin\theta\bigr)\,\mathbf{v}
+\end{equation}
+
+At $\theta=0$: position $= c$.\; At $\theta=\pi$: position $= d$.\; Full revolution $= 2\pi$.
+
+\subsection*{Ellipse}
+
+Same as circle, with a shorter semi-minor axis $b = p \cdot a$
+where $p \in [0.1, 1.0]$ is the minor-axis percentage:
+\begin{equation}
+M = \mathbf{m} \;+\; \bigl(-a\cos\theta\bigr)\,\mathbf{u}
+                \;+\; \bigl(\sigma\, b\sin\theta\bigr)\,\mathbf{v}
+\end{equation}
+
+When $p = 1$, this reduces to the circle. The major axis lies along $c \to d$.
+
+\subsection*{Figure-8}
+
+A Lissajous $1{:}2$ curve crossing at the midpoint:
+\begin{equation}
+M = \mathbf{m} \;+\; \bigl(-a\cos\theta\bigr)\,\mathbf{u}
+                \;+\; \bigl(\sigma\,\tfrac{a}{2}\,\sin 2\theta\bigr)\,\mathbf{v}
+\end{equation}
+
+At $\theta=0$: at $c$.\; At $\theta=\pi/2$: crosses midpoint.\; At $\theta=\pi$: at $d$.\;
+At $\theta=3\pi/2$: crosses midpoint again. The two lobes are symmetric about $\mathbf{m}$.
+
+\subsection*{Summary Table}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.4}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Path} & \textbf{Local-frame displacement} $(l_x, l_y)$ & \textbf{Period} \\
+\midrule
+Line      & $c + (d{-}c)\,\dfrac{1-\cos\theta}{2}$ & $2\pi$ \\[6pt]
+Circle    & $(-a\cos\theta,\; \sigma\,a\sin\theta)$ & $2\pi$ \\[4pt]
+Ellipse   & $(-a\cos\theta,\; \sigma\,b\sin\theta)$ & $2\pi$ \\[4pt]
+Figure-8  & $\bigl(-a\cos\theta,\; \sigma\,\frac{a}{2}\sin 2\theta\bigr)$ & $2\pi$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Position in global frame: $M = \mathbf{m} + l_x\,\mathbf{u} + l_y\,\mathbf{v}$
+\;(except Line, which is computed directly).
+
+
+%──────────────────────────────────────────────────────────────────────
+\section{$J_i(s)$: Jiggle Offsets}
+
+Jiggle produces per-coefficient \textbf{additive} complex offsets with these properties:
+\begin{itemize}[nosep]
+\item Computed from \textbf{home positions} $\home_i = \gamma_i[0]$, \emph{not} from
+      the current animated position $C_i(t)$.
+\item \textbf{Piecewise-constant} in time: offsets change only at step boundaries,
+      every $\Delta t_{\mathrm{jiggle}}$ seconds.
+\item Applied \textbf{only to selected} coefficients ($i \in S$).
+\item Applied \textbf{after} morph blending.
+\end{itemize}
+
+\[
+s = \bigl\lfloor t \,/\, \Delta t_{\mathrm{jiggle}} \bigr\rfloor,
+\qquad
+J_i(s) = 0 \;\;\text{if}\;\; i \notin S \;\text{or}\; \text{mode} = \texttt{"none"}
+\]
+
+\medskip
+\noindent\textbf{Notation:}\;
+$\home_i$ = home position;\;
+$\mathbf{c} = \frac{1}{|S|}\sum_{i\in S} \home_i$ (centroid of selected homes);\;
+$E = \texttt{coeffExtent}$;\;
+$\sigma = (\texttt{jiggleSigma}/10)\cdot E$;\;
+$R_\alpha$ denotes rotation by angle $\alpha$.
+
+\subsection*{Random}
+\begin{equation}
+J_i(s) = \sigma\,\N_1(0,1) + i\,\sigma\,\N_2(0,1)
+\end{equation}
+Independent Gaussian noise, freshly sampled each step.
+
+\subsection*{Walk}
+\begin{equation}
+J_i(s) = J_i(s{-}1) + \sigma\,\N_1(0,1) + i\,\sigma\,\N_2(0,1),
+\qquad J_i(0) = 0
+\end{equation}
+Cumulative random walk. The \emph{only} jiggle mode with memory.
+
+\subsection*{Rotate}
+\begin{equation}
+\alpha = \frac{2\pi s}{N_{\mathrm{angle}}},
+\qquad
+J_i(s) = R_\alpha\,(\home_i - \mathbf{c}) - (\home_i - \mathbf{c})
+\end{equation}
+Rigid rotation of the selected coefficients about their centroid.
+
+\subsection*{Circle (jiggle)}
+\begin{equation}
+\alpha = \frac{2\pi s}{N_{\mathrm{circle}}},
+\qquad
+J_i(s) = R_\alpha\,\home_i - \home_i
+\end{equation}
+Rotation of each coefficient about the origin.
+
+\subsection*{Scale--Center}
+\begin{equation}
+g = \frac{\texttt{scaleStep}}{100}\cdot E,
+\qquad
+J_i(s) = \frac{\home_i}{|\home_i|}\cdot g \cdot s
+\end{equation}
+Radial growth from the origin. Linear in step number.
+
+\subsection*{Scale--Centroid}
+\begin{equation}
+\mathbf{d}_i = \home_i - \mathbf{c},
+\qquad
+J_i(s) = \frac{\mathbf{d}_i}{|\mathbf{d}_i|}\cdot g \cdot s
+\end{equation}
+
+\subsection*{Spiral--Centroid}
+\begin{equation}
+\alpha = \frac{2\pi s}{N_{\mathrm{angle}}},
+\qquad
+r = 1 + \frac{g\,s}{|\mathbf{d}_i|},
+\qquad
+J_i(s) = r\,R_\alpha\,\mathbf{d}_i - \mathbf{d}_i
+\end{equation}
+Combined rotation and radial scaling from centroid.
+
+\subsection*{Spiral--Center}
+\begin{equation}
+r = 1 + \frac{g\,s}{|\home_i|},
+\qquad
+J_i(s) = r\,R_\alpha\,\home_i - \home_i
+\end{equation}
+
+\subsection*{Breathe}
+\begin{equation}
+\lambda = 1 + \frac{A}{100}\,\sin\!\Bigl(\frac{2\pi s}{P}\Bigr),
+\qquad
+J_i(s) = (\home_i - \mathbf{c})\,(\lambda - 1)
+\end{equation}
+Sinusoidal radial pulsation from centroid.
+$A$ = amplitude parameter, $P$ = period in steps.
+
+\subsection*{Wobble}
+\begin{equation}
+\alpha = \frac{2\pi}{N_{\mathrm{angle}}}\,\sin\!\Bigl(\frac{2\pi s}{P}\Bigr),
+\qquad
+J_i(s) = R_\alpha\,(\home_i - \mathbf{c}) - (\home_i - \mathbf{c})
+\end{equation}
+Sinusoidal angular oscillation about centroid.
+
+\subsection*{Lissajous}
+\begin{equation}
+A_{\mathrm{abs}} = \frac{A}{100}\cdot E,
+\qquad
+J_i(s) = A_{\mathrm{abs}}\,\sin\!\Bigl(\frac{2\pi f_x s}{P} + \frac{\pi}{2}\Bigr)
+       + i\,A_{\mathrm{abs}}\,\sin\!\Bigl(\frac{2\pi f_y s}{P}\Bigr)
+\end{equation}
+Uniform translation of \emph{all} selected coefficients along a Lissajous curve.
+Same offset for every coefficient.
+
+
+%──────────────────────────────────────────────────────────────────────
+\section{Complete Pipeline}
+
+\begin{enumerate}[leftmargin=2em]
+\item \textbf{Animate C-nodes.}\; For each coefficient $i$:
+\[
+C_i(t) = \begin{cases}
+\text{sample } \gamma_i \text{ at phase } \varphi_i(t) & \text{if pathType} \neq \texttt{"none"} \\
+\home_i & \text{otherwise}
+\end{cases}
+\]
+If dither is enabled, add Gaussian noise.
+
+\item \textbf{Animate D-nodes.}\; For each D-node $i$:
+\[
+D_i(t) = \begin{cases}
+C_i(t) & \text{if pathType} = \texttt{"follow-c"} \\
+\text{sample D-curve}_i \text{ at phase } \varphi_i^D(t) & \text{if pathType} \neq \texttt{"none"} \\
+D_{\home,i} & \text{otherwise}
+\end{cases}
+\]
+
+\item \textbf{Morph blend.}\;
+\[
+B_i = \begin{cases}
+M\bigl(C_i(t),\, D_i(t),\, \theta(t)\bigr) & \text{if morph enabled} \\
+C_i(t) & \text{otherwise}
+\end{cases}
+\]
+
+\item \textbf{Jiggle.}\; Compute step $s = \lfloor t / \Delta t_{\mathrm{jiggle}} \rfloor$
+      and offsets $J_i(s)$ for $i \in S$.
+
+\item \textbf{Assemble F.}
+\[
+F_i(t) = B_i + J_i(s) \cdot \mathbf{1}_{[i \in S]}
+\]
+
+\item \textbf{Solve.}\; Feed $\mathbf{F}(t)$ to the Ehrlich--Aberth root finder $\to$ roots.
+\end{enumerate}
+
+
+%──────────────────────────────────────────────────────────────────────
+\section{Key Invariants}
+
+\begin{enumerate}[nosep]
+\item \textbf{Jiggle never mutates $C$ or $D$.}\;
+      It only affects the final blend $F$.
+\item \textbf{Jiggle uses home positions.}\;
+      All jiggle offsets (except walk) are deterministic functions of
+      $(s,\, \home_i,\, \text{params})$, not the current animated position.
+\item \textbf{Morph uses live positions.}\;
+      The morph function receives the already-animated $C_i(t)$ and $D_i(t)$,
+      not home positions.
+\item \textbf{No feedback.}\;
+      $F_i(t)$ depends only on the current state of $C_i(t)$, $D_i(t)$,
+      and jiggle step $s$. It does not depend on $F$ at any previous time
+      (except jiggle walk mode, which accumulates).
+\item \textbf{In-place mutation.}\;
+      The \texttt{coefficients[i].re/im} fields hold the current animated
+      $C_i(t)$ after step~1. \texttt{solveRoots()} copies before modifying.
+\end{enumerate}
+
+
+%──────────────────────────────────────────────────────────────────────
+\section{Worker (Fast Mode) Differences}
+
+The same pipeline runs inside Web Workers with these differences:
+
+\begin{itemize}[nosep]
+\item \textbf{Jiggle is static per pass.}\;
+      The main thread computes $J_i(s)$ once and serializes it as a flat array.
+      Workers apply the same offset for every step within a pass.
+      At jiggle interval boundaries, the main thread recomputes and reinitializes.
+\item \textbf{Non-line morph falls back to JS.}\;
+      When the C--D path type $\neq$ \texttt{"line"} and the WASM step loop would
+      otherwise be used, the code falls back to the JavaScript step loop.
+\item \textbf{Elapsed time per step.}\;
+      $t_{\mathrm{step}} = t_{\mathrm{offset}} + (\text{step}/\text{totalSteps})\cdot \Delta T_{\mathrm{pass}}$
+      where $\Delta T_{\mathrm{pass}}$ is the simulated time per pass.
+\end{itemize}
+
+The mathematical result is identical to the main-thread path.
+
+\end{document}

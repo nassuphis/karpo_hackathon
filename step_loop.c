@@ -120,6 +120,9 @@ extern void js_reportProgress(int step);
 #define CD_MORPH_DITHER_START  4   /* C/start dither sigma (absolute, max(cosθ,0)² envelope) */
 #define CD_MORPH_DITHER_MID    5   /* midpoint dither sigma (absolute, sin²θ envelope) */
 #define CD_MORPH_DITHER_END    6   /* D/end dither sigma (absolute, max(-cosθ,0)² envelope) */
+#define CD_CENTER_X            7   /* bitmap viewport center X */
+#define CD_CENTER_Y            8   /* bitmap viewport center Y */
+/* Total: 9 float64 config values */
 
 /* ================================================================
  * Global state (set by init)
@@ -132,6 +135,7 @@ static int colorMode, matchStrategy, morphEnabled;
 static int nEntries, nDEntries, nFollowC, nSelIndices, hasJiggle;
 static int morphPathType, morphCcw;
 static double bitmapRange, FPS, morphRate, morphEllipseMinor, morphDitherStart, morphDitherMid, morphDitherEnd;
+static double centerX, centerY;
 
 /* Data pointers */
 static double *coeffsRe, *coeffsIm;
@@ -508,6 +512,8 @@ void init(int cfgIntOffset, int cfgDblOffset)
     morphDitherStart = cfgD[CD_MORPH_DITHER_START];
     morphDitherMid = cfgD[CD_MORPH_DITHER_MID];
     morphDitherEnd = cfgD[CD_MORPH_DITHER_END];
+    centerX          = cfgD[CD_CENTER_X];
+    centerY          = cfgD[CD_CENTER_Y];
     morphPathType    = cfgI[CI_MORPH_PATH_TYPE];
     morphCcw         = cfgI[CI_MORPH_CCW];
 
@@ -774,8 +780,8 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                 rootsRe[i] = tmpRe[i]; rootsIm[i] = tmpIm[i];
             }
             for (int i = 0; i < nr; i++) {
-                int ix = (int)((rootsRe[i] / range + 1.0) * 0.5 * W);
-                int iy = (int)((1.0 - rootsIm[i] / range) * 0.5 * H);
+                int ix = (int)(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
+                int iy = (int)((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
                 if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
                 int palIdx = (int)(normSens[i] * 15.0 + 0.5);
                 if (palIdx > 15) palIdx = 15;
@@ -806,8 +812,8 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                 rootsRe[i] = tmpRe[i]; rootsIm[i] = tmpIm[i];
             }
             for (int i = 0; i < nr; i++) {
-                int ix = (int)((rootsRe[i] / range + 1.0) * 0.5 * W);
-                int iy = (int)((1.0 - rootsIm[i] / range) * 0.5 * H);
+                int ix = (int)(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
+                int iy = (int)((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
                 if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
                 double t = 1.0;
                 if (proxRunMax > 0) {
@@ -830,8 +836,8 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
             }
             int ur = cfgI[CI_UNIFORM_R], ug = cfgI[CI_UNIFORM_G], ub = cfgI[CI_UNIFORM_B];
             for (int i = 0; i < nr; i++) {
-                int ix = (int)((rootsRe[i] / range + 1.0) * 0.5 * W);
-                int iy = (int)((1.0 - rootsIm[i] / range) * 0.5 * H);
+                int ix = (int)(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
+                int iy = (int)((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
                 if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
                 paintIdx[pc] = iy * W + ix;
                 paintR[pc] = (unsigned char)ur;
@@ -855,8 +861,8 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                 rootsRe[i] = tmpRe[i]; rootsIm[i] = tmpIm[i];
             }
             for (int i = 0; i < nr; i++) {
-                int ix = (int)((rootsRe[i] / range + 1.0) * 0.5 * W);
-                int iy = (int)((1.0 - rootsIm[i] / range) * 0.5 * H);
+                int ix = (int)(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
+                int iy = (int)((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
                 if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
                 paintIdx[pc] = iy * W + ix;
                 paintR[pc] = colorsR[i];

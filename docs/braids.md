@@ -12,13 +12,13 @@ The trail patterns are visual braids. Root identity is preserved across frames b
 
 ### Trail rendering
 
-Root trails are stored in `trailData[]` (line ~1007), an array of arrays where `trailData[i]` holds `{re, im}` points for root *i*. A parallel `finalTrailData[]` stores coefficient trails (blended C/D positions) for the Final tab. Both are capped at `MAX_TRAIL_POINTS = 4000` entries per root (line ~1009).
+Root trails are stored in `trailData[]` (line ~1003), an array of arrays where `trailData[i]` holds `{re, im}` points for root *i*. A parallel `finalTrailData[]` stores coefficient trails (blended C/D positions) for the Final tab. Both are capped at `MAX_TRAIL_POINTS = 4000` entries per root (line ~1005).
 
 Trails are rendered three ways depending on which panel is active:
 
-- **Roots SVG panel** (animation tab): `renderTrails()` (line ~4946) builds SVG `<path>` elements with `M`/`L` segments, colored per root via `rootColor()`.
-- **Final SVG panel**: `renderFinalTrails()` (line ~4744) renders coefficient trails on the Final tab's SVG.
-- **Bitmap canvas panel**: `drawRootsToCtx()` (line ~7180) renders trails as canvas strokes.
+- **Roots SVG panel** (animation tab): `renderTrails()` (line ~5054) builds SVG `<path>` elements with `M`/`L` segments, colored per root via `rootColor()`.
+- **Final SVG panel**: `renderFinalTrails()` (line ~4847) renders coefficient trails on the Final tab's SVG.
+- **Bitmap canvas panel**: `drawRootsToCtx()` (line ~7282) renders trails as canvas strokes.
 
 All three renderers use the same jump-detection logic: if the distance between consecutive trail points exceeds 30% of the visible range, a path break (`M` move) is inserted instead of a connecting line (`L`).
 
@@ -28,24 +28,24 @@ The Trails button in the roots toolbar header toggles trail recording on and off
 
 ### Main-thread animation path
 
-`matchRootOrder()` (line ~5290) is a greedy nearest-neighbor O(n^2) matcher. It reorders each new set of solver roots so that root *i* in the new frame is the one closest to root *i* in the previous frame. This is called:
+`matchRootOrder()` (line ~5398) is a greedy nearest-neighbor O(n^2) matcher. It reorders each new set of solver roots so that root *i* in the new frame is the one closest to root *i* in the previous frame. This is called:
 
-- In `solveRoots()` (line ~5329): every interactive solve (dragging, manual updates).
-- In the main-thread fast-mode stepping loop (line ~11588): called for every bitmap color mode except Uniform, which does not need identity tracking.
+- In `solveRoots()` (line ~5416): every interactive solve (dragging, manual updates).
+- In the main-thread fast-mode stepping loop (line ~11738): called for every bitmap color mode except Uniform, which does not need identity tracking.
 
 ### Worker fast-mode path
 
-Workers use typed-array versions of the matching functions. The strategy is configurable via `bitmapMatchStrategy` (line ~1018) for modes that need root identity:
+Workers use typed-array versions of the matching functions. The strategy is configurable via `bitmapMatchStrategy` (line ~1014) for modes that need root identity:
 
-- **Hungarian** (`hungarian1`): Kuhn-Munkres O(n^3) optimal assignment via `hungarianMatch()` (line ~9990), run every step. Most accurate but slowest.
-- **Greedy x1** (`assign1`): Greedy nearest-neighbor via `matchRoots()` (line ~9974), run every step.
+- **Hungarian** (`hungarian1`): Kuhn-Munkres O(n^3) optimal assignment via `hungarianMatch()` (line ~10115), run every step. Most accurate but slowest.
+- **Greedy x1** (`assign1`): Greedy nearest-neighbor via `matchRoots()` (line ~10099), run every step.
 - **Greedy x4** (`assign4`): Greedy nearest-neighbor every 4th step. Default — balances accuracy and speed since O(n^2) matching is expensive at high frame rates.
 
-The match strategy is stored persistently in worker state as `S_matchStrategy` (line ~10363) and is serialized via `matchStrategy` in the worker init data.
+The match strategy is stored persistently in worker state as `S_matchStrategy` (line ~10459) and is serialized via `matchStrategy` in the worker init data.
 
 ### Which bitmap color modes use matching
 
-There are six bitmap color modes (`bitmapColorMode`, line ~1016):
+There are six bitmap color modes (`bitmapColorMode`, line ~1012):
 
 | Mode | Key | Root matching | Notes |
 |------|-----|--------------|-------|
@@ -60,22 +60,22 @@ There are six bitmap color modes (`bitmapColorMode`, line ~1016):
 
 Match strategy chips (small labeled buttons: "Hungarian", "Greedy x1", "Greedy x4") appear in the bitmap config popup under two modes:
 
-- **Index Rainbow**: chips at line ~7977, nested under the rainbow row.
-- **Idx x Prox**: chips at line ~8056, nested under the idx-prox row.
+- **Index Rainbow**: chips at line ~8101, nested under the rainbow row.
+- **Idx x Prox**: chips at line ~8180, nested under the idx-prox row.
 
 Clicking a chip sets `bitmapMatchStrategy` and, if the current mode is different, switches to the corresponding color mode.
 
 ## Implementation details
 
-### `matchRootOrder(newRoots, oldRoots)` — line ~5290
+### `matchRootOrder(newRoots, oldRoots)` — line ~5398
 
 Main-thread greedy matcher operating on `{re, im}` object arrays. For each old root *i*, finds the closest unused new root *j* by squared Euclidean distance. Returns a reordered array.
 
-### `matchRoots(newRe, newIm, oldRe, oldIm, n)` — line ~9974
+### `matchRoots(newRe, newIm, oldRe, oldIm, n)` — line ~10099
 
 Worker blob greedy matcher operating on parallel `Float64Array` typed arrays. Same algorithm as `matchRootOrder` but avoids object allocation. Modifies `newRe`/`newIm` in place.
 
-### `hungarianMatch(newRe, newIm, oldRe, oldIm, n)` — line ~9990
+### `hungarianMatch(newRe, newIm, oldRe, oldIm, n)` — line ~10115
 
 Worker blob Kuhn-Munkres O(n^3) optimal assignment. Builds an n x n squared-distance cost matrix, applies the Hungarian algorithm with 1-indexed potentials, and reorders `newRe`/`newIm` in place. Produces the globally optimal assignment rather than the locally greedy one.
 

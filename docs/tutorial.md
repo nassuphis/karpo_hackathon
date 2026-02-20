@@ -225,22 +225,25 @@ Each mode has its own parameters. Common parameters include **sigma** (perturbat
 
 ## 12. Morph System (D-Nodes)
 
-The morph system lets you blend between two sets of coefficients. The **D-Nodes** tab on the left panel defines morph-target coefficients, mirroring the C-Nodes layout.
+The morph system lets you blend between two sets of coefficients. The **D-Nodes** tab on the left panel defines morph-target coefficients, mirroring the C-Nodes layout. Morphing **auto-activates** whenever D-nodes exist -- there is no separate checkbox to enable it.
 
 ### Setup
 
 1. Click **D-Nodes** to see the morph target canvas
-2. Click **Copy C->D** to copy current C-coefficients to D-nodes
+2. Click **Copy C->D** to copy current C-coefficients to D-nodes -- this creates D-nodes and immediately activates morphing
 3. Modify the D-node positions by dragging, or assign different animation paths
-4. Switch to the **Final** tab to see the blended result
+4. Switch to the **Final** tab to see the blended result -- the **mu** value displayed there shows the current blend factor (0 = pure C, 1 = pure D)
 
-### Enable Morphing
+### Configure the C-D Morph Path
 
-On the **Final** tab:
+The D-Nodes toolbar has three buttons: **Copy C->D**, **Swap C<->D**, and **C-D Path**. Click the **C-D Path** button to open a popup that controls how the blend factor oscillates between the C and D coefficient sets:
 
-1. Check the **Morph** checkbox to enable blending
-2. Adjust the **Rate** slider (0.01-2.00 Hz) to control oscillation speed
-3. The **mu** value shows the current blend factor (0 = pure C, 1 = pure D)
+- **Path type**: Line (simple back-and-forth), Circle, Ellipse, or Figure-8. Non-line types add a CW/CCW direction toggle.
+- **Rate**: Controls oscillation speed (0.0000-0.0100 Hz).
+- **Minor** (ellipse only): Minor axis as a percentage of the major axis (10-100%).
+- **Dither** (Start/Mid/End sigma): Adds small random perturbations at the start, midpoint, and endpoint of the morph path, which helps fill sparse areas in bitmap renders.
+
+Click **Accept** to confirm changes, or press Escape / click outside to revert.
 
 D-nodes support all the same path types as C-nodes, plus a **Follow C** path type that mirrors the corresponding C-node's position. This makes it easy to set up morph targets that track the main coefficients with offsets.
 
@@ -274,7 +277,7 @@ Click the **color** button (palette icon) on the roots toolbar to open the root 
 
 - **Higher degree = richer patterns.** Click the degree number in the header bar to open a slider (range 2-30). Try degree 10-15 with the Spiral pattern and prime speeds for elaborate braids.
 - **Mix path types.** Not every coefficient needs a circle -- try setting some to Lissajous, Figure-8, or Hilbert for more complex dynamics. Dithered variants add subtle randomness along the curve.
-- **Use D-nodes for morphing.** The D-Nodes tab defines morph-target coefficients. D-nodes support a **Follow C** path type that mirrors the corresponding C-node's position, making it easy to set up morph targets that track the main coefficients.
+- **Use D-nodes for morphing.** The D-Nodes tab defines morph-target coefficients. Morphing auto-activates as soon as D-nodes exist (no checkbox needed). Use the **C-D Path** button to choose a morph path (line, circle, ellipse, figure-8) and set the rate. D-nodes support a **Follow C** path type that mirrors the corresponding C-node's position, making it easy to set up morph targets that track the main coefficients.
 - **Use the scrub slider** (in the header bar, left of the Play button) to advance the animation forward when paused. The scrub adds seconds to the current elapsed time.
 - **PNG is usually smallest** for bitmap exports of sparse root trajectories (a 15K render can be 4.5 MB as PNG vs 35 MB as JPEG).
 - **Save your state** (floppy disk icon in the header) before experimenting -- the JSON snapshot lets you return to any setup instantly. Load it back with the folder icon next to it.

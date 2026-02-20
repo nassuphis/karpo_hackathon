@@ -437,7 +437,7 @@ A **jiggle boundary** occurs every `jiggleInterval` virtual seconds (default 4 s
 
 Workers use a 2-tier execution strategy:
 
-1. **WASM step loop**: entire per-step pipeline compiled to WASM (~15 KB). Supports all morph C-D path types (line, circle, ellipse, figure-8) natively.
+1. **WASM step loop**: entire per-step pipeline compiled to WASM (~16.5 KB). Supports all morph C-D path types (line, circle, ellipse, figure-8) natively.
 2. **Pure JS**: fallback when WASM is unavailable.
 
 Worker solver parameters differ from the main thread:

@@ -1,6 +1,6 @@
 # WASM Acceleration for Fast Mode Workers
 
-> **Status: INTEGRATED (v26+)**. One WASM module is embedded in `index.html`: the full step-loop module (`WASM_STEP_LOOP_B64`, ~15 KB). Users switch between JS and WASM via the **cfg** button in the bitmap toolbar. When WASM is selected, the step-loop module is tried; if it fails, pure JS runs. The selection persists in save/load snapshots. The legacy solver-only module (`WASM_SOLVER_B64`, `solver.c` -> `solver.wasm`, ~2 KB) has been removed.
+> **Status: INTEGRATED (v26+, updated v40)**. One WASM module is embedded in `index.html`: the full step-loop module (`WASM_STEP_LOOP_B64`, ~16.5 KB). Users switch between JS and WASM via the **cfg** button in the bitmap toolbar. When WASM is selected, the step-loop module is tried; if it fails, pure JS runs. The selection persists in save/load snapshots.
 
 ## Context
 
@@ -8,7 +8,7 @@ The fast mode bottleneck is the Ehrlich-Aberth solver running in Web Workers (~3
 
 The full step-loop WASM (`step_loop.c`) moves the **entire per-pass computation** into compiled code, eliminating all JS overhead during the hot loop. JS only copies roots in before `runStepLoop()` and reads sparse pixel output + final roots after.
 
-**Constraint**: Everything must stay in a single `index.html` file. The `.wasm` binaries get base64-encoded and embedded as JS string constants.
+**Constraint**: Everything must stay in a single `index.html` file. The `.wasm` binary gets base64-encoded and embedded as a JS string constant.
 
 ## What to Install
 
@@ -27,22 +27,22 @@ That's it. Homebrew LLVM (`/opt/homebrew/opt/llvm/bin/clang`) is already install
 | wasm-ld (lld) | Installed at `/opt/homebrew/bin/wasm-ld` |
 | Node.js v23 | Installed -- used for base64 encoding |
 | Emscripten | Not installed (fallback option) |
-| Rust | Not installed (fallback option) |
-| WABT | Not installed (fallback option) |
 
 ## Architecture
 
 ### Two-tier execution design
 
-**Tier 1 -- WASM step loop (`step_loop.c` -> `step_loop.wasm`, ~15 KB)**: The entire worker pass runs in WASM. The C code contains the EA solver, curve interpolation (C-curves and D-curves), root matching (greedy and Hungarian), morph blending, jiggle offsets, all four color modes (uniform, index-rainbow, proximity, derivative), derivative sensitivity, and sparse pixel output. JS only copies roots in before `runStepLoop()` and reads sparse pixel output + final roots after. No JS-WASM boundary crossing during the step loop. This is the preferred path when WASM is enabled.
+**Tier 1 -- WASM step loop (`step_loop.c` -> `step_loop.wasm`, ~16.5 KB)**: The entire worker pass runs in WASM. The C code contains the EA solver, curve interpolation (C-curves and D-curves), root matching (greedy and Hungarian), morph blending (line, circle, ellipse, figure-8 paths), C-D path dither with 3-envelope partition-of-unity, per-curve dither (Gaussian or uniform via `rngDither(dist)`), jiggle offsets, all four color modes (uniform, index-rainbow, proximity, derivative), derivative sensitivity, and sparse pixel output. JS only copies roots in before `runStepLoop()` and reads sparse pixel output + final roots after. No JS-WASM boundary crossing during the step loop. This is the preferred path when WASM is enabled.
 
 **Tier 2 -- Pure JS**: If the WASM module fails, the worker runs the pure JS step loop (identical algorithm, no WASM).
 
 **Scope**: Only workers get WASM. The main thread solver stays in JS (called once per frame for interactive mode -- marshalling overhead not worth it).
 
-**Unsupported modes**: The WASM step loop does not implement `idxProxColor` or `ratioColor` bitmap color modes. If either is active, the worker forces a fallback to the JS step loop even when WASM is available (~line 10410).
+**Unsupported modes**: The WASM step loop does not implement `idxProxColor` or `ratioColor` bitmap color modes. If either is active, the worker forces a fallback to the JS step loop even when WASM is available (~line 10525).
 
-### Two-tier initialization cascade (worker `init` handler, ~line 10398)
+Previously (v26-v38), there was a 3-tier design with an intermediate "WASM solver + JS loop" tier. This was removed because the full step loop handles everything the solver-only tier did, and the intermediate tier added complexity for minimal benefit.
+
+### Two-tier initialization cascade (worker `init` handler, ~line 10519)
 
 ```
 if (useWasm) {
@@ -69,7 +69,7 @@ The WASM step loop (`step_loop.wasm`) uses **imported memory** (`-Wl,--import-me
 7. Copy all config, coefficients, colors, curves, palettes, etc. into WASM memory at computed offsets
 8. Call `wasmLoopExports.init(cfgIntOffset, cfgDblOffset)` -- C code reads config and sets up all internal pointers
 
-### Step-loop `run` flow (~line 10432)
+### Step-loop `run` flow (~line 10560)
 
 ```
 Worker run handler:
@@ -83,59 +83,28 @@ Worker run handler:
     JS step loop (pure JS)
 ```
 
-If `runStepLoop()` throws, the worker sets `S_useWasmLoop = false` and posts an error (~line 10449). Subsequent passes fall back to the JS step loop.
+If `runStepLoop()` throws, the worker sets `S_useWasmLoop = false` and posts an error (~line 10573). Subsequent passes fall back to the JS step loop.
 
 ## Files
 
 ### `solver.c` (project root) -- historical reference, no longer embedded
 
-Pure C solver, no stdlib dependencies. 166 lines. The solver-only WASM module (`solver.wasm`, ~2 KB) has been removed from `index.html`. The `solver.c` file remains in the repo for reference but is no longer compiled or embedded.
-
-```c
-#define MAX_ITER 64
-#define TOL2 1e-16
-
-// Exported to WASM -- called from worker JS
-__attribute__((export_name("solveEA")))
-void solveEA(double *cRe, double *cIm, int nCoeffs,
-             double *warmRe, double *warmIm, int nRoots,
-             int trackIter, unsigned char *iterCounts) {
-    // Strip leading zeros, degree-1 direct solve
-    // Copy stripped coefficients to stack arrays: cr[256], ci[256]
-    // Copy warm-start roots to local arrays: rRe[255], rIm[255]
-
-    // Convergence tracking (only when trackIter != 0):
-    //   conv[255] array tracks per-root convergence
-    //   iterCounts[i] gets the iteration where root i converged
-
-    // Main iteration loop (identical algorithm to JS)
-    for (int iter = 0; iter < MAX_ITER; iter++) {
-        double maxCorr2 = 0;
-        for (int i = 0; i < degree; i++) {
-            // Horner: p(z) and p'(z)
-            // Newton: w = p/p'
-            // Aberth: S = sum 1/(z_i - z_j)
-            // Correction: z -= w/(1 - w*S)
-        }
-        if (maxCorr2 < TOL2) break;
-    }
-
-    // Write back to warmRe/warmIm (only finite values)
-    // NaN check via x == x (IEEE 754): skip NaN roots, leave warm-start unchanged
-}
-```
-
-Key: no `math.h`, no `malloc`, no libc. Pure `+`, `-`, `*`, `/` on `double`. The `trackIter`/`iterCounts` parameters remain in the ABI for forward compatibility but are called with `0, 0` from JS (iteration count mode was removed from the UI). NaN check is in the C code (`x == x`); NaN rescue (cos/sin for unit-circle seeding) happens in the JS `solveEA_wasm()` wrapper during the copy-back step.
+Pure C solver, 166 lines. The solver-only WASM module (`solver.wasm`, ~2 KB) was removed from `index.html` in v39. The `solver.c` file remains in the repo for reference but is no longer compiled or embedded. Its algorithm lives on identically inside `step_loop.c`.
 
 ### `step_loop.c` (project root)
 
-Full worker step loop in C. 816 lines. Contains:
+Full worker step loop in C. 879 lines. Contains:
 
-- **EA solver** (ported from `solver.c`, same algorithm, no `trackIter`/`iterCounts`)
+- **EA solver** (same algorithm as JS, no `trackIter`/`iterCounts`)
 - **Curve interpolation** for both C-curves and D-curves (cloud and smooth modes)
-- **Dither** via xorshift128 PRNG + Box-Muller Gaussian (using `__builtin_sqrt` + imported `js_log`/`js_cos`)
+- **Dither** via xorshift128 PRNG with `rngDither(dist)` function supporting both Gaussian (Box-Muller via `__builtin_sqrt` + imported `js_log`/`js_cos`) and uniform distributions
 - **Follow-C** D-nodes that mirror C-node positions
-- **Morph blend** using cosine interpolation (`0.5 - 0.5 * cos(2*PI*morphRate*elapsed)`)
+- **Morph blend** with 4 path types:
+  - **Line** (type 0): cosine interpolation (`0.5 - 0.5 * cos(theta)`)
+  - **Circle** (type 1): parametric arc through midpoint, radius = half C-D distance
+  - **Ellipse** (type 2): like circle but with configurable minor axis fraction (`morphEllipseMinor`)
+  - **Figure-8** (type 3): lemniscate using `sin(2*theta)`
+- **C-D path dither**: 3 separate envelopes (start/mid/end) with partition-of-unity property: `startEnv = max(cos(theta),0)^2`, `midEnv = sin^2(theta)`, `endEnv = max(-cos(theta),0)^2`
 - **Jiggle offsets** applied post-interpolation
 - **Root matching**: greedy O(n^2) and Hungarian O(n^3) (capped at `HUNGARIAN_MAX=32` for stack safety -- 32x32x8 = 8 KB on stack)
 - **Derivative sensitivity** via `computeSens()` + `rankNorm()` with insertion sort
@@ -170,8 +139,8 @@ Uses imported memory (`-Wl,--import-memory`) rather than exported memory, so JS 
 
 The C code reads configuration from two flat arrays placed in WASM memory at offsets passed to `init()`:
 
-- **65 int32 values** (`cfgI[0..64]`): nCoeffs, nRoots, canvasW/H, totalSteps, colorMode, matchStrategy, morphEnabled, nEntries, nDEntries, nFollowC, nSelIndices, hasJiggle, uniformR/G/B, rngSeed[4], and 45 data section byte offsets (CI_OFF_COEFFS_RE through CI_OFF_PAINT_B)
-- **3 float64 values** (`cfgD[0..2]`): range, FPS, morphRate
+- **69 int32 values** (`cfgI[0..68]`): nCoeffs, nRoots, canvasW/H, totalSteps, colorMode, matchStrategy, morphEnabled, nEntries, nDEntries, nFollowC, nSelIndices, hasJiggle, uniformR/G/B, rngSeed[4], 45 data section byte offsets (CI_OFF_COEFFS_RE through CI_OFF_PAINT_B), morphPathType (0=line, 1=circle, 2=ellipse, 3=figure-8), morphCcw, and 2 per-entry dither distribution offsets (entryDitherDist, dEntryDitherDist)
+- **7 float64 values** (`cfgD[0..6]`): range, FPS, morphRate, morphEllipseMinor, morphDitherStart, morphDitherMid, morphDitherEnd
 
 The C code reads these via `cfgI[CI_*]` and `cfgD[CD_*]` index macros. Data pointers are reconstructed from the int32 byte offsets using `PTR(type, idx)` macro.
 
@@ -181,10 +150,10 @@ For each step in `[stepStart, stepEnd)`:
 
 1. **Reset coefficients** to base values (when jiggle is active)
 2. **Interpolate C-curves**: advance each animated coefficient along its curve (cloud = nearest-point, smooth = linear interpolation between adjacent points)
-3. **Apply dither**: Gaussian noise scaled by `ditherSigma` per C-curve entry
-4. **Interpolate D-curves**: same as C-curves but into morph work arrays
+3. **Apply dither**: noise scaled by `ditherSigma` per C-curve entry, distribution per `rngDither(dist)` (Gaussian or uniform)
+4. **Interpolate D-curves**: same as C-curves but into morph work arrays (with per-entry dither distribution)
 5. **Follow-C**: copy C-node positions to D-nodes flagged as follow-C
-6. **Morph blend**: cosine interpolation between C and D coefficients
+6. **Morph blend**: path-dependent interpolation between C and D coefficients (line/circle/ellipse/figure-8), plus 3-envelope C-D path dither
 7. **Apply jiggle offsets**: add pre-computed offsets to all coefficients
 8. **Solve** (EA): copy old roots as warm start, run solver, NaN rescue (unit-circle seeding)
 9. **Color-mode processing + pixel output**: match roots (mode-dependent), compute colors, emit sparse pixels
@@ -225,12 +194,12 @@ Key compiler flags:
 
 ### Modified: `index.html`
 
-**Base64 constant** (~line 1135):
+**Base64 constant** (~line 1170):
 ```javascript
-const WASM_STEP_LOOP_B64 = "AGFzbQ...";  // ~20KB base64 string (~15KB .wasm)
+const WASM_STEP_LOOP_B64 = "AGFzbQ...";  // ~22KB base64 string (~16.5KB .wasm)
 ```
 
-**Worker blob -- WASM step loop support** (~line 10131):
+**Worker blob -- WASM step loop support** (~line 10213):
 ```javascript
 // --- WASM step loop support ---
 var S_useWasmLoop = false;
@@ -247,11 +216,11 @@ function computeWasmLayout(nc, nr, maxP, nE, nDE, nFC, nSI, tCP, tDP, heapBase) 
 function initWasmStepLoop(d) { ... }
 ```
 
-**Worker `init` handler** (~line 10371): Two-tier cascade -- try step loop WASM, fall back to pure JS. Also forces JS step loop for unsupported color modes (idxProxColor, ratioColor).
+**Worker `init` handler** (~line 10519): Two-tier cascade -- try step loop WASM, fall back to pure JS. Also forces JS step loop for unsupported color modes (idxProxColor, ratioColor).
 
-**Worker `run` handler** (~line 10430): If `S_useWasmLoop`, runs the WASM fast path (~line 10432: copy roots in, call `runStepLoop()`, read pixels out). Otherwise falls back to pure JS step loop (~line 10472).
+**Worker `run` handler** (~line 10560): If `S_useWasmLoop`, runs the WASM fast path (copy roots in, call `runStepLoop()`, read pixels out). Otherwise falls back to pure JS step loop.
 
-**Main thread** sends the base64 string to workers (~line 11190):
+**Main thread** sends the base64 string to workers (~line 11344):
 ```javascript
 useWasm: solverType === "wasm",
 wasmStepLoopB64: solverType === "wasm" ? WASM_STEP_LOOP_B64 : null,
@@ -272,9 +241,11 @@ wasmStepLoopB64: solverType === "wasm" ? WASM_STEP_LOOP_B64 : null,
         |                         |  <-- All sections below computed by
         |                         |      computeWasmLayout(), 8-byte aligned
         +-------------------------+
-        | Config int32[65]        |  nCoeffs, nRoots, canvasW/H, colorMode,
-        |                         |  matchStrategy, 45 data section byte offsets...
-        | Config float64[3]       |  range, FPS, morphRate
+        | Config int32[69]        |  nCoeffs, nRoots, canvasW/H, colorMode,
+        |                         |  matchStrategy, morphPathType, morphCcw,
+        |                         |  ditherDist offsets, 45 data section offsets...
+        | Config float64[7]       |  range, FPS, morphRate, morphEllipseMinor,
+        |                         |  morphDitherStart, morphDitherMid, morphDitherEnd
         +-------------------------+
         | coeffsRe[nc]            |  Base coefficient values (restored each step)
         | coeffsIm[nc]            |
@@ -291,13 +262,14 @@ wasmStepLoopB64: solverType === "wasm" ? WASM_STEP_LOOP_B64 : null,
         |   entrySpeed[nE]        |  Speed multipliers (float64)
         |   entryCcw[nE]          |  Direction flags (int32)
         |   entryDither[nE]       |  Dither sigma values (float64)
+        |   entryDitherDist[nE]   |  Dither distribution (int32: 0=normal, 1=uniform)
         |   curveOffsets[nE]      |  Offset into curvesFlat (in points)
         |   curveLengths[nE]      |  Number of points per curve
         |   curveIsCloud[nE]      |  Cloud vs smooth flag
         +-------------------------+
         | D-curve entries:        |  (same layout as C-curves)
         |   dEntryIdx[nDE]        |
-        |   ... (7 arrays)        |
+        |   ... (8 arrays)        |
         +-------------------------+
         | curvesFlat[tCP*2]       |  All C-curve points, interleaved re/im
         | dCurvesFlat[tDP*2]      |  All D-curve points, interleaved re/im
@@ -348,14 +320,14 @@ Then passes `heapBase` to `computeWasmLayout()` which uses it as the starting of
 ```
 1. Edit step_loop.c
 2. Run ./build-wasm.sh
-3. Copy contents of step_loop.wasm.b64 -> paste into WASM_STEP_LOOP_B64 in index.html (~line 1135)
+3. Copy contents of step_loop.wasm.b64 -> paste into WASM_STEP_LOOP_B64 in index.html (~line 1170)
 4. Test in browser
 ```
 
 This is a manual step (not automated), but only needed when the step-loop algorithm changes (rare). The `.c` and `.wasm` files live in the repo alongside `index.html`.
 
 Current binary size:
-- `step_loop.wasm`: 15,242 bytes (20,324 chars base64)
+- `step_loop.wasm`: 16,580 bytes (22,108 chars base64)
 
 ## Verification
 
@@ -364,12 +336,13 @@ Current binary size:
 3. Compare timing popup: worker time should be ~1.5-2x faster
 4. Test with degree 5 (simple) and degree 50+ (stress test)
 5. Test all four color modes: uniform, index-rainbow, proximity, derivative
-6. Test morph blending and D-curve animation under WASM
-7. Test jiggle offsets under WASM
-8. Verify NaN rescue works: load a config that produces NaN roots
-9. Compare bitmap output pixel-for-pixel between JS and WASM versions (should be identical or near-identical due to floating point)
-10. Verify fallback: if step-loop WASM fails, JS runs
-11. Verify idxProxColor and ratioColor modes fall back to JS step loop gracefully
+6. Test morph blending with all 4 path types (line, circle, ellipse, figure-8) under WASM
+7. Test C-D path dither (start/mid/end envelopes) under WASM
+8. Test jiggle offsets under WASM
+9. Verify NaN rescue works: load a config that produces NaN roots
+10. Compare bitmap output pixel-for-pixel between JS and WASM versions (should be identical or near-identical due to floating point)
+11. Verify fallback: if step-loop WASM fails, JS runs
+12. Verify idxProxColor and ratioColor modes fall back to JS step loop gracefully
 
 ## Fallback
 

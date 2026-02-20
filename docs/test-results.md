@@ -1,6 +1,6 @@
 # Test Results
 
-**777 tests total: 776 passed, 1 skipped** | Runtime: ~12m | Headless Chromium on Apple Silicon
+**775 tests total: 774 passed, 1 skipped** | Runtime: ~12m | Headless Chromium on Apple Silicon
 
 Run with: `python -m pytest tests/ -v`
 
@@ -155,18 +155,17 @@ Tests `buildStateMetadata()` → `applyLoadedState()` for serialization fidelity
 
 ---
 
-## test_morph.py — Coefficient Morphing (15 tests)
+## test_morph.py — Coefficient Morphing (13 tests)
 
-Tests `initMorphTarget()`, blending formula, enable/disable state, save/load, degree sync, and fast mode serialization.
+Tests `initMorphTarget()`, blending formula, save/load, degree sync, and fast mode serialization. Morph is always enabled (no enable/disable toggle).
 
 | Test Group | Count | What it checks |
 |------------|-------|----------------|
 | `TestMorphInit` | 3 | Target created on init, positions copied C→D, curves are 1-point |
 | `TestMorphBlending` | 4 | mu=0 (no blend), mu=1 (full morph), mu=0.5 (midpoint), sinusoidal range [0,1] |
-| `TestMorphDisabled` | 2 | Disabled → mu stays 0, enabling sets mu=0.5 |
-| `TestMorphSaveLoad` | 3 | Full roundtrip, missing morph fallback, disabled forces mu=0 |
+| `TestMorphSaveLoad` | 3 | Full roundtrip, missing morph fallback, load preserves mu |
 | `TestMorphDegreeSync` | 1 | Degree change reinitializes D |
-| `TestMorphFastMode` | 2 | Serialize includes morph when enabled, omits when disabled |
+| `TestMorphFastMode` | 2 | Serialize includes morph when enabled, serialize always includes morph (morph always enabled) |
 
 ---
 
@@ -484,7 +483,7 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | Statistics | test_stats.py | 16 | Min/max/mean distance, percentiles |
 | Utilities | test_utils.py | 29 | Formatting, path catalog, prime speeds, audio helpers, ranges |
 | Save/load | test_state.py | 8 | Roundtrip serialization, partial state |
-| Morph | test_morph.py | 15 | Init, blending, enable/disable, save/load, degree sync, fast mode |
+| Morph | test_morph.py | 13 | Init, blending, save/load, degree sync, fast mode (morph always enabled) |
 | Jiggle | test_jiggle.py | 61 | Helpers, all 11 modes, pure function behavior, caching, save/load, nearestPrime, step/period buttons |
 | Fast mode | test_fastmode.py | 22 | Formatting, buttons, removed vars, resets, serialization, clear, toggle |
 | Off-canvas & export | test_offcanvas.py | 76 | Split compute/display, BMP/JPEG/PNG/TIFF export, library loading, save popup, format state, bitmap/animation color decoupling, derivative palette, rank normalization, root sensitivities |
@@ -500,7 +499,7 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | Pattern arrange | test_pattern_arrange.py | 193 | 21 patterns: distributeOnPath, count/finite/centroid, per-shape geometry, blend interpolation, large-N, opts, UI popup |
 | Integration | test_integration.py | 3 | Snap loading, determinism, fast mode pixels |
 | Benchmark | test_benchmark.py | 7 | JS vs WASM: solver correctness + performance, step loop benchmarks |
-| **Total** | **26 files** | **777** | |
+| **Total** | **26 files** | **775** | |
 
 ---
 

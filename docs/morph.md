@@ -2,35 +2,125 @@
 
 ## Overview
 
-The morph system lets a second coefficient set **D** (morph targets, stored in `morphTargetCoeffs[]`) blend with the primary set **C** (`coefficients[]`). When enabled, the polynomial solved each frame uses blended coefficients:
+The morph system lets a second coefficient set **D** (morph targets, stored in `morphTargetCoeffs[]`) blend with the primary set **C** (`coefficients[]`). Morph is **always enabled** (the checkbox was removed in v40). When any D-node differs from its corresponding C-node, the polynomial solved each frame uses interpolated coefficients computed along a configurable **C-D path**.
+
+The default path type is **line** (linear interpolation):
 
 ```
 blended[i] = C[i] * (1 - mu) + D[i] * mu
 ```
 
-where `mu` oscillates between 0 and 1 via:
+where `mu = 0.5 - 0.5 * cos(theta)` and `theta = 2 * pi * morphRate * elapsed`.
 
-```
-mu = 0.5 - 0.5 * cos(2 * pi * morphRate * elapsed)
-```
+Three non-linear path types are also available: **circle**, **ellipse**, and **figure-8**. These trace parametric curves through a local coordinate frame centered on the midpoint of each C-D segment. A **dither** system adds per-step noise with three separate envelope controls (start, mid, end).
 
-D starts as a copy of C positions, lives in the "D-Nodes" tab (with a companion "D-List" for trajectory editing), and can be edited independently (dragged, given paths). The morph enable/rate/mu controls live in the "Final" tab bar, which shows the blended coefficients sent to the solver. This creates rich interference patterns as roots respond to the blended perturbation.
+D starts as a copy of C positions, lives in the "D-Nodes" tab (with a companion "D-List" for trajectory editing), and can be edited independently (dragged, given paths). The morph mu display lives in the "Final" tab bar, which shows the blended coefficients sent to the solver.
 
-**File modified:** `index.html` (single-file app, ~13,912 lines)
+**File modified:** `index.html` (single-file app, ~15,000 lines)
 
 ---
 
-## Global State (~line 1129)
+## Global State (~line 1125)
 
 ```javascript
 let morphTargetCoeffs = [];   // parallel to coefficients[], same {re,im,curve,...} structure
-let morphEnabled = false;
-let morphRate = 0.25;         // Hz (oscillation cycles/sec)
-let morphMu = 0;              // current blend factor [0,1] — 0 when morph disabled
+let morphEnabled = true;      // always true (checkbox removed in v40)
+let morphRate = 0.01;         // Hz (oscillation cycles/sec), range 0–0.01
+let morphMu = 0;              // current blend factor [0,1]
+let morphPathType = "line";   // "line" | "circle" | "ellipse" | "figure8"
+let morphPathCcw = false;     // CW by default; applies to circle, ellipse, figure8
+let morphEllipseMinor = 0.5;  // minor axis as fraction of major (0.1–1.0), ellipse only
+let morphDitherStartSigma = 0; // 0–0.01 (% of coeffExtent), dither at C/start (max(cosθ,0)² envelope)
+let morphDitherMidSigma = 0;   // 0–0.1 (% of coeffExtent), dither at midpoint (sin²θ envelope)
+let morphDitherEndSigma = 0;   // 0–0.01 (% of coeffExtent), dither at D/end (max(-cosθ,0)² envelope)
+let morphTheta = 0;           // current morph phase angle = 2π * morphRate * elapsed
 ```
 
-- `morphMu` defaults to 0. When the user enables morph, the handler sets `morphMu = 0.5` for an immediate 50/50 blend. When morph is disabled, mu resets to 0.
-- The morph mu formula uses **cosine** (not sine): `0.5 - 0.5 * Math.cos(2 * Math.PI * morphRate * elapsed)`. This starts at 0 when elapsed=0 (unlike sine which starts at 0.5), providing a clean ramp-up from pure C to the first blend.
+- `morphEnabled` is always `true`. The enable checkbox was removed; morph auto-activates whenever D-nodes exist. `applyLoadedState()` forces `morphEnabled = true`.
+- `morphRate` defaults to 0.01 Hz (range 0–0.01 Hz), configured via the C-D Path popup.
+- `morphMu` is derived from `morphTheta` via the cosine formula. It starts at 0 when elapsed=0.
+
+---
+
+## C-D Path Interpolation (~line 1139)
+
+### morphInterpPoint(cRe, cIm, dRe, dIm, theta, pathType, ccw, minorPct)
+
+Computes the interpolated position between a C-node and D-node along the configured morph path. `theta = 2*pi*morphRate*elapsed` is the raw angle in radians.
+
+```javascript
+function morphInterpPoint(cRe, cIm, dRe, dIm, theta, pathType, ccw, minorPct) {
+    const dx = dRe - cRe, dy = dIm - cIm;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 1e-15) return { re: cRe, im: cIm };
+    if (pathType === "line") {
+        const mu = 0.5 - 0.5 * Math.cos(theta);
+        return { re: cRe * (1 - mu) + dRe * mu, im: cIm * (1 - mu) + dIm * mu };
+    }
+    // Local frame: u = unit C→D, v = perpendicular (90° CCW)
+    const ux = dx / len, uy = dy / len;
+    const vx = -uy, vy = ux;
+    const midRe = (cRe + dRe) * 0.5, midIm = (cIm + dIm) * 0.5;
+    const semi = len * 0.5;
+    const sign = ccw ? 1 : -1;
+    let lx, ly;
+    if (pathType === "circle") {
+        lx = -semi * Math.cos(theta);
+        ly = sign * semi * Math.sin(theta);
+    } else if (pathType === "ellipse") {
+        const semi_b = minorPct * semi;
+        lx = -semi * Math.cos(theta);
+        ly = sign * semi_b * Math.sin(theta);
+    } else { // figure8
+        lx = -semi * Math.cos(theta);
+        ly = sign * (semi * 0.5) * Math.sin(2 * theta);
+    }
+    return { re: midRe + lx * ux + ly * vx, im: midIm + lx * uy + ly * vy };
+}
+```
+
+### Path Types
+
+| Path Type | Parametric (local frame) | Notes |
+|-----------|-------------------------|-------|
+| **line** | `mu = 0.5 - 0.5*cos(θ)`, linear interpolation C→D | Default. Oscillates between C (θ=0) and D (θ=π) |
+| **circle** | `lx = -semi*cos(θ)`, `ly = sign*semi*sin(θ)` | Full circle through C and D. CW/CCW toggle controls direction |
+| **ellipse** | `lx = -semi*cos(θ)`, `ly = sign*(minor*semi)*sin(θ)` | Ellipse with configurable minor axis (0.1–1.0 of major). At 1.0, identical to circle |
+| **figure-8** | `lx = -semi*cos(θ)`, `ly = sign*(semi/2)*sin(2θ)` | Figure-eight with crossover at midpoint. Uses `sin(2θ)` for double-frequency perpendicular oscillation |
+
+### Local Coordinate Frame (non-line paths)
+
+For circle, ellipse, and figure-8, interpolation uses a local coordinate frame:
+
+1. **Origin**: midpoint of C-D segment `(midRe, midIm)`
+2. **u-axis**: unit vector along C→D direction `(ux, uy) = (dx/len, dy/len)`
+3. **v-axis**: perpendicular unit vector (90° CCW) `(vx, vy) = (-uy, ux)`
+4. **semi**: half the C-D distance `len/2`
+5. **sign**: `+1` for CCW, `-1` for CW
+
+The local coordinates `(lx, ly)` are converted to world coordinates: `re = midRe + lx*ux + ly*vx`, `im = midIm + lx*uy + ly*vy`.
+
+At `θ=0`, `lx = -semi` maps to the C position. At `θ=π`, `lx = +semi` maps to the D position.
+
+---
+
+## C-D Path Dither
+
+Three separate dither sigma controls add uniform noise to the blended coefficients. Each has an envelope function that peaks at different points along the C-D path cycle:
+
+| Control | Envelope | Peak Position | Range |
+|---------|----------|---------------|-------|
+| **Start σ** | `max(cos θ, 0)²` | θ=0 (C position) | 0–0.01% of coeffExtent |
+| **Mid σ** | `sin²(θ)` | θ=π/2, 3π/2 (midpoints) | 0–0.1% of coeffExtent |
+| **End σ** | `max(-cos θ, 0)²` | θ=π (D position) | 0–0.01% of coeffExtent |
+
+These three envelopes form a **partition of unity** — they sum to 1 at every θ. The combined dither magnitude at each step is:
+
+```javascript
+const ds = startSigma/100 * ext * startEnv + midSigma/100 * ext * sin²θ + endSigma/100 * ext * endEnv;
+```
+
+When `ds > 0`, each blended coefficient gets uniform random offsets `±ds` in both Re and Im.
 
 ---
 
@@ -51,15 +141,16 @@ Six tabs in the left panel:
 
 - `data-ltab="morph"` maps to the "D-Nodes" tab (interactive SVG panel for dragging D coefficients)
 - `data-ltab="dlist"` is the trajectory editor for D-nodes
-- `data-ltab="final"` shows blended coefficients and hosts the morph enable/rate/mu controls
+- `data-ltab="final"` shows blended coefficients and the mu display
 
 ### D-Nodes Tab Content (~line 717)
 
 ```html
 <div id="morph-content" class="tab-content">
     <div id="morph-bar" style="...">
-        <button id="morph-copy-btn" class="bar-sel-btn">Copy C->D</button>
-        <button id="morph-swap-btn" class="bar-sel-btn">Swap C<->D</button>
+        <button id="morph-copy-btn" class="bar-sel-btn">Copy C→D</button>
+        <button id="morph-swap-btn" class="bar-sel-btn">Swap C↔D</button>
+        <button id="morph-cdpath-btn" class="bar-sel-btn">C-D Path</button>
     </div>
     <div id="morph-container" style="flex:1;min-height:0;position:relative;">
         <svg id="morph-panel"></svg>
@@ -67,16 +158,22 @@ Six tabs in the left panel:
 </div>
 ```
 
-### Final Tab Content (~line 801)
+The "C-D Path" button opens the `buildCDPathPop()` popup for configuring path type, rate, direction, and dither.
+
+### C-D Path Popup (`#cdpath-pop`, ~line 925)
+
+```html
+<div id="cdpath-pop" class="ops-pop" style="min-width:180px"></div>
+```
+
+Uses the standard `.ops-pop` CSS class, positioned below the C-D Path button via `getBoundingClientRect()`.
+
+### Final Tab Content (~line 802)
 
 ```html
 <div id="final-content" class="tab-content">
     <div id="final-bar" style="...">
-        <label><input type="checkbox" id="morph-enable"> Morph</label>
-        <label>Rate</label>
-        <input id="morph-rate" type="range" min="1" max="200" value="25" step="1">
-        <span id="morph-rate-val">0.25 Hz</span>
-        <span id="morph-mu-val">mu=0.50</span>
+        <span id="morph-mu-val" style="...">μ=0.50</span>
     </div>
     <div id="final-container" style="...">
         <svg id="final-panel"></svg>
@@ -84,7 +181,24 @@ Six tabs in the left panel:
 </div>
 ```
 
-Rate slider: integer 1-200, displayed as value/100 Hz (0.01-2.00 Hz).
+The Final bar contains only the mu display (no checkbox or rate slider — those moved to the C-D Path popup).
+
+---
+
+## C-D Path Popup: buildCDPathPop() (~line 11841)
+
+The popup is built dynamically each time the "C-D Path" button is clicked. It snapshots all current values for revert on Escape/outside-click. Controls:
+
+1. **Path type dropdown**: line (default), circle, ellipse, figure-8
+2. **Rate slider**: 0–100 integer → 0.0000–0.0100 Hz (`morphRate = value / 10000`)
+3. **CW/CCW toggle button**: hidden for line path; toggles `morphPathCcw`
+4. **Minor axis slider**: shown only for ellipse; 10–100 integer → 0.10–1.00 (`morphEllipseMinor = value / 100`)
+5. **Start σ slider**: 0–100 → 0.0000–0.0100% (`morphDitherStartSigma = value / 10000`)
+6. **Mid σ slider**: 0–100 → 0.000–0.100% (`morphDitherMidSigma = value / 1000`)
+7. **End σ slider**: 0–100 → 0.0000–0.0100% (`morphDitherEndSigma = value / 10000`)
+8. **Accept button**: commits changes and closes popup
+
+Accept/Revert workflow: closing without Accept (via Escape or outside-click) reverts all values to the snapshot.
 
 ---
 
@@ -107,51 +221,52 @@ function initMorphTarget() {
 
 Called from: `applyPattern()`, `addCoefficientAt()`, `deleteCoefficient()`, `applyLoadedState()` (as fallback if `meta.morph` missing), and the init block. Degree changes reinitialize D via this function (D positions are lost).
 
-### solveRoots() (~line 5308)
+### solveRoots() (~line 5416)
 
-When morph is enabled, blends C and D before solving:
+Uses `morphInterpPoint()` for C-D blending along the configured path type:
 
 ```javascript
 function solveRoots() {
     let coeffsToSolve = coefficients;
     if (morphEnabled && morphTargetCoeffs.length === coefficients.length) {
-        coeffsToSolve = coefficients.map((c, i) => ({
-            re: c.re * (1 - morphMu) + morphTargetCoeffs[i].re * morphMu,
-            im: c.im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu
-        }));
+        coeffsToSolve = coefficients.map((c, i) =>
+            morphInterpPoint(c.re, c.im, morphTargetCoeffs[i].re, morphTargetCoeffs[i].im,
+                             morphTheta, morphPathType, morphPathCcw, morphEllipseMinor));
     }
     // ... jiggle offsets, then solve
 }
 ```
 
-### animLoop() (~line 4353)
+### animLoop() (~line 3910)
 
 During animation, after advancing C-nodes and D-nodes along curves:
 
 ```javascript
 if (morphEnabled) {
-    morphMu = 0.5 - 0.5 * Math.cos(2 * Math.PI * morphRate * elapsed);
+    morphTheta = 2 * Math.PI * morphRate * elapsed;
+    morphMu = 0.5 - 0.5 * Math.cos(morphTheta);
     const muEl = document.getElementById("morph-mu-val");
-    if (muEl) muEl.textContent = "mu=" + morphMu.toFixed(2);
+    if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
 }
 ```
 
-The morph panel visuals (ghost C positions, interp lines, interp markers) are also updated if visible.
+Both `morphTheta` and `morphMu` are updated. The morph panel visuals (ghost C positions, interp lines, interp markers computed via `morphInterpPoint()`) are also updated if visible.
 
-### advanceToElapsed() (~line 3790)
+### advanceToElapsed() (~line 3910 / ~line 4496)
 
-Called by the scrub slider. Advances C-nodes along curves, then calls `advanceDNodesAlongCurves(elapsed)`, then updates morphMu:
+Called by the scrub slider. Advances C-nodes along curves, then calls `advanceDNodesAlongCurves(elapsed)`, then updates morphTheta and morphMu:
 
 ```javascript
 advanceDNodesAlongCurves(elapsed);
 if (morphEnabled) {
-    morphMu = 0.5 - 0.5 * Math.cos(2 * Math.PI * morphRate * elapsed);
+    morphTheta = 2 * Math.PI * morphRate * elapsed;
+    morphMu = 0.5 - 0.5 * Math.cos(morphTheta);
 }
 ```
 
-### Home button handler (~line 3740)
+### Home button handler (~line 3844)
 
-Resets all coefficients to curve[0], resets D-nodes to curve[0], sets `morphMu = 0`, and re-renders.
+Resets all coefficients to curve[0], resets D-nodes to curve[0], sets `morphMu = 0; morphTheta = 0`, and re-renders.
 
 ---
 
@@ -204,7 +319,7 @@ A D-only path type (`dOnly: true` in `PATH_CATALOG`, ~line 2600) where D[i] mirr
 
 ## Morph Panel SVG (D-Nodes Tab)
 
-### Panel Variables (~line 1924)
+### Panel Variables (~line 1960)
 
 ```javascript
 let morphSvg = null;
@@ -214,7 +329,7 @@ let morphLayer = null;
 let morphPanelInited = false;
 ```
 
-### initMorphPanel() (~line 1931)
+### initMorphPanel() (~line 1968)
 
 Lazy-initialized on first tab switch to D-Nodes:
 
@@ -231,28 +346,23 @@ function initMorphPanel() {
 
 Shares `panels.coeff` scales directly with the C-Nodes panel.
 
-### renderMorphPanel() (~line 4576)
+### renderMorphPanel() (~line 4720)
 
 - Ghost layer: C coefficients as faint circles (opacity 0.25), labels c0..cn
-- Interp layer: lines from C[i] to D[i], and small markers at the blended position `C[i]*(1-mu) + D[i]*mu`
+- Interp layer: lines from C[i] to D[i], and small markers at the interpolated position computed by `morphInterpPoint()`
 - D layer: full-color draggable circles with labels d0..dn
 - Both use `cxs()` and `cys()` from `panels.coeff` for coordinate mapping
 - Colors: D[i] uses same color as C[i] via `coeffColor(i, n)`
+- Interp markers use `morphInterpPoint()` with current `morphTheta`, `morphPathType`, `morphPathCcw`, and `morphEllipseMinor`
 
-### renderFinalPanel() (~line 4682)
+### renderFinalPanel() (~line 5025)
 
-Shows the actual blended coefficients sent to the solver:
+Shows the actual blended coefficients sent to the solver, computed via `morphInterpPoint()`:
 
 ```javascript
-const doBlend = morphEnabled && nD === n;
-for (let i = 0; i < n; i++) {
-    if (doBlend) {
-        re = c.re * (1 - morphMu) + morphTargetCoeffs[i].re * morphMu;
-        im = c.im * (1 - morphMu) + morphTargetCoeffs[i].im * morphMu;
-    } else {
-        re = c.re; im = c.im;
-    }
-}
+const doBlend = morphEnabled && nD === nC;
+const mp = doBlend ? morphInterpPoint(c.re, c.im, morphTargetCoeffs[i].re, morphTargetCoeffs[i].im,
+                                       morphTheta, morphPathType, morphPathCcw, morphEllipseMinor) : c;
 ```
 
 ### Scale Sync
@@ -272,15 +382,14 @@ In `rebuild()`, after existing SVG teardown: clears morph SVG layers and sets `m
 
 ---
 
-## Morph Control Event Handlers (~line 11689)
+## Morph Control Event Handlers (~line 12016)
 
-- **Enable checkbox** (~line 11690): toggle `morphEnabled`; when enabling set `morphMu = 0.5` (immediate 50/50); when disabling set `morphMu = 0`; call `solveRoots()` + update mu display
-- **Rate slider** (~line 11698): `morphRate = this.value / 100`; update display span
-- **Copy C->D** (~line 11702): call `initMorphTarget()`; re-render morph panel; call `solveRoots()` if morphEnabled
-- **Swap C<->D** (~line 11707): For each i, swap `(C[i].re, C[i].im)` with `(D[i].re, D[i].im)`. Then:
+- **Copy C->D** (~line 12017): call `initMorphTarget()`; re-render morph panel; call `solveRoots()` if morphEnabled
+- **Swap C<->D** (~line 12022): For each i, swap `(C[i].re, C[i].im)` with `(D[i].re, D[i].im)`. Then:
   - For D[i]: update `D[i].curve = [{ re: D[i].re, im: D[i].im }]`
   - For C[i]: if `pathType === "none"`, update curve to single point. Otherwise recompute via `computeCurve()`.
   - Re-render coefficients, trails, morph panel, solve roots
+- **C-D Path button** (~line 12016): opens `buildCDPathPop()` popup
 
 ---
 
@@ -337,15 +446,21 @@ When `snap.which === "morph"`, applies transform to each selected D-node, then r
 
 ## Save/Load
 
-### buildStateMetadata() (~line 7567)
+### buildStateMetadata() (~line 7682)
 
-D-node path fields are fully serialized:
+D-node path fields and C-D path settings are fully serialized:
 
 ```javascript
 morph: {
     enabled: morphEnabled,
     rate: morphRate,
     mu: morphMu,
+    cdPathType: morphPathType,
+    cdCcw: morphPathCcw,
+    cdEllipseMinor: morphEllipseMinor,
+    cdDitherStartSigma: morphDitherStartSigma,
+    cdDitherMidSigma: morphDitherMidSigma,
+    cdDitherEndSigma: morphDitherEndSigma,
     target: morphTargetCoeffs.map(d => ({
         pos: [d.re, d.im],
         home: [d.curve[0].re, d.curve[0].im],
@@ -355,15 +470,22 @@ morph: {
 }
 ```
 
-### applyLoadedState() (~line 8532)
+### applyLoadedState() (~line 8653)
 
-Restores morph state including D-node trajectories. Key details:
+Restores morph state. Key details:
 
 ```javascript
+morphEnabled = true; // always enabled (checkbox removed)
 if (meta.morph) {
-    morphEnabled = !!meta.morph.enabled;
-    morphRate = meta.morph.rate ?? 0.25;
-    morphMu = morphEnabled ? (meta.morph.mu ?? 0.5) : 0;
+    morphRate = meta.morph.rate ?? 0.01;
+    morphMu = meta.morph.mu ?? 0.5;
+    morphPathType = meta.morph.cdPathType || "line";
+    morphPathCcw = !!meta.morph.cdCcw;
+    morphEllipseMinor = meta.morph.cdEllipseMinor ?? 0.5;
+    morphDitherMidSigma = meta.morph.cdDitherMidSigma ?? meta.morph.cdDitherSigma ?? 0;
+    morphDitherEndSigma = meta.morph.cdDitherEndSigma ?? 0;
+    morphDitherStartSigma = meta.morph.cdDitherStartSigma ?? morphDitherEndSigma;
+    morphTheta = 0;
     if (meta.morph.target && meta.morph.target.length === coefficients.length) {
         morphTargetCoeffs = meta.morph.target.map(d => {
             const hasPath = d.pathType && d.pathType !== "none" && d.pathType !== "follow-c";
@@ -388,23 +510,28 @@ if (meta.morph) {
     } else {
         initMorphTarget();
     }
-    // Update UI elements (checkbox, rate slider, mu display)
 } else {
     initMorphTarget();  // backward compat: old snaps without morph data
 }
 ```
 
-Backward compatibility: `morphMu` is forced to 0 when morph is disabled. Old snaps without `meta.morph` get a fresh `initMorphTarget()`.
+Backward compatibility: `cdDitherSigma` (old single-dither field) maps to `cdDitherMidSigma`. `morphTheta` is reset to 0 on load. Old snaps without `meta.morph` get a fresh `initMorphTarget()`.
 
 ---
 
 ## Fast Mode: Worker Morph Blend (JS Worker Blob)
 
-Workers receive morph state via `serializeFastModeData()` (~line 11133):
+Workers receive morph state via `serializeFastModeData()` (~line 11260):
 
 ```javascript
 morphEnabled: morphEnabled && morphTargetCoeffs.length === nCoeffs,
 morphRate: morphRate,
+morphPathType: morphPathType,
+morphPathCcw: morphPathCcw,
+morphEllipseMinor: morphEllipseMinor,
+morphDitherStartAbs: morphDitherStartSigma > 0 ? (morphDitherStartSigma / 100 * coeffExtent()) : 0,
+morphDitherMidAbs: morphDitherMidSigma > 0 ? (morphDitherMidSigma / 100 * coeffExtent()) : 0,
+morphDitherEndAbs: morphDitherEndSigma > 0 ? (morphDitherEndSigma / 100 * coeffExtent()) : 0,
 morphTargetRe: morphEnabled ? Float64Array.from(morphTargetCoeffs, d => d.re) : null,
 morphTargetIm: morphEnabled ? Float64Array.from(morphTargetCoeffs, d => d.im) : null,
 dFollowCIndices: morphEnabled ? morphTargetCoeffs.reduce((a, d, i) => {
@@ -414,54 +541,80 @@ dFollowCIndices: morphEnabled ? morphTargetCoeffs.reduce((a, d, i) => {
 
 Also serialized: D-curve animation entries (`dAnimEntries`, `dCurvesFlat`, `dCurveOffsets`, `dCurveLengths`, `dCurveIsCloud`).
 
-### Worker Persistent State (~line 10362)
+### Worker Persistent State (~line 10457)
 
 ```javascript
-var S_morphEnabled = false, S_morphRate = 0;
-var S_morphTargetRe = null, S_morphTargetIm = null;
-var S_dCurvesFlat = null, S_dEntries = null, S_dOffsets = null, S_dLengths = null, S_dIsCloud = null;
-var S_dFollowC = null;
+var S_morphEnabled = false, S_morphRate = 0, S_morphTargetRe = null, S_morphTargetIm = null;
+var S_morphPathType = "line", S_morphPathCcw = false, S_morphEllipseMinor = 0.5;
+var S_morphDitherStartAbs = 0, S_morphDitherMidAbs = 0, S_morphDitherEndAbs = 0;
 ```
 
-### Worker Run Logic (per step, ~line 10480)
+### Worker-Side morphInterpW() (~line 10461)
+
+Mirrors the main-thread `morphInterpPoint()` but returns an array `[re, im]` instead of an object. Supports all 4 path types using the same local-frame math:
+
+```javascript
+function morphInterpW(cRe, cIm, dRe, dIm, theta) {
+    // Uses S_morphPathType, S_morphPathCcw, S_morphEllipseMinor
+    // Same parametric math as morphInterpPoint()
+    // Returns [re, im] for performance
+}
+```
+
+### Worker Run Logic (per step, ~line 10714)
 
 Each step, the worker:
 
-1. **Pre-allocates morph target copies** (~line 10502): `morphRe = new Float64Array(S_morphTargetRe)` (copies base D positions, not mutating persistent state)
-2. **Interpolates C-curves** (~line 10528): updates `coeffsRe`/`coeffsIm` for animated C-nodes
-3. **Interpolates D-curves** (~line 10554): updates `morphRe`/`morphIm` for animated D-nodes along their curves
-4. **Follow-C** (~line 10583): for each follow-c index `fci`, copies `coeffsRe[fci]` into `morphRe[fci]`
-5. **Morph blend** (~line 10592):
+1. **Pre-allocates morph target copies**: `morphRe = new Float64Array(S_morphTargetRe)` (copies base D positions)
+2. **Interpolates C-curves**: updates `coeffsRe`/`coeffsIm` for animated C-nodes
+3. **Interpolates D-curves**: updates `morphRe`/`morphIm` for animated D-nodes along their curves
+4. **Follow-C**: for each follow-c index, copies `coeffsRe[fci]` into `morphRe[fci]`
+5. **Morph interpolation via morphInterpW()**: for each coefficient, computes interpolated position along the C-D path:
 
 ```javascript
 if (S_morphEnabled) {
-    var mu = 0.5 - 0.5 * Math.cos(2 * Math.PI * S_morphRate * elapsed);
-    var omu = 1 - mu;
+    var theta = 2 * Math.PI * S_morphRate * elapsed;
     for (var m = 0; m < nCoeffs; m++) {
-        coeffsRe[m] = coeffsRe[m] * omu + morphRe[m] * mu;
-        coeffsIm[m] = coeffsIm[m] * omu + morphIm[m] * mu;
+        var mp = morphInterpW(coeffsRe[m], coeffsIm[m], morphRe[m], morphIm[m], theta);
+        coeffsRe[m] = mp[0]; coeffsIm[m] = mp[1];
     }
 }
 ```
 
-6. **Jiggle offsets** (~line 10601): applied after morph blend
-7. **Solve** (~line 10609): EA solver on the blended+jiggled coefficients
+6. **C-D path dither**: applies the three-envelope dither system:
 
-### Fast Mode Main-Thread Preview (~line 11500)
+```javascript
+if (S_morphDitherStartAbs > 0 || S_morphDitherMidAbs > 0 || S_morphDitherEndAbs > 0) {
+    var sinT = Math.sin(theta), cosT = Math.cos(theta);
+    var startEnv = cosT > 0 ? cosT * cosT : 0;
+    var endEnv = cosT < 0 ? cosT * cosT : 0;
+    var mds = S_morphDitherStartAbs * startEnv + S_morphDitherMidAbs * sinT * sinT + S_morphDitherEndAbs * endEnv;
+    if (mds > 0) for (var md = 0; md < nCoeffs; md++) {
+        coeffsRe[md] += (Math.random() - 0.5) * 2 * mds;
+        coeffsIm[md] += (Math.random() - 0.5) * 2 * mds;
+    }
+}
+```
+
+7. **Jiggle offsets**: applied after morph blend
+8. **Solve**: EA solver on the blended+jiggled coefficients
+
+### Fast Mode Main-Thread Preview (~line 11703)
 
 Between worker passes, the main thread also steps coefficients for UI preview. This code independently:
 - Advances animated C-nodes on hi-res curves
 - Advances animated D-nodes on their curves
 - Copies Follow-C D-nodes from C positions
-- Computes morph blend with the same cosine formula (~line 11565)
+- Computes morph interpolation via `morphInterpPoint()` along the configured path type
+- Applies C-D path dither with the same three-envelope formula
 - Applies jiggle offsets
 - Solves and renders for visual preview
 
 ---
 
-## WASM Step Loop: Morph Blend in step_loop.c
+## WASM Step Loop: Morph in step_loop.c
 
-The WASM step loop (`/Users/nicknassuphis/karpo_hackathon/step_loop.c`) implements the full per-step pipeline in C for maximum performance.
+The WASM step loop (`/Users/nicknassuphis/karpo_hackathon/step_loop.c`) implements the full per-step pipeline in C for maximum performance, including all 4 C-D path types and dither.
 
 ### Config Layout
 
@@ -469,21 +622,32 @@ Morph-related config entries:
 
 | Config Index | Name | Type | Description |
 |---|---|---|---|
-| `CI_MORPH_ENABLED` (7) | int | Whether morph blending is active |
-| `CI_N_DENTRIES` (9) | int | Number of animated D-curve entries |
-| `CI_N_FOLLOWC` (10) | int | Number of follow-c D-node indices |
-| `CD_MORPH_RATE` (2) | float64 | Morph oscillation rate in Hz |
-| `CI_OFF_MORPH_TGT_RE` (27) | int (offset) | Byte offset to morph target Re array |
-| `CI_OFF_MORPH_TGT_IM` (28) | int (offset) | Byte offset to morph target Im array |
-| `CI_OFF_MORPH_WORK_RE` (57) | int (offset) | Byte offset to morph working Re array |
-| `CI_OFF_MORPH_WORK_IM` (58) | int (offset) | Byte offset to morph working Im array |
-| `CI_OFF_FOLLOWC_IDX` (36) | int (offset) | Byte offset to follow-c index array |
+| `cfgI32[7]` | morphEnabled | int | Whether morph blending is active |
+| `cfgI32[9]` | nDEntries | int | Number of animated D-curve entries |
+| `cfgI32[10]` | nFollowC | int | Number of follow-c D-node indices |
+| `cfgI32[65]` | morphPathType | int | 0=line, 1=circle, 2=ellipse, 3=figure8 |
+| `cfgI32[66]` | morphPathCcw | int | CW/CCW toggle |
+| `cfgF64[0]` | bitmapRange | float64 | |
+| `cfgF64[1]` | FAST_PASS_SECONDS | float64 | |
+| `cfgF64[2]` | morphRate | float64 | Morph oscillation rate in Hz |
+| `cfgF64[3]` | morphEllipseMinor | float64 | Ellipse minor axis fraction |
+| `cfgF64[4]` | morphDitherStartAbs | float64 | Absolute start dither magnitude |
+| `cfgF64[5]` | morphDitherMidAbs | float64 | Absolute mid dither magnitude |
+| `cfgF64[6]` | morphDitherEndAbs | float64 | Absolute end dither magnitude |
 
-D-curve entries use offsets 44-52 (parallel arrays for idx, speed, ccw, dither, offsets, lengths, isCloud, flat data).
+D-curve entries use config offsets 44-52 (parallel arrays for idx, speed, ccw, dither, offsets, lengths, isCloud, flat data).
+
+### WASM Path Type Encoding
+
+Path type is encoded as an integer in `cfgI32[65]`:
+
+```javascript
+cfgI32[65] = ["line","circle","ellipse","figure8"].indexOf(d.morphPathType || "line");
+```
 
 ### Per-Step Pipeline in runStepLoop()
 
-The C code mirrors the JS worker blob step-by-step:
+The C code mirrors the JS worker blob step-by-step, including the full `morphInterpPoint()` equivalent for all 4 path types:
 
 ```c
 /* 2. Interpolate C-curves */
@@ -505,18 +669,16 @@ if (nFollowC > 0) {
     }
 }
 
-/* 6. Morph blend */
+/* 6. Morph interpolation along C-D path (all 4 path types in C) */
 if (morphEnabled) {
-    double mu = 0.5 - 0.5 * js_cos(2.0 * PI * morphRate * elapsed);
-    double omu = 1.0 - mu;
-    for (int m = 0; m < nc; m++) {
-        workCoeffsRe[m] = workCoeffsRe[m] * omu + morphWorkRe[m] * mu;
-        workCoeffsIm[m] = workCoeffsIm[m] * omu + morphWorkIm[m] * mu;
-    }
+    double theta = 2.0 * PI * morphRate * elapsed;
+    // For each coefficient: compute local frame, apply parametric curve
+    // based on morphPathType (0=line, 1=circle, 2=ellipse, 3=figure8)
 }
 
-/* 7. Apply jiggle offsets */
-/* 8. Solve */
+/* 7. C-D path dither (3 envelopes) */
+/* 8. Apply jiggle offsets */
+/* 9. Solve */
 ```
 
 The WASM step loop uses `morphWorkRe`/`morphWorkIm` as pre-allocated working arrays (separate from the base `morphTargetRe`/`morphTargetIm`), so D-node base positions are preserved across steps while animated D-nodes are interpolated into the working copies each step.
@@ -564,30 +726,35 @@ The D-List tab mirrors C-List for `morphTargetCoeffs[]` / `selectedMorphCoeffs`.
 |----------|-------------|
 | CSS (~line 348) | morph-ghost, morph-coeff, morph-label, interp-line, interp-marker styles |
 | HTML tab bar (~line 620) | "D-Nodes", "D-List", "Final" tabs |
-| HTML morph-content (~line 717) | D-Nodes SVG panel with Copy/Swap toolbar |
-| HTML final-content (~line 801) | Final panel with morph enable/rate/mu controls |
+| HTML morph-content (~line 717) | D-Nodes SVG panel with Copy/Swap/C-D Path toolbar |
+| HTML cdpath-pop (~line 925) | C-D Path popup container (`.ops-pop` class) |
+| HTML final-content (~line 802) | Final panel with mu display only (no checkbox/rate) |
 | Selection state (~line 1002) | `selectedMorphCoeffs` Set |
-| Global state (~line 1129) | morphTargetCoeffs, morphEnabled, morphRate, morphMu |
-| Panel vars (~line 1924) | morphSvg, morphGhostLayer, morphInterpLayer, morphLayer, morphPanelInited |
+| Global state (~line 1125) | morphTargetCoeffs, morphEnabled, morphRate, morphMu, morphPathType, morphPathCcw, morphEllipseMinor, morphDitherStartSigma, morphDitherMidSigma, morphDitherEndSigma, morphTheta |
+| morphInterpPoint() (~line 1139) | C-D path interpolation: 4 path types (line, circle, ellipse, figure-8) |
+| Panel vars (~line 1960) | morphSvg, morphGhostLayer, morphInterpLayer, morphLayer, morphPanelInited |
 | autoScaleCoeffPanel() (~line 2511) | Sync morph panel grid on coeff range change |
 | PATH_CATALOG (~line 2600) | "follow-c" entry with `dOnly: true` |
 | initMorphTarget() (~line 3201) | Create D from C, clear selectedMorphCoeffs |
 | allAnimatedDCoeffs() (~line 3428) | Excludes "follow-c" from animated set |
 | advanceDNodesAlongCurves() (~line 3437) | Follow-c copies from C; others interpolate along curves |
 | updateMorphPanelDDots() (~line 3467) | Update D dot positions in morph SVG |
-| Home button (~line 3740) | Reset D-nodes to curve[0], set morphMu=0 |
-| advanceToElapsed() (~line 3790) | Advance D-nodes, update morphMu |
-| animLoop() (~line 4353) | Advance D-nodes, update morphMu, update morph panel visuals |
-| renderMorphPanel() (~line 4576) | Ghost C + draggable D + interp lines/markers on morph SVG |
-| renderFinalPanel() (~line 4682) | Final panel showing blended coefficients |
-| solveRoots() (~line 5308) | Blend coefficients when morphEnabled |
-| buildStateMetadata() (~line 7567) | Serialize morph state including D-node path fields |
-| applyLoadedState() (~line 8532) | Restore morph state with backward compat |
-| Worker blob (~line 10362) | S_morphEnabled, S_morphRate, S_morphTargetRe/Im, S_dFollowC |
-| Worker run (~line 10480) | Pre-allocated morphRe/Im, D-curve interpolation, follow-c copy, morph blend |
-| step_loop.c | Full WASM step loop: D-curve interpolation, follow-c, morph blend in C |
+| Home button (~line 3844) | Reset D-nodes to curve[0], set morphMu=0, morphTheta=0 |
+| animLoop() (~line 3910) | Update morphTheta/morphMu, advance D-nodes, update morph panel visuals |
+| advanceToElapsed() (~line 4496) | Advance D-nodes, update morphTheta/morphMu |
+| renderMorphPanel() (~line 4720) | Ghost C + draggable D + interp lines/markers (via morphInterpPoint) |
+| renderFinalPanel() (~line 5025) | Final panel showing blended coefficients (via morphInterpPoint) |
+| solveRoots() (~line 5416) | Blend coefficients via morphInterpPoint when morphEnabled |
+| buildStateMetadata() (~line 7682) | Serialize morph state including C-D path settings and D-node paths |
+| applyLoadedState() (~line 8653) | Restore morph state; morphEnabled always true; backward compat for old dither format |
+| WASM config (~line 10330) | cfgI32[65]=pathType, cfgI32[66]=ccw, cfgF64[2-6]=rate/minor/dither |
+| Worker state (~line 10457) | S_morphPathType, S_morphPathCcw, S_morphEllipseMinor, S_morphDitherStart/Mid/EndAbs |
+| Worker morphInterpW() (~line 10461) | Worker-side C-D path interpolation (all 4 path types) |
+| Worker run (~line 10714) | morphInterpW per coefficient, then 3-envelope dither, then jiggle, then solve |
+| step_loop.c | Full WASM step loop: all 4 path types + 3-envelope dither in C |
 | WASM layout (~line 10232) | computeWasmLayout allocates morph arrays |
-| serializeFastModeData() (~line 11133) | Serialize morph + D-curve + follow-c data for workers |
-| Fast mode preview (~line 11500) | Main-thread D-node advancement + morph blend between passes |
-| Morph control handlers (~line 11689) | Enable, rate, copy, swap event handlers |
+| serializeFastModeData() (~line 11260) | Serialize morph + C-D path + dither + D-curve + follow-c data for workers |
+| Fast mode preview (~line 11703) | Main-thread D-node advancement + morphInterpPoint + dither between passes |
+| buildCDPathPop() (~line 11841) | C-D Path popup: path type, rate, CW/CCW, minor axis, 3 dither sliders, accept/revert |
+| Morph control handlers (~line 12016) | Copy, Swap, C-D Path button event handlers |
 | D-List functions (~line 12536) | D-node trajectory editor with follow-c support |

@@ -87,15 +87,17 @@ Workers are **persistent** within a jiggle cycle: created once at init, reused a
 
 ## Worker Code
 
-Created by `createFastModeWorkerBlob()` (~line 9907) as an inline blob URL. Contains the following components:
+Created by `createFastModeWorkerBlob()` (~line 10032) as an inline blob URL. Contains the following components:
 
 ### 1. Ehrlich-Aberth Solver (two-tier selection)
 
 Two solver tiers are available, selectable via the **cfg** button in the bitmap toolbar. Workers try the WASM tier first and fall back automatically:
 
-1. **WASM step loop** (`S_useWasmLoop`): The entire per-step loop (coefficient interpolation, D-curve advance, follow-C, morph blend, jiggle, solver, root matching, pixel painting) runs in a single WASM module (`step_loop.c`). The binary is base64-encoded as `WASM_STEP_LOOP_B64` (~line 1136) and sent via `wasmStepLoopB64` in the init message. `initWasmStepLoop(d)` (~line 10200) decodes, compiles, allocates WASM linear memory via `computeWasmLayout()`, and copies all persistent state into flat memory buffers. The `runStepLoop(stepStart, stepEnd, elapsedOffset)` export executes the full step range and returns the pixel count directly. Progress is reported via an imported `reportProgress` callback.
+1. **WASM step loop** (`S_useWasmLoop`): The entire per-step loop (coefficient interpolation, D-curve advance, follow-C, morph blend with non-line paths, C-D path dither, jiggle, solver, root matching, pixel painting) runs in a single WASM module (`step_loop.c`). The binary is base64-encoded as `WASM_STEP_LOOP_B64` (~line 1136) and sent via `wasmStepLoopB64` in the init message. `initWasmStepLoop(d)` (~line 10284) decodes, compiles, allocates WASM linear memory via `computeWasmLayout()`, and copies all persistent state into flat memory buffers. The `runStepLoop(stepStart, stepEnd, elapsedOffset)` export executes the full step range and returns the pixel count directly. Progress is reported via an imported `reportProgress` callback.
 
-2. **JS solver** (`solveEA`): Pure JavaScript flat-array implementation (~line 9911). Used when WASM is disabled or unavailable.
+2. **JS solver** (`solveEA`): Pure JavaScript flat-array implementation (~line 10036). Used when WASM is disabled or unavailable.
+
+The previous "solver-only WASM" tier (tier 2) has been removed. If the WASM step loop cannot be used, workers fall back directly to pure JS.
 
 | Parameter | JS Worker | WASM (step loop) | Main Thread |
 |-----------|-----------|---------------------|-------------|
@@ -105,9 +107,9 @@ Two solver tiers are available, selectable via the **cfg** button in the bitmap 
 | Hot-loop math | No `Math.hypot`, manual `d*d` | Native f64 ops | Uses `Math.hypot` |
 | NaN rescue | In solver (isFinite) | Post-call JS (x !== x) | In solver |
 
-All solvers operate on flat `Float64Array` buffers for cache efficiency. The WASM step loop allocates all buffers in WASM linear memory via `computeWasmLayout()` (~line 10145), which computes byte offsets for coefficients, roots, curves, palettes, follow-C indices, pixel output, and working arrays. Memory is grown to fit (`L.pages` pages).
+All solvers operate on flat `Float64Array` buffers for cache efficiency. The WASM step loop allocates all buffers in WASM linear memory via `computeWasmLayout()` (~line 10227), which computes byte offsets for coefficients, roots, curves, palettes, follow-C indices, per-entry dither distribution flags, pixel output, and working arrays. Memory is grown to fit (`L.pages` pages).
 
-**WASM step loop fallback rule**: If `S_idxProxColor` or `S_ratioColor` is true, the WASM step loop is forced off (~line 10410) and the JS step loop is used instead, because these color modes are not implemented in `step_loop.c`.
+**WASM step loop fallback rule**: If `S_idxProxColor` or `S_ratioColor` is true, the WASM step loop is forced off (~line 10525) and the JS step loop is used instead, because these color modes are not implemented in `step_loop.c`.
 
 ### 2. Root Matching (`matchRoots` / `hungarianMatch`)
 
@@ -115,9 +117,9 @@ Three strategies controlled by `S_matchStrategy`:
 
 | Strategy | Function | Frequency | Complexity |
 |----------|----------|-----------|------------|
-| `"assign4"` (default) | `matchRoots()` greedy (~line 9974) | Every 4th step | O(n²) |
+| `"assign4"` (default) | `matchRoots()` greedy (~line 10099) | Every 4th step | O(n²) |
 | `"assign1"` | `matchRoots()` greedy | Every step | O(n²) |
-| `"hungarian1"` | `hungarianMatch()` Kuhn-Munkres (~line 9990) | Every step | O(n³) |
+| `"hungarian1"` | `hungarianMatch()` Kuhn-Munkres (~line 10115) | Every step | O(n³) |
 
 Matching is skipped entirely in uniform-color and proximity modes. In derivative mode, greedy matching runs every 4th step regardless of `S_matchStrategy`. In idx-prox mode, matching follows the user-selected `S_matchStrategy` (same as rainbow).
 
@@ -125,12 +127,14 @@ Matching is skipped entirely in uniform-color and proximity modes. In derivative
 
 For derivative color mode, workers compute per-root Jacobian sensitivity:
 
-- `computeSens(coeffsRe, coeffsIm, nCoeffs, rootsRe, rootsIm, nRoots, selIndices)` (~line 10058): Evaluates p(z) and p'(z) via Horner's method for each root, computes sensitivity as `sum(|z|^(deg-k)) / |p'(z)|` for selected coefficient indices k.
-- `rankNorm(raw, n)` (~line 10036): Rank-normalizes raw sensitivity values to [0, 1] range, mapping to the 16-entry derivative palette.
+- `computeSens(coeffsRe, coeffsIm, nCoeffs, rootsRe, rootsIm, nRoots, selIndices)` (~line 10183): Evaluates p(z) and p'(z) via Horner's method for each root, computes sensitivity as `sum(|z|^(deg-k)) / |p'(z)|` for selected coefficient indices k.
+- `rankNorm(raw, n)` (~line 10161): Rank-normalizes raw sensitivity values to [0, 1] range, mapping to the 16-entry derivative palette.
 
-### 4. Gaussian Dither (`wGaussRand`)
+### 4. Dither (`wGaussRand` / `wDitherRand`)
 
-`wGaussRand()` (~line 10345) generates standard-normal random samples via the Box-Muller transform. Used when `ditherSigma > 0` to perturb coefficient positions after curve interpolation.
+`wGaussRand()` (~line 10437) generates standard-normal random samples via the Box-Muller transform. `wDitherRand(dist)` (~line 10443) selects the distribution: if `dist` is truthy (1 = uniform), returns `(Math.random() - 0.5) * 2` (uniform in [-1, 1]); otherwise returns `wGaussRand()` (normal/Gaussian). Used when `ditherSigma > 0` to perturb coefficient positions after curve interpolation. Each animation entry carries a `ditherDist` field (0 = normal, 1 = uniform) serialized from the per-coefficient "Dist" dropdown.
+
+In the WASM step loop, the equivalent `rngDither(int dist)` function (~line 209 of `step_loop.c`) selects between Gaussian (Box-Muller via imported `cos`/`sin`/`log`) and uniform distribution, matching the JS behavior.
 
 ### 5. Message Handler (`self.onmessage`)
 
@@ -143,7 +147,7 @@ S_nRoots                   int           Root count (= degree)
 S_colorsR/G/B              Uint8Array    Per-root RGB
 S_W, S_H, S_range          int, number   Canvas dimensions and display range
 S_curvesFlat               Float64Array  All curve points (re,im interleaved)
-S_entries                  object[]      Animation entries [{idx, ccw, speed, ditherSigma}]
+S_entries                  object[]      Animation entries [{idx, ccw, speed, ditherSigma, ditherDist}]
 S_offsets, S_lengths       int[]         Curve offset/length per entry
 S_isCloud                  bool[]        Random-cloud flag per entry
 S_useWasmLoop              bool          Use WASM step loop (preferred when WASM enabled)
@@ -162,9 +166,15 @@ S_ratioGamma               number        Gamma correction for Min/Max Ratio
 S_morphEnabled             bool          Morph blending active
 S_morphRate                number        Morph oscillation rate (Hz)
 S_morphTargetRe/Im         Float64Array  Morph target coefficient values
+S_morphPathType            string        Morph interpolation path ("line"|"circle"|"ellipse"|"figure8")
+S_morphPathCcw             bool          Morph path direction (false=CW, true=CCW)
+S_morphEllipseMinor        number        Ellipse minor axis fraction (0.1-1.0)
+S_morphDitherStartAbs      number        C-D path dither sigma at start (absolute)
+S_morphDitherMidAbs        number        C-D path dither sigma at midpoint (absolute)
+S_morphDitherEndAbs        number        C-D path dither sigma at end (absolute)
 S_matchStrategy            string        Root matching strategy ("assign4"|"assign1"|"hungarian1")
 S_dCurvesFlat              Float64Array  D-node curve points (re,im interleaved)
-S_dEntries                 object[]      D-node animation entries [{idx, ccw, speed, ditherSigma}]
+S_dEntries                 object[]      D-node animation entries [{idx, ccw, speed, ditherSigma, ditherDist}]
 S_dOffsets, S_dLengths     int[]         D-curve offset/length per entry
 S_dIsCloud                 bool[]        D-curve random-cloud flag per entry
 S_dFollowC                 int[]         D-node indices with "follow-c" pathType (copy from C-node)
@@ -178,12 +188,14 @@ wasmLoopWorkerId           int           Current worker ID cached for WASM progr
 wasmLoopTotalRunSteps      int           Total steps in current run cached for WASM progress callback
 ```
 
-Solver tier selection during init (~line 10398):
+Solver tier selection during init (~line 10520):
 1. If `useWasm` and `wasmStepLoopB64` present: try `initWasmStepLoop(d)` -> set `S_useWasmLoop = true`
 2. Otherwise: pure JS (`S_useWasmLoop = false`)
 3. Post-init check: if `S_useWasmLoop` and (`S_idxProxColor` or `S_ratioColor`), force `S_useWasmLoop = false` (these modes are JS-only)
 
-#### "run" Handler: WASM Step Loop Path (~line 10432)
+This is a 2-tier system: WASM step loop -> pure JS. The previous solver-only WASM tier has been removed.
+
+#### "run" Handler: WASM Step Loop Path (~line 10555)
 
 When `S_useWasmLoop && wasmLoopExports` is true:
 
@@ -196,17 +208,18 @@ When `S_useWasmLoop && wasmLoopExports` is true:
 
 The WASM step loop handles all per-step computation natively:
 - Coefficient interpolation along C-curves (smooth linear interp or cloud snap)
-- Dither (Gaussian noise via imported `cos`/`sin`/`log`)
-- D-curve advance for animated morph targets
+- Per-entry dither with selectable distribution (normal/Gaussian or uniform) via `rngDither(dist)`
+- D-curve advance for animated morph targets (with per-entry dither distribution)
 - Follow-C D-node copying
-- Morph blend (cosine oscillation)
+- Morph blend: line path (cosine mu), circle, ellipse (with configurable minor axis), and figure-8 paths — all computed natively in WASM
+- C-D path dither: 3-envelope system (start/mid/end) with partition-of-unity property: `startEnv = max(cos(theta), 0)^2`, `midEnv = sin(theta)^2`, `endEnv = max(-cos(theta), 0)^2`. Dither sigma = weighted sum of the three envelopes. Applied as uniform noise after morph interpolation.
 - Jiggle offset application
 - Ehrlich-Aberth solver
 - Root matching (greedy or Hungarian, per configured strategy and color mode)
 - Pixel coordinate mapping and sparse pixel output
 - Progress reporting via imported `reportProgress` callback (every 2000 steps)
 
-#### "run" Handler: JS Step Loop Fallback (~line 10472)
+#### "run" Handler: JS Step Loop Fallback (~line 10594)
 
 When the WASM step loop is not active, the JS fallback executes. For each step in `[stepStart, stepEnd)`:
 
@@ -222,13 +235,18 @@ When the WASM step loop is not active, the JS fallback executes. For each step i
    ```
    - Cloud curves: snap to nearest point (no interpolation)
    - Smooth curves: linear interpolation between adjacent points
-   - If `ditherSigma > 0`: add Gaussian noise `wGaussRand() * ditherSigma` to both re/im after interpolation
+   - If `ditherSigma > 0`: add `wDitherRand(ditherDist) * ditherSigma` noise to both re/im after interpolation. Distribution is per-entry: 0 = normal (Gaussian), 1 = uniform.
 
-4. **Advance D-node curves** (if morph enabled): Same interpolation as step 3 but for `S_dEntries`/`S_dCurvesFlat`, updating `morphRe`/`morphIm` arrays. D-entries also support `ditherSigma`.
+4. **Advance D-node curves** (if morph enabled): Same interpolation as step 3 but for `S_dEntries`/`S_dCurvesFlat`, updating `morphRe`/`morphIm` arrays. D-entries also support `ditherSigma` and per-entry `ditherDist`.
 
 5. **Follow-C D-nodes**: For each index in `S_dFollowC`, copy the current C-node position (`coeffsRe[fci]`/`coeffsIm[fci]`) into `morphRe[fci]`/`morphIm[fci]`. Applied after D-curve advance, before morph blend — so follow-c D-nodes track the (possibly animated) C-coefficient position at each step.
 
-6. **Morph blend** (if `S_morphEnabled`): Cosine blend `mu = 0.5 - 0.5 * cos(2pi * morphRate * elapsed)` between C-coefficients and morph target D-coefficients. Starts at mu=0 (pure C) and oscillates to mu=1 (pure D).
+6. **Morph blend** (if `S_morphEnabled`): Interpolation between C-coefficients and morph target D-coefficients via `morphInterpW()`. Supports four path types:
+   - **Line**: Cosine blend `mu = 0.5 - 0.5 * cos(theta)`. Starts at mu=0 (pure C) and oscillates to mu=1 (pure D).
+   - **Circle**: Circular arc from C to D through the midpoint, with `semi * cos(theta)` along the C-D axis and `semi * sin(theta)` perpendicular.
+   - **Ellipse**: Like circle but with configurable minor axis fraction (`S_morphEllipseMinor`, 0.1-1.0).
+   - **Figure-8**: Lemniscate-like path using `sin(2*theta)` for the perpendicular component.
+   Direction is controlled by `S_morphPathCcw` (CW or CCW). After morph interpolation, **C-D path dither** is applied: 3 envelopes (start = `max(cos(theta),0)^2`, mid = `sin(theta)^2`, end = `max(-cos(theta),0)^2`) form a partition of unity. Combined sigma = `S_morphDitherStartAbs * startEnv + S_morphDitherMidAbs * midEnv + S_morphDitherEndAbs * endEnv`. Uniform noise scaled by this sigma is added to all coefficients.
 
 7. **Apply jiggle offsets**: If `S_jiggleRe`/`S_jiggleIm` present, add per-coefficient offsets post-interpolation.
 
@@ -242,12 +260,12 @@ When the WASM step loop is not active, the JS fallback executes. For each step i
 
 ## WASM Step Loop Memory Layout
 
-`computeWasmLayout(nc, nr, maxP, nE, nDE, nFC, nSI, tCP, tDP, heapBase)` (~line 10145) computes byte offsets for all buffers in WASM linear memory. The layout starts at `__heap_base` (read from WASM exports, default 65536) and aligns all allocations to 8 bytes.
+`computeWasmLayout(nc, nr, maxP, nE, nDE, nFC, nSI, tCP, tDP, heapBase)` (~line 10227) computes byte offsets for all buffers in WASM linear memory. The layout starts at `__heap_base` (read from WASM exports, default 65536) and aligns all allocations to 8 bytes.
 
 | Abbreviation | Contents | Size |
 |-------------|----------|------|
-| `cfgI` | Integer config (65 Int32 values: dimensions, counts, mode flags, uniform RGB, RNG seeds, all buffer offsets) | 260 bytes |
-| `cfgD` | Float64 config (range, FAST_PASS_SECONDS, morphRate) | 24 bytes |
+| `cfgI` | Integer config (69 Int32 values: dimensions, counts, mode flags, uniform RGB, RNG seeds, all buffer offsets, morph path type/ccw, dither dist offsets) | 276 bytes |
+| `cfgD` | Float64 config (range, FAST_PASS_SECONDS, morphRate, morphEllipseMinor, morphDitherStart, morphDitherMid, morphDitherEnd) | 56 bytes |
 | `cRe`, `cIm` | Base coefficient values | nc * 8 each |
 | `clR`, `clG`, `clB` | Per-root color RGB | nr each |
 | `jRe`, `jIm` | Jiggle offsets | nc * 8 each |
@@ -256,9 +274,11 @@ When the WASM step loop is not active, the JS fallback executes. For each step i
 | `dpR/G/B` | Derivative palette (16 entries) | 16 each |
 | `sI` | Selected coefficient indices | nSI * 4 |
 | `fCI` | Follow-C D-node indices | nFC * 4 |
-| `eIdx`, `eSpd`, `eCcw`, `eDth` | C-curve entry metadata (index, speed, ccw, dither) | nE * (4+8+4+8) |
+| `eIdx`, `eSpd`, `eCcw`, `eDth` | C-curve entry metadata (index, speed, ccw, dither sigma) | nE * (4+8+4+8) |
+| `eDd` | C-curve per-entry dither distribution (0=normal, 1=uniform) | nE * 4 |
 | `cOff`, `cLen`, `cCld` | C-curve offsets, lengths, cloud flags | nE * 4 each |
-| `dIdx`, `dSpd`, `dCcw`, `dDth` | D-curve entry metadata | nDE * (4+8+4+8) |
+| `dIdx`, `dSpd`, `dCcw`, `dDth` | D-curve entry metadata (index, speed, ccw, dither sigma) | nDE * (4+8+4+8) |
+| `dDd` | D-curve per-entry dither distribution (0=normal, 1=uniform) | nDE * 4 |
 | `dOff`, `dLen`, `dCld` | D-curve offsets, lengths, cloud flags | nDE * 4 each |
 | `cvF` | C-curve flat data (re,im interleaved) | tCP * 16 |
 | `dcF` | D-curve flat data (re,im interleaved) | tDP * 16 |
@@ -269,15 +289,15 @@ When the WASM step loop is not active, the JS fallback executes. For each step i
 | `piO` | Pixel index output | maxP * 4 |
 | `prO`, `pgO`, `pbO` | Pixel RGB output | maxP each |
 
-`initWasmStepLoop(d)` (~line 10200):
+`initWasmStepLoop(d)` (~line 10284):
 1. Decodes the base64 WASM binary and compiles the module
 2. Instantiates with a small initial memory (2 pages) plus env imports: `{memory, cos, sin, log, reportProgress}`
 3. Reads `__heap_base` from WASM exports to determine where free memory begins
 4. Calls `computeWasmLayout()` to determine total memory needed
 5. Grows memory if needed (`wasmLoopMemory.grow()`)
-6. Writes integer config (`cfgI32[0..64]`): nc, nr, W, H, totalSteps, colorMode (0=uniform, 1=rainbow, 2=proximity, 3=derivative), matchStrategy (0=assign4, 1=assign1, 2=hungarian), morphEnabled, entry counts, follow-C count, selIdx count, hasJiggle, uniform RGB, 4 RNG seed values, and all 45 buffer byte-offsets
-7. Writes float config (`cfgF64[0..2]`): bitmapRange, FAST_PASS_SECONDS, morphRate
-8. Copies all data arrays into their computed memory locations
+6. Writes integer config (`cfgI32[0..68]`): nc, nr, W, H, totalSteps, colorMode (0=uniform, 1=rainbow, 2=proximity, 3=derivative), matchStrategy (0=assign4, 1=assign1, 2=hungarian), morphEnabled, entry counts, follow-C count, selIdx count, hasJiggle, uniform RGB, 4 RNG seed values, 47 buffer byte-offsets (including eDd and dDd for per-entry dither distributions), morphPathType (0=line, 1=circle, 2=ellipse, 3=figure8), morphCcw (0/1)
+7. Writes float config (`cfgF64[0..6]`): bitmapRange, FAST_PASS_SECONDS, morphRate, morphEllipseMinor, morphDitherStart, morphDitherMid, morphDitherEnd
+8. Copies all data arrays into their computed memory locations (including per-entry `ditherDist` flags for both C-curves and D-curves)
 9. Calls `wasmLoopExports.init(L.cfgI, L.cfgD)` to initialize WASM internal state
 
 ---
@@ -312,7 +332,7 @@ Compositing on main thread writes sparse pixels directly into a **persistent `Im
     nCoeffs: int,
     degree: int,
     nRoots: int,
-    animEntries: [{idx, ccw, speed, ditherSigma}, ...],
+    animEntries: [{idx, ccw, speed, ditherSigma, ditherDist}, ...],  // ditherDist: 0=normal, 1=uniform
     curvesFlat: ArrayBuffer,       // Float64Array, all curve points re,im interleaved
     curveOffsets: [int, ...],      // start index in curvesFlat for each curve
     curveLengths: [int, ...],      // point count per curve
@@ -344,10 +364,16 @@ Compositing on main thread writes sparse pixels directly into a **persistent `Im
     wasmStepLoopB64: string|null,  // base64-encoded WASM step loop binary (if useWasm)
     morphEnabled: bool,            // morph blending active
     morphRate: number,             // morph oscillation rate (Hz)
+    morphPathType: string,         // morph interpolation path ("line"|"circle"|"ellipse"|"figure8")
+    morphPathCcw: bool,            // morph path direction (false=CW, true=CCW)
+    morphEllipseMinor: number,     // ellipse minor axis fraction (0.1-1.0)
+    morphDitherStartAbs: number,   // C-D path dither sigma at start (absolute)
+    morphDitherMidAbs: number,     // C-D path dither sigma at midpoint (absolute)
+    morphDitherEndAbs: number,     // C-D path dither sigma at end (absolute)
     morphTargetRe: ArrayBuffer,    // Float64Array, morph target real parts (or null)
     morphTargetIm: ArrayBuffer,    // Float64Array, morph target imag parts (or null)
     matchStrategy: string,         // "assign4"|"assign1"|"hungarian1"
-    dAnimEntries: [{idx, ccw, speed, ditherSigma}, ...],  // D-node animation entries
+    dAnimEntries: [{idx, ccw, speed, ditherSigma, ditherDist}, ...],  // D-node animation entries; ditherDist: 0=normal, 1=uniform
     dCurvesFlat: ArrayBuffer,      // Float64Array, D-node curve points
     dCurveOffsets: [int, ...],
     dCurveLengths: [int, ...],
@@ -426,7 +452,7 @@ Sent when `runStepLoop()` throws. The worker disables `S_useWasmLoop` so subsequ
 
 ## Lifecycle
 
-### enterFastMode() (~line 10881)
+### enterFastMode() (~line 11008)
 
 1. Stop interactive animation
 2. Ensure bitmap canvas exists (init if needed, match resolution dropdown)
@@ -445,7 +471,7 @@ Sent when `runStepLoop()` throws. The worker disables `S_useWasmLoop` so subsequ
 11. **If no Worker support**: start legacy fallback (`setTimeout(fastModeChunkLegacy, 0)`)
 12. **Otherwise**: serialize data -> `initFastModeWorkers()` -> first `dispatchPassToWorkers()`
 
-### initFastModeWorkers() (~line 11148)
+### initFastModeWorkers() (~line 11281)
 
 Worker count is capped: `actualWorkers = Math.min(numWorkers, stepsVal)`. This prevents creating more workers than steps (e.g., 16 workers for 100 steps would leave most workers with 0 steps). For each of `actualWorkers` workers:
 1. Create blob URL via `createFastModeWorkerBlob()`
@@ -459,26 +485,26 @@ Worker count is capped: `actualWorkers = Math.min(numWorkers, stepsVal)`. This p
 
 Then immediately call `dispatchPassToWorkers()`.
 
-### dispatchPassToWorkers() (~line 11218)
+### dispatchPassToWorkers() (~line 11357)
 
 1. Calculate balanced step distribution: `base = floor(stepsVal / nw)`, `extra = stepsVal % nw` (where `nw = fastModeWorkers.length`, the actual worker count). Each worker gets `base + (w < extra ? 1 : 0)` steps, using a running offset for `stepStart`/`stepEnd`.
 2. Reset completion counter and pixel/progress arrays
 3. Record `fastModePassStartTime`
 4. For each worker: send "run" message with `{stepStart, stepEnd, elapsedOffset, rootsRe, rootsIm}`
 
-### Pass completion (all workers done) (~line 11275)
+### Pass completion (all workers done) (~line 11389)
 
-1. `compositeWorkerPixels()` (~line 11286) — merge sparse pixels onto persistent `ImageData` buffer, flush dirty rect
+1. `compositeWorkerPixels()` (~line 11425) — merge sparse pixels onto persistent `ImageData` buffer, flush dirty rect
 2. `recordTick()` — update frame counter
-3. `recordPassTiming(workerMs)` (~line 11370) — push `{passMs, stepsPerSec, workers, steps, workerMs, composite}` to history
-4. `advancePass()` (~line 11383):
+3. `recordPassTiming(workerMs)` (~line 11509) — push `{passMs, stepsPerSec, workers, steps, workerMs, composite}` to history
+4. `advancePass()` (~line 11522):
    - `fastModeElapsedOffset += 1.0`, increment pass counter
    - Update pass counter UI
    - **Jiggle boundary check**: if `jiggleMode !== "none"` and `passCount >= targetPasses`:
-     - `reinitWorkersForJiggle()` (~line 11407): terminate workers -> `computeJiggleForStep()` -> re-serialize data -> `initFastModeWorkers()` (elapsed offset continues, no exit/re-enter)
+     - `reinitWorkersForJiggle()` (~line 11546): terminate workers -> `computeJiggleForStep()` -> re-serialize data -> `initFastModeWorkers()` (elapsed offset continues, no exit/re-enter)
    - Otherwise: update warm-start roots in shared data -> `dispatchPassToWorkers()`
 
-### exitFastMode() (~line 11428)
+### exitFastMode() (~line 11567)
 
 1. Proportionally advance elapsed offset for mid-pass interruption
 2. Terminate all workers, clear arrays
@@ -495,7 +521,7 @@ Then immediately call `dispatchPassToWorkers()`.
 
 `fastModeTargetPasses` is set directly from `jiggleInterval` (a user-configurable value, 1-100 seconds, shown in the cfg popup). Since each pass is 1.0 virtual seconds, the number of passes per jiggle cycle equals the interval in seconds.
 
-The **PrimeSpeeds** transform (in the C-List/D-List Transform dropdown) sets speeds coprime to all others, forcing GCD=1 and maximum cycle diversity. `findPrimeSpeed()` (~line 10777) operates on integer speed values (internal speed * 1000, range 1-1000) and finds the nearest coprime integer, then divides back by 1000 for the internal speed. The PS button is also available in per-coefficient path picker popups.
+The **PrimeSpeeds** transform (in the C-List/D-List Transform dropdown) sets speeds coprime to all others, forcing GCD=1 and maximum cycle diversity. `findPrimeSpeed()` (~line 10904) operates on integer speed values (internal speed * 1000, range 1-1000) and finds the nearest coprime integer, then divides back by 1000 for the internal speed. The PS button is also available in per-coefficient path picker popups.
 
 ### Jiggle Integration
 
@@ -513,7 +539,7 @@ No curve recomputation is needed since jiggle is applied post-interpolation.
 
 ## Data Serialization
 
-`serializeFastModeData(animated, stepsVal, nRoots)` (~line 11010) produces the shared data object:
+`serializeFastModeData(animated, stepsVal, nRoots)` (~line 11137) produces the shared data object:
 
 ### Coefficient Arrays
 - `coeffsRe`, `coeffsIm`: Float64Array of current coefficient positions (base values, no jiggle applied)
@@ -525,7 +551,7 @@ All animated curves concatenated into one `Float64Array`:
 curvesFlat: [re0_p0, im0_p0, re0_p1, im0_p1, ..., re1_p0, im1_p0, ...]
 ```
 With metadata arrays:
-- `animEntries`: `[{idx: coeffIndex, ccw: bool, speed: number, ditherSigma: number}, ...]`
+- `animEntries`: `[{idx: coeffIndex, ccw: bool, speed: number, ditherSigma: number, ditherDist: 0|1}, ...]`
 - `curveOffsets`: start index (in points, not floats) for each curve
 - `curveLengths`: point count per curve
 - `curveIsCloud`: random-cloud flag per curve
@@ -548,11 +574,16 @@ Workers index into `curvesFlat` as: `base = offsets[a] * 2; curvesFlat[base + k*
 
 ### Morph & D-Curve Data
 - `morphEnabled`, `morphRate`: morph blending configuration
+- `morphPathType`: morph interpolation path (`"line"`, `"circle"`, `"ellipse"`, `"figure8"`)
+- `morphPathCcw`: morph path direction (CW or CCW)
+- `morphEllipseMinor`: ellipse minor axis as fraction of major (0.1-1.0)
+- `morphDitherStartAbs`, `morphDitherMidAbs`, `morphDitherEndAbs`: C-D path dither sigma values (absolute), converted from percentage at serialization time: `morphDitherXSigma / 100 * coeffExtent()`. The three envelopes form a partition of unity along the morph oscillation.
 - `morphTargetRe`, `morphTargetIm`: Float64Array of morph target positions
 - D-curves serialized identically to C-curves: `dAnimEntries`, `dCurvesFlat`, `dCurveOffsets`, `dCurveLengths`, `dCurveIsCloud`
 - `dFollowCIndices`: array of D-node indices where `pathType === "follow-c"`. Built by `morphTargetCoeffs.reduce()` in `serializeFastModeData()`. Workers use this to copy the current C-node position into the morph target at each step.
 - `totalCPts`, `totalDPts`: total curve point counts for C-curves and D-curves respectively. Used by `computeWasmLayout()` to size WASM memory buffers.
-- `ditherSigma` in each animation entry: absolute dither radius (converted from `_ditherSigmaPct / 100 * coeffExtent()`). Workers add Gaussian noise scaled by this value after interpolation.
+- `ditherSigma` in each animation entry: absolute dither radius (converted from `_ditherSigmaPct / 100 * coeffExtent()`). Workers add noise scaled by this value after interpolation.
+- `ditherDist` in each animation entry: distribution type (0 = normal/Gaussian, 1 = uniform). Serialized from the per-coefficient "Dist" dropdown (`_ditherDist`). Both C-curve and D-curve entries carry their own `ditherDist`.
 
 ### Root Matching
 - `matchStrategy`: `"assign4"` (default), `"assign1"`, or `"hungarian1"`
@@ -564,7 +595,7 @@ Workers index into `curvesFlat` as: `base = offsets[a] * 2; curvesFlat[base + k*
 
 ## Root Color Modes
 
-Six bitmap color modes are available. The mode is stored in `bitmapColorMode` (~line 1016) and serialized as boolean flags in the init message:
+Six bitmap color modes are available. The mode is stored in `bitmapColorMode` (~line 1012) and serialized as boolean flags in the init message:
 
 | Mode | Flag(s) | Root matching | WASM step loop | Worker behavior |
 |------|---------|---------------|----------------|-----------------|
@@ -672,7 +703,7 @@ No per-worker W*H*4 canvas buffer. A 10K*10K canvas with 4 workers and 100K step
 | All workers get same warm-start roots | Workers 1-N start with roots from time 0 (not their actual time). EA converges in 1-2 extra iters on first step. Negligible cost vs complexity of chaining roots across workers. |
 | WASM solver optional (not default) | JS solver is already fast and requires no compilation toolchain. WASM provides marginal gains at low degree but significant gains at degree 50+. Users can toggle via cfg button. |
 | WASM b64 sent per init (not shared) | Each worker decodes and compiles independently (~1ms). Avoids complexity of sharing compiled modules across workers. Only happens once per fast-mode session. |
-| WASM step loop (full pipeline) | Moving the entire step loop into WASM eliminates JS-to-WASM boundary crossing per step. The step loop WASM module handles interpolation, D-curves, follow-C, morph, jiggle, solver, matching, and pixel output natively. Two-tier fallback (step loop -> JS) ensures graceful degradation. |
+| WASM step loop (full pipeline) | Moving the entire step loop into WASM eliminates JS-to-WASM boundary crossing per step. The step loop WASM module handles interpolation, D-curves, follow-C, morph (all path types), C-D path dither, jiggle, solver, matching, and pixel output natively. Two-tier fallback (WASM step loop -> pure JS) ensures graceful degradation. The previous solver-only WASM tier was removed — if the step loop cannot run, workers fall back directly to JS. |
 | `maxPaintsPerWorker` per-worker sizing | WASM step loop pre-allocates pixel output buffers in linear memory. `ceil(stepsVal / actualWorkers) * nRoots` gives the exact upper bound for each worker's pixel count, avoiding over-allocation when workers are capped below `numWorkers`. |
 | Idx-prox and ratio modes JS-only | These color modes are not implemented in `step_loop.c`. The WASM step loop is forced off when they are active, falling back to pure JS. |
 
@@ -680,11 +711,11 @@ No per-worker W*H*4 canvas buffer. A 10K*10K canvas with 4 workers and 100K step
 
 ## Legacy Fallback
 
-For browsers without `Worker` support. Runs on main thread via `setTimeout(fastModeChunkLegacy, 0)` (~line 11487).
+For browsers without `Worker` support. Runs on main thread via `setTimeout(fastModeChunkLegacy, 0)` (~line 11626).
 
 Chunk size: `max(10, floor(200 / max(3, degree)))` steps per setTimeout callback. This keeps each chunk under ~16ms to avoid blocking the UI event loop.
 
-Uses the same animation interpolation and solver logic but calls `paintBitmapFrameFast()` (~line 9829, canvas `fillRect` 1x1 pixel writes) instead of sparse pixel buffers. Follow-c D-nodes are handled per step: for each D-node with `pathType === "follow-c"`, its position is copied from the corresponding C-coefficient (`coefficients[fi]`).
+Uses the same animation interpolation and solver logic but calls `paintBitmapFrameFast()` (~line 9954, canvas `fillRect` 1x1 pixel writes) instead of sparse pixel buffers. Follow-c D-nodes are handled per step: for each D-node with `pathType === "follow-c"`, its position is copied from the corresponding C-coefficient (`coefficients[fi]`).
 
 Jiggle boundary logic mirrors worker mode: when `jiggleMode !== "none"` and `passCount >= targetPasses`, reset pass count and call `computeJiggleForStep()`. No curve recomputation needed since jiggle is applied post-interpolation. Unlike worker mode, the legacy fallback does not exit/re-enter fast mode at jiggle boundaries.
 
@@ -725,24 +756,30 @@ The formula is mathematically identical to the interactive-mode `animLoop()`.
 
 ### Dither
 
-When `ditherSigma > 0` for an animation entry, Gaussian noise is added after interpolation:
+When `ditherSigma > 0` for an animation entry, noise is added after interpolation:
 ```
-coeffsRe[idx] += wGaussRand() * ditherSigma
-coeffsIm[idx] += wGaussRand() * ditherSigma
+coeffsRe[idx] += wDitherRand(ditherDist) * ditherSigma
+coeffsIm[idx] += wDitherRand(ditherDist) * ditherSigma
 ```
-`ditherSigma` is an absolute value converted from percentage at serialization time: `_ditherSigmaPct / 100 * coeffExtent()`. Both C-curve and D-curve entries support dither independently.
+`ditherSigma` is an absolute value converted from percentage at serialization time: `_ditherSigmaPct / 100 * coeffExtent()`. Each entry's `ditherDist` selects the distribution: 0 = normal (Gaussian via Box-Muller), 1 = uniform (in [-1, 1]). Both C-curve and D-curve entries support dither and distribution selection independently.
 
-In the WASM step loop, dither uses the same Box-Muller transform with `cos`/`sin`/`log` imported from JS.
+In the WASM step loop, dither uses `rngDither(dist)` which selects between Gaussian (Box-Muller with imported `cos`/`sin`/`log`) and uniform distribution. Per-entry distribution flags are stored in WASM memory at offsets `CI_OFF_ENTRY_DITHER_DIST` (index 67) and `CI_OFF_DENTRY_DITHER_DIST` (index 68).
 
 ### Morph & D-Node Handling in Workers
 
 When morph is enabled, workers maintain separate `morphRe`/`morphIm` arrays (pre-allocated copies of `S_morphTargetRe`/`S_morphTargetIm`). Each step:
 
-1. **D-curve advance**: Animated D-nodes are interpolated along their D-curves (same algorithm as C-curves), updating `morphRe[dIdx]`/`morphIm[dIdx]`.
+1. **D-curve advance**: Animated D-nodes are interpolated along their D-curves (same algorithm as C-curves, with per-entry `ditherDist`), updating `morphRe[dIdx]`/`morphIm[dIdx]`.
 2. **Follow-C**: D-nodes with `follow-c` path type have their morph target position overwritten with the current C-coefficient position: `morphRe[fci] = coeffsRe[fci]`.
-3. **Morph blend**: All coefficients are blended: `coeff = coeff * (1 - mu) + morphTarget * mu` where `mu = 0.5 - 0.5 * cos(2*pi * morphRate * elapsed)`.
+3. **Morph blend**: All coefficients are interpolated via `morphInterpW()` which supports four path types:
+   - **Line**: `mu = 0.5 - 0.5 * cos(theta)`, linear blend between C and D.
+   - **Circle**: Circular arc through the midpoint of C and D.
+   - **Ellipse**: Elliptical arc with configurable minor axis (`S_morphEllipseMinor`).
+   - **Figure-8**: Lemniscate-like path using `sin(2*theta)`.
+   Direction is controlled by `S_morphPathCcw`.
+4. **C-D path dither**: If any of `S_morphDitherStartAbs`, `S_morphDitherMidAbs`, `S_morphDitherEndAbs` are non-zero, three envelopes form a partition of unity: `startEnv = max(cos(theta), 0)^2`, `midEnv = sin(theta)^2`, `endEnv = max(-cos(theta), 0)^2`. Combined sigma = weighted sum. Uniform noise scaled by this sigma is added to all coefficients after morph interpolation.
 
-This ordering ensures follow-C D-nodes track the animated C-coefficient position (not the base position), and the blend is applied after all target positions are finalized.
+This ordering ensures follow-C D-nodes track the animated C-coefficient position (not the base position), the blend is applied after all target positions are finalized, and C-D path dither is applied last. Both the JS and WASM step loops implement this full pipeline.
 
 ---
 
@@ -753,7 +790,7 @@ When `bitmapCoeffView` is true (toggled via ROOT/COEF button), fast mode plots *
 ### How It Works
 
 1. Curves are precomputed by `enterFastMode()` identically to normal mode (jiggle offsets are NOT baked in)
-2. `plotCoeffCurvesOnBitmap(animated, stepsVal)` (~line 10801) iterates all steps:
+2. `plotCoeffCurvesOnBitmap(animated, stepsVal)` (~line 10928) iterates all steps:
    - **Animated coefficients**: read position from `fastModeCurves.get(idx)[step % curveLength]`, then add jiggle offset if present
    - **Non-animated coefficients**: fixed at base position, then add jiggle offset if present
 3. Each coefficient plotted as a **3x3 pixel square** using `coeffColor(i, n)` rainbow palette

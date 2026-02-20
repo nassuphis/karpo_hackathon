@@ -8,7 +8,7 @@ Architecture, conventions, performance insights, and debugging notes for the Pol
 
 ### Single-File Design
 
-The entire application lives in one HTML file (`index.html`, ~13,900 lines). CSS is embedded in a `<style>` block (lines 12–560), HTML body is lines 562–930, and all JavaScript is inline in a single `<script>` block (lines 931–13910). There is no build step — serve the file directly.
+The entire application lives in one HTML file (`index.html`, ~14,300 lines). CSS is embedded in a `<style>` block (lines 12–560), HTML body is lines 562–930, and all JavaScript is inline in a single `<script>` block (lines 931–14270). There is no build step — serve the file directly.
 
 **Why it works**: Zero tooling overhead, instant deployment to GitHub Pages, no import/bundling issues. D3.js and image-encoding libraries are loaded from CDN.
 
@@ -73,8 +73,8 @@ Four distinct canvas systems coexist:
 
 | File | Purpose |
 |------|---------|
-| `index.html` | The entire application (~13,900 lines) |
-| `step_loop.c` | Full worker step loop in C: EA solver, curve interpolation, root matching, pixel output |
+| `index.html` | The entire application (~14,300 lines) |
+| `step_loop.c` | Full worker step loop in C (~880 lines): EA solver, curve interpolation, morph path interpolation, root matching, dither, pixel output |
 | `solver.c` | Historical solver-only WASM source (no longer embedded, kept for reference) |
 | `build-wasm.sh` | Compiles `step_loop.c` to WASM via Homebrew LLVM, produces `.wasm.b64` file |
 | `step_loop.wasm` / `step_loop.wasm.b64` | Compiled full step loop WASM binary and base64-encoded version |
@@ -105,13 +105,27 @@ Each coefficient is a plain object with these fields:
 
 ### Morph System
 
-Coefficient morphing blends two coefficient sets: primary C (`coefficients[]`) and target D (`morphTargetCoeffs[]`). When enabled, the solver receives `C[i]*(1-mu) + D[i]*mu` where `mu = 0.5 - 0.5*cos(2*pi*morphRate*elapsed)`.
+Coefficient morphing blends two coefficient sets: primary C (`coefficients[]`) and target D (`morphTargetCoeffs[]`). Morph is always enabled (`morphEnabled = true`) and auto-activates when D-nodes exist — the morph checkbox was removed in v40. The blending path is configurable via `morphPathType`:
 
-Key state: `morphEnabled`, `morphRate` (Hz, 0.01–2.00), `morphMu` (0–1), `morphTargetCoeffs[]` (same structure as `coefficients[]`). D-nodes can be assigned paths via the D-List tab, making the morph target itself dynamic.
+- **Line** (default): `mu = 0.5 - 0.5*cos(theta)`, linear interpolation C*(1-mu) + D*mu
+- **Circle**: traces a semicircle from C to D through a perpendicular midpoint
+- **Ellipse**: like circle but with configurable minor axis (`morphEllipseMinor`, 0.1–1.0)
+- **Figure-8**: lemniscate path using `sin(2*theta)` for the perpendicular component
+
+All four path types use local coordinate frames: unit vector along C->D for the parallel axis, perpendicular vector for the transverse axis, centered on the C-D midpoint. `morphPathCcw` controls direction for non-line paths.
+
+Key state: `morphEnabled` (always true), `morphRate` (Hz, 0.01–2.00), `morphMu` (0–1), `morphPathType` (`"line"` | `"circle"` | `"ellipse"` | `"figure8"`), `morphPathCcw`, `morphEllipseMinor`, `morphTargetCoeffs[]` (same structure as `coefficients[]`). D-nodes can be assigned paths via the D-List tab, making the morph target itself dynamic.
+
+**C-D path dither**: Three independent dither envelopes along the morph path form a partition of unity:
+- **Start sigma** (`morphDitherStartSigma`): envelope `max(cos(theta), 0)^2` — peaks at C position
+- **Mid sigma** (`morphDitherMidSigma`): envelope `sin^2(theta)` — peaks at midpoint
+- **End sigma** (`morphDitherEndSigma`): envelope `max(-cos(theta), 0)^2` — peaks at D position
+
+The combined dither `ds = startSigma * startEnv + midSigma * midEnv + endSigma * endEnv` is applied as uniform random offset to all coefficients at each step.
 
 **Design insight**: Morph is a "global path" — it affects all coefficients equally through a single parameter. Unlike per-coefficient paths which are independent, morph creates correlated perturbation across the entire polynomial. The blending happens BEFORE the solver call, making it transparent to both JS and WASM solvers.
 
-**Fast mode**: Workers receive D positions in the init message and compute mu per-step. The blending loop is inserted between curve interpolation and solver call in both the JS step loop and the WASM step loop.
+**Fast mode**: Workers receive D positions in the init message and compute morph interpolation per-step. Both the JS step loop and the WASM step loop implement all four morph path types natively (no fallback needed for non-line paths).
 
 **Continuous fast mode**: Fast mode runs continuously until stopped. `jiggleInterval` (0.1–100s, cfg popup) controls how often jiggle perturbations fire — not a cycle length. "init" button snapshots animation state + clears bitmap + resets elapsed. "start"/"pause" toggles computation. Stopping preserves elapsed; resuming continues. "clear" only clears pixels. Elapsed seconds shown as zero-padded counter. Changing the bitmap steps or resolution selects (`bitmap-steps-select`, `bitmap-res-select`) while fast mode is active triggers an automatic restart (`exitFastMode()` + `enterFastMode()`) via dedicated `change` event listeners.
 
@@ -172,10 +186,10 @@ animLoop()
   |-- Update coefficient positions along curves (elapsed time -> curveIndex)
   |-- Advance D-nodes along their paths (advanceDNodesAlongCurves)
   |-- Recompute jiggle offsets if step changed
-  |-- Update morphMu (cosine oscillation) if morphEnabled
+  |-- Update morphTheta if morphEnabled
   |-- solveRootsThrottled()
   |     +-- requestAnimationFrame -> solveRoots()
-  |         |-- Blend C with D if morphEnabled: coeffs[i] = C[i]*(1-mu) + D[i]*mu
+  |         |-- Blend C with D via morphInterpPoint (line/circle/ellipse/figure-8)
   |         +-- renderRoots(newRoots)
   |             |-- Draw SVG circles
   |             |-- Update trail data
@@ -209,8 +223,8 @@ These controls live in the **header bar** (not the left tab bar), inside `<span 
 
 Workers are created as blob URLs from inline code (no separate `.js` file). Each worker receives the full polynomial on `init`, then gets `{stepStart, stepEnd}` ranges on each `run` message. Steps are distributed using balanced floor division: `base = Math.floor(stepsVal / nw)` with the remainder distributed one extra step to the first `stepsVal % nw` workers. The actual worker count is capped at `Math.min(numWorkers, stepsVal)` so that low step counts (e.g., 100 steps with 16 workers) don't create workers with zero steps.
 
-**Two-tier solver selection per worker**: On init, each worker attempts (in order):
-1. **WASM step loop** (`step_loop.wasm`) — full step loop in WASM: curve interpolation, morph blend, solve, root matching, pixel output all run in WASM. Falls back if unsupported color mode (idx-prox, ratio).
+**Two-tier execution per worker** (was 3-tier before v40; solver-only WASM tier removed). On init, each worker attempts (in order):
+1. **WASM step loop** (`step_loop.wasm`) — full step loop in WASM: curve interpolation, morph blend (all 4 path types + C-D path dither), solve, root matching, pixel output all run in WASM. Falls back if unsupported color mode (idx-prox, ratio).
 2. **Pure JS** — everything in JavaScript.
 
 The selection is per-worker and transparent to the main thread — the `done` message format is identical regardless of which tier executed.
@@ -221,9 +235,11 @@ Workers (parallel)                    Main Thread
 --------------------                  ---------------
 Step loop (WASM or JS):
   Interpolate C-curves  ---|
+  Per-entry dither         |
   Interpolate D-curves     |
   Follow-C copy            |
-  Morph blend              |
+  Morph path interp        |
+  C-D path dither          |
   Apply jiggle offsets     |--> structured clone --> handleFastModeWorkerMessage
   EA solve                 |    (paintIdx, R,G,B)         |
   NaN rescue               |                              v
@@ -244,14 +260,15 @@ The worker blob (~line 9907) contains all code inlined as a template string:
 3. **Hungarian matching** (`hungarianMatch`) — Kuhn-Munkres O(n^3), optimal assignment
 4. **Derivative sensitivity** (`rankNorm`, `computeSens`) — Jacobian sensitivity + rank normalization
 5. **WASM step loop init** (`computeWasmLayout`, `initWasmStepLoop`) — compiles step_loop.wasm with imported memory, computes flat memory layout for all data sections, writes config + data into WASM memory
+6. **Morph interpolation** (`morphInterpW`) — worker-side morph path interpolation for all 4 path types (line, circle, ellipse, figure-8), mirrors main-thread `morphInterpPoint()`
 7. **WASM step loop run path** — copies warm-start roots into WASM memory, calls `runStepLoop()`, reads sparse pixel output + final roots
-8. **JS step loop fallback** — full step loop: curve interpolation, D-curve interpolation, follow-C copy, morph blend, jiggle offsets, solve, NaN rescue, color-mode-dependent root matching + pixel output
+8. **JS step loop fallback** — full step loop: curve interpolation, D-curve interpolation, follow-C copy, morph blend (all 4 path types + C-D path dither), jiggle offsets, solve, NaN rescue, color-mode-dependent root matching + pixel output
 9. **Persistent state** (`S_*` variables) — set by `init`, reused across `run` calls
 10. **`onmessage` handler** — dispatches `init` (parse + store) and `run` (execute step loop, post results)
 
 ### WASM Step Loop (`step_loop.c`)
 
-The full step loop was ported to C and compiled to WASM (~817 lines). This eliminates per-step JS-to-WASM boundary crossing — the entire inner loop runs in WASM with only a single call per `run` message.
+The full step loop was ported to C and compiled to WASM (~880 lines). This eliminates per-step JS-to-WASM boundary crossing — the entire inner loop runs in WASM with only a single call per `run` message.
 
 **What `step_loop.c` contains**:
 - EA solver (ported from `solver.c`)
@@ -260,14 +277,16 @@ The full step loop was ported to C and compiled to WASM (~817 lines). This elimi
 - Derivative sensitivity computation (`computeSens`, `rankNorm`)
 - Curve interpolation (C-curves and D-curves, with cloud/interpolation modes)
 - Follow-C copy
-- Morph blend (cosine mu formula)
+- Morph blend with all 4 path types: line (cosine mu), circle, ellipse, figure-8 — uses local coordinate frames (unit vector C->D, perpendicular, midpoint)
+- C-D path dither: 3 envelope partition of unity (start/mid/end sigma)
 - Jiggle offset application
 - NaN rescue (unit-circle re-seeding)
 - All four color modes: Uniform (0), Index Rainbow (1), Proximity (2), Derivative (3)
 - Progress reporting via imported JS function
-- xorshift128 PRNG for dither (avoids importing `Math.random`)
+- xorshift128 PRNG with `rngDither(dist)` — supports normal (Gaussian) and uniform distributions per entry
+- Per-entry dither distribution: each C-curve and D-curve entry carries a `ditherDist` flag (0=normal, 1=uniform)
 
-**Memory layout**: WASM uses imported memory. The JS side computes a flat layout (`computeWasmLayout`) with 65 int32 config values and 3 float64 config values, followed by all data arrays (coefficients, colors, jiggle, morph targets, palettes, curve data, working arrays, output buffers). Memory grows dynamically based on layout requirements. The shadow stack is 64KB (stack-first linker flag).
+**Memory layout**: WASM uses imported memory. The JS side computes a flat layout (`computeWasmLayout`) with 69 int32 config values and 7 float64 config values, followed by all data arrays (coefficients, colors, jiggle, morph targets, palettes, curve data, working arrays, output buffers). Memory grows dynamically based on layout requirements. The shadow stack is 64KB (stack-first linker flag).
 
 **Unsupported modes**: The WASM step loop does not implement Idx x Prox or Min/Max Ratio color modes. When these are selected, `S_useWasmLoop` is forced false and the JS step loop runs instead.
 
@@ -534,11 +553,11 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 18. **Feature flags must cover all code paths** — derivative coloring worked for SVG but the bitmap pipeline was completely separate. When `bitmapColorMode === "derivative"` was selected, workers silently fell through to rainbow coloring. The fix required a complete parallel implementation in both the JS worker blob and the WASM step loop.
 
-19. **The WASM step loop eliminates JS-to-WASM boundary crossing per step** — the original WASM integration called `solveEA` per-step from JS, paying marshalling overhead each time. The full step loop (`step_loop.c`) moves curve interpolation, morph blend, jiggle, solve, match, and pixel output into a single WASM call per run message. The JS side only needs to copy warm-start roots in and read sparse pixels out.
+19. **The WASM step loop eliminates JS-to-WASM boundary crossing per step** — the original WASM integration (removed in v40) called `solveEA` per-step from JS, paying marshalling overhead each time. The full step loop (`step_loop.c`) moves curve interpolation, morph blend (all 4 path types), dither, jiggle, solve, match, and pixel output into a single WASM call per run message. The JS side only needs to copy warm-start roots in and read sparse pixels out.
 
 20. **WASM memory layout must be computed at runtime** — because array sizes depend on degree, number of animated coefficients, step count, etc. The JS-side `computeWasmLayout()` function calculates byte offsets for 40+ arrays and writes them into a config region that WASM reads via `init()`. Memory grows dynamically to fit.
 
-21. **WASM and JS step loops must produce identical results** — the WASM loop is the fast path but the JS loop is the fallback for unsupported color modes. Both must implement the same step sequence: reset coeffs -> interpolate C-curves -> interpolate D-curves -> follow-C -> morph blend -> apply jiggle -> solve -> NaN rescue -> color-mode processing -> pixel output.
+21. **WASM and JS step loops must produce identical results** — the WASM loop is the fast path but the JS loop is the fallback for unsupported color modes. Both must implement the same step sequence: reset coeffs -> interpolate C-curves -> per-entry dither -> interpolate D-curves -> follow-C -> morph path interpolation (line/circle/ellipse/figure-8) -> C-D path dither -> apply jiggle -> solve -> NaN rescue -> color-mode processing -> pixel output.
 
 ---
 
@@ -632,13 +651,13 @@ Manual testing remains important for:
 
 **"Save/load lost my setting"**: The new field probably isn't in `applyLoadedState()` yet. Add it with a default fallback.
 
-**"Morph enabled but Play does nothing"**: Both `startAnimation()` and the Play button handler guard with `allAnimatedCoeffs().size === 0`. When morph is the only animation source (no paths), these guards must be relaxed with `&& !morphEnabled`.
+**"Morph enabled but Play does nothing"**: Both `startAnimation()` and the Play button handler guard with `allAnimatedCoeffs().size === 0`. When morph is the only animation source (no paths), these guards must be relaxed with `&& !morphEnabled`. Note: morph is always enabled in v40 (checkbox removed), so this guard should already account for it.
 
-**"Fast mode ignores morph"**: Check that `morphEnabled` is true and `morphTargetCoeffs.length === coefficients.length` — both conditions must hold for `serializeFastModeData()` to include morph data.
+**"Fast mode ignores morph"**: Check that `morphTargetCoeffs.length === coefficients.length` — this condition must hold for `serializeFastModeData()` to include morph data. Since v40, `morphEnabled` is always true.
 
 **"Fast mode shows sparse dots / almost nothing"**: Check `currentRoots.length` vs `coefficients.length - 1` (degree). If they differ, the solver is dropping roots. Also check the worker's warm-start buffer size matches the expected degree.
 
-**"WASM step loop not activating"**: Check the bitmap color mode — idx-prox and ratio modes force JS fallback. Also check that `solverType === "wasm"` in the cfg popup. The worker tries WASM step loop first, then falls back to pure JS.
+**"WASM step loop not activating"**: Check the bitmap color mode — idx-prox and ratio modes force JS fallback. Also check that `solverType === "wasm"` in the cfg popup. The worker tries WASM step loop first, then falls back to pure JS. Note: the solver-only WASM tier was removed in v40 — there are only two tiers now (WASM step loop or pure JS).
 
 ---
 
@@ -748,5 +767,8 @@ Manual testing remains important for:
 | `ROOT_COLOR_SWATCHES` | ~1023 |
 | `PROX_PALETTE_CATALOG` | ~1034 |
 | `DERIV_PALETTE` / `DERIV_PAL_R/G/B` | ~1067 |
-| `WASM_STEP_LOOP_B64` | ~1135 |
+| `morphInterpPoint()` (main thread) | ~1139 |
+| `morphInterpW()` (worker blob) | ~10462 |
+| `_ditherRand()` / `wDitherRand()` | ~4295 / ~10443 |
+| `WASM_STEP_LOOP_B64` | ~1170 |
 | `fastModeDCurves` | ~1105 |

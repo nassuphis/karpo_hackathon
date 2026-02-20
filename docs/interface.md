@@ -1,6 +1,6 @@
 # Interface Guide
 
-Complete control reference for PolyPaint v38. For a quick overview, see the [README](../README.md#interface-overview).
+Complete control reference for PolyPaint v40. For a quick overview, see the [README](../README.md#interface-overview).
 
 ## Layout Overview
 
@@ -16,7 +16,7 @@ The UI is organized around a compact header bar and two side-by-side complex-pla
 
 | Control | ID | Description |
 |---------|----|-------------|
-| **PolyPaint v38** | `.app-title` | App title and version label. |
+| **PolyPaint v40** | `.app-title` | App title and version label. |
 | **Degree** | `#degree-number` | Click the number to open a slider popover (2-30). Reinitializes coefficients on change. |
 | **Pattern** | `#pattern` | Initial arrangement of coefficients or roots. 26 patterns in 3 categories: Basic (5), Coefficient shapes (8), Root shapes (13). See [Patterns](patterns.md). |
 | **Reset** | `#reset-btn` | Reset to initial state for the current degree and pattern. |
@@ -25,7 +25,7 @@ The UI is organized around a compact header bar and two side-by-side complex-pla
 | **Export** | `#snap-btn` | Opens a popup with 7 export modes (see below). |
 | **T** | `#timing-btn` | Timing stats popup: steps/sec, pass times, composite breakdown. Clears when worker count changes. |
 | **Scrub slider** | `#scrub-slider` | Additive scrubber (range 0-5000): drag to add seconds to the current elapsed time. Only works when animation is paused. Resets to zero on release. |
-| **Play / Pause / Resume** | `#play-btn` | 3-state cycle: **Play** starts from zero, **Pause** stops mid-animation, **Resume** continues from where it left off. Requires at least one animated C-node, D-node, or morph enabled. |
+| **Play / Pause / Resume** | `#play-btn` | 3-state cycle: **Play** starts from zero, **Pause** stops mid-animation, **Resume** continues from where it left off. Requires at least one animated C-node or D-node (morph auto-activates when D-nodes exist). |
 | **Seconds counter** | `#anim-seconds` | Displays current animation elapsed time (e.g. `3.14s`). Updates during playback and scrubbing. |
 | **Home** | `#home-btn` | Return all animated C and D nodes to their start positions (curve[0]) and reset elapsed to 0. |
 
@@ -77,7 +77,7 @@ This replaces the previous immediate-apply behavior, giving you a chance to expe
 
 #### Path Types (40 for C-nodes, 41 for D-nodes)
 
-Paths are defined in `PATH_CATALOG`. Every path in a group (except Gaussian cloud) automatically gets a dithered variant that adds small Gaussian noise to each step.
+Paths are defined in `PATH_CATALOG`. Every path in a group (except Gaussian cloud) automatically gets a dithered variant that adds small noise to each step. Dithered path variants expose two additional parameters: a **sigma** slider controlling dither magnitude and a **Dist** dropdown (`_DIST_PARAM`) to choose between **Normal** (Gaussian) and **Uniform** distribution for the dither noise.
 
 | Group | Base Paths | With Dither |
 |-------|-----------|-------------|
@@ -157,10 +157,36 @@ The curve editor (`#list-curve-editor`) below the toolbar lets you edit the path
 
 Interactive SVG complex-plane visualization of morph target D-nodes (`#morph-panel` inside `#morph-container`). See [Morph](morph.md).
 
-- **Copy C->D** (`#morph-copy-btn`) / **Swap C<->D** (`#morph-swap-btn`) buttons in the toolbar (`#morph-bar`)
+**Morph auto-activation:** Morph is always enabled when D-nodes exist. There is no manual enable/disable checkbox -- the morph checkbox was removed in v39. When D-nodes are present, the solver automatically blends between C and D coefficients according to the current mu parameter.
+
+**Morph bar (`#morph-bar`):**
+
+| Control | ID | Description |
+|---------|----|-------------|
+| **Copy C->D** | `#morph-copy-btn` | Copy current C-coefficients to D-nodes. |
+| **Swap C<->D** | `#morph-swap-btn` | Swap C-coefficient and D-node positions. |
+| **C-D Path** | `#morph-cdpath-btn` | Open the C-D path popup (see below). |
+
 - D-node dots with drag interaction (same as coefficient panel)
 - **Right-click a D-node** to open a context menu (`#dnode-ctx`) with the same trajectory settings, live preview, Accept/Delete/reposition as the C-node context menu
 - Selection count shown in the tab header (`#morph-sel-count`)
+
+#### C-D Path Popup
+
+The C-D path popup (`#cdpath-pop`) controls how the blend parameter mu traverses the path between C-node and D-node positions during morph animation. Uses Accept/Revert workflow: click Accept to commit changes, or click outside / press Escape to revert.
+
+| Control | Description |
+|---------|-------------|
+| **Path type** dropdown | Interpolation path shape: **Line** (default), **Circle**, **Ellipse**, **Figure-8**. |
+| **CW / CCW** toggle button | Clockwise or counter-clockwise traversal. Hidden for Line path type. |
+| **Minor** slider (10-100%) | Ellipse minor axis as a fraction of the major axis. Only visible when Ellipse is selected. |
+| **Rate** slider (0.0000-0.0100 Hz) | Morph oscillation frequency. Controls how fast mu traverses the C-D path. |
+| **Start sigma** slider | Dither amount at the C/start position (envelope: max(cos theta, 0)^2). |
+| **Mid sigma** slider | Dither amount at the midpoint (envelope: sin^2 theta). |
+| **End sigma** slider | Dither amount at the D/end position (envelope: max(-cos theta, 0)^2). |
+| **Accept** button | Commit the current settings and close the popup. |
+
+The three sigma sliders add position-dependent noise along the morph path. Each slider's dither is weighted by an envelope function so that noise is strongest at its designated position (start, midpoint, or end) and fades elsewhere.
 
 ### D-List Tab
 
@@ -200,13 +226,12 @@ See [Paths](paths.md) for jiggle formulas.
 
 ![Final tab](images/iface_morph_tab.png)
 
-Shows the actual coefficients sent to the solver (blended C/D positions when morphing is enabled). Located in `#final-content`.
+Shows the actual coefficients sent to the solver (blended C/D positions when morphing is active). Located in `#final-content`.
 
-- **Morph** checkbox (`#morph-enable`): enable/disable morph blending
-- **Rate** slider (`#morph-rate`, range 1-200, maps to 0.01-2.00 Hz): morph oscillation frequency
-- **Rate display** (`#morph-rate-val`): current Hz value
 - **mu** display (`#morph-mu-val`): current blend parameter (0=C, 1=D)
 - SVG complex-plane visualization (`#final-panel`) of the final blended coefficients
+
+Morph is always enabled when D-nodes exist (no checkbox). The morph rate and path shape are controlled via the [C-D Path popup](#c-d-path-popup) in the D-Nodes tab.
 
 ---
 
@@ -438,6 +463,7 @@ All popups use the `.ops-pop` CSS class, positioned via `getBoundingClientRect()
 | Timing stats | `#timing-pop` | T button in header |
 | Bitmap config | `#bitmap-cfg-pop` | cfg button in bitmap toolbar |
 | Bitmap save format | `#bitmap-save-pop` | save button in bitmap toolbar |
+| C-D path | `#cdpath-pop` | C-D Path button in morph bar |
 
 ---
 
@@ -475,7 +501,7 @@ All popups use the `.ops-pop` CSS class, positioned via `getBoundingClientRect()
 
 | Key | Action |
 |-----|--------|
-| **Escape** | Cascading close: (1) revert animation bar preview, (2) close C-node context menu, (3) close D-node context menu, (4) close ops tool popover, (5) close audio popup, (6) close color picker, (7) close coefficient picker, (8) close snap popup, (9) close bitmap cfg, (10) close path picker, (11) deselect all. Stops at the first match. |
+| **Escape** | Cascading close: (1) revert animation bar preview, (2) close C-node context menu, (3) close D-node context menu, (4) close C-D path popup (reverts changes), (5) close ops tool popover, (6) close audio popup, (7) close color picker, (8) close coefficient picker, (9) close snap popup, (10) close bitmap cfg, (11) close path picker, (12) deselect all. Stops at the first match. |
 
 ---
 

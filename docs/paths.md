@@ -1,6 +1,6 @@
 # Paths & Curve Indexing
 
-How coefficients (C-nodes) and morph targets (D-nodes) move along their assigned trajectories during animation and fast mode, how the full-cycle jiggle interval is computed, and how trajectory editors work.
+How coefficients (C-nodes) and morph targets (D-nodes) move along their assigned trajectories during animation and fast mode, how C-D morph interpolation paths work, how the full-cycle jiggle interval is computed, and how trajectory editors work.
 
 ## Data Model
 
@@ -9,19 +9,19 @@ Each coefficient (C-node) and morph target (D-node) stores the following path-re
 | Field | Type | Description |
 |-------|------|-------------|
 | `pathType` | string | Path type key (e.g. `"none"`, `"circle"`, `"spiral-dither"`, `"follow-c"`) |
-| `radius` | number | Path radius as percentage of `coeffExtent()` (1–100, default 25) |
-| `speed` | number | Loops per second, stored as 0.001–1.0 (displayed as integers 1–1000 via `toUI: v * 1000`, `fromUI: v / 1000`) |
-| `angle` | number | Rotation angle as fraction of a full turn (0–1.0, step 0.01) |
+| `radius` | number | Path radius as percentage of `coeffExtent()` (1--100, default 25) |
+| `speed` | number | Loops per second, stored as 0.001--1.0 (displayed as integers 1--1000 via `toUI: v * 1000`, `fromUI: v / 1000`) |
+| `angle` | number | Rotation angle as fraction of a full turn (0--1.0, step 0.01) |
 | `ccw` | boolean | Direction: `false` = clockwise (CW), `true` = counter-clockwise (CCW) |
 | `extra` | object | Non-standard parameters keyed by name (e.g. `{ freqA: 3, freqB: 2 }` for Lissajous, `{ mult: 1.5, turns: 2 }` for spiral) |
-| `curve` | array | The sampled closed curve — N complex points `[{re, im}, ...]` |
+| `curve` | array | The sampled closed curve -- N complex points `[{re, im}, ...]` |
 | `curveIndex` | number | Integer curve index last set during animation (floor of rawIdx) |
 
 Standard keys (`radius`, `speed`, `angle`, `ccw`) are stored directly on the coefficient object. All other parameter keys are stored inside `extra`.
 
 ## Curve Representation
 
-Each animated coefficient stores a **sampled closed curve** — an array of N complex points `curve[0], curve[1], ..., curve[N-1]` representing the trajectory in the complex plane. The first point `curve[0]` is the coefficient's **home position** (where it sits before animation starts).
+Each animated coefficient stores a **sampled closed curve** -- an array of N complex points `curve[0], curve[1], ..., curve[N-1]` representing the trajectory in the complex plane. The first point `curve[0]` is the coefficient's **home position** (where it sits before animation starts).
 
 The number of sample points N depends on the path type:
 - **Standard paths** (circle, horizontal, vertical, random, lissajous, figure-8, cardioid, astroid, deltoid, rose, epitrochoid, hypotrochoid, butterfly, star, square, c-ellipse): N = 200 (interactive) or the Steps dropdown value (10K/50K/100K/1M) in fast mode
@@ -37,40 +37,51 @@ The curve is always closed: walking from index 0 through N-1 and wrapping back t
 
 Defines the parameter schema for each path type. Each entry is an array of parameter descriptors with `key`, `label`, `min`, `max`, `step`, `default`, and `fmt` fields. Standard parameter shortcuts:
 
-- `_RSAD` = `[speed, radius, angle, ccw]` — most curve paths use this
-- `_RSD` = `[speed, radius, ccw]` — horizontal, vertical (no angle)
+- `_RSAD` = `[speed, radius, angle, ccw]` -- most curve paths use this
+- `_RSD` = `[speed, radius, ccw]` -- horizontal, vertical (no angle)
 
 Full listing:
 
 | Path Type | Parameters |
 |-----------|------------|
 | `none` | (none) |
-| `follow-c` | (none — D-only) |
+| `follow-c` | (none -- D-only) |
 | `circle` | S, R, A, CW/CCW |
 | `horizontal` | S, R, CW/CCW |
 | `vertical` | S, R, CW/CCW |
-| `spiral` | S, R (multiplier 0–2x), T (turns 0.5–5), CW/CCW |
-| `random` | S, sigma (0–10, as % of coeffExtent) |
-| `lissajous` | S, R, A, CW/CCW, a (freq 1–8), b (freq 1–8) |
+| `spiral` | S, R (multiplier 0--2x), T (turns 0.5--5), CW/CCW |
+| `random` | S, sigma (0--10, as % of coeffExtent) |
+| `lissajous` | S, R, A, CW/CCW, a (freq 1--8), b (freq 1--8) |
 | `figure8` through `square` | S, R, A, CW/CCW |
 | `hilbert`, `peano`, `sierpinski` | S, R, A, CW/CCW |
-| `c-ellipse` | S, W (width 1–100%), CW/CCW |
+| `c-ellipse` | S, W (width 1--100%), CW/CCW |
 
 ### PATH_CATALOG
 
 Single source of truth for all path `<select>` elements. Organized into groups:
 
-1. **None** — top-level `"none"` option
-2. **Follow C** — top-level `"follow-c"` option (D-only, `dOnly: true`)
-3. **Basic** — circle, horizontal, vertical, spiral, Gaussian cloud (random)
-4. **Curves** — lissajous, figure-8, cardioid, astroid, deltoid, rose, epitrochoid (Spirograph), hypotrochoid, butterfly, star (pentagram), square, c-ellipse
-5. **Space-filling** — hilbert (Moore), peano, sierpinski
+1. **None** -- top-level `"none"` option
+2. **Follow C** -- top-level `"follow-c"` option (D-only, `dOnly: true`)
+3. **Basic** -- circle, horizontal, vertical, spiral, Gaussian cloud (random)
+4. **Curves** -- lissajous, figure-8, cardioid, astroid, deltoid, rose, epitrochoid (Spirograph), hypotrochoid, butterfly, star (pentagram), square, c-ellipse
+5. **Space-filling** -- hilbert (Moore), peano, sierpinski
 
 ### Dithered Variants
 
-Every path type except `"none"`, `"follow-c"`, and `"random"` has an auto-generated **dithered variant** (e.g. `"circle-dither"`, `"hilbert-dither"`). At catalog build time, a `(dither)` entry is inserted after each base path in every group. The dithered variant inherits all parameters from its base path plus an additional **sigma** parameter (0–1.0, step 0.01, default 0.2, displayed as `sigma%`). When computing curves, the `_ditherSigmaPct` flag is stored on the curve array. During animation, if `_ditherSigmaPct` is set, each interpolated position is perturbed by a Gaussian random offset scaled by `sigma / 100 * coeffExtent()`. This creates a noisy/fuzzy version of the base trajectory. Backward compatibility: old saves with sigma values > 1 are divided by 10 on load.
+Every path type except `"none"`, `"follow-c"`, and `"random"` has an auto-generated **dithered variant** (e.g. `"circle-dither"`, `"hilbert-dither"`). At catalog build time, a `(dither)` entry is inserted after each base path in every group. The dithered variant inherits all parameters from its base path plus two additional parameters:
 
-`buildPathSelect(sel, noneLabel, dNode)` populates a `<select>` from `PATH_CATALOG`. The `dNode` flag controls inclusion of D-only options like "Follow C" — called with `true` for the D-List path selector, omitted for C-List and anim-bar selectors.
+- **sigma** (0--1.0, step 0.01, default 0.2, displayed as `sigma%`) -- perturbation magnitude
+- **Dist** (select: Normal / Uniform, default Normal) -- dither distribution
+
+When computing curves, the `_ditherSigmaPct` flag is stored on the curve array. The `_ditherDist` flag stores the distribution type (`"normal"` or `"uniform"`). During animation, if `_ditherSigmaPct` is set, each interpolated position is perturbed by a random offset scaled by `sigma / 100 * coeffExtent()`:
+- **Normal** (default): `_ditherRand("normal")` returns a Gaussian random value via `_gaussRand()`
+- **Uniform**: `_ditherRand("uniform")` returns `(Math.random() - 0.5) * 2` -- uniform in [-1, 1]
+
+Workers use the same logic via `wDitherRand(dist)` where `dist = 1` for uniform, `dist = 0` for normal.
+
+This creates a noisy/fuzzy version of the base trajectory. Backward compatibility: old saves with sigma values > 1 are divided by 10 on load.
+
+`buildPathSelect(sel, noneLabel, dNode)` populates a `<select>` from `PATH_CATALOG`. The `dNode` flag controls inclusion of D-only options like "Follow C" -- called with `true` for the D-List path selector, omitted for C-List and anim-bar selectors.
 
 ## Special Curve Types
 
@@ -85,7 +96,7 @@ During animation, cloud curves use **snap indexing** (no interpolation): the coe
 Curves flagged with `curve._isOrbital` store **absolute** positions in the complex plane rather than home-relative offsets.
 
 - **Spiral**: Orbits around the origin (0+0i). The coefficient spirals from its current orbit radius R0 to a target radius R1 = R0 * mult (default 1.5x) over `turns` turns (default 2), holds at R1 for one full revolution, then spirals back. Three phases: outward spiral, revolution at target, return spiral. Total angular travel = `(2*turns + 1) * 2*pi`.
-- **C-Ellipse**: Traces an ellipse whose vertices are the coefficient's home position and the origin (0+0i). The center is the midpoint, semi-major axis = half the distance from home to origin, semi-minor axis = width% of semi-major. The `width` parameter (1–100%, default 50%) controls the eccentricity.
+- **C-Ellipse**: Traces an ellipse whose vertices are the coefficient's home position and the origin (0+0i). The center is the midpoint, semi-major axis = half the distance from home to origin, semi-minor axis = width% of semi-major. The `width` parameter (1--100%, default 50%) controls the eccentricity.
 
 Both are fully regenerated (not transformed) when radius or angle changes, because `transformCoeffCurve()` detects the `_isOrbital` flag and calls `computeCurve()` instead of applying scale/rotation transforms.
 
@@ -93,11 +104,125 @@ Both are fully regenerated (not transformed) when radius or angle changes, becau
 
 Three space-filling curves implemented via L-system turtle graphics with caching:
 
-- **Hilbert (Moore curve):** Closed variant of the Hilbert curve — 4 Hilbert sub-curves arranged in a loop. Order 4, 256 points.
+- **Hilbert (Moore curve):** Closed variant of the Hilbert curve -- 4 Hilbert sub-curves arranged in a loop. Order 4, 256 points.
 - **Peano:** Classic Peano space-filling curve. Order 3, 729 points, out-and-back traversal for closure (1458 steps total).
 - **Sierpinski arrowhead:** Fills a Sierpinski triangle. Order 5, 243 segments, out-and-back for closure (486 steps total).
 
 All three generate uniform step sizes and are cached on first use.
+
+## C-D Morph Interpolation Paths
+
+When morph (D-nodes) is active, each coefficient is blended between its C-node position and its corresponding D-node position. The **C-D morph path** controls the geometric trajectory this interpolation follows. Morph **auto-activates** whenever D-nodes exist (`morphEnabled = true` always; the checkbox was removed).
+
+### Morph State Variables
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `morphPathType` | string | `"line"`, `"circle"`, `"ellipse"`, or `"figure8"` |
+| `morphRate` | number | Oscillation frequency in Hz (0--0.01), controls how fast the blend sweeps C to D and back |
+| `morphPathCcw` | boolean | CW/CCW toggle for circle, ellipse, and figure-8 paths (hidden for line) |
+| `morphEllipseMinor` | number | Minor axis as fraction of semi-major (0.1--1.0), ellipse path only |
+| `morphTheta` | number | Current phase angle = `2 * pi * morphRate * elapsed` |
+| `morphMu` | number | Current blend factor [0, 1] = `(1 - cos(theta)) / 2` |
+
+### Path Mathematics
+
+The function `morphInterpPoint(cRe, cIm, dRe, dIm, theta, pathType, ccw, minorPct)` computes the interpolated position between C-node `(cRe, cIm)` and D-node `(dRe, dIm)` at phase angle `theta`:
+
+**Setup (all non-line paths):**
+```
+dx = dRe - cRe,  dy = dIm - cIm
+len = sqrt(dx^2 + dy^2)
+u = (dx/len, dy/len)           -- unit vector C -> D
+v = (-uy, ux)                  -- perpendicular (90 deg CCW)
+mid = (C + D) / 2              -- midpoint of C-D segment
+semi = len / 2                 -- half the C-D distance
+sign = ccw ? +1 : -1           -- direction flip
+```
+
+**Line** (default):
+```
+mu = (1 - cos(theta)) / 2
+result = C * (1 - mu) + D * mu
+```
+Standard smooth lerp. `mu` oscillates 0 -> 1 -> 0 as theta sweeps 0 -> pi -> 2*pi. The interpolated point slides back and forth along the line segment between C and D.
+
+**Circle:**
+```
+lx = -semi * cos(theta)
+ly = sign * semi * sin(theta)
+result = mid + lx * u + ly * v
+```
+Parametric circle centered at the midpoint of the C-D segment, with radius = semi (half the C-D distance). Passes through both C and D positions. At theta=0 the point is at C; at theta=pi it is at D.
+
+**Ellipse:**
+```
+semi_b = minorPct * semi
+lx = -semi * cos(theta)
+ly = sign * semi_b * sin(theta)
+result = mid + lx * u + ly * v
+```
+Like circle but with an adjustable minor axis. The `minorPct` parameter (0.1--1.0, default 0.5) controls how far the path deviates perpendicular to the C-D line. When `minorPct = 1.0`, the ellipse becomes a circle. When `minorPct` is small, the ellipse is nearly flat.
+
+**Figure-8:**
+```
+lx = -semi * cos(theta)
+ly = sign * (semi * 0.5) * sin(2 * theta)
+result = mid + lx * u + ly * v
+```
+Uses `sin(2*theta)` for the perpendicular component, creating a figure-8 (lemniscate-like) pattern that crosses the C-D line at the midpoint. The perpendicular amplitude is half the semi-major axis. The path loops around C on one side and D on the other.
+
+### CW/CCW Toggle
+
+The `morphPathCcw` boolean flips the `sign` multiplier on the perpendicular component (`ly`), reversing the direction of traversal for circle, ellipse, and figure-8 paths. The CW/CCW button is hidden when `morphPathType === "line"` (line interpolation has no perpendicular component).
+
+### Morph Path Dither
+
+Three independent uniform-distribution dither parameters add random noise to the morph-interpolated position at different phases of the oscillation cycle:
+
+| Parameter | Range | Envelope | Peak Location |
+|-----------|-------|----------|---------------|
+| `morphDitherStartSigma` | 0--0.01% of `coeffExtent()` | `max(cos(theta), 0)^2` | At C position (theta near 0) |
+| `morphDitherMidSigma` | 0--0.1% of `coeffExtent()` | `sin(theta)^2` | At midpoint (theta near pi/2) |
+| `morphDitherEndSigma` | 0--0.01% of `coeffExtent()` | `max(-cos(theta), 0)^2` | At D position (theta near pi) |
+
+The combined dither magnitude at each step is:
+```
+ds = startSigma * startEnv + midSigma * sin^2(theta) + endSigma * endEnv
+```
+
+When `ds > 0`, both re and im are perturbed by `(Math.random() - 0.5) * 2 * ds` (uniform distribution). This allows precise control over where along the C-D path noise is injected -- at the endpoints, at the midpoint, or any combination.
+
+### C-D Path Editor Popup
+
+The **C-D Path** button (`#morph-cdpath-btn`) in the morph panel opens a popup (`#cdpath-pop`, built by `buildCDPathPop()`) with:
+
+- **Path type** dropdown: Line, Circle, Ellipse, Figure-8
+- **Rate** slider: 0--100 maps to 0.0000--0.0100 Hz
+- **CW/CCW** toggle button (hidden for line paths)
+- **Minor** slider: 10--100 maps to 0.10--1.00 minor axis fraction (shown only for ellipse)
+- **Start sigma** slider: 0--100 maps to 0.0000--0.0100% dither at C position
+- **Mid sigma** slider: 0--100 maps to 0.000--0.100% dither at midpoint
+- **End sigma** slider: 0--100 maps to 0.0000--0.0100% dither at D position
+- **Accept** button
+
+The popup uses snapshot/revert: on open it captures all morph path state; closing without Accept (via outside click or Escape) reverts to the snapshot.
+
+### Worker-Side Morph Interpolation
+
+Workers receive the morph path configuration via serialized fast-mode data and implement `morphInterpW()`, which mirrors the main-thread `morphInterpPoint()` function. The worker-side variables (`S_morphPathType`, `S_morphPathCcw`, `S_morphEllipseMinor`) and dither values (`S_morphDitherStartAbs`, `S_morphDitherMidAbs`, `S_morphDitherEndAbs`) are set during worker initialization. Dither values are pre-converted to absolute units (not percentages) on the main thread before serialization.
+
+### Save/Load
+
+Morph path state is serialized inside `morph {}`:
+- `cdPathType` -- path type string (default `"line"`)
+- `cdCcw` -- CW/CCW boolean (default `false`)
+- `cdEllipseMinor` -- minor axis fraction (default `0.5`)
+- `cdDitherStartSigma` -- start dither (default `0`)
+- `cdDitherMidSigma` -- mid dither (default `0`)
+- `cdDitherEndSigma` -- end dither (default `0`)
+
+On load, backward compatibility is maintained: missing `cdPathType` defaults to `"line"`, missing dither sigmas default to `0`.
 
 ## How the Curve Index Changes with Time
 
@@ -107,11 +232,11 @@ The Play, Scrub, and Home controls live in the **header bar** (not in the left t
 
 ### Position Computation
 
-During animation, time is tracked as `elapsed` — seconds since Play was pressed (real wall-clock time divided by 1000). Each coefficient has three relevant parameters:
+During animation, time is tracked as `elapsed` -- seconds since Play was pressed (real wall-clock time divided by 1000). Each coefficient has three relevant parameters:
 
-- **speed** — how many full loops per second (slider displays 1–1000 as integers; internally 0.001–1.0)
-- **ccw** — direction flag: false = clockwise, true = counter-clockwise
-- **curve** — the N-point sampled trajectory
+- **speed** -- how many full loops per second (slider displays 1--1000 as integers; internally 0.001--1.0)
+- **ccw** -- direction flag: false = clockwise, true = counter-clockwise
+- **curve** -- the N-point sampled trajectory
 
 At each animation frame, the curve index for coefficient *i* is computed as:
 
@@ -132,13 +257,13 @@ re = curve[lo].re * (1 - frac) + curve[hi].re * frac
 im = curve[lo].im * (1 - frac) + curve[hi].im * frac
 ```
 
-For cloud curves (`curve._isCloud`), no interpolation — the coefficient snaps to the nearest integer index.
+For cloud curves (`curve._isCloud`), no interpolation -- the coefficient snaps to the nearest integer index.
 
-For dithered curves (`curve._ditherSigmaPct`), after interpolation the position is perturbed by a Gaussian random offset: `re += gaussRand() * (sigma / 100 * coeffExtent())`.
+For dithered curves (`curve._ditherSigmaPct`), after interpolation the position is perturbed by a random offset: `re += _ditherRand(dist) * (sigma / 100 * coeffExtent())`, where `_ditherRand` uses Gaussian (normal) or uniform distribution depending on `curve._ditherDist`.
 
 ### advanceToElapsed(elapsed)
 
-The main function that advances all C-nodes along their curves for a given elapsed time. For each coefficient with `pathType !== "none"`, it computes the interpolated position as above and updates `c.re`, `c.im`, and `c.curveIndex`. Then calls `advanceDNodesAlongCurves(elapsed)` for D-nodes.
+The main function that advances all C-nodes along their curves for a given elapsed time. For each coefficient with `pathType !== "none"`, it computes the interpolated position as above and updates `c.re`, `c.im`, and `c.curveIndex`. Then calls `advanceDNodesAlongCurves(elapsed)` for D-nodes. Finally, if morph is active, updates `morphTheta` and `morphMu`.
 
 ### advanceDNodesAlongCurves(elapsed)
 
@@ -149,7 +274,7 @@ Advances all D-nodes (morph targets) along their curves. For each D-node:
 
 ### What u = 0 means
 
-When `u = 0`, `rawIdx = 0`, so the coefficient is at `curve[0]` — its home position. This happens at `elapsed = 0` (animation start) and every time `elapsed * speed` is an exact integer. Each coefficient returns home every `1/speed` seconds.
+When `u = 0`, `rawIdx = 0`, so the coefficient is at `curve[0]` -- its home position. This happens at `elapsed = 0` (animation start) and every time `elapsed * speed` is an exact integer. Each coefficient returns home every `1/speed` seconds.
 
 ### Example
 
@@ -214,7 +339,7 @@ Below the C-List toolbar sits a compact curve editor (`#list-curve-editor`). Whe
 - Parameter sliders/toggles (`#lce-controls`)
 - **"Update Whole Selection"** button (`#lce-update-sel`)
 
-The editor syncs to the **first selected coefficient** (sorted by index, stored in `lceRefIdx`). Changing the dropdown rebuilds controls with that path's parameter schema. Unlike the anim-bar, sliders here do **not** auto-preview — the user must click "Update Whole Selection" to apply.
+The editor syncs to the **first selected coefficient** (sorted by index, stored in `lceRefIdx`). Changing the dropdown rebuilds controls with that path's parameter schema. Unlike the anim-bar, sliders here do **not** auto-preview -- the user must click "Update Whole Selection" to apply.
 
 **No PS button or node cycler**: The PS button and prev/next node cycler arrows were removed from this editor. Use the PrimeSpeeds transform in the C-List Transform dropdown instead.
 
@@ -255,7 +380,7 @@ Transforms use the execute-then-reset pattern: the dropdown fires on change, exe
 
 ### Curve Type Cycler
 
-Both C-List and D-List toolbars have a **curve type cycler** — prev/next arrow buttons and a label showing the current curve type. `buildCurveCycleTypes()` collects all unique `pathType` values across coefficients. The "Same Curve" button selects all coefficients with the displayed curve type. Clicking the arrows cycles through the sorted list of curve types.
+Both C-List and D-List toolbars have a **curve type cycler** -- prev/next arrow buttons and a label showing the current curve type. `buildCurveCycleTypes()` collects all unique `pathType` values across coefficients. The "Same Curve" button selects all coefficients with the displayed curve type. Clicking the arrows cycles through the sorted list of curve types.
 
 ## Curve Building
 
@@ -267,7 +392,7 @@ The flow:
 3. **C-Ellipse**: Build orbital ellipse between home and origin, flag `_isOrbital = true`
 4. **All others**: Call `animPathFn(pathType, t, origin, radius, extra)` for t in [0, 1), compute offsets from home, apply angle rotation, store as absolute positions
 
-For dithered variants, `_ditherSigmaPct` is stored on the curve array.
+For dithered variants, `_ditherSigmaPct` and `_ditherDist` are stored on the curve array.
 
 `transformCoeffCurve(c, oldRadius, oldAngle)` efficiently updates a curve when only radius or angle changes (without full recomputation). For cloud and orbital paths it regenerates instead. For regular paths it applies scale and rotation transforms to the existing curve points, then snaps the coefficient to the nearest curve point.
 
@@ -289,9 +414,9 @@ Pass 0 covers elapsed in [0, 1), pass 1 covers [1, 2), pass 2 covers [2, 3), etc
 `serializeFastModeData(animated, stepsVal, nRoots)` packages all data workers need:
 - Hi-res curves (recomputed at `stepsVal` resolution) serialized as flat `Float64Array` with offset/length metadata
 - Per-curve flags: `curveIsCloud` array for cloud snap behavior
-- Animation entries with `idx`, `ccw`, `speed`, `ditherSigma`
+- Animation entries with `idx`, `ccw`, `speed`, `ditherSigma`, `ditherDist`
 - D-node curves similarly serialized as `dAnimEntries`, `dCurvesFlat`, etc.
-- `dFollowCIndices` — list of D-node indices with `pathType === "follow-c"` (workers copy C-position into morph target for these)
+- `dFollowCIndices` -- list of D-node indices with `pathType === "follow-c"` (workers copy C-position into morph target for these)
 - Jiggle offset arrays (`jiggleRe`, `jiggleIm`)
 
 Workers use this data to advance coefficients along curves at each step, identical to the interactive-mode formula but at much higher resolution.
@@ -325,11 +450,11 @@ On load:
 4. For D-nodes: similarly restore from `morph.target[]` with backward-compatible defaults. D-nodes with `pathType !== "none" && pathType !== "follow-c"` get their curves regenerated. The home position for D-nodes with paths comes from `d.home || d.pos`; for D-nodes without paths it comes from `d.pos`.
 5. Set `curveIndex = 0` for all coefficients and D-nodes
 
-Curves are never serialized directly — they are always regenerated from parameters on load.
+Curves are never serialized directly -- they are always regenerated from parameters on load.
 
 ## Full-Cycle Target (Jiggle Interval)
 
-The **full cycle** is the smallest amount of time after which **every animated coefficient simultaneously returns to its home position** (curve index 0). Fast mode does **not** auto-stop — it runs indefinitely until manually paused via the bitmap "pause" button. The full-cycle value is used only by the **jiggle system**: the GCD button in the jiggle popup computes the cycle length and sets `jiggleInterval` so that jiggle perturbations are applied at exact cycle boundaries.
+The **full cycle** is the smallest amount of time after which **every animated coefficient simultaneously returns to its home position** (curve index 0). Fast mode does **not** auto-stop -- it runs indefinitely until manually paused via the bitmap "pause" button. The full-cycle value is used only by the **jiggle system**: the GCD button in the jiggle popup computes the cycle length and sets `jiggleInterval` so that jiggle perturbations are applied at exact cycle boundaries.
 
 ### Derivation
 
@@ -349,7 +474,7 @@ Since each pass covers 1.0 second, the number of passes for a full cycle is `T_c
 
 ### Integer arithmetic
 
-The speed slider displays integers 1–1000 (internally stored as `s_i / 1000`), so every speed can be written as `s_i / 1000` where `s_i` is a positive integer (e.g. speed 500 -> s_i = 500, speed 7 -> s_i = 7). Then:
+The speed slider displays integers 1--1000 (internally stored as `s_i / 1000`), so every speed can be written as `s_i / 1000` where `s_i` is a positive integer (e.g. speed 500 -> s_i = 500, speed 7 -> s_i = 7). Then:
 
 ```
 T_i = 1 / (s_i / 1000) = 1000 / s_i    seconds
@@ -361,7 +486,7 @@ The LCM of fractions `1000/s_1, 1000/s_2, ...` equals `1000 / GCD(s_1, s_2, ...,
 passes = T_cycle = 1000 / GCD(s_1, s_2, ..., s_k)
 ```
 
-This is computed by the GCD button in the jiggle popup, which sets `jiggleInterval` to this value (clamped to 0.1–100).
+This is computed by the GCD button in the jiggle popup, which sets `jiggleInterval` to this value (clamped to 0.1--100).
 
 ### Examples
 
@@ -384,10 +509,10 @@ This is computed by the GCD button in the jiggle popup, which sets `jiggleInterv
 
 ## Prime Speed (PS)
 
-The **PS** (prime speed) feature finds the nearest integer speed (1–1000 for C-nodes, 1–2000 for D-nodes) that is **coprime** with all other animated coefficients' speeds and also **different** from all of them. This maximizes the full-cycle pass count (`1000 / GCD = 1000 / 1 = 1000` when all speeds are pairwise coprime), ensuring the densest possible bitmap coverage.
+The **PS** (prime speed) feature finds the nearest integer speed (1--1000 for C-nodes, 1--2000 for D-nodes) that is **coprime** with all other animated coefficients' speeds and also **different** from all of them. This maximizes the full-cycle pass count (`1000 / GCD = 1000 / 1 = 1000` when all speeds are pairwise coprime), ensuring the densest possible bitmap coverage.
 
-- `findPrimeSpeed(currentIntSpeed, excludeSet)` — searches outward from the current speed (+/-1, +/-2, ...) up to +/-1000, clamped to [1, 1000]. Checks only C-coefficients.
-- `findDPrimeSpeed(currentIntSpeed, excludeSet)` — searches the same way but with range up to +/-2000, clamped to [1, 2000]. Checks only D-nodes, skipping those with `pathType === "follow-c"`. Since 1 is coprime with everything, both always terminate.
+- `findPrimeSpeed(currentIntSpeed, excludeSet)` -- searches outward from the current speed (+/-1, +/-2, ...) up to +/-1000, clamped to [1, 1000]. Checks only C-coefficients.
+- `findDPrimeSpeed(currentIntSpeed, excludeSet)` -- searches the same way but with range up to +/-2000, clamped to [1, 2000]. Checks only D-nodes, skipping those with `pathType === "follow-c"`. Since 1 is coprime with everything, both always terminate.
 
 **Where PS is available:**
 - **Removed from**: anim-bar, C-List curve editor, D-List curve editor
@@ -401,11 +526,11 @@ After exactly `passes` passes, every coefficient's elapsed time is `passes` seco
 elapsed * speed_i = passes * (s_i / 1000) = (1000 / GCD) * (s_i / 1000) = s_i / GCD
 ```
 
-Since GCD divides every s_i by definition, `s_i / GCD` is always an integer. Therefore `u = 0` and `rawIdx = 0` — every coefficient is at `curve[0]`, its home position.
+Since GCD divides every s_i by definition, `s_i / GCD` is always an integer. Therefore `u = 0` and `rawIdx = 0` -- every coefficient is at `curve[0]`, its home position.
 
-## Jiggle — Path Perturbation Between Cycles
+## Jiggle -- Path Perturbation Between Cycles
 
-The **jiggle** button on the Bitmap tab opens a popup for perturbing coefficient trajectory home positions between fast-mode cycles. All modes produce the same `Map<coeffIdx, {re, im}>` additive offsets consumed by `enterFastMode()` — only the generation strategy differs.
+The **jiggle** button on the Bitmap tab opens a popup for perturbing coefficient trajectory home positions between fast-mode cycles. All modes produce the same `Map<coeffIdx, {re, im}>` additive offsets consumed by `enterFastMode()` -- only the generation strategy differs.
 
 ### Architecture
 
@@ -416,7 +541,7 @@ homeRe += offset.re
 homeIm += offset.im
 ```
 
-The curve shape and parameters (path type, radius, angle, speed) are unchanged — only the center point shifts. Offsets are recomputed between cycles (via Generate or OnTarget auto-trigger).
+The curve shape and parameters (path type, radius, angle, speed) are unchanged -- only the center point shifts. Offsets are recomputed between cycles (via Generate or OnTarget auto-trigger).
 
 ### Modes
 
@@ -427,41 +552,41 @@ No perturbation. Generate is a no-op.
 
 #### Random
 Fresh Gaussian offsets each trigger. Each trigger replaces all offsets independently.
-- **Control**: sigma (0–100) — standard deviation as % of `coeffExtent()`
+- **Control**: sigma (0--100) -- standard deviation as % of `coeffExtent()`
 
 #### Rotate
 Cumulative rotation of all animated coefficient home positions around their centroid by a fixed angle step.
-- **Control**: theta (0.001–0.500 turns)
+- **Control**: theta (0.001--0.500 turns)
 - **State**: `jiggleCumulativeAngle`
 
 #### Walk
-Cumulative random walk — each trigger adds a small random step to current offsets.
-- **Control**: sigma (0–100)
+Cumulative random walk -- each trigger adds a small random step to current offsets.
+- **Control**: sigma (0--100)
 
 #### Scale
 Cumulative scaling of all animated coefficient home positions around their centroid.
-- **Control**: step (1–50) percent scale per trigger
+- **Control**: step (1--50) percent scale per trigger
 - **State**: `jiggleCumulativeScale`
 
 #### Circle
 Cumulative rotation around the **origin** (not centroid). Each coefficient's home position is multiplied by e^(i*theta).
-- **Control**: theta (0.001–0.500 turns)
+- **Control**: theta (0.001--0.500 turns)
 
 #### Spiral
 Combined cumulative rotation + scaling around the centroid.
 - **Controls**: theta + step
 
 #### Breathe
-Sinusoidal scaling from centroid — coefficients expand and contract periodically.
-- **Controls**: Amplitude (0–100%), Period (triggers per oscillation)
+Sinusoidal scaling from centroid -- coefficients expand and contract periodically.
+- **Controls**: Amplitude (0--100%), Period (triggers per oscillation)
 
 #### Wobble
-Sinusoidal rotation around centroid — coefficients oscillate angularly.
+Sinusoidal rotation around centroid -- coefficients oscillate angularly.
 - **Controls**: theta (max rotation in turns), Period
 
 #### Lissajous
-Uniform translation along a Lissajous figure — all coefficients shift by the same offset.
-- **Controls**: Amplitude (0–100%), Period, FreqX, FreqY
+Uniform translation along a Lissajous figure -- all coefficients shift by the same offset.
+- **Controls**: Amplitude (0--100%), Period, FreqX, FreqY
 
 ### Common Controls
 
@@ -471,7 +596,7 @@ Uniform translation along a Lissajous figure — all coefficients shift by the s
 
 ### Persistence
 
-Mode, sigma, theta, and scale step are saved/loaded with the project state. Cumulative state (angle, scale factor) and active offsets are transient — they reset on load.
+Mode, sigma, theta, and scale step are saved/loaded with the project state. Cumulative state (angle, scale factor) and active offsets are transient -- they reset on load.
 
 ## C-List Tab Columns
 
@@ -485,10 +610,10 @@ The C-List tab shows a row per coefficient with the following elements (built by
 | **Label** | Subscript label (c_0, c_1, ...) where subscript = degree - index | Static |
 | **Power** | Monomial term (1, z, z^2, ...) | Static |
 | **Path** | Button showing path type name or "-" for none; click opens path picker popup | On path change |
-| **Speed** | Speed value (1–1000 display) or "-" if none | On path change |
-| **Radius** | Path radius (0–100) or "-" if none | On path change |
-| **Pts** | `curve.length` — sample points in the trajectory (200 or 1500 for interactive; unrelated to the fast-mode Steps dropdown) | On path change |
-| **Pos** | `c.curveIndex` — the integer curve index last set during animation. Sweeps 0 -> N-1 -> 0 during animation. | Every frame via `updateListCoords()` |
+| **Speed** | Speed value (1--1000 display) or "-" if none | On path change |
+| **Radius** | Path radius (0--100) or "-" if none | On path change |
+| **Pts** | `curve.length` -- sample points in the trajectory (200 or 1500 for interactive; unrelated to the fast-mode Steps dropdown) | On path change |
+| **Pos** | `c.curveIndex` -- the integer curve index last set during animation. Sweeps 0 -> N-1 -> 0 during animation. | Every frame via `updateListCoords()` |
 | **Coords** | Complex coordinates (re +/- im*i) | Every frame via `updateListCoords()` |
 
 ## D-List Tab Columns

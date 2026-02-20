@@ -119,7 +119,7 @@ GPU savings: 384MB (10K), 884MB (15K), 2.48GB (25K). The 16MB display buffer add
 
 All changes in `index.html`. All steps below have been implemented.
 
-### State variables (~line 1095)
+### State variables (~line 1092)
 
 After `let bitmapPersistentBuffer = null;`:
 
@@ -130,15 +130,15 @@ let bitmapDisplayRes = 0;          // display canvas resolution = min(computeRes
 let bitmapDisplayBuffer = null;    // ImageData at display resolution (null when no split needed)
 ```
 
-### Resolution dropdown (~line 896)
+### Resolution dropdown (~line 891)
 
 Options: 1000, 2000 (default), 5000, 8000, 10000, 15000, 25000.
 
-### Steps dropdown (~line 899)
+### Steps dropdown (~line 894)
 
 `bitmap-steps-select` controls the number of time steps per fast-mode pass. Options: 10, 100, 1K, 5K, 10K (default), 50K, 100K, 1M. The value is read in `enterFastMode()` and passed through `serializeFastModeData()` as `stepsVal`.
 
-### Dropdown change listeners (~line 13365)
+### Dropdown change listeners (~line 13726)
 
 Both the steps dropdown and the resolution dropdown have `change` event listeners that automatically restart fast mode when changed during an active run:
 
@@ -153,11 +153,11 @@ document.getElementById("bitmap-res-select").addEventListener("change", function
 
 This allows the user to adjust steps or resolution on the fly without manually pausing and restarting. The exit/re-enter cycle tears down existing workers, re-reads both dropdowns, re-serializes all fast-mode data, and spawns fresh workers at the new settings.
 
-### `fillDisplayBuffer()` helper (~line 9675)
+### `fillDisplayBuffer()` helper (~line 9800)
 
 Same exponential `copyWithin` pattern as `fillPersistentBuffer()`, operates on `bitmapDisplayBuffer`.
 
-### `initBitmapCanvas()` (~line 9780)
+### `initBitmapCanvas()` (~line 9905)
 
 - `bitmapComputeRes = res` (from dropdown)
 - `bitmapDisplayRes = Math.min(res, BITMAP_DISPLAY_CAP)`
@@ -165,7 +165,7 @@ Same exponential `copyWithin` pattern as `fillPersistentBuffer()`, operates on `
 - **Persistent buffer**: `new ImageData(bitmapComputeRes, bitmapComputeRes)` — direct constructor, NOT `createImageData` (decoupled from canvas size). Wrapped in try/catch with user-friendly OOM alert.
 - **Display buffer**: `new ImageData(bitmapDisplayRes, bitmapDisplayRes)` only when `bitmapComputeRes > BITMAP_DISPLAY_CAP`, otherwise null
 
-### `serializeFastModeData()` (~line 11010) — MOST CRITICAL
+### `serializeFastModeData()` (~line 11137) — MOST CRITICAL
 
 ```javascript
 canvasW: bitmapComputeRes, canvasH: bitmapComputeRes,
@@ -173,11 +173,11 @@ canvasW: bitmapComputeRes, canvasH: bitmapComputeRes,
 
 Workers always receive the compute resolution, not the display canvas size.
 
-### `enterFastMode()` resolution check (~line 10881)
+### `enterFastMode()` resolution check (~line 11008)
 
 `bitmapComputeRes !== wantRes` instead of `canvas.width !== wantRes`.
 
-### Worker partitioning (~line 11148)
+### Worker partitioning (~line 11281)
 
 `initFastModeWorkers()` caps the number of spawned workers to avoid empty work ranges:
 
@@ -187,7 +187,7 @@ const actualWorkers = Math.min(numWorkers, sd.stepsVal);
 
 Without this, selecting 100 steps with 16 configured workers would spawn 16 workers but only 100 steps to distribute — 10 workers would receive zero steps (`stepEnd === stepStart`) and produce empty pixel buffers. The fix ensures at most `stepsVal` workers are created, so every worker gets at least one step.
 
-`dispatchPassToWorkers()` (~line 11218) distributes steps evenly across workers using integer division with remainder:
+`dispatchPassToWorkers()` (~line 11357) distributes steps evenly across workers using integer division with remainder:
 
 ```javascript
 const base = Math.floor(stepsVal / nw);
@@ -205,18 +205,18 @@ maxPaintsPerWorker: Math.ceil(sd.stepsVal / actualWorkers) * sd.nRoots,
 
 Each step produces at most `nRoots` painted pixels, so `maxPaintsPerWorker` is the ceiling of steps-per-worker times `nRoots`. The worker blob uses this to size its `paintIdx`/`paintR`/`paintG`/`paintB` typed arrays, falling back to `totalSteps * nRoots` if not provided (backward compat).
 
-### `compositeWorkerPixels()` (~line 11286)
+### `compositeWorkerPixels()` (~line 11425)
 
 - Writes to persistent buffer in compute-space (unchanged)
 - When split active (`bitmapDisplayBuffer !== null`): downsamples each pixel to display buffer using `invScale = dW / cW`
 - Tracks dirty rect in display-space
 - `putImageData` uses display buffer (or persistent buffer when no split)
 
-### `plotCoeffCurvesOnBitmap()` (~line 10801)
+### `plotCoeffCurvesOnBitmap()` (~line 10928)
 
 Uses `bitmapDisplayRes || bitmapCtx.canvas.width` for width/height (display-only function that paints to the display canvas).
 
-### Export functions (~line 9690)
+### Export functions (~line 9815)
 
 Four pure-CPU encoders, each taking `(rgba, width, height, filename)` (JPEG adds quality):
 - `exportPersistentBufferAsBMP()` — 24-bit BMP, chunked Blob
@@ -224,23 +224,23 @@ Four pure-CPU encoders, each taking `(rgba, width, height, filename)` (JPEG adds
 - `exportPersistentBufferAsPNG()` — lossless via UPNG.js + pako
 - `exportPersistentBufferAsTIFF()` — uncompressed via UTIF.js
 
-### Save popup handler (~line 8255)
+### Save popup handler (~line 8316)
 
 Save popup with format dropdown, quality slider (JPEG only), and Download button. Reads from `bitmapPersistentBuffer.data` at `bitmapComputeRes`.
 
-### Clear handler (~line 13320)
+### Clear handler (~line 13686)
 
 Clears canvas, persistent buffer, and display buffer (when split active via `if (bitmapDisplayBuffer) fillDisplayBuffer()`).
 
-### `resetBitmap()` (~line 11616)
+### `resetBitmap()` (~line 11766)
 
 Nulls out: `bitmapPersistentBuffer`, `bitmapDisplayBuffer`, `bitmapComputeRes = 0`, `bitmapDisplayRes = 0`.
 
-### Snap "bitmap" export (~line 7704)
+### Snap "bitmap" export (~line 7826)
 
 Creates temp canvas at `bitmapComputeRes` dimensions, uses `ctx.putImageData(bitmapPersistentBuffer, 0, 0)` to copy full-resolution data, then `canvas.toBlob("image/png")` for the snap PNG download.
 
-### Timing copy resolution (~line 8374)
+### Timing copy resolution (~line 8495)
 
 `bitmapComputeRes || null` instead of `bitmapCtx.canvas.width`.
 

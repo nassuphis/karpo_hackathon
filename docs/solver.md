@@ -1,6 +1,6 @@
 # Root Finding: Ehrlich-Aberth Method
 
-The core computational engine implements the [Ehrlich-Aberth method](https://en.wikipedia.org/wiki/Aberth_method) — a simultaneous iterative root-finding algorithm with cubic convergence. Three implementations exist: a JavaScript version for interactive use (main thread), a JavaScript version optimized for workers (flat arrays, inside the worker blob), and a WASM version compiled from C (`step_loop.c`) that runs the entire step loop (solver + curve interpolation + root matching + pixel output) in WASM.
+The core computational engine implements the [Ehrlich-Aberth method](https://en.wikipedia.org/wiki/Aberth_method) — a simultaneous iterative root-finding algorithm with cubic convergence. Two solver implementations exist: a JavaScript version for interactive use (main thread) and a JavaScript version optimized for workers (flat arrays, inside the worker blob). In fast mode, workers use a 2-tier strategy: a WASM step loop compiled from C (`step_loop.c`) that runs the entire pipeline (solver + curve interpolation + root matching + pixel output) in WASM, falling back to a pure JS step loop when WASM is unavailable or for unsupported color modes.
 
 ## How It Works
 
@@ -24,9 +24,9 @@ Given a degree-*n* polynomial p(z) = cₙzⁿ + ··· + c₁z + c₀ (subscript
 
 The UI supports degree 2–30 (minimum degree 2 = quadratic). The key insight is **warm-starting**: when the user drags a coefficient slightly, the roots barely move. The previous frame's root positions are an excellent initial guess, so the solver converges in **1–3 iterations** during interactive drag (versus 15–30 iterations from a cold start). At degree 30, each iteration is O(n²) for the Aberth sums, making the total cost negligible compared to the domain coloring render.
 
-## Three Solver Implementations
+## Solver Implementations
 
-### 1. Main-Thread JS: `solveRootsEA` (~line 5151 in index.html)
+### 1. Main-Thread JS: `solveRootsEA` (~line 5259 in index.html)
 
 Used for interactive mode (drag, animation preview). Called once per frame on the main thread.
 
@@ -40,7 +40,7 @@ Used for interactive mode (drag, animation preview). Called once per frame on th
 - Radius heuristic for cold-start initialization: initial guesses spread on a circle of radius (|c₀|/|cₙ|)^(1/n), with angular offset of 0.37 radians to break symmetry
 - NaN rescue: non-finite results fall back to warm-start values, then to unit circle positions
 
-### 2. Worker Blob JS: `solveEA` (~line 9911 in index.html)
+### 2. Worker Blob JS: `solveEA` (~line 10036 in index.html)
 
 Used in the JavaScript step loop inside fast-mode Web Workers. Called once per step per worker.
 
@@ -52,27 +52,24 @@ Used in the JavaScript step loop inside fast-mode Web Workers. Called once per s
 - NaN rescue in-solver: non-finite roots are re-seeded on unit circle at angle `(2πi/degree + 0.37)` using `Math.cos`/`Math.sin`
 - The JS step loop is the fallback when the WASM step loop is unavailable
 
-### 3. WASM Step Loop: `step_loop.c` → `step_loop.wasm`
+### WASM Step Loop: `step_loop.c` → `step_loop.wasm`
 
-The preferred WASM path. Rather than calling WASM for the solver alone (which would cross the JS-WASM boundary once per step), `step_loop.c` runs the **entire step loop** in WASM: curve interpolation, morph blending, jiggle offsets, EA solver, root matching, and pixel output. JS only calls into WASM twice per pass — `init()` then `runStepLoop()`.
+The preferred fast-mode execution path. Rather than calling WASM for the solver alone (which would cross the JS-WASM boundary once per step), `step_loop.c` runs the **entire step loop** in WASM: curve interpolation, morph blending, jiggle offsets, dither (normal/uniform distribution), EA solver, root matching, and pixel output. JS only calls into WASM twice per pass -- `init()` then `runStepLoop()`.
 
-- **Source**: `step_loop.c` in the project root (~817 lines)
-- **Binary**: `step_loop.wasm` (~15KB), base64-encoded as `WASM_STEP_LOOP_B64` in `index.html`
+- **Source**: `step_loop.c` in the project root (~879 lines)
+- **Binary**: `step_loop.wasm` (~16KB), base64-encoded as `WASM_STEP_LOOP_B64` in `index.html`
 - **Exported functions**: `init(cfgIntOffset, cfgDblOffset)` and `runStepLoop(stepStart, stepEnd, elapsedOffset)` → returns pixel count
 - **Imported functions**: `cos`, `sin`, `log` (JS `Math.*`), `reportProgress` (for progress updates)
 - **Solver parameters**: SOLVER_MAX_ITER=64, SOLVER_TOL2=1e-16 (squared magnitude)
 - Pure C with no stdlib, no malloc — stack arrays for local solver state (up to MAX_DEG=255, MAX_COEFFS=256)
 - Includes full implementations of: `solveEA`, `matchRootsGreedy`, `hungarianMatch` (capped at HUNGARIAN_MAX=32 for stack safety), `computeSens`, `rankNorm`
-- Handles all four color modes (uniform, index-rainbow, proximity, derivative)
+- Handles four color modes (uniform, index-rainbow, proximity, derivative); idx-prox and ratio modes fall back to the JS step loop
+- Per-coefficient dither with configurable distribution: `rngDither(dist)` returns normal (Gaussian via Box-Muller) when `dist=0`, uniform when `dist=1` -- matching the JS `_ditherRand`/`wDitherRand` behavior
 - PRNG: xorshift128 for jiggle/dither, seeded from JS
 - NaN check uses `x != x` (IEEE 754); NaN rescue uses imported `cos`/`sin`
 - Progress reporting every 2000 steps via imported `reportProgress`
 
-#### Historical: Solver-Only WASM (`solver.c` → `solver.wasm`) -- removed
-
-The old solver-only WASM (~2KB) has been removed. It previously exported a single `solveEA` function and served as a fallback between the step-loop WASM and pure JS. The `solver.c` file remains in the repo for reference. The system now uses a 2-tier strategy: WASM step loop -> pure JS.
-
-## WASM Initialization & Fallback Chain
+## WASM Initialization & Fallback Chain (2-tier)
 
 When a worker receives an `init` message with `useWasm: true`, it follows this priority:
 
@@ -87,9 +84,9 @@ Additionally, `S_useWasmLoop` is forced to `false` for color modes not yet suppo
 
 Uses imported memory with dynamic page allocation. The first 64KB is reserved for the C shadow stack (grows downward). Above `__heap_base`, JS computes a layout (`computeWasmLayout`) that packs:
 
-- Config arrays: 65 int32 config values + 3 float64 config values
+- Config arrays: 69 int32 config values + 7 float64 config values
 - Input data: coefficient arrays, color arrays, jiggle offsets, morph targets, palette arrays, selection indices
-- C-curve and D-curve entry arrays (parallel arrays for index, speed, ccw, dither, offsets, lengths, isCloud)
+- C-curve and D-curve entry arrays (parallel arrays for index, speed, ccw, dither sigma, dither distribution, offsets, lengths, isCloud)
 - Curve point data (flat re/im pairs)
 - Working arrays: workCoeffsRe/Im, tmpRe/Im, morphWorkRe/Im, passRootsRe/Im
 - Output buffers: paintIdx (Int32), paintR/G/B (Uint8)
@@ -103,7 +100,7 @@ Memory is grown to fit the computed layout. Total pages depend on polynomial deg
 ```
 
 This compiles:
-- `step_loop.c` → `step_loop.wasm` → `step_loop.wasm.b64` (full step loop, ~15KB)
+- `step_loop.c` → `step_loop.wasm` → `step_loop.wasm.b64` (full step loop, ~16KB)
 
 The base64 string is pasted into `WASM_STEP_LOOP_B64` in `index.html`. Compiler flags:
 - `--import-memory`, `--stack-first`, `--stack-size=65536`, exports `init` + `runStepLoop` + `__heap_base`
@@ -130,14 +127,14 @@ When WASM is selected, workers use the full step-loop WASM (`step_loop.wasm`) an
 
 ## Parameter Comparison
 
-| Parameter | Main-Thread JS | Worker JS | WASM (both) |
-|-----------|---------------|-----------|-------------|
+| Parameter | Main-Thread JS | Worker JS | WASM Step Loop |
+|-----------|---------------|-----------|----------------|
 | Max iterations | 100 | 64 | 64 |
 | Convergence threshold | 1e-12 (magnitude) | 1e-16 (squared) | 1e-16 (squared) |
 | Convergence check | `Math.hypot` | manual `re²+im²` | manual `re²+im²` |
 | Leading-zero test | `Math.hypot` < 1e-15 | magnitude² < 1e-30 | magnitude² < 1e-30 |
 | NaN rescue | `isFinite` → warm-start → unit circle | `isFinite` → unit circle reseed | `x != x` → unit circle (via imported cos/sin) |
-| Iteration tracking | None (removed) | None (removed) | None (removed) |
+| Dither distribution | normal/uniform (`_ditherRand`) | normal/uniform (`wDitherRand`) | normal/uniform (`rngDither`, 0=normal 1=uniform) |
 | Stack arrays | MAX_COEFFS=256, MAX_DEG=255 | Dynamic (via `new Float64Array`) | MAX_COEFFS=256, MAX_DEG=255 |
 
 ## Step Partitioning

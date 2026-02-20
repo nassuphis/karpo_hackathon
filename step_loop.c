@@ -106,12 +106,20 @@ extern void js_reportProgress(int step);
 #define CI_OFF_PAINT_R        62
 #define CI_OFF_PAINT_G        63
 #define CI_OFF_PAINT_B        64
-/* Total: 65 int32 config values */
+#define CI_MORPH_PATH_TYPE    65   /* 0=line, 1=circle, 2=ellipse, 3=figure8 */
+#define CI_MORPH_CCW          66   /* 0=CW (default), 1=CCW */
+#define CI_OFF_ENTRY_DITHER_DIST  67  /* per-entry int32 array: 0=normal, 1=uniform */
+#define CI_OFF_DENTRY_DITHER_DIST 68  /* per-D-entry int32 array: 0=normal, 1=uniform */
+/* Total: 69 int32 config values */
 
 /* Config float64 indices */
-#define CD_RANGE      0
-#define CD_FPS        1
-#define CD_MORPH_RATE 2
+#define CD_RANGE              0
+#define CD_FPS                1
+#define CD_MORPH_RATE         2
+#define CD_MORPH_ELLIPSE_MINOR 3   /* minor axis fraction (0.1–1.0), ellipse only */
+#define CD_MORPH_DITHER_START  4   /* C/start dither sigma (absolute, max(cosθ,0)² envelope) */
+#define CD_MORPH_DITHER_MID    5   /* midpoint dither sigma (absolute, sin²θ envelope) */
+#define CD_MORPH_DITHER_END    6   /* D/end dither sigma (absolute, max(-cosθ,0)² envelope) */
 
 /* ================================================================
  * Global state (set by init)
@@ -122,7 +130,8 @@ static double *cfgD;
 static int nCoeffs, nRoots, canvasW, canvasH, totalSteps;
 static int colorMode, matchStrategy, morphEnabled;
 static int nEntries, nDEntries, nFollowC, nSelIndices, hasJiggle;
-static double bitmapRange, FPS, morphRate;
+static int morphPathType, morphCcw;
+static double bitmapRange, FPS, morphRate, morphEllipseMinor, morphDitherStart, morphDitherMid, morphDitherEnd;
 
 /* Data pointers */
 static double *coeffsRe, *coeffsIm;
@@ -134,13 +143,13 @@ static unsigned char *derivPalR, *derivPalG, *derivPalB;
 static int *selIndices, *followCIdx;
 
 /* C-curve entry arrays */
-static int *entryIdx, *entryCcw;
+static int *entryIdx, *entryCcw, *entryDitherDist;
 static double *entrySpeed, *entryDither;
 static int *curveOffsets, *curveLengths, *curveIsCloud;
 static double *curvesFlat;
 
 /* D-curve entry arrays */
-static int *dEntryIdx, *dEntryCcw;
+static int *dEntryIdx, *dEntryCcw, *dEntryDitherDist;
 static double *dEntrySpeed, *dEntryDither;
 static int *dCurveOffsets, *dCurveLengths, *dCurveIsCloud;
 static double *dCurvesFlat;
@@ -195,6 +204,10 @@ static double rngGauss(void) {
     do { u = rngUniform(); } while (u == 0.0);
     v = rngUniform();
     return __builtin_sqrt(-2.0 * js_log(u)) * js_cos(2.0 * PI * v);
+}
+
+static double rngDither(int dist) {
+    return dist ? (rngUniform() - 0.5) * 2.0 : rngGauss();
 }
 
 /* ================================================================
@@ -488,9 +501,15 @@ void init(int cfgIntOffset, int cfgDblOffset)
     nSelIndices    = cfgI[CI_N_SEL_INDICES];
     hasJiggle     = cfgI[CI_HAS_JIGGLE];
 
-    bitmapRange = cfgD[CD_RANGE];
-    FPS         = cfgD[CD_FPS];
-    morphRate   = cfgD[CD_MORPH_RATE];
+    bitmapRange      = cfgD[CD_RANGE];
+    FPS              = cfgD[CD_FPS];
+    morphRate        = cfgD[CD_MORPH_RATE];
+    morphEllipseMinor = cfgD[CD_MORPH_ELLIPSE_MINOR];
+    morphDitherStart = cfgD[CD_MORPH_DITHER_START];
+    morphDitherMid = cfgD[CD_MORPH_DITHER_MID];
+    morphDitherEnd = cfgD[CD_MORPH_DITHER_END];
+    morphPathType    = cfgI[CI_MORPH_PATH_TYPE];
+    morphCcw         = cfgI[CI_MORPH_CCW];
 
     /* Seed PRNG */
     rngS[0] = (unsigned int)cfgI[CI_RNG_SEED0];
@@ -526,6 +545,7 @@ void init(int cfgIntOffset, int cfgDblOffset)
     entrySpeed    = PTR(double, CI_OFF_ENTRY_SPEED);
     entryCcw      = PTR(int, CI_OFF_ENTRY_CCW);
     entryDither   = PTR(double, CI_OFF_ENTRY_DITHER);
+    entryDitherDist = PTR(int, CI_OFF_ENTRY_DITHER_DIST);
     curveOffsets  = PTR(int, CI_OFF_CURVE_OFFSETS);
     curveLengths  = PTR(int, CI_OFF_CURVE_LENGTHS);
     curveIsCloud  = PTR(int, CI_OFF_CURVE_ISCLOUD);
@@ -535,6 +555,7 @@ void init(int cfgIntOffset, int cfgDblOffset)
     dEntrySpeed   = PTR(double, CI_OFF_DENTRY_SPEED);
     dEntryCcw     = PTR(int, CI_OFF_DENTRY_CCW);
     dEntryDither  = PTR(double, CI_OFF_DENTRY_DITHER);
+    dEntryDitherDist = PTR(int, CI_OFF_DENTRY_DITHER_DIST);
     dCurveOffsets = PTR(int, CI_OFF_DCURVE_OFFSETS);
     dCurveLengths = PTR(int, CI_OFF_DCURVE_LENGTHS);
     dCurveIsCloud = PTR(int, CI_OFF_DCURVE_ISCLOUD);
@@ -616,8 +637,8 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
 
             /* 3. Apply dither */
             if (entryDither[a] > 0) {
-                workCoeffsRe[idx] += rngGauss() * entryDither[a];
-                workCoeffsIm[idx] += rngGauss() * entryDither[a];
+                workCoeffsRe[idx] += rngDither(entryDitherDist[a]) * entryDither[a];
+                workCoeffsIm[idx] += rngDither(entryDitherDist[a]) * entryDither[a];
             }
         }
 
@@ -648,8 +669,8 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                 }
 
                 if (dEntryDither[da] > 0) {
-                    morphWorkRe[dIdx] += rngGauss() * dEntryDither[da];
-                    morphWorkIm[dIdx] += rngGauss() * dEntryDither[da];
+                    morphWorkRe[dIdx] += rngDither(dEntryDitherDist[da]) * dEntryDither[da];
+                    morphWorkIm[dIdx] += rngDither(dEntryDitherDist[da]) * dEntryDither[da];
                 }
             }
         }
@@ -665,11 +686,53 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
 
         /* 6. Morph blend */
         if (morphEnabled) {
-            double mu = 0.5 - 0.5 * js_cos(2.0 * PI * morphRate * elapsed);
-            double omu = 1.0 - mu;
-            for (int m = 0; m < nc; m++) {
-                workCoeffsRe[m] = workCoeffsRe[m] * omu + morphWorkRe[m] * mu;
-                workCoeffsIm[m] = workCoeffsIm[m] * omu + morphWorkIm[m] * mu;
+            double theta = 2.0 * PI * morphRate * elapsed;
+            double cosT = js_cos(theta), sinT = js_sin(theta);
+            if (morphPathType == 0) {
+                /* Line: mu = (1 - cos(theta)) / 2 */
+                double mu = 0.5 - 0.5 * cosT;
+                double omu = 1.0 - mu;
+                for (int m = 0; m < nc; m++) {
+                    workCoeffsRe[m] = workCoeffsRe[m] * omu + morphWorkRe[m] * mu;
+                    workCoeffsIm[m] = workCoeffsIm[m] * omu + morphWorkIm[m] * mu;
+                }
+            } else {
+                /* Non-linear: circle (1), ellipse (2), figure-8 (3) */
+                double sign = morphCcw ? 1.0 : -1.0;
+                double sin2T = 2.0 * sinT * cosT; /* sin(2θ) for figure-8 */
+                for (int m = 0; m < nc; m++) {
+                    double cR = workCoeffsRe[m], cI = workCoeffsIm[m];
+                    double dR = morphWorkRe[m], dI = morphWorkIm[m];
+                    double dx = dR - cR, dy = dI - cI;
+                    double len2 = dx * dx + dy * dy;
+                    if (len2 < 1e-30) continue; /* C ≈ D, keep C */
+                    double len = __builtin_sqrt(len2);
+                    double ux = dx / len, uy = dy / len;
+                    double vx = -uy, vy = ux;
+                    double midR = (cR + dR) * 0.5, midI = (cI + dI) * 0.5;
+                    double semi = len * 0.5;
+                    double lx = -semi * cosT;
+                    double ly;
+                    if (morphPathType == 1) {          /* circle */
+                        ly = sign * semi * sinT;
+                    } else if (morphPathType == 2) {   /* ellipse */
+                        ly = sign * (morphEllipseMinor * semi) * sinT;
+                    } else {                           /* figure-8 */
+                        ly = sign * (semi * 0.5) * sin2T;
+                    }
+                    workCoeffsRe[m] = midR + lx * ux + ly * vx;
+                    workCoeffsIm[m] = midI + lx * uy + ly * vy;
+                }
+            }
+            /* Morph path dither: start max(cos,0)² + mid sin² + end max(-cos,0)² */
+            if (morphDitherStart > 0.0 || morphDitherMid > 0.0 || morphDitherEnd > 0.0) {
+                double startEnv = cosT > 0.0 ? cosT * cosT : 0.0;
+                double endEnv   = cosT < 0.0 ? cosT * cosT : 0.0;
+                double ds = morphDitherStart * startEnv + morphDitherMid * sinT * sinT + morphDitherEnd * endEnv;
+                if (ds > 0.0) for (int m = 0; m < nc; m++) {
+                    workCoeffsRe[m] += (rngUniform() - 0.5) * 2.0 * ds;
+                    workCoeffsIm[m] += (rngUniform() - 0.5) * 2.0 * ds;
+                }
             }
         }
 

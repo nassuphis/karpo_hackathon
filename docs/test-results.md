@@ -439,7 +439,7 @@ Tests the pattern arrange tool: `distributeOnPath()` helper, `patternPositions()
 
 ## test_benchmark.py — JS vs WASM Performance (7 tests)
 
-Tests correctness and speed of the WASM Ehrlich-Aberth solver (`solver.c` → `solver.wasm`) and full step loop (solver + pixel output) benchmarks.
+Tests correctness and speed of the WASM step loop (`step_loop.c` → `step_loop.wasm`) and full step loop (solver + pixel output) benchmarks.
 
 | Test | Status | What it checks |
 |------|--------|----------------|

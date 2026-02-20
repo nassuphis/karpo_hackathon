@@ -89,17 +89,15 @@ Workers are **persistent** within a jiggle cycle: created once at init, reused a
 
 Created by `createFastModeWorkerBlob()` (~line 9907) as an inline blob URL. Contains the following components:
 
-### 1. Ehrlich-Aberth Solver (three-tier selection)
+### 1. Ehrlich-Aberth Solver (two-tier selection)
 
-Three solver tiers are available, selectable via the **cfg** button in the bitmap toolbar. Workers try the highest tier first and fall back automatically:
+Two solver tiers are available, selectable via the **cfg** button in the bitmap toolbar. Workers try the WASM tier first and fall back automatically:
 
 1. **WASM step loop** (`S_useWasmLoop`): The entire per-step loop (coefficient interpolation, D-curve advance, follow-C, morph blend, jiggle, solver, root matching, pixel painting) runs in a single WASM module (`step_loop.c`). The binary is base64-encoded as `WASM_STEP_LOOP_B64` (~line 1136) and sent via `wasmStepLoopB64` in the init message. `initWasmStepLoop(d)` (~line 10200) decodes, compiles, allocates WASM linear memory via `computeWasmLayout()`, and copies all persistent state into flat memory buffers. The `runStepLoop(stepStart, stepEnd, elapsedOffset)` export executes the full step range and returns the pixel count directly. Progress is reported via an imported `reportProgress` callback.
 
-2. **WASM solver-only** (`S_useWasm`): Only the Ehrlich-Aberth solver runs in WASM (`solver.c`, ~2KB). The JS step loop handles interpolation, matching, and painting. Falls back here if the step loop module fails to compile.
+2. **JS solver** (`solveEA`): Pure JavaScript flat-array implementation (~line 9911). Used when WASM is disabled or unavailable.
 
-3. **JS solver** (`solveEA`): Pure JavaScript flat-array implementation (~line 9911). Used when WASM is disabled or unavailable.
-
-| Parameter | JS Worker | WASM (solver/loop) | Main Thread |
+| Parameter | JS Worker | WASM (step loop) | Main Thread |
 |-----------|-----------|---------------------|-------------|
 | Max iterations | 64 | 64 | 100 |
 | Convergence threshold | 1e-16 (squared) | 1e-16 (squared) | 1e-12 (magnitude) |
@@ -107,9 +105,9 @@ Three solver tiers are available, selectable via the **cfg** button in the bitma
 | Hot-loop math | No `Math.hypot`, manual `d*d` | Native f64 ops | Uses `Math.hypot` |
 | NaN rescue | In solver (isFinite) | Post-call JS (x !== x) | In solver |
 
-All solvers operate on flat `Float64Array` buffers for cache efficiency. The WASM step loop allocates all buffers in WASM linear memory via `computeWasmLayout()` (~line 10145), which computes byte offsets for coefficients, roots, curves, palettes, follow-C indices, pixel output, and working arrays. Memory is grown to fit (`L.pages` pages). The solver-only WASM path copies data into/out of a smaller WASM linear memory (64KB).
+All solvers operate on flat `Float64Array` buffers for cache efficiency. The WASM step loop allocates all buffers in WASM linear memory via `computeWasmLayout()` (~line 10145), which computes byte offsets for coefficients, roots, curves, palettes, follow-C indices, pixel output, and working arrays. Memory is grown to fit (`L.pages` pages).
 
-**WASM step loop fallback rule**: If `S_idxProxColor` or `S_ratioColor` is true, the WASM step loop is forced off (~line 10410) and the JS step loop is used instead, because these color modes are not implemented in `step_loop.c`. The solver-only WASM path is still used if available.
+**WASM step loop fallback rule**: If `S_idxProxColor` or `S_ratioColor` is true, the WASM step loop is forced off (~line 10410) and the JS step loop is used instead, because these color modes are not implemented in `step_loop.c`.
 
 ### 2. Root Matching (`matchRoots` / `hungarianMatch`)
 
@@ -148,8 +146,7 @@ S_curvesFlat               Float64Array  All curve points (re,im interleaved)
 S_entries                  object[]      Animation entries [{idx, ccw, speed, ditherSigma}]
 S_offsets, S_lengths       int[]         Curve offset/length per entry
 S_isCloud                  bool[]        Random-cloud flag per entry
-S_useWasm                  bool          Use WASM solver-only (tier 2)
-S_useWasmLoop              bool          Use WASM step loop (tier 1, highest priority)
+S_useWasmLoop              bool          Use WASM step loop (preferred when WASM enabled)
 S_noColor                  bool          Uniform color mode
 S_uniformR/G/B             int           Uniform color RGB
 S_totalSteps, S_FPS        int, number   Steps per pass, seconds per pass
@@ -183,9 +180,8 @@ wasmLoopTotalRunSteps      int           Total steps in current run cached for W
 
 Solver tier selection during init (~line 10398):
 1. If `useWasm` and `wasmStepLoopB64` present: try `initWasmStepLoop(d)` -> set `S_useWasmLoop = true`
-2. If step loop failed (or not present) and `wasmB64` present: try `initWasm(wasmB64)` -> set `S_useWasm = true`
-3. Otherwise: pure JS (`S_useWasm = false, S_useWasmLoop = false`)
-4. Post-init check: if `S_useWasmLoop` and (`S_idxProxColor` or `S_ratioColor`), force `S_useWasmLoop = false` (these modes are JS-only)
+2. Otherwise: pure JS (`S_useWasmLoop = false`)
+3. Post-init check: if `S_useWasmLoop` and (`S_idxProxColor` or `S_ratioColor`), force `S_useWasmLoop = false` (these modes are JS-only)
 
 #### "run" Handler: WASM Step Loop Path (~line 10432)
 
@@ -236,7 +232,7 @@ When the WASM step loop is not active, the JS fallback executes. For each step i
 
 7. **Apply jiggle offsets**: If `S_jiggleRe`/`S_jiggleIm` present, add per-coefficient offsets post-interpolation.
 
-8. **Solve**: Call `solveEA()` (JS) or `solveEA_wasm()` (WASM solver-only) based on `S_useWasm` flag.
+8. **Solve**: Call `solveEA()` (JS).
 
 9. **Color-mode-specific painting**: Branch based on active color mode (see "Root Color Modes" section below). Each branch handles root matching, color computation, and sparse pixel output.
 
@@ -345,7 +341,6 @@ Compositing on main thread writes sparse pixels directly into a **persistent `Im
     totalSteps: int,
     FAST_PASS_SECONDS: number,     // always 1.0
     useWasm: bool,                 // use WASM solver
-    wasmB64: string|null,          // base64-encoded WASM solver binary (if useWasm)
     wasmStepLoopB64: string|null,  // base64-encoded WASM step loop binary (if useWasm)
     morphEnabled: bool,            // morph blending active
     morphRate: number,             // morph oscillation rate (Hz)
@@ -458,7 +453,7 @@ Worker count is capped: `actualWorkers = Math.min(numWorkers, stepsVal)`. This p
 3. Set `onmessage` (`handleFastModeWorkerMessage`) and `onerror` handlers
 4. Send "init" message with all static data (buffer copies), including:
    - `useWasm: solverType === "wasm"` — WASM is only used when the user has selected wasm in the cfg popup
-   - `wasmB64: WASM_SOLVER_B64` and `wasmStepLoopB64: WASM_STEP_LOOP_B64` — base64 binaries sent per init
+   - `wasmStepLoopB64: WASM_STEP_LOOP_B64` — base64 binary sent per init
    - `maxPaintsPerWorker = ceil(stepsVal / actualWorkers) * nRoots` for WASM pixel buffer sizing
 5. Push to `fastModeWorkers` array
 
@@ -660,7 +655,7 @@ Per worker:
 - Sparse pixel arrays: `(stepEnd - stepStart) * nRoots * 13 bytes` (Int32 index + 3 * Uint8 color)
 - Coefficient/root arrays: `nCoeffs * 16 + nRoots * 16 bytes`
 - Curve data: shared via structured clone, ~`totalCurvePoints * 16 bytes`
-- WASM step loop (if active): additional linear memory sized by `computeWasmLayout()` (includes all the above plus working arrays, palettes, pixel output buffers)
+- WASM step loop (if active): linear memory sized by `computeWasmLayout()` (includes all the above plus working arrays, palettes, pixel output buffers)
 
 No per-worker W*H*4 canvas buffer. A 10K*10K canvas with 4 workers and 100K steps would use ~37MB per worker for pixel arrays at degree 29 (worst case), vs 400MB for a full canvas buffer.
 
@@ -677,9 +672,9 @@ No per-worker W*H*4 canvas buffer. A 10K*10K canvas with 4 workers and 100K step
 | All workers get same warm-start roots | Workers 1-N start with roots from time 0 (not their actual time). EA converges in 1-2 extra iters on first step. Negligible cost vs complexity of chaining roots across workers. |
 | WASM solver optional (not default) | JS solver is already fast and requires no compilation toolchain. WASM provides marginal gains at low degree but significant gains at degree 50+. Users can toggle via cfg button. |
 | WASM b64 sent per init (not shared) | Each worker decodes and compiles independently (~1ms). Avoids complexity of sharing compiled modules across workers. Only happens once per fast-mode session. |
-| WASM step loop over solver-only | Moving the entire step loop into WASM eliminates JS-to-WASM boundary crossing per step. The step loop WASM module handles interpolation, D-curves, follow-C, morph, jiggle, solver, matching, and pixel output natively. Three-tier fallback (step loop -> solver-only -> JS) ensures graceful degradation. |
+| WASM step loop (full pipeline) | Moving the entire step loop into WASM eliminates JS-to-WASM boundary crossing per step. The step loop WASM module handles interpolation, D-curves, follow-C, morph, jiggle, solver, matching, and pixel output natively. Two-tier fallback (step loop -> JS) ensures graceful degradation. |
 | `maxPaintsPerWorker` per-worker sizing | WASM step loop pre-allocates pixel output buffers in linear memory. `ceil(stepsVal / actualWorkers) * nRoots` gives the exact upper bound for each worker's pixel count, avoiding over-allocation when workers are capped below `numWorkers`. |
-| Idx-prox and ratio modes JS-only | These color modes are not implemented in `step_loop.c`. The WASM step loop is forced off when they are active, falling back to the WASM solver-only path (or pure JS). |
+| Idx-prox and ratio modes JS-only | These color modes are not implemented in `step_loop.c`. The WASM step loop is forced off when they are active, falling back to pure JS. |
 
 ---
 

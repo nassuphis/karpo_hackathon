@@ -1,6 +1,6 @@
 # Root Finding: Ehrlich-Aberth Method
 
-The core computational engine implements the [Ehrlich-Aberth method](https://en.wikipedia.org/wiki/Aberth_method) — a simultaneous iterative root-finding algorithm with cubic convergence. Three implementations exist: a JavaScript version for interactive use (main thread), a JavaScript version optimized for workers (flat arrays, inside the worker blob), and a WASM version compiled from C that runs the entire step loop (solver + curve interpolation + root matching + pixel output) in WASM.
+The core computational engine implements the [Ehrlich-Aberth method](https://en.wikipedia.org/wiki/Aberth_method) — a simultaneous iterative root-finding algorithm with cubic convergence. Three implementations exist: a JavaScript version for interactive use (main thread), a JavaScript version optimized for workers (flat arrays, inside the worker blob), and a WASM version compiled from C (`step_loop.c`) that runs the entire step loop (solver + curve interpolation + root matching + pixel output) in WASM.
 
 ## How It Works
 
@@ -50,7 +50,7 @@ Used in the JavaScript step loop inside fast-mode Web Workers. Called once per s
 - Pure flat-array arithmetic — no object allocation in the hot loop
 - Leading-zero test uses squared magnitude < 1e-30 (avoids `Math.hypot`)
 - NaN rescue in-solver: non-finite roots are re-seeded on unit circle at angle `(2πi/degree + 0.37)` using `Math.cos`/`Math.sin`
-- Also provides `solveEA_wasm` (~line 10112) which marshals data to/from WASM memory and calls the old solver-only WASM (`solver.c`), used as a fallback when `step_loop.wasm` is unavailable
+- The JS step loop is the fallback when the WASM step loop is unavailable
 
 ### 3. WASM Step Loop: `step_loop.c` → `step_loop.wasm`
 
@@ -68,21 +68,18 @@ The preferred WASM path. Rather than calling WASM for the solver alone (which wo
 - NaN check uses `x != x` (IEEE 754); NaN rescue uses imported `cos`/`sin`
 - Progress reporting every 2000 steps via imported `reportProgress`
 
-#### Legacy Solver-Only WASM: `solver.c` → `solver.wasm`
+#### Historical: Solver-Only WASM (`solver.c` → `solver.wasm`) -- removed
 
-The old solver-only WASM (~2KB) still exists as a fallback. It exports a single `solveEA` function that takes the same flat-array interface as the worker JS solver. The JS wrapper `solveEA_wasm` copies data into WASM linear memory, calls the solver, and copies results back. The `solver.c` function signature still accepts `trackIter` and `iterCounts` parameters for ABI compatibility, but they are called with 0,0 (iteration counting was removed).
-
-This fallback is used when `step_loop.wasm` fails to initialize (e.g., insufficient memory). The init sequence tries `step_loop.wasm` first, then falls back to `solver.wasm`, then to pure JS.
+The old solver-only WASM (~2KB) has been removed. It previously exported a single `solveEA` function and served as a fallback between the step-loop WASM and pure JS. The `solver.c` file remains in the repo for reference. The system now uses a 2-tier strategy: WASM step loop -> pure JS.
 
 ## WASM Initialization & Fallback Chain
 
 When a worker receives an `init` message with `useWasm: true`, it follows this priority:
 
 1. **Try `step_loop.wasm`**: If `wasmStepLoopB64` is provided, attempt `initWasmStepLoop()`. Sets `S_useWasmLoop = true` on success.
-2. **Fallback to `solver.wasm`**: If step loop init fails and `wasmB64` is provided, attempt `initWasm()`. Sets `S_useWasm = true` on success.
-3. **Pure JS**: If both WASM paths fail, the worker uses the JS `solveEA` function in a JS step loop.
+2. **Pure JS**: If the WASM step loop fails, the worker uses the JS `solveEA` function in a JS step loop.
 
-Additionally, `S_useWasmLoop` is forced to `false` for color modes not yet supported by `step_loop.c` (currently: index-proximity and ratio modes), in which case the worker falls back to the JS step loop (which may still use `solveEA_wasm` for the solver call if `S_useWasm` is true).
+Additionally, `S_useWasmLoop` is forced to `false` for color modes not yet supported by `step_loop.c` (currently: index-proximity and ratio modes), in which case the worker falls back to the pure JS step loop.
 
 ## WASM Memory Layout
 
@@ -99,35 +96,17 @@ Uses imported memory with dynamic page allocation. The first 64KB is reserved fo
 
 Memory is grown to fit the computed layout. Total pages depend on polynomial degree, number of curve entries, and max paints per worker.
 
-### solver.wasm (legacy, solver-only)
-
-Fixed 64KB (1 page) layout:
-
-```
-Offset       Array          Size    Type
-0x0000       coeffsRe[N]    N×8B    Float64Array (input)
-N×8          coeffsIm[N]    N×8B    Float64Array (input)
-N×16         warmRe[R]      R×8B    Float64Array (in/out)
-N×16+R×8     warmIm[R]      R×8B    Float64Array (in/out)
-...
-C shadow stack (32KB, grows down from top)
-```
-
-Where N = nCoeffs, R = nRoots. Offsets are computed by JS at init time.
-
 ## Build Workflow
 
 ```bash
 ./build-wasm.sh    # Requires Homebrew LLVM + lld (clang at /opt/homebrew/opt/llvm/bin/clang)
 ```
 
-This compiles both:
-1. `solver.c` → `solver.wasm` → `solver.wasm.b64` (solver-only, ~2KB)
-2. `step_loop.c` → `step_loop.wasm` → `step_loop.wasm.b64` (full step loop, ~15KB)
+This compiles:
+- `step_loop.c` → `step_loop.wasm` → `step_loop.wasm.b64` (full step loop, ~15KB)
 
-The base64 strings are pasted into `WASM_SOLVER_B64` and `WASM_STEP_LOOP_B64` constants in `index.html`. Compiler flags:
-- `step_loop.c`: `--import-memory`, `--stack-first`, `--stack-size=65536`, exports `init` + `runStepLoop` + `__heap_base`
-- `solver.c`: `--initial-memory=65536`, `--stack-size=32768`, exports `solveEA`
+The base64 string is pasted into `WASM_STEP_LOOP_B64` in `index.html`. Compiler flags:
+- `--import-memory`, `--stack-first`, `--stack-size=65536`, exports `init` + `runStepLoop` + `__heap_base`
 
 ## Bidirectional Editing
 
@@ -147,7 +126,7 @@ The polynomial is evaluated via Horner's method. The canvas renders at half reso
 
 Click the **cfg** button in the bitmap toolbar to open the solver config popup. Choose **JS** or **WASM**. The selection takes effect on the next fast-mode start (workers are initialized with the chosen solver type). The setting is persisted in save/load snapshots.
 
-When WASM is selected, workers prefer the full step-loop WASM (`step_loop.wasm`) and fall back to solver-only WASM (`solver.wasm`) then pure JS.
+When WASM is selected, workers use the full step-loop WASM (`step_loop.wasm`) and fall back to pure JS if it fails.
 
 ## Parameter Comparison
 

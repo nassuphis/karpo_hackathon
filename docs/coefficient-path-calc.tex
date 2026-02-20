@@ -96,11 +96,94 @@ When jiggle is off, the jiggle term is zero.
 
 
 %──────────────────────────────────────────────────────────────────────
+\section{Node Parameters}
+
+The formula~\eqref{eq:master} involves two sets of animated nodes, each of length $n = d{+}1$:
+
+\begin{itemize}[nosep]
+\item \textbf{C-nodes} (\texttt{coefficients[]}): primary coefficients. Always active.
+\item \textbf{D-nodes} (\texttt{morphTargetCoeffs[]}): morph targets.
+      Active only when morph is enabled.
+\end{itemize}
+
+\noindent Both node types carry the \emph{same} set of per-node animation parameters.
+D-nodes additionally support $\tau_i = \texttt{"follow-c"}$ (see D-Node Animation below).
+
+\subsection*{Per-node parameters}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}clccl@{}}
+\toprule
+\textbf{Symbol} & \textbf{Meaning} & \textbf{Range} & \textbf{Default} & \textbf{Unit} \\
+\midrule
+$\home_i$         & Home position ($= \gamma_i[0]$)        & $\C$             & (from pattern)  & complex \\
+$\gamma_i$        & Precomputed closed curve                & ---              & $[\home_i]$     & $N$ points in $\C$ \\
+$\tau_i$          & Path type (curve shape)                 & see below        & \texttt{"none"} & --- \\
+$R_i$             & Path radius                             & $[1,\, 100]$     & $25$            & \% of $E$ \\
+$v_i$             & Traversal speed                         & $[0.001,\, 1.0]$ & $1.0$           & cycles/s \\
+$\alpha_i$        & Rotation of path shape                  & $[0,\, 1)$       & $0$             & turns \\
+$\delta_i$        & Direction: $-1$ if CCW, $+1$ if CW     & $\{-1,\,+1\}$    & $+1$            & --- \\
+$\varepsilon_i$   & Extra parameters (path-specific)        & varies           & $\{\}$          & --- \\
+$N$               & Curve sample count                      & $\{200,\, 1500\}$ & $200$          & points \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\medskip
+\noindent Here $E = \texttt{coeffExtent}$: the maximum pairwise distance among all coefficient
+home positions. The absolute radius used for curve generation is
+$R_{\mathrm{abs}} = (R_i / 100) \cdot E$.
+
+The curve $\gamma_i$ is generated once from $(\home_i,\, \tau_i,\, R_{\mathrm{abs}},\, \alpha_i,\, \varepsilon_i)$
+and recomputed whenever any parameter changes.
+When $\tau_i = \texttt{"none"}$, the curve is the single point $[\home_i]$ (no animation).
+
+\subsection*{Path types}
+
+There are 22 base path shapes in three groups. Each animated type also has a
+\textbf{dithered variant} (suffix \texttt{-dither}) that adds per-frame Gaussian noise.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}lp{10cm}@{}}
+\toprule
+\textbf{Group} & \textbf{Types} \\
+\midrule
+Non-animated   & \texttt{none},\; \texttt{follow-c}\,$^{\dagger}$ \\[2pt]
+Basic          & circle, horizontal, vertical, spiral\,$^{*}$, random\,$^{\ddagger}$ \\[2pt]
+Curves         & lissajous, figure-8, cardioid, astroid, deltoid, rose, spirograph,
+                 hypotrochoid, butterfly, star, square, c-ellipse\,$^{*}$ \\[2pt]
+Space-filling  & hilbert, peano, sierpinski \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\smallskip
+\noindent
+$^{\dagger}$D-node only: $D_i(t) = C_i(t)$.\quad
+$^{*}$Orbital paths: curve points are absolute positions
+(orbiting the origin), not offsets from $\home_i$.\quad
+$^{\ddagger}$Cloud: pre-generated Gaussian point cloud; no interpolation between samples.
+
+\medskip
+\noindent Curve sample count: $N = 200$ for most paths; $N = 1500$ for space-filling paths
+and \texttt{spiral} (Hilbert, Peano, Sierpi\'{n}ski, spiral).
+
+\paragraph{Notable extra parameters ($\varepsilon_i$).}
+\texttt{spiral}: multiplier $m \in [0,2]$ (default 1.5), turns $T \in [0.5, 5]$ (default 2).
+\texttt{lissajous}: frequencies $a \in [1,8]$ (default 3), $b \in [1,8]$ (default 2).
+\texttt{c-ellipse}: minor-axis width $w \in [1,100]\%$ (default 50).
+\texttt{random}: sigma $\in [0,10]$ (default 2).
+Dithered variants: $\sigma_{\%} \in [0,1]$ (default 0.2).
+
+
+%──────────────────────────────────────────────────────────────────────
 \section{$C_i(t)$: C-Node Animation}
 
-Each coefficient $i$ has a \textbf{home position} $\home_i = \gamma_i[0] \in \C$ and a precomputed
-closed curve $\gamma_i$ consisting of $N$ sample points in the complex plane.
-The curve is computed once from parameters $(\home_i, \text{pathType}, R, \alpha, \text{extra})$.
+Each C-node $i$ carries a precomputed curve $\gamma_i$ generated from the parameters
+in the preceding table. At each time step, $C_i(t)$ is obtained by sampling this curve
+at a phase determined by the speed $v_i$ and direction $\delta_i$.
 
 \subsection*{Curve Sampling}
 
@@ -144,9 +227,6 @@ where $\N(0,1)$ is a standard Gaussian (Box--Muller) and $E = \texttt{coeffExten
 is the maximum pairwise distance between any two coefficients.
 
 \paragraph{Static case.} When $\text{pathType} = \texttt{"none"}$: $C_i(t) = \home_i$ for all $t$.
-
-\paragraph{Curve resolution.} $N = 200$ for basic paths; $N = 1500$ for space-filling paths
-(Hilbert, Peano, Sierpi\'{n}ski, spiral).
 
 
 %──────────────────────────────────────────────────────────────────────
@@ -276,12 +356,26 @@ J_i(s) = 0 \;\;\text{if}\;\; i \notin S \;\text{or}\; \text{mode} = \texttt{"non
 \]
 
 \medskip
-\noindent\textbf{Notation:}\;
-$\home_i$ = home position;\;
-$\mathbf{c} = \frac{1}{|S|}\sum_{i\in S} \home_i$ (centroid of selected homes);\;
-$E = \texttt{coeffExtent}$;\;
-$\sigma = (\texttt{jiggleSigma}/10)\cdot E$;\;
-$R_\alpha$ denotes rotation by angle $\alpha$.
+\noindent\textbf{Notation} (in addition to the per-node symbols from the Node Parameters table):
+
+\begin{center}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{@{}cll@{}}
+\toprule
+\textbf{Symbol} & \textbf{Meaning} & \textbf{Used by} \\
+\midrule
+$\mathbf{c}$           & Centroid $= \frac{1}{|S|}\sum_{i\in S} \home_i$  & rotate, scale-cen., spiral-cen., breathe, wobble \\
+$\sigma$               & $(\texttt{jiggleSigma}/10)\cdot E$                & random, walk \\
+$g$                    & $(\texttt{scaleStep}/100)\cdot E$                 & scale, spiral \\
+$N_{\mathrm{angle}}$   & Angle steps per full rotation                     & rotate, spiral, wobble \\
+$N_{\mathrm{circle}}$  & Steps per full rotation (about origin)            & circle \\
+$A$                    & Amplitude parameter ($0$--$100$)                  & breathe, lissajous \\
+$P$                    & Period in jiggle steps                            & breathe, wobble, lissajous \\
+$f_x, f_y$            & Frequency multipliers                             & lissajous \\
+$R_\alpha$             & Rotation operator by angle $\alpha$               & all rotation modes \\
+\bottomrule
+\end{tabular}
+\end{center}
 
 \subsection*{Random}
 \begin{equation}
@@ -351,7 +445,6 @@ J_i(s) = r\,R_\alpha\,\home_i - \home_i
 J_i(s) = (\home_i - \mathbf{c})\,(\lambda - 1)
 \end{equation}
 Sinusoidal radial pulsation from centroid.
-$A$ = amplitude parameter, $P$ = period in steps.
 
 \subsection*{Wobble}
 \begin{equation}
@@ -437,23 +530,117 @@ F_i(t) = B_i + J_i(s) \cdot \mathbf{1}_{[i \in S]}
 
 
 %──────────────────────────────────────────────────────────────────────
-\section{Worker (Fast Mode) Differences}
+\section{Fast Mode (Bitmap Workers)}
 
-The same pipeline runs inside Web Workers with these differences:
+In bitmap rendering, the pipeline from Section~\ref{eq:master} runs in parallel
+Web Workers. This section defines the execution model.
 
-\begin{itemize}[nosep]
-\item \textbf{Jiggle is static per pass.}\;
-      The main thread computes $J_i(s)$ once and serializes it as a flat array.
-      Workers apply the same offset for every step within a pass.
-      At jiggle interval boundaries, the main thread recomputes and reinitializes.
-\item \textbf{Non-line morph falls back to JS.}\;
-      When the C--D path type $\neq$ \texttt{"line"} and the WASM step loop would
-      otherwise be used, the code falls back to the JavaScript step loop.
-\item \textbf{Elapsed time per step.}\;
-      $t_{\mathrm{step}} = t_{\mathrm{offset}} + (\text{step}/\text{totalSteps})\cdot \Delta T_{\mathrm{pass}}$
-      where $\Delta T_{\mathrm{pass}}$ is the simulated time per pass.
-\end{itemize}
+\subsection*{Definitions}
 
-The mathematical result is identical to the main-thread path.
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}cll@{}}
+\toprule
+\textbf{Symbol} & \textbf{Meaning} & \textbf{Value / range} \\
+\midrule
+$\Delta T_{\mathrm{pass}}$ & Virtual time per pass           & $1.0$\,s (constant) \\
+$K$                        & Total steps per pass             & user-selected: $10$ to $10^6$ \\
+$W$                        & Number of workers                & $\min(\text{HW threads}, 16)$ \\
+$t_{\mathrm{off}}$         & Elapsed offset (accumulated)     & starts at $0$, $+\Delta T_{\mathrm{pass}}$ each pass \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{What is a pass}
+
+A \textbf{pass} is one complete execution of $K$ solver steps distributed across $W$ workers.
+Each pass advances virtual time by exactly $\Delta T_{\mathrm{pass}} = 1.0$\,s.
+This is not wall-clock time; it is the simulated elapsed time used to advance
+coefficient animations along their curves.
+
+\paragraph{Step distribution.}
+Steps are divided evenly across workers.
+Let $b = \lfloor K / W \rfloor$ and $r = K \bmod W$.
+Worker $w$ ($w = 0, \ldots, W{-}1$) executes steps $[\text{start}_w,\, \text{end}_w)$ where
+the first $r$ workers receive $b+1$ steps and the remaining $W{-}r$ workers receive $b$ steps.
+
+\paragraph{Elapsed time per step.}
+Within a pass, step $k$ ($0 \le k < K$) runs at virtual time:
+\begin{equation}
+t(k) \;=\; t_{\mathrm{off}} \;+\; \frac{k}{K}\;\Delta T_{\mathrm{pass}}
+\label{eq:elapsed}
+\end{equation}
+So within a single pass, $t$ ramps linearly from $t_{\mathrm{off}}$ to
+$t_{\mathrm{off}} + \Delta T_{\mathrm{pass}}$.
+
+\paragraph{Per-step pipeline.}
+Each step executes the full pipeline from the Complete Pipeline section
+(animate C, animate D, morph, jiggle, solve), then maps each root to a canvas pixel
+and emits it as a sparse $(x, y, r, g, b)$ entry.
+
+\subsection*{Pass lifecycle}
+
+\begin{enumerate}[nosep]
+\item \textbf{Init.}\; Main thread serializes all static data
+      (curves, colors, morph config, jiggle offsets, WASM binaries)
+      and sends it to each worker once.
+\item \textbf{Run.}\; Main thread sends a \texttt{"run"} message to each worker
+      with its step range $[\text{start}_w, \text{end}_w)$, the current
+      $t_{\mathrm{off}}$, and warm-start root positions.
+\item \textbf{Compute.}\; Workers execute their steps in parallel.
+      Each worker accumulates sparse pixel arrays (no full-canvas buffers).
+\item \textbf{Done.}\; Each worker transfers its pixel arrays
+      (\texttt{Int32Array} indices + \texttt{Uint8Array} RGB) to the main thread
+      via zero-copy buffer transfer.
+\item \textbf{Composite.}\; Main thread merges all workers' pixels into
+      a persistent \texttt{ImageData} buffer and calls \texttt{putImageData}
+      on the dirty rectangle only.
+\item \textbf{Advance.}\;
+      $t_{\mathrm{off}} \leftarrow t_{\mathrm{off}} + \Delta T_{\mathrm{pass}}$.\;
+      Root positions from the highest-step worker become the warm start for the next pass.
+      Go to step~2.
+\end{enumerate}
+
+Workers are \textbf{persistent}: they are created once at init and reused across
+passes (only a new \texttt{"run"} message is sent each pass).
+
+\subsection*{Jiggle boundary}
+
+Jiggle offsets are \textbf{static within a pass}: the main thread computes $J_i(s)$
+once and bakes it into the worker init data. Workers apply the same offset for every
+step in the pass.
+
+A \textbf{jiggle boundary} occurs every $\Delta t_{\mathrm{jiggle}}$ virtual seconds
+(default 4\,s $=$ 4 passes). When the pass counter reaches the jiggle interval:
+\begin{enumerate}[nosep]
+\item Compute the new jiggle step $s = \lfloor t_{\mathrm{off}} / \Delta t_{\mathrm{jiggle}} \rfloor$.
+\item Compute $J_i(s)$ for all $i \in S$.
+\item \textbf{Terminate all workers} and recreate them with the updated offsets
+      (full reinit, because jiggle offsets are init-time data).
+\end{enumerate}
+
+\subsection*{Solver and WASM}
+
+Workers use a 2-tier execution strategy:
+\begin{enumerate}[nosep]
+\item \textbf{WASM step loop}: entire per-step pipeline compiled to WASM ($\sim$15\,KB).
+      Supports all morph C--D path types (line, circle, ellipse, figure-8) natively.
+\item \textbf{Pure JS}: fallback when WASM is unavailable.
+\end{enumerate}
+
+\noindent Worker solver parameters differ from the main thread:
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+& \textbf{Main thread} & \textbf{Workers} \\
+\midrule
+MAX\_ITER & 100 & 64 \\
+TOL       & $10^{-12}$ (magnitude) & $10^{-16}$ (squared) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The mathematical pipeline is identical to the main-thread path.
+The output differs only in solver precision and iteration count.
 
 \end{document}

@@ -1,12 +1,12 @@
 # WASM Acceleration for Fast Mode Workers
 
-> **Status: INTEGRATED (v26+)**. Two WASM modules are embedded in `index.html`: the full step-loop module (`WASM_STEP_LOOP_B64`, ~15 KB) and the legacy solver-only module (`WASM_SOLVER_B64`, ~2 KB). Users switch between JS and WASM via the **cfg** button in the bitmap toolbar. When WASM is selected, the step-loop module is tried first; if it fails, the solver-only module is used; if that also fails, pure JS runs. The selection persists in save/load snapshots.
+> **Status: INTEGRATED (v26+)**. One WASM module is embedded in `index.html`: the full step-loop module (`WASM_STEP_LOOP_B64`, ~15 KB). Users switch between JS and WASM via the **cfg** button in the bitmap toolbar. When WASM is selected, the step-loop module is tried; if it fails, pure JS runs. The selection persists in save/load snapshots. The legacy solver-only module (`WASM_SOLVER_B64`, `solver.c` -> `solver.wasm`, ~2 KB) has been removed.
 
 ## Context
 
 The fast mode bottleneck is the Ehrlich-Aberth solver running in Web Workers (~3 us at degree 29, scaling O(n^2 * iters)). The JS solver is already well-optimized (flat Float64Arrays, no Math.hypot, squared tolerance), but WASM can squeeze out another 1.3-2x by eliminating JIT warmup, GC pauses, and leveraging tighter register allocation for pure f64 arithmetic. The payoff grows with degree -- at degree 100+, the solver dominates pass time.
 
-The original solver-only WASM eliminated per-step JS-WASM boundary overhead for just the solver, but the step loop itself (curve interpolation, root matching, morph blending, pixel output) still ran in JS. The full step-loop WASM (`step_loop.c`) moves the **entire per-pass computation** into compiled code, eliminating all JS overhead during the hot loop. JS only copies roots in before `runStepLoop()` and reads sparse pixel output + final roots after.
+The full step-loop WASM (`step_loop.c`) moves the **entire per-pass computation** into compiled code, eliminating all JS overhead during the hot loop. JS only copies roots in before `runStepLoop()` and reads sparse pixel output + final roots after.
 
 **Constraint**: Everything must stay in a single `index.html` file. The `.wasm` binaries get base64-encoded and embedded as JS string constants.
 
@@ -32,38 +32,31 @@ That's it. Homebrew LLVM (`/opt/homebrew/opt/llvm/bin/clang`) is already install
 
 ## Architecture
 
-### Two-tier WASM design
+### Two-tier execution design
 
-**Tier 1 -- Full step loop (`step_loop.c` -> `step_loop.wasm`, ~15 KB)**: The entire worker pass runs in WASM. The C code contains the EA solver, curve interpolation (C-curves and D-curves), root matching (greedy and Hungarian), morph blending, jiggle offsets, all four color modes (uniform, index-rainbow, proximity, derivative), derivative sensitivity, and sparse pixel output. JS only copies roots in before `runStepLoop()` and reads sparse pixel output + final roots after. No JS-WASM boundary crossing during the step loop. This is the preferred path when WASM is enabled.
+**Tier 1 -- WASM step loop (`step_loop.c` -> `step_loop.wasm`, ~15 KB)**: The entire worker pass runs in WASM. The C code contains the EA solver, curve interpolation (C-curves and D-curves), root matching (greedy and Hungarian), morph blending, jiggle offsets, all four color modes (uniform, index-rainbow, proximity, derivative), derivative sensitivity, and sparse pixel output. JS only copies roots in before `runStepLoop()` and reads sparse pixel output + final roots after. No JS-WASM boundary crossing during the step loop. This is the preferred path when WASM is enabled.
 
-**Tier 2 -- Solver only (`solver.c` -> `solver.wasm`, ~2 KB)**: Only the EA solver is WASM. The step loop (curve interpolation, matching, pixels) remains in JS. Each step crosses the JS-WASM boundary via `solveEA_wasm()`. This is the fallback if the step-loop module fails to instantiate.
-
-**JS fallback**: If both WASM modules fail, the worker runs the pure JS step loop (identical algorithm, no WASM).
+**Tier 2 -- Pure JS**: If the WASM module fails, the worker runs the pure JS step loop (identical algorithm, no WASM).
 
 **Scope**: Only workers get WASM. The main thread solver stays in JS (called once per frame for interactive mode -- marshalling overhead not worth it).
 
 **Unsupported modes**: The WASM step loop does not implement `idxProxColor` or `ratioColor` bitmap color modes. If either is active, the worker forces a fallback to the JS step loop even when WASM is available (~line 10410).
 
-### Three-tier initialization cascade (worker `init` handler, ~line 10398)
+### Two-tier initialization cascade (worker `init` handler, ~line 10398)
 
 ```
 if (useWasm) {
     try step_loop WASM  -> S_useWasmLoop = true
     if failed:
-        try solver-only WASM -> S_useWasm = true
-    if both failed:
         pure JS fallback
 }
 // Force JS step loop for unsupported color modes (idxProxColor, ratioColor)
 if (S_useWasmLoop && (S_idxProxColor || S_ratioColor)) S_useWasmLoop = false;
 ```
 
-### Memory model: imported vs exported
+### Memory model: imported memory
 
-The two WASM modules use opposite memory strategies:
-
-- **Solver-only** (`solver.wasm`): Uses **exported memory** (1 page = 64 KB, allocated by WASM). JS creates typed array views into this exported memory buffer.
-- **Step loop** (`step_loop.wasm`): Uses **imported memory** (`-Wl,--import-memory`). JS creates a `WebAssembly.Memory` object, passes it to the WASM module during instantiation, and controls growth. This is necessary because the step loop's memory requirements depend on runtime parameters (degree, step count, number of curves) that aren't known at compile time.
+The WASM step loop (`step_loop.wasm`) uses **imported memory** (`-Wl,--import-memory`). JS creates a `WebAssembly.Memory` object, passes it to the WASM module during instantiation, and controls growth. This is necessary because the step loop's memory requirements depend on runtime parameters (degree, step count, number of curves) that aren't known at compile time.
 
 ### Step-loop initialization flow (`initWasmStepLoop()`, ~line 10200)
 
@@ -87,20 +80,16 @@ Worker run handler:
     4. Read final roots: rootsRe/Im (sliced copies from passRootsRe/Im)
     5. Post result back to main thread via transferable buffers
   else:
-    JS step loop (solver-only WASM or pure JS)
+    JS step loop (pure JS)
 ```
 
 If `runStepLoop()` throws, the worker sets `S_useWasmLoop = false` and posts an error (~line 10449). Subsequent passes fall back to the JS step loop.
 
-### Solver-only copy-in/copy-out integration (~line 10112)
-
-Worker typed arrays (`coeffsRe`, `coeffsIm`, `rootsRe`, `rootsIm`) remain standard JS `Float64Array`s. The `solveEA_wasm()` wrapper copies inputs into WASM linear memory, calls the solver, and copies results back (with NaN rescue). This avoids the complexity of making all worker arrays views into WASM memory while keeping the solver hot path in compiled code.
-
 ## Files
 
-### `solver.c` (project root)
+### `solver.c` (project root) -- historical reference, no longer embedded
 
-Pure C solver, no stdlib dependencies. 166 lines.
+Pure C solver, no stdlib dependencies. 166 lines. The solver-only WASM module (`solver.wasm`, ~2 KB) has been removed from `index.html`. The `solver.c` file remains in the repo for reference but is no longer compiled or embedded.
 
 ```c
 #define MAX_ITER 64
@@ -203,22 +192,12 @@ For each step in `[stepStart, stepEnd)`:
 
 ### `build-wasm.sh` (project root)
 
-Builds both WASM modules:
+Builds the WASM step-loop module:
 
 ```bash
 #!/bin/bash
 set -e
 CLANG=/opt/homebrew/opt/llvm/bin/clang
-
-# --- Build solver-only WASM ---
-$CLANG --target=wasm32-unknown-unknown -O3 -nostdlib \
-  -Wl,--no-entry \
-  -Wl,--export=solveEA \
-  -Wl,--initial-memory=65536 \
-  -Wl,-z,stack-size=32768 \
-  -o solver.wasm solver.c
-
-node -e "console.log(require('fs').readFileSync('solver.wasm').toString('base64'))" > solver.wasm.b64
 
 # --- Build full step-loop WASM ---
 $CLANG --target=wasm32-unknown-unknown -O3 -nostdlib \
@@ -234,35 +213,21 @@ $CLANG --target=wasm32-unknown-unknown -O3 -nostdlib \
 node -e "console.log(require('fs').readFileSync('step_loop.wasm').toString('base64'))" > step_loop.wasm.b64
 ```
 
-Key differences between the two builds:
+Key compiler flags:
 
-| Flag | Solver-only | Step loop |
-|------|-------------|-----------|
-| `--import-memory` | No (WASM exports its own 1-page memory) | Yes (JS provides and grows memory) |
-| `--stack-first` | No (default layout) | Yes (stack at bottom of address space, before BSS) |
-| Stack size | 32 KB | 64 KB (larger due to Hungarian cost matrix on stack) |
-| `--export=__heap_base` | No | Yes (JS needs to know where BSS ends to place data) |
-| Exports | `solveEA` | `init`, `runStepLoop`, `__heap_base` |
+| Flag | Step loop |
+|------|-----------|
+| `--import-memory` | Yes (JS provides and grows memory) |
+| `--stack-first` | Yes (stack at bottom of address space, before BSS) |
+| Stack size | 64 KB (larger due to Hungarian cost matrix on stack) |
+| `--export=__heap_base` | Yes (JS needs to know where BSS ends to place data) |
+| Exports | `init`, `runStepLoop`, `__heap_base` |
 
 ### Modified: `index.html`
 
-**Base64 constants** (~line 1135-1136):
+**Base64 constant** (~line 1135):
 ```javascript
 const WASM_STEP_LOOP_B64 = "AGFzbQ...";  // ~20KB base64 string (~15KB .wasm)
-const WASM_SOLVER_B64 = "AGFzbQ...";     // ~3KB base64 string (~2KB .wasm)
-```
-
-**Worker blob -- WASM solver support** (~line 10086):
-```javascript
-// --- WASM solver support ---
-var S_useWasm = false;
-var wasmExports = null;
-var wasmMemBuf = null;
-var W_coeffsRe, W_coeffsIm, W_warmRe, W_warmIm;
-var W_OFF_CR, W_OFF_CI, W_OFF_WR, W_OFF_WI;
-
-function initWasm(b64, nCoeffs, nRoots) { ... }
-function solveEA_wasm(cRe, cIm, nCoeffs, warmRe, warmIm, nRoots) { ... }
 ```
 
 **Worker blob -- WASM step loop support** (~line 10131):
@@ -282,35 +247,17 @@ function computeWasmLayout(nc, nr, maxP, nE, nDE, nFC, nSI, tCP, tDP, heapBase) 
 function initWasmStepLoop(d) { ... }
 ```
 
-**Worker `init` handler** (~line 10371): Three-tier cascade -- try step loop WASM, fall back to solver-only WASM, then pure JS. Also forces JS step loop for unsupported color modes (idxProxColor, ratioColor).
+**Worker `init` handler** (~line 10371): Two-tier cascade -- try step loop WASM, fall back to pure JS. Also forces JS step loop for unsupported color modes (idxProxColor, ratioColor).
 
-**Worker `run` handler** (~line 10430): If `S_useWasmLoop`, runs the WASM fast path (~line 10432: copy roots in, call `runStepLoop()`, read pixels out). Otherwise falls back to JS step loop with optional WASM solver (~line 10472).
+**Worker `run` handler** (~line 10430): If `S_useWasmLoop`, runs the WASM fast path (~line 10432: copy roots in, call `runStepLoop()`, read pixels out). Otherwise falls back to pure JS step loop (~line 10472).
 
-**Main thread** sends both base64 strings to workers (~line 11190):
+**Main thread** sends the base64 string to workers (~line 11190):
 ```javascript
 useWasm: solverType === "wasm",
-wasmB64: solverType === "wasm" ? WASM_SOLVER_B64 : null,
 wasmStepLoopB64: solverType === "wasm" ? WASM_STEP_LOOP_B64 : null,
 ```
 
-## WASM Memory Layouts
-
-### Solver-only (64 KB = 1 page, exported memory)
-
-```
-0x0000 +-------------------------+
-       | coeffsRe[256]  (2 KB)   |  Float64Array view at offset 0
-0x0800 | coeffsIm[256]  (2 KB)   |  Float64Array view
-0x1000 | warmRe[255]    (2 KB)   |  Float64Array view (in/out)
-0x1800 | warmIm[255]    (2 KB)   |  Float64Array view (in/out)
-0x2000 | (unused)                |
-       +-------------------------+
-0x8000 | C shadow stack (32 KB)  |  Grows downward from 0xFFFF
-       | (solver local arrays)   |
-0xFFFF +-------------------------+
-```
-
-Total data region: ~8.25 KB. Shadow stack: 32 KB (holds cr[256], ci[256], rRe[255], rIm[255], conv[255] = ~8 KB).
+## WASM Memory Layout
 
 ### Step loop (multi-page, imported memory, growable)
 
@@ -399,17 +346,15 @@ Then passes `heapBase` to `computeWasmLayout()` which uses it as the starting of
 ## Build & Embed Workflow
 
 ```
-1. Edit solver.c and/or step_loop.c
+1. Edit step_loop.c
 2. Run ./build-wasm.sh
-3. Copy contents of solver.wasm.b64  -> paste into WASM_SOLVER_B64 in index.html (~line 1136)
-4. Copy contents of step_loop.wasm.b64 -> paste into WASM_STEP_LOOP_B64 in index.html (~line 1135)
-5. Test in browser
+3. Copy contents of step_loop.wasm.b64 -> paste into WASM_STEP_LOOP_B64 in index.html (~line 1135)
+4. Test in browser
 ```
 
-This is a manual step (not automated), but only needed when the solver or step-loop algorithm changes (rare). The `.c` and `.wasm` files live in the repo alongside `index.html`.
+This is a manual step (not automated), but only needed when the step-loop algorithm changes (rare). The `.c` and `.wasm` files live in the repo alongside `index.html`.
 
-Current binary sizes:
-- `solver.wasm`: 2,129 bytes (2,840 chars base64)
+Current binary size:
 - `step_loop.wasm`: 15,242 bytes (20,324 chars base64)
 
 ## Verification
@@ -423,17 +368,16 @@ Current binary sizes:
 7. Test jiggle offsets under WASM
 8. Verify NaN rescue works: load a config that produces NaN roots
 9. Compare bitmap output pixel-for-pixel between JS and WASM versions (should be identical or near-identical due to floating point)
-10. Verify fallback cascade: if step-loop WASM fails, solver-only should activate; if both fail, JS runs
+10. Verify fallback: if step-loop WASM fails, JS runs
 11. Verify idxProxColor and ratioColor modes fall back to JS step loop gracefully
 
 ## Fallback
 
-Three-tier cascade within each worker:
+Two-tier cascade within each worker:
 1. **WASM step loop** (`step_loop.wasm`): Full pass in compiled code, zero JS-WASM boundary crossings during step loop
-2. **WASM solver only** (`solver.wasm`): Solver in WASM, step loop in JS -- falls back here if step-loop module fails to instantiate
-3. **Pure JS**: Both solver and step loop in JS -- falls back here if all WASM modules fail
+2. **Pure JS**: Both solver and step loop in JS -- falls back here if the WASM module fails to instantiate
 
-Additionally, the WASM step loop is disabled at runtime for color modes it does not implement (idxProxColor, ratioColor), falling back to the JS step loop with optional WASM solver.
+Additionally, the WASM step loop is disabled at runtime for color modes it does not implement (idxProxColor, ratioColor), falling back to the pure JS step loop.
 
 If clang + lld has issues building, alternatives in order of preference:
 1. **Emscripten**: `brew install emscripten`, use `emcc -sSIDE_MODULE -sSTANDALONE_WASM`

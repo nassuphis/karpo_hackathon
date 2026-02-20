@@ -14,8 +14,7 @@ class TestMorphInit:
             rate: morphRate
         })""")
         assert result["nMorph"] == result["nCoeffs"]
-        assert result["enabled"] is False
-        assert result["mu"] == 0  # disabled → mu=0
+        assert result["enabled"] is True  # morph always enabled
         assert result["rate"] == 0.01
 
     def test_init_morph_target_copies_positions(self, page):
@@ -137,31 +136,6 @@ class TestMorphBlending:
         assert result["count"] > 50
 
 
-class TestMorphDisabled:
-    def test_morph_disabled_mu_stays_zero(self, page):
-        """When morph is disabled, mu must be 0."""
-        result = page.evaluate("""() => {
-            morphEnabled = false;
-            return morphMu;
-        }""")
-        assert result == 0
-
-    def test_enabling_morph_sets_mu_half(self, page):
-        """Enable checkbox sets mu=0.5 for immediate visual effect."""
-        result = page.evaluate("""() => {
-            var cb = document.getElementById('morph-enable');
-            cb.checked = true;
-            cb.dispatchEvent(new Event('change'));
-            var muAfterEnable = morphMu;
-            cb.checked = false;
-            cb.dispatchEvent(new Event('change'));
-            var muAfterDisable = morphMu;
-            return { muAfterEnable, muAfterDisable };
-        }""")
-        assert result["muAfterEnable"] == 0.5
-        assert result["muAfterDisable"] == 0
-
-
 class TestMorphSaveLoad:
     def test_morph_state_roundtrip(self, page):
         """Morph state survives save/load cycle."""
@@ -206,21 +180,19 @@ class TestMorphSaveLoad:
             };
         }""")
         assert result["nMorph"] == result["nCoeffs"]
-        assert result["enabled"] is False
+        assert result["enabled"] is True  # morph always enabled
 
-    def test_morph_disabled_load_sets_mu_zero(self, page):
-        """Loading morph with enabled=false forces mu=0."""
+    def test_morph_load_preserves_mu(self, page):
+        """Loading morph preserves mu value (morph always enabled)."""
         result = page.evaluate("""() => {
-            morphEnabled = true;
             morphMu = 0.75;
             var state = buildStateMetadata();
-            state.morph.enabled = false;
-            state.morph.mu = 0.99;  // this should be overridden
+            state.morph.mu = 0.99;
             applyLoadedState(state);
             return { mu: morphMu, enabled: morphEnabled };
         }""")
-        assert result["enabled"] is False
-        assert result["mu"] == 0
+        assert result["enabled"] is True
+        assert abs(result["mu"] - 0.99) < 1e-10
 
 
 class TestMorphDegreeSync:
@@ -272,10 +244,9 @@ class TestMorphFastMode:
         assert result["morphEnabled"] is True
         assert abs(result["morphRate"] - 0.5) < 1e-10
 
-    def test_serialize_no_morph_when_disabled(self, page):
-        """serializeFastModeData omits morph target data when disabled."""
+    def test_serialize_always_includes_morph(self, page):
+        """serializeFastModeData always includes morph data (morph always enabled)."""
         result = page.evaluate("""() => {
-            morphEnabled = false;
             initBitmapCanvas();
             fastModeCurves = new Map();
             var animated = allAnimatedCoeffs();
@@ -285,4 +256,4 @@ class TestMorphFastMode:
                 hasMorphTargetRe: 'morphTargetRe' in sd
             };
         }""")
-        assert result["morphEnabled"] is False
+        assert result["morphEnabled"] is True

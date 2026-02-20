@@ -1,4 +1,4 @@
-# PolyPaint v39
+# PolyPaint v40
 
 **[Try it live](https://nassuphis.github.io/karpo_hackathon/)**
 

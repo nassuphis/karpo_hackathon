@@ -332,8 +332,8 @@ worker.postMessage({
     canvasW, canvasH, bitmapRange,
     // color mode flags
     noColor, uniformR/G/B, proxColor, proxPalR/G/B, derivColor, derivPalR/G/B,
-    // WASM binaries
-    useWasm, wasmB64, wasmStepLoopB64,
+    // WASM binary
+    useWasm, wasmStepLoopB64,
     // morph, D-curves, jiggle, match strategy...
 });
 ```
@@ -382,34 +382,28 @@ The URL is revoked immediately after `new Worker(blobUrl)` returns.
 
 ## WASM Fallback Pattern
 
-The worker `init` handler implements a three-tier fallback for the solver engine:
+The worker `init` handler implements a two-tier fallback for the solver engine:
 
 ```
 1. Try WASM step loop (entire step loop in C/WASM, maximum performance)
-2. Fall back to WASM solver-only (JS step loop, WASM for each EA solve call)
-3. Fall back to pure JavaScript (everything in JS)
+2. Fall back to pure JavaScript (everything in JS)
 ```
 
 Code structure:
 
 ```js
-S_useWasm = false;
 S_useWasmLoop = false;
 if (d.useWasm) {
     if (d.wasmStepLoopB64) {
         try { initWasmStepLoop(d); S_useWasmLoop = true; }
         catch(e) { S_useWasmLoop = false; }
     }
-    if (!S_useWasmLoop && d.wasmB64) {
-        try { initWasm(d.wasmB64, d.nCoeffs, d.nRoots); S_useWasm = true; }
-        catch(e) { S_useWasm = false; }
-    }
 }
 // Force JS for modes not supported by WASM step_loop.c
 if (S_useWasmLoop && (S_idxProxColor || S_ratioColor)) S_useWasmLoop = false;
 ```
 
-The WASM binaries are base64-encoded constants (`WASM_SOLVER_B64`, `WASM_STEP_LOOP_B64`) embedded directly in the HTML file. Workers decode them via `atob()` and instantiate with `new WebAssembly.Module()` / `new WebAssembly.Instance()`.
+The WASM binary is a base64-encoded constant (`WASM_STEP_LOOP_B64`) embedded directly in the HTML file. Workers decode it via `atob()` and instantiate with `new WebAssembly.Module()` / `new WebAssembly.Instance()`.
 
 **Runtime fallback**: If the WASM step loop throws during `runStepLoop()`, the worker falls back to pure JS for that run and disables WASM for subsequent runs:
 

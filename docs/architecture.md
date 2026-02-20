@@ -43,7 +43,7 @@ The entire application lives in one HTML file (`index.html`, ~13,900 lines). CSS
 | Stats plotting | 9170–9660 | 16 time-series canvases, phase-space plots, spectrum plots |
 | Off-canvas bitmap utilities | 9660–9780 | `fillPersistentBuffer()`, `fillDisplayBuffer()`, export functions (BMP/JPEG/PNG/TIFF) |
 | Bitmap canvas init | 9780–9910 | `initBitmapCanvas()`, split compute/display setup |
-| Web worker blob | 9907–10880 | Inline EA solver, Hungarian matcher, rankNorm, computeSens, WASM solver-only init, WASM step loop init + layout, JS step loop, persistent worker state, init/run message handler |
+| Web worker blob | 9907–10880 | Inline EA solver, Hungarian matcher, rankNorm, computeSens, WASM step loop init + layout, JS step loop, persistent worker state, init/run message handler |
 | Fast mode entry/exit | 10881–11430 | `enterFastMode()`, `serializeFastModeData()`, `initFastModeWorkers()`, `dispatchPassToWorkers()`, `handleFastModeWorkerMessage()`, `compositeWorkerPixels()`, `advancePass()`, `reinitWorkersForJiggle()`, `exitFastMode()` |
 | Tab switching | 11649–11710 | `switchTab()`, `switchLeftTab()` |
 | C-List tab & transforms | 11915–12430 | Coefficient table, Transform dropdown (20 transforms), bulk operations |
@@ -75,10 +75,9 @@ Four distinct canvas systems coexist:
 |------|---------|
 | `index.html` | The entire application (~13,900 lines) |
 | `step_loop.c` | Full worker step loop in C: EA solver, curve interpolation, root matching, pixel output |
-| `solver.c` | Solver-only WASM module (original, kept for reference and fallback) |
-| `build-wasm.sh` | Compiles both C files to WASM via Homebrew LLVM, produces `.wasm.b64` files |
+| `solver.c` | Historical solver-only WASM source (no longer embedded, kept for reference) |
+| `build-wasm.sh` | Compiles `step_loop.c` to WASM via Homebrew LLVM, produces `.wasm.b64` file |
 | `step_loop.wasm` / `step_loop.wasm.b64` | Compiled full step loop WASM binary and base64-encoded version |
-| `solver.wasm` / `solver.wasm.b64` | Compiled solver-only WASM binary and base64-encoded version |
 
 ---
 
@@ -210,10 +209,9 @@ These controls live in the **header bar** (not the left tab bar), inside `<span 
 
 Workers are created as blob URLs from inline code (no separate `.js` file). Each worker receives the full polynomial on `init`, then gets `{stepStart, stepEnd}` ranges on each `run` message. Steps are distributed using balanced floor division: `base = Math.floor(stepsVal / nw)` with the remainder distributed one extra step to the first `stepsVal % nw` workers. The actual worker count is capped at `Math.min(numWorkers, stepsVal)` so that low step counts (e.g., 100 steps with 16 workers) don't create workers with zero steps.
 
-**Three-tier solver selection per worker**: On init, each worker attempts (in order):
+**Two-tier solver selection per worker**: On init, each worker attempts (in order):
 1. **WASM step loop** (`step_loop.wasm`) — full step loop in WASM: curve interpolation, morph blend, solve, root matching, pixel output all run in WASM. Falls back if unsupported color mode (idx-prox, ratio).
-2. **WASM solver-only** (`solver.wasm`) — only the EA solver runs in WASM; curve interpolation, matching, and pixel output remain in JS.
-3. **Pure JS** — everything in JavaScript.
+2. **Pure JS** — everything in JavaScript.
 
 The selection is per-worker and transparent to the main thread — the `done` message format is identical regardless of which tier executed.
 
@@ -245,8 +243,7 @@ The worker blob (~line 9907) contains all code inlined as a template string:
 2. **Greedy root matching** (`matchRoots`) — O(n^2) nearest-neighbor
 3. **Hungarian matching** (`hungarianMatch`) — Kuhn-Munkres O(n^3), optimal assignment
 4. **Derivative sensitivity** (`rankNorm`, `computeSens`) — Jacobian sensitivity + rank normalization
-5. **WASM solver-only init** (`initWasm`, `solveEA_wasm`) — compiles solver.wasm per-worker, marshals data in/out
-6. **WASM step loop init** (`computeWasmLayout`, `initWasmStepLoop`) — compiles step_loop.wasm with imported memory, computes flat memory layout for all data sections, writes config + data into WASM memory
+5. **WASM step loop init** (`computeWasmLayout`, `initWasmStepLoop`) — compiles step_loop.wasm with imported memory, computes flat memory layout for all data sections, writes config + data into WASM memory
 7. **WASM step loop run path** — copies warm-start roots into WASM memory, calls `runStepLoop()`, reads sparse pixel output + final roots
 8. **JS step loop fallback** — full step loop: curve interpolation, D-curve interpolation, follow-C copy, morph blend, jiggle offsets, solve, NaN rescue, color-mode-dependent root matching + pixel output
 9. **Persistent state** (`S_*` variables) — set by `init`, reused across `run` calls
@@ -274,7 +271,7 @@ The full step loop was ported to C and compiled to WASM (~817 lines). This elimi
 
 **Unsupported modes**: The WASM step loop does not implement Idx x Prox or Min/Max Ratio color modes. When these are selected, `S_useWasmLoop` is forced false and the JS step loop runs instead.
 
-**Build workflow**: `./build-wasm.sh` compiles both `solver.c` -> `solver.wasm` and `step_loop.c` -> `step_loop.wasm` using Homebrew LLVM. The `.wasm.b64` files are then pasted into `WASM_STEP_LOOP_B64` and `WASM_SOLVER_B64` constants in `index.html`.
+**Build workflow**: `./build-wasm.sh` compiles `step_loop.c` -> `step_loop.wasm` using Homebrew LLVM. The `.wasm.b64` file is then pasted into `WASM_STEP_LOOP_B64` in `index.html`.
 
 ### Sparse Pixel Format
 
@@ -641,7 +638,7 @@ Manual testing remains important for:
 
 **"Fast mode shows sparse dots / almost nothing"**: Check `currentRoots.length` vs `coefficients.length - 1` (degree). If they differ, the solver is dropping roots. Also check the worker's warm-start buffer size matches the expected degree.
 
-**"WASM step loop not activating"**: Check the bitmap color mode — idx-prox and ratio modes force JS fallback. Also check that `solverType === "wasm"` in the cfg popup. The worker tries WASM step loop first, falls back to WASM solver-only, then pure JS.
+**"WASM step loop not activating"**: Check the bitmap color mode — idx-prox and ratio modes force JS fallback. Also check that `solverType === "wasm"` in the cfg popup. The worker tries WASM step loop first, then falls back to pure JS.
 
 ---
 
@@ -725,8 +722,6 @@ Manual testing remains important for:
 | `solveEA()` (worker blob JS) | ~9911 |
 | `hungarianMatch()` (worker blob) | ~9990 |
 | `rankNorm()` + `computeSens()` (worker blob) | ~10036 |
-| `initWasm()` (worker, solver-only) | ~10093 |
-| `solveEA_wasm()` (worker, solver-only) | ~10112 |
 | `computeWasmLayout()` (worker) | ~10145 |
 | `initWasmStepLoop()` (worker) | ~10200 |
 | Worker `onmessage` handler | ~10368 |
@@ -754,5 +749,4 @@ Manual testing remains important for:
 | `PROX_PALETTE_CATALOG` | ~1034 |
 | `DERIV_PALETTE` / `DERIV_PAL_R/G/B` | ~1067 |
 | `WASM_STEP_LOOP_B64` | ~1135 |
-| `WASM_SOLVER_B64` | ~1136 |
 | `fastModeDCurves` | ~1105 |

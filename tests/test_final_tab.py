@@ -70,9 +70,10 @@ class TestFinalPanelRendering:
         assert result["labels"] == result["expected"]
 
     def test_without_morph_shows_c_positions(self, page):
-        """With morph off, Final panel should show C-node positions."""
+        """When D=C, Final panel should show C-node positions."""
         result = page.evaluate("""() => {
-            morphEnabled = false;
+            initMorphTarget();  // D = C, so morph blend = C
+            morphTheta = 0;
             switchLeftTab('final');
             renderFinalPanel();
             var dot = document.querySelector('#final-panel circle.final-coeff');

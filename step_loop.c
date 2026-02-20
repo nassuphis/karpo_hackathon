@@ -203,11 +203,19 @@ static double rngUniform(void) {
     return (double)(xorshift128() >> 1) / 2147483648.0; /* [0, 1) */
 }
 
+static double gaussSpare;
+static int gaussHasSpare;
+
 static double rngGauss(void) {
+    if (gaussHasSpare) { gaussHasSpare = 0; return gaussSpare; }
     double u, v;
     do { u = rngUniform(); } while (u == 0.0);
     v = rngUniform();
-    return __builtin_sqrt(-2.0 * js_log(u)) * js_cos(2.0 * PI * v);
+    double r = __builtin_sqrt(-2.0 * js_log(u));
+    double theta = 2.0 * PI * v;
+    gaussSpare = r * js_sin(theta);
+    gaussHasSpare = 1;
+    return r * js_cos(theta);
 }
 
 static double rngDither(int dist) {
@@ -474,9 +482,13 @@ static void computeSens(double *cRe, double *cIm, int nc,
         if (dpMag2 < 1e-60) { sens[j] = 1e300; continue; }
         double dpMag = __builtin_sqrt(dpMag2);
         double rMag = __builtin_sqrt(zRe * zRe + zIm * zIm);
+        /* Power ladder: pows[k] = rMag^k, O(deg) once instead of O(deg*nSel) */
+        double pows[MAX_COEFFS];
+        pows[0] = 1.0;
+        for (int k = 1; k <= deg; k++) pows[k] = pows[k - 1] * rMag;
         double sum = 0;
         for (int s = 0; s < nSel; s++) {
-            sum += ipow(rMag, deg - selIdx[s]);
+            sum += pows[deg - selIdx[s]];
         }
         sens[j] = sum / dpMag;
     }
@@ -517,7 +529,8 @@ void init(int cfgIntOffset, int cfgDblOffset)
     morphPathType    = cfgI[CI_MORPH_PATH_TYPE];
     morphCcw         = cfgI[CI_MORPH_CCW];
 
-    /* Seed PRNG */
+    /* Seed PRNG + reset Gaussian spare */
+    gaussHasSpare = 0;
     rngS[0] = (unsigned int)cfgI[CI_RNG_SEED0];
     rngS[1] = (unsigned int)cfgI[CI_RNG_SEED1];
     rngS[2] = (unsigned int)cfgI[CI_RNG_SEED2];
@@ -605,6 +618,17 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
     double *rootsRe = passRootsRe;
     double *rootsIm = passRootsIm;
 
+    /* Morph angle recurrence: replace per-step JS trig with multiply */
+    double morphCosT = 1.0, morphSinT = 0.0;
+    double morphCosD = 1.0, morphSinD = 0.0;
+    if (morphEnabled) {
+        double dTheta = 2.0 * PI * morphRate * FPS / (double)totalSteps;
+        double theta0 = 2.0 * PI * morphRate *
+            (elapsedOffset + ((double)stepStart / (double)totalSteps) * FPS);
+        morphCosT = js_cos(theta0); morphSinT = js_sin(theta0);
+        morphCosD = js_cos(dTheta); morphSinD = js_sin(dTheta);
+    }
+
     for (int step = stepStart; step < stepEnd; step++) {
         double elapsed = elapsedOffset + ((double)step / (double)totalSteps) * FPS;
 
@@ -627,16 +651,15 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
             int base = curveOffsets[a] * 2;
 
             if (curveIsCloud[a]) {
-                int k = ((int)rawIdx) % N;
-                if (k < 0) k += N;
+                int k = (int)rawIdx;
+                if (k >= N) k = N - 1;  /* safety clamp */
                 workCoeffsRe[idx] = curvesFlat[base + k * 2];
                 workCoeffsIm[idx] = curvesFlat[base + k * 2 + 1];
             } else {
-                int lo = ((int)rawIdx) % N;
-                if (lo < 0) lo += N;
-                int hi = (lo + 1) % N;
-                double frac = rawIdx - (double)(int)rawIdx;
-                if (frac < 0) frac += 1.0;
+                int lo = (int)rawIdx;
+                if (lo >= N) lo = N - 1;
+                int hi = lo + 1; if (hi == N) hi = 0;
+                double frac = rawIdx - (double)lo;
                 workCoeffsRe[idx] = curvesFlat[base + lo * 2] * (1 - frac) + curvesFlat[base + hi * 2] * frac;
                 workCoeffsIm[idx] = curvesFlat[base + lo * 2 + 1] * (1 - frac) + curvesFlat[base + hi * 2 + 1] * frac;
             }
@@ -648,8 +671,8 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
             }
         }
 
-        /* 4. Interpolate D-curves */
-        if (nDEntries > 0 && dCurvesFlat) {
+        /* 4. Interpolate D-curves (only when morph active) */
+        if (morphEnabled && nDEntries > 0 && dCurvesFlat) {
             for (int da = 0; da < nDEntries; da++) {
                 int dIdx = dEntryIdx[da];
                 double dDir = dEntryCcw[da] ? -1.0 : 1.0;
@@ -660,16 +683,15 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                 int dBase = dCurveOffsets[da] * 2;
 
                 if (dCurveIsCloud[da]) {
-                    int dK = ((int)dRawIdx) % dN;
-                    if (dK < 0) dK += dN;
+                    int dK = (int)dRawIdx;
+                    if (dK >= dN) dK = dN - 1;
                     morphWorkRe[dIdx] = dCurvesFlat[dBase + dK * 2];
                     morphWorkIm[dIdx] = dCurvesFlat[dBase + dK * 2 + 1];
                 } else {
-                    int dLo = ((int)dRawIdx) % dN;
-                    if (dLo < 0) dLo += dN;
-                    int dHi = (dLo + 1) % dN;
-                    double dFrac = dRawIdx - (double)(int)dRawIdx;
-                    if (dFrac < 0) dFrac += 1.0;
+                    int dLo = (int)dRawIdx;
+                    if (dLo >= dN) dLo = dN - 1;
+                    int dHi = dLo + 1; if (dHi == dN) dHi = 0;
+                    double dFrac = dRawIdx - (double)dLo;
                     morphWorkRe[dIdx] = dCurvesFlat[dBase + dLo * 2] * (1 - dFrac) + dCurvesFlat[dBase + dHi * 2] * dFrac;
                     morphWorkIm[dIdx] = dCurvesFlat[dBase + dLo * 2 + 1] * (1 - dFrac) + dCurvesFlat[dBase + dHi * 2 + 1] * dFrac;
                 }
@@ -681,8 +703,8 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
             }
         }
 
-        /* 5. Follow-C: D-nodes that mirror C-node position */
-        if (nFollowC > 0) {
+        /* 5. Follow-C: D-nodes that mirror C-node position (only when morph active) */
+        if (morphEnabled && nFollowC > 0) {
             for (int fc = 0; fc < nFollowC; fc++) {
                 int fci = followCIdx[fc];
                 morphWorkRe[fci] = workCoeffsRe[fci];
@@ -690,10 +712,9 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
             }
         }
 
-        /* 6. Morph blend */
+        /* 6. Morph blend (sin/cos via recurrence — no JS trig calls) */
         if (morphEnabled) {
-            double theta = 2.0 * PI * morphRate * elapsed;
-            double cosT = js_cos(theta), sinT = js_sin(theta);
+            double cosT = morphCosT, sinT = morphSinT;
             if (morphPathType == 0) {
                 /* Line: mu = (1 - cos(theta)) / 2 */
                 double mu = 0.5 - 0.5 * cosT;
@@ -739,6 +760,18 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                     workCoeffsRe[m] += (rngUniform() - 0.5) * 2.0 * ds;
                     workCoeffsIm[m] += (rngUniform() - 0.5) * 2.0 * ds;
                 }
+            }
+            /* Advance morph angle recurrence */
+            {
+                double nc2 = morphCosT * morphCosD - morphSinT * morphSinD;
+                double ns  = morphSinT * morphCosD + morphCosT * morphSinD;
+                morphCosT = nc2; morphSinT = ns;
+            }
+            /* Renormalize every 1024 steps to prevent drift */
+            if (((step - stepStart) & 1023) == 0) {
+                double invLen = 1.0 / __builtin_sqrt(
+                    morphCosT * morphCosT + morphSinT * morphSinT);
+                morphCosT *= invLen; morphSinT *= invLen;
             }
         }
 
@@ -792,18 +825,18 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                 pc++;
             }
         } else if (colorMode == 2) {
-            /* Proximity mode */
+            /* Proximity mode — symmetric O(n²/2) */
             double minDists[MAX_DEG];
+            for (int i = 0; i < nr; i++) minDists[i] = 1e300;
             for (int i = 0; i < nr; i++) {
-                double md = 1e300;
-                for (int j = 0; j < nr; j++) {
-                    if (j == i) continue;
+                for (int j = i + 1; j < nr; j++) {
                     double dx = tmpRe[i] - tmpRe[j], dy = tmpIm[i] - tmpIm[j];
                     double d2 = dx * dx + dy * dy;
-                    if (d2 < md) md = d2;
+                    if (d2 < minDists[i]) minDists[i] = d2;
+                    if (d2 < minDists[j]) minDists[j] = d2;
                 }
-                minDists[i] = __builtin_sqrt(md);
             }
+            for (int i = 0; i < nr; i++) minDists[i] = __builtin_sqrt(minDists[i]);
             for (int i = 0; i < nr; i++) {
                 if (minDists[i] > proxRunMax) proxRunMax = minDists[i];
             }

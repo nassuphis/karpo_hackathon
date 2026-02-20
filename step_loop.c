@@ -713,7 +713,8 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
         }
 
         /* 6. Morph blend (sin/cos via recurrence — no JS trig calls) */
-        if (morphEnabled) {
+        if (morphEnabled && !(morphCosT >= 1.0 - 1e-14 && morphSinT > -1e-14 && morphSinT < 1e-14)) {
+            /* Skip blend when theta≈0 — avoids fp noise at home position */
             double cosT = morphCosT, sinT = morphSinT;
             if (morphPathType == 0) {
                 /* Line: mu = (1 - cos(theta)) / 2 */

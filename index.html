@@ -1013,6 +1013,7 @@ let bitmapColorMode = "uniform";  // "uniform" | "rainbow" | "derivative" | "pro
 let bitmapUniformColor = [255, 255, 255];
 let bitmapMatchStrategy = "assign4"; // "assign4" | "assign1" | "hungarian1"
 let bitmapProxPaletteName = "inferno"; // key into PROX_PALETTE_CATALOG
+let bitmapDerivPaletteName = "bwr"; // key into DERIV_PALETTE_CATALOG
 let bitmapIdxProxGamma = 0.5; // gamma correction for Idx×Prox brightness (0.1=bright, 1.0=linear)
 let bitmapRatioGamma = 0.5;   // gamma correction for Min/Max Ratio (0.1=spread low ratios, 1.0=linear)
 // Fixed 8-color palette shared by animation and bitmap uniform pickers
@@ -1059,24 +1060,40 @@ function setProxPalette(key) {
     PROX_PAL_G = new Uint8Array(PROX_PALETTE.map(c => c[1]));
     PROX_PAL_B = new Uint8Array(PROX_PALETTE.map(c => c[2]));
 }
-// 16-color derivative palette: blue (stable) → white → red (volatile) for sensitivity visualization
-const DERIV_PALETTE = (() => {
+// 16-color derivative palette: rebuildable from catalog selection
+function buildDerivBWR() {
     const pal = [];
     for (let k = 0; k < 16; k++) {
-        const normVal = k / 15;
-        if (normVal <= 0.5) {
-            const t = normVal * 2;
-            pal.push([Math.round(t * 255), Math.round(t * 255), 255]);
-        } else {
-            const t = (normVal - 0.5) * 2;
-            pal.push([255, Math.round((1 - t) * 255), Math.round((1 - t) * 255)]);
-        }
+        const t = k / 15;
+        if (t <= 0.5) { const s = t * 2; pal.push([Math.round(s * 255), Math.round(s * 255), 255]); }
+        else { const s = (t - 0.5) * 2; pal.push([255, Math.round((1 - s) * 255), Math.round((1 - s) * 255)]); }
     }
     return pal;
-})();
-const DERIV_PAL_R = new Uint8Array(DERIV_PALETTE.map(c => c[0]));
-const DERIV_PAL_G = new Uint8Array(DERIV_PALETTE.map(c => c[1]));
-const DERIV_PAL_B = new Uint8Array(DERIV_PALETTE.map(c => c[2]));
+}
+const DERIV_PALETTE_CATALOG = [
+    { key: "bwr",      label: "Blue-White-Red", fn: null },
+    { key: "inferno",   label: "Inferno",   fn: d3.interpolateInferno },
+    { key: "viridis",   label: "Viridis",   fn: d3.interpolateViridis },
+    { key: "magma",     label: "Magma",     fn: d3.interpolateMagma },
+    { key: "plasma",    label: "Plasma",    fn: d3.interpolatePlasma },
+    { key: "turbo",     label: "Turbo",     fn: d3.interpolateTurbo },
+    { key: "cividis",   label: "Cividis",   fn: d3.interpolateCividis },
+    { key: "warm",      label: "Warm",      fn: d3.interpolateWarm },
+    { key: "cool",      label: "Cool",      fn: d3.interpolateCool },
+];
+let DERIV_PALETTE = buildDerivBWR();
+let DERIV_PAL_R = new Uint8Array(DERIV_PALETTE.map(c => c[0]));
+let DERIV_PAL_G = new Uint8Array(DERIV_PALETTE.map(c => c[1]));
+let DERIV_PAL_B = new Uint8Array(DERIV_PALETTE.map(c => c[2]));
+function setDerivPalette(key) {
+    const entry = DERIV_PALETTE_CATALOG.find(p => p.key === key);
+    if (!entry) return;
+    bitmapDerivPaletteName = key;
+    DERIV_PALETTE = entry.fn ? buildProxPaletteFrom(entry.fn) : buildDerivBWR();
+    DERIV_PAL_R = new Uint8Array(DERIV_PALETTE.map(c => c[0]));
+    DERIV_PAL_G = new Uint8Array(DERIV_PALETTE.map(c => c[1]));
+    DERIV_PAL_B = new Uint8Array(DERIV_PALETTE.map(c => c[2]));
+}
 let domainCanvas = document.getElementById("domain-canvas");
 let domainCtx = domainCanvas.getContext("2d");
 let domainPendingRender = false;
@@ -7589,6 +7606,7 @@ function startRecording() {
             bitmapCanvasColor: bitmapCanvasColor,
             bitmapMatchStrategy: bitmapMatchStrategy,
             bitmapProxPalette: bitmapProxPaletteName,
+            bitmapDerivPalette: bitmapDerivPaletteName,
             bitmapIdxProxGamma: bitmapIdxProxGamma,
             bitmapRatioGamma: bitmapRatioGamma,
             trails: trailsEnabled,
@@ -7655,6 +7673,7 @@ function buildStateMetadata(timestamp) {
         bitmapCanvasColor: bitmapCanvasColor,
         bitmapMatchStrategy: bitmapMatchStrategy,
         bitmapProxPalette: bitmapProxPaletteName,
+        bitmapDerivPalette: bitmapDerivPaletteName,
         bitmapIdxProxGamma: bitmapIdxProxGamma,
         bitmapExportFormat: bitmapExportFormat,
         trails: trailsEnabled,
@@ -8022,6 +8041,7 @@ function buildBitmapCfgPop() {
     const bmRows = [];
     let bmSwatchWrap = null;
     let bmMatchWrap = null;
+    let bmDerivWrap = null;
     let bmProxWrap = null;
     let bmIdxProxMatchWrap = null;
     let bmRatioProxWrap = null;
@@ -8031,9 +8051,13 @@ function buildBitmapCfgPop() {
     function refreshProxPalettes() {
         if (bmProxWrap) bmProxWrap.style.opacity = bitmapColorMode === "proximity" ? "1" : "0.3";
     }
+    function refreshDerivPalettes() {
+        if (bmDerivWrap) bmDerivWrap.style.opacity = bitmapColorMode === "derivative" ? "1" : "0.3";
+    }
     function refreshBmSwatches() {
         if (bmSwatchWrap) bmSwatchWrap.style.opacity = bitmapColorMode === "uniform" ? "1" : "0.3";
         refreshMatchChips();
+        refreshDerivPalettes();
         refreshProxPalettes();
         if (bmIdxProxMatchWrap) {
             bmIdxProxMatchWrap.style.opacity = bitmapColorMode === "idx-prox" ? "1" : "0.3";
@@ -8134,6 +8158,45 @@ function buildBitmapCfgPop() {
                 bmMatchWrap.appendChild(chip);
             });
             bitmapCfgPop.appendChild(bmMatchWrap);
+        }
+
+        if (bm.key === "derivative") {
+            bmDerivWrap = document.createElement("div");
+            bmDerivWrap.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;padding:4px 2px 6px 20px;max-width:220px;";
+            bmDerivWrap.style.opacity = bitmapColorMode === "derivative" ? "1" : "0.3";
+            DERIV_PALETTE_CATALOG.forEach(pal => {
+                const circle = document.createElement("div");
+                const isActive = bitmapDerivPaletteName === pal.key;
+                let bgStyle;
+                if (pal.fn) {
+                    const stops = [];
+                    for (let s = 0; s < 8; s++) { const t = s / 7; stops.push(pal.fn(t) + " " + Math.round(t * 100) + "%"); }
+                    bgStyle = `linear-gradient(to top, ${stops.join(", ")})`;
+                } else {
+                    bgStyle = "linear-gradient(to top, rgb(0,0,255) 0%, rgb(255,255,255) 50%, rgb(255,0,0) 100%)";
+                }
+                circle.style.cssText = `width:20px;height:20px;border-radius:50%;cursor:pointer;flex-shrink:0;` +
+                    `background:${bgStyle};` +
+                    `border:2px solid ${isActive ? "#fff" : "rgba(255,255,255,0.15)"};` +
+                    `box-sizing:border-box;`;
+                circle.title = pal.label;
+                circle.addEventListener("click", () => {
+                    setDerivPalette(pal.key);
+                    bmDerivWrap.querySelectorAll("div").forEach(c => {
+                        c.style.borderColor = "rgba(255,255,255,0.15)";
+                    });
+                    circle.style.borderColor = "#fff";
+                    if (bitmapColorMode !== "derivative") {
+                        bitmapColorMode = "derivative";
+                        bmRows.forEach(r => r.classList.remove("on"));
+                        bmRows[2].classList.add("on"); // derivative is index 2
+                        rcTitle.textContent = "COLOR (Derivative)";
+                        refreshBmSwatches();
+                    }
+                });
+                bmDerivWrap.appendChild(circle);
+            });
+            bitmapCfgPop.appendChild(bmDerivWrap);
         }
 
         if (bm.key === "proximity") {
@@ -8743,6 +8806,11 @@ function applyLoadedState(meta) {
         setProxPalette(meta.bitmapProxPalette);
     } else {
         setProxPalette("inferno");
+    }
+    if (meta.bitmapDerivPalette && DERIV_PALETTE_CATALOG.some(p => p.key === meta.bitmapDerivPalette)) {
+        setDerivPalette(meta.bitmapDerivPalette);
+    } else {
+        setDerivPalette("bwr");
     }
     if (meta.bitmapIdxProxGamma != null && meta.bitmapIdxProxGamma >= 0.1 && meta.bitmapIdxProxGamma <= 1.0) {
         bitmapIdxProxGamma = meta.bitmapIdxProxGamma;

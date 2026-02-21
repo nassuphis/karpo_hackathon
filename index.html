@@ -507,7 +507,6 @@ circle.coeff.selected, circle.root.selected, circle.morph-coeff.selected {
 }
 body.fast-mode #header,
 body.fast-mode .mid-bar,
-body.fast-mode .tab-bar,
 body.fast-mode #roots-content,
 body.fast-mode #stats-content,
 body.fast-mode #sound-content,
@@ -516,17 +515,15 @@ body.fast-mode .panel:first-child {
     opacity: 0.15; pointer-events: none; filter: grayscale(1);
     transition: opacity 0.3s, filter 0.3s;
 }
+body.fast-mode .tab-bar .tab {
+    opacity: 0.15; pointer-events: none; filter: grayscale(1);
+}
 body.fast-mode #bitmap-toolbar .bitmap-btn:not(#bitmap-fast-btn):not(#bitmap-coeff-btn):not(#bitmap-zoom-in-btn):not(#bitmap-zoom-out-btn):not(#bitmap-zoom-reset-btn),
 body.fast-mode #bitmap-toolbar .bitmap-select {
     opacity: 0.3; pointer-events: none;
 }
 body.fast-mode #bitmap-fast-btn {
     background: var(--accent); color: #fff;
-}
-body.fast-mode #rec-mode,
-body.fast-mode #rec-roots-btn,
-body.fast-mode #stop-roots-btn {
-    opacity: 1; pointer-events: auto; filter: none;
 }
 #anim-bar .bar-controls { opacity: 1; transition: opacity 0.15s; }
 #anim-bar .bar-controls.dimmed { opacity: 0.3; pointer-events: none; }
@@ -624,6 +621,11 @@ body.fast-mode #stop-roots-btn {
             <button class="tab" data-ltab="dlist">D-List</button>
             <button class="tab" data-ltab="jiggle">Jiggle <span id="jiggle-sel-count" style="font-size:9px;color:#5ddb6a;opacity:0.85;"></span></button>
             <button class="tab" data-ltab="final">Final</button>
+            <span class="tab-bar-controls" id="left-tab-zoom">
+                <button class="icon-btn" id="coeff-zoom-out" title="Zoom out 25%">&minus;</button>
+                <button class="icon-btn" id="coeff-zoom-in" title="Zoom in 25%">+</button>
+                <button class="icon-btn" id="coeff-fit" title="Fit to extent" style="font-size:9px;letter-spacing:0.5px;">Fit</button>
+            </span>
         </div>
         <div class="tab-panes" id="left-tab-panes">
             <div id="coeffs-content" class="tab-content active">
@@ -2528,7 +2530,12 @@ const drag = d3.drag()
             for (const si of selectedCoeffs) {
                 coefficients[si].re += deltaRe;
                 coefficients[si].im += deltaIm;
-                for (const pt of coefficients[si].curve) { pt.re += deltaRe; pt.im += deltaIm; }
+                if (coefficients[si].curve._isOrbital) {
+                    const absR = coefficients[si].radius / 100 * coeffExtent();
+                    coefficients[si].curve = computeCurve(coefficients[si].re, coefficients[si].im, coefficients[si].pathType, absR, coefficients[si].angle, coefficients[si].extra);
+                } else {
+                    for (const pt of coefficients[si].curve) { pt.re += deltaRe; pt.im += deltaIm; }
+                }
             }
             coeffLayer.selectAll("circle.coeff")
                 .attr("cx", cd => cxs()(cd.re)).attr("cy", cd => cys()(cd.im));
@@ -2540,14 +2547,18 @@ const drag = d3.drag()
             const deltaIm = newIm - d.im;
             d.re = newRe;
             d.im = newIm;
-            for (const pt of d.curve) { pt.re += deltaRe; pt.im += deltaIm; }
+            if (d.curve._isOrbital) {
+                const absR = d.radius / 100 * coeffExtent();
+                d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+            } else {
+                for (const pt of d.curve) { pt.re += deltaRe; pt.im += deltaIm; }
+            }
             d3.select(this).attr("cx", cxs()(d.re)).attr("cy", cys()(d.im));
             coeffLayer.selectAll(".coeff-label")
                 .filter(ld => ld === d)
                 .attr("x", cxs()(d.re) + 12).attr("y", cys()(d.im) + 4);
         }
         showTooltip(event.sourceEvent, d.re, d.im);
-        autoScaleCoeffPanel();
         solveRootsThrottled();
         renderDomainColoringThrottled();
         // Update analytical coefficient path curves (they follow the coefficient)
@@ -2565,11 +2576,27 @@ const drag = d3.drag()
         }
     });
 
-function autoScaleCoeffPanel() {
+// Set the coefficient panel range and redraw all coeff/morph/final visuals.
+function setCoeffRange(newRange) {
+    newRange = Math.max(MIN_RANGE, newRange);
+    if (Math.abs(panels.coeff.range - newRange) < 0.01) return;
+    updatePanelRange(coeffSvg, panels.coeff, newRange);
+    coeffLayer.selectAll("circle.coeff")
+        .attr("cx", d => cxs()(d.re)).attr("cy", d => cys()(d.im));
+    coeffLayer.selectAll(".coeff-label")
+        .attr("x", d => cxs()(d.re) + 12).attr("y", d => cys()(d.im) + 4);
+    renderCoeffTrails();
+    if (morphPanelInited) {
+        drawGrid(morphSvg, panels.coeff);
+        renderMorphPanel();
+    }
+}
+
+// Fit the coefficient panel to encompass all relevant data.
+// On D-Nodes/Final tabs, includes C+D positions and the full morph interpolation path.
+function fitCoeffPanel() {
     let needed = computeRange(coefficients);
-    // Include D-node (morph target) positions so the morph tab doesn't clip
-    if (morphTargetCoeffs.length > 0) needed = Math.max(needed, computeRange(morphTargetCoeffs));
-    // Include jiggle-offset positions so the Final tab doesn't clip
+    // Include jiggle-offset positions
     if (jiggleOffsets && jiggleOffsets.size > 0) {
         for (const [idx, off] of jiggleOffsets) {
             if (idx < coefficients.length) {
@@ -2581,23 +2608,25 @@ function autoScaleCoeffPanel() {
             }
         }
     }
-    // During animation, only zoom out — never shrink back
-    if (animState.playing) needed = Math.max(needed, panels.coeff.range);
-    if (needed !== panels.coeff.range) {
-        updatePanelRange(coeffSvg, panels.coeff, needed);
-        coeffLayer.selectAll("circle.coeff")
-            .attr("cx", d => cxs()(d.re)).attr("cy", d => cys()(d.im));
-        coeffLayer.selectAll(".coeff-label")
-            .attr("x", d => cxs()(d.re) + 12).attr("y", d => cys()(d.im) + 4);
-        // Trail SVG paths contain absolute screen coordinates — must re-render
-        // when the scale changes so trails stay aligned with coefficient dots
-        renderCoeffTrails();
-        // Sync morph panel grid + dot positions when coeff scale changes
-        if (morphPanelInited) {
-            drawGrid(morphSvg, panels.coeff);
-            renderMorphPanel();
+    // On morph/final tabs, include D-nodes and full interpolation path extent
+    if (leftTab === "morph" || leftTab === "final") {
+        if (morphTargetCoeffs.length > 0) needed = Math.max(needed, computeRange(morphTargetCoeffs));
+        const n = Math.min(coefficients.length, morphTargetCoeffs.length);
+        if (n > 0) {
+            const pts = [];
+            const NSAMP = 24;
+            for (let k = 0; k <= NSAMP; k++) {
+                const theta = k * 2 * Math.PI / NSAMP;
+                for (let i = 0; i < n; i++) {
+                    pts.push(morphInterpPoint(coefficients[i].re, coefficients[i].im,
+                        morphTargetCoeffs[i].re, morphTargetCoeffs[i].im,
+                        theta, morphPathType, morphPathCcw, morphEllipseMinor));
+                }
+            }
+            needed = Math.max(needed, computeRange(pts));
         }
     }
+    setCoeffRange(needed);
 }
 
 // --- Coefficient selection & animation ---
@@ -4573,7 +4602,6 @@ function animLoop(now) {
         .filter(ld => animated.has(ld._idx))
         .attr("x", ld => cxs()(ld.re) + 12).attr("y", ld => cys()(ld.im) + 4);
 
-    autoScaleCoeffPanel();
     solveRootsThrottled();
     renderDomainColoringThrottled();
     recordTick();
@@ -4709,7 +4737,6 @@ const morphDrag = d3.drag()
                     .attr("cy", cys()(_mp.im));
             }
         }
-        autoScaleCoeffPanel();
         if (morphEnabled) solveRootsThrottled();
     })
     .on("end", function (event, d) {
@@ -6270,7 +6297,6 @@ function applyPreview(snap, fn) {
             }
             c.curveIndex = 0;
         }
-        autoScaleCoeffPanel();
         renderCoefficients();
         updateCoeffSelectionVisual();
         renderCoeffTrails();
@@ -7184,7 +7210,7 @@ document.getElementById("inverse-btn").addEventListener("click", function() {
         }
         c.curveIndex = 0;
     }
-    autoScaleCoeffPanel();
+    fitCoeffPanel();
     renderCoefficients();
     updateCoeffSelectionVisual();
     renderCoeffTrails();
@@ -7555,9 +7581,8 @@ function recordTick() {
         drawCoeffsToCtx(ctx, 0, 0, S, S);
         drawRightPanelToCtx(ctx, S + gap, 0, S, S);
     }
-    // In fast mode, rAF isn't running so captureStream may not see canvas updates.
-    // Explicitly request a frame capture from the video track.
-    if (fastModeActive && vidRec.stream) {
+    // Explicitly request a frame capture from the video track so captureStream sees updates.
+    if (vidRec.stream) {
         var vt = vidRec.stream.getVideoTracks()[0];
         if (vt && vt.requestFrame) vt.requestFrame();
     }
@@ -11980,8 +12005,15 @@ function switchLeftTab(tabName) {
     if (tabName === "morph") renderMorphPanel();
     if (tabName === "jiggle") buildJigglePanel();
     if (tabName === "final") renderFinalPanel();
+    document.getElementById("left-tab-zoom").style.display =
+        (tabName === "coeffs" || tabName === "morph" || tabName === "final") ? "flex" : "none";
 }
 leftTabButtons.forEach(btn => btn.addEventListener("click", () => switchLeftTab(btn.dataset.ltab)));
+
+// --- Coeff panel zoom controls ---
+document.getElementById("coeff-zoom-out").addEventListener("click", () => setCoeffRange(panels.coeff.range * 1.25));
+document.getElementById("coeff-zoom-in").addEventListener("click", () => setCoeffRange(panels.coeff.range * 0.75));
+document.getElementById("coeff-fit").addEventListener("click", () => fitCoeffPanel());
 
 // --- C-D Path popup ---
 let cdpathPopOpen = false;

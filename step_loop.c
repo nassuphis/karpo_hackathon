@@ -29,6 +29,9 @@ extern double js_sin(double);
 __attribute__((import_module("env"), import_name("log")))
 extern double js_log(double);
 
+__attribute__((import_module("env"), import_name("pow")))
+extern double js_pow(double, double);
+
 __attribute__((import_module("env"), import_name("reportProgress")))
 extern void js_reportProgress(int step);
 
@@ -110,7 +113,8 @@ extern void js_reportProgress(int step);
 #define CI_MORPH_CCW          66   /* 0=CW (default), 1=CCW */
 #define CI_OFF_ENTRY_DITHER_DIST  67  /* per-entry int32 array: 0=normal, 1=uniform */
 #define CI_OFF_DENTRY_DITHER_DIST 68  /* per-D-entry int32 array: 0=normal, 1=uniform */
-/* Total: 69 int32 config values */
+#define CI_MORPH_DITHER_DIST      69  /* 0=normal, 1=disk, 2=square */
+/* Total: 70 int32 config values */
 
 /* Config float64 indices */
 #define CD_RANGE              0
@@ -122,7 +126,8 @@ extern void js_reportProgress(int step);
 #define CD_MORPH_DITHER_END    6   /* D/end dither sigma (absolute, max(-cosθ,0)² envelope) */
 #define CD_CENTER_X            7   /* bitmap viewport center X */
 #define CD_CENTER_Y            8   /* bitmap viewport center Y */
-/* Total: 9 float64 config values */
+#define CD_MORPH_DITHER_POW    9   /* power param for disk/square dither (0–1) */
+/* Total: 10 float64 config values */
 
 /* ================================================================
  * Global state (set by init)
@@ -135,7 +140,8 @@ static int colorMode, matchStrategy, morphEnabled;
 static int nEntries, nDEntries, nFollowC, nSelIndices, hasJiggle;
 static int morphPathType, morphCcw;
 static double bitmapRange, FPS, morphRate, morphEllipseMinor, morphDitherStart, morphDitherMid, morphDitherEnd;
-static double centerX, centerY;
+static double centerX, centerY, morphDitherPow;
+static int morphDitherDistType;
 
 /* Data pointers */
 static double *coeffsRe, *coeffsIm;
@@ -220,6 +226,25 @@ static double rngGauss(void) {
 
 static double rngDither(int dist) {
     return dist ? (rngUniform() - 0.5) * 2.0 : rngGauss();
+}
+
+static void morphDitherPair(double sigma, int dist, double pw,
+                            double *outRe, double *outIm) {
+    if (dist == 1) { /* disk */
+        double angle = rngUniform() * 2.0 * PI;
+        double r = js_pow(rngUniform(), pw) * sigma;
+        *outRe = r * js_cos(angle);
+        *outIm = r * js_sin(angle);
+    } else if (dist == 2) { /* square */
+        double x = rngUniform() * 2.0 - 1.0;
+        double y = rngUniform() * 2.0 - 1.0;
+        double ax = x < 0 ? -x : x, ay = y < 0 ? -y : y;
+        *outRe = (x < 0 ? -1.0 : 1.0) * js_pow(ax, pw) * sigma;
+        *outIm = (y < 0 ? -1.0 : 1.0) * js_pow(ay, pw) * sigma;
+    } else { /* normal */
+        *outRe = rngGauss() * sigma;
+        *outIm = rngGauss() * sigma;
+    }
 }
 
 /* ================================================================
@@ -526,8 +551,10 @@ void init(int cfgIntOffset, int cfgDblOffset)
     morphDitherEnd = cfgD[CD_MORPH_DITHER_END];
     centerX          = cfgD[CD_CENTER_X];
     centerY          = cfgD[CD_CENTER_Y];
+    morphDitherPow   = cfgD[CD_MORPH_DITHER_POW];
     morphPathType    = cfgI[CI_MORPH_PATH_TYPE];
     morphCcw         = cfgI[CI_MORPH_CCW];
+    morphDitherDistType = cfgI[CI_MORPH_DITHER_DIST];
 
     /* Seed PRNG + reset Gaussian spare */
     gaussHasSpare = 0;
@@ -758,8 +785,10 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                 double endEnv   = cosT < 0.0 ? cosT * cosT : 0.0;
                 double ds = morphDitherStart * startEnv + morphDitherMid * sinT * sinT + morphDitherEnd * endEnv;
                 if (ds > 0.0) for (int m = 0; m < nc; m++) {
-                    workCoeffsRe[m] += (rngUniform() - 0.5) * 2.0 * ds;
-                    workCoeffsIm[m] += (rngUniform() - 0.5) * 2.0 * ds;
+                    double dRe, dIm;
+                    morphDitherPair(ds, morphDitherDistType, morphDitherPow, &dRe, &dIm);
+                    workCoeffsRe[m] += dRe;
+                    workCoeffsIm[m] += dIm;
                 }
             }
             /* Advance morph angle recurrence */

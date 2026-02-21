@@ -21,8 +21,8 @@ _CWL = """
         var o = heapBase || 65536;
         function a8(x) { return (x + 7) & ~7; }
         var L = {};
-        L.cfgI = o; o = a8(o + 65 * 4);
-        L.cfgD = o; o = a8(o + 3 * 8);
+        L.cfgI = o; o = a8(o + 70 * 4);
+        L.cfgD = o; o = a8(o + 10 * 8);
         L.cRe = o; o = a8(o + nc * 8);
         L.cIm = o; o = a8(o + nc * 8);
         L.clR = o; o = a8(o + nr);
@@ -81,7 +81,7 @@ _INST = """
         var mod = new WebAssembly.Module(bytes.buffer);
         var mem = new WebAssembly.Memory({initial: 2});
         var inst = new WebAssembly.Instance(mod, {
-            env: { memory: mem, cos: Math.cos, sin: Math.sin, log: Math.log,
+            env: { memory: mem, cos: Math.cos, sin: Math.sin, log: Math.log, pow: Math.pow,
                    reportProgress: progressFn || function(){} }
         });
         var hb = inst.exports.__heap_base ? inst.exports.__heap_base.value : 65536;
@@ -92,7 +92,7 @@ _INST = """
 _WRITE_CFG = """
     function writeCfg(buf, L, nc, nr, opts) {
         opts = opts || {};
-        var cfgI32 = new Int32Array(buf, L.cfgI, 65);
+        var cfgI32 = new Int32Array(buf, L.cfgI, 70);
         cfgI32[0] = nc; cfgI32[1] = nr;
         cfgI32[2] = opts.canvasW || 200; cfgI32[3] = opts.canvasH || 200;
         cfgI32[4] = opts.totalSteps || 10;
@@ -119,7 +119,7 @@ _WRITE_CFG = """
         cfgI32[57] = L.mWR; cfgI32[58] = L.mWI;
         cfgI32[59] = L.pRR; cfgI32[60] = L.pRI;
         cfgI32[61] = L.piO; cfgI32[62] = L.prO; cfgI32[63] = L.pgO; cfgI32[64] = L.pbO;
-        var cfgF64 = new Float64Array(buf, L.cfgD, 3);
+        var cfgF64 = new Float64Array(buf, L.cfgD, 10);
         cfgF64[0] = opts.range || 2.0;
         cfgF64[1] = opts.fps || 1.0;
         cfgF64[2] = opts.morphRate || 0.0;
@@ -189,7 +189,7 @@ class TestWasmModuleLoading:
                 var mod = new WebAssembly.Module(bytes.buffer);
                 var mem = new WebAssembly.Memory({initial: 4});
                 var inst = new WebAssembly.Instance(mod, {
-                    env: { memory: mem, cos: Math.cos, sin: Math.sin, log: Math.log, reportProgress: function(){} }
+                    env: { memory: mem, cos: Math.cos, sin: Math.sin, log: Math.log, pow: Math.pow, reportProgress: function(){} }
                 });
                 return {ok: true, exports: Object.keys(inst.exports)};
             } catch(e) {
@@ -211,7 +211,7 @@ class TestWasmModuleLoading:
             var mod = new WebAssembly.Module(bytes.buffer);
             var mem = new WebAssembly.Memory({initial: 4});
             var inst = new WebAssembly.Instance(mod, {
-                env: { memory: mem, cos: Math.cos, sin: Math.sin, log: Math.log, reportProgress: function(){} }
+                env: { memory: mem, cos: Math.cos, sin: Math.sin, log: Math.log, pow: Math.pow, reportProgress: function(){} }
             });
             return {
                 hasHeapBase: '__heap_base' in inst.exports,
@@ -233,7 +233,7 @@ class TestWasmModuleLoading:
             var mod = new WebAssembly.Module(bytes.buffer);
             var mem = new WebAssembly.Memory({initial: 4});
             var inst = new WebAssembly.Instance(mod, {
-                env: { memory: mem, cos: Math.cos, sin: Math.sin, log: Math.log, reportProgress: function(){} }
+                env: { memory: mem, cos: Math.cos, sin: Math.sin, log: Math.log, pow: Math.pow, reportProgress: function(){} }
             });
             return inst.exports.__heap_base.value;
         }""", wasm_step_loop_b64)
@@ -633,7 +633,7 @@ class TestWasmProgressReporting:
             var progressCalls = [];
             var inst = new WebAssembly.Instance(mod, {
                 env: {
-                    memory: mem, cos: Math.cos, sin: Math.sin, log: Math.log,
+                    memory: mem, cos: Math.cos, sin: Math.sin, log: Math.log, pow: Math.pow,
                     reportProgress: function(step) { progressCalls.push(step); }
                 }
             });
@@ -644,7 +644,7 @@ class TestWasmProgressReporting:
             if (L.pages > curPages) mem.grow(L.pages - curPages);
             var buf = mem.buffer;
 
-            var cfgI32 = new Int32Array(buf, L.cfgI, 65);
+            var cfgI32 = new Int32Array(buf, L.cfgI, 70);
             cfgI32[0] = nc; cfgI32[1] = nr;
             cfgI32[2] = 200; cfgI32[3] = 200;
             cfgI32[4] = 5000; cfgI32[5] = 0; cfgI32[12] = 0;
@@ -667,7 +667,7 @@ class TestWasmProgressReporting:
             cfgI32[59] = L.pRR; cfgI32[60] = L.pRI;
             cfgI32[61] = L.piO; cfgI32[62] = L.prO; cfgI32[63] = L.pgO; cfgI32[64] = L.pbO;
 
-            var cfgF64 = new Float64Array(buf, L.cfgD, 3);
+            var cfgF64 = new Float64Array(buf, L.cfgD, 10);
             cfgF64[0] = 2.0; cfgF64[1] = 1.0; cfgF64[2] = 0.0;
 
             new Float64Array(buf, L.cRe, nc).set([1, 0, 0, -1]);

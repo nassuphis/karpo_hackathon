@@ -4635,10 +4635,6 @@ function updateCoeffChainLine() {
 // --- Render coefficients ---
 
 function renderCoefficients() {
-    // Auto-scale coeff panel to fit all coefficients
-    const needed = computeRange(coefficients);
-    updatePanelRange(coeffSvg, panels.coeff, needed);
-
     const n = coefficients.length;
     for (let i = 0; i < n; i++) coefficients[i]._idx = i;
 
@@ -5002,8 +4998,8 @@ const rootDrag = d3.drag()
                 pt.im += deltaIm;
             }
         }
-        renderCoefficients();  // auto-scales panel (may change scale)
-        renderCoeffTrails();   // must come AFTER scale update
+        renderCoefficients();
+        renderCoeffTrails();
         updateListCoords();
         // Show coefficient chain line during root drag
         coeffChainLine.style("display", null);

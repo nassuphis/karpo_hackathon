@@ -419,13 +419,13 @@ circle.morph-interp-marker { pointer-events: none; }
 #domain-canvas { position: absolute; top: 0; left: 0; border-radius: 0; }
 #roots-panel.domain-active { background: transparent !important; }
 circle.coeff.selected, circle.root.selected, circle.morph-coeff.selected {
-    stroke: #fff; stroke-width: 3;
+    stroke: var(--accent); stroke-width: 3;
     filter: drop-shadow(0 0 4px var(--accent)) drop-shadow(0 0 10px var(--accent)) drop-shadow(0 0 18px rgba(233,69,96,0.4));
     animation: sel-pulse 1.2s ease-in-out infinite alternate;
 }
 @keyframes sel-pulse {
-    from { filter: drop-shadow(0 0 4px var(--accent)) drop-shadow(0 0 10px var(--accent)) drop-shadow(0 0 18px rgba(233,69,96,0.4)); }
-    to   { filter: drop-shadow(0 0 6px var(--accent)) drop-shadow(0 0 14px var(--accent)) drop-shadow(0 0 24px rgba(233,69,96,0.5)); }
+    from { stroke: var(--accent); filter: drop-shadow(0 0 4px var(--accent)) drop-shadow(0 0 10px var(--accent)) drop-shadow(0 0 18px rgba(233,69,96,0.4)); }
+    to   { stroke: #ff9eb0; filter: drop-shadow(0 0 6px var(--accent)) drop-shadow(0 0 14px var(--accent)) drop-shadow(0 0 24px rgba(233,69,96,0.5)); }
 }
 .sel-rect {
     fill: rgba(233,69,96,0.12); stroke: rgba(233,69,96,0.65);
@@ -499,6 +499,13 @@ circle.coeff.selected, circle.root.selected, circle.morph-coeff.selected {
 }
 .bitmap-btn:hover { background: var(--accent); color: #fff; }
 .bitmap-btn:disabled { opacity: 0.3; cursor: default; background: transparent; color: var(--accent); }
+#debug-probes label { cursor:pointer; display:flex; align-items:center; gap:2px; }
+#debug-probes input[type="checkbox"] { accent-color:var(--accent); width:12px; height:12px; }
+#debug-log .debug-error { color:#e94560; }
+#debug-log .debug-warn { color:#f39c12; }
+#debug-log .debug-info { color:#8a90a6; }
+#debug-log .debug-snapshot { color:#2ecc71; }
+#debug-log .debug-stall { color:#ff6b9d; font-weight:700; }
 #bitmap-coeff-btn { color: #e94560; font-weight: 700; }
 #bitmap-coeff-btn.active { color: #2ecc71; }
 .bitmap-select {
@@ -835,6 +842,7 @@ body.fast-mode #bitmap-fast-btn {
             <button class="tab" data-tab="stats">Stats</button>
             <button class="tab" data-tab="sound">Sound</button>
             <button class="tab" data-tab="bitmap">Bitmap</button>
+            <button class="tab" data-tab="debug">Debug</button>
             <span class="tab-bar-controls">
                 <select id="rec-mode" title="Recording mode" style="font-size:10px;padding:1px 2px;background:rgba(255,255,255,0.06);color:var(--muted);border:1px solid var(--stroke);border-radius:4px;cursor:pointer;"><option value="roots">Roots</option><option value="coeffs">Coeffs</option><option value="both">Both</option><option value="stats">Stats</option><option value="sound">Sound</option><option value="bitmap">Bitmap</option><option value="full">Full</option></select>
                 <button id="rec-roots-btn" class="icon-btn" title="Record (webm)">⏺</button>
@@ -906,6 +914,21 @@ body.fast-mode #bitmap-fast-btn {
                     <canvas id="bitmap-canvas" style="width:100%;height:100%;"></canvas>
                     <div id="bitmap-sel" style="position:absolute;display:none;border:2px dashed rgba(255,255,255,0.8);background:rgba(255,255,255,0.1);pointer-events:none;box-sizing:border-box;"></div>
                 </div>
+            </div>
+            <div id="debug-content" class="tab-content">
+                <div id="debug-toolbar" style="display:flex;gap:4px;padding:4px 6px;align-items:center;flex-wrap:wrap;">
+                    <label style="font-size:10px;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:3px;">
+                        <input type="checkbox" id="debug-master-toggle" checked> Debug
+                    </label>
+                    <button id="debug-snapshot-btn" class="bitmap-btn">Snap</button>
+                    <button id="debug-clear-btn" class="bitmap-btn">Clear</button>
+                    <button id="debug-save-btn" class="bitmap-btn">Save</button>
+                    <button id="debug-copy-btn" class="bitmap-btn">Copy</button>
+                    <button id="debug-prev-btn" class="bitmap-btn" title="Load log from previous session (before crash)">Prev</button>
+                </div>
+                <div id="debug-probes" style="padding:2px 6px;display:flex;gap:8px;flex-wrap:wrap;font-size:9px;color:var(--muted);"></div>
+                <div id="debug-summary" style="padding:2px 6px;font-size:9px;color:var(--muted);font-family:monospace;white-space:pre;"></div>
+                <div id="debug-log" style="flex:1;min-height:0;overflow-y:auto;padding:4px 6px;font-family:monospace;font-size:9px;color:var(--text);white-space:pre-wrap;word-break:break-all;background:rgba(0,0,0,0.3);border-top:1px solid var(--stroke);"></div>
             </div>
         </div>
     </div>
@@ -1232,6 +1255,346 @@ let fastModeCycleStartTime = 0;     // performance.now() when current cycle star
 let fastModeTimingHistory = [];     // Array of {passMs, stepsPerSec, workers, steps}
 // Stats tab state
 let activeTab = "roots";
+
+// ============= DEBUG TAB STATE =============
+// Memory polling: try performance.memory (legacy Chrome), then measureUserAgentSpecificMemory (modern), else null
+let _debugMemCache = null; // {usedMB, totalMB, limitMB, source}
+let _debugMemPollTimer = null;
+
+function _pollMemory() {
+    // Legacy Chrome API (deprecated but may still work)
+    if (performance.memory && performance.memory.usedJSHeapSize > 0) {
+        _debugMemCache = {
+            usedMB: Math.round(performance.memory.usedJSHeapSize / 1048576),
+            totalMB: Math.round(performance.memory.totalJSHeapSize / 1048576),
+            limitMB: Math.round(performance.memory.jsHeapSizeLimit / 1048576),
+            source: "memory"
+        };
+        return;
+    }
+    // Modern async API (requires crossOriginIsolated)
+    if (typeof performance.measureUserAgentSpecificMemory === "function" && crossOriginIsolated) {
+        performance.measureUserAgentSpecificMemory().then(function(result) {
+            _debugMemCache = {
+                usedMB: Math.round(result.bytes / 1048576),
+                totalMB: null, limitMB: null,
+                source: "measureUASM"
+            };
+        }).catch(function() {});
+        return;
+    }
+    // Neither available
+    _debugMemCache = null;
+}
+
+function _startMemoryPolling() {
+    _pollMemory();
+    if (_debugMemPollTimer) clearInterval(_debugMemPollTimer);
+    _debugMemPollTimer = setInterval(_pollMemory, 3000);
+}
+
+function debugMemString() {
+    if (!_debugMemCache) return null;
+    if (_debugMemCache.totalMB != null) return _debugMemCache.usedMB + "/" + _debugMemCache.totalMB + "MB";
+    return _debugMemCache.usedMB + "MB";
+}
+
+const DEBUG_LOG_MAX = 500;
+const DEBUG_RING_MAX = 200;
+const debugState = {
+    enabled: true,
+    probes: { animLoop: true, solver: false, matchRoots: false, workerRoundTrip: true },
+    rings: { animLoop: [], solver: [], matchRoots: [], workerRoundTrip: [] },
+    errors: [],
+    log: [],
+    animLoopCounter: 0,
+    lastCheckedCounter: 0,
+    watchdogTimerId: null,
+    framesSinceLastReport: 0,
+    reportInterval: 30
+};
+
+// ---------- Debug: localStorage persistence ----------
+const DEBUG_LS_KEY = "polypaint-debug-log";
+let _debugSaveTimer = null;
+
+function debugPersist() {
+    // Throttled: schedule a save if not already pending
+    if (_debugSaveTimer) return;
+    _debugSaveTimer = setTimeout(function() {
+        _debugSaveTimer = null;
+        try {
+            const data = { log: debugState.log.slice(-DEBUG_LOG_MAX), errors: debugState.errors, savedAt: new Date().toISOString() };
+            localStorage.setItem(DEBUG_LS_KEY, JSON.stringify(data));
+        } catch (e) { /* quota exceeded or private mode — ignore */ }
+    }, 2000);
+}
+
+function debugLoadPrevious() {
+    try {
+        const raw = localStorage.getItem(DEBUG_LS_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+    } catch (e) { return null; }
+}
+
+// ---------- Debug: logging ----------
+function debugLog(type, message, data) {
+    if (!debugState.enabled) return;
+    const entry = {
+        t: performance.now(),
+        ts: new Date().toISOString().slice(11, 23),
+        type: type,
+        msg: message,
+        data: data || null
+    };
+    debugState.log.push(entry);
+    if (debugState.log.length > DEBUG_LOG_MAX) debugState.log.shift();
+    if (activeTab === "debug") appendDebugLogEntry(entry);
+    debugPersist();
+}
+
+function _formatDebugData(data) {
+    if (!data) return "";
+    // Format as key=value pairs, one per line, indented
+    const lines = [];
+    for (const [k, v] of Object.entries(data)) {
+        if (v === null || v === undefined) continue;
+        let val = typeof v === "object" ? JSON.stringify(v) : String(v);
+        lines.push("  " + k + ": " + val);
+    }
+    return lines.join("\n");
+}
+
+function appendDebugLogEntry(entry) {
+    const logEl = document.getElementById("debug-log");
+    if (!logEl) return;
+    const line = document.createElement("div");
+    line.className = "debug-" + entry.type;
+    line.style.marginBottom = "2px";
+    line.style.borderBottom = "1px solid rgba(255,255,255,0.04)";
+    line.style.padding = "1px 0";
+    let text = entry.ts + "  " + entry.type.toUpperCase().padEnd(8) + " " + entry.msg;
+    if (entry.data) text += "\n" + _formatDebugData(entry.data);
+    line.textContent = text;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+    while (logEl.childElementCount > DEBUG_LOG_MAX) logEl.removeChild(logEl.firstChild);
+}
+
+function renderFullDebugLog() {
+    const logEl = document.getElementById("debug-log");
+    if (!logEl) return;
+    logEl.innerHTML = "";
+    for (const entry of debugState.log) appendDebugLogEntry(entry);
+}
+
+// ---------- Debug: ring buffers ----------
+function debugRingPush(ringName, ms) {
+    const ring = debugState.rings[ringName];
+    if (!ring) return;
+    ring.push({ t: performance.now(), ms: ms });
+    if (ring.length > DEBUG_RING_MAX) ring.shift();
+}
+
+function debugRingStats(ringName) {
+    const ring = debugState.rings[ringName];
+    if (!ring || ring.length === 0) return null;
+    const vals = ring.map(r => r.ms);
+    const last = vals[vals.length - 1];
+    let min = Infinity, max = -Infinity, sum = 0;
+    for (let i = 0; i < vals.length; i++) {
+        if (vals[i] < min) min = vals[i];
+        if (vals[i] > max) max = vals[i];
+        sum += vals[i];
+    }
+    return { count: vals.length, last: last, min: min, max: max, avg: sum / vals.length };
+}
+
+// ---------- Debug: global error handlers ----------
+function installDebugErrorHandlers() {
+    window.onerror = function(msg, source, lineno, colno, error) {
+        const entry = {
+            msg: String(msg),
+            source: source ? source.split("/").pop() : "?",
+            line: lineno, col: colno,
+            stack: error && error.stack ? error.stack.split("\n").slice(0, 5).join("\n") : ""
+        };
+        debugState.errors.push(entry);
+        if (debugState.errors.length > 100) debugState.errors.shift();
+        debugLog("error", String(msg), entry);
+        return false;
+    };
+    window.addEventListener("unhandledrejection", function(ev) {
+        const reason = ev.reason;
+        const msg = reason instanceof Error ? reason.message : String(reason);
+        const entry = {
+            msg: msg,
+            stack: reason instanceof Error ? reason.stack.split("\n").slice(0, 5).join("\n") : ""
+        };
+        debugState.errors.push(entry);
+        if (debugState.errors.length > 100) debugState.errors.shift();
+        debugLog("error", "Unhandled rejection: " + msg, entry);
+    });
+}
+
+// ---------- Debug: state snapshot ----------
+function debugSnapshot() {
+    const snap = {
+        timestamp: new Date().toISOString(),
+        coefficients: coefficients.length,
+        degree: coefficients.length - 1,
+        currentRoots: currentRoots.length,
+        fastModeActive: fastModeActive,
+        bitmapActive: bitmapActive,
+        animPlaying: animState.playing,
+        activeTab: activeTab,
+        leftTab: typeof leftTab !== "undefined" ? leftTab : "?",
+        jiggleMode: typeof jiggleMode !== "undefined" ? jiggleMode : "?",
+        morphEnabled: typeof morphEnabled !== "undefined" ? morphEnabled : "?",
+        morphPathType: typeof morphPathType !== "undefined" ? morphPathType : "?",
+        solverType: typeof solverType !== "undefined" ? solverType : "?",
+        numWorkers: typeof numWorkers !== "undefined" ? numWorkers : "?",
+        coeffRange: panels.coeff.range,
+        rootsRange: panels.roots.range,
+        animLoopCounter: debugState.animLoopCounter,
+        errorCount: debugState.errors.length
+    };
+    if (_debugMemCache) {
+        snap.heap = debugMemString();
+        if (_debugMemCache.limitMB) snap.heapLimit = _debugMemCache.limitMB + "MB";
+    }
+    debugLog("snapshot", "State snapshot", snap);
+    return snap;
+}
+
+// ---------- Debug: heartbeat watchdog ----------
+function startDebugWatchdog() {
+    if (debugState.watchdogTimerId) clearInterval(debugState.watchdogTimerId);
+    debugState.lastCheckedCounter = debugState.animLoopCounter;
+    debugState.watchdogTimerId = setInterval(function() {
+        if (!debugState.enabled) return;
+        if (!animState.playing || fastModeActive) {
+            debugState.lastCheckedCounter = debugState.animLoopCounter;
+            return;
+        }
+        if (debugState.animLoopCounter === debugState.lastCheckedCounter) {
+            debugLog("stall", "animLoop stalled -- counter stuck at " + debugState.animLoopCounter);
+            debugSnapshot();
+            animState.rafId = requestAnimationFrame(animLoop);
+        }
+        debugState.lastCheckedCounter = debugState.animLoopCounter;
+    }, 2000);
+}
+
+function stopDebugWatchdog() {
+    if (debugState.watchdogTimerId) {
+        clearInterval(debugState.watchdogTimerId);
+        debugState.watchdogTimerId = null;
+    }
+}
+
+// ---------- Debug: summary display ----------
+function updateDebugSummary() {
+    if (activeTab !== "debug") return;
+    const el = document.getElementById("debug-summary");
+    if (!el) return;
+    const lines = [];
+    // Header
+    lines.push("Probe          Last     Avg     Min     Max     N");
+    lines.push("-----          ----     ---     ---     ---     -");
+    for (const [name, enabled] of Object.entries(debugState.probes)) {
+        if (!enabled) continue;
+        const stats = debugRingStats(name);
+        if (!stats) continue;
+        const pad = name.padEnd(15);
+        lines.push(pad +
+            stats.last.toFixed(1).padStart(5) + "ms" +
+            stats.avg.toFixed(1).padStart(6) + "ms" +
+            stats.min.toFixed(1).padStart(6) + "ms" +
+            stats.max.toFixed(1).padStart(6) + "ms" +
+            String(stats.count).padStart(6));
+    }
+    const memStr = debugMemString();
+    if (memStr) {
+        lines.push("");
+        lines.push("Heap: " + memStr + (_debugMemCache && _debugMemCache.limitMB ? " (limit " + _debugMemCache.limitMB + " MB)" : ""));
+    }
+    lines.push("Errors: " + debugState.errors.length + "  Log entries: " + debugState.log.length +
+               "  animLoop#: " + debugState.animLoopCounter);
+    el.textContent = lines.join("\n");
+}
+
+// ---------- Debug: build probe toggles ----------
+function buildDebugProbes() {
+    const container = document.getElementById("debug-probes");
+    if (!container) return;
+    container.innerHTML = "";
+    const probeNames = ["animLoop", "solver", "matchRoots", "workerRoundTrip"];
+    const probeLabels = ["Frame", "Solver", "Match", "Worker RT"];
+    for (let i = 0; i < probeNames.length; i++) {
+        const lbl = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = debugState.probes[probeNames[i]];
+        const name = probeNames[i];
+        cb.addEventListener("change", function() { debugState.probes[name] = cb.checked; });
+        lbl.appendChild(cb);
+        lbl.appendChild(document.createTextNode(" " + probeLabels[i]));
+        container.appendChild(lbl);
+    }
+}
+
+// ---------- Debug: clear ----------
+function debugClear() {
+    debugState.log = [];
+    debugState.errors = [];
+    for (const key of Object.keys(debugState.rings)) debugState.rings[key] = [];
+    debugState.animLoopCounter = 0;
+    debugState.lastCheckedCounter = 0;
+    debugState.framesSinceLastReport = 0;
+    const logEl = document.getElementById("debug-log");
+    if (logEl) logEl.innerHTML = "";
+    const sumEl = document.getElementById("debug-summary");
+    if (sumEl) sumEl.textContent = "";
+}
+
+// ---------- Debug: save JSON ----------
+function debugSaveJSON() {
+    const data = {
+        exported: new Date().toISOString(),
+        log: debugState.log,
+        errors: debugState.errors,
+        rings: {},
+        snapshot: debugSnapshot()
+    };
+    for (const [name, ring] of Object.entries(debugState.rings)) {
+        if (ring.length > 0) {
+            data.rings[name] = { entries: ring.slice(-50), stats: debugRingStats(name) };
+        }
+    }
+    const json = JSON.stringify(data, null, 2);
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const blob = new Blob([json], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "polypaint-debug-" + ts + ".json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+// ---------- Debug: copy to clipboard ----------
+function debugCopyToClipboard() {
+    const text = debugState.log.map(function(e) {
+        let line = "[" + e.ts + "] " + e.type.toUpperCase() + ": " + e.msg;
+        if (e.data) line += "\n  " + JSON.stringify(e.data);
+        return line;
+    }).join("\n");
+    navigator.clipboard.writeText(text).then(function() {
+        debugLog("info", "Copied " + debugState.log.length + " log entries to clipboard");
+    });
+}
+
 const STAT_TYPES = ["Force", "MinForce", "MaxForce", "Speed", "MinSpeed", "MaxSpeed", "MinDist", "MaxDist", "Records", "MeanDist", "\u0394MeanDist", "AngularMom", "\u03c3Speed", "EMASpeed", "\u03c3Dist", "Odometer", "CycleCount", "MedianR", "Spread", "EMed", "EHi", "Coherence", "Encounters"];
 const STAT_COLORS = { Force: "#e94560", MinForce: "#f7a1b5", MaxForce: "#c0392b", Speed: "#5b6abf", MinSpeed: "#7eb8da", MaxSpeed: "#ff7b54", MinDist: "#2ecc71", MaxDist: "#f39c12", Records: "#ff6b9d", MeanDist: "#4ecdc4", "\u0394MeanDist": "#a8e6cf", AngularMom: "#e0aaff", "\u03c3Speed": "#48bfe3", EMASpeed: "#64dfdf", "\u03c3Dist": "#f4a261", Odometer: "#d4a373", CycleCount: "#80ed99", MedianR: "#f0a6ca", Spread: "#b8c0ff", EMed: "#a7c957", EHi: "#f77f00", Coherence: "#7209b7", Encounters: "#ff85a1" };
 // Phase-space (XY) plot definitions: { label, xStat, yStat, color }
@@ -4581,6 +4944,29 @@ function startAnimation() {
 function animLoop(now) {
     if (!animState.playing) return;
     if (fastModeActive) return;
+    debugState.animLoopCounter++;
+    const _t0 = (debugState.enabled && debugState.probes.animLoop) ? performance.now() : 0;
+    try {
+        animLoopBody(now);
+    } catch (err) {
+        debugLog("error", "animLoop exception: " + err.message, {
+            stack: err.stack ? err.stack.split("\n").slice(0, 5).join("\n") : "",
+            nCoeffs: coefficients.length
+        });
+        animState.rafId = requestAnimationFrame(animLoop);
+        return;
+    }
+    if (_t0 > 0) {
+        debugRingPush("animLoop", performance.now() - _t0);
+        debugState.framesSinceLastReport++;
+        if (debugState.framesSinceLastReport >= debugState.reportInterval) {
+            debugState.framesSinceLastReport = 0;
+            updateDebugSummary();
+        }
+    }
+}
+
+function animLoopBody(now) {
     const elapsed = (now - animState.startTime) / 1000;
 
     for (let i = 0; i < coefficients.length; i++) {
@@ -4590,7 +4976,6 @@ function animLoop(now) {
         const t = elapsed * c.speed * (c.ccw ? -1 : 1);
         const rawIdx = ((t % 1) + 1) % 1 * N;
         if (c.curve._isCloud) {
-            // Random cloud: snap to nearest point (no interpolation)
             const idx = Math.floor(rawIdx) % N;
             c.re = c.curve[idx].re;
             c.im = c.curve[idx].im;
@@ -4610,10 +4995,8 @@ function animLoop(now) {
         }
     }
 
-    // Advance D-nodes along their paths
     advanceDNodesAlongCurves(elapsed);
 
-    // Jiggle: recompute if step changed (pure function of elapsed time)
     if (jiggleMode !== "none") {
         computeJiggleForStep(jiggleStepFromElapsed(elapsed));
     }
@@ -4625,7 +5008,6 @@ function animLoop(now) {
         if (muEl) muEl.textContent = "μ=" + morphMu.toFixed(2);
     }
 
-    // Update morph panel visuals if visible
     if (morphPanelInited && leftTab === "morph") {
         const nn = Math.min(coefficients.length, morphTargetCoeffs.length);
         morphGhostLayer.selectAll("circle.morph-ghost")
@@ -5552,8 +5934,12 @@ function solveRoots() {
             }
         }
     }
+    let _st0 = (debugState.enabled && debugState.probes.solver) ? performance.now() : 0;
     let roots = solveRootsEA(coeffsToSolve, currentRoots);
+    if (_st0 > 0) debugRingPush("solver", performance.now() - _st0);
+    let _mt0 = (debugState.enabled && debugState.probes.matchRoots) ? performance.now() : 0;
     roots = matchRootOrder(roots, currentRoots);
+    if (_mt0 > 0) debugRingPush("matchRoots", performance.now() - _mt0);
     renderRoots(roots);
     if (leftTab === "final") renderFinalPanel();
 }
@@ -11290,6 +11676,26 @@ function enterFastMode() {
     fastModeActive = true;
     fastModeStepIndex = 0;
     fastModeTotalSteps = stepsVal;
+
+    // Debug: log fast mode entry with allocation details
+    {
+        const maxPaintsPerWorker = Math.ceil(stepsVal / numWorkers) * nRoots;
+        const paintBufPerWorkerMB = (maxPaintsPerWorker * 7 / 1048576).toFixed(1);
+        const totalPaintBufMB = (maxPaintsPerWorker * 7 * numWorkers / 1048576).toFixed(1);
+        const bitmapBufMB = (bitmapComputeRes * bitmapComputeRes * 4 / 1048576).toFixed(1);
+        debugLog("info", "FAST MODE START", {
+            degree: nRoots,
+            nCoeffs: coefficients.length,
+            steps: stepsVal,
+            workers: numWorkers,
+            solver: solverType,
+            resolution: bitmapComputeRes + "x" + bitmapComputeRes,
+            maxPaintsPerWorker: maxPaintsPerWorker,
+            paintBufPerWorker: paintBufPerWorkerMB + "MB",
+            totalPaintBuf: totalPaintBufMB + "MB",
+            bitmapBuf: bitmapBufMB + "MB"
+        });
+    }
     fastModeCycleStartTime = performance.now();
     fastModeTargetPasses = jiggleInterval;
 
@@ -11505,6 +11911,10 @@ function initFastModeWorkers() {
         worker.onmessage = handleFastModeWorkerMessage;
         worker.onerror = function(err) {
             console.error("Fast mode worker", w, "error:", err);
+            debugLog("error", "Worker " + w + " onerror", {
+                message: err.message || String(err),
+                filename: err.filename, lineno: err.lineno
+            });
             exitFastMode();
         };
 
@@ -11609,6 +12019,7 @@ function handleFastModeWorkerMessage(e) {
     }
     else if (msg.type === "error") {
         console.error("WASM worker " + msg.workerId + " error:", msg.error);
+        debugLog("error", "Worker " + msg.workerId + " msg error: " + msg.error);
     }
     else if (msg.type === "done") {
         // Collect this worker's sparse pixel data
@@ -11626,8 +12037,10 @@ function handleFastModeWorkerMessage(e) {
         fastModeWorkersComplete++;
 
         if (fastModeWorkersComplete === fastModeWorkers.length) {
-            // All workers done — composite, record timing, advance
             const workerMs = performance.now() - fastModePassStartTime;
+            if (debugState.enabled && debugState.probes.workerRoundTrip) {
+                debugRingPush("workerRoundTrip", workerMs);
+            }
             compositeWorkerPixels();
             recordTick();
             recordPassTiming(workerMs);
@@ -11722,14 +12135,21 @@ function compositeWorkerPixels() {
 
 function recordPassTiming(workerMs) {
     const ms = performance.now() - fastModePassStartTime;
-    fastModeTimingHistory.push({
+    const entry = {
         passMs: ms,
         stepsPerSec: Math.round(fastModeTotalSteps / (ms / 1000)),
         workers: fastModeWorkers.length,
         steps: fastModeTotalSteps,
         workerMs: workerMs || ms,
         composite: fastModeCompositeBreakdown
-    });
+    };
+    fastModeTimingHistory.push(entry);
+    // Debug: log every pass with key metrics
+    if (debugState.enabled) {
+        const mem = debugMemString() || "N/A";
+        debugLog("info", "Pass #" + fastModePassCount + ": " +
+                 Math.round(ms) + "ms, " + entry.stepsPerSec.toLocaleString() + " steps/s, heap=" + mem);
+    }
     updateTimingPopup();
 }
 
@@ -11780,6 +12200,16 @@ function reinitWorkersForJiggle() {
 
 function exitFastMode() {
     if (!fastModeActive) { uiBuzz(); return; }
+    // Debug: log fast mode exit
+    {
+        const totalTime = performance.now() - fastModeCycleStartTime;
+        debugLog("info", "FAST MODE STOP", {
+            passes: fastModePassCount,
+            totalTimeMs: Math.round(totalTime),
+            avgPassMs: fastModePassCount > 0 ? Math.round(totalTime / fastModePassCount) : 0,
+            timingEntries: fastModeTimingHistory.length
+        });
+    }
 
     // Advance elapsed offset proportionally for mid-pass interruption
     if (fastModeWorkerProgress.length > 0 && fastModeTotalSteps > 0) {
@@ -12008,7 +12438,8 @@ const tabContents = {
     roots: document.getElementById("roots-content"),
     stats: document.getElementById("stats-content"),
     sound: document.getElementById("sound-content"),
-    bitmap: document.getElementById("bitmap-content")
+    bitmap: document.getElementById("bitmap-content"),
+    debug: document.getElementById("debug-content")
 };
 
 function switchTab(tabName) {
@@ -12022,6 +12453,10 @@ function switchTab(tabName) {
     if (prevTab === "bitmap" && tabName === "roots") {
         renderDomainColoring();
         solveRoots();
+    }
+    if (tabName === "debug") {
+        renderFullDebugLog();
+        updateDebugSummary();
     }
 }
 tabButtons.forEach(btn => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
@@ -12100,13 +12535,13 @@ function buildCDPathPop() {
         const vs = document.createElement("span");
         vs.style.cssText = "width:48px;text-align:right;font-size:8px;flex-shrink:0;";
         const u = unit || "%";
-        const dec = () => Math.max(1, Math.round(Math.log10(div)));
+        const dec = () => Math.max(0, Math.round(Math.log10(div)));
         const fmt = s => s.toFixed(dec()) + u;
         vs.textContent = fmt(val);
         inp.addEventListener("input", () => { const s = inp.value / div; onS(s); vs.textContent = fmt(s); });
         const bs = "font-size:7px;padding:0 2px;background:#333;color:#aaa;border:1px solid #555;border-radius:2px;cursor:pointer;flex-shrink:0;line-height:14px;";
         const up = document.createElement("button"); up.textContent = "+1 OOM"; up.title = "Multiply max by 10"; up.style.cssText = bs;
-        up.addEventListener("click", () => { if (div <= 1) return; const cs = inp.value / div; div /= 10; onD(div); inp.value = Math.min(100, Math.round(cs * div)); const s = inp.value / div; onS(s); vs.textContent = fmt(s); });
+        up.addEventListener("click", () => { if (div <= 1e-3) return; const cs = inp.value / div; div /= 10; onD(div); inp.value = Math.min(100, Math.round(cs * div)); const s = inp.value / div; onS(s); vs.textContent = fmt(s); });
         const dn = document.createElement("button"); dn.textContent = "\u22121 OOM"; dn.title = "Divide max by 10"; dn.style.cssText = bs;
         dn.addEventListener("click", () => { if (div >= 1e8) return; const cs = inp.value / div; div *= 10; onD(div); inp.value = Math.min(100, Math.round(cs * div)); const s = inp.value / div; onS(s); vs.textContent = fmt(s); });
         r.append(l, inp, vs, up, dn);
@@ -14578,6 +15013,59 @@ installMarqueeSelection(d3.select("#morph-panel"), () => morphLayer ? morphLayer
 updateCoeffSelectionVisual();
 updateAnimBar();
 renderCoeffTrails();
+
+// ============= DEBUG TAB INIT =============
+installDebugErrorHandlers();
+buildDebugProbes();
+startDebugWatchdog();
+_startMemoryPolling();
+
+document.getElementById("debug-master-toggle").addEventListener("change", function() {
+    debugState.enabled = this.checked;
+    if (this.checked) {
+        startDebugWatchdog();
+        debugLog("info", "Debug enabled");
+    } else {
+        stopDebugWatchdog();
+    }
+});
+document.getElementById("debug-snapshot-btn").addEventListener("click", debugSnapshot);
+document.getElementById("debug-clear-btn").addEventListener("click", debugClear);
+document.getElementById("debug-save-btn").addEventListener("click", debugSaveJSON);
+document.getElementById("debug-copy-btn").addEventListener("click", debugCopyToClipboard);
+document.getElementById("debug-prev-btn").addEventListener("click", function() {
+    const prev = debugLoadPrevious();
+    if (!prev) {
+        debugLog("warn", "No previous session data in localStorage");
+        return;
+    }
+    debugLog("info", "=== PREVIOUS SESSION (saved " + prev.savedAt + ") ===");
+    if (prev.log) {
+        for (const entry of prev.log) {
+            entry.type = entry.type || "info";
+            appendDebugLogEntry(entry);
+        }
+        debugLog("info", "Loaded " + prev.log.length + " entries from previous session");
+    }
+    if (prev.errors && prev.errors.length > 0) {
+        debugLog("warn", prev.errors.length + " errors in previous session");
+    }
+});
+
+// Check if there's data from a previous crash
+{
+    const prev = debugLoadPrevious();
+    if (prev && prev.log && prev.log.length > 0) {
+        const errCount = prev.errors ? prev.errors.length : 0;
+        debugLog("info", "Previous session data available (" + prev.log.length +
+                 " entries, " + errCount + " errors, saved " + prev.savedAt +
+                 "). Click [Prev] to load.");
+    }
+}
+
+debugLog("info", "Debug initialized. Degree=" + (coefficients.length - 1) +
+         ", workers=" + numWorkers + ", solver=" + solverType +
+         ", heap=" + (debugMemString() || "unavailable (use Chrome Task Manager Shift+Esc)"));
 </script>
 </body>
 </html>

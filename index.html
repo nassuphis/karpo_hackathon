@@ -624,7 +624,8 @@ body.fast-mode #bitmap-fast-btn {
             <span class="tab-bar-controls" id="left-tab-zoom">
                 <button class="icon-btn" id="coeff-zoom-out" title="Zoom out 25%">&minus;</button>
                 <button class="icon-btn" id="coeff-zoom-in" title="Zoom in 25%">+</button>
-                <button class="icon-btn" id="coeff-fit" title="Fit to extent" style="font-size:9px;letter-spacing:0.5px;">Fit</button>
+                <button class="icon-btn" id="coeff-fit-c" title="Fit centered on origin" style="font-size:9px;letter-spacing:0.5px;">FitC</button>
+                <button class="icon-btn" id="coeff-fit-s" title="Fit centered on selected nodes" style="font-size:9px;letter-spacing:0.5px;">FitS</button>
             </span>
         </div>
         <div class="tab-panes" id="left-tab-panes">
@@ -967,19 +968,19 @@ let S = getPanelSize();
 
 // Per-panel state
 const panels = {
-    coeff: { range: 3, xScale: null, yScale: null, gridG: null, axisG: null, labelRe: null, labelIm: null, unitCircle: null },
-    roots: { range: 3, xScale: null, yScale: null, gridG: null, axisG: null, labelRe: null, labelIm: null, unitCircle: null }
+    coeff: { range: 3, centerRe: 0, centerIm: 0, xScale: null, yScale: null, gridG: null, axisG: null, labelRe: null, labelIm: null, unitCircle: null },
+    roots: { range: 3, centerRe: 0, centerIm: 0, xScale: null, yScale: null, gridG: null, axisG: null, labelRe: null, labelIm: null, unitCircle: null }
 };
 
-function makeScales(range) {
+function makeScales(range, cRe, cIm) {
     return {
-        x: d3.scaleLinear().domain([-range, range]).range([MARGIN, S - MARGIN]),
-        y: d3.scaleLinear().domain([-range, range]).range([S - MARGIN, MARGIN])
+        x: d3.scaleLinear().domain([cRe - range, cRe + range]).range([MARGIN, S - MARGIN]),
+        y: d3.scaleLinear().domain([cIm - range, cIm + range]).range([S - MARGIN, MARGIN])
     };
 }
 
 function initPanelScales(p) {
-    const s = makeScales(p.range);
+    const s = makeScales(p.range, p.centerRe || 0, p.centerIm || 0);
     p.xScale = s.x;
     p.yScale = s.y;
 }
@@ -1925,6 +1926,9 @@ function computeRange(points) {
 
 function drawGrid(svgSel, p) {
     const xs = p.xScale, ys = p.yScale, range = p.range;
+    const cRe = p.centerRe || 0, cIm = p.centerIm || 0;
+    const lo = cRe - range, hi = cRe + range;
+    const loIm = cIm - range, hiIm = cIm + range;
 
     // Clear old grid elements
     if (p.gridG) p.gridG.remove();
@@ -1944,35 +1948,50 @@ function drawGrid(svgSel, p) {
         const norm = raw / mag;
         step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
     }
-    const gridMax = Math.floor(range / step) * step;
-    for (let v = -gridMax; v <= gridMax; v += step) {
+    const gridLoX = Math.ceil(lo / step) * step;
+    const gridHiX = Math.floor(hi / step) * step;
+    const gridLoY = Math.ceil(loIm / step) * step;
+    const gridHiY = Math.floor(hiIm / step) * step;
+    for (let v = gridLoX; v <= gridHiX + step * 0.01; v += step) {
         p.gridG.append("line")
-            .attr("x1", xs(v)).attr("y1", ys(-range))
-            .attr("x2", xs(v)).attr("y2", ys(range));
+            .attr("x1", xs(v)).attr("y1", ys(loIm))
+            .attr("x2", xs(v)).attr("y2", ys(hiIm));
+    }
+    for (let v = gridLoY; v <= gridHiY + step * 0.01; v += step) {
         p.gridG.append("line")
-            .attr("x1", xs(-range)).attr("y1", ys(v))
-            .attr("x2", xs(range)).attr("y2", ys(v));
+            .attr("x1", xs(lo)).attr("y1", ys(v))
+            .attr("x2", xs(hi)).attr("y2", ys(v));
     }
 
-    // Axes
+    // Axes (through origin, clipped to visible range)
     p.axisG = svgSel.insert("g", ":first-child").attr("class", "axis");
-    p.axisG.append("line")
-        .attr("x1", xs(-range)).attr("y1", ys(0))
-        .attr("x2", xs(range)).attr("y2", ys(0));
-    p.axisG.append("line")
-        .attr("x1", xs(0)).attr("y1", ys(-range))
-        .attr("x2", xs(0)).attr("y2", ys(range));
+    if (loIm <= 0 && 0 <= hiIm) {
+        p.axisG.append("line")
+            .attr("x1", xs(lo)).attr("y1", ys(0))
+            .attr("x2", xs(hi)).attr("y2", ys(0));
+    }
+    if (lo <= 0 && 0 <= hi) {
+        p.axisG.append("line")
+            .attr("x1", xs(0)).attr("y1", ys(loIm))
+            .attr("x2", xs(0)).attr("y2", ys(hiIm));
+    }
 
-    // Axis labels
-    p.labelRe = svgSel.append("text").attr("x", S - MARGIN + 4).attr("y", ys(0) + 4)
-        .attr("fill", "#556").attr("font-size", 11).text("Re");
-    p.labelIm = svgSel.append("text").attr("x", xs(0) + 6).attr("y", MARGIN - 4)
-        .attr("fill", "#556").attr("font-size", 11).text("Im");
+    // Axis labels (only if axes are visible)
+    if (loIm <= 0 && 0 <= hiIm) {
+        p.labelRe = svgSel.append("text").attr("x", S - MARGIN + 4).attr("y", ys(0) + 4)
+            .attr("fill", "#556").attr("font-size", 11).text("Re");
+    }
+    if (lo <= 0 && 0 <= hi) {
+        p.labelIm = svgSel.append("text").attr("x", xs(0) + 6).attr("y", MARGIN - 4)
+            .attr("fill", "#556").attr("font-size", 11).text("Im");
+    }
 
-    // Unit circle
+    // Unit circle (only if origin is in view)
     const r = Math.abs(xs(1) - xs(0));
-    p.unitCircle = svgSel.append("circle").attr("class", "unit-circle")
-        .attr("cx", xs(0)).attr("cy", ys(0)).attr("r", r);
+    if (lo <= 1 && -1 <= hi && loIm <= 1 && -1 <= hiIm) {
+        p.unitCircle = svgSel.append("circle").attr("class", "unit-circle")
+            .attr("cx", xs(0)).attr("cy", ys(0)).attr("r", r);
+    }
 }
 
 function setupPanel(svgSel, p) {
@@ -2576,11 +2595,20 @@ const drag = d3.drag()
         }
     });
 
-// Set the coefficient panel range and redraw all coeff/morph/final visuals.
-function setCoeffRange(newRange) {
+// Set the coefficient panel range (and optionally center) and redraw all coeff/morph/final visuals.
+function setCoeffView(newRange, cRe, cIm) {
     newRange = Math.max(MIN_RANGE, newRange);
-    if (Math.abs(panels.coeff.range - newRange) < 0.01) return;
-    updatePanelRange(coeffSvg, panels.coeff, newRange);
+    if (cRe == null) cRe = panels.coeff.centerRe || 0;
+    if (cIm == null) cIm = panels.coeff.centerIm || 0;
+    const rangeChanged = Math.abs(panels.coeff.range - newRange) >= 0.01;
+    const centerChanged = Math.abs((panels.coeff.centerRe || 0) - cRe) >= 0.001
+                       || Math.abs((panels.coeff.centerIm || 0) - cIm) >= 0.001;
+    if (!rangeChanged && !centerChanged) return;
+    panels.coeff.range = newRange;
+    panels.coeff.centerRe = cRe;
+    panels.coeff.centerIm = cIm;
+    initPanelScales(panels.coeff);
+    drawGrid(coeffSvg, panels.coeff);
     coeffLayer.selectAll("circle.coeff")
         .attr("cx", d => cxs()(d.re)).attr("cy", d => cys()(d.im));
     coeffLayer.selectAll(".coeff-label")
@@ -2591,8 +2619,9 @@ function setCoeffRange(newRange) {
         renderMorphPanel();
     }
 }
+function setCoeffRange(newRange) { setCoeffView(newRange); }
 
-// Fit the coefficient panel to encompass all relevant data.
+// FitC: Fit the coefficient panel centered on origin to encompass all relevant data.
 // On D-Nodes/Final tabs, includes C+D positions and the full morph interpolation path.
 function fitCoeffPanel() {
     let needed = computeRange(coefficients);
@@ -2626,7 +2655,25 @@ function fitCoeffPanel() {
             needed = Math.max(needed, computeRange(pts));
         }
     }
-    setCoeffRange(needed);
+    setCoeffView(needed, 0, 0);
+}
+
+// FitS: Fit the coefficient panel centered on the centroid of selected C-nodes.
+function fitCoeffSelection() {
+    const sel = [...selectedCoeffs].filter(i => i < coefficients.length);
+    if (sel.length === 0) { fitCoeffPanel(); return; } // fallback to FitC
+    // Compute centroid of selected nodes
+    let sumRe = 0, sumIm = 0;
+    for (const i of sel) { sumRe += coefficients[i].re; sumIm += coefficients[i].im; }
+    const cRe = sumRe / sel.length, cIm = sumIm / sel.length;
+    // Compute range: max distance from centroid across all selected nodes
+    let maxDist = MIN_RANGE;
+    for (const i of sel) {
+        maxDist = Math.max(maxDist, Math.abs(coefficients[i].re - cRe), Math.abs(coefficients[i].im - cIm));
+    }
+    const raw = maxDist * RANGE_PAD * 2;
+    const needed = isFinite(raw) ? Math.max(Math.ceil(raw) / 2, MIN_RANGE) : MIN_RANGE;
+    setCoeffView(needed, cRe, cIm);
 }
 
 // --- Coefficient selection & animation ---
@@ -7674,7 +7721,7 @@ function startRecording() {
             })),
             roots: currentRoots.map(r => [r.re, r.im]),
             panels: {
-                coeff: { range: panels.coeff.range },
+                coeff: { range: panels.coeff.range, centerRe: panels.coeff.centerRe || 0, centerIm: panels.coeff.centerIm || 0 },
                 roots: { range: panels.roots.range }
             }
         };
@@ -8755,7 +8802,7 @@ function applyLoadedState(meta) {
 
     // 4. Set panel ranges (must happen before computeCurve so coeffExtent works with correct scale)
     if (meta.panels) {
-        if (meta.panels.coeff) { panels.coeff.range = meta.panels.coeff.range; initPanelScales(panels.coeff); drawGrid(coeffSvg, panels.coeff); }
+        if (meta.panels.coeff) { panels.coeff.range = meta.panels.coeff.range; panels.coeff.centerRe = meta.panels.coeff.centerRe || 0; panels.coeff.centerIm = meta.panels.coeff.centerIm || 0; initPanelScales(panels.coeff); drawGrid(coeffSvg, panels.coeff); }
         if (meta.panels.roots) { panels.roots.range = meta.panels.roots.range; initPanelScales(panels.roots); drawGrid(rootsSvg, panels.roots); }
     }
 
@@ -12009,7 +12056,8 @@ leftTabButtons.forEach(btn => btn.addEventListener("click", () => switchLeftTab(
 // --- Coeff panel zoom controls ---
 document.getElementById("coeff-zoom-out").addEventListener("click", () => setCoeffRange(panels.coeff.range * 1.25));
 document.getElementById("coeff-zoom-in").addEventListener("click", () => setCoeffRange(panels.coeff.range * 0.75));
-document.getElementById("coeff-fit").addEventListener("click", () => fitCoeffPanel());
+document.getElementById("coeff-fit-c").addEventListener("click", () => fitCoeffPanel());
+document.getElementById("coeff-fit-s").addEventListener("click", () => fitCoeffSelection());
 
 // --- C-D Path popup ---
 let cdpathPopOpen = false;

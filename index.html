@@ -1474,6 +1474,7 @@ function startDebugWatchdog() {
     debugState.lastCheckedCounter = debugState.animLoopCounter;
     debugState.watchdogTimerId = setInterval(function() {
         if (!debugState.enabled) return;
+        if (document.hidden) return; // Tab is backgrounded — rAF won't fire, don't false-alarm
         if (!animState.playing || fastModeActive) {
             debugState.lastCheckedCounter = debugState.animLoopCounter;
             return;
@@ -6658,8 +6659,36 @@ document.getElementById("voice-toggle-btn").addEventListener("click", function (
 })();
 
 document.addEventListener("visibilitychange", function () {
-    if (document.hidden && audioNodes && audioCtx) {
-        audioNodes.masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
+    if (document.hidden) {
+        // Mute audio
+        if (audioNodes && audioCtx) {
+            audioNodes.masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
+        }
+        // Snapshot animation elapsed time before Safari freezes rAF
+        if (animState.playing && animState.startTime) {
+            animState._hiddenElapsed = (performance.now() - animState.startTime) / 1000;
+        }
+        // Pause fast mode workers before Safari kills them
+        if (fastModeActive && fastModeWorkers.length > 0) {
+            debugLog("warn", "Tab hidden — pausing fast mode to prevent Safari worker kill");
+            exitFastMode();
+            debugState._wasInFastMode = true;
+        }
+        // Reset watchdog so it doesn't false-alarm on return
+        debugState.lastCheckedCounter = debugState.animLoopCounter;
+    } else {
+        // Tab visible again — resync animation timing to avoid huge elapsed jumps
+        if (animState.playing && animState._hiddenElapsed != null) {
+            animState.startTime = performance.now() - animState._hiddenElapsed * 1000;
+            debugLog("info", "Tab visible — resynced animation timer (elapsed=" +
+                     animState._hiddenElapsed.toFixed(2) + "s)");
+            animState._hiddenElapsed = null;
+        }
+        // Notify if fast mode was interrupted
+        if (debugState._wasInFastMode) {
+            debugLog("warn", "Fast mode was paused when tab was hidden. Restart manually.");
+            debugState._wasInFastMode = false;
+        }
     }
 });
 

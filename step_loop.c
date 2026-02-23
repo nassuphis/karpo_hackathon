@@ -45,7 +45,7 @@ extern void js_reportProgress(int step);
 #define CI_CANVAS_W       2
 #define CI_CANVAS_H       3
 #define CI_TOTAL_STEPS    4
-#define CI_COLOR_MODE     5   /* 0=uniform, 1=index, 2=proximity, 3=derivative */
+#define CI_COLOR_MODE     5   /* 0=uniform, 1=index, 2=proximity, 3=derivative, 4=rel-proximity */
 #define CI_MATCH_STRATEGY 6   /* 0=assign4, 1=assign1, 2=hungarian1 */
 #define CI_MORPH_ENABLED  7
 #define CI_N_ENTRIES      8
@@ -127,7 +127,16 @@ extern void js_reportProgress(int step);
 #define CD_CENTER_X            7   /* bitmap viewport center X */
 #define CD_CENTER_Y            8   /* bitmap viewport center Y */
 #define CD_MORPH_DITHER_POW    9   /* power param for disk/square dither (0–1) */
-/* Total: 10 float64 config values */
+#define CD_REL_PROX_FLOOR      10  /* palette floor for rel-proximity (0–1) */
+#define CD_REL_PROX_CEILING    11  /* palette ceiling for rel-proximity (0–1) */
+#define CD_REL_PROX_FREQ       12  /* sine frequency for rel-proximity (0=linear) */
+#define CD_PROX_FLOOR          13  /* palette floor for proximity (0–1) */
+#define CD_PROX_CEILING        14  /* palette ceiling for proximity (0–1) */
+#define CD_PROX_FREQ           15  /* sine frequency for proximity (0=linear) */
+#define CD_DERIV_FLOOR         16  /* palette floor for derivative (0–1) */
+#define CD_DERIV_CEILING       17  /* palette ceiling for derivative (0–1) */
+#define CD_DERIV_FREQ          18  /* sine frequency for derivative (0=linear) */
+/* Total: 19 float64 config values */
 
 /* ================================================================
  * Global state (set by init)
@@ -141,6 +150,9 @@ static int nEntries, nDEntries, nFollowC, nSelIndices, hasJiggle;
 static int morphPathType, morphCcw;
 static double bitmapRange, FPS, morphRate, morphEllipseMinor, morphDitherStart, morphDitherMid, morphDitherEnd;
 static double centerX, centerY, morphDitherPow;
+static double relProxFloor, relProxCeiling, relProxFreq;
+static double proxFloor, proxCeiling, proxFreq;
+static double derivFloor, derivCeiling, derivFreq;
 static int morphDitherDistType;
 
 /* Data pointers */
@@ -552,6 +564,15 @@ void init(int cfgIntOffset, int cfgDblOffset)
     centerX          = cfgD[CD_CENTER_X];
     centerY          = cfgD[CD_CENTER_Y];
     morphDitherPow   = cfgD[CD_MORPH_DITHER_POW];
+    relProxFloor     = cfgD[CD_REL_PROX_FLOOR];
+    relProxCeiling   = cfgD[CD_REL_PROX_CEILING];
+    relProxFreq      = cfgD[CD_REL_PROX_FREQ];
+    proxFloor        = cfgD[CD_PROX_FLOOR];
+    proxCeiling      = cfgD[CD_PROX_CEILING];
+    proxFreq         = cfgD[CD_PROX_FREQ];
+    derivFloor       = cfgD[CD_DERIV_FLOOR];
+    derivCeiling     = cfgD[CD_DERIV_CEILING];
+    derivFreq        = cfgD[CD_DERIV_FREQ];
     morphPathType    = cfgI[CI_MORPH_PATH_TYPE];
     morphCcw         = cfgI[CI_MORPH_CCW];
     morphDitherDistType = cfgI[CI_MORPH_DITHER_DIST];
@@ -635,6 +656,7 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
     double range = bitmapRange;
     int nr = nRoots, nc = nCoeffs;
     double proxRunMax = 1.0;
+    double proxRunMin = 1e300;
 
     /* Copy pass roots to working roots */
     for (int i = 0; i < nr; i++) {
@@ -852,7 +874,13 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                 int ix = (int)(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
                 int iy = (int)((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
                 if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
-                int palIdx = (int)(normSens[i] * 15.0 + 0.5);
+                double td = normSens[i];
+                if (derivFreq > 0.0) {
+                    td = (derivCeiling - derivFloor) * (js_sin(td * 2.0 * 3.14159265358979323846 * derivFreq) + 1.0) * 0.5 + derivFloor;
+                } else {
+                    td = derivFloor + td * (derivCeiling - derivFloor);
+                }
+                int palIdx = (int)(td * 15.0 + 0.5);
                 if (palIdx > 15) palIdx = 15;
                 paintIdx[pc] = iy * W + ix;
                 paintR[pc] = derivPalR[palIdx];
@@ -889,6 +917,55 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                     t = minDists[i] / proxRunMax;
                     if (t > 1.0) t = 1.0;
                     t = 1.0 - t;
+                }
+                if (proxFreq > 0.0) {
+                    t = (proxCeiling - proxFloor) * (js_sin(t * 2.0 * 3.14159265358979323846 * proxFreq) + 1.0) * 0.5 + proxFloor;
+                } else {
+                    t = proxFloor + t * (proxCeiling - proxFloor);
+                }
+                int palIdx = (int)(t * 15.0);
+                if (palIdx < 0) palIdx = 0;
+                if (palIdx > 15) palIdx = 15;
+                paintIdx[pc] = iy * W + ix;
+                paintR[pc] = proxPalR[palIdx];
+                paintG[pc] = proxPalG[palIdx];
+                paintB[pc] = proxPalB[palIdx];
+                pc++;
+            }
+        } else if (colorMode == 4) {
+            /* Relative proximity mode — symmetric O(n²/2), rolling min+max */
+            double minDists4[MAX_DEG];
+            for (int i = 0; i < nr; i++) minDists4[i] = 1e300;
+            for (int i = 0; i < nr; i++) {
+                for (int j = i + 1; j < nr; j++) {
+                    double dx = tmpRe[i] - tmpRe[j], dy = tmpIm[i] - tmpIm[j];
+                    double d2 = dx * dx + dy * dy;
+                    if (d2 < minDists4[i]) minDists4[i] = d2;
+                    if (d2 < minDists4[j]) minDists4[j] = d2;
+                }
+            }
+            for (int i = 0; i < nr; i++) minDists4[i] = __builtin_sqrt(minDists4[i]);
+            for (int i = 0; i < nr; i++) {
+                if (minDists4[i] < proxRunMin) proxRunMin = minDists4[i];
+                if (minDists4[i] > proxRunMax) proxRunMax = minDists4[i];
+            }
+            proxRunMin *= 1.001;
+            proxRunMax *= 0.999;
+            for (int i = 0; i < nr; i++) {
+                rootsRe[i] = tmpRe[i]; rootsIm[i] = tmpIm[i];
+            }
+            for (int i = 0; i < nr; i++) {
+                int ix = (int)(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
+                int iy = (int)((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
+                if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
+                double denom = proxRunMax - proxRunMin;
+                double t = denom > 1e-12 ? (minDists4[i] - proxRunMin) / denom : 0.5;
+                if (t < 0.0) t = 0.0;
+                if (t > 1.0) t = 1.0;
+                if (relProxFreq > 0.0) {
+                    t = (relProxCeiling - relProxFloor) * (js_sin(t * 2.0 * 3.14159265358979323846 * relProxFreq) + 1.0) * 0.5 + relProxFloor;
+                } else {
+                    t = relProxFloor + t * (relProxCeiling - relProxFloor);
                 }
                 int palIdx = (int)(t * 15.0);
                 if (palIdx > 15) palIdx = 15;

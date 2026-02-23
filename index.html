@@ -766,6 +766,7 @@ body.fast-mode #bitmap-fast-btn {
                         <option value="InvertPositions">InvertPositions</option>
                         <option value="SortByModulus">SortByModulus</option>
                         <option value="SortByArgument">SortByArgument</option>
+                        <option value="ref2C">ref2C</option>
                     </select>
                     <span style="display:inline-flex;align-items:center;gap:2px;" title="Parameter for transforms">
                         <span style="font-size:7px;color:var(--muted);">Param1</span>
@@ -14488,6 +14489,17 @@ document.getElementById("dlist-transform").addEventListener("change", function()
                 d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
                 d.curveIndex = 0;
             }
+            changed = true;
+        }
+    } else if (action === "ref2C") {
+        for (const idx of selectedMorphCoeffs) {
+            const d = morphTargetCoeffs[idx];
+            if (!d.pathType.startsWith("orb-")) continue;
+            if (!d.extra) d.extra = {};
+            d.extra.refC = Math.min(idx, coefficients.length - 1);
+            const absR = d.radius / 100 * coeffExtent();
+            d.curve = computeCurve(d.re, d.im, d.pathType, absR, d.angle, d.extra);
+            d.curveIndex = 0;
             changed = true;
         }
     }

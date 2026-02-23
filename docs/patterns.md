@@ -126,6 +126,10 @@ Most patterns use `distributeOnPath(n, verts, closed)` — an arc-length-based p
 
 ## Parameter Ranges
 
+### Points (N)
+
+All path types (except None and Follow C) expose an **N** slider controlling the number of sample points in the precomputed curve. Stored in `extra.points`. Range **100--10000**, step 100, default 200. When not set, the effective default depends on path type: 1500 for space-filling paths (hilbert, peano, sierpinski, spiral) and 200 for all others. Higher values give smoother curves at the cost of memory.
+
 ### Speed
 
 Speed is stored internally as a float (0.001--1.0) and displayed/edited as an integer (1--1000) via `toUI: v => Math.round(v * 1000)` and `fromUI: v => v / 1000`. Resolution is **1/1000** of a full loop per second. The speed slider in C-List and D-List selection bars has `min="1" max="1000" step="1"`.

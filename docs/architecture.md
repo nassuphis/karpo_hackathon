@@ -97,7 +97,7 @@ Each coefficient is a plain object with these fields:
 - `speed` — Animation speed (internal 0–1.0 float, displayed as integer 0–1000 via `speed * 1000`, resolution 1/1000)
 - `angle` — Starting phase (0–1 turns)
 - `ccw` — Counter-clockwise flag
-- `extra` — Path-specific params (object, varies by pathType)
+- `extra` — Path-specific params (object, varies by pathType; may include `points` for user-defined curve resolution 100--10000)
 - `curve` — Pre-computed array of `{re, im}` points (N samples of the closed path)
 - `curveIndex` — Current integer index into `curve[]`
 

@@ -64,7 +64,7 @@ Located at the top of the C-Nodes tab (`#anim-bar`). Controls the animation path
 
 **First row:** Coefficient picker (`#coeff-picker-btn`), Select All (`#select-all-coeffs-btn`) / Deselect (`#deselect-all-btn`), selection label (`#bar-title`), **Update Whole Selection** button (`#sel2path-btn`).
 
-**Second row (`#bar-controls`):** Path type dropdown (`#anim-path`) and path-specific controls (`#bar-dynamic`). Sliders change based on the chosen path type (e.g. R/S/A/CW-CCW for circles, S/sigma for Gaussian). Adjusting controls shows a live preview of the proposed paths. Click away or press Escape to revert; click **Update Whole Selection** to commit. Controls dim when no coefficients are selected.
+**Second row (`#bar-controls`):** Path type dropdown (`#anim-path`) and path-specific controls (`#bar-dynamic`). Sliders change based on the chosen path type (e.g. R/S/A/CW-CCW/N for circles, S/sigma/N for Gaussian). All path types expose an **N** slider (100--10000, default 200) controlling curve sample point count. Adjusting controls shows a live preview of the proposed paths. Click away or press Escape to revert; click **Update Whole Selection** to commit. Controls dim when no coefficients are selected.
 
 #### Preview / Revert / Commit Pattern
 
@@ -112,7 +112,7 @@ Tabular view of all coefficients with per-row columns:
 | Path | Animation path type (clickable to open per-coefficient path picker popup) |
 | Speed | Animation speed (or dash) |
 | Radius | Path radius (or dash) |
-| Curve length | Number of sample points |
+| Curve length | Number of sample points (user-configurable via N parameter, 100--10000) |
 | Curve index | Current position along path |
 | Coordinates | Complex value (re + im*i) |
 

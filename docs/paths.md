@@ -13,7 +13,7 @@ Each coefficient (C-node) and morph target (D-node) stores the following path-re
 | `speed` | number | Loops per second, stored as 0.001--1.0 (displayed as integers 1--1000 via `toUI: v * 1000`, `fromUI: v / 1000`) |
 | `angle` | number | Rotation angle as fraction of a full turn (0--1.0, step 0.01) |
 | `ccw` | boolean | Direction: `false` = clockwise (CW), `true` = counter-clockwise (CCW) |
-| `extra` | object | Non-standard parameters keyed by name (e.g. `{ freqA: 3, freqB: 2 }` for Lissajous, `{ mult: 1.5, turns: 2 }` for spiral) |
+| `extra` | object | Non-standard parameters keyed by name (e.g. `{ freqA: 3, freqB: 2 }` for Lissajous, `{ mult: 1.5, turns: 2 }` for spiral, `{ points: 500 }` for custom curve resolution) |
 | `curve` | array | The sampled closed curve -- N complex points `[{re, im}, ...]` |
 | `curveIndex` | number | Integer curve index last set during animation (floor of rawIdx) |
 
@@ -23,9 +23,12 @@ Standard keys (`radius`, `speed`, `angle`, `ccw`) are stored directly on the coe
 
 Each animated coefficient stores a **sampled closed curve** -- an array of N complex points `curve[0], curve[1], ..., curve[N-1]` representing the trajectory in the complex plane. The first point `curve[0]` is the coefficient's **home position** (where it sits before animation starts).
 
-The number of sample points N depends on the path type:
-- **Standard paths** (circle, horizontal, vertical, random, lissajous, figure-8, cardioid, astroid, deltoid, rose, epitrochoid, hypotrochoid, butterfly, star, square, c-ellipse): N = 200 (interactive) or the Steps dropdown value (10K/50K/100K/1M) in fast mode
-- **High-resolution paths** (hilbert, peano, sierpinski, spiral): N = 1500 (interactive) or Steps value in fast mode
+The number of sample points N is determined by a three-tier priority:
+1. **User-defined** (`extra.points`): If set, N = `extra.points` (range 100--10000, step 100, default 200). Exposed as an "N" slider on every path type's parameter UI.
+2. **High-resolution paths** (hilbert, peano, sierpinski, spiral): If `extra.points` is not set, N = 1500
+3. **Standard paths** (all others): If `extra.points` is not set, N = 200
+
+In fast mode, curves are recomputed at the Steps dropdown resolution (10K/50K/100K/1M) regardless of the interactive N value.
 
 Constants: `COEFF_TRAIL_SAMPLES = 200`, `COEFF_TRAIL_SAMPLES_HI = 1500`, `_HIRES_PATHS = new Set(["hilbert", "peano", "sierpinski", "spiral"])`.
 
@@ -37,8 +40,8 @@ The curve is always closed: walking from index 0 through N-1 and wrapping back t
 
 Defines the parameter schema for each path type. Each entry is an array of parameter descriptors with `key`, `label`, `min`, `max`, `step`, `default`, and `fmt` fields. Standard parameter shortcuts:
 
-- `_RSAD` = `[speed, radius, angle, ccw]` -- most curve paths use this
-- `_RSD` = `[speed, radius, ccw]` -- horizontal, vertical (no angle)
+- `_RSAD` = `[speed, radius, angle, ccw, points]` -- most curve paths use this
+- `_RSD` = `[speed, radius, ccw, points]` -- horizontal, vertical (no angle)
 
 Full listing:
 
@@ -46,15 +49,17 @@ Full listing:
 |-----------|------------|
 | `none` | (none) |
 | `follow-c` | (none -- D-only) |
-| `circle` | S, R, A, CW/CCW |
-| `horizontal` | S, R, CW/CCW |
-| `vertical` | S, R, CW/CCW |
-| `spiral` | S, R (multiplier 0--2x), T (turns 0.5--5), CW/CCW |
-| `random` | S, sigma (0--10, as % of coeffExtent) |
-| `lissajous` | S, R, A, CW/CCW, a (freq 1--8), b (freq 1--8) |
-| `figure8` through `square` | S, R, A, CW/CCW |
-| `hilbert`, `peano`, `sierpinski` | S, R, A, CW/CCW |
-| `c-ellipse` | S, W (width 1--100%), CW/CCW |
+| `circle` | S, R, A, CW/CCW, N |
+| `horizontal` | S, R, CW/CCW, N |
+| `vertical` | S, R, CW/CCW, N |
+| `spiral` | S, R (multiplier 0--2x), T (turns 0.5--5), CW/CCW, N |
+| `random` | S, sigma (0--10, as % of coeffExtent), N |
+| `lissajous` | S, R, A, CW/CCW, a (freq 1--8), b (freq 1--8), N |
+| `figure8` through `square` | S, R, A, CW/CCW, N |
+| `hilbert`, `peano`, `sierpinski` | S, R, A, CW/CCW, N |
+| `c-ellipse` | S, W (width 1--100%), CW/CCW, N |
+
+**N** (points, 100--10000, step 100, default 200) controls the number of sample points in the precomputed curve. Stored in `extra.points`. When not explicitly set, defaults to 200 for standard paths or 1500 for space-filling paths.
 
 ### PATH_CATALOG
 
@@ -384,7 +389,7 @@ Both C-List and D-List toolbars have a **curve type cycler** -- prev/next arrow 
 
 ## Curve Building
 
-`computeCurve(homeRe, homeIm, pathType, radius, angle, extra)` is the main entry point for building a curve at interactive resolution (200 or 1500 points). It delegates to `computeCurveN(...)` which can also be called with an arbitrary N (used for fast mode hi-res curves).
+`computeCurve(homeRe, homeIm, pathType, radius, angle, extra)` is the main entry point for building a curve at interactive resolution. It reads `extra.points` if set (user-defined), otherwise falls back to 1500 for space-filling paths or 200 for standard paths. It delegates to `computeCurveN(...)` which can also be called with an arbitrary N (used for fast mode hi-res curves).
 
 The flow:
 1. **Random**: Generate N Gaussian points around home, flag `_isCloud = true`
@@ -435,7 +440,7 @@ Each coefficient is serialized as:
     "speed": 0.5,
     "angle": 0.33,
     "ccw": false,
-    "extra": { "freqA": 3 }
+    "extra": { "freqA": 3, "points": 500 }
 }
 ```
 
@@ -612,7 +617,7 @@ The C-List tab shows a row per coefficient with the following elements (built by
 | **Path** | Button showing path type name or "-" for none; click opens path picker popup | On path change |
 | **Speed** | Speed value (1--1000 display) or "-" if none | On path change |
 | **Radius** | Path radius (0--100) or "-" if none | On path change |
-| **Pts** | `curve.length` -- sample points in the trajectory (200 or 1500 for interactive; unrelated to the fast-mode Steps dropdown) | On path change |
+| **Pts** | `curve.length` -- sample points in the trajectory (user-defined via N slider, default 200 or 1500 for space-filling; unrelated to the fast-mode Steps dropdown) | On path change |
 | **Pos** | `c.curveIndex` -- the integer curve index last set during animation. Sweeps 0 -> N-1 -> 0 during animation. | Every frame via `updateListCoords()` |
 | **Coords** | Complex coordinates (re +/- im*i) | Every frame via `updateListCoords()` |
 

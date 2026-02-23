@@ -743,7 +743,13 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
         if (morphEnabled && !(morphCosT >= 1.0 - 1e-14 && morphSinT > -1e-14 && morphSinT < 1e-14)) {
             /* Skip blend when theta≈0 — avoids fp noise at home position */
             double cosT = morphCosT, sinT = morphSinT;
-            if (morphPathType == 0) {
+            if (morphPathType == 4) {
+                /* D-Node: no interpolation, just use D-node position directly */
+                for (int m = 0; m < nc; m++) {
+                    workCoeffsRe[m] = morphWorkRe[m];
+                    workCoeffsIm[m] = morphWorkIm[m];
+                }
+            } else if (morphPathType == 0) {
                 /* Line: mu = (1 - cos(theta)) / 2 */
                 double mu = 0.5 - 0.5 * cosT;
                 double omu = 1.0 - mu;

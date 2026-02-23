@@ -40,19 +40,19 @@ class TestCirclePath:
 
 class TestEllipsePath:
     def test_ellipse_points(self, page):
-        """c-ellipse with non-zero home should produce points at varying distances."""
+        """o-ellipse with non-zero home should produce points at varying distances."""
         home_re, home_im = 2.0, 1.0  # non-zero home (needed — ellipse between home and origin)
         extra = {"width": 50}
-        pts = compute_curve(page, home_re, home_im, "c-ellipse", 1.0, 0, extra, 100)
+        pts = compute_curve(page, home_re, home_im, "o-ellipse", 1.0, 0, extra, 100)
         assert len(pts) == 100
         dists = [math.sqrt(re ** 2 + im ** 2) for re, im in pts]
         assert max(dists) > min(dists) + 0.1, "Ellipse should show eccentricity"
 
     def test_ellipse_passes_through_home_and_origin(self, page):
-        """c-ellipse endpoints are at home and origin."""
+        """o-ellipse endpoints are at home and origin."""
         home_re, home_im = 2.0, 0.0
         extra = {"width": 50}
-        pts = compute_curve(page, home_re, home_im, "c-ellipse", 1.0, 0, extra, 1000)
+        pts = compute_curve(page, home_re, home_im, "o-ellipse", 1.0, 0, extra, 1000)
         # One point should be near home, another near origin
         min_home = min(math.sqrt((re - home_re) ** 2 + (im - home_im) ** 2) for re, im in pts)
         min_origin = min(math.sqrt(re ** 2 + im ** 2) for re, im in pts)
@@ -77,5 +77,5 @@ class TestPointCount:
     @pytest.mark.parametrize("n", [1, 10, 100])
     def test_correct_count_spiral(self, page, n):
         extra = {"turns": 3}
-        pts = compute_curve(page, 1, 0, "spiral", 1.0, 0, extra, n)
+        pts = compute_curve(page, 1, 0, "o-spiral", 1.0, 0, extra, n)
         assert len(pts) == n

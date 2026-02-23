@@ -114,7 +114,7 @@ class TestAllAnimatedDCoeffs:
         result = page.evaluate("""() => {
             initMorphTarget();
             morphTargetCoeffs[0].pathType = "circle";
-            morphTargetCoeffs[2].pathType = "spiral";
+            morphTargetCoeffs[2].pathType = "o-spiral";
             var s = allAnimatedDCoeffs();
             var indices = Array.from(s).sort();
             // Restore
@@ -434,14 +434,14 @@ class TestDNodeSaveLoad:
             morphTargetCoeffs[1].curve = [{ re: 99, im: -99 }];
 
             if (morphTargetCoeffs.length > 2) {
-                morphTargetCoeffs[2].pathType = "spiral";
+                morphTargetCoeffs[2].pathType = "o-spiral";
                 morphTargetCoeffs[2].radius = 40;
                 morphTargetCoeffs[2].speed = 2;
                 morphTargetCoeffs[2].angle = 0;
                 morphTargetCoeffs[2].ccw = true;
                 morphTargetCoeffs[2].extra = {};
                 morphTargetCoeffs[2].curve = computeCurve(
-                    morphTargetCoeffs[2].re, morphTargetCoeffs[2].im, "spiral",
+                    morphTargetCoeffs[2].re, morphTargetCoeffs[2].im, "o-spiral",
                     morphTargetCoeffs[2].radius / 100 * coeffExtent(), 0, {});
             }
 
@@ -472,7 +472,7 @@ class TestDNodeSaveLoad:
         assert abs(result["d1re"] - 99) < 1e-10
         assert abs(result["d1im"] - (-99)) < 1e-10
         if "d2path" in result:
-            assert result["d2path"] == "spiral"
+            assert result["d2path"] == "o-spiral"
             assert result["d2speed"] == 2
             assert result["d2ccw"] is True
             assert result["d2curveLen"] > 1

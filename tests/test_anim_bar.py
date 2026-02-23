@@ -408,11 +408,11 @@ class TestDListEditorFunction:
         """Editor dropdown should reflect first selected D-node's path type."""
         result = page.evaluate("""() => {
             initMorphTarget();
-            morphTargetCoeffs[0].pathType = 'spiral';
+            morphTargetCoeffs[0].pathType = 'o-spiral';
             morphTargetCoeffs[0].radius = 50;
             morphTargetCoeffs[0].speed = 1;
             morphTargetCoeffs[0].curve = computeCurve(
-                morphTargetCoeffs[0].re, morphTargetCoeffs[0].im, 'spiral',
+                morphTargetCoeffs[0].re, morphTargetCoeffs[0].im, 'o-spiral',
                 morphTargetCoeffs[0].radius / 100 * coeffExtent(), 0, {});
 
             selectedMorphCoeffs.add(0);
@@ -427,4 +427,4 @@ class TestDListEditorFunction:
             switchLeftTab('coeffs');
             return shown;
         }""")
-        assert result == "spiral"
+        assert result == "o-spiral"

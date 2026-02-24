@@ -114,7 +114,12 @@ extern void js_reportProgress(int step);
 #define CI_OFF_ENTRY_DITHER_DIST  67  /* per-entry int32 array: 0=normal, 1=uniform */
 #define CI_OFF_DENTRY_DITHER_DIST 68  /* per-D-entry int32 array: 0=normal, 1=uniform */
 #define CI_MORPH_DITHER_DIST      69  /* 0=normal, 1=disk, 2=square */
-/* Total: 70 int32 config values */
+#define CI_NPINNED                70
+#define CI_OFF_PINNED_RE          71
+#define CI_OFF_PINNED_IM          72
+#define CI_OFF_EXP_RE             73
+#define CI_OFF_EXP_IM             74
+/* Total: 75 int32 config values */
 
 /* Config float64 indices */
 #define CD_RANGE              0
@@ -136,7 +141,8 @@ extern void js_reportProgress(int step);
 #define CD_DERIV_FLOOR         16  /* palette floor for derivative (0–1) */
 #define CD_DERIV_CEILING       17  /* palette ceiling for derivative (0–1) */
 #define CD_DERIV_FREQ          18  /* sine frequency for derivative (0=linear) */
-/* Total: 19 float64 config values */
+#define CD_PINNED_EPSILON      19  /* soft-pin perturbation: P(z) = Q(z)·R(z) + ε */
+/* Total: 20 float64 config values */
 
 /* ================================================================
  * Global state (set by init)
@@ -153,6 +159,7 @@ static double centerX, centerY, morphDitherPow;
 static double relProxFloor, relProxCeiling, relProxFreq;
 static double proxFloor, proxCeiling, proxFreq;
 static double derivFloor, derivCeiling, derivFreq;
+static double pinnedEpsilon;
 static int morphDitherDistType;
 
 /* Data pointers */
@@ -181,6 +188,11 @@ static double *workCoeffsRe, *workCoeffsIm;
 static double *tmpRe, *tmpIm;
 static double *morphWorkRe, *morphWorkIm;
 static double *passRootsRe, *passRootsIm;
+
+/* Pinned roots (for polynomial expansion) */
+static int nPinned;
+static double *pinnedRe, *pinnedIm;
+static double *expCoeffsRe, *expCoeffsIm;
 
 /* Output buffers */
 static int *paintIdx;
@@ -573,6 +585,7 @@ void init(int cfgIntOffset, int cfgDblOffset)
     derivFloor       = cfgD[CD_DERIV_FLOOR];
     derivCeiling     = cfgD[CD_DERIV_CEILING];
     derivFreq        = cfgD[CD_DERIV_FREQ];
+    pinnedEpsilon    = cfgD[CD_PINNED_EPSILON];
     morphPathType    = cfgI[CI_MORPH_PATH_TYPE];
     morphCcw         = cfgI[CI_MORPH_CCW];
     morphDitherDistType = cfgI[CI_MORPH_DITHER_DIST];
@@ -641,6 +654,12 @@ void init(int cfgIntOffset, int cfgDblOffset)
     paintR        = PTR(unsigned char, CI_OFF_PAINT_R);
     paintG        = PTR(unsigned char, CI_OFF_PAINT_G);
     paintB        = PTR(unsigned char, CI_OFF_PAINT_B);
+
+    nPinned       = cfgI[CI_NPINNED];
+    pinnedRe      = PTR(double, CI_OFF_PINNED_RE);
+    pinnedIm      = PTR(double, CI_OFF_PINNED_IM);
+    expCoeffsRe   = PTR(double, CI_OFF_EXP_RE);
+    expCoeffsIm   = PTR(double, CI_OFF_EXP_IM);
     #undef PTR
 }
 
@@ -841,12 +860,35 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
             }
         }
 
+        /* 7.5. Expand Q(z) × Π(z - R_pi) → P(z) if pinned roots exist */
+        double *evalRe = workCoeffsRe, *evalIm = workCoeffsIm;
+        int evalNc = nc;
+        if (nPinned > 0) {
+            for (int i = 0; i < nc; i++) {
+                expCoeffsRe[i] = workCoeffsRe[i];
+                expCoeffsIm[i] = workCoeffsIm[i];
+            }
+            int len = nc;
+            for (int p = 0; p < nPinned; p++) {
+                double rr = pinnedRe[p], ri = pinnedIm[p];
+                expCoeffsRe[len] = -rr * expCoeffsRe[len-1] + ri * expCoeffsIm[len-1];
+                expCoeffsIm[len] = -rr * expCoeffsIm[len-1] - ri * expCoeffsRe[len-1];
+                for (int j = len - 1; j >= 1; j--) {
+                    expCoeffsRe[j] -= (rr * expCoeffsRe[j-1] - ri * expCoeffsIm[j-1]);
+                    expCoeffsIm[j] -= (rr * expCoeffsIm[j-1] + ri * expCoeffsRe[j-1]);
+                }
+                len++;
+            }
+            evalRe = expCoeffsRe; evalIm = expCoeffsIm; evalNc = len;
+        }
+        if (pinnedEpsilon != 0.0 && nPinned > 0) evalRe[evalNc - 1] += pinnedEpsilon;
+
         /* 8. Solve */
         for (int i = 0; i < nr; i++) {
             tmpRe[i] = rootsRe[i];
             tmpIm[i] = rootsIm[i];
         }
-        solveEA(workCoeffsRe, workCoeffsIm, nc, tmpRe, tmpIm, nr);
+        solveEA(evalRe, evalIm, evalNc, tmpRe, tmpIm, nr);
 
         /* NaN rescue */
         for (int i = 0; i < nr; i++) {
@@ -864,7 +906,7 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                 matchRootsGreedy(tmpRe, tmpIm, rootsRe, rootsIm, nr);
             }
             double rawSens[MAX_DEG], normSens[MAX_DEG];
-            computeSens(workCoeffsRe, workCoeffsIm, nc, tmpRe, tmpIm, nr,
+            computeSens(evalRe, evalIm, evalNc, tmpRe, tmpIm, nr,
                         selIndices, nSelIndices, rawSens);
             rankNorm(rawSens, normSens, nr);
             for (int i = 0; i < nr; i++) {

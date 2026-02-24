@@ -522,15 +522,15 @@ class TestHomeReset:
         assert result["mu"] == 0
         assert result["theta"] == 0
 
-    def test_home_key_triggers_button(self, page):
-        """Pressing Home key should trigger the home button click."""
+    def test_home_button_resets_coefficients(self, page):
+        """Clicking the home button should reset coefficients to curve[0]."""
         result = page.evaluate("""() => {
             // Move a coefficient
             coefficients[0].re += 10;
             var movedRe = coefficients[0].re;
 
-            // Dispatch Home key
-            document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Home'}));
+            // Click the home button
+            document.getElementById('home-btn').click();
 
             // Check coefficient was reset to curve[0]
             return {

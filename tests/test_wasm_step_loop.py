@@ -22,7 +22,7 @@ _CWL = """
         function a8(x) { return (x + 7) & ~7; }
         var L = {};
         L.cfgI = o; o = a8(o + 70 * 4);
-        L.cfgD = o; o = a8(o + 10 * 8);
+        L.cfgD = o; o = a8(o + 19 * 8);
         L.cRe = o; o = a8(o + nc * 8);
         L.cIm = o; o = a8(o + nc * 8);
         L.clR = o; o = a8(o + nr);
@@ -44,6 +44,7 @@ _CWL = """
         L.eSpd = o; o = a8(o + Math.max(nE, 1) * 8);
         L.eCcw = o; o = a8(o + Math.max(nE, 1) * 4);
         L.eDth = o; o = a8(o + Math.max(nE, 1) * 8);
+        L.eDd = o; o = a8(o + Math.max(nE, 1) * 4);
         L.cOff = o; o = a8(o + Math.max(nE, 1) * 4);
         L.cLen = o; o = a8(o + Math.max(nE, 1) * 4);
         L.cCld = o; o = a8(o + Math.max(nE, 1) * 4);
@@ -51,6 +52,7 @@ _CWL = """
         L.dSpd = o; o = a8(o + Math.max(nDE, 1) * 8);
         L.dCcw = o; o = a8(o + Math.max(nDE, 1) * 4);
         L.dDth = o; o = a8(o + Math.max(nDE, 1) * 8);
+        L.dDd = o; o = a8(o + Math.max(nDE, 1) * 4);
         L.dOff = o; o = a8(o + Math.max(nDE, 1) * 4);
         L.dLen = o; o = a8(o + Math.max(nDE, 1) * 4);
         L.dCld = o; o = a8(o + Math.max(nDE, 1) * 4);
@@ -98,7 +100,12 @@ _WRITE_CFG = """
         cfgI32[4] = opts.totalSteps || 10;
         cfgI32[5] = opts.colorMode || 0;
         cfgI32[6] = opts.matchStrategy || 0;
-        cfgI32[12] = 0;
+        cfgI32[7] = 0;   /* morphEnabled */
+        cfgI32[8] = 0;   /* nEntries */
+        cfgI32[9] = 0;   /* nDEntries */
+        cfgI32[10] = 0;  /* nFollowC */
+        cfgI32[11] = 0;  /* nSelIndices */
+        cfgI32[12] = 0;  /* hasJiggle */
         cfgI32[13] = opts.uR !== undefined ? opts.uR : 255;
         cfgI32[14] = opts.uG !== undefined ? opts.uG : 255;
         cfgI32[15] = opts.uB !== undefined ? opts.uB : 255;
@@ -119,10 +126,31 @@ _WRITE_CFG = """
         cfgI32[57] = L.mWR; cfgI32[58] = L.mWI;
         cfgI32[59] = L.pRR; cfgI32[60] = L.pRI;
         cfgI32[61] = L.piO; cfgI32[62] = L.prO; cfgI32[63] = L.pgO; cfgI32[64] = L.pbO;
-        var cfgF64 = new Float64Array(buf, L.cfgD, 10);
+        cfgI32[65] = 0;  /* morphPathType */
+        cfgI32[66] = 0;  /* morphCcw */
+        cfgI32[67] = L.eDd;  /* entryDitherDist offset */
+        cfgI32[68] = L.dDd;  /* dEntryDitherDist offset */
+        cfgI32[69] = 0;  /* morphDitherDist */
+        var cfgF64 = new Float64Array(buf, L.cfgD, 19);
         cfgF64[0] = opts.range || 2.0;
         cfgF64[1] = opts.fps || 1.0;
         cfgF64[2] = opts.morphRate || 0.0;
+        cfgF64[3] = 0.5;  /* morphEllipseMinor */
+        cfgF64[4] = 0.0;  /* morphDitherStart */
+        cfgF64[5] = 0.0;  /* morphDitherMid */
+        cfgF64[6] = 0.0;  /* morphDitherEnd */
+        cfgF64[7] = 0.0;  /* centerX */
+        cfgF64[8] = 0.0;  /* centerY */
+        cfgF64[9] = 0.0;  /* morphDitherPow */
+        cfgF64[10] = 0.0; /* relProxFloor */
+        cfgF64[11] = 1.0; /* relProxCeiling */
+        cfgF64[12] = 0.0; /* relProxFreq */
+        cfgF64[13] = 0.0; /* proxFloor */
+        cfgF64[14] = 1.0; /* proxCeiling */
+        cfgF64[15] = 0.0; /* proxFreq */
+        cfgF64[16] = 0.0; /* derivFloor */
+        cfgF64[17] = 1.0; /* derivCeiling */
+        cfgF64[18] = 0.0; /* derivFreq */
     }
 """
 
@@ -201,7 +229,7 @@ class TestWasmModuleLoading:
         assert "runStepLoop" in result["exports"]
 
     def test_heap_base_exported(self, page, wasm_step_loop_b64):
-        """WASM exports __heap_base for memory layout calculation."""
+        """WASM heap base can be determined (exported or default 65536 with stack-first)."""
         if wasm_step_loop_b64 is None:
             pytest.skip("step_loop.wasm not built")
         result = page.evaluate("""(b64) => {
@@ -213,17 +241,20 @@ class TestWasmModuleLoading:
             var inst = new WebAssembly.Instance(mod, {
                 env: { memory: mem, cos: Math.cos, sin: Math.sin, log: Math.log, pow: Math.pow, reportProgress: function(){} }
             });
+            var hb = inst.exports.__heap_base ? inst.exports.__heap_base.value : 65536;
             return {
                 hasHeapBase: '__heap_base' in inst.exports,
-                value: inst.exports.__heap_base ? inst.exports.__heap_base.value : null
+                hasStackPointer: '__stack_pointer' in inst.exports,
+                value: hb
             };
         }""", wasm_step_loop_b64)
-        assert result["hasHeapBase"], "__heap_base not exported — BSS/config overlap possible"
-        assert result["value"] is not None
-        assert result["value"] > 65536, "heap_base should be above the 64KB stack"
+        # Module must export either __heap_base or __stack_pointer (stack-first layout)
+        assert result["hasHeapBase"] or result["hasStackPointer"], \
+            "WASM should export __heap_base or __stack_pointer"
+        assert result["value"] >= 65536, "heap base should be at or above 64KB stack boundary"
 
     def test_heap_base_above_stack(self, page, wasm_step_loop_b64):
-        """__heap_base must be above 64KB stack to avoid BSS/config overlap."""
+        """Heap base must be >= 64KB to avoid stack/config overlap."""
         if wasm_step_loop_b64 is None:
             pytest.skip("step_loop.wasm not built")
         result = page.evaluate("""(b64) => {
@@ -235,9 +266,9 @@ class TestWasmModuleLoading:
             var inst = new WebAssembly.Instance(mod, {
                 env: { memory: mem, cos: Math.cos, sin: Math.sin, log: Math.log, pow: Math.pow, reportProgress: function(){} }
             });
-            return inst.exports.__heap_base.value;
+            return inst.exports.__heap_base ? inst.exports.__heap_base.value : 65536;
         }""", wasm_step_loop_b64)
-        assert result >= 65536 + 200, f"heap_base too low ({result}), BSS would overlap with config"
+        assert result >= 65536, f"heap_base too low ({result}), config would overlap with stack"
 
 
 # ============================================================

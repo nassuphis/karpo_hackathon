@@ -158,12 +158,12 @@ class TestSaveLoadRoundtrip:
 
 class TestUIChips:
     def test_chips_exist_in_popup(self, page):
-        """Bitmap cfg popup should show match strategy chips (3 under Rainbow + 3 under Idx×Prox)."""
+        """BITCFG tab should show match strategy chips (3 under Rainbow + 3 under Idx×Prox)."""
         result = page.evaluate("""() => {
             document.getElementById('bitmap-res-select').value = '1000';
             initBitmapCanvas();
-            openBitmapCfgPop();
-            var pop = document.getElementById('bitmap-cfg-pop');
+            switchTab('bitcfg');
+            var pop = document.getElementById('bitcfg-content');
             if (!pop) return [];
             var divs = pop.querySelectorAll('div');
             var labels = [];
@@ -172,7 +172,6 @@ class TestUIChips:
                 if (t === 'Hungarian' || t === 'Greedy\\u00d71' || t === 'Greedy\\u00d74')
                     labels.push(t);
             });
-            closeBitmapCfgPop();
             return labels;
         }""")
         assert len(result) == 6
@@ -183,8 +182,8 @@ class TestUIChips:
             bitmapMatchStrategy = 'assign4';
             document.getElementById('bitmap-res-select').value = '1000';
             initBitmapCanvas();
-            openBitmapCfgPop();
-            var pop = document.getElementById('bitmap-cfg-pop');
+            switchTab('bitcfg');
+            var pop = document.getElementById('bitcfg-content');
             var divs = pop.querySelectorAll('div');
             var active = null;
             divs.forEach(function(d) {
@@ -192,7 +191,6 @@ class TestUIChips:
                     active = d.textContent.trim();
                 }
             });
-            closeBitmapCfgPop();
             return active;
         }""")
         assert result is not None
@@ -204,14 +202,13 @@ class TestUIChips:
             bitmapMatchStrategy = 'assign4';
             document.getElementById('bitmap-res-select').value = '1000';
             initBitmapCanvas();
-            openBitmapCfgPop();
-            var pop = document.getElementById('bitmap-cfg-pop');
+            switchTab('bitcfg');
+            var pop = document.getElementById('bitcfg-content');
             var divs = pop.querySelectorAll('div');
             divs.forEach(function(d) {
                 if (d.textContent.trim() === 'Hungarian') d.click();
             });
             var result = bitmapMatchStrategy;
-            closeBitmapCfgPop();
             bitmapMatchStrategy = 'assign4';
             return result;
         }""")

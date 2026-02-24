@@ -590,11 +590,11 @@ class TestPatternUIExists:
         assert result is True
 
     def test_pattern_list_constant(self, page):
-        """PATTERN_LIST should have 21 entries."""
+        """PATTERN_LIST should have 22 entries."""
         result = page.evaluate("""() => {
             return PATTERN_LIST.length;
         }""")
-        assert result == 21
+        assert result == 22
 
 
 class TestPatternLargeN:
@@ -835,7 +835,12 @@ class TestPatternToolUI:
             pop.innerHTML = "";
             buildPatternTool(pop, snap);
 
-            // Positions should have changed (applied to circle by default)
+            // Select "circle" pattern (default is "identity" which keeps positions)
+            var sel = pop.querySelector("select");
+            sel.value = "circle";
+            sel.dispatchEvent(new Event("change"));
+
+            // Positions should have changed (applied to circle)
             var afterApply = coefficients.map(c => ({re: c.re, im: c.im}));
             var changed = false;
             for (var i = 0; i < afterApply.length; i++) {
@@ -874,6 +879,11 @@ class TestPatternToolUI:
             var pop = document.getElementById("ops-pop");
             pop.innerHTML = "";
             buildPatternTool(pop, snap);
+
+            // Select "circle" pattern (default is "identity" which keeps positions)
+            var sel = pop.querySelector("select");
+            sel.value = "circle";
+            sel.dispatchEvent(new Event("change"));
 
             // Positions changed
             var afterApply = coefficients.map(c => ({re: c.re, im: c.im}));
@@ -930,7 +940,7 @@ class TestPatternToolUI:
         assert result is True
 
     def test_has_select_dropdown(self, page):
-        """The pattern tool should have a select dropdown with 21 options."""
+        """The pattern tool should have a select dropdown with 22 options."""
         result = page.evaluate("""() => {
             for (var i = 0; i < coefficients.length; i++) selectedCoeffs.add(i);
             var snap = snapshotSelection();
@@ -943,7 +953,7 @@ class TestPatternToolUI:
             closeOpTool();
             return optCount;
         }""")
-        assert result == 21
+        assert result == 22
 
     def test_star_shows_controls(self, page):
         """Selecting Star should show the Inner R slider."""

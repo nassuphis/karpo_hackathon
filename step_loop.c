@@ -700,8 +700,10 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
     for (int step = stepStart; step < stepEnd; step++) {
         double elapsed = elapsedOffset + ((double)step / (double)totalSteps) * FPS;
 
-        /* 1. Reset coefficients to base values (if jiggle) */
-        if (hasJiggle) {
+        /* 1. Reset coefficients to base values each step.
+           Without this, morph (applied in-place) accumulates across steps
+           for non-animated coefficients not overwritten by C-curve interp. */
+        if (hasJiggle || morphEnabled) {
             for (int i = 0; i < nc; i++) {
                 workCoeffsRe[i] = coeffsRe[i];
                 workCoeffsIm[i] = coeffsIm[i];
@@ -784,7 +786,9 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
         if (morphEnabled && !(morphCosT >= 1.0 - 1e-14 && morphSinT > -1e-14 && morphSinT < 1e-14)) {
             /* Skip blend when theta≈0 — avoids fp noise at home position */
             double cosT = morphCosT, sinT = morphSinT;
-            if (morphPathType == 4) {
+            if (morphPathType == 5) {
+                /* C-Node: no interpolation, keep C-node position — skip morph entirely */
+            } else if (morphPathType == 4) {
                 /* D-Node: no interpolation, just use D-node position directly */
                 for (int m = 0; m < nc; m++) {
                     workCoeffsRe[m] = morphWorkRe[m];
@@ -838,12 +842,13 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                     workCoeffsIm[m] += dIm;
                 }
             }
-            /* Advance morph angle recurrence */
-            {
-                double nc2 = morphCosT * morphCosD - morphSinT * morphSinD;
-                double ns  = morphSinT * morphCosD + morphCosT * morphSinD;
-                morphCosT = nc2; morphSinT = ns;
-            }
+        }
+
+        /* 6b. Advance morph angle recurrence (always, even when blend was skipped) */
+        if (morphEnabled) {
+            double nc2 = morphCosT * morphCosD - morphSinT * morphSinD;
+            double ns  = morphSinT * morphCosD + morphCosT * morphSinD;
+            morphCosT = nc2; morphSinT = ns;
             /* Renormalize every 1024 steps to prevent drift */
             if (((step - stepStart) & 1023) == 0) {
                 double invLen = 1.0 / __builtin_sqrt(

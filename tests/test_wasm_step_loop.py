@@ -449,7 +449,7 @@ class TestWasmFastModeEndToEnd:
         page.evaluate("""() => {
             if (coefficients.length >= 3 && coefficients[1].pathType === 'none') {
                 coefficients[1].pathType = 'circle';
-                coefficients[1].radius = 0.3;
+                coefficients[1].rAbs = 0.3;
                 coefficients[1].speed = 1;
             }
         }""")
@@ -498,7 +498,7 @@ class TestWasmVsJsComparison:
             page.evaluate("""() => {
                 if (coefficients.length >= 3 && coefficients[1].pathType === 'none') {
                     coefficients[1].pathType = 'circle';
-                    coefficients[1].radius = 0.3;
+                    coefficients[1].rAbs = 0.3;
                     coefficients[1].speed = 1;
                 }
             }""")

@@ -352,11 +352,11 @@ class TestCListEditorFunction:
         result = page.evaluate("""() => {
             // Set coeff 1 to circle
             coefficients[1].pathType = 'circle';
-            coefficients[1].radius = 50;
+            coefficients[1].rAbs = 50;
             coefficients[1].speed = 1;
             coefficients[1].curve = computeCurve(
                 coefficients[1].re, coefficients[1].im, 'circle',
-                coefficients[1].radius / 100 * coeffExtent(), 0, {});
+                coefficients[1].rAbs, 0, {});
 
             // Select only coeff 1
             selectedCoeffs.add(1);
@@ -409,11 +409,11 @@ class TestDListEditorFunction:
         result = page.evaluate("""() => {
             initMorphTarget();
             morphTargetCoeffs[0].pathType = 'o-spiral';
-            morphTargetCoeffs[0].radius = 50;
+            morphTargetCoeffs[0].rAbs = 50;
             morphTargetCoeffs[0].speed = 1;
             morphTargetCoeffs[0].curve = computeCurve(
                 morphTargetCoeffs[0].re, morphTargetCoeffs[0].im, 'o-spiral',
-                morphTargetCoeffs[0].radius / 100 * coeffExtent(), 0, {});
+                morphTargetCoeffs[0].rAbs, 0, {});
 
             selectedMorphCoeffs.add(0);
             switchLeftTab('dlist');

@@ -36,7 +36,7 @@ class TestDiskCloud:
         }""")
         assert result is not None
         assert "speed" in result
-        assert "radius" in result
+        assert "rAbs" in result
         assert "pow" in result
         assert "points" in result
 
@@ -65,10 +65,10 @@ class TestDiskCloud:
     def test_disk_cloud_generates_curve(self, page):
         """computeCurveN should generate a cloud for disk-cloud."""
         result = page.evaluate("""() => {
-            var c = {re: 0, im: 0, pathType: 'disk-cloud', radius: 2, speed: 1,
+            var c = {re: 0, im: 0, pathType: 'disk-cloud', rAbs: 2, speed: 1,
                      angle: 0, ccw: false, extra: {pow: 1, points: 200},
                      curve: [{re:0, im:0}], curveIndex: 0};
-            var curve = computeCurveN(c.re, c.im, c.pathType, c.radius, c.angle, c.extra, 200);
+            var curve = computeCurveN(c.re, c.im, c.pathType, c.rAbs, c.angle, c.extra, 200);
             if (!curve) return null;
             return {
                 length: curve.length,
@@ -85,13 +85,13 @@ class TestDiskCloud:
         """All disk-cloud points should be within the specified radius."""
         result = page.evaluate("""() => {
             var R = 2;
-            var c = {re: 1, im: 1, pathType: 'disk-cloud', radius: R, speed: 1,
+            var c = {re: 1, im: 1, pathType: 'disk-cloud', rAbs: R, speed: 1,
                      angle: 0, ccw: false, extra: {pow: 1, points: 500},
                      curve: [{re:1, im:1}], curveIndex: 0};
-            var curve = computeCurveN(c.re, c.im, c.pathType, c.radius, c.angle, c.extra, 500);
+            var curve = computeCurveN(c.re, c.im, c.pathType, c.rAbs, c.angle, c.extra, 500);
             var maxDist = 0;
             for (var i = 0; i < curve.length; i++) {
-                var dx = curve[i].re - 1, dy = curve[i].im - 1;
+                var dx = curve[i].re, dy = curve[i].im;  // offsets from anchor
                 var d = Math.sqrt(dx*dx + dy*dy);
                 if (d > maxDist) maxDist = d;
             }
@@ -103,10 +103,10 @@ class TestDiskCloud:
         """Higher pow should concentrate points toward center."""
         result = page.evaluate("""() => {
             function avgDist(pow) {
-                var c = {re: 0, im: 0, pathType: 'disk-cloud', radius: 2, speed: 1,
+                var c = {re: 0, im: 0, pathType: 'disk-cloud', rAbs: 2, speed: 1,
                          angle: 0, ccw: false, extra: {pow: pow, points: 1000},
                          curve: [{re:0, im:0}], curveIndex: 0};
-                var curve = computeCurveN(c.re, c.im, c.pathType, c.radius, c.angle, c.extra, 1000);
+                var curve = computeCurveN(c.re, c.im, c.pathType, c.rAbs, c.angle, c.extra, 1000);
                 var sum = 0;
                 for (var i = 0; i < curve.length; i++) {
                     sum += Math.sqrt(curve[i].re*curve[i].re + curve[i].im*curve[i].im);
@@ -157,7 +157,7 @@ class TestSqCloud:
         }""")
         assert result is not None
         assert "speed" in result
-        assert "radius" in result
+        assert "rAbs" in result
         assert "pow" in result
         assert "points" in result
 
@@ -171,10 +171,10 @@ class TestSqCloud:
     def test_sq_cloud_generates_curve(self, page):
         """computeCurveN should generate a cloud for sq-cloud."""
         result = page.evaluate("""() => {
-            var c = {re: 0, im: 0, pathType: 'sq-cloud', radius: 2, speed: 1,
+            var c = {re: 0, im: 0, pathType: 'sq-cloud', rAbs: 2, speed: 1,
                      angle: 0, ccw: false, extra: {pow: 1, points: 200},
                      curve: [{re:0, im:0}], curveIndex: 0};
-            var curve = computeCurveN(c.re, c.im, c.pathType, c.radius, c.angle, c.extra, 200);
+            var curve = computeCurveN(c.re, c.im, c.pathType, c.rAbs, c.angle, c.extra, 200);
             if (!curve) return null;
             return {
                 length: curve.length,
@@ -191,13 +191,13 @@ class TestSqCloud:
         """All sq-cloud points should be within [-R, R] × [-R, R] of center."""
         result = page.evaluate("""() => {
             var R = 2;
-            var c = {re: 1, im: 1, pathType: 'sq-cloud', radius: R, speed: 1,
+            var c = {re: 1, im: 1, pathType: 'sq-cloud', rAbs: R, speed: 1,
                      angle: 0, ccw: false, extra: {pow: 1, points: 500},
                      curve: [{re:1, im:1}], curveIndex: 0};
-            var curve = computeCurveN(c.re, c.im, c.pathType, c.radius, c.angle, c.extra, 500);
+            var curve = computeCurveN(c.re, c.im, c.pathType, c.rAbs, c.angle, c.extra, 500);
             var maxX = 0, maxY = 0;
             for (var i = 0; i < curve.length; i++) {
-                var dx = Math.abs(curve[i].re - 1), dy = Math.abs(curve[i].im - 1);
+                var dx = Math.abs(curve[i].re), dy = Math.abs(curve[i].im);  // offsets from anchor
                 if (dx > maxX) maxX = dx;
                 if (dy > maxY) maxY = dy;
             }
@@ -209,10 +209,10 @@ class TestSqCloud:
         """Higher pow should concentrate points toward center for sq-cloud."""
         result = page.evaluate("""() => {
             function avgDist(pow) {
-                var c = {re: 0, im: 0, pathType: 'sq-cloud', radius: 2, speed: 1,
+                var c = {re: 0, im: 0, pathType: 'sq-cloud', rAbs: 2, speed: 1,
                          angle: 0, ccw: false, extra: {pow: pow, points: 1000},
                          curve: [{re:0, im:0}], curveIndex: 0};
-                var curve = computeCurveN(c.re, c.im, c.pathType, c.radius, c.angle, c.extra, 1000);
+                var curve = computeCurveN(c.re, c.im, c.pathType, c.rAbs, c.angle, c.extra, 1000);
                 var sum = 0;
                 for (var i = 0; i < curve.length; i++) {
                     sum += Math.sqrt(curve[i].re*curve[i].re + curve[i].im*curve[i].im);

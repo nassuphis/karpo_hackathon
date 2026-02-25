@@ -129,14 +129,14 @@ class TestFinalTrailData:
         result = page.evaluate("""() => {
             // Setup: give coeff[0] a circle path
             coefficients[0].pathType = "circle";
-            coefficients[0].radius = 50;
+            coefficients[0].rAbs = 50;
             coefficients[0].speed = 1;
             coefficients[0].angle = 0;
             coefficients[0].ccw = false;
             coefficients[0].extra = {};
             coefficients[0].curve = computeCurve(
                 coefficients[0].re, coefficients[0].im, "circle",
-                coefficients[0].radius / 100 * coeffExtent(), 0, {});
+                coefficients[0].rAbs, 0, {});
 
             trailsEnabled = true;
             finalTrailData = [];
@@ -339,14 +339,14 @@ class TestAnimationWithFinalTrails:
         result = page.evaluate("""() => {
             // Setup animation on coeff[0]
             coefficients[0].pathType = "circle";
-            coefficients[0].radius = 50;
+            coefficients[0].rAbs = 50;
             coefficients[0].speed = 1;
             coefficients[0].angle = 0;
             coefficients[0].ccw = false;
             coefficients[0].extra = {};
             coefficients[0].curve = computeCurve(
                 coefficients[0].re, coefficients[0].im, "circle",
-                coefficients[0].radius / 100 * coeffExtent(), 0, {});
+                coefficients[0].rAbs, 0, {});
 
             switchLeftTab('final');
             trailsEnabled = true;

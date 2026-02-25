@@ -61,14 +61,14 @@ class TestStartAnimationGuard:
         """If C nodes have paths, startAnimation should allow start."""
         result = page.evaluate("""() => {
             coefficients[0].pathType = "circle";
-            coefficients[0].radius = 50;
+            coefficients[0].rAbs = 50;
             coefficients[0].speed = 1;
             coefficients[0].angle = 0;
             coefficients[0].ccw = false;
             coefficients[0].extra = {};
             coefficients[0].curve = computeCurve(
                 coefficients[0].re, coefficients[0].im, "circle",
-                coefficients[0].radius / 100 * coeffExtent(), 0, {});
+                coefficients[0].rAbs, 0, {});
 
             animState.playing = false;
             startAnimation();
@@ -93,14 +93,14 @@ class TestStartAnimationGuard:
             // But D has a path
             initMorphTarget();
             morphTargetCoeffs[0].pathType = "circle";
-            morphTargetCoeffs[0].radius = 50;
+            morphTargetCoeffs[0].rAbs = 50;
             morphTargetCoeffs[0].speed = 1;
             morphTargetCoeffs[0].angle = 0;
             morphTargetCoeffs[0].ccw = false;
             morphTargetCoeffs[0].extra = {};
             morphTargetCoeffs[0].curve = computeCurve(
                 morphTargetCoeffs[0].re, morphTargetCoeffs[0].im, "circle",
-                morphTargetCoeffs[0].radius / 100 * coeffExtent(), 0, {});
+                morphTargetCoeffs[0].rAbs, 0, {});
 
             animState.playing = false;
             startAnimation();
@@ -120,12 +120,12 @@ class TestHomeButton:
         result = page.evaluate("""() => {
             var c = coefficients[0];
             c.pathType = "circle";
-            c.radius = 50;
+            c.rAbs = 50;
             c.speed = 1;
             c.angle = 0;
             c.ccw = false;
             c.extra = {};
-            c.curve = computeCurve(c.re, c.im, "circle", c.radius / 100 * coeffExtent(), 0, {});
+            c.curve = computeCurve(c.re, c.im, "circle", c.rAbs, 0, {});
             var homeRe = c.curve[0].re;
             var homeIm = c.curve[0].im;
 
@@ -154,12 +154,12 @@ class TestHomeButton:
             initMorphTarget();
             var d = morphTargetCoeffs[0];
             d.pathType = "circle";
-            d.radius = 50;
+            d.rAbs = 50;
             d.speed = 1;
             d.angle = 0;
             d.ccw = false;
             d.extra = {};
-            d.curve = computeCurve(d.re, d.im, "circle", d.radius / 100 * coeffExtent(), 0, {});
+            d.curve = computeCurve(d.re, d.im, "circle", d.rAbs, 0, {});
             var homeRe = d.curve[0].re;
             var homeIm = d.curve[0].im;
 
@@ -186,12 +186,12 @@ class TestHomeButton:
             initMorphTarget();
             var d = morphTargetCoeffs[0];
             d.pathType = "circle";
-            d.radius = 50;
+            d.rAbs = 50;
             d.speed = 1;
             d.angle = 0;
             d.ccw = false;
             d.extra = {};
-            d.curve = computeCurve(d.re, d.im, "circle", d.radius / 100 * coeffExtent(), 0, {});
+            d.curve = computeCurve(d.re, d.im, "circle", d.rAbs, 0, {});
             d.curveIndex = 50;
 
             document.getElementById('home-btn').click();
@@ -211,12 +211,12 @@ class TestScrubSlider:
         result = page.evaluate("""() => {
             var c = coefficients[0];
             c.pathType = "circle";
-            c.radius = 50;
+            c.rAbs = 50;
             c.speed = 1;
             c.angle = 0;
             c.ccw = false;
             c.extra = {};
-            c.curve = computeCurve(c.re, c.im, "circle", c.radius / 100 * coeffExtent(), 0, {});
+            c.curve = computeCurve(c.re, c.im, "circle", c.rAbs, 0, {});
             var homeRe = c.curve[0].re;
             animState.elapsedAtPause = null;
             scrubBase = 0;
@@ -242,12 +242,12 @@ class TestScrubSlider:
             initMorphTarget();
             var d = morphTargetCoeffs[0];
             d.pathType = "circle";
-            d.radius = 50;
+            d.rAbs = 50;
             d.speed = 1;
             d.angle = 0;
             d.ccw = false;
             d.extra = {};
-            d.curve = computeCurve(d.re, d.im, "circle", d.radius / 100 * coeffExtent(), 0, {});
+            d.curve = computeCurve(d.re, d.im, "circle", d.rAbs, 0, {});
             var homeRe = d.curve[0].re;
             animState.elapsedAtPause = null;
             scrubBase = 0;
@@ -271,12 +271,12 @@ class TestScrubSlider:
         result = page.evaluate("""() => {
             var c = coefficients[0];
             c.pathType = "circle";
-            c.radius = 50;
+            c.rAbs = 50;
             c.speed = 1;
             c.angle = 0;
             c.ccw = false;
             c.extra = {};
-            c.curve = computeCurve(c.re, c.im, "circle", c.radius / 100 * coeffExtent(), 0, {});
+            c.curve = computeCurve(c.re, c.im, "circle", c.rAbs, 0, {});
             var homeRe = c.curve[0].re;
             var homeIm = c.curve[0].im;
             animState.elapsedAtPause = null;
@@ -304,12 +304,12 @@ class TestScrubSlider:
         result = page.evaluate("""() => {
             var c = coefficients[0];
             c.pathType = "circle";
-            c.radius = 50;
+            c.rAbs = 50;
             c.speed = 1;
             c.angle = 0;
             c.ccw = false;
             c.extra = {};
-            c.curve = computeCurve(c.re, c.im, "circle", c.radius / 100 * coeffExtent(), 0, {});
+            c.curve = computeCurve(c.re, c.im, "circle", c.rAbs, 0, {});
             animState.elapsedAtPause = null;
             scrubBase = 0;
 

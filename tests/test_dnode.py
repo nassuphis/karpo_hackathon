@@ -171,12 +171,12 @@ class TestAdvanceDNodesAlongCurves:
             initMorphTarget();
             var d = morphTargetCoeffs[0];
             d.pathType = "circle";
-            d.radius = 50;
+            d.rAbs = 50;
             d.speed = 1;
             d.ccw = false;
             d.angle = 0;
             d.extra = {};
-            d.curve = computeCurve(d.re, d.im, "circle", d.radius / 100 * coeffExtent(), d.angle, d.extra);
+            d.curve = computeCurve(d.re, d.im, "circle", d.rAbs, d.angle, d.extra);
             var origRe = d.re;
             var origIm = d.im;
             advanceDNodesAlongCurves(0.25);  // quarter cycle
@@ -196,12 +196,12 @@ class TestAdvanceDNodesAlongCurves:
             initMorphTarget();
             var d = morphTargetCoeffs[0];
             d.pathType = "circle";
-            d.radius = 50;
+            d.rAbs = 50;
             d.speed = 1;
             d.ccw = false;
             d.angle = 0;
             d.extra = {};
-            d.curve = computeCurve(d.re, d.im, "circle", d.radius / 100 * coeffExtent(), d.angle, d.extra);
+            d.curve = computeCurve(d.re, d.im, "circle", d.rAbs, d.angle, d.extra);
             var c0re = d.curve[0].re;
             var c0im = d.curve[0].im;
             advanceDNodesAlongCurves(0);
@@ -217,18 +217,18 @@ class TestAdvanceDNodesAlongCurves:
             initMorphTarget();
             // Setup CW
             var d0 = morphTargetCoeffs[0];
-            d0.pathType = "circle"; d0.radius = 50; d0.speed = 1;
+            d0.pathType = "circle"; d0.rAbs = 50; d0.speed = 1;
             d0.ccw = false; d0.angle = 0; d0.extra = {};
-            d0.curve = computeCurve(d0.re, d0.im, "circle", d0.radius / 100 * coeffExtent(), d0.angle, d0.extra);
+            d0.curve = computeCurve(d0.re, d0.im, "circle", d0.rAbs, d0.angle, d0.extra);
             advanceDNodesAlongCurves(0.25);
             var cwRe = d0.re, cwIm = d0.im;
 
             // Reset and setup CCW
             initMorphTarget();
             var d1 = morphTargetCoeffs[0];
-            d1.pathType = "circle"; d1.radius = 50; d1.speed = 1;
+            d1.pathType = "circle"; d1.rAbs = 50; d1.speed = 1;
             d1.ccw = true; d1.angle = 0; d1.extra = {};
-            d1.curve = computeCurve(d1.re, d1.im, "circle", d1.radius / 100 * coeffExtent(), d1.angle, d1.extra);
+            d1.curve = computeCurve(d1.re, d1.im, "circle", d1.rAbs, d1.angle, d1.extra);
             advanceDNodesAlongCurves(0.25);
             var ccwRe = d1.re, ccwIm = d1.im;
 
@@ -243,18 +243,18 @@ class TestAdvanceDNodesAlongCurves:
             initMorphTarget();
             // Speed 1
             var d = morphTargetCoeffs[0];
-            d.pathType = "circle"; d.radius = 50; d.speed = 1;
+            d.pathType = "circle"; d.rAbs = 50; d.speed = 1;
             d.ccw = false; d.angle = 0; d.extra = {};
-            d.curve = computeCurve(d.re, d.im, "circle", d.radius / 100 * coeffExtent(), d.angle, d.extra);
+            d.curve = computeCurve(d.re, d.im, "circle", d.rAbs, d.angle, d.extra);
             advanceDNodesAlongCurves(0.1);
             var pos1Re = d.re, pos1Im = d.im;
 
             // Reset, speed 2
             initMorphTarget();
             d = morphTargetCoeffs[0];
-            d.pathType = "circle"; d.radius = 50; d.speed = 2;
+            d.pathType = "circle"; d.rAbs = 50; d.speed = 2;
             d.ccw = false; d.angle = 0; d.extra = {};
-            d.curve = computeCurve(d.re, d.im, "circle", d.radius / 100 * coeffExtent(), d.angle, d.extra);
+            d.curve = computeCurve(d.re, d.im, "circle", d.rAbs, d.angle, d.extra);
             advanceDNodesAlongCurves(0.1);
             var pos2Re = d.re, pos2Im = d.im;
 
@@ -269,24 +269,24 @@ class TestAdvanceDNodesAlongCurves:
             initMorphTarget();
             // d0: circle, d1: circle with different speed
             morphTargetCoeffs[0].pathType = "circle";
-            morphTargetCoeffs[0].radius = 50;
+            morphTargetCoeffs[0].rAbs = 50;
             morphTargetCoeffs[0].speed = 1;
             morphTargetCoeffs[0].ccw = false;
             morphTargetCoeffs[0].angle = 0;
             morphTargetCoeffs[0].extra = {};
             morphTargetCoeffs[0].curve = computeCurve(
                 morphTargetCoeffs[0].re, morphTargetCoeffs[0].im, "circle",
-                morphTargetCoeffs[0].radius / 100 * coeffExtent(), 0, {});
+                morphTargetCoeffs[0].rAbs, 0, {});
 
             morphTargetCoeffs[1].pathType = "circle";
-            morphTargetCoeffs[1].radius = 50;
+            morphTargetCoeffs[1].rAbs = 50;
             morphTargetCoeffs[1].speed = 3;
             morphTargetCoeffs[1].ccw = false;
             morphTargetCoeffs[1].angle = 0;
             morphTargetCoeffs[1].extra = {};
             morphTargetCoeffs[1].curve = computeCurve(
                 morphTargetCoeffs[1].re, morphTargetCoeffs[1].im, "circle",
-                morphTargetCoeffs[1].radius / 100 * coeffExtent(), 0, {});
+                morphTargetCoeffs[1].rAbs, 0, {});
 
             advanceDNodesAlongCurves(0.1);
             var d0re = morphTargetCoeffs[0].re;
@@ -306,7 +306,7 @@ class TestDNodeSaveLoad:
         result = page.evaluate("""() => {
             initMorphTarget();
             morphTargetCoeffs[0].pathType = "circle";
-            morphTargetCoeffs[0].radius = 42;
+            morphTargetCoeffs[0].rAbs = 42;
             morphTargetCoeffs[0].speed = 2.5;
             morphTargetCoeffs[0].angle = 30;
             morphTargetCoeffs[0].ccw = true;
@@ -316,7 +316,7 @@ class TestDNodeSaveLoad:
             var d0 = meta.morph.target[0];
             return {
                 pathType: d0.pathType,
-                radius: d0.radius,
+                rAbs: d0.rAbs,
                 speed: d0.speed,
                 angle: d0.angle,
                 ccw: d0.ccw,
@@ -326,7 +326,7 @@ class TestDNodeSaveLoad:
             };
         }""")
         assert result["pathType"] == "circle"
-        assert result["radius"] == 42
+        assert result["rAbs"] == 42
         assert abs(result["speed"] - 2.5) < 1e-10
         assert result["angle"] == 30
         assert result["ccw"] is True
@@ -340,12 +340,12 @@ class TestDNodeSaveLoad:
             initMorphTarget();
             var d = morphTargetCoeffs[0];
             d.pathType = "circle";
-            d.radius = 42;
+            d.rAbs = 42;
             d.speed = 2.5;
             d.angle = 30;
             d.ccw = true;
             d.extra = {};
-            d.curve = computeCurve(d.re, d.im, "circle", d.radius / 100 * coeffExtent(), d.angle, d.extra);
+            d.curve = computeCurve(d.re, d.im, "circle", d.rAbs, d.angle, d.extra);
 
             var meta = buildStateMetadata();
             initMorphTarget();
@@ -353,7 +353,7 @@ class TestDNodeSaveLoad:
 
             return {
                 pathType: morphTargetCoeffs[0].pathType,
-                radius: morphTargetCoeffs[0].radius,
+                rAbs: morphTargetCoeffs[0].rAbs,
                 speed: morphTargetCoeffs[0].speed,
                 angle: morphTargetCoeffs[0].angle,
                 ccw: morphTargetCoeffs[0].ccw,
@@ -361,7 +361,7 @@ class TestDNodeSaveLoad:
             };
         }""")
         assert result["pathType"] == "circle"
-        assert result["radius"] == 42
+        assert result["rAbs"] == 42
         assert abs(result["speed"] - 2.5) < 1e-10
         assert result["angle"] == 30
         assert result["ccw"] is True
@@ -394,12 +394,12 @@ class TestDNodeSaveLoad:
             initMorphTarget();
             var d = morphTargetCoeffs[0];
             d.pathType = "circle";
-            d.radius = 50;
+            d.rAbs = 50;
             d.speed = 1;
             d.angle = 0;
             d.ccw = false;
             d.extra = {};
-            d.curve = computeCurve(d.re, d.im, "circle", d.radius / 100 * coeffExtent(), d.angle, d.extra);
+            d.curve = computeCurve(d.re, d.im, "circle", d.rAbs, d.angle, d.extra);
             // Advance to a non-home position
             advanceDNodesAlongCurves(0.25);
             var meta = buildStateMetadata();
@@ -420,14 +420,14 @@ class TestDNodeSaveLoad:
             initMorphTarget();
             // d0: circle, d1: none (moved), d2: spiral
             morphTargetCoeffs[0].pathType = "circle";
-            morphTargetCoeffs[0].radius = 30;
+            morphTargetCoeffs[0].rAbs = 30;
             morphTargetCoeffs[0].speed = 1;
             morphTargetCoeffs[0].angle = 0;
             morphTargetCoeffs[0].ccw = false;
             morphTargetCoeffs[0].extra = {};
             morphTargetCoeffs[0].curve = computeCurve(
                 morphTargetCoeffs[0].re, morphTargetCoeffs[0].im, "circle",
-                morphTargetCoeffs[0].radius / 100 * coeffExtent(), 0, {});
+                morphTargetCoeffs[0].rAbs, 0, {});
 
             morphTargetCoeffs[1].re = 99;
             morphTargetCoeffs[1].im = -99;
@@ -435,14 +435,14 @@ class TestDNodeSaveLoad:
 
             if (morphTargetCoeffs.length > 2) {
                 morphTargetCoeffs[2].pathType = "o-spiral";
-                morphTargetCoeffs[2].radius = 40;
+                morphTargetCoeffs[2].rAbs = 40;
                 morphTargetCoeffs[2].speed = 2;
                 morphTargetCoeffs[2].angle = 0;
                 morphTargetCoeffs[2].ccw = true;
                 morphTargetCoeffs[2].extra = {};
                 morphTargetCoeffs[2].curve = computeCurve(
                     morphTargetCoeffs[2].re, morphTargetCoeffs[2].im, "o-spiral",
-                    morphTargetCoeffs[2].radius / 100 * coeffExtent(), 0, {});
+                    morphTargetCoeffs[2].rAbs, 0, {});
             }
 
             var meta = buildStateMetadata();
@@ -451,7 +451,7 @@ class TestDNodeSaveLoad:
 
             var results = {
                 d0path: morphTargetCoeffs[0].pathType,
-                d0radius: morphTargetCoeffs[0].radius,
+                d0rAbs: morphTargetCoeffs[0].rAbs,
                 d0curveLen: morphTargetCoeffs[0].curve.length,
                 d1path: morphTargetCoeffs[1].pathType,
                 d1re: morphTargetCoeffs[1].re,
@@ -466,7 +466,7 @@ class TestDNodeSaveLoad:
             return results;
         }""")
         assert result["d0path"] == "circle"
-        assert result["d0radius"] == 30
+        assert result["d0rAbs"] == 30
         assert result["d0curveLen"] > 1
         assert result["d1path"] == "none"
         assert abs(result["d1re"] - 99) < 1e-10
@@ -493,7 +493,7 @@ class TestDNodeBackwardCompat:
             return morphTargetCoeffs.map(function(d) {
                 return {
                     pathType: d.pathType,
-                    hasRadius: typeof d.radius === 'number',
+                    hasRadius: typeof d.rAbs === 'number',
                     hasSpeed: typeof d.speed === 'number',
                     hasCurve: Array.isArray(d.curve)
                 };
@@ -515,14 +515,14 @@ class TestDNodeBackwardCompat:
             applyLoadedState(meta);
             var d = morphTargetCoeffs[0];
             return {
-                radius: d.radius,
+                rAbs: d.rAbs,
                 speed: d.speed,
                 angle: d.angle,
                 ccw: d.ccw,
                 curveLen: d.curve.length
             };
         }""")
-        assert result["radius"] == 25  # default
+        assert result["rAbs"] == 0.5  # default
         assert result["speed"] == 1    # default
         assert result["angle"] == 0    # default
         assert result["ccw"] is False  # default
@@ -584,14 +584,14 @@ class TestDCurveSerialization:
             initMorphTarget();
             morphEnabled = true;
             morphTargetCoeffs[0].pathType = "circle";
-            morphTargetCoeffs[0].radius = 50;
+            morphTargetCoeffs[0].rAbs = 50;
             morphTargetCoeffs[0].speed = 2;
             morphTargetCoeffs[0].ccw = true;
             morphTargetCoeffs[0].angle = 0;
             morphTargetCoeffs[0].extra = {};
             morphTargetCoeffs[0].curve = computeCurve(
                 morphTargetCoeffs[0].re, morphTargetCoeffs[0].im, "circle",
-                morphTargetCoeffs[0].radius / 100 * coeffExtent(), 0, {});
+                morphTargetCoeffs[0].rAbs, 0, {});
 
             initBitmapCanvas();
             fastModeCurves = new Map();
@@ -601,7 +601,7 @@ class TestDCurveSerialization:
             var stepsVal = 100;
             fastModeDCurves = new Map();
             var d = morphTargetCoeffs[0];
-            var absR = (d.radius / 100) * extentAtHome;
+            var absR = d.rAbs;
             var curve = computeCurveN(d.curve[0].re, d.curve[0].im, d.pathType, absR, d.angle, d.extra, stepsVal);
             fastModeDCurves.set(0, curve);
 
@@ -639,14 +639,14 @@ class TestDCurveSerialization:
             // Animate 2 D-nodes
             for (var i = 0; i < 2 && i < morphTargetCoeffs.length; i++) {
                 morphTargetCoeffs[i].pathType = "circle";
-                morphTargetCoeffs[i].radius = 50;
+                morphTargetCoeffs[i].rAbs = 50;
                 morphTargetCoeffs[i].speed = 1;
                 morphTargetCoeffs[i].ccw = false;
                 morphTargetCoeffs[i].angle = 0;
                 morphTargetCoeffs[i].extra = {};
                 morphTargetCoeffs[i].curve = computeCurve(
                     morphTargetCoeffs[i].re, morphTargetCoeffs[i].im, "circle",
-                    morphTargetCoeffs[i].radius / 100 * coeffExtent(), 0, {});
+                    morphTargetCoeffs[i].rAbs, 0, {});
             }
 
             initBitmapCanvas();
@@ -656,7 +656,7 @@ class TestDCurveSerialization:
             var extent = coeffExtent();
             for (var j = 0; j < 2 && j < morphTargetCoeffs.length; j++) {
                 var d = morphTargetCoeffs[j];
-                var absR = (d.radius / 100) * extent;
+                var absR = d.rAbs;
                 var curve = computeCurveN(d.curve[0].re, d.curve[0].im, d.pathType, absR, d.angle, d.extra, stepsVal);
                 fastModeDCurves.set(j, curve);
             }

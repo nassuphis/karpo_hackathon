@@ -79,11 +79,11 @@ class TestOpenDNodeCtx:
         result = page.evaluate("""() => {
             initMorphTarget();
             morphTargetCoeffs[0].pathType = "circle";
-            morphTargetCoeffs[0].radius = 42;
+            morphTargetCoeffs[0].rAbs = 42;
             var evt = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
             openDNodeCtx(evt, 0);
             var snap = ctxDNodeSnapshot;
-            var ok = snap && snap.pathType === "circle" && snap.radius === 42;
+            var ok = snap && snap.pathType === "circle" && snap.rAbs === 42;
             closeDNodeCtx(true);
             initMorphTarget();
             return ok;
@@ -103,7 +103,7 @@ class TestCloseDNodeCtx:
             openDNodeCtx(evt, 0);
             // Change path type in the menu
             morphTargetCoeffs[0].pathType = "circle";
-            morphTargetCoeffs[0].radius = 50;
+            morphTargetCoeffs[0].rAbs = 50;
             closeDNodeCtx(true);  // revert
             var after = morphTargetCoeffs[0].pathType;
             initMorphTarget();

@@ -964,6 +964,7 @@ body.fast-mode #bitmap-fast-btn {
 <div id="timing-pop" class="ops-pop" style="min-width:220px"></div>
 <div id="bitmap-save-pop" class="ops-pop" style="min-width:160px"></div>
 <div id="cdpath-pop" class="ops-pop" style="min-width:180px"></div>
+<div id="prox-custom-pop" class="ops-pop" style="min-width:200px"></div>
 
 <script>
 // ============================================================================
@@ -1107,9 +1108,58 @@ let PROX_PALETTE = buildProxPaletteFrom(d3.interpolateInferno);
 let PROX_PAL_R = new Uint8Array(PROX_PALETTE.map(c => c[0]));
 let PROX_PAL_G = new Uint8Array(PROX_PALETTE.map(c => c[1]));
 let PROX_PAL_B = new Uint8Array(PROX_PALETTE.map(c => c[2]));
+let bitmapProxCustom = null; // array of 8 [r,g,b]; initialized on first use
+let bitmapProxCustomActive = false;
+
+function hsvToRgb(h, s, v) {
+    h = ((h % 360) + 360) % 360;
+    const c = v * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = v - c;
+    let r, g, b;
+    if (h < 60)       { r = c; g = x; b = 0; }
+    else if (h < 120) { r = x; g = c; b = 0; }
+    else if (h < 180) { r = 0; g = c; b = x; }
+    else if (h < 240) { r = 0; g = x; b = c; }
+    else if (h < 300) { r = x; g = 0; b = c; }
+    else               { r = c; g = 0; b = x; }
+    return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+function rgbToHsv(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    let h = 0;
+    if (d > 0) {
+        if (mx === r) h = 60 * (((g - b) / d) % 6);
+        else if (mx === g) h = 60 * ((b - r) / d + 2);
+        else h = 60 * ((r - g) / d + 4);
+    }
+    if (h < 0) h += 360;
+    return [h, mx === 0 ? 0 : d / mx, mx];
+}
+function initCustomProxPalette() {
+    if (bitmapProxCustom) return;
+    bitmapProxCustom = [];
+    for (let i = 0; i < 8; i++) {
+        bitmapProxCustom.push(hsvToRgb(i * 45, 1, 1));
+    }
+}
+function applyCustomProxPalette() {
+    if (!bitmapProxCustom) initCustomProxPalette();
+    const pal = bitmapProxCustom;
+    for (let k = 0; k < 16; k++) {
+        const t = k / 15 * 7;
+        const i0 = Math.min(Math.floor(t), 6);
+        const i1 = i0 + 1;
+        const f = t - i0;
+        PROX_PAL_R[k] = Math.round(pal[i0][0] * (1 - f) + pal[i1][0] * f);
+        PROX_PAL_G[k] = Math.round(pal[i0][1] * (1 - f) + pal[i1][1] * f);
+        PROX_PAL_B[k] = Math.round(pal[i0][2] * (1 - f) + pal[i1][2] * f);
+    }
+    bitmapProxCustomActive = true;
+}
 function setProxPalette(key) {
     const entry = PROX_PALETTE_CATALOG.find(p => p.key === key);
     if (!entry) return;
+    bitmapProxCustomActive = false;
     bitmapProxPaletteName = key;
     PROX_PALETTE = buildProxPaletteFrom(entry.fn);
     PROX_PAL_R = new Uint8Array(PROX_PALETTE.map(c => c[0]));
@@ -3278,6 +3328,26 @@ const PATH_PARAMS = {
         { key: "innerTurns", label: "Twist", min: 0, max: 3, step: 0.05, default: 0.5, fmt: v => v.toFixed(2) },
         { key: "innerRatio", label: "Squish", min: 0.01, max: 1, step: 0.01, default: 0.5, fmt: v => v.toFixed(2) },
         _P.points],
+    "annulus-cloud": [_P.speed,
+        { key: "rAbs", label: "R", type: "rabs", default: 0.05 },
+        { key: "rIn", label: "Inner", min: 0.05, max: 0.95, step: 0.05, default: 0.5, fmt: v => v.toFixed(2) },
+        { key: "pow", label: "Pow", min: 0.1, max: 5, step: 0.1, default: 1, fmt: v => v.toFixed(1) },
+        _P.points],
+    spokes: [_P.speed,
+        { key: "rAbs", label: "R", type: "rabs", default: 0.05 },
+        { key: "spokes", label: "Arms", min: 2, max: 24, step: 1, default: 12, fmt: v => String(Math.round(v)) },
+        { key: "pow", label: "Pow", min: 0.1, max: 5, step: 0.1, default: 1, fmt: v => v.toFixed(1) },
+        _P.points],
+    "golden-spiral": [_P.speed,
+        { key: "rAbs", label: "R", type: "rabs", default: 0.05 },
+        _P.points],
+    "hex-grid": [_P.speed,
+        { key: "rAbs", label: "R", type: "rabs", default: 0.05 },
+        _P.points],
+    "jitter-grid": [_P.speed,
+        { key: "rAbs", label: "R", type: "rabs", default: 0.05 },
+        { key: "jit", label: "Jitter", min: 0, max: 1, step: 0.05, default: 0.35, fmt: v => v.toFixed(2) },
+        _P.points],
     lissajous:     [..._RSAD,
         { key: "freqA", label: "a", min: 1, max: 8, step: 1, default: 3, fmt: v => String(Math.round(v)) },
         { key: "freqB", label: "b", min: 1, max: 8, step: 1, default: 2, fmt: v => String(Math.round(v)) },
@@ -3310,7 +3380,7 @@ for (const base of ["circle","horizontal","vertical","figure8","lissajous","star
 }
 // Auto-generate dithered variants for all animated paths
 for (const key of Object.keys(PATH_PARAMS)) {
-    if (key !== "none" && key !== "follow-c" && key !== "random" && key !== "disk-cloud" && key !== "sq-cloud" && !key.endsWith("-dither")) {
+    if (key !== "none" && key !== "follow-c" && key !== "random" && key !== "disk-cloud" && key !== "sq-cloud" && key !== "annulus-cloud" && key !== "spokes" && key !== "jitter-grid" && !key.endsWith("-dither")) {
         PATH_PARAMS[key + "-dither"] = [...PATH_PARAMS[key], _SIGMA_PARAM, _DIST_PARAM];
     }
 }
@@ -3333,6 +3403,11 @@ const PATH_CATALOG = [
         { value: "disk-grid",       label: "Disk grid" },
         { value: "disk-spiral",     label: "Disk spiral" },
     { value: "elkal",           label: "Ellipse kaleidoscope" },
+        { value: "annulus-cloud",  label: "Annulus sample" },
+        { value: "spokes",         label: "Spokes (starburst)" },
+        { value: "golden-spiral",  label: "Golden spiral" },
+        { value: "hex-grid",       label: "Hex grid" },
+        { value: "jitter-grid",    label: "Jitter grid" },
     ]},
     { group: "Curves", items: [
         { value: "lissajous",    label: "Lissajous" },
@@ -3378,7 +3453,7 @@ for (const entry of PATH_CATALOG) {
         const expanded = [];
         for (const item of entry.items) {
             expanded.push(item);
-            if (item.value !== "random" && item.value !== "disk-cloud" && item.value !== "sq-cloud" && item.value !== "follow-c") {
+            if (item.value !== "random" && item.value !== "disk-cloud" && item.value !== "sq-cloud" && item.value !== "annulus-cloud" && item.value !== "spokes" && item.value !== "jitter-grid" && item.value !== "follow-c") {
                 const dith = { value: item.value + "-dither", label: item.label + " (dither)" };
                 if (item.dOnly) dith.dOnly = true;
                 expanded.push(dith);
@@ -5734,6 +5809,116 @@ function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
             curve._ditherSigma = (extra && extra.sigma != null) ? extra.sigma : 0.01;
             curve._ditherDist = (extra && extra.ditherDist) || "normal";
         }
+        return curve;
+    }
+
+    // Annulus (ring band): random points between inner and outer radius
+    if (baseType === "annulus-cloud") {
+        const R = radius;
+        const halfR = R / 2;
+        const rin = (extra && extra.rIn != null) ? extra.rIn : 0.5;
+        const p = (extra && extra.pow != null) ? extra.pow : 1;
+        const curve = new Array(N);
+        for (let k = 0; k < N; k++) {
+            const th = Math.random() * 2 * Math.PI;
+            const u = Math.pow(Math.random(), p);
+            const rho = (rin + (1 - rin) * u) * halfR;
+            curve[k] = { re: rho * Math.cos(th), im: rho * Math.sin(th) };
+        }
+        curve._isCloud = true;
+        curve._cloudOffset = true;
+        curve._anchorRe = homeRe;
+        curve._anchorIm = homeIm;
+        return curve;
+    }
+
+    // Spokes (starburst): points distributed along radial arms
+    if (baseType === "spokes") {
+        const R = radius;
+        const halfR = R / 2;
+        const m = Math.max(2, Math.round((extra && extra.spokes != null) ? extra.spokes : 12));
+        const p = (extra && extra.pow != null) ? extra.pow : 1;
+        const curve = new Array(N);
+        for (let k = 0; k < N; k++) {
+            const arm = k % m;
+            const th = (2 * Math.PI * arm) / m;
+            const rho = Math.pow(Math.random(), p) * halfR;
+            curve[k] = { re: rho * Math.cos(th), im: rho * Math.sin(th) };
+        }
+        curve._isCloud = true;
+        curve._cloudOffset = true;
+        curve._anchorRe = homeRe;
+        curve._anchorIm = homeIm;
+        return curve;
+    }
+
+    // Golden-angle spiral (phyllotaxis): deterministic blue-noise-like coverage
+    if (baseType === "golden-spiral") {
+        const R = radius;
+        const halfR = R / 2;
+        const golden = Math.PI * (3 - Math.sqrt(5)); // ~2.399963
+        const curve = new Array(N);
+        for (let k = 0; k < N; k++) {
+            const i = k + 1;
+            const r = halfR * Math.sqrt(i / N);
+            const th = i * golden;
+            curve[k] = { re: r * Math.cos(th), im: r * Math.sin(th) };
+        }
+        curve._isCloud = true;
+        curve._cloudOffset = true;
+        curve._anchorRe = homeRe;
+        curve._anchorIm = homeIm;
+        if (pathType.endsWith("-dither")) {
+            curve._ditherSigma = (extra && extra.sigma != null) ? extra.sigma : 0.01;
+            curve._ditherDist = (extra && extra.ditherDist) || "normal";
+        }
+        return curve;
+    }
+
+    // Hex grid: hexagonal lattice with staggered rows
+    if (baseType === "hex-grid") {
+        const R = radius;
+        const side = Math.max(2, Math.round(Math.sqrt(N)));
+        const dx = R / (side - 1);
+        const dy = dx * Math.sqrt(3) / 2;
+        const curve = [];
+        for (let row = 0; row < side; row++) {
+            const y = (row - (side - 1) / 2) * dy;
+            const xoff = (row % 2) * 0.5 * dx;
+            for (let col = 0; col < side; col++) {
+                const x = (col - (side - 1) / 2) * dx + xoff;
+                curve.push({ re: x, im: y });
+            }
+        }
+        curve._isCloud = true;
+        curve._cloudOffset = true;
+        curve._anchorRe = homeRe;
+        curve._anchorIm = homeIm;
+        if (pathType.endsWith("-dither")) {
+            curve._ditherSigma = (extra && extra.sigma != null) ? extra.sigma : 0.01;
+            curve._ditherDist = (extra && extra.ditherDist) || "normal";
+        }
+        return curve;
+    }
+
+    // Jitter grid: square grid with random per-point displacement
+    if (baseType === "jitter-grid") {
+        const R = radius;
+        const side = Math.max(2, Math.round(Math.sqrt(N)));
+        const cell = R / (side - 1);
+        const jit = (extra && extra.jit != null) ? extra.jit : 0.35;
+        const curve = new Array(side * side);
+        for (let row = 0; row < side; row++) {
+            for (let col = 0; col < side; col++) {
+                const x = (col / (side - 1) - 0.5) * R + (Math.random() * 2 - 1) * jit * cell;
+                const y = (row / (side - 1) - 0.5) * R + (Math.random() * 2 - 1) * jit * cell;
+                curve[row * side + col] = { re: x, im: y };
+            }
+        }
+        curve._isCloud = true;
+        curve._cloudOffset = true;
+        curve._anchorRe = homeRe;
+        curve._anchorIm = homeIm;
         return curve;
     }
 
@@ -9660,6 +9845,8 @@ function startRecording() {
             bitmapCanvasColor: bitmapCanvasColor,
             bitmapMatchStrategy: bitmapMatchStrategy,
             bitmapProxPalette: bitmapProxPaletteName,
+            bitmapProxCustom: bitmapProxCustom,
+            bitmapProxCustomActive: bitmapProxCustomActive,
             bitmapDerivPalette: bitmapDerivPaletteName,
             bitmapIdxProxGamma: bitmapIdxProxGamma,
             bitmapRatioGamma: bitmapRatioGamma,
@@ -9734,6 +9921,8 @@ function buildStateMetadata(timestamp) {
         bitmapCanvasColor: bitmapCanvasColor,
         bitmapMatchStrategy: bitmapMatchStrategy,
         bitmapProxPalette: bitmapProxPaletteName,
+        bitmapProxCustom: bitmapProxCustom,
+        bitmapProxCustomActive: bitmapProxCustomActive,
         bitmapDerivPalette: bitmapDerivPaletteName,
         bitmapIdxProxGamma: bitmapIdxProxGamma,
         bitmapProxGamma: bitmapProxGamma,
@@ -10112,7 +10301,7 @@ function buildBitmapCfgContent() {
     const hr3 = document.createElement("hr");
     hr3.style.cssText = "border:none;border-top:1px solid var(--stroke);margin:8px 0 4px;";
     bitcfgContainer.appendChild(hr3);
-    const colorModeLabels = { uniform: "Uniform", rainbow: "Rainbow", derivative: "Derivative", proximity: "Proximity", "idx-prox": "Idx \u00d7 Prox", ratio: "Min/Max Ratio", "rel-proximity": "Rel. Proximity" };
+    const colorModeLabels = { uniform: "Uniform", rainbow: "Rainbow", derivative: "Derivative", proximity: "Proximity", "idx-prox": "Idx \u00d7 Prox", ratio: "Min/Max Ratio", "rel-proximity": "Rel. Proximity", "custom-prox": "Custom Proximity" };
     const rcTitle = document.createElement("div");
     rcTitle.className = "pop-title"; rcTitle.textContent = "COLOR (" + (colorModeLabels[bitmapColorMode] || bitmapColorMode) + ")";
     bitcfgContainer.appendChild(rcTitle);
@@ -10125,6 +10314,7 @@ function buildBitmapCfgContent() {
         { key: "idx-prox",   label: "Idx \u00d7 Prox" },
         { key: "ratio",      label: "Min/Max Ratio" },
         { key: "rel-proximity", label: "Rel. Proximity" },
+        { key: "custom-prox",  label: "Custom Proximity" },
     ];
     const bmRows = [];
     let bmSwatchWrap = null;
@@ -10134,6 +10324,7 @@ function buildBitmapCfgContent() {
     let bmRelProxWrap = null;
     let bmIdxProxMatchWrap = null;
     let bmRatioProxWrap = null;
+    let bmCustomProxWrap = null;
     function refreshMatchChips() {
         if (bmMatchWrap) bmMatchWrap.style.opacity = bitmapColorMode === "rainbow" ? "1" : "0.3";
     }
@@ -10151,6 +10342,7 @@ function buildBitmapCfgContent() {
         if (bmIdxProxMatchWrap) bmIdxProxMatchWrap.style.opacity = bitmapColorMode === "idx-prox" ? "1" : "0.3";
         if (bmRatioProxWrap) bmRatioProxWrap.style.opacity = bitmapColorMode === "ratio" ? "1" : "0.3";
         if (bmRelProxWrap) bmRelProxWrap.style.opacity = bitmapColorMode === "rel-proximity" ? "1" : "0.3";
+        if (bmCustomProxWrap) bmCustomProxWrap.style.opacity = bitmapColorMode === "custom-prox" ? "1" : "0.3";
     }
     bitmapModes.forEach(bm => {
         const row = document.createElement("div");
@@ -10502,9 +10694,170 @@ function buildBitmapCfgContent() {
             _appendFCF(bmRelProxWrap, () => bitmapRelProxFloor, v => { bitmapRelProxFloor = v; }, () => bitmapRelProxCeiling, v => { bitmapRelProxCeiling = v; }, () => bitmapRelProxFreq, v => { bitmapRelProxFreq = v; });
             row.appendChild(bmRelProxWrap);
         }
+
+        if (bm.key === "custom-prox") {
+            bmCustomProxWrap = document.createElement("span");
+            bmCustomProxWrap.style.cssText = "display:inline-flex;flex-wrap:wrap;gap:3px;margin-left:0;";
+            bmCustomProxWrap.style.opacity = bitmapColorMode === "custom-prox" ? "1" : "0.3";
+            initCustomProxPalette();
+            const customSwatches = [];
+            for (let si = 0; si < 8; si++) {
+                const sw = document.createElement("div");
+                const col = bitmapProxCustom[si];
+                sw.style.cssText = `width:16px;height:16px;border-radius:50%;cursor:pointer;flex-shrink:0;` +
+                    `background:rgb(${col[0]},${col[1]},${col[2]});` +
+                    `border:2px solid rgba(255,255,255,0.15);box-sizing:border-box;`;
+                sw.title = "Stop " + (si + 1);
+                const idx = si;
+                sw.addEventListener("click", () => {
+                    if (bitmapColorMode !== "custom-prox") {
+                        bitmapColorMode = "custom-prox";
+                        bmRows.forEach(r => r.classList.remove("on"));
+                        row.classList.add("on");
+                        rcTitle.textContent = "COLOR (Custom Proximity)";
+                        refreshBmSwatches();
+                    }
+                    applyCustomProxPalette();
+                    openProxCustomPop(sw, idx, customSwatches);
+                });
+                customSwatches.push(sw);
+                bmCustomProxWrap.appendChild(sw);
+            }
+            // Frequency slider
+            const cSep = document.createElement("span");
+            cSep.style.cssText = "width:1px;height:14px;background:var(--stroke);margin:0 2px;flex-shrink:0;";
+            bmCustomProxWrap.appendChild(cSep);
+            const cQL = document.createElement("span");
+            cQL.style.cssText = "font-size:9px;color:var(--muted);white-space:nowrap;";
+            cQL.textContent = "~";
+            const cQS = document.createElement("input");
+            cQS.type = "range"; cQS.min = "0"; cQS.max = "10"; cQS.step = "0.1";
+            cQS.value = bitmapProxFreq;
+            cQS.style.cssText = "width:50px;height:12px;cursor:pointer;accent-color:var(--accent);";
+            const cQV = document.createElement("span");
+            cQV.style.cssText = "font-size:9px;color:var(--fg);font-family:monospace;min-width:28px;";
+            cQV.textContent = bitmapProxFreq.toFixed(1);
+            cQS.addEventListener("input", () => {
+                bitmapProxFreq = parseFloat(cQS.value);
+                cQV.textContent = bitmapProxFreq.toFixed(1);
+            });
+            bmCustomProxWrap.appendChild(cQL);
+            bmCustomProxWrap.appendChild(cQS);
+            bmCustomProxWrap.appendChild(cQV);
+            row.appendChild(bmCustomProxWrap);
+        }
     });
 }
 document.getElementById("bitmap-cfg-btn").addEventListener("click", () => switchTab("bitcfg"));
+
+// --- Custom proximity HSV picker popup ---
+let proxCustomPopOpen = false;
+const proxCustomPop = document.getElementById("prox-custom-pop");
+function closeProxCustomPop() { proxCustomPop.classList.remove("open"); proxCustomPopOpen = false; }
+function openProxCustomPop(btnEl, stopIndex, swatches) {
+    if (proxCustomPopOpen) { closeProxCustomPop(); return; }
+    proxCustomPop.innerHTML = "";
+    const col = bitmapProxCustom[stopIndex];
+    let [curH, curS, curV] = rgbToHsv(col[0], col[1], col[2]);
+    const SZ = 140;
+
+    // Hue slider
+    const hueRow = document.createElement("div");
+    hueRow.style.cssText = "display:flex;align-items:center;gap:4px;margin-bottom:6px;";
+    const hLbl = document.createElement("span");
+    hLbl.style.cssText = "font-size:9px;color:var(--muted);";
+    hLbl.textContent = "H";
+    const hSlider = document.createElement("input");
+    hSlider.type = "range"; hSlider.min = "0"; hSlider.max = "360"; hSlider.step = "1";
+    hSlider.value = Math.round(curH);
+    hSlider.style.cssText = "width:120px;height:12px;cursor:pointer;accent-color:var(--accent);";
+    const hVal = document.createElement("span");
+    hVal.style.cssText = "font-size:9px;color:var(--fg);font-family:monospace;min-width:28px;";
+    hVal.textContent = Math.round(curH);
+    hueRow.appendChild(hLbl);
+    hueRow.appendChild(hSlider);
+    hueRow.appendChild(hVal);
+    proxCustomPop.appendChild(hueRow);
+
+    // SV canvas
+    const cvs = document.createElement("canvas");
+    cvs.width = SZ; cvs.height = SZ;
+    cvs.style.cssText = "cursor:crosshair;display:block;border:1px solid var(--stroke);";
+    proxCustomPop.appendChild(cvs);
+    const ctx = cvs.getContext("2d");
+
+    // Crosshair indicator
+    const crossX = () => Math.round(curS * (SZ - 1));
+    const crossY = () => Math.round((1 - curV) * (SZ - 1));
+
+    function paintSV() {
+        const img = ctx.createImageData(SZ, SZ);
+        const d = img.data;
+        for (let y = 0; y < SZ; y++) {
+            const v = 1 - y / (SZ - 1);
+            for (let x = 0; x < SZ; x++) {
+                const s = x / (SZ - 1);
+                const [r, g, b] = hsvToRgb(curH, s, v);
+                const off = (y * SZ + x) * 4;
+                d[off] = r; d[off + 1] = g; d[off + 2] = b; d[off + 3] = 255;
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+        // Draw crosshair
+        const cx = crossX(), cy = crossY();
+        ctx.strokeStyle = curV > 0.5 ? "#000" : "#fff";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+    paintSV();
+
+    function updateFromSV(ex) {
+        const rect = cvs.getBoundingClientRect();
+        const x = Math.max(0, Math.min(SZ - 1, ex.clientX - rect.left));
+        const y = Math.max(0, Math.min(SZ - 1, ex.clientY - rect.top));
+        curS = x / (SZ - 1);
+        curV = 1 - y / (SZ - 1);
+        applyColor();
+        paintSV();
+    }
+    function applyColor() {
+        const rgb = hsvToRgb(curH, curS, curV);
+        bitmapProxCustom[stopIndex] = rgb;
+        swatches[stopIndex].style.background = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+        applyCustomProxPalette();
+    }
+    let dragging = false;
+    cvs.addEventListener("mousedown", e => { dragging = true; updateFromSV(e); });
+    window.addEventListener("mousemove", e => { if (dragging) updateFromSV(e); });
+    window.addEventListener("mouseup", () => { dragging = false; });
+
+    hSlider.addEventListener("input", () => {
+        curH = parseFloat(hSlider.value);
+        hVal.textContent = Math.round(curH);
+        applyColor();
+        paintSV();
+    });
+
+    // Position popup
+    const rect = btnEl.getBoundingClientRect();
+    proxCustomPop.style.left = rect.left + "px";
+    proxCustomPop.style.top = (rect.bottom + 4) + "px";
+    proxCustomPop.classList.add("open");
+    proxCustomPopOpen = true;
+
+    // Click outside to close
+    setTimeout(() => {
+        function outsideClick(e) {
+            if (!proxCustomPop.contains(e.target) && e.target !== btnEl) {
+                closeProxCustomPop();
+                document.removeEventListener("mousedown", outsideClick);
+            }
+        }
+        document.addEventListener("mousedown", outsideClick);
+    }, 0);
+}
 
 // --- Bitmap save popup (format selection) ---
 let bitmapSavePopOpen = false;
@@ -10992,7 +11345,12 @@ function applyLoadedState(meta) {
     } else {
         bitmapMatchStrategy = "assign4";
     }
-    if (meta.bitmapProxPalette && PROX_PALETTE_CATALOG.some(p => p.key === meta.bitmapProxPalette)) {
+    if (meta.bitmapProxCustom && Array.isArray(meta.bitmapProxCustom) && meta.bitmapProxCustom.length === 8) {
+        bitmapProxCustom = meta.bitmapProxCustom.map(c => c.slice());
+    }
+    if (meta.bitmapProxCustomActive) {
+        applyCustomProxPalette();
+    } else if (meta.bitmapProxPalette && PROX_PALETTE_CATALOG.some(p => p.key === meta.bitmapProxPalette)) {
         setProxPalette(meta.bitmapProxPalette);
     } else {
         setProxPalette("inferno");
@@ -12266,7 +12624,7 @@ function paintBitmapFrameFast() {
     const range = bitmapRange;
     const n = currentRoots.length;
     const colors = fastModeRootColors;
-    const proxMode = bitmapColorMode === "proximity";
+    const proxMode = bitmapColorMode === "proximity" || bitmapColorMode === "custom-prox";
     const derivMode = bitmapColorMode === "derivative";
     const idxProxMode = bitmapColorMode === "idx-prox";
     const ratioMode = bitmapColorMode === "ratio";
@@ -13761,7 +14119,7 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         bitmapRange, bitmapCenterX, bitmapCenterY, stepsVal,
         noColor: bitmapColorMode === "uniform",
         uniformR: bitmapUniformColor[0], uniformG: bitmapUniformColor[1], uniformB: bitmapUniformColor[2],
-        proxColor: bitmapColorMode === "proximity",
+        proxColor: bitmapColorMode === "proximity" || bitmapColorMode === "custom-prox",
         proxPalR: PROX_PAL_R.buffer.slice(0), proxPalG: PROX_PAL_G.buffer.slice(0), proxPalB: PROX_PAL_B.buffer.slice(0),
         derivColor: bitmapColorMode === "derivative",
         derivPalR: DERIV_PAL_R.buffer.slice(0), derivPalG: DERIV_PAL_G.buffer.slice(0), derivPalB: DERIV_PAL_B.buffer.slice(0),

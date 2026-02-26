@@ -1150,9 +1150,13 @@ function applyCustomProxPalette() {
         const i0 = Math.min(Math.floor(t), 6);
         const i1 = i0 + 1;
         const f = t - i0;
-        PROX_PAL_R[k] = Math.round(pal[i0][0] * (1 - f) + pal[i1][0] * f);
-        PROX_PAL_G[k] = Math.round(pal[i0][1] * (1 - f) + pal[i1][1] * f);
-        PROX_PAL_B[k] = Math.round(pal[i0][2] * (1 - f) + pal[i1][2] * f);
+        const r = Math.round(pal[i0][0] * (1 - f) + pal[i1][0] * f);
+        const g = Math.round(pal[i0][1] * (1 - f) + pal[i1][1] * f);
+        const b = Math.round(pal[i0][2] * (1 - f) + pal[i1][2] * f);
+        PROX_PAL_R[k] = r;
+        PROX_PAL_G[k] = g;
+        PROX_PAL_B[k] = b;
+        PROX_PALETTE[k] = [r, g, b];
     }
     bitmapProxCustomActive = true;
 }
@@ -5857,10 +5861,11 @@ function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
         const R = radius;
         const halfR = R / 2;
         const golden = Math.PI * (3 - Math.sqrt(5)); // ~2.399963
-        const curve = new Array(N);
-        for (let k = 0; k < N; k++) {
+        const pts = (extra && extra.points > 0) ? extra.points : N;
+        const curve = new Array(pts);
+        for (let k = 0; k < pts; k++) {
             const i = k + 1;
-            const r = halfR * Math.sqrt(i / N);
+            const r = halfR * Math.sqrt(i / pts);
             const th = i * golden;
             curve[k] = { re: r * Math.cos(th), im: r * Math.sin(th) };
         }
@@ -5878,7 +5883,8 @@ function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
     // Hex grid: hexagonal lattice with staggered rows
     if (baseType === "hex-grid") {
         const R = radius;
-        const side = Math.max(2, Math.round(Math.sqrt(N)));
+        const pts = (extra && extra.points > 0) ? extra.points : N;
+        const side = Math.max(2, Math.round(Math.sqrt(pts)));
         const dx = R / (side - 1);
         const dy = dx * Math.sqrt(3) / 2;
         const curve = [];
@@ -5904,7 +5910,8 @@ function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
     // Jitter grid: square grid with random per-point displacement
     if (baseType === "jitter-grid") {
         const R = radius;
-        const side = Math.max(2, Math.round(Math.sqrt(N)));
+        const pts = (extra && extra.points > 0) ? extra.points : N;
+        const side = Math.max(2, Math.round(Math.sqrt(pts)));
         const cell = R / (side - 1);
         const jit = (extra && extra.jit != null) ? extra.jit : 0.35;
         const curve = new Array(side * side);

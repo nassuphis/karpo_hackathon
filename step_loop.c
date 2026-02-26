@@ -142,7 +142,8 @@ extern void js_reportProgress(int step);
 #define CD_DERIV_CEILING       17  /* palette ceiling for derivative (0–1) */
 #define CD_DERIV_FREQ          18  /* sine frequency for derivative (0=linear) */
 #define CD_PINNED_EPSILON      19  /* soft-pin perturbation: P(z) = Q(z)·R(z) + ε */
-/* Total: 20 float64 config values */
+#define CD_PROX_GAMMA          20  /* gamma correction for proximity (0.1–3.0, 1.0=linear) */
+/* Total: 21 float64 config values */
 
 /* ================================================================
  * Global state (set by init)
@@ -157,6 +158,7 @@ static int morphPathType, morphCcw;
 static double bitmapRange, FPS, morphRate, morphEllipseMinor, morphDitherStart, morphDitherMid, morphDitherEnd;
 static double centerX, centerY, morphDitherPow;
 static double relProxFloor, relProxCeiling, relProxFreq;
+static double proxGamma;
 static double proxFloor, proxCeiling, proxFreq;
 static double derivFloor, derivCeiling, derivFreq;
 static double pinnedEpsilon;
@@ -582,6 +584,7 @@ void init(int cfgIntOffset, int cfgDblOffset)
     proxFloor        = cfgD[CD_PROX_FLOOR];
     proxCeiling      = cfgD[CD_PROX_CEILING];
     proxFreq         = cfgD[CD_PROX_FREQ];
+    proxGamma        = cfgD[CD_PROX_GAMMA];
     derivFloor       = cfgD[CD_DERIV_FLOOR];
     derivCeiling     = cfgD[CD_DERIV_CEILING];
     derivFreq        = cfgD[CD_DERIV_FREQ];
@@ -965,6 +968,7 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                     if (t > 1.0) t = 1.0;
                     t = 1.0 - t;
                 }
+                if (proxGamma != 1.0) t = js_pow(t, proxGamma);
                 if (proxFreq > 0.0) {
                     t = (proxCeiling - proxFloor) * (js_sin(t * 2.0 * 3.14159265358979323846 * proxFreq) + 1.0) * 0.5 + proxFloor;
                 } else {

@@ -8,7 +8,7 @@ Architecture, conventions, performance insights, and debugging notes for the Pol
 
 ### Single-File Design
 
-The entire application lives in one HTML file (`index.html`, ~14,300 lines). CSS is embedded in a `<style>` block (lines 12–560), HTML body is lines 562–930, and all JavaScript is inline in a single `<script>` block (lines 931–14270). There is no build step — serve the file directly.
+The entire application lives in one HTML file (`index.html`, ~15,500 lines). CSS is embedded in a `<style>` block (lines 12–560), HTML body is lines 562–930, and all JavaScript is inline in a single `<script>` block (lines 931–14270). There is no build step — serve the file directly.
 
 **Why it works**: Zero tooling overhead, instant deployment to GitHub Pages, no import/bundling issues. D3.js and image-encoding libraries are loaded from CDN.
 
@@ -39,7 +39,7 @@ The entire application lives in one HTML file (`index.html`, ~14,300 lines). CSS
 | Ops tools | 6075–6400 | Scale, rotate, translate, shape morph, pattern arrange (`PTRN_PARAMS`, `opCloseCallback`) — supports C/D/root targets |
 | Recording & snapshots | 7358–7530 | Video capture, `recordTick()` |
 | Save/Load | 7529–8425 | `buildStateMetadata()`, `saveState()`, `loadState()`, `applyLoadedState()` |
-| Bitmap config & save popovers | 7807–8400 | `buildBitmapCfgPop()`, `buildBitmapSavePop()`, 6 bitmap color mode UI |
+| Bitmap config & save popovers | 7807–8400 | `buildBitmapCfgPop()`, `buildBitmapSavePop()`, 7 bitmap color mode UI |
 | Stats plotting | 9170–9660 | 16 time-series canvases, phase-space plots, spectrum plots |
 | Off-canvas bitmap utilities | 9660–9780 | `fillPersistentBuffer()`, `fillDisplayBuffer()`, export functions (BMP/JPEG/PNG/TIFF) |
 | Bitmap canvas init | 9780–9910 | `initBitmapCanvas()`, split compute/display setup |
@@ -73,7 +73,7 @@ Four distinct canvas systems coexist:
 
 | File | Purpose |
 |------|---------|
-| `index.html` | The entire application (~14,300 lines) |
+| `index.html` | The entire application (~15,500 lines) |
 | `step_loop.c` | Full worker step loop in C (~880 lines): EA solver, curve interpolation, morph path interpolation, root matching, dither, pixel output |
 | `solver.c` | Historical solver-only WASM source (no longer embedded, kept for reference) |
 | `build-wasm.sh` | Compiles `step_loop.c` to WASM via Homebrew LLVM, produces `.wasm.b64` file |
@@ -88,20 +88,31 @@ Four distinct canvas systems coexist:
 Each coefficient is a plain object with these fields:
 
 ```
-{ re, im, pathType, radius, speed, angle, ccw, extra, curve, curveIndex }
+{ re, im, pathType, rAbs, speed, angle, ccw, extra, curve, curveIndex }
 ```
 
 - `re`, `im` — Current complex position
-- `pathType` — Animation type: `"none"`, `"follow-c"` (D-nodes only), `"circle"`, `"spiral"`, `"lissajous"`, etc.
-- `radius` — Path radius (0–100, as % of panel extent)
+- `pathType` — Animation type: `"none"`, `"follow-c"` (D-nodes only), `"circle"`, `"spiral"`, `"lissajous"`, `"grid-cloud"`, etc.
+- `rAbs` — Path radius in absolute world units (default 0.5). UI: mantissa slider (1-10) + OOM ±1 buttons via `buildRabsControl()`
 - `speed` — Animation speed (internal 0–1.0 float, displayed as integer 0–1000 via `speed * 1000`, resolution 1/1000)
 - `angle` — Starting phase (0–1 turns)
 - `ccw` — Counter-clockwise flag
-- `extra` — Path-specific params (object, varies by pathType; may include `points` for user-defined curve resolution 100--10000)
+- `extra` — Path-specific params (object, varies by pathType; may include `points` for user-defined curve resolution 100--100000)
 - `curve` — Pre-computed array of `{re, im}` points (N samples of the closed path)
 - `curveIndex` — Current integer index into `curve[]`
 
 **Important**: `"none"` path type means a 1-point curve at the coefficient's home position. It is NOT null — always check `pathType`, never check `curve == null`. `"follow-c"` is a D-node-only path type that mirrors the corresponding C-node's current position — treated like `"none"` for curve generation (1-point curve), but workers track `S_dFollowC` indices to copy C positions into D each step.
+
+**`_STD_KEYS`**: `["rAbs", "speed", "angle", "ccw"]` — these four fields are stored directly on the coefficient object, not inside `extra`.
+
+### Cloud Offset Storage
+
+Cloud path types (`"random"`, `"disk-cloud"`, `"sq-cloud"`, `"grid-cloud"`) store curve points as `{re, im}` **offsets from an anchor position**, not as absolute coordinates. This means the C-node stays stationary during animation — the curve describes relative displacement.
+
+- `curve._cloudOffset = true` — flag indicating offset-based storage
+- `curve._anchorRe`, `curve._anchorIm` — metadata recording the anchor position at curve generation time
+- During animation, the solver uses effective positions: `c._effRe = anchor.re + offset.re`, `c._effIm = anchor.im + offset.im`
+- Helper functions: `coeffHomePos(c)` returns the home (anchor) position; `coeffEffPos(c)` returns the effective position (anchor + current offset) used by the solver
 
 ### Morph System
 
@@ -136,6 +147,24 @@ The combined dither `ds = startSigma * startEnv + midSigma * midEnv + endSigma *
 - `trailData[]` — Array of arrays: `[[{re,im}, ...], ...]`, one inner array per root
 - `closeEncounters` — `Float64Array(n * 3)` per-root top-3 closest distances
 
+### Root Pinning
+
+Roots can be pinned to fixed positions, creating a constrained polynomial system:
+
+- **`pinnedRoots[]`**: Array of `{re, im}` fixed root positions
+- **`pinnedEpsilon`**: Coupling strength (default 0.1), with OOM slider for adjustment
+- **`selectedPinnedRoots`**: `Set` for pinned root selection
+- **`rootSelMode`**: `"free"` | `"pinned"` — determines which root set the UI targets
+- **`rootsAutoFit`**: Toggle for auto-fitting root view extent
+
+**Interaction**: Right-click a root to open a context menu with Free/Pinned toggle and Delete button.
+
+**API**: `pinRoot(idx)` moves a free root to pinned, `unpinRoot(idx)` moves a pinned root back to free, `deleteRoot(idx, isPinned)` removes a root from either set.
+
+**Solver integration**: The effective polynomial is `P(z) = Q(z) * product(z - pinnedRoots[i]) + epsilon`, where `Q(z)` is the polynomial from the free coefficients. The pinned roots expand the coefficient array passed to the Ehrlich-Aberth solver.
+
+**Home reset**: Pinned roots are cleared on home reset.
+
 ### Selection
 
 Three `Set` objects: `selectedCoeffs` (indices into `coefficients[]`), `selectedRoots` (indices into `currentRoots[]`), and `selectedMorphCoeffs` (indices into `morphTargetCoeffs[]`). Selections are **mutually exclusive** — selecting a C-node clears D-node and root selections, selecting a D-node clears C-node and root selections, and selecting a root clears both C and D selections. This is enforced by `toggleCoeffSelect()`, D-node click handler, and root click handler each calling `clearRootSelection()` / `clearMorphSelection()` / `clearCoeffSelection()` as appropriate. Lasso drag on each panel also clears the other two.
@@ -148,7 +177,7 @@ The C-List tab (`leftTab === "list"`) shows a tabular view of all coefficients w
 - **Selection buttons**: All, None, SameCurve, and a curve-type cycler (cycles path types, not individual nodes)
 - **Transform dropdown** (20 transforms): Applies a one-shot transform to `selectedCoeffs`, then resets to "none". Includes PrimeSpeeds, SetAllSpeeds, RandomSpeed, RandomAngle, RandomRadius, LerpSpeed, LerpRadius, LerpAngle, RandomDirection, FlipAllDirections, ShuffleCurves, ShufflePositions, CircleLayout, RotatePositions, ScalePositions, JitterPositions, Conjugate, InvertPositions, SortByModulus, SortByArgument.
 - **Param1/Param2 sliders**: Passive inputs that transforms read when executed. Param2 range is 1–1000.
-- **Per-coefficient columns**: Index with color dot, position (re, im), speed (spd), radius (rad), curve length (pts), curve position (pos).
+- **Per-coefficient columns**: Index with color dot, position (re, im), speed (spd), rAbs, curve length (pts), curve position (pos).
 
 ### Add/Delete Coefficients
 
@@ -224,7 +253,7 @@ These controls live in the **header bar** (not the left tab bar), inside `<span 
 Workers are created as blob URLs from inline code (no separate `.js` file). Each worker receives the full polynomial on `init`, then gets `{stepStart, stepEnd}` ranges on each `run` message. Steps are distributed using balanced floor division: `base = Math.floor(stepsVal / nw)` with the remainder distributed one extra step to the first `stepsVal % nw` workers. The actual worker count is capped at `Math.min(numWorkers, stepsVal)` so that low step counts (e.g., 100 steps with 16 workers) don't create workers with zero steps.
 
 **Two-tier execution per worker** (was 3-tier before v40; solver-only WASM tier removed). On init, each worker attempts (in order):
-1. **WASM step loop** (`step_loop.wasm`) — full step loop in WASM: curve interpolation, morph blend (all 4 path types + C-D path dither), solve, root matching, pixel output all run in WASM. Falls back if unsupported color mode (idx-prox, ratio).
+1. **WASM step loop** (`step_loop.wasm`) — full step loop in WASM: curve interpolation, morph blend (all 4 path types + C-D path dither), solve, root matching, pixel output all run in WASM. Falls back if unsupported color mode (rel-proximity, idx-prox, ratio).
 2. **Pure JS** — everything in JavaScript.
 
 The selection is per-worker and transparent to the main thread — the `done` message format is identical regardless of which tier executed.
@@ -288,7 +317,7 @@ The full step loop was ported to C and compiled to WASM (~880 lines). This elimi
 
 **Memory layout**: WASM uses imported memory. The JS side computes a flat layout (`computeWasmLayout`) with 69 int32 config values and 7 float64 config values, followed by all data arrays (coefficients, colors, jiggle, morph targets, palettes, curve data, working arrays, output buffers). Memory grows dynamically based on layout requirements. The shadow stack is 64KB (stack-first linker flag).
 
-**Unsupported modes**: The WASM step loop does not implement Idx x Prox or Min/Max Ratio color modes. When these are selected, `S_useWasmLoop` is forced false and the JS step loop runs instead.
+**Unsupported modes**: The WASM step loop does not implement Rel-Proximity, Idx x Prox, or Min/Max Ratio color modes. When these are selected (`relProxColor`, `idxProxColor`, or `ratioColor`), `S_useWasmLoop` is forced false and the JS step loop runs instead.
 
 **Build workflow**: `./build-wasm.sh` compiles `step_loop.c` -> `step_loop.wasm` using Homebrew LLVM. The `.wasm.b64` file is then pasted into `WASM_STEP_LOOP_B64` in `index.html`.
 
@@ -327,15 +356,16 @@ Controls SVG animation root dot coloring. Three modes:
 
 ### Bitmap Color Modes (`bitmapColorMode`)
 
-Controls fast-mode bitmap pixel coloring. Six modes:
+Controls fast-mode bitmap pixel coloring. Seven modes:
 - **Uniform** — all pixels same color (from `bitmapUniformColor`)
 - **Index Rainbow** — per-root rainbow with configurable matching strategy
 - **Derivative** — Jacobian sensitivity via `computeSens()` + `rankNorm()` in worker, 16-entry `DERIV_PALETTE` (blue -> white -> red)
 - **Root Proximity** — nearest-neighbor distance mapped to 16-entry proximity palette (8 d3 palette options: Inferno, Viridis, Magma, Plasma, Turbo, Cividis, Warm, Cool)
+- **Rel-Proximity** — relative proximity coloring mode, using proximity values normalized relative to the root constellation's scale. Configured via the BITCFG tab with floor/ceiling/freq sliders.
 - **Idx x Prox** — Index Rainbow hue with proximity-based brightness, configurable gamma (0.1-1.0). JS-only (not in WASM step loop).
 - **Min/Max Ratio** — distance ratio coloring with configurable gamma. JS-only (not in WASM step loop).
 
-Workers receive flags (`noColor`, `proxColor`, `derivColor`, `idxProxColor`, `ratioColor`) derived from `bitmapColorMode` — they never read the mode string directly.
+Workers receive flags (`noColor`, `proxColor`, `derivColor`, `relProxColor`, `idxProxColor`, `ratioColor`) derived from `bitmapColorMode` — they never read the mode string directly.
 
 ### Root-Matching Strategies
 
@@ -404,7 +434,14 @@ Toggle via `.open` class. A global `document.addEventListener("mousedown", ...)`
 
 ### Tab System
 
-Left panel has 6 tabs: C-Nodes, C-List, D-Nodes, D-List, Jiggle, Final. Switching calls `switchLeftTab(name)` which updates CSS classes and triggers content-specific refresh (e.g., `refreshCoeffList()` for C-List, `refreshDCoeffList()` for D-List, `renderMorphPanel()` for D-Nodes, `buildJigglePanel()` for Jiggle, `renderFinalPanel()` for Final).
+Left panel has 7 tabs: C-Nodes, C-List, D-Nodes, D-List, Jiggle, Final, BITCFG. Switching calls `switchLeftTab(name)` which updates CSS classes and triggers content-specific refresh (e.g., `refreshCoeffList()` for C-List, `refreshDCoeffList()` for D-List, `renderMorphPanel()` for D-Nodes, `buildJigglePanel()` for Jiggle, `renderFinalPanel()` for Final).
+
+### BITCFG Tab
+
+The BITCFG tab provides bitmap configuration controls directly in the left panel:
+- **Rel-proximity color mode**: A new bitmap color mode that normalizes proximity values relative to the root constellation's scale
+- **Floor/ceiling/freq sliders**: Available for all palette modes, controlling the mapping of data values to palette entries
+- These controls complement the bitmap config popover (`buildBitmapCfgPop()`) which handles resolution, steps, and worker settings
 
 Right panel has 4 tabs: Roots, Stats, Sound, Bitmap. Switching calls `switchTab(name)` which updates CSS classes and triggers resize/redraw for the newly visible tab.
 
@@ -549,7 +586,7 @@ Pixel index = `y * W + x` (row-major). RGB channels sent separately (not interle
 
 16. **GPU memory is the real constraint for large canvases, not CPU memory** — a 10K canvas allocates ~400MB GPU memory. The fix: decouple compute resolution from display resolution. The persistent buffer can be 25K (CPU-only) while the canvas stays at 2000px.
 
-17. **Decouple display-only controls from computation controls** — `rootColorMode` was a single variable controlling both SVG animation and bitmap rendering. The fix: separate `rootColorMode` (animation, 3 modes) from `bitmapColorMode` (bitmap, 6 modes) with independent uniform color variables.
+17. **Decouple display-only controls from computation controls** — `rootColorMode` was a single variable controlling both SVG animation and bitmap rendering. The fix: separate `rootColorMode` (animation, 3 modes) from `bitmapColorMode` (bitmap, 7 modes) with independent uniform color variables.
 
 18. **Feature flags must cover all code paths** — derivative coloring worked for SVG but the bitmap pipeline was completely separate. When `bitmapColorMode === "derivative"` was selected, workers silently fell through to rainbow coloring. The fix required a complete parallel implementation in both the JS worker blob and the WASM step loop.
 
@@ -624,7 +661,7 @@ The bitmap system uses a **split compute/display** model (see [off-canvas-render
 
 ### Test Suite
 
-Automated tests exist in `tests/` using Playwright Python (headless Chromium). 777 tests across 26 files covering solver correctness, root matching, curve generation, path parametrics, shapes, polynomial operations, state save/load, stats, colors, utilities, morph system, jiggle perturbation (10 modes), continuous fast mode, off-canvas render split, multi-format image export, bitmap/animation color decoupling, derivative bitmap coloring, root-matching strategies (Hungarian algorithm, serialization, UI chips), D-node paths (D-List tab, animation helpers, D-curve serialization, backward compat), D-node context menu (open/close, path editing, revert), extended save/load fields, animation controls (play/pause/resume, home, scrub with D-nodes), trajectory editor simplification (preview/revert/commit, PS button removal, node cycler removal), Final tab (rendering, morph blending, trail data), WASM step loop (init, run, color modes, morph, matching strategies), shape morph ops, pattern arrange ops, integration tests, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
+Automated tests exist in `tests/` using Playwright Python (headless Chromium). 841 tests (838 pass, 2 skipped, 1 deselected) across 26 files covering solver correctness, root matching, curve generation, path parametrics, shapes, polynomial operations, state save/load, stats, colors, utilities, morph system, jiggle perturbation (10 modes), continuous fast mode, off-canvas render split, multi-format image export, bitmap/animation color decoupling, derivative bitmap coloring, root-matching strategies (Hungarian algorithm, serialization, UI chips), D-node paths (D-List tab, animation helpers, D-curve serialization, backward compat), D-node context menu (open/close, path editing, revert), extended save/load fields, animation controls (play/pause/resume, home, scrub with D-nodes), trajectory editor simplification (preview/revert/commit, PS button removal, node cycler removal), Final tab (rendering, morph blending, trail data), WASM step loop (init, run, color modes, morph, matching strategies), shape morph ops, pattern arrange ops, integration tests, and JS vs WASM benchmarks. See [test-results.md](test-results.md) for details.
 
 Manual testing remains important for:
 - Dragging coefficients and roots

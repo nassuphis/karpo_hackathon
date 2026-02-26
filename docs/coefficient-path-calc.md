@@ -48,39 +48,42 @@ Both node types carry the same set of per-node animation parameters. D-nodes add
 | `H_i` | Home position (= `curve_i[0]`) | complex | (from pattern) | complex plane |
 | `gamma_i` | Precomputed closed curve | --- | `[H_i]` | N points in C |
 | `tau_i` | Path type (curve shape) | see below | `"none"` | --- |
-| `R_i` | Path radius | [1, 100] | 25 | % of E |
+| `R_i` | Path radius (`rAbs`) | (0, ∞) | 0.5 (standard), 0.05 (cloud) | world units |
 | `v_i` | Traversal speed | [0.001, 1.0] | 1.0 | cycles/s |
 | `alpha_i` | Rotation of path shape | [0, 1) | 0 | turns |
 | `delta_i` | Direction: -1 if CCW, +1 if CW | {-1, +1} | +1 | --- |
 | `epsilon_i` | Extra parameters (path-specific) | varies | {} | --- |
-| `N` | Curve sample count | {200, 1500} | 200 | points |
+| `N` | Curve sample count | [100, 100000] | 200 | points |
 
-Here `E = coeffExtent`: the maximum pairwise distance among all coefficient home positions. The absolute radius used for curve generation is `R_abs = (R_i / 100) * E`.
+`R_i` is stored as `rAbs` on the coefficient — an absolute radius in world units. There is no percentage conversion; `rAbs` IS the radius used directly for curve generation. (The old `radius` field was a percentage of `coeffExtent`; that indirection has been removed.)
 
-The curve `gamma_i` is generated once from `(H_i, tau_i, R_abs, alpha_i, epsilon_i)` and recomputed whenever any parameter changes. When `tau_i = "none"`, the curve is the single point `[H_i]` (no animation).
+The curve `gamma_i` is generated once from `(H_i, tau_i, rAbs_i, alpha_i, epsilon_i)` and recomputed whenever any parameter changes. When `tau_i = "none"`, the curve is the single point `[H_i]` (no animation).
+
+**`_STD_KEYS`**: The standard per-node animation keys `["rAbs", "speed", "angle", "ccw"]` are stored directly on the coefficient object, NOT inside `extra`/`epsilon_i`.
 
 ### Path types
 
-22 base path shapes in three groups. Each animated type also has a **dithered variant** (suffix `-dither`) that adds per-frame Gaussian noise.
+25 base path shapes in three groups. Each animated type also has a **dithered variant** (suffix `-dither`) that adds per-frame Gaussian noise.
 
 | Group | Types |
 |-------|-------|
 | Non-animated | `none`, `follow-c`* |
-| Basic | circle, horizontal, vertical, spiral**, random*** |
+| Basic | circle, horizontal, vertical, spiral**, random***, disk-cloud***, sq-cloud***, grid-cloud*** |
 | Curves | lissajous, figure-8, cardioid, astroid, deltoid, rose, spirograph, hypotrochoid, butterfly, star, square, c-ellipse** |
 | Space-filling | hilbert, peano, sierpinski |
 
 \* D-node only: `D_i(t) = C_i(t)`.
 \*\* Orbital paths: curve points are absolute positions (orbiting the origin), not offsets from `H_i`.
-\*\*\* Cloud: pre-generated Gaussian point cloud; no interpolation between samples.
+\*\*\* Cloud paths: pre-generated point clouds; no interpolation between samples. `random` = Gaussian, `disk-cloud` = uniform disk, `sq-cloud` = uniform square, `grid-cloud` = `sqrt(N)×sqrt(N)` evenly spaced grid in `[-R/2, R/2]²` (where R = `rAbs`).
 
-Curve sample count: N = 200 for most paths; N = 1500 for space-filling paths and spiral.
+Curve sample count: N = 200 for most paths; N = 1500 for space-filling paths and spiral. User-configurable in range [100, 100000].
 
 **Notable extra parameters (epsilon_i):**
 `spiral`: multiplier m in [0,2] (default 1.5), turns T in [0.5, 5] (default 2).
 `lissajous`: frequencies a in [1,8] (default 3), b in [1,8] (default 2).
 `c-ellipse`: minor-axis width w in [1,100]% (default 50).
 `random`: sigma in [0,10] (default 2).
+`grid-cloud`: no extra parameters (grid dimensions derived from N).
 Dithered variants: sigma_% in [0,1] (default 0.2).
 
 ---
@@ -110,31 +113,52 @@ C_i(t) = curve_i[lo] * (1 - frac) + curve_i[hi] * frac
 
 This is linear interpolation between adjacent curve samples, wrapping at the boundary.
 
-For cloud curves (random path type, `_isCloud` flag):
+For cloud curves (random, disk-cloud, sq-cloud, grid-cloud; `_isCloud` flag):
 ```
 C_i(t) = curve_i[ floor(rawIdx) mod N ]
 ```
 
 No interpolation — snaps to the nearest precomputed point.
 
+### Cloud offset storage
+
+Cloud curves (random, disk-cloud, sq-cloud, grid-cloud) store their points as **offsets from the anchor position**, not absolute positions. This is indicated by the `curve._cloudOffset = true` flag.
+
+Metadata on the curve array:
+```
+curve._cloudOffset = true
+curve._anchorRe    = H_i.re       (home position real part)
+curve._anchorIm    = H_i.im       (home position imaginary part)
+```
+
+During animation, the C-node's **display position** stays at the home position (the C-node does not visibly move). The solver instead uses **effective positions**:
+```
+c._effRe = curve._anchorRe + curve[idx].re
+c._effIm = curve._anchorIm + curve[idx].im
+```
+
+Two helper functions retrieve positions:
+- `coeffHomePos(c)` — returns `{re, im}` of the home/anchor position (= `curve[0]` for non-cloud, or `{_anchorRe, _anchorIm}` for cloud curves)
+- `coeffEffPos(c)` — returns the effective position used by the solver (anchor + offset for clouds, or the sampled curve point for non-cloud curves)
+
 **Dither term:** If the curve has `_ditherSigmaPct > 0` (circle-dither, spiral-dither, etc.), Gaussian noise is added after sampling:
 
 ```
-sigma_abs = ditherSigmaPct / 100 * coeffExtent
+sigma_abs = ditherSigmaPct / 100 * rAbs_i
 C_i(t) += N(0, sigma_abs) + i * N(0, sigma_abs)
 ```
 
-where `N(0, sigma)` is a Gaussian random variable (Box-Muller) and `coeffExtent` is the maximum pairwise distance between any two coefficients.
+where `N(0, sigma)` is a Gaussian random variable (Box-Muller).
 
 **When pathType = "none":** `C_i(t) = H_i` (the coefficient stays at its home position, no curve sampling).
 
-**Curve sample counts:** N = 200 for basic paths, N = 1500 for space-filling paths (hilbert, peano, sierpinski, spiral).
+**Curve sample counts:** N = 200 for basic paths, N = 1500 for space-filling paths (hilbert, peano, sierpinski, spiral). User-configurable in range [100, 100000].
 
 ---
 
 ## D_i(t): D-Node Animation
 
-D-nodes use the identical curve-sampling formula as C-nodes, with their own independent `pathType`, `speed`, `radius`, `angle`, `ccw`, and precomputed `curve` array.
+D-nodes use the identical curve-sampling formula as C-nodes, with their own independent `pathType`, `speed`, `rAbs`, `angle`, `ccw`, and precomputed `curve` array.
 
 **Special case — Follow C:** When `D_i.pathType = "follow-c"`:
 ```
@@ -451,10 +475,16 @@ The mathematical pipeline is identical to the main-thread path. The output diffe
 
 ---
 
+## Save / Load
+
+Coefficient animation parameters are serialized in `saveState()` and restored by `loadState()`. The field stored is `rAbs` (absolute world units). Old snapshots that contain the legacy `radius` field (percentage of `coeffExtent`) are migrated on load: `rAbs = (radius / 100) * coeffExtent` at the time of import.
+
+---
+
 ## Key Invariants
 
 1. **Jiggle never mutates C or D.** It only affects the final blend F.
 2. **Jiggle uses home positions.** All jiggle offsets (except walk) are deterministic functions of the step number and the home positions `H_i = curve_i[0]`, not the current animated positions.
 3. **Morph uses live positions.** The morph function receives the already-animated `C_i(t)` and `D_i(t)`, not home positions.
 4. **No feedback.** F(t) depends only on the current state of C(t), D(t), and jiggle step s. It does not depend on F at any previous time step (except jiggle walk mode, which accumulates).
-5. **coefficients[i].re/im is mutated in place** by curve sampling. The `coefficients` array always holds the current animated C-node positions after step 1.
+5. **coefficients[i].re/im is mutated in place** by curve sampling. The `coefficients` array always holds the current animated C-node positions after step 1. For cloud curves, `coefficients[i].re/im` stays at the home position; the solver uses `c._effRe/_effIm` (= anchor + offset) instead.

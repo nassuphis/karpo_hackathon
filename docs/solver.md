@@ -63,7 +63,7 @@ The preferred fast-mode execution path. Rather than calling WASM for the solver 
 - **Solver parameters**: SOLVER_MAX_ITER=64, SOLVER_TOL2=1e-16 (squared magnitude)
 - Pure C with no stdlib, no malloc — stack arrays for local solver state (up to MAX_DEG=255, MAX_COEFFS=256)
 - Includes full implementations of: `solveEA`, `matchRootsGreedy`, `hungarianMatch` (capped at HUNGARIAN_MAX=32 for stack safety), `computeSens`, `rankNorm`
-- Handles four color modes (uniform, index-rainbow, proximity, derivative); idx-prox and ratio modes fall back to the JS step loop
+- Handles four color modes (uniform, index-rainbow, proximity, derivative); idx-prox, ratio, and rel-proximity modes fall back to the JS step loop
 - Per-coefficient dither with configurable distribution: `rngDither(dist)` returns normal (Gaussian via Box-Muller) when `dist=0`, uniform when `dist=1` -- matching the JS `_ditherRand`/`wDitherRand` behavior
 - PRNG: xorshift128 for jiggle/dither, seeded from JS
 - NaN check uses `x != x` (IEEE 754); NaN rescue uses imported `cos`/`sin`
@@ -76,7 +76,7 @@ When a worker receives an `init` message with `useWasm: true`, it follows this p
 1. **Try `step_loop.wasm`**: If `wasmStepLoopB64` is provided, attempt `initWasmStepLoop()`. Sets `S_useWasmLoop = true` on success.
 2. **Pure JS**: If the WASM step loop fails, the worker uses the JS `solveEA` function in a JS step loop.
 
-Additionally, `S_useWasmLoop` is forced to `false` for color modes not yet supported by `step_loop.c` (currently: index-proximity and ratio modes), in which case the worker falls back to the pure JS step loop.
+Additionally, `S_useWasmLoop` is forced to `false` for color modes not yet supported by `step_loop.c` (currently: index-proximity, ratio, and rel-proximity modes), in which case the worker falls back to the pure JS step loop.
 
 ## WASM Memory Layout
 
@@ -108,6 +108,37 @@ The base64 string is pasted into `WASM_STEP_LOOP_B64` in `index.html`. Compiler 
 ## Bidirectional Editing
 
 Dragging roots works in the opposite direction: the polynomial is reconstructed from its roots by expanding the product (z − r₀)(z − r₁)···(z − rₙ₋₁) using sequential polynomial multiplication — O(n²) complex multiplications. The resulting coefficients are rendered on the left panel and the domain coloring updates accordingly.
+
+## Root Pinning
+
+Root pinning allows fixing one or more roots at specific positions. Instead of adding them as initial guesses to the EA solver, pinned roots are **baked into the coefficient array** by expanding the polynomial.
+
+### Data Structures
+
+- `pinnedRoots[]`: array of `{re, im}` fixed root positions.
+- `pinnedEpsilon`: coupling strength (default 0.1). Added to the constant coefficient after expansion.
+
+### How It Works
+
+The solver expands the polynomial as:
+
+```
+P(z) = Q(z) * product(z - pinnedRoots[i]) + epsilon
+```
+
+where `Q(z)` is the original coefficient polynomial and `epsilon` is added to the constant term.
+
+**`expandPinnedCoeffs()`** multiplies the coefficient polynomial by `(z - p_i)` for each pinned root `p_i`. This is sequential polynomial multiplication -- for each pinned root, the existing coefficient array is convolved with `[1, -p_i]`, increasing the degree by 1 per pinned root.
+
+If `pinnedEpsilon !== 0`, it is added to the constant term (last element of the expanded coefficient array) after all multiplications are complete.
+
+### Key Design Decision
+
+Pinned roots are **NOT** passed to the EA solver as initial guesses. They are baked into the expanded coefficient array, so the solver naturally finds them (along with the original roots) as solutions to the expanded polynomial. This means the solver's degree increases by the number of pinned roots.
+
+### Worker/WASM Integration
+
+Workers and WASM receive `pinnedEpsilon` in the config. In the WASM step loop, it is stored in `cfgF64[19]`. The main thread runs `expandPinnedCoeffs()` before sending coefficient data to workers, so workers always receive the already-expanded coefficient array.
 
 ## Domain Coloring
 

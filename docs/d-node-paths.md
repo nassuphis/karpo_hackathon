@@ -2,7 +2,7 @@
 
 ## Overview
 
-D-nodes (morph targets stored in `morphTargetCoeffs[]`) have the same full data structure as C-coefficients, including `pathType`, `radius`, `speed`, `angle`, `ccw`, `extra`, `curve`, and `curveIndex`. A dedicated "D-List" tab mirrors the C-List tab, allowing D-nodes to be assigned paths (circles, spirals, etc.) and animate along them. D-node animation is integrated into all five animation entry points (animLoop, play/start, scrub, home, fast mode) and is fully supported in both the JS worker blob and the WASM step loop.
+D-nodes (morph targets stored in `morphTargetCoeffs[]`) have the same full data structure as C-coefficients, including `pathType`, `rAbs`, `speed`, `angle`, `ccw`, `extra`, `curve`, and `curveIndex`. A dedicated "D-List" tab mirrors the C-List tab, allowing D-nodes to be assigned paths (circles, spirals, etc.) and animate along them. D-node animation is integrated into all five animation entry points (animLoop, play/start, scrub, home, fast mode) and is fully supported in both the JS worker blob and the WASM step loop.
 
 **Files:** `index.html` (main app, ~15,000 lines), `step_loop.c` (WASM step loop)
 
@@ -15,7 +15,7 @@ D-nodes (morph targets stored in `morphTargetCoeffs[]`) have the same full data 
 - **C-D path interpolation** (v40): 4 path types between C and D positions: **line** (default), **circle**, **ellipse**, **figure-8**. Controlled by `morphPathType`, `morphPathCcw`, and `morphEllipseMinor` globals. Configured via the C-D Path popup (`#cdpath-pop`), opened by the morph-cdpath-btn button.
 - **C-D path dither** (v40): 3 separate sigma controls (start/mid/end) with partition-of-unity envelopes. `morphDitherStartSigma` (0-0.01%), `morphDitherMidSigma` (0-0.1%), `morphDitherEndSigma` (0-0.01%). Envelopes: start = max(cos theta, 0)^2, mid = sin^2 theta, end = max(-cos theta, 0)^2.
 - **D-node dither distribution** (v40): Per-D-entry (and per-C-entry) dither supports normal (Gaussian, default) or uniform distribution. Controlled by `ditherDist` in `extra`, serialized as `_ditherDist` on curves. `_DIST_PARAM` added to `PATH_PARAMS` for all dithered path variants. `_ditherRand(dist)` returns `(Math.random() - 0.5) * 2` for uniform or `_gaussRand()` for normal.
-- **D radius uses C's `coeffExtent()`** -- shared coordinate space. Morph blends C and D in the same unit system.
+- **D radius uses absolute `rAbs` values** -- D-nodes store `rAbs` in absolute world units, same as C-nodes. No `coeffExtent()` conversion needed. Morph blends C and D in the same unit system.
 - **`bitmapCoeffView` unchanged** -- currently plots C coefficient positions only. Adding a C/D toggle is deferred.
 - **No jiggle offsets for D-nodes** -- jiggle only applies to C-coefficients. D-nodes have no jiggle support.
 - **"Follow C" path type**: D-only path type (`"follow-c"`) that mirrors the corresponding C-node position at every step. Listed in `PATH_CATALOG` with `dOnly: true`, has empty params in `PATH_PARAMS`. `buildPathSelect()` accepts a `dNode` parameter to include D-only options. Treated like `"none"` for curve generation (single-point curve at home position). During animation, `follow-c` nodes copy from `coefficients[i].re/im` (or `workCoeffsRe[i]/Im[i]` in fast mode) at each step.
@@ -165,7 +165,7 @@ Right-clicking a D-node in the morph panel SVG opens a context menu (`#dnode-ctx
 All C-List functions mirrored for `morphTargetCoeffs[]` and `selectedMorphCoeffs`:
 
 - **Path picker popup**: `openDPathPickPop(dIdx, anchorEl)`, `closeDPathPickPop(revert)` with live preview, PS button, and "Follow C" option. Snapshots D-node state; reverts on cancel, commits on accept.
-- **Core list**: `refreshDCoeffList()`, `updateDListCoords()`, `updateDListPathCols()`. Rows show label (d0, d1, ...), path type button, speed, radius, curve length, curve index, coordinates. "Follow C" nodes show "Follow C" text for path; speed/radius columns show "-" for `none` and `follow-c` types.
+- **Core list**: `refreshDCoeffList()`, `updateDListCoords()`, `updateDListPathCols()`. Rows show label (d0, d1, ...), path type button, speed, rAbs, curve length, curve index, coordinates. "Follow C" nodes show "Follow C" text for path; speed/rAbs columns show "-" for `none` and `follow-c` types.
 - **Curve type cycler**: `buildDCurveCycleTypes()`, `updateDCurveCycleLabel()`, `selectByDCurveType(type)`. Cycles through distinct path types present across all D-nodes; clicking selects all D-nodes of that type.
 - **Curve editor**: `refreshDListCurveEditor()`, `buildDleControls(pathType)`, `dleReadParams()`, `dleApplyToCoeff(di, params)`. Uses `dleRefIdx` (first selected D-node, sorted by index) as reference for control values. `dleApplyToCoeff()` treats `follow-c` like `"none"` for curve generation (single-point curve at current position).
 - **"Update Whole Selection"** button (`#dle-update-sel`): Reads params from the editor, calls `dleApplyToCoeff()` for each selected D-node, then refreshes the list and updates morph panel if visible.
@@ -192,7 +192,7 @@ Ops tools work on D-nodes when `selectedMorphCoeffs` is non-empty. `snapshotSele
 
 - **`allAnimatedDCoeffs()`** (~line 3504): Returns Set of D-node indices with `pathType !== "none"` and `pathType !== "follow-c"`. Follow-c nodes are not considered "animated" for curve interpolation purposes (they mirror C-nodes instead).
 - **`hasMorphMotion()`** (~line 3514): Returns true when any D-node position differs from its C-node by more than 1e-12. Skips follow-c nodes. Used to determine if morph blending will produce visible motion.
-- **`advanceDNodesAlongCurves(elapsed)`** (~line 3525): Iterates all D-nodes. For `follow-c` nodes, copies `coefficients[i].re/im` directly. For other animated nodes, interpolates position along their curve using `elapsed * speed * direction`, with cloud/smooth interpolation and optional dither (supporting both normal and uniform distributions via `_ditherRand(curve._ditherDist)`).
+- **`advanceDNodesAlongCurves(elapsed)`** (~line 3525): Iterates all D-nodes. For `follow-c` nodes, copies `coefficients[i].re/im` directly. For other animated nodes, interpolates position along their curve using `elapsed * speed * direction`, with cloud/smooth interpolation and optional dither (supporting both normal and uniform distributions via `_ditherRand(curve._ditherDist)`). Cloud paths use the offset model: curves store `{re, im}` offsets from the anchor position, and the effective position is computed as anchor + offset, written to `d._effRe`/`d._effIm`.
 - **`updateMorphPanelDDots()`** (~line 3556): Updates D-dot circle positions, label positions, and morph interpolation line endpoints in the morph panel SVG.
 
 ### Entry Points
@@ -375,7 +375,7 @@ For browsers without Worker support (~line 11487):
 
 ### buildStateMetadata() (~line 7567)
 
-D-node serialization: `morphTargetCoeffs.map(d => ({ pos, home, pathType, radius, speed, angle, ccw, extra }))`. The `home` field stores `d.curve[0].re/im` (the curve start point, which is the pre-animation home position). The `pos` field stores `d.re/im` (current animated position). `follow-c` nodes are serialized with `pathType: "follow-c"`.
+D-node serialization: `morphTargetCoeffs.map(d => ({ pos, home, pathType, rAbs, speed, angle, ccw, extra }))`. The `home` field stores `d.curve[0].re/im` (the curve start point, which is the pre-animation home position). The `pos` field stores `d.re/im` (current animated position). `follow-c` nodes are serialized with `pathType: "follow-c"`.
 
 Morph config serialization includes (v40):
 - `cdPathType`: morphPathType
@@ -387,7 +387,7 @@ Morph config serialization includes (v40):
 
 ### applyLoadedState() (~line 8532)
 
-Restores path fields with backward compat defaults: `d.pathType || "none"`, `d.radius ?? 25`, `d.speed ?? 1`, `d.angle ?? 0`, `d.ccw ?? false`, `d.extra || {}`. For nodes with paths (`pathType !== "none"` and `pathType !== "follow-c"`), the home position is used (`d.home || d.pos`); for `"none"` and `"follow-c"`, position is used directly. Curves are regenerated via `computeCurve()` for non-`"none"` and non-`"follow-c"` paths. `follow-c` and `"none"` nodes get a single-point curve at home position.
+Restores path fields with backward compat defaults: `d.pathType || "none"`, `d.rAbs ?? 0.5`, `d.speed ?? 1`, `d.angle ?? 0`, `d.ccw ?? false`, `d.extra || {}`. For nodes with paths (`pathType !== "none"` and `pathType !== "follow-c"`), the home position is used (`d.home || d.pos`); for `"none"` and `"follow-c"`, position is used directly. Curves are regenerated via `computeCurve()` for non-`"none"` and non-`"follow-c"` paths. `follow-c` and `"none"` nodes get a single-point curve at home position.
 
 `morphEnabled = true` is set unconditionally (checkbox removed in v40).
 
@@ -406,7 +406,7 @@ Morph config restoration (v40):
 ## Out of Scope (deferred)
 
 - **`bitmapCoeffView` D toggle**: Currently plots C coefficient positions only
-- **`coeffExtent` override**: D uses C's extent; per-set option deferred
+- **Per-set scale override**: D and C both use absolute `rAbs`; per-set UI option deferred
 - **Morph panel trail rendering**: Cosmetic, deferred
 
 ---

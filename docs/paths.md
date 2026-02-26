@@ -9,7 +9,7 @@ Each coefficient (C-node) and morph target (D-node) stores the following path-re
 | Field | Type | Description |
 |-------|------|-------------|
 | `pathType` | string | Path type key (e.g. `"none"`, `"circle"`, `"spiral-dither"`, `"follow-c"`) |
-| `radius` | number | Path radius as percentage of `coeffExtent()` (1--100, default 25) |
+| `rAbs` | number | Path radius in absolute world units (default 0.5). The UI uses a mantissa slider (1--10) + OOM +/- buttons via `buildRabsControl()`. Cloud paths default to 0.05. |
 | `speed` | number | Loops per second, stored as 0.001--1.0 (displayed as integers 1--1000 via `toUI: v * 1000`, `fromUI: v / 1000`) |
 | `angle` | number | Rotation angle as fraction of a full turn (0--1.0, step 0.01) |
 | `ccw` | boolean | Direction: `false` = clockwise (CW), `true` = counter-clockwise (CCW) |
@@ -17,14 +17,14 @@ Each coefficient (C-node) and morph target (D-node) stores the following path-re
 | `curve` | array | The sampled closed curve -- N complex points `[{re, im}, ...]` |
 | `curveIndex` | number | Integer curve index last set during animation (floor of rawIdx) |
 
-Standard keys (`radius`, `speed`, `angle`, `ccw`) are stored directly on the coefficient object. All other parameter keys are stored inside `extra`.
+Standard keys (`_STD_KEYS = ["rAbs", "speed", "angle", "ccw"]`) are stored directly on the coefficient object. All other parameter keys are stored inside `extra`.
 
 ## Curve Representation
 
 Each animated coefficient stores a **sampled closed curve** -- an array of N complex points `curve[0], curve[1], ..., curve[N-1]` representing the trajectory in the complex plane. The first point `curve[0]` is the coefficient's **home position** (where it sits before animation starts).
 
 The number of sample points N is determined by a three-tier priority:
-1. **User-defined** (`extra.points`): If set, N = `extra.points` (range 100--10000, step 100, default 200). Exposed as an "N" slider on every path type's parameter UI.
+1. **User-defined** (`extra.points`): If set, N = `extra.points` (range 100--100000, step 100, default 200). Exposed as an "N" slider on every path type's parameter UI.
 2. **High-resolution paths** (hilbert, peano, sierpinski, spiral): If `extra.points` is not set, N = 1500
 3. **Standard paths** (all others): If `extra.points` is not set, N = 200
 
@@ -40,8 +40,8 @@ The curve is always closed: walking from index 0 through N-1 and wrapping back t
 
 Defines the parameter schema for each path type. Each entry is an array of parameter descriptors with `key`, `label`, `min`, `max`, `step`, `default`, and `fmt` fields. Standard parameter shortcuts:
 
-- `_RSAD` = `[speed, radius, angle, ccw, points]` -- most curve paths use this
-- `_RSD` = `[speed, radius, ccw, points]` -- horizontal, vertical (no angle)
+- `_RSAD` = `[speed, rAbs, angle, ccw, points]` -- most curve paths use this
+- `_RSD` = `[speed, rAbs, ccw, points]` -- horizontal, vertical (no angle)
 
 Full listing:
 
@@ -53,13 +53,16 @@ Full listing:
 | `horizontal` | S, R, CW/CCW, N |
 | `vertical` | S, R, CW/CCW, N |
 | `spiral` | S, R (multiplier 0--2x), T (turns 0.5--5), CW/CCW, N |
-| `random` | S, sigma (0--10, as % of coeffExtent), N |
+| `random` | S, R (rAbs, default 0.05), N |
+| `disk-cloud` | S, R (rAbs, default 0.05), N |
+| `sq-cloud` | S, R (rAbs, default 0.05), N |
+| `grid-cloud` | S, R (rAbs, default 0.05), N |
 | `lissajous` | S, R, A, CW/CCW, a (freq 1--8), b (freq 1--8), N |
 | `figure8` through `square` | S, R, A, CW/CCW, N |
 | `hilbert`, `peano`, `sierpinski` | S, R, A, CW/CCW, N |
 | `c-ellipse` | S, W (width 1--100%), CW/CCW, N |
 
-**N** (points, 100--10000, step 100, default 200) controls the number of sample points in the precomputed curve. Stored in `extra.points`. When not explicitly set, defaults to 200 for standard paths or 1500 for space-filling paths.
+**N** (points, 100--100000, step 100, default 200) controls the number of sample points in the precomputed curve. Stored in `extra.points`. When not explicitly set, defaults to 200 for standard paths or 1500 for space-filling paths.
 
 ### PATH_CATALOG
 
@@ -67,7 +70,7 @@ Single source of truth for all path `<select>` elements. Organized into groups:
 
 1. **None** -- top-level `"none"` option
 2. **Follow C** -- top-level `"follow-c"` option (D-only, `dOnly: true`)
-3. **Basic** -- circle, horizontal, vertical, spiral, Gaussian cloud (random)
+3. **Basic** -- circle, horizontal, vertical, spiral, Gaussian cloud (random), disk-cloud, sq-cloud, grid-cloud
 4. **Curves** -- lissajous, figure-8, cardioid, astroid, deltoid, rose, epitrochoid (Spirograph), hypotrochoid, butterfly, star (pentagram), square, c-ellipse
 5. **Space-filling** -- hilbert (Moore), peano, sierpinski
 
@@ -78,7 +81,7 @@ Every path type except `"none"`, `"follow-c"`, and `"random"` has an auto-genera
 - **sigma** (0--1.0, step 0.01, default 0.2, displayed as `sigma%`) -- perturbation magnitude
 - **Dist** (select: Normal / Uniform, default Normal) -- dither distribution
 
-When computing curves, the `_ditherSigmaPct` flag is stored on the curve array. The `_ditherDist` flag stores the distribution type (`"normal"` or `"uniform"`). During animation, if `_ditherSigmaPct` is set, each interpolated position is perturbed by a random offset scaled by `sigma / 100 * coeffExtent()`:
+When computing curves, the `_ditherSigmaPct` flag is stored on the curve array. The `_ditherDist` flag stores the distribution type (`"normal"` or `"uniform"`). During animation, if `_ditherSigmaPct` is set, each interpolated position is perturbed by a random offset scaled by `sigma * rAbs`:
 - **Normal** (default): `_ditherRand("normal")` returns a Gaussian random value via `_gaussRand()`
 - **Uniform**: `_ditherRand("uniform")` returns `(Math.random() - 0.5) * 2` -- uniform in [-1, 1]
 
@@ -90,11 +93,34 @@ This creates a noisy/fuzzy version of the base trajectory. Backward compatibilit
 
 ## Special Curve Types
 
-### Cloud paths (random / Gaussian)
+### Cloud paths (random, disk-cloud, sq-cloud, grid-cloud)
 
-When `baseType === "random"`, `computeCurveN()` generates a Gaussian point cloud: N independent points sampled from a 2D Gaussian centered at the home position with standard deviation equal to the radius parameter (already scaled to absolute units). The curve array is flagged with `curve._isCloud = true`.
+Four cloud path types generate point clouds around the coefficient's anchor position:
 
-During animation, cloud curves use **snap indexing** (no interpolation): the coefficient jumps to the nearest integer index (`Math.floor(rawIdx) % N`), producing discrete jumps rather than smooth motion.
+- **random** (Gaussian cloud): N independent points sampled from a 2D Gaussian with standard deviation = `rAbs` (default 0.05).
+- **disk-cloud** (Disk sample): N points uniformly distributed inside a disk of radius `rAbs`, centered on the anchor.
+- **sq-cloud** (Square sample): N points uniformly distributed inside a square of side `rAbs`, centered on the anchor.
+- **grid-cloud** (Grid sample): `sqrt(N) x sqrt(N)` evenly spaced grid of offsets in `[-R/2, R/2]^2`, centered on the anchor. Same cloud offset pattern. PATH_PARAMS: `[_P.speed, { key: "rAbs", label: "R", type: "rabs", default: 0.05 }, _P.points]`.
+
+#### Cloud offset storage
+
+Cloud curves store `{re, im}` as **offsets from the anchor position**, not absolute positions. Key metadata on the curve array:
+
+- `curve._cloudOffset = true` -- marks offset storage mode
+- `curve._anchorRe`, `curve._anchorIm` -- the anchor position at the time the curve was generated
+
+During animation:
+- `c.re` / `c.im` stays at the **anchor** (the C-node appears stationary on the coefficient panel)
+- `c._effRe` / `c._effIm` = `c.re + curve[idx].re`, `c.im + curve[idx].im` -- the **effective position** used by the solver
+- The solver reads effective positions, so the polynomial roots respond to the cloud offsets even though the visible C-node dot does not jump around
+
+Helper functions:
+- `coeffHomePos(c)` -- returns the home position: for clouds, the anchor (`curve._anchorRe/Im`); for other paths, `curve[0]`
+- `coeffEffPos(c)` -- returns the effective position: `c._effRe/_effIm` if set, otherwise `c.re/c.im`
+
+Legacy fallback: Old `_isCloud` behavior (teleporting the node to absolute cloud point positions) is retained for backward compatibility with pre-offset snapshots. New curves always use `_cloudOffset = true`.
+
+Cloud curves use **snap indexing** (no interpolation): the coefficient jumps to the nearest integer index (`Math.floor(rawIdx) % N`), producing discrete jumps rather than smooth motion.
 
 ### Orbital paths (spiral, c-ellipse)
 
@@ -103,7 +129,7 @@ Curves flagged with `curve._isOrbital` store **absolute** positions in the compl
 - **Spiral**: Orbits around the origin (0+0i). The coefficient spirals from its current orbit radius R0 to a target radius R1 = R0 * mult (default 1.5x) over `turns` turns (default 2), holds at R1 for one full revolution, then spirals back. Three phases: outward spiral, revolution at target, return spiral. Total angular travel = `(2*turns + 1) * 2*pi`.
 - **C-Ellipse**: Traces an ellipse whose vertices are the coefficient's home position and the origin (0+0i). The center is the midpoint, semi-major axis = half the distance from home to origin, semi-minor axis = width% of semi-major. The `width` parameter (1--100%, default 50%) controls the eccentricity.
 
-Both are fully regenerated (not transformed) when radius or angle changes, because `transformCoeffCurve()` detects the `_isOrbital` flag and calls `computeCurve()` instead of applying scale/rotation transforms.
+Both are fully regenerated (not transformed) when rAbs or angle changes, because `transformCoeffCurve()` detects the `_isOrbital` flag and calls `computeCurve()` instead of applying scale/rotation transforms.
 
 ### Space-Filling Curves
 
@@ -187,9 +213,9 @@ Three independent uniform-distribution dither parameters add random noise to the
 
 | Parameter | Range | Envelope | Peak Location |
 |-----------|-------|----------|---------------|
-| `morphDitherStartSigma` | 0--0.01% of `coeffExtent()` | `max(cos(theta), 0)^2` | At C position (theta near 0) |
-| `morphDitherMidSigma` | 0--0.1% of `coeffExtent()` | `sin(theta)^2` | At midpoint (theta near pi/2) |
-| `morphDitherEndSigma` | 0--0.01% of `coeffExtent()` | `max(-cos(theta), 0)^2` | At D position (theta near pi) |
+| `morphDitherStartSigma` | 0--0.01 (absolute units) | `max(cos(theta), 0)^2` | At C position (theta near 0) |
+| `morphDitherMidSigma` | 0--0.1 (absolute units) | `sin(theta)^2` | At midpoint (theta near pi/2) |
+| `morphDitherEndSigma` | 0--0.01 (absolute units) | `max(-cos(theta), 0)^2` | At D position (theta near pi) |
 
 The combined dither magnitude at each step is:
 ```
@@ -262,9 +288,9 @@ re = curve[lo].re * (1 - frac) + curve[hi].re * frac
 im = curve[lo].im * (1 - frac) + curve[hi].im * frac
 ```
 
-For cloud curves (`curve._isCloud`), no interpolation -- the coefficient snaps to the nearest integer index.
+For cloud curves (`curve._cloudOffset` or legacy `curve._isCloud`), no interpolation -- the coefficient snaps to the nearest integer index. With `_cloudOffset`, `c.re/im` stays at the anchor while `c._effRe/_effIm` receives the offset position for the solver.
 
-For dithered curves (`curve._ditherSigmaPct`), after interpolation the position is perturbed by a random offset: `re += _ditherRand(dist) * (sigma / 100 * coeffExtent())`, where `_ditherRand` uses Gaussian (normal) or uniform distribution depending on `curve._ditherDist`.
+For dithered curves (`curve._ditherSigmaPct`), after interpolation the position is perturbed by a random offset: `re += _ditherRand(dist) * sigma * rAbs`, where `_ditherRand` uses Gaussian (normal) or uniform distribution depending on `curve._ditherDist`.
 
 ### advanceToElapsed(elapsed)
 
@@ -300,7 +326,7 @@ There are five places where a coefficient's path can be edited:
 The anim-bar sits at the top of the C-Nodes tab. It shows the selection label, a path type dropdown (`#anim-path`), dynamically rebuilt parameter sliders/toggles (`#bar-dynamic`), and the **"Update Whole Selection"** button (`#sel2path-btn`).
 
 **Preview/revert/commit pattern:**
-- When any slider or toggle is adjusted, `previewBarToSelection()` is called immediately. On first interaction it takes a **snapshot** of all selected coefficients' path state (`barSnapshots = { idx: {pathType, radius, speed, angle, ccw, extra, curve, curveIndex}, ... }`), then applies the current bar settings as a live preview.
+- When any slider or toggle is adjusted, `previewBarToSelection()` is called immediately. On first interaction it takes a **snapshot** of all selected coefficients' path state (`barSnapshots = { idx: {pathType, rAbs, speed, angle, ccw, extra, curve, curveIndex}, ... }`), then applies the current bar settings as a live preview.
 - Changing the path type dropdown also triggers `previewBarToSelection()`.
 - If the user clicks away (deselects coefficients, changes tab, etc.), `revertBarPreview()` restores all coefficients from the snapshot and clears `barSnapshots`.
 - Pressing Escape also reverts the preview.
@@ -364,9 +390,9 @@ Both C-List and D-List tabs have a **Transform** dropdown (`#list-transform`, `#
 | Set All Speeds | Set all selected to Param1 speed |
 | RandomSpeed | Random speed in [0, Param1] |
 | RandomAngle | Random angle in [0, Param1/100] |
-| RandomRadius | Random radius in [min(Param1,Param2), max(Param1,Param2)] |
+| RandomRadius | Random rAbs in [min(Param1,Param2), max(Param1,Param2)] |
 | Lerp Speed | Linearly interpolate speeds from Param1 to Param2 across selection |
-| Lerp Radius | Linearly interpolate radii from Param1 to Param2 |
+| Lerp Radius | Linearly interpolate rAbs from Param1 to Param2 |
 | Lerp Angle | Linearly interpolate angles from Param1/100 to Param2/100 |
 | RandomDirection | Random CW/CCW for each selected |
 | FlipAllDirections | Toggle CW/CCW for all selected |
@@ -389,17 +415,17 @@ Both C-List and D-List toolbars have a **curve type cycler** -- prev/next arrow 
 
 ## Curve Building
 
-`computeCurve(homeRe, homeIm, pathType, radius, angle, extra)` is the main entry point for building a curve at interactive resolution. It reads `extra.points` if set (user-defined), otherwise falls back to 1500 for space-filling paths or 200 for standard paths. It delegates to `computeCurveN(...)` which can also be called with an arbitrary N (used for fast mode hi-res curves).
+`computeCurve(homeRe, homeIm, pathType, rAbs, angle, extra)` is the main entry point for building a curve at interactive resolution. It reads `extra.points` if set (user-defined), otherwise falls back to 1500 for space-filling paths or 200 for standard paths. It delegates to `computeCurveN(...)` which can also be called with an arbitrary N (used for fast mode hi-res curves).
 
 The flow:
-1. **Random**: Generate N Gaussian points around home, flag `_isCloud = true`
+1. **Cloud paths** (random, disk-cloud, sq-cloud, grid-cloud): Generate N cloud points as offsets from anchor, flag `_cloudOffset = true`, store `_anchorRe/_anchorIm`
 2. **Spiral**: Build orbital spiral around origin, flag `_isOrbital = true`
 3. **C-Ellipse**: Build orbital ellipse between home and origin, flag `_isOrbital = true`
-4. **All others**: Call `animPathFn(pathType, t, origin, radius, extra)` for t in [0, 1), compute offsets from home, apply angle rotation, store as absolute positions
+4. **All others**: Call `animPathFn(pathType, t, origin, rAbs, extra)` for t in [0, 1), compute offsets from home, apply angle rotation, store as absolute positions
 
 For dithered variants, `_ditherSigmaPct` and `_ditherDist` are stored on the curve array.
 
-`transformCoeffCurve(c, oldRadius, oldAngle)` efficiently updates a curve when only radius or angle changes (without full recomputation). For cloud and orbital paths it regenerates instead. For regular paths it applies scale and rotation transforms to the existing curve points, then snaps the coefficient to the nearest curve point.
+`transformCoeffCurve(c, oldRabs, oldAngle)` efficiently updates a curve when only rAbs or angle changes (without full recomputation). For cloud and orbital paths it regenerates instead. For regular paths it applies scale and rotation transforms to the existing curve points, then snaps the coefficient to the nearest curve point.
 
 ## Fast Mode Passes
 
@@ -436,7 +462,7 @@ Each coefficient is serialized as:
     "pos": [re, im],
     "home": [curve[0].re, curve[0].im],
     "pathType": "circle",
-    "radius": 25,
+    "rAbs": 0.5,
     "speed": 0.5,
     "angle": 0.33,
     "ccw": false,
@@ -449,11 +475,12 @@ D-nodes are serialized identically inside `morph.target[]`.
 ### Load (`loadState()`)
 
 On load:
-1. Rebuild coefficient objects with defaults for missing fields (`pathType || "none"`, `radius ?? 25`, `speed ?? 1`, `angle ?? 0`, `ccw ?? false`, `extra || {}`)
-2. Set panel ranges first (so `coeffExtent()` works correctly for curve building)
-3. Regenerate curves: for each coefficient, if `pathType === "none"` set curve to `[{re, im}]`, otherwise call `computeCurve()` with the saved parameters
-4. For D-nodes: similarly restore from `morph.target[]` with backward-compatible defaults. D-nodes with `pathType !== "none" && pathType !== "follow-c"` get their curves regenerated. The home position for D-nodes with paths comes from `d.home || d.pos`; for D-nodes without paths it comes from `d.pos`.
-5. Set `curveIndex = 0` for all coefficients and D-nodes
+1. Rebuild coefficient objects with defaults for missing fields (`pathType || "none"`, `rAbs ?? 0.5`, `speed ?? 1`, `angle ?? 0`, `ccw ?? false`, `extra || {}`)
+2. **Legacy migration**: Old snapshots that contain `radius` (percentage 0--100 of `coeffExtent()`) instead of `rAbs` are migrated: the old value is stored temporarily as `_legacyRadius` and converted to absolute world units. The field is then renamed to `rAbs`.
+3. Set panel ranges first
+4. Regenerate curves: for each coefficient, if `pathType === "none"` set curve to `[{re, im}]`, otherwise call `computeCurve()` with the saved parameters
+5. For D-nodes: similarly restore from `morph.target[]` with backward-compatible defaults. D-nodes with `pathType !== "none" && pathType !== "follow-c"` get their curves regenerated. The home position for D-nodes with paths comes from `d.home || d.pos`; for D-nodes without paths it comes from `d.pos`.
+6. Set `curveIndex = 0` for all coefficients and D-nodes
 
 Curves are never serialized directly -- they are always regenerated from parameters on load.
 
@@ -546,7 +573,7 @@ homeRe += offset.re
 homeIm += offset.im
 ```
 
-The curve shape and parameters (path type, radius, angle, speed) are unchanged -- only the center point shifts. Offsets are recomputed between cycles (via Generate or OnTarget auto-trigger).
+The curve shape and parameters (path type, rAbs, angle, speed) are unchanged -- only the center point shifts. Offsets are recomputed between cycles (via Generate or OnTarget auto-trigger).
 
 ### Modes
 
@@ -616,7 +643,7 @@ The C-List tab shows a row per coefficient with the following elements (built by
 | **Power** | Monomial term (1, z, z^2, ...) | Static |
 | **Path** | Button showing path type name or "-" for none; click opens path picker popup | On path change |
 | **Speed** | Speed value (1--1000 display) or "-" if none | On path change |
-| **Radius** | Path radius (0--100) or "-" if none | On path change |
+| **R (rAbs)** | Path radius in absolute world units (default 0.5) or "-" if none | On path change |
 | **Pts** | `curve.length` -- sample points in the trajectory (user-defined via N slider, default 200 or 1500 for space-filling; unrelated to the fast-mode Steps dropdown) | On path change |
 | **Pos** | `c.curveIndex` -- the integer curve index last set during animation. Sweeps 0 -> N-1 -> 0 during animation. | Every frame via `updateListCoords()` |
 | **Coords** | Complex coordinates (re +/- im*i) | Every frame via `updateListCoords()` |
@@ -633,7 +660,7 @@ The D-List tab (`refreshDCoeffList()`) shows a row per morph target with similar
 | **Label** | `d0, d1, ...` |
 | **Path** | Button showing path name, "Follow C", or "-"; click opens D-path picker popup |
 | **Speed** | Speed value or "-" |
-| **Radius** | Radius or "-" |
+| **R (rAbs)** | rAbs or "-" |
 | **Pts** | Curve sample count |
 | **Pos** | Curve index |
 | **Coords** | Complex coordinates |

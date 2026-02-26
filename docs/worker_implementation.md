@@ -109,7 +109,7 @@ The previous "solver-only WASM" tier (tier 2) has been removed. If the WASM step
 
 All solvers operate on flat `Float64Array` buffers for cache efficiency. The WASM step loop allocates all buffers in WASM linear memory via `computeWasmLayout()` (~line 10227), which computes byte offsets for coefficients, roots, curves, palettes, follow-C indices, per-entry dither distribution flags, pixel output, and working arrays. Memory is grown to fit (`L.pages` pages).
 
-**WASM step loop fallback rule**: If `S_idxProxColor` or `S_ratioColor` is true, the WASM step loop is forced off (~line 10525) and the JS step loop is used instead, because these color modes are not implemented in `step_loop.c`.
+**WASM step loop fallback rule**: If `S_idxProxColor`, `S_ratioColor`, or `S_relProxColor` is true, the WASM step loop is forced off (~line 10525) and the JS step loop is used instead, because these color modes are not implemented in `step_loop.c`.
 
 ### 2. Root Matching (`matchRoots` / `hungarianMatch`)
 
@@ -147,7 +147,7 @@ S_nRoots                   int           Root count (= degree)
 S_colorsR/G/B              Uint8Array    Per-root RGB
 S_W, S_H, S_range          int, number   Canvas dimensions and display range
 S_curvesFlat               Float64Array  All curve points (re,im interleaved)
-S_entries                  object[]      Animation entries [{idx, ccw, speed, ditherSigma, ditherDist}]
+S_entries                  object[]      Animation entries [{idx, ccw, speed, ditherSigma, ditherDist, cloudOffset, anchorRe, anchorIm}]
 S_offsets, S_lengths       int[]         Curve offset/length per entry
 S_isCloud                  bool[]        Random-cloud flag per entry
 S_useWasmLoop              bool          Use WASM step loop (preferred when WASM enabled)
@@ -163,6 +163,7 @@ S_idxProxColor             bool          Index × Proximity color mode (JS-only)
 S_idxProxGamma             number        Gamma correction for Idx×Prox brightness
 S_ratioColor               bool          Min/Max Ratio color mode (JS-only)
 S_ratioGamma               number        Gamma correction for Min/Max Ratio
+S_relProxColor             bool          Relative Proximity color mode (JS-only)
 S_morphEnabled             bool          Morph blending active
 S_morphRate                number        Morph oscillation rate (Hz)
 S_morphTargetRe/Im         Float64Array  Morph target coefficient values
@@ -191,7 +192,7 @@ wasmLoopTotalRunSteps      int           Total steps in current run cached for W
 Solver tier selection during init (~line 10520):
 1. If `useWasm` and `wasmStepLoopB64` present: try `initWasmStepLoop(d)` -> set `S_useWasmLoop = true`
 2. Otherwise: pure JS (`S_useWasmLoop = false`)
-3. Post-init check: if `S_useWasmLoop` and (`S_idxProxColor` or `S_ratioColor`), force `S_useWasmLoop = false` (these modes are JS-only)
+3. Post-init check: if `S_useWasmLoop` and (`S_idxProxColor` or `S_ratioColor` or `S_relProxColor`), force `S_useWasmLoop = false` (these modes are JS-only)
 
 This is a 2-tier system: WASM step loop -> pure JS. The previous solver-only WASM tier has been removed.
 
@@ -233,7 +234,7 @@ When the WASM step loop is not active, the JS fallback executes. For each step i
    u = ((t % 1) + 1) % 1          // normalized phase [0, 1)
    rawIdx = u * curveLength
    ```
-   - Cloud curves: snap to nearest point (no interpolation)
+   - Cloud curves: snap to nearest point (no interpolation). If `entries[a].cloudOffset` is true, the curve stores offsets from anchor rather than absolute positions — the worker computes `anchorRe + curvesFlat[...]` and `anchorIm + curvesFlat[...]` to get the final position.
    - Smooth curves: linear interpolation between adjacent points
    - If `ditherSigma > 0`: add `wDitherRand(ditherDist) * ditherSigma` noise to both re/im after interpolation. Distribution is per-entry: 0 = normal (Gaussian), 1 = uniform.
 
@@ -296,7 +297,7 @@ When the WASM step loop is not active, the JS fallback executes. For each step i
 4. Calls `computeWasmLayout()` to determine total memory needed
 5. Grows memory if needed (`wasmLoopMemory.grow()`)
 6. Writes integer config (`cfgI32[0..68]`): nc, nr, W, H, totalSteps, colorMode (0=uniform, 1=rainbow, 2=proximity, 3=derivative), matchStrategy (0=assign4, 1=assign1, 2=hungarian), morphEnabled, entry counts, follow-C count, selIdx count, hasJiggle, uniform RGB, 4 RNG seed values, 47 buffer byte-offsets (including eDd and dDd for per-entry dither distributions), morphPathType (0=line, 1=circle, 2=ellipse, 3=figure8), morphCcw (0/1)
-7. Writes float config (`cfgF64[0..6]`): bitmapRange, FAST_PASS_SECONDS, morphRate, morphEllipseMinor, morphDitherStart, morphDitherMid, morphDitherEnd
+7. Writes float config (`cfgF64[0..6]`, plus additional entries): bitmapRange, FAST_PASS_SECONDS, morphRate, morphEllipseMinor, morphDitherStart, morphDitherMid, morphDitherEnd, ..., pinnedEpsilon (`cfgF64[19]`)
 8. Copies all data arrays into their computed memory locations (including per-entry `ditherDist` flags for both C-curves and D-curves)
 9. Calls `wasmLoopExports.init(L.cfgI, L.cfgD)` to initialize WASM internal state
 
@@ -332,7 +333,7 @@ Compositing on main thread writes sparse pixels directly into a **persistent `Im
     nCoeffs: int,
     degree: int,
     nRoots: int,
-    animEntries: [{idx, ccw, speed, ditherSigma, ditherDist}, ...],  // ditherDist: 0=normal, 1=uniform
+    animEntries: [{idx, ccw, speed, ditherSigma, ditherDist, cloudOffset, anchorRe, anchorIm}, ...],  // ditherDist: 0=normal, 1=uniform; cloudOffset/anchorRe/anchorIm for cloud paths
     curvesFlat: ArrayBuffer,       // Float64Array, all curve points re,im interleaved
     curveOffsets: [int, ...],      // start index in curvesFlat for each curve
     curveLengths: [int, ...],      // point count per curve
@@ -357,6 +358,7 @@ Compositing on main thread writes sparse pixels directly into a **persistent `Im
     idxProxGamma: number,          // gamma for idx-prox brightness
     ratioColor: bool,              // min/max ratio color mode (JS step loop only)
     ratioGamma: number,            // gamma for ratio mode
+    relProxColor: bool,            // relative proximity color mode (JS step loop only)
     selectedCoeffIndices: [int, ...],  // which coefficients for derivative sensitivity
     totalSteps: int,
     FAST_PASS_SECONDS: number,     // always 1.0
@@ -460,7 +462,7 @@ Sent when `runStepLoop()` throws. The worker disables `S_useWasmLoop` so subsequ
 4. **Precompute hi-res curves** for all animated coefficients:
    - `allAnimatedCoeffs()` returns Set of indices where `pathType !== "none"`
    - Snap coefficients to home position (`curve[0]`) temporarily for `coeffExtent()` calculation
-   - For each animated coeff: `computeCurveN(home, pathType, absRadius, angle, extra, stepsVal)` (jiggle offsets are NOT baked into curves; they are applied post-interpolation in workers)
+   - For each animated coeff: `computeCurveN(home, pathType, rAbs, angle, extra, stepsVal)` (jiggle offsets are NOT baked into curves; they are applied post-interpolation in workers)
    - Store in `fastModeCurves` Map
 5. **Precompute hi-res D-curves** for animated morph target coefficients (`allAnimatedDCoeffs()`), stored in `fastModeDCurves` Map
 6. Precompute root colors (`rootColorRGB`)
@@ -551,12 +553,14 @@ All animated curves concatenated into one `Float64Array`:
 curvesFlat: [re0_p0, im0_p0, re0_p1, im0_p1, ..., re1_p0, im1_p0, ...]
 ```
 With metadata arrays:
-- `animEntries`: `[{idx: coeffIndex, ccw: bool, speed: number, ditherSigma: number, ditherDist: 0|1}, ...]`
+- `animEntries`: `[{idx: coeffIndex, ccw: bool, speed: number, ditherSigma: number, ditherDist: 0|1, cloudOffset: bool, anchorRe: number, anchorIm: number}, ...]`
 - `curveOffsets`: start index (in points, not floats) for each curve
 - `curveLengths`: point count per curve
 - `curveIsCloud`: random-cloud flag per curve
 
 Workers index into `curvesFlat` as: `base = offsets[a] * 2; curvesFlat[base + k*2]` for real part of point k.
+
+For cloud paths with offset storage (`cloudOffset = true`), curve points are stored as offsets from the anchor position rather than absolute coordinates. The worker computes the final position as `anchorRe + curvesFlat[base + k*2]` (real) and `anchorIm + curvesFlat[base + k*2 + 1]` (imaginary). This keeps the C-node stationary during animation; the solver uses the effective position (anchor + offset).
 
 ### Root Warm Start
 - Uses `fastModeWorkerRoots` from previous pass if available
@@ -570,6 +574,7 @@ Workers index into `curvesFlat` as: `base = offsets[a] * 2; curvesFlat[base + k*
 - `derivColor` flag + `derivPalR/G/B`: derivative palette (Uint8Array(16) each)
 - `idxProxColor` flag + `idxProxGamma`: index * proximity mode with gamma correction
 - `ratioColor` flag + `ratioGamma`: min/max ratio mode with gamma correction
+- `relProxColor` flag: relative proximity mode (per-root running max normalization)
 - `selectedCoeffIndices`: which coefficient indices to use for derivative sensitivity
 
 ### Morph & D-Curve Data
@@ -588,6 +593,9 @@ Workers index into `curvesFlat` as: `base = offsets[a] * 2; curvesFlat[base + k*
 ### Root Matching
 - `matchStrategy`: `"assign4"` (default), `"assign1"`, or `"hungarian1"`
 
+### Root Pinning
+- `pinnedEpsilon`: number (sent in config; `cfgF64[19]` in WASM). When root pinning is active, the polynomial is expanded on the main thread in `serializeFastModeData()` to include the pinned roots as additional linear factors. Workers receive the already-expanded coefficient array and solve the expanded polynomial directly — no special pinning logic is needed in the worker.
+
 ### Jiggle Offsets
 - `jiggleRe`, `jiggleIm`: Float64Array, one entry per coefficient. Applied post-interpolation in workers. Zero for non-jiggled coefficients.
 
@@ -595,7 +603,7 @@ Workers index into `curvesFlat` as: `base = offsets[a] * 2; curvesFlat[base + k*
 
 ## Root Color Modes
 
-Six bitmap color modes are available. The mode is stored in `bitmapColorMode` (~line 1012) and serialized as boolean flags in the init message:
+Seven bitmap color modes are available. The mode is stored in `bitmapColorMode` (~line 1012) and serialized as boolean flags in the init message:
 
 | Mode | Flag(s) | Root matching | WASM step loop | Worker behavior |
 |------|---------|---------------|----------------|-----------------|
@@ -605,8 +613,9 @@ Six bitmap color modes are available. The mode is stored in `bitmapColorMode` (~
 | `"proximity"` | `proxColor = true` | None | Yes | Workers compute min pairwise distance per root with adaptive running max normalization. Color from selectable 16-entry sequential palette (8 options: Inferno, Viridis, Magma, Plasma, Turbo, Cividis, Warm, Cool). |
 | `"idx-prox"` | `idxProxColor = true` | Per `matchStrategy` | **No** (JS only) | Combines per-root rainbow color with proximity-based brightness. `brightness = pow(min(1, dist/maxDist), gamma)`. Root color is `colorsRGB[i] * brightness`. |
 | `"ratio"` | `ratioColor = true` | None | **No** (JS only) | Computes `minDist/maxDist` ratio per root in single O(n^2) pass. Color from proximity palette via `pow(ratio, gamma)`. |
+| `"rel-proximity"` | `relProxColor = true` | None | **No** (JS only) | Relative proximity mode: normalizes pairwise distances relative to each root's own running maximum, rather than a global maximum. Uses the proximity palette. |
 
-Uniform and proximity modes are fastest: no per-root color lookup, no root matching overhead. The idx-prox and ratio modes are JS-only — the WASM step loop is forced off when these are active.
+Uniform and proximity modes are fastest: no per-root color lookup, no root matching overhead. The idx-prox, ratio, and rel-proximity modes are JS-only — the WASM step loop is forced off when these are active.
 
 ### Proximity Adaptive Normalization
 
@@ -649,6 +658,10 @@ During fast mode, all controls except Fast/imode and R\|C are disabled (CSS `poi
 ### Config Popup (C button)
 
 Worker count selection: buttons for 1, 2, 4, 8, 16. Shows `navigator.hardwareConcurrency` as reference. Changing worker count clears timing history.
+
+### BITCFG Tab
+
+The BITCFG tab exposes floor, ceiling, and frequency sliders that affect palette-based color modes (proximity, derivative, rel-proximity). These values are serialized as additional config parameters sent to workers, controlling how palette indices are computed from raw distance/sensitivity values.
 
 ### Timing Popup (T button)
 
@@ -705,7 +718,7 @@ No per-worker W*H*4 canvas buffer. A 10K*10K canvas with 4 workers and 100K step
 | WASM b64 sent per init (not shared) | Each worker decodes and compiles independently (~1ms). Avoids complexity of sharing compiled modules across workers. Only happens once per fast-mode session. |
 | WASM step loop (full pipeline) | Moving the entire step loop into WASM eliminates JS-to-WASM boundary crossing per step. The step loop WASM module handles interpolation, D-curves, follow-C, morph (all path types), C-D path dither, jiggle, solver, matching, and pixel output natively. Two-tier fallback (WASM step loop -> pure JS) ensures graceful degradation. The previous solver-only WASM tier was removed — if the step loop cannot run, workers fall back directly to JS. |
 | `maxPaintsPerWorker` per-worker sizing | WASM step loop pre-allocates pixel output buffers in linear memory. `ceil(stepsVal / actualWorkers) * nRoots` gives the exact upper bound for each worker's pixel count, avoiding over-allocation when workers are capped below `numWorkers`. |
-| Idx-prox and ratio modes JS-only | These color modes are not implemented in `step_loop.c`. The WASM step loop is forced off when they are active, falling back to pure JS. |
+| Idx-prox, ratio, and rel-proximity modes JS-only | These color modes are not implemented in `step_loop.c`. The WASM step loop is forced off when they are active, falling back to pure JS. |
 
 ---
 
@@ -727,7 +740,7 @@ Jiggle boundary logic mirrors worker mode: when `jiggleMode !== "none"` and `pas
 
 In `enterFastMode()`, for each coefficient with `pathType !== "none"`:
 1. Home position = `curve[0]` (first point of interactive-mode curve)
-2. `computeCurveN(home, pathType, absRadius, angle, extra, stepsVal)` generates N points (jiggle offsets are NOT baked in; they are applied post-interpolation in workers)
+2. `computeCurveN(home, pathType, rAbs, angle, extra, stepsVal)` generates N points (jiggle offsets are NOT baked in; they are applied post-interpolation in workers)
 3. Stored in `fastModeCurves` Map
 
 D-node curves are precomputed identically and stored in `fastModeDCurves` Map.

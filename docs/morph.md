@@ -212,7 +212,7 @@ Creates D array as a deep copy of C positions with `pathType="none"`:
 function initMorphTarget() {
     morphTargetCoeffs = coefficients.map(c => ({
         re: c.re, im: c.im,
-        pathType: "none", radius: 25, speed: 1, angle: 0, ccw: false, extra: {},
+        pathType: "none", rAbs: 0.5, speed: 1, angle: 0, ccw: false, extra: {},
         curve: [{ re: c.re, im: c.im }], curveIndex: 0
     }));
     selectedMorphCoeffs.clear();
@@ -272,7 +272,7 @@ Resets all coefficients to curve[0], resets D-nodes to curve[0], sets `morphMu =
 
 ## D-Node Path System
 
-D-nodes support full trajectory paths (circle, ellipse, figure8, spiral, cloud, etc.) identically to C-nodes, plus one D-only path type.
+D-nodes support full trajectory paths (circle, ellipse, figure8, spiral, random, disk-cloud, sq-cloud, grid-cloud, etc.) identically to C-nodes, plus one D-only path type.
 
 ### allAnimatedDCoeffs() (~line 3428)
 
@@ -291,7 +291,7 @@ function allAnimatedDCoeffs() {
 
 ### advanceDNodesAlongCurves(elapsed) (~line 3437)
 
-Advances all D-nodes along their curves each frame:
+Advances all D-nodes along their curves each frame. Cloud paths (random, disk-cloud, sq-cloud, grid-cloud) use the offset model: curves store `{re, im}` as offsets from the anchor position, and the effective position is computed as anchor + offset, written to `d._effRe`/`d._effIm`. Non-cloud paths interpolate positions directly.
 
 ```javascript
 function advanceDNodesAlongCurves(elapsed) {
@@ -302,6 +302,7 @@ function advanceDNodesAlongCurves(elapsed) {
         }
         if (d.pathType === "none") continue;
         // ... standard curve interpolation (same as C-nodes)
+        // Cloud paths: d._effRe = anchor.re + offset.re, d._effIm = anchor.im + offset.im
     }
 }
 ```
@@ -464,7 +465,7 @@ morph: {
     target: morphTargetCoeffs.map(d => ({
         pos: [d.re, d.im],
         home: [d.curve[0].re, d.curve[0].im],
-        pathType: d.pathType, radius: d.radius, speed: d.speed,
+        pathType: d.pathType, rAbs: d.rAbs, speed: d.speed,
         angle: d.angle, ccw: d.ccw, extra: d.extra || {}
     }))
 }
@@ -493,7 +494,7 @@ if (meta.morph) {
             return {
                 re: home[0], im: home[1],
                 pathType: d.pathType || "none",
-                radius: d.radius ?? 25, speed: d.speed ?? 1,
+                rAbs: d.rAbs ?? 0.5, speed: d.speed ?? 1,
                 angle: d.angle ?? 0, ccw: d.ccw ?? false,
                 extra: d.extra || {},
                 curve: [{ re: home[0], im: home[1] }], curveIndex: 0
@@ -503,7 +504,7 @@ if (meta.morph) {
         for (const d of morphTargetCoeffs) {
             if (d.pathType !== "none" && d.pathType !== "follow-c") {
                 d.curve = computeCurve(d.curve[0].re, d.curve[0].im, d.pathType,
-                    d.radius / 100 * coeffExtent(), d.angle, d.extra);
+                    d.rAbs, d.angle, d.extra);
             }
             d.curveIndex = 0;
         }

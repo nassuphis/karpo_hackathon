@@ -1,6 +1,6 @@
 # Test Results
 
-**775 tests total: 774 passed, 1 skipped** | Runtime: ~12m | Headless Chromium on Apple Silicon
+**841 tests total: 838 passed, 2 skipped, 1 deselected** | Runtime: ~12m | Headless Chromium on Apple Silicon
 
 Run with: `python -m pytest tests/ -v`
 
@@ -426,6 +426,40 @@ Tests the pattern arrange tool: `distributeOnPath()` helper, `patternPositions()
 
 ---
 
+## test_new_features.py — New Features (38 tests)
+
+Tests disk-cloud/sq-cloud path types, BITCFG tab, rel-proximity color mode, clearTrails comprehensive clearing, and Home button/key reset behavior.
+
+| Test Group | Count | What it checks |
+|------------|-------|----------------|
+| `TestDiskCloud` | 8 | Catalog/params entry, no dither variant, curve generation, within-radius, power concentration, animPathFn center |
+| `TestSqCloud` | 6 | Catalog/params entry, no dither variant, curve generation, within-bounds, power concentration |
+| `TestBitcfgTab` | 7 | Tab button, content div, build on switch, solver title, color mode toggles, BG color grid, all 7 color modes |
+| `TestRelProximity` | 4 | In bitmap modes, selectable, save/load roundtrip, worker data flag |
+| `TestClearTrails` | 6 | Clears trailData, finalTrailData, root trail SVG, coeffTrailLayer, morphTrailLayer, idempotent |
+| `TestHomeReset` | 7 | Resets coefficients, curveIndex, stops animation, clears trails, resets jiggle, resets morph, resets D-nodes |
+
+---
+
+## test_orb_paths.py — Orbit D-Node Paths (28 tests)
+
+Tests orbit (orb-) D-node path types: PATH_CATALOG/PARAMS integration, curve generation, animation with reference C-node, Home button behavior, fast mode serialization, WASM fallback, and backward-compatible path renames.
+
+| Test Group | Count | What it checks |
+|------------|-------|----------------|
+| `TestOrbPathCatalog` | 8 | Orbit group exists, dOnly flag, follow-c entry, orb-circle entry, refC param, excluded from C-node select, included in D-node select, all 14 orb- variants |
+| `TestOrbCurveGeneration` | 3 | _orbRefC property, offsets centered at origin, default refC=0 |
+| `TestOrbAnimation` | 1 | advanceDNodesAlongCurves adds C-ref position to orbit D-node |
+| `TestOrbHomeReset` | 2 | Home returns C-nodes to curve[0], orbit D-node near C-ref after Home |
+| `TestOrbFastModeSerialization` | 2 | orbRefC in serialized dAnimEntries, non-orbit gets orbRefC=-1 |
+| `TestOrbFastModeMainThread` | 1 | Main-thread step loop applies orbit offset to D-nodes |
+| `TestOrbEnterFastMode` | 2 | enterFastMode succeeds with orbit D-node, still works without orbit |
+| `TestOrbPathDisplayName` | 4 | orb-circle, orb-figure8, orb-lissajous, orb-dither display names |
+| `TestOrbWasmFallback` | 2 | WASM bypass with orbit D-nodes, worker blob uses nCoeffs not nc |
+| `TestBackwardCompatRenames` | 3 | spiral->o-spiral, old c-ellipse->o-ellipse, new c-ellipse preserved |
+
+---
+
 ## test_integration.py — End-to-End (3 tests)
 
 | Test | Status | What it checks |
@@ -497,9 +531,11 @@ Headless Chromium, Apple Silicon Mac. Each degree run includes 100-200 JIT/WASM 
 | WASM step loop | test_wasm_step_loop.py | 26 | Module loading, memory layout, solver correctness, color modes, fast mode E2E, JS comparison, progress, edge cases |
 | Shape morph | test_shape_morph.py | 30 | Ray-polygon intersection, shape boundary targets (box/tri/pent/inf), morph slider interpolation |
 | Pattern arrange | test_pattern_arrange.py | 193 | 21 patterns: distributeOnPath, count/finite/centroid, per-shape geometry, blend interpolation, large-N, opts, UI popup |
+| New features | test_new_features.py | 38 | Disk-cloud/sq-cloud paths, BITCFG tab, rel-proximity color mode, clearTrails, Home reset |
+| Orbit D-node paths | test_orb_paths.py | 28 | Orbit path catalog/params, curve generation, animation, Home reset, fast mode serialization, WASM fallback, backward-compat renames |
 | Integration | test_integration.py | 3 | Snap loading, determinism, fast mode pixels |
 | Benchmark | test_benchmark.py | 7 | JS vs WASM: solver correctness + performance, step loop benchmarks |
-| **Total** | **26 files** | **775** | |
+| **Total** | **28 files** | **841** | |
 
 ---
 
@@ -534,6 +570,8 @@ tests/
   test_wasm_step_loop.py   — WASM step loop (module loading, memory layout, solver, color modes, E2E)
   test_shape_morph.py      — Shape morph tool (rayPolyHit, shapeTargets, slider interpolation)
   test_pattern_arrange.py  — Pattern arrange tool (21 patterns, distributeOnPath, blend, opts, UI)
+  test_new_features.py     — Disk-cloud/sq-cloud paths, BITCFG tab, rel-proximity, clearTrails, Home reset
+  test_orb_paths.py        — Orbit D-node paths (catalog, animation, fast mode, WASM fallback, renames)
   test_integration.py      — Snap loading, determinism, fast mode
   test_benchmark.py        — JS vs WASM speed + correctness, step loop benchmarks
 ```
@@ -541,3 +579,16 @@ tests/
 **Dependencies**: `uv pip install playwright pytest && playwright install chromium`
 
 **WASM build**: `./build-wasm.sh` (requires `brew install lld`)
+
+---
+
+## Changelog
+
+### 2026-02-25 — 775 -> 841 tests (28 files)
+
+- **rAbs refactoring**: `c.radius` (percentage) -> `c.rAbs` (absolute world units) required updating 92 test references across 9 files
+- **Cloud offset storage tests**: disk-cloud/sq-cloud path types with power concentration, animPathFn center, bounds checks
+- **Grid-cloud path type**: added to path catalog
+- **Root pinning features**: 38 new tests covering BITCFG tab, rel-proximity color mode, clearTrails comprehensive clearing, Home button/key reset
+- **Orbit D-node paths**: 28 new tests covering orbit path catalog/params, curve generation, animation with reference C-node, fast mode serialization, WASM fallback, backward-compatible path renames (spiral->o-spiral, old c-ellipse->o-ellipse)
+- **New test files**: `test_new_features.py` (38 tests), `test_orb_paths.py` (28 tests)

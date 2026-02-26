@@ -37,7 +37,7 @@ Animation path types are defined in `PATH_CATALOG`, the single source of truth f
 |-------|-------|
 | *(top-level)* | None |
 | *(top-level, D-only)* | Follow C |
-| Basic | Circle, Horizontal, Vertical, Spiral, Gaussian cloud |
+| Basic | Circle, Horizontal, Vertical, Spiral, Gaussian cloud, Grid cloud |
 | Curves | Lissajous, Figure-8, Cardioid, Astroid, Deltoid, Rose (3-petal), Spirograph, Hypotrochoid, Butterfly, Star (pentagram), Square, C-Ellipse |
 | Space-filling | Hilbert (Moore), Peano, Sierpinski |
 
@@ -128,7 +128,7 @@ Most patterns use `distributeOnPath(n, verts, closed)` — an arc-length-based p
 
 ### Points (N)
 
-All path types (except None and Follow C) expose an **N** slider controlling the number of sample points in the precomputed curve. Stored in `extra.points`. Range **100--10000**, step 100, default 200. When not set, the effective default depends on path type: 1500 for space-filling paths (hilbert, peano, sierpinski, spiral) and 200 for all others. Higher values give smoother curves at the cost of memory.
+All path types (except None and Follow C) expose an **N** slider controlling the number of sample points in the precomputed curve. Stored in `extra.points`. Range **100--100000**, step 100, default 200. When not set, the effective default depends on path type: 1500 for space-filling paths (hilbert, peano, sierpinski, spiral) and 200 for all others. Higher values give smoother curves at the cost of memory.
 
 ### Speed
 
@@ -295,7 +295,7 @@ The same pattern is used for D-List transforms on `#dlist-transform`.
 
 Serializes the entire application state into a plain JSON-serializable object. Called by both `saveState()` and `snapDownload()`. Fields include:
 
-- `degree`, `pattern`, `coefficients[]` (pos, home, pathType, radius, speed, angle, ccw, extra)
+- `degree`, `pattern`, `coefficients[]` (pos, home, pathType, rAbs, speed, angle, ccw, extra)
 - `roots[]`, `panels` (coeff/roots ranges), `trailData`
 - Color modes: `rootColorMode`, `uniformRootColor`, `bitmapColorMode`, `bitmapUniformColor`, `bitmapCanvasColor`
 - Bitmap config: `bitmapMatchStrategy`, `bitmapProxPalette`, `bitmapIdxProxGamma`, `bitmapExportFormat`
@@ -317,7 +317,7 @@ Restores state in a strict order:
 5. Regenerate curves for all coefficients
 6. Restore morph state, jiggle state, color modes, etc.
 
-**Backward compatibility**: uses `??` and `||` defaults for all fields so older saves missing newer fields load cleanly. Example: `saved.radius ?? 25`, `meta.morph?.enabled`, `bitmapMatchStrategy || "assign4"`.
+**Backward compatibility**: uses `??` and `||` defaults for all fields so older saves missing newer fields load cleanly. Example: `saved.rAbs ?? 0.5`, `meta.morph?.enabled`, `bitmapMatchStrategy || "assign4"`. Old snapshots that stored `radius` (percentage 0-200 of `coeffExtent`) are migrated on load: if `saved.rAbs` is absent but `saved.radius` exists, the loader converts `radius` to absolute world units via `radius / 100 * coeffExtent()`.
 
 ## Worker Init/Run Message Pattern
 
@@ -488,7 +488,7 @@ This is dramatically smaller than full buffers. For a 10K x 10K render with 1M s
 
 Application state lives in top-level `let` variables. There is no framework, store, or state management library. Key state variables include:
 
-- `coefficients[]` -- array of coefficient objects `{ re, im, curve, curveIndex, pathType, radius, speed, angle, ccw, extra }`
+- `coefficients[]` -- array of coefficient objects `{ re, im, curve, curveIndex, pathType, rAbs, speed, angle, ccw, extra }`
 - `morphTargetCoeffs[]` -- parallel array for D-nodes, same structure
 - `currentRoots[]` -- solved root positions `{ re, im }`
 - `selectedCoeffs`, `selectedMorphCoeffs`, `selectedRoots` -- `Set<number>` for selection
@@ -506,17 +506,20 @@ Each coefficient object carries both position and animation metadata:
     curve: [{re, im}, ...],          // precomputed path points
     curveIndex: number,              // current position along curve
     pathType: string,                // "none", "circle", "lissajous", etc.
-    radius: number,                  // path radius (0-200, % of coeffExtent)
+    rAbs: number,                    // path radius in absolute world units (default 0.5)
     speed: number,                   // 0.001-1.0, loops per second
     angle: number,                   // rotation angle (0-1, fraction of 2pi)
     ccw: boolean,                    // counter-clockwise flag
-    extra: {}                        // path-type-specific params (e.g. {freqX:3, freqY:2} for Lissajous)
+    extra: {},                       // path-type-specific params (e.g. {freqX:3, freqY:2} for Lissajous)
+    _effRe: number, _effIm: number,  // effective position (for cloud paths: anchor + offset)
 }
 ```
 
 - `coefficients[0]` = leading (highest power). New coeff via `unshift()` = new highest power.
 - `"none"` path = 1-point curve at home position (not null).
 - `Set` iteration order is insertion order -- sort `[...selectedCoeffs]` for deterministic index order.
+- `_STD_KEYS`: `["rAbs", "speed", "angle", "ccw"]` -- stored directly on the coefficient object, not in `extra`.
+- Cloud paths (random, disk-cloud, sq-cloud, grid-cloud) store `{re, im}` as offsets from the anchor, not absolute positions. `curve._cloudOffset = true`, `curve._anchorRe/Im` metadata. C-node stays stationary during animation; solver uses `c._effRe/_effIm` = anchor + offset. Helpers: `coeffHomePos(c)` returns the home (anchor) position; `coeffEffPos(c)` returns the effective position used by the solver.
 
 ### D-node data model
 

@@ -64,7 +64,7 @@ Located at the top of the C-Nodes tab (`#anim-bar`). Controls the animation path
 
 **First row:** Coefficient picker (`#coeff-picker-btn`), Select All (`#select-all-coeffs-btn`) / Deselect (`#deselect-all-btn`), selection label (`#bar-title`), **Update Whole Selection** button (`#sel2path-btn`).
 
-**Second row (`#bar-controls`):** Path type dropdown (`#anim-path`) and path-specific controls (`#bar-dynamic`). Sliders change based on the chosen path type (e.g. R/S/A/CW-CCW/N for circles, S/sigma/N for Gaussian). All path types expose an **N** slider (100--10000, default 200) controlling curve sample point count. Adjusting controls shows a live preview of the proposed paths. Click away or press Escape to revert; click **Update Whole Selection** to commit. Controls dim when no coefficients are selected.
+**Second row (`#bar-controls`):** Path type dropdown (`#anim-path`) and path-specific controls (`#bar-dynamic`). Sliders change based on the chosen path type (e.g. R/S/A/CW-CCW/N for circles, S/sigma/N for Gaussian). All path types expose an **N** slider (100--100000, default 200) controlling curve sample point count. Adjusting controls shows a live preview of the proposed paths. Click away or press Escape to revert; click **Update Whole Selection** to commit. Controls dim when no coefficients are selected.
 
 #### Preview / Revert / Commit Pattern
 
@@ -75,19 +75,21 @@ The trajectory editor uses a preview/revert workflow. When you change the path d
 
 This replaces the previous immediate-apply behavior, giving you a chance to experiment without permanently changing paths.
 
-#### Path Types (40 for C-nodes, 41 for D-nodes)
+#### Path Types (48 for C-nodes, 77 for D-nodes)
 
-Paths are defined in `PATH_CATALOG`. Every path in a group (except Gaussian cloud) automatically gets a dithered variant that adds small noise to each step. Dithered path variants expose two additional parameters: a **sigma** slider controlling dither magnitude and a **Dist** dropdown (`_DIST_PARAM`) to choose between **Normal** (Gaussian) and **Uniform** distribution for the dither noise.
+Paths are defined in `PATH_CATALOG`. Every path in a group (except Gaussian cloud, Disk sample, and Square sample) automatically gets a dithered variant that adds small noise to each step. Dithered path variants expose two additional parameters: a **sigma** slider controlling dither magnitude and a **Dist** dropdown (`_DIST_PARAM`) to choose between **Normal** (Gaussian) and **Uniform** distribution for the dither noise.
 
 | Group | Base Paths | With Dither |
 |-------|-----------|-------------|
 | **Top-level** | None | -- |
-| **D-only** | Follow C | -- |
-| **Basic** | Circle, Horizontal, Vertical, Spiral, Gaussian cloud | +4 dithered (cloud excluded) |
-| **Curves** | Lissajous, Figure-8, Cardioid, Astroid, Deltoid, Rose (3-petal), Spirograph, Hypotrochoid, Butterfly, Star (pentagram), Square, C-Ellipse | +12 dithered |
-| **Space-filling** | Hilbert (Moore), Peano, Sierpinski | +3 dithered |
+| **Basic** (9) | Circle, Horizontal, Vertical, O-Spiral, C-Spiral, Gaussian cloud, Disk sample, Square sample, Grid sample | +6 dithered (cloud types random, disk-cloud, sq-cloud excluded) |
+| **Curves** (13) | Lissajous, Figure-8, Cardioid, Astroid, Deltoid, Rose (3-petal), Spirograph, Hypotrochoid, Butterfly, Star (pentagram), Square, O-Ellipse, C-Ellipse | +13 dithered |
+| **Space-filling** (3) | Hilbert (Moore), Peano, Sierpinski | +3 dithered |
+| **Orbit** (D-only, 15) | Follow C, Orb-Circle, Orb-Horizontal, Orb-Vertical, Orb-Figure8, Orb-Lissajous, Orb-Star, Orb-Square, Orb-Cardioid, Orb-Astroid, Orb-Deltoid, Orb-Rose, Orb-Epitrochoid, Orb-Hypotrochoid, Orb-Butterfly | +14 dithered (Follow C excluded) |
 
-Each coefficient stores its own path type, radius, speed, angle, and direction independently. See [Paths](paths.md) for curve formulas, cycle sync, and space-filling curve details.
+Cloud path types (random, disk-cloud, sq-cloud) store curve points as offsets from the anchor position, keeping the C-node visually stationary during animation while the solver uses `c._effRe/_effIm` = anchor + offset. Grid sample (grid-cloud) does get a dithered variant.
+
+Each coefficient stores its own path type, rAbs (radius in absolute world units), speed, angle, and direction independently. The UI exposes rAbs via `buildRabsControl()` -- a mantissa slider plus order-of-magnitude (OOM) buttons. See [Paths](paths.md) for curve formulas, cycle sync, and space-filling curve details.
 
 #### Trajectory Workflow
 
@@ -111,8 +113,8 @@ Tabular view of all coefficients with per-row columns:
 | Power | Polynomial power |
 | Path | Animation path type (clickable to open per-coefficient path picker popup) |
 | Speed | Animation speed (or dash) |
-| Radius | Path radius (or dash) |
-| Curve length | Number of sample points (user-configurable via N parameter, 100--10000) |
+| rAbs | Path radius in absolute world units (or dash) |
+| Curve length | Number of sample points (user-configurable via N parameter, 100--100000) |
 | Curve index | Current position along path |
 | Coordinates | Complex value (re + im*i) |
 
@@ -132,9 +134,9 @@ The curve editor (`#list-curve-editor`) below the toolbar lets you edit the path
 | Set All Speeds | Set selected to Param1 speed |
 | RandomSpeed | Random speed for each selected |
 | RandomAngle | Random starting angle |
-| RandomRadius | Random radius |
+| RandomRadius | Random rAbs |
 | Lerp Speed | Interpolate speeds from Param1 to Param2 |
-| Lerp Radius | Interpolate radii |
+| Lerp Radius | Interpolate rAbs values |
 | Lerp Angle | Interpolate angles |
 | RandomDirection | Random CW/CCW for each |
 | FlipAllDirections | Toggle CW/CCW on all selected |
@@ -192,7 +194,7 @@ The three sigma sliders add position-dependent noise along the morph path. Each 
 
 ![D-List tab](images/iface_dlist_tab.png)
 
-Identical structure to the C-List tab, but for morph target D-nodes. Assign paths, speeds, and transforms to D-nodes independently from C-coefficients. The toolbar (`#dcoeff-list-toolbar`) has the same controls: Select All (`#dlist-select-all-btn`) / Deselect (`#dlist-deselect-all-btn`), Same Curve (`#dlist-all-curves-btn`), curve type cycler (prev/next arrows, label `#dlist-curve-cycle`), selection count (`#dlist-count`), Transform dropdown (`#dlist-transform`), and Param1 (`#dlist-sel-speed`) / Param2 (`#dlist-sel-param2`) sliders. The curve editor (`#dlist-curve-editor`) uses the same pattern: select D-nodes, adjust parameters via dropdown `#dle-path-sel` and controls `#dle-controls`, and click **Update Whole Selection** (`#dle-update-sel`) to apply. D-nodes have an additional **Follow C** path type that mirrors the corresponding C-node's position (no speed or radius displayed). See [D-Node Paths](d-node-paths.md).
+Identical structure to the C-List tab, but for morph target D-nodes. Assign paths, speeds, and transforms to D-nodes independently from C-coefficients. The toolbar (`#dcoeff-list-toolbar`) has the same controls: Select All (`#dlist-select-all-btn`) / Deselect (`#dlist-deselect-all-btn`), Same Curve (`#dlist-all-curves-btn`), curve type cycler (prev/next arrows, label `#dlist-curve-cycle`), selection count (`#dlist-count`), Transform dropdown (`#dlist-transform`), and Param1 (`#dlist-sel-speed`) / Param2 (`#dlist-sel-param2`) sliders. The curve editor (`#dlist-curve-editor`) uses the same pattern: select D-nodes, adjust parameters via dropdown `#dle-path-sel` and controls `#dle-controls`, and click **Update Whole Selection** (`#dle-update-sel`) to apply. D-nodes have an additional **Follow C** path type that mirrors the corresponding C-node's position (no speed or rAbs displayed). See [D-Node Paths](d-node-paths.md).
 
 ### Jiggle Tab
 
@@ -263,7 +265,7 @@ Additional controls:
 
 ## Right Panel
 
-The right panel has four tabs: Roots, Stats, Sound, Bitmap. Recording controls sit in the tab bar.
+The right panel has five tabs: Roots, Stats, Sound, Bitmap, and BITCFG. Recording controls sit in the tab bar.
 
 ### Recording Controls
 
@@ -295,8 +297,12 @@ Interactive SVG complex-plane visualization of polynomial roots (`#roots-panel` 
 | **Fit** | `#roots-fit-btn` | Auto-zoom to fit all roots and trails. |
 | **-25%** | `#roots-zoom-in-btn` | Zoom in by 25%. |
 | **+25%** | `#roots-zoom-out-btn` | Zoom out by 25%. |
-| **Select All** | `#select-all-roots-btn` | Select all roots. |
+| **Auto-fit** | `#roots-autofit-cb` | Checkbox: auto-zoom roots panel to show all roots after each solve (`rootsAutoFit`). |
+| **Select All** | `#select-all-roots-btn` | Select all roots. Behavior depends on `rootSelMode`: selects pinned roots if last selection was pinned, otherwise selects free roots. |
 | **Deselect** | `#deselect-all-roots-btn` | Deselect all roots. |
+| **Pin** | `#roots-pin-btn` | Pin selected free roots (batch). See [Root Pinning](#root-pinning). |
+| **Free** | `#roots-free-btn` | Free selected pinned roots (batch). See [Root Pinning](#root-pinning). |
+| **Epsilon toolbar** | `#eps-toolbar` | Shown when pinned roots exist. `pinnedEpsilon` slider with OOM buttons. |
 
 #### Root Color Popup
 
@@ -325,6 +331,28 @@ Root trails record positions as colored SVG paths during animation. Loop detecti
 - **Drag any root** to move it; coefficients update on the left via inverse reconstruction.
 - During root drag, a dashed polyline connects coefficient dots, visualizing the coefficient chain.
 - **Marquee select** works the same as on the coefficients panel.
+- **Right-click any root** (free or pinned) to open a context menu (`#root-ctx`) with Free/Pinned toggle and Delete button. See [Root Pinning](#root-pinning) below.
+
+#### Root Pinning
+
+Roots can be **pinned** to fix them in place while the remaining free roots are solved. Pinning a root performs synthetic division, removing a linear factor from the polynomial. Freeing a pinned root multiplies the factor back in.
+
+**Toolbar controls** (in `#roots-toolbar`):
+
+| Control | ID | Description |
+|---------|----|-------------|
+| **Pin** | `#roots-pin-btn` | Pin all selected free roots (batch). Disabled if fewer than 3 coefficients would remain. |
+| **Free** | `#roots-free-btn` | Free all selected pinned roots (batch). Multiplies the linear factor back into the polynomial. |
+| **Auto-fit checkbox** | `#roots-autofit-cb` | Toggle `rootsAutoFit` -- when checked, the roots panel auto-zooms to show all roots after each solve. |
+| **Epsilon toolbar** | `#eps-toolbar` | Shown when pinned roots exist. Contains `pinnedEpsilon` slider with OOM buttons (up/down to shift the divisor by powers of 10). Epsilon adds a coupling term to the expanded polynomial. |
+
+**Root context menu** (`#root-ctx`): Right-click any root to open:
+
+- **Free / Pinned** toggle buttons -- switch the root between free and pinned states. Pinning is disabled when `coefficients.length <= 3` (minimum degree 2).
+- **Delete** button -- removes the root entirely. Guarded by `totalDeg = coefficients.length - 1 + pinnedRoots.length` which must remain > 2.
+- **Accept** button -- closes the context menu.
+
+Pinned roots appear as separate dots on the SVG canvas. The `rootSelMode` variable (`"free"` | `"pinned"`) tracks which kind of root was last selected, so that **Select All** in the roots toolbar selects the appropriate set.
 
 ### Stats Tab
 
@@ -390,7 +418,7 @@ Accumulates root (or coefficient) positions as single-pixel stamps on a high-res
 | **start / stop** | `#bitmap-fast-btn` | Toggle continuous fast mode (parallel Web Workers). Stop preserves state; start resumes where it left off. |
 | **ROOT / COEF** | `#bitmap-coeff-btn` | Toggle between plotting root or coefficient positions. |
 | **Steps** | `#bitmap-steps-select` | Solver steps per pass: 10 / 100 / 1K / 5K / 10K / 50K / 100K / 1M. Auto-restarts fast mode if changed during active rendering. |
-| **cfg** | `#bitmap-cfg-btn` | Open configuration popup (see below). |
+| **cfg** | `#bitmap-cfg-btn` | Switch to the BITCFG tab (see [BITCFG Tab](#bitcfg-tab) below). |
 | **-25%** | `#bitmap-zoom-in-btn` | Zoom in bitmap view by 25%. |
 | **+25%** | `#bitmap-zoom-out-btn` | Zoom out bitmap view by 25%. |
 | **Zoom label** | `#bitmap-zoom-label` | Current bitmap zoom level (e.g. `1.00x`). |
@@ -408,20 +436,24 @@ After clicking **init** and **start**, parallel Web Workers continuously solve t
 
 Four export formats: JPEG (with quality slider), PNG, BMP, TIFF. The image is exported at full compute resolution, not the display-capped resolution.
 
-#### Configuration Popup (cfg)
+### BITCFG Tab
 
-![Bitmap configuration popup](images/iface_bitmap_cfg.png)
+The BITCFG tab (`#bitcfg-content`) consolidates all bitmap configuration into a dedicated right-panel tab. Clicking the **cfg** button in the bitmap toolbar switches to this tab. The content is built dynamically by `buildBitmapCfgContent()`.
+
+#### Solver Engine & Workers
 
 | Setting | Options |
 |---------|---------|
 | **Solver engine** | JavaScript or WebAssembly. See [WASM](wasm_investigation.md). |
 | **Workers** | Number of parallel Web Workers: 1, 2, 4, 8, 16. |
-| **Background color** | 24 preset colors (darks, lights, grays). |
-| **Root color** | 6 bitmap color modes (see below). Independent from animation root coloring. |
 
-Jiggle controls have moved to the dedicated [Jiggle tab](#jiggle-tab) in the left panel.
+#### Background Color
 
-**Bitmap color modes** (6):
+24 preset colors (darks, lights, grays) displayed as a swatch grid.
+
+#### Root Color Modes (7)
+
+Independent from animation root coloring.
 
 | Mode | Description | Palette / Options |
 |------|-------------|-------------------|
@@ -431,8 +463,21 @@ Jiggle controls have moved to the dedicated [Jiggle tab](#jiggle-tab) in the lef
 | Root Proximity | Min distance to nearest root | Sequential palette from catalog (8 options) |
 | Idx x Prox | Index Rainbow hue modulated by proximity brightness | Matching strategy chips + gamma slider (0.1-1.0) |
 | Min/Max Ratio | Ratio of min/max root distance | Sequential palette from catalog (8 options) + gamma slider (0.1-1.0) |
+| Rel. Proximity | Relative proximity -- normalized distance to nearest root | Sequential palette from catalog (8 options) |
 
-**Proximity palette catalog** (used by Root Proximity and Min/Max Ratio modes): Inferno (default), Viridis, Magma, Plasma, Turbo, Cividis, Warm, Cool. Each renders as a gradient circle in the cfg popup; clicking selects the palette and switches to the corresponding mode.
+**Proximity palette catalog** (used by Root Proximity, Min/Max Ratio, and Rel. Proximity modes): Inferno (default), Viridis, Magma, Plasma, Turbo, Cividis, Warm, Cool. Each renders as a gradient circle; clicking selects the palette and switches to the corresponding mode.
+
+#### Floor / Ceiling / Frequency Sliders
+
+Each palette-based color mode exposes three additional sliders (appended via `_appendFCF()`):
+
+| Slider | Label | Range | Description |
+|--------|-------|-------|-------------|
+| **Floor** | F | 0.00--1.00 | Minimum value mapped to the lowest palette color. Values below floor are clamped. |
+| **Ceiling** | C | 0.00--1.00 | Maximum value mapped to the highest palette color. Values above ceiling are clamped. Floor and ceiling are linked: floor cannot exceed ceiling and vice versa. |
+| **Frequency** | ~ | 0.0--10.0 | Palette cycling frequency. Higher values repeat the palette more times across the value range. |
+
+These sliders are available for all modes that use a sequential palette (Derivative, Root Proximity, Idx x Prox, Min/Max Ratio, Rel. Proximity).
 
 **Root-matching strategies** (used by Index Rainbow and Idx x Prox modes):
 
@@ -457,11 +502,11 @@ All popups use the `.ops-pop` CSS class, positioned via `getBoundingClientRect()
 | Coefficient picker | `#coeff-pick-pop` | Coefficient picker button in anim bar |
 | C-node context menu | `#coeff-ctx` | Right-click on a coefficient dot |
 | D-node context menu | `#dnode-ctx` | Right-click on a D-node dot |
+| Root context menu | `#root-ctx` | Right-click on a root (free or pinned) |
 | Export | `#snap-pop` | Export button in header |
 | C-List path picker | `#path-pick-pop` | Clicking path cell in C-List table |
 | D-List path picker | `#dpath-pick-pop` | Clicking path cell in D-List table |
 | Timing stats | `#timing-pop` | T button in header |
-| Bitmap config | `#bitmap-cfg-pop` | cfg button in bitmap toolbar |
 | Bitmap save format | `#bitmap-save-pop` | save button in bitmap toolbar |
 | C-D path | `#cdpath-pop` | C-D Path button in morph bar |
 
@@ -501,7 +546,7 @@ All popups use the `.ops-pop` CSS class, positioned via `getBoundingClientRect()
 
 | Key | Action |
 |-----|--------|
-| **Escape** | Cascading close: (1) revert animation bar preview, (2) close C-node context menu, (3) close D-node context menu, (4) close C-D path popup (reverts changes), (5) close ops tool popover, (6) close audio popup, (7) close color picker, (8) close coefficient picker, (9) close snap popup, (10) close bitmap cfg, (11) close path picker, (12) deselect all. Stops at the first match. |
+| **Escape** | Cascading close: (1) revert animation bar preview, (2) close C-node context menu, (3) close D-node context menu, (4) close root context menu, (5) close C-D path popup (reverts changes), (6) close ops tool popover, (7) close audio popup, (8) close color picker, (9) close coefficient picker, (10) close snap popup, (11) close bitmap cfg, (12) close path picker, (13) deselect all. Stops at the first match. |
 
 ---
 

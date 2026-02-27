@@ -1110,6 +1110,10 @@ let PROX_PAL_G = new Uint8Array(PROX_PALETTE.map(c => c[1]));
 let PROX_PAL_B = new Uint8Array(PROX_PALETTE.map(c => c[2]));
 let bitmapProxCustom = null; // array of 8 [r,g,b]; initialized on first use
 let bitmapProxCustomActive = false;
+let bitmapProxCustom4 = null; // array of 4 [r,g,b]; initialized on first use
+let bitmapProxCustom4Active = false;
+let bitmapProxCustomRP4 = null; // array of 4 [r,g,b] for custom-relprox-4 (independent)
+let bitmapProxCustomRP4Active = false;
 
 function hsvToRgb(h, s, v) {
     h = ((h % 360) + 360) % 360;
@@ -1159,11 +1163,69 @@ function applyCustomProxPalette() {
         PROX_PALETTE[k] = [r, g, b];
     }
     bitmapProxCustomActive = true;
+    bitmapProxCustom4Active = false;
+    bitmapProxCustomRP4Active = false;
+}
+function initCustomProxPalette4() {
+    if (bitmapProxCustom4) return;
+    bitmapProxCustom4 = [];
+    for (let i = 0; i < 4; i++) {
+        bitmapProxCustom4.push(hsvToRgb(i * 90, 1, 1));
+    }
+}
+function applyCustomProxPalette4() {
+    if (!bitmapProxCustom4) initCustomProxPalette4();
+    const pal = bitmapProxCustom4;
+    for (let k = 0; k < 16; k++) {
+        const t = k / 15 * 3;
+        const i0 = Math.min(Math.floor(t), 2);
+        const i1 = i0 + 1;
+        const f = t - i0;
+        const r = Math.round(pal[i0][0] * (1 - f) + pal[i1][0] * f);
+        const g = Math.round(pal[i0][1] * (1 - f) + pal[i1][1] * f);
+        const b = Math.round(pal[i0][2] * (1 - f) + pal[i1][2] * f);
+        PROX_PAL_R[k] = r;
+        PROX_PAL_G[k] = g;
+        PROX_PAL_B[k] = b;
+        PROX_PALETTE[k] = [r, g, b];
+    }
+    bitmapProxCustom4Active = true;
+    bitmapProxCustomActive = false;
+    bitmapProxCustomRP4Active = false;
+}
+function initCustomProxPaletteRP4() {
+    if (bitmapProxCustomRP4) return;
+    bitmapProxCustomRP4 = [];
+    for (let i = 0; i < 4; i++) {
+        bitmapProxCustomRP4.push(hsvToRgb(i * 90 + 45, 1, 1));
+    }
+}
+function applyCustomProxPaletteRP4() {
+    if (!bitmapProxCustomRP4) initCustomProxPaletteRP4();
+    const pal = bitmapProxCustomRP4;
+    for (let k = 0; k < 16; k++) {
+        const t = k / 15 * 3;
+        const i0 = Math.min(Math.floor(t), 2);
+        const i1 = i0 + 1;
+        const f = t - i0;
+        const r = Math.round(pal[i0][0] * (1 - f) + pal[i1][0] * f);
+        const g = Math.round(pal[i0][1] * (1 - f) + pal[i1][1] * f);
+        const b = Math.round(pal[i0][2] * (1 - f) + pal[i1][2] * f);
+        PROX_PAL_R[k] = r;
+        PROX_PAL_G[k] = g;
+        PROX_PAL_B[k] = b;
+        PROX_PALETTE[k] = [r, g, b];
+    }
+    bitmapProxCustomRP4Active = true;
+    bitmapProxCustomActive = false;
+    bitmapProxCustom4Active = false;
 }
 function setProxPalette(key) {
     const entry = PROX_PALETTE_CATALOG.find(p => p.key === key);
     if (!entry) return;
     bitmapProxCustomActive = false;
+    bitmapProxCustom4Active = false;
+    bitmapProxCustomRP4Active = false;
     bitmapProxPaletteName = key;
     PROX_PALETTE = buildProxPaletteFrom(entry.fn);
     PROX_PAL_R = new Uint8Array(PROX_PALETTE.map(c => c[0]));
@@ -3286,7 +3348,7 @@ const _RSAD = [_P.speed, _P.rAbs, _P.angle, _P.ccw, _P.points];
 const _RSD  = [_P.speed, _P.rAbs, _P.ccw, _P.points];
 const _STD_KEYS = new Set(["rAbs", "speed", "angle", "ccw"]);
 const _SIGMA_PARAM = { key: "sigma", label: "\u03C3", type: "rabs", default: 0.01 };
-const _DIST_PARAM = { key: "ditherDist", type: "select", label: "Dist", options: [{ value: "normal", label: "Normal" }, { value: "uniform", label: "Uniform" }], default: "normal" };
+const _DIST_PARAM = { key: "ditherDist", type: "select", label: "Dist", options: [{ value: "normal", label: "Normal" }, { value: "uniform", label: "Uniform" }, { value: "disk", label: "Disk" }], default: "normal" };
 
 const PATH_PARAMS = {
     none:          [],
@@ -3328,7 +3390,7 @@ const PATH_PARAMS = {
         _P.points],
     elkal: [_P.speed,
         { key: "rAbs", label: "R", type: "rabs", default: 0.05 },
-        { key: "rings", label: "Rings", min: 2, max: 30, step: 1, default: 8, fmt: v => String(Math.round(v)) },
+        { key: "rings", label: "Rings", min: 2, max: 250, step: 1, default: 8, fmt: v => String(Math.round(v)) },
         { key: "innerTurns", label: "Twist", min: 0, max: 3, step: 0.05, default: 0.5, fmt: v => v.toFixed(2) },
         { key: "innerRatio", label: "Squish", min: 0.01, max: 1, step: 0.01, default: 0.5, fmt: v => v.toFixed(2) },
         _P.points],
@@ -3351,6 +3413,11 @@ const PATH_PARAMS = {
     "jitter-grid": [_P.speed,
         { key: "rAbs", label: "R", type: "rabs", default: 0.05 },
         { key: "jit", label: "Jitter", min: 0, max: 1, step: 0.05, default: 0.35, fmt: v => v.toFixed(2) },
+        _P.points],
+    "grid-perlin": [_P.speed,
+        { key: "rAbs", label: "R", type: "rabs", default: 0.05 },
+        { key: "noiseScale", label: "Scale", min: 0.5, max: 20, step: 0.5, default: 3, fmt: v => v.toFixed(1) },
+        { key: "noiseAmp", label: "Amp", min: 0, max: 1, step: 0.01, default: 0.3, fmt: v => v.toFixed(2) },
         _P.points],
     lissajous:     [..._RSAD,
         { key: "freqA", label: "a", min: 1, max: 8, step: 1, default: 3, fmt: v => String(Math.round(v)) },
@@ -3412,6 +3479,7 @@ const PATH_CATALOG = [
         { value: "golden-spiral",  label: "Golden spiral" },
         { value: "hex-grid",       label: "Hex grid" },
         { value: "jitter-grid",    label: "Jitter grid" },
+        { value: "grid-perlin",    label: "Grid Perlin" },
     ]},
     { group: "Curves", items: [
         { value: "lissajous",    label: "Lissajous" },
@@ -3864,6 +3932,8 @@ function closeCoeffCtx(revert) {
     document.getElementById("coeff-ctx").classList.remove("open");
     if (revert && ctxSnapshot) {
         const c = coefficients[ctxCoeffIdx];
+        c.re = ctxSnapshot.re;
+        c.im = ctxSnapshot.im;
         c.pathType = ctxSnapshot.pathType;
         c.rAbs = ctxSnapshot.rAbs;
         c.speed = ctxSnapshot.speed;
@@ -3874,6 +3944,8 @@ function closeCoeffCtx(revert) {
         c.curveIndex = ctxSnapshot.curveIndex;
         updateAnimBar();
         renderCoeffTrails();
+        solveRoots();
+        updateListCoords();
     }
     ctxCoeffIdx = -1;
     ctxSnapshot = null;
@@ -4509,6 +4581,7 @@ function openCoeffCtx(event, coeffIdx) {
     // Snapshot current state for cancel/revert
     const cc = coefficients[coeffIdx];
     ctxSnapshot = {
+        re: cc.re, im: cc.im,
         pathType: cc.pathType, rAbs: cc.rAbs, speed: cc.speed,
         angle: cc.angle, ccw: cc.ccw, extra: cc.extra ? { ...cc.extra } : {},
         curve: cloneCurve(cc.curve),
@@ -4537,6 +4610,57 @@ function openCoeffCtx(event, coeffIdx) {
     });
     title.appendChild(moveBtn);
     ctx.appendChild(title);
+
+    // "Copy from" dropdown — copies trajectory settings from another coefficient
+    const copyRow = document.createElement("label");
+    copyRow.textContent = "Copy from ";
+    const copySel = document.createElement("select");
+    copySel.style.cssText = "font-size:9px;background:#222;color:var(--text);border:1px solid var(--stroke);border-radius:3px;padding:1px 4px;";
+    const copyNone = document.createElement("option");
+    copyNone.value = "-"; copyNone.textContent = "\u2013";
+    copySel.appendChild(copyNone);
+    for (let ci = 0; ci < coefficients.length; ci++) {
+        if (ci === coeffIdx) continue;
+        const opt = document.createElement("option");
+        opt.value = ci;
+        opt.textContent = "c" + subscript(n - 1 - ci);
+        copySel.appendChild(opt);
+    }
+    copySel.addEventListener("change", () => {
+        if (copySel.value === "-") return;
+        const srcIdx = parseInt(copySel.value);
+        const src = coefficients[srcIdx];
+        const dst = coefficients[coeffIdx];
+        dst.pathType = src.pathType;
+        dst.rAbs = src.rAbs;
+        dst.speed = src.speed;
+        dst.angle = src.angle;
+        dst.ccw = src.ccw;
+        dst.extra = src.extra ? JSON.parse(JSON.stringify(src.extra)) : {};
+        pathSel.value = dst.pathType;
+        buildCtxControls(dst.pathType);
+        previewCtx();
+        copySel.value = "-";
+    });
+    copyRow.appendChild(copySel);
+    ctx.appendChild(copyRow);
+
+    // Re / Im coordinate inputs (applied on Accept, not live)
+    const coordStyle = "width:100px;font-size:9px;background:#222;color:var(--text);border:1px solid var(--stroke);border-radius:3px;padding:1px 4px;";
+    function makeCoordRow(labelText, value) {
+        const row = document.createElement("label");
+        const inp = document.createElement("input");
+        inp.type = "number"; inp.step = "any";
+        inp.value = parseFloat(value.toPrecision(10));
+        inp.style.cssText = coordStyle;
+        row.textContent = labelText + " ";
+        row.appendChild(inp);
+        return { row, inp };
+    }
+    const ctxReInput = makeCoordRow("Re", cc.re);
+    const ctxImInput = makeCoordRow("Im", cc.im);
+    ctx.appendChild(ctxReInput.row);
+    ctx.appendChild(ctxImInput.row);
 
     // Pre-fill from coefficient's trajectory settings
     const existing = cc;
@@ -4627,9 +4751,28 @@ function openCoeffCtx(event, coeffIdx) {
     acceptBtn.className = "ctx-accept";
     acceptBtn.textContent = "Accept";
     acceptBtn.addEventListener("click", () => {
+        // Apply coordinate inputs
+        const c = coefficients[coeffIdx];
+        const newRe = parseFloat(ctxReInput.inp.value);
+        const newIm = parseFloat(ctxImInput.inp.value);
+        if (!isNaN(newRe) && !isNaN(newIm) && (newRe !== c.re || newIm !== c.im)) {
+            const dRe = newRe - c.re, dIm = newIm - c.im;
+            c.re = newRe; c.im = newIm;
+            if (c.curve._isOrbital) {
+                c.curve = computeCurve(c.re, c.im, c.pathType, c.rAbs, c.angle, c.extra);
+            } else if (c.curve._cloudOffset) {
+                c.curve._anchorRe = c.re;
+                c.curve._anchorIm = c.im;
+            } else if (!c.curve._orbRefC) {
+                for (const pt of c.curve) { pt.re += dRe; pt.im += dIm; }
+            }
+        }
         ctxSnapshot = null; // discard snapshot — keep current state
         closeCoeffCtx(false);
+        renderCoefficients();
         solveRoots();
+        renderCoeffTrails();
+        updateListCoords();
     });
     ctxBtnRow.appendChild(acceptBtn);
     const delBtn = document.createElement("button");
@@ -4783,11 +4926,11 @@ function advanceDNodesAlongCurves(elapsed) {
         }
         if (d.curve._ditherSigma) {
             const ds = d.curve._ditherSigma;
-            const _dd = d.curve._ditherDist;
+            const _dp = _ditherPair(d.curve._ditherDist, ds);
             if (d._effRe != null) {
-                d._effRe += _ditherRand(_dd) * ds; d._effIm += _ditherRand(_dd) * ds;
+                d._effRe += _dp[0]; d._effIm += _dp[1];
             } else {
-                d.re += _ditherRand(_dd) * ds; d.im += _ditherRand(_dd) * ds;
+                d.re += _dp[0]; d.im += _dp[1];
             }
         }
         if (d.curve._orbRefC != null) {
@@ -5185,11 +5328,11 @@ function advanceToElapsed(elapsed) {
         }
         if (c.curve._ditherSigma) {
             const ds = c.curve._ditherSigma;
-            const _cd = c.curve._ditherDist;
+            const _dp = _ditherPair(c.curve._ditherDist, ds);
             if (c._effRe != null) {
-                c._effRe += _ditherRand(_cd) * ds; c._effIm += _ditherRand(_cd) * ds;
+                c._effRe += _dp[0]; c._effIm += _dp[1];
             } else {
-                c.re += _ditherRand(_cd) * ds; c.im += _ditherRand(_cd) * ds;
+                c.re += _dp[0]; c.im += _dp[1];
             }
         }
     }
@@ -5582,9 +5725,57 @@ function _gaussRand() {
     v = Math.random();
     return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 }
-// Dither helper: returns random offset based on distribution type
-function _ditherRand(dist) {
-    return dist === "uniform" ? (Math.random() - 0.5) * 2 : _gaussRand();
+// Dither helper: returns [dRe, dIm] offset scaled by sigma, based on distribution type
+var _ditherOut = [0, 0];
+function _ditherPair(dist, sigma) {
+    if (dist === "disk") {
+        const angle = Math.random() * 2 * Math.PI;
+        const r = Math.sqrt(Math.random()) * sigma;
+        _ditherOut[0] = r * Math.cos(angle);
+        _ditherOut[1] = r * Math.sin(angle);
+    } else if (dist === "uniform") {
+        _ditherOut[0] = (Math.random() - 0.5) * 2 * sigma;
+        _ditherOut[1] = (Math.random() - 0.5) * 2 * sigma;
+    } else {
+        _ditherOut[0] = _gaussRand() * sigma;
+        _ditherOut[1] = _gaussRand() * sigma;
+    }
+    return _ditherOut;
+}
+
+// --- Perlin 2D noise (deterministic, Ken Perlin's reference permutation) ---
+var _PERLIN_P = [151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,
+    140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,
+    247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,
+    57,177,33,88,237,149,56,87,174,20,125,136,171,168,68,175,
+    74,165,71,134,139,48,27,166,77,146,158,231,83,111,229,122,
+    60,211,133,230,220,105,92,41,55,46,245,40,244,102,143,54,
+    65,25,63,161,1,216,80,73,209,76,132,187,208,89,18,169,
+    200,196,135,130,116,188,159,86,164,100,109,198,173,186,3,64,
+    52,217,226,250,124,123,5,202,38,147,118,126,255,82,85,212,
+    207,206,59,227,47,16,58,17,182,189,28,42,223,183,170,213,
+    119,248,152,2,44,154,163,70,221,153,101,155,167,43,172,9,
+    129,22,39,253,19,98,108,110,79,113,224,232,178,185,112,104,
+    218,246,97,228,251,34,242,193,238,210,144,12,191,179,162,241,
+    81,51,145,235,249,14,239,107,49,192,214,31,181,199,106,157,
+    184,84,204,176,115,121,50,45,127,4,150,254,138,236,205,93,
+    222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180];
+var _perlin_perm = new Uint8Array(512);
+for (var _pi = 0; _pi < 512; _pi++) _perlin_perm[_pi] = _PERLIN_P[_pi & 255];
+var _perlin_grad = [[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]];
+function _perlinFade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+function _perlinDot(gi, x, y) { var g = _perlin_grad[gi & 7]; return g[0] * x + g[1] * y; }
+function perlin2D(x, y) {
+    var xi = Math.floor(x) & 255, yi = Math.floor(y) & 255;
+    var xf = x - Math.floor(x), yf = y - Math.floor(y);
+    var u = _perlinFade(xf), v = _perlinFade(yf);
+    var aa = _perlin_perm[_perlin_perm[xi] + yi];
+    var ab = _perlin_perm[_perlin_perm[xi] + yi + 1];
+    var ba = _perlin_perm[_perlin_perm[xi + 1] + yi];
+    var bb = _perlin_perm[_perlin_perm[xi + 1] + yi + 1];
+    var x1 = _perlinDot(aa, xf, yf) + (_perlinDot(ba, xf - 1, yf) - _perlinDot(aa, xf, yf)) * u;
+    var x2 = _perlinDot(ab, xf, yf - 1) + (_perlinDot(bb, xf - 1, yf - 1) - _perlinDot(ab, xf, yf - 1)) * u;
+    return x1 + (x2 - x1) * v;
 }
 
 // Inject centroid into extra for c-spiral/c-ellipse paths (baked at definition time).
@@ -5929,6 +6120,41 @@ function computeCurveN(homeRe, homeIm, pathType, radius, angle, extra, N) {
         return curve;
     }
 
+    // Grid Perlin: hex grid with Perlin noise displacement
+    if (baseType === "grid-perlin") {
+        const R = radius;
+        const pts = (extra && extra.points > 0) ? extra.points : N;
+        const side = Math.max(2, Math.round(Math.sqrt(pts)));
+        const dx = R / (side - 1);
+        const dy = dx * Math.sqrt(3) / 2;
+        const nScale = (extra && extra.noiseScale != null) ? extra.noiseScale : 3;
+        const nAmp = (extra && extra.noiseAmp != null) ? extra.noiseAmp : 0.3;
+        const amp = nAmp * R;
+        const curve = [];
+        for (let row = 0; row < side; row++) {
+            const gy = (row - (side - 1) / 2) * dy;
+            const xoff = (row % 2) * 0.5 * dx;
+            for (let col = 0; col < side; col++) {
+                const gx = (col - (side - 1) / 2) * dx + xoff;
+                // Normalise grid coords to [0, nScale] range for noise input
+                const nx = (col / (side - 1)) * nScale;
+                const ny = (row / (side - 1)) * nScale;
+                const dRe = perlin2D(nx, ny) * amp;
+                const dIm = perlin2D(nx + 97.3, ny + 43.7) * amp;
+                curve.push({ re: gx + dRe, im: gy + dIm });
+            }
+        }
+        curve._isCloud = true;
+        curve._cloudOffset = true;
+        curve._anchorRe = homeRe;
+        curve._anchorIm = homeIm;
+        if (pathType.endsWith("-dither")) {
+            curve._ditherSigma = (extra && extra.sigma != null) ? extra.sigma : 0.01;
+            curve._ditherDist = (extra && extra.ditherDist) || "normal";
+        }
+        return curve;
+    }
+
     // --- Spiral helpers ---
     function _buildSpiralCurve(homeRe, homeIm, refRe, refIm, extra, N, pathType, isOrbital) {
         const mult = (extra && extra.mult != null) ? extra.mult : 1.5;
@@ -6157,11 +6383,11 @@ function animLoopBody(now) {
         }
         if (c.curve._ditherSigma) {
             const ds = c.curve._ditherSigma;
-            const _cd = c.curve._ditherDist;
+            const _dp = _ditherPair(c.curve._ditherDist, ds);
             if (c._effRe != null) {
-                c._effRe += _ditherRand(_cd) * ds; c._effIm += _ditherRand(_cd) * ds;
+                c._effRe += _dp[0]; c._effIm += _dp[1];
             } else {
-                c.re += _ditherRand(_cd) * ds; c.im += _ditherRand(_cd) * ds;
+                c.re += _dp[0]; c.im += _dp[1];
             }
         }
     }
@@ -9854,6 +10080,10 @@ function startRecording() {
             bitmapProxPalette: bitmapProxPaletteName,
             bitmapProxCustom: bitmapProxCustom,
             bitmapProxCustomActive: bitmapProxCustomActive,
+            bitmapProxCustom4: bitmapProxCustom4,
+            bitmapProxCustom4Active: bitmapProxCustom4Active,
+            bitmapProxCustomRP4: bitmapProxCustomRP4,
+            bitmapProxCustomRP4Active: bitmapProxCustomRP4Active,
             bitmapDerivPalette: bitmapDerivPaletteName,
             bitmapIdxProxGamma: bitmapIdxProxGamma,
             bitmapRatioGamma: bitmapRatioGamma,
@@ -9930,6 +10160,10 @@ function buildStateMetadata(timestamp) {
         bitmapProxPalette: bitmapProxPaletteName,
         bitmapProxCustom: bitmapProxCustom,
         bitmapProxCustomActive: bitmapProxCustomActive,
+        bitmapProxCustom4: bitmapProxCustom4,
+        bitmapProxCustom4Active: bitmapProxCustom4Active,
+        bitmapProxCustomRP4: bitmapProxCustomRP4,
+        bitmapProxCustomRP4Active: bitmapProxCustomRP4Active,
         bitmapDerivPalette: bitmapDerivPaletteName,
         bitmapIdxProxGamma: bitmapIdxProxGamma,
         bitmapProxGamma: bitmapProxGamma,
@@ -10308,7 +10542,7 @@ function buildBitmapCfgContent() {
     const hr3 = document.createElement("hr");
     hr3.style.cssText = "border:none;border-top:1px solid var(--stroke);margin:8px 0 4px;";
     bitcfgContainer.appendChild(hr3);
-    const colorModeLabels = { uniform: "Uniform", rainbow: "Rainbow", derivative: "Derivative", proximity: "Proximity", "idx-prox": "Idx \u00d7 Prox", ratio: "Min/Max Ratio", "rel-proximity": "Rel. Proximity", "custom-prox": "Custom Proximity" };
+    const colorModeLabels = { uniform: "Uniform", rainbow: "Rainbow", derivative: "Derivative", proximity: "Proximity", "idx-prox": "Idx \u00d7 Prox", ratio: "Min/Max Ratio", "rel-proximity": "Rel. Proximity", "custom-prox-8": "Custom Root Prox 8", "custom-prox-4": "Custom Root Prox 4", "custom-relprox-4": "Custom Rel. Prox 4" };
     const rcTitle = document.createElement("div");
     rcTitle.className = "pop-title"; rcTitle.textContent = "COLOR (" + (colorModeLabels[bitmapColorMode] || bitmapColorMode) + ")";
     bitcfgContainer.appendChild(rcTitle);
@@ -10321,7 +10555,9 @@ function buildBitmapCfgContent() {
         { key: "idx-prox",   label: "Idx \u00d7 Prox" },
         { key: "ratio",      label: "Min/Max Ratio" },
         { key: "rel-proximity", label: "Rel. Proximity" },
-        { key: "custom-prox",  label: "Custom Proximity" },
+        { key: "custom-prox-8",  label: "Custom Root Prox 8" },
+        { key: "custom-prox-4",  label: "Custom Root Prox 4" },
+        { key: "custom-relprox-4", label: "Custom Rel. Prox 4" },
     ];
     const bmRows = [];
     let bmSwatchWrap = null;
@@ -10332,6 +10568,8 @@ function buildBitmapCfgContent() {
     let bmIdxProxMatchWrap = null;
     let bmRatioProxWrap = null;
     let bmCustomProxWrap = null;
+    let bmCustomProx4Wrap = null;
+    let bmCustomRelProx4Wrap = null;
     function refreshMatchChips() {
         if (bmMatchWrap) bmMatchWrap.style.opacity = bitmapColorMode === "rainbow" ? "1" : "0.3";
     }
@@ -10349,7 +10587,9 @@ function buildBitmapCfgContent() {
         if (bmIdxProxMatchWrap) bmIdxProxMatchWrap.style.opacity = bitmapColorMode === "idx-prox" ? "1" : "0.3";
         if (bmRatioProxWrap) bmRatioProxWrap.style.opacity = bitmapColorMode === "ratio" ? "1" : "0.3";
         if (bmRelProxWrap) bmRelProxWrap.style.opacity = bitmapColorMode === "rel-proximity" ? "1" : "0.3";
-        if (bmCustomProxWrap) bmCustomProxWrap.style.opacity = bitmapColorMode === "custom-prox" ? "1" : "0.3";
+        if (bmCustomProxWrap) bmCustomProxWrap.style.opacity = bitmapColorMode === "custom-prox-8" ? "1" : "0.3";
+        if (bmCustomProx4Wrap) bmCustomProx4Wrap.style.opacity = bitmapColorMode === "custom-prox-4" ? "1" : "0.3";
+        if (bmCustomRelProx4Wrap) bmCustomRelProx4Wrap.style.opacity = bitmapColorMode === "custom-relprox-4" ? "1" : "0.3";
     }
     bitmapModes.forEach(bm => {
         const row = document.createElement("div");
@@ -10366,6 +10606,9 @@ function buildBitmapCfgContent() {
             row.classList.add("on");
             rcTitle.textContent = "COLOR (" + (colorModeLabels[bm.key] || bm.key) + ")";
             refreshBmSwatches();
+            if (bm.key === "custom-prox-8") applyCustomProxPalette();
+            else if (bm.key === "custom-prox-4") applyCustomProxPalette4();
+            else if (bm.key === "custom-relprox-4") applyCustomProxPaletteRP4();
         });
         bitcfgContainer.appendChild(row);
         bmRows.push(row);
@@ -10702,10 +10945,10 @@ function buildBitmapCfgContent() {
             row.appendChild(bmRelProxWrap);
         }
 
-        if (bm.key === "custom-prox") {
+        if (bm.key === "custom-prox-8") {
             bmCustomProxWrap = document.createElement("span");
             bmCustomProxWrap.style.cssText = "display:inline-flex;flex-wrap:wrap;gap:3px;margin-left:0;";
-            bmCustomProxWrap.style.opacity = bitmapColorMode === "custom-prox" ? "1" : "0.3";
+            bmCustomProxWrap.style.opacity = bitmapColorMode === "custom-prox-8" ? "1" : "0.3";
             initCustomProxPalette();
             const customSwatches = [];
             for (let si = 0; si < 8; si++) {
@@ -10717,11 +10960,11 @@ function buildBitmapCfgContent() {
                 sw.title = "Stop " + (si + 1);
                 const idx = si;
                 sw.addEventListener("click", () => {
-                    if (bitmapColorMode !== "custom-prox") {
-                        bitmapColorMode = "custom-prox";
+                    if (bitmapColorMode !== "custom-prox-8") {
+                        bitmapColorMode = "custom-prox-8";
                         bmRows.forEach(r => r.classList.remove("on"));
                         row.classList.add("on");
-                        rcTitle.textContent = "COLOR (Custom Proximity)";
+                        rcTitle.textContent = "COLOR (Custom Root Prox 8)";
                         refreshBmSwatches();
                     }
                     applyCustomProxPalette();
@@ -10753,6 +10996,89 @@ function buildBitmapCfgContent() {
             bmCustomProxWrap.appendChild(cQV);
             row.appendChild(bmCustomProxWrap);
         }
+
+        if (bm.key === "custom-prox-4") {
+            bmCustomProx4Wrap = document.createElement("span");
+            bmCustomProx4Wrap.style.cssText = "display:inline-flex;flex-wrap:wrap;gap:3px;margin-left:0;";
+            bmCustomProx4Wrap.style.opacity = bitmapColorMode === "custom-prox-4" ? "1" : "0.3";
+            initCustomProxPalette4();
+            const customSwatches4 = [];
+            for (let si = 0; si < 4; si++) {
+                const sw = document.createElement("div");
+                const col = bitmapProxCustom4[si];
+                sw.style.cssText = `width:16px;height:16px;border-radius:50%;cursor:pointer;flex-shrink:0;` +
+                    `background:rgb(${col[0]},${col[1]},${col[2]});` +
+                    `border:2px solid rgba(255,255,255,0.15);box-sizing:border-box;`;
+                sw.title = "Stop " + (si + 1);
+                const idx = si;
+                sw.addEventListener("click", () => {
+                    if (bitmapColorMode !== "custom-prox-4") {
+                        bitmapColorMode = "custom-prox-4";
+                        bmRows.forEach(r => r.classList.remove("on"));
+                        row.classList.add("on");
+                        rcTitle.textContent = "COLOR (Custom Root Prox 4)";
+                        refreshBmSwatches();
+                    }
+                    applyCustomProxPalette4();
+                    openProxCustomPop(sw, idx, customSwatches4, bitmapProxCustom4, applyCustomProxPalette4);
+                });
+                customSwatches4.push(sw);
+                bmCustomProx4Wrap.appendChild(sw);
+            }
+            const c4Sep = document.createElement("span");
+            c4Sep.style.cssText = "width:1px;height:14px;background:var(--stroke);margin:0 2px;flex-shrink:0;";
+            bmCustomProx4Wrap.appendChild(c4Sep);
+            const c4QL = document.createElement("span");
+            c4QL.style.cssText = "font-size:9px;color:var(--muted);white-space:nowrap;";
+            c4QL.textContent = "~";
+            const c4QS = document.createElement("input");
+            c4QS.type = "range"; c4QS.min = "0"; c4QS.max = "10"; c4QS.step = "0.1";
+            c4QS.value = bitmapProxFreq;
+            c4QS.style.cssText = "width:50px;height:12px;cursor:pointer;accent-color:var(--accent);";
+            const c4QV = document.createElement("span");
+            c4QV.style.cssText = "font-size:9px;color:var(--fg);font-family:monospace;min-width:28px;";
+            c4QV.textContent = bitmapProxFreq.toFixed(1);
+            c4QS.addEventListener("input", () => {
+                bitmapProxFreq = parseFloat(c4QS.value);
+                c4QV.textContent = bitmapProxFreq.toFixed(1);
+            });
+            bmCustomProx4Wrap.appendChild(c4QL);
+            bmCustomProx4Wrap.appendChild(c4QS);
+            bmCustomProx4Wrap.appendChild(c4QV);
+            row.appendChild(bmCustomProx4Wrap);
+        }
+
+        if (bm.key === "custom-relprox-4") {
+            bmCustomRelProx4Wrap = document.createElement("span");
+            bmCustomRelProx4Wrap.style.cssText = "display:inline-flex;flex-wrap:wrap;gap:3px;margin-left:0;";
+            bmCustomRelProx4Wrap.style.opacity = bitmapColorMode === "custom-relprox-4" ? "1" : "0.3";
+            initCustomProxPaletteRP4();
+            const customSwatchesR4 = [];
+            for (let si = 0; si < 4; si++) {
+                const sw = document.createElement("div");
+                const col = bitmapProxCustomRP4[si];
+                sw.style.cssText = `width:16px;height:16px;border-radius:50%;cursor:pointer;flex-shrink:0;` +
+                    `background:rgb(${col[0]},${col[1]},${col[2]});` +
+                    `border:2px solid rgba(255,255,255,0.15);box-sizing:border-box;`;
+                sw.title = "Stop " + (si + 1);
+                const idx = si;
+                sw.addEventListener("click", () => {
+                    if (bitmapColorMode !== "custom-relprox-4") {
+                        bitmapColorMode = "custom-relprox-4";
+                        bmRows.forEach(r => r.classList.remove("on"));
+                        row.classList.add("on");
+                        rcTitle.textContent = "COLOR (Custom Rel. Prox 4)";
+                        refreshBmSwatches();
+                    }
+                    applyCustomProxPaletteRP4();
+                    openProxCustomPop(sw, idx, customSwatchesR4, bitmapProxCustomRP4, applyCustomProxPaletteRP4);
+                });
+                customSwatchesR4.push(sw);
+                bmCustomRelProx4Wrap.appendChild(sw);
+            }
+            _appendFCF(bmCustomRelProx4Wrap, () => bitmapRelProxFloor, v => { bitmapRelProxFloor = v; }, () => bitmapRelProxCeiling, v => { bitmapRelProxCeiling = v; }, () => bitmapRelProxFreq, v => { bitmapRelProxFreq = v; });
+            row.appendChild(bmCustomRelProx4Wrap);
+        }
     });
 }
 document.getElementById("bitmap-cfg-btn").addEventListener("click", () => switchTab("bitcfg"));
@@ -10761,10 +11087,12 @@ document.getElementById("bitmap-cfg-btn").addEventListener("click", () => switch
 let proxCustomPopOpen = false;
 const proxCustomPop = document.getElementById("prox-custom-pop");
 function closeProxCustomPop() { proxCustomPop.classList.remove("open"); proxCustomPopOpen = false; }
-function openProxCustomPop(btnEl, stopIndex, swatches) {
+function openProxCustomPop(btnEl, stopIndex, swatches, palArray, applyFn) {
     if (proxCustomPopOpen) { closeProxCustomPop(); return; }
+    const _palArray = palArray || bitmapProxCustom;
+    const _applyFn = applyFn || applyCustomProxPalette;
     proxCustomPop.innerHTML = "";
-    const col = bitmapProxCustom[stopIndex];
+    const col = _palArray[stopIndex];
     let [curH, curS, curV] = rgbToHsv(col[0], col[1], col[2]);
     const SZ = 140;
 
@@ -10831,9 +11159,9 @@ function openProxCustomPop(btnEl, stopIndex, swatches) {
     }
     function applyColor() {
         const rgb = hsvToRgb(curH, curS, curV);
-        bitmapProxCustom[stopIndex] = rgb;
+        _palArray[stopIndex] = rgb;
         swatches[stopIndex].style.background = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
-        applyCustomProxPalette();
+        _applyFn();
     }
     let dragging = false;
     cvs.addEventListener("mousedown", e => { dragging = true; updateFromSV(e); });
@@ -10929,20 +11257,15 @@ function buildBitmapSavePop() {
         qRow.style.display = this.value === "jpeg" ? "" : "none";
     });
 
-    // Download button
-    var dlBtn = document.createElement("button");
-    dlBtn.className = "bitmap-btn";
-    dlBtn.style.width = "100%";
-    dlBtn.textContent = "Download";
+    // Shared export logic
     var bitmapSaving = false;
-    dlBtn.addEventListener("click", function() {
+    function doExport(btn, label, withState) {
         if (bitmapSaving) { uiBuzz(); return; }
         if (!bitmapPersistentBuffer) { uiBuzz(); return; }
         bitmapSaving = true;
-        dlBtn.textContent = "Saving...";
-        dlBtn.style.opacity = "0.5";
+        btn.textContent = "Saving...";
+        btn.style.opacity = "0.5";
         uiPing(660, 0.08);
-        // Defer encoding so "Saving..." renders before blocking
         setTimeout(function() {
             try {
                 var ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -10957,18 +11280,50 @@ function buildBitmapSavePop() {
                     case "png":  exportPersistentBufferAsPNG(rgba, w, h, base + ".png"); break;
                     case "tiff": exportPersistentBufferAsTIFF(rgba, w, h, base + ".tiff"); break;
                 }
+                if (withState) {
+                    var meta = buildStateMetadata(new Date().toISOString());
+                    meta.snapMode = "bitmap";
+                    meta.activeTab = activeTab;
+                    var jsonBlob = new Blob([JSON.stringify(meta, null, 2)], { type: "application/json" });
+                    var a = document.createElement("a");
+                    a.href = URL.createObjectURL(jsonBlob);
+                    a.download = base + ".json";
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                }
                 uiPing(1320, 0.06);
             } catch (e) {
                 uiBuzz();
                 console.error("Export failed:", e);
             }
-            dlBtn.textContent = "Download";
-            dlBtn.style.opacity = "";
+            btn.textContent = label;
+            btn.style.opacity = "";
             bitmapSaving = false;
             closeBitmapSavePop();
         }, 30);
-    });
-    wrap.appendChild(dlBtn);
+    }
+
+    // Button row
+    var btnRow = document.createElement("div");
+    btnRow.style.cssText = "display:flex;gap:4px;";
+
+    // Image button
+    var dlBtn = document.createElement("button");
+    dlBtn.className = "bitmap-btn";
+    dlBtn.style.flex = "1";
+    dlBtn.textContent = "Image";
+    dlBtn.addEventListener("click", function() { doExport(dlBtn, "Image", false); });
+    btnRow.appendChild(dlBtn);
+
+    // Image+State button
+    var dlBothBtn = document.createElement("button");
+    dlBothBtn.className = "bitmap-btn";
+    dlBothBtn.style.flex = "1";
+    dlBothBtn.textContent = "Image+State";
+    dlBothBtn.addEventListener("click", function() { doExport(dlBothBtn, "Image+State", true); });
+    btnRow.appendChild(dlBothBtn);
+
+    wrap.appendChild(btnRow);
     bitmapSavePop.appendChild(wrap);
 }
 
@@ -11150,6 +11505,7 @@ async function loadState() {
 
 function applyLoadedState(meta) {
     // 1. Stop animation, clear everything
+    if (fastModeActive) exitFastMode();
     stopAnimation();
     animState.elapsedAtPause = null;
     playBtn.textContent = "\u25b6 Play";
@@ -11331,7 +11687,7 @@ function applyLoadedState(meta) {
         uniformRootColor = meta.uniformRootColor.slice();
     }
     if (meta.bitmapColorMode) {
-        bitmapColorMode = meta.bitmapColorMode;
+        bitmapColorMode = meta.bitmapColorMode === "custom-prox" ? "custom-prox-8" : meta.bitmapColorMode;
     } else {
         bitmapColorMode = rootColorMode; // backward compat: mirror animation mode
     }
@@ -11355,7 +11711,17 @@ function applyLoadedState(meta) {
     if (meta.bitmapProxCustom && Array.isArray(meta.bitmapProxCustom) && meta.bitmapProxCustom.length === 8) {
         bitmapProxCustom = meta.bitmapProxCustom.map(c => c.slice());
     }
-    if (meta.bitmapProxCustomActive) {
+    if (meta.bitmapProxCustom4 && Array.isArray(meta.bitmapProxCustom4) && meta.bitmapProxCustom4.length === 4) {
+        bitmapProxCustom4 = meta.bitmapProxCustom4.map(c => c.slice());
+    }
+    if (meta.bitmapProxCustomRP4 && Array.isArray(meta.bitmapProxCustomRP4) && meta.bitmapProxCustomRP4.length === 4) {
+        bitmapProxCustomRP4 = meta.bitmapProxCustomRP4.map(c => c.slice());
+    }
+    if (meta.bitmapProxCustomRP4Active || bitmapColorMode === "custom-relprox-4") {
+        applyCustomProxPaletteRP4();
+    } else if (meta.bitmapProxCustom4Active || bitmapColorMode === "custom-prox-4") {
+        applyCustomProxPalette4();
+    } else if (meta.bitmapProxCustomActive) {
         applyCustomProxPalette();
     } else if (meta.bitmapProxPalette && PROX_PALETTE_CATALOG.some(p => p.key === meta.bitmapProxPalette)) {
         setProxPalette(meta.bitmapProxPalette);
@@ -12631,7 +12997,7 @@ function paintBitmapFrameFast() {
     const range = bitmapRange;
     const n = currentRoots.length;
     const colors = fastModeRootColors;
-    const proxMode = bitmapColorMode === "proximity" || bitmapColorMode === "custom-prox";
+    const proxMode = bitmapColorMode === "proximity" || bitmapColorMode === "custom-prox-8" || bitmapColorMode === "custom-prox-4";
     const derivMode = bitmapColorMode === "derivative";
     const idxProxMode = bitmapColorMode === "idx-prox";
     const ratioMode = bitmapColorMode === "ratio";
@@ -13136,8 +13502,21 @@ function wGaussRand() {
     v = Math.random();
     return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 }
-function wDitherRand(dist) {
-    return dist ? (Math.random() - 0.5) * 2 : wGaussRand();
+var _wDitherOut = [0, 0];
+function wDitherPair(dist, sigma) {
+    if (dist === 2) { // disk
+        var angle = Math.random() * 2 * Math.PI;
+        var r = Math.sqrt(Math.random()) * sigma;
+        _wDitherOut[0] = r * Math.cos(angle);
+        _wDitherOut[1] = r * Math.sin(angle);
+    } else if (dist === 1) { // uniform
+        _wDitherOut[0] = (Math.random() - 0.5) * 2 * sigma;
+        _wDitherOut[1] = (Math.random() - 0.5) * 2 * sigma;
+    } else { // normal
+        _wDitherOut[0] = wGaussRand() * sigma;
+        _wDitherOut[1] = wGaussRand() * sigma;
+    }
+    return _wDitherOut;
 }
 var _wMorphDitherOut = [0, 0];
 function wMorphDitherSample(sigma, dist, pw) {
@@ -13439,8 +13818,9 @@ self.onmessage = function(e) {
                 coeffsIm[idx] = curvesFlat[base+lo*2+1]*(1-frac) + curvesFlat[base+hi*2+1]*frac;
             }
             if (entries[a].ditherSigma) {
-                coeffsRe[idx] += wDitherRand(entries[a].ditherDist) * entries[a].ditherSigma;
-                coeffsIm[idx] += wDitherRand(entries[a].ditherDist) * entries[a].ditherSigma;
+                var _wd = wDitherPair(entries[a].ditherDist, entries[a].ditherSigma);
+                coeffsRe[idx] += _wd[0];
+                coeffsIm[idx] += _wd[1];
             }
         }
 
@@ -13474,8 +13854,9 @@ self.onmessage = function(e) {
                     morphIm[dIdx] = dCurvesFlat[dBase+dLo*2+1]*(1-dFrac) + dCurvesFlat[dBase+dHi*2+1]*dFrac;
                 }
                 if (dEntries[da].ditherSigma) {
-                    morphRe[dIdx] += wDitherRand(dEntries[da].ditherDist) * dEntries[da].ditherSigma;
-                    morphIm[dIdx] += wDitherRand(dEntries[da].ditherDist) * dEntries[da].ditherSigma;
+                    var _wd2 = wDitherPair(dEntries[da].ditherDist, dEntries[da].ditherSigma);
+                    morphRe[dIdx] += _wd2[0];
+                    morphIm[dIdx] += _wd2[1];
                 }
                 if (dEntries[da].orbRefC >= 0) {
                     var orc = dEntries[da].orbRefC < nCoeffs ? dEntries[da].orbRefC : nCoeffs - 1;
@@ -14032,7 +14413,7 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
     let totalPts = 0;
     for (const [idx, curve] of fastModeCurves.entries()) {
         const c = coefficients[idx];
-        animEntries.push({ idx, ccw: !!c.ccw, speed: c.speed, ditherSigma: curve._ditherSigma || 0, ditherDist: curve._ditherDist === "uniform" ? 1 : 0, cloudOffset: !!curve._cloudOffset, anchorRe: curve._cloudOffset ? c.re : 0, anchorIm: curve._cloudOffset ? c.im : 0 });
+        animEntries.push({ idx, ccw: !!c.ccw, speed: c.speed, ditherSigma: curve._ditherSigma || 0, ditherDist: curve._ditherDist === "disk" ? 2 : curve._ditherDist === "uniform" ? 1 : 0, cloudOffset: !!curve._cloudOffset, anchorRe: curve._cloudOffset ? c.re : 0, anchorIm: curve._cloudOffset ? c.im : 0 });
         curveOffsets.push(totalPts);
         curveLengths.push(curve.length);
         curveIsCloud.push(!!curve._isCloud);
@@ -14056,7 +14437,7 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
     if (fastModeDCurves && fastModeDCurves.size > 0) {
         for (const [idx, curve] of fastModeDCurves.entries()) {
             const d = morphTargetCoeffs[idx];
-            dAnimEntries.push({ idx, ccw: !!d.ccw, speed: d.speed, ditherSigma: curve._ditherSigma || 0, ditherDist: curve._ditherDist === "uniform" ? 1 : 0, orbRefC: curve._orbRefC != null ? Math.min(curve._orbRefC, nCoeffs - 1) : -1, cloudOffset: !!curve._cloudOffset, anchorRe: curve._cloudOffset ? d.re : 0, anchorIm: curve._cloudOffset ? d.im : 0 });
+            dAnimEntries.push({ idx, ccw: !!d.ccw, speed: d.speed, ditherSigma: curve._ditherSigma || 0, ditherDist: curve._ditherDist === "disk" ? 2 : curve._ditherDist === "uniform" ? 1 : 0, orbRefC: curve._orbRefC != null ? Math.min(curve._orbRefC, nCoeffs - 1) : -1, cloudOffset: !!curve._cloudOffset, anchorRe: curve._cloudOffset ? d.re : 0, anchorIm: curve._cloudOffset ? d.im : 0 });
             dCurveOffsets.push(dTotalPts);
             dCurveLengths.push(curve.length);
             dCurveIsCloud.push(!!curve._isCloud);
@@ -14126,7 +14507,7 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         bitmapRange, bitmapCenterX, bitmapCenterY, stepsVal,
         noColor: bitmapColorMode === "uniform",
         uniformR: bitmapUniformColor[0], uniformG: bitmapUniformColor[1], uniformB: bitmapUniformColor[2],
-        proxColor: bitmapColorMode === "proximity" || bitmapColorMode === "custom-prox",
+        proxColor: bitmapColorMode === "proximity" || bitmapColorMode === "custom-prox-8" || bitmapColorMode === "custom-prox-4",
         proxPalR: PROX_PAL_R.buffer.slice(0), proxPalG: PROX_PAL_G.buffer.slice(0), proxPalB: PROX_PAL_B.buffer.slice(0),
         derivColor: bitmapColorMode === "derivative",
         derivPalR: DERIV_PAL_R.buffer.slice(0), derivPalG: DERIV_PAL_G.buffer.slice(0), derivPalB: DERIV_PAL_B.buffer.slice(0),
@@ -14136,7 +14517,7 @@ function serializeFastModeData(animated, stepsVal, nRoots) {
         ratioColor: bitmapColorMode === "ratio",
         ratioGamma: bitmapRatioGamma,
         ratioFloor: bitmapRatioFloor, ratioCeiling: bitmapRatioCeiling, ratioFreq: bitmapRatioFreq,
-        relProxColor: bitmapColorMode === "rel-proximity",
+        relProxColor: bitmapColorMode === "rel-proximity" || bitmapColorMode === "custom-relprox-4",
         relProxFloor: bitmapRelProxFloor, relProxCeiling: bitmapRelProxCeiling, relProxFreq: bitmapRelProxFreq,
         proxFloor: bitmapProxFloor, proxCeiling: bitmapProxCeiling, proxFreq: bitmapProxFreq, proxGamma: bitmapProxGamma,
         derivFloor: bitmapDerivFloor, derivCeiling: bitmapDerivCeiling, derivFreq: bitmapDerivFreq,
@@ -14809,12 +15190,11 @@ function fastModeChunkLegacy() {
                     c.im = curve[lo].im * (1 - frac) + curve[hi].im * frac;
                 }
                 if (curve._ditherSigma) {
-                    const ds = curve._ditherSigma;
-                    const _cd2 = curve._ditherDist;
+                    const _dp2 = _ditherPair(curve._ditherDist, curve._ditherSigma);
                     if (c._effRe != null) {
-                        c._effRe += _ditherRand(_cd2) * ds; c._effIm += _ditherRand(_cd2) * ds;
+                        c._effRe += _dp2[0]; c._effIm += _dp2[1];
                     } else {
-                        c.re += _ditherRand(_cd2) * ds; c.im += _ditherRand(_cd2) * ds;
+                        c.re += _dp2[0]; c.im += _dp2[1];
                     }
                 }
             }
@@ -14844,12 +15224,11 @@ function fastModeChunkLegacy() {
                     d.im = curve[lo].im * (1 - frac) + curve[hi].im * frac;
                 }
                 if (curve._ditherSigma) {
-                    const ds = curve._ditherSigma;
-                    const _dd2 = curve._ditherDist;
+                    const _dp2 = _ditherPair(curve._ditherDist, curve._ditherSigma);
                     if (d._effRe != null) {
-                        d._effRe += _ditherRand(_dd2) * ds; d._effIm += _ditherRand(_dd2) * ds;
+                        d._effRe += _dp2[0]; d._effIm += _dp2[1];
                     } else {
-                        d.re += _ditherRand(_dd2) * ds; d.im += _ditherRand(_dd2) * ds;
+                        d.re += _dp2[0]; d.im += _dp2[1];
                     }
                 }
                 if (curve._orbRefC != null) {
@@ -15344,6 +15723,40 @@ function openPathPickPop(coeffIdx, anchorEl) {
     title.className = "ctx-title";
     title.textContent = "c" + subscript(subIdx) + " trajectory";
     pathPickPop.appendChild(title);
+
+    // "Copy from" dropdown — copies trajectory settings from another coefficient
+    const ppCopyRow = document.createElement("label");
+    ppCopyRow.textContent = "Copy from ";
+    const ppCopySel = document.createElement("select");
+    ppCopySel.style.cssText = "font-size:9px;background:#222;color:var(--text);border:1px solid var(--stroke);border-radius:3px;padding:1px 4px;";
+    const ppCopyNone = document.createElement("option");
+    ppCopyNone.value = "-"; ppCopyNone.textContent = "\u2013";
+    ppCopySel.appendChild(ppCopyNone);
+    for (let ci = 0; ci < coefficients.length; ci++) {
+        if (ci === coeffIdx) continue;
+        const opt = document.createElement("option");
+        opt.value = ci;
+        opt.textContent = "c" + subscript(n - 1 - ci);
+        ppCopySel.appendChild(opt);
+    }
+    ppCopySel.addEventListener("change", () => {
+        if (ppCopySel.value === "-") return;
+        const srcIdx = parseInt(ppCopySel.value);
+        const src = coefficients[srcIdx];
+        const dst = coefficients[coeffIdx];
+        dst.pathType = src.pathType;
+        dst.rAbs = src.rAbs;
+        dst.speed = src.speed;
+        dst.angle = src.angle;
+        dst.ccw = src.ccw;
+        dst.extra = src.extra ? JSON.parse(JSON.stringify(src.extra)) : {};
+        pathSel.value = dst.pathType;
+        buildPPControls(dst.pathType);
+        previewPP();
+        ppCopySel.value = "-";
+    });
+    ppCopyRow.appendChild(ppCopySel);
+    pathPickPop.appendChild(ppCopyRow);
 
     // Path type select (clone from #anim-path)
     const pathSel = document.createElement("select");

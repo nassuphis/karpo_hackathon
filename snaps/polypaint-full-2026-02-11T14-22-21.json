@@ -1,0 +1,144 @@
+{
+  "type": "recording",
+  "mode": "full",
+  "activeTab": "stats",
+  "timestamp": "2026-02-11T14:22:21.809Z",
+  "degree": 5,
+  "pattern": "circle",
+  "domainColoring": false,
+  "rootColoring": true,
+  "rootColorMode": "rainbow",
+  "uniformRootColor": [
+    255,
+    255,
+    255
+  ],
+  "bitmapCanvasColor": "#eee8d5",
+  "trails": true,
+  "selectedCoeffs": [
+    2
+  ],
+  "selectedRoots": [],
+  "coefficients": [
+    {
+      "pos": [
+        1,
+        0
+      ],
+      "home": [
+        1,
+        0
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false
+    },
+    {
+      "pos": [
+        0.5000000000000001,
+        0.8660254037844386
+      ],
+      "home": [
+        0.5000000000000001,
+        0.8660254037844386
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false
+    },
+    {
+      "pos": [
+        0.6653210283049855,
+        0.1701320876989006
+      ],
+      "home": [
+        -0.3857142857142857,
+        -0.07727816764413255
+      ],
+      "pathType": "spiral",
+      "radius": 50,
+      "speed": 0.25,
+      "angle": 0.33,
+      "ccw": false
+    },
+    {
+      "pos": [
+        -1,
+        1.2246467991473532e-16
+      ],
+      "home": [
+        -1,
+        1.2246467991473532e-16
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false
+    },
+    {
+      "pos": [
+        -0.5000000000000004,
+        -0.8660254037844384
+      ],
+      "home": [
+        -0.5000000000000004,
+        -0.8660254037844384
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false
+    },
+    {
+      "pos": [
+        0.047836725387387355,
+        -0.505386210627033
+      ],
+      "home": [
+        0.5000000000000001,
+        -0.8660254037844386
+      ],
+      "pathType": "circle",
+      "radius": 15,
+      "speed": 0.85,
+      "angle": 0.85,
+      "ccw": false
+    }
+  ],
+  "roots": [
+    [
+      0.9483315811806111,
+      0.11871272201890483
+    ],
+    [
+      -0.4926040637509815,
+      0.01523820429423069
+    ],
+    [
+      -0.4800606082751958,
+      -1.409562298995684
+    ],
+    [
+      -0.03203479287723798,
+      -0.618391689945155
+    ],
+    [
+      -0.4436321162771959,
+      1.027977658843265
+    ]
+  ],
+  "panels": {
+    "coeff": {
+      "range": 2
+    },
+    "roots": {
+      "range": 2
+    }
+  }
+}

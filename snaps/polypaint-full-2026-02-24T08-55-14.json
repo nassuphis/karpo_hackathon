@@ -1,0 +1,113 @@
+{
+  "type": "recording",
+  "mode": "full",
+  "activeTab": "roots",
+  "timestamp": "2026-02-24T08:55:14.661Z",
+  "degree": 2,
+  "pattern": "circle",
+  "domainColoring": false,
+  "rootColoring": true,
+  "rootColorMode": "rainbow",
+  "uniformRootColor": [
+    255,
+    255,
+    255
+  ],
+  "bitmapColorMode": "uniform",
+  "bitmapUniformColor": [
+    255,
+    255,
+    255
+  ],
+  "bitmapCanvasColor": "#000000",
+  "bitmapMatchStrategy": "assign4",
+  "bitmapProxPalette": "inferno",
+  "bitmapDerivPalette": "bwr",
+  "bitmapIdxProxGamma": 0.5,
+  "bitmapRatioGamma": 0.5,
+  "bitmapRelProxFloor": 0,
+  "bitmapRelProxCeiling": 1,
+  "bitmapRelProxFreq": 0,
+  "bitmapProxFloor": 0,
+  "bitmapProxCeiling": 1,
+  "bitmapProxFreq": 0,
+  "bitmapDerivFloor": 0,
+  "bitmapDerivCeiling": 1,
+  "bitmapDerivFreq": 0,
+  "bitmapIdxProxFloor": 0,
+  "bitmapIdxProxCeiling": 1,
+  "bitmapIdxProxFreq": 0,
+  "bitmapRatioFloor": 0,
+  "bitmapRatioCeiling": 1,
+  "bitmapRatioFreq": 0,
+  "trails": true,
+  "selectedCoeffs": [],
+  "selectedRoots": [],
+  "coefficients": [
+    {
+      "pos": [
+        1,
+        0
+      ],
+      "home": [
+        1,
+        0
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false
+    },
+    {
+      "pos": [
+        84.95602448453609,
+        -22.597938144329916
+      ],
+      "home": [
+        84.95602448453609,
+        -22.597938144329916
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false
+    },
+    {
+      "pos": [
+        -85.95602448453609,
+        22.597938144329934
+      ],
+      "home": [
+        -85.95602448453609,
+        22.597938144329927
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false
+    }
+  ],
+  "roots": [
+    [
+      1,
+      -1.9847686607974606e-16
+    ],
+    [
+      -85.95602448453609,
+      22.597938144329916
+    ]
+  ],
+  "panels": {
+    "coeff": {
+      "range": 375,
+      "centerRe": 0,
+      "centerIm": 0
+    },
+    "roots": {
+      "range": 274
+    }
+  }
+}

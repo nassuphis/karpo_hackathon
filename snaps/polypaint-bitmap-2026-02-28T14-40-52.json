@@ -1,0 +1,402 @@
+{
+  "timestamp": "2026-02-28T14:40:53.342Z",
+  "degree": 5,
+  "pattern": "circle",
+  "domainColoring": false,
+  "rootColoring": true,
+  "rootColorMode": "rainbow",
+  "uniformRootColor": [
+    255,
+    255,
+    255
+  ],
+  "bitmapColorMode": "derivative",
+  "bitmapUniformColor": [
+    255,
+    255,
+    255
+  ],
+  "bitmapCanvasColor": "#000000",
+  "bitmapMatchStrategy": "hungarian1",
+  "bitmapProxPalette": "turbo",
+  "bitmapProxCustom": [
+    [
+      255,
+      0,
+      0
+    ],
+    [
+      0,
+      102,
+      255
+    ],
+    [
+      255,
+      0,
+      0
+    ],
+    [
+      0,
+      34,
+      255
+    ],
+    [
+      255,
+      0,
+      0
+    ],
+    [
+      0,
+      64,
+      255
+    ],
+    [
+      255,
+      0,
+      0
+    ],
+    [
+      0,
+      94,
+      255
+    ]
+  ],
+  "bitmapProxCustomActive": false,
+  "bitmapProxCustom4": [
+    [
+      255,
+      0,
+      0
+    ],
+    [
+      128,
+      255,
+      0
+    ],
+    [
+      0,
+      255,
+      255
+    ],
+    [
+      128,
+      0,
+      255
+    ]
+  ],
+  "bitmapProxCustom4Active": false,
+  "bitmapProxCustomRP4": [
+    [
+      255,
+      191,
+      0
+    ],
+    [
+      0,
+      255,
+      64
+    ],
+    [
+      0,
+      64,
+      255
+    ],
+    [
+      255,
+      0,
+      191
+    ]
+  ],
+  "bitmapProxCustomRP4Active": false,
+  "bitmapDerivPalette": "turbo",
+  "bitmapIdxProxGamma": 0.5,
+  "bitmapProxGamma": 1,
+  "bitmapRelProxFloor": 0,
+  "bitmapRelProxCeiling": 1,
+  "bitmapRelProxFreq": 0,
+  "bitmapProxFloor": 0.17,
+  "bitmapProxCeiling": 0.45,
+  "bitmapProxFreq": 10,
+  "bitmapDerivFloor": 0,
+  "bitmapDerivCeiling": 1,
+  "bitmapDerivFreq": 9.4,
+  "bitmapIdxProxFloor": 0,
+  "bitmapIdxProxCeiling": 1,
+  "bitmapIdxProxFreq": 0,
+  "bitmapRatioFloor": 0,
+  "bitmapRatioCeiling": 1,
+  "bitmapRatioFreq": 0,
+  "bitmapExportFormat": "png",
+  "trails": false,
+  "animPlaying": false,
+  "activeTab": "bitmap",
+  "selectedCoeffs": [
+    1
+  ],
+  "selectedRoots": [],
+  "coefficients": [
+    {
+      "pos": [
+        1,
+        0
+      ],
+      "home": [
+        1,
+        0
+      ],
+      "pathType": "none",
+      "rAbs": 0.5,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        0.5,
+        0.8660254038
+      ],
+      "home": [
+        0.5,
+        0.8660254038
+      ],
+      "pathType": "golden-spiral",
+      "rAbs": 50,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {
+        "points": 999
+      }
+    },
+    {
+      "pos": [
+        -0.4999999999999998,
+        0.8660254037844387
+      ],
+      "home": [
+        -0.4999999999999998,
+        0.8660254037844387
+      ],
+      "pathType": "none",
+      "rAbs": 0.5,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -1,
+        1.2246467991473532e-16
+      ],
+      "home": [
+        -1,
+        1.2246467991473532e-16
+      ],
+      "pathType": "none",
+      "rAbs": 0.5,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -0.5,
+        -0.8660254038
+      ],
+      "home": [
+        -0.5,
+        -0.8660254038
+      ],
+      "pathType": "circle-dither",
+      "rAbs": 5,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {
+        "points": 2000,
+        "sigma": 0.9990000000000001,
+        "ditherDist": "normal"
+      }
+    },
+    {
+      "pos": [
+        0.5000000000000001,
+        -0.8660254037844386
+      ],
+      "home": [
+        0.5000000000000001,
+        -0.8660254037844386
+      ],
+      "pathType": "none",
+      "rAbs": 0.5,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    }
+  ],
+  "roots": [
+    [
+      -0.49999999999999994,
+      -0.8660254037844387
+    ],
+    [
+      0.9999999999999999,
+      -2.147614062529465e-19
+    ],
+    [
+      -0.5,
+      0.8660254037844387
+    ],
+    [
+      -0.9999999999955077,
+      -7.780723971487873e-12
+    ],
+    [
+      0.4999999999955078,
+      -0.8660254037922194
+    ]
+  ],
+  "pinnedRoots": [],
+  "pinnedEpsilon": 0.1,
+  "pinnedEpsilonDiv": 10,
+  "panels": {
+    "coeff": {
+      "range": 3
+    },
+    "roots": {
+      "range": 2
+    }
+  },
+  "trailData": [],
+  "jiggle": {
+    "mode": "none",
+    "sigma": 1,
+    "angleSteps": 100,
+    "scaleStep": 0.1,
+    "period": 20,
+    "amplitude": 10,
+    "lissFreqX": 1,
+    "lissFreqY": 2,
+    "circleSteps": 60
+  },
+  "numWorkers": 16,
+  "bitmapCoeffView": false,
+  "solverType": "wasm",
+  "targetSeconds": 4,
+  "morph": {
+    "enabled": true,
+    "rate": 0.01,
+    "mu": 0,
+    "cdPathType": "c-node",
+    "cdCcw": false,
+    "cdEllipseMinor": 0.5,
+    "cdDitherStartSigma": 0,
+    "cdDitherMidSigma": 0,
+    "cdDitherEndSigma": 0,
+    "cdDitherDist": "normal",
+    "cdDitherPow": 0.5,
+    "target": [
+      {
+        "pos": [
+          1,
+          0
+        ],
+        "home": [
+          1,
+          0
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          0.5000000000000001,
+          0.8660254037844386
+        ],
+        "home": [
+          0.5000000000000001,
+          0.8660254037844386
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          -0.4999999999999998,
+          0.8660254037844387
+        ],
+        "home": [
+          -0.4999999999999998,
+          0.8660254037844387
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          -1,
+          1.2246467991473532e-16
+        ],
+        "home": [
+          -1,
+          1.2246467991473532e-16
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          -0.5000000000000004,
+          -0.8660254037844384
+        ],
+        "home": [
+          -0.5000000000000004,
+          -0.8660254037844384
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          0.5000000000000001,
+          -0.8660254037844386
+        ],
+        "home": [
+          0.5000000000000001,
+          -0.8660254037844386
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      }
+    ]
+  },
+  "snapMode": "bitmap"
+}

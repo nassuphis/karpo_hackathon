@@ -1,0 +1,993 @@
+{
+  "timestamp": "2026-02-24T21:35:23.657Z",
+  "degree": 22,
+  "pattern": "circle",
+  "domainColoring": false,
+  "rootColoring": true,
+  "rootColorMode": "rainbow",
+  "uniformRootColor": [
+    255,
+    255,
+    255
+  ],
+  "bitmapColorMode": "proximity",
+  "bitmapUniformColor": [
+    255,
+    255,
+    255
+  ],
+  "bitmapCanvasColor": "#000000",
+  "bitmapMatchStrategy": "assign4",
+  "bitmapProxPalette": "turbo",
+  "bitmapDerivPalette": "bwr",
+  "bitmapIdxProxGamma": 0.5,
+  "bitmapRelProxFloor": 0.07,
+  "bitmapRelProxCeiling": 0.95,
+  "bitmapRelProxFreq": 0.8,
+  "bitmapProxFloor": 0.06,
+  "bitmapProxCeiling": 0.9,
+  "bitmapProxFreq": 9.2,
+  "bitmapDerivFloor": 0,
+  "bitmapDerivCeiling": 1,
+  "bitmapDerivFreq": 0,
+  "bitmapIdxProxFloor": 0,
+  "bitmapIdxProxCeiling": 1,
+  "bitmapIdxProxFreq": 0,
+  "bitmapRatioFloor": 0,
+  "bitmapRatioCeiling": 1,
+  "bitmapRatioFreq": 0,
+  "bitmapExportFormat": "png",
+  "trails": false,
+  "animPlaying": false,
+  "activeTab": "roots",
+  "selectedCoeffs": [],
+  "selectedRoots": [],
+  "coefficients": [
+    {
+      "pos": [
+        1,
+        0
+      ],
+      "home": [
+        1,
+        0
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        0.9586933887473241,
+        0.26775897376520996
+      ],
+      "home": [
+        0.9586933887473241,
+        0.26775897376520996
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        0.8473406743569152,
+        0.5133789302659386
+      ],
+      "home": [
+        0.8473406743569152,
+        0.5133789302659386
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        0.6747768745263473,
+        0.7189893112606789
+      ],
+      "home": [
+        0.6747768745263473,
+        0.7189893112606789
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        0.45426827172736156,
+        0.8698303597190437
+      ],
+      "home": [
+        0.45426827172736156,
+        0.8698303597190437
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        0.20249344599636881,
+        0.9553148312472877
+      ],
+      "home": [
+        0.20249344599636881,
+        0.9553148312472877
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -0.06171900027735763,
+        0.9697718619023087
+      ],
+      "home": [
+        -0.06171900027735763,
+        0.9697718619023087
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -0.3188004561083607,
+        0.9128206604824755
+      ],
+      "home": [
+        -0.3188004561083607,
+        0.9128206604824755
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -0.5498943381473302,
+        0.7893495859226589
+      ],
+      "home": [
+        -0.5498943381473302,
+        0.7893495859226589
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -0.7382422206412742,
+        0.609105647413109
+      ],
+      "home": [
+        -0.7382422206412742,
+        0.609105647413109
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -0.8704019523883768,
+        0.3859283217857764
+      ],
+      "home": [
+        -0.8704019523883768,
+        0.3859283217857764
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -0.9372090124536738,
+        0.136687678407014
+      ],
+      "home": [
+        -0.9372090124536738,
+        0.136687678407014
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -0.9344121958772066,
+        -0.11999178239558458
+      ],
+      "home": [
+        -0.9344121958772066,
+        -0.11999178239558458
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -0.8629395111530481,
+        -0.3651249902983634
+      ],
+      "home": [
+        -0.8629395111530481,
+        -0.3651249902983634
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -0.7287780263754726,
+        -0.580773409794732
+      ],
+      "home": [
+        -0.7287780263754726,
+        -0.580773409794732
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -0.542480220998119,
+        -0.7513609015389286
+      ],
+      "home": [
+        -0.542480220998119,
+        -0.7513609015389286
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -0.3183370307061436,
+        -0.8648015934549886
+      ],
+      "home": [
+        -0.3183370307061436,
+        -0.8648015934549886
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -0.0732821659867759,
+        -0.9133578843019282
+      ],
+      "home": [
+        -0.0732821659867759,
+        -0.9133578843019282
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        0.1743883488558876,
+        -0.8941675309225948
+      ],
+      "home": [
+        0.1743883488558876,
+        -0.8941675309225948
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        0.40638452962567695,
+        -0.8094039533828644
+      ],
+      "home": [
+        0.40638452962567695,
+        -0.8094039533828644
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        0.6057761867846273,
+        -0.666061513577531
+      ],
+      "home": [
+        0.6057761867846273,
+        -0.666061513577531
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        0.7582316693486222,
+        -0.47538550090425674
+      ],
+      "home": [
+        0.7582316693486222,
+        -0.47538550090425674
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        0.853050730060239,
+        -0.2519928028566534
+      ],
+      "home": [
+        0.853050730060239,
+        -0.2519928028566534
+      ],
+      "pathType": "none",
+      "radius": 25,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    }
+  ],
+  "roots": [
+    [
+      0.9910367532819239,
+      0.6152015551101075
+    ],
+    [
+      0.6893227524505264,
+      0.7396567050506168
+    ],
+    [
+      0.4453534796878507,
+      0.887246062015952
+    ],
+    [
+      0.19575945050970653,
+      0.9917099918025813
+    ],
+    [
+      -0.07626267054207106,
+      1.0234734167394974
+    ],
+    [
+      -0.3462963903736857,
+      0.9518780232972912
+    ],
+    [
+      -0.5843700270451002,
+      0.8181452861628562
+    ],
+    [
+      -0.7925553764720648,
+      0.6432657018931776
+    ],
+    [
+      -0.938881934101197,
+      0.4115588753014941
+    ],
+    [
+      -0.9952087162296571,
+      0.14100931521209276
+    ],
+    [
+      -0.9902903657715015,
+      -0.13153601408757595
+    ],
+    [
+      -0.932272945946061,
+      -0.40153340209218136
+    ],
+    [
+      -0.7900247570647242,
+      -0.6373097794310751
+    ],
+    [
+      -0.5768865039987391,
+      -0.8111622685904225
+    ],
+    [
+      -0.3364993821542792,
+      -0.9366557279752562
+    ],
+    [
+      -0.07024822961770108,
+      -1.0095115090396856
+    ],
+    [
+      0.20349326187256592,
+      -0.9869288703819813
+    ],
+    [
+      0.45441593842499023,
+      -0.8794872074124309
+    ],
+    [
+      0.6781750305430557,
+      -0.7272489028973459
+    ],
+    [
+      0.8621369134992221,
+      -0.5219943539171088
+    ],
+    [
+      0.9627970295471758,
+      -0.26782860879592496
+    ],
+    [
+      0.9869973755291618,
+      -0.00006764785493217911
+    ]
+  ],
+  "pinnedRoots": [
+    [
+      -0.22019974226804126,
+      0.3969072164948453
+    ],
+    [
+      0.9714526477912775,
+      0.2660034397215877
+    ]
+  ],
+  "pinnedEpsilon": 0.14,
+  "pinnedEpsilonDiv": 100,
+  "panels": {
+    "coeff": {
+      "range": 2
+    },
+    "roots": {
+      "range": 2
+    }
+  },
+  "trailData": [],
+  "jiggle": {
+    "mode": "none",
+    "sigma": 1,
+    "angleSteps": 100,
+    "scaleStep": 0.1,
+    "period": 20,
+    "amplitude": 10,
+    "lissFreqX": 1,
+    "lissFreqY": 2,
+    "circleSteps": 60
+  },
+  "numWorkers": 16,
+  "bitmapCoeffView": false,
+  "solverType": "wasm",
+  "targetSeconds": 4,
+  "morph": {
+    "enabled": true,
+    "rate": 0.01,
+    "mu": 0.9078136743000901,
+    "cdPathType": "d-node",
+    "cdCcw": false,
+    "cdEllipseMinor": 0.5,
+    "cdDitherStartSigma": 0,
+    "cdDitherMidSigma": 0.023,
+    "cdDitherEndSigma": 0,
+    "cdDitherDist": "square",
+    "cdDitherPow": 0.5,
+    "target": [
+      {
+        "pos": [
+          0.6467952342068779,
+          0.3330888589538727
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.109,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 0
+        }
+      },
+      {
+        "pos": [
+          0.48842276157108566,
+          0.3884271137601625
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.111,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 1
+        }
+      },
+      {
+        "pos": [
+          0.37739747715926414,
+          0.39150504790807217
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.113,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 2
+        }
+      },
+      {
+        "pos": [
+          0.3224416130900206,
+          0.3850031934150427
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.115,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 3
+        }
+      },
+      {
+        "pos": [
+          0.30746549895876396,
+          0.40709367064301083
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.117,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 4
+        }
+      },
+      {
+        "pos": [
+          0.2978520132187224,
+          0.47931598893313815
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.119,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 5
+        }
+      },
+      {
+        "pos": [
+          0.334587296402297,
+          0.6894117348520068
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.122,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 6
+        }
+      },
+      {
+        "pos": [
+          0.16367069218634517,
+          0.8591551609450342
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.124,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 7
+        }
+      },
+      {
+        "pos": [
+          -0.10166927188554808,
+          0.9757712061140055
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.126,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 8
+        }
+      },
+      {
+        "pos": [
+          -0.4361278310590826,
+          0.9890903634257076
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.128,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 9
+        }
+      },
+      {
+        "pos": [
+          -0.7898003238544268,
+          0.8646454064422984
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.13,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 10
+        }
+      },
+      {
+        "pos": [
+          -1.098242228310802,
+          0.5946642897056309
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.132,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 11
+        }
+      },
+      {
+        "pos": [
+          -1.2968993009948424,
+          0.2029438114055578
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.134,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 12
+        }
+      },
+      {
+        "pos": [
+          -1.3364217179814908,
+          -0.2578340422903645
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.136,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 13
+        }
+      },
+      {
+        "pos": [
+          -1.1950910408869644,
+          -0.7159170051481146
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.138,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 14
+        }
+      },
+      {
+        "pos": [
+          -0.8852242495225664,
+          -1.095209157093726
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.14,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 15
+        }
+      },
+      {
+        "pos": [
+          -0.4519741749606322,
+          -1.331526726352055
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.142,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 16
+        }
+      },
+      {
+        "pos": [
+          0.1502548756448323,
+          -1.3442942896364554
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.145,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 17
+        }
+      },
+      {
+        "pos": [
+          0.5784847943070115,
+          -1.163190313777793
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.147,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 18
+        }
+      },
+      {
+        "pos": [
+          0.8901860090864495,
+          -0.8493782759313239
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.149,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 19
+        }
+      },
+      {
+        "pos": [
+          1.0485395254432897,
+          -0.4670150627811228
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.151,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 20
+        }
+      },
+      {
+        "pos": [
+          1.0494566610864395,
+          -0.0869960880230462
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.153,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 21
+        }
+      },
+      {
+        "pos": [
+          0.9200555042877094,
+          0.22880921759525685
+        ],
+        "home": [
+          0.48550632587022213,
+          0
+        ],
+        "pathType": "orb-circle",
+        "radius": 25,
+        "speed": 0.155,
+        "angle": 0,
+        "ccw": false,
+        "extra": {
+          "points": 200,
+          "refC": 22
+        }
+      }
+    ]
+  }
+}

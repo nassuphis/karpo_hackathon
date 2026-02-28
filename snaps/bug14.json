@@ -1,0 +1,890 @@
+{
+  "timestamp": "2026-02-27T12:43:40.833Z",
+  "degree": 18,
+  "pattern": "circle",
+  "domainColoring": false,
+  "rootColoring": true,
+  "rootColorMode": "rainbow",
+  "uniformRootColor": [
+    255,
+    255,
+    255
+  ],
+  "bitmapColorMode": "derivative",
+  "bitmapUniformColor": [
+    255,
+    255,
+    255
+  ],
+  "bitmapCanvasColor": "#000000",
+  "bitmapMatchStrategy": "hungarian1",
+  "bitmapProxPalette": "inferno",
+  "bitmapProxCustom": [
+    [
+      228,
+      156,
+      100
+    ],
+    [
+      164,
+      143,
+      79
+    ],
+    [
+      105,
+      137,
+      74
+    ],
+    [
+      57,
+      146,
+      79
+    ],
+    [
+      100,
+      45,
+      45
+    ],
+    [
+      120,
+      75,
+      38
+    ],
+    [
+      95,
+      67,
+      124
+    ],
+    [
+      164,
+      83,
+      144
+    ]
+  ],
+  "bitmapProxCustomActive": false,
+  "bitmapProxCustom4": [
+    [
+      247,
+      7,
+      7
+    ],
+    [
+      21,
+      14,
+      14
+    ],
+    [
+      9,
+      51,
+      175
+    ],
+    [
+      157,
+      18,
+      175
+    ]
+  ],
+  "bitmapProxCustom4Active": true,
+  "bitmapProxCustomRP4": null,
+  "bitmapProxCustomRP4Active": false,
+  "bitmapDerivPalette": "turbo",
+  "bitmapIdxProxGamma": 0.5,
+  "bitmapProxGamma": 1,
+  "bitmapRelProxFloor": 0,
+  "bitmapRelProxCeiling": 1,
+  "bitmapRelProxFreq": 5.7,
+  "bitmapProxFloor": 0,
+  "bitmapProxCeiling": 1,
+  "bitmapProxFreq": 7.3,
+  "bitmapDerivFloor": 0,
+  "bitmapDerivCeiling": 1,
+  "bitmapDerivFreq": 0,
+  "bitmapIdxProxFloor": 0,
+  "bitmapIdxProxCeiling": 1,
+  "bitmapIdxProxFreq": 0,
+  "bitmapRatioFloor": 0,
+  "bitmapRatioCeiling": 1,
+  "bitmapRatioFreq": 0,
+  "bitmapExportFormat": "png",
+  "trails": true,
+  "animPlaying": false,
+  "activeTab": "roots",
+  "selectedCoeffs": [
+    18
+  ],
+  "selectedRoots": [],
+  "coefficients": [
+    {
+      "pos": [
+        1,
+        0
+      ],
+      "home": [
+        1,
+        0
+      ],
+      "pathType": "none",
+      "rAbs": 0.5,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        0,
+        0
+      ],
+      "home": [
+        0,
+        0
+      ],
+      "pathType": "annulus-cloud",
+      "rAbs": 99.9,
+      "speed": 0.001,
+      "angle": 0,
+      "ccw": false,
+      "extra": {
+        "points": 9990,
+        "sigma": 115999.99999999999,
+        "ditherDist": "uniform",
+        "noiseScale": 3,
+        "noiseAmp": 0.28,
+        "rIn": 0.5,
+        "pow": 1
+      }
+    },
+    {
+      "pos": [
+        0.7891405093963936,
+        0.6142127126896678
+      ],
+      "home": [
+        0.7891405093963936,
+        0.6142127126896678
+      ],
+      "pathType": "none",
+      "rAbs": 0.9990000000000001,
+      "speed": 0.001,
+      "angle": 0,
+      "ccw": false,
+      "extra": {
+        "points": 999
+      }
+    },
+    {
+      "pos": [
+        0.5469481581224269,
+        0.8371664782625285
+      ],
+      "home": [
+        0.5469481581224269,
+        0.8371664782625285
+      ],
+      "pathType": "none",
+      "rAbs": 0.9990000000000001,
+      "speed": 0.024,
+      "angle": 0,
+      "ccw": false,
+      "extra": {
+        "points": 999
+      }
+    },
+    {
+      "pos": [
+        0.24548548714079924,
+        0.9694002659393304
+      ],
+      "home": [
+        0.24548548714079924,
+        0.9694002659393304
+      ],
+      "pathType": "none",
+      "rAbs": 0.5,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        -0.08257934547,
+        0.996584493
+      ],
+      "home": [
+        -0.08257934547,
+        0.996584493
+      ],
+      "pathType": "none",
+      "rAbs": 0.5,
+      "speed": 0.043,
+      "angle": 0.25,
+      "ccw": false,
+      "extra": {
+        "points": 200
+      }
+    },
+    {
+      "pos": [
+        -0.4016954246529694,
+        0.9157733266550574
+      ],
+      "home": [
+        -0.4016954246529694,
+        0.9157733266550574
+      ],
+      "pathType": "none",
+      "rAbs": 0.5,
+      "speed": 1,
+      "angle": 0,
+      "ccw": false,
+      "extra": {}
+    },
+    {
+      "pos": [
+        0.8949342887,
+        -0.4493805046
+      ],
+      "home": [
+        0.8949342887,
+        -0.4493805046
+      ],
+      "pathType": "circle-dither",
+      "rAbs": 99900000000,
+      "speed": 0.022,
+      "angle": 0.93,
+      "ccw": false,
+      "extra": {
+        "points": 99900,
+        "sigma": 99900000,
+        "ditherDist": "normal"
+      }
+    },
+    {
+      "pos": [
+        -0.8794737512,
+        0.475947393
+      ],
+      "home": [
+        -0.8794737512,
+        0.475947393
+      ],
+      "pathType": "none",
+      "rAbs": 0.9990000000000001,
+      "speed": 0.105,
+      "angle": 0.42,
+      "ccw": false,
+      "extra": {
+        "points": 200
+      }
+    },
+    {
+      "pos": [
+        -0.9863613034027223,
+        0.16459459028073403
+      ],
+      "home": [
+        -0.9863613034027223,
+        0.16459459028073403
+      ],
+      "pathType": "none",
+      "rAbs": 0.9990000000000001,
+      "speed": 0.047,
+      "angle": 0,
+      "ccw": false,
+      "extra": {
+        "points": 999
+      }
+    },
+    {
+      "pos": [
+        -0.9863613034027224,
+        -0.16459459028073378
+      ],
+      "home": [
+        -0.9863613034027224,
+        -0.16459459028073378
+      ],
+      "pathType": "none",
+      "rAbs": 0.9990000000000001,
+      "speed": 0.069,
+      "angle": 0,
+      "ccw": false,
+      "extra": {
+        "points": 999
+      }
+    },
+    {
+      "pos": [
+        -0.8794737512064893,
+        -0.4759473930370731
+      ],
+      "home": [
+        -0.8794737512064893,
+        -0.4759473930370731
+      ],
+      "pathType": "none",
+      "rAbs": 0.9990000000000001,
+      "speed": 0.092,
+      "angle": 0,
+      "ccw": false,
+      "extra": {
+        "points": 999
+      }
+    },
+    {
+      "pos": [
+        -0.6772815716,
+        -0.7357239107
+      ],
+      "home": [
+        -0.6772815716,
+        -0.7357239107
+      ],
+      "pathType": "none",
+      "rAbs": 0.5,
+      "speed": 0.019,
+      "angle": 0.65,
+      "ccw": false,
+      "extra": {
+        "points": 200
+      }
+    },
+    {
+      "pos": [
+        -0.40169542465296904,
+        -0.9157733266550576
+      ],
+      "home": [
+        -0.40169542465296904,
+        -0.9157733266550576
+      ],
+      "pathType": "none",
+      "rAbs": 0.9990000000000001,
+      "speed": 0.115,
+      "angle": 0,
+      "ccw": false,
+      "extra": {
+        "points": 999
+      }
+    },
+    {
+      "pos": [
+        -0.08257934547233274,
+        -0.9965844930066698
+      ],
+      "home": [
+        -0.08257934547233274,
+        -0.9965844930066698
+      ],
+      "pathType": "none",
+      "rAbs": 0.9990000000000001,
+      "speed": 0.138,
+      "angle": 0,
+      "ccw": false,
+      "extra": {
+        "points": 999
+      }
+    },
+    {
+      "pos": [
+        0.2454854871407988,
+        -0.9694002659393305
+      ],
+      "home": [
+        0.2454854871407988,
+        -0.9694002659393305
+      ],
+      "pathType": "none",
+      "rAbs": 0.9990000000000001,
+      "speed": 0.16,
+      "angle": 0,
+      "ccw": false,
+      "extra": {
+        "points": 999
+      }
+    },
+    {
+      "pos": [
+        0.5469481581224266,
+        -0.8371664782625288
+      ],
+      "home": [
+        0.5469481581224266,
+        -0.8371664782625288
+      ],
+      "pathType": "none",
+      "rAbs": 0.9990000000000001,
+      "speed": 0.183,
+      "angle": 0,
+      "ccw": false,
+      "extra": {
+        "points": 999
+      }
+    },
+    {
+      "pos": [
+        0.7891405093963939,
+        -0.6142127126896674
+      ],
+      "home": [
+        0.7891405093963939,
+        -0.6142127126896674
+      ],
+      "pathType": "none",
+      "rAbs": 0.9990000000000001,
+      "speed": 0.206,
+      "angle": 0,
+      "ccw": false,
+      "extra": {
+        "points": 999
+      }
+    },
+    {
+      "pos": [
+        0.9458172417,
+        -0.3246994692
+      ],
+      "home": [
+        0.9458172417,
+        -0.3246994692
+      ],
+      "pathType": "elkal",
+      "rAbs": 99900000000000,
+      "speed": 0.001,
+      "angle": 0,
+      "ccw": true,
+      "extra": {
+        "points": 6840,
+        "sigma": 0.01,
+        "ditherDist": "normal",
+        "spokes": 2,
+        "pow": 1,
+        "rIn": 0.5,
+        "rings": 191,
+        "innerTurns": 0.75,
+        "innerRatio": 0.39
+      }
+    }
+  ],
+  "roots": [
+    [
+      -0.7118348739851366,
+      -0.7987050110428335
+    ],
+    [
+      1.0165922041969966,
+      -0.7527446464492593
+    ],
+    [
+      0.3018708179593157,
+      1.2343534902687612
+    ],
+    [
+      0.8900439408117238,
+      -0.3409937974967931
+    ],
+    [
+      1.025732844326852,
+      0.016535978939847498
+    ],
+    [
+      -0.7427943181518519,
+      -0.4698496399046027
+    ],
+    [
+      -0.5271389814243154,
+      0.9844974621386062
+    ],
+    [
+      -1.0511017678503196,
+      0.14743109744025182
+    ],
+    [
+      0.2549949644067092,
+      -1.1111703252819747
+    ],
+    [
+      -0.4714613964277353,
+      0.8032411286220202
+    ],
+    [
+      0.8247840224809942,
+      0.6301183246530518
+    ],
+    [
+      0.5716339464746347,
+      -0.7269340588822697
+    ],
+    [
+      0.5119621586172614,
+      0.8082700360213146
+    ],
+    [
+      -0.7627120964855404,
+      0.4355151578767328
+    ],
+    [
+      -0.35502955150982857,
+      -0.8087862713954971
+    ],
+    [
+      0.030455620275816418,
+      0.9251929350796306
+    ],
+    [
+      -0.8884824296771282,
+      -0.06462516190697667
+    ],
+    [
+      0.08248489596155177,
+      -0.9113466986800102
+    ]
+  ],
+  "pinnedRoots": [],
+  "pinnedEpsilon": 0.1,
+  "pinnedEpsilonDiv": 10,
+  "panels": {
+    "coeff": {
+      "range": 620.3854594147707
+    },
+    "roots": {
+      "range": 2
+    }
+  },
+  "trailData": [],
+  "jiggle": {
+    "mode": "none",
+    "sigma": 1,
+    "angleSteps": 100,
+    "scaleStep": 0.1,
+    "period": 20,
+    "amplitude": 10,
+    "lissFreqX": 1,
+    "lissFreqY": 2,
+    "circleSteps": 60
+  },
+  "numWorkers": 16,
+  "bitmapCoeffView": false,
+  "solverType": "wasm",
+  "targetSeconds": 4,
+  "morph": {
+    "enabled": true,
+    "rate": 0.01,
+    "mu": 0.02471405429987511,
+    "cdPathType": "c-node",
+    "cdCcw": false,
+    "cdEllipseMinor": 0.5,
+    "cdDitherStartSigma": 0,
+    "cdDitherMidSigma": 0,
+    "cdDitherEndSigma": 0,
+    "cdDitherDist": "normal",
+    "cdDitherPow": 0.5,
+    "target": [
+      {
+        "pos": [
+          1,
+          0
+        ],
+        "home": [
+          1,
+          0
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          0.9458172417006346,
+          0.32469946920468346
+        ],
+        "home": [
+          0.9458172417006346,
+          0.32469946920468346
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          0.7891405093963936,
+          0.6142127126896678
+        ],
+        "home": [
+          0.7891405093963936,
+          0.6142127126896678
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          0.5469481581224269,
+          0.8371664782625285
+        ],
+        "home": [
+          0.5469481581224269,
+          0.8371664782625285
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          0.24548548714079924,
+          0.9694002659393304
+        ],
+        "home": [
+          0.24548548714079924,
+          0.9694002659393304
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          -0.08257934547233227,
+          0.9965844930066698
+        ],
+        "home": [
+          -0.08257934547233227,
+          0.9965844930066698
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          -0.4016954246529694,
+          0.9157733266550574
+        ],
+        "home": [
+          -0.4016954246529694,
+          0.9157733266550574
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          -0.6772815716257409,
+          0.7357239106731318
+        ],
+        "home": [
+          -0.6772815716257409,
+          0.7357239106731318
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          -0.879473751206489,
+          0.4759473930370737
+        ],
+        "home": [
+          -0.879473751206489,
+          0.4759473930370737
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          -0.9863613034027223,
+          0.16459459028073403
+        ],
+        "home": [
+          -0.9863613034027223,
+          0.16459459028073403
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          -0.9863613034027224,
+          -0.16459459028073378
+        ],
+        "home": [
+          -0.9863613034027224,
+          -0.16459459028073378
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          -0.8794737512064893,
+          -0.4759473930370731
+        ],
+        "home": [
+          -0.8794737512064893,
+          -0.4759473930370731
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          -0.6772815716257411,
+          -0.7357239106731316
+        ],
+        "home": [
+          -0.6772815716257411,
+          -0.7357239106731316
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          -0.40169542465296904,
+          -0.9157733266550576
+        ],
+        "home": [
+          -0.40169542465296904,
+          -0.9157733266550576
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          -0.08257934547233274,
+          -0.9965844930066698
+        ],
+        "home": [
+          -0.08257934547233274,
+          -0.9965844930066698
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          0.2454854871407988,
+          -0.9694002659393305
+        ],
+        "home": [
+          0.2454854871407988,
+          -0.9694002659393305
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          0.5469481581224266,
+          -0.8371664782625288
+        ],
+        "home": [
+          0.5469481581224266,
+          -0.8371664782625288
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          0.7891405093963939,
+          -0.6142127126896674
+        ],
+        "home": [
+          0.7891405093963939,
+          -0.6142127126896674
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      },
+      {
+        "pos": [
+          0.9458172417006346,
+          -0.32469946920468373
+        ],
+        "home": [
+          0.9458172417006346,
+          -0.32469946920468373
+        ],
+        "pathType": "none",
+        "rAbs": 0.5,
+        "speed": 1,
+        "angle": 0,
+        "ccw": false,
+        "extra": {}
+      }
+    ]
+  }
+}

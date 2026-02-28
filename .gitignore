@@ -215,6 +215,7 @@ __marimo__/
 
 # Local snapshots, plans, timing data
 snaps/
+!snaps/*.json
 plans/
 timing/
 

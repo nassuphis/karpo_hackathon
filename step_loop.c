@@ -17,6 +17,14 @@
 #define PROGRESS_INTERVAL 2000
 #define PI 3.14159265358979323846
 
+/* Safe float→int: clamp to avoid WASM i32.trunc_f64_s trap on NaN/Inf/out-of-range */
+static inline int safe_trunc(double x) {
+    if (x != x) return -1;          /* NaN → out of bounds */
+    if (x > 2147483647.0) return 2147483647;
+    if (x < -2147483648.0) return -2147483648;
+    return (int)x;
+}
+
 /* ================================================================
  * Imported functions from JS environment
  * ================================================================ */
@@ -921,8 +929,8 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                 rootsRe[i] = tmpRe[i]; rootsIm[i] = tmpIm[i];
             }
             for (int i = 0; i < nr; i++) {
-                int ix = (int)(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
-                int iy = (int)((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
+                int ix = safe_trunc(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
+                int iy = safe_trunc((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
                 if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
                 double td = normSens[i];
                 if (derivFreq > 0.0) {
@@ -959,8 +967,8 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                 rootsRe[i] = tmpRe[i]; rootsIm[i] = tmpIm[i];
             }
             for (int i = 0; i < nr; i++) {
-                int ix = (int)(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
-                int iy = (int)((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
+                int ix = safe_trunc(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
+                int iy = safe_trunc((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
                 if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
                 double t = 1.0;
                 if (proxRunMax > 0) {
@@ -1006,8 +1014,8 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                 rootsRe[i] = tmpRe[i]; rootsIm[i] = tmpIm[i];
             }
             for (int i = 0; i < nr; i++) {
-                int ix = (int)(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
-                int iy = (int)((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
+                int ix = safe_trunc(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
+                int iy = safe_trunc((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
                 if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
                 double denom = proxRunMax - proxRunMin;
                 double t = denom > 1e-12 ? (minDists4[i] - proxRunMin) / denom : 0.5;
@@ -1033,8 +1041,8 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
             }
             int ur = cfgI[CI_UNIFORM_R], ug = cfgI[CI_UNIFORM_G], ub = cfgI[CI_UNIFORM_B];
             for (int i = 0; i < nr; i++) {
-                int ix = (int)(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
-                int iy = (int)((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
+                int ix = safe_trunc(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
+                int iy = safe_trunc((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
                 if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
                 paintIdx[pc] = iy * W + ix;
                 paintR[pc] = (unsigned char)ur;
@@ -1058,8 +1066,8 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
                 rootsRe[i] = tmpRe[i]; rootsIm[i] = tmpIm[i];
             }
             for (int i = 0; i < nr; i++) {
-                int ix = (int)(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
-                int iy = (int)((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
+                int ix = safe_trunc(((rootsRe[i] - centerX) / range + 1.0) * 0.5 * W);
+                int iy = safe_trunc((1.0 - (rootsIm[i] - centerY) / range) * 0.5 * H);
                 if (ix < 0 || ix >= W || iy < 0 || iy >= H) continue;
                 paintIdx[pc] = iy * W + ix;
                 paintR[pc] = colorsR[i];

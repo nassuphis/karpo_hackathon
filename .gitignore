@@ -229,6 +229,7 @@ timing/
 make_book.py
 test_book*.json
 whitewall.pdf
+polypaint_book_*.pdf
 
 # Local test files
 tests/test_orb_paths.py

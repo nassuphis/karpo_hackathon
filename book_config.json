@@ -1,0 +1,176 @@
+{
+  "title": "PolyPaint",
+  "subtitle": "Polynomial Root Visualizations",
+  "pages": [
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-27T18-40-07.png",
+      "title": "Six Roots, Four Colors",
+      "text": "Degree 6. Seven coefficients wander the complex plane on figure-eight curves, a dithered circle, a disk spiral, and a twelve-spoke star with seventeen turns. The Ehrlich\u2013Aberth solver finds all six roots at each of 99,900 sample points. Each pixel is colored by which root it converges to nearest, using a four-color palette\u2014green, indigo, yellow, orange\u2014modulated by relative proximity. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-27T11-03-21.png",
+      "title": "Serpentine Turbulence",
+      "text": "Degree 18. Nineteen coefficients arrayed on the unit circle, most held stationary, with one tracing a hex grid under uniform dither, another scattered across a vast dithered circle, and one sweeping a two-spoke serpentine grid of 6,840 points. The Ehrlich\u2013Aberth solver finds all eighteen roots, colored by derivative magnitude through the turbo palette\u2014a continuous spectrum from deep blue through green and yellow to red. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-27T10-38-43.png",
+      "title": "Three-Spoke Derivative",
+      "text": "Degree 18. The same unit-circle arrangement of nineteen coefficients, but now one coefficient follows a three-spoke star across 9,850 points while another explores a hex grid with disk dither. Derivative magnitude maps to the turbo palette, revealing the rate of change of the polynomial across the complex plane. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-27T10-05-26.png",
+      "title": "Perlin Million",
+      "text": "Degree 18. One coefficient traverses a Perlin-noise-warped grid of 999,000 sample points while fifteen others orbit on tiny circles at staggered speeds. The four-color palette\u2014red, near-black, deep blue, and emerald\u2014assigns each pixel by which of the eighteen roots it converges to nearest, modulated by relative proximity. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-27T09-49-35.png",
+      "title": "Dark Lattice",
+      "text": "Degree 18. A Perlin-warped grid path drives one coefficient through 99,900 sample points. Most of the remaining eighteen coefficients sit fixed on the unit circle; a few orbit on small circles with varying speeds and tilts. The four-color palette\u2014red, near-black, deep blue, emerald\u2014colors each pixel by nearest-root convergence. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-27T09-31-02.png",
+      "title": "Five Roots, Three Spokes",
+      "text": "Degree 5. Six coefficients: the leading one orbits on a tilted circle, two sit stationary, one traces a slow tilted orbit, one covers a Perlin-noise hex grid of 9,990 points with disk dither, and one sweeps a three-spoke star of 4,360 points. The four-color palette\u2014red, near-black, deep blue, emerald\u2014colors the five roots by proximity. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-27T09-24-02.png",
+      "title": "Spokes and Hexagons",
+      "text": "Degree 5. The leading coefficient radiates along a three-spoke star of 4,360 points while another samples a Perlin-warped hex grid of 9,990 points with disk dither. Two more trace tilted circular orbits at different radii, and two sit stationary. The four-color palette\u2014red, near-black, deep blue, emerald\u2014colors the five roots by proximity. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-27T12-56-06.png",
+      "title": "Elkal Rings",
+      "text": "Degree 18. The leading coefficient follows an elkal path\u2014191 concentric rings spiraling inward with three-quarter-turn inner windings across 6,840 points\u2014while a vast dithered circle scatters another coefficient and an annulus cloud distributes 9,990 points through a ring-shaped region. Relative proximity determines the four-color assignment\u2014amber, green, blue, magenta\u2014producing smooth gradients between root basins. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-27T13-49-36.png",
+      "title": "Double Elkal",
+      "text": "Degree 18. Two coefficients each trace elkal paths\u2014250-ring spirals with 1.4-turn inner windings\u2014while two others scatter across vast dithered circles and an annulus cloud casts 9,990 points through a ring. Relative proximity assigns four colors\u2014amber, green, blue, magenta\u2014across the eighteen root basins. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-27T18-21-38.png",
+      "title": "Hex Grid and Spiral",
+      "text": "Degree 6. Seven coefficients: three orbit on circles of varying radii, one samples a disk-dithered circle, one covers a hex grid of 20,000 points with disk dither, one spirals outward through a disk of 99,900 points over seventeen turns, and one sits stationary. The four-color palette\u2014green, indigo, yellow, orange\u2014colors the six roots by proximity. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-27T18-05-20.png",
+      "title": "Spiral Unfurling",
+      "text": "Degree 6. The same seven-coefficient arrangement\u2014circles, a dithered circle, a hex grid, and a seventeen-turn disk spiral of 99,900 points\u2014captured at a different stage of the animation. Fewer spiral turns have accumulated, revealing the early structure of the root basins as they begin to interweave. The four-color palette\u2014green, indigo, yellow, orange\u2014colors by proximity. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T06-11-23.png",
+      "title": "Twin Spirals",
+      "text": "Degree 8. Nine coefficients: two trace disk spirals\u2014one tight with 30 turns across 9,990 points, one vast with the same winding but a far greater reach\u2014while the leading coefficient orbits a small circle, one scatters a dithered circle, and four sit stationary. The four-color palette\u2014green, indigo, yellow, orange\u2014maps eight roots by proximity. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T06-56-48.png",
+      "title": "Accelerated Spirals",
+      "text": "Degree 8. The same twin-spiral configuration but with faster coefficient speeds, producing denser sampling. Two disk spirals of 30 turns wind at accelerated pace while a dithered circle scatters broadly. The four-color palette\u2014green, indigo, yellow, orange\u2014maps eight roots by proximity. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T14-36-15.png",
+      "title": "Quintic Turbo",
+      "text": "Degree 5. Six coefficients: the leading one sits far from the origin, one traces a vast figure-eight curve of 200,000 points, one scatters across a dithered circle with normal dither, two orbit on tilted circles at vastly different scales, and one sits stationary. Derivative magnitude maps to the turbo palette with frequency modulation at 9.4 cycles, producing banded color rings that reveal the polynomial\u2019s rate of change. Black canvas, Hungarian root matching, JavaScript solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T14-40-52.png",
+      "title": "Golden Spiral",
+      "text": "Degree 5. Six coefficients on the unit circle: one traces a golden spiral of 999 points, one scatters across a dithered circle with normal dither, and four sit stationary. Derivative magnitude maps to the turbo palette with 9.4-cycle frequency modulation, revealing concentric bands of the polynomial\u2019s rate of change radiating from the roots. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T14-54-25.png",
+      "title": "Golden Spiral, Relative Proximity",
+      "text": "Degree 5. The same golden-spiral configuration\u2014one coefficient tracing 999 points outward, one scattering across a broadly dithered circle, four stationary\u2014but now colored by relative proximity rather than derivative. The four-color palette\u2014crimson, purple, blue, sage\u2014assigns each pixel by which of the five roots it converges to nearest, with smooth gradients where basins of attraction meet. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T15-12-08.png",
+      "title": "Hex Grid Derivative",
+      "text": "Degree 7. Eight coefficients scattered across the complex plane, several far from the origin. One traverses a vast hex grid of 20,000 points, one scatters across a dithered circle with normal dither, and the rest sit stationary at varied positions. Derivative magnitude maps to the turbo palette with 5-cycle frequency modulation, producing concentric spectral bands around each of the seven roots. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T15-23-16.png",
+      "title": "Blue-White-Red Grid",
+      "text": "Degree 7. Eight coefficients scattered far across the complex plane. One traverses a vast hex grid of 20,000 points with three spokes, one scatters across a dithered circle with normal dither, and one spreads through a disk grid with heavy disk dither. Derivative magnitude maps to the blue\u2013white\u2013red palette with 5-cycle frequency modulation, producing cool-to-warm banded rings around each of the seven roots. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T15-28-56.png",
+      "title": "Dispersed Grid",
+      "text": "Degree 7. The same eight-coefficient arrangement as Blue\u2013White\u2013Red Grid but with vastly increased dither: the dithered circle expands to a radius of 500,000 with sigma 1,000, and the disk grid\u2019s dither swells to sigma 47,400\u2014scattering sample points across enormous regions of the complex plane. The hex grid still traverses 20,000 points with three spokes. Derivative magnitude maps to the blue\u2013white\u2013red palette with 5-cycle frequency modulation, now revealing finer structure as the wider sampling smooths the root basins. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T15-41-51.png",
+      "title": "Earth Palette",
+      "text": "Degree 5. Six coefficients on the unit circle: one samples a hex grid of 1,000 points with fine uniform dither, one orbits a tilted circle at moderate radius, one sweeps a wide tilted circle of radius 30 across 200 points, and three sit stationary. An eight-color earthy palette\u2014sand, olive, sage, green, maroon, brown, purple, pink\u2014assigns each pixel by which of the five roots it converges to nearest. Black canvas, assign-four root matching, JavaScript solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T16-27-04.png",
+      "title": "Spiral Corners",
+      "text": "Degree 29. Thirty coefficients arranged in a six-by-five grid pattern. The four corner coefficients trace outward spirals with two turns each, while the remaining twenty-six sit stationary at their grid positions. Each of the twenty-nine roots receives a distinct rainbow hue, producing a vivid mosaic of interlocking basins of attraction. Trails enabled. Black canvas, assign-four root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T16-36-49.png",
+      "title": "Sixty-Two Roots",
+      "text": "Degree 62. Sixty-three coefficients arrayed on a circle: the leading one orbits a tilted circle across 10,000 points, four scatter through disk clouds of 10,000 points each at varying radii and tilts, and the remaining fifty-eight sit stationary. Proximity to the nearest of sixty-two roots maps to the turbo palette with 5.8-cycle frequency modulation, producing intricate spectral rings around each basin of attraction. Black canvas, assign-four root matching, JavaScript solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T16-49-07.png",
+      "title": "Rainbow Grid",
+      "text": "Degree 29. Thirty coefficients in a six-by-five grid, the same arrangement as Spiral Corners. The four corner coefficients trace outward spirals with two turns each while the remaining twenty-six hold their grid positions. Each of the twenty-nine roots receives a distinct rainbow hue. Trails enabled, capturing the history of root motion as the spirals unwind. Black canvas, assign-four root matching, JavaScript solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T16-54-53.png",
+      "title": "Contrasting Spirals",
+      "text": "Degree 8. Nine coefficients on the unit circle: one traces a vast disk spiral of radius 999 with 30 turns across 9,990 points, another winds through a microscopic 30-turn spiral, one drifts on a tiny slow circle, one scatters a dithered circle with disk dither, and four sit stationary. The four-color palette\u2014green, indigo, yellow, orange\u2014assigns each pixel by which of the eight roots it converges to nearest, with 10-cycle frequency modulation producing fine concentric bands. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T17-00-36.png",
+      "title": "Contrasting Spirals II",
+      "text": "Degree 8. The same nine-coefficient arrangement as Contrasting Spirals\u2014a vast 30-turn disk spiral, a microscopic 30-turn spiral, a slow drifting circle, a dithered circle, and four stationary\u2014captured at a later stage of the animation. The large spiral has wound further outward, reshaping the basins of attraction. The four-color palette\u2014green, indigo, yellow, orange\u2014with 10-cycle frequency modulation. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T17-12-51.png",
+      "title": "Contrasting Spirals III",
+      "text": "Degree 8. A third frame from the Contrasting Spirals sequence. The vast disk spiral continues to expand while the microscopic spiral and dithered circle accumulate samples. The evolving root positions produce a different pattern of basin boundaries and color bands. The four-color palette\u2014green, indigo, yellow, orange\u2014with 10-cycle frequency modulation. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T17-21-51.png",
+      "title": "Warm Clusters",
+      "text": "Degree 30. Thirty-one coefficients arranged in two clusters, every one tracing an outward ellipse of enormous radius with width 50 at the same speed. The two-cluster pattern places the coefficients along two arcs in the complex plane, all spiraling outward in lockstep. Derivative magnitude maps to the warm palette, rendering the polynomial\u2019s rate of change in glowing reds, oranges, and yellows. Trails enabled. Black canvas, assign-four root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T17-29-56.png",
+      "title": "Rainbow Twins",
+      "text": "Degree 19. Twenty coefficients in two symmetric clusters of ten, arranged along opposing arcs. One coefficient samples a hex grid of 9,990 points with fine disk dither, another orbits a circle of 2,000 points, and the remaining eighteen sit stationary. Each of the nineteen roots receives a distinct rainbow hue, producing a kaleidoscopic mosaic of interlocking basins mirrored across the two clusters. Black canvas, Hungarian root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T17-42-07.png",
+      "title": "Cloud Eleven",
+      "text": "Degree 11. Twelve coefficients scattered far across the complex plane: two drift through vast disk clouds of radius 272, one scatters a square cloud at radius 33, and the remaining nine sit stationary in two loose groups. Relative proximity to the nearest of eleven roots maps to the turbo palette with gentle 1.2-cycle frequency modulation, producing broad spectral gradients where basins of attraction overlap. Black canvas, assign-four root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T20-43-49.png",
+      "title": "Four-Color Grid",
+      "text": "Degree 25. Twenty-six coefficients in a grid pattern: four trace hex grids of 999 points at staggered speeds, three orbit tilted dithered circles with disk dither, and the remaining nineteen sit stationary at their grid positions. Relative proximity assigns the four-color palette\u2014amber, green, blue, magenta\u2014with 8.2-cycle frequency modulation, producing fine concentric bands around each of the twenty-five root basins. Trails enabled. Black canvas, assign-four root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T21-10-09.png",
+      "title": "Proximity Neon I",
+      "text": "Degree 25. Twenty-six coefficients in a grid pattern: four trace hex grids of 9990 points at radius 10, three orbit dithered circles at radius 100, two follow plain circles, and the remaining seventeen sit stationary. Proximity to the nearest root maps through a four-color neon palette\u2014red, green-cyan, cyan, purple\u2014with 10-cycle frequency modulation, producing tight luminous bands that ripple outward from each basin centre. Trails enabled. Black canvas, assign-four root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T21-11-38.png",
+      "title": "Proximity Neon II",
+      "text": "Same configuration as Proximity Neon I captured ninety seconds later. The hex-grid and dithered-circle orbits have advanced, shifting the interference pattern and producing a different lattice of neon contours across the twenty-five root basins."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T21-00-34.png",
+      "title": "Solar Disc",
+      "text": "Degree 25. Twenty-six coefficients in a grid pattern with tight orbits: four trace hex grids of roughly a thousand points at radius 1, one dithered circle sweeps a wide arc at radius 100, two plain circles orbit at radii 7 and 10, and the remaining nineteen sit stationary. The small hex-grid radius keeps all coefficient motion close to the grid, producing a compact glowing disc with lobed corona. Four-color proximity palette\u2014red, green-cyan, cyan, purple\u2014at 10-cycle frequency. Trails enabled. Black canvas, assign-four root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T21-33-55.png",
+      "title": "Spectral Annulus",
+      "text": "A large dark ring floats on black, its outer and inner edges fringed with scalloped spectral bands\u2014amber, green, cyan, blue\u2014that repeat in ornate lobes around the circumference. A small red star glows faintly at the centre. Degree-25 polynomial root basins form the ring geometry, with trails accumulating the delicate colour gradients."
+    }
+  ]
+}

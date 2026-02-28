@@ -212,3 +212,23 @@ __marimo__/
 # Video files (uploaded to GitHub CDN for README embedding)
 *.webm
 *.mp4
+
+# Local snapshots, plans, timing data
+snaps/
+plans/
+timing/
+
+# Claude Code local config
+.claude/
+
+# InDesign / print files
+*.idml
+*.joboptions
+
+# Book generation
+make_book.py
+test_book*.json
+whitewall.pdf
+
+# Local test files
+tests/test_orb_paths.py

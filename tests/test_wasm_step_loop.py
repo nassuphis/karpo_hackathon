@@ -17,12 +17,13 @@ def wasm_step_loop_b64():
 # computeWasmLayout is inside the worker blob and not accessible from page scope.
 
 _CWL = """
-    function computeWasmLayout(nc, nr, maxP, nE, nDE, nFC, nSI, tCP, tDP, heapBase) {
+    function computeWasmLayout(nc, nr, maxP, nE, nDE, nFC, nSI, tCP, tDP, heapBase, nP) {
         var o = heapBase || 65536;
         function a8(x) { return (x + 7) & ~7; }
+        nP = nP || 0;
         var L = {};
-        L.cfgI = o; o = a8(o + 70 * 4);
-        L.cfgD = o; o = a8(o + 19 * 8);
+        L.cfgI = o; o = a8(o + 76 * 4);
+        L.cfgD = o; o = a8(o + 21 * 8);
         L.cRe = o; o = a8(o + nc * 8);
         L.cIm = o; o = a8(o + nc * 8);
         L.clR = o; o = a8(o + nr);
@@ -66,6 +67,10 @@ _CWL = """
         L.mWI = o; o = a8(o + nc * 8);
         L.pRR = o; o = a8(o + nr * 8);
         L.pRI = o; o = a8(o + nr * 8);
+        L.pnRe = o; o = a8(o + Math.max(nP, 1) * 8);
+        L.pnIm = o; o = a8(o + Math.max(nP, 1) * 8);
+        L.xRe = o; o = a8(o + (nc + nP) * 8);
+        L.xIm = o; o = a8(o + (nc + nP) * 8);
         L.piO = o; o = a8(o + maxP * 4);
         L.prO = o; o = a8(o + maxP);
         L.pgO = o; o = a8(o + maxP);
@@ -94,7 +99,7 @@ _INST = """
 _WRITE_CFG = """
     function writeCfg(buf, L, nc, nr, opts) {
         opts = opts || {};
-        var cfgI32 = new Int32Array(buf, L.cfgI, 70);
+        var cfgI32 = new Int32Array(buf, L.cfgI, 76);
         cfgI32[0] = nc; cfgI32[1] = nr;
         cfgI32[2] = opts.canvasW || 200; cfgI32[3] = opts.canvasH || 200;
         cfgI32[4] = opts.totalSteps || 10;
@@ -131,7 +136,11 @@ _WRITE_CFG = """
         cfgI32[67] = L.eDd;  /* entryDitherDist offset */
         cfgI32[68] = L.dDd;  /* dEntryDitherDist offset */
         cfgI32[69] = 0;  /* morphDitherDist */
-        var cfgF64 = new Float64Array(buf, L.cfgD, 19);
+        cfgI32[70] = 0;  /* nPinned */
+        cfgI32[71] = L.pnRe; cfgI32[72] = L.pnIm;
+        cfgI32[73] = L.xRe; cfgI32[74] = L.xIm;
+        cfgI32[75] = opts.maxPaint || 0;  /* CI_MAX_PAINT — paint buffer capacity */
+        var cfgF64 = new Float64Array(buf, L.cfgD, 21);
         cfgF64[0] = opts.range || 2.0;
         cfgF64[1] = opts.fps || 1.0;
         cfgF64[2] = opts.morphRate || 0.0;
@@ -151,13 +160,16 @@ _WRITE_CFG = """
         cfgF64[16] = 0.0; /* derivFloor */
         cfgF64[17] = 1.0; /* derivCeiling */
         cfgF64[18] = 0.0; /* derivFreq */
+        cfgF64[19] = 0.0; /* pinnedEpsilon */
+        cfgF64[20] = 1.0; /* proxGamma */
     }
 """
 
 _SETUP = """
     function setupAndRun(w, nc, nr, maxP, coeffsRe, coeffsIm, opts) {
         opts = opts || {};
-        var L = computeWasmLayout(nc, nr, maxP, 0, 0, 0, 0, 0, 0, w.hb);
+        if (!opts.maxPaint) opts.maxPaint = maxP;
+        var L = computeWasmLayout(nc, nr, maxP, 0, 0, 0, 0, 0, 0, w.hb, 0);
         var curPages = w.mem.buffer.byteLength / 65536;
         if (L.pages > curPages) w.mem.grow(L.pages - curPages);
         var buf = w.mem.buffer;
@@ -675,7 +687,7 @@ class TestWasmProgressReporting:
             if (L.pages > curPages) mem.grow(L.pages - curPages);
             var buf = mem.buffer;
 
-            var cfgI32 = new Int32Array(buf, L.cfgI, 70);
+            var cfgI32 = new Int32Array(buf, L.cfgI, 76);
             cfgI32[0] = nc; cfgI32[1] = nr;
             cfgI32[2] = 200; cfgI32[3] = 200;
             cfgI32[4] = 5000; cfgI32[5] = 0; cfgI32[12] = 0;
@@ -697,9 +709,24 @@ class TestWasmProgressReporting:
             cfgI32[57] = L.mWR; cfgI32[58] = L.mWI;
             cfgI32[59] = L.pRR; cfgI32[60] = L.pRI;
             cfgI32[61] = L.piO; cfgI32[62] = L.prO; cfgI32[63] = L.pgO; cfgI32[64] = L.pbO;
+            cfgI32[65] = 0;  /* morphPathType */
+            cfgI32[66] = 0;  /* morphCcw */
+            cfgI32[67] = L.eDd;  /* entryDitherDist */
+            cfgI32[68] = L.dDd;  /* dEntryDitherDist */
+            cfgI32[69] = 0;  /* morphDitherDist */
+            cfgI32[70] = 0;  /* nPinned */
+            cfgI32[71] = L.pnRe; cfgI32[72] = L.pnIm;
+            cfgI32[73] = L.xRe; cfgI32[74] = L.xIm;
+            cfgI32[75] = 30000;  /* CI_MAX_PAINT */
 
-            var cfgF64 = new Float64Array(buf, L.cfgD, 10);
+            var cfgF64 = new Float64Array(buf, L.cfgD, 21);
             cfgF64[0] = 2.0; cfgF64[1] = 1.0; cfgF64[2] = 0.0;
+            cfgF64[3] = 0.5; cfgF64[4] = 0.0; cfgF64[5] = 0.0;
+            cfgF64[6] = 0.0; cfgF64[7] = 0.0; cfgF64[8] = 0.0;
+            cfgF64[9] = 0.0; cfgF64[10] = 0.0; cfgF64[11] = 1.0;
+            cfgF64[12] = 0.0; cfgF64[13] = 0.0; cfgF64[14] = 1.0;
+            cfgF64[15] = 0.0; cfgF64[16] = 0.0; cfgF64[17] = 1.0;
+            cfgF64[18] = 0.0; cfgF64[19] = 0.0; cfgF64[20] = 1.0;
 
             new Float64Array(buf, L.cRe, nc).set([1, 0, 0, -1]);
             new Float64Array(buf, L.cIm, nc).set([0, 0, 0, 0]);
@@ -835,3 +862,136 @@ class TestWasmVsJsSolverDirect:
 
         assert result["maxDiff"] < 1e-6, \
             f"JS and WASM roots differ by {result['maxDiff']}: JS={result['jsRoots']}, WASM={result['wasmRoots']}"
+
+
+# ============================================================
+# __heap_base export requirement
+# ============================================================
+
+class TestHeapBaseExport:
+    def test_heap_base_is_explicitly_exported(self, page, wasm_step_loop_b64):
+        """__heap_base MUST be explicitly exported — defaulting to 65536 causes
+        config data to overlap with WASM's BSS section, corrupting memory."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("""(b64) => {
+            var raw = atob(b64);
+            var bytes = new Uint8Array(raw.length);
+            for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+            var mod = new WebAssembly.Module(bytes.buffer);
+            var mem = new WebAssembly.Memory({initial: 4});
+            var inst = new WebAssembly.Instance(mod, {
+                env: { memory: mem, cos: Math.cos, sin: Math.sin, log: Math.log, pow: Math.pow, reportProgress: function(){} }
+            });
+            return {
+                hasHeapBase: '__heap_base' in inst.exports,
+                value: inst.exports.__heap_base ? inst.exports.__heap_base.value : null
+            };
+        }""", wasm_step_loop_b64)
+        assert result["hasHeapBase"], \
+            "__heap_base must be explicitly exported from WASM (missing --export=__heap_base in build?)"
+        assert result["value"] is not None and result["value"] > 65536, \
+            f"__heap_base={result['value']} should be > 65536 (BSS data lives above the stack)"
+
+    def test_init_does_not_crash_with_real_heap_base(self, page, wasm_step_loop_b64):
+        """WASM init+run succeeds when config is placed at the real __heap_base,
+        not the incorrect default of 65536."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("(b64) => {" + _HELPERS + """
+            var w = instantiateWasm(b64);
+            if (!w.inst.exports.__heap_base) return {skipped: true};
+            var realHB = w.inst.exports.__heap_base.value;
+            try {
+                var r = setupAndRun(w, 4, 3, 100, [1, 0, 0, -1], [0, 0, 0, 0],
+                    {totalSteps: 5, stepEnd: 5});
+                return {ok: true, paintCount: r.paintCount, heapBase: realHB};
+            } catch(e) {
+                return {ok: false, error: String(e), heapBase: realHB};
+            }
+        }""", wasm_step_loop_b64)
+        if result.get("skipped"):
+            pytest.skip("__heap_base not exported")
+        assert result["ok"], f"WASM crashed with real heapBase={result['heapBase']}: {result.get('error')}"
+        assert result["paintCount"] == 15, f"Expected 15 pixels, got {result['paintCount']}"
+
+
+# ============================================================
+# Paint buffer bounds checking (CI_MAX_PAINT)
+# ============================================================
+
+class TestPaintBufferBounds:
+    def test_paint_count_respects_max_paint(self, page, wasm_step_loop_b64):
+        """WASM stops painting when paint buffer is full (CI_MAX_PAINT)."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("(b64) => {" + _HELPERS + """
+            var w = instantiateWasm(b64);
+            // 100 steps * 3 roots = 300 pixels needed, but maxPaint = 10
+            var r = setupAndRun(w, 4, 3, 10, [1, 0, 0, -1], [0, 0, 0, 0],
+                {totalSteps: 100, stepEnd: 100, maxPaint: 10});
+            return {paintCount: r.paintCount};
+        }""", wasm_step_loop_b64)
+        # With maxPaint=10 and 3 roots per step, we can fit at most 3 full steps (9 pixels)
+        # because 9+3=12 > 10, so it stops after 3 steps
+        assert result["paintCount"] <= 10, \
+            f"Paint count {result['paintCount']} exceeds maxPaint=10"
+        assert result["paintCount"] > 0, "Should produce at least some pixels"
+
+    def test_no_overflow_with_tight_buffer(self, page, wasm_step_loop_b64):
+        """With a very small paint buffer, WASM should not write beyond it."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("(b64) => {" + _CWL + _INST + _WRITE_CFG + """
+            var w = instantiateWasm(b64);
+            var nc = 4, nr = 3, maxP = 6;
+            var L = computeWasmLayout(nc, nr, maxP, 0, 0, 0, 0, 0, 0, w.hb, 0);
+            var curPages = w.mem.buffer.byteLength / 65536;
+            if (L.pages > curPages) w.mem.grow(L.pages - curPages);
+            var buf = w.mem.buffer;
+
+            // Write a sentinel value right after the paint buffer
+            var sentinelOffset = L.pbO + maxP;
+            var sentinelView = new Uint8Array(buf, sentinelOffset, 4);
+            sentinelView[0] = 0xDE; sentinelView[1] = 0xAD;
+            sentinelView[2] = 0xBE; sentinelView[3] = 0xEF;
+
+            writeCfg(buf, L, nc, nr, {totalSteps: 50, maxPaint: maxP});
+            new Float64Array(buf, L.cRe, nc).set([1, 0, 0, -1]);
+            new Float64Array(buf, L.cIm, nc).set([0, 0, 0, 0]);
+            new Float64Array(buf, L.wCR, nc).set([1, 0, 0, -1]);
+            new Float64Array(buf, L.wCI, nc).set([0, 0, 0, 0]);
+            var pRR = new Float64Array(buf, L.pRR, nr);
+            var pRI = new Float64Array(buf, L.pRI, nr);
+            for (var i = 0; i < nr; i++) {
+                var a = (2 * Math.PI * i) / nr + 0.37;
+                pRR[i] = Math.cos(a); pRI[i] = Math.sin(a);
+            }
+
+            w.inst.exports.init(L.cfgI, L.cfgD);
+            var pc = w.inst.exports.runStepLoop(0, 50, 0.0);
+
+            // Check sentinel is intact
+            var afterBuf = new Uint8Array(buf, sentinelOffset, 4);
+            var intact = afterBuf[0] === 0xDE && afterBuf[1] === 0xAD &&
+                         afterBuf[2] === 0xBE && afterBuf[3] === 0xEF;
+            return {paintCount: pc, sentinelIntact: intact, maxPaint: maxP};
+        }""", wasm_step_loop_b64)
+        assert result["paintCount"] <= result["maxPaint"], \
+            f"Paint count {result['paintCount']} exceeds maxPaint={result['maxPaint']}"
+        assert result["sentinelIntact"], \
+            "Sentinel bytes after paint buffer were overwritten — buffer overflow!"
+
+    def test_exact_fit_no_overflow(self, page, wasm_step_loop_b64):
+        """When maxPaint exactly matches steps*roots, all pixels should be painted."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("(b64) => {" + _HELPERS + """
+            var w = instantiateWasm(b64);
+            // 5 steps * 3 roots = 15 pixels, maxPaint = 15
+            var r = setupAndRun(w, 4, 3, 15, [1, 0, 0, -1], [0, 0, 0, 0],
+                {totalSteps: 5, stepEnd: 5, maxPaint: 15});
+            return {paintCount: r.paintCount};
+        }""", wasm_step_loop_b64)
+        assert result["paintCount"] == 15, \
+            f"Expected exactly 15 pixels when maxPaint=15 fits perfectly, got {result['paintCount']}"

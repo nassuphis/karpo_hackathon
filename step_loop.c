@@ -127,7 +127,8 @@ extern void js_reportProgress(int step);
 #define CI_OFF_PINNED_IM          72
 #define CI_OFF_EXP_RE             73
 #define CI_OFF_EXP_IM             74
-/* Total: 75 int32 config values */
+#define CI_MAX_PAINT              75
+/* Total: 76 int32 config values */
 
 /* Config float64 indices */
 #define CD_RANGE              0
@@ -171,6 +172,7 @@ static double proxFloor, proxCeiling, proxFreq;
 static double derivFloor, derivCeiling, derivFreq;
 static double pinnedEpsilon;
 static int morphDitherDistType;
+static int maxPaint;  /* paint buffer capacity — hard cap for pc */
 
 /* Data pointers */
 static double *coeffsRe, *coeffsIm;
@@ -372,11 +374,20 @@ static void solveEA(double *cRe, double *cIm, int nc,
         if (maxCorr2 < SOLVER_TOL2) break;
     }
 
-    /* Write back (NaN check) */
+    /* Write back — rescue non-finite roots to unit circle (matches JS solver).
+       Without this, roots that overflow to NaN/Inf keep their old (large) warm-start
+       position, the solver keeps failing, and the root is permanently stuck off-screen. */
     for (int i = 0; i < degree; i++) {
-        if (rRe[i] == rRe[i] && rIm[i] == rIm[i]) {
+        if (rRe[i] == rRe[i] && rIm[i] == rIm[i] &&
+            rRe[i] > -1e300 && rRe[i] < 1e300 &&
+            rIm[i] > -1e300 && rIm[i] < 1e300) {
             warmRe[i] = rRe[i];
             warmIm[i] = rIm[i];
+        } else {
+            /* Re-seed on unit circle so next step has a valid warm-start */
+            double angle = (2.0 * PI * i) / (double)degree + 0.37;
+            warmRe[i] = js_cos(angle);
+            warmIm[i] = js_sin(angle);
         }
     }
 }
@@ -671,6 +682,7 @@ void init(int cfgIntOffset, int cfgDblOffset)
     pinnedIm      = PTR(double, CI_OFF_PINNED_IM);
     expCoeffsRe   = PTR(double, CI_OFF_EXP_RE);
     expCoeffsIm   = PTR(double, CI_OFF_EXP_IM);
+    maxPaint      = cfgI[CI_MAX_PAINT];
     #undef PTR
 }
 
@@ -682,6 +694,7 @@ __attribute__((export_name("runStepLoop")))
 int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
 {
     int pc = 0;  /* paint count */
+    int maxP = maxPaint;  /* hard cap — prevent buffer overflow */
     int W = canvasW, H = canvasH;
     double range = bitmapRange;
     int nr = nRoots, nc = nCoeffs;
@@ -906,9 +919,11 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
         }
         solveEA(evalRe, evalIm, evalNc, tmpRe, tmpIm, nr);
 
-        /* NaN rescue */
+        /* NaN/Infinity rescue — also catches roots stuck at very large values */
         for (int i = 0; i < nr; i++) {
-            if (tmpRe[i] != tmpRe[i] || tmpIm[i] != tmpIm[i]) {
+            if (tmpRe[i] != tmpRe[i] || tmpIm[i] != tmpIm[i] ||
+                tmpRe[i] > 1e300 || tmpRe[i] < -1e300 ||
+                tmpIm[i] > 1e300 || tmpIm[i] < -1e300) {
                 double angle = (2.0 * PI * i) / nr + 0.37;
                 tmpRe[i] = js_cos(angle);
                 tmpIm[i] = js_sin(angle);
@@ -916,6 +931,9 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
         }
 
         /* 9. Post-solve: color-mode dependent processing + pixel output */
+        /* Hard cap: stop painting if buffer would overflow */
+        if (pc + nr > maxP) break;
+
         if (colorMode == 3) {
             /* Derivative mode */
             if ((step - stepStart) % 4 == 0) {

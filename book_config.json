@@ -171,6 +171,31 @@
       "image": "snaps/polypaint-bitmap-2026-02-28T21-33-55.png",
       "title": "Spectral Annulus",
       "text": "A large dark ring floats on black, its outer and inner edges fringed with scalloped spectral bands\u2014amber, green, cyan, blue\u2014that repeat in ornate lobes around the circumference. A small red star glows faintly at the centre. Degree-25 polynomial root basins form the ring geometry, with trails accumulating the delicate colour gradients."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T22-11-14.png",
+      "title": "Thermal Eye",
+      "text": "Degree 30. Thirty-one coefficients on a circle pattern with wildly varied orbits: one annulus cloud sweeps radius 50 million, two spokes paths reach similar scales, a hex grid spans 5 million, a circle-dither at 500 thousand, a figure-eight at 5 thousand, a horizontal dither at 500, and the remaining twenty-four sit stationary. Derivative sensitivity maps through the turbo palette, producing concentric thermal rings\u2014a red-orange outer glow fading to a dark gap, then a bright cyan ring encircling a warm inner disc. No trails. Black canvas, assign-four root matching, JS solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-02-28T22-28-41.png",
+      "title": "Iris",
+      "text": "Degree 30. Thirty-one coefficients on a circle pattern with extreme orbits: four hex grids and an annulus cloud at radii from 4 to 50 million, four spokes paths up to 50 million, two circle-dithers at 50 and 500 thousand, a horizontal dither at 500, and the remaining nineteen sit stationary. Derivative sensitivity maps through the blue-white-red palette with 7-cycle frequency modulation, producing a luminous pink disc with a dark pupil ringed by a violet-white corona of fine radial filaments. No trails. Black canvas, assign-four root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-01T06-23-10.png",
+      "title": "Crowned Eclipse",
+      "text": "Degree 30. Thirty-one coefficients on a circle pattern with morphing enabled: twenty-nine sit stationary while two trace figure-eight-dither paths\u2014one at radius 10 near the upper plane, another at radius 500 below centre. Derivative sensitivity maps through the turbo palette with 7-cycle frequency modulation, producing a vast dark disc with a luminous green-yellow core flanked by two dark pupils. An ornate scalloped corona of red, amber, green, and violet fractal lobes encircles the disc, thickening into a molten red bloom on one flank. No trails. Black canvas, assign-four root matching, JS solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-01T06-46-10.png",
+      "title": "Violet Torus",
+      "text": "Degree 30. Sixty-two coefficients on a circle pattern: twenty-nine orbit on circles at staggered speeds, two trace figure-eight-dither paths, and thirty-one sit stationary\u2014all at radius 9.99. Relative proximity maps through a custom eight-color neon palette\u2014red, yellow, lime, cyan, aqua, blue, purple, magenta\u2014producing a luminous cyan-violet torus threaded with moir\u00e9 interference bands. A dark void opens at the centre, and a small orange ring with a dark pupil sits on the left rim where two basins of attraction meet. No trails. Black canvas, assign-four root matching, JS solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-01T06-53-22.png",
+      "title": "Green Spore",
+      "text": "Degree 30. Thirty-one coefficients on a circle pattern with morphing enabled: twenty-nine trace outward-ellipse-dither paths at radius 0.5 with 2,000 points, disk dither, and width 50, at gradually increasing speeds, while one outlier orbits a circle of radius 5,000 far off-screen. Derivative sensitivity maps through the turbo palette with 6.1-cycle frequency modulation, producing a luminous lime-green spore with three dark lobes at its core. Radial filaments stream outward through an orange-red ring into a fiery corona of yellow, blue, and red striations, with a curling cyan tendril at one flank. No trails. Black canvas, assign-four root matching, JS solver on sixteen parallel workers."
     }
   ]
 }

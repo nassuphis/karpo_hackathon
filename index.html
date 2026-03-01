@@ -5217,6 +5217,8 @@ playBtn.addEventListener("click", function () {
         playBtn.textContent = "▶ Resume";
     } else {
         if (allAnimatedCoeffs().size === 0 && allAnimatedDCoeffs().size === 0 && !hasMorphMotion()) { uiBuzz(); return; }
+        // Exit fast mode first so animation can take over
+        if (fastModeActive) exitFastMode();
         const resuming = animState.elapsedAtPause != null;
         if (trailsEnabled && !resuming) {
             trailData = [];
@@ -6717,18 +6719,21 @@ function renderFinalPanel() {
     const nD = morphTargetCoeffs.length;
     const doBlend = morphEnabled && nD === n;
 
+    // Mirror solveRoots(): use coeffEffPos for animated paths, morph blend, jiggle
     const finalCoeffs = [];
     for (let i = 0; i < n; i++) {
         const c = coefficients[i];
         let re, im;
         if (doBlend) {
-            const d = morphTargetCoeffs[i];
-            const mp = morphInterpPoint(c.re, c.im, d.re, d.im, morphTheta, morphPathType, morphPathCcw, morphEllipseMinor);
+            const cP = coeffEffPos(c);
+            const dP = coeffEffPos(morphTargetCoeffs[i]);
+            const mp = morphInterpPoint(cP.re, cP.im, dP.re, dP.im, morphTheta, morphPathType, morphPathCcw, morphEllipseMinor);
             re = mp.re;
             im = mp.im;
         } else {
-            re = c.re;
-            im = c.im;
+            const cP = coeffEffPos(c);
+            re = cP.re;
+            im = cP.im;
         }
         const jOff = jiggleOffsets ? jiggleOffsets.get(i) : undefined;
         if (jOff) { re += jOff.re; im += jOff.im; }
@@ -6770,11 +6775,11 @@ function renderFinalPanel() {
       .merge(labels)
         .attr("x", d => cxs()(d.re) + 12)
         .attr("y", d => cys()(d.im) + 4)
-        .text((_, i) => `c${subscript(nDisplay - 1 - i)}`);
+        .text((_, i) => `F${subscript(i)}`);
     labels.exit().remove();
 
     // Render trails on the final panel
-    if (trailsEnabled && finalTrailData.length > 0) renderFinalTrails();
+    if ((trailsEnabled || coeffDragTrailsEnabled) && finalTrailData.length > 0) renderFinalTrails();
 }
 
 function renderFinalTrails() {
@@ -7068,18 +7073,41 @@ function renderRoots(newRoots) {
             trailData[i].push({ re: currentRoots[i].re, im: currentRoots[i].im });
             if (trailData[i].length > MAX_TRAIL_POINTS) trailData[i].shift();
         }
-        // Final coefficient trails (blended C/D positions, expanded by pinned roots)
+    }
+    // Final coefficient trails (blended C/D positions, expanded by pinned roots)
+    // Accumulate when either Trails or CTrail is enabled during animation
+    if ((trailsEnabled || coeffDragTrailsEnabled) && animState.playing) {
         const nC = coefficients.length;
         const nD = morphTargetCoeffs.length;
         const doBlendF = morphEnabled && nD === nC;
         const qFinal = [];
         for (let i = 0; i < nC; i++) {
             const c = coefficients[i];
-            const mp = doBlendF ? morphInterpPoint(c.re, c.im, morphTargetCoeffs[i].re, morphTargetCoeffs[i].im, morphTheta, morphPathType, morphPathCcw, morphEllipseMinor) : c;
-            let re = mp.re, im = mp.im;
+            const cP = coeffEffPos(c);
+            let re, im;
+            if (doBlendF) {
+                const dP = coeffEffPos(morphTargetCoeffs[i]);
+                const mp = morphInterpPoint(cP.re, cP.im, dP.re, dP.im, morphTheta, morphPathType, morphPathCcw, morphEllipseMinor);
+                re = mp.re; im = mp.im;
+            } else {
+                re = cP.re; im = cP.im;
+            }
             const jOff = jiggleOffsets ? jiggleOffsets.get(i) : undefined;
             if (jOff) { re += jOff.re; im += jOff.im; }
             qFinal.push({ re, im });
+        }
+        // Apply morph C-D path dither to final trail (matches solver)
+        if (doBlendF && (morphDitherStartSigma > 0 || morphDitherMidSigma > 0 || morphDitherEndSigma > 0)) {
+            const ext = coeffExtent();
+            const sinT = Math.sin(morphTheta), cosT = Math.cos(morphTheta);
+            const startEnv = cosT > 0 ? cosT * cosT : 0;
+            const endEnv = cosT < 0 ? cosT * cosT : 0;
+            const ds = morphDitherStartSigma / 100 * ext * startEnv + morphDitherMidSigma / 100 * ext * sinT * sinT + morphDitherEndSigma / 100 * ext * endEnv;
+            if (ds > 0) for (let i = 0; i < qFinal.length; i++) {
+                const [dre, dim] = morphDitherSample(ds);
+                qFinal[i].re += dre;
+                qFinal[i].im += dim;
+            }
         }
         const pFinal = expandByPinnedRoots(qFinal);
         const nF = pFinal.length;
@@ -7586,6 +7614,19 @@ function solveRoots() {
             return morphInterpPoint(cP.re, cP.im, dP.re, dP.im,
                              morphTheta, morphPathType, morphPathCcw, morphEllipseMinor);
         });
+        // Apply morph C-D path dither (matches fast-mode worker behaviour)
+        if (morphDitherStartSigma > 0 || morphDitherMidSigma > 0 || morphDitherEndSigma > 0) {
+            const ext = coeffExtent();
+            const sinT = Math.sin(morphTheta), cosT = Math.cos(morphTheta);
+            const startEnv = cosT > 0 ? cosT * cosT : 0;
+            const endEnv = cosT < 0 ? cosT * cosT : 0;
+            const ds = morphDitherStartSigma / 100 * ext * startEnv + morphDitherMidSigma / 100 * ext * sinT * sinT + morphDitherEndSigma / 100 * ext * endEnv;
+            if (ds > 0) for (let i = 0; i < coeffsToSolve.length; i++) {
+                const [dre, dim] = morphDitherSample(ds);
+                coeffsToSolve[i].re += dre;
+                coeffsToSolve[i].im += dim;
+            }
+        }
     } else if (hasEff) {
         coeffsToSolve = coefficients.map(c => coeffEffPos(c));
     }
@@ -10228,6 +10269,23 @@ function buildStateMetadata(timestamp) {
 
 // --- Snap (capture) ---
 
+var snapSaveDirHandle = null;  // FileSystemDirectoryHandle from File System Access API
+
+async function _writeToDir(dirHandle, filename, blob) {
+    const fh = await dirHandle.getFileHandle(filename, { create: true });
+    const writable = await fh.createWritable();
+    await writable.write(blob);
+    await writable.close();
+}
+
+function _browserDownload(blob, filename) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
 function snapDownload(canvas, mode) {
     const now = new Date();
     const ts = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -10239,21 +10297,27 @@ function snapDownload(canvas, mode) {
     meta.snapMode = mode;
     meta.activeTab = activeTab;
 
+    const jsonBlob = new Blob([JSON.stringify(meta, null, 2)], { type: "application/json" });
+
     canvas.toBlob(function (blob) {
         if (!blob) return;
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `${basename}.png`;
-        a.click();
-        URL.revokeObjectURL(a.href);
+        if (snapSaveDirHandle) {
+            Promise.all([
+                _writeToDir(snapSaveDirHandle, `${basename}.png`, blob),
+                _writeToDir(snapSaveDirHandle, `${basename}.json`, jsonBlob),
+            ]).then(() => {
+                console.log(`Snap saved to folder: ${basename}`);
+            }).catch(err => {
+                console.warn("Directory write failed, falling back to download:", err);
+                snapSaveDirHandle = null;
+                _browserDownload(blob, `${basename}.png`);
+                _browserDownload(jsonBlob, `${basename}.json`);
+            });
+        } else {
+            _browserDownload(blob, `${basename}.png`);
+            _browserDownload(jsonBlob, `${basename}.json`);
+        }
     }, "image/png");
-
-    const jsonBlob = new Blob([JSON.stringify(meta, null, 2)], { type: "application/json" });
-    const a2 = document.createElement("a");
-    a2.href = URL.createObjectURL(jsonBlob);
-    a2.download = `${basename}.json`;
-    a2.click();
-    URL.revokeObjectURL(a2.href);
 }
 
 function snapCapture(mode) {
@@ -10437,6 +10501,34 @@ function openSnapPop() {
         btn.addEventListener("click", () => { closeSnapPop(); snapCapture(m.value); });
         snapPop.appendChild(btn);
     }
+    // Directory picker (File System Access API)
+    if (window.showDirectoryPicker) {
+        const sep = document.createElement("div");
+        sep.style.cssText = "height:1px;background:var(--stroke);margin:4px 0;";
+        snapPop.appendChild(sep);
+        const dirBtn = document.createElement("button");
+        dirBtn.style.cssText = "width:100%;font-size:9px;padding:5px 10px;text-align:left;border:none;background:transparent;color:var(--accent);cursor:pointer;border-radius:6px;";
+        dirBtn.onmouseenter = () => { dirBtn.style.background = "rgba(255,255,255,0.08)"; };
+        dirBtn.onmouseleave = () => { dirBtn.style.background = "transparent"; };
+        dirBtn.textContent = snapSaveDirHandle ? "\u2713 " + (snapSaveDirHandle.name || "folder") + " \u2014 change..." : "Save to folder\u2026";
+        dirBtn.addEventListener("click", async () => {
+            try {
+                snapSaveDirHandle = await window.showDirectoryPicker({ mode: "readwrite" });
+                dirBtn.textContent = "\u2713 " + snapSaveDirHandle.name;
+            } catch (e) { /* user cancelled */ }
+        });
+        snapPop.appendChild(dirBtn);
+        if (snapSaveDirHandle) {
+            const clrBtn = document.createElement("button");
+            clrBtn.style.cssText = "width:100%;font-size:9px;padding:5px 10px;text-align:left;border:none;background:transparent;color:var(--muted);cursor:pointer;border-radius:6px;";
+            clrBtn.onmouseenter = () => { clrBtn.style.background = "rgba(255,255,255,0.08)"; clrBtn.style.color = "var(--text)"; };
+            clrBtn.onmouseleave = () => { clrBtn.style.background = "transparent"; clrBtn.style.color = "var(--muted)"; };
+            clrBtn.textContent = "Use Downloads";
+            clrBtn.addEventListener("click", () => { snapSaveDirHandle = null; closeSnapPop(); });
+            snapPop.appendChild(clrBtn);
+        }
+    }
+
     snapPop.classList.add("open");
     const r = document.getElementById("snap-btn").getBoundingClientRect();
     snapPop.style.left = r.left + "px";
@@ -11291,11 +11383,7 @@ function buildBitmapSavePop() {
                     meta.snapMode = "bitmap";
                     meta.activeTab = activeTab;
                     var jsonBlob = new Blob([JSON.stringify(meta, null, 2)], { type: "application/json" });
-                    var a = document.createElement("a");
-                    a.href = URL.createObjectURL(jsonBlob);
-                    a.download = base + ".json";
-                    a.click();
-                    URL.revokeObjectURL(a.href);
+                    downloadBlob(jsonBlob, base + ".json");
                 }
                 uiPing(1320, 0.06);
             } catch (e) {
@@ -11330,6 +11418,35 @@ function buildBitmapSavePop() {
     btnRow.appendChild(dlBothBtn);
 
     wrap.appendChild(btnRow);
+
+    // Directory picker (reuses snapSaveDirHandle from snap popup)
+    if (window.showDirectoryPicker) {
+        var sep2 = document.createElement("div");
+        sep2.style.cssText = "height:1px;background:var(--stroke);margin:4px 0;";
+        wrap.appendChild(sep2);
+        var dirBtn = document.createElement("button");
+        dirBtn.className = "bitmap-btn";
+        dirBtn.style.cssText = "width:100%;font-size:9px;text-align:left;";
+        dirBtn.textContent = snapSaveDirHandle ? "\u2713 " + (snapSaveDirHandle.name || "folder") + " \u2014 change..." : "Save to folder\u2026";
+        dirBtn.addEventListener("click", async function() {
+            try {
+                snapSaveDirHandle = await window.showDirectoryPicker({ mode: "readwrite" });
+                dirBtn.textContent = "\u2713 " + snapSaveDirHandle.name;
+                if (clrBtn) clrBtn.style.display = "";
+            } catch (e) { /* user cancelled */ }
+        });
+        wrap.appendChild(dirBtn);
+        var clrBtn = null;
+        if (snapSaveDirHandle) {
+            clrBtn = document.createElement("button");
+            clrBtn.className = "bitmap-btn";
+            clrBtn.style.cssText = "width:100%;font-size:9px;text-align:left;color:var(--muted);";
+            clrBtn.textContent = "Use Downloads";
+            clrBtn.addEventListener("click", function() { snapSaveDirHandle = null; closeBitmapSavePop(); });
+            wrap.appendChild(clrBtn);
+        }
+    }
+
     bitmapSavePop.appendChild(wrap);
 }
 
@@ -12899,10 +13016,15 @@ function exportPersistentBufferAsBMP(rgba, width, height, filename) {
 }
 
 function downloadBlob(blob, filename) {
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement("a");
-    a.href = url; a.download = filename; a.click();
-    setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
+    if (snapSaveDirHandle) {
+        _writeToDir(snapSaveDirHandle, filename, blob).catch(function(err) {
+            console.warn("Directory write failed, falling back to download:", err);
+            snapSaveDirHandle = null;
+            _browserDownload(blob, filename);
+        });
+    } else {
+        _browserDownload(blob, filename);
+    }
 }
 
 function exportPersistentBufferAsJPEG(rgba, width, height, quality, filename) {
@@ -15489,6 +15611,10 @@ coeffDragTrailBtn.addEventListener("click", function () {
     coeffDragTrailsEnabled = !coeffDragTrailsEnabled;
     this.classList.toggle("active", coeffDragTrailsEnabled);
     clearCoeffDragTrails();
+    // Also clear final coefficient trails (shown on Final tab)
+    finalTrailData = [];
+    if (finalTrailLayer) finalTrailLayer.selectAll("path.trail-path").remove();
+    if (leftTab === "final") renderFinalPanel();
 });
 
 // --- C-D Path popup ---

@@ -933,7 +933,7 @@ class TestPatternToolUI:
             buildPatternTool(pop, snap);
             var btns = pop.querySelectorAll("button");
             var hasAccept = false;
-            btns.forEach(b => { if (b.textContent.includes("Accept")) hasAccept = true; });
+            btns.forEach(b => { if (b.textContent.toLowerCase().includes("accept")) hasAccept = true; });
             closeOpTool();
             return hasAccept;
         }""")

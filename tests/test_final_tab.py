@@ -85,14 +85,13 @@ class TestFinalPanelRendering:
         assert abs(result["cx"] - result["expectedX"]) < 1
 
     def test_with_morph_shows_blended_positions(self, page):
-        """With morph on, Final panel should show blended C/D positions."""
+        """With morph on (line path), Final panel should show blended C/D positions."""
         result = page.evaluate("""() => {
             initMorphTarget();
             morphEnabled = true;
-            // Set morphTheta to π so mu = (1 - cos(π))/2 = 1.0 → full D position
-            // Actually, set to π/2 so mu = (1 - cos(π/2))/2 = 0.5
+            morphPathType = "line";  // line path: mu = (1 - cos(theta)) / 2
+            // Set morphTheta to π/2 so mu = (1 - cos(π/2))/2 = 0.5
             morphTheta = Math.PI / 2;
-            morphMu = 0.5;
             // Move D-node 0 far from C-node 0
             morphTargetCoeffs[0].re = coefficients[0].re + 2;
             morphTargetCoeffs[0].im = coefficients[0].im;
@@ -103,7 +102,7 @@ class TestFinalPanelRendering:
             var blendedRe = coefficients[0].re * 0.5 + morphTargetCoeffs[0].re * 0.5;
             var expectedX = cxs()(blendedRe);
             // Cleanup
-            morphEnabled = false; morphTheta = 0;
+            morphEnabled = false; morphTheta = 0; morphPathType = "c-node";
             initMorphTarget();
             switchLeftTab('coeffs');
             return { cx, expectedX };

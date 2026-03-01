@@ -335,10 +335,13 @@ class TestRelProximity:
             switchTab('bitcfg');
             var el = document.getElementById('bitcfg-content');
             var toggles = el.querySelectorAll('.audio-toggle');
+            var clicked = false;
             toggles.forEach(t => {
+                if (clicked) return;
                 var label = t.querySelector('.toggle-label');
-                if (label && (label.textContent.indexOf('Rel.') >= 0 || label.textContent.indexOf('Rel ') >= 0)) {
+                if (label && label.textContent === 'Rel. Proximity') {
                     t.click();
+                    clicked = true;
                 }
             });
             return bitmapColorMode;

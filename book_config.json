@@ -1,6 +1,9 @@
 {
-  "title": "PolyPaint",
-  "subtitle": "Polynomial Root Visualizations",
+  "title": "Polynomiography",
+  "subtitle": "Portraits from the Complex Plane",
+  "cover_image": "snaps/polypaint-bitmap-2026-03-01T07-57-43.png",
+  "back_image": "snaps/polypaint-bitmap-2026-03-01T10-23-24.png",
+  "description": "Every pixel is a window into the complex plane. Polynomial coefficients trace paths through space \u2014 circles, spirals, noise fields \u2014 while the Ehrlich\u2013Aberth solver hunts for roots at every step. Color maps the invisible architecture of convergence: the boundaries where one root\u2019s basin meets another, rendered as luminous landscapes of pure mathematics.",
   "pages": [
     {
       "image": "snaps/polypaint-bitmap-2026-02-27T18-40-07.png",
@@ -196,6 +199,41 @@
       "image": "snaps/polypaint-bitmap-2026-03-01T06-53-22.png",
       "title": "Green Spore",
       "text": "Degree 30. Thirty-one coefficients on a circle pattern with morphing enabled: twenty-nine trace outward-ellipse-dither paths at radius 0.5 with 2,000 points, disk dither, and width 50, at gradually increasing speeds, while one outlier orbits a circle of radius 5,000 far off-screen. Derivative sensitivity maps through the turbo palette with 6.1-cycle frequency modulation, producing a luminous lime-green spore with three dark lobes at its core. Radial filaments stream outward through an orange-red ring into a fiery corona of yellow, blue, and red striations, with a curling cyan tendril at one flank. No trails. Black canvas, assign-four root matching, JS solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-01T07-57-43.png",
+      "title": "Neon Butterfly",
+      "text": "Degree 30. Thirty-one coefficients in two clusters with morphing enabled. Sixteen coefficients trace dithered circles at radius 999 with 2,000 points and disk dither, speeds staggered from 0.001 to 0.299. Fifteen more spiral outward on two-turn dithered spirals of 5,664 points with normal dither, at similarly staggered speeds. The two sweeping red arcs form a butterfly figure, crossing at a luminous core where a bright cyan ring encircles a dark void. A corona of green scalloped lobes and magenta-purple filaments radiates between the arcs. The custom eight-color neon palette\u2014red, orange, lime, green, cyan, blue, purple, magenta\u2014assigns each pixel by proximity with gamma 0.5, producing vivid spectral gradients across the thirty root basins. No trails. Black canvas, assign-four root matching, JS solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-01T10-05-10.png",
+      "title": "Cardioid Bloom",
+      "text": "Degree 30. Thirty-one coefficients in two clusters with morphing enabled. Sixteen coefficients sit at their home positions on dithered circles of radius 999 with 2,000 points and disk dither, speeds staggered from 0.001 to 0.299. Fifteen more rest at home on two-turn outward spirals of 5,664 points with normal dither at matching speeds. A broad red-orange cardioid arc sweeps from the upper left and curls inward, enclosing a luminous magenta-violet basin that fades to deep purple at the edges. At the centre, a small three-lobed red ring surrounds a dark pupil fringed with green and cyan scallops. A rainbow gradient\u2014green, yellow, orange, red\u2014bleeds from the left edge where multiple root basins converge. The custom eight-color neon palette\u2014red, orange, lime, green, cyan, blue, purple, magenta\u2014assigns each pixel by proximity with gamma 0.5. No trails. Black canvas, assign-four root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-01T10-23-24.png",
+      "title": "Concentric Chains",
+      "text": "Degree 30. Thirty-one coefficients in two clusters with morphing enabled. Sixteen coefficients sit at their home positions on dithered circles of radius 999 with 2,000 points and disk dither, speeds staggered from 0.001 to 0.299. Fifteen more rest at home on two-turn outward spirals of 5,664 points with normal dither at matching speeds. A luminous red-orange ring floats at the centre, surrounded by a pale blue halo and a dark void. Concentric chains of tiny multicoloured loops\u2014cyan, green, yellow, red\u2014radiate outward in delicate lacework, each chain tracing a different orbit of the thirty root basins. The custom eight-color neon palette with proximity frequency modulation at 8.4 cycles produces the fine banding within each chain. No trails. Black canvas, assign-four root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-01T14-42-50.png",
+      "title": "Dithered Nebula",
+      "text": "Degree 5 expanded by seventeen pinned roots. Six coefficients on a circle pattern with morphing enabled along a figure-eight C\u2013D path. Two coefficients orbit on tilted circles\u2014one at radius 1 with speed 0.5 and tilt 0.33, the other at radius 0.3 with speed 0.85 and tilt 0.85\u2014while four sit stationary. The D-node for the fifth coefficient traverses a hex grid of 999,000 points at radius 33,500, far off in the complex plane, while two other D-nodes rest at distant positions. Strong Gaussian morph dither at 0.8 sigma mid-path scatters the interpolated coefficients along the figure-eight, producing a turbulent organic structure. Seventeen pinned roots trace a curved arc, expanding the quintic to an effective degree of 22. A deep blue-violet core, threaded with fine concentric moir\u00e9 patterns, fades outward through cyan and green into a bright yellow-green aureole. Red-orange flame-like tendrils with jagged serrated edges extend to the left and right, curling back at the tips. The custom eight-color neon palette\u2014red, amber, lime, green, cyan, blue, purple, magenta\u2014assigns each pixel by proximity. No trails. Black canvas, assign-four root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-01T15-21-33.png",
+      "title": "Four-Lobed Bloom",
+      "text": "Degree 5 expanded by seventeen pinned roots. Six coefficients on a circle pattern with morphing along a figure-eight C\u2013D path and scale-center jiggle applied to all six. Two C-nodes orbit on tilted circles while four sit stationary. Three D-nodes now carry their own paths: one traces a 57-ring elkal spiral of 9,990 points at radius 500, another covers a hex grid of 99,900 points at radius 3,350, and the third radiates along three spokes of 2,000 points at radius 500. Gaussian morph dither at 2.0 sigma mid-path\u2014more than double the previous frame\u2014scatters the interpolated coefficients heavily along the figure-eight, while the scale-center jiggle slowly pushes all six coefficients outward from the origin. The result is a compact four-lobed flower: a luminous multicoloured core of red, cyan, green, and blue gives way to four dark petals, each outlined by sweeping red-orange arcs that overlap and interweave like magnetic field lines. The dark voids between the lobes deepen toward the edges. The custom eight-color neon palette\u2014red, amber, lime, green, cyan, blue, purple, magenta\u2014assigns each pixel by proximity. No trails. Black canvas, assign-four root matching, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-01T18-14-57.png",
+      "title": "Peacock Chrysanthemum",
+      "text": "Degree 18. Nineteen coefficients on a circle pattern with morphing along a C+D path and scale-center jiggle. Two C-nodes carry their own paths\u2014one on a hex grid of 2,000 points at radius 10, another on a dithered grid-serpentine of 9,990 points at radius 50 with disk dither\u2014while seventeen sit stationary. Six D-nodes have paths: D\u2080 orbits a circle of enormous radius 50,000 with 200 points, D\u2084 and D\u2081\u2080 each orbit circles of radius 9,990, D\u2087 radiates along seven spokes of 999 points at radius 10 with speed 0.336, D\u2081\u2084 traverses a grid-serpentine of 999 points at radius 1, and D\u2081\u2087 orbits a circle of radius 999 at speed 0.285. No morph dither. Morph rate 0.52, mu near 0.93. Roughly eighteen crimson petals radiate outward from the centre, each textured with fine filamentary striations that dissolve into pale hairlike strands at the tips. A mid-ring of circular \u201ceye\u201d motifs in sky blue and cyan, each with a red centre ring and golden-yellow surround, encircles a darker turbulent core threaded with olive and yellow. Proximity frequency modulation at 6.1 cycles and relative-proximity frequency at 8.1 cycles produce the fine concentric banding within each petal and eye. The custom four-colour palette\u2014crimson, sage green, golden yellow, sky blue\u2014assigns each pixel by proximity with Hungarian matching. No trails. Black canvas, WASM solver on sixteen parallel workers, target time 40.5 seconds."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-01T18-23-42.png",
+      "title": "Ascending Flare",
+      "text": "Degree 18. Nineteen coefficients on a circle pattern with morphing along a C+D path and scale-center jiggle\u2014same base configuration as the previous frame but with four additional D-node paths pushed to extreme radii. D\u2081 now covers a disk grid of 9,990 points at radius 5,000; D\u2081\u2085 sweeps a vertical line of 999 points at radius 999,000,000; D\u2081\u2086 sweeps a horizontal line of 999 points at radius 50,000,000; D\u2081\u2088 radiates along eight spokes of 9,990 points at radius 500. The enormous vertical and horizontal D-node radii pull the C+D morph interpolation to astronomical distances, collapsing most of the eighteen root basins into a single luminous structure in the upper half of the frame. A crimson starburst with roughly eighteen pointed rays surrounds a bright golden-yellow core, wrapped in a sage-green halo that fades to dark olive. Fine filamentary strands spray outward like a dandelion head. From the flame\u2019s apex a narrow cyan-blue and crimson plume jets upward, curving slightly at the tip where the extreme vertical D-node distorts the basin boundary. The lower half of the canvas is nearly black. The custom four-colour palette\u2014crimson, sage green, golden yellow, sky blue\u2014assigns each pixel by proximity with Hungarian matching. Proximity frequency 6.1, relative-proximity frequency 8.1. No trails. Black canvas, WASM solver on sixteen parallel workers, target time 40.5 seconds."
     }
   ]
 }

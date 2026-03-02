@@ -1361,6 +1361,12 @@ function morphInterpPoint(cRe, cIm, dRe, dIm, theta, pathType, ccw, minorPct) {
     if (pathType === "c-node") return { re: cRe, im: cIm };
     if (pathType === "d-node") return { re: dRe, im: dIm };
     if (pathType === "c+d") return { re: cRe + dRe, im: cIm + dIm };
+    if (pathType === "d*c") return { re: dRe * cRe - dIm * cIm, im: dRe * cIm + dIm * cRe };
+    if (pathType === "d-c") return { re: dRe - cRe, im: dIm - cIm };
+    if (pathType === "c*exp(d)") {
+        var s = Math.exp(dRe), cs = Math.cos(dIm), sn = Math.sin(dIm);
+        return { re: s * (cRe * cs - cIm * sn), im: s * (cRe * sn + cIm * cs) };
+    }
     if (theta === 0) return { re: cRe, im: cIm }; // exact C at home — no fp noise
     const dx = dRe - cRe, dy = dIm - cIm;
     const len = Math.sqrt(dx * dx + dy * dy);
@@ -3155,8 +3161,6 @@ const drag = d3.drag()
         if (!dragMoved && Math.hypot(event.x - dragStartX, event.y - dragStartY) < CLICK_DEAD_ZONE) return;
         dragMoved = true;
         const idx = d._idx;
-        // Skip if this coefficient is being animated
-        if (animState.playing && allAnimatedCoeffs().has(idx)) return;
 
         const newRe = cxs().invert(event.x);
         const newIm = cys().invert(event.y);
@@ -13735,6 +13739,12 @@ function morphInterpW(cRe, cIm, dRe, dIm, theta) {
     if (S_morphPathType === "c-node") return [cRe, cIm];
     if (S_morphPathType === "d-node") return [dRe, dIm];
     if (S_morphPathType === "c+d") return [cRe + dRe, cIm + dIm];
+    if (S_morphPathType === "d*c") return [dRe * cRe - dIm * cIm, dRe * cIm + dIm * cRe];
+    if (S_morphPathType === "d-c") return [dRe - cRe, dIm - cIm];
+    if (S_morphPathType === "c*exp(d)") {
+        var s = Math.exp(dRe), cs = Math.cos(dIm), sn = Math.sin(dIm);
+        return [s * (cRe * cs - cIm * sn), s * (cRe * sn + cIm * cs)];
+    }
     if (theta === 0) return [cRe, cIm]; // exact C at home — no fp noise
     var dx = dRe - cRe, dy = dIm - cIm;
     var len = Math.sqrt(dx * dx + dy * dy);
@@ -15635,7 +15645,7 @@ function buildCDPathPop() {
     // Path type dropdown
     const sel = document.createElement("select");
     sel.style.cssText = "width:100%;font-size:10px;margin:4px 0;background:#333;color:#fff;border:1px solid #666;border-radius:3px;padding:2px;";
-    for (const [val, label] of [["c-node","C-Node"],["c+d","C+D"],["line","Line"],["circle","Circle"],["ellipse","Ellipse"],["figure8","Figure-8"],["d-node","D-Node"]]) {
+    for (const [val, label] of [["c-node","C-Node"],["c+d","C+D"],["d*c","D\u00D7C"],["d-c","D\u2212C"],["c*exp(d)","C\u00B7exp(D)"],["line","Line"],["circle","Circle"],["ellipse","Ellipse"],["figure8","Figure-8"],["d-node","D-Node"]]) {
         const opt = document.createElement("option");
         opt.value = val; opt.textContent = label;
         if (val === morphPathType) opt.selected = true;
@@ -15778,7 +15788,8 @@ function buildCDPathPop() {
     // Update visibility when path type changes
     sel.addEventListener("change", () => {
         morphPathType = sel.value;
-        ccwRow.style.display = (morphPathType === "line" || morphPathType === "c-node") ? "none" : "flex";
+        const _static = ["c-node","c+d","d*c","d-c","c*exp(d)","d-node","line"].includes(morphPathType);
+        ccwRow.style.display = _static ? "none" : "flex";
         minorRow.style.display = morphPathType === "ellipse" ? "flex" : "none";
     });
 

@@ -737,22 +737,27 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
         /* 2. Interpolate C-curves */
         for (int a = 0; a < nEntries; a++) {
             int idx = entryIdx[a];
+            if (idx < 0 || idx >= nc) continue;
+            int N = curveLengths[a];
+            if (N <= 0) continue;  /* empty curve — skip */
             double dir = entryCcw[a] ? -1.0 : 1.0;
             double t = elapsed * entrySpeed[a] * dir;
             double u = frac01(t);
-            int N = curveLengths[a];
             double rawIdx = u * N;
             int base = curveOffsets[a] * 2;
+            if (base < 0) continue;
 
             if (curveIsCloud[a]) {
                 int k = (int)rawIdx;
+                if (k < 0) k = 0;
                 if (k >= N) k = N - 1;  /* safety clamp */
                 workCoeffsRe[idx] = curvesFlat[base + k * 2];
                 workCoeffsIm[idx] = curvesFlat[base + k * 2 + 1];
             } else {
                 int lo = (int)rawIdx;
+                if (lo < 0) lo = 0;
                 if (lo >= N) lo = N - 1;
-                int hi = lo + 1; if (hi == N) hi = 0;
+                int hi = lo + 1; if (hi >= N) hi = 0;
                 double frac = rawIdx - (double)lo;
                 workCoeffsRe[idx] = curvesFlat[base + lo * 2] * (1 - frac) + curvesFlat[base + hi * 2] * frac;
                 workCoeffsIm[idx] = curvesFlat[base + lo * 2 + 1] * (1 - frac) + curvesFlat[base + hi * 2 + 1] * frac;
@@ -769,22 +774,27 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
         if (morphEnabled && nDEntries > 0 && dCurvesFlat) {
             for (int da = 0; da < nDEntries; da++) {
                 int dIdx = dEntryIdx[da];
+                if (dIdx < 0 || dIdx >= nc) continue;
+                int dN = dCurveLengths[da];
+                if (dN <= 0) continue;  /* empty D-curve — skip */
                 double dDir = dEntryCcw[da] ? -1.0 : 1.0;
                 double dT = elapsed * dEntrySpeed[da] * dDir;
                 double dU = frac01(dT);
-                int dN = dCurveLengths[da];
                 double dRawIdx = dU * dN;
                 int dBase = dCurveOffsets[da] * 2;
+                if (dBase < 0) continue;
 
                 if (dCurveIsCloud[da]) {
                     int dK = (int)dRawIdx;
+                    if (dK < 0) dK = 0;
                     if (dK >= dN) dK = dN - 1;
                     morphWorkRe[dIdx] = dCurvesFlat[dBase + dK * 2];
                     morphWorkIm[dIdx] = dCurvesFlat[dBase + dK * 2 + 1];
                 } else {
                     int dLo = (int)dRawIdx;
+                    if (dLo < 0) dLo = 0;
                     if (dLo >= dN) dLo = dN - 1;
-                    int dHi = dLo + 1; if (dHi == dN) dHi = 0;
+                    int dHi = dLo + 1; if (dHi >= dN) dHi = 0;
                     double dFrac = dRawIdx - (double)dLo;
                     morphWorkRe[dIdx] = dCurvesFlat[dBase + dLo * 2] * (1 - dFrac) + dCurvesFlat[dBase + dHi * 2] * dFrac;
                     morphWorkIm[dIdx] = dCurvesFlat[dBase + dLo * 2 + 1] * (1 - dFrac) + dCurvesFlat[dBase + dHi * 2 + 1] * dFrac;

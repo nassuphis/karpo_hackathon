@@ -269,6 +269,36 @@
       "image": "snaps/polypaint-bitmap-2026-03-02T06-43-33.png",
       "title": "Celestial Eye",
       "text": "Degree 6, WASM solver. Three circles (C₀, C₃, C₆) orbit while two hex-grid-dither nodes (C₁ at rAbs ≈ 854, C₂ at rAbs ≈ 8.5) scatter stippled points across wide lattices. C-node morph path with Hungarian matching and custom 4-colour proximity colouring. Trails weave the orbital sweeps and grid scatter into a luminous iris—a glowing blue-red annulus ringed by tangled filament streamers, with a dark pupil at its centre."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-02T09-10-27.png",
+      "title": "Copper Windmill",
+      "text": "Degree 5 with D×C morph path and scale-center jiggle. Six C-nodes on circle paths; all six D-nodes placed at unit-hexagon vertices on three-spoke paths (rAbs 999, 9,990 points each). The D×C complex product multiplies each coefficient's position by its morph target, folding the spokes radiation into a rotationally distorted field. Derivative magnitude maps through the turbo palette with 9.5-cycle frequency modulation. Four broad copper-brown blades sweep outward from the centre in a slow pinwheel, separated by luminous amber-orange channels textured with fine directional brushstrokes. At the hub, a bright cyan-green rosette with four lobes surrounds a tiny dark pupil—the only cool tones in the frame. Hungarian matching, no trails. Black canvas, WASM solver on sixteen parallel workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-02T10-38-34.png",
+      "title": "Spectral Nebula",
+      "text": "Degree 5 with C/D morph path—complex division of each C-node position by its D-node target. The division's singularity near D≈0 hurls root basins outward in violent asymmetric plumes while the quotient's phase twists them into concentric ripple bands. A luminous core of pale lavender and silver resolves into fine moiré interference fringes at upper left; the lower hemisphere shatters into a crystalline debris field of sharp-edged facets and dark voids. Faint orbital arcs—ghostly ellipses from the C-node circle paths—lace the outer darkness. Proximity colouring through a muted grey-violet-gold palette, WASM solver on sixteen workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-02T11-49-31.png",
+      "title": "Scattered Jewels",
+      "text": "Degree 5 with Möbius morph path (aC+D)/(C+aD). Each root basin fragments into dozens of tiny luminous squares—emerald, ruby, sapphire, amber—scattered across the left half of the frame like gemstones spilled on black velvet. A vertical curtain of soft teal-green glow anchors the left edge while a dense cluster of multicoloured pixel confetti drifts rightward into a pale silvery wash, dissolving into darkness at the margins. The Möbius transform's conformal warping compresses some basins into tight jewel-like facets and stretches others into diffuse hazes, creating an asymmetric constellation that reads simultaneously as particle field and dim galaxy. WASM solver, sixteen workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-02T17-25-59.png",
+      "title": "Cosmic Egg",
+      "text": "Degree 5 with geometric interpolation C^a·D^(1−a). The log-polar blending spirals root basins into a massive dark void at centre, ringed by a molten orange-brown corona. Saturated colour fields—amber, vermillion, cobalt, lime green—radiate outward in broad brushed sectors, their boundaries scored by fine directional hatching from the solver's convergence gradients. Inside the dark bowl, a delicate olive-green filigree of spiral arms and stippled lace curls inward, dotted with a few bright chartreuse lobes where basin boundaries pile up. The geometric mean's tendency to magnify phase differences at small magnitudes carves the interior into intricate lacework while the exterior stays bold and painterly. Custom multi-colour proximity palette, WASM solver on sixteen workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-02T17-47-39.png",
+      "title": "Chromatic Eclipse",
+      "text": "Degree 11 with trails. Twelve coefficients all on disk-spiral paths in two tiers: C₀–C₅ at rAbs 50,000 with graduated speeds (0.09–0.25), C₆–C₁₁ at rAbs 9,990,000 with matched speed 0.443. The enormous radius gap—two hundred to one—flings the higher-order terms through vast arcs while the lower terms drift gently, splitting the derivative field into two complementary hemispheres: acid chartreuse at lower left, saturated violet-blue at upper right. A massive black void occupies the centre, its rim traced by a fine stippled halo of convergence boundary dust. Across the void's waist, a bridge of copper-orange filaments fans from a luminous pinch point—the solver's convergence gradients compressed where the two colour fields collide. Faint red thread-like traces wander the chartreuse field, ghosts of earlier spiral passes. Derivative magnitude through the turbo palette, custom 4-colour RP4 (amber, green, red, magenta), assign4 matching, black canvas."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-02T19-32-43.png",
+      "title": "Woven Dusk",
+      "text": "Degree 20 with 21 coefficients split between vertical and horizontal paths. Eleven vertical movers and ten horizontal movers at rAbs 9.99 with gentle, graduated speeds weave the twenty root basins into a fibrous lattice—lavender-purple warp threads crossing sage-green weft. Where the two families intersect the proximity field compresses into a taut grid of dark voids framed by luminous filament crossings; at the edges the strands splay outward into feathery sprays, each individual root trajectory resolving as a fine hair-like trace. The orthogonal path geometry imposes a textile structure on the complex plane: a shimmering swatch of algorithmic fabric suspended in black space. Custom 8-colour proximity palette (inferno base with browns, greens, cyans, blues, purples), assign4 matching, black canvas, WASM solver on sixteen workers."
     }
   ]
 }

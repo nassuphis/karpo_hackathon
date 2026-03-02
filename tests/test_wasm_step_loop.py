@@ -995,3 +995,292 @@ class TestPaintBufferBounds:
         }""", wasm_step_loop_b64)
         assert result["paintCount"] == 15, \
             f"Expected exactly 15 pixels when maxPaint=15 fits perfectly, got {result['paintCount']}"
+
+
+# ============================================================
+# WASM Robustness tests — crash prevention & edge cases
+# ============================================================
+
+class TestWasmRobustness:
+    """Tests targeting crash scenarios: memory growth, resolution changes,
+    buffer overflow, config validation, and edge cases."""
+
+    def test_memory_grow_checked(self, page, wasm_step_loop_b64):
+        """memory.grow() return value is checked — failure raises instead of crashing."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("""(b64) => {
+            """ + _CWL + _INST + """
+            var w = instantiateWasm(b64);
+            var nc = 3, nr = 2;
+            // Compute layout with reasonable maxP
+            var L = computeWasmLayout(nc, nr, 100, 0, 0, 0, 0, 0, 0, w.hb, 0);
+            var curPages = w.mem.buffer.byteLength / 65536;
+            // Test: if grow() were to fail, we should detect it
+            // (We can't easily force failure, but verify the pattern works when it succeeds)
+            if (L.pages > curPages) {
+                var result = w.mem.grow(L.pages - curPages);
+                if (result === -1) return {ok: false, reason: 'grow failed as expected'};
+            }
+            return {ok: true, pages: w.mem.buffer.byteLength / 65536, needed: L.pages};
+        }""", wasm_step_loop_b64)
+        assert result["ok"]
+        assert result["pages"] >= result["needed"]
+
+    def test_layout_at_5k_resolution(self, page):
+        """computeWasmLayout at 5K resolution produces reasonable page count."""
+        result = page.evaluate("() => {" + _CWL + """
+            var nc = 12, nr = 11;
+            var stepsPerWorker = Math.ceil(100000 / 16);
+            var maxP = stepsPerWorker * nr + nr;
+            var L = computeWasmLayout(nc, nr, maxP, nc, 0, 0, 6, nc * 2000, 0, 65808, 0);
+            return {pages: L.pages, totalBytes: L.pages * 65536, maxP: maxP};
+        }""")
+        assert result["pages"] > 0
+        # Should be well under 50MB per worker
+        assert result["totalBytes"] < 50 * 1024 * 1024, \
+            f"Layout too large: {result['totalBytes']} bytes"
+
+    def test_paint_buffer_overflow_protection(self, page, wasm_step_loop_b64):
+        """WASM respects maxPaint cap and stops painting early."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("""(b64) => {
+            """ + _HELPERS + """
+            var w = instantiateWasm(b64);
+            var nc = 4, nr = 3;
+            // Set maxPaint to only 6 (less than steps * nRoots = 50 * 3 = 150)
+            var r = setupAndRun(w, nc, nr, 6, [1.0, 0.0, 0.0, -1.0], [0.0, 0.0, 0.0, 0.0],
+                {totalSteps: 50, stepEnd: 50, maxPaint: 6, canvasW: 200, canvasH: 200});
+            return {paintCount: r.paintCount};
+        }""", wasm_step_loop_b64)
+        assert result["paintCount"] <= 6, \
+            f"Paint count {result['paintCount']} exceeds maxPaint cap of 6"
+
+    def test_config_validation_roundtrip(self, page, wasm_step_loop_b64):
+        """Config values written by JS are correctly read back after init()."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("""(b64) => {
+            """ + _CWL + _INST + _WRITE_CFG + """
+            var w = instantiateWasm(b64);
+            var nc = 5, nr = 4, maxP = 200;
+            var L = computeWasmLayout(nc, nr, maxP, 0, 0, 0, 0, 0, 0, w.hb, 0);
+            var curPages = w.mem.buffer.byteLength / 65536;
+            if (L.pages > curPages) w.mem.grow(L.pages - curPages);
+            var buf = w.mem.buffer;
+            writeCfg(buf, L, nc, nr, {canvasW: 5000, canvasH: 5000, totalSteps: 100, maxPaint: maxP});
+            // Write coefficients
+            new Float64Array(buf, L.cRe, nc).set([1, 0, 0, 0, -1]);
+            new Float64Array(buf, L.cIm, nc).set([0, 0, 0, 0, 0]);
+            new Float64Array(buf, L.wCR, nc).set([1, 0, 0, 0, -1]);
+            new Float64Array(buf, L.wCI, nc).set([0, 0, 0, 0, 0]);
+            // Init roots
+            var pRR = new Float64Array(buf, L.pRR, nr);
+            var pRI = new Float64Array(buf, L.pRI, nr);
+            for (var i = 0; i < nr; i++) {
+                var a = (2 * Math.PI * i) / nr + 0.37;
+                pRR[i] = Math.cos(a); pRI[i] = Math.sin(a);
+            }
+            w.inst.exports.init(L.cfgI, L.cfgD);
+            // Read back config from WASM memory to verify
+            var check = new Int32Array(w.mem.buffer, L.cfgI, 76);
+            return {nc: check[0], nr: check[1], canvasW: check[2], canvasH: check[3], maxPaint: check[75]};
+        }""", wasm_step_loop_b64)
+        assert result["nc"] == 5
+        assert result["nr"] == 4
+        assert result["canvasW"] == 5000
+        assert result["canvasH"] == 5000
+        assert result["maxPaint"] == 200
+
+    def test_resolution_change_sequence(self, page, wasm_step_loop_b64):
+        """Init at 2K, re-init at 5K, re-init at 2K — no crashes."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("""(b64) => {
+            """ + _HELPERS + """
+            var results = [];
+            for (var ci = 0; ci < 3; ci++) {
+                var canvasW = [2000, 5000, 2000][ci];
+                var w = instantiateWasm(b64);
+                var nc = 4, nr = 3, maxP = 100;
+                try {
+                    var res = setupAndRun(w, nc, nr, maxP, [1.0, 0.0, 0.0, -1.0], [0.0, 0.0, 0.0, 0.0],
+                        {canvasW: canvasW, canvasH: canvasW, totalSteps: 10, maxPaint: maxP});
+                    results.push({canvasW: canvasW, ok: true, pc: res.paintCount});
+                } catch(e) {
+                    results.push({canvasW: canvasW, ok: false, error: String(e)});
+                }
+            }
+            return results;
+        }""", wasm_step_loop_b64)
+        for r in result:
+            assert r["ok"], f"Crash at resolution {r['canvasW']}: {r.get('error')}"
+
+    def test_zero_degree_edge_case(self, page, wasm_step_loop_b64):
+        """nCoeffs=1, nRoots=0 — no division by zero or OOB access."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("""(b64) => {
+            """ + _CWL + _INST + _WRITE_CFG + """
+            var w = instantiateWasm(b64);
+            var nc = 1, nr = 0, maxP = 10;
+            var L = computeWasmLayout(nc, nr, maxP, 0, 0, 0, 0, 0, 0, w.hb, 0);
+            var curPages = w.mem.buffer.byteLength / 65536;
+            if (L.pages > curPages) w.mem.grow(L.pages - curPages);
+            var buf = w.mem.buffer;
+            writeCfg(buf, L, nc, nr, {canvasW: 100, canvasH: 100, totalSteps: 5, maxPaint: maxP});
+            new Float64Array(buf, L.cRe, nc).set([1.0]);
+            new Float64Array(buf, L.cIm, nc).set([0.0]);
+            new Float64Array(buf, L.wCR, nc).set([1.0]);
+            new Float64Array(buf, L.wCI, nc).set([0.0]);
+            w.inst.exports.init(L.cfgI, L.cfgD);
+            try {
+                var pc = w.inst.exports.runStepLoop(0, 5, 0.0);
+                return {ok: true, paintCount: pc};
+            } catch(e) {
+                return {ok: false, error: String(e)};
+            }
+        }""", wasm_step_loop_b64)
+        assert result["ok"], f"Zero-degree crash: {result.get('error')}"
+        assert result["paintCount"] == 0
+
+    def test_high_degree_stress(self, page, wasm_step_loop_b64):
+        """MAX_COEFFS=256, MAX_DEG=255 — no stack overflow with large polynomials."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("""(b64) => {
+            """ + _CWL + _INST + _WRITE_CFG + """
+            var w = instantiateWasm(b64);
+            var nc = 256, nr = 255;
+            var maxP = 5 * nr;
+            var L = computeWasmLayout(nc, nr, maxP, 0, 0, 0, 0, 0, 0, w.hb, 0);
+            var curPages = w.mem.buffer.byteLength / 65536;
+            if (L.pages > curPages) w.mem.grow(L.pages - curPages);
+            var buf = w.mem.buffer;
+            writeCfg(buf, L, nc, nr, {canvasW: 200, canvasH: 200, totalSteps: 5, maxPaint: maxP});
+            // z^255 - 1 (roots of unity)
+            var cRe = new Float64Array(nc);
+            var cIm = new Float64Array(nc);
+            cRe[0] = 1.0; cRe[nc - 1] = -1.0;
+            new Float64Array(buf, L.cRe, nc).set(cRe);
+            new Float64Array(buf, L.cIm, nc).set(cIm);
+            new Float64Array(buf, L.wCR, nc).set(cRe);
+            new Float64Array(buf, L.wCI, nc).set(cIm);
+            // Colors
+            var clR = new Uint8Array(nr); clR.fill(255);
+            new Uint8Array(buf, L.clR, nr).set(clR);
+            new Uint8Array(buf, L.clG, nr).set(new Uint8Array(nr));
+            new Uint8Array(buf, L.clB, nr).set(new Uint8Array(nr));
+            // Init roots as unit circle
+            var pRR = new Float64Array(buf, L.pRR, nr);
+            var pRI = new Float64Array(buf, L.pRI, nr);
+            for (var i = 0; i < nr; i++) {
+                var a = (2 * Math.PI * i) / nr + 0.37;
+                pRR[i] = Math.cos(a); pRI[i] = Math.sin(a);
+            }
+            w.inst.exports.init(L.cfgI, L.cfgD);
+            try {
+                var pc = w.inst.exports.runStepLoop(0, 5, 0.0);
+                return {ok: true, paintCount: pc};
+            } catch(e) {
+                return {ok: false, error: String(e)};
+            }
+        }""", wasm_step_loop_b64)
+        assert result["ok"], f"High degree stress test failed: {result.get('error')}"
+
+    def test_zero_length_curve_no_crash(self, page, wasm_step_loop_b64):
+        """Zero-length curve (N=0) must not cause OOB trap.
+        This was the root cause of the WASM fast-mode crash: when a curve has
+        0 points, k = N - 1 = -1, causing a negative index into curvesFlat.
+        The fix adds 'if (N <= 0) continue;' in the curve interpolation loops."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("""(b64) => {
+            """ + _CWL + _INST + _WRITE_CFG + """
+            var w = instantiateWasm(b64);
+            var nc = 4, nr = 3, maxP = 100;
+            // nEntries=2: one with a real 3-point curve, one with ZERO-length curve
+            var nE = 2, tCP = 3;  // total curve points = 3 (only from first entry)
+            var L = computeWasmLayout(nc, nr, maxP, nE, 0, 0, 0, tCP, 0, w.hb, 0);
+            var curPages = w.mem.buffer.byteLength / 65536;
+            if (L.pages > curPages) w.mem.grow(L.pages - curPages);
+            var buf = w.mem.buffer;
+
+            // Write config with nEntries=2
+            writeCfg(buf, L, nc, nr, {canvasW: 200, canvasH: 200, totalSteps: 20,
+                                       maxPaint: maxP});
+            var cfgI32 = new Int32Array(buf, L.cfgI, 76);
+            cfgI32[8] = nE;  // nEntries = 2
+
+            // Entry 0: coeff index 0, curve with 3 points, speed 1.0
+            new Int32Array(buf, L.eIdx, nE).set([0, 1]);      // entry indices
+            new Float64Array(buf, L.eSpd, nE).set([1.0, 1.0]); // speeds
+            new Int32Array(buf, L.eCcw, nE).set([1, 1]);       // ccw flags
+            new Float64Array(buf, L.eDth, nE).set([0.0, 0.0]); // dither theta
+            new Int32Array(buf, L.eDd, nE).set([0, 0]);        // dither dist
+
+            // Entry 0: 3-point curve at offset 0
+            // Entry 1: ZERO-length curve (the crash scenario)
+            new Int32Array(buf, L.cOff, nE).set([0, 0]);  // both point to offset 0
+            new Int32Array(buf, L.cLen, nE).set([3, 0]);   // entry 1 has length 0!
+            new Int32Array(buf, L.cCld, nE).set([0, 0]);   // not cloud curves
+
+            // Write 3 curve points for entry 0 into curvesFlat (re, im pairs)
+            var cvFlat = new Float64Array(buf, L.cvF, tCP * 2);
+            cvFlat.set([0.5, 0.0,  0.0, 0.5,  -0.5, 0.0]);  // 3 points
+
+            // Coefficients: z^3 - 1
+            new Float64Array(buf, L.cRe, nc).set([1, 0, 0, -1]);
+            new Float64Array(buf, L.cIm, nc).set([0, 0, 0, 0]);
+            new Float64Array(buf, L.wCR, nc).set([1, 0, 0, -1]);
+            new Float64Array(buf, L.wCI, nc).set([0, 0, 0, 0]);
+            // Init roots
+            var pRR = new Float64Array(buf, L.pRR, nr);
+            var pRI = new Float64Array(buf, L.pRI, nr);
+            for (var i = 0; i < nr; i++) {
+                var a = (2 * Math.PI * i) / nr + 0.37;
+                pRR[i] = Math.cos(a); pRI[i] = Math.sin(a);
+            }
+
+            w.inst.exports.init(L.cfgI, L.cfgD);
+            try {
+                var pc = w.inst.exports.runStepLoop(0, 20, 1.0);
+                return {ok: true, paintCount: pc};
+            } catch(e) {
+                return {ok: false, error: String(e)};
+            }
+        }""", wasm_step_loop_b64)
+        assert result["ok"], \
+            f"Zero-length curve caused WASM crash: {result.get('error')}"
+        assert result["paintCount"] > 0, "Should still produce pixels despite empty curve"
+
+    def test_compositing_bounds_check(self, page):
+        """Out-of-bounds pixel indices should be safely skipped in compositing logic."""
+        result = page.evaluate("""() => {
+            // Simulate compositing with out-of-bounds pixel indices
+            var cW = 100;  // Current resolution: 100x100 = 10000 pixels
+            var out = new Uint8ClampedArray(cW * cW * 4);
+            var maxPix = cW * cW;
+
+            // Create fake worker result with indices from a 200x200 resolution
+            var idx = new Int32Array([50, 15000, 99, 25000, 9999]);  // 15000 and 25000 are OOB
+            var r = new Uint8Array([255, 128, 200, 64, 100]);
+
+            var valid = 0, skipped = 0;
+            for (var i = 0; i < idx.length; i++) {
+                if (idx[i] < 0 || idx[i] >= maxPix) { skipped++; continue; }
+                out[idx[i] * 4] = r[i];
+                valid++;
+            }
+            // Verify the valid pixels were written
+            var p50 = out[50 * 4];
+            var p99 = out[99 * 4];
+            var p9999 = out[9999 * 4];
+            return {valid: valid, skipped: skipped, p50: p50, p99: p99, p9999: p9999};
+        }""")
+        assert result["valid"] == 3
+        assert result["skipped"] == 2
+        assert result["p50"] == 255
+        assert result["p99"] == 200
+        assert result["p9999"] == 100

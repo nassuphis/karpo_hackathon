@@ -214,8 +214,13 @@ static unsigned char *paintR, *paintG, *paintB;
  * Utility functions
  * ================================================================ */
 
-/* Fractional part in [0, 1): equivalent to ((t%1)+1)%1 */
+/* Fractional part in [0, 1): equivalent to ((t%1)+1)%1
+ * Hardened against NaN/Inf — WASM's i64.trunc_f64_s traps on these
+ * unlike x86 which just produces garbage. */
 static double frac01(double t) {
+    if (t != t) return 0.0;               /* NaN → 0 */
+    if (t > 9.22e18) t = 9.22e18;         /* clamp to i64 range */
+    if (t < -9.22e18) t = -9.22e18;
     double f = t - (double)(long long)t;
     if (f < 0.0) f += 1.0;
     return f;
@@ -578,6 +583,7 @@ void init(int cfgIntOffset, int cfgDblOffset)
     canvasW       = cfgI[CI_CANVAS_W];
     canvasH       = cfgI[CI_CANVAS_H];
     totalSteps    = cfgI[CI_TOTAL_STEPS];
+    if (totalSteps <= 0) totalSteps = 1;  /* prevent division by zero → Inf/NaN */
     colorMode     = cfgI[CI_COLOR_MODE];
     matchStrategy = cfgI[CI_MATCH_STRATEGY];
     morphEnabled  = cfgI[CI_MORPH_ENABLED];
@@ -811,6 +817,7 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
         if (morphEnabled && nFollowC > 0) {
             for (int fc = 0; fc < nFollowC; fc++) {
                 int fci = followCIdx[fc];
+                if (fci < 0 || fci >= nc) continue;  /* bounds check */
                 morphWorkRe[fci] = workCoeffsRe[fci];
                 morphWorkIm[fci] = workCoeffsIm[fci];
             }

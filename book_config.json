@@ -299,6 +299,11 @@
       "image": "snaps/polypaint-bitmap-2026-03-02T19-32-43.png",
       "title": "Woven Dusk",
       "text": "Degree 20 with 21 coefficients split between vertical and horizontal paths. Eleven vertical movers and ten horizontal movers at rAbs 9.99 with gentle, graduated speeds weave the twenty root basins into a fibrous lattice—lavender-purple warp threads crossing sage-green weft. Where the two families intersect the proximity field compresses into a taut grid of dark voids framed by luminous filament crossings; at the edges the strands splay outward into feathery sprays, each individual root trajectory resolving as a fine hair-like trace. The orthogonal path geometry imposes a textile structure on the complex plane: a shimmering swatch of algorithmic fabric suspended in black space. Custom 8-colour proximity palette (inferno base with browns, greens, cyans, blues, purples), assign4 matching, black canvas, WASM solver on sixteen workers."
+    },
+    {
+      "image": "snaps/polypaint-bitmap-2026-03-02T20-36-20.png",
+      "title": "Spiral Rosary",
+      "text": "Degree 30 with 31 coefficients uniformly spaced on the unit circle, every one following a disk-spiral-dither path at rAbs 5, speed 0.227, with Gaussian dither (sigma 0.0248). Morph enabled at rate 0.01 with c-node CD paths—the morph targets sit stationary at each coefficient's home position, so the solver field breathes gently around the dithered spirals. The result is a luminous necklace of concentric bullseye beads—teal-cyan halos around terracotta-orange cores—strung along a sweeping open arc against pure black. At the top of the arc the beads shrink and compress into a smooth gradient curl of green and coral that tightens into a smaller teardrop hook, a faint red tendril trailing from the inner whorl. The thirty evenly-spaced coefficients impose the bead periodicity; the dither clouds each bead's basin boundary into soft concentric rings rather than hard edges. Custom 4-colour proximity palette (dusty rose, sage green, dark teal, dark purple), assign4 matching, gamma 0.5, black canvas, WASM solver on sixteen workers."
     }
   ]
 }

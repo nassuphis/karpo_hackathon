@@ -716,6 +716,15 @@ int runStepLoop(int stepStart, int stepEnd, double elapsedOffset)
     double *rootsRe = passRootsRe;
     double *rootsIm = passRootsIm;
 
+    /* Initialize working coefficients from base values (matches JS:
+       var coeffsRe = new Float64Array(S_coeffsRe) before the loop).
+       Without this, non-animated coefficients remain as zero in WASM memory,
+       causing the solver to use the wrong polynomial. */
+    for (int i = 0; i < nc; i++) {
+        workCoeffsRe[i] = coeffsRe[i];
+        workCoeffsIm[i] = coeffsIm[i];
+    }
+
     /* Morph angle recurrence: replace per-step JS trig with multiply */
     double morphCosT = 1.0, morphSinT = 0.0;
     double morphCosD = 1.0, morphSinD = 0.0;

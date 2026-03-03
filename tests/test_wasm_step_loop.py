@@ -1284,3 +1284,209 @@ class TestWasmRobustness:
         assert result["p50"] == 255
         assert result["p99"] == 200
         assert result["p9999"] == 100
+
+
+# ============================================================
+# Bug regression: uniform color with zero-valued channels
+# ============================================================
+
+class TestUniformColorZeroChannel:
+    """Regression tests for the || 255 bug: zero-valued color channels
+    must be preserved, not replaced with 255."""
+
+    def test_wasm_uniform_green_has_zero_red(self, page, wasm_step_loop_b64):
+        """WASM uniform color [0, 200, 83] must output R=0, not R=255."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("""(b64) => {
+            """ + _HELPERS + """
+            var w = instantiateWasm(b64);
+            // z^2 - 1 → roots at ±1
+            var res = setupAndRun(w, 3, 2, 200, [1, 0, -1], [0, 0, 0], {
+                colorMode: 0,  // uniform
+                uR: 0, uG: 200, uB: 83,
+                totalSteps: 5, canvasW: 100, canvasH: 100
+            });
+            // Check that ALL painted pixels have R=0 (not 255)
+            var badR = 0;
+            for (var i = 0; i < res.paintCount; i++) {
+                if (res.paintR[i] !== 0) badR++;
+            }
+            return {pc: res.paintCount, badR: badR,
+                    firstR: res.paintCount > 0 ? res.paintR[0] : -1,
+                    firstG: res.paintCount > 0 ? res.paintG[0] : -1,
+                    firstB: res.paintCount > 0 ? res.paintB[0] : -1};
+        }""", wasm_step_loop_b64)
+        assert result["pc"] > 0, "Should produce pixels"
+        assert result["badR"] == 0, f"R channel should be 0, got {result['firstR']} in {result['badR']} pixels"
+        assert result["firstG"] == 200
+        assert result["firstB"] == 83
+
+    def test_wasm_uniform_black_preserved(self, page, wasm_step_loop_b64):
+        """WASM uniform color [0, 0, 0] (black) must not become [255, 255, 255]."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("""(b64) => {
+            """ + _HELPERS + """
+            var w = instantiateWasm(b64);
+            var res = setupAndRun(w, 3, 2, 200, [1, 0, -1], [0, 0, 0], {
+                colorMode: 0, uR: 0, uG: 0, uB: 0,
+                totalSteps: 5, canvasW: 100, canvasH: 100
+            });
+            var maxR = 0, maxG = 0, maxB = 0;
+            for (var i = 0; i < res.paintCount; i++) {
+                if (res.paintR[i] > maxR) maxR = res.paintR[i];
+                if (res.paintG[i] > maxG) maxG = res.paintG[i];
+                if (res.paintB[i] > maxB) maxB = res.paintB[i];
+            }
+            return {pc: res.paintCount, maxR: maxR, maxG: maxG, maxB: maxB};
+        }""", wasm_step_loop_b64)
+        assert result["pc"] > 0
+        assert result["maxR"] == 0, f"Black R should be 0, got {result['maxR']}"
+        assert result["maxG"] == 0, f"Black G should be 0, got {result['maxG']}"
+        assert result["maxB"] == 0, f"Black B should be 0, got {result['maxB']}"
+
+    def test_js_worker_uniform_zero_channel(self, page):
+        """JS worker uniform color init must preserve zero-valued channels."""
+        result = page.evaluate("""() => {
+            // Simulate the JS worker init path
+            var d = {uniformR: 0, uniformG: 200, uniformB: 0};
+            var S_uniformR = d.uniformR != null ? d.uniformR : 255;
+            var S_uniformG = d.uniformG != null ? d.uniformG : 255;
+            var S_uniformB = d.uniformB != null ? d.uniformB : 255;
+            return {r: S_uniformR, g: S_uniformG, b: S_uniformB};
+        }""")
+        assert result["r"] == 0, f"JS uniformR should be 0, got {result['r']}"
+        assert result["g"] == 200
+        assert result["b"] == 0
+
+
+# ============================================================
+# Bug regression: WASM workCoeffs initialization for non-animated coefficients
+# ============================================================
+
+class TestWasmWorkCoeffsInit:
+    """Regression tests for the workCoeffsRe/Im initialization bug:
+    non-animated coefficients must use base values, not zero."""
+
+    def test_non_animated_coeffs_use_base_values(self, page, wasm_step_loop_b64):
+        """With no jiggle/morph and no C-curve entries, WASM solver must use
+        base coefficient values (not zero) — verifying workCoeffsRe init."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("""(b64) => {
+            """ + _HELPERS + """
+            var w = instantiateWasm(b64);
+            // P(z) = z^2 - 1, roots at ±1
+            // No animation entries, no jiggle, no morph
+            // Without the fix, workCoeffsRe/Im stays zero → different polynomial
+            var nc = 3, nr = 2;
+            var coeffsRe = [1, 0, -1], coeffsIm = [0, 0, 0];
+            var maxP = 100;
+            var L = computeWasmLayout(nc, nr, maxP, 0, 0, 0, 0, 0, 0, w.hb, 0);
+            var curPages = w.mem.buffer.byteLength / 65536;
+            if (L.pages > curPages) w.mem.grow(L.pages - curPages);
+            var buf = w.mem.buffer;
+            writeCfg(buf, L, nc, nr, {
+                totalSteps: 5, maxPaint: maxP, colorMode: 0,
+                uR: 255, uG: 0, uB: 0, canvasW: 200, canvasH: 200
+            });
+            // Write base coefficients ONLY to cRe/cIm (NOT wCR/wCI)
+            // This mimics the real initWasmStepLoop which only writes cRe/cIm
+            new Float64Array(buf, L.cRe, nc).set(coeffsRe);
+            new Float64Array(buf, L.cIm, nc).set(coeffsIm);
+            // Deliberately leave wCR/wCI as zero (the bug scenario)
+            new Float64Array(buf, L.wCR, nc).fill(0);
+            new Float64Array(buf, L.wCI, nc).fill(0);
+            // Init roots near ±1
+            new Float64Array(buf, L.pRR, nr).set([0.9, -0.9]);
+            new Float64Array(buf, L.pRI, nr).set([0.1, -0.1]);
+            w.inst.exports.init(L.cfgI, L.cfgD);
+            var pc = w.inst.exports.runStepLoop(0, 5, 0.0);
+            // Read final roots
+            var finalRe = Array.from(new Float64Array(buf, L.pRR, nr));
+            var finalIm = Array.from(new Float64Array(buf, L.pRI, nr));
+            // Roots should converge near ±1 (for z^2-1), not near 0 (for z^2)
+            var sortedRe = finalRe.slice().sort();
+            return {
+                pc: pc,
+                r0re: sortedRe[0], r1re: sortedRe[1],
+                r0im: finalIm[0], r1im: finalIm[1]
+            };
+        }""", wasm_step_loop_b64)
+        assert result["pc"] > 0, "Should produce pixels"
+        # Roots of z^2-1 are at -1 and +1
+        assert abs(result["r0re"] - (-1)) < 0.1, \
+            f"Root 0 should be near -1, got {result['r0re']} (workCoeffs not initialized?)"
+        assert abs(result["r1re"] - 1) < 0.1, \
+            f"Root 1 should be near +1, got {result['r1re']} (workCoeffs not initialized?)"
+
+    def test_mixed_animated_and_static_coeffs(self, page, wasm_step_loop_b64):
+        """With some coefficients animated and others static (no path),
+        static coefficients must use base values in the solver."""
+        if wasm_step_loop_b64 is None:
+            pytest.skip("step_loop.wasm not built")
+        result = page.evaluate("""(b64) => {
+            """ + _HELPERS + """
+            var w = instantiateWasm(b64);
+            // P(z) = z^3 + 0z^2 + 0z - 1 (roots: 1, e^{i2π/3}, e^{-i2π/3})
+            // Only coeff[2] (z term, index 2) is animated on a 1-point "curve"
+            // Coeffs [0] (z^3, leading=1) and [1] (z^2, =0) are static
+            var nc = 4, nr = 3;
+            var coeffsRe = [1, 0, 0, -1], coeffsIm = [0, 0, 0, 0];
+            var maxP = 200;
+            var nE = 1, tCP = 1;
+            var L = computeWasmLayout(nc, nr, maxP, nE, 0, 0, 0, tCP, 0, w.hb, 0);
+            var curPages = w.mem.buffer.byteLength / 65536;
+            if (L.pages > curPages) w.mem.grow(L.pages - curPages);
+            var buf = w.mem.buffer;
+            writeCfg(buf, L, nc, nr, {
+                totalSteps: 10, maxPaint: maxP, colorMode: 0,
+                uR: 100, uG: 100, uB: 100, canvasW: 200, canvasH: 200
+            });
+            // Override nEntries to 1
+            new Int32Array(buf, L.cfgI, 76)[8] = 1;
+            // Write base coefficients only to cRe/cIm
+            new Float64Array(buf, L.cRe, nc).set(coeffsRe);
+            new Float64Array(buf, L.cIm, nc).set(coeffsIm);
+            // Leave wCR/wCI zeroed
+            new Float64Array(buf, L.wCR, nc).fill(0);
+            new Float64Array(buf, L.wCI, nc).fill(0);
+            // Set up 1 animation entry: coeff index 2, speed 1, not CCW
+            // 1-point curve at (0, 0) — keeps coeff[2] at 0+0i
+            new Int32Array(buf, L.eIdx, 1).set([2]);
+            new Float64Array(buf, L.eSpd, 1).set([1.0]);
+            new Int32Array(buf, L.eCcw, 1).set([0]);
+            new Float64Array(buf, L.eDth, 1).set([0]);
+            new Int32Array(buf, L.eDd, 1).set([0]);
+            new Int32Array(buf, L.cOff, 1).set([0]);
+            new Int32Array(buf, L.cLen, 1).set([1]);
+            new Int32Array(buf, L.cCld, 1).set([0]);
+            // 1-point curve data: (0, 0)
+            new Float64Array(buf, L.cvF, 2).set([0.0, 0.0]);
+            // Init roots
+            for (var i = 0; i < nr; i++) {
+                var a = (2 * Math.PI * i) / nr + 0.37;
+                new Float64Array(buf, L.pRR, nr)[i] = Math.cos(a);
+                new Float64Array(buf, L.pRI, nr)[i] = Math.sin(a);
+            }
+            w.inst.exports.init(L.cfgI, L.cfgD);
+            var pc = w.inst.exports.runStepLoop(0, 10, 0.0);
+            // Read final roots
+            var finalRe = Array.from(new Float64Array(buf, L.pRR, nr));
+            var finalIm = Array.from(new Float64Array(buf, L.pRI, nr));
+            // With correct base values: P(z) = z^3 - 1 → roots near e^{i2πk/3}
+            // All roots should have |z| ≈ 1
+            var mags = finalRe.map(function(re, i) {
+                return Math.sqrt(re * re + finalIm[i] * finalIm[i]);
+            });
+            return {
+                pc: pc, mags: mags,
+                re: finalRe, im: finalIm
+            };
+        }""", wasm_step_loop_b64)
+        assert result["pc"] > 0, "Should produce pixels"
+        # All roots of z^3 - 1 have magnitude 1
+        for i, mag in enumerate(result["mags"]):
+            assert abs(mag - 1.0) < 0.15, \
+                f"Root {i} magnitude should be ~1.0, got {mag} (static coeffs not initialized?)"

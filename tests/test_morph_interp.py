@@ -63,15 +63,18 @@ class TestMorphInterpDNode:
 # ── c+d path ─────────────────────────────────────────────────────────
 
 class TestMorphInterpCPlusD:
-    """pathType='c+d' returns the sum C + D."""
+    """pathType='c+d' blends alpha*C + (1-alpha)*D where alpha=morphCdAlpha."""
 
-    def test_sum_basic(self, page):
+    def test_blend_basic(self, page):
+        """Default alpha=0.5 → midpoint of C and D."""
         r = _call_interp(page, 1, 2, 3, 4, 0, "c+d")
-        assert r["re"] == 4 and r["im"] == 6
+        assert abs(r["re"] - 2) < 1e-12 and abs(r["im"] - 3) < 1e-12
 
-    def test_sum_at_arbitrary_theta(self, page):
+    def test_blend_at_arbitrary_theta(self, page):
+        """c+d is theta-independent; still alpha*C + (1-alpha)*D."""
         r = _call_interp(page, -1, 0.5, 2, -0.5, 1.23, "c+d")
-        assert abs(r["re"] - 1) < 1e-12 and abs(r["im"]) < 1e-12
+        # 0.5*(-1) + 0.5*2 = 0.5, 0.5*0.5 + 0.5*(-0.5) = 0
+        assert abs(r["re"] - 0.5) < 1e-12 and abs(r["im"]) < 1e-12
 
 
 # ── line path ────────────────────────────────────────────────────────

@@ -774,6 +774,763 @@ static void rev_giga_87(double x1, double x2,
 }
 
 /*
+ * giga_30: degree-9 polynomial with 10 coefficients.
+ * t1 = exp(2πi·x1), t2 = exp(2πi·x2)  (unit circle)
+ * R code (ascending, no rev):
+ *   n=10; cf = rep(0,n)
+ *   cf[1]   = 150i * t2^2 + 100 * t1^3
+ *   cf[n/2] = 150 * abs(t1 + t2 - 2.5*(1i+1))
+ *   cf[n]   = 100i * t1^3 + 150 * t2^2
+ * Mapping: R[k] → C[10-k]
+ */
+static void giga_30(double x1, double x2,
+                    double *cRe, double *cIm, int *nCoeffs)
+{
+    *nCoeffs = 10;
+    memset(cRe, 0, 10 * sizeof(double));
+    memset(cIm, 0, 10 * sizeof(double));
+
+    double a1 = 2.0 * M_PI * x1, a2 = 2.0 * M_PI * x2;
+    double t1R = cos(a1), t1I = sin(a1);
+    double t2R = cos(a2), t2I = sin(a2);
+
+    /* Powers */
+    double t2_2R = t2R * t2R - t2I * t2I;
+    double t2_2I = 2.0 * t2R * t2I;
+    double t1_2R = t1R * t1R - t1I * t1I;
+    double t1_2I = 2.0 * t1R * t1I;
+    double t1_3R = t1_2R * t1R - t1_2I * t1I;
+    double t1_3I = t1_2R * t1I + t1_2I * t1R;
+
+    /* cf[1] = 150i*t2^2 + 100*t1^3 → C[9]
+     * 150i*(t2_2R + i*t2_2I) = -150*t2_2I + i*150*t2_2R */
+    cRe[9] = -150.0 * t2_2I + 100.0 * t1_3R;
+    cIm[9] =  150.0 * t2_2R + 100.0 * t1_3I;
+
+    /* cf[5] = 150*|t1 + t2 - 2.5*(1+i)| → C[5]
+     * abs() gives real result (complex modulus) */
+    double dR = t1R + t2R - 2.5;
+    double dI = t1I + t2I - 2.5;
+    cRe[5] = 150.0 * sqrt(dR * dR + dI * dI);
+
+    /* cf[10] = 100i*t1^3 + 150*t2^2 → C[0]
+     * 100i*(t1_3R + i*t1_3I) = -100*t1_3I + i*100*t1_3R */
+    cRe[0] = -100.0 * t1_3I + 150.0 * t2_2R;
+    cIm[0] =  100.0 * t1_3R + 150.0 * t2_2I;
+}
+
+/* rev_giga_30: reversed coefficients of giga_30. */
+static void rev_giga_30(double x1, double x2,
+                        double *cRe, double *cIm, int *nCoeffs)
+{
+    double tmpRe[MAX_COEFFS], tmpIm[MAX_COEFFS];
+    int n;
+    giga_30(x1, x2, tmpRe, tmpIm, &n);
+    *nCoeffs = n;
+    for (int k = 0; k < n; k++) {
+        cRe[k] = tmpRe[n - 1 - k];
+        cIm[k] = tmpIm[n - 1 - k];
+    }
+}
+
+/*
+ * giga_39: degree-49 polynomial with 50 coefficients.
+ * t1 = exp(2πi·x1), t2 = exp(2πi·x2)  (unit circle)
+ * R code (ascending, no rev):
+ *   cf = complex(50)
+ *   cf[c(1,10,20,30,40,50)] = c(1,2,-3,4,-5,6)
+ *   cf[15] = 100*(t1^2 + t2^2)
+ *   cf[25] = 50*(sin(t1) + 1i*cos(t2))
+ *   cf[35] = 200*(t1*t2) + 1i*(t1^3 - t2^3)
+ *   cf[45] = exp(1i*(t1+t2)) + exp(-1i*(t1-t2))
+ * Mapping: R[k] → C[50-k]
+ */
+static void giga_39(double x1, double x2,
+                    double *cRe, double *cIm, int *nCoeffs)
+{
+    *nCoeffs = 50;
+    memset(cRe, 0, 50 * sizeof(double));
+    memset(cIm, 0, 50 * sizeof(double));
+
+    double a1 = 2.0 * M_PI * x1, a2 = 2.0 * M_PI * x2;
+    double t1R = cos(a1), t1I = sin(a1);
+    double t2R = cos(a2), t2I = sin(a2);
+
+    /* Fixed real coefficients: R[k] → C[50-k] */
+    cRe[49] = 1.0;   /* R[1] */
+    cRe[40] = 2.0;   /* R[10] */
+    cRe[30] = -3.0;  /* R[20] */
+    cRe[20] = 4.0;   /* R[30] */
+    cRe[10] = -5.0;  /* R[40] */
+    cRe[0]  = 6.0;   /* R[50] */
+
+    /* Powers */
+    double t1_2R = t1R * t1R - t1I * t1I;
+    double t1_2I = 2.0 * t1R * t1I;
+    double t2_2R = t2R * t2R - t2I * t2I;
+    double t2_2I = 2.0 * t2R * t2I;
+    double t1_3R = t1_2R * t1R - t1_2I * t1I;
+    double t1_3I = t1_2R * t1I + t1_2I * t1R;
+    double t2_3R = t2_2R * t2R - t2_2I * t2I;
+    double t2_3I = t2_2R * t2I + t2_2I * t2R;
+
+    /* t1*t2 */
+    double t1t2R = t1R * t2R - t1I * t2I;
+    double t1t2I = t1R * t2I + t1I * t2R;
+
+    /* cf[15] = 100*(t1^2 + t2^2) → C[35] */
+    cRe[35] = 100.0 * (t1_2R + t2_2R);
+    cIm[35] = 100.0 * (t1_2I + t2_2I);
+
+    /* cf[25] = 50*(sin(t1) + i*cos(t2)) → C[25]
+     * sin(a+bi) = sin(a)cosh(b) + i*cos(a)sinh(b)
+     * cos(c+di) = cos(c)cosh(d) - i*sin(c)sinh(d)
+     * i*cos(t2) = i*(cost2R + i*cost2I) = -cost2I + i*cost2R */
+    double sint1R = sin(t1R) * cosh(t1I);
+    double sint1I = cos(t1R) * sinh(t1I);
+    double cost2R = cos(t2R) * cosh(t2I);
+    double cost2I = -sin(t2R) * sinh(t2I);
+    cRe[25] = 50.0 * (sint1R - cost2I);
+    cIm[25] = 50.0 * (sint1I + cost2R);
+
+    /* cf[35] = 200*(t1*t2) + i*(t1^3 - t2^3) → C[15]
+     * i*(t1^3 - t2^3) = -(t1_3I - t2_3I) + i*(t1_3R - t2_3R) */
+    cRe[15] = 200.0 * t1t2R - (t1_3I - t2_3I);
+    cIm[15] = 200.0 * t1t2I + (t1_3R - t2_3R);
+
+    /* cf[45] = exp(i*(t1+t2)) + exp(-i*(t1-t2)) → C[5]
+     * Let s = t1+t2, d = t1-t2
+     * i*s = -sI + i*sR → exp(-sI) * (cos(sR) + i*sin(sR))
+     * -i*d = dI - i*dR → exp(dI) * (cos(dR) - i*sin(dR)) */
+    double sR = t1R + t2R, sI = t1I + t2I;
+    double ea = exp(-sI);
+    double eaR = ea * cos(sR), eaI = ea * sin(sR);
+    double dmR = t1R - t2R, dmI = t1I - t2I;
+    double eb = exp(dmI);
+    double ebR = eb * cos(dmR), ebI = -eb * sin(dmR);
+    cRe[5] = eaR + ebR;
+    cIm[5] = eaI + ebI;
+}
+
+/* rev_giga_39: reversed coefficients of giga_39. */
+static void rev_giga_39(double x1, double x2,
+                        double *cRe, double *cIm, int *nCoeffs)
+{
+    double tmpRe[MAX_COEFFS], tmpIm[MAX_COEFFS];
+    int n;
+    giga_39(x1, x2, tmpRe, tmpIm, &n);
+    *nCoeffs = n;
+    for (int k = 0; k < n; k++) {
+        cRe[k] = tmpRe[n - 1 - k];
+        cIm[k] = tmpIm[n - 1 - k];
+    }
+}
+
+/*
+ * giga_40: degree-34 polynomial with 35 coefficients.
+ * t1 = exp(2πi·x1), t2 = exp(2πi·x2)  (unit circle)
+ * R code (ascending, no rev):
+ *   cf = complex(35)
+ *   cf[c(1,7,15,20,27,35)] = c(1,-2,3,-4,5,-6)
+ *   cf[12] = 50i * sin(t1^2 - t2^2)
+ *   cf[18] = 100 * (cos(t1) + 1i*sin(t2))
+ *   cf[25] = 50 * (t1^3 - t2^3 + 1i*t1*t2)
+ *   cf[30] = 200*exp(1i*t1) + 50*exp(-1i*t2)
+ * Mapping: R[k] → C[35-k]
+ */
+static void giga_40(double x1, double x2,
+                    double *cRe, double *cIm, int *nCoeffs)
+{
+    *nCoeffs = 35;
+    memset(cRe, 0, 35 * sizeof(double));
+    memset(cIm, 0, 35 * sizeof(double));
+
+    double a1 = 2.0 * M_PI * x1, a2 = 2.0 * M_PI * x2;
+    double t1R = cos(a1), t1I = sin(a1);
+    double t2R = cos(a2), t2I = sin(a2);
+
+    /* Fixed real coefficients: R[k] → C[35-k] */
+    cRe[34] = 1.0;   /* R[1] */
+    cRe[28] = -2.0;  /* R[7] */
+    cRe[20] = 3.0;   /* R[15] */
+    cRe[15] = -4.0;  /* R[20] */
+    cRe[8]  = 5.0;   /* R[27] */
+    cRe[0]  = -6.0;  /* R[35] */
+
+    /* Powers */
+    double t1_2R = t1R * t1R - t1I * t1I;
+    double t1_2I = 2.0 * t1R * t1I;
+    double t2_2R = t2R * t2R - t2I * t2I;
+    double t2_2I = 2.0 * t2R * t2I;
+    double t1_3R = t1_2R * t1R - t1_2I * t1I;
+    double t1_3I = t1_2R * t1I + t1_2I * t1R;
+    double t2_3R = t2_2R * t2R - t2_2I * t2I;
+    double t2_3I = t2_2R * t2I + t2_2I * t2R;
+
+    /* t1*t2 */
+    double t1t2R = t1R * t2R - t1I * t2I;
+    double t1t2I = t1R * t2I + t1I * t2R;
+
+    /* cf[12] = 50i * sin(t1^2 - t2^2) → C[23]
+     * w = t1^2 - t2^2
+     * sin(a+bi) = sin(a)cosh(b) + i*cos(a)sinh(b)
+     * 50i * sin(w) = -50*sinwI + i*50*sinwR */
+    double wR = t1_2R - t2_2R, wI = t1_2I - t2_2I;
+    double sinwR = sin(wR) * cosh(wI);
+    double sinwI = cos(wR) * sinh(wI);
+    cRe[23] = -50.0 * sinwI;
+    cIm[23] =  50.0 * sinwR;
+
+    /* cf[18] = 100*(cos(t1) + i*sin(t2)) → C[17]
+     * cos(a+bi) = cos(a)cosh(b) - i*sin(a)sinh(b)
+     * sin(c+di) = sin(c)cosh(d) + i*cos(c)sinh(d)
+     * i*sin(t2) = -sint2I + i*sint2R */
+    double cost1R = cos(t1R) * cosh(t1I);
+    double cost1I = -sin(t1R) * sinh(t1I);
+    double sint2R = sin(t2R) * cosh(t2I);
+    double sint2I = cos(t2R) * sinh(t2I);
+    cRe[17] = 100.0 * (cost1R - sint2I);
+    cIm[17] = 100.0 * (cost1I + sint2R);
+
+    /* cf[25] = 50*(t1^3 - t2^3 + i*t1*t2) → C[10]
+     * i*(t1t2R + i*t1t2I) = -t1t2I + i*t1t2R */
+    cRe[10] = 50.0 * (t1_3R - t2_3R - t1t2I);
+    cIm[10] = 50.0 * (t1_3I - t2_3I + t1t2R);
+
+    /* cf[30] = 200*exp(i*t1) + 50*exp(-i*t2) → C[5]
+     * i*t1 = -t1I + i*t1R → exp(-t1I)*(cos(t1R) + i*sin(t1R))
+     * -i*t2 = t2I - i*t2R → exp(t2I)*(cos(t2R) - i*sin(t2R)) */
+    double e1 = exp(-t1I);
+    double eit1R = e1 * cos(t1R), eit1I = e1 * sin(t1R);
+    double e2 = exp(t2I);
+    double emit2R = e2 * cos(t2R), emit2I = -e2 * sin(t2R);
+    cRe[5] = 200.0 * eit1R + 50.0 * emit2R;
+    cIm[5] = 200.0 * eit1I + 50.0 * emit2I;
+}
+
+/* rev_giga_40: reversed coefficients of giga_40. */
+static void rev_giga_40(double x1, double x2,
+                        double *cRe, double *cIm, int *nCoeffs)
+{
+    double tmpRe[MAX_COEFFS], tmpIm[MAX_COEFFS];
+    int n;
+    giga_40(x1, x2, tmpRe, tmpIm, &n);
+    *nCoeffs = n;
+    for (int k = 0; k < n; k++) {
+        cRe[k] = tmpRe[n - 1 - k];
+        cIm[k] = tmpIm[n - 1 - k];
+    }
+}
+
+/*
+ * p7f: degree-22 polynomial with 23 coefficients.
+ * t1 = x1, t2 = x2 (raw 0-to-1, NO unit circle transform).
+ *
+ * tt1  = exp(i*2π*t1)           (unit circle point)
+ * ttt1 = exp(i*2π*tt1)          (nested exp, tt1 is complex)
+ * v    = linspace(Re(tt1), Re(ttt1), 23)   (23 real values)
+ *
+ * Coefficients: f[k] = scale * exp(i * trig(freq * 2π * v[k]))
+ * where scale, freq, and trig (sin/cos) depend on t2 bracket.
+ * f[22] += 211 * exp(i * 2π * (1/7) * t2)
+ *
+ * Python 0-indexed → reverse for C leading-first.
+ */
+static void p7f(double x1, double x2,
+                double *cRe, double *cIm, int *nCoeffs)
+{
+    *nCoeffs = 23;
+    double t1 = x1, t2 = x2;
+    double pi2 = 2.0 * M_PI;
+
+    /* tt1 = exp(i*2π*t1) */
+    double a1 = pi2 * t1;
+    double tt1R = cos(a1), tt1I = sin(a1);
+
+    /* ttt1 = exp(i*2π*tt1), tt1 is complex
+     * i*2π*tt1 = 2π*(-tt1I + i*tt1R)
+     * exp(-2π*tt1I) * (cos(2π*tt1R) + i*sin(2π*tt1R)) */
+    double eArg = -pi2 * tt1I;
+    double aArg = pi2 * tt1R;
+    double ttt1R = exp(eArg) * cos(aArg);
+    /* ttt1I not needed — only Re(ttt1) used for linspace */
+
+    /* v = linspace(Re(tt1), Re(ttt1), 23) */
+    double v0 = tt1R;
+    double vEnd = ttt1R;
+    double dv = (vEnd - v0) / 22.0;
+
+    /* Determine scale, freq, and trig function from t2 bracket */
+    double scale;
+    double freq;
+    int useCos = 0;  /* 0 = sin, 1 = cos */
+
+    if (t2 < 0.1) {
+        scale = 10.0 * t1; freq = 11.0;
+    } else if (t2 < 0.2) {
+        scale = 100.0; freq = 17.0;
+    } else if (t2 < 0.3) {
+        scale = 599.0; freq = 83.0; useCos = 1;
+    } else if (t2 < 0.4) {
+        scale = 443.0; freq = 179.0;
+    } else if (t2 < 0.5) {
+        scale = 293.0; freq = 127.0;
+    } else if (t2 < 0.6) {
+        scale = 541.0; freq = 103.0;
+    } else if (t2 < 0.7) {
+        scale = 379.0; freq = 283.0;
+    } else if (t2 < 0.8) {
+        scale = 233.0; freq = 3.0;
+    } else if (t2 < 0.9) {
+        scale = 173.0; freq = 5.0;
+    } else {
+        scale = 257.0; freq = 23.0;
+    }
+
+    /* Compute f[k] = scale * exp(i * trig(freq * 2π * v[k]))
+     * trig(x) is real → exp(i * real) = cos(real) + i*sin(real) */
+    double fRe[23], fIm[23];
+    for (int k = 0; k < 23; k++) {
+        double vk = v0 + k * dv;
+        double trigArg = freq * pi2 * vk;
+        double trigVal = useCos ? cos(trigArg) : sin(trigArg);
+        fRe[k] = scale * cos(trigVal);
+        fIm[k] = scale * sin(trigVal);
+    }
+
+    /* f[22] += 211 * exp(i * 2π * (1/7) * t2) */
+    double addAngle = pi2 * (1.0 / 7.0) * t2;
+    fRe[22] += 211.0 * cos(addAngle);
+    fIm[22] += 211.0 * sin(addAngle);
+
+    /* Reverse: Python ascending → C leading-first */
+    for (int k = 0; k < 23; k++) {
+        cRe[k] = fRe[22 - k];
+        cIm[k] = fIm[22 - k];
+    }
+}
+
+/* rev_p7f: reversed coefficients of p7f. */
+static void rev_p7f(double x1, double x2,
+                    double *cRe, double *cIm, int *nCoeffs)
+{
+    double tmpRe[MAX_COEFFS], tmpIm[MAX_COEFFS];
+    int n;
+    p7f(x1, x2, tmpRe, tmpIm, &n);
+    *nCoeffs = n;
+    for (int k = 0; k < n; k++) {
+        cRe[k] = tmpRe[n - 1 - k];
+        cIm[k] = tmpIm[n - 1 - k];
+    }
+}
+
+/*
+ * giga_230: degree-9 polynomial with 10 coefficients.
+ * Pipeline: uc → coeff3 → poly_giga_53 → rev.
+ *
+ * uc:      t1 = exp(i*2π*x1), t2 = exp(i*2π*x2)
+ * coeff3:  t1 = 1/(t1+2),     t2 = 1/(t2+2)
+ *
+ * poly_giga_53(t1, t2):
+ *   cf[0] = 100 * sin(t1)³ * cos(t2)²
+ *   cf[1] = 100 * exp(i*(t1+t2)) - 10*(t1-t2)²
+ *   cf[2] = t1*t2*(t1-t2) / (|t1|+|t2|+1)
+ *   cf[4] = (t1*t2*exp(i*(t1²-t2²)))³
+ *   cf[6] = sqrt(|t1|) - sqrt(|t2|) + i*sin(t1*t2)
+ *   cf[7] = 50*|t1-t2|*exp(i*|t1+t2|)
+ *   cf[8] = t1-|t2| if Im(t1)>0 else t2-|t1|
+ *   cf[9] = (i*t1*t2)^(0.1*t1*t2)
+ *
+ * rev: C[k] = cf[9-k]
+ */
+static void giga_230(double x1, double x2,
+                     double *cRe, double *cIm, int *nCoeffs)
+{
+    *nCoeffs = 10;
+    memset(cRe, 0, 10 * sizeof(double));
+    memset(cIm, 0, 10 * sizeof(double));
+
+    /* uc */
+    double a1 = 2.0 * M_PI * x1, a2 = 2.0 * M_PI * x2;
+    double u1R = cos(a1), u1I = sin(a1);
+    double u2R = cos(a2), u2I = sin(a2);
+
+    /* coeff3: 1/(t+2) */
+    double d1R = u1R + 2.0, d1I = u1I, m1 = d1R * d1R + d1I * d1I;
+    double t1R = d1R / m1, t1I = -d1I / m1;
+    double d2R = u2R + 2.0, d2I = u2I, m2 = d2R * d2R + d2I * d2I;
+    double t2R = d2R / m2, t2I = -d2I / m2;
+
+    /* Common values */
+    double absT1 = sqrt(t1R * t1R + t1I * t1I);
+    double absT2 = sqrt(t2R * t2R + t2I * t2I);
+    double pR = t1R * t2R - t1I * t2I, pI = t1R * t2I + t1I * t2R;
+    double difR = t1R - t2R, difI = t1I - t2I;
+    double sumR = t1R + t2R, sumI = t1I + t2I;
+
+    double cfR[10], cfI[10];
+    memset(cfR, 0, sizeof(cfR));
+    memset(cfI, 0, sizeof(cfI));
+
+    /* cf[0] = 100 * sin(t1)^3 * cos(t2)^2 */
+    double st1R = sin(t1R) * cosh(t1I), st1I = cos(t1R) * sinh(t1I);
+    double st1_2R = st1R * st1R - st1I * st1I, st1_2I = 2.0 * st1R * st1I;
+    double st1_3R = st1_2R * st1R - st1_2I * st1I;
+    double st1_3I = st1_2R * st1I + st1_2I * st1R;
+    double ct2R_v = cos(t2R) * cosh(t2I), ct2I_v = -sin(t2R) * sinh(t2I);
+    double ct2_2R = ct2R_v * ct2R_v - ct2I_v * ct2I_v;
+    double ct2_2I = 2.0 * ct2R_v * ct2I_v;
+    cfR[0] = 100.0 * (st1_3R * ct2_2R - st1_3I * ct2_2I);
+    cfI[0] = 100.0 * (st1_3R * ct2_2I + st1_3I * ct2_2R);
+
+    /* cf[1] = 100*exp(i*(t1+t2)) - 10*(t1-t2)^2
+     * i*(sumR+i*sumI) = (-sumI, sumR) → exp(-sumI)*(cos(sumR)+i*sin(sumR)) */
+    double e1v = exp(-sumI);
+    double ex1R = e1v * cos(sumR), ex1I = e1v * sin(sumR);
+    double dif2R = difR * difR - difI * difI, dif2I = 2.0 * difR * difI;
+    cfR[1] = 100.0 * ex1R - 10.0 * dif2R;
+    cfI[1] = 100.0 * ex1I - 10.0 * dif2I;
+
+    /* cf[2] = t1*t2*(t1-t2) / (|t1|+|t2|+1) */
+    double pdR = pR * difR - pI * difI, pdI = pR * difI + pI * difR;
+    double den2 = absT1 + absT2 + 1.0;
+    cfR[2] = pdR / den2;
+    cfI[2] = pdI / den2;
+
+    /* cf[4] = (t1*t2*exp(i*(t1^2-t2^2)))^3 */
+    double t1_2R = t1R * t1R - t1I * t1I, t1_2I = 2.0 * t1R * t1I;
+    double t2_2R = t2R * t2R - t2I * t2I, t2_2I = 2.0 * t2R * t2I;
+    double dsqR = t1_2R - t2_2R, dsqI = t1_2I - t2_2I;
+    double e4v = exp(-dsqI);
+    double ex4R = e4v * cos(dsqR), ex4I = e4v * sin(dsqR);
+    double pe4R = pR * ex4R - pI * ex4I, pe4I = pR * ex4I + pI * ex4R;
+    double pe4_2R = pe4R * pe4R - pe4I * pe4I, pe4_2I = 2.0 * pe4R * pe4I;
+    cfR[4] = pe4_2R * pe4R - pe4_2I * pe4I;
+    cfI[4] = pe4_2R * pe4I + pe4_2I * pe4R;
+
+    /* cf[6] = sqrt(|t1|) - sqrt(|t2|) + i*sin(t1*t2) */
+    double sinpR = sin(pR) * cosh(pI), sinpI = cos(pR) * sinh(pI);
+    cfR[6] = sqrt(absT1) - sqrt(absT2) - sinpI;
+    cfI[6] = sinpR;
+
+    /* cf[7] = 50*|t1-t2|*exp(i*|t1+t2|) */
+    double absDif = sqrt(difR * difR + difI * difI);
+    double absSm = sqrt(sumR * sumR + sumI * sumI);
+    cfR[7] = 50.0 * absDif * cos(absSm);
+    cfI[7] = 50.0 * absDif * sin(absSm);
+
+    /* cf[8] = t1-|t2| if Im(t1)>0 else t2-|t1| */
+    if (t1I > 0) { cfR[8] = t1R - absT2; cfI[8] = t1I; }
+    else         { cfR[8] = t2R - absT1; cfI[8] = t2I; }
+
+    /* cf[9] = (i*t1*t2)^(0.1*t1*t2) = exp(w*log(z)), z=i*p, w=0.1*p */
+    double zR = -pI, zI = pR;
+    double wR = 0.1 * pR, wI = 0.1 * pI;
+    double absZ = sqrt(zR * zR + zI * zI);
+    if (absZ > 1e-300) {
+        double logZR = log(absZ), logZI = atan2(zI, zR);
+        double wlR = wR * logZR - wI * logZI;
+        double wlI = wR * logZI + wI * logZR;
+        double ewl = exp(wlR);
+        cfR[9] = ewl * cos(wlI);
+        cfI[9] = ewl * sin(wlI);
+    }
+
+    /* rev + safe: C[k] = cf[9-k], NaN/Inf → 0 */
+    for (int k = 0; k < 10; k++) {
+        double re = cfR[9 - k], im = cfI[9 - k];
+        cRe[k] = isfinite(re) ? re : 0.0;
+        cIm[k] = isfinite(im) ? im : 0.0;
+    }
+}
+
+/* rev_giga_230: reversed coefficients of giga_230. */
+static void rev_giga_230(double x1, double x2,
+                         double *cRe, double *cIm, int *nCoeffs)
+{
+    double tmpRe[MAX_COEFFS], tmpIm[MAX_COEFFS];
+    int n;
+    giga_230(x1, x2, tmpRe, tmpIm, &n);
+    *nCoeffs = n;
+    for (int k = 0; k < n; k++) {
+        cRe[k] = tmpRe[n - 1 - k];
+        cIm[k] = tmpIm[n - 1 - k];
+    }
+}
+
+/*
+ * giga_232: degree-8 polynomial with 9 coefficients.
+ * Pipeline: uc → coeff2 → poly_729 → rev → safe.
+ *
+ * uc:     t1 = exp(i*2π*x1), t2 = exp(i*2π*x2)
+ * coeff2: t1_new = t1+t2, t2_new = t1*t2
+ *
+ * poly_729(t1, t2):
+ *   for j in 0..8:
+ *     r_part    = Re(t1)*j² - Re(t2)*sqrt(j+1)
+ *     im_part   = (Im(t1)+Im(t2))*log(j+2)
+ *     magnitude = |t1|^(j%3+1) + |t2|^(8-j)
+ *     angle     = arg(t1)*sin(j) + arg(t2)*cos(j)
+ *     cf[j]     = (r_part + i*im_part) * magnitude * exp(i*angle)
+ *
+ * rev: C[k] = cf[8-k]
+ * safe: NaN/Inf → 0
+ */
+static void giga_232(double x1, double x2,
+                     double *cRe, double *cIm, int *nCoeffs)
+{
+    *nCoeffs = 9;
+    memset(cRe, 0, 9 * sizeof(double));
+    memset(cIm, 0, 9 * sizeof(double));
+
+    /* uc */
+    double a1 = 2.0 * M_PI * x1, a2 = 2.0 * M_PI * x2;
+    double u1R = cos(a1), u1I = sin(a1);
+    double u2R = cos(a2), u2I = sin(a2);
+
+    /* coeff2: t1 = u1+u2, t2 = u1*u2 */
+    double t1R = u1R + u2R, t1I = u1I + u2I;
+    double t2R = u1R * u2R - u1I * u2I, t2I = u1R * u2I + u1I * u2R;
+
+    /* Precompute moduli, arguments, powers */
+    double absT1 = sqrt(t1R * t1R + t1I * t1I);
+    double absT2 = sqrt(t2R * t2R + t2I * t2I);
+    double angT1 = atan2(t1I, t1R);
+    double angT2 = atan2(t2I, t2R);
+
+    double absT1p[4]; /* absT1^1, ^2, ^3 (index 1..3) */
+    absT1p[1] = absT1;
+    absT1p[2] = absT1 * absT1;
+    absT1p[3] = absT1p[2] * absT1;
+
+    double absT2p[9]; /* absT2^0 .. ^8 */
+    absT2p[0] = 1.0;
+    for (int i = 1; i <= 8; i++) absT2p[i] = absT2p[i - 1] * absT2;
+
+    double cfR[9], cfI[9];
+    for (int j = 0; j <= 8; j++) {
+        double jd = (double)j;
+        double r_part = t1R * (jd * jd) - t2R * sqrt(jd + 1.0);
+        double im_part = (t1I + t2I) * log(jd + 2.0);
+        double magnitude = absT1p[(j % 3) + 1] + absT2p[8 - j];
+        double ang = angT1 * sin(jd) + angT2 * cos(jd);
+
+        /* (r_part + i*im_part) * magnitude * exp(i*angle) */
+        double zmR = r_part * magnitude, zmI = im_part * magnitude;
+        double eR = cos(ang), eI = sin(ang);
+        cfR[j] = zmR * eR - zmI * eI;
+        cfI[j] = zmR * eI + zmI * eR;
+    }
+
+    /* safe + rev: C[k] = cf[8-k], NaN/Inf → 0 */
+    for (int k = 0; k < 9; k++) {
+        double re = cfR[8 - k], im = cfI[8 - k];
+        cRe[k] = isfinite(re) ? re : 0.0;
+        cIm[k] = isfinite(im) ? im : 0.0;
+    }
+}
+
+/* rev_giga_232: reversed coefficients of giga_232. */
+static void rev_giga_232(double x1, double x2,
+                         double *cRe, double *cIm, int *nCoeffs)
+{
+    double tmpRe[MAX_COEFFS], tmpIm[MAX_COEFFS];
+    int n;
+    giga_232(x1, x2, tmpRe, tmpIm, &n);
+    *nCoeffs = n;
+    for (int k = 0; k < n; k++) {
+        cRe[k] = tmpRe[n - 1 - k];
+        cIm[k] = tmpIm[n - 1 - k];
+    }
+}
+
+/*
+ * giga_227: degree-24 polynomial with 25 coefficients.
+ * Pipeline: uc → coeff3 → poly_giga_62 → rev.
+ *
+ * uc:      t1 = exp(i*2π*x1), t2 = exp(i*2π*x2)
+ * coeff3:  t1 = 1/(t1+2),     t2 = 1/(t2+2)
+ *
+ * poly_giga_62(t1, t2):
+ *   cf[0:5]   = |t1+t2|^(i+1) for i=0..4
+ *   cf[5:10]  = Re((t1+2j*t2)^3) * log(|t1*t2|)  (all 5 same)
+ *   cf[10:15] = Im((t1-t2)^2) / angle(t1*t2)     (all 5 same)
+ *   cf[15:20] = sqrt(|cf[5:10]|) + angle(cf[0:5]) (all 5 same, angle=0)
+ *   cf[20:25] = |t1*t2|^(i+1) for i=0..4
+ *
+ * rev: C[k] = cf[24-k]
+ * All coefficients are real.
+ */
+static void giga_227(double x1, double x2,
+                     double *cRe, double *cIm, int *nCoeffs)
+{
+    *nCoeffs = 25;
+    memset(cRe, 0, 25 * sizeof(double));
+    memset(cIm, 0, 25 * sizeof(double));
+
+    /* uc: unit circle */
+    double a1 = 2.0 * M_PI * x1, a2 = 2.0 * M_PI * x2;
+    double t1R = cos(a1), t1I = sin(a1);
+    double t2R = cos(a2), t2I = sin(a2);
+
+    /* coeff3: t = 1/(t+2)
+     * 1/((a+2) + bi) = ((a+2) - bi) / ((a+2)² + b²) */
+    double d1R = t1R + 2.0, d1I = t1I;
+    double m1 = d1R * d1R + d1I * d1I;
+    t1R = d1R / m1; t1I = -d1I / m1;
+
+    double d2R = t2R + 2.0, d2I = t2I;
+    double m2 = d2R * d2R + d2I * d2I;
+    t2R = d2R / m2; t2I = -d2I / m2;
+
+    /* --- poly_giga_62 --- */
+
+    /* |t1+t2| */
+    double sR = t1R + t2R, sI = t1I + t2I;
+    double absSum = sqrt(sR * sR + sI * sI);
+
+    /* cf[0:5] = |t1+t2|^(i+1) */
+    double cf0[5];
+    double pw = absSum;
+    for (int i = 0; i < 5; i++) { cf0[i] = pw; pw *= absSum; }
+
+    /* (t1 + 2j*t2)^3:  2j*t2 = -2*t2I + 2i*t2R */
+    double wR = t1R - 2.0 * t2I, wI = t1I + 2.0 * t2R;
+    double w2R = wR * wR - wI * wI, w2I = 2.0 * wR * wI;
+    double w3R = w2R * wR - w2I * wI;
+    /* Re((t1+2j*t2)^3) = w3R */
+
+    /* |t1*t2| */
+    double pR = t1R * t2R - t1I * t2I, pI = t1R * t2I + t1I * t2R;
+    double absProd = sqrt(pR * pR + pI * pI);
+
+    /* log(|conj(t1*t2)|) = log(|t1*t2|) */
+    double logAbsP = (absProd > 1e-300) ? log(absProd) : -690.0;
+
+    /* cf[5:10] = Re((t1+2j*t2)^3) * log(|t1*t2|) */
+    double val5 = w3R * logAbsP;
+
+    /* (t1-t2)^2 */
+    double dR = t1R - t2R, dI = t1I - t2I;
+    double diff2I = 2.0 * dR * dI;  /* Im((t1-t2)^2) */
+
+    /* angle(t1*t2) */
+    double angleP = atan2(pI, pR);
+
+    /* cf[10:15] = Im((t1-t2)^2) / angle(t1*t2) */
+    double val10 = (fabs(angleP) > 1e-15) ? (diff2I / angleP) : 0.0;
+
+    /* cf[15:20] = sqrt(|cf[5:10]|) + angle(cf[0:5])
+     * cf[0:5] are positive reals → angle = 0 */
+    double val15 = sqrt(fabs(val5));
+
+    /* cf[20:25] = |t1*t2|^(i+1) */
+    double cf20[5];
+    pw = absProd;
+    for (int i = 0; i < 5; i++) { cf20[i] = pw; pw *= absProd; }
+
+    /* rev: C[k] = cf[24-k] */
+    /* C[0..4]   = cf[24..20] = |t1*t2|^5..1 */
+    for (int i = 0; i < 5; i++) cRe[i] = cf20[4 - i];
+    /* C[5..9]   = cf[19..15] = val15 */
+    for (int i = 5; i < 10; i++) cRe[i] = val15;
+    /* C[10..14] = cf[14..10] = val10 */
+    for (int i = 10; i < 15; i++) cRe[i] = val10;
+    /* C[15..19] = cf[9..5]   = val5 */
+    for (int i = 15; i < 20; i++) cRe[i] = val5;
+    /* C[20..24] = cf[4..0]   = |t1+t2|^5..1 */
+    for (int i = 0; i < 5; i++) cRe[20 + i] = cf0[4 - i];
+}
+
+/* rev_giga_227: reversed coefficients of giga_227. */
+static void rev_giga_227(double x1, double x2,
+                         double *cRe, double *cIm, int *nCoeffs)
+{
+    double tmpRe[MAX_COEFFS], tmpIm[MAX_COEFFS];
+    int n;
+    giga_227(x1, x2, tmpRe, tmpIm, &n);
+    *nCoeffs = n;
+    for (int k = 0; k < n; k++) {
+        cRe[k] = tmpRe[n - 1 - k];
+        cIm[k] = tmpIm[n - 1 - k];
+    }
+}
+
+/*
+ * poly_110: degree-70 polynomial with 71 coefficients.
+ * Pipeline: t1=x1, t2=x2 → unit_circle → coeff5 → poly_110.
+ *
+ * unit_circle: t1 = exp(i*2π*x1), t2 = exp(i*2π*x2)
+ * coeff5:      t1_new = t1 + 1/t2,  t2_new = t2 + 1/t1
+ *              (on unit circle: 1/z = conj(z))
+ *
+ * poly_110(t1, t2):
+ *   cf = zeros(71, complex)
+ *   primes = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59]
+ *   for k in 1..35:
+ *     cf[k-1]  = Re(t1)*primes[k%17]    + Im(t2)*k²
+ *     cf[70-k] = Re(t2)*primes[(70-k)%17] - Im(t1)*k²
+ *   cf[35] = 440 * (cos(angle(t1)) + i*sin(angle(t2)))
+ *   cf[70] = 0 always
+ *
+ * No reversal: cf[0] = leading coeff (cf[70]=0 would be zero leading if reversed).
+ */
+static void poly_110(double x1, double x2,
+                     double *cRe, double *cIm, int *nCoeffs)
+{
+    *nCoeffs = 71;
+    memset(cRe, 0, 71 * sizeof(double));
+    memset(cIm, 0, 71 * sizeof(double));
+
+    /* Unit circle transform */
+    double a1 = 2.0 * M_PI * x1, a2 = 2.0 * M_PI * x2;
+    double t1R = cos(a1), t1I = sin(a1);
+    double t2R = cos(a2), t2I = sin(a2);
+
+    /* coeff5: t1_new = t1 + 1/t2, t2_new = t2 + 1/t1
+     * On unit circle: 1/z = conj(z) = (Re(z), -Im(z)) */
+    double nt1R = t1R + t2R, nt1I = t1I - t2I;
+    double nt2R = t2R + t1R, nt2I = t2I - t1I;
+    t1R = nt1R; t1I = nt1I;
+    t2R = nt2R; t2I = nt2I;
+
+    /* Prime sequence (17 primes) */
+    static const int P[] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29,
+                            31, 37, 41, 43, 47, 53, 59};
+
+    /* Fill cf[0..34] and cf[36..69] symmetrically */
+    for (int k = 1; k <= 35; k++) {
+        double k2 = (double)(k * k);
+        /* cf[k-1] = Re(t1) * prime[k%17] + Im(t2) * k²  (real) */
+        cRe[k - 1] = t1R * P[k % 17] + t2I * k2;
+        /* cf[70-k] = Re(t2) * prime[(70-k)%17] - Im(t1) * k²  (real) */
+        cRe[70 - k] = t2R * P[(70 - k) % 17] - t1I * k2;
+    }
+
+    /* cf[35] = sum(primes) * (cos(angle(t1)) + i*sin(angle(t2)))
+     * sum = 2+3+5+7+11+13+17+19+23+29+31+37+41+43+47+53+59 = 440 */
+    double angle_t1 = atan2(t1I, t1R);
+    double angle_t2 = atan2(t2I, t2R);
+    cRe[35] = 440.0 * cos(angle_t1);
+    cIm[35] = 440.0 * sin(angle_t2);
+    /* cf[70] = 0: z=0 is always a root */
+}
+
+/* rev_poly_110: reversed coefficients of poly_110. */
+static void rev_poly_110(double x1, double x2,
+                         double *cRe, double *cIm, int *nCoeffs)
+{
+    double tmpRe[MAX_COEFFS], tmpIm[MAX_COEFFS];
+    int n;
+    poly_110(x1, x2, tmpRe, tmpIm, &n);
+    *nCoeffs = n;
+    for (int k = 0; k < n; k++) {
+        cRe[k] = tmpRe[n - 1 - k];
+        cIm[k] = tmpIm[n - 1 - k];
+    }
+}
+
+/*
  * giga_19: degree-89 polynomial with 90 coefficients.
  * t1 = x1, t2 = x2 (raw 0-to-1, NO unit circle transform).
  * R definition (1-based, NO rev):
@@ -784,29 +1541,33 @@ static void rev_giga_87(double x1, double x2,
  *     if finite(av) && av > 1e-10: cf[k] = 1i * v / av
  *     else:                        cf[k] = t1 + t2
  *
- * No rev() — R index k maps to C index k-1.
+ * No rev() — R returns ascending order (constant first), but C solver
+ * expects leading-first, so we reverse after iterative computation.
  */
 static void giga_19(double x1, double x2,
                     double *cRe, double *cIm, int *nCoeffs)
 {
     *nCoeffs = 90;
-    memset(cRe, 0, 90 * sizeof(double));
-    memset(cIm, 0, 90 * sizeof(double));
+
+    /* Compute in temp arrays (R ascending order: index 0 = constant) */
+    double tmpRe[90], tmpIm[90];
+    memset(tmpRe, 0, 90 * sizeof(double));
+    memset(tmpIm, 0, 90 * sizeof(double));
 
     /* t1, t2 are real, 0 to 1 — no exp(2πi·x) */
     double t1 = x1, t2 = x2;
 
-    /* cf[1] = t1 - t2  →  C[0] */
-    cRe[0] = t1 - t2;
-    cIm[0] = 0.0;
+    /* cf[1] = t1 - t2  →  tmp[0] (constant term) */
+    tmpRe[0] = t1 - t2;
+    tmpIm[0] = 0.0;
 
     for (int k = 2; k <= 90; k++) {
-        int ci = k - 1;    /* C 0-based index */
+        int ci = k - 1;    /* temp index */
         int prev = ci - 1; /* previous coefficient */
 
         /* z = k * cf[k-1]  (real × complex) */
-        double zR = (double)k * cRe[prev];
-        double zI = (double)k * cIm[prev];
+        double zR = (double)k * tmpRe[prev];
+        double zI = (double)k * tmpIm[prev];
 
         /* Complex sin: sin(a+bi) = sin(a)cosh(b) + i·cos(a)sinh(b) */
         double sinzR = sin(zR) * cosh(zI);
@@ -828,13 +1589,19 @@ static void giga_19(double x1, double x2,
              * 1i * (a, b) = (-b, a) */
             double nR = vR / av;
             double nI = vI / av;
-            cRe[ci] = -nI;
-            cIm[ci] = nR;
+            tmpRe[ci] = -nI;
+            tmpIm[ci] = nR;
         } else {
             /* fallback: cf[k] = t1 + t2 (real) */
-            cRe[ci] = t1 + t2;
-            cIm[ci] = 0.0;
+            tmpRe[ci] = t1 + t2;
+            tmpIm[ci] = 0.0;
         }
+    }
+
+    /* Reverse: R ascending → C leading-first */
+    for (int k = 0; k < 90; k++) {
+        cRe[k] = tmpRe[89 - k];
+        cIm[k] = tmpIm[89 - k];
     }
 }
 
@@ -869,6 +1636,22 @@ static CoeffFunc lookupFunction(const char *name) {
     if (strcmp(name, "rev_giga_87") == 0) return rev_giga_87;
     if (strcmp(name, "giga_19") == 0) return giga_19;
     if (strcmp(name, "rev_giga_19") == 0) return rev_giga_19;
+    if (strcmp(name, "giga_30") == 0) return giga_30;
+    if (strcmp(name, "rev_giga_30") == 0) return rev_giga_30;
+    if (strcmp(name, "giga_39") == 0) return giga_39;
+    if (strcmp(name, "rev_giga_39") == 0) return rev_giga_39;
+    if (strcmp(name, "giga_40") == 0) return giga_40;
+    if (strcmp(name, "rev_giga_40") == 0) return rev_giga_40;
+    if (strcmp(name, "p7f") == 0) return p7f;
+    if (strcmp(name, "rev_p7f") == 0) return rev_p7f;
+    if (strcmp(name, "poly_110") == 0) return poly_110;
+    if (strcmp(name, "rev_poly_110") == 0) return rev_poly_110;
+    if (strcmp(name, "giga_227") == 0) return giga_227;
+    if (strcmp(name, "rev_giga_227") == 0) return rev_giga_227;
+    if (strcmp(name, "giga_230") == 0) return giga_230;
+    if (strcmp(name, "rev_giga_230") == 0) return rev_giga_230;
+    if (strcmp(name, "giga_232") == 0) return giga_232;
+    if (strcmp(name, "rev_giga_232") == 0) return rev_giga_232;
     return NULL;
 }
 

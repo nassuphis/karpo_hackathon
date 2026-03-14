@@ -313,15 +313,16 @@ static void buildGammaLUT(double gamma) {
 
 /* ---- roots2image mode ---- */
 
-enum ColorMode { COLOR_RAINBOW = 0, COLOR_PROXIMITY = 1 };
+enum ColorMode { COLOR_RAINBOW = 0, COLOR_PROXIMITY = 1, COLOR_CONSTANT = 2 };
 enum MatchMode { MATCH_NONE = 0, MATCH_GREEDY = 1, MATCH_HUNGARIAN = 2 };
 
 static int do_roots2image(int argc, char **argv) {
     if (argc < 4) {
         fprintf(stderr, "Usage: imgpipe --roots2image stripe.bin out.png "
                 "--width=W --height=H --center_re=X --center_im=Y --scale=S "
-                "--degree=D [--color=rainbow|proximity] "
-                "[--match=none|greedy|hungarian] [--palette=inferno|...]\n");
+                "--degree=D [--color=rainbow|proximity|constant] "
+                "[--match=none|greedy|hungarian] [--palette=inferno|...] "
+                "[--constant_color=RRGGBB]\n");
         return 1;
     }
     const char *binPath = argv[2];
@@ -336,8 +337,18 @@ static int do_roots2image(int argc, char **argv) {
     const char *matchStr = getArgStr(argc, argv, "--match", "none");
     const char *palName = getArgStr(argc, argv, "--palette", "inferno");
 
+    const char *constColorStr = getArgStr(argc, argv, "--constant_color", "ffffff");
+
     enum ColorMode colorMode = COLOR_RAINBOW;
     if (strcmp(colorStr, "proximity") == 0) colorMode = COLOR_PROXIMITY;
+    else if (strcmp(colorStr, "constant") == 0) colorMode = COLOR_CONSTANT;
+
+    /* Parse constant color hex (RRGGBB) */
+    unsigned int constHex = 0xffffff;
+    sscanf(constColorStr, "%x", &constHex);
+    unsigned char constR = (constHex >> 16) & 0xff;
+    unsigned char constG = (constHex >> 8) & 0xff;
+    unsigned char constB = constHex & 0xff;
 
     enum MatchMode matchMode = MATCH_NONE;
     if (strcmp(matchStr, "greedy") == 0) matchMode = MATCH_GREEDY;
@@ -448,6 +459,27 @@ static int do_roots2image(int argc, char **argv) {
                 rootsPlotted++;
             }
         }
+    } else if (colorMode == COLOR_CONSTANT) {
+        /* --- Constant color: every root gets the same color --- */
+        for (long p = 0; p < nPoints; p++) {
+            float *step = roots + p * stride;
+            for (int r = 0; r < degree; r++) {
+                double re = step[r * 2];
+                double im = step[r * 2 + 1];
+                int px = (int)(halfW + (re - centerRe) * scale);
+                int py = (int)(halfH - (im - centerIm) * scale);
+                if (px >= 0 && px < W && py >= 0 && py < H) {
+                    long idx = ((long)py * W + px) * 3;
+                    int v;
+                    v = pixels[idx]   + constR; pixels[idx]   = v > 255 ? 255 : v;
+                    v = pixels[idx+1] + constG; pixels[idx+1] = v > 255 ? 255 : v;
+                    v = pixels[idx+2] + constB; pixels[idx+2] = v > 255 ? 255 : v;
+                    rootsPlotted++;
+                } else {
+                    rootsClipped++;
+                }
+            }
+        }
     } else {
         /* --- Rainbow coloring (with optional matching) --- */
         int colorMap[MAXDEG];
@@ -518,6 +550,8 @@ static int do_roots2image(int argc, char **argv) {
            rootsPlotted, rootsClipped, nPoints, degree, colorStr, matchStr);
     if (colorMode == COLOR_PROXIMITY)
         printf(",\"palette\":\"%s\"", palName);
+    else if (colorMode == COLOR_CONSTANT)
+        printf(",\"constant_color\":\"%s\"", constColorStr);
     printf("}\n");
 
     return 0;

@@ -120,13 +120,17 @@ def handle_compute_render_stripe(event):
     color_mode = params.get("color", "rainbow")
     match_mode = params.get("match", "none")
     palette = params.get("palette", "inferno")
+    constant_color = params.get("constant_color", "ffffff")
+    imgpipe_args = [
+        IMGPIPE, "--roots2image", bin_path, raw_path,
+        f"--width={width}", f"--height={height}",
+        f"--center_re={params['center_re']}", f"--center_im={params['center_im']}",
+        f"--scale={params['scale']}", f"--degree={degree}",
+        f"--color={color_mode}", f"--match={match_mode}",
+        f"--palette={palette}", f"--constant_color={constant_color}",
+    ]
     result = subprocess.run(
-        [IMGPIPE, "--roots2image", bin_path, raw_path,
-         f"--width={width}", f"--height={height}",
-         f"--center_re={params['center_re']}", f"--center_im={params['center_im']}",
-         f"--scale={params['scale']}", f"--degree={degree}",
-         f"--color={color_mode}", f"--match={match_mode}",
-         f"--palette={palette}"],
+        imgpipe_args,
         capture_output=True, text=True,
         timeout=300, env=_imgpipe_env()
     )
@@ -284,6 +288,7 @@ def handle_render_v2(event):
     color_mode = params.get("color", "rainbow")
     match_mode = params.get("match", "none")
     palette = params.get("palette", "inferno")
+    constant_color = params.get("constant_color", "ffffff")
     gamma = params.get("gamma", 2.2)
 
     # Auto-decide stripe count
@@ -365,7 +370,7 @@ def handle_render_v2(event):
              f"--center_re={center_re}", f"--center_im={center_im}",
              f"--scale={scale}", f"--degree={degree}",
              f"--color={color_mode}", f"--match={match_mode}",
-             f"--palette={palette}"],
+             f"--palette={palette}", f"--constant_color={constant_color}"],
             capture_output=True, text=True,
             timeout=300, env=_imgpipe_env()
         )
@@ -446,6 +451,7 @@ def handle_render_v2(event):
                 "color": color_mode,
                 "match": match_mode,
                 "palette": palette,
+                "constant_color": constant_color,
             }),
         }
         resp = lambda_client.invoke(

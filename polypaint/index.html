@@ -109,6 +109,22 @@ button {
                     <option value="rev_giga_43">rev_giga_43 (reversed)</option>
                     <option value="giga_87">giga_87 (degree 50)</option>
                     <option value="rev_giga_87">rev_giga_87 (reversed)</option>
+                    <option value="giga_30">giga_30 (degree 9)</option>
+                    <option value="rev_giga_30">rev_giga_30 (reversed)</option>
+                    <option value="giga_39">giga_39 (degree 49)</option>
+                    <option value="rev_giga_39">rev_giga_39 (reversed)</option>
+                    <option value="giga_40">giga_40 (degree 34)</option>
+                    <option value="rev_giga_40">rev_giga_40 (reversed)</option>
+                    <option value="p7f">p7f (degree 22)</option>
+                    <option value="rev_p7f">rev_p7f (reversed)</option>
+                    <option value="poly_110">poly_110 (degree 70)</option>
+                    <option value="rev_poly_110">rev_poly_110 (reversed)</option>
+                    <option value="giga_227">giga_227 (degree 24)</option>
+                    <option value="rev_giga_227">rev_giga_227 (reversed)</option>
+                    <option value="giga_230">giga_230 (degree 9)</option>
+                    <option value="rev_giga_230">rev_giga_230 (reversed)</option>
+                    <option value="giga_232">giga_232 (degree 8)</option>
+                    <option value="rev_giga_232">rev_giga_232 (reversed)</option>
                 </select>
             </div>
             <div class="anim-row" style="margin-top:8px">
@@ -140,23 +156,28 @@ button {
                 <div class="color-row">
                     <span class="color-dot active" data-mode="rainbow" onclick="setColorMode('rainbow')"></span>
                     <span style="color:#aaa; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('rainbow')">Rainbow</span>
-                    <span style="width:12px"></span>
-                    <span class="color-dot" data-mode="proximity" onclick="setColorMode('proximity')"></span>
-                    <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('proximity')">Proximity</span>
-                </div>
-                <div id="rainbow-options">
-                    <div class="color-row">
+                    <div id="rainbow-options" style="display:inline-flex; gap:6px; margin-left:12px">
                         <span class="color-row-label">Match:</span>
                         <span class="strat-chip active" data-match="none" onclick="setMatch('none')">None</span>
                         <span class="strat-chip" data-match="greedy" onclick="setMatch('greedy')">Greedy</span>
                         <span class="strat-chip" data-match="hungarian" onclick="setMatch('hungarian')">Hungarian</span>
                     </div>
                 </div>
-                <div id="proximity-options" style="display:none">
-                    <div class="color-row" style="flex-wrap:wrap">
+                <div class="color-row">
+                    <span class="color-dot" data-mode="proximity" onclick="setColorMode('proximity')"></span>
+                    <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('proximity')">Proximity</span>
+                    <div id="proximity-options" style="display:none; margin-left:12px">
                         <span class="color-row-label">Palette:</span>
-                        <div id="palette-circles" style="display:flex; gap:4px; flex-wrap:wrap"></div>
+                        <div id="palette-circles" style="display:inline-flex; gap:4px; flex-wrap:wrap"></div>
                     </div>
+                </div>
+                <div class="color-row">
+                    <span class="color-dot" data-mode="constant" onclick="setColorMode('constant')"></span>
+                    <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('constant')">Constant</span>
+                    <span id="constant-options" style="display:none; margin-left:12px">
+                        <input type="color" id="render-constant-color" value="#ffffff"
+                            style="width:28px; height:22px; border:1px solid #555; background:#222; cursor:pointer; vertical-align:middle">
+                    </span>
                 </div>
                 <div class="color-row" style="margin-top:4px">
                     <span class="color-row-label" style="min-width:80px">Gamma: <span id="render-gamma-val" style="display:inline-block;width:2em;text-align:right">2.2</span></span>
@@ -227,8 +248,9 @@ function setColorMode(mode) {
         d.classList.toggle('active', d.dataset.mode === mode);
         d.nextElementSibling.style.color = d.dataset.mode === mode ? '#aaa' : '#888';
     });
-    document.getElementById('rainbow-options').style.display = mode === 'rainbow' ? '' : 'none';
-    document.getElementById('proximity-options').style.display = mode === 'proximity' ? '' : 'none';
+    document.getElementById('rainbow-options').style.display = mode === 'rainbow' ? 'inline-flex' : 'none';
+    document.getElementById('proximity-options').style.display = mode === 'proximity' ? 'inline-flex' : 'none';
+    document.getElementById('constant-options').style.display = mode === 'constant' ? 'inline' : 'none';
 }
 
 function setMatch(mode) {
@@ -296,6 +318,7 @@ async function runRender() {
         color: renderColorMode,
         match: renderMatchMode,
         palette: renderPalette,
+        constant_color: document.getElementById('render-constant-color').value.replace('#', ''),
         gamma: gamma,
     };
 
@@ -303,7 +326,8 @@ async function runRender() {
     btn.disabled = true;
     document.getElementById('render-status').textContent = `Rendering ${funcName} N=${n}, ${pix}px ${fmt}...`;
     document.getElementById('render-status').className = 'status';
-    const colorDesc = renderColorMode === 'proximity' ? `proximity/${renderPalette}` : `rainbow/${renderMatchMode}`;
+    const colorDesc = renderColorMode === 'constant' ? `constant/#${requestBody.constant_color}` :
+        renderColorMode === 'proximity' ? `proximity/${renderPalette}` : `rainbow/${renderMatchMode}`;
     log(`Render: ${funcName} N=${n}, ${pix}px ${fmt}, ${colorDesc}, gamma=${gamma}, q=${(quantile*100).toFixed(1)}%, shim=${(shim*100).toFixed(1)}%, stripes=${nStripes||'auto'}...`);
 
     try {

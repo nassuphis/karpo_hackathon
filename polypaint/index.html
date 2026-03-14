@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PolyPaint Lambda</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+h1 { color: #e94560; margin-bottom: 20px; }
+.container { max-width: 900px; margin: 0 auto; }
+
+.panel {
+    background: #16213e; border-radius: 8px; padding: 16px;
+    margin-bottom: 16px; border: 1px solid #0f3460;
+}
+.panel h2 { color: #e94560; font-size: 14px; text-transform: uppercase; margin-bottom: 12px; }
+
+label { display: block; font-size: 13px; color: #888; margin-bottom: 4px; }
+input, select {
+    width: 100%; padding: 8px; border: 1px solid #0f3460; border-radius: 4px;
+    background: #1a1a2e; color: #e0e0e0; font-family: monospace; font-size: 14px;
+}
+select { cursor: pointer; }
+input[type="number"] { width: 100px; }
+
+button {
+    padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer;
+    font-size: 14px; font-weight: 600; margin-right: 8px; margin-top: 8px;
+}
+.btn-primary { background: #e94560; color: white; }
+.btn-primary:hover { background: #c73e54; }
+.btn-primary:disabled { background: #555; cursor: not-allowed; }
+.btn-secondary { background: #0f3460; color: #e0e0e0; }
+
+.status { font-size: 13px; color: #888; margin-top: 8px; }
+.status.error { color: #e94560; }
+.status.ok { color: #4ecca3; }
+
+#job-log { font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto; }
+.log-entry { padding: 2px 0; color: #666; }
+.log-entry.ok { color: #4ecca3; }
+.log-entry.err { color: #e94560; }
+
+.anim-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 13px; }
+.anim-row label { display: inline; margin: 0; min-width: 50px; }
+.anim-row input { width: 70px; }
+
+.color-dot {
+    width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+    border: 1.5px solid #555; cursor: pointer; transition: all 0.12s;
+}
+.color-dot.active { background: #e94560; border-color: #e94560; }
+
+.strat-chip {
+    padding: 2px 7px; border-radius: 8px; cursor: pointer; font-size: 9px;
+    text-transform: uppercase; letter-spacing: 0.06em; user-select: none;
+    background: rgba(255,255,255,0.08); color: #888; border: 1px solid rgba(255,255,255,0.15);
+    display: inline-block;
+}
+.strat-chip.active { background: #e94560; color: #000; border-color: #e94560; }
+
+.pal-circle {
+    width: 20px; height: 20px; border-radius: 50%; cursor: pointer; flex-shrink: 0;
+    border: 2px solid rgba(255,255,255,0.15); box-sizing: border-box;
+    transition: border-color 0.12s;
+}
+.pal-circle.active { border-color: #fff; }
+
+.color-box {
+    margin-top: 8px; padding: 8px; background: #1a1a2e; border-radius: 4px;
+    border: 1px solid #0f3460;
+}
+.color-title {
+    font-size: 11px; font-weight: 600; color: #e94560; text-transform: uppercase;
+    margin-bottom: 6px;
+}
+.color-row {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 4px; font-size: 10px;
+}
+.color-row-label { color: #666; min-width: 45px; text-transform: uppercase; letter-spacing: 0.06em; }
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>PolyPaint Lambda</h1>
+
+    <!-- Config -->
+    <div class="panel">
+        <h2>Configuration</h2>
+        <label>API Base URL</label>
+        <input type="text" id="api-url" value="https://smojhi4gqe.execute-api.us-east-1.amazonaws.com">
+    </div>
+
+    <div class="panel">
+            <h2>Server-Side Render</h2>
+            <div class="anim-row">
+                <label>Function:</label>
+                <select id="render-function">
+                    <option value="giga_1">giga_1 (degree 24)</option>
+                    <option value="rev_giga_1">rev_giga_1 (reversed)</option>
+                    <option value="giga_5">giga_5 (degree 25)</option>
+                    <option value="rev_giga_5">rev_giga_5 (reversed)</option>
+                    <option value="giga_19">giga_19 (degree 89)</option>
+                    <option value="rev_giga_19">rev_giga_19 (reversed)</option>
+                    <option value="giga_42">giga_42 (degree 49)</option>
+                    <option value="rev_giga_42">rev_giga_42 (reversed)</option>
+                    <option value="giga_43">giga_43 (degree 39)</option>
+                    <option value="rev_giga_43">rev_giga_43 (reversed)</option>
+                    <option value="giga_87">giga_87 (degree 50)</option>
+                    <option value="rev_giga_87">rev_giga_87 (reversed)</option>
+                </select>
+            </div>
+            <div class="anim-row" style="margin-top:8px">
+                <label>N (grid):</label>
+                <input type="number" id="render-n" value="500" min="10" max="5000" step="10">
+                <label>Pix (image):</label>
+                <input type="number" id="render-pix" value="4096" min="256" max="16384" step="256">
+                <label>Stripes:</label>
+                <input type="number" id="render-stripes" value="0" min="0" max="50" step="1" title="0 = auto">
+            </div>
+            <div class="anim-row" style="margin-top:8px">
+                <label>Format:</label>
+                <select id="render-format">
+                    <option value="jpeg">JPEG</option>
+                    <option value="png">PNG</option>
+                </select>
+                <label>Quality:</label>
+                <input type="number" id="render-quality" value="90" min="1" max="100" step="5">
+            </div>
+            <div class="anim-row" style="margin-top:8px">
+                <label style="display:inline-block;min-width:100px">Quantile: <span id="render-quantile-val" style="display:inline-block;width:2.5em;text-align:right">0.0</span>%</label>
+                <input type="range" id="render-quantile" min="0" max="3" step="0.1" value="0" style="width:200px" oninput="document.getElementById('render-quantile-val').textContent=parseFloat(this.value).toFixed(1)">
+                <label style="display:inline-block;min-width:80px;margin-left:12px">Shim: <span id="render-shim-val" style="display:inline-block;width:2.5em;text-align:right">5.0</span>%</label>
+                <input type="range" id="render-shim" min="0" max="10" step="0.1" value="5.0" style="width:200px" oninput="document.getElementById('render-shim-val').textContent=parseFloat(this.value).toFixed(1)">
+            </div>
+            <!-- Color controls -->
+            <div class="color-box">
+                <div class="color-title">Color</div>
+                <div class="color-row">
+                    <span class="color-dot active" data-mode="rainbow" onclick="setColorMode('rainbow')"></span>
+                    <span style="color:#aaa; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('rainbow')">Rainbow</span>
+                    <span style="width:12px"></span>
+                    <span class="color-dot" data-mode="proximity" onclick="setColorMode('proximity')"></span>
+                    <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('proximity')">Proximity</span>
+                </div>
+                <div id="rainbow-options">
+                    <div class="color-row">
+                        <span class="color-row-label">Match:</span>
+                        <span class="strat-chip active" data-match="none" onclick="setMatch('none')">None</span>
+                        <span class="strat-chip" data-match="greedy" onclick="setMatch('greedy')">Greedy</span>
+                        <span class="strat-chip" data-match="hungarian" onclick="setMatch('hungarian')">Hungarian</span>
+                    </div>
+                </div>
+                <div id="proximity-options" style="display:none">
+                    <div class="color-row" style="flex-wrap:wrap">
+                        <span class="color-row-label">Palette:</span>
+                        <div id="palette-circles" style="display:flex; gap:4px; flex-wrap:wrap"></div>
+                    </div>
+                </div>
+                <div class="color-row" style="margin-top:4px">
+                    <span class="color-row-label" style="min-width:80px">Gamma: <span id="render-gamma-val" style="display:inline-block;width:2em;text-align:right">2.2</span></span>
+                    <input type="range" id="render-gamma" min="0" max="3" step="0.1" value="2.2" style="width:150px"
+                        oninput="document.getElementById('render-gamma-val').textContent=parseFloat(this.value).toFixed(1)">
+                    <span style="color:#555; font-size:9px">(0=raw add)</span>
+                </div>
+            </div>
+
+            <div style="margin-top:8px">
+                <button class="btn-primary" id="btn-render" onclick="runRender()">Render Image</button>
+                <button class="btn-secondary" onclick="loadRenderPreset('fast')">Fast N=100 1K</button>
+                <button class="btn-secondary" onclick="loadRenderPreset('medium')">Medium N=500 4K</button>
+                <button class="btn-secondary" onclick="loadRenderPreset('hires')">Hi-res N=1K 4K</button>
+            </div>
+            <div class="status" id="render-status"></div>
+        </div>
+
+        <div class="panel">
+            <h2>Result</h2>
+            <div id="render-preview" style="max-width:600px">
+                <p style="color:#888; font-size:14px">Run a render to see the result here.</p>
+            </div>
+            <div id="render-info" style="font-size:12px; color:#888; margin-top:8px"></div>
+        </div>
+
+    <!-- Log -->
+    <div class="panel">
+        <h2>Job Log</h2>
+        <div id="job-log"></div>
+    </div>
+</div>
+
+<script>
+/* ---- Logging ---- */
+function log(msg, cls='') {
+    const el = document.getElementById('job-log');
+    const d = document.createElement('div');
+    d.className = 'log-entry ' + cls;
+    d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    el.prepend(d);
+}
+
+/* ---- API helpers ---- */
+function apiUrl(path) {
+    return document.getElementById('api-url').value.trim().replace(/\/$/, '') + path;
+}
+
+/* ---- Color controls ---- */
+let renderColorMode = 'rainbow';
+let renderMatchMode = 'none';
+let renderPalette = 'inferno';
+
+const PALETTE_DEFS = [
+    { name: 'inferno',  stops: ['#000004','#420a68','#932667','#dd513a','#fca50a','#fcffa4'] },
+    { name: 'viridis',  stops: ['#440154','#3b528b','#21918c','#5ec962','#fde725','#fde725'] },
+    { name: 'magma',    stops: ['#000004','#51127c','#b73779','#fc8961','#fcfdbf','#fcfdbf'] },
+    { name: 'plasma',   stops: ['#0d0887','#7e03a8','#cc4778','#f89540','#f0f921','#f0f921'] },
+    { name: 'turbo',    stops: ['#30123b','#28bbec','#a2fc3c','#fb8022','#7a0403','#7a0403'] },
+    { name: 'cividis',  stops: ['#00204c','#31446b','#666870','#958f78','#cebe5a','#fde724'] },
+    { name: 'warm',     stops: ['#6e40aa','#e04f7e','#f19938','#c3e032','#aff05b','#aff05b'] },
+    { name: 'cool',     stops: ['#6e40aa','#4775de','#1bb5a8','#52f667','#aff05b','#aff05b'] },
+];
+
+function setColorMode(mode) {
+    renderColorMode = mode;
+    document.querySelectorAll('.color-dot').forEach(d => {
+        d.classList.toggle('active', d.dataset.mode === mode);
+        d.nextElementSibling.style.color = d.dataset.mode === mode ? '#aaa' : '#888';
+    });
+    document.getElementById('rainbow-options').style.display = mode === 'rainbow' ? '' : 'none';
+    document.getElementById('proximity-options').style.display = mode === 'proximity' ? '' : 'none';
+}
+
+function setMatch(mode) {
+    renderMatchMode = mode;
+    document.querySelectorAll('.strat-chip').forEach(c => c.classList.toggle('active', c.dataset.match === mode));
+}
+
+function setPalette(name) {
+    renderPalette = name;
+    document.querySelectorAll('.pal-circle').forEach(c => c.classList.toggle('active', c.dataset.palette === name));
+}
+
+// Build palette circles on load
+(function buildPaletteCircles() {
+    const container = document.getElementById('palette-circles');
+    PALETTE_DEFS.forEach(p => {
+        const el = document.createElement('div');
+        el.className = 'pal-circle' + (p.name === renderPalette ? ' active' : '');
+        el.dataset.palette = p.name;
+        el.title = p.name;
+        el.style.background = `linear-gradient(to top, ${p.stops.map((s, i) => s + ' ' + Math.round(i/(p.stops.length-1)*100) + '%').join(', ')})`;
+        el.onclick = () => setPalette(p.name);
+        container.appendChild(el);
+    });
+})();
+
+/* ---- Render ---- */
+function loadRenderPreset(name) {
+    if (name === 'fast') {
+        document.getElementById('render-n').value = '100';
+        document.getElementById('render-pix').value = '1024';
+    } else if (name === 'medium') {
+        document.getElementById('render-n').value = '500';
+        document.getElementById('render-pix').value = '4096';
+    } else if (name === 'hires') {
+        document.getElementById('render-n').value = '1000';
+        document.getElementById('render-pix').value = '4096';
+    }
+}
+
+async function runRender() {
+    const funcName = document.getElementById('render-function').value;
+    const n = parseInt(document.getElementById('render-n').value);
+    const pix = parseInt(document.getElementById('render-pix').value);
+    const fmt = document.getElementById('render-format').value;
+    const quality = parseInt(document.getElementById('render-quality').value);
+    const nStripes = parseInt(document.getElementById('render-stripes').value) || 0;
+    const quantile = parseFloat(document.getElementById('render-quantile').value) / 100;
+    const shim = parseFloat(document.getElementById('render-shim').value) / 100;
+    const jobId = 'render_' + Date.now().toString(36);
+
+    const gamma = parseFloat(document.getElementById('render-gamma').value);
+
+    const requestBody = {
+        job_id: jobId,
+        function: funcName,
+        n1: n, n2: n,
+        width: pix, height: pix,
+        format: fmt,
+        quality: quality,
+        auto_scale: true,
+        n_stripes: nStripes,
+        quantile: quantile,
+        shim: shim,
+        color: renderColorMode,
+        match: renderMatchMode,
+        palette: renderPalette,
+        gamma: gamma,
+    };
+
+    const btn = document.getElementById('btn-render');
+    btn.disabled = true;
+    document.getElementById('render-status').textContent = `Rendering ${funcName} N=${n}, ${pix}px ${fmt}...`;
+    document.getElementById('render-status').className = 'status';
+    const colorDesc = renderColorMode === 'proximity' ? `proximity/${renderPalette}` : `rainbow/${renderMatchMode}`;
+    log(`Render: ${funcName} N=${n}, ${pix}px ${fmt}, ${colorDesc}, gamma=${gamma}, q=${(quantile*100).toFixed(1)}%, shim=${(shim*100).toFixed(1)}%, stripes=${nStripes||'auto'}...`);
+
+    try {
+        const t0 = performance.now();
+        const resp = await fetch(apiUrl('/render'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody),
+        });
+        const networkTime = (performance.now() - t0).toFixed(0);
+
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+
+        const result = await resp.json();
+        const data = typeof result.body === 'string' ? JSON.parse(result.body) : result;
+        const t = data.timing || {};
+
+        const fileSizeMB = (data.file_size / 1e6).toFixed(2);
+        const fmtUs = (us) => us != null ? (us/1e6).toFixed(1) + 's' : '?';
+        let statusParts = [data.roots_plotted.toLocaleString() + ' roots'];
+        if (data.n_stripes > 1) statusParts.push(data.n_stripes + ' stripes');
+        statusParts.push('wall ' + fmtUs(t.compute_wall_us));
+        statusParts.push('compute ' + fmtUs(t.total_compute_us));
+        if (t.reduce_us) statusParts.push('reduce ' + fmtUs(t.reduce_us) + (t.reduce_rounds ? ' (' + t.reduce_rounds + ' rounds)' : ''));
+        if (t.encode_us) statusParts.push('encode ' + fmtUs(t.encode_us));
+        statusParts.push(fileSizeMB + 'MB ' + data.format);
+        statusParts.push('network ' + networkTime + 'ms');
+        document.getElementById('render-status').textContent = statusParts.join(' | ');
+        document.getElementById('render-status').className = 'status ok';
+
+        // Show image preview
+        const preview = document.getElementById('render-preview');
+        preview.innerHTML = `<a href="${data.image_url}" target="_blank" title="Click to open full-size image">` +
+            `<img src="${data.image_url}" style="max-width:100%; border:1px solid #333; cursor:pointer"></a>` +
+            `<div style="margin-top:8px"><a href="${data.image_url}" target="_blank" class="btn-secondary" ` +
+            `style="text-decoration:none; padding:4px 12px">Download ${data.format.toUpperCase()}</a></div>`;
+
+        document.getElementById('render-info').textContent =
+            `Job: ${data.job_id} | ${data.function} N=${data.n1} | ` +
+            `${data.width}x${data.height} | Degree: ${data.degree} | ` +
+            `Avg iters: ${data.avg_iterations.toFixed(1)}`;
+
+        // Itemized timing log (bottom-up so they display top-down in prepend log)
+        const vp = data.viewport;
+        const lines = [];
+        lines.push(`  network:  ${(networkTime/1000).toFixed(1)}s  (fetch round-trip incl. all Lambda execution)`);
+        if (t.cleanup_us) lines.push(`  cleanup:  ${fmtUs(t.cleanup_us)}`);
+        lines.push(`  encode:   ${fmtUs(t.encode_us)}  → ${fileSizeMB}MB ${data.format}`);
+        if (t.reduce_us) lines.push(`  reduce:   ${fmtUs(t.reduce_us)}  (${t.reduce_rounds || '?'} rounds, tree-parallel)`);
+        if (t.total_render_us) lines.push(`  render:   ${fmtUs(t.total_render_us)}  (sum across stripes)`);
+        lines.push(`  compute:  ${fmtUs(t.total_compute_us)}  (sum) / ${fmtUs(t.compute_wall_us)} wall  (${data.n_stripes} stripes parallel)`);
+        if (t.viewport_us) {
+            let vpDetail = fmtUs(t.viewport_us);
+            if (vp && !vp.manual) {
+                vpDetail += `  center=(${vp.center_re.toFixed(4)}, ${vp.center_im.toFixed(4)}) scale=${vp.scale.toFixed(1)}`;
+            }
+            lines.push(`  viewport: ${vpDetail}`);
+        }
+        lines.push(`Render ${data.job_id}: ${data.function} deg${data.degree} N=${data.n1} ${data.width}px, ` +
+            `${data.roots_plotted.toLocaleString()} roots`);
+        // Log bottom-up (prepend means last push appears first)
+        for (const line of lines) log(line, 'ok');
+
+    } catch (e) {
+        document.getElementById('render-status').textContent = 'Error: ' + e.message;
+        document.getElementById('render-status').className = 'status error';
+        log(`Render failed: ${e.message}`, 'err');
+    } finally {
+        btn.disabled = false;
+    }
+}
+</script>
+</body>
+</html>

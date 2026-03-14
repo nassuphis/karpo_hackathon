@@ -234,3 +234,14 @@ polypaint_book_*.pdf
 
 # Local test files
 tests/test_orb_paths.py
+
+# Polypaint Lambda build artifacts
+polypaint/lambda/layer-build/
+polypaint/lambda/deploy.zip
+polypaint/lambda/imgpipe
+polypaint/lambda/lores_viewport
+polypaint/lambda/lores_viewport_*
+polypaint/lambda/sweep
+polypaint/lambda/sweep_cli
+polypaint/lambda/sweep_cli_new
+polypaint/lambda/solver

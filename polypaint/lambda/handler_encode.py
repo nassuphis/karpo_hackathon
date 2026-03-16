@@ -33,59 +33,36 @@ def handler(event, context):
         ext = "jpeg" if fmt != "png" else "png"
         out_path = f"/tmp/encode_out.{ext}"
 
-        tile_grid = params.get("tile_grid")
-        if tile_grid:
-            # 2D tile grid stitching — load one row of tiles at a time
-            n_cols = tile_grid["n_cols"]
-            n_rows = tile_grid["n_rows"]
-            total_w = params["width"]
-            total_h = params["height"]
+        # 2D tile grid stitching — load one row of tiles at a time
+        tile_grid = params["tile_grid"]
+        n_cols = tile_grid["n_cols"]
+        n_rows = tile_grid["n_rows"]
+        total_w = params["width"]
+        total_h = params["height"]
 
-            if job_id:
-                report_status(job_id, task_id, "stitching")
+        if job_id:
+            report_status(job_id, task_id, "stitching")
 
-            with open(in_path, "wb") as f:
-                f.write(struct.pack("<III", total_w, total_h, 3))
-                for tr in range(n_rows):
-                    # Load one row of tiles
-                    row_tiles = []
-                    for tc in range(n_cols):
-                        tile_id = tr * n_cols + tc
-                        key = tile_grid["tile_keys"][tile_id]
-                        data = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
-                        tw, th, tb = struct.unpack("<III", data[:12])
-                        row_tiles.append((tw, th, data[12:]))
+        with open(in_path, "wb") as f:
+            f.write(struct.pack("<III", total_w, total_h, 3))
+            for tr in range(n_rows):
+                # Load one row of tiles
+                row_tiles = []
+                for tc in range(n_cols):
+                    tile_id = tr * n_cols + tc
+                    key = tile_grid["tile_keys"][tile_id]
+                    data = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
+                    tw, th, tb = struct.unpack("<III", data[:12])
+                    row_tiles.append((tw, th, data[12:]))
 
-                    # Write interleaved pixel rows for this tile row
-                    th = row_tiles[0][1]
-                    for py in range(th):
-                        for (tw, _, pixels_data) in row_tiles:
-                            start = py * tw * 3
-                            end = start + tw * 3
-                            f.write(pixels_data[start:end])
-                    del row_tiles
-
-        elif (tile_keys := params.get("tile_keys")):
-            # Concatenate tile .raw files into one full .raw
-            total_height = 0
-            with open(in_path, "wb") as f:
-                f.write(b'\x00' * 12)  # placeholder header
-                for tk in tile_keys:
-                    data = s3.get_object(Bucket=BUCKET, Key=tk)["Body"].read()
-                    w, h, b = struct.unpack("<III", data[:12])
-                    if total_height == 0:
-                        width, bands = w, b
-                    f.write(data[12:])  # pixel data only
-                    total_height += h
-                # Write correct header
-                f.seek(0)
-                f.write(struct.pack("<III", width, total_height, bands))
-        else:
-            # Single raw file
-            raw_key = params["raw_key"]
-            obj = s3.get_object(Bucket=BUCKET, Key=raw_key)
-            with open(in_path, "wb") as f:
-                f.write(obj["Body"].read())
+                # Write interleaved pixel rows for this tile row
+                th = row_tiles[0][1]
+                for py in range(th):
+                    for (tw, _, pixels_data) in row_tiles:
+                        start = py * tw * 3
+                        end = start + tw * 3
+                        f.write(pixels_data[start:end])
+                del row_tiles
 
         if job_id:
             report_status(job_id, task_id, "encoding")

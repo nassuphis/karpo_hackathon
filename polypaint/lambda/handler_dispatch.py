@@ -16,9 +16,6 @@ import boto3
 from shared import parse_body, ok_response
 
 FUNCTIONS = {
-    "render": os.environ.get("RENDER_FUNCTION", "polypaint-render"),
-    "tile_reduce": os.environ.get("TILE_REDUCE_FUNCTION", "polypaint-tile-reduce"),
-    "reduce": os.environ.get("REDUCE_FUNCTION", "polypaint-reduce"),
     "raster": os.environ.get("RASTER_FUNCTION", "polypaint-raster"),
     "finalize": os.environ.get("FINALIZE_FUNCTION", "polypaint-finalize"),
     "encode": os.environ.get("ENCODE_FUNCTION", "polypaint-encode"),
@@ -40,7 +37,9 @@ def _invoke_one(function_name, job):
 
 def handler(event, context):
     params = parse_body(event)
-    target = params.get("target", "render")
+    target = params.get("target")
+    if not target:
+        return ok_response({"error": "Missing 'target' parameter", "fired": 0, "total": 0})
     function_name = FUNCTIONS.get(target)
     if not function_name:
         return ok_response({"error": f"Unknown target: {target}", "fired": 0, "total": 0})
@@ -60,23 +59,9 @@ def handler(event, context):
             except Exception as e:
                 errors.append(str(e))
 
-    # Expected S3 keys: caller can provide them, otherwise build from render job fields
-    expected_keys = params.get("expected_keys")
-    if expected_keys is None:
-        expected_keys = []
-        for job in jobs:
-            job_id = job["job_id"]
-            stripe_idx = job["stripe_idx"]
-            tile_idx = job.get("tile_idx")
-            if tile_idx is not None:
-                expected_keys.append(f"renders/{job_id}/stripe_{stripe_idx}_t{tile_idx}.raw")
-            else:
-                expected_keys.append(f"renders/{job_id}/stripe_{stripe_idx}.raw")
-
     result = {
         "fired": fired,
         "total": len(jobs),
-        "expected_keys": expected_keys,
     }
     if errors:
         result["errors"] = errors[:10]

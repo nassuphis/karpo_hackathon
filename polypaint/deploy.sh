@@ -2,11 +2,8 @@
 # Deploy the polypaint Lambda functions
 # Usage: ./deploy.sh [create|update]
 #
-# 10 Lambdas (fully unbundled):
+# 7 Lambdas:
 #   polypaint-sweep        — multi-process root solver (sweep binary)
-#   polypaint-render       — bin→raw pixel rendering (roots2raw binary, NO libvips) [legacy]
-#   polypaint-reduce       — merge two raw images (rawreduce binary, NO libvips) [legacy]
-#   polypaint-tile-reduce  — merge a tile (row-slice) of two raw images (rawreduce, NO libvips) [legacy]
 #   polypaint-raster       — bin→tile-bucketed .pix sparse pixel output (roots2pix binary)
 #   polypaint-finalize     — assemble .pix files into .raw tile (pixassemble binary)
 #   polypaint-encode       — raw→JPEG/PNG encoding (raw2jpeg binary, needs libvips)
@@ -18,9 +15,6 @@ set -euo pipefail
 export AWS_PAGER=""
 
 SWEEP_NAME="polypaint-sweep"
-RENDER_NAME="polypaint-render"
-REDUCE_NAME="polypaint-reduce"
-TILE_REDUCE_NAME="polypaint-tile-reduce"
 ENCODE_NAME="polypaint-encode"
 VIEWPORT_NAME="polypaint-viewport"
 STORAGE_NAME="polypaint-storage"
@@ -33,9 +27,6 @@ API_NAME="polypaint-api"
 RUNTIME="python3.12"
 ARCH="arm64"
 SWEEP_MEMORY=10240    # 6 vCPUs for multi-process sweep
-RENDER_MEMORY=1769    # 1 vCPU, NO libvips
-REDUCE_MEMORY=1769    # 1 vCPU, NO libvips
-TILE_REDUCE_MEMORY=3584  # 2 vCPU, needs ~3× tile size in memory (left+right+out)
 ENCODE_MEMORY=1769    # 1 vCPU + libvips for JPEG/PNG encoding
 VIEWPORT_MEMORY=512   # pure Python
 STORAGE_MEMORY=512    # pure Python
@@ -56,12 +47,6 @@ echo "Compiling binaries..."
 
 echo "  sweep (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/sweep lambda/sweep_cli.c -lm
-
-echo "  roots2raw (static, ARM64)..."
-aarch64-linux-musl-gcc -O3 -static -o lambda/roots2raw lambda/roots2raw.c -lm
-
-echo "  rawreduce (static, ARM64)..."
-aarch64-linux-musl-gcc -O3 -static -o lambda/rawreduce lambda/rawreduce.c -lm
 
 echo "  roots2pix (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/roots2pix lambda/roots2pix.c -lm
@@ -101,36 +86,6 @@ cp lambda/sweep "$SWEEP_DIR/"
 chmod +x "$SWEEP_DIR"/sweep
 cd "$SWEEP_DIR" && zip -r9 /tmp/polypaint-sweep.zip . -q && cd "$SCRIPT_DIR"
 echo "  Sweep:    $(du -h /tmp/polypaint-sweep.zip | cut -f1)  (sweep)"
-
-# Render: handler_render.py + shared.py + roots2raw
-RENDER_DIR=/tmp/polypaint-render
-rm -rf "$RENDER_DIR"
-mkdir -p "$RENDER_DIR"
-cp lambda/handler_render.py lambda/shared.py "$RENDER_DIR/"
-cp lambda/roots2raw "$RENDER_DIR/"
-chmod +x "$RENDER_DIR"/roots2raw
-cd "$RENDER_DIR" && zip -r9 /tmp/polypaint-render.zip . -q && cd "$SCRIPT_DIR"
-echo "  Render:   $(du -h /tmp/polypaint-render.zip | cut -f1)  (roots2raw, NO libvips)"
-
-# Reduce: handler_reduce.py + shared.py + rawreduce
-REDUCE_DIR=/tmp/polypaint-reduce
-rm -rf "$REDUCE_DIR"
-mkdir -p "$REDUCE_DIR"
-cp lambda/handler_reduce.py lambda/shared.py "$REDUCE_DIR/"
-cp lambda/rawreduce "$REDUCE_DIR/"
-chmod +x "$REDUCE_DIR"/rawreduce
-cd "$REDUCE_DIR" && zip -r9 /tmp/polypaint-reduce.zip . -q && cd "$SCRIPT_DIR"
-echo "  Reduce:   $(du -h /tmp/polypaint-reduce.zip | cut -f1)  (rawreduce, NO libvips)"
-
-# Tile-Reduce: handler_tile_reduce.py + shared.py + rawreduce
-TILE_REDUCE_DIR=/tmp/polypaint-tile-reduce
-rm -rf "$TILE_REDUCE_DIR"
-mkdir -p "$TILE_REDUCE_DIR"
-cp lambda/handler_tile_reduce.py lambda/shared.py "$TILE_REDUCE_DIR/"
-cp lambda/rawreduce "$TILE_REDUCE_DIR/"
-chmod +x "$TILE_REDUCE_DIR"/rawreduce
-cd "$TILE_REDUCE_DIR" && zip -r9 /tmp/polypaint-tile-reduce.zip . -q && cd "$SCRIPT_DIR"
-echo "  TileRed:  $(du -h /tmp/polypaint-tile-reduce.zip | cut -f1)  (rawreduce, NO libvips)"
 
 # Encode: handler_encode.py + shared.py + raw2jpeg
 ENCODE_DIR=/tmp/polypaint-encode
@@ -294,7 +249,7 @@ setup_api_gateway() {
     }
 
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_NAME" "$RENDER_NAME" "$REDUCE_NAME" "$TILE_REDUCE_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME"; do
+    for FNAME in "$SWEEP_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -305,11 +260,8 @@ setup_api_gateway() {
 
     # Create integrations
     echo "  Creating integrations..."
-    local SWEEP_INT RENDER_INT REDUCE_INT TILE_REDUCE_INT ENCODE_INT VIEWPORT_INT STORAGE_INT DISPATCH_INT
+    local SWEEP_INT ENCODE_INT VIEWPORT_INT STORAGE_INT DISPATCH_INT
     SWEEP_INT=$(create_integration "$SWEEP_NAME")
-    RENDER_INT=$(create_integration "$RENDER_NAME")
-    REDUCE_INT=$(create_integration "$REDUCE_NAME")
-    TILE_REDUCE_INT=$(create_integration "$TILE_REDUCE_NAME")
     ENCODE_INT=$(create_integration "$ENCODE_NAME")
     VIEWPORT_INT=$(create_integration "$VIEWPORT_NAME")
     STORAGE_INT=$(create_integration "$STORAGE_NAME")
@@ -318,9 +270,6 @@ setup_api_gateway() {
     # Create routes
     echo "  Setting up routes..."
     ensure_route "POST /sweep" "$SWEEP_INT"
-    ensure_route "POST /render-stripe" "$RENDER_INT"
-    ensure_route "POST /reduce-pair" "$REDUCE_INT"
-    ensure_route "POST /tile-reduce" "$TILE_REDUCE_INT"
     ensure_route "POST /encode-upload" "$ENCODE_INT"
     ensure_route "POST /viewport" "$VIEWPORT_INT"
     ensure_route "POST /list" "$STORAGE_INT"
@@ -341,14 +290,11 @@ setup_api_gateway() {
 
     printf '{
   "sweep": "%s/sweep",
-  "render": "%s/render-stripe",
-  "reduce": "%s/reduce-pair",
-  "tile_reduce": "%s/tile-reduce",
   "encode": "%s/encode-upload",
   "viewport": "%s/viewport",
   "storage": "%s",
   "dispatch": "%s/dispatch-render"
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" --region "$REGION"
     echo "  config.json uploaded"
@@ -446,15 +392,6 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$SWEEP_NAME" "handler_sweep.handler" "/tmp/polypaint-sweep.zip" \
         "$SWEEP_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
 
-    create_lambda "$RENDER_NAME" "handler_render.handler" "/tmp/polypaint-render.zip" \
-        "$RENDER_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
-
-    create_lambda "$REDUCE_NAME" "handler_reduce.handler" "/tmp/polypaint-reduce.zip" \
-        "$REDUCE_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
-
-    create_lambda "$TILE_REDUCE_NAME" "handler_tile_reduce.handler" "/tmp/polypaint-tile-reduce.zip" \
-        "$TILE_REDUCE_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
-
     create_lambda "$ENCODE_NAME" "handler_encode.handler" "/tmp/polypaint-encode.zip" \
         "$ENCODE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
@@ -468,7 +405,7 @@ if [ "$ACTION" = "create" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     create_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RENDER_FUNCTION=$RENDER_NAME,TILE_REDUCE_FUNCTION=$TILE_REDUCE_NAME,REDUCE_FUNCTION=$REDUCE_NAME,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME"
+        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -480,7 +417,7 @@ if [ "$ACTION" = "create" ]; then
         "$FINALIZE_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
     # Disable async retries on fire-and-forget Lambdas (prevents retry storms)
-    for fn in "$RENDER_NAME" "$REDUCE_NAME" "$TILE_REDUCE_NAME" "$RASTER_NAME" "$FINALIZE_NAME"; do
+    for fn in "$RASTER_NAME" "$FINALIZE_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \
@@ -496,28 +433,16 @@ if [ "$ACTION" = "create" ]; then
     echo ""
     echo "=== DEPLOYED ==="
     echo "  Sweep:    $SWEEP_NAME ($SWEEP_MEMORY MB)"
-    echo "  Render:   $RENDER_NAME ($RENDER_MEMORY MB)"
-    echo "  Reduce:   $REDUCE_NAME ($REDUCE_MEMORY MB)"
-    echo "  TileRed:  $TILE_REDUCE_NAME ($TILE_REDUCE_MEMORY MB)"
+    echo "  Raster:   $RASTER_NAME ($RASTER_MEMORY MB)"
+    echo "  Finalize: $FINALIZE_NAME ($FINALIZE_MEMORY MB)"
     echo "  Encode:   $ENCODE_NAME ($ENCODE_MEMORY MB)"
     echo "  Viewport: $VIEWPORT_NAME ($VIEWPORT_MEMORY MB)"
     echo "  Storage:  $STORAGE_NAME ($STORAGE_MEMORY MB)"
     echo "  Dispatch: $DISPATCH_NAME ($DISPATCH_MEMORY MB)"
-    echo "  Raster:   $RASTER_NAME ($RASTER_MEMORY MB)"
-    echo "  Finalize: $FINALIZE_NAME ($FINALIZE_MEMORY MB)"
 
 elif [ "$ACTION" = "update" ]; then
     update_lambda "$SWEEP_NAME" "handler_sweep.handler" "/tmp/polypaint-sweep.zip" \
         "$SWEEP_MEMORY" "" "BUCKET=$BUCKET"
-
-    update_lambda "$RENDER_NAME" "handler_render.handler" "/tmp/polypaint-render.zip" \
-        "$RENDER_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
-
-    update_lambda "$REDUCE_NAME" "handler_reduce.handler" "/tmp/polypaint-reduce.zip" \
-        "$REDUCE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
-
-    update_lambda "$TILE_REDUCE_NAME" "handler_tile_reduce.handler" "/tmp/polypaint-tile-reduce.zip" \
-        "$TILE_REDUCE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
     update_lambda "$ENCODE_NAME" "handler_encode.handler" "/tmp/polypaint-encode.zip" \
         "$ENCODE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -532,7 +457,7 @@ elif [ "$ACTION" = "update" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     update_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RENDER_FUNCTION=$RENDER_NAME,TILE_REDUCE_FUNCTION=$TILE_REDUCE_NAME,REDUCE_FUNCTION=$REDUCE_NAME,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME"
+        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -544,7 +469,7 @@ elif [ "$ACTION" = "update" ]; then
         "$FINALIZE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
     # Disable async retries on fire-and-forget Lambdas (prevents retry storms)
-    for fn in "$RENDER_NAME" "$REDUCE_NAME" "$TILE_REDUCE_NAME" "$RASTER_NAME" "$FINALIZE_NAME"; do
+    for fn in "$RASTER_NAME" "$FINALIZE_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \
@@ -604,15 +529,12 @@ elif [ "$ACTION" = "update" ]; then
     echo ""
     echo "=== UPDATED ==="
     echo "  Sweep:    $SWEEP_NAME ($SWEEP_MEMORY MB)"
-    echo "  Render:   $RENDER_NAME ($RENDER_MEMORY MB)"
-    echo "  Reduce:   $REDUCE_NAME ($REDUCE_MEMORY MB)"
-    echo "  TileRed:  $TILE_REDUCE_NAME ($TILE_REDUCE_MEMORY MB)"
+    echo "  Raster:   $RASTER_NAME ($RASTER_MEMORY MB)"
+    echo "  Finalize: $FINALIZE_NAME ($FINALIZE_MEMORY MB)"
     echo "  Encode:   $ENCODE_NAME ($ENCODE_MEMORY MB)"
     echo "  Viewport: $VIEWPORT_NAME ($VIEWPORT_MEMORY MB)"
     echo "  Storage:  $STORAGE_NAME ($STORAGE_MEMORY MB)"
     echo "  Dispatch: $DISPATCH_NAME ($DISPATCH_MEMORY MB)"
-    echo "  Raster:   $RASTER_NAME ($RASTER_MEMORY MB)"
-    echo "  Finalize: $FINALIZE_NAME ($FINALIZE_MEMORY MB)"
     echo "  Site:     http://$BUCKET.s3-website-$REGION.amazonaws.com"
 else
     echo "Usage: $0 [create|update]"

@@ -46,6 +46,22 @@ button {
 .anim-row label { display: inline; margin: 0; min-width: 50px; }
 .anim-row input { width: 70px; }
 
+.chip-container {
+    display: flex; flex-wrap: wrap; gap: 4px;
+    min-height: 26px; padding: 3px 4px;
+    background: #1a1a2e; border: 1px solid #0f3460; border-radius: 4px;
+    flex: 1; min-width: 80px;
+}
+.chip {
+    display: inline-flex; align-items: center;
+    padding: 1px 8px; background: #0f3460; border-radius: 12px;
+    font-size: 11px; color: #e0e0e0; white-space: nowrap;
+}
+.chip .chip-x {
+    margin-left: 5px; cursor: pointer; color: #e94560; font-weight: bold;
+    font-size: 12px;
+}
+
 .color-dot {
     width: 10px; height: 10px; border-radius: 50%; display: inline-block;
     border: 1.5px solid #555; cursor: pointer; transition: all 0.12s;
@@ -119,37 +135,57 @@ button {
     <div class="panel" style="border-radius:0 8px 8px 8px">
         <!-- Compute tab -->
         <div id="tab-compute" class="tab-content active">
+            <div class="anim-row" style="flex-wrap:wrap">
+                <label style="min-width:90px">Param transforms:</label>
+                <div id="pt-chips" class="chip-container"></div>
+                <select id="pt-add" onchange="addChip('pt',this.value);this.value='';" style="width:100px; font-size:12px">
+                    <option value="">+ add...</option>
+                    <option value="unit_circle">unit_circle</option>
+                    <option value="square">square</option>
+                    <option value="cube">cube</option>
+                    <option value="reciprocal">reciprocal</option>
+                    <option value="conjugate">conjugate</option>
+                    <option value="swap">swap</option>
+                    <option value="add_sub">add_sub</option>
+                    <option value="mul_div">mul_div</option>
+                    <option value="moebius">moebius</option>
+                    <option value="shift1">shift1</option>
+                    <option value="scale10">scale10</option>
+                    <option value="negate">negate</option>
+                    <option value="exp">exp</option>
+                </select>
+            </div>
             <div class="anim-row">
-                <label>Function:</label>
+                <label style="min-width:90px">Function:</label>
                 <select id="render-function">
                     <option value="giga_1">giga_1 (degree 24)</option>
-                    <option value="rev_giga_1">rev_giga_1 (reversed)</option>
                     <option value="giga_5">giga_5 (degree 25)</option>
-                    <option value="rev_giga_5">rev_giga_5 (reversed)</option>
                     <option value="giga_19">giga_19 (degree 89)</option>
-                    <option value="rev_giga_19">rev_giga_19 (reversed)</option>
-                    <option value="giga_42">giga_42 (degree 49)</option>
-                    <option value="rev_giga_42">rev_giga_42 (reversed)</option>
-                    <option value="giga_43">giga_43 (degree 39)</option>
-                    <option value="rev_giga_43">rev_giga_43 (reversed)</option>
-                    <option value="giga_87">giga_87 (degree 50)</option>
-                    <option value="rev_giga_87">rev_giga_87 (reversed)</option>
                     <option value="giga_30">giga_30 (degree 9)</option>
-                    <option value="rev_giga_30">rev_giga_30 (reversed)</option>
                     <option value="giga_39">giga_39 (degree 49)</option>
-                    <option value="rev_giga_39">rev_giga_39 (reversed)</option>
                     <option value="giga_40">giga_40 (degree 34)</option>
-                    <option value="rev_giga_40">rev_giga_40 (reversed)</option>
-                    <option value="p7f">p7f (degree 22)</option>
-                    <option value="rev_p7f">rev_p7f (reversed)</option>
-                    <option value="poly_110">poly_110 (degree 70)</option>
-                    <option value="rev_poly_110">rev_poly_110 (reversed)</option>
+                    <option value="giga_42">giga_42 (degree 49)</option>
+                    <option value="giga_43">giga_43 (degree 39)</option>
+                    <option value="giga_87">giga_87 (degree 50)</option>
                     <option value="giga_227">giga_227 (degree 24)</option>
-                    <option value="rev_giga_227">rev_giga_227 (reversed)</option>
                     <option value="giga_230">giga_230 (degree 9)</option>
-                    <option value="rev_giga_230">rev_giga_230 (reversed)</option>
                     <option value="giga_232">giga_232 (degree 8)</option>
-                    <option value="rev_giga_232">rev_giga_232 (reversed)</option>
+                    <option value="p7f">p7f (degree 22)</option>
+                    <option value="poly_110">poly_110 (degree 70)</option>
+                </select>
+            </div>
+            <div class="anim-row" style="flex-wrap:wrap">
+                <label style="min-width:90px">Coeff transforms:</label>
+                <div id="ct-chips" class="chip-container"></div>
+                <select id="ct-add" onchange="addChip('ct',this.value);this.value='';" style="width:100px; font-size:12px">
+                    <option value="">+ add...</option>
+                    <option value="rev">rev</option>
+                    <option value="conj">conj</option>
+                    <option value="normalize">normalize</option>
+                    <option value="deriv">deriv</option>
+                    <option value="scale100">scale100</option>
+                    <option value="safe">safe</option>
+                    <option value="negate_odd">negate_odd</option>
                 </select>
             </div>
             <div class="anim-row" style="margin-top:8px">
@@ -458,31 +494,47 @@ async function previewResult() {
         const REF_SIZE = 4096;
         const scale = vp.scale_ref * previewSize / REF_SIZE;
 
-        // Step 2: render lores at small size
-        infoEl.textContent = 'Rendering preview...';
+        // Step 2: raster (lores.bin → .pix, single stripe, single tile)
+        infoEl.textContent = 'Rasterizing preview...';
         const loresKey = `renders/${_selectedJobId}/lores.bin`;
-        const renderResult = await lambdaPost('render', {
+        await lambdaPost('raster', {
             job_id: _selectedJobId,
             stripe_idx: 0,
             bin_key: loresKey,
             width: previewSize, height: previewSize,
+            tile_size: previewSize,
+            n_tile_cols: 1, n_tile_rows: 1,
             center_re: vp.center_re, center_im: vp.center_im,
             scale: scale, degree: degree,
             color: 'rainbow', match: 'none',
             palette: 'inferno', constant_color: 'ffffff',
         });
 
-        // Step 3: encode to JPEG
+        // Step 3: finalize (.pix → .raw tile)
+        infoEl.textContent = 'Assembling preview...';
+        await lambdaPost('finalize', {
+            job_id: _selectedJobId,
+            tile_idx: 0,
+            n_stripes: 1,
+            tile_w: previewSize, tile_h: previewSize,
+        });
+
+        // Step 4: encode to JPEG
         infoEl.textContent = 'Encoding preview...';
+        const tileKey = `renders/${_selectedJobId}/tile_0000.raw`;
         const previewKey = `renders/${_selectedJobId}/preview.jpg`;
         const encResult = await lambdaPost('encode', {
-            raw_key: renderResult.s3_key,
             out_key: previewKey,
+            width: previewSize, height: previewSize,
+            tile_grid: {
+                n_cols: 1, n_rows: 1,
+                tile_keys: [tileKey],
+            },
             format: 'jpeg', quality: 80,
         });
 
-        // Cleanup temp .raw
-        lambdaPost('storage', { keys: [renderResult.s3_key] }, '/cleanup').catch(() => {});
+        // Cleanup temp files
+        lambdaPost('storage', { keys: [tileKey] }, '/cleanup').catch(() => {});
 
         const totalMs = (performance.now() - t0).toFixed(0);
 
@@ -545,7 +597,7 @@ function renderResult() {
 }
 
 /* ---- Lambda config ---- */
-let _lambdaUrls = {};  // {sweep, render, reduce, encode, viewport, storage}
+let _lambdaUrls = {};  // {sweep, coeffgen, raster, finalize, encode, viewport, storage, dispatch}
 
 async function loadLambdaConfig() {
     const url = document.getElementById('config-url').value.trim();
@@ -696,6 +748,32 @@ function setPalette(name) {
 })();
 
 /* ---- Render ---- */
+/* ---- Chip-based transform chains ---- */
+let _ptChain = [];  // parameter transform chain
+let _ctChain = [];  // coefficient transform chain
+
+function addChip(which, name) {
+    if (!name) return;
+    const chain = which === 'pt' ? _ptChain : _ctChain;
+    chain.push(name);
+    _renderChips(which);
+}
+
+function removeChip(which, idx) {
+    const chain = which === 'pt' ? _ptChain : _ctChain;
+    chain.splice(idx, 1);
+    _renderChips(which);
+}
+
+function _renderChips(which) {
+    const chain = which === 'pt' ? _ptChain : _ctChain;
+    const el = document.getElementById(which + '-chips');
+    if (!el) return;
+    el.innerHTML = chain.map((name, i) =>
+        `<span class="chip">${name}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`
+    ).join('');
+}
+
 function loadRenderPreset(name) {
     if (name === 'fast') {
         document.getElementById('render-n').value = '100';
@@ -1006,34 +1084,53 @@ async function runCalculate() {
     const nStripes = Math.max(10, parseInt(document.getElementById('render-stripes').value) || 10);
     const jobId = 'compute_' + Date.now().toString(36);
 
+    const paramTransforms = [..._ptChain];
+    const coeffTransforms = [..._ctChain];
+    const pipelineStr = `[${paramTransforms.join(',')||'none'}] ${funcName} [${coeffTransforms.join(',')||'none'}]`;
+
     const btn = document.getElementById('btn-calculate');
     btn.disabled = true;
-    document.getElementById('compute-status').textContent = `Computing ${funcName} N=${n}, stripes=${nStripes}...`;
+    document.getElementById('compute-status').textContent = `Computing ${pipelineStr} N=${n}...`;
     document.getElementById('compute-status').className = 'status';
-    log(`Compute: ${funcName} N=${n}, stripes=${nStripes}...`);
+    log(`Compute: ${pipelineStr} N=${n}, stripes=${nStripes}...`);
     const fmtMs = (ms) => (ms/1000).toFixed(1) + 's';
 
     try {
         const tTotal = performance.now();
 
-        // Phase 1: lores sweep (single stripe, small grid)
-        document.getElementById('compute-status').textContent = `Lores sweep...`;
+        // Phase 1: coefficient generation (single Lambda call)
+        document.getElementById('compute-status').textContent = `Generating coefficients...`;
+        const tCoeffgen = performance.now();
+        const coeffResult = await lambdaPost('coeffgen', {
+            job_id: jobId,
+            param_transforms: paramTransforms,
+            function: funcName,
+            coeff_transforms: coeffTransforms,
+            n1: n, n2: n,
+        });
+        const coeffgenMs = performance.now() - tCoeffgen;
+        const degree = coeffResult.degree;
+        const nCoeffs = coeffResult.n_coeffs;
+        log(`  coeffgen: ${fmtMs(coeffgenMs)}, degree=${degree}, size=${(coeffResult.coeffs_size/1e6).toFixed(1)}MB`, 'ok');
+
+        // Phase 2: lores solve (read first 100 rows of coeffs.bin)
+        document.getElementById('compute-status').textContent = `Lores solve...`;
         const loresN = Math.min(n, 100);
         const loresKey = `renders/${jobId}/lores.bin`;
         const tLores = performance.now();
         const loresResult = await lambdaPost('sweep', {
             job_id: jobId, stripe_idx: 0,
-            function: funcName,
-            n1: loresN, n2: loresN,
+            coeffs_key: coeffResult.coeffs_key,
+            n_coeffs: nCoeffs,
+            n1: n, n2: n,
             i1_start: 0, i1_end: loresN,
             s3_key: loresKey,
         });
         const loresMs = performance.now() - tLores;
-        const degree = loresResult.degree;
-        log(`  lores: ${fmtMs(loresMs)}, degree=${degree}`, 'ok');
+        log(`  lores solve: ${fmtMs(loresMs)}`, 'ok');
 
-        // Phase 2: fan-out hires compute stripes
-        document.getElementById('compute-status').textContent = `Computing 0/${nStripes} stripes...`;
+        // Phase 3: fan-out hires solve stripes
+        document.getElementById('compute-status').textContent = `Solving 0/${nStripes} stripes...`;
         const rowsPer = Math.floor(n / nStripes);
         const tCompute = performance.now();
         let computeDone = 0;
@@ -1044,7 +1141,8 @@ async function runCalculate() {
             const i1End = s < nStripes - 1 ? (s + 1) * rowsPer : n;
             sweepJobs.push({
                 job_id: jobId, stripe_idx: s,
-                function: funcName,
+                coeffs_key: coeffResult.coeffs_key,
+                n_coeffs: nCoeffs,
                 n1: n, n2: n,
                 i1_start: i1Start, i1_end: i1End,
             });
@@ -1053,19 +1151,27 @@ async function runCalculate() {
             lambdaPost('sweep', p).then(r => {
                 computeDone++;
                 document.getElementById('compute-status').textContent =
-                    `Computing ${computeDone}/${nStripes} stripes...`;
+                    `Solving ${computeDone}/${nStripes} stripes...`;
                 return r;
             })
         );
         const computeWallMs = performance.now() - tCompute;
 
-        // Phase 3: save calc.json metadata via storage Lambda
+        // Phase 4: save calc.json metadata via storage Lambda
         const calcMeta = {
             job_id: jobId,
+            pipeline: {
+                param_transforms: paramTransforms,
+                function: funcName,
+                coeff_transforms: coeffTransforms,
+            },
             function: funcName,
             n1: n, n2: n,
             n_stripes: nStripes,
             degree,
+            n_coeffs: nCoeffs,
+            coeffs_key: coeffResult.coeffs_key,
+            coeffs_size: coeffResult.coeffs_size,
             lores: {
                 bin_key: loresKey,
                 n1: loresN, n2: loresN,
@@ -1091,7 +1197,6 @@ async function runCalculate() {
             ? stripeResults.reduce((s, r) => s + r.avg_iterations * r.n_t, 0) / totalSteps
             : 0;
 
-        // Populate results dir on both tabs
         document.getElementById('results-dir').value = jobId;
         document.getElementById('render-results-dir').value = jobId;
 
@@ -1100,13 +1205,13 @@ async function runCalculate() {
             `compute ${(totalComputeUs/1e6).toFixed(1)}s (sum) | deg ${degree} | total ${fmtMs(totalMs)}`;
         document.getElementById('compute-status').className = 'status ok';
 
-        // Timing log
         const lines = [];
         lines.push(`  total:    ${fmtMs(totalMs)}`);
+        lines.push(`  coeffgen: ${fmtMs(coeffgenMs)} (${(coeffResult.coeffs_size/1e6).toFixed(1)}MB)`);
         lines.push(`  total bin: ${(totalBinSize/1e6).toFixed(1)}MB + lores ${(loresResult.bin_size/1e3).toFixed(0)}KB`);
-        lines.push(`  compute: ${(totalComputeUs/1e6).toFixed(1)}s (sum) / ${fmtMs(computeWallMs)} wall (${nStripes} stripes)`);
+        lines.push(`  solve: ${(totalComputeUs/1e6).toFixed(1)}s (sum) / ${fmtMs(computeWallMs)} wall (${nStripes} stripes)`);
         lines.push(`  lores:    ${fmtMs(loresMs)}`);
-        lines.push(`Compute ${jobId}: ${funcName} deg${degree} N=${n}, avg_iters=${avgIters.toFixed(1)}`);
+        lines.push(`Compute ${jobId}: ${pipelineStr} deg${degree} N=${n}, avg_iters=${avgIters.toFixed(1)}`);
         for (const line of lines) log(line, 'ok');
 
     } catch (e) {

@@ -19,6 +19,9 @@ SWEEP = os.path.join(os.path.dirname(__file__), "sweep")
 
 
 def handler(event, context):
+    params = parse_body(event)
+    if "coeffs_key" in params:
+        return handle_solve_from_coeffs(params)
     return handle_compute_only_stripe(event)
 
 
@@ -136,4 +139,79 @@ def handle_compute_only_stripe(event):
         "degree": compute_meta["degree"],
         "avg_iterations": compute_meta["avg_iterations"],
         "n_procs": n_procs,
+    })
+
+
+def handle_solve_from_coeffs(params):
+    """Solve roots from pre-computed coefficient file (coeffs.bin).
+    Downloads the relevant byte range of coeffs.bin from S3,
+    runs sweep in 'solve' mode, uploads root .bin to S3.
+    """
+    job_id = params["job_id"]
+    stripe_idx = params["stripe_idx"]
+    coeffs_key = params["coeffs_key"]
+    n_coeffs = params["n_coeffs"]
+    n1 = params["n1"]
+    n2 = params["n2"]
+    i1_start = params["i1_start"]
+    i1_end = params["i1_end"]
+
+    t0 = time.time()
+
+    # S3 range read for this stripe's coefficients
+    bytes_per_row = n2 * n_coeffs * 2 * 4  # n2 points × n_coeffs × (re,im) × float32
+    start_byte = i1_start * bytes_per_row
+    end_byte = i1_end * bytes_per_row - 1
+
+    resp = s3.get_object(
+        Bucket=BUCKET, Key=coeffs_key,
+        Range=f"bytes={start_byte}-{end_byte}")
+    coeffs_data = resp["Body"].read()
+
+    coeffs_file = "/tmp/coeffs_stripe.bin"
+    with open(coeffs_file, "wb") as f:
+        f.write(coeffs_data)
+
+    bin_path = "/tmp/stripe.bin"
+    spec = {
+        "mode": "solve",
+        "coeffs_file": coeffs_file,
+        "n_coeffs": n_coeffs,
+        "n1": n1, "n2": n2,
+        "i1_start": 0,  # offset already handled by range read
+        "i1_end": i1_end - i1_start,
+        "match_roots": False,
+    }
+    result = subprocess.run(
+        [SWEEP, bin_path],
+        input=json.dumps(spec),
+        capture_output=True, text=True, timeout=840
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"solve failed: {result.stderr.strip()}")
+    compute_meta = json.loads(result.stdout)
+
+    compute_us = int((time.time() - t0) * 1e6)
+
+    s3_key = params.get("s3_key", f"renders/{job_id}/stripe_{stripe_idx}.bin")
+    with open(bin_path, "rb") as f:
+        bin_data = f.read()
+    s3.put_object(Bucket=BUCKET, Key=s3_key,
+                  Body=bin_data, ContentType="application/octet-stream")
+
+    for p in [coeffs_file, bin_path]:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+    return ok_response({
+        "stripe_idx": stripe_idx,
+        "s3_key": s3_key,
+        "bin_size": len(bin_data),
+        "compute_us": compute_us,
+        "n_t": compute_meta["n_t"],
+        "degree": compute_meta["degree"],
+        "avg_iterations": compute_meta["avg_iterations"],
+        "n_procs": 1,
     })

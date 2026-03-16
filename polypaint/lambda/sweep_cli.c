@@ -259,6 +259,30 @@ static int parseString(const char *p, char *out, int maxLen) {
     return i;
 }
 
+/* ---- Parse a JSON array of strings (e.g. ["unit_circle","rev"]) ---- */
+
+#define MAX_CHAIN 16
+
+static int parseStringArray(const char *p, char names[][64], int maxCount) {
+    p = skip(p);
+    if (*p != '[') return 0;
+    p++;
+    int count = 0;
+    while (count < maxCount) {
+        p = skip(p);
+        if (*p == ']') break;
+        if (*p == ',') { p++; p = skip(p); }
+        if (*p != '"') break;
+        p++;
+        int i = 0;
+        while (*p && *p != '"' && i < 63) names[count][i++] = *p++;
+        names[count][i] = '\0';
+        if (*p == '"') p++;
+        count++;
+    }
+    return count;
+}
+
 /* ---- Coefficient functions for grid mode ---- */
 
 /*
@@ -1655,6 +1679,494 @@ static CoeffFunc lookupFunction(const char *name) {
     return NULL;
 }
 
+/* ==== Parameter transforms (composable pipeline) ==== */
+
+typedef void (*ParamTransform)(double *z1r, double *z1i, double *z2r, double *z2i);
+
+static void pt_none(double *z1r, double *z1i, double *z2r, double *z2i) {
+    (void)z1r; (void)z1i; (void)z2r; (void)z2i;
+}
+
+static void pt_unit_circle(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double a1 = 2.0 * M_PI * (*z1r), a2 = 2.0 * M_PI * (*z2r);
+    *z1r = cos(a1); *z1i = sin(a1);
+    *z2r = cos(a2); *z2i = sin(a2);
+}
+
+static void pt_square(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double r, i;
+    r = (*z1r)*(*z1r) - (*z1i)*(*z1i); i = 2.0*(*z1r)*(*z1i);
+    *z1r = r; *z1i = i;
+    r = (*z2r)*(*z2r) - (*z2i)*(*z2i); i = 2.0*(*z2r)*(*z2i);
+    *z2r = r; *z2i = i;
+}
+
+static void pt_cube(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double a, b, r, i;
+    a = *z1r; b = *z1i;
+    r = a*a*a - 3.0*a*b*b; i = 3.0*a*a*b - b*b*b;
+    *z1r = r; *z1i = i;
+    a = *z2r; b = *z2i;
+    r = a*a*a - 3.0*a*b*b; i = 3.0*a*a*b - b*b*b;
+    *z2r = r; *z2i = i;
+}
+
+static void pt_reciprocal(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double d;
+    d = (*z1r)*(*z1r) + (*z1i)*(*z1i);
+    if (d > 1e-30) { *z1r = (*z1r)/d; *z1i = -(*z1i)/d; }
+    else { *z1r = 0; *z1i = 0; }
+    d = (*z2r)*(*z2r) + (*z2i)*(*z2i);
+    if (d > 1e-30) { *z2r = (*z2r)/d; *z2i = -(*z2i)/d; }
+    else { *z2r = 0; *z2i = 0; }
+}
+
+static void pt_conjugate(double *z1r, double *z1i, double *z2r, double *z2i) {
+    *z1i = -(*z1i); *z2i = -(*z2i);
+}
+
+static void pt_swap(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double tr = *z1r, ti = *z1i;
+    *z1r = *z2r; *z1i = *z2i;
+    *z2r = tr; *z2i = ti;
+}
+
+static void pt_add_sub(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double ar = *z1r, ai = *z1i, br = *z2r, bi = *z2i;
+    *z1r = ar + br; *z1i = ai + bi;
+    *z2r = ar - br; *z2i = ai - bi;
+}
+
+static void pt_mul_div(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double ar = *z1r, ai = *z1i, br = *z2r, bi = *z2i;
+    *z1r = ar*br - ai*bi; *z1i = ar*bi + ai*br;
+    double d = br*br + bi*bi;
+    if (d > 1e-30) { *z2r = (ar*br + ai*bi)/d; *z2i = (ai*br - ar*bi)/d; }
+    else { *z2r = 0; *z2i = 0; }
+}
+
+static void pt_moebius(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double d;
+    double ar = *z1r + 2.0, ai = *z1i;
+    d = ar*ar + ai*ai;
+    if (d > 1e-30) { *z1r = ar/d; *z1i = -ai/d; }
+    else { *z1r = 0; *z1i = 0; }
+    ar = *z2r + 2.0; ai = *z2i;
+    d = ar*ar + ai*ai;
+    if (d > 1e-30) { *z2r = ar/d; *z2i = -ai/d; }
+    else { *z2r = 0; *z2i = 0; }
+}
+
+static void pt_shift1(double *z1r, double *z1i, double *z2r, double *z2i) {
+    *z1r += 1.0; *z2r += 1.0; (void)z1i; (void)z2i;
+}
+
+static void pt_scale10(double *z1r, double *z1i, double *z2r, double *z2i) {
+    *z1r *= 10.0; *z1i *= 10.0; *z2r *= 10.0; *z2i *= 10.0;
+}
+
+static void pt_negate(double *z1r, double *z1i, double *z2r, double *z2i) {
+    *z1r = -(*z1r); *z1i = -(*z1i); *z2r = -(*z2r); *z2i = -(*z2i);
+}
+
+static void pt_exp(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double e, r, i;
+    e = exp(*z1r); r = e * cos(*z1i); i = e * sin(*z1i);
+    *z1r = r; *z1i = i;
+    e = exp(*z2r); r = e * cos(*z2i); i = e * sin(*z2i);
+    *z2r = r; *z2i = i;
+}
+
+static ParamTransform lookupParamTransform(const char *name) {
+    if (strcmp(name, "none") == 0)        return pt_none;
+    if (strcmp(name, "unit_circle") == 0) return pt_unit_circle;
+    if (strcmp(name, "square") == 0)      return pt_square;
+    if (strcmp(name, "cube") == 0)        return pt_cube;
+    if (strcmp(name, "reciprocal") == 0)  return pt_reciprocal;
+    if (strcmp(name, "conjugate") == 0)   return pt_conjugate;
+    if (strcmp(name, "swap") == 0)        return pt_swap;
+    if (strcmp(name, "add_sub") == 0)     return pt_add_sub;
+    if (strcmp(name, "mul_div") == 0)     return pt_mul_div;
+    if (strcmp(name, "moebius") == 0)     return pt_moebius;
+    if (strcmp(name, "shift1") == 0)      return pt_shift1;
+    if (strcmp(name, "scale10") == 0)     return pt_scale10;
+    if (strcmp(name, "negate") == 0)      return pt_negate;
+    if (strcmp(name, "exp") == 0)         return pt_exp;
+    return NULL;
+}
+
+/* ==== Coefficient transforms (composable pipeline) ==== */
+
+typedef void (*CoeffTransform)(double *cRe, double *cIm, int *nCoeffs);
+
+static void ct_none(double *cRe, double *cIm, int *nCoeffs) {
+    (void)cRe; (void)cIm; (void)nCoeffs;
+}
+
+static void ct_rev(double *cRe, double *cIm, int *nCoeffs) {
+    int n = *nCoeffs;
+    for (int k = 0; k < n / 2; k++) {
+        double tr = cRe[k]; cRe[k] = cRe[n-1-k]; cRe[n-1-k] = tr;
+        double ti = cIm[k]; cIm[k] = cIm[n-1-k]; cIm[n-1-k] = ti;
+    }
+}
+
+static void ct_conj(double *cRe, double *cIm, int *nCoeffs) {
+    for (int k = 0; k < *nCoeffs; k++) cIm[k] = -cIm[k];
+    (void)cRe;
+}
+
+static void ct_normalize(double *cRe, double *cIm, int *nCoeffs) {
+    double d = cRe[0]*cRe[0] + cIm[0]*cIm[0];
+    if (d < 1e-30) return;
+    double invR = cRe[0] / d, invI = -cIm[0] / d;
+    for (int k = 0; k < *nCoeffs; k++) {
+        double r = cRe[k]*invR - cIm[k]*invI;
+        double i = cRe[k]*invI + cIm[k]*invR;
+        cRe[k] = r; cIm[k] = i;
+    }
+}
+
+static void ct_deriv(double *cRe, double *cIm, int *nCoeffs) {
+    int n = *nCoeffs;
+    if (n <= 1) { *nCoeffs = 1; cRe[0] = 0; cIm[0] = 0; return; }
+    /* Leading-first: c[0]*z^(n-1) + c[1]*z^(n-2) + ... + c[n-1]
+       Derivative: (n-1)*c[0]*z^(n-2) + (n-2)*c[1]*z^(n-3) + ... + 1*c[n-2] */
+    for (int k = 0; k < n - 1; k++) {
+        double deg = (double)(n - 1 - k);
+        cRe[k] = cRe[k] * deg;
+        cIm[k] = cIm[k] * deg;
+    }
+    *nCoeffs = n - 1;
+}
+
+static void ct_scale100(double *cRe, double *cIm, int *nCoeffs) {
+    for (int k = 0; k < *nCoeffs; k++) { cRe[k] *= 100.0; cIm[k] *= 100.0; }
+}
+
+static void ct_safe(double *cRe, double *cIm, int *nCoeffs) {
+    for (int k = 0; k < *nCoeffs; k++) {
+        if (!isfinite(cRe[k])) cRe[k] = 0;
+        if (!isfinite(cIm[k])) cIm[k] = 0;
+    }
+}
+
+static void ct_negate_odd(double *cRe, double *cIm, int *nCoeffs) {
+    for (int k = 1; k < *nCoeffs; k += 2) { cRe[k] = -cRe[k]; cIm[k] = -cIm[k]; }
+}
+
+static CoeffTransform lookupCoeffTransform(const char *name) {
+    if (strcmp(name, "none") == 0)        return ct_none;
+    if (strcmp(name, "rev") == 0)         return ct_rev;
+    if (strcmp(name, "conj") == 0)        return ct_conj;
+    if (strcmp(name, "normalize") == 0)   return ct_normalize;
+    if (strcmp(name, "deriv") == 0)       return ct_deriv;
+    if (strcmp(name, "scale100") == 0)    return ct_scale100;
+    if (strcmp(name, "safe") == 0)        return ct_safe;
+    if (strcmp(name, "negate_odd") == 0)  return ct_negate_odd;
+    return NULL;
+}
+
+/* ==== Wrapped coefficient functions (accept complex inputs) ==== */
+
+typedef void (*CoeffFuncC)(double, double, double, double, double*, double*, int*);
+
+#define WRAP_OLD(fname) \
+    static void fname##_c(double x1r, double x1i, double x2r, double x2i, \
+                          double *cRe, double *cIm, int *nCoeffs) { \
+        (void)x1i; (void)x2i; \
+        fname(x1r, x2r, cRe, cIm, nCoeffs); \
+    }
+
+WRAP_OLD(giga_1)
+WRAP_OLD(giga_5)
+WRAP_OLD(giga_19)
+WRAP_OLD(giga_30)
+WRAP_OLD(giga_39)
+WRAP_OLD(giga_40)
+WRAP_OLD(giga_42)
+WRAP_OLD(giga_43)
+WRAP_OLD(giga_87)
+WRAP_OLD(giga_227)
+WRAP_OLD(giga_230)
+WRAP_OLD(giga_232)
+WRAP_OLD(p7f)
+WRAP_OLD(poly_110)
+
+static CoeffFuncC lookupCoeffFuncC(const char *name) {
+    if (strcmp(name, "giga_1") == 0)   return giga_1_c;
+    if (strcmp(name, "giga_5") == 0)   return giga_5_c;
+    if (strcmp(name, "giga_19") == 0)  return giga_19_c;
+    if (strcmp(name, "giga_30") == 0)  return giga_30_c;
+    if (strcmp(name, "giga_39") == 0)  return giga_39_c;
+    if (strcmp(name, "giga_40") == 0)  return giga_40_c;
+    if (strcmp(name, "giga_42") == 0)  return giga_42_c;
+    if (strcmp(name, "giga_43") == 0)  return giga_43_c;
+    if (strcmp(name, "giga_87") == 0)  return giga_87_c;
+    if (strcmp(name, "giga_227") == 0) return giga_227_c;
+    if (strcmp(name, "giga_230") == 0) return giga_230_c;
+    if (strcmp(name, "giga_232") == 0) return giga_232_c;
+    if (strcmp(name, "p7f") == 0)      return p7f_c;
+    if (strcmp(name, "poly_110") == 0) return poly_110_c;
+    return NULL;
+}
+
+/* ==== Coeffgen mode: generate coefficient vectors for the grid ==== */
+
+static int runCoeffGen(const char *buf, const char *outPath) {
+    char funcName[64] = "";
+    const char *cp = findKey(buf, "function");
+    if (cp) parseString(cp, funcName, sizeof(funcName));
+
+    int n1 = 100, n2 = 100;
+    cp = findKey(buf, "n1"); if (cp) n1 = (int)parseNum(&cp);
+    cp = findKey(buf, "n2"); if (cp) n2 = (int)parseNum(&cp);
+    if (n1 < 1) n1 = 1;
+    if (n2 < 1) n2 = 1;
+
+    int i1_start = 0, i1_end = n1;
+    cp = findKey(buf, "i1_start"); if (cp) i1_start = (int)parseNum(&cp);
+    cp = findKey(buf, "i1_end");   if (cp) i1_end = (int)parseNum(&cp);
+    if (i1_start < 0) i1_start = 0;
+    if (i1_end > n1) i1_end = n1;
+    if (i1_start >= i1_end) {
+        fprintf(stderr, "Empty stripe: i1_start=%d >= i1_end=%d\n", i1_start, i1_end);
+        return 1;
+    }
+
+    /* Parse parameter transform chain */
+    char ptNames[MAX_CHAIN][64];
+    int nPt = 0;
+    cp = findKey(buf, "param_transforms");
+    if (cp) nPt = parseStringArray(cp, ptNames, MAX_CHAIN);
+    ParamTransform ptChain[MAX_CHAIN];
+    for (int t = 0; t < nPt; t++) {
+        ptChain[t] = lookupParamTransform(ptNames[t]);
+        if (!ptChain[t]) {
+            fprintf(stderr, "Unknown param transform: %s\n", ptNames[t]);
+            return 1;
+        }
+    }
+
+    /* Parse coefficient transform chain */
+    char ctNames[MAX_CHAIN][64];
+    int nCt = 0;
+    cp = findKey(buf, "coeff_transforms");
+    if (cp) nCt = parseStringArray(cp, ctNames, MAX_CHAIN);
+    CoeffTransform ctChain[MAX_CHAIN];
+    for (int t = 0; t < nCt; t++) {
+        ctChain[t] = lookupCoeffTransform(ctNames[t]);
+        if (!ctChain[t]) {
+            fprintf(stderr, "Unknown coeff transform: %s\n", ctNames[t]);
+            return 1;
+        }
+    }
+
+    /* Look up coefficient function */
+    CoeffFuncC coeffFunc = lookupCoeffFuncC(funcName);
+    if (!coeffFunc) {
+        fprintf(stderr, "Unknown function: %s\n", funcName);
+        return 1;
+    }
+
+    /* Probe degree at (0,0) with transforms applied */
+    double probeRe[MAX_COEFFS], probeIm[MAX_COEFFS];
+    int probeN;
+    {
+        double z1r = 0, z1i = 0, z2r = 0, z2i = 0;
+        for (int t = 0; t < nPt; t++) ptChain[t](&z1r, &z1i, &z2r, &z2i);
+        coeffFunc(z1r, z1i, z2r, z2i, probeRe, probeIm, &probeN);
+        for (int t = 0; t < nCt; t++) ctChain[t](probeRe, probeIm, &probeN);
+    }
+    int nCoeffsOut = probeN;
+    int degree = nCoeffsOut - 1;
+
+    FILE *fout = fopen(outPath, "wb");
+    if (!fout) { fprintf(stderr, "Cannot open %s\n", outPath); return 1; }
+
+    float *stepBuf = malloc(nCoeffsOut * 2 * sizeof(float));
+    int stripeRows = i1_end - i1_start;
+    long totalSteps = (long)stripeRows * n2;
+
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+
+    for (int i1 = i1_start; i1 < i1_end; i1++) {
+        double x1 = (double)i1 / (double)n1;
+        for (int j = 0; j < n2; j++) {
+            int i2 = (i1 & 1) ? (n2 - 1 - j) : j;
+            double x2 = (double)i2 / (double)n2;
+
+            double z1r = x1, z1i = 0.0, z2r = x2, z2i = 0.0;
+            for (int t = 0; t < nPt; t++) ptChain[t](&z1r, &z1i, &z2r, &z2i);
+
+            double cRe[MAX_COEFFS], cIm[MAX_COEFFS];
+            int nCoeffs;
+            coeffFunc(z1r, z1i, z2r, z2i, cRe, cIm, &nCoeffs);
+            for (int t = 0; t < nCt; t++) ctChain[t](cRe, cIm, &nCoeffs);
+
+            /* Pad or truncate to nCoeffsOut */
+            for (int k = nCoeffs; k < nCoeffsOut; k++) { cRe[k] = 0; cIm[k] = 0; }
+
+            for (int k = 0; k < nCoeffsOut; k++) {
+                stepBuf[k * 2]     = (float)cRe[k];
+                stepBuf[k * 2 + 1] = (float)cIm[k];
+            }
+            fwrite(stepBuf, sizeof(float), nCoeffsOut * 2, fout);
+        }
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    long elapsed_us = (t1.tv_sec - t0.tv_sec) * 1000000L +
+                      (t1.tv_nsec - t0.tv_nsec) / 1000L;
+    fclose(fout);
+    free(stepBuf);
+
+    long dataBytes = totalSteps * nCoeffsOut * 2 * (long)sizeof(float);
+    printf("{\"mode\":\"coeffgen\",\"function\":\"%s\","
+           "\"n_coeffs\":%d,\"degree\":%d,"
+           "\"n1\":%d,\"n2\":%d,"
+           "\"i1_start\":%d,\"i1_end\":%d,"
+           "\"n_t\":%ld,\"data_bytes\":%ld,"
+           "\"elapsed_us\":%ld}\n",
+           funcName, nCoeffsOut, degree,
+           n1, n2, i1_start, i1_end,
+           totalSteps, dataBytes, elapsed_us);
+    return 0;
+}
+
+/* ==== Solve-from-coefficients mode ==== */
+
+static int runSolveFromCoeffs(const char *buf, const char *outPath) {
+    char coeffsFile[256] = "";
+    const char *cp = findKey(buf, "coeffs_file");
+    if (cp) parseString(cp, coeffsFile, sizeof(coeffsFile));
+    if (!coeffsFile[0]) {
+        fprintf(stderr, "Missing coeffs_file\n");
+        return 1;
+    }
+
+    int nCoeffs = 0;
+    cp = findKey(buf, "n_coeffs"); if (cp) nCoeffs = (int)parseNum(&cp);
+    if (nCoeffs < 2 || nCoeffs > MAX_COEFFS) {
+        fprintf(stderr, "Invalid n_coeffs: %d\n", nCoeffs);
+        return 1;
+    }
+    int degree = nCoeffs - 1;
+
+    int n1 = 100, n2 = 100;
+    cp = findKey(buf, "n1"); if (cp) n1 = (int)parseNum(&cp);
+    cp = findKey(buf, "n2"); if (cp) n2 = (int)parseNum(&cp);
+
+    int i1_start = 0, i1_end = n1;
+    cp = findKey(buf, "i1_start"); if (cp) i1_start = (int)parseNum(&cp);
+    cp = findKey(buf, "i1_end");   if (cp) i1_end = (int)parseNum(&cp);
+    if (i1_start < 0) i1_start = 0;
+    if (i1_end > n1) i1_end = n1;
+
+    int doMatch = 1;
+    cp = findKey(buf, "match_roots"); if (cp) doMatch = parseBool(cp);
+
+    FILE *fin = fopen(coeffsFile, "rb");
+    if (!fin) { fprintf(stderr, "Cannot open %s\n", coeffsFile); return 1; }
+
+    FILE *fout = fopen(outPath, "wb");
+    if (!fout) { fclose(fin); fprintf(stderr, "Cannot open %s\n", outPath); return 1; }
+
+    float *coeffBuf = malloc(nCoeffs * 2 * sizeof(float));
+    float *rootBuf = malloc(degree * 2 * sizeof(float));
+    double rootRe[MAX_DEGREE], rootIm[MAX_DEGREE];
+    double prevRe[MAX_DEGREE], prevIm[MAX_DEGREE];
+    double coeffRe[MAX_COEFFS], coeffIm[MAX_COEFFS];
+
+    for (int k = 0; k < degree; k++) {
+        double ang = 2.0 * M_PI * k / degree + 0.3;
+        double r = 1.0 + 0.1 * k / degree;
+        rootRe[k] = r * cos(ang);
+        rootIm[k] = r * sin(ang);
+    }
+
+    int stripeRows = i1_end - i1_start;
+    long totalSteps = (long)stripeRows * n2;
+    long totalIters = 0;
+
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+
+    for (long step = 0; step < totalSteps; step++) {
+        if (fread(coeffBuf, sizeof(float), nCoeffs * 2, fin) != (size_t)(nCoeffs * 2)) {
+            fprintf(stderr, "Short read at step %ld\n", step);
+            break;
+        }
+        for (int k = 0; k < nCoeffs; k++) {
+            coeffRe[k] = (double)coeffBuf[k * 2];
+            coeffIm[k] = (double)coeffBuf[k * 2 + 1];
+        }
+
+        /* Strip leading zeros */
+        int start = 0;
+        while (start < nCoeffs - 1 &&
+               coeffRe[start]*coeffRe[start] + coeffIm[start]*coeffIm[start] < 1e-30)
+            start++;
+        int effN = nCoeffs - start;
+        int effDeg = effN - 1;
+
+        int iters;
+        if (effDeg <= 0) {
+            for (int i = 0; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
+            iters = 0;
+        } else if (effDeg == 1) {
+            double aR = coeffRe[start], aI = coeffIm[start];
+            double bR = coeffRe[start+1], bI = coeffIm[start+1];
+            double d = aR*aR + aI*aI;
+            if (d > 1e-30) {
+                rootRe[0] = -(bR*aR + bI*aI) / d;
+                rootIm[0] = -(bI*aR - bR*aI) / d;
+            }
+            iters = 1;
+        } else {
+            iters = solveEA(coeffRe + start, coeffIm + start, effN,
+                            rootRe, rootIm, effDeg);
+        }
+        totalIters += iters;
+
+        if (doMatch && step > 0 && effDeg > 1) {
+            matchRoots(rootRe, rootIm, prevRe, prevIm, effDeg);
+        }
+        memcpy(prevRe, rootRe, degree * sizeof(double));
+        memcpy(prevIm, rootIm, degree * sizeof(double));
+
+        for (int i = 0; i < degree; i++) {
+            rootBuf[i * 2]     = (float)rootRe[i];
+            rootBuf[i * 2 + 1] = (float)rootIm[i];
+        }
+        fwrite(rootBuf, sizeof(float), degree * 2, fout);
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    long elapsed_us = (t1.tv_sec - t0.tv_sec) * 1000000L +
+                      (t1.tv_nsec - t0.tv_nsec) / 1000L;
+
+    fclose(fin);
+    fclose(fout);
+    free(coeffBuf);
+    free(rootBuf);
+
+    long dataBytes = totalSteps * degree * 2 * (long)sizeof(float);
+    double avgIters = totalSteps > 0 ? (double)totalIters / totalSteps : 0;
+
+    printf("{\"mode\":\"solve\",\"degree\":%d,"
+           "\"n1\":%d,\"n2\":%d,"
+           "\"i1_start\":%d,\"i1_end\":%d,"
+           "\"n_t\":%ld,\"stride\":%d,\"matched\":%s,"
+           "\"data_bytes\":%ld,\"elapsed_us\":%ld,"
+           "\"avg_iterations\":%.2f}\n",
+           degree, n1, n2, i1_start, i1_end,
+           totalSteps, degree * 2, doMatch ? "true" : "false",
+           dataBytes, elapsed_us, avgIters);
+    return 0;
+}
+
 /* ---- Grid sweep (2D parameter scan) ---- */
 
 static int runGrid(const char *buf, const char *outPath) {
@@ -1834,13 +2346,23 @@ int main(int argc, char **argv) {
         len += n;
     buf[len] = '\0';
 
-    /* Check for grid mode */
+    /* Dispatch on mode */
     {
         char mode[32] = "";
         const char *mp = findKey(buf, "mode");
         if (mp) parseString(mp, mode, sizeof(mode));
         if (strcmp(mode, "grid") == 0) {
             int rc = runGrid(buf, outPath);
+            free(buf);
+            return rc;
+        }
+        if (strcmp(mode, "coeffgen") == 0) {
+            int rc = runCoeffGen(buf, outPath);
+            free(buf);
+            return rc;
+        }
+        if (strcmp(mode, "solve") == 0) {
+            int rc = runSolveFromCoeffs(buf, outPath);
             free(buf);
             return rc;
         }

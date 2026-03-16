@@ -398,5 +398,454 @@ class TestCleanRenderDynamoDB(unittest.TestCase):
         mock_ddb.batch_write_item.assert_called_once()
 
 
+# ── Test: handler_coeffgen.py ─────────────────────────────────────────────
+
+
+class TestCoeffgenHandler(unittest.TestCase):
+
+    def _make_event(self, body):
+        return {"body": json.dumps(body)}
+
+    def _mock_open(self, path, mode="r", **kwargs):
+        """Mock open() for /tmp files — return a file-like mock."""
+        if "/tmp/" in str(path) and "b" in mode:
+            m = MagicMock()
+            m.__enter__ = MagicMock(return_value=m)
+            m.__exit__ = MagicMock(return_value=False)
+            m.read = MagicMock(return_value=b"\x00" * 100)
+            return m
+        return self._original_open(path, mode, **kwargs)
+
+    def setUp(self):
+        import builtins
+        self._original_open = builtins.open
+
+    @patch("builtins.open")
+    @patch("handler_coeffgen.os.remove")
+    @patch("handler_coeffgen.s3")
+    @patch("handler_coeffgen.subprocess")
+    def test_coeffgen_basic(self, mock_subprocess, mock_s3, mock_remove, mock_open):
+        mock_open.side_effect = self._mock_open
+        from handler_coeffgen import handler
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({
+            "data_bytes": 9600,
+            "n_coeffs": 24,
+            "degree": 24,
+        })
+        mock_subprocess.run.return_value = mock_result
+
+        event = self._make_event({
+            "job_id": "test-job",
+            "function": "giga_1",
+            "n1": 10,
+            "n2": 10,
+        })
+        result = handler(event, None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(body["job_id"], "test-job")
+        self.assertEqual(body["coeffs_key"], "renders/test-job/coeffs.bin")
+        self.assertEqual(body["n_coeffs"], 24)
+        self.assertEqual(body["degree"], 24)
+        self.assertEqual(body["coeffs_size"], 9600)
+
+        # Verify sweep binary was called with correct spec
+        call_args = mock_subprocess.run.call_args
+        spec = json.loads(call_args[1]["input"])
+        self.assertEqual(spec["mode"], "coeffgen")
+        self.assertEqual(spec["function"], "giga_1")
+        self.assertEqual(spec["n1"], 10)
+        self.assertEqual(spec["n2"], 10)
+        self.assertEqual(spec["i1_start"], 0)
+        self.assertEqual(spec["i1_end"], 10)
+
+    @patch("builtins.open")
+    @patch("handler_coeffgen.os.remove")
+    @patch("handler_coeffgen.s3")
+    @patch("handler_coeffgen.subprocess")
+    def test_coeffgen_with_transforms(self, mock_subprocess, mock_s3, mock_remove, mock_open):
+        mock_open.side_effect = self._mock_open
+        from handler_coeffgen import handler
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({
+            "data_bytes": 4800,
+            "n_coeffs": 12,
+            "degree": 12,
+        })
+        mock_subprocess.run.return_value = mock_result
+
+        event = self._make_event({
+            "job_id": "t-job",
+            "function": "giga_5",
+            "param_transforms": ["unit_circle", "square"],
+            "coeff_transforms": ["rev", "conj"],
+            "n1": 10,
+            "n2": 10,
+        })
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertEqual(result["statusCode"], 200)
+
+        # Verify transforms passed through to sweep spec
+        spec = json.loads(mock_subprocess.run.call_args[1]["input"])
+        self.assertEqual(spec["param_transforms"], ["unit_circle", "square"])
+        self.assertEqual(spec["coeff_transforms"], ["rev", "conj"])
+
+    @patch("builtins.open")
+    @patch("handler_coeffgen.os.remove")
+    @patch("handler_coeffgen.s3")
+    @patch("handler_coeffgen.subprocess")
+    def test_coeffgen_s3_upload(self, mock_subprocess, mock_s3, mock_remove, mock_open):
+        mock_open.side_effect = self._mock_open
+        from handler_coeffgen import handler
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({
+            "data_bytes": 100,
+            "n_coeffs": 5,
+            "degree": 5,
+        })
+        mock_subprocess.run.return_value = mock_result
+
+        event = self._make_event({
+            "job_id": "upload-test",
+            "function": "giga_1",
+            "n1": 5,
+            "n2": 5,
+        })
+        handler(event, None)
+
+        # Verify S3 upload was called with correct key
+        mock_s3.put_object.assert_called_once()
+        call_kwargs = mock_s3.put_object.call_args[1]
+        self.assertEqual(call_kwargs["Key"], "renders/upload-test/coeffs.bin")
+        self.assertEqual(call_kwargs["ContentType"], "application/octet-stream")
+
+    @patch("handler_coeffgen.s3")
+    @patch("handler_coeffgen.subprocess")
+    def test_coeffgen_sweep_failure(self, mock_subprocess, mock_s3):
+        from handler_coeffgen import handler
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = "bad function name"
+        mock_subprocess.run.return_value = mock_result
+
+        event = self._make_event({
+            "job_id": "fail-test",
+            "function": "bad_func",
+            "n1": 5,
+            "n2": 5,
+        })
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(event, None)
+        self.assertIn("coeffgen failed", str(ctx.exception))
+
+    @patch("builtins.open")
+    @patch("handler_coeffgen.os.remove")
+    @patch("handler_coeffgen.s3")
+    @patch("handler_coeffgen.subprocess")
+    def test_coeffgen_default_transforms(self, mock_subprocess, mock_s3, mock_remove, mock_open):
+        """Omitting transforms defaults to empty lists."""
+        mock_open.side_effect = self._mock_open
+        from handler_coeffgen import handler
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({
+            "data_bytes": 100,
+            "n_coeffs": 5,
+            "degree": 5,
+        })
+        mock_subprocess.run.return_value = mock_result
+
+        event = self._make_event({
+            "job_id": "j",
+            "function": "giga_1",
+            "n1": 5,
+            "n2": 5,
+        })
+        handler(event, None)
+
+        spec = json.loads(mock_subprocess.run.call_args[1]["input"])
+        self.assertEqual(spec["param_transforms"], [])
+        self.assertEqual(spec["coeff_transforms"], [])
+
+
+# ── Test: handler_sweep.py (solve-from-coefficients path) ────────────────
+
+
+class TestSolveFromCoeffs(unittest.TestCase):
+
+    def _make_event(self, body):
+        return {"body": json.dumps(body)}
+
+    @patch("handler_sweep.os.remove")
+    @patch("handler_sweep.s3")
+    @patch("handler_sweep.subprocess")
+    def test_solve_routes_on_coeffs_key(self, mock_subprocess, mock_s3, mock_remove):
+        """When coeffs_key is present, handler routes to solve path."""
+        from handler_sweep import handler
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({
+            "n_t": 500,
+            "degree": 24,
+            "avg_iterations": 12.3,
+        })
+        mock_subprocess.run.return_value = mock_result
+
+        # Mock S3 range read
+        mock_body = MagicMock()
+        mock_body.read.return_value = b"\x00" * 1000
+        mock_s3.get_object.return_value = {"Body": mock_body}
+
+        # Mock file reads for bin upload
+        import builtins
+        original_open = builtins.open
+
+        def mock_open(path, mode="r", **kwargs):
+            if "/tmp/" in str(path) and "b" in mode:
+                m = MagicMock()
+                m.__enter__ = MagicMock(return_value=m)
+                m.__exit__ = MagicMock(return_value=False)
+                if "w" in mode:
+                    m.write = MagicMock()
+                else:
+                    m.read = MagicMock(return_value=b"\x00" * 500)
+                return m
+            return original_open(path, mode, **kwargs)
+
+        with patch("builtins.open", side_effect=mock_open):
+            event = self._make_event({
+                "job_id": "solve-test",
+                "stripe_idx": 0,
+                "coeffs_key": "renders/solve-test/coeffs.bin",
+                "n_coeffs": 24,
+                "n1": 100,
+                "n2": 100,
+                "i1_start": 0,
+                "i1_end": 10,
+            })
+            result = handler(event, None)
+
+        body = json.loads(result["body"])
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(body["stripe_idx"], 0)
+        self.assertEqual(body["n_t"], 500)
+        self.assertEqual(body["degree"], 24)
+        self.assertEqual(body["n_procs"], 1)
+
+        # Verify sweep was called in solve mode
+        call_args = mock_subprocess.run.call_args
+        spec = json.loads(call_args[1]["input"])
+        self.assertEqual(spec["mode"], "solve")
+        self.assertEqual(spec["n_coeffs"], 24)
+        # i1_start should be 0 (offset already handled by range read)
+        self.assertEqual(spec["i1_start"], 0)
+        self.assertEqual(spec["i1_end"], 10)
+
+    @patch("handler_sweep.os.remove")
+    @patch("handler_sweep.s3")
+    @patch("handler_sweep.subprocess")
+    def test_solve_s3_range_read(self, mock_subprocess, mock_s3, mock_remove):
+        """Verify correct S3 byte range calculation for coefficient read."""
+        from handler_sweep import handler
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({
+            "n_t": 100,
+            "degree": 10,
+            "avg_iterations": 5.0,
+        })
+        mock_subprocess.run.return_value = mock_result
+
+        mock_body = MagicMock()
+        mock_body.read.return_value = b"\x00" * 8000
+        mock_s3.get_object.return_value = {"Body": mock_body}
+
+        import builtins
+        original_open = builtins.open
+
+        def mock_open(path, mode="r", **kwargs):
+            if "/tmp/" in str(path) and "b" in mode:
+                m = MagicMock()
+                m.__enter__ = MagicMock(return_value=m)
+                m.__exit__ = MagicMock(return_value=False)
+                if "w" in mode:
+                    m.write = MagicMock()
+                else:
+                    m.read = MagicMock(return_value=b"\x00" * 400)
+                return m
+            return original_open(path, mode, **kwargs)
+
+        with patch("builtins.open", side_effect=mock_open):
+            event = self._make_event({
+                "job_id": "range-test",
+                "stripe_idx": 2,
+                "coeffs_key": "renders/range-test/coeffs.bin",
+                "n_coeffs": 10,
+                "n1": 100,
+                "n2": 50,
+                "i1_start": 20,
+                "i1_end": 30,
+            })
+            result = handler(event, None)
+
+        # Verify S3 range read
+        # bytes_per_row = n2 * n_coeffs * 2 * 4 = 50 * 10 * 2 * 4 = 4000
+        # start_byte = 20 * 4000 = 80000
+        # end_byte = 30 * 4000 - 1 = 119999
+        call_kwargs = mock_s3.get_object.call_args[1]
+        self.assertEqual(call_kwargs["Range"], "bytes=80000-119999")
+        self.assertEqual(call_kwargs["Key"], "renders/range-test/coeffs.bin")
+
+    @patch("handler_sweep.os.remove")
+    @patch("handler_sweep.s3")
+    @patch("handler_sweep.subprocess")
+    def test_solve_custom_s3_key(self, mock_subprocess, mock_s3, mock_remove):
+        """Verify s3_key override works for solve path."""
+        from handler_sweep import handler
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({
+            "n_t": 50,
+            "degree": 5,
+            "avg_iterations": 3.0,
+        })
+        mock_subprocess.run.return_value = mock_result
+
+        mock_body = MagicMock()
+        mock_body.read.return_value = b"\x00" * 100
+        mock_s3.get_object.return_value = {"Body": mock_body}
+
+        import builtins
+        original_open = builtins.open
+
+        def mock_open(path, mode="r", **kwargs):
+            if "/tmp/" in str(path) and "b" in mode:
+                m = MagicMock()
+                m.__enter__ = MagicMock(return_value=m)
+                m.__exit__ = MagicMock(return_value=False)
+                if "w" in mode:
+                    m.write = MagicMock()
+                else:
+                    m.read = MagicMock(return_value=b"\x00" * 50)
+                return m
+            return original_open(path, mode, **kwargs)
+
+        with patch("builtins.open", side_effect=mock_open):
+            event = self._make_event({
+                "job_id": "key-test",
+                "stripe_idx": 0,
+                "coeffs_key": "renders/key-test/coeffs.bin",
+                "n_coeffs": 5,
+                "n1": 10,
+                "n2": 10,
+                "i1_start": 0,
+                "i1_end": 5,
+                "s3_key": "renders/key-test/lores.bin",
+            })
+            result = handler(event, None)
+
+        body = json.loads(result["body"])
+        # Verify the custom s3_key was used for upload
+        upload_kwargs = mock_s3.put_object.call_args[1]
+        self.assertEqual(upload_kwargs["Key"], "renders/key-test/lores.bin")
+        self.assertEqual(body["s3_key"], "renders/key-test/lores.bin")
+
+    @patch("handler_sweep.os.remove")
+    @patch("handler_sweep.s3")
+    @patch("handler_sweep.subprocess")
+    def test_solve_failure_raises(self, mock_subprocess, mock_s3, mock_remove):
+        """Verify solve mode raises RuntimeError on sweep failure."""
+        from handler_sweep import handler
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = "solver diverged"
+        mock_subprocess.run.return_value = mock_result
+
+        mock_body = MagicMock()
+        mock_body.read.return_value = b"\x00" * 100
+        mock_s3.get_object.return_value = {"Body": mock_body}
+
+        import builtins
+        original_open = builtins.open
+
+        def mock_open(path, mode="r", **kwargs):
+            if "/tmp/" in str(path) and "b" in mode:
+                m = MagicMock()
+                m.__enter__ = MagicMock(return_value=m)
+                m.__exit__ = MagicMock(return_value=False)
+                m.write = MagicMock()
+                return m
+            return original_open(path, mode, **kwargs)
+
+        with patch("builtins.open", side_effect=mock_open):
+            event = self._make_event({
+                "job_id": "fail-test",
+                "stripe_idx": 0,
+                "coeffs_key": "renders/fail-test/coeffs.bin",
+                "n_coeffs": 5,
+                "n1": 10,
+                "n2": 10,
+                "i1_start": 0,
+                "i1_end": 5,
+            })
+            with self.assertRaises(RuntimeError) as ctx:
+                handler(event, None)
+            self.assertIn("solve failed", str(ctx.exception))
+
+    @patch("handler_sweep.multiprocessing")
+    @patch("handler_sweep.os.remove")
+    @patch("handler_sweep.s3")
+    @patch("handler_sweep.subprocess")
+    def test_grid_mode_still_works(self, mock_subprocess, mock_s3, mock_remove, mock_mp):
+        """Without coeffs_key, handler uses existing grid path."""
+        from handler_sweep import handler
+        mock_mp.cpu_count.return_value = 1
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({
+            "n_t": 100,
+            "degree": 24,
+            "avg_iterations": 10.0,
+        })
+        mock_subprocess.run.return_value = mock_result
+
+        import builtins
+        original_open = builtins.open
+
+        def mock_open(path, mode="r", **kwargs):
+            if "/tmp/" in str(path) and "b" in mode:
+                m = MagicMock()
+                m.__enter__ = MagicMock(return_value=m)
+                m.__exit__ = MagicMock(return_value=False)
+                m.read = MagicMock(return_value=b"\x00" * 200)
+                return m
+            return original_open(path, mode, **kwargs)
+
+        with patch("builtins.open", side_effect=mock_open):
+            event = self._make_event({
+                "job_id": "grid-test",
+                "stripe_idx": 0,
+                "function": "giga_1",
+                "n1": 10,
+                "n2": 10,
+                "i1_start": 0,
+                "i1_end": 5,
+            })
+            result = handler(event, None)
+
+        body = json.loads(result["body"])
+        self.assertEqual(result["statusCode"], 200)
+
+        # Verify sweep was called in grid mode (not solve)
+        spec = json.loads(mock_subprocess.run.call_args[1]["input"])
+        self.assertEqual(spec["mode"], "grid")
+
+
 if __name__ == "__main__":
     unittest.main()

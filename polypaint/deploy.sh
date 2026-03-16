@@ -2,8 +2,9 @@
 # Deploy the polypaint Lambda functions
 # Usage: ./deploy.sh [create|update]
 #
-# 7 Lambdas:
+# 8 Lambdas:
 #   polypaint-sweep        — multi-process root solver (sweep binary)
+#   polypaint-coeffgen     — composable coefficient generation (sweep binary, coeffgen mode)
 #   polypaint-raster       — bin→tile-bucketed .pix sparse pixel output (roots2pix binary)
 #   polypaint-finalize     — assemble .pix files into .raw tile (pixassemble binary)
 #   polypaint-encode       — raw→JPEG/PNG encoding (raw2jpeg binary, needs libvips)
@@ -21,6 +22,7 @@ STORAGE_NAME="polypaint-storage"
 DISPATCH_NAME="polypaint-dispatch"
 RASTER_NAME="polypaint-raster"
 FINALIZE_NAME="polypaint-finalize"
+COEFFGEN_NAME="polypaint-coeffgen"
 ROLE_NAME="polypaint-lambda-role"
 REGION="us-east-1"
 API_NAME="polypaint-api"
@@ -33,6 +35,7 @@ STORAGE_MEMORY=512    # pure Python
 DISPATCH_MEMORY=1769  # 1 vCPU — 50 threads doing SSL need real CPU
 RASTER_MEMORY=1769    # 1 vCPU, roots2pix (no canvas allocation)
 FINALIZE_MEMORY=1769  # 1 vCPU, pixassemble (64 MB tile buffer for 4096²)
+COEFFGEN_MEMORY=3072  # 2 vCPU, coefficient generation (no solver, fast)
 BINARY_TMP=10240      # /tmp size for Lambdas that process raw images (max 10GB)
 TIMEOUT=900
 BUCKET="polypaint"
@@ -86,6 +89,16 @@ cp lambda/sweep "$SWEEP_DIR/"
 chmod +x "$SWEEP_DIR"/sweep
 cd "$SWEEP_DIR" && zip -r9 /tmp/polypaint-sweep.zip . -q && cd "$SCRIPT_DIR"
 echo "  Sweep:    $(du -h /tmp/polypaint-sweep.zip | cut -f1)  (sweep)"
+
+# Coeffgen: handler_coeffgen.py + shared.py + sweep
+COEFFGEN_DIR=/tmp/polypaint-coeffgen
+rm -rf "$COEFFGEN_DIR"
+mkdir -p "$COEFFGEN_DIR"
+cp lambda/handler_coeffgen.py lambda/shared.py "$COEFFGEN_DIR/"
+cp lambda/sweep "$COEFFGEN_DIR/"
+chmod +x "$COEFFGEN_DIR"/sweep
+cd "$COEFFGEN_DIR" && zip -r9 /tmp/polypaint-coeffgen.zip . -q && cd "$SCRIPT_DIR"
+echo "  Coeffgen: $(du -h /tmp/polypaint-coeffgen.zip | cut -f1)  (sweep)"
 
 # Encode: handler_encode.py + shared.py + raw2jpeg
 ENCODE_DIR=/tmp/polypaint-encode
@@ -249,7 +262,7 @@ setup_api_gateway() {
     }
 
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME"; do
+    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -260,8 +273,9 @@ setup_api_gateway() {
 
     # Create integrations
     echo "  Creating integrations..."
-    local SWEEP_INT ENCODE_INT VIEWPORT_INT STORAGE_INT DISPATCH_INT
+    local SWEEP_INT COEFFGEN_INT ENCODE_INT VIEWPORT_INT STORAGE_INT DISPATCH_INT
     SWEEP_INT=$(create_integration "$SWEEP_NAME")
+    COEFFGEN_INT=$(create_integration "$COEFFGEN_NAME")
     ENCODE_INT=$(create_integration "$ENCODE_NAME")
     VIEWPORT_INT=$(create_integration "$VIEWPORT_NAME")
     STORAGE_INT=$(create_integration "$STORAGE_NAME")
@@ -270,6 +284,14 @@ setup_api_gateway() {
     # Create routes
     echo "  Setting up routes..."
     ensure_route "POST /sweep" "$SWEEP_INT"
+    ensure_route "POST /coeffgen" "$COEFFGEN_INT"
+
+    local RASTER_INT FINALIZE_INT
+    RASTER_INT=$(create_integration "$RASTER_NAME")
+    FINALIZE_INT=$(create_integration "$FINALIZE_NAME")
+    ensure_route "POST /raster" "$RASTER_INT"
+    ensure_route "POST /finalize" "$FINALIZE_INT"
+
     ensure_route "POST /encode-upload" "$ENCODE_INT"
     ensure_route "POST /viewport" "$VIEWPORT_INT"
     ensure_route "POST /list" "$STORAGE_INT"
@@ -290,11 +312,14 @@ setup_api_gateway() {
 
     printf '{
   "sweep": "%s/sweep",
+  "coeffgen": "%s/coeffgen",
+  "raster": "%s/raster",
+  "finalize": "%s/finalize",
   "encode": "%s/encode-upload",
   "viewport": "%s/viewport",
   "storage": "%s",
   "dispatch": "%s/dispatch-render"
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" --region "$REGION"
     echo "  config.json uploaded"
@@ -392,6 +417,9 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$SWEEP_NAME" "handler_sweep.handler" "/tmp/polypaint-sweep.zip" \
         "$SWEEP_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
 
+    create_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
+        "$COEFFGEN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
+
     create_lambda "$ENCODE_NAME" "handler_encode.handler" "/tmp/polypaint-encode.zip" \
         "$ENCODE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
@@ -433,6 +461,7 @@ if [ "$ACTION" = "create" ]; then
     echo ""
     echo "=== DEPLOYED ==="
     echo "  Sweep:    $SWEEP_NAME ($SWEEP_MEMORY MB)"
+    echo "  Coeffgen: $COEFFGEN_NAME ($COEFFGEN_MEMORY MB)"
     echo "  Raster:   $RASTER_NAME ($RASTER_MEMORY MB)"
     echo "  Finalize: $FINALIZE_NAME ($FINALIZE_MEMORY MB)"
     echo "  Encode:   $ENCODE_NAME ($ENCODE_MEMORY MB)"
@@ -443,6 +472,9 @@ if [ "$ACTION" = "create" ]; then
 elif [ "$ACTION" = "update" ]; then
     update_lambda "$SWEEP_NAME" "handler_sweep.handler" "/tmp/polypaint-sweep.zip" \
         "$SWEEP_MEMORY" "" "BUCKET=$BUCKET"
+
+    update_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
+        "$COEFFGEN_MEMORY" "" "BUCKET=$BUCKET"
 
     update_lambda "$ENCODE_NAME" "handler_encode.handler" "/tmp/polypaint-encode.zip" \
         "$ENCODE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -529,6 +561,7 @@ elif [ "$ACTION" = "update" ]; then
     echo ""
     echo "=== UPDATED ==="
     echo "  Sweep:    $SWEEP_NAME ($SWEEP_MEMORY MB)"
+    echo "  Coeffgen: $COEFFGEN_NAME ($COEFFGEN_MEMORY MB)"
     echo "  Raster:   $RASTER_NAME ($RASTER_MEMORY MB)"
     echo "  Finalize: $FINALIZE_NAME ($FINALIZE_MEMORY MB)"
     echo "  Encode:   $ENCODE_NAME ($ENCODE_MEMORY MB)"

@@ -79,6 +79,21 @@ button {
     display: flex; gap: 8px; align-items: center; margin-bottom: 4px; font-size: 10px;
 }
 .color-row-label { color: #666; min-width: 45px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+.tab-bar { display: flex; gap: 0; margin-bottom: 0; }
+.tab-btn {
+    padding: 8px 20px; font-size: 13px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; cursor: pointer; border: 1px solid #0f3460;
+    border-bottom: none; border-radius: 8px 8px 0 0; background: #1a1a2e; color: #666;
+}
+.tab-btn.active { background: #16213e; color: #e94560; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+#results-tbody tr { cursor: pointer; transition: background 0.1s; }
+#results-tbody tr:hover { background: rgba(233, 69, 96, 0.1); }
+#results-tbody tr.selected { background: rgba(233, 69, 96, 0.25); }
+#results-tbody td { padding: 3px 6px; border-bottom: 1px solid #0f3460; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -88,12 +103,22 @@ button {
     <!-- Config -->
     <div class="panel">
         <h2>Configuration</h2>
-        <label>API Base URL</label>
-        <input type="text" id="api-url" value="https://smojhi4gqe.execute-api.us-east-1.amazonaws.com">
+        <label>Config URL (config.json)</label>
+        <div style="display:flex; gap:8px; align-items:center">
+            <input type="text" id="config-url" value="http://polypaint.s3-website-us-east-1.amazonaws.com/config.json" style="flex:1">
+            <button onclick="loadLambdaConfig()" class="btn-secondary" style="padding:4px 12px">Load</button>
+            <span id="config-status" style="font-size:11px; color:#888"></span>
+        </div>
     </div>
 
-    <div class="panel">
-            <h2>Server-Side Render</h2>
+    <div class="tab-bar">
+        <div class="tab-btn active" onclick="switchTab('compute')">Compute</div>
+        <div class="tab-btn" onclick="switchTab('results')">Results</div>
+        <div class="tab-btn" onclick="switchTab('render')">Render</div>
+    </div>
+    <div class="panel" style="border-radius:0 8px 8px 8px">
+        <!-- Compute tab -->
+        <div id="tab-compute" class="tab-content active">
             <div class="anim-row">
                 <label>Function:</label>
                 <select id="render-function">
@@ -130,25 +155,97 @@ button {
             <div class="anim-row" style="margin-top:8px">
                 <label>N (grid):</label>
                 <input type="number" id="render-n" value="500" min="10" max="5000" step="10">
-                <label>Pix (image):</label>
-                <input type="number" id="render-pix" value="4096" min="256" max="16384" step="256">
                 <label>Stripes:</label>
-                <input type="number" id="render-stripes" value="0" min="0" max="50" step="1" title="0 = auto">
+                <input type="number" id="render-stripes" value="10" min="10" max="500" step="1">
+            </div>
+            <div style="margin-top:8px">
+                <button class="btn-primary" id="btn-calculate" onclick="runCalculate()" style="background:#2a6">Calculate</button>
+                <button class="btn-secondary" onclick="loadRenderPreset('fast')">Fast N=100</button>
+                <button class="btn-secondary" onclick="loadRenderPreset('medium')">Medium N=500</button>
+                <button class="btn-secondary" onclick="loadRenderPreset('hires')">Hi-res N=1K</button>
             </div>
             <div class="anim-row" style="margin-top:8px">
-                <label>Format:</label>
-                <select id="render-format">
-                    <option value="jpeg">JPEG</option>
-                    <option value="png">PNG</option>
-                </select>
-                <label>Quality:</label>
-                <input type="number" id="render-quality" value="90" min="1" max="100" step="5">
+                <label>Results Dir:</label>
+                <input type="text" id="results-dir" placeholder="auto-populated after Calculate" style="flex:1; font-family:monospace; font-size:12px">
+            </div>
+            <div class="status" id="compute-status"></div>
+            <div id="compute-log" style="margin-top:8px; max-height:200px; overflow-y:auto; font-family:monospace; font-size:12px"></div>
+        </div>
+
+        <!-- Results tab -->
+        <div id="tab-results" class="tab-content">
+            <div style="display:flex; gap:12px; height:420px">
+                <!-- Left: scrollable table -->
+                <div style="flex:1; min-width:0; display:flex; flex-direction:column">
+                    <div style="margin-bottom:6px; display:flex; align-items:center; gap:8px">
+                        <button class="btn-secondary" onclick="loadResults()" style="margin:0; padding:4px 12px">Refresh</button>
+                        <span id="results-count" style="font-size:11px; color:#666"></span>
+                    </div>
+                    <div id="results-scroll" tabindex="0" style="flex:1; overflow-y:auto; border:1px solid #0f3460; border-radius:4px; outline:none">
+                        <table style="width:100%; border-collapse:collapse; font-size:11px; font-family:monospace">
+                            <thead>
+                                <tr style="background:#1a1a2e; position:sticky; top:0; z-index:1">
+                                    <th style="text-align:left; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460">Job ID</th>
+                                    <th style="text-align:left; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460">Function</th>
+                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460">Deg</th>
+                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460">N</th>
+                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460">Str</th>
+                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460">Size</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <!-- Right: buttons + preview thumbnail -->
+                <div style="width:200px; flex-shrink:0; display:flex; flex-direction:column">
+                    <div style="font-size:11px; margin-bottom:4px">
+                        <label>Quantile <span id="res-q-val">0</span>%</label>
+                        <input type="range" id="res-quantile" min="0" max="10" step="0.5" value="0"
+                               style="width:100%" oninput="document.getElementById('res-q-val').textContent=this.value">
+                        <label>Shim <span id="res-s-val">5</span>%</label>
+                        <input type="range" id="res-shim" min="0" max="50" step="1" value="5"
+                               style="width:100%" oninput="document.getElementById('res-s-val').textContent=this.value">
+                    </div>
+                    <div style="display:flex; gap:6px; margin-bottom:8px">
+                        <button class="btn-primary" id="btn-preview" onclick="previewResult()" disabled
+                                style="margin:0; padding:4px 12px; font-size:12px">Preview</button>
+                        <button class="btn-primary" id="btn-render-result" onclick="renderResult()" disabled
+                                style="margin:0; padding:4px 12px; font-size:12px; background:#2a6">Render</button>
+                        <button class="btn-secondary" id="btn-delete" onclick="deleteResult()" disabled
+                                style="margin:0; padding:4px 12px; font-size:12px; background:#6b2030">Delete</button>
+                    </div>
+                    <div id="results-preview" style="flex:1; display:flex; align-items:center; justify-content:center;
+                         border:1px solid #0f3460; border-radius:4px; background:#1a1a2e; overflow:hidden">
+                        <span style="color:#444; font-size:11px">No preview</span>
+                    </div>
+                    <div id="results-info" style="font-size:10px; color:#666; margin-top:4px; line-height:1.4"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Render tab -->
+        <div id="tab-render" class="tab-content">
+            <div class="anim-row">
+                <label>Results Dir:</label>
+                <input type="text" id="render-results-dir" placeholder="populate via Compute tab or enter job_id" style="flex:1; font-family:monospace; font-size:12px">
             </div>
             <div class="anim-row" style="margin-top:8px">
                 <label style="display:inline-block;min-width:100px">Quantile: <span id="render-quantile-val" style="display:inline-block;width:2.5em;text-align:right">0.0</span>%</label>
                 <input type="range" id="render-quantile" min="0" max="3" step="0.1" value="0" style="width:200px" oninput="document.getElementById('render-quantile-val').textContent=parseFloat(this.value).toFixed(1)">
                 <label style="display:inline-block;min-width:80px;margin-left:12px">Shim: <span id="render-shim-val" style="display:inline-block;width:2.5em;text-align:right">5.0</span>%</label>
                 <input type="range" id="render-shim" min="0" max="10" step="0.1" value="5.0" style="width:200px" oninput="document.getElementById('render-shim-val').textContent=parseFloat(this.value).toFixed(1)">
+            </div>
+            <div class="anim-row" style="margin-top:8px">
+                <label>Pix (image):</label>
+                <input type="number" id="render-pix" value="4096" min="256" max="100000" step="256" style="width:7em" onchange="updateMergeTiles()" oninput="updateMergeTiles()">
+                <label>Format:</label>
+                <select id="render-format" style="width:5em">
+                    <option value="jpeg">JPEG</option>
+                    <option value="png">PNG</option>
+                </select>
+                <label>Quality:</label>
+                <input type="number" id="render-quality" value="90" min="1" max="100" step="5">
             </div>
             <!-- Color controls -->
             <div class="color-box">
@@ -175,8 +272,11 @@ button {
                     <span class="color-dot" data-mode="constant" onclick="setColorMode('constant')"></span>
                     <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('constant')">Constant</span>
                     <span id="constant-options" style="display:none; margin-left:12px">
+                        <span id="constant-color-swatch" onclick="document.getElementById('render-constant-color').click()"
+                            style="display:inline-block; width:24px; height:24px; border-radius:4px; border:2px solid #666; cursor:pointer; vertical-align:middle; background:#ffffff; box-shadow:0 0 0 1px #333 inset"></span>
                         <input type="color" id="render-constant-color" value="#ffffff"
-                            style="width:28px; height:22px; border:1px solid #555; background:#222; cursor:pointer; vertical-align:middle">
+                            style="position:absolute; opacity:0; width:0; height:0; pointer-events:none"
+                            oninput="document.getElementById('constant-color-swatch').style.background=this.value">
                     </span>
                 </div>
                 <div class="color-row" style="margin-top:4px">
@@ -186,45 +286,387 @@ button {
                     <span style="color:#555; font-size:9px">(0=raw add)</span>
                 </div>
             </div>
-
-            <div style="margin-top:8px">
-                <button class="btn-primary" id="btn-render" onclick="runRender()">Render Image</button>
-                <button class="btn-secondary" onclick="loadRenderPreset('fast')">Fast N=100 1K</button>
-                <button class="btn-secondary" onclick="loadRenderPreset('medium')">Medium N=500 4K</button>
-                <button class="btn-secondary" onclick="loadRenderPreset('hires')">Hi-res N=1K 4K</button>
+            <div class="color-row" style="margin-top:4px">
+                <span class="color-row-label" style="min-width:80px">Pipeline:</span>
+                <select id="render-pipeline-mode" style="font-size:12px; background:#1a1a2e; color:#ccc; border:1px solid #333; padding:2px 4px"
+                    onchange="const isLegacy = this.value !== 'sparse';
+                        document.getElementById('sparse-tile-wrap').style.display = isLegacy ? 'none' : 'inline-flex';
+                        document.getElementById('legacy-merge-wrap').style.display = isLegacy ? 'inline-flex' : 'none';
+                        document.getElementById('btn-merge').style.display = isLegacy ? '' : 'none';
+                        document.getElementById('btn-render').style.display = isLegacy ? '' : 'none';
+                        document.getElementById('btn-raster-all').style.display = isLegacy ? 'none' : '';">
+                    <option value="sparse">Sparse (raster+finalize)</option>
+                    <option value="legacy_full">Legacy Full (render+merge)</option>
+                    <option value="legacy_tiled">Legacy Tiled (render+tile-merge)</option>
+                </select>
+                <span id="sparse-tile-wrap" style="margin-left:8px; display:inline-flex; align-items:center; gap:4px">
+                    <span class="color-row-label">Tile:</span>
+                    <select id="sparse-tile-size" style="font-size:12px; background:#1a1a2e; color:#ccc; border:1px solid #333; padding:2px 4px">
+                        <option value="2048">2048</option>
+                        <option value="4096" selected>4096</option>
+                        <option value="8192">8192</option>
+                    </select>
+                </span>
+                <span id="legacy-merge-wrap" style="display:none; margin-left:8px; align-items:center; gap:4px">
+                    <span class="color-row-label">T:</span>
+                    <select id="merge-tiles" style="font-size:12px; background:#1a1a2e; color:#ccc; border:1px solid #333; padding:2px 4px" onchange="updateMergeTilesInfo()">
+                    </select>
+                    <span id="merge-tiles-info" style="color:#555; font-size:9px"></span>
+                </span>
+            </div>
+            <div style="margin-top:8px; display:flex; gap:6px; align-items:center">
+                <button class="btn-primary" id="btn-render" onclick="runRenderPhase()" style="display:none">Render</button>
+                <button class="btn-primary" id="btn-merge" onclick="runMergePhase()" disabled style="display:none">Merge</button>
+                <button class="btn-primary" id="btn-encode" onclick="runEncodePhase()" disabled>Encode</button>
+                <button class="btn-primary" id="btn-render-all" onclick="runRenderAll()" style="display:none">Legacy All</button>
+                <button class="btn-primary" id="btn-raster-all" onclick="runRasterPipeline()">Render</button>
             </div>
             <div class="status" id="render-status"></div>
+            <div id="render-preview" style="max-width:600px; margin-top:8px"></div>
+            <div id="render-info" style="font-size:12px; color:#888; margin-top:4px"></div>
+            <div id="render-log" style="margin-top:8px"></div>
         </div>
-
-        <div class="panel">
-            <h2>Result</h2>
-            <div id="render-preview" style="max-width:600px">
-                <p style="color:#888; font-size:14px">Run a render to see the result here.</p>
-            </div>
-            <div id="render-info" style="font-size:12px; color:#888; margin-top:8px"></div>
-        </div>
-
-    <!-- Log -->
-    <div class="panel">
-        <h2>Job Log</h2>
-        <div id="job-log"></div>
     </div>
 </div>
 
 <script>
 /* ---- Logging ---- */
-function log(msg, cls='') {
-    const el = document.getElementById('job-log');
+function log(msg, cls='', target='compute-log') {
+    const el = document.getElementById(target);
+    if (!el) return;
     const d = document.createElement('div');
     d.className = 'log-entry ' + cls;
     d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
     el.prepend(d);
+    // Cap at 500 entries
+    while (el.children.length > 500) el.removeChild(el.lastChild);
 }
 
-/* ---- API helpers ---- */
-function apiUrl(path) {
-    return document.getElementById('api-url').value.trim().replace(/\/$/, '') + path;
+/* ---- Tabs ---- */
+function switchTab(name) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === name));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
+    if (name === 'results') loadResults();
 }
+
+/* ---- Results management ---- */
+let _resultsCache = [];      // last fetched results
+let _selectedJobId = null;   // currently selected job_id
+let _resultsLoading = false;
+
+async function loadResults() {
+    if (_resultsLoading) return;
+    _resultsLoading = true;
+    const countEl = document.getElementById('results-count');
+    countEl.textContent = 'Loading...';
+
+    try {
+        const data = await lambdaPost('storage', {}, '/list');
+        _resultsCache = data.results || [];
+        renderResultsTable();
+        countEl.textContent = `${data.count} results (${(data.list_us/1e6).toFixed(1)}s)`;
+    } catch (e) {
+        countEl.textContent = 'Error: ' + e.message;
+    } finally {
+        _resultsLoading = false;
+    }
+}
+
+function renderResultsTable() {
+    const tbody = document.getElementById('results-tbody');
+    tbody.innerHTML = '';
+    const fmtSize = (b) => b > 1e6 ? (b/1e6).toFixed(1)+'M' : (b/1e3).toFixed(0)+'K';
+
+    for (const r of _resultsCache) {
+        const tr = document.createElement('tr');
+        if (r.job_id === _selectedJobId) tr.className = 'selected';
+        tr.onclick = () => selectResult(r.job_id);
+
+        // Short ID: strip "compute_" prefix
+        const shortId = r.job_id.replace(/^compute_/, '');
+        const indicators = (r.has_preview ? '\u25cf' : '\u25cb') + (r.has_image ? '\u2713' : '');
+
+        tr.innerHTML =
+            `<td style="color:#e0e0e0">${shortId} <span style="color:#555;font-size:9px">${indicators}</span></td>` +
+            `<td style="color:#4ecca3">${r.function || '?'}</td>` +
+            `<td style="text-align:right">${r.degree || ''}</td>` +
+            `<td style="text-align:right">${r.n1 || ''}</td>` +
+            `<td style="text-align:right">${r.n_stripes || ''}</td>` +
+            `<td style="text-align:right;color:#888">${fmtSize(r.total_size || 0)}</td>`;
+        tbody.appendChild(tr);
+    }
+}
+
+function selectResult(jobId) {
+    _selectedJobId = jobId;
+
+    // Update selection highlight
+    document.querySelectorAll('#results-tbody tr').forEach(tr => tr.classList.remove('selected'));
+    const rows = document.querySelectorAll('#results-tbody tr');
+    const idx = _resultsCache.findIndex(r => r.job_id === jobId);
+    if (idx >= 0 && rows[idx]) {
+        rows[idx].classList.add('selected');
+        rows[idx].scrollIntoView({ block: 'nearest' });
+    }
+
+    // Focus the scroll container so arrow keys work
+    document.getElementById('results-scroll').focus();
+
+    // Enable buttons
+    document.getElementById('btn-preview').disabled = false;
+    document.getElementById('btn-render-result').disabled = false;
+    document.getElementById('btn-delete').disabled = false;
+
+    // Populate render-results-dir for easy render access
+    document.getElementById('render-results-dir').value = jobId;
+    document.getElementById('results-dir').value = jobId;
+
+    // Show cached preview if available
+    const r = _resultsCache.find(r => r.job_id === jobId);
+    const previewEl = document.getElementById('results-preview');
+    const infoEl = document.getElementById('results-info');
+
+    if (r && r.has_preview && r.preview_url) {
+        previewEl.innerHTML = `<img src="${r.preview_url}" style="max-width:100%; max-height:100%; image-rendering:pixelated">`;
+    } else {
+        previewEl.innerHTML = '<span style="color:#444; font-size:11px">No preview</span>';
+    }
+
+    if (r) {
+        infoEl.textContent = `${r.function || '?'} deg${r.degree || '?'} N=${r.n1||'?'} ${r.n_stripes||'?'}str ${r.file_count||'?'} files`;
+    }
+}
+
+document.addEventListener('keydown', (e) => {
+    if (!document.getElementById('tab-results').classList.contains('active')) return;
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (!_resultsCache.length) return;
+    e.preventDefault();
+
+    const idx = _selectedJobId ? _resultsCache.findIndex(r => r.job_id === _selectedJobId) : -1;
+    let next;
+    if (e.key === 'ArrowDown') {
+        next = idx < _resultsCache.length - 1 ? idx + 1 : idx;
+    } else {
+        next = idx > 0 ? idx - 1 : 0;
+    }
+    selectResult(_resultsCache[next].job_id);
+});
+
+async function previewResult() {
+    if (!_selectedJobId) return;
+    const btn = document.getElementById('btn-preview');
+    btn.disabled = true;
+    btn.textContent = '...';
+    const infoEl = document.getElementById('results-info');
+    const t0 = performance.now();
+
+    try {
+        const quantile = parseFloat(document.getElementById('res-quantile').value) / 100;
+        const shim = parseFloat(document.getElementById('res-shim').value) / 100;
+        const previewSize = 256;
+
+        // Step 1: viewport
+        infoEl.textContent = 'Computing viewport...';
+        const vp = await lambdaPost('viewport', {
+            job_id: _selectedJobId, quantile, shim,
+        });
+
+        // Get degree from results cache
+        let calcResult = _resultsCache.find(r => r.job_id === _selectedJobId);
+        if (!calcResult) {
+            await lambdaPost('storage', {}, '/list');
+            calcResult = _resultsCache.find(r => r.job_id === _selectedJobId);
+        }
+        const degree = (calcResult && calcResult.degree) || 1;
+        const REF_SIZE = 4096;
+        const scale = vp.scale_ref * previewSize / REF_SIZE;
+
+        // Step 2: render lores at small size
+        infoEl.textContent = 'Rendering preview...';
+        const loresKey = `renders/${_selectedJobId}/lores.bin`;
+        const renderResult = await lambdaPost('render', {
+            job_id: _selectedJobId,
+            stripe_idx: 0,
+            bin_key: loresKey,
+            width: previewSize, height: previewSize,
+            center_re: vp.center_re, center_im: vp.center_im,
+            scale: scale, degree: degree,
+            color: 'rainbow', match: 'none',
+            palette: 'inferno', constant_color: 'ffffff',
+        });
+
+        // Step 3: encode to JPEG
+        infoEl.textContent = 'Encoding preview...';
+        const previewKey = `renders/${_selectedJobId}/preview.jpg`;
+        const encResult = await lambdaPost('encode', {
+            raw_key: renderResult.s3_key,
+            out_key: previewKey,
+            format: 'jpeg', quality: 80,
+        });
+
+        // Cleanup temp .raw
+        lambdaPost('storage', { keys: [renderResult.s3_key] }, '/cleanup').catch(() => {});
+
+        const totalMs = (performance.now() - t0).toFixed(0);
+
+        // Update cache
+        const r = _resultsCache.find(r => r.job_id === _selectedJobId);
+        if (r) {
+            r.has_preview = true;
+            r.preview_url = encResult.image_url;
+        }
+
+        // Show preview
+        document.getElementById('results-preview').innerHTML =
+            `<img src="${encResult.image_url}" style="max-width:100%; max-height:100%; image-rendering:pixelated">`;
+        infoEl.textContent += ` | preview ${(totalMs/1000).toFixed(1)}s`;
+
+        renderResultsTable();
+    } catch (e) {
+        infoEl.textContent = 'Preview error: ' + e.message;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Preview';
+    }
+}
+
+async function deleteResult() {
+    if (!_selectedJobId) return;
+    if (!confirm(`Delete all data for ${_selectedJobId}?`)) return;
+
+    const btn = document.getElementById('btn-delete');
+    btn.disabled = true;
+    btn.textContent = '...';
+
+    try {
+        await lambdaPost('storage', { job_id: _selectedJobId }, '/delete');
+
+        // Remove from cache and re-render
+        _resultsCache = _resultsCache.filter(r => r.job_id !== _selectedJobId);
+        _selectedJobId = null;
+        renderResultsTable();
+
+        document.getElementById('results-preview').innerHTML =
+            '<span style="color:#444; font-size:11px">No preview</span>';
+        document.getElementById('results-info').textContent = 'Deleted';
+        document.getElementById('results-count').textContent = `${_resultsCache.length} results`;
+        document.getElementById('btn-preview').disabled = true;
+        document.getElementById('btn-render-result').disabled = true;
+        document.getElementById('btn-delete').disabled = true;
+    } catch (e) {
+        document.getElementById('results-info').textContent = 'Delete error: ' + e.message;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Delete';
+    }
+}
+
+function renderResult() {
+    if (!_selectedJobId) return;
+    document.getElementById('render-results-dir').value = _selectedJobId;
+    switchTab('render');
+}
+
+/* ---- Lambda config ---- */
+let _lambdaUrls = {};  // {sweep, render, reduce, encode, viewport, storage}
+
+async function loadLambdaConfig() {
+    const url = document.getElementById('config-url').value.trim();
+    const statusEl = document.getElementById('config-status');
+    try {
+        statusEl.textContent = 'Loading...';
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        _lambdaUrls = await resp.json();
+        const count = Object.keys(_lambdaUrls).length;
+        statusEl.textContent = `${count} endpoints loaded`;
+        statusEl.style.color = '#4ecca3';
+    } catch (e) {
+        statusEl.textContent = 'Error: ' + e.message;
+        statusEl.style.color = '#ff5555';
+    }
+}
+
+function lambdaUrl(name, path) {
+    const base = (_lambdaUrls[name] || '').replace(/\/$/, '');
+    if (!base) throw new Error(`Lambda URL not configured for "${name}". Load config.json first.`);
+    return base + (path || '');
+}
+
+// Helper: POST JSON to a Lambda and parse response
+async function lambdaPost(name, body, path) {
+    const url = lambdaUrl(name, path);
+    const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+    for (let attempt = 0; attempt < 5; attempt++) {
+        let resp;
+        try {
+            resp = await fetch(url, opts);
+        } catch (e) {
+            // Network-level failure (Failed to fetch) — retry with backoff
+            if (attempt < 4) {
+                const delay = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
+                await new Promise(r => setTimeout(r, delay));
+                continue;
+            }
+            throw e;
+        }
+        if (resp.status === 503 || resp.status === 429) {
+            const delay = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+        }
+        if (!resp.ok) throw new Error(`${name} HTTP ${resp.status}: ${await resp.text()}`);
+        const raw = await resp.json();
+        return typeof raw.body === 'string' ? JSON.parse(raw.body) : raw;
+    }
+    throw new Error(`${name}: failed after 5 retries`);
+}
+
+// Download a file via presigned URL with Content-Disposition: attachment
+// Gets a new presigned URL with download filename baked in, then navigates to it.
+async function downloadPresignedFile(originalUrl, filename) {
+    const btn = event && event.target;
+    const origText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Preparing download...'; }
+    try {
+        // Re-presign with Content-Disposition: attachment so browser saves instead of displaying
+        const key = _lastDownloadKey;
+        if (key) {
+            const result = await lambdaPost('storage', { key, filename }, '/presign');
+            window.location.href = result.url;
+        } else {
+            // Fallback: use <a download> trick
+            const a = document.createElement('a');
+            a.href = originalUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+    } catch (e) {
+        alert('Download failed: ' + e.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
+    }
+}
+let _lastDownloadKey = null;
+
+// Concurrency-limited parallel execution (prevents browser connection exhaustion)
+async function asyncPool(limit, items, fn) {
+    const results = [];
+    const executing = new Set();
+    for (const item of items) {
+        const p = fn(item).then(r => { executing.delete(p); return r; });
+        executing.add(p);
+        results.push(p);
+        if (executing.size >= limit) await Promise.race(executing);
+    }
+    return Promise.all(results);
+}
+
+// Load config on page load
+loadLambdaConfig();
 
 /* ---- Color controls ---- */
 let renderColorMode = 'rainbow';
@@ -241,6 +683,61 @@ const PALETTE_DEFS = [
     { name: 'warm',     stops: ['#6e40aa','#e04f7e','#f19938','#c3e032','#aff05b','#aff05b'] },
     { name: 'cool',     stops: ['#6e40aa','#4775de','#1bb5a8','#52f667','#aff05b','#aff05b'] },
 ];
+
+function updateMergeTiles() {
+    const pix = parseInt(document.getElementById('render-pix').value) || 4096;
+    // tile-reduce needs 3 tiles on disk + rawreduce reads 2 into memory
+    // Each tile = pix × (pix/T) × 3 bytes.  Target max 256 MB per tile so
+    // 3 tiles fit comfortably in 3584 MB Lambda with room for rawreduce + Python.
+    const MAX_TILE_MB = 256;
+    const tileBytes = pix * pix * 3;  // size of one full-height tile (T=1)
+    const minT = Math.max(1, Math.ceil(tileBytes / (MAX_TILE_MB * 1024 * 1024)));
+
+    // Full-merge reduce Lambda = 1769 MB; needs 3× full image in memory
+    // Auto-switch to tiled when full merge would OOM
+    const reduceLambdaUsable = 1769 * 1024 * 1024 * 0.5;
+    const fullMergeBytes = 3 * pix * pix * 3;
+    const modeSel = document.getElementById('render-pipeline-mode');
+    const fullOption = modeSel.querySelector('option[value="legacy_full"]');
+    if (fullMergeBytes > reduceLambdaUsable) {
+        fullOption.disabled = true;
+        fullOption.textContent = 'Legacy Full (too large)';
+        if (modeSel.value === 'legacy_full') {
+            modeSel.value = 'sparse';
+            document.getElementById('legacy-merge-wrap').style.display = 'none';
+            document.getElementById('sparse-tile-wrap').style.display = 'inline-flex';
+        }
+    } else {
+        fullOption.disabled = false;
+        fullOption.textContent = 'Legacy Full (render+merge)';
+    }
+
+    const sel = document.getElementById('merge-tiles');
+    const prev = parseInt(sel.value) || 0;
+    sel.innerHTML = '';
+    const powers = [1,2,4,8,16,32,64,128];
+    let first = null;
+    for (const p of powers) {
+        if (p < minT) continue;
+        const opt = document.createElement('option');
+        opt.value = p; opt.textContent = p;
+        sel.appendChild(opt);
+        if (!first) first = p;
+    }
+    if (prev >= minT && powers.includes(prev)) sel.value = prev;
+    else sel.value = first;
+    updateMergeTilesInfo();
+}
+function updateMergeTilesInfo() {
+    const pix = parseInt(document.getElementById('render-pix').value) || 4096;
+    const T = parseInt(document.getElementById('merge-tiles').value) || 1;
+    const tileH = Math.ceil(pix / T);
+    const tileMB = (pix * tileH * 3 / 1e6).toFixed(0);
+    const MAX_TILE_MB = 256;
+    const minT = Math.max(1, Math.ceil((pix * pix * 3) / (MAX_TILE_MB * 1024 * 1024)));
+    document.getElementById('merge-tiles-info').textContent =
+        `min ${minT} · tile ${tileH}px · ${tileMB}MB/tile`;
+}
 
 function setColorMode(mode) {
     renderColorMode = mode;
@@ -281,124 +778,892 @@ function setPalette(name) {
 function loadRenderPreset(name) {
     if (name === 'fast') {
         document.getElementById('render-n').value = '100';
-        document.getElementById('render-pix').value = '1024';
     } else if (name === 'medium') {
         document.getElementById('render-n').value = '500';
-        document.getElementById('render-pix').value = '4096';
     } else if (name === 'hires') {
         document.getElementById('render-n').value = '1000';
-        document.getElementById('render-pix').value = '4096';
     }
 }
 
-async function runRender() {
-    const funcName = document.getElementById('render-function').value;
-    const n = parseInt(document.getElementById('render-n').value);
-    const pix = parseInt(document.getElementById('render-pix').value);
-    const fmt = document.getElementById('render-format').value;
-    const quality = parseInt(document.getElementById('render-quality').value);
-    const nStripes = parseInt(document.getElementById('render-stripes').value) || 0;
-    const quantile = parseFloat(document.getElementById('render-quantile').value) / 100;
-    const shim = parseFloat(document.getElementById('render-shim').value) / 100;
-    const jobId = 'render_' + Date.now().toString(36);
+// --- Render pipeline state (persists between phases) ---
+let _renderState = null;
+const _fmtMs = (ms) => (ms/1000).toFixed(1) + 's';
+const _fmtStatus = (sc) => sc ? Object.entries(sc).map(([k,v]) => `${k}:${v}`).join(' ') : '';
 
-    const gamma = parseFloat(document.getElementById('render-gamma').value);
-
-    const requestBody = {
-        job_id: jobId,
-        function: funcName,
-        n1: n, n2: n,
-        width: pix, height: pix,
-        format: fmt,
-        quality: quality,
-        auto_scale: true,
-        n_stripes: nStripes,
-        quantile: quantile,
-        shim: shim,
-        color: renderColorMode,
-        match: renderMatchMode,
-        palette: renderPalette,
-        constant_color: document.getElementById('render-constant-color').value.replace('#', ''),
-        gamma: gamma,
+function _renderCommonParams() {
+    const jobId = document.getElementById('render-results-dir').value.trim();
+    if (!jobId) throw new Error('No results dir — run Calculate first');
+    return {
+        jobId,
+        pix: parseInt(document.getElementById('render-pix').value),
+        fmt: document.getElementById('render-format').value,
+        quality: parseInt(document.getElementById('render-quality').value),
+        gamma: parseFloat(document.getElementById('render-gamma').value),
+        quantile: parseFloat(document.getElementById('render-quantile').value) / 100,
+        shim: parseFloat(document.getElementById('render-shim').value) / 100,
+        constantColor: document.getElementById('render-constant-color').value.replace('#', ''),
+        pipelineMode: document.getElementById('render-pipeline-mode').value,
+        tileSize: parseInt(document.getElementById('sparse-tile-size').value),
+        // Legacy compat
+        mergeMode: document.getElementById('render-pipeline-mode').value === 'legacy_tiled' ? 'tiled' : 'full',
+        T: document.getElementById('render-pipeline-mode').value === 'legacy_tiled'
+            ? parseInt(document.getElementById('merge-tiles').value) : 0,
     };
+}
 
+async function runRenderPhase() {
     const btn = document.getElementById('btn-render');
     btn.disabled = true;
-    document.getElementById('render-status').textContent = `Rendering ${funcName} N=${n}, ${pix}px ${fmt}...`;
-    document.getElementById('render-status').className = 'status';
-    const colorDesc = renderColorMode === 'constant' ? `constant/#${requestBody.constant_color}` :
-        renderColorMode === 'proximity' ? `proximity/${renderPalette}` : `rainbow/${renderMatchMode}`;
-    log(`Render: ${funcName} N=${n}, ${pix}px ${fmt}, ${colorDesc}, gamma=${gamma}, q=${(quantile*100).toFixed(1)}%, shim=${(shim*100).toFixed(1)}%, stripes=${nStripes||'auto'}...`);
+    document.getElementById('btn-merge').disabled = true;
+    document.getElementById('btn-encode').disabled = true;
+    // Clear old preview
+    document.getElementById('render-preview').innerHTML = '';
+    document.getElementById('render-info').textContent = '';
+    _renderState = null;
 
     try {
-        const t0 = performance.now();
-        const resp = await fetch(apiUrl('/render'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody),
-        });
-        const networkTime = (performance.now() - t0).toFixed(0);
+        const p = _renderCommonParams();
+        const colorDesc = renderColorMode === 'constant' ? `constant/#${p.constantColor}` :
+            renderColorMode === 'proximity' ? `proximity/${renderPalette}` : `rainbow/${renderMatchMode}`;
 
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+        // Clean up old render artifacts (.raw/.jpeg/.png), preserve .bin
+        document.getElementById('render-status').textContent = `Cleaning old render files...`;
+        document.getElementById('render-status').className = 'status';
+        const cleanResult = await lambdaPost('storage', { job_id: p.jobId }, '/clean-render');
+        if (cleanResult.deleted > 0)
+            log(`  cleaned ${cleanResult.deleted} old render files`, '', 'render-log');
 
-        const result = await resp.json();
-        const data = typeof result.body === 'string' ? JSON.parse(result.body) : result;
-        const t = data.timing || {};
+        // Phase 1: viewport
+        document.getElementById('render-status').textContent = `Computing viewport...`;
+        log(`Viewport: ${p.jobId}, quantile=${(p.quantile*100).toFixed(1)}%, shim=${(p.shim*100).toFixed(1)}%...`, '', 'render-log');
 
-        const fileSizeMB = (data.file_size / 1e6).toFixed(2);
-        const fmtUs = (us) => us != null ? (us/1e6).toFixed(1) + 's' : '?';
-        let statusParts = [data.roots_plotted.toLocaleString() + ' roots'];
-        if (data.n_stripes > 1) statusParts.push(data.n_stripes + ' stripes');
-        statusParts.push('wall ' + fmtUs(t.compute_wall_us));
-        statusParts.push('compute ' + fmtUs(t.total_compute_us));
-        if (t.reduce_us) statusParts.push('reduce ' + fmtUs(t.reduce_us) + (t.reduce_rounds ? ' (' + t.reduce_rounds + ' rounds)' : ''));
-        if (t.encode_us) statusParts.push('encode ' + fmtUs(t.encode_us));
-        statusParts.push(fileSizeMB + 'MB ' + data.format);
-        statusParts.push('network ' + networkTime + 'ms');
-        document.getElementById('render-status').textContent = statusParts.join(' | ');
-        document.getElementById('render-status').className = 'status ok';
+        const tVp = performance.now();
+        const vpData = await lambdaPost('viewport', { job_id: p.jobId, quantile: p.quantile, shim: p.shim });
+        log(`  viewport: ${_fmtMs(performance.now()-tVp)} | ${vpData.n_roots} roots`, 'ok', 'render-log');
 
-        // Show image preview
-        const preview = document.getElementById('render-preview');
-        preview.innerHTML = `<a href="${data.image_url}" target="_blank" title="Click to open full-size image">` +
-            `<img src="${data.image_url}" style="max-width:100%; border:1px solid #333; cursor:pointer"></a>` +
-            `<div style="margin-top:8px"><a href="${data.image_url}" target="_blank" class="btn-secondary" ` +
-            `style="text-decoration:none; padding:4px 12px">Download ${data.format.toUpperCase()}</a></div>`;
+        const REF_SIZE = 4096;
+        const scale = vpData.scale_ref * Math.min(p.pix, p.pix) / REF_SIZE;
 
-        document.getElementById('render-info').textContent =
-            `Job: ${data.job_id} | ${data.function} N=${data.n1} | ` +
-            `${data.width}x${data.height} | Degree: ${data.degree} | ` +
-            `Avg iters: ${data.avg_iterations.toFixed(1)}`;
-
-        // Itemized timing log (bottom-up so they display top-down in prepend log)
-        const vp = data.viewport;
-        const lines = [];
-        lines.push(`  network:  ${(networkTime/1000).toFixed(1)}s  (fetch round-trip incl. all Lambda execution)`);
-        if (t.cleanup_us) lines.push(`  cleanup:  ${fmtUs(t.cleanup_us)}`);
-        lines.push(`  encode:   ${fmtUs(t.encode_us)}  → ${fileSizeMB}MB ${data.format}`);
-        if (t.reduce_us) lines.push(`  reduce:   ${fmtUs(t.reduce_us)}  (${t.reduce_rounds || '?'} rounds, tree-parallel)`);
-        if (t.total_render_us) lines.push(`  render:   ${fmtUs(t.total_render_us)}  (sum across stripes)`);
-        lines.push(`  compute:  ${fmtUs(t.total_compute_us)}  (sum) / ${fmtUs(t.compute_wall_us)} wall  (${data.n_stripes} stripes parallel)`);
-        if (t.viewport_us) {
-            let vpDetail = fmtUs(t.viewport_us);
-            if (vp && !vp.manual) {
-                vpDetail += `  center=(${vp.center_re.toFixed(4)}, ${vp.center_im.toFixed(4)}) scale=${vp.scale.toFixed(1)}`;
-            }
-            lines.push(`  viewport: ${vpDetail}`);
+        let calcMeta = _lastCalcMeta && _lastCalcMeta.job_id === p.jobId ? _lastCalcMeta : null;
+        if (!calcMeta) {
+            const listData = await lambdaPost('storage', {}, '/list');
+            const jobResult = (listData.results || []).find(r => r.job_id === p.jobId);
+            if (!jobResult) throw new Error('Job not found in results');
+            calcMeta = { n_stripes: jobResult.n_stripes || 10, degree: jobResult.degree || 1 };
         }
-        lines.push(`Render ${data.job_id}: ${data.function} deg${data.degree} N=${data.n1} ${data.width}px, ` +
-            `${data.roots_plotted.toLocaleString()} roots`);
-        // Log bottom-up (prepend means last push appears first)
-        for (const line of lines) log(line, 'ok');
+        const nStripes = calcMeta.n_stripes;
+        const tileRows = p.T > 0 ? Math.ceil(p.pix / p.T) : 0;
+
+        // Phase 2: fan-out render
+        const renderJobs = [];
+        if (p.mergeMode === 'tiled') {
+            for (let s = 0; s < nStripes; s++) {
+                for (let t = 0; t < p.T; t++) {
+                    const yStart = t * tileRows;
+                    const yHeight = Math.min(tileRows, p.pix - yStart);
+                    if (yHeight <= 0) continue;
+                    renderJobs.push({
+                        job_id: p.jobId, stripe_idx: s, tile_idx: t,
+                        bin_key: `renders/${p.jobId}/stripe_${s}.bin`,
+                        width: p.pix, height: p.pix,
+                        y_start: yStart, y_height: yHeight,
+                        center_re: vpData.center_re, center_im: vpData.center_im,
+                        scale, degree: calcMeta.degree,
+                        color: renderColorMode, match: renderMatchMode,
+                        palette: renderPalette, constant_color: p.constantColor,
+                    });
+                }
+            }
+        } else {
+            for (let s = 0; s < nStripes; s++) {
+                renderJobs.push({
+                    job_id: p.jobId, stripe_idx: s,
+                    bin_key: `renders/${p.jobId}/stripe_${s}.bin`,
+                    width: p.pix, height: p.pix,
+                    center_re: vpData.center_re, center_im: vpData.center_im,
+                    scale, degree: calcMeta.degree,
+                    color: renderColorMode, match: renderMatchMode,
+                    palette: renderPalette, constant_color: p.constantColor,
+                });
+            }
+        }
+
+        const totalRenderJobs = renderJobs.length;
+        const renderDesc = p.mergeMode === 'tiled'
+            ? `${nStripes} stripes × ${p.T} tiles = ${totalRenderJobs} Lambdas`
+            : `${nStripes} stripes`;
+        log(`Render: ${p.jobId}, ${p.pix}px ${p.fmt}, ${colorDesc}, gamma=${p.gamma}, ${renderDesc}...`, '', 'render-log');
+        document.getElementById('render-status').textContent = `Dispatching ${totalRenderJobs} render Lambdas...`;
+        const tRender = performance.now();
+
+        // Dispatch all render Lambdas asynchronously (server-side fan-out)
+        // Send in batches to avoid API Gateway payload limits (~6MB)
+        const BATCH_SIZE = 500;
+        const allExpectedKeys = [];
+        const nBatches = Math.ceil(renderJobs.length / BATCH_SIZE);
+        for (let i = 0; i < renderJobs.length; i += BATCH_SIZE) {
+            const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+            const batch = renderJobs.slice(i, i + BATCH_SIZE);
+            document.getElementById('render-status').textContent = `Dispatching batch ${batchNum}/${nBatches} (${batch.length} jobs)...`;
+            const tBatch = performance.now();
+            const dispResult = await lambdaPost('dispatch', { jobs: batch });
+            if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length)) {
+                throw new Error(
+                    `Render dispatch failed for batch ${batchNum}: ` +
+                    `fired ${dispResult.fired || 0}/${batch.length}, ` +
+                    `errors ${dispResult.errors ? dispResult.errors.length : 0}`
+                );
+            }
+            allExpectedKeys.push(...dispResult.expected_keys);
+            log(`  dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired (${_fmtMs(performance.now() - tBatch)})`, '', 'render-log');
+        }
+        const dispatchMs = performance.now() - tRender;
+        log(`  dispatched: ${_fmtMs(dispatchMs)} (${allExpectedKeys.length} Lambdas fired)`, 'ok', 'render-log');
+
+        // Poll DynamoDB for completion (timeout after 10 min of no progress)
+        let lastDone = 0;
+        let pollCount = 0;
+        let lastProgressTime = performance.now();
+        const POLL_TIMEOUT_MS = 600000;  // 10 min with no progress
+        while (true) {
+            await new Promise(r => setTimeout(r, 3000));  // poll every 3s
+            pollCount++;
+            const check = await lambdaPost('storage', {
+                job_id: p.jobId,
+                task_prefix: 'stripe_',
+                expected: totalRenderJobs,
+            }, '/check-status');
+            if (check.errors > 0) {
+                const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                throw new Error(`${check.errors} render tasks failed:\n${msgs}`);
+            }
+            if (check.done !== lastDone) {
+                const delta = check.done - lastDone;
+                const elapsed = _fmtMs(performance.now() - tRender);
+                log(`  poll #${pollCount}: ${check.done}/${totalRenderJobs} done (+${delta}, ${elapsed})`, '', 'render-log');
+                lastDone = check.done;
+                lastProgressTime = performance.now();
+                document.getElementById('render-status').textContent =
+                    `Rendering ${check.done}/${totalRenderJobs}...`;
+            }
+            if (check.complete) break;
+            if (performance.now() - lastProgressTime > POLL_TIMEOUT_MS) {
+                throw new Error(`Render stalled: ${lastDone}/${totalRenderJobs} after ${_fmtMs(performance.now() - tRender)}`);
+            }
+        }
+        const renderWallMs = performance.now() - tRender;
+        log(`  render: ${_fmtMs(renderWallMs)} wall (${renderDesc})`, 'ok', 'render-log');
+
+        // Validate all expected renders arrived
+        if (allExpectedKeys.length !== totalRenderJobs) {
+            throw new Error(`Render incomplete: got ${allExpectedKeys.length} keys but expected ${totalRenderJobs}`);
+        }
+
+        // Build renderResults from expected keys (for merge phase compatibility)
+        const renderResults = allExpectedKeys.map(key => {
+            const m = key.match(/stripe_(\d+)(?:_t(\d+))?\.raw$/);
+            if (!m) throw new Error(`Unexpected render key format: ${key}`);
+            return {
+                stripe_idx: parseInt(m[1]),
+                s3_key: key,
+                roots_plotted: 0,  // not available from async dispatch
+                roots_clipped: 0,
+            };
+        });
+
+        // Save state for merge phase
+        _renderState = { ...p, renderResults, nStripes, calcMeta, renderWallMs, tTotal: performance.now() };
+        document.getElementById('render-status').textContent = `Render done (${_fmtMs(renderWallMs)}). Ready to merge.`;
+        document.getElementById('render-status').className = 'status ok';
+        document.getElementById('btn-merge').disabled = false;
 
     } catch (e) {
-        document.getElementById('render-status').textContent = 'Error: ' + e.message;
+        document.getElementById('render-status').textContent = 'Render error: ' + e.message;
         document.getElementById('render-status').className = 'status error';
-        log(`Render failed: ${e.message}`, 'err');
+        log(`Render failed: ${e.message}`, 'err', 'render-log');
     } finally {
         btn.disabled = false;
     }
 }
+
+async function runMergePhase() {
+    if (!_renderState) {
+        document.getElementById('render-status').textContent = 'No render data — run Render first';
+        document.getElementById('render-status').className = 'status error';
+        return;
+    }
+    const btn = document.getElementById('btn-merge');
+    btn.disabled = true;
+    document.getElementById('btn-encode').disabled = true;
+
+    try {
+        const s = _renderState;
+        const POLL_TIMEOUT_MS = 600000;  // 10 min with no progress
+        document.getElementById('render-status').textContent = `Reducing ${s.nStripes} stripes...`;
+        document.getElementById('render-status').className = 'status';
+        const tReduce = performance.now();
+        const allTempKeys = [];
+        let roundNum = 0;
+        let finalKey = null, finalTileKeys = null;
+
+        if (s.mergeMode === 'full') {
+            let keys = s.renderResults.map(r => r.s3_key);
+            while (keys.length > 1) {
+                const pairs = [];
+                const nextKeys = [];
+                const expectedOutKeys = [];
+                for (let i = 0; i < keys.length; i += 2) {
+                    if (i + 1 < keys.length) {
+                        const outKey = `renders/${s.jobId}/merge_${roundNum}_${Math.floor(i/2)}.raw`;
+                        pairs.push({ job_id: s.jobId, left_key: keys[i], right_key: keys[i+1], out_key: outKey, gamma: s.gamma });
+                        nextKeys.push(outKey);
+                        allTempKeys.push(outKey);
+                        expectedOutKeys.push(outKey);
+                    } else {
+                        nextKeys.push(keys[i]);
+                    }
+                }
+                log(`  reduce round ${roundNum}: ${pairs.length} pairs`, '', 'render-log');
+                // Dispatch merge jobs server-side in batches + poll for completion
+                const tMergeRound = performance.now();
+                const MERGE_BATCH = 500;
+                let totalMergeFired = 0;
+                for (let b = 0; b < pairs.length; b += MERGE_BATCH) {
+                    const batch = pairs.slice(b, b + MERGE_BATCH);
+                    const batchKeys = expectedOutKeys.slice(b, b + MERGE_BATCH);
+                    const dispResult = await lambdaPost('dispatch', { target: 'reduce', jobs: batch, expected_keys: batchKeys });
+                    if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length)) {
+                        throw new Error(
+                            `Merge dispatch failed (round ${roundNum}): ` +
+                            `fired ${dispResult.fired || 0}/${batch.length}, ` +
+                            `errors ${dispResult.errors ? dispResult.errors.length : 0}`
+                        );
+                    }
+                    totalMergeFired += dispResult.fired;
+                }
+                log(`  dispatched ${totalMergeFired}/${pairs.length} merge jobs`, '', 'render-log');
+                let lastMergeDone = 0;
+                let mergePollCount = 0;
+                let lastMergeProgress = performance.now();
+                while (true) {
+                    await new Promise(r => setTimeout(r, 2000));
+                    mergePollCount++;
+                    const check = await lambdaPost('storage', {
+                        job_id: s.jobId, task_prefix: `merge_${roundNum}_`, expected: pairs.length,
+                    }, '/check-status');
+                    if (check.errors > 0) {
+                        const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                        throw new Error(`${check.errors} merge tasks failed in round ${roundNum}:\n${msgs}`);
+                    }
+                    if (check.done !== lastMergeDone) {
+                        log(`    round ${roundNum}: ${check.done}/${pairs.length} merged (+${check.done - lastMergeDone}, ${_fmtMs(performance.now() - tMergeRound)})`, '', 'render-log');
+                        lastMergeDone = check.done;
+                        lastMergeProgress = performance.now();
+                        document.getElementById('render-status').textContent = `Merging round ${roundNum}: ${check.done}/${pairs.length}...`;
+                    } else if (mergePollCount % 5 === 0) {
+                        log(`    round ${roundNum}: waiting... ${check.done}/${pairs.length} [${_fmtStatus(check.status_counts)}] ${_fmtMs(performance.now() - tMergeRound)}`, '', 'render-log');
+                    }
+                    if (check.complete) break;
+                    if (performance.now() - lastMergeProgress > POLL_TIMEOUT_MS) {
+                        throw new Error(`Merge stalled at round ${roundNum}: ${lastMergeDone}/${pairs.length} done [${_fmtStatus(check.status_counts)}]`);
+                    }
+                }
+                keys = nextKeys;
+                roundNum++;
+            }
+            finalKey = keys[0];
+        } else {
+            let keys = [];
+            for (let i = 0; i < s.nStripes; i++) {
+                const stripeTiles = s.renderResults
+                    .filter(r => r.stripe_idx === i)
+                    .sort((a, b) => {
+                        const tA = parseInt(a.s3_key.match(/_t(\d+)\.raw$/)[1]);
+                        const tB = parseInt(b.s3_key.match(/_t(\d+)\.raw$/)[1]);
+                        return tA - tB;
+                    })
+                    .map(r => r.s3_key);
+                keys.push(stripeTiles);
+            }
+
+            while (keys.length > 1) {
+                const nextKeys = [];
+                const tileJobs = [];
+                const expectedOutKeys = [];
+                const pairCount = Math.floor(keys.length / 2);
+
+                for (let i = 0; i < keys.length; i += 2) {
+                    if (i + 1 >= keys.length) {
+                        nextKeys.push(keys[i]);
+                        continue;
+                    }
+                    const pairIdx = Math.floor(i / 2);
+                    const outTileKeys = [];
+
+                    for (let t = 0; t < keys[i].length; t++) {
+                        const outKey = `renders/${s.jobId}/merge_${roundNum}_${pairIdx}_t${t}.raw`;
+                        outTileKeys.push(outKey);
+                        allTempKeys.push(outKey);
+                        expectedOutKeys.push(outKey);
+                        tileJobs.push({
+                            job_id: s.jobId, left_key: keys[i][t], right_key: keys[i+1][t],
+                            out_key: outKey, gamma: s.gamma,
+                        });
+                    }
+                    nextKeys.push(outTileKeys);
+                }
+
+                log(`  reduce round ${roundNum}: ${pairCount} pairs × ${s.T} tiles = ${tileJobs.length} Lambdas`, '', 'render-log');
+                // Dispatch merge jobs server-side in batches + poll for completion
+                const tMergeRound = performance.now();
+                const MERGE_BATCH = 500;
+                let totalTileFired = 0;
+                for (let b = 0; b < tileJobs.length; b += MERGE_BATCH) {
+                    const batch = tileJobs.slice(b, b + MERGE_BATCH);
+                    const batchKeys = expectedOutKeys.slice(b, b + MERGE_BATCH);
+                    const dispResult = await lambdaPost('dispatch', { target: 'tile_reduce', jobs: batch, expected_keys: batchKeys });
+                    if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length)) {
+                        throw new Error(
+                            `Tile merge dispatch failed (round ${roundNum}): ` +
+                            `fired ${dispResult.fired || 0}/${batch.length}, ` +
+                            `errors ${dispResult.errors ? dispResult.errors.length : 0}`
+                        );
+                    }
+                    totalTileFired += dispResult.fired;
+                    log(`    dispatched ${Math.min(b + MERGE_BATCH, tileJobs.length)}/${tileJobs.length} merge jobs (${totalTileFired} fired)`, '', 'render-log');
+                }
+                let lastMergeDone = 0;
+                let mergePollCount = 0;
+                let lastMergeProgress = performance.now();
+                while (true) {
+                    await new Promise(r => setTimeout(r, 2000));
+                    mergePollCount++;
+                    const check = await lambdaPost('storage', {
+                        job_id: s.jobId, task_prefix: `merge_${roundNum}_`, expected: tileJobs.length,
+                    }, '/check-status');
+                    if (check.errors > 0) {
+                        const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                        throw new Error(`${check.errors} merge tasks failed in round ${roundNum}:\n${msgs}`);
+                    }
+                    if (check.done !== lastMergeDone) {
+                        log(`    round ${roundNum}: ${check.done}/${tileJobs.length} merged (+${check.done - lastMergeDone}, ${_fmtMs(performance.now() - tMergeRound)})`, '', 'render-log');
+                        lastMergeDone = check.done;
+                        lastMergeProgress = performance.now();
+                        document.getElementById('render-status').textContent = `Merging round ${roundNum}: ${check.done}/${tileJobs.length}...`;
+                    } else if (mergePollCount % 5 === 0) {
+                        log(`    round ${roundNum}: waiting... ${check.done}/${tileJobs.length} [${_fmtStatus(check.status_counts)}] ${_fmtMs(performance.now() - tMergeRound)}`, '', 'render-log');
+                    }
+                    if (check.complete) break;
+                    if (performance.now() - lastMergeProgress > POLL_TIMEOUT_MS) {
+                        throw new Error(`Merge stalled at round ${roundNum}: ${lastMergeDone}/${tileJobs.length} done [${_fmtStatus(check.status_counts)}]`);
+                    }
+                }
+                keys = nextKeys;
+                roundNum++;
+            }
+            finalTileKeys = keys[0];
+        }
+
+        const reduceMs = performance.now() - tReduce;
+        const modeDesc = s.mergeMode === 'tiled' ? `${roundNum} rounds, T=${s.T}` : `${roundNum} rounds`;
+        log(`  reduce: ${_fmtMs(reduceMs)} (${modeDesc})`, 'ok', 'render-log');
+
+        // Save state for encode phase
+        _renderState.finalKey = finalKey;
+        _renderState.finalTileKeys = finalTileKeys;
+        _renderState.allTempKeys = allTempKeys;
+        _renderState.reduceMs = reduceMs;
+        _renderState.modeDesc = modeDesc;
+
+        document.getElementById('render-status').textContent = `Merge done (${_fmtMs(reduceMs)}). Ready to encode.`;
+        document.getElementById('render-status').className = 'status ok';
+        document.getElementById('btn-encode').disabled = false;
+
+    } catch (e) {
+        document.getElementById('render-status').textContent = 'Merge error: ' + e.message;
+        document.getElementById('render-status').className = 'status error';
+        log(`Merge failed: ${e.message}`, 'err', 'render-log');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function runEncodePhase() {
+    if (!_renderState || (!_renderState.finalKey && !_renderState.finalTileKeys)) {
+        document.getElementById('render-status').textContent = 'No merge data — run Merge first';
+        document.getElementById('render-status').className = 'status error';
+        return;
+    }
+    const btn = document.getElementById('btn-encode');
+    btn.disabled = true;
+
+    try {
+        const s = _renderState;
+        const ext = s.fmt !== 'png' ? 'jpeg' : 'png';
+        document.getElementById('render-status').textContent = `Encoding ${ext}...`;
+        document.getElementById('render-status').className = 'status';
+        const tEncode = performance.now();
+        const imageKey = `renders/${s.jobId}/image.${ext}`;
+        const encodeParams = { out_key: imageKey, format: ext, quality: s.quality };
+        if (s.finalTileKeys) {
+            encodeParams.tile_keys = s.finalTileKeys;
+        } else {
+            encodeParams.raw_key = s.finalKey;
+        }
+        const encResult = await lambdaPost('encode', encodeParams);
+        const encodeMs = performance.now() - tEncode;
+        _lastDownloadKey = imageKey;
+        log(`  encode: ${_fmtMs(encodeMs)} → ${(encResult.file_size/1e6).toFixed(2)}MB ${ext}`, 'ok', 'render-log');
+
+        // Cleanup (fire-and-forget)
+        const cleanupKeys = s.renderResults.map(r => r.s3_key).concat(s.allTempKeys || []);
+        if (s.finalTileKeys) cleanupKeys.push(...s.finalTileKeys);
+        else if (s.finalKey !== imageKey) cleanupKeys.push(s.finalKey);
+        lambdaPost('storage', { keys: cleanupKeys }, '/cleanup').catch(() => {});
+
+        // Show results
+        const totalPlotted = s.renderResults.reduce((sum, r) => sum + r.roots_plotted, 0);
+        const fileSizeMB = (encResult.file_size / 1e6).toFixed(2);
+
+        let statusParts = [];
+        if (totalPlotted > 0) statusParts.push(totalPlotted.toLocaleString() + ' roots');
+        statusParts.push(s.nStripes + ' stripes');
+        statusParts.push('render ' + _fmtMs(s.renderWallMs));
+        if (s.reduceMs) statusParts.push('reduce ' + _fmtMs(s.reduceMs) + ' (' + s.modeDesc + ')');
+        statusParts.push('encode ' + _fmtMs(encodeMs));
+        statusParts.push(fileSizeMB + 'MB ' + ext);
+        document.getElementById('render-status').textContent = statusParts.join(' | ');
+        document.getElementById('render-status').className = 'status ok';
+
+        const preview = document.getElementById('render-preview');
+        if (s.pix > 5000) {
+            preview.innerHTML = `<div style="padding:20px; text-align:center; background:#1a1a2e; border:1px solid #333; border-radius:8px">` +
+                `<div style="color:#aaa; margin-bottom:12px">${s.pix}x${s.pix} image — too large to preview in browser</div>` +
+                `<button class="btn-primary" onclick="downloadPresignedFile('${encResult.image_url}', '${s.jobId}_${s.pix}px.${ext}')" ` +
+                `style="padding:8px 24px; font-size:14px">Download ${ext.toUpperCase()}</button></div>`;
+        } else {
+            preview.innerHTML = `<a href="${encResult.image_url}" target="_blank" title="Click to open full-size image">` +
+                `<img src="${encResult.image_url}" style="max-width:100%; border:1px solid #333; cursor:pointer"></a>` +
+                `<div style="margin-top:8px"><button class="btn-secondary" onclick="downloadPresignedFile('${encResult.image_url}', '${s.jobId}_${s.pix}px.${ext}')" ` +
+                `style="padding:4px 12px">Download ${ext.toUpperCase()}</button></div>`;
+        }
+
+        document.getElementById('render-info').textContent =
+            `Job: ${s.jobId} | ${s.pix}x${s.pix} | Degree: ${s.calcMeta.degree}`;
+
+        log(`Done: deg${s.calcMeta.degree} ${s.pix}px, ${totalPlotted.toLocaleString()} roots`, 'ok', 'render-log');
+
+    } catch (e) {
+        document.getElementById('render-status').textContent = 'Encode error: ' + e.message;
+        document.getElementById('render-status').className = 'status error';
+        log(`Encode failed: ${e.message}`, 'err', 'render-log');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function runRasterPipeline() {
+    const btn = document.getElementById('btn-raster-all');
+    btn.disabled = true;
+    document.getElementById('btn-encode').disabled = true;
+    document.getElementById('render-preview').innerHTML = '';
+    document.getElementById('render-info').textContent = '';
+    _renderState = null;
+
+    try {
+        const p = _renderCommonParams();
+        const tileSize = p.tileSize;
+        const nTileCols = Math.ceil(p.pix / tileSize);
+        const nTileRows = Math.ceil(p.pix / tileSize);
+        const nTiles = nTileCols * nTileRows;
+        const colorDesc = renderColorMode === 'constant' ? `constant/#${p.constantColor}` :
+            renderColorMode === 'proximity' ? `proximity/${renderPalette}` : `rainbow/${renderMatchMode}`;
+
+        // Clean up old render artifacts (.raw/.jpeg/.png/.pix), preserve .bin
+        document.getElementById('render-status').textContent = `Cleaning old render files...`;
+        document.getElementById('render-status').className = 'status';
+        const cleanResult = await lambdaPost('storage', { job_id: p.jobId }, '/clean-render');
+        if (cleanResult.deleted > 0)
+            log(`  cleaned ${cleanResult.deleted} old render files`, '', 'render-log');
+
+        // Phase 1: viewport
+        document.getElementById('render-status').textContent = `Computing viewport...`;
+        log(`Viewport: ${p.jobId}, quantile=${(p.quantile*100).toFixed(1)}%, shim=${(p.shim*100).toFixed(1)}%...`, '', 'render-log');
+
+        const tVp = performance.now();
+        const vpData = await lambdaPost('viewport', { job_id: p.jobId, quantile: p.quantile, shim: p.shim });
+        log(`  viewport: ${_fmtMs(performance.now()-tVp)} | ${vpData.n_roots} roots`, 'ok', 'render-log');
+
+        const REF_SIZE = 4096;
+        const scale = vpData.scale_ref * Math.min(p.pix, p.pix) / REF_SIZE;
+
+        let calcMeta = _lastCalcMeta && _lastCalcMeta.job_id === p.jobId ? _lastCalcMeta : null;
+        if (!calcMeta) {
+            const listData = await lambdaPost('storage', {}, '/list');
+            const jobResult = (listData.results || []).find(r => r.job_id === p.jobId);
+            if (!jobResult) throw new Error('Job not found in results');
+            calcMeta = { n_stripes: jobResult.n_stripes || 10, degree: jobResult.degree || 1 };
+        }
+        const nStripes = calcMeta.n_stripes;
+
+        // Phase 2: Raster — one Lambda per compute stripe
+        const rasterJobs = [];
+        for (let s = 0; s < nStripes; s++) {
+            rasterJobs.push({
+                job_id: p.jobId, stripe_idx: s,
+                bin_key: `renders/${p.jobId}/stripe_${s}.bin`,
+                width: p.pix, height: p.pix,
+                tile_size: tileSize,
+                n_tile_cols: nTileCols, n_tile_rows: nTileRows,
+                center_re: vpData.center_re, center_im: vpData.center_im,
+                scale, degree: calcMeta.degree,
+                color: renderColorMode, match: renderMatchMode,
+                palette: renderPalette, constant_color: p.constantColor,
+            });
+        }
+
+        log(`Raster: ${p.jobId}, ${p.pix}px ${p.fmt}, ${colorDesc}, ${nStripes} stripes, ${nTileCols}x${nTileRows}=${nTiles} tiles (${tileSize}px)...`, '', 'render-log');
+        document.getElementById('render-status').textContent = `Dispatching ${nStripes} raster Lambdas...`;
+        const tRaster = performance.now();
+
+        // Dispatch raster Lambdas in batches
+        const BATCH_SIZE = 500;
+        const nBatches = Math.ceil(rasterJobs.length / BATCH_SIZE);
+        for (let i = 0; i < rasterJobs.length; i += BATCH_SIZE) {
+            const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+            const batch = rasterJobs.slice(i, i + BATCH_SIZE);
+            document.getElementById('render-status').textContent = `Dispatching raster batch ${batchNum}/${nBatches} (${batch.length} jobs)...`;
+            const tBatch = performance.now();
+            // Raster jobs don't produce simple expected keys — pass empty to skip key derivation
+            const dispResult = await lambdaPost('dispatch', { target: 'raster', jobs: batch, expected_keys: [] });
+            if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length)) {
+                throw new Error(
+                    `Raster dispatch failed batch ${batchNum}: ` +
+                    `fired ${dispResult.fired || 0}/${batch.length}, ` +
+                    `errors ${dispResult.errors ? dispResult.errors.length : 0}`
+                );
+            }
+            log(`  raster dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired (${_fmtMs(performance.now() - tBatch)})`, '', 'render-log');
+        }
+        log(`  dispatched: ${_fmtMs(performance.now() - tRaster)} (${nStripes} raster Lambdas)`, 'ok', 'render-log');
+
+        // Poll DynamoDB for raster completion
+        let lastDone = 0;
+        let pollCount = 0;
+        let lastProgressTime = performance.now();
+        const POLL_TIMEOUT_MS = 600000;
+        while (true) {
+            await new Promise(r => setTimeout(r, 3000));
+            pollCount++;
+            const check = await lambdaPost('storage', {
+                job_id: p.jobId, task_prefix: 'raster_', expected: nStripes,
+            }, '/check-status');
+            if (check.errors > 0) {
+                const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                throw new Error(`${check.errors} raster tasks failed:\n${msgs}`);
+            }
+            if (check.done !== lastDone) {
+                const delta = check.done - lastDone;
+                log(`  raster poll #${pollCount}: ${check.done}/${nStripes} done (+${delta}, ${_fmtMs(performance.now() - tRaster)})`, '', 'render-log');
+                lastDone = check.done;
+                lastProgressTime = performance.now();
+                document.getElementById('render-status').textContent = `Rasterizing ${check.done}/${nStripes}...`;
+            }
+            if (check.complete) break;
+            if (performance.now() - lastProgressTime > POLL_TIMEOUT_MS) {
+                throw new Error(`Raster stalled: ${lastDone}/${nStripes} after ${_fmtMs(performance.now() - tRaster)}`);
+            }
+        }
+        const rasterMs = performance.now() - tRaster;
+        log(`  raster: ${_fmtMs(rasterMs)} wall (${nStripes} stripes)`, 'ok', 'render-log');
+
+        // Phase 3: Finalize — one Lambda per tile
+        const finalizeJobs = [];
+        const tileKeys = [];
+        for (let t = 0; t < nTiles; t++) {
+            const tRow = Math.floor(t / nTileCols);
+            const tCol = t % nTileCols;
+            const tw = Math.min(tileSize, p.pix - tCol * tileSize);
+            const th = Math.min(tileSize, p.pix - tRow * tileSize);
+            finalizeJobs.push({
+                job_id: p.jobId, tile_idx: t, n_stripes: nStripes,
+                tile_w: tw, tile_h: th,
+            });
+            tileKeys.push(`renders/${p.jobId}/tile_${String(t).padStart(4, '0')}.raw`);
+        }
+
+        log(`Finalize: ${nTiles} tiles (${nTileCols}x${nTileRows})...`, '', 'render-log');
+        document.getElementById('render-status').textContent = `Dispatching ${nTiles} finalize Lambdas...`;
+        const tFinalize = performance.now();
+
+        // Dispatch finalize Lambdas
+        const finBatches = Math.ceil(finalizeJobs.length / BATCH_SIZE);
+        for (let i = 0; i < finalizeJobs.length; i += BATCH_SIZE) {
+            const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+            const batch = finalizeJobs.slice(i, i + BATCH_SIZE);
+            const dispResult = await lambdaPost('dispatch', { target: 'finalize', jobs: batch, expected_keys: [] });
+            if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length)) {
+                throw new Error(
+                    `Finalize dispatch failed batch ${batchNum}: ` +
+                    `fired ${dispResult.fired || 0}/${batch.length}`
+                );
+            }
+            log(`  finalize dispatch ${batchNum}/${finBatches}: ${dispResult.fired}/${batch.length} fired`, '', 'render-log');
+        }
+
+        // Poll DynamoDB for finalize completion
+        let finLastDone = 0;
+        let finPollCount = 0;
+        let finLastProgress = performance.now();
+        while (true) {
+            await new Promise(r => setTimeout(r, 3000));
+            finPollCount++;
+            const check = await lambdaPost('storage', {
+                job_id: p.jobId, task_prefix: 'tile_', expected: nTiles,
+            }, '/check-status');
+            if (check.errors > 0) {
+                const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                throw new Error(`${check.errors} finalize tasks failed:\n${msgs}`);
+            }
+            if (check.done !== finLastDone) {
+                const delta = check.done - finLastDone;
+                log(`  finalize poll #${finPollCount}: ${check.done}/${nTiles} done (+${delta}, ${_fmtMs(performance.now() - tFinalize)})`, '', 'render-log');
+                finLastDone = check.done;
+                finLastProgress = performance.now();
+                document.getElementById('render-status').textContent = `Finalizing ${check.done}/${nTiles} tiles...`;
+            }
+            if (check.complete) break;
+            if (performance.now() - finLastProgress > POLL_TIMEOUT_MS) {
+                throw new Error(`Finalize stalled: ${finLastDone}/${nTiles} after ${_fmtMs(performance.now() - tFinalize)}`);
+            }
+        }
+        const finalizeMs = performance.now() - tFinalize;
+        log(`  finalize: ${_fmtMs(finalizeMs)} wall (${nTiles} tiles)`, 'ok', 'render-log');
+
+        // Phase 4: Encode — dispatch async, poll for completion
+        const ext = p.fmt !== 'png' ? 'jpeg' : 'png';
+        document.getElementById('render-status').textContent = `Dispatching encode (${ext})...`;
+        const tEncode = performance.now();
+        const imageKey = `renders/${p.jobId}/image.${ext}`;
+        const encodeJob = {
+            job_id: p.jobId,
+            out_key: imageKey, format: ext, quality: p.quality,
+            width: p.pix, height: p.pix,
+            tile_grid: {
+                n_cols: nTileCols, n_rows: nTileRows,
+                tile_size: tileSize, tile_keys: tileKeys,
+            },
+        };
+
+        // Dispatch encode Lambda asynchronously
+        const encDispResult = await lambdaPost('dispatch', { target: 'encode', jobs: [encodeJob], expected_keys: [] });
+        if ((encDispResult.fired || 0) !== 1) {
+            throw new Error(`Encode dispatch failed: fired ${encDispResult.fired || 0}/1`);
+        }
+        log(`  encode dispatched (${ext})`, '', 'render-log');
+
+        // Poll DynamoDB for encode completion
+        let encPollCount = 0;
+        let encLastProgress = performance.now();
+        while (true) {
+            await new Promise(r => setTimeout(r, 3000));
+            encPollCount++;
+            const check = await lambdaPost('storage', {
+                job_id: p.jobId, task_prefix: 'encode', expected: 1,
+            }, '/check-status');
+            if (check.errors > 0) {
+                const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                throw new Error(`Encode failed:\n${msgs}`);
+            }
+            const statusStr = check.status_counts ? Object.entries(check.status_counts).map(([k,v]) => k).join('/') : '';
+            if (statusStr && encPollCount % 3 === 0) {
+                document.getElementById('render-status').textContent = `Encoding... (${statusStr})`;
+            }
+            if (check.complete) break;
+            if (performance.now() - encLastProgress > POLL_TIMEOUT_MS) {
+                throw new Error(`Encode stalled after ${_fmtMs(performance.now() - tEncode)}`);
+            }
+        }
+        const encodeMs = performance.now() - tEncode;
+
+        // Get presigned URL for the encoded image
+        const presignResult = await lambdaPost('storage', { key: imageKey }, '/presign');
+        const imageUrl = presignResult.url;
+        _lastDownloadKey = imageKey;
+        log(`  encode: ${_fmtMs(encodeMs)} (${ext})`, 'ok', 'render-log');
+
+        // Cleanup .pix and tile .raw files (fire-and-forget)
+        const cleanupKeys = [...tileKeys];
+        lambdaPost('storage', { keys: cleanupKeys }, '/cleanup').catch(() => {});
+
+        // Show results
+        const totalMs = performance.now() - tVp;
+        const statusParts = [
+            nStripes + ' stripes',
+            nTiles + ' tiles',
+            'raster ' + _fmtMs(rasterMs),
+            'finalize ' + _fmtMs(finalizeMs),
+            'encode ' + _fmtMs(encodeMs),
+            ext,
+        ];
+        document.getElementById('render-status').textContent = statusParts.join(' | ');
+        document.getElementById('render-status').className = 'status ok';
+
+        const preview = document.getElementById('render-preview');
+        if (p.pix > 5000) {
+            // Too large for browser preview — download-only
+            preview.innerHTML = `<div style="padding:20px; text-align:center; background:#1a1a2e; border:1px solid #333; border-radius:8px">` +
+                `<div style="color:#aaa; margin-bottom:12px">${p.pix}x${p.pix} image — too large to preview in browser</div>` +
+                `<button class="btn-primary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px.${ext}')" ` +
+                `style="padding:8px 24px; font-size:14px">Download ${ext.toUpperCase()}</button></div>`;
+        } else {
+            preview.innerHTML = `<a href="${imageUrl}" target="_blank" title="Click to open full-size image">` +
+                `<img src="${imageUrl}" style="max-width:100%; border:1px solid #333; cursor:pointer"></a>` +
+                `<div style="margin-top:8px"><button class="btn-secondary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px.${ext}')" ` +
+                `style="padding:4px 12px">Download ${ext.toUpperCase()}</button></div>`;
+        }
+
+        document.getElementById('render-info').textContent =
+            `Job: ${p.jobId} | ${p.pix}x${p.pix} | Degree: ${calcMeta.degree} | Sparse pipeline`;
+
+        log(`Done: deg${calcMeta.degree} ${p.pix}px, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');
+
+    } catch (e) {
+        document.getElementById('render-status').textContent = 'Render error: ' + e.message;
+        document.getElementById('render-status').className = 'status error';
+        log(`Render failed: ${e.message}`, 'err', 'render-log');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function runRenderAll() {
+    await runRenderPhase();
+    if (_renderState) await runMergePhase();
+    if (_renderState && (_renderState.finalKey || _renderState.finalTileKeys)) await runEncodePhase();
+}
+
+let _lastCalcMeta = null;  // cache last compute metadata for render
+
+async function runCalculate() {
+    const funcName = document.getElementById('render-function').value;
+    const n = parseInt(document.getElementById('render-n').value);
+    const nStripes = Math.max(10, parseInt(document.getElementById('render-stripes').value) || 10);
+    const jobId = 'compute_' + Date.now().toString(36);
+
+    const btn = document.getElementById('btn-calculate');
+    btn.disabled = true;
+    document.getElementById('compute-status').textContent = `Computing ${funcName} N=${n}, stripes=${nStripes}...`;
+    document.getElementById('compute-status').className = 'status';
+    log(`Compute: ${funcName} N=${n}, stripes=${nStripes}...`);
+    const fmtMs = (ms) => (ms/1000).toFixed(1) + 's';
+
+    try {
+        const tTotal = performance.now();
+
+        // Phase 1: lores sweep (single stripe, small grid)
+        document.getElementById('compute-status').textContent = `Lores sweep...`;
+        const loresN = Math.min(n, 100);
+        const loresKey = `renders/${jobId}/lores.bin`;
+        const tLores = performance.now();
+        const loresResult = await lambdaPost('sweep', {
+            job_id: jobId, stripe_idx: 0,
+            function: funcName,
+            n1: loresN, n2: loresN,
+            i1_start: 0, i1_end: loresN,
+            s3_key: loresKey,
+        });
+        const loresMs = performance.now() - tLores;
+        const degree = loresResult.degree;
+        log(`  lores: ${fmtMs(loresMs)}, degree=${degree}`, 'ok');
+
+        // Phase 2: fan-out hires compute stripes
+        document.getElementById('compute-status').textContent = `Computing 0/${nStripes} stripes...`;
+        const rowsPer = Math.floor(n / nStripes);
+        const tCompute = performance.now();
+        let computeDone = 0;
+
+        const sweepJobs = [];
+        for (let s = 0; s < nStripes; s++) {
+            const i1Start = s * rowsPer;
+            const i1End = s < nStripes - 1 ? (s + 1) * rowsPer : n;
+            sweepJobs.push({
+                job_id: jobId, stripe_idx: s,
+                function: funcName,
+                n1: n, n2: n,
+                i1_start: i1Start, i1_end: i1End,
+            });
+        }
+        const stripeResults = await asyncPool(50, sweepJobs, p =>
+            lambdaPost('sweep', p).then(r => {
+                computeDone++;
+                document.getElementById('compute-status').textContent =
+                    `Computing ${computeDone}/${nStripes} stripes...`;
+                return r;
+            })
+        );
+        const computeWallMs = performance.now() - tCompute;
+
+        // Phase 3: save calc.json metadata via storage Lambda
+        const calcMeta = {
+            job_id: jobId,
+            function: funcName,
+            n1: n, n2: n,
+            n_stripes: nStripes,
+            degree,
+            lores: {
+                bin_key: loresKey,
+                n1: loresN, n2: loresN,
+                bin_size: loresResult.bin_size,
+            },
+            stripes: stripeResults.map(r => ({
+                idx: r.stripe_idx,
+                bin_key: r.s3_key,
+                bin_size: r.bin_size,
+                compute_us: r.compute_us,
+                n_t: r.n_t,
+                avg_iterations: r.avg_iterations,
+            })),
+        };
+        await lambdaPost('storage', { job_id: jobId, metadata: calcMeta }, '/save-metadata');
+        _lastCalcMeta = calcMeta;
+
+        const totalMs = performance.now() - tTotal;
+        const totalBinSize = stripeResults.reduce((s, r) => s + r.bin_size, 0);
+        const totalComputeUs = stripeResults.reduce((s, r) => s + r.compute_us, 0);
+        const totalSteps = stripeResults.reduce((s, r) => s + r.n_t, 0);
+        const avgIters = totalSteps > 0
+            ? stripeResults.reduce((s, r) => s + r.avg_iterations * r.n_t, 0) / totalSteps
+            : 0;
+
+        // Populate results dir on both tabs
+        document.getElementById('results-dir').value = jobId;
+        document.getElementById('render-results-dir').value = jobId;
+
+        document.getElementById('compute-status').textContent =
+            `Computed | ${nStripes} stripes | wall ${fmtMs(computeWallMs)} | ` +
+            `compute ${(totalComputeUs/1e6).toFixed(1)}s (sum) | deg ${degree} | total ${fmtMs(totalMs)}`;
+        document.getElementById('compute-status').className = 'status ok';
+
+        // Timing log
+        const lines = [];
+        lines.push(`  total:    ${fmtMs(totalMs)}`);
+        lines.push(`  total bin: ${(totalBinSize/1e6).toFixed(1)}MB + lores ${(loresResult.bin_size/1e3).toFixed(0)}KB`);
+        lines.push(`  compute: ${(totalComputeUs/1e6).toFixed(1)}s (sum) / ${fmtMs(computeWallMs)} wall (${nStripes} stripes)`);
+        lines.push(`  lores:    ${fmtMs(loresMs)}`);
+        lines.push(`Compute ${jobId}: ${funcName} deg${degree} N=${n}, avg_iters=${avgIters.toFixed(1)}`);
+        for (const line of lines) log(line, 'ok');
+
+    } catch (e) {
+        document.getElementById('compute-status').textContent = 'Error: ' + e.message;
+        document.getElementById('compute-status').className = 'status error';
+        log(`Compute failed: ${e.message}`, 'err');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+
 </script>
 </body>
 </html>

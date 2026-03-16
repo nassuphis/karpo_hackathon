@@ -53,6 +53,14 @@ def handler(event, context):
     meta = json.loads(result.stdout)
     elapsed_us = int((time.time() - t0) * 1e6)
 
+    # Verify file size matches expected data_bytes (catch /tmp truncation)
+    actual_size = os.path.getsize(bin_path)
+    expected_size = meta["data_bytes"]
+    if actual_size != expected_size:
+        raise RuntimeError(
+            f"coeffs.bin size mismatch: expected {expected_size}, got {actual_size} "
+            f"(possible /tmp space exhaustion)")
+
     coeffs_key = f"renders/{job_id}/coeffs.bin"
     with open(bin_path, "rb") as f:
         s3.put_object(Bucket=BUCKET, Key=coeffs_key,

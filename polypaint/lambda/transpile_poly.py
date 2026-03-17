@@ -42,6 +42,7 @@ class PolyTranspiler(ast.NodeVisitor):
         self.n_coeffs = n_coeffs
         self.lines = []
         self.declared = set()
+        self.array_sizes = {}  # name -> int (number of elements)
         self.indent = 1
 
     def emit(self, line):
@@ -133,17 +134,17 @@ class PolyTranspiler(ast.NodeVisitor):
             prev = left
             for op, comp in zip(ops, comparators):
                 if isinstance(op, ast.Eq):
-                    parts.append(f"({prev.r} == {comp.r})")
+                    parts.append(f"{prev.r} == {comp.r}")
                 elif isinstance(op, ast.NotEq):
-                    parts.append(f"({prev.r} != {comp.r})")
+                    parts.append(f"{prev.r} != {comp.r}")
                 elif isinstance(op, ast.Lt):
-                    parts.append(f"({prev.r} < {comp.r})")
+                    parts.append(f"{prev.r} < {comp.r}")
                 elif isinstance(op, ast.LtE):
-                    parts.append(f"({prev.r} <= {comp.r})")
+                    parts.append(f"{prev.r} <= {comp.r}")
                 elif isinstance(op, ast.Gt):
-                    parts.append(f"({prev.r} > {comp.r})")
+                    parts.append(f"{prev.r} > {comp.r}")
                 elif isinstance(op, ast.GtE):
-                    parts.append(f"({prev.r} >= {comp.r})")
+                    parts.append(f"{prev.r} >= {comp.r}")
                 prev = comp
             return " && ".join(parts)
         elif isinstance(node, ast.BoolOp):
@@ -555,14 +556,18 @@ class PolyTranspiler(ast.NodeVisitor):
                 idx = self.index_expr(node.slice)
                 tmp = CVar.fresh("cf")
                 self.declare(tmp)
-                self.emit(f"{tmp.r} = cRe[{idx}]; {tmp.i} = cIm[{idx}];")
+                self.emit(f"{{ int _idx = {idx}; if (_idx >= 0 && _idx < {self.n_coeffs}) {{ {tmp.r} = cRe[_idx]; {tmp.i} = cIm[_idx]; }} }}")
                 return tmp
             else:
-                # Some local array — treat as real constant lookup
+                # Some local array — bounds-checked real constant lookup
                 idx = self.index_expr(node.slice)
                 tmp = CVar.fresh("arr")
                 self.declare(tmp)
-                self.emit(f"{tmp.r} = {name}[{idx}]; {tmp.i} = 0;")
+                sz = self.array_sizes.get(name)
+                if sz is not None:
+                    self.emit(f"{{ int _idx = {idx}; {tmp.r} = (_idx >= 0 && _idx < {sz}) ? {name}[_idx] : 0.0; {tmp.i} = 0; }}")
+                else:
+                    self.emit(f"{tmp.r} = {name}[{idx}]; {tmp.i} = 0;")
                 return tmp
 
         tmp = CVar.fresh("sub")
@@ -595,10 +600,10 @@ class PolyTranspiler(ast.NodeVisitor):
         return f"(int)({self.expr_to_c(node).r})"
 
     def assign_cf(self, idx_node, value_node):
-        """Emit cf[idx] = value."""
+        """Emit cf[idx] = value (bounds-checked)."""
         idx = self.index_expr(idx_node)
         val = self.expr_to_c(value_node)
-        self.emit(f"cRe[{idx}] = {val.r}; cIm[{idx}] = {val.i};")
+        self.emit(f"{{ int _idx = {idx}; if (_idx >= 0 && _idx < {self.n_coeffs}) {{ cRe[_idx] = {val.r}; cIm[_idx] = {val.i}; }} }}")
 
     def assign_cf_slice(self, sl, value_node):
         """Handle cf[a:b] = expr involving arrays."""
@@ -666,10 +671,14 @@ class PolyTranspiler(ast.NodeVisitor):
 
         # Check if node itself is a local array name
         if isinstance(node, ast.Name) and node.id in self.declared and node.id not in ("t1", "t2", "x1r", "x1i", "x2r", "x2i"):
-            # Subscript the array
+            # Subscript the array with bounds check
             tmp = CVar.fresh("elem")
             self.declare(tmp)
-            self.emit(f"{tmp.r} = {node.id}[{loop_var}]; {tmp.i} = 0;")
+            sz = self.array_sizes.get(node.id)
+            if sz is not None:
+                self.emit(f"{{ int _idx = {loop_var}; {tmp.r} = (_idx >= 0 && _idx < {sz}) ? {node.id}[_idx] : 0.0; {tmp.i} = 0; }}")
+            else:
+                self.emit(f"{tmp.r} = {node.id}[{loop_var}]; {tmp.i} = 0;")
             return tmp
 
         # Fallback to normal expression
@@ -714,6 +723,7 @@ class PolyTranspiler(ast.NodeVisitor):
                     if elts is not None:
                         vals = ", ".join(str(float(v)) for v in elts)
                         self.declared.add(name)
+                        self.array_sizes[name] = len(elts)
                         self.emit(f"static const double {name}[] = {{{vals}}};")
                     else:
                         self.declared.add(name)
@@ -725,6 +735,7 @@ class PolyTranspiler(ast.NodeVisitor):
                     if arr is not None:
                         vals = ", ".join(str(float(v)) for v in arr)
                         self.declared.add(name)
+                        self.array_sizes[name] = len(arr)
                         self.emit(f"static const double {name}[] = {{{vals}}};")
                     else:
                         self.declared.add(name)

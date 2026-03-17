@@ -350,9 +350,15 @@ class PolyTranspiler(ast.NodeVisitor):
         elif attr == "arange":
             return CVar("0", "0")
         elif attr == "sum":
-            # np.sum(cf[a:b]) — handle specially
+            # np.sum(cf[a:b]) or np.sum(cf)
             if len(args) == 1 and isinstance(args[0], ast.Subscript):
                 return self.numpy_sum_slice(args[0])
+            if len(args) == 1 and isinstance(args[0], ast.Name) and args[0].id == "cf":
+                tmp = CVar.fresh("sum")
+                self.declare(tmp)
+                self.emit(f"{tmp.r} = 0; {tmp.i} = 0;")
+                self.emit(f"for (int _si = 0; _si < {self.n_coeffs}; _si++) {{ {tmp.r} += cRe[_si]; {tmp.i} += cIm[_si]; }}")
+                return tmp
             arg = self.expr_to_c(args[0])
             return arg
         elif attr == "prod":
@@ -958,7 +964,7 @@ def main():
     print()
 
     # Functions that fail to transpile cleanly — stub them
-    STUB_FUNCS = {"poly_16", "poly_21", "poly_35", "poly_37", "poly_40", "poly_46", "poly_58", "poly_72", "poly_74", "poly_94", "poly_100"}
+    STUB_FUNCS = {"poly_21", "poly_35", "poly_37", "poly_40", "poly_46", "poly_58", "poly_72", "poly_74", "poly_94", "poly_100"}
 
     names_and_ncoeffs = []
     for func_node in funcs:

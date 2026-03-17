@@ -2151,6 +2151,57 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
         pt_sdith(z1r, z1i, z2r, z2i, d, gridN);
         return 0;
     }
+    /* radd(v): add v to real parts of both */
+    if (strcmp(e->name, "radd") == 0) {
+        double v = e->nArgs > 0 ? e->args[0] : 0.0;
+        *z1r += v; *z2r += v;
+        return 0;
+    }
+    /* iadd(v): add v to imaginary parts of both */
+    if (strcmp(e->name, "iadd") == 0) {
+        double v = e->nArgs > 0 ? e->args[0] : 0.0;
+        *z1i += v; *z2i += v;
+        return 0;
+    }
+    /* add(v): add v to both real and imaginary of both */
+    if (strcmp(e->name, "add") == 0) {
+        double v = e->nArgs > 0 ? e->args[0] : 0.0;
+        *z1r += v; *z1i += v; *z2r += v; *z2i += v;
+        return 0;
+    }
+    /* cadd(re, im): add complex (re+im*i) to both */
+    if (strcmp(e->name, "cadd") == 0) {
+        double re = e->nArgs > 0 ? e->args[0] : 0.0;
+        double im = e->nArgs > 1 ? e->args[1] : 0.0;
+        *z1r += re; *z1i += im; *z2r += re; *z2i += im;
+        return 0;
+    }
+    /* rscale(v): multiply real parts by v */
+    if (strcmp(e->name, "rscale") == 0) {
+        double v = e->nArgs > 0 ? e->args[0] : 1.0;
+        *z1r *= v; *z2r *= v;
+        return 0;
+    }
+    /* iscale(v): multiply imaginary parts by v */
+    if (strcmp(e->name, "iscale") == 0) {
+        double v = e->nArgs > 0 ? e->args[0] : 1.0;
+        *z1i *= v; *z2i *= v;
+        return 0;
+    }
+    /* scale(v): multiply both (re,im) by v */
+    if (strcmp(e->name, "scale") == 0) {
+        double v = e->nArgs > 0 ? e->args[0] : 1.0;
+        *z1r *= v; *z1i *= v; *z2r *= v; *z2i *= v;
+        return 0;
+    }
+    /* rtheta: z1 = x1*exp(2*pi*x2*i), z2 = x2*exp(2*pi*x1*i) */
+    if (strcmp(e->name, "rtheta") == 0) {
+        double r1 = *z1r, r2 = *z2r;
+        double a1 = 2.0 * M_PI * *z2r, a2 = 2.0 * M_PI * *z1r;
+        *z1r = r1 * cos(a1); *z1i = r1 * sin(a1);
+        *z2r = r2 * cos(a2); *z2i = r2 * sin(a2);
+        return 0;
+    }
     /* Fall back to standard param transforms (no extra args) */
     ParamTransform fn = lookupParamTransform(e->name);
     if (!fn) {
@@ -2275,11 +2326,21 @@ static int runCoeffGen(const char *buf, const char *outPath) {
 
     float *stepBuf = malloc(nCoeffsOut * 2 * sizeof(float));
     int stripeRows = i1_end - i1_start;
-    long totalSteps = (long)stripeRows * n2;
+    /* Parse times (repeat count for dithering) */
+    int times = 1;
+    cp = findKey(buf, "times");
+    if (cp) times = (int)parseNum(&cp);
+    if (times < 1) times = 1;
+
+    long totalSteps = (long)stripeRows * n2 * times;
 
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
+    for (int pass = 0; pass < times; pass++) {
+    /* Re-seed RNG each pass so every (pass, stripe) combo gets unique dither */
+    _rng_state = 0x123456789abcdef0ULL ^ ((uint64_t)pass * 2654435761ULL) ^ ((uint64_t)i1_start * 40503ULL);
+    if (!_rng_state) _rng_state = 1;
     for (int i1 = i1_start; i1 < i1_end; i1++) {
         double x1 = (double)i1 / (double)n1;
         for (int j = 0; j < n2; j++) {
@@ -2303,7 +2364,8 @@ static int runCoeffGen(const char *buf, const char *outPath) {
             }
             fwrite(stepBuf, sizeof(float), nCoeffsOut * 2, fout);
         }
-    }
+    } /* end i1 loop */
+    } /* end pass loop */
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
     long elapsed_us = (t1.tv_sec - t0.tv_sec) * 1000000L +
@@ -2375,18 +2437,14 @@ static int runSolveFromCoeffs(const char *buf, const char *outPath) {
         rootIm[k] = r * sin(ang);
     }
 
-    int stripeRows = i1_end - i1_start;
-    long totalSteps = (long)stripeRows * n2;
+    long totalSteps = 0;
     long totalIters = 0;
 
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
-    for (long step = 0; step < totalSteps; step++) {
-        if (fread(coeffBuf, sizeof(float), nCoeffs * 2, fin) != (size_t)(nCoeffs * 2)) {
-            fprintf(stderr, "Short read at step %ld\n", step);
-            break;
-        }
+    while (fread(coeffBuf, sizeof(float), nCoeffs * 2, fin) == (size_t)(nCoeffs * 2)) {
+        totalSteps++;
         for (int k = 0; k < nCoeffs; k++) {
             coeffRe[k] = (double)coeffBuf[k * 2];
             coeffIm[k] = (double)coeffBuf[k * 2 + 1];
@@ -2419,7 +2477,7 @@ static int runSolveFromCoeffs(const char *buf, const char *outPath) {
         }
         totalIters += iters;
 
-        if (doMatch && step > 0 && effDeg > 1) {
+        if (doMatch && totalSteps > 1 && effDeg > 1) {
             matchRoots(rootRe, rootIm, prevRe, prevIm, effDeg);
         }
         memcpy(prevRe, rootRe, degree * sizeof(double));

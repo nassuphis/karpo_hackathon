@@ -115,6 +115,8 @@ def handler(event, context):
         "preview_size": preview_size,
         "n_roots": vp["n_roots"],
         "degree": degree,
+        "q_re": vp["q_re"],
+        "q_im": vp["q_im"],
         "png_size": len(png_data),
         "elapsed_us": elapsed_us,
     })

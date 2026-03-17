@@ -44,6 +44,7 @@ def handler(event, context):
             "n2": params["n2"],
             "i1_start": i1_start,
             "i1_end": i1_end,
+            "times": params.get("times", 1),
         }
 
         result = subprocess.run(

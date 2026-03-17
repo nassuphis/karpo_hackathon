@@ -97,8 +97,17 @@ button {
     margin-bottom: 6px;
 }
 .color-row {
-    display: flex; gap: 8px; align-items: center; margin-bottom: 4px; font-size: 10px;
+    display: flex; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 10px;
 }
+.view-row {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 4px; font-size: 10px; cursor: pointer;
+}
+.view-row .view-dot {
+    width: 10px; height: 10px; border-radius: 50%; border: 2px solid #555; background: transparent; flex-shrink: 0;
+}
+.view-row.active .view-dot { background: #e94560; border-color: #e94560; }
+.view-row:not(.active) { opacity: 0.5; }
+.view-row:not(.active) input, .view-row:not(.active) label { pointer-events: none; }
 .color-row-label { color: #666; min-width: 45px; text-transform: uppercase; letter-spacing: 0.06em; }
 
 .tab-bar { display: flex; gap: 0; margin-bottom: 0; }
@@ -146,6 +155,7 @@ button {
                 <select id="pt-add" onchange="addChip('pt',this.value);this.value='';" style="width:100px; font-size:12px">
                     <option value="">+ add...</option>
                     <option value="unit_circle">unit_circle</option>
+                    <option value="rtheta">rtheta (r*e^i*theta disk)</option>
                     <option value="square">square</option>
                     <option value="cube">cube</option>
                     <option value="reciprocal">reciprocal</option>
@@ -154,24 +164,29 @@ button {
                     <option value="add_sub">add_sub</option>
                     <option value="mul_div">mul_div</option>
                     <option value="moebius">moebius</option>
-                    <option value="shift1">shift1</option>
-                    <option value="scale10">scale10</option>
                     <option value="negate">negate</option>
                     <option value="exp">exp</option>
-                    <option value="coeff2">coeff2 (t1+t2, t1·t2)</option>
+                    <option value="radd">radd (real +v)</option>
+                    <option value="iadd">iadd (imag +v)</option>
+                    <option value="add">add (both +v)</option>
+                    <option value="cadd">cadd (complex +re,im)</option>
+                    <option value="rscale">rscale (real *v)</option>
+                    <option value="iscale">iscale (imag *v)</option>
+                    <option value="scale">scale (both *v)</option>
+                    <option value="sdith">sdith (square dither)</option>
+                    <option value="coeff2">coeff2 (t1+t2, t1*t2)</option>
                     <option value="coeff3">coeff3 (1/(t+2))</option>
                     <option value="coeff3a">coeff3a (1/(t+1))</option>
                     <option value="coeff4">coeff4 (cos t1, sin t2)</option>
                     <option value="coeff5">coeff5 (t1+1/t2, t2+1/t1)</option>
                     <option value="coeff5a">coeff5a (t+1/t)</option>
-                    <option value="coeff6">coeff6 ((t³+i)/(t³-i))</option>
+                    <option value="coeff6">coeff6 ((t3+i)/(t3-i))</option>
                     <option value="coeff7">coeff7 ((t+sin)/(t+cos))</option>
                     <option value="coeff8">coeff8 (cross sin/cos)</option>
-                    <option value="coeff9">coeff9 ((t²+it')/(t²-it'))</option>
-                    <option value="coeff10">coeff10 ((t⁴-t')/(t⁴+t'))</option>
-                    <option value="coeff11">coeff11 (log(t⁴+2))</option>
+                    <option value="coeff9">coeff9 ((t2+it')/(t2-it'))</option>
+                    <option value="coeff10">coeff10 ((t4-t')/(t4+t'))</option>
+                    <option value="coeff11">coeff11 (log(t4+2))</option>
                     <option value="coeff12">coeff12 (mixed poly)</option>
-                    <option value="sdith">sdith (square dither)</option>
                 </select>
             </div>
             <div class="anim-row">
@@ -298,6 +313,8 @@ button {
                 <input type="number" id="render-n" value="500" min="10" max="5000" step="10">
                 <label>Stripes:</label>
                 <input type="number" id="render-stripes" value="10" min="10" max="500" step="1">
+                <label>Times:</label>
+                <input type="number" id="render-times" value="1" min="1" max="100" step="1">
             </div>
             <div style="margin-top:8px">
                 <button class="btn-primary" id="btn-calculate" onclick="runCalculate()" style="background:#2a6">Calculate</button>
@@ -340,6 +357,12 @@ button {
                 </div>
                 <!-- Right: buttons + preview thumbnail -->
                 <div style="width:200px; flex-shrink:0; display:flex; flex-direction:column">
+                    <div style="font-size:10px; color:#888; line-height:1.5; margin-bottom:4px">
+                        <div><span style="color:#555">pform:</span> <span id="res-pform">-</span></div>
+                        <div><span style="color:#555">cfun:</span> <span id="res-cfun">-</span></div>
+                        <div><span style="color:#555">cform:</span> <span id="res-cform">-</span></div>
+                        <div><span style="color:#555">degree:</span> <span id="res-degree">-</span></div>
+                    </div>
                     <div style="font-size:11px; margin-bottom:4px">
                         <label>Quantile <span id="res-q-val">0</span>%</label>
                         <input type="range" id="res-quantile" min="0" max="10" step="0.5" value="0"
@@ -360,6 +383,10 @@ button {
                          border:1px solid #0f3460; border-radius:4px; background:#1a1a2e; overflow:hidden">
                         <span style="color:#444; font-size:11px">No preview</span>
                     </div>
+                    <div style="font-size:10px; color:#888; line-height:1.5; margin-top:4px">
+                        <div><span style="color:#555">LL:</span> <span id="res-ll">-</span></div>
+                        <div><span style="color:#555">UR:</span> <span id="res-ur">-</span></div>
+                    </div>
                     <div id="results-info" style="font-size:10px; color:#666; margin-top:4px; line-height:1.4"></div>
                 </div>
             </div>
@@ -371,11 +398,26 @@ button {
                 <label>Results Dir:</label>
                 <input type="text" id="render-results-dir" placeholder="populate via Compute tab or enter job_id" style="flex:1; font-family:monospace; font-size:12px">
             </div>
-            <div class="anim-row" style="margin-top:8px">
-                <label style="display:inline-block;min-width:100px">Quantile: <span id="render-quantile-val" style="display:inline-block;width:2.5em;text-align:right">0.0</span>%</label>
-                <input type="range" id="render-quantile" min="0" max="3" step="0.1" value="0" style="width:200px" oninput="document.getElementById('render-quantile-val').textContent=parseFloat(this.value).toFixed(1)">
-                <label style="display:inline-block;min-width:80px;margin-left:12px">Shim: <span id="render-shim-val" style="display:inline-block;width:2.5em;text-align:right">5.0</span>%</label>
-                <input type="range" id="render-shim" min="0" max="10" step="0.1" value="5.0" style="width:200px" oninput="document.getElementById('render-shim-val').textContent=parseFloat(this.value).toFixed(1)">
+            <div class="color-box">
+                <div class="color-title">View</div>
+                <div class="view-row active" id="view-row-auto" onclick="selectViewMode('auto')">
+                    <span class="view-dot"></span>
+                    <span style="color:#aaa; letter-spacing:0.06em; text-transform:uppercase; min-width:50px">Auto</span>
+                    <label style="display:inline-block;min-width:100px">Quantile: <span id="render-quantile-val" style="display:inline-block;width:2.5em;text-align:right">0.0</span>%</label>
+                    <input type="range" id="render-quantile" min="0" max="3" step="0.1" value="0" style="width:160px"
+                        oninput="document.getElementById('render-quantile-val').textContent=parseFloat(this.value).toFixed(1);selectViewMode('auto')">
+                    <label style="display:inline-block;min-width:65px;margin-left:8px">Shim: <span id="render-shim-val" style="display:inline-block;width:2.5em;text-align:right">5.0</span>%</label>
+                    <input type="range" id="render-shim" min="0" max="50" step="0.5" value="5.0" style="width:160px"
+                        oninput="document.getElementById('render-shim-val').textContent=parseFloat(this.value).toFixed(1);selectViewMode('auto')">
+                </div>
+                <div class="view-row" id="view-row-square" onclick="selectViewMode('square')">
+                    <span class="view-dot"></span>
+                    <span style="color:#aaa; letter-spacing:0.06em; text-transform:uppercase; min-width:50px">Square</span>
+                    <label style="min-width:50px">Extent:</label>
+                    <input type="number" id="render-square-extent" value="2.0" min="0.01" max="1000" step="0.1"
+                        style="width:6em; font-family:monospace; font-size:12px" onfocus="selectViewMode('square')" oninput="selectViewMode('square')">
+                    <span style="color:#555; font-size:10px; margin-left:6px">LL = -ext - j*ext, UR = +ext + j*ext</span>
+                </div>
             </div>
             <div class="anim-row" style="margin-top:8px">
                 <label>Pix (image):</label>
@@ -394,37 +436,27 @@ button {
                 <div class="color-row">
                     <span class="color-dot active" data-mode="rainbow" onclick="setColorMode('rainbow')"></span>
                     <span style="color:#aaa; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('rainbow')">Rainbow</span>
-                    <div id="rainbow-options" style="display:inline-flex; gap:6px; margin-left:12px">
-                        <span class="color-row-label">Match:</span>
-                        <span class="strat-chip active" data-match="none" onclick="setMatch('none')">None</span>
-                        <span class="strat-chip" data-match="greedy" onclick="setMatch('greedy')">Greedy</span>
-                        <span class="strat-chip" data-match="hungarian" onclick="setMatch('hungarian')">Hungarian</span>
+                    <div style="display:inline-flex; gap:6px; margin-left:12px">
+                        <span class="strat-chip active" data-match="none" onclick="setMatch('none');setColorMode('rainbow')">None</span>
+                        <span class="strat-chip" data-match="greedy" onclick="setMatch('greedy');setColorMode('rainbow')">Greedy</span>
+                        <span class="strat-chip" data-match="hungarian" onclick="setMatch('hungarian');setColorMode('rainbow')">Hungarian</span>
                     </div>
                 </div>
                 <div class="color-row">
                     <span class="color-dot" data-mode="proximity" onclick="setColorMode('proximity')"></span>
                     <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('proximity')">Proximity</span>
-                    <div id="proximity-options" style="display:none; margin-left:12px">
-                        <span class="color-row-label">Palette:</span>
-                        <div id="palette-circles" style="display:inline-flex; gap:4px; flex-wrap:wrap"></div>
-                    </div>
+                    <div id="palette-circles" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:12px"></div>
                 </div>
                 <div class="color-row">
                     <span class="color-dot" data-mode="constant" onclick="setColorMode('constant')"></span>
                     <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('constant')">Constant</span>
-                    <span id="constant-options" style="display:none; margin-left:12px">
-                        <span id="constant-color-swatch" onclick="document.getElementById('render-constant-color').click()"
+                    <span style="margin-left:12px">
+                        <span id="constant-color-swatch" onclick="setColorMode('constant');document.getElementById('render-constant-color').click()"
                             style="display:inline-block; width:24px; height:24px; border-radius:4px; border:2px solid #666; cursor:pointer; vertical-align:middle; background:#ffffff; box-shadow:0 0 0 1px #333 inset"></span>
                         <input type="color" id="render-constant-color" value="#ffffff"
                             style="position:absolute; opacity:0; width:0; height:0; pointer-events:none"
                             oninput="document.getElementById('constant-color-swatch').style.background=this.value">
                     </span>
-                </div>
-                <div class="color-row" style="margin-top:4px">
-                    <span class="color-row-label" style="min-width:80px">Gamma: <span id="render-gamma-val" style="display:inline-block;width:2em;text-align:right">2.2</span></span>
-                    <input type="range" id="render-gamma" min="0" max="3" step="0.1" value="2.2" style="width:150px"
-                        oninput="document.getElementById('render-gamma-val').textContent=parseFloat(this.value).toFixed(1)">
-                    <span style="color:#555; font-size:9px">(0=raw add)</span>
                 </div>
             </div>
             <div class="color-row" style="margin-top:4px">
@@ -551,7 +583,34 @@ function selectResult(jobId) {
     }
 
     if (r) {
+        // Pipeline info
+        const pt = r.param_transforms || [];
+        const ct = r.coeff_transforms || [];
+        document.getElementById('res-pform').textContent = pt.length
+            ? pt.map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(', ')
+            : 'none';
+        document.getElementById('res-cfun').textContent = r.function || '?';
+        document.getElementById('res-cform').textContent = ct.length ? ct.join(', ') : 'none';
+        document.getElementById('res-degree').textContent = r.degree || '-';
+
+        // Show cached viewport/file_count or defaults
+        document.getElementById('res-ll').textContent = r.q_re && r.q_im
+            ? `${r.q_re[0].toFixed(4)}, ${r.q_im[0].toFixed(4)}` : '-';
+        document.getElementById('res-ur').textContent = r.q_re && r.q_im
+            ? `${r.q_re[1].toFixed(4)}, ${r.q_im[1].toFixed(4)}` : '-';
         infoEl.textContent = `${r.function || '?'} deg${r.degree || '?'} N=${r.n1||'?'} ${r.n_stripes||'?'}str ${r.file_count||'?'} files`;
+
+        // Fetch detail (file_count + viewport) on demand
+        lambdaPost('storage', { job_id: jobId }, '/detail').then(detail => {
+            if (_selectedJobId !== jobId) return; // stale
+            r.file_count = detail.file_count;
+            if (detail.q_re) { r.q_re = detail.q_re; r.q_im = detail.q_im; }
+            infoEl.textContent = `${r.function || '?'} deg${r.degree || '?'} N=${r.n1||'?'} ${r.n_stripes||'?'}str ${r.file_count||'?'} files`;
+            document.getElementById('res-ll').textContent = r.q_re && r.q_im
+                ? `${r.q_re[0].toFixed(4)}, ${r.q_im[0].toFixed(4)}` : '-';
+            document.getElementById('res-ur').textContent = r.q_re && r.q_im
+                ? `${r.q_re[1].toFixed(4)}, ${r.q_im[1].toFixed(4)}` : '-';
+        }).catch(() => {});
     }
 }
 
@@ -596,12 +655,19 @@ async function previewResult() {
         if (r) {
             r.has_preview = true;
             r.preview_url = result.image_url;
+            if (result.q_re) { r.q_re = result.q_re; r.q_im = result.q_im; }
         }
 
         // Show preview
         document.getElementById('results-preview').innerHTML =
             `<img src="${result.image_url}" style="max-width:100%; max-height:100%; image-rendering:pixelated">`;
-        infoEl.textContent = `deg${result.degree} ${result.n_roots} roots | preview ${(totalMs/1000).toFixed(1)}s`;
+        infoEl.textContent = `${result.n_roots.toLocaleString()} roots | preview ${(totalMs/1000).toFixed(1)}s`;
+
+        // Update viewport bounds
+        if (result.q_re && result.q_im) {
+            document.getElementById('res-ll').textContent = `${result.q_re[0].toFixed(4)}, ${result.q_im[0].toFixed(4)}`;
+            document.getElementById('res-ur').textContent = `${result.q_re[1].toFixed(4)}, ${result.q_im[1].toFixed(4)}`;
+        }
 
         renderResultsTable();
     } catch (e) {
@@ -771,9 +837,6 @@ function setColorMode(mode) {
         d.classList.toggle('active', d.dataset.mode === mode);
         d.nextElementSibling.style.color = d.dataset.mode === mode ? '#aaa' : '#888';
     });
-    document.getElementById('rainbow-options').style.display = mode === 'rainbow' ? 'inline-flex' : 'none';
-    document.getElementById('proximity-options').style.display = mode === 'proximity' ? 'inline-flex' : 'none';
-    document.getElementById('constant-options').style.display = mode === 'constant' ? 'inline' : 'none';
 }
 
 function setMatch(mode) {
@@ -795,35 +858,41 @@ function setPalette(name) {
         el.dataset.palette = p.name;
         el.title = p.name;
         el.style.background = `linear-gradient(to top, ${p.stops.map((s, i) => s + ' ' + Math.round(i/(p.stops.length-1)*100) + '%').join(', ')})`;
-        el.onclick = () => setPalette(p.name);
+        el.onclick = () => { setPalette(p.name); setColorMode('proximity'); };
         container.appendChild(el);
     });
 })();
 
 /* ---- Render ---- */
 /* ---- Chip-based transform chains ---- */
+// params: array of {placeholder, defaultValue} — one input per param. Empty = no params.
 const _ptCatalog = {
-    unit_circle: { kind: 'none' }, square: { kind: 'none' }, cube: { kind: 'none' },
-    reciprocal: { kind: 'none' }, conjugate: { kind: 'none' }, swap: { kind: 'none' },
-    add_sub: { kind: 'none' }, mul_div: { kind: 'none' }, moebius: { kind: 'none' },
-    shift1: { kind: 'none' }, scale10: { kind: 'none' }, negate: { kind: 'none' },
-    exp: { kind: 'none' },
-    coeff2: { kind: 'none' }, coeff3: { kind: 'none' }, coeff3a: { kind: 'none' },
-    coeff4: { kind: 'none' }, coeff5: { kind: 'none' }, coeff5a: { kind: 'none' },
-    coeff6: { kind: 'none' }, coeff7: { kind: 'none' }, coeff8: { kind: 'none' },
-    coeff9: { kind: 'none' }, coeff10: { kind: 'none' }, coeff11: { kind: 'none' },
-    coeff12: { kind: 'none' },
-    sdith: { kind: 'number', placeholder: '3', defaultValue: '3' },
+    unit_circle: {}, rtheta: {},
+    square: {}, cube: {}, reciprocal: {}, conjugate: {}, swap: {},
+    add_sub: {}, mul_div: {}, moebius: {}, negate: {}, exp: {},
+    radd:   { params: [{ph:'1', def:'1'}] },
+    iadd:   { params: [{ph:'1', def:'1'}] },
+    add:    { params: [{ph:'1', def:'1'}] },
+    cadd:   { params: [{ph:'re', def:'1'}, {ph:'im', def:'0'}] },
+    rscale: { params: [{ph:'10', def:'10'}] },
+    iscale: { params: [{ph:'10', def:'10'}] },
+    scale:  { params: [{ph:'10', def:'10'}] },
+    sdith:  { params: [{ph:'3', def:'3'}] },
+    coeff2: {}, coeff3: {}, coeff3a: {},
+    coeff4: {}, coeff5: {}, coeff5a: {},
+    coeff6: {}, coeff7: {}, coeff8: {},
+    coeff9: {}, coeff10: {}, coeff11: {}, coeff12: {},
 };
-let _ptChain = [];  // parameter transform chain (array of {name, param})
+let _ptChain = [];  // parameter transform chain (array of {name, params: [str,...]})
 let _ctChain = [];  // coefficient transform chain (array of strings)
 
 function addChip(which, name) {
     if (!name) return;
     const chain = which === 'pt' ? _ptChain : _ctChain;
     if (which === 'pt') {
-        const spec = _ptCatalog[name] || { kind: 'none' };
-        chain.push({ name, param: spec.kind !== 'none' ? (spec.defaultValue || '') : null });
+        const spec = _ptCatalog[name] || {};
+        const p = spec.params || [];
+        chain.push({ name, params: p.map(d => d.def || '') });
     } else {
         chain.push(name);
     }
@@ -836,9 +905,9 @@ function removeChip(which, idx) {
     _renderChips(which);
 }
 
-function updateChipParam(idx, value) {
-    if (idx >= 0 && idx < _ptChain.length) {
-        _ptChain[idx].param = value;
+function updateChipParam(chipIdx, paramIdx, value) {
+    if (chipIdx >= 0 && chipIdx < _ptChain.length) {
+        _ptChain[chipIdx].params[paramIdx] = value;
     }
 }
 
@@ -849,10 +918,11 @@ function _renderChips(which) {
     if (which === 'pt') {
         el.innerHTML = chain.map((item, i) => {
             const spec = _ptCatalog[item.name] || {};
-            const paramHtml = item.param !== null
-                ? `<input class="chip-input" type="text" inputmode="decimal" value="${item.param}" placeholder="${spec.placeholder || ''}" onchange="updateChipParam(${i}, this.value)" onclick="event.stopPropagation()">`
-                : '';
-            return `<span class="chip">${item.name}${paramHtml}<span class="chip-x" onclick="removeChip('pt',${i})">x</span></span>`;
+            const pDefs = spec.params || [];
+            const inputsHtml = item.params.map((val, pi) =>
+                `<input class="chip-input" type="text" inputmode="decimal" value="${val}" placeholder="${(pDefs[pi]||{}).ph||''}" onchange="updateChipParam(${i},${pi},this.value)" onclick="event.stopPropagation()">`
+            ).join('');
+            return `<span class="chip">${item.name}${inputsHtml}<span class="chip-x" onclick="removeChip('pt',${i})">x</span></span>`;
         }).join('');
     } else {
         el.innerHTML = chain.map((name, i) =>
@@ -874,6 +944,13 @@ function loadRenderPreset(name) {
 const _fmtMs = (ms) => (ms/1000).toFixed(1) + 's';
 const _fmtStatus = (sc) => sc ? Object.entries(sc).map(([k,v]) => `${k}:${v}`).join(' ') : '';
 
+let _viewMode = 'auto';
+function selectViewMode(mode) {
+    _viewMode = mode;
+    document.getElementById('view-row-auto').classList.toggle('active', mode === 'auto');
+    document.getElementById('view-row-square').classList.toggle('active', mode === 'square');
+}
+
 function _renderCommonParams() {
     const jobId = document.getElementById('render-results-dir').value.trim();
     if (!jobId) throw new Error('No results dir — run Calculate first');
@@ -882,9 +959,11 @@ function _renderCommonParams() {
         pix: parseInt(document.getElementById('render-pix').value),
         fmt: document.getElementById('render-format').value,
         quality: parseInt(document.getElementById('render-quality').value),
-        gamma: parseFloat(document.getElementById('render-gamma').value),
+        gamma: 1.0,
+        viewMode: _viewMode,
         quantile: parseFloat(document.getElementById('render-quantile').value) / 100,
         shim: parseFloat(document.getElementById('render-shim').value) / 100,
+        squareExtent: parseFloat(document.getElementById('render-square-extent').value) || 2.0,
         constantColor: document.getElementById('render-constant-color').value.replace('#', ''),
         tileSize: parseInt(document.getElementById('sparse-tile-size').value),
     };
@@ -913,15 +992,23 @@ async function runRasterPipeline() {
             log(`  cleaned ${cleanResult.deleted} old render files`, '', 'render-log');
 
         // Phase 1: viewport
-        document.getElementById('render-status').textContent = `Computing viewport...`;
-        log(`Viewport: ${p.jobId}, quantile=${(p.quantile*100).toFixed(1)}%, shim=${(p.shim*100).toFixed(1)}%...`, '', 'render-log');
-
         const tVp = performance.now();
-        const vpData = await lambdaPost('viewport', { job_id: p.jobId, quantile: p.quantile, shim: p.shim });
-        log(`  viewport: ${_fmtMs(performance.now()-tVp)} | ${vpData.n_roots} roots`, 'ok', 'render-log');
-
-        const REF_SIZE = 4096;
-        const scale = vpData.scale_ref * Math.min(p.pix, p.pix) / REF_SIZE;
+        let vpCenterRe, vpCenterIm, scale;
+        if (p.viewMode === 'square') {
+            const ext = p.squareExtent;
+            vpCenterRe = 0; vpCenterIm = 0;
+            scale = p.pix / (2 * ext);
+            log(`Viewport: square ext=${ext} → [${-ext}, ${ext}]`, 'ok', 'render-log');
+        } else {
+            document.getElementById('render-status').textContent = `Computing viewport...`;
+            log(`Viewport: ${p.jobId}, quantile=${(p.quantile*100).toFixed(1)}%, shim=${(p.shim*100).toFixed(1)}%...`, '', 'render-log');
+            const vpData = await lambdaPost('viewport', { job_id: p.jobId, quantile: p.quantile, shim: p.shim });
+            log(`  viewport: ${_fmtMs(performance.now()-tVp)} | ${vpData.n_roots.toLocaleString()} roots`, 'ok', 'render-log');
+            const REF_SIZE = 4096;
+            scale = vpData.scale_ref * Math.min(p.pix, p.pix) / REF_SIZE;
+            vpCenterRe = vpData.center_re;
+            vpCenterIm = vpData.center_im;
+        }
 
         let calcMeta = _lastCalcMeta && _lastCalcMeta.job_id === p.jobId ? _lastCalcMeta : null;
         if (!calcMeta) {
@@ -941,7 +1028,7 @@ async function runRasterPipeline() {
                 width: p.pix, height: p.pix,
                 tile_size: tileSize,
                 n_tile_cols: nTileCols, n_tile_rows: nTileRows,
-                center_re: vpData.center_re, center_im: vpData.center_im,
+                center_re: vpCenterRe, center_im: vpCenterIm,
                 scale, degree: calcMeta.degree,
                 color: renderColorMode, match: renderMatchMode,
                 palette: renderPalette, constant_color: p.constantColor,
@@ -1245,15 +1332,23 @@ async function runBilevelPipeline() {
             log(`  cleaned ${cleanResult.deleted} old render files`, '', 'render-log');
 
         // Phase 1: viewport
-        document.getElementById('render-status').textContent = `BiLevel: computing viewport...`;
-        log(`BiLevel: ${p.jobId}, ${p.pix}px png, constant/white, ${nTileCols}x${nTileRows}=${nTiles} tiles...`, '', 'render-log');
-
         const tVp = performance.now();
-        const vpData = await lambdaPost('viewport', { job_id: p.jobId, quantile: p.quantile, shim: p.shim });
-        log(`  viewport: ${_fmtMs(performance.now()-tVp)} | ${vpData.n_roots} roots`, 'ok', 'render-log');
-
-        const REF_SIZE = 4096;
-        const scale = vpData.scale_ref * Math.min(p.pix, p.pix) / REF_SIZE;
+        let vpCenterRe, vpCenterIm, scale;
+        if (p.viewMode === 'square') {
+            const ext = p.squareExtent;
+            vpCenterRe = 0; vpCenterIm = 0;
+            scale = p.pix / (2 * ext);
+            log(`BiLevel: ${p.jobId}, ${p.pix}px png, constant/white, square ext=${ext}, ${nTileCols}x${nTileRows}=${nTiles} tiles...`, '', 'render-log');
+        } else {
+            document.getElementById('render-status').textContent = `BiLevel: computing viewport...`;
+            log(`BiLevel: ${p.jobId}, ${p.pix}px png, constant/white, ${nTileCols}x${nTileRows}=${nTiles} tiles...`, '', 'render-log');
+            const vpData = await lambdaPost('viewport', { job_id: p.jobId, quantile: p.quantile, shim: p.shim });
+            log(`  viewport: ${_fmtMs(performance.now()-tVp)} | ${vpData.n_roots.toLocaleString()} roots`, 'ok', 'render-log');
+            const REF_SIZE = 4096;
+            scale = vpData.scale_ref * Math.min(p.pix, p.pix) / REF_SIZE;
+            vpCenterRe = vpData.center_re;
+            vpCenterIm = vpData.center_im;
+        }
 
         let calcMeta = _lastCalcMeta && _lastCalcMeta.job_id === p.jobId ? _lastCalcMeta : null;
         if (!calcMeta) {
@@ -1273,7 +1368,7 @@ async function runBilevelPipeline() {
                 width: p.pix, height: p.pix,
                 tile_size: tileSize,
                 n_tile_cols: nTileCols, n_tile_rows: nTileRows,
-                center_re: vpData.center_re, center_im: vpData.center_im,
+                center_re: vpCenterRe, center_im: vpCenterIm,
                 scale, degree: calcMeta.degree,
                 color: bilevelColor, match: bilevelMatch,
                 palette: 'inferno', constant_color: 'ffffff',
@@ -1477,10 +1572,11 @@ async function runCalculate() {
     const funcName = document.getElementById('render-function').value;
     const n = parseInt(document.getElementById('render-n').value);
     const nStripes = Math.max(10, parseInt(document.getElementById('render-stripes').value) || 10);
+    const times = Math.max(1, parseInt(document.getElementById('render-times').value) || 1);
     const jobId = 'compute_' + Date.now().toString(36);
 
     const paramTransforms = _ptChain.map(item =>
-        item.param !== null && item.param !== '' ? [item.name, item.param] : [item.name]
+        item.params.length ? [item.name, ...item.params] : [item.name]
     );
     const coeffTransforms = [..._ctChain];
     const ptDisplay = paramTransforms.map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(',');
@@ -1490,14 +1586,14 @@ async function runCalculate() {
     btn.disabled = true;
     document.getElementById('compute-status').textContent = `Computing ${pipelineStr} N=${n}...`;
     document.getElementById('compute-status').className = 'status';
-    log(`Compute: ${pipelineStr} N=${n}, stripes=${nStripes}...`);
+    log(`Compute: ${pipelineStr} N=${n}, stripes=${nStripes}${times > 1 ? ', times=' + times : ''}...`);
     const fmtMs = (ms) => (ms/1000).toFixed(1) + 's';
 
     try {
         const tTotal = performance.now();
         const rowsPer = Math.floor(n / nStripes);
 
-        // Phase 1: fan-out hires coeffgen stripes
+        // Phase 1: fan-out hires coeffgen stripes (times × nStripes)
         document.getElementById('compute-status').textContent = `Generating coefficients 0/${nStripes}...`;
         const tCoeffgen = performance.now();
         let coeffgenDone = 0;
@@ -1513,6 +1609,7 @@ async function runCalculate() {
                 coeff_transforms: coeffTransforms,
                 n1: n, n2: n,
                 i1_start: i1Start, i1_end: i1End,
+                times: times,
             });
         }
 

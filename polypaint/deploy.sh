@@ -47,6 +47,18 @@ LIBVIPS_LAYER="arn:aws:lambda:us-east-1:710848990594:layer:polypaint-libvips:5"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# --- JS syntax check ---
+echo "Checking index.html JS syntax..."
+sed -n '/<script>/,/<\/script>/p' index.html | sed '1d;$d' > /tmp/_jscheck.js
+node --check /tmp/_jscheck.js 2>&1
+if [ $? -ne 0 ]; then
+    rm -f /tmp/_jscheck.js
+    echo "ERROR: index.html has JavaScript syntax errors. Aborting deploy."
+    exit 1
+fi
+rm -f /tmp/_jscheck.js
+echo "  JS syntax OK"
+
 # --- Compile binaries ---
 echo "Compiling binaries..."
 

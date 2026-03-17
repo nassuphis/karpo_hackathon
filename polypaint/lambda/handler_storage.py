@@ -37,6 +37,8 @@ def handler(event, context):
         return handle_check_keys(event)
     elif path.endswith("/check-status"):
         return handle_check_status(event)
+    elif path.endswith("/detail"):
+        return handle_detail(event)
     elif path.endswith("/presign"):
         return handle_presign(event)
     return {
@@ -78,6 +80,10 @@ def handle_list(event):
             entry["n1"] = calc.get("n1", 0)
             entry["n2"] = calc.get("n2", 0)
             entry["n_stripes"] = calc.get("n_stripes", 0)
+            # Pipeline info
+            pipeline = calc.get("pipeline", {})
+            entry["param_transforms"] = pipeline.get("param_transforms", [])
+            entry["coeff_transforms"] = pipeline.get("coeff_transforms", [])
             # Compute total bin size from stripe metadata if available
             stripes = calc.get("stripes", [])
             entry["total_size"] = sum(s.get("bin_size", 0) for s in stripes)
@@ -254,7 +260,7 @@ def handle_clean_render(event):
     paginator = s3.get_paginator('list_objects_v2')
     for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
         for obj in page.get('Contents', []):
-            if obj['Key'].endswith(render_exts):
+            if obj['Key'].endswith(render_exts) and not obj['Key'].endswith('preview.png'):
                 objects.append(obj)
 
     total_deleted = 0
@@ -365,3 +371,33 @@ def handle_cleanup(event):
             pass
 
     return ok_response({"deleted": total_deleted})
+
+
+def handle_detail(event):
+    """Return file_count and viewport for a single job (called on selection)."""
+    params = parse_body(event)
+    job_id = params["job_id"]
+    prefix = f"renders/{job_id}/"
+    result = {"job_id": job_id}
+
+    # Count files
+    try:
+        n_files = 0
+        for page in s3.get_paginator('list_objects_v2').paginate(
+                Bucket=BUCKET, Prefix=prefix):
+            n_files += page.get('KeyCount', 0)
+        result["file_count"] = n_files
+    except Exception:
+        result["file_count"] = 0
+
+    # Read view.json for viewport coordinates
+    try:
+        vobj = s3.get_object(Bucket=BUCKET,
+                             Key=f"renders/{job_id}/view.json")
+        view = json.loads(vobj["Body"].read())
+        result["q_re"] = view.get("q_re")
+        result["q_im"] = view.get("q_im")
+    except Exception:
+        pass
+
+    return ok_response(result)

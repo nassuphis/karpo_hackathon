@@ -1387,12 +1387,92 @@ static void poly_15_c(double x1r, double x1i, double x2r, double x2i,
     }
 }
 
-/* poly_16: too complex for auto-transpile, stubbed */
 static void poly_16_c(double x1r, double x1i, double x2r, double x2i,
                      double *cRe, double *cIm, int *nCoeffs) {
     *nCoeffs = 51;
     for (int _i = 0; _i < 51; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
-    (void)x1r; (void)x1i; (void)x2r; (void)x2i;
+    double _add1r = 0, _add1i = 0;
+    _add1r = x1r + x2r; _add1i = x1i + x2i;
+    { int _idx = 0; if (_idx >= 0 && _idx < 51) { cRe[_idx] = _add1r; cIm[_idx] = _add1i; } }
+    double _c2r = 0, _c2i = 0;
+    _c2r = 2.0; _c2i = 0;
+    double _pow3r = 0, _pow3i = 0;
+    c_mul(x1r, x1i, x1r, x1i, &_pow3r, &_pow3i);
+    double _c4r = 0, _c4i = 0;
+    _c4r = 2.0; _c4i = 0;
+    double _pow5r = 0, _pow5i = 0;
+    c_mul(x2r, x2i, x2r, x2i, &_pow5r, &_pow5i);
+    double _sub6r = 0, _sub6i = 0;
+    _sub6r = _pow3r - _pow5r; _sub6i = _pow3i - _pow5i;
+    double _re7r = 0, _re7i = 0;
+    _re7r = _sub6r; _re7i = 0;
+    { int _idx = 1; if (_idx >= 0 && _idx < 51) { cRe[_idx] = _re7r; cIm[_idx] = _re7i; } }
+    static const double primes[] = {2.0, 3.0, 5.0, 7.0, 11.0, 13.0, 17.0, 19.0, 23.0, 29.0, 31.0, 37.0, 41.0, 43.0, 47.0, 53.0, 59.0, 61.0, 67.0, 71.0, 73.0, 79.0, 83.0, 89.0, 97.0};
+    for (int k = 2; k < 25; k++) {
+        double _cf8r = 0, _cf8i = 0;
+        { int _idx = (k - 1); if (_idx >= 0 && _idx < 51) { _cf8r = cRe[_idx]; _cf8i = cIm[_idx]; } }
+        double _arr9r = 0, _arr9i = 0;
+        { int _idx = (k - 2); _arr9r = (_idx >= 0 && _idx < 25) ? primes[_idx] : 0.0; _arr9i = 0; }
+        double _mul10r = 0, _mul10i = 0;
+        c_mul(_cf8r, _cf8i, _arr9r, _arr9i, &_mul10r, &_mul10i);
+        double _im11r = 0, _im11i = 0;
+        _im11r = _mul10i; _im11i = 0;
+        double _ang12r = 0, _ang12i = 0;
+        _ang12r = c_arg(x1r, x1i); _ang12i = 0;
+        double _mul13r = 0, _mul13i = 0;
+        c_mul(_im11r, _im11i, _ang12r, _ang12i, &_mul13r, &_mul13i);
+        double _abs14r = 0, _abs14i = 0;
+        _abs14r = c_abs(x2r, x2i); _abs14i = 0;
+        double _mul15r = 0, _mul15i = 0;
+        c_mul(_mul13r, _mul13i, _abs14r, _abs14i, &_mul15r, &_mul15i);
+        { int _idx = k; if (_idx >= 0 && _idx < 51) { cRe[_idx] = _mul15r; cIm[_idx] = _mul15i; } }
+    }
+    for (int k = 25; k < 50; k++) {
+        double _cf16r = 0, _cf16i = 0;
+        { int _idx = (k - 1); if (_idx >= 0 && _idx < 51) { _cf16r = cRe[_idx]; _cf16i = cIm[_idx]; } }
+        double _arr17r = 0, _arr17i = 0;
+        { int _idx = (k - 25); _arr17r = (_idx >= 0 && _idx < 25) ? primes[_idx] : 0.0; _arr17i = 0; }
+        double _c18r = 0, _c18i = 0;
+        _c18r = 2.0; _c18i = 0;
+        double _pow19r = 0, _pow19i = 0;
+        c_mul(_arr17r, _arr17i, _arr17r, _arr17i, &_pow19r, &_pow19i);
+        double _mul20r = 0, _mul20i = 0;
+        c_mul(_cf16r, _cf16i, _pow19r, _pow19i, &_mul20r, &_mul20i);
+        double _abs21r = 0, _abs21i = 0;
+        _abs21r = c_abs(_mul20r, _mul20i); _abs21i = 0;
+        double _ang22r = 0, _ang22i = 0;
+        _ang22r = c_arg(x2r, x2i); _ang22i = 0;
+        double _mul23r = 0, _mul23i = 0;
+        c_mul(_abs21r, _abs21i, _ang22r, _ang22i, &_mul23r, &_mul23i);
+        double _re24r = 0, _re24i = 0;
+        _re24r = x1r; _re24i = 0;
+        double _mul25r = 0, _mul25i = 0;
+        c_mul(_mul23r, _mul23i, _re24r, _re24i, &_mul25r, &_mul25i);
+        { int _idx = k; if (_idx >= 0 && _idx < 51) { cRe[_idx] = _mul25r; cIm[_idx] = _mul25i; } }
+    }
+    double _sum26r = 0, _sum26i = 0;
+    _sum26r = 0; _sum26i = 0;
+    for (int _si = 0; _si < 51; _si++) { _sum26r += cRe[_si]; _sum26i += cIm[_si]; }
+    double _re27r = 0, _re27i = 0;
+    _re27r = x2r; _re27i = 0;
+    double _sin28r = 0, _sin28i = 0;
+    c_sin(_re27r, _re27i, &_sin28r, &_sin28i);
+    double _abs29r = 0, _abs29i = 0;
+    _abs29r = c_abs(x1r, x1i); _abs29i = 0;
+    double _c30r = 0, _c30i = 0;
+    _c30r = 1.0; _c30i = 0;
+    double _add31r = 0, _add31i = 0;
+    _add31r = _abs29r + _c30r; _add31i = _abs29i + _c30i;
+    double _log32r = 0, _log32i = 0;
+    c_log(_add31r, _add31i, &_log32r, &_log32i);
+    double _mul33r = 0, _mul33i = 0;
+    c_mul(_sin28r, _sin28i, _log32r, _log32i, &_mul33r, &_mul33i);
+    double _add34r = 0, _add34i = 0;
+    _add34r = _sum26r + _mul33r; _add34i = _sum26i + _mul33i;
+    { int _idx = 50; if (_idx >= 0 && _idx < 51) { cRe[_idx] = _add34r; cIm[_idx] = _add34i; } }
+    for (int _i = 0; _i < 51; _i++) {
+        if (!isfinite(cRe[_i]) || !isfinite(cIm[_i])) { cRe[_i] = 0; cIm[_i] = 0; }
+    }
 }
 
 static void poly_17_c(double x1r, double x1i, double x2r, double x2i,

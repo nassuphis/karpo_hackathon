@@ -1,0 +1,32 @@
+# Compiled C binaries (built by deploy.sh or locally)
+lambda/sweep
+lambda/sweep_test
+lambda/sweep_cli
+lambda/sweep_cli_new
+lambda/solver
+lambda/roots2pix
+lambda/pixassemble
+lambda/raw2jpeg
+lambda/lores_viewport
+lambda/lores_viewport_*
+lambda/imgpipe
+
+# Lambda packaging
+lambda/deploy.zip
+lambda/*.zip
+
+# libvips cross-compile layer (large, built separately)
+lambda/layer-build/
+
+# Python bytecode
+lambda/__pycache__/
+
+# Backup files
+lambda/*.bak
+
+# Test output binaries
+lambda/*.bin
+/tmp/
+
+# macOS
+.DS_Store

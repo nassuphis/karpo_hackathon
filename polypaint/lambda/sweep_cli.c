@@ -15,6 +15,8 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include <stdint.h>
+#include <unistd.h>
 
 #define MAX_DEGREE 255
 #define MAX_COEFFS 256
@@ -1777,6 +1779,187 @@ static void pt_exp(double *z1r, double *z1i, double *z2r, double *z2i) {
     *z2r = r; *z2i = i;
 }
 
+/* Complex arithmetic helpers for composable parameter transforms */
+static inline void c_mul(double ar, double ai, double br, double bi, double *rr, double *ri) {
+    *rr = ar*br - ai*bi;
+    *ri = ar*bi + ai*br;
+}
+static inline void c_div(double ar, double ai, double br, double bi, double *rr, double *ri) {
+    double d = br*br + bi*bi;
+    if (d < 1e-30) { *rr = 0; *ri = 0; return; }
+    *rr = (ar*br + ai*bi) / d;
+    *ri = (ai*br - ar*bi) / d;
+}
+static inline void c_sin(double ar, double ai, double *rr, double *ri) {
+    *rr = sin(ar) * cosh(ai);
+    *ri = cos(ar) * sinh(ai);
+}
+static inline void c_cos(double ar, double ai, double *rr, double *ri) {
+    *rr = cos(ar) * cosh(ai);
+    *ri = -sin(ar) * sinh(ai);
+}
+static inline void c_log(double ar, double ai, double *rr, double *ri) {
+    double m2 = ar*ar + ai*ai;
+    *rr = (m2 > 0) ? 0.5 * log(m2) : -700.0;
+    *ri = atan2(ai, ar);
+}
+
+/* Additional complex helpers for coefficient functions */
+static inline double c_abs(double r, double i) { return sqrt(r*r + i*i); }
+static inline double c_arg(double r, double i) { return atan2(i, r); }
+static inline void c_exp2(double r, double i, double *rr, double *ri) {
+    double e = exp(r); *rr = e * cos(i); *ri = e * sin(i);
+}
+static inline void c_powr(double r, double i, double p, double *rr, double *ri) {
+    double m2 = r*r + i*i;
+    if (m2 < 1e-60) { *rr = 0; *ri = 0; return; }
+    double m = sqrt(m2), a = atan2(i, r), mp = pow(m, p);
+    *rr = mp * cos(p * a); *ri = mp * sin(p * a);
+}
+static inline void c_powc(double ar, double ai, double br, double bi, double *rr, double *ri) {
+    double lr, li, mr, mi;
+    c_log(ar, ai, &lr, &li);
+    c_mul(br, bi, lr, li, &mr, &mi);
+    c_exp2(mr, mi, rr, ri);
+}
+
+/* coeff2: (t1+t2, t1*t2) */
+static void pt_coeff2(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double a1r=*z1r, a1i=*z1i, a2r=*z2r, a2i=*z2i;
+    double pr, pi;
+    c_mul(a1r, a1i, a2r, a2i, &pr, &pi);
+    *z1r = a1r + a2r; *z1i = a1i + a2i;
+    *z2r = pr; *z2i = pi;
+}
+
+/* coeff3: (1/(t1+2), 1/(t2+2)) */
+static void pt_coeff3(double *z1r, double *z1i, double *z2r, double *z2i) {
+    c_div(1.0, 0.0, *z1r + 2.0, *z1i, z1r, z1i);
+    c_div(1.0, 0.0, *z2r + 2.0, *z2i, z2r, z2i);
+}
+
+/* coeff3a: (1/(t1+1), 1/(t2+1)) */
+static void pt_coeff3a(double *z1r, double *z1i, double *z2r, double *z2i) {
+    c_div(1.0, 0.0, *z1r + 1.0, *z1i, z1r, z1i);
+    c_div(1.0, 0.0, *z2r + 1.0, *z2i, z2r, z2i);
+}
+
+/* coeff4: (cos(t1), sin(t2)) */
+static void pt_coeff4(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double rr, ri;
+    c_cos(*z1r, *z1i, &rr, &ri); *z1r = rr; *z1i = ri;
+    c_sin(*z2r, *z2i, &rr, &ri); *z2r = rr; *z2i = ri;
+}
+
+/* coeff5: (t1 + 1/t2, t2 + 1/t1) */
+static void pt_coeff5(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double a1r=*z1r, a1i=*z1i, a2r=*z2r, a2i=*z2i;
+    double rr, ri;
+    c_div(1.0, 0.0, a2r, a2i, &rr, &ri);
+    *z1r = a1r + rr; *z1i = a1i + ri;
+    c_div(1.0, 0.0, a1r, a1i, &rr, &ri);
+    *z2r = a2r + rr; *z2i = a2i + ri;
+}
+
+/* coeff5a: (t1 + 1/t1, t2 + 1/t2) */
+static void pt_coeff5a(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double a1r=*z1r, a1i=*z1i, a2r=*z2r, a2i=*z2i;
+    double rr, ri;
+    c_div(1.0, 0.0, a1r, a1i, &rr, &ri);
+    *z1r = a1r + rr; *z1i = a1i + ri;
+    c_div(1.0, 0.0, a2r, a2i, &rr, &ri);
+    *z2r = a2r + rr; *z2i = a2i + ri;
+}
+
+/* coeff6: ((t1^3+i)/(t1^3-i), (t2^3+i)/(t2^3-i)) */
+static void pt_coeff6(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double tr, ti, s2r, s2i, c3r, c3i;
+    tr = *z1r; ti = *z1i;
+    c_mul(tr, ti, tr, ti, &s2r, &s2i);
+    c_mul(s2r, s2i, tr, ti, &c3r, &c3i);
+    c_div(c3r, c3i + 1.0, c3r, c3i - 1.0, z1r, z1i);
+    tr = *z2r; ti = *z2i;
+    c_mul(tr, ti, tr, ti, &s2r, &s2i);
+    c_mul(s2r, s2i, tr, ti, &c3r, &c3i);
+    c_div(c3r, c3i + 1.0, c3r, c3i - 1.0, z2r, z2i);
+}
+
+/* coeff7: ((t+sin(t))/(t+cos(t))) for each */
+static void pt_coeff7(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double sr, si, cr, ci, tr, ti;
+    tr = *z1r; ti = *z1i;
+    c_sin(tr, ti, &sr, &si);
+    c_cos(tr, ti, &cr, &ci);
+    c_div(tr + sr, ti + si, tr + cr, ti + ci, z1r, z1i);
+    tr = *z2r; ti = *z2i;
+    c_sin(tr, ti, &sr, &si);
+    c_cos(tr, ti, &cr, &ci);
+    c_div(tr + sr, ti + si, tr + cr, ti + ci, z2r, z2i);
+}
+
+/* coeff8: ((t1+sin(t2))/(t2+cos(t1)), (t2+sin(t1))/(t1+cos(t2))) */
+static void pt_coeff8(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double a1r=*z1r, a1i=*z1i, a2r=*z2r, a2i=*z2i;
+    double s1r, s1i, s2r, s2i, c1r, c1i, c2r, c2i;
+    c_sin(a1r, a1i, &s1r, &s1i);
+    c_sin(a2r, a2i, &s2r, &s2i);
+    c_cos(a1r, a1i, &c1r, &c1i);
+    c_cos(a2r, a2i, &c2r, &c2i);
+    c_div(a1r + s2r, a1i + s2i, a2r + c1r, a2i + c1i, z1r, z1i);
+    c_div(a2r + s1r, a2i + s1i, a1r + c2r, a1i + c2i, z2r, z2i);
+}
+
+/* coeff9: ((t1^2+i*t2)/(t1^2-i*t2), (t2^2+i*t1)/(t2^2-i*t1)) */
+static void pt_coeff9(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double a1r=*z1r, a1i=*z1i, a2r=*z2r, a2i=*z2i;
+    double sq1r, sq1i, sq2r, sq2i, it1r, it1i, it2r, it2i;
+    c_mul(a1r, a1i, a1r, a1i, &sq1r, &sq1i);
+    c_mul(a2r, a2i, a2r, a2i, &sq2r, &sq2i);
+    it2r = -a2i; it2i = a2r;  /* i*t2 */
+    it1r = -a1i; it1i = a1r;  /* i*t1 */
+    c_div(sq1r + it2r, sq1i + it2i, sq1r - it2r, sq1i - it2i, z1r, z1i);
+    c_div(sq2r + it1r, sq2i + it1i, sq2r - it1r, sq2i - it1i, z2r, z2i);
+}
+
+/* coeff10: ((t1^4-t2)/(t1^4+t2), (t2^4-t1)/(t2^4+t1)) */
+static void pt_coeff10(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double a1r=*z1r, a1i=*z1i, a2r=*z2r, a2i=*z2i;
+    double s1r, s1i, s2r, s2i, q1r, q1i, q2r, q2i;
+    c_mul(a1r, a1i, a1r, a1i, &s1r, &s1i);
+    c_mul(s1r, s1i, s1r, s1i, &q1r, &q1i);
+    c_mul(a2r, a2i, a2r, a2i, &s2r, &s2i);
+    c_mul(s2r, s2i, s2r, s2i, &q2r, &q2i);
+    c_div(q1r - a2r, q1i - a2i, q1r + a2r, q1i + a2i, z1r, z1i);
+    c_div(q2r - a1r, q2i - a1i, q2r + a1r, q2i + a1i, z2r, z2i);
+}
+
+/* coeff11: (log(t1^4+2), log(t2^4+2)) */
+static void pt_coeff11(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double sqr, sqi, qr, qi;
+    c_mul(*z1r, *z1i, *z1r, *z1i, &sqr, &sqi);
+    c_mul(sqr, sqi, sqr, sqi, &qr, &qi);
+    c_log(qr + 2.0, qi, z1r, z1i);
+    c_mul(*z2r, *z2i, *z2r, *z2i, &sqr, &sqi);
+    c_mul(sqr, sqi, sqr, sqi, &qr, &qi);
+    c_log(qr + 2.0, qi, z2r, z2i);
+}
+
+/* coeff12: (2*t1^4-3*t2^3+4*t1^2-5*t2, 2*t2^4-3*t1^3+4*t2^2-5*t1) */
+static void pt_coeff12(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double a1r=*z1r, a1i=*z1i, a2r=*z2r, a2i=*z2i;
+    double s1r, s1i, s2r, s2i, c1r, c1i, c2r, c2i, q1r, q1i, q2r, q2i;
+    c_mul(a1r, a1i, a1r, a1i, &s1r, &s1i);
+    c_mul(s1r, s1i, a1r, a1i, &c1r, &c1i);
+    c_mul(s1r, s1i, s1r, s1i, &q1r, &q1i);
+    c_mul(a2r, a2i, a2r, a2i, &s2r, &s2i);
+    c_mul(s2r, s2i, a2r, a2i, &c2r, &c2i);
+    c_mul(s2r, s2i, s2r, s2i, &q2r, &q2i);
+    *z1r = 2*q1r - 3*c2r + 4*s1r - 5*a2r;
+    *z1i = 2*q1i - 3*c2i + 4*s1i - 5*a2i;
+    *z2r = 2*q2r - 3*c1r + 4*s2r - 5*a1r;
+    *z2i = 2*q2i - 3*c1i + 4*s2i - 5*a1i;
+}
+
 static ParamTransform lookupParamTransform(const char *name) {
     if (strcmp(name, "none") == 0)        return pt_none;
     if (strcmp(name, "unit_circle") == 0) return pt_unit_circle;
@@ -1792,6 +1975,19 @@ static ParamTransform lookupParamTransform(const char *name) {
     if (strcmp(name, "scale10") == 0)     return pt_scale10;
     if (strcmp(name, "negate") == 0)      return pt_negate;
     if (strcmp(name, "exp") == 0)         return pt_exp;
+    if (strcmp(name, "coeff2") == 0)     return pt_coeff2;
+    if (strcmp(name, "coeff3") == 0)     return pt_coeff3;
+    if (strcmp(name, "coeff3a") == 0)    return pt_coeff3a;
+    if (strcmp(name, "coeff4") == 0)     return pt_coeff4;
+    if (strcmp(name, "coeff5") == 0)     return pt_coeff5;
+    if (strcmp(name, "coeff5a") == 0)    return pt_coeff5a;
+    if (strcmp(name, "coeff6") == 0)     return pt_coeff6;
+    if (strcmp(name, "coeff7") == 0)     return pt_coeff7;
+    if (strcmp(name, "coeff8") == 0)     return pt_coeff8;
+    if (strcmp(name, "coeff9") == 0)     return pt_coeff9;
+    if (strcmp(name, "coeff10") == 0)    return pt_coeff10;
+    if (strcmp(name, "coeff11") == 0)    return pt_coeff11;
+    if (strcmp(name, "coeff12") == 0)    return pt_coeff12;
     return NULL;
 }
 
@@ -1867,6 +2063,104 @@ static CoeffTransform lookupCoeffTransform(const char *name) {
     return NULL;
 }
 
+/* ==== Fast xorshift64 RNG for dithering ==== */
+
+static uint64_t _rng_state = 0x123456789abcdef0ULL;
+static inline uint64_t xorshift64(void) {
+    uint64_t x = _rng_state;
+    x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+    _rng_state = x;
+    return x;
+}
+static inline double rng_uniform(void) {
+    return (xorshift64() >> 11) * (1.0 / 9007199254740992.0);
+}
+
+/* sdith: square dither — adds uniform noise with width 1/(d*N) to z1r, z2r */
+static void pt_sdith(double *z1r, double *z1i, double *z2r, double *z2i, double d, int gridN) {
+    (void)z1i; (void)z2i;
+    if (d <= 0.0) d = 1.0;
+    double w = 1.0 / (d * gridN);
+    *z1r += w * (rng_uniform() - 0.5);
+    *z2r += w * (rng_uniform() - 0.5);
+}
+
+/* ==== Parameter transform dispatch (array-of-arrays format) ==== */
+
+#define MAX_PT_ARGS 4
+
+typedef struct {
+    char name[64];
+    double args[MAX_PT_ARGS];
+    int nArgs;
+} PtEntry;
+
+/* Parse param_transforms: [["unit_circle"], ["sdith", "3"], ...] */
+static int parsePtChain(const char *p, PtEntry *entries, int maxCount) {
+    p = skip(p);
+    if (*p != '[') return 0;
+    p++; /* outer [ */
+    int count = 0;
+    while (count < maxCount) {
+        p = skip(p);
+        if (*p == ']') break;
+        if (*p == ',') { p++; p = skip(p); }
+        if (*p != '[') break;
+        p++; /* inner [ */
+        /* First element: the name (string) */
+        p = skip(p);
+        if (*p != '"') break;
+        p++;
+        int i = 0;
+        while (*p && *p != '"' && i < 63) entries[count].name[i++] = *p++;
+        entries[count].name[i] = '\0';
+        if (*p == '"') p++;
+        /* Remaining elements: numeric or string args */
+        entries[count].nArgs = 0;
+        while (entries[count].nArgs < MAX_PT_ARGS) {
+            p = skip(p);
+            if (*p == ']') break;
+            if (*p == ',') { p++; p = skip(p); }
+            if (*p == '"') {
+                /* String arg — parse as double */
+                p++;
+                char tmp[64]; int j = 0;
+                while (*p && *p != '"' && j < 63) tmp[j++] = *p++;
+                tmp[j] = '\0';
+                if (*p == '"') p++;
+                entries[count].args[entries[count].nArgs++] = atof(tmp);
+            } else if (*p == '-' || (*p >= '0' && *p <= '9')) {
+                /* Bare number */
+                entries[count].args[entries[count].nArgs++] = atof(p);
+                while (*p && *p != ',' && *p != ']') p++;
+            } else {
+                break;
+            }
+        }
+        p = skip(p);
+        if (*p == ']') p++; /* close inner ] */
+        count++;
+    }
+    return count;
+}
+
+/* Dispatch a single param transform entry */
+static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, double *z2i, int gridN) {
+    if (strcmp(e->name, "sdith") == 0) {
+        double d = e->nArgs > 0 ? e->args[0] : 1.0;
+        pt_sdith(z1r, z1i, z2r, z2i, d, gridN);
+        return 0;
+    }
+    /* Fall back to standard param transforms (no extra args) */
+    ParamTransform fn = lookupParamTransform(e->name);
+    if (!fn) {
+        fprintf(stderr, "Unknown param transform: %s\n", e->name);
+        return 1;
+    }
+    fn(z1r, z1i, z2r, z2i);
+    return 0;
+}
+
 /* ==== Wrapped coefficient functions (accept complex inputs) ==== */
 
 typedef void (*CoeffFuncC)(double, double, double, double, double*, double*, int*);
@@ -1893,6 +2187,8 @@ WRAP_OLD(giga_232)
 WRAP_OLD(p7f)
 WRAP_OLD(poly_110)
 
+#include "poly_generated_funcs.h"
+
 static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_1") == 0)   return giga_1_c;
     if (strcmp(name, "giga_5") == 0)   return giga_5_c;
@@ -1908,6 +2204,7 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_232") == 0) return giga_232_c;
     if (strcmp(name, "p7f") == 0)      return p7f_c;
     if (strcmp(name, "poly_110") == 0) return poly_110_c;
+#include "poly_generated_lookups.h"
     return NULL;
 }
 
@@ -1934,19 +2231,11 @@ static int runCoeffGen(const char *buf, const char *outPath) {
         return 1;
     }
 
-    /* Parse parameter transform chain */
-    char ptNames[MAX_CHAIN][64];
+    /* Parse parameter transform chain (array-of-arrays format) */
+    PtEntry ptEntries[MAX_CHAIN];
     int nPt = 0;
     cp = findKey(buf, "param_transforms");
-    if (cp) nPt = parseStringArray(cp, ptNames, MAX_CHAIN);
-    ParamTransform ptChain[MAX_CHAIN];
-    for (int t = 0; t < nPt; t++) {
-        ptChain[t] = lookupParamTransform(ptNames[t]);
-        if (!ptChain[t]) {
-            fprintf(stderr, "Unknown param transform: %s\n", ptNames[t]);
-            return 1;
-        }
-    }
+    if (cp) nPt = parsePtChain(cp, ptEntries, MAX_CHAIN);
 
     /* Parse coefficient transform chain */
     char ctNames[MAX_CHAIN][64];
@@ -1974,7 +2263,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     int probeN;
     {
         double z1r = 0, z1i = 0, z2r = 0, z2i = 0;
-        for (int t = 0; t < nPt; t++) ptChain[t](&z1r, &z1i, &z2r, &z2i);
+        for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, n1);
         coeffFunc(z1r, z1i, z2r, z2i, probeRe, probeIm, &probeN);
         for (int t = 0; t < nCt; t++) ctChain[t](probeRe, probeIm, &probeN);
     }
@@ -1998,7 +2287,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
             double x2 = (double)i2 / (double)n2;
 
             double z1r = x1, z1i = 0.0, z2r = x2, z2i = 0.0;
-            for (int t = 0; t < nPt; t++) ptChain[t](&z1r, &z1i, &z2r, &z2i);
+            for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, n1);
 
             double cRe[MAX_COEFFS], cIm[MAX_COEFFS];
             int nCoeffs;
@@ -2337,6 +2626,9 @@ int main(int argc, char **argv) {
         return 1;
     }
     const char *outPath = argv[1];
+
+    /* Seed xorshift RNG */
+    _rng_state = (uint64_t)time(NULL) ^ ((uint64_t)getpid() << 32);
 
     /* Read stdin */
     char *buf = malloc(BUF_SIZE);

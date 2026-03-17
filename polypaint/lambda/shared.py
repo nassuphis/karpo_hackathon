@@ -72,18 +72,18 @@ def compute_viewport_from_bin(bin_data, quantile=0.0, shim=0.05):
     n_roots, q_re, q_im.
     """
     n_floats = len(bin_data) // 4
-    if n_floats < 2:
+    n_pairs = n_floats // 2
+    if n_pairs == 0:
         return {"center_re": 0, "center_im": 0, "scale": 1.0, "n_roots": 0,
                 "q_re": [0, 0], "q_im": [0, 0]}
 
-    floats = struct.unpack(f'<{n_floats}f', bin_data)
-
-    # Extract re/im, filtering non-finite values
+    # Stream f32 pairs to avoid materializing all floats into a Python tuple
+    usable = n_pairs * 8  # 2 floats × 4 bytes
+    _isfinite = math.isfinite
     all_re = []
     all_im = []
-    for i in range(0, n_floats - 1, 2):
-        re, im = floats[i], floats[i + 1]
-        if math.isfinite(re) and math.isfinite(im):
+    for re, im in struct.iter_unpack('<ff', bin_data[:usable]):
+        if _isfinite(re) and _isfinite(im):
             all_re.append(re)
             all_im.append(im)
 

@@ -306,6 +306,15 @@ int main(int argc, char **argv) {
     if (strcmp(matchStr, "greedy") == 0) matchMode = MATCH_GREEDY;
     else if (strcmp(matchStr, "hungarian") == 0) matchMode = MATCH_HUNGARIAN;
 
+    /* Auto-downgrade: Hungarian is O(n³) per grid point — impractical for
+     * high degree.  At degree 70 it needs ~1.7B ops per stripe and some
+     * stripes exceed the Lambda timeout.  Greedy is O(n²) with nearly
+     * identical visual results. */
+    if (matchMode == MATCH_HUNGARIAN && degree > 40) {
+        fprintf(stderr, "auto-downgrade: hungarian -> greedy (degree %d > 40)\n", degree);
+        matchMode = MATCH_GREEDY;
+    }
+
     const RGB *proxPal = findPalette(palName);
 
     if (W < 1 || W > 65536 || H < 1 || H > 65536) {
@@ -378,6 +387,20 @@ int main(int argc, char **argv) {
     long rootsPlotted = 0, rootsClipped = 0;
     double halfW = W / 2.0, halfH = H / 2.0;
 
+    /* Per-tile bitset for pixel deduplication (all color modes).
+     * First root to hit a pixel wins; subsequent hits are skipped.
+     * Typically reduces pix output 50-100x for high-degree polynomials. */
+    uint8_t *tileBits[MAX_TILES];
+    long rootsDeduped = 0;
+    for (int t = 0; t < nTiles; t++) {
+        size_t bytes = ((size_t)tileW[t] * tileH[t] + 7) / 8;
+        tileBits[t] = calloc(1, bytes);
+        if (!tileBits[t]) {
+            fprintf(stderr, "Cannot allocate bitset for tile %d (%zu bytes)\n", t, bytes);
+            return 1;
+        }
+    }
+
     if (colorMode == COLOR_PROXIMITY) {
         /* --- Proximity coloring: two-pass --- */
         /* Pass 1: find global min/max nearest-neighbor distance */
@@ -414,6 +437,22 @@ int main(int argc, char **argv) {
                     continue;
                 }
 
+                int tile_col = px / tileSize;
+                int tile_row = py / tileSize;
+                int tile_id = tile_row * nTileCols + tile_col;
+                uint32_t local_x = px - tile_col * tileSize;
+                uint32_t local_y = py - tile_row * tileSize;
+                uint32_t pix_idx = local_y * (uint32_t)tileW[tile_id] + local_x;
+
+                /* Dedup: skip if pixel already emitted */
+                uint32_t byte_idx = pix_idx >> 3;
+                uint8_t bit_mask = 1u << (pix_idx & 7);
+                if (tileBits[tile_id][byte_idx] & bit_mask) {
+                    rootsDeduped++;
+                    continue;
+                }
+                tileBits[tile_id][byte_idx] |= bit_mask;
+
                 double d2min = 1e30;
                 for (int j = 0; j < degree; j++) {
                     if (j == i) continue;
@@ -429,13 +468,6 @@ int main(int argc, char **argv) {
                 unsigned char cr, cg, cb;
                 paletteRGB(proxPal, t, &cr, &cg, &cb);
 
-                /* Tile bucketing */
-                int tile_col = px / tileSize;
-                int tile_row = py / tileSize;
-                int tile_id = tile_row * nTileCols + tile_col;
-                uint32_t local_x = px - tile_col * tileSize;
-                uint32_t local_y = py - tile_row * tileSize;
-                uint32_t pix_idx = local_y * (uint32_t)tileW[tile_id] + local_x;
                 uint32_t rgb = ((uint32_t)cr << 16) | ((uint32_t)cg << 8) | cb;
                 emit_pixel(tile_id, pix_idx, rgb);
                 rootsPlotted++;
@@ -458,6 +490,14 @@ int main(int argc, char **argv) {
                     uint32_t local_x = px - tile_col * tileSize;
                     uint32_t local_y = py - tile_row * tileSize;
                     uint32_t pix_idx = local_y * (uint32_t)tileW[tile_id] + local_x;
+                    /* Dedup: skip if pixel already emitted */
+                    uint32_t byte_idx = pix_idx >> 3;
+                    uint8_t bit_mask = 1u << (pix_idx & 7);
+                    if (tileBits[tile_id][byte_idx] & bit_mask) {
+                        rootsDeduped++;
+                        continue;
+                    }
+                    tileBits[tile_id][byte_idx] |= bit_mask;
                     emit_pixel(tile_id, pix_idx, constRGB);
                     rootsPlotted++;
                 } else {
@@ -495,13 +535,21 @@ int main(int argc, char **argv) {
                 int px = (int)(halfW + (re - centerRe) * scale);
                 int py = (int)(halfH - (im - centerIm) * scale);
                 if (px >= 0 && px < W && py >= 0 && py < H) {
-                    int ci = colorMap[r];
                     int tile_col = px / tileSize;
                     int tile_row = py / tileSize;
                     int tile_id = tile_row * nTileCols + tile_col;
                     uint32_t local_x = px - tile_col * tileSize;
                     uint32_t local_y = py - tile_row * tileSize;
                     uint32_t pix_idx = local_y * (uint32_t)tileW[tile_id] + local_x;
+                    /* Dedup: skip if pixel already emitted */
+                    uint32_t byte_idx = pix_idx >> 3;
+                    uint8_t bit_mask = 1u << (pix_idx & 7);
+                    if (tileBits[tile_id][byte_idx] & bit_mask) {
+                        rootsDeduped++;
+                        continue;
+                    }
+                    tileBits[tile_id][byte_idx] |= bit_mask;
+                    int ci = colorMap[r];
                     uint32_t rgb = ((uint32_t)rbPalR[ci] << 16) |
                                    ((uint32_t)rbPalG[ci] << 8) |
                                     rbPalB[ci];
@@ -518,6 +566,14 @@ int main(int argc, char **argv) {
             }
         }
     }
+
+    for (int t = 0; t < nTiles; t++)
+        free(tileBits[t]);
+
+    if (rootsDeduped > 0)
+        fprintf(stderr, "dedup: %ld unique, %ld skipped (%.0fx reduction)\n",
+                rootsPlotted, rootsDeduped,
+                rootsPlotted > 0 ? (double)(rootsPlotted + rootsDeduped) / rootsPlotted : 0.0);
 
     /* Flush remaining buffers and close files */
     long totalEntries = 0;

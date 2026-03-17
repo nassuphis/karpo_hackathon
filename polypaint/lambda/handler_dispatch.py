@@ -8,12 +8,16 @@ Uses ThreadPoolExecutor to invoke Lambdas in parallel (~65ms per invoke,
 so 500 jobs with 50 threads = ~0.7s instead of ~32s sequential).
 """
 import json
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import boto3
 
 from shared import parse_body, ok_response
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 FUNCTIONS = {
     "raster": os.environ.get("RASTER_FUNCTION", "polypaint-raster"),
@@ -27,12 +31,19 @@ lambda_client = boto3.client("lambda", region_name=REGION)
 
 
 def _invoke_one(function_name, job):
-    """Invoke a single Lambda asynchronously."""
-    lambda_client.invoke(
+    """Invoke a single Lambda asynchronously. Returns HTTP status code."""
+    resp = lambda_client.invoke(
         FunctionName=function_name,
         InvocationType="Event",
         Payload=json.dumps({"body": json.dumps(job)}),
     )
+    status = resp.get("StatusCode", 0)
+    # Event invocations return 202 on success. Anything else is a problem.
+    if status != 202:
+        job_id = job.get("job_id", "?")
+        task_hint = job.get("tile_idx", job.get("stripe_idx", job.get("task_id", "?")))
+        logger.warning(f"invoke {function_name} returned {status} for job_id={job_id} task={task_hint}")
+    return status
 
 
 def handler(event, context):
@@ -46,18 +57,28 @@ def handler(event, context):
 
     jobs = params["jobs"]
 
+    logger.info(f"DISPATCH target={target} function={function_name} jobs={len(jobs)}")
+
     # Fire all Lambdas in parallel using thread pool
     fired = 0
     errors = []
+    non_202 = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         futures = {pool.submit(_invoke_one, function_name, job): i
                    for i, job in enumerate(jobs)}
         for future in as_completed(futures):
+            idx = futures[future]
             try:
-                future.result()
-                fired += 1
+                status = future.result()
+                if status == 202:
+                    fired += 1
+                else:
+                    non_202.append({"idx": idx, "status": status})
+                    fired += 1  # still count as fired — Lambda may run
             except Exception as e:
-                errors.append(str(e))
+                errors.append(f"job[{idx}]: {e}")
+
+    logger.info(f"DISPATCH DONE fired={fired}/{len(jobs)} errors={len(errors)} non_202={len(non_202)}")
 
     result = {
         "fired": fired,
@@ -65,4 +86,6 @@ def handler(event, context):
     }
     if errors:
         result["errors"] = errors[:10]
+    if non_202:
+        result["non_202"] = non_202[:10]
     return ok_response(result)

@@ -56,7 +56,7 @@ def handler(event, context):
             f"--palette={params.get('palette', 'inferno')}",
             f"--constant_color={params.get('constant_color', 'ffffff')}",
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:
             raise RuntimeError(f"roots2pix failed: {result.stderr.strip()}")
         raster_meta = json.loads(result.stdout)

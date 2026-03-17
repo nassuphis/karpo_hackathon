@@ -23,6 +23,7 @@ DISPATCH_NAME="polypaint-dispatch"
 RASTER_NAME="polypaint-raster"
 FINALIZE_NAME="polypaint-finalize"
 COEFFGEN_NAME="polypaint-coeffgen"
+PREVIEW_NAME="polypaint-preview"
 ROLE_NAME="polypaint-lambda-role"
 REGION="us-east-1"
 API_NAME="polypaint-api"
@@ -35,7 +36,8 @@ STORAGE_MEMORY=512    # pure Python
 DISPATCH_MEMORY=1769  # 1 vCPU — 50 threads doing SSL need real CPU
 RASTER_MEMORY=1769    # 1 vCPU, roots2pix (no canvas allocation)
 FINALIZE_MEMORY=1769  # 1 vCPU, pixassemble (64 MB tile buffer for 4096²)
-COEFFGEN_MEMORY=3072  # 2 vCPU, coefficient generation (no solver, fast)
+COEFFGEN_MEMORY=1769  # 1 vCPU, coefficient generation (no solver, striped)
+PREVIEW_MEMORY=1024   # pure Python, PNG encoding via zlib (512 OOMs on large lores)
 BINARY_TMP=10240      # /tmp size for Lambdas that process raw images (max 10GB)
 TIMEOUT=900
 BUCKET="polypaint"
@@ -154,6 +156,14 @@ chmod +x "$FINALIZE_DIR"/pixassemble
 cd "$FINALIZE_DIR" && zip -r9 /tmp/polypaint-finalize.zip . -q && cd "$SCRIPT_DIR"
 echo "  Finalize: $(du -h /tmp/polypaint-finalize.zip | cut -f1)  (pixassemble)"
 
+# Preview: handler_preview.py + shared.py (pure Python, PNG via zlib)
+PREVIEW_DIR=/tmp/polypaint-preview
+rm -rf "$PREVIEW_DIR"
+mkdir -p "$PREVIEW_DIR"
+cp lambda/handler_preview.py lambda/shared.py "$PREVIEW_DIR/"
+cd "$PREVIEW_DIR" && zip -r9 /tmp/polypaint-preview.zip . -q && cd "$SCRIPT_DIR"
+echo "  Preview:  $(du -h /tmp/polypaint-preview.zip | cut -f1)  (pure Python)"
+
 ACTION="${1:-create}"
 
 # Helper: create a Lambda function
@@ -235,12 +245,21 @@ setup_api_gateway() {
         echo "  Using existing API Gateway: $API_ID"
     fi
 
-    # Create integration for a Lambda and return its ID
+    # Find or create integration for a Lambda and return its ID
     create_integration() {
         local FNAME="$1"
+        local TARGET_URI="arn:aws:lambda:$REGION:$ACCT:function:$FNAME"
+        # Check if an integration already exists for this Lambda
+        local EXISTING
+        EXISTING=$(aws apigatewayv2 get-integrations --api-id "$API_ID" --region "$REGION" \
+            --query "Items[?IntegrationUri=='${TARGET_URI}'].IntegrationId | [0]" --output text 2>/dev/null)
+        if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
+            echo "$EXISTING"
+            return
+        fi
         aws apigatewayv2 create-integration --api-id "$API_ID" \
             --integration-type AWS_PROXY \
-            --integration-uri "arn:aws:lambda:$REGION:$ACCT:function:$FNAME" \
+            --integration-uri "$TARGET_URI" \
             --payload-format-version "2.0" \
             --region "$REGION" --query 'IntegrationId' --output text
     }
@@ -262,7 +281,7 @@ setup_api_gateway() {
     }
 
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME"; do
+    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -286,11 +305,13 @@ setup_api_gateway() {
     ensure_route "POST /sweep" "$SWEEP_INT"
     ensure_route "POST /coeffgen" "$COEFFGEN_INT"
 
-    local RASTER_INT FINALIZE_INT
+    local RASTER_INT FINALIZE_INT PREVIEW_INT
     RASTER_INT=$(create_integration "$RASTER_NAME")
     FINALIZE_INT=$(create_integration "$FINALIZE_NAME")
+    PREVIEW_INT=$(create_integration "$PREVIEW_NAME")
     ensure_route "POST /raster" "$RASTER_INT"
     ensure_route "POST /finalize" "$FINALIZE_INT"
+    ensure_route "POST /preview" "$PREVIEW_INT"
 
     ensure_route "POST /encode-upload" "$ENCODE_INT"
     ensure_route "POST /viewport" "$VIEWPORT_INT"
@@ -317,9 +338,10 @@ setup_api_gateway() {
   "finalize": "%s/finalize",
   "encode": "%s/encode-upload",
   "viewport": "%s/viewport",
+  "preview": "%s/preview",
   "storage": "%s",
   "dispatch": "%s/dispatch-render"
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" --region "$REGION"
     echo "  config.json uploaded"
@@ -366,7 +388,6 @@ if [ "$ACTION" = "create" ]; then
         --policy-document "$S3_POLICY"
 
     # Lambda invoke access (for dispatch Lambda to invoke render Lambdas)
-    local ACCT
     ACCT=$(aws sts get-caller-identity --query 'Account' --output text)
     LAMBDA_POLICY="{
         \"Version\": \"2012-10-17\",
@@ -418,7 +439,7 @@ if [ "$ACTION" = "create" ]; then
         "$SWEEP_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
 
     create_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
-        "$COEFFGEN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET" "$BINARY_TMP"
+        "$COEFFGEN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
 
     create_lambda "$ENCODE_NAME" "handler_encode.handler" "/tmp/polypaint-encode.zip" \
         "$ENCODE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -444,6 +465,9 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$FINALIZE_NAME" "handler_finalize.handler" "/tmp/polypaint-finalize.zip" \
         "$FINALIZE_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
+    create_lambda "$PREVIEW_NAME" "handler_preview.handler" "/tmp/polypaint-preview.zip" \
+        "$PREVIEW_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
+
     # Disable async retries on fire-and-forget Lambdas (prevents retry storms)
     for fn in "$RASTER_NAME" "$FINALIZE_NAME"; do
         aws lambda put-function-event-invoke-config \
@@ -468,13 +492,14 @@ if [ "$ACTION" = "create" ]; then
     echo "  Viewport: $VIEWPORT_NAME ($VIEWPORT_MEMORY MB)"
     echo "  Storage:  $STORAGE_NAME ($STORAGE_MEMORY MB)"
     echo "  Dispatch: $DISPATCH_NAME ($DISPATCH_MEMORY MB)"
+    echo "  Preview:  $PREVIEW_NAME ($PREVIEW_MEMORY MB)"
 
 elif [ "$ACTION" = "update" ]; then
     update_lambda "$SWEEP_NAME" "handler_sweep.handler" "/tmp/polypaint-sweep.zip" \
         "$SWEEP_MEMORY" "" "BUCKET=$BUCKET"
 
     update_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
-        "$COEFFGEN_MEMORY" "" "BUCKET=$BUCKET" "$BINARY_TMP"
+        "$COEFFGEN_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
 
     update_lambda "$ENCODE_NAME" "handler_encode.handler" "/tmp/polypaint-encode.zip" \
         "$ENCODE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -499,6 +524,9 @@ elif [ "$ACTION" = "update" ]; then
 
     update_lambda "$FINALIZE_NAME" "handler_finalize.handler" "/tmp/polypaint-finalize.zip" \
         "$FINALIZE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+
+    update_lambda "$PREVIEW_NAME" "handler_preview.handler" "/tmp/polypaint-preview.zip" \
+        "$PREVIEW_MEMORY" "" "BUCKET=$BUCKET"
 
     # Disable async retries on fire-and-forget Lambdas (prevents retry storms)
     for fn in "$RASTER_NAME" "$FINALIZE_NAME"; do
@@ -568,6 +596,7 @@ elif [ "$ACTION" = "update" ]; then
     echo "  Viewport: $VIEWPORT_NAME ($VIEWPORT_MEMORY MB)"
     echo "  Storage:  $STORAGE_NAME ($STORAGE_MEMORY MB)"
     echo "  Dispatch: $DISPATCH_NAME ($DISPATCH_MEMORY MB)"
+    echo "  Preview:  $PREVIEW_NAME ($PREVIEW_MEMORY MB)"
     echo "  Site:     http://$BUCKET.s3-website-$REGION.amazonaws.com"
 else
     echo "Usage: $0 [create|update]"

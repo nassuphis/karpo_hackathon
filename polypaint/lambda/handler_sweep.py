@@ -90,11 +90,18 @@ def handle_compute_only_stripe(event):
             procs.append((c, sub_bin, proc))
 
         sub_metas = []
-        for c, sub_bin, proc in procs:
-            stdout, stderr = proc.communicate(timeout=840)
-            if proc.returncode != 0:
-                raise RuntimeError(f"sweep sub-{c} failed: {stderr.strip()}")
-            sub_metas.append(json.loads(stdout))
+        try:
+            for c, sub_bin, proc in procs:
+                stdout, stderr = proc.communicate(timeout=840)
+                if proc.returncode != 0:
+                    raise RuntimeError(f"sweep sub-{c} failed: {stderr.strip()}")
+                sub_metas.append(json.loads(stdout))
+        except Exception:
+            # Kill any still-running subprocesses before re-raising
+            for _, _, p in procs:
+                if p.poll() is None:
+                    p.kill()
+            raise
 
         bin_path = "/tmp/stripe.bin"
         with open(bin_path, "wb") as out:
@@ -118,12 +125,11 @@ def handle_compute_only_stripe(event):
 
     compute_us = int((time.time() - t0) * 1e6)
 
-    # Upload .bin to S3 (use s3_key override if provided, e.g. for lores sweep)
+    # Upload .bin to S3 (stream, don't read into memory)
     s3_key = params.get("s3_key", f"renders/{job_id}/stripe_{stripe_idx}.bin")
+    bin_size = os.path.getsize(bin_path)
     with open(bin_path, "rb") as f:
-        bin_data = f.read()
-    s3.put_object(Bucket=BUCKET, Key=s3_key,
-                  Body=bin_data, ContentType="application/octet-stream")
+        s3.upload_fileobj(f, BUCKET, s3_key)
 
     try:
         os.remove(bin_path)
@@ -133,7 +139,7 @@ def handle_compute_only_stripe(event):
     return ok_response({
         "stripe_idx": stripe_idx,
         "s3_key": s3_key,
-        "bin_size": len(bin_data),
+        "bin_size": bin_size,
         "compute_us": compute_us,
         "n_t": compute_meta["n_t"],
         "degree": compute_meta["degree"],
@@ -143,29 +149,23 @@ def handle_compute_only_stripe(event):
 
 
 def handle_solve_from_coeffs(params):
-    """Solve roots from pre-computed coefficient file (coeffs.bin).
-    Downloads the relevant byte range of coeffs.bin from S3,
-    runs sweep in 'solve' mode, uploads root .bin to S3.
+    """Solve roots from pre-computed per-stripe coefficient file.
+    Downloads the stripe's coeffs file from S3 (no range reads —
+    each stripe has its own file), runs sweep in 'solve' mode,
+    uploads root .bin to S3.
     """
     job_id = params["job_id"]
     stripe_idx = params["stripe_idx"]
     coeffs_key = params["coeffs_key"]
     n_coeffs = params["n_coeffs"]
-    n1 = params["n1"]
     n2 = params["n2"]
     i1_start = params["i1_start"]
     i1_end = params["i1_end"]
 
     t0 = time.time()
 
-    # S3 range read for this stripe's coefficients
-    bytes_per_row = n2 * n_coeffs * 2 * 4  # n2 points × n_coeffs × (re,im) × float32
-    start_byte = i1_start * bytes_per_row
-    end_byte = i1_end * bytes_per_row - 1
-
-    resp = s3.get_object(
-        Bucket=BUCKET, Key=coeffs_key,
-        Range=f"bytes={start_byte}-{end_byte}")
+    # Download per-stripe coefficient file (whole file, no range reads)
+    resp = s3.get_object(Bucket=BUCKET, Key=coeffs_key)
     coeffs_data = resp["Body"].read()
 
     coeffs_file = "/tmp/coeffs_stripe.bin"
@@ -177,8 +177,8 @@ def handle_solve_from_coeffs(params):
         "mode": "solve",
         "coeffs_file": coeffs_file,
         "n_coeffs": n_coeffs,
-        "n1": n1, "n2": n2,
-        "i1_start": 0,  # offset already handled by range read
+        "n2": n2,
+        "i1_start": 0,  # file contains only this stripe's rows
         "i1_end": i1_end - i1_start,
         "match_roots": False,
     }
@@ -194,10 +194,9 @@ def handle_solve_from_coeffs(params):
     compute_us = int((time.time() - t0) * 1e6)
 
     s3_key = params.get("s3_key", f"renders/{job_id}/stripe_{stripe_idx}.bin")
+    bin_size = os.path.getsize(bin_path)
     with open(bin_path, "rb") as f:
-        bin_data = f.read()
-    s3.put_object(Bucket=BUCKET, Key=s3_key,
-                  Body=bin_data, ContentType="application/octet-stream")
+        s3.upload_fileobj(f, BUCKET, s3_key)
 
     for p in [coeffs_file, bin_path]:
         try:
@@ -208,7 +207,7 @@ def handle_solve_from_coeffs(params):
     return ok_response({
         "stripe_idx": stripe_idx,
         "s3_key": s3_key,
-        "bin_size": len(bin_data),
+        "bin_size": bin_size,
         "compute_us": compute_us,
         "n_t": compute_meta["n_t"],
         "degree": compute_meta["degree"],

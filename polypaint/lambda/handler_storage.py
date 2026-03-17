@@ -48,80 +48,83 @@ def handler(event, context):
 
 def handle_list(event):
     """List all computed results in S3.
-    Returns metadata from calc.json for each job, plus preview URLs if available.
+    Uses Delimiter='/' to get just folder names (O(n_jobs)),
+    then reads calc.json per job in parallel for metadata.
     """
     import concurrent.futures
 
     t0 = time.time()
 
-    # List ALL objects under renders/
-    all_objects = []
+    # List folder prefixes under renders/ — O(n_jobs), not O(all_objects)
+    job_ids = []
     paginator = s3.get_paginator('list_objects_v2')
-    for page in paginator.paginate(Bucket=BUCKET, Prefix='renders/'):
-        all_objects.extend(page.get('Contents', []))
-
-    # Group by job_id
-    jobs = {}
-    for obj in all_objects:
-        parts = obj['Key'].split('/')
-        if len(parts) < 3:
-            continue
-        job_id = parts[1]
-        filename = '/'.join(parts[2:])
-        if job_id not in jobs:
-            jobs[job_id] = {"files": {}, "modified": obj["LastModified"]}
-        jobs[job_id]["files"][filename] = obj["Size"]
-        if obj["LastModified"] > jobs[job_id]["modified"]:
-            jobs[job_id]["modified"] = obj["LastModified"]
+    for page in paginator.paginate(Bucket=BUCKET, Prefix='renders/',
+                                   Delimiter='/'):
+        for prefix in page.get('CommonPrefixes', []):
+            # prefix['Prefix'] = 'renders/job_id/'
+            job_id = prefix['Prefix'].split('/')[1]
+            if job_id:
+                job_ids.append(job_id)
 
     # Read calc.json for each job (parallelized)
     def read_calc(job_id):
         entry = {"job_id": job_id}
-        files = jobs[job_id]["files"]
-        entry["created"] = jobs[job_id]["modified"].isoformat()
-
-        if "calc.json" in files:
-            try:
-                obj = s3.get_object(Bucket=BUCKET,
-                                    Key=f"renders/{job_id}/calc.json")
-                calc = json.loads(obj["Body"].read())
-                entry["function"] = calc.get("function", "?")
-                entry["degree"] = calc.get("degree", 0)
-                entry["n1"] = calc.get("n1", 0)
-                entry["n2"] = calc.get("n2", 0)
-                entry["n_stripes"] = calc.get("n_stripes", 0)
-            except Exception:
-                entry["function"] = "?"
-        else:
+        try:
+            obj = s3.get_object(Bucket=BUCKET,
+                                Key=f"renders/{job_id}/calc.json")
+            calc = json.loads(obj["Body"].read())
+            entry["function"] = calc.get("function", "?")
+            entry["degree"] = calc.get("degree", 0)
+            entry["n1"] = calc.get("n1", 0)
+            entry["n2"] = calc.get("n2", 0)
+            entry["n_stripes"] = calc.get("n_stripes", 0)
+            # Compute total bin size from stripe metadata if available
+            stripes = calc.get("stripes", [])
+            entry["total_size"] = sum(s.get("bin_size", 0) for s in stripes)
+            entry["total_size"] += calc.get("total_coeffs_size", 0)
+        except Exception:
             entry["function"] = "?"
+            entry["total_size"] = 0
 
-        entry["has_preview"] = "preview.jpg" in files
-        if entry["has_preview"]:
+        # Check for preview/image with lightweight HEAD requests
+        # Check .png (new) then .jpg (legacy) for preview
+        preview_key = None
+        if _key_exists(f"renders/{job_id}/preview.png"):
+            preview_key = f"renders/{job_id}/preview.png"
+        elif _key_exists(f"renders/{job_id}/preview.jpg"):
+            preview_key = f"renders/{job_id}/preview.jpg"
+        entry["has_preview"] = preview_key is not None
+        if preview_key:
             entry["preview_url"] = s3.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": BUCKET,
-                        "Key": f"renders/{job_id}/preview.jpg"},
+                Params={"Bucket": BUCKET, "Key": preview_key},
                 ExpiresIn=PRESIGN_EXPIRY)
 
-        entry["has_image"] = any(f"image.{ext}" in files
-                                for ext in ["jpeg", "png"])
-        entry["total_size"] = sum(files.values())
-        entry["file_count"] = len(files)
+        entry["has_image"] = (_key_exists(f"renders/{job_id}/image.jpeg")
+                              or _key_exists(f"renders/{job_id}/image.png"))
 
         return entry
 
-    job_ids = list(jobs.keys())
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
         results = list(pool.map(read_calc, job_ids))
 
-    # Sort by modified time descending
-    results.sort(key=lambda r: r["created"], reverse=True)
+    # Sort by job_id descending (job_ids contain timestamps)
+    results.sort(key=lambda r: r["job_id"], reverse=True)
 
     return ok_response({
         "results": results,
         "count": len(results),
         "list_us": int((time.time() - t0) * 1e6),
     })
+
+
+def _key_exists(key):
+    """Check if an S3 key exists via HEAD (fast, no data transfer)."""
+    try:
+        s3.head_object(Bucket=BUCKET, Key=key)
+        return True
+    except Exception:
+        return False
 
 
 def handle_delete(event):
@@ -193,6 +196,7 @@ def handle_check_status(event):
     ddb = _get_ddb()
     done = 0
     error_details = []
+    stuck_tasks = []  # tasks in non-terminal status, with their actual status
     status_counts = {}  # track all statuses: started, tiles_read, tiles_merged, done, error
     kwargs = {
         "TableName": JOBS_TABLE,
@@ -215,6 +219,11 @@ def handle_check_status(event):
                     "task_id": item["task_id"]["S"],
                     "error_msg": item.get("error_msg", {}).get("S", "unknown"),
                 })
+            else:
+                stuck_tasks.append({
+                    "task_id": item["task_id"]["S"],
+                    "status": status,
+                })
         if "LastEvaluatedKey" not in resp:
             break
         kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
@@ -224,6 +233,7 @@ def handle_check_status(event):
         "done": done,
         "errors": len(error_details),
         "error_details": error_details[:20],
+        "stuck": stuck_tasks[:50],
         "status_counts": status_counts,
         "total": total,
         "expected": expected,

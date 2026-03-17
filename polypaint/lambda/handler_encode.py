@@ -68,9 +68,12 @@ def handler(event, context):
             report_status(job_id, task_id, "encoding")
 
         # Encode
+        bilevel = params.get("bilevel", False)
         encode_args = [RAW2JPEG, in_path, out_path]
         if ext == "jpeg":
             encode_args.append(f"--quality={quality}")
+        if bilevel:
+            encode_args.append("--bilevel")
         result = subprocess.run(encode_args, capture_output=True, text=True,
                                 timeout=300, env=imgpipe_env())
         if result.returncode != 0:

@@ -61,6 +61,11 @@ button {
     margin-left: 5px; cursor: pointer; color: #e94560; font-weight: bold;
     font-size: 12px;
 }
+.chip .chip-input {
+    width: 36px; margin-left: 4px; padding: 0 3px;
+    background: #1a1a2e; border: 1px solid #0f3460; border-radius: 3px;
+    color: #e0e0e0; font-size: 11px; text-align: center;
+}
 
 .color-dot {
     width: 10px; height: 10px; border-radius: 50%; display: inline-block;
@@ -153,6 +158,20 @@ button {
                     <option value="scale10">scale10</option>
                     <option value="negate">negate</option>
                     <option value="exp">exp</option>
+                    <option value="coeff2">coeff2 (t1+t2, t1·t2)</option>
+                    <option value="coeff3">coeff3 (1/(t+2))</option>
+                    <option value="coeff3a">coeff3a (1/(t+1))</option>
+                    <option value="coeff4">coeff4 (cos t1, sin t2)</option>
+                    <option value="coeff5">coeff5 (t1+1/t2, t2+1/t1)</option>
+                    <option value="coeff5a">coeff5a (t+1/t)</option>
+                    <option value="coeff6">coeff6 ((t³+i)/(t³-i))</option>
+                    <option value="coeff7">coeff7 ((t+sin)/(t+cos))</option>
+                    <option value="coeff8">coeff8 (cross sin/cos)</option>
+                    <option value="coeff9">coeff9 ((t²+it')/(t²-it'))</option>
+                    <option value="coeff10">coeff10 ((t⁴-t')/(t⁴+t'))</option>
+                    <option value="coeff11">coeff11 (log(t⁴+2))</option>
+                    <option value="coeff12">coeff12 (mixed poly)</option>
+                    <option value="sdith">sdith (square dither)</option>
                 </select>
             </div>
             <div class="anim-row">
@@ -172,6 +191,92 @@ button {
                     <option value="giga_232">giga_232 (degree 8)</option>
                     <option value="p7f">p7f (degree 22)</option>
                     <option value="poly_110">poly_110 (degree 70)</option>
+                    <option value="poly_1">poly_1 (degree 35)</option>
+                    <option value="poly_2">poly_2 (degree 35)</option>
+                    <option value="poly_3">poly_3 (degree 35)</option>
+                    <option value="poly_4">poly_4 (degree 35)</option>
+                    <option value="poly_5">poly_5 (degree 35)</option>
+                    <option value="poly_6">poly_6 (degree 50)</option>
+                    <option value="poly_7">poly_7 (degree 50)</option>
+                    <option value="poly_8">poly_8 (degree 50)</option>
+                    <option value="poly_9">poly_9 (degree 50)</option>
+                    <option value="poly_10">poly_10 (degree 50)</option>
+                    <option value="poly_11">poly_11 (degree 50)</option>
+                    <option value="poly_12">poly_12 (degree 50)</option>
+                    <option value="poly_13">poly_13 (degree 50)</option>
+                    <option value="poly_14">poly_14 (degree 50)</option>
+                    <option value="poly_15">poly_15 (degree 70)</option>
+                    <option value="poly_16">poly_16 (degree 50)</option>
+                    <option value="poly_17">poly_17 (degree 70)</option>
+                    <option value="poly_18">poly_18 (degree 70)</option>
+                    <option value="poly_19">poly_19 (degree 70)</option>
+                    <option value="poly_20">poly_20 (degree 70)</option>
+                    <option value="poly_21">poly_21 (degree 70)</option>
+                    <option value="poly_22">poly_22 (degree 70)</option>
+                    <option value="poly_23">poly_23 (degree 70)</option>
+                    <option value="poly_24">poly_24 (degree 70)</option>
+                    <option value="poly_25">poly_25 (degree 70)</option>
+                    <option value="poly_26">poly_26 (degree 70)</option>
+                    <option value="poly_27">poly_27 (degree 70)</option>
+                    <option value="poly_28">poly_28 (degree 70)</option>
+                    <option value="poly_29">poly_29 (degree 70)</option>
+                    <option value="poly_30">poly_30 (degree 70)</option>
+                    <option value="poly_31">poly_31 (degree 70)</option>
+                    <option value="poly_32">poly_32 (degree 70)</option>
+                    <option value="poly_33">poly_33 (degree 70)</option>
+                    <option value="poly_34">poly_34 (degree 70)</option>
+                    <option value="poly_35">poly_35 (degree 70)</option>
+                    <option value="poly_36">poly_36 (degree 70)</option>
+                    <option value="poly_37">poly_37 (degree 70)</option>
+                    <option value="poly_38">poly_38 (degree 70)</option>
+                    <option value="poly_39">poly_39 (degree 70)</option>
+                    <option value="poly_40">poly_40 (degree 70)</option>
+                    <option value="poly_41">poly_41 (degree 70)</option>
+                    <option value="poly_42">poly_42 (degree 70)</option>
+                    <option value="poly_43">poly_43 (degree 70)</option>
+                    <option value="poly_44">poly_44 (degree 70)</option>
+                    <option value="poly_45">poly_45 (degree 70)</option>
+                    <option value="poly_46">poly_46 (degree 70)</option>
+                    <option value="poly_47">poly_47 (degree 70)</option>
+                    <option value="poly_48">poly_48 (degree 70)</option>
+                    <option value="poly_49">poly_49 (degree 70)</option>
+                    <option value="poly_50">poly_50 (degree 70)</option>
+                    <option value="poly_51">poly_51 (degree 70)</option>
+                    <option value="poly_52">poly_52 (degree 70)</option>
+                    <option value="poly_53">poly_53 (degree 70)</option>
+                    <option value="poly_54">poly_54 (degree 70)</option>
+                    <option value="poly_55">poly_55 (degree 70)</option>
+                    <option value="poly_56">poly_56 (degree 70)</option>
+                    <option value="poly_57">poly_57 (degree 70)</option>
+                    <option value="poly_58">poly_58 (degree 70)</option>
+                    <option value="poly_59">poly_59 (degree 70)</option>
+                    <option value="poly_60">poly_60 (degree 70)</option>
+                    <option value="poly_61">poly_61 (degree 70)</option>
+                    <option value="poly_62">poly_62 (degree 70)</option>
+                    <option value="poly_63">poly_63 (degree 70)</option>
+                    <option value="poly_64">poly_64 (degree 70)</option>
+                    <option value="poly_65">poly_65 (degree 70)</option>
+                    <option value="poly_66">poly_66 (degree 70)</option>
+                    <option value="poly_67">poly_67 (degree 70)</option>
+                    <option value="poly_68">poly_68 (degree 70)</option>
+                    <option value="poly_69">poly_69 (degree 70)</option>
+                    <option value="poly_70">poly_70 (degree 70)</option>
+                    <option value="poly_71">poly_71 (degree 70)</option>
+                    <option value="poly_72">poly_72 (degree 70)</option>
+                    <option value="poly_73">poly_73 (degree 70)</option>
+                    <option value="poly_74">poly_74 (degree 70)</option>
+                    <option value="poly_75">poly_75 (degree 70)</option>
+                    <option value="poly_76">poly_76 (degree 70)</option>
+                    <option value="poly_77">poly_77 (degree 70)</option>
+                    <option value="poly_78">poly_78 (degree 70)</option>
+                    <option value="poly_79">poly_79 (degree 70)</option>
+                    <option value="poly_80">poly_80 (degree 70)</option>
+                    <option value="poly_81">poly_81 (degree 70)</option>
+                    <option value="poly_82">poly_82 (degree 70)</option>
+                    <option value="poly_83">poly_83 (degree 70)</option>
+                    <option value="poly_84">poly_84 (degree 70)</option>
+                    <option value="poly_85">poly_85 (degree 70)</option>
+                    <option value="poly_86">poly_86 (degree 70)</option>
                 </select>
             </div>
             <div class="anim-row" style="flex-wrap:wrap">
@@ -332,6 +437,7 @@ button {
             </div>
             <div style="margin-top:8px; display:flex; gap:6px; align-items:center">
                 <button class="btn-primary" id="btn-raster-all" onclick="runRasterPipeline()">Render</button>
+                <button class="btn-primary" id="btn-bilevel" onclick="runBilevelPipeline()" style="background:#444">BiLevel</button>
             </div>
             <div class="status" id="render-status"></div>
             <div id="render-preview" style="max-width:600px; margin-top:8px"></div>
@@ -476,65 +582,12 @@ async function previewResult() {
     try {
         const quantile = parseFloat(document.getElementById('res-quantile').value) / 100;
         const shim = parseFloat(document.getElementById('res-shim').value) / 100;
-        const previewSize = 256;
 
-        // Step 1: viewport
-        infoEl.textContent = 'Computing viewport...';
-        const vp = await lambdaPost('viewport', {
-            job_id: _selectedJobId, quantile, shim,
+        // Single Lambda call: viewport + raster + encode all in one
+        infoEl.textContent = 'Generating preview...';
+        const result = await lambdaPost('preview', {
+            job_id: _selectedJobId, quantile, shim, preview_size: 256,
         });
-
-        // Get degree from results cache
-        let calcResult = _resultsCache.find(r => r.job_id === _selectedJobId);
-        if (!calcResult) {
-            await lambdaPost('storage', {}, '/list');
-            calcResult = _resultsCache.find(r => r.job_id === _selectedJobId);
-        }
-        const degree = (calcResult && calcResult.degree) || 1;
-        const REF_SIZE = 4096;
-        const scale = vp.scale_ref * previewSize / REF_SIZE;
-
-        // Step 2: raster (lores.bin → .pix, single stripe, single tile)
-        infoEl.textContent = 'Rasterizing preview...';
-        const loresKey = `renders/${_selectedJobId}/lores.bin`;
-        await lambdaPost('raster', {
-            job_id: _selectedJobId,
-            stripe_idx: 0,
-            bin_key: loresKey,
-            width: previewSize, height: previewSize,
-            tile_size: previewSize,
-            n_tile_cols: 1, n_tile_rows: 1,
-            center_re: vp.center_re, center_im: vp.center_im,
-            scale: scale, degree: degree,
-            color: 'rainbow', match: 'none',
-            palette: 'inferno', constant_color: 'ffffff',
-        });
-
-        // Step 3: finalize (.pix → .raw tile)
-        infoEl.textContent = 'Assembling preview...';
-        await lambdaPost('finalize', {
-            job_id: _selectedJobId,
-            tile_idx: 0,
-            n_stripes: 1,
-            tile_w: previewSize, tile_h: previewSize,
-        });
-
-        // Step 4: encode to JPEG
-        infoEl.textContent = 'Encoding preview...';
-        const tileKey = `renders/${_selectedJobId}/tile_0000.raw`;
-        const previewKey = `renders/${_selectedJobId}/preview.jpg`;
-        const encResult = await lambdaPost('encode', {
-            out_key: previewKey,
-            width: previewSize, height: previewSize,
-            tile_grid: {
-                n_cols: 1, n_rows: 1,
-                tile_keys: [tileKey],
-            },
-            format: 'jpeg', quality: 80,
-        });
-
-        // Cleanup temp files
-        lambdaPost('storage', { keys: [tileKey] }, '/cleanup').catch(() => {});
 
         const totalMs = (performance.now() - t0).toFixed(0);
 
@@ -542,13 +595,13 @@ async function previewResult() {
         const r = _resultsCache.find(r => r.job_id === _selectedJobId);
         if (r) {
             r.has_preview = true;
-            r.preview_url = encResult.image_url;
+            r.preview_url = result.image_url;
         }
 
         // Show preview
         document.getElementById('results-preview').innerHTML =
-            `<img src="${encResult.image_url}" style="max-width:100%; max-height:100%; image-rendering:pixelated">`;
-        infoEl.textContent += ` | preview ${(totalMs/1000).toFixed(1)}s`;
+            `<img src="${result.image_url}" style="max-width:100%; max-height:100%; image-rendering:pixelated">`;
+        infoEl.textContent = `deg${result.degree} ${result.n_roots} roots | preview ${(totalMs/1000).toFixed(1)}s`;
 
         renderResultsTable();
     } catch (e) {
@@ -749,13 +802,31 @@ function setPalette(name) {
 
 /* ---- Render ---- */
 /* ---- Chip-based transform chains ---- */
-let _ptChain = [];  // parameter transform chain
-let _ctChain = [];  // coefficient transform chain
+const _ptCatalog = {
+    unit_circle: { kind: 'none' }, square: { kind: 'none' }, cube: { kind: 'none' },
+    reciprocal: { kind: 'none' }, conjugate: { kind: 'none' }, swap: { kind: 'none' },
+    add_sub: { kind: 'none' }, mul_div: { kind: 'none' }, moebius: { kind: 'none' },
+    shift1: { kind: 'none' }, scale10: { kind: 'none' }, negate: { kind: 'none' },
+    exp: { kind: 'none' },
+    coeff2: { kind: 'none' }, coeff3: { kind: 'none' }, coeff3a: { kind: 'none' },
+    coeff4: { kind: 'none' }, coeff5: { kind: 'none' }, coeff5a: { kind: 'none' },
+    coeff6: { kind: 'none' }, coeff7: { kind: 'none' }, coeff8: { kind: 'none' },
+    coeff9: { kind: 'none' }, coeff10: { kind: 'none' }, coeff11: { kind: 'none' },
+    coeff12: { kind: 'none' },
+    sdith: { kind: 'number', placeholder: '3', defaultValue: '3' },
+};
+let _ptChain = [];  // parameter transform chain (array of {name, param})
+let _ctChain = [];  // coefficient transform chain (array of strings)
 
 function addChip(which, name) {
     if (!name) return;
     const chain = which === 'pt' ? _ptChain : _ctChain;
-    chain.push(name);
+    if (which === 'pt') {
+        const spec = _ptCatalog[name] || { kind: 'none' };
+        chain.push({ name, param: spec.kind !== 'none' ? (spec.defaultValue || '') : null });
+    } else {
+        chain.push(name);
+    }
     _renderChips(which);
 }
 
@@ -765,13 +836,29 @@ function removeChip(which, idx) {
     _renderChips(which);
 }
 
+function updateChipParam(idx, value) {
+    if (idx >= 0 && idx < _ptChain.length) {
+        _ptChain[idx].param = value;
+    }
+}
+
 function _renderChips(which) {
     const chain = which === 'pt' ? _ptChain : _ctChain;
     const el = document.getElementById(which + '-chips');
     if (!el) return;
-    el.innerHTML = chain.map((name, i) =>
-        `<span class="chip">${name}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`
-    ).join('');
+    if (which === 'pt') {
+        el.innerHTML = chain.map((item, i) => {
+            const spec = _ptCatalog[item.name] || {};
+            const paramHtml = item.param !== null
+                ? `<input class="chip-input" type="text" inputmode="decimal" value="${item.param}" placeholder="${spec.placeholder || ''}" onchange="updateChipParam(${i}, this.value)" onclick="event.stopPropagation()">`
+                : '';
+            return `<span class="chip">${item.name}${paramHtml}<span class="chip-x" onclick="removeChip('pt',${i})">x</span></span>`;
+        }).join('');
+    } else {
+        el.innerHTML = chain.map((name, i) =>
+            `<span class="chip">${name}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`
+        ).join('');
+    }
 }
 
 function loadRenderPreset(name) {
@@ -882,7 +969,10 @@ async function runRasterPipeline() {
                     `errors ${dispResult.errors ? dispResult.errors.length : 0}`
                 );
             }
-            log(`  raster dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired (${_fmtMs(performance.now() - tBatch)})`, '', 'render-log');
+            let rasterDispMsg = `  raster dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired (${_fmtMs(performance.now() - tBatch)})`;
+            if (dispResult.non_202 && dispResult.non_202.length) rasterDispMsg += ` (${dispResult.non_202.length} non-202: ${JSON.stringify(dispResult.non_202)})`;
+            if (dispResult.errors && dispResult.errors.length) rasterDispMsg += ` ERRORS: ${JSON.stringify(dispResult.errors)}`;
+            log(rasterDispMsg, dispResult.errors?.length ? 'warn' : '', 'render-log');
         }
         log(`  dispatched: ${_fmtMs(performance.now() - tRaster)} (${nStripes} raster Lambdas)`, 'ok', 'render-log');
 
@@ -891,6 +981,8 @@ async function runRasterPipeline() {
         let pollCount = 0;
         let lastProgressTime = performance.now();
         const POLL_TIMEOUT_MS = 600000;
+        const STALL_LOG_MS = 30000;  // log diagnostics after 30s no progress
+        let lastStallLog = 0;
         while (true) {
             await new Promise(r => setTimeout(r, 3000));
             pollCount++;
@@ -906,11 +998,21 @@ async function runRasterPipeline() {
                 log(`  raster poll #${pollCount}: ${check.done}/${nStripes} done (+${delta}, ${_fmtMs(performance.now() - tRaster)})`, '', 'render-log');
                 lastDone = check.done;
                 lastProgressTime = performance.now();
+                lastStallLog = 0;
                 document.getElementById('render-status').textContent = `Rasterizing ${check.done}/${nStripes}...`;
             }
             if (check.complete) break;
-            if (performance.now() - lastProgressTime > POLL_TIMEOUT_MS) {
-                throw new Error(`Raster stalled: ${lastDone}/${nStripes} after ${_fmtMs(performance.now() - tRaster)}`);
+            const stallTime = performance.now() - lastProgressTime;
+            if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
+                lastStallLog = stallTime;
+                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
+                log(`  ⚠ raster stall ${_fmtMs(stallTime)}: ${lastDone}/${nStripes} done, statuses=${sc}${stuckInfo ? ', stuck: ' + stuckInfo : ''}`, 'warn', 'render-log');
+            }
+            if (stallTime > POLL_TIMEOUT_MS) {
+                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
+                throw new Error(`Raster stalled: ${lastDone}/${nStripes} after ${_fmtMs(stallTime)}, statuses=${sc}, stuck: ${stuckInfo || 'none (missing from DDB)'}`);
             }
         }
         const rasterMs = performance.now() - tRaster;
@@ -947,13 +1049,18 @@ async function runRasterPipeline() {
                     `fired ${dispResult.fired || 0}/${batch.length}`
                 );
             }
-            log(`  finalize dispatch ${batchNum}/${finBatches}: ${dispResult.fired}/${batch.length} fired`, '', 'render-log');
+            let finDispMsg = `  finalize dispatch ${batchNum}/${finBatches}: ${dispResult.fired}/${batch.length} fired`;
+            if (dispResult.non_202 && dispResult.non_202.length) finDispMsg += ` (${dispResult.non_202.length} non-202: ${JSON.stringify(dispResult.non_202)})`;
+            if (dispResult.errors && dispResult.errors.length) finDispMsg += ` ERRORS: ${JSON.stringify(dispResult.errors)}`;
+            log(finDispMsg, dispResult.errors?.length ? 'warn' : '', 'render-log');
         }
 
         // Poll DynamoDB for finalize completion
         let finLastDone = 0;
         let finPollCount = 0;
         let finLastProgress = performance.now();
+        let finLastStallLog = 0;
+        let finLastStatusSig = '';  // track status changes (e.g. reading_10 → reading_20)
         while (true) {
             await new Promise(r => setTimeout(r, 3000));
             finPollCount++;
@@ -964,20 +1071,43 @@ async function runRasterPipeline() {
                 const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
                 throw new Error(`${check.errors} finalize tasks failed:\n${msgs}`);
             }
-            if (check.done !== finLastDone) {
-                const delta = check.done - finLastDone;
-                log(`  finalize poll #${finPollCount}: ${check.done}/${nTiles} done (+${delta}, ${_fmtMs(performance.now() - tFinalize)})`, '', 'render-log');
-                finLastDone = check.done;
+            // Detect any status change (done count or intermediate status like reading_N)
+            const statusSig = JSON.stringify(check.status_counts || {});
+            const statusChanged = check.done !== finLastDone || statusSig !== finLastStatusSig;
+            if (statusChanged) {
+                if (check.done !== finLastDone) {
+                    const delta = check.done - finLastDone;
+                    log(`  finalize poll #${finPollCount}: ${check.done}/${nTiles} done (+${delta}, ${_fmtMs(performance.now() - tFinalize)})`, '', 'render-log');
+                    finLastDone = check.done;
+                } else {
+                    // Intermediate progress — show what tiles are doing
+                    const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
+                    document.getElementById('render-status').textContent = `Finalizing ${check.done}/${nTiles} tiles... ${stuckInfo}`;
+                }
                 finLastProgress = performance.now();
-                document.getElementById('render-status').textContent = `Finalizing ${check.done}/${nTiles} tiles...`;
+                finLastStallLog = 0;
+                finLastStatusSig = statusSig;
+                document.getElementById('render-status').textContent = `Finalizing ${check.done}/${nTiles} tiles...` +
+                    ((check.stuck || []).length ? ' (' + (check.stuck || []).map(s => s.status).join(', ') + ')' : '');
             }
             if (check.complete) break;
-            if (performance.now() - finLastProgress > POLL_TIMEOUT_MS) {
-                throw new Error(`Finalize stalled: ${finLastDone}/${nTiles} after ${_fmtMs(performance.now() - tFinalize)}`);
+            const finStallTime = performance.now() - finLastProgress;
+            if (finStallTime > STALL_LOG_MS && finStallTime - finLastStallLog > STALL_LOG_MS) {
+                finLastStallLog = finStallTime;
+                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
+                const missing = nTiles - (check.done + (check.errors || 0) + (check.stuck || []).length);
+                log(`  ⚠ finalize stall ${_fmtMs(finStallTime)}: ${finLastDone}/${nTiles} done, statuses=${sc}${stuckInfo ? ', stuck: ' + stuckInfo : ''}${missing > 0 ? ', missing from DDB: ' + missing : ''}`, 'warn', 'render-log');
+            }
+            if (finStallTime > POLL_TIMEOUT_MS) {
+                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
+                const missing = nTiles - (check.done + (check.errors || 0) + (check.stuck || []).length);
+                throw new Error(`Finalize stalled: ${finLastDone}/${nTiles} after ${_fmtMs(finStallTime)}, statuses=${sc}, stuck: ${stuckInfo || 'none'}, missing from DDB: ${missing}`);
             }
         }
         const finalizeMs = performance.now() - tFinalize;
-        log(`  finalize: ${_fmtMs(finalizeMs)} wall (${nTiles} tiles)`, 'ok', 'render-log');
+        log(`  finalize: ${_fmtMs(finalizeMs)} wall (${finLastDone}/${nTiles} tiles)`, 'ok', 'render-log');
 
         // Phase 4: Encode — dispatch async, poll for completion
         const ext = p.fmt !== 'png' ? 'jpeg' : 'png';
@@ -1004,6 +1134,7 @@ async function runRasterPipeline() {
         // Poll DynamoDB for encode completion
         let encPollCount = 0;
         let encLastProgress = performance.now();
+        let encLastStallLog = 0;
         while (true) {
             await new Promise(r => setTimeout(r, 3000));
             encPollCount++;
@@ -1019,8 +1150,17 @@ async function runRasterPipeline() {
                 document.getElementById('render-status').textContent = `Encoding... (${statusStr})`;
             }
             if (check.complete) break;
-            if (performance.now() - encLastProgress > POLL_TIMEOUT_MS) {
-                throw new Error(`Encode stalled after ${_fmtMs(performance.now() - tEncode)}`);
+            const encStallTime = performance.now() - encLastProgress;
+            if (encStallTime > STALL_LOG_MS && encStallTime - encLastStallLog > STALL_LOG_MS) {
+                encLastStallLog = encStallTime;
+                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
+                log(`  ⚠ encode stall ${_fmtMs(encStallTime)}: statuses=${sc}${stuckInfo ? ', stuck: ' + stuckInfo : ''}`, 'warn', 'render-log');
+            }
+            if (encStallTime > POLL_TIMEOUT_MS) {
+                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
+                throw new Error(`Encode stalled after ${_fmtMs(encStallTime)}, statuses=${sc}, stuck: ${stuckInfo || 'none'}`);
             }
         }
         const encodeMs = performance.now() - tEncode;
@@ -1076,6 +1216,261 @@ async function runRasterPipeline() {
     }
 }
 
+async function runBilevelPipeline() {
+    const btn = document.getElementById('btn-bilevel');
+    const renderBtn = document.getElementById('btn-raster-all');
+    btn.disabled = true;
+    renderBtn.disabled = true;
+    document.getElementById('render-preview').innerHTML = '';
+    document.getElementById('render-info').textContent = '';
+
+    try {
+        const p = _renderCommonParams();
+        // Force bi-level settings: constant white, PNG
+        p.fmt = 'png';
+        p.constantColor = 'ffffff';
+        const bilevelColor = 'constant';
+        const bilevelMatch = 'none';
+
+        const tileSize = p.tileSize;
+        const nTileCols = Math.ceil(p.pix / tileSize);
+        const nTileRows = Math.ceil(p.pix / tileSize);
+        const nTiles = nTileCols * nTileRows;
+
+        // Clean up old render artifacts
+        document.getElementById('render-status').textContent = `BiLevel: cleaning old render files...`;
+        document.getElementById('render-status').className = 'status';
+        const cleanResult = await lambdaPost('storage', { job_id: p.jobId }, '/clean-render');
+        if (cleanResult.deleted > 0)
+            log(`  cleaned ${cleanResult.deleted} old render files`, '', 'render-log');
+
+        // Phase 1: viewport
+        document.getElementById('render-status').textContent = `BiLevel: computing viewport...`;
+        log(`BiLevel: ${p.jobId}, ${p.pix}px png, constant/white, ${nTileCols}x${nTileRows}=${nTiles} tiles...`, '', 'render-log');
+
+        const tVp = performance.now();
+        const vpData = await lambdaPost('viewport', { job_id: p.jobId, quantile: p.quantile, shim: p.shim });
+        log(`  viewport: ${_fmtMs(performance.now()-tVp)} | ${vpData.n_roots} roots`, 'ok', 'render-log');
+
+        const REF_SIZE = 4096;
+        const scale = vpData.scale_ref * Math.min(p.pix, p.pix) / REF_SIZE;
+
+        let calcMeta = _lastCalcMeta && _lastCalcMeta.job_id === p.jobId ? _lastCalcMeta : null;
+        if (!calcMeta) {
+            const listData = await lambdaPost('storage', {}, '/list');
+            const jobResult = (listData.results || []).find(r => r.job_id === p.jobId);
+            if (!jobResult) throw new Error('Job not found in results');
+            calcMeta = { n_stripes: jobResult.n_stripes || 10, degree: jobResult.degree || 1 };
+        }
+        const nStripes = calcMeta.n_stripes;
+
+        // Phase 2: Raster — constant white, no matching
+        const rasterJobs = [];
+        for (let s = 0; s < nStripes; s++) {
+            rasterJobs.push({
+                job_id: p.jobId, stripe_idx: s,
+                bin_key: `renders/${p.jobId}/stripe_${s}.bin`,
+                width: p.pix, height: p.pix,
+                tile_size: tileSize,
+                n_tile_cols: nTileCols, n_tile_rows: nTileRows,
+                center_re: vpData.center_re, center_im: vpData.center_im,
+                scale, degree: calcMeta.degree,
+                color: bilevelColor, match: bilevelMatch,
+                palette: 'inferno', constant_color: 'ffffff',
+            });
+        }
+
+        document.getElementById('render-status').textContent = `BiLevel: dispatching ${nStripes} raster Lambdas...`;
+        const tRaster = performance.now();
+        const BATCH_SIZE = 50;
+        const nBatches = Math.ceil(rasterJobs.length / BATCH_SIZE);
+        for (let i = 0; i < rasterJobs.length; i += BATCH_SIZE) {
+            const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+            const batch = rasterJobs.slice(i, i + BATCH_SIZE);
+            const dispResult = await lambdaPost('dispatch', { target: 'raster', jobs: batch, expected_keys: [] });
+            if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length)) {
+                throw new Error(`Raster dispatch failed batch ${batchNum}: fired ${dispResult.fired || 0}/${batch.length}`);
+            }
+            log(`  raster dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired`, '', 'render-log');
+        }
+
+        // Poll raster
+        let lastDone = 0, pollCount = 0, lastProgressTime = performance.now();
+        const POLL_TIMEOUT_MS = 600000, STALL_LOG_MS = 30000;
+        let lastStallLog = 0;
+        while (true) {
+            await new Promise(r => setTimeout(r, 3000));
+            pollCount++;
+            const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'raster_', expected: nStripes }, '/check-status');
+            if (check.errors > 0) {
+                const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                throw new Error(`${check.errors} raster tasks failed:\n${msgs}`);
+            }
+            if (check.done !== lastDone) {
+                const delta = check.done - lastDone;
+                log(`  raster poll #${pollCount}: ${check.done}/${nStripes} done (+${delta}, ${_fmtMs(performance.now() - tRaster)})`, '', 'render-log');
+                lastDone = check.done;
+                lastProgressTime = performance.now();
+                lastStallLog = 0;
+                document.getElementById('render-status').textContent = `BiLevel: rasterizing ${check.done}/${nStripes}...`;
+            }
+            if (check.complete) break;
+            const stallTime = performance.now() - lastProgressTime;
+            if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
+                lastStallLog = stallTime;
+                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
+                log(`  ⚠ raster stall ${_fmtMs(stallTime)}: ${lastDone}/${nStripes} done, statuses=${sc}${stuckInfo ? ', stuck: ' + stuckInfo : ''}`, 'warn', 'render-log');
+            }
+            if (stallTime > POLL_TIMEOUT_MS) {
+                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
+                throw new Error(`Raster stalled: ${lastDone}/${nStripes} after ${_fmtMs(stallTime)}, statuses=${sc}, stuck: ${stuckInfo || 'none'}`);
+            }
+        }
+        const rasterMs = performance.now() - tRaster;
+        log(`  raster: ${_fmtMs(rasterMs)} wall (${nStripes} stripes)`, 'ok', 'render-log');
+
+        // Phase 3: Finalize
+        const finalizeJobs = [];
+        const tileKeys = [];
+        for (let t = 0; t < nTiles; t++) {
+            const tRow = Math.floor(t / nTileCols);
+            const tCol = t % nTileCols;
+            const tw = Math.min(tileSize, p.pix - tCol * tileSize);
+            const th = Math.min(tileSize, p.pix - tRow * tileSize);
+            finalizeJobs.push({ job_id: p.jobId, tile_idx: t, n_stripes: nStripes, tile_w: tw, tile_h: th });
+            tileKeys.push(`renders/${p.jobId}/tile_${String(t).padStart(4, '0')}.raw`);
+        }
+        log(`BiLevel finalize: ${nTiles} tiles...`, '', 'render-log');
+        document.getElementById('render-status').textContent = `BiLevel: dispatching ${nTiles} finalize Lambdas...`;
+        const tFinalize = performance.now();
+        const finBatches = Math.ceil(finalizeJobs.length / BATCH_SIZE);
+        for (let i = 0; i < finalizeJobs.length; i += BATCH_SIZE) {
+            const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+            const batch = finalizeJobs.slice(i, i + BATCH_SIZE);
+            const dispResult = await lambdaPost('dispatch', { target: 'finalize', jobs: batch, expected_keys: [] });
+            if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length)) {
+                throw new Error(`Finalize dispatch failed batch ${batchNum}: fired ${dispResult.fired || 0}/${batch.length}`);
+            }
+            log(`  finalize dispatch ${batchNum}/${finBatches}: ${dispResult.fired}/${batch.length} fired`, '', 'render-log');
+        }
+
+        // Poll finalize
+        let finLastDone = 0, finPollCount = 0, finLastProgress = performance.now(), finLastStallLog = 0;
+        while (true) {
+            await new Promise(r => setTimeout(r, 3000));
+            finPollCount++;
+            const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'tile_', expected: nTiles }, '/check-status');
+            if (check.errors > 0) {
+                const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                throw new Error(`${check.errors} finalize tasks failed:\n${msgs}`);
+            }
+            if (check.done !== finLastDone) {
+                const delta = check.done - finLastDone;
+                log(`  finalize poll #${finPollCount}: ${check.done}/${nTiles} done (+${delta}, ${_fmtMs(performance.now() - tFinalize)})`, '', 'render-log');
+                finLastDone = check.done;
+                finLastProgress = performance.now();
+                finLastStallLog = 0;
+                document.getElementById('render-status').textContent = `BiLevel: finalizing ${check.done}/${nTiles} tiles...`;
+            }
+            if (check.complete) break;
+            const finStallTime = performance.now() - finLastProgress;
+            if (finStallTime > STALL_LOG_MS && finStallTime - finLastStallLog > STALL_LOG_MS) {
+                finLastStallLog = finStallTime;
+                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
+                const missing = nTiles - (check.done + (check.errors || 0) + (check.stuck || []).length);
+                log(`  ⚠ finalize stall ${_fmtMs(finStallTime)}: ${finLastDone}/${nTiles} done, statuses=${sc}${stuckInfo ? ', stuck: ' + stuckInfo : ''}${missing > 0 ? ', missing from DDB: ' + missing : ''}`, 'warn', 'render-log');
+            }
+            if (finStallTime > POLL_TIMEOUT_MS) {
+                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
+                throw new Error(`Finalize stalled: ${finLastDone}/${nTiles} after ${_fmtMs(finStallTime)}`);
+            }
+        }
+        const finalizeMs = performance.now() - tFinalize;
+        log(`  finalize: ${_fmtMs(finalizeMs)} wall (${finLastDone}/${nTiles} tiles)`, 'ok', 'render-log');
+
+        // Phase 4: Encode — bilevel PNG
+        const imageKey = `renders/${p.jobId}/image_bilevel.png`;
+        document.getElementById('render-status').textContent = `BiLevel: encoding 1-bit PNG...`;
+        const tEncode = performance.now();
+        const encodeJob = {
+            job_id: p.jobId, out_key: imageKey,
+            format: 'png', bilevel: true,
+            width: p.pix, height: p.pix,
+            tile_grid: {
+                n_cols: nTileCols, n_rows: nTileRows,
+                tile_keys: tileKeys,
+            },
+        };
+        const encDispResult = await lambdaPost('dispatch', { target: 'encode', jobs: [encodeJob], expected_keys: [] });
+        if ((encDispResult.fired || 0) !== 1) throw new Error(`Encode dispatch failed: fired ${encDispResult.fired || 0}/1`);
+        log(`  encode dispatched (bilevel png)`, '', 'render-log');
+
+        // Poll encode
+        let encPollCount = 0, encLastProgress = performance.now(), encLastStallLog = 0;
+        while (true) {
+            await new Promise(r => setTimeout(r, 3000));
+            encPollCount++;
+            const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'encode', expected: 1 }, '/check-status');
+            if (check.errors > 0) {
+                const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                throw new Error(`Encode failed:\n${msgs}`);
+            }
+            if (check.complete) break;
+            const encStallTime = performance.now() - encLastProgress;
+            if (encStallTime > STALL_LOG_MS && encStallTime - encLastStallLog > STALL_LOG_MS) {
+                encLastStallLog = encStallTime;
+                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                log(`  ⚠ encode stall ${_fmtMs(encStallTime)}: statuses=${sc}`, 'warn', 'render-log');
+            }
+            if (encStallTime > POLL_TIMEOUT_MS) throw new Error(`Encode stalled after ${_fmtMs(encStallTime)}`);
+        }
+        const encodeMs = performance.now() - tEncode;
+
+        const presignResult = await lambdaPost('storage', { key: imageKey }, '/presign');
+        const imageUrl = presignResult.url;
+        _lastDownloadKey = imageKey;
+        log(`  encode: ${_fmtMs(encodeMs)} (bilevel png)`, 'ok', 'render-log');
+
+        lambdaPost('storage', { keys: [...tileKeys] }, '/cleanup').catch(() => {});
+
+        const totalMs = performance.now() - tVp;
+        const statusParts = [
+            'BiLevel', nStripes + ' stripes', nTiles + ' tiles',
+            'raster ' + _fmtMs(rasterMs), 'finalize ' + _fmtMs(finalizeMs), 'encode ' + _fmtMs(encodeMs), '1-bit png',
+        ];
+        document.getElementById('render-status').textContent = statusParts.join(' | ');
+        document.getElementById('render-status').className = 'status ok';
+
+        const preview = document.getElementById('render-preview');
+        if (p.pix > 5000) {
+            preview.innerHTML = `<div style="padding:20px; text-align:center; background:#1a1a2e; border:1px solid #333; border-radius:8px">` +
+                `<div style="color:#aaa; margin-bottom:12px">${p.pix}x${p.pix} bilevel PNG — too large to preview</div>` +
+                `<button class="btn-primary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_bilevel.png')" ` +
+                `style="padding:8px 24px; font-size:14px">Download PNG</button></div>`;
+        } else {
+            preview.innerHTML = `<a href="${imageUrl}" target="_blank" title="Click to open full-size image">` +
+                `<img src="${imageUrl}" style="max-width:100%; border:1px solid #333; cursor:pointer; background:#000"></a>` +
+                `<div style="margin-top:8px"><button class="btn-secondary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_bilevel.png')" ` +
+                `style="padding:4px 12px">Download PNG</button></div>`;
+        }
+        document.getElementById('render-info').textContent =
+            `Job: ${p.jobId} | ${p.pix}x${p.pix} | Degree: ${calcMeta.degree} | BiLevel 1-bit PNG`;
+        log(`Done: deg${calcMeta.degree} ${p.pix}px bilevel, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');
+
+    } catch (e) {
+        document.getElementById('render-status').textContent = 'BiLevel error: ' + e.message;
+        document.getElementById('render-status').className = 'status error';
+        log(`BiLevel failed: ${e.message}`, 'err', 'render-log');
+    } finally {
+        btn.disabled = false;
+        renderBtn.disabled = false;
+    }
+}
+
 let _lastCalcMeta = null;  // cache last compute metadata for render
 
 async function runCalculate() {
@@ -1084,9 +1479,12 @@ async function runCalculate() {
     const nStripes = Math.max(10, parseInt(document.getElementById('render-stripes').value) || 10);
     const jobId = 'compute_' + Date.now().toString(36);
 
-    const paramTransforms = [..._ptChain];
+    const paramTransforms = _ptChain.map(item =>
+        item.param !== null && item.param !== '' ? [item.name, item.param] : [item.name]
+    );
     const coeffTransforms = [..._ctChain];
-    const pipelineStr = `[${paramTransforms.join(',')||'none'}] ${funcName} [${coeffTransforms.join(',')||'none'}]`;
+    const ptDisplay = paramTransforms.map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(',');
+    const pipelineStr = `[${ptDisplay||'none'}] ${funcName} [${coeffTransforms.join(',')||'none'}]`;
 
     const btn = document.getElementById('btn-calculate');
     btn.disabled = true;
@@ -1097,41 +1495,75 @@ async function runCalculate() {
 
     try {
         const tTotal = performance.now();
+        const rowsPer = Math.floor(n / nStripes);
 
-        // Phase 1: coefficient generation (single Lambda call)
-        document.getElementById('compute-status').textContent = `Generating coefficients...`;
+        // Phase 1: fan-out hires coeffgen stripes
+        document.getElementById('compute-status').textContent = `Generating coefficients 0/${nStripes}...`;
         const tCoeffgen = performance.now();
-        const coeffResult = await lambdaPost('coeffgen', {
-            job_id: jobId,
+        let coeffgenDone = 0;
+
+        const coeffgenJobs = [];
+        for (let s = 0; s < nStripes; s++) {
+            const i1Start = s * rowsPer;
+            const i1End = s < nStripes - 1 ? (s + 1) * rowsPer : n;
+            coeffgenJobs.push({
+                job_id: jobId, stripe_idx: s,
+                param_transforms: paramTransforms,
+                function: funcName,
+                coeff_transforms: coeffTransforms,
+                n1: n, n2: n,
+                i1_start: i1Start, i1_end: i1End,
+            });
+        }
+
+        const coeffgenResults = await asyncPool(50, coeffgenJobs, p =>
+            lambdaPost('coeffgen', p).then(r => {
+                coeffgenDone++;
+                const count = Math.min(coeffgenDone, nStripes);
+                document.getElementById('compute-status').textContent =
+                    `Generating coefficients ${count}/${nStripes}...`;
+                return r;
+            })
+        );
+        const coeffgenMs = performance.now() - tCoeffgen;
+        const degree = coeffgenResults[0].degree;
+        const nCoeffs = coeffgenResults[0].n_coeffs;
+
+        // Size lores grid to target ~250K roots for consistent previews
+        const TARGET_PREVIEW_ROOTS = 250000;
+        const loresN = Math.min(n, Math.max(10, Math.ceil(Math.sqrt(TARGET_PREVIEW_ROOTS / degree))));
+
+        // Phase 1b: lores coeffgen (now that we know degree)
+        document.getElementById('compute-status').textContent = `Generating lores coefficients...`;
+        const loresCoeffResult = await lambdaPost('coeffgen', {
+            job_id: jobId, stripe_idx: 9999,
             param_transforms: paramTransforms,
             function: funcName,
             coeff_transforms: coeffTransforms,
-            n1: n, n2: n,
+            n1: loresN, n2: loresN,
+            i1_start: 0, i1_end: loresN,
+            s3_key: `renders/${jobId}/lores_coeffs.bin`,
         });
-        const coeffgenMs = performance.now() - tCoeffgen;
-        const degree = coeffResult.degree;
-        const nCoeffs = coeffResult.n_coeffs;
-        log(`  coeffgen: ${fmtMs(coeffgenMs)}, degree=${degree}, size=${(coeffResult.coeffs_size/1e6).toFixed(1)}MB`, 'ok');
+        const totalCoeffsSize = coeffgenResults.reduce((s, r) => s + r.coeffs_size, 0);
+        log(`  coeffgen: ${fmtMs(coeffgenMs)}, degree=${degree}, size=${(totalCoeffsSize/1e6).toFixed(1)}MB (${nStripes} stripes)`, 'ok');
 
-        // Phase 2: lores solve (read first 100 rows of coeffs.bin)
+        // Phase 2: lores solve (reads lores_coeffs.bin)
         document.getElementById('compute-status').textContent = `Lores solve...`;
-        const loresN = Math.min(n, 100);
         const loresKey = `renders/${jobId}/lores.bin`;
         const tLores = performance.now();
         const loresResult = await lambdaPost('sweep', {
             job_id: jobId, stripe_idx: 0,
-            coeffs_key: coeffResult.coeffs_key,
+            coeffs_key: loresCoeffResult.coeffs_key,
             n_coeffs: nCoeffs,
-            n1: n, n2: n,
+            n1: loresN, n2: loresN,
             i1_start: 0, i1_end: loresN,
             s3_key: loresKey,
         });
         const loresMs = performance.now() - tLores;
         log(`  lores solve: ${fmtMs(loresMs)}`, 'ok');
 
-        // Phase 3: fan-out hires solve stripes
+        // Phase 3: fan-out hires solve stripes (each reads its own coeffs file)
         document.getElementById('compute-status').textContent = `Solving 0/${nStripes} stripes...`;
-        const rowsPer = Math.floor(n / nStripes);
         const tCompute = performance.now();
         let computeDone = 0;
 
@@ -1141,7 +1573,7 @@ async function runCalculate() {
             const i1End = s < nStripes - 1 ? (s + 1) * rowsPer : n;
             sweepJobs.push({
                 job_id: jobId, stripe_idx: s,
-                coeffs_key: coeffResult.coeffs_key,
+                coeffs_key: coeffgenResults[s].coeffs_key,
                 n_coeffs: nCoeffs,
                 n1: n, n2: n,
                 i1_start: i1Start, i1_end: i1End,
@@ -1170,8 +1602,8 @@ async function runCalculate() {
             n_stripes: nStripes,
             degree,
             n_coeffs: nCoeffs,
-            coeffs_key: coeffResult.coeffs_key,
-            coeffs_size: coeffResult.coeffs_size,
+            coeffs_keys: coeffgenResults.map(r => r.coeffs_key),
+            total_coeffs_size: totalCoeffsSize,
             lores: {
                 bin_key: loresKey,
                 n1: loresN, n2: loresN,
@@ -1201,13 +1633,13 @@ async function runCalculate() {
         document.getElementById('render-results-dir').value = jobId;
 
         document.getElementById('compute-status').textContent =
-            `Computed | ${nStripes} stripes | wall ${fmtMs(computeWallMs)} | ` +
+            `Computed | ${nStripes} stripes | coeffgen ${fmtMs(coeffgenMs)} | solve ${fmtMs(computeWallMs)} | ` +
             `compute ${(totalComputeUs/1e6).toFixed(1)}s (sum) | deg ${degree} | total ${fmtMs(totalMs)}`;
         document.getElementById('compute-status').className = 'status ok';
 
         const lines = [];
         lines.push(`  total:    ${fmtMs(totalMs)}`);
-        lines.push(`  coeffgen: ${fmtMs(coeffgenMs)} (${(coeffResult.coeffs_size/1e6).toFixed(1)}MB)`);
+        lines.push(`  coeffgen: ${fmtMs(coeffgenMs)} (${(totalCoeffsSize/1e6).toFixed(1)}MB, ${nStripes} stripes)`);
         lines.push(`  total bin: ${(totalBinSize/1e6).toFixed(1)}MB + lores ${(loresResult.bin_size/1e3).toFixed(0)}KB`);
         lines.push(`  solve: ${(totalComputeUs/1e6).toFixed(1)}s (sum) / ${fmtMs(computeWallMs)} wall (${nStripes} stripes)`);
         lines.push(`  lores:    ${fmtMs(loresMs)}`);

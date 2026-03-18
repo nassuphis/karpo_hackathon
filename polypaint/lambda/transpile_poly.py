@@ -88,6 +88,22 @@ class PolyTranspiler(ast.NodeVisitor):
                 # loop variable or local — treat as real
                 return CVar(name, "0")
 
+        if isinstance(node, ast.Attribute):
+            # np.pi, t1.real, t1.imag, t2.real, t2.imag, (expr).real, (expr).imag
+            attr = node.attr
+            if isinstance(node.value, ast.Name) and node.value.id == "np" and attr == "pi":
+                return CVar("M_PI", "0")
+            # t1.real, t1.imag, t2.real, t2.imag
+            if attr in ("real", "imag"):
+                val = self.expr_to_c(node.value)
+                tmp = CVar.fresh("attr")
+                self.declare(tmp)
+                if attr == "real":
+                    self.emit(f"{tmp.r} = {val.r}; {tmp.i} = 0;")
+                else:
+                    self.emit(f"{tmp.r} = {val.i}; {tmp.i} = 0;")
+                return tmp
+
         if isinstance(node, ast.UnaryOp):
             if isinstance(node.op, ast.USub):
                 operand = self.expr_to_c(node.operand)
@@ -269,11 +285,29 @@ class PolyTranspiler(ast.NodeVisitor):
                 self.emit(f"{tmp.r} = (double)({arg.r}); {tmp.i} = 0;")
                 return tmp
             elif func.id == "len":
-                # array length — depends on context
+                if node.args and isinstance(node.args[0], ast.Name):
+                    name = node.args[0].id
+                    tmp = CVar.fresh("len")
+                    self.declare(tmp)
+                    if name == "cf":
+                        self.emit(f"{tmp.r} = {self.n_coeffs}; {tmp.i} = 0;")
+                    else:
+                        sz = self.array_sizes.get(name)
+                        if sz is not None:
+                            self.emit(f"{tmp.r} = {sz}; {tmp.i} = 0;")
+                        else:
+                            self.emit(f"/* WARNING: len({name}) unknown */")
+                    return tmp
                 tmp = CVar.fresh("len")
                 self.declare(tmp)
                 self.emit(f"/* WARNING: len() not directly translatable */")
                 return tmp
+            elif func.id == "sum":
+                # sum(cf[a:b]) or sum(iterable) — try np.sum path
+                if node.args and isinstance(node.args[0], ast.Subscript):
+                    return self.numpy_sum_slice(node.args[0])
+                arg = self.expr_to_c(node.args[0])
+                return arg
 
         tmp = CVar.fresh("call")
         self.declare(tmp)
@@ -603,6 +637,15 @@ class PolyTranspiler(ast.NodeVisitor):
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
             operand = self.index_expr(node.operand)
             return f"(-{operand})"
+        # len(cf) -> n_coeffs, len(other) -> sizeof trick
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "len":
+            if node.args and isinstance(node.args[0], ast.Name):
+                name = node.args[0].id
+                if name == "cf":
+                    return str(self.n_coeffs)
+                sz = self.array_sizes.get(name)
+                if sz is not None:
+                    return str(sz)
         return f"(int)({self.expr_to_c(node).r})"
 
     def assign_cf(self, idx_node, value_node):
@@ -620,6 +663,47 @@ class PolyTranspiler(ast.NodeVisitor):
             return
         count = hi - lo
 
+        # Fix 3: np.array([expr1, expr2, ...]) — unroll element-by-element
+        arr_elts = self.extract_np_array_elements(value_node)
+        if arr_elts is not None:
+            for i, elt_node in enumerate(arr_elts):
+                if i >= count:
+                    break
+                val = self.expr_to_c(elt_node)
+                self.emit(f"cRe[{lo + i}] = {val.r}; cIm[{lo + i}] = {val.i};")
+            return
+
+        # Fix 3b: np.array([...]) * expr or expr * np.array([...]) — unroll with multiplication
+        arr_elts_binop = self.extract_np_array_binop(value_node)
+        if arr_elts_binop is not None:
+            elts, other_node, op, arr_is_left = arr_elts_binop
+            other = self.expr_to_c(other_node)
+            for i, elt_node in enumerate(elts):
+                if i >= count:
+                    break
+                elt = self.expr_to_c(elt_node)
+                left_v, right_v = (elt, other) if arr_is_left else (other, elt)
+                tmp = CVar.fresh("abop")
+                self.declare(tmp)
+                if isinstance(op, ast.Mult):
+                    self.emit(f"c_mul({left_v.r}, {left_v.i}, {right_v.r}, {right_v.i}, &{tmp.r}, &{tmp.i});")
+                elif isinstance(op, ast.Add):
+                    self.emit(f"{tmp.r} = {left_v.r} + {right_v.r}; {tmp.i} = {left_v.i} + {right_v.i};")
+                elif isinstance(op, ast.Sub):
+                    self.emit(f"{tmp.r} = {left_v.r} - {right_v.r}; {tmp.i} = {left_v.i} - {right_v.i};")
+                elif isinstance(op, ast.Div):
+                    self.emit(f"c_div({left_v.r}, {left_v.i}, {right_v.r}, {right_v.i}, &{tmp.r}, &{tmp.i});")
+                else:
+                    self.emit(f"c_mul({left_v.r}, {left_v.i}, {right_v.r}, {right_v.i}, &{tmp.r}, &{tmp.i});")
+                self.emit(f"cRe[{lo + i}] = {tmp.r}; cIm[{lo + i}] = {tmp.i};")
+            return
+
+        # Fix 4: List comprehension — [expr for var in range(start, end)]
+        if isinstance(value_node, ast.ListComp):
+            comp = self.transpile_listcomp_slice(value_node, lo, count)
+            if comp:
+                return
+
         # Detect np.arange(start, end) * expr  or  array * expr
         # and emit element-wise loop with index
         self.emit(f"for (int _si = 0; _si < {count}; _si++) {{")
@@ -630,6 +714,64 @@ class PolyTranspiler(ast.NodeVisitor):
         self.emit(f"cRe[_si_idx] = {val.r}; cIm[_si_idx] = {val.i};")
         self.indent -= 1
         self.emit(f"}}")
+
+    def extract_np_array_elements(self, node):
+        """Extract element AST nodes from np.array([...]) — works with computed elements too."""
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if (isinstance(node.func.value, ast.Name) and node.func.value.id == "np"
+                    and node.func.attr == "array"):
+                if node.args and isinstance(node.args[0], ast.List):
+                    return node.args[0].elts
+        return None
+
+    def extract_np_array_binop(self, node):
+        """Detect np.array([...]) * expr or expr * np.array([...]).
+        Returns (elements, other_node, op, arr_is_left) or None."""
+        if not isinstance(node, ast.BinOp):
+            return None
+        # Check left side
+        left_elts = self.extract_np_array_elements(node.left)
+        if left_elts is not None:
+            return (left_elts, node.right, node.op, True)
+        # Check right side
+        right_elts = self.extract_np_array_elements(node.right)
+        if right_elts is not None:
+            return (right_elts, node.left, node.op, False)
+        return None
+
+    def transpile_listcomp_slice(self, node, lo, count):
+        """Transpile [expr for var in range(start, end)] as cf[lo:lo+count] = ..."""
+        if len(node.generators) != 1:
+            return False
+        gen = node.generators[0]
+        if not isinstance(gen.target, ast.Name):
+            return False
+        var = gen.target.id
+        if not (isinstance(gen.iter, ast.Call) and isinstance(gen.iter.func, ast.Name)
+                and gen.iter.func.id == "range"):
+            return False
+        args = gen.iter.args
+        if len(args) == 1:
+            r_start, r_end = 0, self.get_int(args[0])
+        elif len(args) >= 2:
+            r_start = self.get_int(args[0]) or 0
+            r_end = self.get_int(args[1])
+        else:
+            return False
+        if r_end is None:
+            return False
+        r_step = self.get_int(args[2]) if len(args) > 2 else 1
+
+        self.declared.add(var)
+        self.emit(f"{{ int _lc_i = 0;")
+        self.emit(f"for (int {var} = {r_start}; {var} < {r_end}; {var} += {r_step}) {{")
+        self.indent += 1
+        val = self.expr_to_c(node.elt)
+        self.emit(f"if (_lc_i < {count}) {{ cRe[{lo} + _lc_i] = {val.r}; cIm[{lo} + _lc_i] = {val.i}; }}")
+        self.emit(f"_lc_i++;")
+        self.indent -= 1
+        self.emit(f"}} }}")
+        return True
 
     def expr_to_c_slice(self, node, loop_var, lo, count):
         """Like expr_to_c but handles arange and array references element-wise."""
@@ -689,6 +831,21 @@ class PolyTranspiler(ast.NodeVisitor):
 
         # Fallback to normal expression
         return self.expr_to_c(node)
+
+    def is_np_arange_fancy(self, node):
+        """Check if node is np.arange(start, stop, step) used as fancy index."""
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if isinstance(node.func.value, ast.Name) and node.func.value.id == "np" and node.func.attr == "arange":
+                return len(node.args) >= 2
+        return False
+
+    def extract_arange_params(self, node):
+        """Extract (start, stop, step) from np.arange(start, stop[, step])."""
+        args = node.args
+        start = self.get_int(args[0]) or 0
+        stop = self.get_int(args[1]) if len(args) > 1 else self.n_coeffs
+        step = self.get_int(args[2]) if len(args) > 2 else 1
+        return start, stop, step
 
     def is_indexable_in_slice(self, node):
         """Check if an expression should be indexed element-wise in a slice context."""
@@ -790,6 +947,20 @@ class PolyTranspiler(ast.NodeVisitor):
                             self.emit(f"cRe[_si_idx] += {val.r}; cIm[_si_idx] += {val.i};")
                         elif isinstance(stmt.op, ast.Mult):
                             self.emit(f"{{ double _tr = cRe[_si_idx]*{val.r} - cIm[_si_idx]*{val.i}; cIm[_si_idx] = cRe[_si_idx]*{val.i} + cIm[_si_idx]*{val.r}; cRe[_si_idx] = _tr; }}")
+                        self.indent -= 1
+                        self.emit(f"}}")
+                    elif self.is_np_arange_fancy(sl):
+                        # cf[np.arange(start, stop, step)] *= expr — strided loop
+                        start, stop, step = self.extract_arange_params(sl)
+                        val = self.expr_to_c(stmt.value)
+                        self.emit(f"for (int _fi = {start}; _fi < {stop}; _fi += {step}) {{")
+                        self.indent += 1
+                        if isinstance(stmt.op, ast.Mult):
+                            self.emit(f"{{ double _tr = cRe[_fi]*{val.r} - cIm[_fi]*{val.i}; cIm[_fi] = cRe[_fi]*{val.i} + cIm[_fi]*{val.r}; cRe[_fi] = _tr; }}")
+                        elif isinstance(stmt.op, ast.Add):
+                            self.emit(f"cRe[_fi] += {val.r}; cIm[_fi] += {val.i};")
+                        elif isinstance(stmt.op, ast.Sub):
+                            self.emit(f"cRe[_fi] -= {val.r}; cIm[_fi] -= {val.i};")
                         self.indent -= 1
                         self.emit(f"}}")
                     else:
@@ -946,9 +1117,17 @@ def transpile_function(func_node):
     return "\n".join(lines), name, n_coeffs
 
 
-def main():
-    # Read the source file
-    src_path = "/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly100.py"
+def transpile_file(src_path, stub_funcs=None, skip_funcs=None, label=None):
+    """Transpile all poly_N functions from a Python source file.
+    Returns (c_code_str, header_str, lookup_str) as strings.
+    stub_funcs: emit zero-output stubs. skip_funcs: completely omit."""
+    if stub_funcs is None:
+        stub_funcs = set()
+    if skip_funcs is None:
+        skip_funcs = set()
+    if label is None:
+        label = src_path.rsplit("/", 1)[-1]
+
     with open(src_path) as f:
         source = f.read()
 
@@ -959,41 +1138,67 @@ def main():
         if isinstance(node, ast.FunctionDef) and node.name.startswith("poly_"):
             funcs.append(node)
 
-    print("/* AUTO-GENERATED from poly100.py — do not edit manually */")
-    print(f"/* {len(funcs)} coefficient functions */")
-    print()
+    c_lines = []
+    c_lines.append(f"/* AUTO-GENERATED from {label} — do not edit manually */")
+    c_lines.append(f"/* {len(funcs)} coefficient functions */")
+    c_lines.append("")
 
-    # Functions that fail to transpile cleanly — stub them
-    STUB_FUNCS = {"poly_21", "poly_35", "poly_37", "poly_40", "poly_46", "poly_58", "poly_72", "poly_74", "poly_94", "poly_100"}
-
+    header_lines = []
+    lookup_lines = []
     names_and_ncoeffs = []
+
     for func_node in funcs:
         try:
-            if func_node.name in STUB_FUNCS:
+            if func_node.name in skip_funcs:
+                c_lines.append(f"/* {func_node.name}: skipped (defined elsewhere) */")
+                c_lines.append("")
+                continue
+            if func_node.name in stub_funcs:
                 n_coeffs = extract_ncoeffs(func_node)
-                print(f"/* {func_node.name}: too complex for auto-transpile, stubbed */")
-                print(f"static void {func_node.name}_c(double x1r, double x1i, double x2r, double x2i,")
-                print(f"                     double *cRe, double *cIm, int *nCoeffs) {{")
-                print(f"    *nCoeffs = {n_coeffs};")
-                print(f"    for (int _i = 0; _i < {n_coeffs}; _i++) {{ cRe[_i] = 0; cIm[_i] = 0; }}")
-                print(f"    (void)x1r; (void)x1i; (void)x2r; (void)x2i;")
-                print(f"}}")
-                print()
+                c_lines.append(f"/* {func_node.name}: too complex for auto-transpile, stubbed */")
+                c_lines.append(f"static void {func_node.name}_c(double x1r, double x1i, double x2r, double x2i,")
+                c_lines.append(f"                     double *cRe, double *cIm, int *nCoeffs) {{")
+                c_lines.append(f"    *nCoeffs = {n_coeffs};")
+                c_lines.append(f"    for (int _i = 0; _i < {n_coeffs}; _i++) {{ cRe[_i] = 0; cIm[_i] = 0; }}")
+                c_lines.append(f"    (void)x1r; (void)x1i; (void)x2r; (void)x2i;")
+                c_lines.append(f"}}")
+                c_lines.append("")
                 names_and_ncoeffs.append((func_node.name, n_coeffs))
                 continue
             c_code, name, n_coeffs = transpile_function(func_node)
-            print(c_code)
-            print()
+            c_lines.append(c_code)
+            c_lines.append("")
             names_and_ncoeffs.append((name, n_coeffs))
         except Exception as e:
-            print(f"/* ERROR transpiling {func_node.name}: {e} */")
-            print()
+            c_lines.append(f"/* ERROR transpiling {func_node.name}: {e} */")
+            c_lines.append("")
 
-    # Generate lookup entries
+    for name, _ in names_and_ncoeffs:
+        header_lines.append(f"static void {name}_c(double x1r, double x1i, double x2r, double x2i, double *cRe, double *cIm, int *nCoeffs);")
+        lookup_lines.append(f'    if (strcmp(name, "{name}") == 0) return {name}_c;')
+
+    return "\n".join(c_lines), "\n".join(header_lines), "\n".join(lookup_lines)
+
+
+def main():
+    src_path = sys.argv[1] if len(sys.argv) > 1 else "/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly100.py"
+
+    # Stub functions per source file
+    STUBS = {
+        "poly100.py": {"poly_21", "poly_35", "poly_37", "poly_40", "poly_46", "poly_58", "poly_72", "poly_74", "poly_94", "poly_100"},
+    }
+
+    basename = src_path.rsplit("/", 1)[-1]
+    stub_funcs = STUBS.get(basename, set())
+
+    c_code, header, lookups = transpile_file(src_path, stub_funcs, basename)
+
+    # Write .c file to stdout
+    print(c_code)
+    print()
     print("/* Lookup entries for lookupCoeffFuncC: */")
     print("/*")
-    for name, _ in names_and_ncoeffs:
-        print(f'    if (strcmp(name, "{name}") == 0) return {name}_c;')
+    print(lookups)
     print("*/")
 
 

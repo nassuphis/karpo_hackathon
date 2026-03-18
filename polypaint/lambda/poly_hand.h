@@ -1424,3 +1424,208 @@ static void poly_97_hand(double x1r, double x1i, double x2r, double x2i,
         if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
     }
 }
+
+/* poly_102_serendipity: clamped recurrence version of poly_102.
+ * The original overflows float32 (~k! growth). Clamping |cf[k]| to 1e30
+ * creates a different but visually interesting pattern. */
+static void poly_102_serendipity(double x1r, double x1i, double x2r, double x2i,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    #define CLAMP102 1e30
+    /* cf[0] = 1000 * (t1 + t2)**2 */
+    double sr = x1r + x2r, si = x1i + x2i;
+    double s2r, s2i;
+    c_mul(sr, si, sr, si, &s2r, &s2i);
+    cRe[0] = 1000.0 * s2r; cIm[0] = 1000.0 * s2i;
+
+    for (int k = 1; k < 20; k++) {
+        double kp1 = (double)(k + 1);
+        double pr = kp1 * cRe[k-1], pi_ = kp1 * cIm[k-1];
+        double ar = kp1 * x1r, ai = kp1 * x1i;
+        double snr, sni; c_sin(ar, ai, &snr, &sni);
+        double br = kp1 * x2r, bi = kp1 * x2i;
+        double csr, csi; c_cos(br, bi, &csr, &csi);
+        cRe[k] = pr + snr + csr;
+        cIm[k] = pi_ + sni + csi;
+        double m = c_abs(cRe[k], cIm[k]);
+        if (m > CLAMP102) { double s = CLAMP102/m; cRe[k]*=s; cIm[k]*=s; }
+    }
+    for (int k = 20; k < 40; k++) {
+        double kp1 = (double)(k + 1);
+        double pr = kp1 * cRe[k-1], pi_ = kp1 * cIm[k-1];
+        double ar = kp1 * x1r, ai = kp1 * x1i;
+        double snr, sni; c_sin(ar, ai, &snr, &sni);
+        double br = kp1 * x2r, bi = kp1 * x2i;
+        double csr, csi; c_cos(br, bi, &csr, &csi);
+        cRe[k] = pr - snr - csr;
+        cIm[k] = pi_ - sni - csi;
+        double m = c_abs(cRe[k], cIm[k]);
+        if (m > CLAMP102) { double s = CLAMP102/m; cRe[k]*=s; cIm[k]*=s; }
+    }
+    for (int k = 40; k < 60; k++) {
+        double kp1 = (double)(k + 1);
+        double pr = kp1 * cRe[k-1], pi_ = kp1 * cIm[k-1];
+        double t12r, t12i; c_mul(x1r, x1i, x2r, x2i, &t12r, &t12i);
+        double ar = kp1 * t12r, ai = kp1 * t12i;
+        double snr, sni; c_sin(ar, ai, &snr, &sni);
+        double csr, csi; c_cos(ar, ai, &csr, &csi);
+        cRe[k] = pr + snr + csr;
+        cIm[k] = pi_ + sni + csi;
+        double m = c_abs(cRe[k], cIm[k]);
+        if (m > CLAMP102) { double s = CLAMP102/m; cRe[k]*=s; cIm[k]*=s; }
+    }
+    for (int k = 60; k < 70; k++) {
+        double kp1 = (double)(k + 1);
+        double pr = kp1 * cRe[k-1], pi_ = kp1 * cIm[k-1];
+        double t12r, t12i; c_mul(x1r, x1i, x2r, x2i, &t12r, &t12i);
+        double ar = kp1 * t12r, ai = kp1 * t12i;
+        double snr, sni; c_sin(ar, ai, &snr, &sni);
+        double csr, csi; c_cos(ar, ai, &csr, &csi);
+        cRe[k] = pr - snr - csr;
+        cIm[k] = pi_ - sni - csi;
+        double m = c_abs(cRe[k], cIm[k]);
+        if (m > CLAMP102) { double s = CLAMP102/m; cRe[k]*=s; cIm[k]*=s; }
+    }
+    /* cf[70] = |cf[69]| + angle(t1) - angle(t2) + real(t1*t2) - imag(conj(t1)*t2) */
+    double abs69 = c_abs(cRe[69], cIm[69]);
+    double ang1 = c_arg(x1r, x1i), ang2 = c_arg(x2r, x2i);
+    double t12r, t12i; c_mul(x1r, x1i, x2r, x2i, &t12r, &t12i);
+    double ct12r, ct12i; c_mul(x1r, -x1i, x2r, x2i, &ct12r, &ct12i);
+    cRe[70] = abs69 + ang1 - ang2 + t12r - ct12i;
+    cIm[70] = 0;
+    #undef CLAMP102
+
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* poly_117: loop + whole-array cf *= expr + slice augassign
+ * cf[k-1] = (t1+t2)^(k-1) + (-1)^k * exp(i*k*pi/71) * k^(1/3)
+ * cf *= (1 + log(|cf|+1) / (1 + |t1*t2|))
+ * cf[0:10] += (t1^2+t2^2)^(1/3)
+ * cf[61:71] *= exp(-i*angle(t1)) */
+static void poly_117_hand(double x1r, double x1i, double x2r, double x2i,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double sr = x1r + x2r, si = x1i + x2i;
+    double t12r, t12i; c_mul(x1r, x1i, x2r, x2i, &t12r, &t12i);
+    double abs_t12 = c_abs(t12r, t12i);
+
+    /* cf[k-1] = (t1+t2)^(k-1) + (-1)^k * exp(i*k*pi/71) * k^(1/3) */
+    for (int k = 1; k <= 71; k++) {
+        double pr, pi_;
+        c_powr(sr, si, (double)(k - 1), &pr, &pi_);
+        double sign = (k % 2 == 0) ? 1.0 : -1.0;
+        double ang = (double)k * M_PI / 71.0;
+        double er = sign * cos(ang), ei = sign * sin(ang);
+        double cbrtk = cbrt((double)k);
+        cRe[k-1] = pr + er * cbrtk;
+        cIm[k-1] = pi_ + ei * cbrtk;
+    }
+
+    /* cf *= (1 + log(|cf|+1) / (1 + |t1*t2|)) — element-wise */
+    for (int i = 0; i < 71; i++) {
+        double m = c_abs(cRe[i], cIm[i]);
+        double fac = 1.0 + log(m + 1.0) / (1.0 + abs_t12);
+        cRe[i] *= fac;
+        cIm[i] *= fac;
+    }
+
+    /* cf[0:10] += (t1^2+t2^2)^(1/3) */
+    double t1sq_r, t1sq_i; c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    double t2sq_r, t2sq_i; c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+    double sumr = t1sq_r + t2sq_r, sumi = t1sq_i + t2sq_i;
+    double cbr, cbi; c_powr(sumr, sumi, 1.0/3.0, &cbr, &cbi);
+    for (int i = 0; i < 10; i++) {
+        cRe[i] += cbr;
+        cIm[i] += cbi;
+    }
+
+    /* cf[61:71] *= exp(-i*angle(t1)) */
+    double ang1 = c_arg(x1r, x1i);
+    double expr = cos(-ang1), expi = sin(-ang1);
+    for (int i = 61; i < 71; i++) {
+        double tr = cRe[i]*expr - cIm[i]*expi;
+        cIm[i] = cRe[i]*expi + cIm[i]*expr;
+        cRe[i] = tr;
+    }
+
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* poly_118: primes array used in scalar sums and slice multiplications.
+ * Transpiler passes array to c_mul — needs hand-written element-wise loops. */
+static void poly_118_hand(double x1r, double x1i, double x2r, double x2i,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    static const double primes[] = {2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53};
+    /* np.sum(primes) = 381, np.sum(primes[:8]) = 77 */
+    double sumP = 381.0, sumP8 = 77.0;
+
+    /* f1 = t1 * sumP + t2 */
+    double f1r = x1r * sumP + x2r, f1i = x1i * sumP + x2i;
+    /* f2 = t2 * sumP8 + conj(t1) */
+    double f2r = x2r * sumP8 + x1r, f2i = x2i * sumP8 - x1i;
+
+    /* cf[0:16] = primes[:16] * (t1 - t2) */
+    double dr = x1r - x2r, di = x1i - x2i;
+    for (int i = 0; i < 16; i++) {
+        cRe[i] = primes[i] * dr;
+        cIm[i] = primes[i] * di;
+    }
+
+    /* cf[16:32] = f1^2 - f2^2 */
+    double f1sq_r, f1sq_i; c_mul(f1r, f1i, f1r, f1i, &f1sq_r, &f1sq_i);
+    double f2sq_r, f2sq_i; c_mul(f2r, f2i, f2r, f2i, &f2sq_r, &f2sq_i);
+    double diffr = f1sq_r - f2sq_r, diffi = f1sq_i - f2sq_i;
+    for (int i = 16; i < 32; i++) {
+        cRe[i] = diffr;
+        cIm[i] = diffi;
+    }
+
+    /* cf[32:48] = (t1^3 - t2^3) * (primes[:16] - f1) */
+    double t1cu_r, t1cu_i; c_mul(x1r, x1i, x1r, x1i, &t1cu_r, &t1cu_i);
+    c_mul(t1cu_r, t1cu_i, x1r, x1i, &t1cu_r, &t1cu_i);
+    double t2cu_r, t2cu_i; c_mul(x2r, x2i, x2r, x2i, &t2cu_r, &t2cu_i);
+    c_mul(t2cu_r, t2cu_i, x2r, x2i, &t2cu_r, &t2cu_i);
+    double cubdr = t1cu_r - t2cu_r, cubdi = t1cu_i - t2cu_i;
+    for (int i = 0; i < 16; i++) {
+        double pr = primes[i] - f1r, pi_ = -f1i;
+        double rr, ri; c_mul(cubdr, cubdi, pr, pi_, &rr, &ri);
+        cRe[32 + i] = rr;
+        cIm[32 + i] = ri;
+    }
+
+    /* cf[48:64] = (primes[:16] * t1^2 + t2^3) - t1 */
+    double t1sq_r2, t1sq_i2; c_mul(x1r, x1i, x1r, x1i, &t1sq_r2, &t1sq_i2);
+    for (int i = 0; i < 16; i++) {
+        cRe[48 + i] = primes[i] * t1sq_r2 + t2cu_r - x1r;
+        cIm[48 + i] = primes[i] * t1sq_i2 + t2cu_i - x1i;
+    }
+
+    /* cf[64:70] = sin(cf[0:6]*t2) + cos(cf[0:6]*t1) */
+    for (int i = 0; i < 6; i++) {
+        double ar, ai; c_mul(cRe[i], cIm[i], x2r, x2i, &ar, &ai);
+        double snr, sni; c_sin(ar, ai, &snr, &sni);
+        double br, bi; c_mul(cRe[i], cIm[i], x1r, x1i, &br, &bi);
+        double csr, csi; c_cos(br, bi, &csr, &csi);
+        cRe[64 + i] = snr + csr;
+        cIm[64 + i] = sni + csi;
+    }
+
+    /* cf[70] = prod(primes[:9]) = 2*3*5*7*11*13*17*19*23 = 223092870 */
+    cRe[70] = 223092870.0;
+    cIm[70] = 0;
+
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}

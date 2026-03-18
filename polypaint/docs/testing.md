@@ -94,6 +94,27 @@ Before running `deploy.sh update`:
 2. **Run full test suite:** `cd polypaint && uv run python -m pytest tests/ -v`
 3. **Cross-compile:** `cd lambda && aarch64-linux-musl-gcc -O3 -static -o sweep sweep_cli.c -lm`
 4. **JS syntax check:** `deploy.sh` does this automatically
+5. **Verify API Gateway routes:** Every storage endpoint used by the frontend must have a matching `ensure_route` in deploy.sh (see below)
+
+## Post-Deploy Checklist
+
+After deploying, verify:
+
+1. **API Gateway routes match handler endpoints.** The storage Lambda handles multiple routes internally (via `path.endswith("/...")`), but each route must be explicitly registered in the API Gateway. If deploy.sh adds a new handler endpoint but forgets the `ensure_route`, the frontend gets "Failed to fetch" with no useful error. Known routes that must exist:
+   - `POST /list` — job listing
+   - `POST /delete` — job deletion
+   - `POST /detail` — file count + viewport for selected job
+   - `POST /save-metadata` — calc.json upload
+   - `POST /clean-render` — render artifact cleanup
+   - `POST /check-keys` — legacy S3 key polling
+   - `POST /check-status` — DynamoDB task polling
+   - `POST /presign` — presigned URL generation
+
+   To check: `aws apigatewayv2 get-routes --api-id <API_ID> --region us-east-1`
+
+2. **Lambda env vars.** Lambdas that write to DynamoDB need `JOBS_TABLE`. Dispatch Lambda needs function name env vars for all targets (`RASTER_FUNCTION`, `FINALIZE_FUNCTION`, `ENCODE_FUNCTION`, `SWEEP_FUNCTION`).
+
+3. **Test a compute + preview + render** end-to-end on a fast function (e.g., giga_30, N=100) to verify the full pipeline works.
 
 ## When to Run What
 

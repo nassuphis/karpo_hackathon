@@ -80,14 +80,18 @@ def handle_list(event):
             entry["n1"] = calc.get("n1", 0)
             entry["n2"] = calc.get("n2", 0)
             entry["n_stripes"] = calc.get("n_stripes", 0)
+            entry["times"] = calc.get("times", 1)
             # Pipeline info
             pipeline = calc.get("pipeline", {})
             entry["param_transforms"] = pipeline.get("param_transforms", [])
             entry["coeff_transforms"] = pipeline.get("coeff_transforms", [])
-            # Compute total bin size from stripe metadata if available
+            # Compute total bin size and root count from stripe metadata
             stripes = calc.get("stripes", [])
             entry["total_size"] = sum(s.get("bin_size", 0) for s in stripes)
             entry["total_size"] += calc.get("total_coeffs_size", 0)
+            # total_roots: stored directly, or derive from stripe bin sizes (8 bytes per root)
+            entry["total_roots"] = calc.get("total_roots",
+                sum(s.get("bin_size", 0) for s in stripes) // 8)
         except Exception:
             entry["function"] = "?"
             entry["total_size"] = 0
@@ -204,6 +208,7 @@ def handle_check_status(event):
     error_details = []
     stuck_tasks = []  # tasks in non-terminal status, with their actual status
     status_counts = {}  # track all statuses: started, tiles_read, tiles_merged, done, error
+    results = []  # result_data from completed tasks (for sweep metadata)
     kwargs = {
         "TableName": JOBS_TABLE,
         "KeyConditionExpression": "job_id = :jid AND begins_with(task_id, :pfx)",
@@ -211,7 +216,7 @@ def handle_check_status(event):
             ":jid": {"S": job_id},
             ":pfx": {"S": task_prefix},
         },
-        "ProjectionExpression": "task_id, task_status, error_msg",
+        "ProjectionExpression": "task_id, task_status, error_msg, result_data",
     }
     while True:
         resp = ddb.query(**kwargs)
@@ -220,6 +225,12 @@ def handle_check_status(event):
             status_counts[status] = status_counts.get(status, 0) + 1
             if status == "done":
                 done += 1
+                rd = item.get("result_data", {}).get("S")
+                if rd:
+                    try:
+                        results.append(json.loads(rd))
+                    except Exception:
+                        pass
             elif status == "error":
                 error_details.append({
                     "task_id": item["task_id"]["S"],
@@ -235,7 +246,7 @@ def handle_check_status(event):
         kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
 
     total = done + len(error_details)
-    return ok_response({
+    resp_body = {
         "done": done,
         "errors": len(error_details),
         "error_details": error_details[:20],
@@ -244,7 +255,10 @@ def handle_check_status(event):
         "total": total,
         "expected": expected,
         "complete": total >= expected,
-    })
+    }
+    if results:
+        resp_body["results"] = results
+    return ok_response(resp_body)
 
 
 def handle_clean_render(event):

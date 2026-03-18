@@ -114,6 +114,7 @@ def handler(event, context):
         "image_url": image_url,
         "preview_size": preview_size,
         "n_roots": vp["n_roots"],
+        "n_roots_total": len(bin_data) // 8,
         "degree": degree,
         "q_re": vp["q_re"],
         "q_im": vp["q_im"],

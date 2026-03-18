@@ -23,6 +23,7 @@ FUNCTIONS = {
     "raster": os.environ.get("RASTER_FUNCTION", "polypaint-raster"),
     "finalize": os.environ.get("FINALIZE_FUNCTION", "polypaint-finalize"),
     "encode": os.environ.get("ENCODE_FUNCTION", "polypaint-encode"),
+    "sweep": os.environ.get("SWEEP_FUNCTION", "polypaint-sweep"),
 }
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_WORKERS = int(os.environ.get("DISPATCH_THREADS", "50"))

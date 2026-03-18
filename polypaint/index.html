@@ -332,7 +332,7 @@ button {
 
         <!-- Results tab -->
         <div id="tab-results" class="tab-content">
-            <div style="display:flex; gap:12px; height:420px">
+            <div style="display:flex; gap:12px; height:520px">
                 <!-- Left: scrollable table -->
                 <div style="flex:1; min-width:0; display:flex; flex-direction:column">
                     <div style="margin-bottom:6px; display:flex; align-items:center; gap:8px">
@@ -362,14 +362,21 @@ button {
                         <div><span style="color:#555">cfun:</span> <span id="res-cfun">-</span></div>
                         <div><span style="color:#555">cform:</span> <span id="res-cform">-</span></div>
                         <div><span style="color:#555">degree:</span> <span id="res-degree">-</span></div>
+                        <div><span style="color:#555">stripes:</span> <span id="res-stripes">-</span></div>
+                        <div><span style="color:#555">times:</span> <span id="res-times">-</span></div>
+                        <div><span style="color:#555">roots:</span> <span id="res-nroots">-</span></div>
                     </div>
-                    <div style="font-size:11px; margin-bottom:4px">
-                        <label>Quantile <span id="res-q-val">0</span>%</label>
-                        <input type="range" id="res-quantile" min="0" max="10" step="0.5" value="0"
-                               style="width:100%" oninput="document.getElementById('res-q-val').textContent=this.value">
-                        <label>Shim <span id="res-s-val">5</span>%</label>
-                        <input type="range" id="res-shim" min="0" max="50" step="1" value="5"
-                               style="width:100%" oninput="document.getElementById('res-s-val').textContent=this.value">
+                    <div style="font-size:10px; margin-bottom:4px; display:flex; gap:6px">
+                        <div style="flex:1">
+                            <label>Q <span id="res-q-val">0</span>%</label>
+                            <input type="range" id="res-quantile" min="0" max="10" step="0.5" value="0"
+                                   style="width:100%" oninput="document.getElementById('res-q-val').textContent=this.value">
+                        </div>
+                        <div style="flex:1">
+                            <label>SHM <span id="res-s-val">5</span>%</label>
+                            <input type="range" id="res-shim" min="0" max="50" step="1" value="5"
+                                   style="width:100%" oninput="document.getElementById('res-s-val').textContent=this.value">
+                        </div>
                     </div>
                     <div style="display:flex; gap:6px; margin-bottom:8px">
                         <button class="btn-primary" id="btn-preview" onclick="previewResult()" disabled
@@ -384,6 +391,8 @@ button {
                         <span style="color:#444; font-size:11px">No preview</span>
                     </div>
                     <div style="font-size:10px; color:#888; line-height:1.5; margin-top:4px">
+                        <div><span style="color:#555">prev total:</span> <span id="res-prev-total">-</span></div>
+                        <div><span style="color:#555">prev good:</span> <span id="res-prev-good">-</span></div>
                         <div><span style="color:#555">LL:</span> <span id="res-ll">-</span></div>
                         <div><span style="color:#555">UR:</span> <span id="res-ur">-</span></div>
                     </div>
@@ -592,25 +601,36 @@ function selectResult(jobId) {
         document.getElementById('res-cfun').textContent = r.function || '?';
         document.getElementById('res-cform').textContent = ct.length ? ct.join(', ') : 'none';
         document.getElementById('res-degree').textContent = r.degree || '-';
+        document.getElementById('res-stripes').textContent = r.n_stripes || '-';
+        document.getElementById('res-times').textContent = r.times || '-';
+        document.getElementById('res-nroots').textContent = r.total_roots
+            ? r.total_roots.toLocaleString() : '-';
+        document.getElementById('res-prev-total').textContent = '-';
+        document.getElementById('res-prev-good').textContent = '-';
 
         // Show cached viewport/file_count or defaults
         document.getElementById('res-ll').textContent = r.q_re && r.q_im
             ? `${r.q_re[0].toFixed(4)}, ${r.q_im[0].toFixed(4)}` : '-';
         document.getElementById('res-ur').textContent = r.q_re && r.q_im
             ? `${r.q_re[1].toFixed(4)}, ${r.q_im[1].toFixed(4)}` : '-';
-        infoEl.textContent = `${r.function || '?'} deg${r.degree || '?'} N=${r.n1||'?'} ${r.n_stripes||'?'}str ${r.file_count||'?'} files`;
-
-        // Fetch detail (file_count + viewport) on demand
-        lambdaPost('storage', { job_id: jobId }, '/detail').then(detail => {
-            if (_selectedJobId !== jobId) return; // stale
-            r.file_count = detail.file_count;
-            if (detail.q_re) { r.q_re = detail.q_re; r.q_im = detail.q_im; }
-            infoEl.textContent = `${r.function || '?'} deg${r.degree || '?'} N=${r.n1||'?'} ${r.n_stripes||'?'}str ${r.file_count||'?'} files`;
-            document.getElementById('res-ll').textContent = r.q_re && r.q_im
-                ? `${r.q_re[0].toFixed(4)}, ${r.q_im[0].toFixed(4)}` : '-';
-            document.getElementById('res-ur').textContent = r.q_re && r.q_im
-                ? `${r.q_re[1].toFixed(4)}, ${r.q_im[1].toFixed(4)}` : '-';
-        }).catch(() => {});
+        if (r.file_count != null) {
+            infoEl.textContent = `${r.file_count} files`;
+        } else {
+            // Fetch detail (file_count + viewport) on demand — only if not cached
+            infoEl.textContent = 'loading...';
+            lambdaPost('storage', { job_id: jobId }, '/detail').then(detail => {
+                if (_selectedJobId !== jobId) return; // stale
+                r.file_count = detail.file_count;
+                if (detail.q_re) { r.q_re = detail.q_re; r.q_im = detail.q_im; }
+                infoEl.textContent = `${r.file_count} files`;
+                document.getElementById('res-ll').textContent = r.q_re && r.q_im
+                    ? `${r.q_re[0].toFixed(4)}, ${r.q_im[0].toFixed(4)}` : '-';
+                document.getElementById('res-ur').textContent = r.q_re && r.q_im
+                    ? `${r.q_re[1].toFixed(4)}, ${r.q_im[1].toFixed(4)}` : '-';
+            }).catch(e => {
+                if (_selectedJobId === jobId) infoEl.textContent = `detail error: ${e.message}`;
+            });
+        }
     }
 }
 
@@ -661,7 +681,9 @@ async function previewResult() {
         // Show preview
         document.getElementById('results-preview').innerHTML =
             `<img src="${result.image_url}" style="max-width:100%; max-height:100%; image-rendering:pixelated">`;
-        infoEl.textContent = `${result.n_roots.toLocaleString()} roots | preview ${(totalMs/1000).toFixed(1)}s`;
+        document.getElementById('res-prev-total').textContent = (result.n_roots_total || 0).toLocaleString();
+        document.getElementById('res-prev-good').textContent = result.n_roots.toLocaleString();
+        infoEl.textContent = `preview ${(totalMs/1000).toFixed(1)}s`;
 
         // Update viewport bounds
         if (result.q_re && result.q_im) {
@@ -1659,10 +1681,9 @@ async function runCalculate() {
         const loresMs = performance.now() - tLores;
         log(`  lores solve: ${fmtMs(loresMs)}`, 'ok');
 
-        // Phase 3: fan-out hires solve stripes (each reads its own coeffs file)
-        document.getElementById('compute-status').textContent = `Solving 0/${nStripes} stripes...`;
+        // Phase 3: fan-out hires solve via async dispatch + DynamoDB polling
+        document.getElementById('compute-status').textContent = `Dispatching ${nStripes} solve Lambdas...`;
         const tCompute = performance.now();
-        let computeDone = 0;
 
         const sweepJobs = [];
         for (let s = 0; s < nStripes; s++) {
@@ -1676,15 +1697,61 @@ async function runCalculate() {
                 i1_start: i1Start, i1_end: i1End,
             });
         }
-        const stripeResults = await asyncPool(50, sweepJobs, p =>
-            lambdaPost('sweep', p).then(r => {
-                computeDone++;
-                document.getElementById('compute-status').textContent =
-                    `Solving ${computeDone}/${nStripes} stripes...`;
-                return r;
-            })
-        );
+
+        // Dispatch all sweep jobs via dispatch Lambda (fire-and-forget)
+        const SWEEP_BATCH = 500;
+        for (let i = 0; i < sweepJobs.length; i += SWEEP_BATCH) {
+            const batch = sweepJobs.slice(i, i + SWEEP_BATCH);
+            const dispResult = await lambdaPost('dispatch', { target: 'sweep', jobs: batch, expected_keys: [] });
+            if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length)) {
+                throw new Error(`Sweep dispatch failed: fired ${dispResult.fired || 0}/${batch.length}`);
+            }
+        }
+        log(`  sweep dispatched: ${nStripes} Lambdas (${fmtMs(performance.now() - tCompute)})`, 'ok');
+
+        // Poll DynamoDB for sweep completion
+        let sweepLastDone = 0;
+        let sweepLastProgress = performance.now();
+        let sweepPollCount = 0;
+        let sweepLastStallLog = 0;
+        let stripeResults = [];
+        while (true) {
+            await new Promise(r => setTimeout(r, 3000));
+            sweepPollCount++;
+            const check = await lambdaPost('storage', {
+                job_id: jobId, task_prefix: 'sweep_', expected: nStripes,
+            }, '/check-status');
+            if (check.errors > 0) {
+                const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                throw new Error(`${check.errors} sweep tasks failed:\n${msgs}`);
+            }
+            if (check.done !== sweepLastDone) {
+                const delta = check.done - sweepLastDone;
+                log(`  solve poll #${sweepPollCount}: ${check.done}/${nStripes} done (+${delta}, ${fmtMs(performance.now() - tCompute)})`);
+                sweepLastDone = check.done;
+                sweepLastProgress = performance.now();
+                sweepLastStallLog = 0;
+                document.getElementById('compute-status').textContent = `Solving ${check.done}/${nStripes} stripes...`;
+            }
+            if (check.complete) {
+                stripeResults = (check.results || []).sort((a, b) => a.stripe_idx - b.stripe_idx);
+                break;
+            }
+            const stallTime = performance.now() - sweepLastProgress;
+            if (stallTime > 30000 && stallTime - sweepLastStallLog > 30000) {
+                sweepLastStallLog = stallTime;
+                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
+                log(`  \u26a0 solve stall ${fmtMs(stallTime)}: ${sweepLastDone}/${nStripes}, statuses=${sc}${stuckInfo ? ', stuck: ' + stuckInfo : ''}`, 'warn');
+            }
+            if (stallTime > 600000) {
+                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
+                throw new Error(`Solve stalled: ${sweepLastDone}/${nStripes} after ${fmtMs(stallTime)}, statuses=${sc}, stuck: ${stuckInfo || 'none'}`);
+            }
+        }
         const computeWallMs = performance.now() - tCompute;
+        log(`  solve: ${fmtMs(computeWallMs)} wall (${nStripes} stripes)`, 'ok');
 
         // Phase 4: save calc.json metadata via storage Lambda
         const calcMeta = {
@@ -1697,6 +1764,7 @@ async function runCalculate() {
             function: funcName,
             n1: n, n2: n,
             n_stripes: nStripes,
+            times,
             degree,
             n_coeffs: nCoeffs,
             coeffs_keys: coeffgenResults.map(r => r.coeffs_key),
@@ -1714,6 +1782,7 @@ async function runCalculate() {
                 n_t: r.n_t,
                 avg_iterations: r.avg_iterations,
             })),
+            total_roots: stripeResults.reduce((s, r) => s + (r.bin_size || 0), 0) / 8,
         };
         await lambdaPost('storage', { job_id: jobId, metadata: calcMeta }, '/save-metadata');
         _lastCalcMeta = calcMeta;

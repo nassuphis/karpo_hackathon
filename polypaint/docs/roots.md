@@ -120,3 +120,11 @@ Per step (repeated for n_t steps):
 - `stride`: floats per step (degree * 2)
 - `avg_iterations`: mean Ehrlich-Aberth iterations across all steps
 - `n_t`: total steps processed (matches coefficients file size, not grid dimensions)
+
+## Lambda Invocation
+
+The sweep Lambda (`polypaint-sweep`) is dispatched asynchronously via the dispatch Lambda (fire-and-forget, `InvocationType=Event`), the same pattern used for raster/finalize/encode. The frontend sends sweep jobs to `/dispatch-render` with `target: 'sweep'`, then polls `/check-status` with `task_prefix: 'sweep_'` every 3 seconds.
+
+The sweep Lambda reports its progress to DynamoDB via `report_status()` with task_id `sweep_{stripe_idx}`. On completion, it stores sweep metadata (`bin_size`, `compute_us`, `n_t`, `avg_iterations`) as `result_data` in the DynamoDB item. The frontend collects this metadata from the `results` array in the check-status response.
+
+See [dynamodb.md](dynamodb.md) for the full status tracking protocol.

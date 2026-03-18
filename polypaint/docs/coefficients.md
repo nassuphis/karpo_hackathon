@@ -379,6 +379,9 @@ With times=30 and sdith in the PT chain, the coeffgen produces 30× as many coef
 
 ## Related Documentation
 
-- [roots.md](roots.md) — how roots are computed from coefficients (Ehrlich-Aberth solver, binary format)
+- [roots.md](roots.md) — how roots are computed from coefficients (Ehrlich-Aberth solver, binary format, async dispatch)
 - [lambdas.md](lambdas.md) — all Lambda handlers including coeffgen and sweep
+- [dynamodb.md](dynamodb.md) — DynamoDB status tracking (coeffgen, sweep, raster, finalize, encode)
 - [testing.md](testing.md) — test suite and pre-deploy checklist
+
+**Note:** After coeffgen completes, the solve phase (sweep Lambda) is dispatched asynchronously via the dispatch Lambda, not invoked synchronously. The frontend polls DynamoDB for sweep completion. See [roots.md](roots.md) for details.

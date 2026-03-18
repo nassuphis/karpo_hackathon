@@ -69,18 +69,29 @@ static void poly_N_c(double x1r, double x1i, double x2r, double x2i,
 
 ## Known Limitations
 
-### 1. np.array([...]) in slice assignments (CRITICAL)
+### 1. Computed arrays in slice assignments (CRITICAL)
 
-**Does not work:**
+Two patterns silently emit **zeros** for all elements:
+
+**Pattern A: `np.array([...])` with computed elements**
 ```python
 cf[0:5] = np.array([1, t1, t1**2, t1**3, t1**4])
 ```
 
-The transpiler emits **zeros** for all elements. It cannot evaluate `np.array([...])` with mixed constants and complex expressions at transpile time. This affects any function that uses `np.array([...])` to populate coefficient slices.
+**Pattern B: List comprehensions**
+```python
+cf[0:35] = [np.real(f(t1, n)) - np.imag(f(t2, n)) for n in range(1, 36)]
+```
 
-**Affected functions:** poly_29 (hand-written replacement exists), and likely others among the 100.
+The transpiler cannot evaluate these at transpile time because they contain expressions involving the function parameters (`t1`, `t2`). Both patterns produce all-zero coefficient slices, and the functions compile and run without error — the failure is completely silent.
 
-**Workaround:** Hand-write the function in C (see `poly_29_hand` in sweep_cli.c) or rewrite the Python to use a loop:
+**Affected functions (hand-written replacements exist in `poly_hand.h`):**
+- poly_29 — `np.array([...])` slice assignments
+- poly_33 — list comprehension slice assignments
+- poly_55 — list comprehension slice assignments
+- poly_58 — list comprehension slice assignments (also in stubbed list)
+
+**Workaround:** Hand-write the function in C (see `poly_hand.h`) or rewrite the Python to use element-by-element assignment:
 ```python
 # Instead of:
 cf[0:5] = np.array([1, t1, t1**2, t1**3, t1**4])
@@ -88,13 +99,13 @@ cf[0:5] = np.array([1, t1, t1**2, t1**3, t1**4])
 cf[0] = 1; cf[1] = t1; cf[2] = t1**2; cf[3] = t1**3; cf[4] = t1**4
 ```
 
-### 2. Stubbed functions (10 functions)
+### 2. Stubbed functions (9 functions)
 
 These were too complex for auto-transpilation and produce all-zero coefficients:
 
-poly_21, poly_35, poly_37, poly_40, poly_46, poly_58, poly_72, poly_74, poly_94, poly_100
+poly_21, poly_35, poly_37, poly_40, poly_46, poly_72, poly_74, poly_94, poly_100
 
-They may use unsupported numpy functions (spherical harmonics, special functions), complex control flow, or runtime-dependent operations.
+They may use unsupported numpy functions (spherical harmonics, special functions), complex control flow, or runtime-dependent operations. (poly_58 was in this list but now has a hand-written replacement.)
 
 ### 3. Slice assignments with complex RHS patterns
 
@@ -102,6 +113,7 @@ Only simple patterns are supported for `cf[a:b] = expr`:
 - `cf[a:b] = scalar * np.arange(start, end)` — works
 - `cf[a:b] = expr1 * expr2` where one is arange — works
 - `cf[a:b] = np.array([...])` with computed elements — **does not work** (emits zeros)
+- `cf[a:b] = [expr for x in range(...)]` — **does not work** (emits zeros)
 
 ### 4. Real-only accuracy tests miss complex input bugs
 
@@ -132,11 +144,17 @@ The `test_poly_accuracy.py` framework can be extended for this — just use `uni
 
 ## Hand-Written Overrides
 
-When a transpiled function is broken, write it by hand in sweep_cli.c and add a lookup override before the `#include "poly_generated_lookups.h"` line:
+Hand-written C implementations live in `poly_hand.h` (included by sweep_cli.c). Each uses the same signature as transpiled functions. Add a lookup override before the `#include "poly_generated_lookups.h"` line in `lookupCoeffFuncC()`:
 
 ```c
 if (strcmp(name, "poly_29") == 0)  return poly_29_hand;
+if (strcmp(name, "poly_33") == 0)  return poly_33_hand;
+if (strcmp(name, "poly_55") == 0)  return poly_55_hand;
+if (strcmp(name, "poly_58") == 0)  return poly_58_hand;
 ```
 
-This takes precedence over the generated lookup. Current hand-written overrides:
-- `poly_29_hand` — replaces broken transpiled poly_29
+These take precedence over the generated lookup. Current hand-written overrides:
+- `poly_29_hand` — np.array slice assignments (verified 99.97% pixel match at N=500)
+- `poly_33_hand` — list comprehension slice assignments (verified 77.7% pixel match at N=100; lower match due to degree 70 ill-conditioning with float32 coefficients)
+- `poly_55_hand` — list comprehension slice assignments
+- `poly_58_hand` — list comprehension slice assignments + 70! overflow (root_coeff = inf → NaN guard zeros)

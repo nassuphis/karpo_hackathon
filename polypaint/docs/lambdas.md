@@ -55,7 +55,11 @@ Evaluates a coefficient function and solves inline. Spawns multiple `sweep` subp
 - `n_coeffs` — coefficient count (solve mode)
 - `function` — polynomial function name (grid mode)
 
+**Status reporting:** Reports progress to DynamoDB via `report_status()` with task_id `sweep_{stripe_idx}`. Status progression: `started` -> `done` (or `error`). On success, `result_data` includes sweep metadata (`bin_size`, `compute_us`, `n_t`, `avg_iterations`).
+
 **Output:** `s3_key`, `bin_size`, `n_t`, `degree`, `avg_iterations`, `n_procs`
+
+**Invocation:** Dispatched asynchronously via the dispatch Lambda (fire-and-forget). The frontend polls `/check-status` with `task_prefix: 'sweep_'` every 3 seconds to track completion, collecting sweep metadata from the `results` array in the response.
 
 See [roots.md](roots.md) for details on the solver.
 
@@ -239,10 +243,10 @@ S3 and DynamoDB management. Routes:
 **Route:** POST /dispatch-render
 **Memory:** 1769 MB
 
-Asynchronous fan-out: invokes raster/finalize/encode Lambdas in parallel using a 50-thread pool. Fire-and-forget (InvocationType=Event).
+Asynchronous fan-out: invokes target Lambdas in parallel using a 50-thread pool. Fire-and-forget (InvocationType=Event).
 
 **Input:**
-- `target` — "raster", "finalize", or "encode"
+- `target` — "sweep", "raster", "finalize", or "encode"
 - `jobs` — array of job specs to invoke
 
 **Output:** `fired`, `total`, `errors`

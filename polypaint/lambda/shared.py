@@ -25,8 +25,9 @@ def _get_ddb():
     return _ddb
 
 
-def report_status(job_id, task_id, status, error_msg=None):
-    """Write task completion status to DynamoDB. TTL = 24h auto-cleanup."""
+def report_status(job_id, task_id, status, error_msg=None, result_data=None):
+    """Write task completion status to DynamoDB. TTL = 24h auto-cleanup.
+    Optional result_data dict is stored as JSON string for later retrieval."""
     item = {
         "job_id": {"S": job_id},
         "task_id": {"S": task_id},
@@ -35,6 +36,8 @@ def report_status(job_id, task_id, status, error_msg=None):
     }
     if error_msg:
         item["error_msg"] = {"S": str(error_msg)[:1000]}
+    if result_data:
+        item["result_data"] = {"S": json.dumps(result_data)}
     _get_ddb().put_item(TableName=JOBS_TABLE, Item=item)
 
 

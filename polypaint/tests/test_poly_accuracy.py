@@ -41,6 +41,24 @@ def poly_17(t1, t2):
     return cf.astype(np.complex128)
 
 
+def poly_29(t1, t2):
+    """Copied from poly100.py."""
+    cf = np.zeros(71, dtype=complex)
+    cf[0:5] = np.array([1, t1, t1**2, t1**3, t1**4])
+    cf[5:10] = np.array([1, t2, t2**2, t2**3, t2**4])
+    cf[10:15] = np.array([1, np.exp(1j * t1), np.exp(2j * t1), np.exp(3j * t1), np.exp(4j * t1)])
+    cf[15:20] = np.array([1, np.exp(1j * t2), np.exp(2j * t2), np.exp(3j * t2), np.exp(4j * t2)])
+    cf[20:30] = np.array([1, np.real(t1 + t2), np.imag(t1 + t2), np.real(t1 * t2), np.imag(t1 * t2),
+                           np.real(t1 + t2)**2, np.imag(t1 + t2)**2, np.real(t1 * t2)**2, np.imag(t1 * t2)**2,
+                           np.abs(t1 + t2)])
+    cf[30:40] = np.arange(1, 11) * np.abs(t1) * np.abs(t2)
+    cf[40:50] = np.array([1, np.log(np.abs(t1) + 1), np.log(np.abs(t2) + 1), np.log(np.abs(t1 + t2) + 1),
+                           np.log(np.abs(t1 * t2) + 1), np.angle(t1), np.angle(t2), np.abs(t1), np.abs(t2),
+                           np.angle(t1 + t2)])
+    cf[50] = np.abs(t1 + t2) * np.angle(t1 * t2)
+    return cf.astype(np.complex128)
+
+
 SWEEP = os.path.join(_LAMBDA_DIR, "sweep_test")
 
 def run_c_coeffgen(func_name, t1r, t1i, t2r, t2i):
@@ -165,8 +183,13 @@ def test_poly_17():
     return compare_poly("poly_17", poly_17, TEST_POINTS)
 
 
+def test_poly_29():
+    return compare_poly("poly_29", poly_29, TEST_POINTS)
+
+
 if __name__ == "__main__":
     ok = True
     ok = test_poly_16() and ok
     ok = test_poly_17() and ok
+    ok = test_poly_29() and ok
     sys.exit(0 if ok else 1)

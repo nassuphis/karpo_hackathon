@@ -2051,6 +2051,16 @@ static void ct_negate_odd(double *cRe, double *cIm, int *nCoeffs) {
     for (int k = 1; k < *nCoeffs; k += 2) { cRe[k] = -cRe[k]; cIm[k] = -cIm[k]; }
 }
 
+static void ct_max2one(double *cRe, double *cIm, int *nCoeffs) {
+    int best = 0;
+    double bestMag = cRe[0]*cRe[0] + cIm[0]*cIm[0];
+    for (int k = 1; k < *nCoeffs; k++) {
+        double m = cRe[k]*cRe[k] + cIm[k]*cIm[k];
+        if (m > bestMag) { bestMag = m; best = k; }
+    }
+    cRe[best] = 1.0; cIm[best] = 0.0;
+}
+
 static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "none") == 0)        return ct_none;
     if (strcmp(name, "rev") == 0)         return ct_rev;
@@ -2060,6 +2070,7 @@ static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "scale100") == 0)    return ct_scale100;
     if (strcmp(name, "safe") == 0)        return ct_safe;
     if (strcmp(name, "negate_odd") == 0)  return ct_negate_odd;
+    if (strcmp(name, "max2one") == 0)    return ct_max2one;
     return NULL;
 }
 
@@ -2475,6 +2486,8 @@ static int runSolveFromCoeffs(const char *buf, const char *outPath) {
             iters = solveEA(coeffRe + start, coeffIm + start, effN,
                             rootRe, rootIm, effDeg);
         }
+        /* Zero out unused root slots when leading zeros reduced the effective degree */
+        for (int i = effDeg; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
         totalIters += iters;
 
         if (doMatch && totalSteps > 1 && effDeg > 1) {
@@ -2629,6 +2642,8 @@ static int runGrid(const char *buf, const char *outPath) {
                 iters = solveEA(coeffRe + start, coeffIm + start, effN,
                                 rootRe, rootIm, effDeg);
             }
+            /* Zero out unused root slots when leading zeros reduced the effective degree */
+            for (int z = effDeg; z < degree; z++) { rootRe[z] = 0; rootIm[z] = 0; }
             totalIters += iters;
 
             /* Match roots */
@@ -2827,6 +2842,8 @@ int main(int argc, char **argv) {
             iters = solveEA(coeffRe + start, coeffIm + start, effN,
                             rootRe, rootIm, effDeg);
         }
+        /* Zero out unused root slots when leading zeros reduced the effective degree */
+        for (int z = effDeg; z < degree; z++) { rootRe[z] = 0; rootIm[z] = 0; }
         totalIters += iters;
 
         /* Match roots to previous step */

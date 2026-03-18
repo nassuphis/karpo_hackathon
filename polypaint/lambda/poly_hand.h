@@ -823,3 +823,625 @@ static void poly_42_hand(double x1r, double x1i, double x2r, double x2i,
         if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
     }
 }
+
+/* ---- poly_2_hand ----
+ * cf[0]=t1+t2; for k=2..36: v=sin(k*cf[k-2])+cos(k*t1)+Re(k*t2)*Im(k*cf[k-2]); cf[k-1]=v/|v|
+ * cf[17], cf[31], cf[35] overwritten
+ */
+static void poly_2_hand(double x1r, double x1i, double x2r, double x2i,
+                        double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 36;
+    for (int i = 0; i < 36; i++) { cRe[i] = 0; cIm[i] = 0; }
+    cRe[0] = x1r + x2r; cIm[0] = x1i + x2i;
+    for (int k = 2; k <= 36; k++) {
+        double prevR = cRe[k-2], prevI = cIm[k-2];
+        /* sin(k*cf[k-2]) */
+        double sr, si; c_sin(k*prevR, k*prevI, &sr, &si);
+        /* cos(k*t1) */
+        double cr, ci; c_cos(k*x1r, k*x1i, &cr, &ci);
+        /* Re(k*t2)*Im(k*cf[k-2]) */
+        double reKt2 = k * x2r;
+        double imKprev = k * prevI;
+        double vr = sr + cr + reKt2 * imKprev;
+        double vi = si + ci;
+        double mag = c_abs(vr, vi);
+        if (mag > 1e-30) { cRe[k-1] = vr/mag; cIm[k-1] = vi/mag; }
+    }
+    /* cf[17] = t1^2 + Re(t1)*t2 - Im(t2^2) */
+    double t1sq_r, t1sq_i; c_mul(x1r,x1i,x1r,x1i,&t1sq_r,&t1sq_i);
+    double rt1t2_r = x1r*x2r, rt1t2_i = x1r*x2i;
+    double t2sq_r, t2sq_i; c_mul(x2r,x2i,x2r,x2i,&t2sq_r,&t2sq_i);
+    cRe[17] = t1sq_r + rt1t2_r - t2sq_i; cIm[17] = t1sq_i + rt1t2_i;
+    /* cf[31] = 2*(t1+t2) - Re(t1*t2) + sin(Re(t1))*cos(Im(t2)) */
+    double mr, mi; c_mul(x1r,x1i,x2r,x2i,&mr,&mi);
+    cRe[31] = 2*(x1r+x2r) - mr + sin(x1r)*cos(x2i);
+    cIm[31] = 2*(x1i+x2i);
+    /* cf[35] = cf[17]*cf[31] + sin(Re(t1*t2)) - cos(Im(t1*t2)) */
+    double p35r, p35i; c_mul(cRe[17],cIm[17],cRe[31],cIm[31],&p35r,&p35i);
+    cRe[35] = p35r + sin(mr) - cos(mi); cIm[35] = p35i;
+    for (int i = 0; i < 36; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_9_hand ----
+ * 51 coefficients. Loop sets cf, then post-loop reads/slice assignments.
+ */
+static void poly_9_hand(double x1r, double x1i, double x2r, double x2i,
+                        double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 51;
+    for (int i = 0; i < 51; i++) { cRe[i] = 0; cIm[i] = 0; }
+    cRe[0] = x1r + x2r; cIm[0] = x1i + x2i;
+    double absT1 = c_abs(x1r,x1i), angT2 = c_arg(x2r,x2i);
+    for (int k = 2; k <= 51; k++) {
+        double denom = sqrt((double)(k*k) + 1.0);
+        cRe[k-1] = (absT1*sin(k) + angT2*cos(k)) / denom;
+        cIm[k-1] = 0;
+    }
+    /* cf[9] = cf[0]^2 - cf[1]^2 + log(|cf[2]|+1) */
+    double c0sq_r,c0sq_i; c_mul(cRe[0],cIm[0],cRe[0],cIm[0],&c0sq_r,&c0sq_i);
+    double c1sq_r,c1sq_i; c_mul(cRe[1],cIm[1],cRe[1],cIm[1],&c1sq_r,&c1sq_i);
+    cRe[9] = c0sq_r - c1sq_r + log(c_abs(cRe[2],cIm[2])+1);
+    cIm[9] = c0sq_i - c1sq_i;
+    /* cf[19] = sum(cf[0:19]) * t1 */
+    double sumR=0,sumI=0;
+    for(int j=0;j<19;j++){sumR+=cRe[j];sumI+=cIm[j];}
+    c_mul(sumR,sumI,x1r,x1i,&cRe[19],&cIm[19]);
+    /* cf[29] = prod(cf[0:29]) * t2 */
+    double pR=cRe[0],pI=cIm[0];
+    for(int j=1;j<29;j++){double r,i;c_mul(pR,pI,cRe[j],cIm[j],&r,&i);pR=r;pI=i;}
+    c_mul(pR,pI,x2r,x2i,&cRe[29],&cIm[29]);
+    /* cf[39] = cf[38]*cf[37] / (1+t1*t2) */
+    double n39r,n39i; c_mul(cRe[38],cIm[38],cRe[37],cIm[37],&n39r,&n39i);
+    double t12r,t12i; c_mul(x1r,x1i,x2r,x2i,&t12r,&t12i);
+    double d39r=1+t12r,d39i=t12i;
+    c_div(n39r,n39i,d39r,d39i,&cRe[39],&cIm[39]);
+    /* cf[40:50] = Re(cf[30:40]) + i*Im(cf[0:10]) */
+    for(int j=0;j<10;j++){cRe[40+j]=cRe[30+j];cIm[40+j]=cIm[j];}
+    /* cf[50] = sum(cf[0:50]) */
+    sumR=0;sumI=0;
+    for(int j=0;j<50;j++){sumR+=cRe[j];sumI+=cIm[j];}
+    cRe[50]=sumR;cIm[50]=sumI;
+    for (int i = 0; i < 51; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_44_hand ---- */
+static void poly_44_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    double sr,si,cr,ci;
+    c_sin(x1r,x1i,&sr,&si); c_cos(x2r,x2i,&cr,&ci);
+    c_mul(sr,si,cr,ci,&cRe[0],&cIm[0]);
+    c_cos(x1r,x1i,&cr,&ci); c_sin(x2r,x2i,&sr,&si);
+    cRe[1]=cr+sr; cIm[1]=ci+si;
+    double a1=c_abs(x1r,x1i),a2=c_abs(x2r,x2i);
+    cRe[2]=a1*a1*a1-a2*a2*a2*a2; cIm[2]=0;
+    cRe[3]=c_arg(x1r,x1i)-c_arg(x2r,x2i); cIm[3]=0;
+    double m0r,m0i; c_mul(x1r,x1i,x2r,x2i,&m0r,&m0i);
+    cRe[4]=c_abs(m0r,m0i); cIm[4]=0;
+    for(int k=6;k<=35;k++){
+        c_sin(k*x1r,k*x1i,&sr,&si); c_cos(k*x2r,k*x2i,&cr,&ci);
+        cRe[k-1]=sr+cr; cIm[k-1]=si+ci;
+        int k2=70-k;
+        c_sin(k2*x1r,k2*x1i,&sr,&si); c_cos(k2*x2r,k2*x2i,&cr,&ci);
+        cRe[k+34]=sr-cr; cIm[k+34]=si-ci;
+    }
+    cRe[35]=c_abs(x1r+x2r,x1i+x2i); cIm[35]=0;
+    cRe[70]=log(c_abs(m0r,m0i)+1); cIm[70]=0;
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_50_hand ----
+ * Loop with conditional cf[k-2], cf[k-3], cf[k-4] dependencies
+ */
+static void poly_50_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    double sr,si,cr,ci;
+    c_sin(x1r+x2r,x1i+x2i,&sr,&si); c_cos(x1r-x2r,x1i-x2i,&cr,&ci);
+    double cvr=sr+cr, cvi=si+ci;
+    double absT1=c_abs(x1r,x1i);
+    for(int k=1;k<=71;k++){
+        if(k%2==0){
+            cRe[k-1]=cvr/(double)k - absT1; cIm[k-1]=cvi/(double)k;
+        } else {
+            cRe[k-1]=cvr*(double)k + log((double)k+1) + x2i - x1r;
+            cIm[k-1]=cvi*(double)k;
+        }
+        if(k%3==0 && k>=3){cRe[k-1]+=3*cRe[k-2];cIm[k-1]+=3*cIm[k-2];}
+        if(k%5==0 && k>=4){cRe[k-1]+=5*cRe[k-3];cIm[k-1]+=5*cIm[k-3];}
+        if(k%7==0 && k>=5){cRe[k-1]+=7*cRe[k-4];cIm[k-1]+=7*cIm[k-4];}
+    }
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_54_hand ----
+ * Loop sets cf, then cf[0:30] *= (|t1|*|t2|)^arange(1,31)
+ */
+static void poly_54_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    for(int i=1;i<=71;i++){
+        /* z = t1*cos(i*t2/15) + t2*sin(i*t1/15) */
+        double cr,ci,sr,si;
+        c_cos(i*x2r/15.0,i*x2i/15.0,&cr,&ci);
+        c_sin(i*x1r/15.0,i*x1i/15.0,&sr,&si);
+        double ar,ai,br,bi;
+        c_mul(x1r,x1i,cr,ci,&ar,&ai);
+        c_mul(x2r,x2i,sr,si,&br,&bi);
+        double zr=ar+br, zi=ai+bi;
+        double phi=c_arg(zr,zi), r=c_abs(zr,zi);
+        /* r*exp(i*phi)^i = r*exp(i*i*phi) */
+        double er,ei; c_exp2(0, i*phi, &er, &ei);
+        double sign = (i%2==0) ? 1.0 : -1.0;
+        cRe[i-1] = r*er + sign*(double)(i*i);
+        cIm[i-1] = r*ei;
+    }
+    /* cf[0:30] *= (|t1|*|t2|)^arange(1,31) */
+    double ab=c_abs(x1r,x1i)*c_abs(x2r,x2i);
+    double pw=1.0;
+    for(int k=0;k<30;k++){
+        pw*=ab;
+        cRe[k]*=pw; cIm[k]*=pw;
+    }
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_61_hand ----
+ * cf[0:35] = Re(t1)*arange(1,36)^3 + Im(t2)*sin(arange(1,36))
+ * cf[35:70] = Im(t1)*arange(70,35,-1)^2 + Re(t2)*cos(arange(70,35,-1))
+ * cf[70] = |t1|*angle(t2) - |t2|*angle(t1)
+ */
+static void poly_61_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    for(int k=1;k<=35;k++){
+        cRe[k-1] = x1r*(double)(k*k*k) + x2i*sin((double)k);
+        cIm[k-1] = 0;
+    }
+    for(int k=70;k>=36;k--){
+        cRe[k-1] = x1i*(double)(k*k) + x2r*cos((double)k);
+        cIm[k-1] = 0;
+    }
+    cRe[70] = c_abs(x1r,x1i)*c_arg(x2r,x2i) - c_abs(x2r,x2i)*c_arg(x1r,x1i);
+    cIm[70] = 0;
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_62_hand ----
+ * Sequential: cf[i-1] = i*cf[i-2]^2, then post-loop modifications
+ */
+static void poly_62_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    /* cf[0] = t1^5 + t2^5 */
+    double pr=1,pi=0,qr=1,qi=0;
+    for(int j=0;j<5;j++){double r,i;c_mul(pr,pi,x1r,x1i,&r,&i);pr=r;pi=i;}
+    double p2r=1,p2i=0;
+    for(int j=0;j<5;j++){double r,i;c_mul(p2r,p2i,x2r,x2i,&r,&i);p2r=r;p2i=i;}
+    cRe[0]=pr+p2r; cIm[0]=pi+p2i;
+    for(int i=2;i<=71;i++){
+        double sq_r,sq_i;
+        c_mul(cRe[i-2],cIm[i-2],cRe[i-2],cIm[i-2],&sq_r,&sq_i);
+        if(i%2==0){
+            cRe[i-1]=(double)i*sq_r; cIm[i-1]=(double)i*sq_i;
+        } else {
+            double fr=(double)i*sq_r, fi=(double)i*sq_i;
+            /* *(1+0.1*t2) */
+            double mr,mi; c_mul(fr,fi,1+0.1*x2r,-0.1*x2i,&mr,&mi);
+            /* wait: 1+0.1*t2 = (1+0.1*x2r) + i*(0.1*x2i) */
+            c_mul(fr,fi,1+0.1*x2r,0.1*x2i,&cRe[i-1],&cIm[i-1]);
+        }
+    }
+    /* cf[0] += 2*cf[1] */
+    cRe[0]+=2*cRe[1]; cIm[0]+=2*cIm[1];
+    /* cf[1] -= 3*cf[2] */
+    cRe[1]-=3*cRe[2]; cIm[1]-=3*cIm[2];
+    /* for i=3..69: cf[i] += cf[i+1] - cf[i+2] */
+    for(int i=3;i<70;i++){cRe[i]+=cRe[i+1]-cRe[i+2]; cIm[i]+=cIm[i+1]-cIm[i+2];}
+    /* cf[69] += cf[70] */
+    cRe[69]+=cRe[70]; cIm[69]+=cIm[70];
+    /* cf[70] = |t1|^2 - |t2|^2 + 2*Im(t1)*Im(t2) - angle(t2) */
+    double a1=c_abs(x1r,x1i),a2=c_abs(x2r,x2i);
+    cRe[70]=a1*a1-a2*a2+2*x1i*x2i-c_arg(x2r,x2i); cIm[70]=0;
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_65_hand ---- */
+static void poly_65_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    double sumR=x1r+x2r, sumI=x1i+x2i;
+    for(int k=1;k<=71;k++){
+        /* (t1+t2)^(2k-1) */
+        int exp=2*k-1; double pR=1,pI=0;
+        for(int j=0;j<exp;j++){double r,i;c_mul(pR,pI,sumR,sumI,&r,&i);pR=r;pI=i;}
+        /* sin(k*t1)*cos(k*t2) */
+        double sr,si,cr,ci;
+        c_sin(k*x1r,k*x1i,&sr,&si);c_cos(k*x2r,k*x2i,&cr,&ci);
+        double scr,sci; c_mul(sr,si,cr,ci,&scr,&sci);
+        /* log(|k^t2|+1)*Re(t1^t2) — k^t2 = exp(t2*log(k)) */
+        double lk=log((double)k);
+        double eR,eI; c_exp2(x2r*lk-x2i*0, x2i*lk+x2r*0, &eR, &eI);
+        /* wait: k^t2 = exp(t2*log(k)). t2*log(k) = (x2r*lk, x2i*lk) */
+        c_exp2(x2r*lk, x2i*lk, &eR, &eI);
+        double logAbsKt2 = log(c_abs(eR,eI)+1);
+        /* t1^t2 = exp(t2*log(t1)) */
+        double lt1r,lt1i; c_log(x1r,x1i,&lt1r,&lt1i);
+        double elt1r,elt1i; c_mul(x2r,x2i,lt1r,lt1i,&elt1r,&elt1i);
+        double t1t2r,t1t2i; c_exp2(elt1r,elt1i,&t1t2r,&t1t2i);
+        double reT1t2 = t1t2r;
+        /* |Im(t1^(2k+1) + t2^(2k))| */
+        int e1=2*k+1,e2=2*k;
+        double p1r=1,p1i=0; for(int j=0;j<e1;j++){double r,i;c_mul(p1r,p1i,x1r,x1i,&r,&i);p1r=r;p1i=i;}
+        double p2r=1,p2i=0; for(int j=0;j<e2;j++){double r,i;c_mul(p2r,p2i,x2r,x2i,&r,&i);p2r=r;p2i=i;}
+        double absImPow = fabs(p1i+p2i);
+        double vr = pR + scr + logAbsKt2*reT1t2 + absImPow;
+        double vi = pI + sci;
+        /* conj * (-1)^k */
+        double sign = (k%2==0) ? 1.0 : -1.0;
+        cRe[k-1] = sign*vr; cIm[k-1] = sign*(-vi);
+        if(k%2==0){
+            /* /= (k + t1) */
+            double dr=k+x1r, di=x1i;
+            double qr,qi; c_div(cRe[k-1],cIm[k-1],dr,di,&qr,&qi);
+            cRe[k-1]=qr; cIm[k-1]=qi;
+        }
+    }
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_70_hand ----
+ * cf[i-1] = Re(t1)*Re(t2)*i^2/exp(|t1|*i) + Im(t1)*Im(t2)*i^3/exp(|t2|*i)
+ * cf[1::2] *= -1; cf[k where k^2<=71] += i*|t1|*|t2|
+ */
+static void poly_70_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    double absT1=c_abs(x1r,x1i), absT2=c_abs(x2r,x2i);
+    for(int i=1;i<=71;i++){
+        /* exp(|t1|*1j) = cos(|t1|) + i*sin(|t1|) */
+        double e1r=cos(absT1), e1i=sin(absT1);
+        double e2r=cos(absT2), e2i=sin(absT2);
+        /* Re(t1)*Re(t2)*i^2 / exp(|t1|*1j) */
+        double numR = x1r*x2r*(double)(i*i);
+        double ar,ai; c_div(numR,0,e1r,e1i,&ar,&ai);
+        /* Im(t1)*Im(t2)*i^3 / exp(|t2|*1j) */
+        double numR2 = x1i*x2i*(double)(i*i*i);
+        double br,bi; c_div(numR2,0,e2r,e2i,&br,&bi);
+        cRe[i-1]=ar+br; cIm[i-1]=ai+bi;
+    }
+    /* cf[1::2] *= -1 (odd indices) */
+    for(int i=1;i<71;i+=2){cRe[i]=-cRe[i];cIm[i]=-cIm[i];}
+    /* cf[k where k^2<=71] += i*|t1|*|t2| — k=1..8 (8^2=64<=71, 9^2=81>71) */
+    /* p=arange(1,72); cf[p**2<=71] — this means indices where (index+1)^2<=71? No: p=arange(1,72) is [1..71], p**2 is [1,4,9,...]; cf[p**2<=71] selects cf at indices where p^2<=71, i.e. p=1..8, so cf[1],cf[4],cf[9],...cf[64] — but p is used as boolean mask on cf */
+    /* Actually: p=np.arange(1,72) gives [1,2,...,71]. p**2 = [1,4,...,5041]. p**2<=71 is True for p=1..8. cf[p**2<=71] selects cf[0:8] (first 8 elements, where mask is True) */
+    double ab12=absT1*absT2;
+    for(int j=0;j<8;j++){cIm[j]+=ab12;} /* += 1j * |t1|*|t2| */
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_73_hand ----
+ * Large-scale coefficients with powers of 10. Multiple loops, each covering different ranges.
+ */
+static void poly_73_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    double sR=x1r+x2r, sI=x1i+x2i, dR=x1r-x2r, dI=x1i-x2i;
+    double ct1r,ct1i,st2r,st2i;
+    c_cos(x1r,x1i,&ct1r,&ct1i); c_sin(x2r,x2i,&st2r,&st2i);
+    cRe[0]=1e30*sR; cIm[0]=1e30*sI;
+    cRe[1]=1e28*dR; cIm[1]=1e28*dI;
+    cRe[2]=1e26*sR; cIm[2]=1e26*sI;
+    for(int k=4;k<=21;k++){
+        double s=pow(10.0,30-k);
+        cRe[k-1]=s*(ct1r+st2r); cIm[k-1]=s*(ct1i+st2i);
+    }
+    for(int k=22;k<=31;k++){
+        double s=pow(10.0,k-21);
+        cRe[k-1]=s*(ct1r-st2r); cIm[k-1]=s*(ct1i-st2i);
+    }
+    double csR,csI,ssR,ssI;
+    c_cos(sR,sI,&csR,&csI); c_sin(dR,dI,&ssR,&ssI);
+    for(int k=32;k<=41;k++){
+        double s=pow(10.0,42-k);
+        double mr,mi; c_mul(sR,sI,csR+ssR,csI+ssI,&mr,&mi);
+        cRe[k-1]=s*mr; cIm[k-1]=s*mi;
+    }
+    cRe[41]=1e21*dR; cIm[41]=1e21*dI;
+    double absS=c_abs(sR,sI), angD=c_arg(dR,dI);
+    for(int k=43;k<=53;k++){double s=pow(10.0,53-k);cRe[k-1]=s*(absS+angD);cIm[k-1]=0;}
+    double absD=c_abs(dR,dI), angS=c_arg(sR,sI);
+    for(int k=54;k<=64;k++){double s=pow(10.0,64-k);cRe[k-1]=s*(absD+angS);cIm[k-1]=0;}
+    double s1r,s1i,c2r,c2i;
+    c_sin(x1r,x1i,&s1r,&s1i); c_cos(x2r,x2i,&c2r,&c2i);
+    for(int k=65;k<=71;k++){double s=pow(10.0,71-k);cRe[k-1]=s*(s1r+c2r);cIm[k-1]=s*(s1i+c2i);}
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_78_hand ----
+ * 7 slice assignments with fractional powers and alternating signs
+ */
+static void poly_78_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    double a1=c_abs(x1r,x1i), a2=c_abs(x2r,x2i);
+    double logA2=log(1+a2), angT2=c_arg(x2r,x2i);
+    double aSR=x1r+x2r, aSI=x1i+x2i;
+    double angProd=c_arg(x1r*x2r-x1i*x2i, x1r*x2i+x1i*x2r);
+    double angDifR=x1r-x2r, angDifI=x1i-x2i;
+    double angDif=c_arg(angDifR,angDifI);
+    double logAbsSum=log(1+c_abs(aSR,aSI));
+    /* cf[0:10] = |t1|^(k/5)*log(1+|t2|) */
+    for(int k=1;k<=10;k++){cRe[k-1]=pow(a1,(double)k/5.0)*logA2;cIm[k-1]=0;}
+    /* cf[10:20] = Re(t1)^k * angle(t2) * (-1)^k */
+    for(int k=1;k<=10;k++){
+        double sign=(k%2==0)?1.0:-1.0;
+        cRe[9+k]=pow(x1r,(double)k)*angT2*sign; cIm[9+k]=0;
+    }
+    /* cf[20:30] = Im(t1)^(k/3) * |t2|^(k/4) * (-1)^k */
+    for(int k=1;k<=10;k++){
+        double sign=(k%2==0)?1.0:-1.0;
+        cRe[19+k]=pow(x1i,(double)k/3.0)*pow(a2,(double)k/4.0)*sign; cIm[19+k]=0;
+    }
+    /* cf[30:40] = |t1*t2|^(k/2) * k */
+    double absProd=c_abs(x1r*x2r-x1i*x2i,x1r*x2i+x1i*x2r);
+    for(int k=1;k<=10;k++){cRe[29+k]=pow(absProd,(double)k/2.0)*(double)k;cIm[29+k]=0;}
+    /* cf[40:50] = Re((t1+t2)^(k/2))*cos(angle(t1*t2))*(-1)^k */
+    for(int k=1;k<=10;k++){
+        double sign=(k%2==0)?1.0:-1.0;
+        /* (t1+t2)^(k/2) = exp(k/2*log(t1+t2)) */
+        double lr,li; c_log(aSR,aSI,&lr,&li);
+        double er,ei; c_exp2(lr*(double)k/2.0, li*(double)k/2.0, &er, &ei);
+        cRe[39+k]=er*cos(angProd)*sign; cIm[39+k]=0;
+    }
+    /* cf[50:60] = Im((t1+t2)^(k/3))*sin(angle(t1-t2))*(-1)^k */
+    for(int k=1;k<=10;k++){
+        double sign=(k%2==0)?1.0:-1.0;
+        double lr,li; c_log(aSR,aSI,&lr,&li);
+        double er,ei; c_exp2(lr*(double)k/3.0, li*(double)k/3.0, &er, &ei);
+        cRe[49+k]=ei*sin(angDif)*sign; cIm[49+k]=0;
+    }
+    /* cf[60:70] = Re(t1^k)*|t2^k|*log(1+|t1+t2|) */
+    double t1pR=1,t1pI=0,t2pR=1,t2pI=0;
+    for(int k=1;k<=10;k++){
+        double nr,ni;
+        c_mul(t1pR,t1pI,x1r,x1i,&nr,&ni);t1pR=nr;t1pI=ni;
+        c_mul(t2pR,t2pI,x2r,x2i,&nr,&ni);t2pR=nr;t2pI=ni;
+        cRe[59+k]=t1pR*c_abs(t2pR,t2pI)*logAbsSum; cIm[59+k]=0;
+    }
+    cRe[70]=c_abs(angDifR,angDifI)*log(1+a1); cIm[70]=0;
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_81_hand ----
+ * Loop + fancy indexing (np.arange slices with step)
+ */
+static void poly_81_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    double a1=c_abs(x1r,x1i), a2=c_abs(x2r,x2i);
+    for(int k=1;k<=71;k++){
+        double sr,si,cr,ci;
+        c_sin(k*x1r,k*x1i,&sr,&si); c_cos(k*x2r,k*x2i,&cr,&ci);
+        double mr,mi; c_mul(sr,si,cr,ci,&mr,&mi);
+        cRe[k-1]=(k+20)*mr + pow(a1,(double)k) + pow(a2,(double)k);
+        cIm[k-1]=(k+20)*mi;
+    }
+    /* cf[arange(2,71,5)] += |t1|*|t2| → indices 2,7,12,...,67 */
+    double ab=a1*a2;
+    for(int j=2;j<71;j+=5){cRe[j]+=ab;}
+    /* cf[arange(3,70,7)] += (-1)^arange(1,11) * angle(t1+t2) — 10 elements */
+    double angSum=c_arg(x1r+x2r,x1i+x2i);
+    int idx3[]={3,10,17,24,31,38,45,52,59,66};
+    for(int j=0;j<10;j++){double sign=(j%2==0)?-1.0:1.0;cRe[idx3[j]]+=sign*angSum;}
+    /* cf[arange(6,67,9)] += (-1)^arange(1,8)*log(|t1+t2|+1) — 7 elements */
+    double logS=log(c_abs(x1r+x2r,x1i+x2i)+1);
+    int idx6[]={6,15,24,33,42,51,60};
+    for(int j=0;j<7;j++){double sign=(j%2==0)?-1.0:1.0;cRe[idx6[j]]+=sign*logS;}
+    /* cf[arange(5,71,7)] *= Re(t1+t2) — indices 5,12,19,...,68 */
+    double reSum=x1r+x2r;
+    for(int j=5;j<71;j+=7){cRe[j]*=reSum;cIm[j]*=reSum;}
+    /* cf[arange(7,64,11)] *= Im(t1+t2) — indices 7,18,29,40,51,62 */
+    double imSum=x1i+x2i;
+    for(int j=7;j<64;j+=11){cRe[j]*=imSum;cIm[j]*=imSum;}
+    /* cf[arange(1,72,7)] *= conj(t1+t2) — indices 1,8,15,...,71→capped to 70 */
+    double cjR=x1r+x2r, cjI=-(x1i+x2i);
+    for(int j=1;j<71;j+=7){double r,i;c_mul(cRe[j],cIm[j],cjR,cjI,&r,&i);cRe[j]=r;cIm[j]=i;}
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_82_hand ----
+ * Forward dependency: cf[i-1] = i + cf[i-2]*sin + cf[i-3]*cos + cf[i-4]*log
+ * Then reverse loop, then cf[70]=sum
+ */
+static void poly_82_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    double mr,mi; c_mul(x1r,x1i,x2r,x2i,&mr,&mi);
+    cRe[0]=1+mr; cIm[0]=mi;
+    cRe[1]=2+c_abs(x1r,x1i)*c_abs(x2r,x2i); cIm[1]=0;
+    cRe[2]=3+c_abs(x1r+x2r,x1i+x2i); cIm[2]=0;
+    for(int i=4;i<=36;i++){
+        double s2r,s2i; c_sin(i*x2r,i*x2i,&s2r,&s2i);
+        double c1r,c1i; c_cos(i*x1r,i*x1i,&c1r,&c1i);
+        double lv=log(c_abs(i*mr+1, i*mi));
+        double ar,ai; c_mul(cRe[i-2],cIm[i-2],s2r,s2i,&ar,&ai);
+        double br,bi; c_mul(cRe[i-3],cIm[i-3],c1r,c1i,&br,&bi);
+        cRe[i-1]=(double)i+ar+br+cRe[i-4]*lv; cIm[i-1]=ai+bi+cIm[i-4]*lv;
+    }
+    for(int i=37;i<=70;i++){
+        int ri=70-i;
+        int i2=70-((i<69)?i:69), i3=69-((i<68)?i:68), i4=68-((i<67)?i:67);
+        double s1r,s1i; c_sin(ri*x1r,ri*x1i,&s1r,&s1i);
+        double c2r,c2i; c_cos(ri*x2r,ri*x2i,&c2r,&c2i);
+        double lv=log(c_abs(ri*mr+1, ri*mi));
+        double ar,ai; c_mul(cRe[i2],cIm[i2],s1r,s1i,&ar,&ai);
+        double br,bi; c_mul(cRe[i3],cIm[i3],c2r,c2i,&br,&bi);
+        cRe[i-1]=(double)(70-i)+ar+br+cRe[i4]*lv; cIm[i-1]=ai+bi+cIm[i4]*lv;
+    }
+    double sumR=0,sumI=0;
+    for(int j=0;j<70;j++){sumR+=cRe[j];sumI+=cIm[j];}
+    cRe[70]=sumR+c_arg(x1r-x2r,x1i-x2i);
+    cIm[70]=sumI+c_arg(x1r+x2r,x1i+x2i);
+    /* angle returns real, so imag part correction */
+    cIm[70]=sumI; cRe[70]=sumR+c_arg(x1r-x2r,x1i-x2i);
+    /* np.real(np.angle(...)) + np.imag(np.angle(...)) — angle is real, so imag=0 */
+    cRe[70]=sumR+c_arg(x1r-x2r,x1i-x2i); cIm[70]=sumI;
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_95_hand ----
+ * Loop + slice modifications reading loop-set values
+ */
+static void poly_95_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    cRe[0]=x1r*x1r*x1r - x1i*x1i + 2*x1i*x1r - x2r + x2i*x2i; cIm[0]=0;
+    cRe[1]=x1i*x1i*x1i - 5*x1r*x1r + 2*x1r*x1i + 5*x2r - 2*x2i*x2i; cIm[1]=0;
+    for(int k=3;k<=71;k++){
+        double sr,si; c_sin(k*x1r,k*x1i,&sr,&si);
+        double cr,ci; c_cos(k*x2r,k*x2i,&cr,&ci);
+        /* |t1^k+t2^(k-1)| */
+        double p1r=1,p1i=0; for(int j=0;j<k;j++){double r,i;c_mul(p1r,p1i,x1r,x1i,&r,&i);p1r=r;p1i=i;}
+        double p2r=1,p2i=0; for(int j=0;j<k-1;j++){double r,i;c_mul(p2r,p2i,x2r,x2i,&r,&i);p2r=r;p2i=i;}
+        cRe[k-1]=c_abs(sr,si)+c_abs(cr,ci)-c_abs(p1r+p2r,p1i+p2i);
+        cIm[k-1]=0;
+    }
+    /* cf[29:40] = |cf[29:40]| / (|t1-t2|^2+1) */
+    double dR=x1r-x2r,dI=x1i-x2i; double ad=c_abs(dR,dI); double d1=ad*ad+1;
+    for(int j=29;j<40;j++){cRe[j]=c_abs(cRe[j],cIm[j])/d1; cIm[j]=0;}
+    /* cf[49:60] = -|cf[49:60]| / (|t1+t2|^2+1) */
+    double sR2=x1r+x2r,sI2=x1i+x2i; double as2=c_abs(sR2,sI2); double d2=as2*as2+1;
+    for(int j=49;j<60;j++){cRe[j]=-c_abs(cRe[j],cIm[j])/d2; cIm[j]=0;}
+    /* cf[64:71] = cf[0:7] * (|t1|^2+|t2|^2) */
+    double a1=c_abs(x1r,x1i),a2=c_abs(x2r,x2i); double scale=a1*a1+a2*a2;
+    for(int j=0;j<7;j++){cRe[64+j]=cRe[j]*scale; cIm[64+j]=cIm[j]*scale;}
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_96_hand ----
+ * Two sequential loops with cf[k-1]=k*cf[k-2]+... dependency
+ */
+static void poly_96_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    /* cf[0] = t1^5 - t2^4 + t1^2 - t2^2 + |t1| + |t2| */
+    double t1p[8],t1pi[8],t2p[7],t2pi[7];
+    t1p[1]=x1r;t1pi[1]=x1i;
+    for(int j=2;j<=5;j++){c_mul(t1p[j-1],t1pi[j-1],x1r,x1i,&t1p[j],&t1pi[j]);}
+    t2p[1]=x2r;t2pi[1]=x2i;
+    for(int j=2;j<=6;j++){c_mul(t2p[j-1],t2pi[j-1],x2r,x2i,&t2p[j],&t2pi[j]);}
+    double a1=c_abs(x1r,x1i),a2=c_abs(x2r,x2i);
+    cRe[0]=t1p[5]-t2p[4]+t1p[2]-t2p[2]+a1+a2;
+    cIm[0]=t1pi[5]-t2pi[4]+t1pi[2]-t2pi[2];
+    /* cf[50] */
+    cRe[50]=t2p[6]-t1p[4]+t2p[3]-t1p[2]+c_arg(x1r,x1i);
+    cIm[50]=t2pi[6]-t1pi[4]+t2pi[3]-t1pi[2];
+    double sr,si; c_sin(x2r,x2i,&sr,&si);
+    cRe[50]+=sr; cIm[50]+=si;
+    /* cf[70] */
+    double t1_7r=t1p[5],t1_7i=t1pi[5];
+    c_mul(t1_7r,t1_7i,t1p[2],t1pi[2],&t1_7r,&t1_7i);
+    double t2_5r=t2p[5],t2_5i=t2pi[5];
+    double cr,ci; c_cos(x1r,x1i,&cr,&ci);
+    cRe[70]=t1_7r+t2_5r-t1p[3]-t2p[2]+cr-sr;
+    cIm[70]=t1_7i+t2_5i-t1pi[3]-t2pi[2]+ci-si;
+    /* for k=2..50: cf[k-1] = k*cf[k-2] + |cf[0]|/k */
+    double absC0=c_abs(cRe[0],cIm[0]);
+    for(int k=2;k<=50;k++){
+        cRe[k-1]=(double)k*cRe[k-2]+absC0/(double)k;
+        cIm[k-1]=(double)k*cIm[k-2];
+    }
+    /* for r=52..70: cf[r-1] = r*cf[r-2] + |cf[50]|/r */
+    double absC50=c_abs(cRe[50],cIm[50]);
+    for(int r=52;r<=70;r++){
+        cRe[r-1]=(double)r*cRe[r-2]+absC50/(double)r;
+        cIm[r-1]=(double)r*cIm[r-2];
+    }
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_97_hand ----
+ * Three loops: first sets all, second overwrites [0:10], third overwrites [60:71] reading cf[k-2]
+ */
+static void poly_97_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    /* z = t1 + i*t2 = (x1r - x2i) + i*(x1i + x2r) */
+    double zr=x1r-x2i, zi=x1i+x2r;
+    /* Loop 1: cf[k-1] = z * k^(-|t1|*log(|k+1|)) */
+    double absT1=c_abs(x1r,x1i);
+    for(int k=1;k<=71;k++){
+        double ex = -absT1*log((double)(k+1));
+        double kpow = pow((double)k, ex);
+        cRe[k-1]=zr*kpow; cIm[k-1]=zi*kpow;
+    }
+    /* Loop 2: overwrite cf[0:10] */
+    for(int k=1;k<=10;k++){
+        double cr,ci,sr2,si2;
+        c_cos(x1i+k*x2i, 0, &cr, &ci); /* cos(Im(t1+k*t2)) — Im is real */
+        /* actually Im(t1+k*t2) = x1i + k*x2i, this is a real number */
+        double imV = x1i + k*x2i;
+        double reV = x1r - k*x2r; /* wait: Re(t1-k*t2) = x1r - k*x2r */
+        double cosV = cos(imV);
+        double sinV = sin(reV);
+        double absV = fabs((double)(k*k*k)*cosV - sinV);
+        cRe[k-1]=zr*absV; cIm[k-1]=zi*absV;
+    }
+    /* Loop 3: overwrite cf[60:71], reading cf[k-2] */
+    for(int k=61;k<=71;k++){
+        double imV=x1i+k*x2i;
+        double cosV=cos(imV);
+        double denom=fabs((double)(k*k*k)*cosV);
+        if(denom<1e-30) denom=1e-30;
+        double absPrev=c_abs(cRe[k-2],cIm[k-2]);
+        double fac=(double)k*absPrev/denom;
+        cRe[k-1]=zr*fac; cIm[k-1]=zi*fac;
+    }
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}

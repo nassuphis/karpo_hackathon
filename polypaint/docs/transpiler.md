@@ -223,79 +223,128 @@ c_code, header, lookups = transpile_file('poly200.py', stub_funcs={'poly_103'}, 
 - `skip_funcs`: completely omit (e.g., poly_110 already defined in poly100)
 - Output files: `poly_generated_200.c`, `poly_generated_200_funcs.h`, `poly_generated_200_lookups.h`
 
-## Coverage Summary (poly_1–300)
+## Coverage Summary (poly_1–500)
 
-| Source | Total | Transpiled OK | Hand-written | Broken (float32) |
-|--------|-------|---------------|--------------|-------------------|
-| poly100.py | 100 | ~68 | 32 | ~10 |
-| poly200.py | 100 | ~40 | 30 | ~30 |
-| poly300.py | 100 | 0 (all need hand-writing) | 100 | ~12 |
+| Source | Total | Transpiled OK | Hand-written | Stubbed | Broken |
+|--------|-------|---------------|--------------|---------|--------|
+| poly100.py | 100 | ~68 | 32 | 0 | ~10 |
+| poly200.py | 100 | ~40 | 30 | 2 | ~30 |
+| poly300.py | 100 | ~23 (arange lowering) | 100 | 0 | ~12 |
+| poly400.py | 100 | ~47 | 0 | 8 | ~45 |
+| poly500.py | 100 | ~59 | 0 | 7 | ~34 |
 
-**poly200.py**: Transpiler handles most functions. ~30 fail due to float32 dynamic range (>7 orders of magnitude in coefficients), not transpiler bugs.
+**poly200.py**: Transpiler handles most loop-based functions. ~30 fail due to float32 dynamic range (>7 orders of magnitude in coefficients), not transpiler bugs.
 
-**poly300.py**: Transpiler cannot handle this file at all — every function uses vectorized `np.arange` patterns that emit arrays instead of scalars. All 100 required hand-writing.
+**poly300.py**: Entirely vectorized `np.arange` style. Arange loop lowering (implemented) handles poly_201-223. The degree-34 functions (224-300) use `np.linspace`, `np.prod`, conditional branches — all hand-written.
 
-## Transpiler Improvement Opportunities
+**poly400.py/poly500.py**: Loop-based style transpiles well. ~50-60% pass rate. Failures from: `np.linspace` (can't evaluate at transpile time), `np.prod([t1,t2])` (list args), `max()`/`min()` builtins, conditional variable scoping, `np.arctan2`.
 
-### 9. Vectorized arange expressions (NEW — from poly300 experience)
+## Transpiler Improvement Opportunities — Prioritized
 
-The #1 missing capability. poly300 functions use this pattern pervasively:
+### Priority 1: `np.linspace` support (HIGHEST IMPACT)
+
+**122 warnings** across poly400+poly500 from `could not evaluate` — almost all are `np.linspace(np.real(t1), np.real(t2), n)`. These create local arrays `rec` and `imc` used throughout the function.
 
 ```python
-j = np.arange(71)
-cf = (np.real(t1)**j * np.sin(j * np.angle(t2)) + ...) + (...) * 1j
+rec = np.linspace(np.real(t1), np.real(t2), n)  # n=35
+imc = np.linspace(np.imag(t1), np.imag(t2), n)
 ```
 
-The transpiler currently emits `j` as `const double j[71]` (a static array), then tries to pass it to scalar functions like `c_powr(base, j, ...)` — type mismatch.
+**Proposed fix:** Detect this pattern and emit inline computation:
+```c
+double rec[35], imc[35];
+for (int _li = 0; _li < 35; _li++) {
+    rec[_li] = x1r + (x2r - x1r) * _li / 34.0;
+    imc[_li] = x1i + (x2i - x1i) * _li / 34.0;
+}
+```
 
-**Proposed fix — "arange loop lowering":**
+This alone would fix ~60% of poly400/poly500 failures since most broken functions use `rec[j-1]` and `imc[j-1]` in their coefficient loops.
 
-1. Detect `j = np.arange(N)` → mark `j` as a loop-index variable
-2. When `j` appears in a whole-array expression assigned to `cf`, emit:
-   ```c
-   for (int j = 0; j < N; j++) {
-       // transpile the per-element expression with j as scalar
-       cRe[j] = ...;
-       cIm[j] = ...;
-   }
-   ```
-3. Inside the loop, handle sub-patterns:
-   - `t1**j` → iterative complex multiply: `pwr *= t1` each iteration
-   - `np.real(t1)**j` → iterative real multiply: `rpow *= x1r`
-   - `(-1)**j` → `(j % 2 == 0) ? 1.0 : -1.0`
-   - `np.sin(j * real_scalar)` → `sin(j * val)` (real sin)
-   - `np.sin(j * complex)` → `c_sin(j*xr, j*xi, ...)` (complex sin)
-   - `1 / (1 + j**2)` → `1.0 / (1.0 + (double)j*j)`
-   - `A + B * 1j` → split: `cRe[j] = real(A); cIm[j] = imag(A) + real(B)`
+### Priority 2: `np.prod` and `np.sum` with list arguments
 
-4. Detect iterative power patterns and hoist accumulator variables:
-   ```c
-   double t1pr = 1.0, t1pi = 0.0;  // t1^0
-   for (int j = 0; j < N; j++) {
-       // use t1pr, t1pi as t1^j
-       ...
-       c_mul(t1pr, t1pi, x1r, x1i, &t1pr, &t1pi);  // advance to t1^(j+1)
-   }
-   ```
+```python
+np.prod(np.array([np.real(t1), np.imag(t2)]))  # = real(t1) * imag(t2)
+np.sum(np.array([np.abs(t1), np.abs(t2)]))     # = abs(t1) + abs(t2)
+```
 
-This would handle ~80% of poly300 functions automatically. The remaining ~20% use more complex patterns (nested loops, conditional branches, post-loop overrides) that would still need hand-writing.
+These are small constant-length lists of expressions. Emit unrolled multiplication/addition:
+```c
+double _prod = x1r * x2i;  // np.prod([real(t1), imag(t2)])
+double _sum = c_abs(x1r,x1i) + c_abs(x2r,x2i);  // np.sum([abs(t1), abs(t2)])
+```
+
+### Priority 3: Conditional variable scoping (COMPILE ERRORS)
+
+15 functions across poly400+poly500 fail to compile because variables first assigned inside `if/elif` branches aren't declared at function scope:
+
+```python
+if j % 3 == 0:
+    mag = expr1
+elif j % 3 == 1:
+    mag = expr2
+else:
+    mag = expr3
+cf[j-1] = mag * np.exp(1j * angle)  # ERROR: 'mag' undeclared
+```
+
+**Fix:** When processing an `if/elif/else` chain, scan all branches for first assignments to new variables. Pre-declare them before the `if`:
+```c
+double mag = 0;  // pre-declare
+if (j % 3 == 0) { mag = ...; }
+else if (j % 3 == 1) { mag = ...; }
+else { mag = ...; }
+```
+
+### Priority 4: Python builtins `max()`, `min()`, `complex()`
+
+```python
+max(np.abs(t1), np.abs(t2))  → fmax(c_abs(x1r,x1i), c_abs(x2r,x2i))
+min(j, 6)                     → fmin((double)j, 6.0)
+complex(real=a, imag=b)        → (a, b)  as CVar
+```
+
+Simple 1:1 mappings. Currently emit warnings.
+
+### Priority 5: `np.arctan2`
+
+```python
+np.arctan2(np.imag(t1), np.real(t1))  → atan2(x1i, x1r)
+```
+
+Already have `math.atan2` support — just need to add `np.arctan2` as an alias.
+
+### Priority 6: Dynamic slice bounds
+
+```python
+cf[:k] = ...      # Slice(upper=Name('k'))
+np.sum(cf[:j])    # sum of first j elements
+```
+
+Currently emits a warning. Could emit a bounded loop:
+```c
+for (int _si = 0; _si < k && _si < nCoeffs; _si++) { ... }
+```
+
+### Implemented (from poly300 session)
+
+### 9. Vectorized arange expressions — IMPLEMENTED
+
+Arange loop lowering now works for `j = np.arange(N); cf = f(j)`. Verified identical output to hand-written code for poly_201, 202, 210, 220. Handles poly_201-223 automatically.
 
 ### 10. Whole-array operations
 
-Related to #9. Patterns like:
-```python
-cf *= np.exp(1j * np.angle(cf))  # modify all coefficients
-mod_cf = (71 - np.arange(1, 72)) * np.abs(cf)
-```
-
-These require a second pass over the coefficient array after initial computation. The transpiler would need to detect these as post-processing loops.
+Still unimplemented. Patterns like `cf *= np.exp(1j * np.angle(cf))` and `mod_cf = (71 - np.arange(1, 72)) * np.abs(cf)` need post-processing loop detection.
 
 ### 11. Float32 dynamic range guard
 
-Functions with coefficient magnitudes spanning >7 orders produce wrong roots due to float32 storage. The transpiler could optionally emit a normalization pass:
-```c
-double maxm = 0;
-for (int i = 0; i < N; i++) { double m = c_abs(cRe[i], cIm[i]); if (m > maxm) maxm = m; }
-if (maxm > 0) { double inv = 1.0/maxm; for (int i = 0; i < N; i++) { cRe[i]*=inv; cIm[i]*=inv; } }
-```
-This preserves roots (scalar multiplication doesn't change root positions) but reduces dynamic range to fit float32.
+Still unimplemented. Optional normalization pass to keep coefficient magnitudes within float32 range. Would help ~30 poly200 functions and ~10 poly300 functions.
+
+## Estimated Impact of Improvements
+
+If all Priority 1-5 fixes were implemented:
+- **poly400**: ~47 → ~75 pass (linspace + prod + scoping + builtins)
+- **poly500**: ~59 → ~80 pass (same)
+- **Future files**: Expect similar loop-based style, ~75-80% auto-transpile rate
+
+Priority 1 (linspace) alone would recover ~30 functions across poly400+poly500.

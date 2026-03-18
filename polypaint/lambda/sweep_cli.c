@@ -1770,6 +1770,11 @@ static void pt_scale10(double *z1r, double *z1i, double *z2r, double *z2i) {
 static void pt_negate(double *z1r, double *z1i, double *z2r, double *z2i) {
     *z1r = -(*z1r); *z1i = -(*z1i); *z2r = -(*z2r); *z2i = -(*z2i);
 }
+static void pt_zz(double *z1r, double *z1i, double *z2r, double *z2i) {
+    /* (x1.real + i*x2.real, x2.real + i*x1.real) */
+    double a = *z1r, b = *z2r;
+    *z1r = a; *z1i = b; *z2r = b; *z2i = a;
+}
 
 static void pt_exp(double *z1r, double *z1i, double *z2r, double *z2i) {
     double e, r, i;
@@ -1974,6 +1979,7 @@ static ParamTransform lookupParamTransform(const char *name) {
     if (strcmp(name, "shift1") == 0)      return pt_shift1;
     if (strcmp(name, "scale10") == 0)     return pt_scale10;
     if (strcmp(name, "negate") == 0)      return pt_negate;
+    if (strcmp(name, "zz") == 0)          return pt_zz;
     if (strcmp(name, "exp") == 0)         return pt_exp;
     if (strcmp(name, "coeff2") == 0)     return pt_coeff2;
     if (strcmp(name, "coeff3") == 0)     return pt_coeff3;
@@ -2269,10 +2275,19 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_232") == 0) return giga_232_c;
     if (strcmp(name, "p7f") == 0)      return p7f_c;
     if (strcmp(name, "poly_110") == 0) return poly_110_c;
+    if (strcmp(name, "poly_21") == 0)  return poly_21_hand;
     if (strcmp(name, "poly_29") == 0)  return poly_29_hand;
     if (strcmp(name, "poly_33") == 0)  return poly_33_hand;
+    if (strcmp(name, "poly_35") == 0)  return poly_35_hand;
+    if (strcmp(name, "poly_37") == 0)  return poly_37_hand;
+    if (strcmp(name, "poly_40") == 0)  return poly_40_hand;
+    if (strcmp(name, "poly_46") == 0)  return poly_46_hand;
     if (strcmp(name, "poly_55") == 0)  return poly_55_hand;
     if (strcmp(name, "poly_58") == 0)  return poly_58_hand;
+    if (strcmp(name, "poly_72") == 0)  return poly_72_hand;
+    if (strcmp(name, "poly_74") == 0)  return poly_74_hand;
+    if (strcmp(name, "poly_94") == 0)  return poly_94_hand;
+    if (strcmp(name, "poly_100") == 0) return poly_100_hand;
 #include "poly_generated_lookups.h"
     return NULL;
 }

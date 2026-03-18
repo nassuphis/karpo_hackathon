@@ -128,3 +128,14 @@ After deploying, verify:
 | handler_sweep.py | test_pipeline (TestSolveFromCoeffs) |
 | handler_coeffgen.py | test_pipeline (TestCoeffgenHandler) |
 | Before any deploy | All three test files |
+| New poly function (hand-written or transpiled) | Visual comparison: render Python _py.png and C _c.png side by side, check overlap |
+
+## Visual Comparison Procedure
+
+When adding or fixing a poly function, always generate **both** the Python reference and C sweep renders and compare side by side:
+
+1. **Render Python reference:** Run the Python function through `unit_circle → poly_N → rev → np.roots` at N=100, 1000px, extent=2.0. Save as `/tmp/poly_NNN_py.png`.
+2. **Render C sweep:** Run `coeffgen → solve` through the sweep binary. Save as `/tmp/poly_NNN_c.png`.
+3. **Open both side by side:** `open /tmp/poly_NNN_py.png /tmp/poly_NNN_c.png`
+4. **Compute pixel overlap:** >60% = OK (float32 precision loss), <60% = broken transpilation, needs hand-writing.
+5. **If Python produces 0 roots but C produces roots:** phantom — the Python function crashes (OOB, overflow, etc.) and the C bounds-checking/NaN-guard creates a different function. Accept as-is or exclude.

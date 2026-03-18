@@ -1629,3 +1629,125 @@ static void poly_118_hand(double x1r, double x1i, double x2r, double x2i,
         if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
     }
 }
+
+/* ---- poly_120_hand ----
+ * Python:
+ *   theta = angle(t1) * angle(t2)
+ *   mult_factors[i] = (i%2==0) ? 1 : -1   (for i=0..69)
+ *   cf[0:10]  = (k+1)*t1^2 - (10-k)*t2^2   for k=0..9
+ *   cf[10:40] = (k%2)*|t1| + (k%3)*|t2|*exp(k/5*theta*i)  for k=11..40 (1-indexed)
+ *   cf[40:60] = ((k+41) + log(|theta|+1)) * conj(t1) * 5 * mult_factors[k]  for k=0..19
+ *   cf[60:70] = (k+61) - (k+1)*t2 - (-5)   for k=0..9   [sum = -5]
+ *   cf[70]    = 2556 / 15!  ≈ 1.954e-9
+ */
+static void poly_120_hand(double x1r, double x1i, double x2r, double x2i,
+                           double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double theta = c_arg(x1r, x1i) * c_arg(x2r, x2i);
+    double abs_t1 = c_abs(x1r, x1i);
+    double abs_t2 = c_abs(x2r, x2i);
+
+    /* t1^2, t2^2 */
+    double t1sq_r, t1sq_i; c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    double t2sq_r, t2sq_i; c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+
+    /* conj(t1) */
+    double conj_t1r = x1r, conj_t1i = -x1i;
+
+    /* cf[0:10] = (k+1)*t1^2 - (10-k)*t2^2  for k=0..9 */
+    for (int k = 0; k < 10; k++) {
+        double a = (double)(k + 1);
+        double b = (double)(10 - k);
+        cRe[k] = a * t1sq_r - b * t2sq_r;
+        cIm[k] = a * t1sq_i - b * t2sq_i;
+    }
+
+    /* cf[10:40]: for k=11..40 (1-indexed), cf[k-1] = (k%2)*|t1| + (k%3)*|t2|*exp(k/5*theta*i) */
+    for (int k = 11; k <= 40; k++) {
+        double base_r = (double)(k % 2) * abs_t1;
+        double base_i = 0.0;
+        /* (k%3)*|t2|*exp(k/5*theta*i) */
+        double angle = ((double)k / 5.0) * theta;
+        double er, ei; c_exp2(0.0, angle, &er, &ei);
+        double scale = (double)(k % 3) * abs_t2;
+        cRe[k - 1] = base_r + scale * er;
+        cIm[k - 1] = base_i + scale * ei;
+    }
+
+    /* cf[40:60] = ((k+41) + log(|theta|+1)) * conj(t1) * 5 * mult_factors[k]  for k=0..19
+     * mult_factors[k] = (k%2==0) ? 1 : -1 */
+    double log_term = log(fabs(theta) + 1.0);
+    for (int k = 0; k < 20; k++) {
+        double scalar = ((double)(k + 41) + log_term) * 5.0;
+        double sign = (k % 2 == 0) ? 1.0 : -1.0;
+        scalar *= sign;
+        cRe[40 + k] = scalar * conj_t1r;
+        cIm[40 + k] = scalar * conj_t1i;
+    }
+
+    /* cf[60:70] = (k+61) - (k+1)*t2 - (-5)  for k=0..9
+     * The constant sum: sum((arange(1,11)) * mult_factors[10:20])
+     *   mult_factors[10:20] = [1,-1,1,-1,1,-1,1,-1,1,-1]
+     *   1*1 - 2 + 3 - 4 + 5 - 6 + 7 - 8 + 9 - 10 = -5  */
+    for (int k = 0; k < 10; k++) {
+        double real_part = (double)(k + 61) - (double)(k + 1) * x2r - (-5.0);
+        double imag_part = -(double)(k + 1) * x2i;
+        cRe[60 + k] = real_part;
+        cIm[60 + k] = imag_part;
+    }
+
+    /* cf[70] = 2556 / 15! = 2556 / 1307674368000 */
+    cRe[70] = 2556.0 / 1307674368000.0;
+    cIm[70] = 0.0;
+
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_128_hand ----
+ * Python:
+ *   for k=1..71: cf[k-1] = (-1)^k * (t1^k + conj(t2)^(71-k)) * (72-k)
+ */
+static void poly_128_hand(double x1r, double x1i, double x2r, double x2i,
+                           double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    /* conj(t2) */
+    double ct2r = x2r, ct2i = -x2i;
+
+    /* Build t1^k incrementally and conj(t2)^(71-k) via c_powr */
+    double t1pk_r = x1r, t1pk_i = x1i; /* t1^1 */
+    for (int k = 1; k <= 71; k++) {
+        /* t1^k (already computed for current k) */
+        /* conj(t2)^(71-k) */
+        double ct2p_r, ct2p_i;
+        int exp2 = 71 - k;
+        if (exp2 == 0) {
+            ct2p_r = 1.0; ct2p_i = 0.0;
+        } else {
+            c_powr(ct2r, ct2i, (double)exp2, &ct2p_r, &ct2p_i);
+        }
+
+        double sign = (k % 2 == 0) ? 1.0 : -1.0;
+        double scale = sign * (double)(72 - k);
+        double sum_r = t1pk_r + ct2p_r;
+        double sum_i = t1pk_i + ct2p_i;
+        cRe[k - 1] = scale * sum_r;
+        cIm[k - 1] = scale * sum_i;
+
+        /* advance t1^(k+1) = t1^k * t1 */
+        if (k < 71) {
+            double nr, ni;
+            c_mul(t1pk_r, t1pk_i, x1r, x1i, &nr, &ni);
+            t1pk_r = nr; t1pk_i = ni;
+        }
+    }
+
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}

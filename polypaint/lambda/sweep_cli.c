@@ -2312,6 +2312,8 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "poly_102_serendipity") == 0) return poly_102_serendipity;
     if (strcmp(name, "poly_117") == 0) return poly_117_hand;
     if (strcmp(name, "poly_118") == 0) return poly_118_hand;
+    if (strcmp(name, "poly_120") == 0) return poly_120_hand;
+    if (strcmp(name, "poly_128") == 0) return poly_128_hand;
 #include "poly_generated_lookups.h"
 #include "poly_generated_200_lookups.h"
     return NULL;

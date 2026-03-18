@@ -2263,10 +2263,16 @@ WRAP_OLD(poly_110)
 #include "poly_hand_batch5.h"
 #include "poly_hand_batch6.h"
 #include "poly_hand_batch7.h"
+#include "poly_hand_300a.h"
+#include "poly_hand_300b.h"
+#include "poly_hand_300c.h"
+#include "poly_hand_300d.h"
+#include "poly_hand_300e.h"
 
 #include "poly_generated_funcs.h"
 #include "poly_generated_200.c"
 #include "poly_generated_200_funcs.h"
+/* poly_generated_300.c not included — all 100 functions hand-written in poly_hand_300[a-e].h */
 
 static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_1") == 0)   return giga_1_c;
@@ -2357,8 +2363,110 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "poly_123") == 0) return poly_123_hand;
     if (strcmp(name, "poly_161") == 0) return poly_161_hand;
     if (strcmp(name, "poly_103") == 0) return poly_103_hand;
+    /* poly_201-300 hand-written overrides */
+    if (strcmp(name, "poly_201") == 0) return poly_201_hand;
+    if (strcmp(name, "poly_202") == 0) return poly_202_hand;
+    if (strcmp(name, "poly_203") == 0) return poly_203_hand;
+    if (strcmp(name, "poly_204") == 0) return poly_204_hand;
+    if (strcmp(name, "poly_205") == 0) return poly_205_hand;
+    if (strcmp(name, "poly_206") == 0) return poly_206_hand;
+    if (strcmp(name, "poly_207") == 0) return poly_207_hand;
+    if (strcmp(name, "poly_208") == 0) return poly_208_hand;
+    if (strcmp(name, "poly_209") == 0) return poly_209_hand;
+    if (strcmp(name, "poly_210") == 0) return poly_210_hand;
+    if (strcmp(name, "poly_211") == 0) return poly_211_hand;
+    if (strcmp(name, "poly_212") == 0) return poly_212_hand;
+    if (strcmp(name, "poly_213") == 0) return poly_213_hand;
+    if (strcmp(name, "poly_214") == 0) return poly_214_hand;
+    if (strcmp(name, "poly_215") == 0) return poly_215_hand;
+    if (strcmp(name, "poly_216") == 0) return poly_216_hand;
+    if (strcmp(name, "poly_217") == 0) return poly_217_hand;
+    if (strcmp(name, "poly_218") == 0) return poly_218_hand;
+    if (strcmp(name, "poly_219") == 0) return poly_219_hand;
+    if (strcmp(name, "poly_220") == 0) return poly_220_hand;
+    if (strcmp(name, "poly_221") == 0) return poly_221_hand;
+    if (strcmp(name, "poly_222") == 0) return poly_222_hand;
+    if (strcmp(name, "poly_223") == 0) return poly_223_hand;
+    if (strcmp(name, "poly_224") == 0) return poly_224_hand;
+    if (strcmp(name, "poly_225") == 0) return poly_225_hand;
+    if (strcmp(name, "poly_226") == 0) return poly_226_hand;
+    if (strcmp(name, "poly_227") == 0) return poly_227_hand;
+    if (strcmp(name, "poly_228") == 0) return poly_228_hand;
+    if (strcmp(name, "poly_229") == 0) return poly_229_hand;
+    if (strcmp(name, "poly_230") == 0) return poly_230_hand;
+    if (strcmp(name, "poly_231") == 0) return poly_231_hand;
+    if (strcmp(name, "poly_232") == 0) return poly_232_hand;
+    if (strcmp(name, "poly_233") == 0) return poly_233_hand;
+    if (strcmp(name, "poly_234") == 0) return poly_234_hand;
+    if (strcmp(name, "poly_235") == 0) return poly_235_hand;
+    if (strcmp(name, "poly_236") == 0) return poly_236_hand;
+    if (strcmp(name, "poly_237") == 0) return poly_237_hand;
+    if (strcmp(name, "poly_238") == 0) return poly_238_hand;
+    if (strcmp(name, "poly_239") == 0) return poly_239_hand;
+    if (strcmp(name, "poly_240") == 0) return poly_240_hand;
+    if (strcmp(name, "poly_241") == 0) return poly_241_hand;
+    if (strcmp(name, "poly_242") == 0) return poly_242_hand;
+    if (strcmp(name, "poly_243") == 0) return poly_243_hand;
+    if (strcmp(name, "poly_244") == 0) return poly_244_hand;
+    if (strcmp(name, "poly_245") == 0) return poly_245_hand;
+    if (strcmp(name, "poly_246") == 0) return poly_246_hand;
+    if (strcmp(name, "poly_247") == 0) return poly_247_hand;
+    if (strcmp(name, "poly_248") == 0) return poly_248_hand;
+    if (strcmp(name, "poly_249") == 0) return poly_249_hand;
+    if (strcmp(name, "poly_250") == 0) return poly_250_hand;
+    if (strcmp(name, "poly_251") == 0) return poly_251_hand;
+    if (strcmp(name, "poly_252") == 0) return poly_252_hand;
+    if (strcmp(name, "poly_253") == 0) return poly_253_hand;
+    if (strcmp(name, "poly_254") == 0) return poly_254_hand;
+    if (strcmp(name, "poly_255") == 0) return poly_255_hand;
+    if (strcmp(name, "poly_256") == 0) return poly_256_hand;
+    if (strcmp(name, "poly_257") == 0) return poly_257_hand;
+    if (strcmp(name, "poly_258") == 0) return poly_258_hand;
+    if (strcmp(name, "poly_259") == 0) return poly_259_hand;
+    if (strcmp(name, "poly_260") == 0) return poly_260_hand;
+    if (strcmp(name, "poly_261") == 0) return poly_261_hand;
+    if (strcmp(name, "poly_262") == 0) return poly_262_hand;
+    if (strcmp(name, "poly_263") == 0) return poly_263_hand;
+    if (strcmp(name, "poly_264") == 0) return poly_264_hand;
+    if (strcmp(name, "poly_265") == 0) return poly_265_hand;
+    if (strcmp(name, "poly_266") == 0) return poly_266_hand;
+    if (strcmp(name, "poly_267") == 0) return poly_267_hand;
+    if (strcmp(name, "poly_268") == 0) return poly_268_hand;
+    if (strcmp(name, "poly_269") == 0) return poly_269_hand;
+    if (strcmp(name, "poly_270") == 0) return poly_270_hand;
+    if (strcmp(name, "poly_271") == 0) return poly_271_hand;
+    if (strcmp(name, "poly_272") == 0) return poly_272_hand;
+    if (strcmp(name, "poly_273") == 0) return poly_273_hand;
+    if (strcmp(name, "poly_274") == 0) return poly_274_hand;
+    if (strcmp(name, "poly_275") == 0) return poly_275_hand;
+    if (strcmp(name, "poly_276") == 0) return poly_276_hand;
+    if (strcmp(name, "poly_277") == 0) return poly_277_hand;
+    if (strcmp(name, "poly_278") == 0) return poly_278_hand;
+    if (strcmp(name, "poly_279") == 0) return poly_279_hand;
+    if (strcmp(name, "poly_280") == 0) return poly_280_hand;
+    if (strcmp(name, "poly_281") == 0) return poly_281_hand;
+    if (strcmp(name, "poly_282") == 0) return poly_282_hand;
+    if (strcmp(name, "poly_283") == 0) return poly_283_hand;
+    if (strcmp(name, "poly_284") == 0) return poly_284_hand;
+    if (strcmp(name, "poly_285") == 0) return poly_285_hand;
+    if (strcmp(name, "poly_286") == 0) return poly_286_hand;
+    if (strcmp(name, "poly_287") == 0) return poly_287_hand;
+    if (strcmp(name, "poly_288") == 0) return poly_288_hand;
+    if (strcmp(name, "poly_289") == 0) return poly_289_hand;
+    if (strcmp(name, "poly_290") == 0) return poly_290_hand;
+    if (strcmp(name, "poly_291") == 0) return poly_291_hand;
+    if (strcmp(name, "poly_292") == 0) return poly_292_hand;
+    if (strcmp(name, "poly_293") == 0) return poly_293_hand;
+    if (strcmp(name, "poly_294") == 0) return poly_294_hand;
+    if (strcmp(name, "poly_295") == 0) return poly_295_hand;
+    if (strcmp(name, "poly_296") == 0) return poly_296_hand;
+    if (strcmp(name, "poly_297") == 0) return poly_297_hand;
+    if (strcmp(name, "poly_298") == 0) return poly_298_hand;
+    if (strcmp(name, "poly_299") == 0) return poly_299_hand;
+    if (strcmp(name, "poly_300") == 0) return poly_300_hand;
 #include "poly_generated_lookups.h"
 #include "poly_generated_200_lookups.h"
+/* poly_generated_300_lookups.h not needed — hand-written lookups above */
     return NULL;
 }
 

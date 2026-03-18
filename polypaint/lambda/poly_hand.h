@@ -755,3 +755,71 @@ static void poly_45_hand(double x1r, double x1i, double x2r, double x2i,
         if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
     }
 }
+
+/* ---- poly_42_serendipity ----
+ * The broken transpiled version of poly_42. The transpiler replaced the loop
+ * variable k (from np.arange) with 0 in the sin/cos arguments, producing
+ * |t1|*sin(0*angle(t1)) and Re(t2)*cos(0*Im(t2)) — a beautiful accident.
+ * Preserved for posterity because the resulting root image is gorgeous.
+ */
+static void poly_42_serendipity(double x1r, double x1i, double x2r, double x2i,
+                                double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    double absT1 = c_abs(x1r, x1i);
+    double angT1 = c_arg(x1r, x1i);
+    /* The "bug": k=0 for all elements, so sin(0)=0, making cf[0:35] all zero */
+    double sv = sin(0 * angT1);  /* always 0 */
+    for (int k = 0; k < 35; k++) {
+        cRe[k] = absT1 * sv;
+        cIm[k] = 0;
+    }
+    /* cos(0*Im(t2)) = cos(0) = 1, so cf[35:70] = Re(t2) * 1 = Re(t2) */
+    double cv = cos(0 * x2i);  /* always 1 */
+    for (int k = 0; k < 35; k++) {
+        cRe[35 + k] = x2r * cv;
+        cIm[35 + k] = 0;
+    }
+    /* cf[70] = t1*t2 + i*sum(log(|cf[0:70]|+1)) */
+    double mr, mi;
+    c_mul(x1r, x1i, x2r, x2i, &mr, &mi);
+    double logsum = 0;
+    for (int k = 0; k < 70; k++) logsum += log(c_abs(cRe[k], cIm[k]) + 1);
+    cRe[70] = mr - logsum;  /* real part: Re(t1*t2) - logsum (from i*logsum imag) */
+    cIm[70] = mi + logsum;
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* ---- poly_42_hand ----
+ * Correct version:
+ * cf[0:35] = |t1| * sin(arange(1,36) * angle(t1))
+ * cf[35:70] = Re(t2) * cos(arange(1,36) * Im(t2))
+ * cf[70] = t1*t2 + i*sum(log(|cf[0:70]|+1))
+ */
+static void poly_42_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+    double absT1 = c_abs(x1r, x1i);
+    double angT1 = c_arg(x1r, x1i);
+    for (int k = 1; k <= 35; k++) {
+        cRe[k-1] = absT1 * sin(k * angT1);
+        cIm[k-1] = 0;
+    }
+    for (int k = 1; k <= 35; k++) {
+        cRe[34 + k] = x2r * cos(k * x2i);
+        cIm[34 + k] = 0;
+    }
+    /* cf[70] = t1*t2 + i*sum(log(|cf[0:70]|+1)) */
+    double mr, mi;
+    c_mul(x1r, x1i, x2r, x2i, &mr, &mi);
+    double logsum = 0;
+    for (int k = 0; k < 70; k++) logsum += log(c_abs(cRe[k], cIm[k]) + 1);
+    cRe[70] = mr;
+    cIm[70] = mi + logsum;
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}

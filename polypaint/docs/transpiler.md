@@ -99,42 +99,49 @@ cf[0:5] = np.array([1, t1, t1**2, t1**3, t1**4])
 cf[0] = 1; cf[1] = t1; cf[2] = t1**2; cf[3] = t1**3; cf[4] = t1**4
 ```
 
-### 2. Sequential coefficient dependencies in loops (SUBTLE)
+### 2. Broken transpiled functions (visual pixel comparison results)
 
-When a loop body reads `cf[i-2]` to compute `cf[i-1]`, the transpiler *usually* handles this correctly — it generates C code that reads and writes in the same order as Python. **However**, the transpiler can produce wrong results when:
+A batch visual test (50x50 grid, unit_circle → poly → rev → solve → render 500px) compared Python numpy reference images with C sweep images for all at-risk functions. The test renders roots as bilevel pixels and measures pixel set overlap. Functions with <60% overlap are confirmed broken.
 
-**Pattern A: Multiple loops modifying overlapping ranges**
-```python
-# Loop 1 sets cf[0:70]
-for k in range(1, 72):
-    cf[k-1] = some_expr(k, t1, t2)
-# Loop 2 overwrites parts of cf using values set by loop 1
-for i in range(2, 35):
-    cf[i-1] = cf[i-2] * factor + constant       # forward dependency
-    cf[len(cf) - i] = -cf[len(cf) - i + 1] * ...  # reverse dependency
-```
+**Confirmed broken (17 functions, need hand-writing):**
 
-The transpiler may mis-handle computed reverse indices like `cf[len(cf) - i]` or fail to preserve the sequential evaluation order when the same array is both read and written across loop iterations.
+| Function | Py pixels | C pixels | Overlap | Failure mode |
+|----------|-----------|----------|---------|-------------|
+| poly_2 | 25344 | 23208 | 59.5% | Sequential cf[k-2] dependency in loop |
+| poly_9 | 17732 | 10869 | 52.7% | Post-loop reads of loop-set values |
+| poly_42 | 6242 | 6058 | 38.4% | arange loop variable replaced with 0 in slice assignment |
+| poly_44 | 11149 | 1753 | 15.7% | Sequential dependency across overlapping loops |
+| poly_50 | 7841 | 9867 | 21.3% | Loop dependency |
+| poly_54 | 7149 | 1119 | 1.8% | Slice modification after loop |
+| poly_61 | 3625 | 1752 | 0.8% | Nearly total mismatch |
+| poly_62 | 0 | 2705 | 0% | Python produces 0 nonzero coefficients, C produces garbage |
+| poly_65 | 18823 | 13348 | 57.6% | Sequential dependency |
+| poly_70 | 2413 | 3332 | 20.7% | Loop dependency |
+| poly_73 | 6779 | 2306 | 34.0% | Multiple overlapping loops |
+| poly_78 | 20857 | 2537 | 9.3% | Complex power mishandling |
+| poly_81 | 0 | 15068 | 0% | Python produces empty, C hallucinates |
+| poly_82 | 2655 | 1100 | 27.6% | Sequential dependency |
+| poly_95 | 9932 | 4657 | 24.9% | Loop dependency |
+| poly_96 | 204 | 1 | 0.5% | Nearly empty C output |
+| poly_97 | 8660 | 3047 | 35.1% | Loop dependency |
 
-**Pattern B: Post-loop modifications reading loop-set values**
-```python
-for k in range(1, 72):
-    cf[k-1] = expr(k, t1, t2)
-cf[1] += np.sum(cf[0:2])      # reads cf[0], cf[1] set by loop
-cf[4] += np.prod(cf[0:5])     # reads cf[0:5] set by loop
-cf[12] = 3 * (t1**2 - t2**2)  # overwrites loop value
-cf[13] = cf[12] + ...         # reads just-overwritten cf[12]
-```
+**Confirmed OK (24 functions, transpiler handles correctly despite complex patterns):**
 
-The transpiler may evaluate these in a different order than Python, especially when a line reads a value that was just overwritten by the preceding line.
+poly_1 (100%), poly_8 (100%), poly_10 (97.7%), poly_23 (99.9%), poly_24 (70.9%), poly_41 (99.2%), poly_43 (88.0%), poly_47 (71.5%), poly_48 (64.8%), poly_49 (100%), poly_53 (100%), poly_60 (82.2%), poly_64 (63.6%), poly_71 (63.2%), poly_76 (98.6%), poly_77 (97.1%), poly_83 (98.2%), poly_89 (76.2%), poly_90 (88.1%), poly_91 (99.8%), poly_92 (69.8%), poly_93 (62.4%), poly_98 (98.8%), poly_99 (100%)
 
-**Confirmed broken:** poly_45 (3% pixel overlap with Python reference — completely wrong image).
+Functions with 60-80% overlap are correct but lossy due to float32 coefficient storage at high degree (70). The root positions shift with small coefficient perturbations, but the overall structure matches.
 
-**At-risk functions** (transpiled, contain sequential cf dependencies — may or may not be correct, need visual comparison testing):
+**Key failure modes identified:**
 
-poly_1, poly_2, poly_8, poly_9, poly_10, poly_23, poly_24, poly_41, poly_42, poly_43, poly_44, poly_47, poly_48, poly_49, poly_50, poly_53, poly_54, poly_60, poly_61, poly_62, poly_64, poly_65, poly_70, poly_71, poly_73, poly_76, poly_77, poly_78, poly_81, poly_82, poly_83, poly_89, poly_90, poly_91, poly_92, poly_93, poly_95, poly_96, poly_97, poly_98, poly_99
+1. **arange variable zeroed** (poly_42): `cf[0:35] = |t1| * sin(arange(1,36) * angle(t1))` — the transpiler replaces the arange loop variable with 0, producing `sin(0) = 0` for all elements. The beautiful accident was preserved as `poly_42_serendipity`.
 
-Not all of these are broken — many sequential patterns transpile correctly. The only way to confirm is to run a visual comparison test (Python vs C) for each function.
+2. **Overlapping loop modification** (poly_44, poly_45, poly_54): A second loop modifies array elements that depend on values set by the first loop. The transpiler loses the sequential ordering.
+
+3. **Post-loop slice reads** (poly_9, poly_73): Lines after a loop read `cf[k]` values that were set by the loop. The transpiler may mis-order these.
+
+4. **Computed reverse indexing** (poly_45): `cf[len(cf) - i]` uses a computed index the transpiler can't resolve correctly.
+
+5. **Phantom coefficients** (poly_62, poly_81): The transpiler produces nonzero output where Python produces all zeros (exception-caught functions returning zeros).
 
 ### 3. Formerly stubbed functions (all now hand-written)
 
@@ -168,46 +175,36 @@ Constant arrays like `np.cumsum(np.arange(1, N))` are evaluated at code generati
 
 ## Identifying Broken Functions
 
-To check if a transpiled function is correct:
+**Single-point coefficient comparison is unreliable.** Float32 storage causes large relative errors at individual points even when the function is visually correct. poly_1 showed 197% relative error at one test point but produces pixel-identical images.
 
-1. Pick a test point with complex inputs (e.g., `t1 = exp(πi/4)`, `t2 = exp(πi/3)`)
-2. Run the Python function to get reference coefficients
-3. Run the C function via sweep_test coeffgen to get C coefficients
-4. Compare: if nonzero count differs significantly, the transpilation is broken
+**Visual pixel comparison is the reliable test.** Render a 50x50 (or 100x100) grid through the full pipeline (unit_circle → poly → rev → solve → plot) in both Python and C, then compare lit pixel sets:
 
-The `test_poly_accuracy.py` framework can be extended for this — just use `unit_circle` as a param transform instead of raw real inputs.
+- **>60% overlap** → transpiler is correct (differences are float32 precision loss)
+- **<60% overlap** → transpiler is broken, needs hand-writing
+- **0% overlap with one side empty** → phantom coefficients or total failure
+
+The batch visual test script is inline in the conversation history. To test a single function:
+
+1. Create `test_poly_N.py` with the Python function, run it to get `/tmp/polyN_roots.png`
+2. Run C sweep: `coeffgen → solve → render` to get `/tmp/polyN_sweep.png`
+3. Compare pixel sets: `open /tmp/polyN_roots.png /tmp/polyN_sweep.png`
 
 ## Hand-Written Overrides
 
 Hand-written C implementations live in `poly_hand.h` (included by sweep_cli.c). Each uses the same signature as transpiled functions. Add a lookup override before the `#include "poly_generated_lookups.h"` line in `lookupCoeffFuncC()`:
 
-```c
-if (strcmp(name, "poly_21") == 0)  return poly_21_hand;
-if (strcmp(name, "poly_29") == 0)  return poly_29_hand;
-if (strcmp(name, "poly_33") == 0)  return poly_33_hand;
-if (strcmp(name, "poly_35") == 0)  return poly_35_hand;
-if (strcmp(name, "poly_37") == 0)  return poly_37_hand;
-if (strcmp(name, "poly_40") == 0)  return poly_40_hand;
-if (strcmp(name, "poly_45") == 0)  return poly_45_hand;
-if (strcmp(name, "poly_46") == 0)  return poly_46_hand;
-if (strcmp(name, "poly_55") == 0)  return poly_55_hand;
-if (strcmp(name, "poly_58") == 0)  return poly_58_hand;
-if (strcmp(name, "poly_72") == 0)  return poly_72_hand;
-if (strcmp(name, "poly_74") == 0)  return poly_74_hand;
-if (strcmp(name, "poly_94") == 0)  return poly_94_hand;
-if (strcmp(name, "poly_100") == 0) return poly_100_hand;
-```
-
-These take precedence over the generated lookup. Current hand-written overrides (14 functions):
+Current hand-written overrides (15 functions + 1 serendipity):
 
 | Function | Reason | Verification |
 |----------|--------|-------------|
 | poly_21 | Lagrange basis construction (complex indexing) | Visual check |
 | poly_29 | np.array slice assignments | 99.97% pixel match N=500 |
-| poly_33 | List comprehension slice assignments | 77.7% match N=100 (float32 ill-conditioning) |
+| poly_33 | List comprehension slice assignments | 77.7% match N=100 (float32) |
 | poly_35 | Originally stubbed (cos/sin powers) | Visual check |
 | poly_37 | Post-loop modifications + fancy indexing | Visual check |
 | poly_40 | Originally stubbed (angle/power) | Visual check |
+| poly_42 | arange loop variable zeroed in slice assignment | Visual comparison |
+| poly_42_serendipity | Preserved broken version (beautiful accident) | Intentionally wrong |
 | poly_45 | Sequential dependency in overlapping loops | 100% pixel match N=100 |
 | poly_46 | Prime array + complex power construction | Visual check |
 | poly_55 | List comprehension slice assignments | Visual check |
@@ -216,3 +213,7 @@ These take precedence over the generated lookup. Current hand-written overrides 
 | poly_74 | Fractional complex powers | Visual check |
 | poly_94 | Sparse power structure | Visual check |
 | poly_100 | Iterative product with conj(iter) | Visual check |
+
+**Still broken (16 functions awaiting hand-writing):**
+
+poly_2, poly_9, poly_44, poly_50, poly_54, poly_61, poly_62, poly_65, poly_70, poly_73, poly_78, poly_81, poly_82, poly_95, poly_96, poly_97

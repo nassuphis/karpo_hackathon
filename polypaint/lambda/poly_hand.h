@@ -690,3 +690,68 @@ static void poly_100_hand(double x1r, double x1i, double x2r, double x2i,
         if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
     }
 }
+
+/* ---- poly_45_hand ----
+ * Loop 1: for k=1..71:
+ *   if k%2==0: cf[k-1] = k*(t1+Re(t2))*sin(|t1|*k)
+ *   else:      cf[k-1] = k*(t2-Im(t1))*cos(angle(t2)*k)
+ * Loop 2: for i=2..len(cf)//2-1:
+ *   cf[i-1] = cf[i-2]*(|t1|+0.5) + log(|t2|+1)    (sequential dependency!)
+ *   cf[70-i] = -cf[71-i]*(|t2|+0.5) - log(|t1|+1)  (sequential from end)
+ */
+static void poly_45_hand(double x1r, double x1i, double x2r, double x2i,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double absT1 = c_abs(x1r, x1i);
+    double absT2 = c_abs(x2r, x2i);
+    double angT2 = c_arg(x2r, x2i);
+
+    /* Loop 1 */
+    for (int k = 1; k <= 71; k++) {
+        if (k % 2 == 0) {
+            /* k*(t1 + Re(t2))*sin(|t1|*k) */
+            /* t1 + Re(t2) = (x1r + x2r) + i*x1i */
+            double sr = sin(absT1 * k), cr_unused = cos(absT1 * k);
+            /* sin is real here since absT1*k is real */
+            double ar = x1r + x2r, ai = x1i;
+            cRe[k-1] = k * (ar * sr);
+            cIm[k-1] = k * (ai * sr);
+        } else {
+            /* k*(t2 - Im(t1))*cos(angle(t2)*k) */
+            /* t2 - Im(t1) = (x2r - x1i) + i*x2i */
+            double cv = cos(angT2 * k);
+            double ar = x2r - x1i, ai = x2i;
+            cRe[k-1] = k * (ar * cv);
+            cIm[k-1] = k * (ai * cv);
+        }
+    }
+
+    /* Loop 2: sequential dependency — each cf[i-1] depends on cf[i-2]
+     * len(cf)//2 = 35, so i goes from 2 to 34 */
+    double mul1r = absT1 + 0.5;
+    double logT2 = log(absT2 + 1.0);
+    double mul2r = absT2 + 0.5;
+    double logT1 = log(absT1 + 1.0);
+
+    for (int i = 2; i < 35; i++) {
+        /* cf[i-1] = cf[i-2] * (|t1|+0.5) + log(|t2|+1)
+         * mul by real scalar, add real constant */
+        double prevR = cRe[i-2], prevI = cIm[i-2];
+        cRe[i-1] = prevR * mul1r + logT2;
+        cIm[i-1] = prevI * mul1r;
+
+        /* cf[len(cf)-i] = -cf[len(cf)-i+1] * (|t2|+0.5) - log(|t1|+1)
+         * len(cf) = 71, so cf[71-i] = -cf[72-i] * ... */
+        int idx = 71 - i;      /* target */
+        int src = 72 - i;      /* source = idx + 1 */
+        double srcR = cRe[src], srcI = cIm[src];
+        cRe[idx] = -srcR * mul2r - logT1;
+        cIm[idx] = -srcI * mul2r;
+    }
+
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}

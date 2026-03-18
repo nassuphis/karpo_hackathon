@@ -2467,13 +2467,26 @@ static int runSolveFromCoeffs(const char *buf, const char *outPath) {
                coeffRe[start]*coeffRe[start] + coeffIm[start]*coeffIm[start] < 1e-30)
             start++;
         int effN = nCoeffs - start;
+
+        /* Strip trailing zeros — trailing zeros mean z=0 is a root with that multiplicity.
+         * Factor them out so the solver only works on the reduced polynomial. */
+        int trailingZeros = 0;
+        while (trailingZeros < effN - 1) {
+            int k = start + effN - 1 - trailingZeros;
+            if (coeffRe[k]*coeffRe[k] + coeffIm[k]*coeffIm[k] >= 1e-30) break;
+            trailingZeros++;
+        }
+        effN -= trailingZeros;
         int effDeg = effN - 1;
 
         int iters;
+        /* Set trailing-zero roots to 0 (z=0 with multiplicity trailingZeros) */
+        for (int i = 0; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
+
         if (effDeg <= 0) {
-            for (int i = 0; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
             iters = 0;
         } else if (effDeg == 1) {
+            rootRe[0] = 0; rootIm[0] = 0;
             double aR = coeffRe[start], aI = coeffIm[start];
             double bR = coeffRe[start+1], bI = coeffIm[start+1];
             double d = aR*aR + aI*aI;
@@ -2483,11 +2496,22 @@ static int runSolveFromCoeffs(const char *buf, const char *outPath) {
             }
             iters = 1;
         } else {
+            /* Re-init warm-start if previous roots are all zero (e.g. after a
+             * degenerate step). EA needs non-degenerate starting points. */
+            double warmMag = 0;
+            for (int i = 0; i < effDeg; i++)
+                warmMag += rootRe[i]*rootRe[i] + rootIm[i]*rootIm[i];
+            if (warmMag < 1e-20) {
+                for (int i = 0; i < effDeg; i++) {
+                    double ang = 2.0 * M_PI * i / effDeg + 0.3;
+                    double r = 1.0 + 0.1 * i / effDeg;
+                    rootRe[i] = r * cos(ang);
+                    rootIm[i] = r * sin(ang);
+                }
+            }
             iters = solveEA(coeffRe + start, coeffIm + start, effN,
                             rootRe, rootIm, effDeg);
         }
-        /* Zero out unused root slots when leading zeros reduced the effective degree */
-        for (int i = effDeg; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
         totalIters += iters;
 
         if (doMatch && totalSteps > 1 && effDeg > 1) {
@@ -2622,14 +2646,25 @@ static int runGrid(const char *buf, const char *outPath) {
                    coeffRe[start] * coeffRe[start] + coeffIm[start] * coeffIm[start] < 1e-30)
                 start++;
             int effN = nCoeffs - start;
+
+            /* Strip trailing zeros (z=0 roots) */
+            int trailingZeros = 0;
+            while (trailingZeros < effN - 1) {
+                int k = start + effN - 1 - trailingZeros;
+                if (coeffRe[k]*coeffRe[k] + coeffIm[k]*coeffIm[k] >= 1e-30) break;
+                trailingZeros++;
+            }
+            effN -= trailingZeros;
             int effDeg = effN - 1;
 
             /* Solve */
             int iters;
+            for (int i = 0; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
+
             if (effDeg <= 0) {
-                for (int i = 0; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
                 iters = 0;
             } else if (effDeg == 1) {
+                rootRe[0] = 0; rootIm[0] = 0;
                 double aR = coeffRe[start], aI = coeffIm[start];
                 double bR = coeffRe[start+1], bI = coeffIm[start+1];
                 double d = aR*aR + aI*aI;
@@ -2639,11 +2674,20 @@ static int runGrid(const char *buf, const char *outPath) {
                 }
                 iters = 1;
             } else {
+                double warmMag = 0;
+                for (int ii = 0; ii < effDeg; ii++)
+                    warmMag += rootRe[ii]*rootRe[ii] + rootIm[ii]*rootIm[ii];
+                if (warmMag < 1e-20) {
+                    for (int ii = 0; ii < effDeg; ii++) {
+                        double ang = 2.0 * M_PI * ii / effDeg + 0.3;
+                        double r = 1.0 + 0.1 * ii / effDeg;
+                        rootRe[ii] = r * cos(ang);
+                        rootIm[ii] = r * sin(ang);
+                    }
+                }
                 iters = solveEA(coeffRe + start, coeffIm + start, effN,
                                 rootRe, rootIm, effDeg);
             }
-            /* Zero out unused root slots when leading zeros reduced the effective degree */
-            for (int z = effDeg; z < degree; z++) { rootRe[z] = 0; rootIm[z] = 0; }
             totalIters += iters;
 
             /* Match roots */
@@ -2820,16 +2864,26 @@ int main(int argc, char **argv) {
                coeffRe[start] * coeffRe[start] + coeffIm[start] * coeffIm[start] < 1e-30)
             start++;
         int effN = nCoeffs - start;
+
+        /* Strip trailing zeros (z=0 roots) */
+        int trailingZeros = 0;
+        while (trailingZeros < effN - 1) {
+            int k = start + effN - 1 - trailingZeros;
+            if (coeffRe[k]*coeffRe[k] + coeffIm[k]*coeffIm[k] >= 1e-30) break;
+            trailingZeros++;
+        }
+        effN -= trailingZeros;
         int effDeg = effN - 1;
 
         /* Solve */
         int iters;
+        for (int i = 0; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
+
         if (effDeg <= 0) {
-            /* Degenerate: zero roots */
-            for (int i = 0; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
             iters = 0;
         } else if (effDeg == 1) {
             /* Linear */
+            rootRe[0] = 0; rootIm[0] = 0;
             double aR = coeffRe[start], aI = coeffIm[start];
             double bR = coeffRe[start+1], bI = coeffIm[start+1];
             double d = aR*aR + aI*aI;
@@ -2839,11 +2893,20 @@ int main(int argc, char **argv) {
             }
             iters = 1;
         } else {
+            double warmMag = 0;
+            for (int i = 0; i < effDeg; i++)
+                warmMag += rootRe[i]*rootRe[i] + rootIm[i]*rootIm[i];
+            if (warmMag < 1e-20) {
+                for (int i = 0; i < effDeg; i++) {
+                    double ang = 2.0 * M_PI * i / effDeg + 0.3;
+                    double r = 1.0 + 0.1 * i / effDeg;
+                    rootRe[i] = r * cos(ang);
+                    rootIm[i] = r * sin(ang);
+                }
+            }
             iters = solveEA(coeffRe + start, coeffIm + start, effN,
                             rootRe, rootIm, effDeg);
         }
-        /* Zero out unused root slots when leading zeros reduced the effective degree */
-        for (int z = effDeg; z < degree; z++) { rootRe[z] = 0; rootIm[z] = 0; }
         totalIters += iters;
 
         /* Match roots to previous step */

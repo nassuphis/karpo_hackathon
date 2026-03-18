@@ -1751,3 +1751,70 @@ static void poly_128_hand(double x1r, double x1i, double x2r, double x2i,
         if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
     }
 }
+
+/* poly_125: 5 list-comp slices + 1 loop + cf[70]=1.
+ * Python source has bug: cf[61:70] = [... range(61,71)] — 9 slots, 10 values → crash.
+ * Hand-written to match the fixed (intended) behavior. */
+static void poly_125_hand(double x1r, double x1i, double x2r, double x2i,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double abs1 = c_abs(x1r, x1i);
+    double abs2 = c_abs(x2r, x2i);
+
+    /* cf[0:15] = [(-1)**j * j**2 * (|t1| + |t2|) for j in range(1,16)] */
+    for (int j = 1; j <= 15; j++) {
+        double sign = (j % 2 == 0) ? 1.0 : -1.0;
+        cRe[j-1] = sign * (double)(j*j) * (abs1 + abs2);
+    }
+
+    /* cf[15:30] = [(-1)**(k+1) * k**3 * angle(t1 + 1j*t2) for k in range(16,31)] */
+    double sr = x1r - x2i, si = x1i + x2r;  /* t1 + 1j*t2 */
+    double ang_s = c_arg(sr, si);
+    for (int k = 16; k <= 30; k++) {
+        double sign = ((k+1) % 2 == 0) ? 1.0 : -1.0;
+        cRe[k-1] = sign * (double)(k*k*k) * ang_s;
+    }
+
+    /* cf[30:45] = [(-1)**(r+1)*cos(r*t1) + sin(r*t2) for r in range(31,46)] */
+    for (int r = 31; r <= 45; r++) {
+        double sign = ((r+1) % 2 == 0) ? 1.0 : -1.0;
+        double ar = (double)r*x1r, ai = (double)r*x1i;
+        double cosr, cosi; c_cos(ar, ai, &cosr, &cosi);
+        double br = (double)r*x2r, bi = (double)r*x2i;
+        double sinr, sini; c_sin(br, bi, &sinr, &sini);
+        cRe[r-1] = sign*cosr + sinr;
+        cIm[r-1] = sign*cosi + sini;
+    }
+
+    /* for s in range(46,61): cf[s] = (-1)**s * s**2 * conj(t1) * conj(t2) */
+    double cpr, cpi; c_mul(x1r, -x1i, x2r, -x2i, &cpr, &cpi);
+    for (int s = 46; s <= 60; s++) {
+        double sign = (s % 2 == 0) ? 1.0 : -1.0;
+        double fac = sign * (double)(s*s);
+        cRe[s] = fac * cpr;
+        cIm[s] = fac * cpi;
+    }
+
+    /* cf[61:71] = [n**3 * log(|t1*t2| + 1) for n in range(61,71)]
+     * Slice indices 61..70, list values n=61..70. cf[61+i] = (61+i)^3 * logval. */
+    double t12r, t12i; c_mul(x1r, x1i, x2r, x2i, &t12r, &t12i);
+    double logval = log(c_abs(t12r, t12i) + 1.0);
+    for (int i = 0; i < 10; i++) {
+        int n = 61 + i;
+        cRe[61 + i] = (double)(n*n*n) * logval;
+    }
+
+    /* cf[70] = 1 */
+    cRe[70] = 1.0;
+
+    /* Cap coefficient magnitudes at 1e10 — serendipity version.
+     * Original poly_125 has ~16 orders dynamic range which float32 can't handle.
+     * Capping creates a different but potentially interesting polynomial. */
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; continue; }
+        double m = c_abs(cRe[i], cIm[i]);
+        if (m > 1e10) { double s = 1e10 / m; cRe[i] *= s; cIm[i] *= s; }
+    }
+}

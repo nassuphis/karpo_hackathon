@@ -2257,6 +2257,12 @@ WRAP_OLD(poly_110)
 
 /* Hand-written poly functions: replace broken transpiled versions */
 #include "poly_hand.h"
+#include "poly_hand_batch2.h"
+#include "poly_hand_batch3.h"
+#include "poly_hand_batch4.h"
+#include "poly_hand_batch5.h"
+#include "poly_hand_batch6.h"
+#include "poly_hand_batch7.h"
 
 #include "poly_generated_funcs.h"
 #include "poly_generated_200.c"
@@ -2313,7 +2319,44 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "poly_117") == 0) return poly_117_hand;
     if (strcmp(name, "poly_118") == 0) return poly_118_hand;
     if (strcmp(name, "poly_120") == 0) return poly_120_hand;
+    if (strcmp(name, "poly_125") == 0) return poly_125_hand;
     if (strcmp(name, "poly_128") == 0) return poly_128_hand;
+    /* batch 2 */
+    if (strcmp(name, "poly_134") == 0) return poly_134_hand;
+    if (strcmp(name, "poly_135") == 0) return poly_135_hand;
+    if (strcmp(name, "poly_142") == 0) return poly_142_hand;
+    if (strcmp(name, "poly_146") == 0) return poly_146_hand;
+    if (strcmp(name, "poly_150") == 0) return poly_150_hand;
+    /* batch 3 */
+    if (strcmp(name, "poly_152") == 0) return poly_152_hand;
+    if (strcmp(name, "poly_153") == 0) return poly_153_hand;
+    if (strcmp(name, "poly_157") == 0) return poly_157_hand;
+    if (strcmp(name, "poly_164") == 0) return poly_164_hand;
+    if (strcmp(name, "poly_167") == 0) return poly_167_hand;
+    /* batch 4 */
+    if (strcmp(name, "poly_171") == 0) return poly_171_hand;
+    if (strcmp(name, "poly_179") == 0) return poly_179_hand;
+    if (strcmp(name, "poly_180") == 0) return poly_180_hand;
+    if (strcmp(name, "poly_184") == 0) return poly_184_hand;
+    if (strcmp(name, "poly_187") == 0) return poly_187_hand;
+    /* batch 5 */
+    if (strcmp(name, "poly_188") == 0) return poly_188_hand;
+    if (strcmp(name, "poly_189") == 0) return poly_189_hand;
+    if (strcmp(name, "poly_190") == 0) return poly_190_hand;
+    if (strcmp(name, "poly_191") == 0) return poly_191_hand;
+    if (strcmp(name, "poly_192") == 0) return poly_192_hand;
+    /* batch 6 */
+    if (strcmp(name, "poly_193") == 0) return poly_193_hand;
+    if (strcmp(name, "poly_194") == 0) return poly_194_hand;
+    if (strcmp(name, "poly_195") == 0) return poly_195_hand;
+    if (strcmp(name, "poly_196") == 0) return poly_196_hand;
+    if (strcmp(name, "poly_197") == 0) return poly_197_hand;
+    /* batch 7 */
+    if (strcmp(name, "poly_198") == 0) return poly_198_hand;
+    if (strcmp(name, "poly_199") == 0) return poly_199_hand;
+    if (strcmp(name, "poly_123") == 0) return poly_123_hand;
+    if (strcmp(name, "poly_161") == 0) return poly_161_hand;
+    if (strcmp(name, "poly_103") == 0) return poly_103_hand;
 #include "poly_generated_lookups.h"
 #include "poly_generated_200_lookups.h"
     return NULL;

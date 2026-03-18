@@ -90,6 +90,7 @@ def handler(event, context):
             py = int(half_h - (im - cy) * scale)
             if 0 <= px < W and 0 <= py < H:
                 gray[py * W + px] = 255
+    n_roots_total = len(bin_data) // 8
     del bin_data
 
     # Encode as grayscale PNG (half the size of RGB)
@@ -114,7 +115,7 @@ def handler(event, context):
         "image_url": image_url,
         "preview_size": preview_size,
         "n_roots": vp["n_roots"],
-        "n_roots_total": len(bin_data) // 8,
+        "n_roots_total": n_roots_total,
         "degree": degree,
         "q_re": vp["q_re"],
         "q_im": vp["q_im"],

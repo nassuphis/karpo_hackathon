@@ -809,11 +809,12 @@ class TestSolveFromCoeffs(unittest.TestCase):
     def _make_event(self, body):
         return {"body": json.dumps(body)}
 
+    @patch("handler_sweep.report_status")
     @patch("handler_sweep.os.path.getsize", return_value=400)
     @patch("handler_sweep.os.remove")
     @patch("handler_sweep.s3")
     @patch("handler_sweep.subprocess")
-    def test_solve_routes_on_coeffs_key(self, mock_subprocess, mock_s3, mock_remove, mock_getsize):
+    def test_solve_routes_on_coeffs_key(self, mock_subprocess, mock_s3, mock_remove, mock_getsize, mock_ddb):
         """When coeffs_key is present, handler routes to solve path."""
         from handler_sweep import handler
         mock_result = MagicMock()
@@ -874,11 +875,12 @@ class TestSolveFromCoeffs(unittest.TestCase):
         self.assertEqual(spec["i1_start"], 0)
         self.assertEqual(spec["i1_end"], 10)
 
+    @patch("handler_sweep.report_status")
     @patch("handler_sweep.os.path.getsize", return_value=400)
     @patch("handler_sweep.os.remove")
     @patch("handler_sweep.s3")
     @patch("handler_sweep.subprocess")
-    def test_solve_downloads_full_file(self, mock_subprocess, mock_s3, mock_remove, mock_getsize):
+    def test_solve_downloads_full_file(self, mock_subprocess, mock_s3, mock_remove, mock_getsize, mock_ddb):
         """Verify S3 get_object downloads full per-stripe file (no Range)."""
         from handler_sweep import handler
         mock_result = MagicMock()
@@ -927,11 +929,12 @@ class TestSolveFromCoeffs(unittest.TestCase):
         self.assertNotIn("Range", call_kwargs)
         self.assertEqual(call_kwargs["Key"], "renders/full-dl-test/coeffs_0002.bin")
 
+    @patch("handler_sweep.report_status")
     @patch("handler_sweep.os.path.getsize", return_value=50)
     @patch("handler_sweep.os.remove")
     @patch("handler_sweep.s3")
     @patch("handler_sweep.subprocess")
-    def test_solve_custom_s3_key(self, mock_subprocess, mock_s3, mock_remove, mock_getsize):
+    def test_solve_custom_s3_key(self, mock_subprocess, mock_s3, mock_remove, mock_getsize, mock_ddb):
         """Verify s3_key override works for solve path."""
         from handler_sweep import handler
         mock_result = MagicMock()
@@ -982,10 +985,11 @@ class TestSolveFromCoeffs(unittest.TestCase):
         self.assertEqual(upload_args[2], "renders/key-test/lores.bin")
         self.assertEqual(body["s3_key"], "renders/key-test/lores.bin")
 
+    @patch("handler_sweep.report_status")
     @patch("handler_sweep.os.remove")
     @patch("handler_sweep.s3")
     @patch("handler_sweep.subprocess")
-    def test_solve_failure_raises(self, mock_subprocess, mock_s3, mock_remove):
+    def test_solve_failure_raises(self, mock_subprocess, mock_s3, mock_remove, mock_ddb):
         """Verify solve mode raises RuntimeError on sweep failure."""
         from handler_sweep import handler
         mock_result = MagicMock()

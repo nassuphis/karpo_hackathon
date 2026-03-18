@@ -8,6 +8,7 @@ Usage: python3 transpile_poly.py > poly_generated.c
 """
 
 import ast
+import copy
 import sys
 import textwrap
 
@@ -43,6 +44,7 @@ class PolyTranspiler(ast.NodeVisitor):
         self.lines = []
         self.declared = set()
         self.array_sizes = {}  # name -> int (number of elements)
+        self.arange_vars = {}  # name -> (start, stop) for arange loop variables
         self.indent = 1
 
     def emit(self, line):
@@ -84,6 +86,9 @@ class PolyTranspiler(ast.NodeVisitor):
                 return CVar("x2r", "x2i")
             elif name == "pi":
                 return CVar("M_PI", "0")
+            elif name == "_cf_elem":
+                # Synthetic marker for cf[loop_var] inside arange loop
+                return CVar("_cf_r", "_cf_i")
             else:
                 # loop variable or local — treat as real
                 return CVar(name, "0")
@@ -893,16 +898,25 @@ class PolyTranspiler(ast.NodeVisitor):
                         self.emit(f"/* WARNING: could not extract np.array for {name} */")
                         self.emit(f"static const double {name}[] = {{0}};")
                 elif self.is_np_computed_array(stmt.value):
-                    # np.cumsum(np.arange(1, N)) etc.
-                    arr = self.eval_computed_array(stmt.value)
-                    if arr is not None:
-                        vals = ", ".join(str(float(v)) for v in arr)
+                    # Check if this is a simple np.arange — track as loop variable
+                    arange_info = self._is_arange_assign(stmt)
+                    if arange_info:
+                        _, astart, astop = arange_info
+                        self.arange_vars[name] = (astart, astop)
                         self.declared.add(name)
-                        self.array_sizes[name] = len(arr)
-                        self.emit(f"static const double {name}[] = {{{vals}}};")
+                        # Don't emit static array — will be used as loop variable
+                        self.emit(f"/* {name} = np.arange({astart}, {astop}) — loop variable */")
                     else:
-                        self.declared.add(name)
-                        self.emit(f"static const double {name}[] = {{0}}; /* WARNING: could not evaluate */")
+                        # np.cumsum(np.arange(1, N)) etc.
+                        arr = self.eval_computed_array(stmt.value)
+                        if arr is not None:
+                            vals = ", ".join(str(float(v)) for v in arr)
+                            self.declared.add(name)
+                            self.array_sizes[name] = len(arr)
+                            self.emit(f"static const double {name}[] = {{{vals}}};")
+                        else:
+                            self.declared.add(name)
+                            self.emit(f"static const double {name}[] = {{0}}; /* WARNING: could not evaluate */")
                 elif name in ("t1", "t2"):
                     val = self.expr_to_c(stmt.value)
                     if name == "t1":
@@ -1065,9 +1079,181 @@ class PolyTranspiler(ast.NodeVisitor):
             self.indent -= 1
         self.emit("}")
 
+    # --- Arange loop lowering helpers ---
+
+    def _find_arange_var_in_expr(self, node):
+        """Find if any arange variable is referenced in this expression tree."""
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and child.id in self.arange_vars:
+                return child.id
+        return None
+
+    def _is_np_zeros(self, node):
+        """Check if node is np.zeros(...)."""
+        return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and
+                isinstance(node.func.value, ast.Name) and node.func.value.id == "np" and
+                node.func.attr == "zeros")
+
+    def _is_arange_assign(self, stmt):
+        """Check if stmt is `var = np.arange(...)` and return (name, start, stop) or None."""
+        if not isinstance(stmt, ast.Assign):
+            return None
+        target = stmt.targets[0]
+        if not isinstance(target, ast.Name):
+            return None
+        if not (isinstance(stmt.value, ast.Call) and isinstance(stmt.value.func, ast.Attribute)):
+            return None
+        func = stmt.value.func
+        if not (isinstance(func.value, ast.Name) and func.value.id == "np" and func.attr == "arange"):
+            return None
+        args = stmt.value.args
+        if len(args) == 1:
+            n = self.get_int(args[0])
+            if n is not None:
+                return (target.id, 0, n)
+        elif len(args) == 2:
+            start = self.get_int(args[0])
+            stop = self.get_int(args[1])
+            if start is not None and stop is not None:
+                return (target.id, start, stop)
+        return None
+
+    def _stmt_references_arange(self, stmt):
+        """Check if any part of a statement references an arange variable."""
+        for child in ast.walk(stmt):
+            if isinstance(child, ast.Name) and child.id in self.arange_vars:
+                return True
+        return False
+
+    def _is_cf_uses_cf_rhs(self, stmt):
+        """Check if stmt is `cf = cf * expr` or `cf = expr * cf` (uses cf on RHS)."""
+        if not isinstance(stmt, ast.Assign):
+            return False
+        target = stmt.targets[0]
+        if not (isinstance(target, ast.Name) and target.id == "cf"):
+            return False
+        for child in ast.walk(stmt.value):
+            if isinstance(child, ast.Name) and child.id == "cf":
+                return True
+        return False
+
+    def _emit_cf_assign_in_loop(self, cf_idx, stmt_value):
+        """Emit cRe[cf_idx] = ...; cIm[cf_idx] = ...; for a cf = expr statement."""
+        val = self.expr_to_c(stmt_value)
+        self.emit(f"if ({cf_idx} < {self.n_coeffs}) {{ cRe[{cf_idx}] = {val.r}; cIm[{cf_idx}] = {val.i}; }}")
+
+    def _emit_cf_augassign_in_loop(self, cf_idx, op, stmt_value):
+        """Emit augmented assignment cRe[cf_idx] += ...; etc."""
+        val = self.expr_to_c(stmt_value)
+        if isinstance(op, ast.Add):
+            self.emit(f"if ({cf_idx} < {self.n_coeffs}) {{ cRe[{cf_idx}] += {val.r}; cIm[{cf_idx}] += {val.i}; }}")
+        elif isinstance(op, ast.Sub):
+            self.emit(f"if ({cf_idx} < {self.n_coeffs}) {{ cRe[{cf_idx}] -= {val.r}; cIm[{cf_idx}] -= {val.i}; }}")
+        elif isinstance(op, ast.Mult):
+            self.emit(f"if ({cf_idx} < {self.n_coeffs}) {{ double _tr = cRe[{cf_idx}]*{val.r} - cIm[{cf_idx}]*{val.i}; cIm[{cf_idx}] = cRe[{cf_idx}]*{val.i} + cIm[{cf_idx}]*{val.r}; cRe[{cf_idx}] = _tr; }}")
+
+    def _emit_cf_selfmul_in_loop(self, cf_idx, rhs_node):
+        """Emit cf = cf * expr as augmented multiply in loop.
+        rhs_node is the full RHS, which contains cf references."""
+        # Replace cf references with cRe[cf_idx]/cIm[cf_idx] by setting up a temp
+        # that holds the current cf[cf_idx] value
+        self.emit(f"if ({cf_idx} < {self.n_coeffs}) {{")
+        self.indent += 1
+        # Save current cf value into temps
+        self.emit(f"double _cf_r = cRe[{cf_idx}], _cf_i = cIm[{cf_idx}];")
+        # Temporarily make 'cf' resolve to the per-element value
+        old_declared = 'cf' in self.declared
+        self.declared.add('cf')
+        # We need expr_to_c to treat bare 'cf' as _cf_r + _cf_i*i
+        # Since expr_to_c for Name returns CVar(name, "0"), we need a workaround:
+        # Replace 'cf' Name nodes in the AST with a synthetic expression
+        rhs_copy = copy.deepcopy(rhs_node)
+        self._replace_cf_name(rhs_copy)
+        val = self.expr_to_c(rhs_copy)
+        self.emit(f"cRe[{cf_idx}] = {val.r}; cIm[{cf_idx}] = {val.i};")
+        if not old_declared:
+            self.declared.discard('cf')
+        self.indent -= 1
+        self.emit(f"}}")
+
+    def _replace_cf_name(self, node):
+        """Replace all ast.Name('cf') nodes in-place with ast.Name('_cf_r') hack.
+        We use a special marker that expr_to_c handles."""
+        for field, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                for i, item in enumerate(value):
+                    if isinstance(item, ast.AST):
+                        if isinstance(item, ast.Name) and item.id == 'cf':
+                            item.id = '_cf_elem'
+                        else:
+                            self._replace_cf_name(item)
+            elif isinstance(value, ast.AST):
+                if isinstance(value, ast.Name) and value.id == 'cf':
+                    value.id = '_cf_elem'
+                else:
+                    self._replace_cf_name(value)
+
+    def process_arange_block(self, stmts):
+        """Process a block of statements that use an arange loop variable.
+        Emits a single for-loop containing all the statements."""
+        # Find which arange var is used
+        arange_var = None
+        for s in stmts:
+            for child in ast.walk(s):
+                if isinstance(child, ast.Name) and child.id in self.arange_vars:
+                    arange_var = child.id
+                    break
+            if arange_var:
+                break
+        if not arange_var:
+            for s in stmts:
+                self.process_stmt(s)
+            return
+
+        start, stop = self.arange_vars[arange_var]
+        # cf index: for np.arange(0, N), cf_idx = loop_var; for np.arange(start, stop), cf_idx = loop_var - start
+        cf_idx = arange_var if start == 0 else f"({arange_var} - {start})"
+        self.emit(f"for (int {arange_var} = {start}; {arange_var} < {stop}; {arange_var}++) {{")
+        self.indent += 1
+        self.declared.add(arange_var)
+
+        for s in stmts:
+            if isinstance(s, ast.Assign):
+                target = s.targets[0]
+                if isinstance(target, ast.Name) and target.id == "cf":
+                    if self._is_np_zeros(s.value):
+                        pass  # skip, already zero
+                    elif self._is_cf_uses_cf_rhs(s):
+                        self._emit_cf_selfmul_in_loop(cf_idx, s.value)
+                    else:
+                        self._emit_cf_assign_in_loop(cf_idx, s.value)
+                elif isinstance(target, ast.Name):
+                    # Local variable inside loop (e.g., real_part = expr)
+                    name = target.id
+                    val = self.expr_to_c(s.value)
+                    if name not in self.declared:
+                        self.declared.add(name)
+                        self.emit(f"double {name} = {val.r}; double {name}_im = {val.i};")
+                    else:
+                        self.emit(f"{name} = {val.r}; {name}_im = {val.i};")
+                else:
+                    self.process_stmt(s)
+            elif isinstance(s, ast.AugAssign):
+                target = s.target
+                if isinstance(target, ast.Name) and target.id == "cf":
+                    self._emit_cf_augassign_in_loop(cf_idx, s.op, s.value)
+                else:
+                    self.process_stmt(s)
+            else:
+                self.process_stmt(s)
+
+        self.indent -= 1
+        self.emit("}")
+
 
 def extract_ncoeffs(func_node):
-    """Extract the size of the cf array from np.zeros(N, ...)."""
+    """Extract the size of the cf array from np.zeros(N, ...) or np.arange(N)."""
+    # First try np.zeros(N, ...)
     for stmt in ast.walk(func_node):
         if isinstance(stmt, ast.Assign):
             if isinstance(stmt.targets[0], ast.Name) and stmt.targets[0].id == "cf":
@@ -1077,6 +1263,22 @@ def extract_ncoeffs(func_node):
                         args = stmt.value.args
                         if args and isinstance(args[0], ast.Constant):
                             return int(args[0].value)
+    # Fall back to np.arange size (the arange determines cf length)
+    for stmt in ast.walk(func_node):
+        if isinstance(stmt, ast.Assign):
+            target = stmt.targets[0]
+            if isinstance(target, ast.Name) and target.id != "cf":
+                if isinstance(stmt.value, ast.Call) and isinstance(stmt.value.func, ast.Attribute):
+                    func = stmt.value.func
+                    if (isinstance(func.value, ast.Name) and func.value.id == "np" and
+                            func.attr == "arange"):
+                        args = stmt.value.args
+                        if len(args) == 1 and isinstance(args[0], ast.Constant):
+                            return int(args[0].value)
+                        elif len(args) == 2:
+                            # np.arange(start, stop) — size is stop - start
+                            if isinstance(args[0], ast.Constant) and isinstance(args[1], ast.Constant):
+                                return int(args[1].value) - int(args[0].value)
     return 36  # default
 
 
@@ -1088,6 +1290,64 @@ def get_func_body(func_node):
     return body
 
 
+def _process_with_arange_blocks(tp, stmts, arange_var_names):
+    """Process statements, grouping consecutive vectorized stmts into arange loop blocks.
+
+    A stmt is 'vectorized' if it references an arange variable OR assigns/augassigns
+    to 'cf' and follows a vectorized statement (to catch cf = real_part + 1j*imag_part
+    where real_part was computed from an arange var).
+    """
+    # First pass: process arange definition statements normally so tp.arange_vars gets populated
+    # Then group remaining stmts
+    pending_block = []  # vectorized stmts to emit in a loop
+    vectorized_locals = set()  # local vars computed from arange expressions
+
+    def _references_arange_or_vec_local(node):
+        """Check if node references an arange var or a vectorized local."""
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name):
+                if child.id in arange_var_names or child.id in vectorized_locals:
+                    return True
+        return False
+
+    def flush_block():
+        nonlocal pending_block
+        if pending_block:
+            tp.process_arange_block(pending_block)
+            pending_block = []
+
+    for stmt in stmts:
+        # Check if this is an arange definition
+        info = tp._is_arange_assign(stmt)
+        if info:
+            flush_block()
+            tp.process_stmt(stmt)  # registers in arange_vars
+            continue
+
+        # Check if this statement references an arange var or vectorized local
+        is_vec = _references_arange_or_vec_local(stmt)
+
+        # Also check: cf = np.zeros(...) before vectorized block — just process normally
+        if isinstance(stmt, ast.Assign):
+            target = stmt.targets[0]
+            if isinstance(target, ast.Name) and target.id == "cf" and tp._is_np_zeros(stmt.value):
+                flush_block()
+                tp.process_stmt(stmt)
+                continue
+            # Track vectorized locals (non-cf assignments from arange expressions)
+            if is_vec and isinstance(target, ast.Name) and target.id != "cf":
+                vectorized_locals.add(target.id)
+
+        if is_vec:
+            pending_block.append(stmt)
+        else:
+            flush_block()
+            vectorized_locals.clear()
+            tp.process_stmt(stmt)
+
+    flush_block()
+
+
 def transpile_function(func_node):
     """Transpile a single poly_N function to C."""
     name = func_node.name
@@ -1097,10 +1357,29 @@ def transpile_function(func_node):
     tp = PolyTranspiler(name, n_coeffs)
 
     body = get_func_body(func_node)
+
+    # Two-pass: first pass detects arange variables, second pass processes
+    # We need to pre-scan for arange vars so we can group vectorized statements
+    arange_var_names = set()
     for stmt in body:
         if isinstance(stmt, ast.Return):
             break
-        tp.process_stmt(stmt)
+        info = tp._is_arange_assign(stmt)
+        if info:
+            arange_var_names.add(info[0])
+
+    # Process statements, grouping consecutive vectorized stmts into arange loop blocks
+    stmts = []
+    for stmt in body:
+        if isinstance(stmt, ast.Return):
+            break
+        stmts.append(stmt)
+
+    if arange_var_names:
+        _process_with_arange_blocks(tp, stmts, arange_var_names)
+    else:
+        for stmt in stmts:
+            tp.process_stmt(stmt)
 
     # Build the C function
     lines = []

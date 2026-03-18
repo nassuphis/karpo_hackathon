@@ -191,29 +191,111 @@ The batch visual test script is inline in the conversation history. To test a si
 
 ## Hand-Written Overrides
 
-Hand-written C implementations live in `poly_hand.h` (included by sweep_cli.c). Each uses the same signature as transpiled functions. Add a lookup override before the `#include "poly_generated_lookups.h"` line in `lookupCoeffFuncC()`:
+Hand-written C implementations replace broken transpiled versions. Files:
 
-Current hand-written overrides (15 functions + 1 serendipity):
+| File | Functions | Source |
+|------|-----------|--------|
+| `poly_hand.h` | poly_2, 9, 21, 29, 33, 35, 37, 40, 42, 42_serendipity, 44, 45, 46, 50, 54, 55, 58, 61, 62, 65, 70, 72, 73, 74, 78, 81, 82, 94, 95, 96, 97, 100 | poly100.py |
+| `poly_hand_batch2.h` | poly_134, 135, 142, 146, 150 | poly200.py |
+| `poly_hand_batch3.h` | poly_152, 153, 157, 164, 167 | poly200.py |
+| `poly_hand_batch4.h` | poly_171, 179, 180, 184, 187 | poly200.py |
+| `poly_hand_batch5.h` | poly_188, 189, 190, 191, 192 | poly200.py |
+| `poly_hand_batch6.h` | poly_193, 194, 195, 196, 197 | poly200.py |
+| `poly_hand_batch7.h` | poly_198, 199, 123, 161, 103 | poly200.py |
+| `poly_hand_300a.h` | poly_201–220 | poly300.py |
+| `poly_hand_300b.h` | poly_221–240 | poly300.py |
+| `poly_hand_300c.h` | poly_241–260 | poly300.py |
+| `poly_hand_300d.h` | poly_261–280 | poly300.py |
+| `poly_hand_300e.h` | poly_281–300 | poly300.py |
 
-| Function | Reason | Verification |
-|----------|--------|-------------|
-| poly_21 | Lagrange basis construction (complex indexing) | Visual check |
-| poly_29 | np.array slice assignments | 99.97% pixel match N=500 |
-| poly_33 | List comprehension slice assignments | 77.7% match N=100 (float32) |
-| poly_35 | Originally stubbed (cos/sin powers) | Visual check |
-| poly_37 | Post-loop modifications + fancy indexing | Visual check |
-| poly_40 | Originally stubbed (angle/power) | Visual check |
-| poly_42 | arange loop variable zeroed in slice assignment | Visual comparison |
-| poly_42_serendipity | Preserved broken version (beautiful accident) | Intentionally wrong |
-| poly_45 | Sequential dependency in overlapping loops | 100% pixel match N=100 |
-| poly_46 | Prime array + complex power construction | Visual check |
-| poly_55 | List comprehension slice assignments | Visual check |
-| poly_58 | List comprehension + 70! overflow | Visual check |
-| poly_72 | Sort-based rewrite (runtime-dependent) | Visual check |
-| poly_74 | Fractional complex powers | Visual check |
-| poly_94 | Sparse power structure | Visual check |
-| poly_100 | Iterative product with conj(iter) | Visual check |
+Add lookup overrides in `lookupCoeffFuncC()` before the `#include "poly_generated_lookups.h"` line. Hand-written lookups take priority over transpiled ones.
 
-**Still broken (16 functions awaiting hand-writing):**
+## Multi-file Transpilation
 
-poly_2, poly_9, poly_44, poly_50, poly_54, poly_61, poly_62, poly_65, poly_70, poly_73, poly_78, poly_81, poly_82, poly_95, poly_96, poly_97
+The transpiler supports multiple source files via `transpile_file()`:
+
+```python
+from transpile_poly import transpile_file
+c_code, header, lookups = transpile_file('poly200.py', stub_funcs={'poly_103'}, skip_funcs={'poly_110'}, label='poly200.py')
+```
+
+- `stub_funcs`: emit zero-output stubs for functions too complex to transpile
+- `skip_funcs`: completely omit (e.g., poly_110 already defined in poly100)
+- Output files: `poly_generated_200.c`, `poly_generated_200_funcs.h`, `poly_generated_200_lookups.h`
+
+## Coverage Summary (poly_1–300)
+
+| Source | Total | Transpiled OK | Hand-written | Broken (float32) |
+|--------|-------|---------------|--------------|-------------------|
+| poly100.py | 100 | ~68 | 32 | ~10 |
+| poly200.py | 100 | ~40 | 30 | ~30 |
+| poly300.py | 100 | 0 (all need hand-writing) | 100 | ~12 |
+
+**poly200.py**: Transpiler handles most functions. ~30 fail due to float32 dynamic range (>7 orders of magnitude in coefficients), not transpiler bugs.
+
+**poly300.py**: Transpiler cannot handle this file at all — every function uses vectorized `np.arange` patterns that emit arrays instead of scalars. All 100 required hand-writing.
+
+## Transpiler Improvement Opportunities
+
+### 9. Vectorized arange expressions (NEW — from poly300 experience)
+
+The #1 missing capability. poly300 functions use this pattern pervasively:
+
+```python
+j = np.arange(71)
+cf = (np.real(t1)**j * np.sin(j * np.angle(t2)) + ...) + (...) * 1j
+```
+
+The transpiler currently emits `j` as `const double j[71]` (a static array), then tries to pass it to scalar functions like `c_powr(base, j, ...)` — type mismatch.
+
+**Proposed fix — "arange loop lowering":**
+
+1. Detect `j = np.arange(N)` → mark `j` as a loop-index variable
+2. When `j` appears in a whole-array expression assigned to `cf`, emit:
+   ```c
+   for (int j = 0; j < N; j++) {
+       // transpile the per-element expression with j as scalar
+       cRe[j] = ...;
+       cIm[j] = ...;
+   }
+   ```
+3. Inside the loop, handle sub-patterns:
+   - `t1**j` → iterative complex multiply: `pwr *= t1` each iteration
+   - `np.real(t1)**j` → iterative real multiply: `rpow *= x1r`
+   - `(-1)**j` → `(j % 2 == 0) ? 1.0 : -1.0`
+   - `np.sin(j * real_scalar)` → `sin(j * val)` (real sin)
+   - `np.sin(j * complex)` → `c_sin(j*xr, j*xi, ...)` (complex sin)
+   - `1 / (1 + j**2)` → `1.0 / (1.0 + (double)j*j)`
+   - `A + B * 1j` → split: `cRe[j] = real(A); cIm[j] = imag(A) + real(B)`
+
+4. Detect iterative power patterns and hoist accumulator variables:
+   ```c
+   double t1pr = 1.0, t1pi = 0.0;  // t1^0
+   for (int j = 0; j < N; j++) {
+       // use t1pr, t1pi as t1^j
+       ...
+       c_mul(t1pr, t1pi, x1r, x1i, &t1pr, &t1pi);  // advance to t1^(j+1)
+   }
+   ```
+
+This would handle ~80% of poly300 functions automatically. The remaining ~20% use more complex patterns (nested loops, conditional branches, post-loop overrides) that would still need hand-writing.
+
+### 10. Whole-array operations
+
+Related to #9. Patterns like:
+```python
+cf *= np.exp(1j * np.angle(cf))  # modify all coefficients
+mod_cf = (71 - np.arange(1, 72)) * np.abs(cf)
+```
+
+These require a second pass over the coefficient array after initial computation. The transpiler would need to detect these as post-processing loops.
+
+### 11. Float32 dynamic range guard
+
+Functions with coefficient magnitudes spanning >7 orders produce wrong roots due to float32 storage. The transpiler could optionally emit a normalization pass:
+```c
+double maxm = 0;
+for (int i = 0; i < N; i++) { double m = c_abs(cRe[i], cIm[i]); if (m > maxm) maxm = m; }
+if (maxm > 0) { double inv = 1.0/maxm; for (int i = 0; i < N; i++) { cRe[i]*=inv; cIm[i]*=inv; } }
+```
+This preserves roots (scalar multiplication doesn't change root positions) but reduces dynamic range to fit float32.

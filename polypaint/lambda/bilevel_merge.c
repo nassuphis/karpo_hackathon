@@ -155,14 +155,15 @@ static int do_stitch(int argc, char **argv) {
         return 1;
     }
 
-    /* Load all tile images */
+    /* Load all tile images — fail hard on missing tiles */
     VipsImage **tiles = malloc(nTiles * sizeof(VipsImage *));
     for (int t = 0; t < nTiles; t++) {
         tiles[t] = vips_image_new_from_file(paths[t], NULL);
         if (!tiles[t]) {
-            fprintf(stderr, "Cannot load %s: %s\n", paths[t], vips_error_buffer());
-            /* Create black tile as fallback */
-            tiles[t] = vips_image_new_from_image1(tiles[0] ? tiles[0] : tiles[t], 0);
+            fprintf(stderr, "Cannot load tile %d (%s): %s\n", t, paths[t], vips_error_buffer());
+            for (int j = 0; j < t; j++) g_object_unref(tiles[j]);
+            free(tiles);
+            return 1;
         }
     }
 

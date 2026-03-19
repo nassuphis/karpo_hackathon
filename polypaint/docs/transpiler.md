@@ -261,7 +261,7 @@ This is currently a manual copy-paste process which is error-prone and tedious. 
 
 This would make the dropdown a derived artifact rather than hand-maintained state.
 
-## Coverage Summary (poly_1–600)
+## Coverage Summary (poly_1–800)
 
 | Source | Total | Transpiled OK | Hand-written | Stubbed | Broken | Pass Rate |
 |--------|-------|---------------|--------------|---------|--------|-----------|
@@ -270,7 +270,9 @@ This would make the dropdown a derived artifact rather than hand-maintained stat
 | poly300.py | 100 | ~23 (arange lowering) | 100 | 0 | ~12 | ~100% (all hand) |
 | poly400.py | 100 | 73 | 0 | 10 | 17 | 73% |
 | poly500.py | 100 | 79 | 0 | 7 | 14 | 79% |
-| poly600.py | 100 | 84 | 0 | 1 | 15 | 84% |
+| poly600.py | 100 | 84 | 0 | 0 | 16 | 84% |
+| poly700.py | 100 | 89 | 0 | 0 | 11 | 89% |
+| poly800.py | 100 | 61 | 0 | 2 | 37 | 61% |
 
 **poly200.py**: Transpiler handles most loop-based functions. ~30 fail due to float32 dynamic range (>7 orders of magnitude in coefficients), not transpiler bugs.
 
@@ -278,7 +280,11 @@ This would make the dropdown a derived artifact rather than hand-maintained stat
 
 **poly400.py/poly500.py**: Loop-based style. After Priority 1-6 improvements: 73-79% pass rate, 0 transpiler warnings. Remaining failures are float32 dynamic range, phantom coefficients, and sequential loop dependencies.
 
-**poly600.py**: Same loop-based style. 84% pass rate — highest auto-transpile success. Only 1 stub (poly_535 uses runtime `ps.poly.get("n")` config). 8 warnings from dynamic slice bounds and an unresolvable BoolOp default.
+**poly600.py**: Same loop-based style. 84% pass rate. `ps.poly.get("n") or 35` pattern now handled (extracts default value). 7 warnings from dynamic slice bounds.
+
+**poly700.py**: 89% pass rate — highest auto-transpile success. Mostly degree-8/9 functions. 1 warning (dynamic slice bound). Self-referencing variable fix (`angle_part = f(angle_part)`) discovered and implemented here.
+
+**poly800.py**: 61% pass rate — lowest of the auto-transpiled batches. Contains exotic patterns the transpiler doesn't handle: `np.where`, `np.isnan`/`np.isinf`/`np.isfinite`, `np.fft.fft`, `np.linalg.det`/`inv`, `np.log10`, `np.median`, `np.arctan`, `np.log1p`, `math.prod`, `np.math.factorial`. 2 stubs (poly_755, poly_772) for vectorized linspace array operations (`csi ** 2` where `csi` is a linspace array). 51 warnings total. Mixed degrees (8-24).
 
 ## Implemented Transpiler Improvements
 
@@ -300,41 +306,50 @@ All six prioritized improvements have been implemented and tested:
 - poly500: estimated ~80 → actual **79** (close)
 - poly600 (new): **84** (exceeded the ~75-80% prediction)
 
-### Additional fixes discovered during poly600 transpilation
+### Additional fixes discovered during poly600–800 transpilation
 
-**Index cast bug (compile error):** Local variables like `n`, `idx`, `index` are declared as `double` but used as array subscripts in `cf[n - k]` patterns. The transpiler now tracks `_loop_vars` (declared as `int` in for-loops) separately from other locals, and casts non-loop variables to `(int)` when used as array indices.
+**Index cast bug (compile error, poly600):** Local variables like `n`, `idx`, `index` are declared as `double` but used as array subscripts in `cf[n - k]` patterns. The transpiler now tracks `_loop_vars` (declared as `int` in for-loops) separately from other locals, and casts non-loop variables to `(int)` when used as array indices.
 
-**Linspace `num=` keyword:** poly600 functions use `np.linspace(t1.real, t2.real, num=n)` with keyword argument instead of positional. `_extract_linspace_args()` now checks `node.keywords` for `num=`.
+**Linspace `num=` keyword (poly600):** `np.linspace(t1.real, t2.real, num=n)` with keyword argument. `_extract_linspace_args()` now checks `node.keywords` for `num=`.
 
-**Constant expression evaluation:** `np.linspace(..., num=degree + 1)` requires evaluating `degree + 1` at transpile time. Added `_eval_const_expr()` which recursively evaluates `+`, `-`, `*`, `//` on constants and resolved locals.
+**Constant expression evaluation (poly600):** `np.linspace(..., num=degree + 1)` requires evaluating `degree + 1` at transpile time. Added `_eval_const_expr()` which recursively evaluates `+`, `-`, `*`, `//` on constants and resolved locals.
 
-**General `_resolve_const_name`:** Previously only resolved `"n"` — now resolves any variable from `_const_locals` (pre-scanned constant assignments like `n = 35`, `degree = 34`).
+**General `_resolve_const_name` (poly600):** Now resolves any variable from `_const_locals`, not just `"n"`.
+
+**Runtime config defaults (poly600):** `n = ps.poly.get("n") or 35` — the const pre-scan now extracts the default from `X or <constant>` BoolOp patterns. Will help ~20 functions in poly900.
+
+**Self-referencing variable pre-declaration (poly700):** `angle_part = sin(x) + cos(angle_part)` — the RHS references the variable before its declaration. Added `_name_in_expr()` to detect this and pre-declare as `double name = 0;`.
 
 ### Still unimplemented
 
-**Whole-array operations:** Patterns like `cf *= np.exp(1j * np.angle(cf))` and `mod_cf = (71 - np.arange(1, 72)) * np.abs(cf)` need post-processing loop detection.
+**Vectorized linspace array operations:** `csi = np.linspace(...); cf[1:10] = t1 * csi ** 2` — the transpiler creates `csi` as a `double[]` array but then tries to use it as a scalar in expressions. Requires element-wise loop lowering for array variables in expressions. Causes compile errors (poly_755, poly_772 stubbed).
+
+**Exotic numpy functions (poly800+):** `np.where`, `np.isnan`, `np.isinf`, `np.isfinite`, `np.fft.fft`, `np.linalg.det`/`inv`, `np.log10`, `np.median`, `np.arctan`, `np.log1p`, `math.prod`, `np.math.factorial`. These emit warnings and produce zeros. 51 warnings in poly800.
+
+**Whole-array operations:** Patterns like `cf *= np.exp(1j * np.angle(cf))` need post-processing loop detection.
 
 **Float32 dynamic range guard:** Optional normalization pass to keep coefficient magnitudes within float32 range. Would help ~30 poly200 functions and ~10 poly300 functions.
 
-**Runtime config resolution:** `n = ps.poly.get("n") or 35` — the transpiler can't evaluate runtime calls. Only poly_535 uses this pattern; it's stubbed.
+**Dynamic slice assignment:** `cf[:k] = expr` where `k` is a variable (not `np.sum` context) still emits a warning.
 
-**Dynamic slice assignment:** `cf[:k] = expr` where `k` is a variable (not `np.sum` context) still emits a warning. 4 functions in poly600 hit this.
+## Remaining Failure Modes (poly400–800)
 
-## Remaining Failure Modes (poly400–600)
+Analysis of 94 failed functions across poly400-800 shows these categories:
 
-Analysis of 46 failed functions across poly400-600 shows these categories:
+### 1. Float32 dynamic range / precision loss (~20 functions)
+Functions produce structurally similar but shifted root positions. Overlap 30-55%. The transpiled C is correct but float32 coefficient storage amplifies small differences at high degree. Example: poly_301 (48%), poly_408 (45%), poly_749 (52%).
 
-### 1. Float32 dynamic range / precision loss (~15 functions)
-Functions produce structurally similar but shifted root positions. Overlap 30-55%. The transpiled C is correct but float32 coefficient storage amplifies small differences at high degree. Example: poly_301 (48.1%), poly_408 (44.6%), poly_545 (44.7%).
+### 2. Phantom coefficients (~15 functions)
+C produces nonzero output where Python produces all zeros (exception-caught functions returning zeros), or vice versa. Overlap 0%. Example: poly_307, poly_504, poly_742, poly_782, poly_789, poly_793.
 
-### 2. Phantom coefficients (~8 functions)
-C produces nonzero output where Python produces all zeros (exception-caught functions returning zeros), or vice versa. Overlap 0%. Example: poly_307 (C=102012, Py=0), poly_504 (C=100530, Py=0), poly_478 (C=133573, Py=0).
+### 3. Unsupported numpy functions (~15 functions, mostly poly800)
+Functions using `np.where`, `np.isnan`, `np.fft.fft`, `np.linalg`, etc. produce zeros for the unsupported calls, leading to structural mismatch. Example: poly_745 (5%), poly_762 (2%), poly_774 (6%).
 
-### 3. Sequential loop dependencies (~10 functions)
-A second loop reads `cf[k]` values set by the first loop, or conditional branches produce different variable values that interact with later code. The transpiler emits correct individual operations but loses ordering dependencies. Example: poly_341 (32.8%), poly_525 (32.4%).
+### 4. Sequential loop dependencies (~10 functions)
+A second loop reads `cf[k]` values set by the first loop. The transpiler emits correct individual operations but loses ordering dependencies. Example: poly_341 (33%), poly_525 (32%).
 
-### 4. Structural mismatch (~8 functions)
-Complete or near-complete mismatch in root positions due to a fundamental transpilation error in one or more operations. Example: poly_317 (0%), poly_345 (0%), poly_566 (5.8%).
+### 5. Structural mismatch (~15 functions)
+Complete or near-complete mismatch from fundamental transpilation errors. More common in poly800 due to complex patterns. Example: poly_317 (0%), poly_766 (18%), poly_776 (10%), poly_800 (3%).
 
-### 5. Near-miss (55-60% overlap, ~5 functions)
-Visually similar but just below the 60% threshold. Likely float32 precision at the boundary. Example: poly_477 (59.5%), poly_489 (59.8%), poly_573 (51.9%).
+### 6. Near-miss (50-60% overlap, ~10 functions)
+Visually similar but below the 60% threshold. Example: poly_489 (60%), poly_573 (52%), poly_637 (57%), poly_749 (52%).

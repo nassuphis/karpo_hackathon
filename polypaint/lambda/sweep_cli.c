@@ -2277,6 +2277,8 @@ WRAP_OLD(poly_110)
 #include "poly_generated_400_funcs.h"
 #include "poly_generated_500.c"
 #include "poly_generated_500_funcs.h"
+#include "poly_generated_600.c"
+#include "poly_generated_600_funcs.h"
 
 static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_1") == 0)   return giga_1_c;
@@ -2473,6 +2475,7 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
 /* poly_generated_300_lookups.h not needed — hand-written lookups above */
 #include "poly_generated_400_lookups.h"
 #include "poly_generated_500_lookups.h"
+#include "poly_generated_600_lookups.h"
     return NULL;
 }
 

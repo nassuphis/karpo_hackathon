@@ -45,6 +45,7 @@ class PolyTranspiler(ast.NodeVisitor):
         self.declared = set()
         self.array_sizes = {}  # name -> int (number of elements)
         self.arange_vars = {}  # name -> (start, stop) for arange loop variables
+        self._loop_vars = set()  # variables declared as int in for-loops
         self.indent = 1
 
     def emit(self, line):
@@ -694,7 +695,11 @@ class PolyTranspiler(ast.NodeVisitor):
         if isinstance(node, ast.Constant):
             return str(int(node.value))
         if isinstance(node, ast.Name):
-            return node.id
+            name = node.id
+            # Loop variables (declared via for-loop) are int; other locals are double and need cast
+            if name in self.declared and name not in self._loop_vars:
+                return f"(int)({name})"
+            return name
         if isinstance(node, ast.BinOp):
             left = self.index_expr(node.left)
             right = self.index_expr(node.right)
@@ -1139,6 +1144,7 @@ class PolyTranspiler(ast.NodeVisitor):
                     return
 
                 self.declared.add(var)
+                self._loop_vars.add(var)
                 self.indent += 1
                 for s in stmt.body:
                     self.process_stmt(s)
@@ -1204,19 +1210,44 @@ class PolyTranspiler(ast.NodeVisitor):
 
     def _extract_linspace_args(self, node):
         """Returns (start_node, end_node, n_int) or (None, None, None)."""
+        # Get n from positional arg[2] or keyword num=
+        n_node = None
         if len(node.args) >= 3:
-            n = self.get_int(node.args[2])
-            if n is None and isinstance(node.args[2], ast.Name):
-                # Try to resolve from n_coeffs or known constant
-                n = self._resolve_const_name(node.args[2].id)
+            n_node = node.args[2]
+        else:
+            for kw in (node.keywords or []):
+                if kw.arg == "num":
+                    n_node = kw.value
+                    break
+        if n_node is not None and len(node.args) >= 2:
+            n = self._eval_const_expr(n_node)
             if n is not None:
                 return node.args[0], node.args[1], n
         return None, None, None
 
     def _resolve_const_name(self, name):
         """Try to resolve a variable name to its constant integer value from the function body."""
-        if name == "n" and hasattr(self, '_const_locals') and "n" in self._const_locals:
-            return self._const_locals["n"]
+        if hasattr(self, '_const_locals') and name in self._const_locals:
+            return self._const_locals[name]
+        return None
+
+    def _eval_const_expr(self, node):
+        """Try to evaluate an AST node to a constant integer using known locals."""
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return int(node.value)
+        if isinstance(node, ast.Name):
+            return self._resolve_const_name(node.id)
+        if isinstance(node, ast.BinOp):
+            left = self._eval_const_expr(node.left)
+            right = self._eval_const_expr(node.right)
+            if left is not None and right is not None:
+                if isinstance(node.op, ast.Add): return left + right
+                if isinstance(node.op, ast.Sub): return left - right
+                if isinstance(node.op, ast.Mult): return left * right
+                if isinstance(node.op, ast.FloorDiv): return left // right
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            val = self._eval_const_expr(node.operand)
+            if val is not None: return -val
         return None
 
     def _extract_list_or_array_elts(self, node):

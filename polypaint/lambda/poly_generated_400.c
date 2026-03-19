@@ -4601,7 +4601,7 @@ static void poly_338_c(double x1r, double x1i, double x2r, double x2i,
     _add59r = n + _c58r; _add59i = 0 + _c58i;
     for (int r = 1; r < (int)(_add59r); r++) {
         double _cf60r = 0, _cf60i = 0;
-        { int _idx = (n - r); if (_idx >= 0 && _idx < 36) { _cf60r = cRe[_idx]; _cf60i = cIm[_idx]; } }
+        { int _idx = ((int)(n) - r); if (_idx >= 0 && _idx < 36) { _cf60r = cRe[_idx]; _cf60i = cIm[_idx]; } }
         double _conj61r = 0, _conj61i = 0;
         _conj61r = _cf60r; _conj61i = -(_cf60i);
         double _mul62r = 0, _mul62i = 0;
@@ -9683,7 +9683,7 @@ static void poly_387_c(double x1r, double x1i, double x2r, double x2i,
         c_exp2(_mul35r, _mul35i, &_exp36r, &_exp36i);
         double _mul37r = 0, _mul37i = 0;
         c_mul(mag_part, 0, _exp36r, _exp36i, &_mul37r, &_mul37i);
-        { int _idx = (j - 1); if (_idx >= 0 && _idx < 36) { cRe[_idx] = _mul37r; cIm[_idx] = _mul37i; } }
+        { int _idx = ((int)(j) - 1); if (_idx >= 0 && _idx < 36) { cRe[_idx] = _mul37r; cIm[_idx] = _mul37i; } }
     }
     for (int _i = 0; _i < 36; _i++) {
         if (!isfinite(cRe[_i]) || !isfinite(cIm[_i])) { cRe[_i] = 0; cIm[_i] = 0; }

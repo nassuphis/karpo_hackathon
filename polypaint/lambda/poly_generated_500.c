@@ -781,11 +781,11 @@ static void poly_408_c(double x1r, double x1i, double x2r, double x2i,
             c_exp2(_mul54r, _mul54i, &_exp55r, &_exp55i);
             perturbation = _exp55r;
             double _cf56r = 0, _cf56i = 0;
-            { int _idx = (idx - 1); if (_idx >= 0 && _idx < 36) { _cf56r = cRe[_idx]; _cf56i = cIm[_idx]; } }
+            { int _idx = ((int)(idx) - 1); if (_idx >= 0 && _idx < 36) { _cf56r = cRe[_idx]; _cf56i = cIm[_idx]; } }
             double _mul57r = 0, _mul57i = 0;
             c_mul(_cf56r, _cf56i, perturbation, 0, &_mul57r, &_mul57i);
             double _cf58r = 0, _cf58i = 0;
-            { int _idx = (idx - 1); if (_idx >= 0 && _idx < 36) { _cf58r = cRe[_idx]; _cf58i = cIm[_idx]; } }
+            { int _idx = ((int)(idx) - 1); if (_idx >= 0 && _idx < 36) { _cf58r = cRe[_idx]; _cf58i = cIm[_idx]; } }
             double _abs59r = 0, _abs59i = 0;
             _abs59r = c_abs(_cf58r, _cf58i); _abs59i = 0;
             double _c60r = 0, _c60i = 0;
@@ -796,7 +796,7 @@ static void poly_408_c(double x1r, double x1i, double x2r, double x2i,
             c_log(_add61r, _add61i, &_log62r, &_log62i);
             double _add63r = 0, _add63i = 0;
             _add63r = _mul57r + _log62r; _add63i = _mul57i + _log62i;
-            { int _idx = (idx - 1); if (_idx >= 0 && _idx < 36) { cRe[_idx] = _add63r; cIm[_idx] = _add63i; } }
+            { int _idx = ((int)(idx) - 1); if (_idx >= 0 && _idx < 36) { cRe[_idx] = _add63r; cIm[_idx] = _add63i; } }
         }
     }
     double _c64r = 0, _c64i = 0;
@@ -4952,7 +4952,7 @@ static void poly_442_c(double x1r, double x1i, double x2r, double x2i,
         double _cf63r = 0, _cf63i = 0;
         { int _idx = (r - 1); if (_idx >= 0 && _idx < 36) { _cf63r = cRe[_idx]; _cf63i = cIm[_idx]; } }
         double _cf64r = 0, _cf64i = 0;
-        { int _idx = (n - r); if (_idx >= 0 && _idx < 36) { _cf64r = cRe[_idx]; _cf64i = cIm[_idx]; } }
+        { int _idx = ((int)(n) - r); if (_idx >= 0 && _idx < 36) { _cf64r = cRe[_idx]; _cf64i = cIm[_idx]; } }
         double _conj65r = 0, _conj65i = 0;
         _conj65r = _cf64r; _conj65i = -(_cf64i);
         double _abs66r = 0, _abs66i = 0;
@@ -5570,7 +5570,7 @@ static void poly_450_c(double x1r, double x1i, double x2r, double x2i,
         _c41r = 0.0; _c41i = 0;
         if (idx >= _c41r) {
             double _cf42r = 0, _cf42i = 0;
-            { int _idx = idx; if (_idx >= 0 && _idx < 36) { _cf42r = cRe[_idx]; _cf42i = cIm[_idx]; } }
+            { int _idx = (int)(idx); if (_idx >= 0 && _idx < 36) { _cf42r = cRe[_idx]; _cf42i = cIm[_idx]; } }
             double _conj43r = 0, _conj43i = 0;
             _conj43r = x1r; _conj43i = -(x1i);
             double _c44r = 0, _c44i = 0;
@@ -5595,7 +5595,7 @@ static void poly_450_c(double x1r, double x1i, double x2r, double x2i,
             c_powr(_conj50r, _conj50i, _mod52r, &_pow53r, &_pow53i);
             double _add54r = 0, _add54i = 0;
             _add54r = _mul49r + _pow53r; _add54i = _mul49i + _pow53i;
-            { int _idx = idx; if (_idx >= 0 && _idx < 36) { cRe[_idx] = _add54r; cIm[_idx] = _add54i; } }
+            { int _idx = (int)(idx); if (_idx >= 0 && _idx < 36) { cRe[_idx] = _add54r; cIm[_idx] = _add54i; } }
         }
     }
     double _c55r = 0, _c55i = 0;

@@ -2256,7 +2256,7 @@ async function runBilevelPipeline() {
         log(`  merge: ${_fmtMs(mergeMs)} wall (${nTiles} tiles)`, 'ok', 'render-log');
 
         // Phase 3: Stitch — single bilevel Lambda joins tile PNGs → final image
-        const imageKey = `renders/${p.jobId}/image_bilevel.png`;
+        const imageKey = `renders/${p.jobId}/image_bilevel.tif`;
         document.getElementById('render-status').textContent = `BiLevel stitch: assembling final PNG...`;
         const tStitch = performance.now();
         const stitchJob = {
@@ -2307,17 +2307,17 @@ async function runBilevelPipeline() {
         const preview = document.getElementById('render-preview');
         if (p.pix > 5000) {
             preview.innerHTML = `<div style="padding:20px; text-align:center; background:#1a1a2e; border:1px solid #333; border-radius:8px">` +
-                `<div style="color:#aaa; margin-bottom:12px">${p.pix}x${p.pix} bilevel PNG — too large to preview</div>` +
-                `<button class="btn-primary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_bilevel.png')" ` +
+                `<div style="color:#aaa; margin-bottom:12px">${p.pix}x${p.pix} bilevel TIFF — too large to preview</div>` +
+                `<button class="btn-primary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_bilevel.tif')" ` +
                 `style="padding:8px 24px; font-size:14px">Download PNG</button></div>`;
         } else {
             preview.innerHTML = `<a href="${imageUrl}" target="_blank" title="Click to open full-size image">` +
                 `<img src="${imageUrl}" style="max-width:100%; border:1px solid #333; cursor:pointer; background:#000"></a>` +
-                `<div style="margin-top:8px"><button class="btn-secondary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_bilevel.png')" ` +
+                `<div style="margin-top:8px"><button class="btn-secondary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_bilevel.tif')" ` +
                 `style="padding:4px 12px">Download PNG</button></div>`;
         }
         document.getElementById('render-info').textContent =
-            `Job: ${p.jobId} | ${p.pix}x${p.pix} | Degree: ${calcMeta.degree} | BiLevel 1-bit PNG`;
+            `Job: ${p.jobId} | ${p.pix}x${p.pix} | Degree: ${calcMeta.degree} | BiLevel 1-bit TIFF (CCITT G4)`;
         log(`Done: deg${calcMeta.degree} ${p.pix}px bilevel, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');
 
     } catch (e) {

@@ -113,8 +113,10 @@ static int do_merge(int argc, char **argv) {
         return 1;
     }
 
-    if (vips_pngsave(thresh, outPath, "compression", 9, "bitdepth", 1, NULL)) {
-        fprintf(stderr, "vips_pngsave failed: %s\n", vips_error_buffer());
+    if (vips_tiffsave(thresh, outPath,
+                      "compression", VIPS_FOREIGN_TIFF_COMPRESSION_CCITT_G4,
+                      "bitdepth", 1, NULL)) {
+        fprintf(stderr, "vips_tiffsave failed: %s\n", vips_error_buffer());
         g_object_unref(thresh);
         g_object_unref(img);
         free(imgBuf);
@@ -176,9 +178,11 @@ static int do_stitch(int argc, char **argv) {
         return 1;
     }
 
-    /* Save as 1-bit PNG */
-    if (vips_pngsave(joined, outPath, "compression", 9, "bitdepth", 1, NULL)) {
-        fprintf(stderr, "vips_pngsave failed: %s\n", vips_error_buffer());
+    /* Save as 1-bit TIFF with CCITT G4 compression (no zlib, no size limits) */
+    if (vips_tiffsave(joined, outPath,
+                      "compression", VIPS_FOREIGN_TIFF_COMPRESSION_CCITT_G4,
+                      "bitdepth", 1, NULL)) {
+        fprintf(stderr, "vips_tiffsave failed: %s\n", vips_error_buffer());
         g_object_unref(joined);
         for (int t = 0; t < nTiles; t++) g_object_unref(tiles[t]);
         free(tiles);

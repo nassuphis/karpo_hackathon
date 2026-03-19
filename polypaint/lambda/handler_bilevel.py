@@ -142,7 +142,7 @@ def handle_merge(params):
                 raise
 
         # Run bilevel_merge
-        out_path = "/tmp/tile.png"
+        out_path = "/tmp/tile.tif"
         cmd = [
             BILEVEL_MERGE, "merge",
             f"--tile_w={tile_w}", f"--tile_h={tile_h}",
@@ -165,7 +165,7 @@ def handle_merge(params):
                 pass
 
         # Upload tile PNG
-        tile_key = f"renders/{job_id}/bilevel_t{tile_idx:04d}.png"
+        tile_key = f"renders/{job_id}/bilevel_t{tile_idx:04d}.tif"
         with open(out_path, "rb") as fh:
             s3.upload_fileobj(fh, BUCKET, tile_key)
         os.remove(out_path)
@@ -197,7 +197,7 @@ def handle_stitch(params):
         # Download all tile PNGs
         tile_paths = []
         for t in range(n_tiles):
-            tile_key = f"renders/{job_id}/bilevel_t{t:04d}.png"
+            tile_key = f"renders/{job_id}/bilevel_t{t:04d}.tif"
             local_path = f"/tmp/tile_{t:04d}.png"
             obj = s3.get_object(Bucket=BUCKET, Key=tile_key)
             with open(local_path, "wb") as f:
@@ -208,7 +208,7 @@ def handle_stitch(params):
         report_status(job_id, task_id, "stitching")
 
         # Run bilevel_merge stitch
-        out_path = "/tmp/final.png"
+        out_path = "/tmp/final.tif"
         cmd = [
             BILEVEL_MERGE, "stitch",
             f"--n_cols={n_tile_cols}",
@@ -233,7 +233,7 @@ def handle_stitch(params):
 
         # Upload final PNG
         with open(out_path, "rb") as f:
-            s3.put_object(Bucket=BUCKET, Key=out_key, Body=f, ContentType="image/png")
+            s3.put_object(Bucket=BUCKET, Key=out_key, Body=f, ContentType="image/tiff")
         os.remove(out_path)
 
         report_status(job_id, task_id, "done")

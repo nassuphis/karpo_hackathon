@@ -47,7 +47,7 @@ def handler(event, context):
 
         report_status(job_id, task_id, "stitching")
 
-        # Run bilevel_merge stitch (no hardcoded timeout — use Lambda's own limit)
+        # Run bilevel_merge stitch (timeout 870s — 30s headroom before Lambda's 900s limit)
         out_path = "/tmp/final.tif"
         cmd = [
             BILEVEL_MERGE, "stitch",
@@ -88,4 +88,14 @@ def handler(event, context):
 
     except Exception as e:
         report_status(job_id, task_id, "error", str(e))
+        # Clean up /tmp to avoid stale files on warm container reuse
+        for p in tile_paths if 'tile_paths' in dir() else []:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        try:
+            os.remove("/tmp/final.tif")
+        except OSError:
+            pass
         raise

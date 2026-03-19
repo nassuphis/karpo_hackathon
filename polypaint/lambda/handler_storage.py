@@ -289,6 +289,7 @@ def handle_clean_render(event):
 
     # Also clear DynamoDB status entries for this job
     ddb_deleted = 0
+    ddb_errors = []
     try:
         ddb = _get_ddb()
         kwargs = {
@@ -305,9 +306,10 @@ def handle_clean_render(event):
                 break
             kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
 
+        import time
         for i in range(0, len(items_to_delete), 25):
             batch = items_to_delete[i:i + 25]
-            ddb.batch_write_item(RequestItems={
+            request_items = {
                 JOBS_TABLE: [
                     {"DeleteRequest": {"Key": {
                         "job_id": item["job_id"],
@@ -315,16 +317,31 @@ def handle_clean_render(event):
                     }}}
                     for item in batch
                 ]
-            })
-            ddb_deleted += len(batch)
-    except Exception:
-        pass  # DynamoDB cleanup is best-effort
+            }
+            # Retry unprocessed items up to 3 times with backoff
+            for attempt in range(4):
+                resp = ddb.batch_write_item(RequestItems=request_items)
+                unprocessed = resp.get("UnprocessedItems", {}).get(JOBS_TABLE, [])
+                processed = len(request_items[JOBS_TABLE]) - len(unprocessed)
+                ddb_deleted += processed
+                if not unprocessed:
+                    break
+                request_items = {JOBS_TABLE: unprocessed}
+                if attempt < 3:
+                    time.sleep(0.1 * (2 ** attempt))
+            else:
+                ddb_errors.append(f"{len(unprocessed)} items unprocessed after retries")
+    except Exception as e:
+        ddb_errors.append(str(e))
 
-    return ok_response({
+    result = {
         "job_id": job_id,
         "deleted": total_deleted,
         "ddb_deleted": ddb_deleted,
-    })
+    }
+    if ddb_errors:
+        result["ddb_errors"] = ddb_errors
+    return ok_response(result)
 
 
 def handle_save_metadata(event):

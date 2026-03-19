@@ -283,6 +283,8 @@ int main(int argc, char **argv) {
     double centerRe = getArgDouble(argc, argv, "--center_re", 0.0);
     double centerIm = getArgDouble(argc, argv, "--center_im", 0.0);
     double scale = getArgDouble(argc, argv, "--scale", 100.0);
+    double rotation = getArgDouble(argc, argv, "--rotation", 0.0);
+    double cosA = cos(rotation), sinA = sin(rotation);
     int degree = getArgInt(argc, argv, "--degree", 25);
     int tileSize = getArgInt(argc, argv, "--tile_size", 4096);
     int nTileCols = getArgInt(argc, argv, "--n_tile_cols", 1);
@@ -430,8 +432,10 @@ int main(int argc, char **argv) {
             float *step = roots + p * stride;
             for (int i = 0; i < degree; i++) {
                 double re = step[i * 2], im = step[i * 2 + 1];
-                int px = (int)(halfW + (re - centerRe) * scale);
-                int py = (int)(halfH - (im - centerIm) * scale);
+                double dx = re - centerRe, dy = im - centerIm;
+                double rx = dx * cosA - dy * sinA, ry = dx * sinA + dy * cosA;
+                int px = (int)(halfW + rx * scale);
+                int py = (int)(halfH - ry * scale);
                 if (px < 0 || px >= W || py < 0 || py >= H) {
                     rootsClipped++;
                     continue;
@@ -481,8 +485,10 @@ int main(int argc, char **argv) {
             for (int r = 0; r < degree; r++) {
                 double re = step[r * 2];
                 double im = step[r * 2 + 1];
-                int px = (int)(halfW + (re - centerRe) * scale);
-                int py = (int)(halfH - (im - centerIm) * scale);
+                double dx = re - centerRe, dy = im - centerIm;
+                double rx = dx * cosA - dy * sinA, ry = dx * sinA + dy * cosA;
+                int px = (int)(halfW + rx * scale);
+                int py = (int)(halfH - ry * scale);
                 if (px >= 0 && px < W && py >= 0 && py < H) {
                     int tile_col = px / tileSize;
                     int tile_row = py / tileSize;
@@ -532,8 +538,10 @@ int main(int argc, char **argv) {
             for (int r = 0; r < degree; r++) {
                 double re = step[r * 2];
                 double im = step[r * 2 + 1];
-                int px = (int)(halfW + (re - centerRe) * scale);
-                int py = (int)(halfH - (im - centerIm) * scale);
+                double dx = re - centerRe, dy = im - centerIm;
+                double rx = dx * cosA - dy * sinA, ry = dx * sinA + dy * cosA;
+                int px = (int)(halfW + rx * scale);
+                int py = (int)(halfH - ry * scale);
                 if (px >= 0 && px < W && py >= 0 && py < H) {
                     int tile_col = px / tileSize;
                     int tile_row = py / tileSize;

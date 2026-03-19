@@ -55,6 +55,7 @@ def handler(event, context):
             f"--match={params.get('match', 'none')}",
             f"--palette={params.get('palette', 'inferno')}",
             f"--constant_color={params.get('constant_color', 'ffffff')}",
+            f"--rotation={params.get('rotation', 0.0)}",
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:

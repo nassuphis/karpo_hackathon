@@ -228,6 +228,39 @@ c_code, header, lookups = transpile_file('poly200.py', stub_funcs={'poly_103'}, 
 - `skip_funcs`: completely omit (e.g., poly_110 already defined in poly100)
 - Output files: `poly_generated_200.c`, `poly_generated_200_funcs.h`, `poly_generated_200_lookups.h`
 
+## Updating the UI Dropdown
+
+After transpiling a new batch and running visual tests, the coefficient function selector dropdown in `index.html` must be updated manually. The dropdown is a `<select id="render-function">` element (around line 195–811) containing one `<option>` per function.
+
+### Current format
+
+```html
+<option value="poly_501">· poly_501 [100%] (degree 34)</option>   <!-- transpiled, passing -->
+<option value="poly_535">· poly_535 [0%] (degree 34)</option>      <!-- transpiled, failing -->
+<option value="poly_407">❌ poly_407 (degree 34)</option>           <!-- stubbed -->
+```
+
+- `·` prefix = transpiled C function exists in sweep binary
+- `❌` prefix = stubbed (zero-output placeholder)
+- `[N%]` = pixel overlap from visual comparison test
+- `(degree N)` = polynomial degree (34 for poly_301+, 70 for poly_1–223)
+
+### What to update after adding a new batch
+
+1. Add `<option>` entries for the new functions before the `</select>` tag
+2. Update overlap percentages for any re-transpiled functions whose results changed
+3. Mark stubbed functions with `❌` and no overlap percentage
+
+### Future improvement
+
+This is currently a manual copy-paste process which is error-prone and tedious. A better approach would be:
+
+1. Save test results to a JSON file (e.g. `polypaint/lambda/test_results.json`) keyed by function name, with overlap %, stub status, and degree
+2. Write a script that reads the JSON and regenerates the `<option>` block
+3. Optionally run the script as part of the transpile → compile → test → update pipeline
+
+This would make the dropdown a derived artifact rather than hand-maintained state.
+
 ## Coverage Summary (poly_1–600)
 
 | Source | Total | Transpiled OK | Hand-written | Stubbed | Broken | Pass Rate |

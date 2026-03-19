@@ -114,7 +114,7 @@ static int do_merge(int argc, char **argv) {
     }
 
     if (vips_tiffsave(thresh, outPath,
-                      "compression", VIPS_FOREIGN_TIFF_COMPRESSION_CCITTFAX4,
+                      "compression", VIPS_FOREIGN_TIFF_COMPRESSION_CCITT_G4,
                       "bitdepth", 1, NULL)) {
         fprintf(stderr, "vips_tiffsave failed: %s\n", vips_error_buffer());
         g_object_unref(thresh);
@@ -180,7 +180,7 @@ static int do_stitch(int argc, char **argv) {
 
     /* Save as 1-bit TIFF with CCITT G4 compression (no zlib, no size limits) */
     if (vips_tiffsave(joined, outPath,
-                      "compression", VIPS_FOREIGN_TIFF_COMPRESSION_CCITTFAX4,
+                      "compression", VIPS_FOREIGN_TIFF_COMPRESSION_CCITT_G4,
                       "bitdepth", 1, NULL)) {
         fprintf(stderr, "vips_tiffsave failed: %s\n", vips_error_buffer());
         g_object_unref(joined);

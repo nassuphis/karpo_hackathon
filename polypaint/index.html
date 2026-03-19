@@ -156,8 +156,7 @@ button {
                 <input type="number" id="render-stripes" value="10" min="10" max="500" step="1" style="width:4em">
                 <label>Times:</label>
                 <input type="number" id="render-times" value="1" min="1" max="100" step="1" style="width:3.5em">
-                <button class="btn-primary" id="btn-calculate" onclick="runCalculate()" style="background:#2a6; margin-left:8px">Calculate</button>
-                <button class="btn-secondary" onclick="loadRenderPreset('fast')">Fast N=100</button>
+                <button class="btn-secondary" onclick="loadRenderPreset('fast')" style="margin-left:8px">Fast N=100</button>
                 <button class="btn-secondary" onclick="loadRenderPreset('medium')">Medium N=500</button>
                 <button class="btn-secondary" onclick="loadRenderPreset('hires')">Hi-res N=1K</button>
             </div>
@@ -1052,6 +1051,9 @@ button {
                     <option value="safe">safe</option>
                     <option value="negate_odd">negate_odd</option>
                 </select>
+            </div>
+            <div style="margin-top:8px">
+                <button class="btn-primary" id="btn-calculate" onclick="runCalculate()" style="background:#2a6">Calculate</button>
             </div>
             <div class="anim-row" style="margin-top:8px">
                 <label>Results Dir:</label>

@@ -236,3 +236,5 @@ polypaint_book_*.pdf
 tests/test_orb_paths.py
 
 # Polypaint build artifacts — see polypaint/.gitignore
+polypaint/lambda/coeffgen
+polypaint/coeffgen

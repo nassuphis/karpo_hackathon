@@ -275,6 +275,31 @@ class PolyTranspiler(ast.NodeVisitor):
                     self.declare(tmp)
                     self.emit(f"{tmp.r} = {re.r}; {tmp.i} = {im.r};")
                     return tmp
+                elif node.keywords:
+                    re_val = im_val = None
+                    for kw in node.keywords:
+                        if kw.arg == "real": re_val = self.expr_to_c(kw.value)
+                        elif kw.arg == "imag": im_val = self.expr_to_c(kw.value)
+                    tmp = CVar.fresh("cplx")
+                    self.declare(tmp)
+                    self.emit(f"{tmp.r} = {re_val.r if re_val else '0'}; {tmp.i} = {im_val.r if im_val else '0'};")
+                    return tmp
+            elif func.id == "max":
+                if len(node.args) == 2:
+                    a = self.expr_to_c(node.args[0])
+                    b = self.expr_to_c(node.args[1])
+                    tmp = CVar.fresh("max")
+                    self.declare(tmp)
+                    self.emit(f"{tmp.r} = fmax({a.r}, {b.r}); {tmp.i} = 0;")
+                    return tmp
+            elif func.id == "min":
+                if len(node.args) == 2:
+                    a = self.expr_to_c(node.args[0])
+                    b = self.expr_to_c(node.args[1])
+                    tmp = CVar.fresh("min")
+                    self.declare(tmp)
+                    self.emit(f"{tmp.r} = fmin({a.r}, {b.r}); {tmp.i} = 0;")
+                    return tmp
             elif func.id == "range":
                 pass  # handled in for loop
             elif func.id == "int":
@@ -398,11 +423,33 @@ class PolyTranspiler(ast.NodeVisitor):
                 self.emit(f"{tmp.r} = 0; {tmp.i} = 0;")
                 self.emit(f"for (int _si = 0; _si < {self.n_coeffs}; _si++) {{ {tmp.r} += cRe[_si]; {tmp.i} += cIm[_si]; }}")
                 return tmp
+            # Handle np.sum(np.array([...])) or np.sum([...])
+            elts = self._extract_list_or_array_elts(args[0]) if args else None
+            if elts is not None and len(elts) > 0:
+                result = self.expr_to_c(elts[0])
+                for elt in elts[1:]:
+                    val = self.expr_to_c(elt)
+                    tmp = CVar.fresh("sum")
+                    self.declare(tmp)
+                    self.emit(f"{tmp.r} = {result.r} + {val.r}; {tmp.i} = {result.i} + {val.i};")
+                    result = tmp
+                return result
             arg = self.expr_to_c(args[0])
             return arg
         elif attr == "prod":
             if len(args) == 1 and isinstance(args[0], ast.Subscript):
                 return self.numpy_prod_slice(args[0])
+            # Handle np.prod(np.array([expr1, expr2, ...])) or np.prod([expr1, expr2, ...])
+            elts = self._extract_list_or_array_elts(args[0]) if args else None
+            if elts is not None and len(elts) > 0:
+                result = self.expr_to_c(elts[0])
+                for elt in elts[1:]:
+                    val = self.expr_to_c(elt)
+                    tmp = CVar.fresh("prod")
+                    self.declare(tmp)
+                    self.emit(f"c_mul({result.r}, {result.i}, {val.r}, {val.i}, &{tmp.r}, &{tmp.i});")
+                    result = tmp
+                return result
             arg = self.expr_to_c(args[0])
             return arg
         elif attr == "sign":
@@ -477,6 +524,19 @@ class PolyTranspiler(ast.NodeVisitor):
             self.declare(tmp)
             self.emit(f"{tmp.r} = fmin({a.r}, {b.r}); {tmp.i} = 0;")
             return tmp
+        elif attr == "arctan2":
+            a = self.expr_to_c(args[0])
+            b = self.expr_to_c(args[1])
+            tmp = CVar.fresh("at2")
+            self.declare(tmp)
+            self.emit(f"{tmp.r} = atan2({a.r}, {b.r}); {tmp.i} = 0;")
+            return tmp
+        elif attr == "conjugate":
+            arg = self.expr_to_c(args[0])
+            tmp = CVar.fresh("conj")
+            self.declare(tmp)
+            self.emit(f"{tmp.r} = {arg.r}; {tmp.i} = -({arg.i});")
+            return tmp
 
         # Fallback
         tmp = CVar.fresh("np")
@@ -520,6 +580,15 @@ class PolyTranspiler(ast.NodeVisitor):
                     self.declare(tmp)
                     self.emit(f"{tmp.r} = 0; {tmp.i} = 0;")
                     self.emit(f"for (int _si = {lo}; _si < {hi}; _si++) {{ {tmp.r} += cRe[_si]; {tmp.i} += cIm[_si]; }}")
+                    return tmp
+                else:
+                    # Dynamic bounds
+                    lo_c = f"({self.expr_to_c(sl.lower).r})" if sl.lower else "0"
+                    hi_c = f"({self.expr_to_c(sl.upper).r})" if sl.upper else str(self.n_coeffs)
+                    tmp = CVar.fresh("sum")
+                    self.declare(tmp)
+                    self.emit(f"{tmp.r} = 0; {tmp.i} = 0;")
+                    self.emit(f"for (int _si = (int){lo_c}; _si < (int){hi_c} && _si < {self.n_coeffs}; _si++) {{ {tmp.r} += cRe[_si]; {tmp.i} += cIm[_si]; }}")
                     return tmp
         # fallback
         tmp = CVar.fresh("sum")
@@ -897,6 +966,21 @@ class PolyTranspiler(ast.NodeVisitor):
                         self.declared.add(name)
                         self.emit(f"/* WARNING: could not extract np.array for {name} */")
                         self.emit(f"static const double {name}[] = {{0}};")
+                elif self._is_np_linspace(stmt.value):
+                    # np.linspace(start, end, n) -> double name[n]; for loop
+                    start_expr, end_expr, n_val = self._extract_linspace_args(stmt.value)
+                    if start_expr is not None and n_val is not None:
+                        self.declared.add(name)
+                        self.array_sizes[name] = n_val
+                        start_var = self.expr_to_c(start_expr)
+                        end_var = self.expr_to_c(end_expr)
+                        self.emit(f"double {name}[{n_val}];")
+                        if n_val > 1:
+                            self.emit(f"for (int _li = 0; _li < {n_val}; _li++) {{")
+                            self.emit(f"    {name}[_li] = {start_var.r} + ({end_var.r} - {start_var.r}) * _li / {n_val - 1}.0;")
+                            self.emit(f"}}")
+                        else:
+                            self.emit(f"{name}[0] = {start_var.r};")
                 elif self.is_np_computed_array(stmt.value):
                     # Check if this is a simple np.arange — track as loop variable
                     arange_info = self._is_arange_assign(stmt)
@@ -1000,6 +1084,7 @@ class PolyTranspiler(ast.NodeVisitor):
             self.process_for(stmt)
 
         elif isinstance(stmt, ast.If):
+            self._predeclare_if_vars(stmt)
             self.process_if(stmt)
 
         elif isinstance(stmt, ast.Return):
@@ -1088,11 +1173,61 @@ class PolyTranspiler(ast.NodeVisitor):
                 return child.id
         return None
 
+    def _predeclare_if_vars(self, if_node):
+        """Pre-declare variables that are first assigned inside if/elif/else branches."""
+        assigned = set()
+        def scan_branch(stmts):
+            for s in stmts:
+                if isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name):
+                    name = s.targets[0].id
+                    if name not in self.declared and name != "cf":
+                        assigned.add(name)
+                elif isinstance(s, ast.If):
+                    scan_branch(s.body)
+                    scan_branch(s.orelse)
+        scan_branch(if_node.body)
+        scan_branch(if_node.orelse)
+        for name in sorted(assigned):
+            self.declared.add(name)
+            self.emit(f"double {name} = 0;")
+
     def _is_np_zeros(self, node):
         """Check if node is np.zeros(...)."""
         return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and
                 isinstance(node.func.value, ast.Name) and node.func.value.id == "np" and
                 node.func.attr == "zeros")
+
+    def _is_np_linspace(self, node):
+        return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and
+                isinstance(node.func.value, ast.Name) and node.func.value.id == "np" and
+                node.func.attr == "linspace")
+
+    def _extract_linspace_args(self, node):
+        """Returns (start_node, end_node, n_int) or (None, None, None)."""
+        if len(node.args) >= 3:
+            n = self.get_int(node.args[2])
+            if n is None and isinstance(node.args[2], ast.Name):
+                # Try to resolve from n_coeffs or known constant
+                n = self._resolve_const_name(node.args[2].id)
+            if n is not None:
+                return node.args[0], node.args[1], n
+        return None, None, None
+
+    def _resolve_const_name(self, name):
+        """Try to resolve a variable name to its constant integer value from the function body."""
+        if name == "n" and hasattr(self, '_const_locals') and "n" in self._const_locals:
+            return self._const_locals["n"]
+        return None
+
+    def _extract_list_or_array_elts(self, node):
+        """Extract element AST nodes from a list literal or np.array([...])."""
+        if isinstance(node, ast.List):
+            return node.elts
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if (isinstance(node.func.value, ast.Name) and node.func.value.id == "np" and
+                    node.func.attr == "array" and node.args and isinstance(node.args[0], ast.List)):
+                return node.args[0].elts
+        return None
 
     def _is_arange_assign(self, stmt):
         """Check if stmt is `var = np.arange(...)` and return (name, start, stop) or None."""
@@ -1357,6 +1492,16 @@ def transpile_function(func_node):
     tp = PolyTranspiler(name, n_coeffs)
 
     body = get_func_body(func_node)
+
+    # Pre-scan for constant local assignments (e.g. n = 35) so linspace can resolve them
+    tp._const_locals = {}
+    for stmt in body:
+        if isinstance(stmt, ast.Return):
+            break
+        if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and
+                isinstance(stmt.targets[0], ast.Name) and isinstance(stmt.value, ast.Constant) and
+                isinstance(stmt.value.value, (int, float))):
+            tp._const_locals[stmt.targets[0].id] = int(stmt.value.value)
 
     # Two-pass: first pass detects arange variables, second pass processes
     # We need to pre-scan for arange vars so we can group vectorized statements

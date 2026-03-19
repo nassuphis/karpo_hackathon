@@ -1013,13 +1013,18 @@ class PolyTranspiler(ast.NodeVisitor):
                     else:
                         self.emit(f"x2r = {val.r}; x2i = {val.i};")
                 else:
-                    # Local variable
-                    val = self.expr_to_c(stmt.value)
-                    if name not in self.declared:
+                    # Local variable — check if pre-resolved as constant
+                    const_val = self._const_locals.get(name) if hasattr(self, '_const_locals') else None
+                    if const_val is not None and name not in self.declared:
                         self.declared.add(name)
-                        self.emit(f"double {name} = {val.r}; /* +{val.i}i */")
+                        self.emit(f"double {name} = {float(const_val)};")
                     else:
-                        self.emit(f"{name} = {val.r};")
+                        val = self.expr_to_c(stmt.value)
+                        if name not in self.declared:
+                            self.declared.add(name)
+                            self.emit(f"double {name} = {val.r}; /* +{val.i}i */")
+                        else:
+                            self.emit(f"{name} = {val.r};")
             elif isinstance(target, ast.Tuple):
                 # Tuple unpacking — handle simple cases
                 if isinstance(stmt.value, ast.Tuple):
@@ -1525,14 +1530,21 @@ def transpile_function(func_node):
     body = get_func_body(func_node)
 
     # Pre-scan for constant local assignments (e.g. n = 35) so linspace can resolve them
+    # Also handles: n = ps.poly.get("n") or 35  →  extracts the default (35)
     tp._const_locals = {}
     for stmt in body:
         if isinstance(stmt, ast.Return):
             break
         if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and
-                isinstance(stmt.targets[0], ast.Name) and isinstance(stmt.value, ast.Constant) and
-                isinstance(stmt.value.value, (int, float))):
-            tp._const_locals[stmt.targets[0].id] = int(stmt.value.value)
+                isinstance(stmt.targets[0], ast.Name)):
+            val = stmt.value
+            if isinstance(val, ast.Constant) and isinstance(val.value, (int, float)):
+                tp._const_locals[stmt.targets[0].id] = int(val.value)
+            elif (isinstance(val, ast.BoolOp) and isinstance(val.op, ast.Or) and
+                  len(val.values) == 2 and isinstance(val.values[1], ast.Constant) and
+                  isinstance(val.values[1].value, (int, float))):
+                # Pattern: X or <default> — use the default
+                tp._const_locals[stmt.targets[0].id] = int(val.values[1].value)
 
     # Two-pass: first pass detects arange variables, second pass processes
     # We need to pre-scan for arange vars so we can group vectorized statements

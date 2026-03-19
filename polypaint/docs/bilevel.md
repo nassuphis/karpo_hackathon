@@ -1,6 +1,12 @@
 # Bilevel Render Lambda
 
-Dedicated Lambda for rendering polynomial root images as 1-bit black/white PNGs. Stripe-first architecture: each stripe is processed once, each root is projected once.
+Dedicated Lambda for rendering polynomial root images as 1-bit black/white TIFFs. Stripe-first architecture: each stripe is processed once, each root is projected once.
+
+## Output format
+
+TIFF with CCITT Group 4 compression throughout the pipeline. No zlib anywhere.
+
+PNG uses zlib internally (even through libvips), which has size limits and is very slow at high compression for large images. CCITT G4 is purpose-built for bilevel data: no zlib dependency, no size limits, better compression for 1-bit content. libvips writes CCITT G4 natively via `vips_tiffsave`.
 
 ## Architecture
 
@@ -11,10 +17,10 @@ Phase 1 — Raster (one Lambda per stripe):
   Download stripe .bin → project roots → write per-tile .bits files to S3
 
 Phase 2 — Merge (one Lambda per tile):
-  Download stripe .bits files for tile → OR bitsets → write 1-bit tile PNG
+  Download stripe .bits files for tile → OR bitsets → write 1-bit tile TIFF
 
 Phase 3 — Stitch (single Lambda):
-  Download tile PNGs → vips_arrayjoin → write final 1-bit PNG
+  Download tile TIFFs → vips_arrayjoin → write final 1-bit TIFF
 ```
 
 ### Why stripe-first
@@ -27,6 +33,10 @@ The alternative (tile-first: one Lambda per tile, each downloads all stripes) wa
 
 Stripe-first processes each stripe once, projects each root once, then fans out per-tile bitsets (tiny: 2 MB each) for the merge phase. The merge phase is trivial (bitwise OR).
 
+### Why not PNG
+
+The stitch phase on a 50K×50K image timed out at 600s using `vips_pngsave` with compression=9. PNG format uses zlib deflate internally, which is both slow and has a 32-bit size constraint that makes very large images problematic. CCITT G4 has none of these issues.
+
 ## Data flow
 
 ```
@@ -35,9 +45,9 @@ stripe_1.bin ──→ bits_s0001_t0000.bits  bits_s0001_t0001.bits  ...
   ...
 
 For each tile:
-  bits_s0000_tN.bits + bits_s0001_tN.bits + ... ──OR──→ bilevel_tN.png
+  bits_s0000_tN.bits + bits_s0001_tN.bits + ... ──OR──→ bilevel_tN.tif
 
-bilevel_t0000.png + bilevel_t0001.png + ... ──stitch──→ image_bilevel.png
+bilevel_t0000.tif + bilevel_t0001.tif + ... ──stitch──→ image_bilevel.tif
 ```
 
 ## Files
@@ -45,7 +55,7 @@ bilevel_t0000.png + bilevel_t0001.png + ... ──stitch──→ image_bilevel.
 | File | Purpose |
 |------|---------|
 | `bilevel_raster.c` | Static binary: one stripe → per-tile .bits files. No libvips. |
-| `bilevel_merge.c` | Dynamic binary (libvips): merge .bits → tile PNG, or stitch tile PNGs → final PNG. |
+| `bilevel_merge.c` | Dynamic binary (libvips): merge .bits → tile TIFF, or stitch tile TIFFs → final TIFF. |
 | `handler_bilevel.py` | Lambda handler: routes phase=raster/merge/stitch to appropriate binary. |
 
 ## C binary interfaces
@@ -67,17 +77,19 @@ Build: `aarch64-linux-musl-gcc -O3 -static -o bilevel_raster bilevel_raster.c -l
 
 ### bilevel_merge
 
-Merge mode (OR bitsets → tile PNG):
+Merge mode (OR bitsets → tile TIFF):
 ```
-bilevel_merge merge --tile_w=TW --tile_h=TH --output=tile.png
+bilevel_merge merge --tile_w=TW --tile_h=TH --output=tile.tif
     bits1.bits bits2.bits ...
 ```
 
-Stitch mode (join tile PNGs → final PNG):
+Stitch mode (join tile TIFFs → final TIFF):
 ```
-bilevel_merge stitch --n_cols=C --n_rows=R --output=final.png
-    tile0.png tile1.png ...
+bilevel_merge stitch --n_cols=C --n_rows=R --output=final.tif
+    tile0.tif tile1.tif ...
 ```
+
+Both modes output TIFF with CCITT G4, bitdepth=1 via `vips_tiffsave`.
 
 Build: Docker ARM64 with libvips (same as raw2jpeg).
 
@@ -90,11 +102,11 @@ Build: Docker ARM64 with libvips (same as raw2jpeg).
 
 ### Merge Lambda (per tile)
 - N stripe .bits files: N × 2 MB — 20 MB for 10 stripes
-- Image buffer for PNG conversion: 16 MB (4096×4096 × 1 byte)
+- Image buffer for TIFF conversion: 16 MB (4096×4096 × 1 byte)
 - **Total: ~40 MB**
 
 ### Stitch Lambda (single)
-- libvips opens tile PNGs lazily (demand-driven, not all in memory)
+- libvips opens tile TIFFs lazily (demand-driven, not all in memory)
 - Working set: a few rows of tiles at a time
 - Output streams to disk
 
@@ -121,7 +133,7 @@ Two binaries in the zip: `bilevel_raster` (static) + `bilevel_merge` (dynamic/li
 4. Poll `bilevel_merge_*` tasks until all complete
 5. Dispatch 1 bilevel Lambda with `phase: "stitch"`
 6. Poll `bilevel_stitch` task until complete
-7. Get presigned URL for final PNG
+7. Get presigned URL for final TIFF
 
 ## Scaling
 
@@ -130,6 +142,12 @@ Two binaries in the zip: `bilevel_raster` (static) + `bilevel_merge` (dynamic/li
 | 4096×4096 | 2 MB | 20 MB (10 stripes) | 48 MB/tile |
 | 50K×50K | ~338 MB | 20 MB/tile | ~7 GB stitched raw |
 | 100K×100K | ~1.2 GB | 20 MB/tile | ~28 GB (impossible) |
+
+## Known limits
+
+- **MAX_TILES=4096**: the raster binary supports up to a 64×64 tile grid. At 4096px tiles that's 262K×262K max. At 2048px tiles it's 131K×131K. Sufficient for the 100K target.
+- **Whole-stripe malloc**: the raster binary loads the full stripe .bin into memory. This is the correct tradeoff for stripe-first (one stripe per Lambda), but memory is bounded by solver stripe sizing.
+- **No merge/stitch local tests**: `bilevel_merge` requires libvips from the Lambda Docker build. Only `bilevel_raster` is tested locally.
 
 ## Tests
 
@@ -147,8 +165,6 @@ Requires `bilevel_raster_local` (natively compiled) in `polypaint/lambda/`:
 cd polypaint/lambda && cc -O3 -o bilevel_raster_local bilevel_raster.c -lm
 ```
 
-No tests for `bilevel_merge` locally — it requires libvips which is only available in the Lambda Docker build environment.
-
 ## Design history
 
 ### v1: Tile-first (rejected)
@@ -161,14 +177,10 @@ The first implementation dispatched one Lambda per tile. Each tile Lambda downlo
 4. **Encode contract break**: tile PNGs were fed into the old raw-tile encoder which expected a 12-byte binary header.
 5. **`dl_ms` undefined**: handler returned an undefined variable on success, causing NameError after reporting "done".
 
-### v2: Stripe-first (current)
+### v2: Stripe-first with PNG (stitch timeout)
 
-Rewritten to match the architecture recommended in `image_render.md`:
+Rewrote to stripe-first architecture but still used PNG output (`vips_pngsave`). The stitch phase timed out at 600s on a 50K image — `vips_pngsave` with compression=9 on 2.5 billion 1-bit pixels is too slow because PNG uses zlib internally.
 
-1. Raster phase processes each stripe once (one Lambda per stripe)
-2. Each root is projected once and bucketed into the correct tile's bitset
-3. Tiny .bits files (2 MB each) are uploaded to S3
-4. Merge phase is trivial: OR the bitsets, write PNG
-5. Stitch phase uses libvips `vips_arrayjoin` to join tile PNGs — never touches the old raw-tile encoder
+### v3: Stripe-first with TIFF CCITT G4 (current)
 
-This is the same structure as the existing color pipeline (raster → finalize → encode) but with 24× less data flowing through S3.
+Switched all output from PNG to TIFF with CCITT Group 4 compression. No zlib anywhere in the pipeline. CCITT G4 is purpose-built for bilevel data, has no size limits, and compresses faster with better ratios than PNG for 1-bit content.

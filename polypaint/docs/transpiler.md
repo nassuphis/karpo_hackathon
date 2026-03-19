@@ -60,9 +60,9 @@ static void poly_N_c(double x1r, double x1i, double x2r, double x2i,
 - Exponential/Log: `np.exp`, `np.log`, `np.sqrt`
 - Magnitude/Phase: `np.abs`, `np.angle`
 - Components: `np.real`, `np.imag`, `np.conj`
-- Reduction: `np.sum(cf[a:b])`, `np.prod(cf[a:b])`
-- Array creation: `np.zeros`, `np.arange`
-- Misc: `np.sign`, `np.floor`, `np.ceil`, `np.clip`, `np.maximum`, `np.minimum`, `np.tanh`, `np.sinh`, `np.cosh`
+- Reduction: `np.sum(cf[a:b])`, `np.prod(cf[a:b])`, `np.sum([a, b])`, `np.prod([a, b])`
+- Array creation: `np.zeros`, `np.arange`, `np.linspace`
+- Misc: `np.sign`, `np.floor`, `np.ceil`, `np.clip`, `np.maximum`, `np.minimum`, `np.tanh`, `np.sinh`, `np.cosh`, `np.arctan2`, `np.conjugate`
 
 ### Math Functions
 - `sin`, `cos`, `tan`, `exp`, `log`, `sqrt`, `tanh`, `sinh`, `cosh`, `atan2`, `fabs`, `floor`, `ceil`
@@ -151,11 +151,15 @@ poly_21, poly_35, poly_37, poly_40, poly_46, poly_72, poly_74, poly_94, poly_100
 
 ### 4. Slice assignments with complex RHS patterns
 
-Only simple patterns are supported for `cf[a:b] = expr`:
-- `cf[a:b] = scalar * np.arange(start, end)` — works
+Supported patterns for `cf[a:b] = expr`:
+- `cf[a:b] = scalar * np.arange(start, end)` — works (element-wise loop)
 - `cf[a:b] = expr1 * expr2` where one is arange — works
-- `cf[a:b] = np.array([...])` with computed elements — **does not work** (emits zeros)
-- `cf[a:b] = [expr for x in range(...)]` — **does not work** (emits zeros)
+- `cf[a:b] = np.array([expr1, expr2, ...])` — works (unrolled element-by-element)
+- `cf[a:b] = [expr for x in range(...)]` — works (transpiled list comprehension)
+- `cf[a:b] = np.array([...]) * expr` — works (unrolled with binop per element)
+
+Not supported:
+- Dynamic slice bounds: `cf[:k] = expr` where `k` is a variable (emits warning)
 
 ### 5. Real-only accuracy tests miss complex input bugs
 
@@ -183,11 +187,12 @@ Constant arrays like `np.cumsum(np.arange(1, N))` are evaluated at code generati
 - **<60% overlap** → transpiler is broken, needs hand-writing
 - **0% overlap with one side empty** → phantom coefficients or total failure
 
-The batch visual test script is inline in the conversation history. To test a single function:
+**Batch test script:** `test_transpiler_all.py` in `polypaint/lambda/` tests all functions in a source file range. For each function:
+1. **C pipeline:** `sweep_test` binary runs coeffgen → solve → reads binary float32 root positions → rasterizes to 1000×1000 boolean grid
+2. **Python pipeline:** loads function via `ast.parse`+`exec` → evaluates on 100×100 parameter grid with `unit_circle` transform → `np.roots()` → rasterizes to same grid
+3. **Compare:** computes `intersection / union` of the two boolean pixel sets
 
-1. Create `test_poly_N.py` with the Python function, run it to get `/tmp/polyN_roots.png`
-2. Run C sweep: `coeffgen → solve → render` to get `/tmp/polyN_sweep.png`
-3. Compare pixel sets: `open /tmp/polyN_roots.png /tmp/polyN_sweep.png`
+No PNG files are generated or compared — it's an in-memory pixel set overlap test. Run: `cd polypaint/lambda && uv run python test_transpiler_all.py`
 
 ## Hand-Written Overrides
 
@@ -223,128 +228,80 @@ c_code, header, lookups = transpile_file('poly200.py', stub_funcs={'poly_103'}, 
 - `skip_funcs`: completely omit (e.g., poly_110 already defined in poly100)
 - Output files: `poly_generated_200.c`, `poly_generated_200_funcs.h`, `poly_generated_200_lookups.h`
 
-## Coverage Summary (poly_1–500)
+## Coverage Summary (poly_1–600)
 
-| Source | Total | Transpiled OK | Hand-written | Stubbed | Broken |
-|--------|-------|---------------|--------------|---------|--------|
-| poly100.py | 100 | ~68 | 32 | 0 | ~10 |
-| poly200.py | 100 | ~40 | 30 | 2 | ~30 |
-| poly300.py | 100 | ~23 (arange lowering) | 100 | 0 | ~12 |
-| poly400.py | 100 | ~47 | 0 | 8 | ~45 |
-| poly500.py | 100 | ~59 | 0 | 7 | ~34 |
+| Source | Total | Transpiled OK | Hand-written | Stubbed | Broken | Pass Rate |
+|--------|-------|---------------|--------------|---------|--------|-----------|
+| poly100.py | 100 | ~68 | 32 | 0 | ~10 | ~90% (with hand) |
+| poly200.py | 100 | ~40 | 30 | 2 | ~30 | ~70% (with hand) |
+| poly300.py | 100 | ~23 (arange lowering) | 100 | 0 | ~12 | ~100% (all hand) |
+| poly400.py | 100 | 73 | 0 | 10 | 17 | 73% |
+| poly500.py | 100 | 79 | 0 | 7 | 14 | 79% |
+| poly600.py | 100 | 84 | 0 | 1 | 15 | 84% |
 
 **poly200.py**: Transpiler handles most loop-based functions. ~30 fail due to float32 dynamic range (>7 orders of magnitude in coefficients), not transpiler bugs.
 
 **poly300.py**: Entirely vectorized `np.arange` style. Arange loop lowering (implemented) handles poly_201-223. The degree-34 functions (224-300) use `np.linspace`, `np.prod`, conditional branches — all hand-written.
 
-**poly400.py/poly500.py**: Loop-based style transpiles well. ~50-60% pass rate. Failures from: `np.linspace` (can't evaluate at transpile time), `np.prod([t1,t2])` (list args), `max()`/`min()` builtins, conditional variable scoping, `np.arctan2`.
+**poly400.py/poly500.py**: Loop-based style. After Priority 1-6 improvements: 73-79% pass rate, 0 transpiler warnings. Remaining failures are float32 dynamic range, phantom coefficients, and sequential loop dependencies.
 
-## Transpiler Improvement Opportunities — Prioritized
+**poly600.py**: Same loop-based style. 84% pass rate — highest auto-transpile success. Only 1 stub (poly_535 uses runtime `ps.poly.get("n")` config). 8 warnings from dynamic slice bounds and an unresolvable BoolOp default.
 
-### Priority 1: `np.linspace` support (HIGHEST IMPACT)
+## Implemented Transpiler Improvements
 
-**122 warnings** across poly400+poly500 from `could not evaluate` — almost all are `np.linspace(np.real(t1), np.real(t2), n)`. These create local arrays `rec` and `imc` used throughout the function.
+### Priority 1–6: ALL IMPLEMENTED
 
-```python
-rec = np.linspace(np.real(t1), np.real(t2), n)  # n=35
-imc = np.linspace(np.imag(t1), np.imag(t2), n)
-```
+All six prioritized improvements have been implemented and tested:
 
-**Proposed fix:** Detect this pattern and emit inline computation:
-```c
-double rec[35], imc[35];
-for (int _li = 0; _li < 35; _li++) {
-    rec[_li] = x1r + (x2r - x1r) * _li / 34.0;
-    imc[_li] = x1i + (x2i - x1i) * _li / 34.0;
-}
-```
+| # | Feature | Implementation |
+|---|---------|---------------|
+| 1 | `np.linspace` | `_is_np_linspace()`, `_extract_linspace_args()` — emits `double name[n]; for` loop. Handles positional and `num=` keyword arg. Resolves constant expressions like `degree + 1` via `_eval_const_expr()`. |
+| 2 | `np.prod`/`np.sum` with list args | `_extract_list_or_array_elts()` — unrolls `np.prod([a, b])` to `c_mul(a, b)`, `np.sum([a, b])` to `a + b`. |
+| 3 | Conditional variable scoping | `_predeclare_if_vars()` — scans if/elif/else branches, pre-declares variables as `double name = 0;` before the if. |
+| 4 | `max()`/`min()`/`complex()` builtins | `max(a,b)` → `fmax()`, `min(a,b)` → `fmin()`, `complex(real=a, imag=b)` → CVar. |
+| 5 | `np.arctan2` | Aliased to `atan2()`. Also added `np.conjugate` support. |
+| 6 | Dynamic slice bounds | `np.sum(cf[:j])` emits bounded loop with `(int)` cast and `< nCoeffs` guard. |
 
-This alone would fix ~60% of poly400/poly500 failures since most broken functions use `rec[j-1]` and `imc[j-1]` in their coefficient loops.
+**Actual results vs estimates:**
+- poly400: estimated ~75 → actual **73** (close)
+- poly500: estimated ~80 → actual **79** (close)
+- poly600 (new): **84** (exceeded the ~75-80% prediction)
 
-### Priority 2: `np.prod` and `np.sum` with list arguments
+### Additional fixes discovered during poly600 transpilation
 
-```python
-np.prod(np.array([np.real(t1), np.imag(t2)]))  # = real(t1) * imag(t2)
-np.sum(np.array([np.abs(t1), np.abs(t2)]))     # = abs(t1) + abs(t2)
-```
+**Index cast bug (compile error):** Local variables like `n`, `idx`, `index` are declared as `double` but used as array subscripts in `cf[n - k]` patterns. The transpiler now tracks `_loop_vars` (declared as `int` in for-loops) separately from other locals, and casts non-loop variables to `(int)` when used as array indices.
 
-These are small constant-length lists of expressions. Emit unrolled multiplication/addition:
-```c
-double _prod = x1r * x2i;  // np.prod([real(t1), imag(t2)])
-double _sum = c_abs(x1r,x1i) + c_abs(x2r,x2i);  // np.sum([abs(t1), abs(t2)])
-```
+**Linspace `num=` keyword:** poly600 functions use `np.linspace(t1.real, t2.real, num=n)` with keyword argument instead of positional. `_extract_linspace_args()` now checks `node.keywords` for `num=`.
 
-### Priority 3: Conditional variable scoping (COMPILE ERRORS)
+**Constant expression evaluation:** `np.linspace(..., num=degree + 1)` requires evaluating `degree + 1` at transpile time. Added `_eval_const_expr()` which recursively evaluates `+`, `-`, `*`, `//` on constants and resolved locals.
 
-15 functions across poly400+poly500 fail to compile because variables first assigned inside `if/elif` branches aren't declared at function scope:
+**General `_resolve_const_name`:** Previously only resolved `"n"` — now resolves any variable from `_const_locals` (pre-scanned constant assignments like `n = 35`, `degree = 34`).
 
-```python
-if j % 3 == 0:
-    mag = expr1
-elif j % 3 == 1:
-    mag = expr2
-else:
-    mag = expr3
-cf[j-1] = mag * np.exp(1j * angle)  # ERROR: 'mag' undeclared
-```
+### Still unimplemented
 
-**Fix:** When processing an `if/elif/else` chain, scan all branches for first assignments to new variables. Pre-declare them before the `if`:
-```c
-double mag = 0;  // pre-declare
-if (j % 3 == 0) { mag = ...; }
-else if (j % 3 == 1) { mag = ...; }
-else { mag = ...; }
-```
+**Whole-array operations:** Patterns like `cf *= np.exp(1j * np.angle(cf))` and `mod_cf = (71 - np.arange(1, 72)) * np.abs(cf)` need post-processing loop detection.
 
-### Priority 4: Python builtins `max()`, `min()`, `complex()`
+**Float32 dynamic range guard:** Optional normalization pass to keep coefficient magnitudes within float32 range. Would help ~30 poly200 functions and ~10 poly300 functions.
 
-```python
-max(np.abs(t1), np.abs(t2))  → fmax(c_abs(x1r,x1i), c_abs(x2r,x2i))
-min(j, 6)                     → fmin((double)j, 6.0)
-complex(real=a, imag=b)        → (a, b)  as CVar
-```
+**Runtime config resolution:** `n = ps.poly.get("n") or 35` — the transpiler can't evaluate runtime calls. Only poly_535 uses this pattern; it's stubbed.
 
-Simple 1:1 mappings. Currently emit warnings.
+**Dynamic slice assignment:** `cf[:k] = expr` where `k` is a variable (not `np.sum` context) still emits a warning. 4 functions in poly600 hit this.
 
-### Priority 5: `np.arctan2`
+## Remaining Failure Modes (poly400–600)
 
-```python
-np.arctan2(np.imag(t1), np.real(t1))  → atan2(x1i, x1r)
-```
+Analysis of 46 failed functions across poly400-600 shows these categories:
 
-Already have `math.atan2` support — just need to add `np.arctan2` as an alias.
+### 1. Float32 dynamic range / precision loss (~15 functions)
+Functions produce structurally similar but shifted root positions. Overlap 30-55%. The transpiled C is correct but float32 coefficient storage amplifies small differences at high degree. Example: poly_301 (48.1%), poly_408 (44.6%), poly_545 (44.7%).
 
-### Priority 6: Dynamic slice bounds
+### 2. Phantom coefficients (~8 functions)
+C produces nonzero output where Python produces all zeros (exception-caught functions returning zeros), or vice versa. Overlap 0%. Example: poly_307 (C=102012, Py=0), poly_504 (C=100530, Py=0), poly_478 (C=133573, Py=0).
 
-```python
-cf[:k] = ...      # Slice(upper=Name('k'))
-np.sum(cf[:j])    # sum of first j elements
-```
+### 3. Sequential loop dependencies (~10 functions)
+A second loop reads `cf[k]` values set by the first loop, or conditional branches produce different variable values that interact with later code. The transpiler emits correct individual operations but loses ordering dependencies. Example: poly_341 (32.8%), poly_525 (32.4%).
 
-Currently emits a warning. Could emit a bounded loop:
-```c
-for (int _si = 0; _si < k && _si < nCoeffs; _si++) { ... }
-```
+### 4. Structural mismatch (~8 functions)
+Complete or near-complete mismatch in root positions due to a fundamental transpilation error in one or more operations. Example: poly_317 (0%), poly_345 (0%), poly_566 (5.8%).
 
-### Implemented (from poly300 session)
-
-### 9. Vectorized arange expressions — IMPLEMENTED
-
-Arange loop lowering now works for `j = np.arange(N); cf = f(j)`. Verified identical output to hand-written code for poly_201, 202, 210, 220. Handles poly_201-223 automatically.
-
-### 10. Whole-array operations
-
-Still unimplemented. Patterns like `cf *= np.exp(1j * np.angle(cf))` and `mod_cf = (71 - np.arange(1, 72)) * np.abs(cf)` need post-processing loop detection.
-
-### 11. Float32 dynamic range guard
-
-Still unimplemented. Optional normalization pass to keep coefficient magnitudes within float32 range. Would help ~30 poly200 functions and ~10 poly300 functions.
-
-## Estimated Impact of Improvements
-
-If all Priority 1-5 fixes were implemented:
-- **poly400**: ~47 → ~75 pass (linspace + prod + scoping + builtins)
-- **poly500**: ~59 → ~80 pass (same)
-- **Future files**: Expect similar loop-based style, ~75-80% auto-transpile rate
-
-Priority 1 (linspace) alone would recover ~30 functions across poly400+poly500.
+### 5. Near-miss (55-60% overlap, ~5 functions)
+Visually similar but just below the 60% threshold. Likely float32 precision at the boundary. Example: poly_477 (59.5%), poly_489 (59.8%), poly_573 (51.9%).

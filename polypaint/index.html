@@ -2107,17 +2107,17 @@ async function runBilevelPipeline() {
         if (cleanResult.deleted > 0)
             log(`  cleaned ${cleanResult.deleted} old render files`, '', 'render-log');
 
-        // Phase 1: viewport
+        // Phase 0: viewport
         const tVp = performance.now();
         let vpCenterRe, vpCenterIm, scale;
         if (p.viewMode === 'square') {
             const ext = p.squareExtent;
             vpCenterRe = 0; vpCenterIm = 0;
             scale = p.pix / (2 * ext);
-            log(`BiLevel: ${p.jobId}, ${p.pix}px png, ${nTileCols}x${nTileRows}=${nTiles} tiles...`, '', 'render-log');
+            log(`BiLevel: ${p.jobId}, ${p.pix}px, ${nTileCols}x${nTileRows}=${nTiles} tiles...`, '', 'render-log');
         } else {
             document.getElementById('render-status').textContent = `BiLevel: computing viewport...`;
-            log(`BiLevel: ${p.jobId}, ${p.pix}px png, ${nTileCols}x${nTileRows}=${nTiles} tiles...`, '', 'render-log');
+            log(`BiLevel: ${p.jobId}, ${p.pix}px, ${nTileCols}x${nTileRows}=${nTiles} tiles...`, '', 'render-log');
             const vpData = await lambdaPost('viewport', { job_id: p.jobId, quantile: p.quantile, shim: p.shim });
             log(`  viewport: ${_fmtMs(performance.now()-tVp)} | ${vpData.n_roots.toLocaleString()} roots`, 'ok', 'render-log');
             const REF_SIZE = 4096;
@@ -2135,126 +2135,171 @@ async function runBilevelPipeline() {
         }
         const nStripes = calcMeta.n_stripes;
 
-        // Phase 2: Bilevel tiles — one Lambda per tile, each processes all stripes
-        const bilevelJobs = [];
-        for (let t = 0; t < nTiles; t++) {
-            const tRow = Math.floor(t / nTileCols);
-            const tCol = t % nTileCols;
-            const tw = Math.min(tileSize, p.pix - tCol * tileSize);
-            const th = Math.min(tileSize, p.pix - tRow * tileSize);
-            bilevelJobs.push({
-                job_id: p.jobId, tile_idx: t, tile_col: tCol, tile_row: tRow,
-                tile_w: tw, tile_h: th, tile_size: tileSize,
-                full_w: p.pix, full_h: p.pix, n_stripes: nStripes,
+        const BATCH_SIZE = 50;
+        const POLL_TIMEOUT_MS = 600000, STALL_LOG_MS = 30000;
+
+        // Phase 1: Raster — one bilevel Lambda per stripe → per-tile .bits files
+        const rasterJobs = [];
+        for (let s = 0; s < nStripes; s++) {
+            rasterJobs.push({
+                phase: 'raster', job_id: p.jobId, stripe_idx: s,
+                width: p.pix, height: p.pix,
+                tile_size: tileSize, n_tile_cols: nTileCols, n_tile_rows: nTileRows,
                 center_re: vpCenterRe, center_im: vpCenterIm,
                 scale, rotation: p.rotation, degree: calcMeta.degree,
             });
         }
 
-        document.getElementById('render-status').textContent = `BiLevel: dispatching ${nTiles} bilevel Lambdas...`;
-        const tBilevel = performance.now();
-        const BATCH_SIZE = 50;
-        const nBatches = Math.ceil(bilevelJobs.length / BATCH_SIZE);
-        for (let i = 0; i < bilevelJobs.length; i += BATCH_SIZE) {
-            const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-            const batch = bilevelJobs.slice(i, i + BATCH_SIZE);
-            const dispResult = await lambdaPost('dispatch', { target: 'bilevel', jobs: batch, expected_keys: [] });
-            if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length)) {
-                throw new Error(`Bilevel dispatch failed batch ${batchNum}: fired ${dispResult.fired || 0}/${batch.length}`);
-            }
-            log(`  bilevel dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired`, '', 'render-log');
-        }
-
-        // Poll bilevel tiles
-        let lastDone = 0, pollCount = 0, lastProgressTime = performance.now();
-        const POLL_TIMEOUT_MS = 600000, STALL_LOG_MS = 30000;
-        let lastStallLog = 0;
-        while (true) {
-            await new Promise(r => setTimeout(r, 3000));
-            pollCount++;
-            const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'bilevel_', expected: nTiles }, '/check-status');
-            if (check.errors > 0) {
-                const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
-                throw new Error(`${check.errors} bilevel tasks failed:\n${msgs}`);
-            }
-            if (check.done !== lastDone) {
-                const delta = check.done - lastDone;
-                log(`  bilevel poll #${pollCount}: ${check.done}/${nTiles} done (+${delta}, ${_fmtMs(performance.now() - tBilevel)})`, '', 'render-log');
-                lastDone = check.done;
-                lastProgressTime = performance.now();
-                lastStallLog = 0;
-                document.getElementById('render-status').textContent = `BiLevel: rendering ${check.done}/${nTiles} tiles...`;
-            }
-            if (check.complete) break;
-            const stallTime = performance.now() - lastProgressTime;
-            if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
-                lastStallLog = stallTime;
-                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
-                log(`  ⚠ bilevel stall ${_fmtMs(stallTime)}: ${lastDone}/${nTiles} done, statuses=${sc}${stuckInfo ? ', stuck: ' + stuckInfo : ''}`, 'warn', 'render-log');
-            }
-            if (stallTime > POLL_TIMEOUT_MS) {
-                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
-                throw new Error(`Bilevel stalled: ${lastDone}/${nTiles} after ${_fmtMs(stallTime)}, statuses=${sc}, stuck: ${stuckInfo || 'none'}`);
+        document.getElementById('render-status').textContent = `BiLevel raster: dispatching ${nStripes} stripe Lambdas...`;
+        const tRaster = performance.now();
+        {
+            const nBatches = Math.ceil(rasterJobs.length / BATCH_SIZE);
+            for (let i = 0; i < rasterJobs.length; i += BATCH_SIZE) {
+                const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+                const batch = rasterJobs.slice(i, i + BATCH_SIZE);
+                const dispResult = await lambdaPost('dispatch', { target: 'bilevel', jobs: batch, expected_keys: [] });
+                if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length))
+                    throw new Error(`Raster dispatch failed batch ${batchNum}: fired ${dispResult.fired || 0}/${batch.length}`);
+                log(`  raster dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired`, '', 'render-log');
             }
         }
-        const bilevelMs = performance.now() - tBilevel;
-        log(`  bilevel: ${_fmtMs(bilevelMs)} wall (${nTiles} tiles)`, 'ok', 'render-log');
 
-        // Phase 3: Encode — stitch tile PNGs into final bilevel PNG via encode Lambda
-        const tileKeys = [];
-        for (let t = 0; t < nTiles; t++)
-            tileKeys.push(`renders/${p.jobId}/bilevel_t${String(t).padStart(4, '0')}.png`);
+        // Poll raster
+        {
+            let lastDone = 0, pollCount = 0, lastProgressTime = performance.now(), lastStallLog = 0;
+            while (true) {
+                await new Promise(r => setTimeout(r, 3000));
+                pollCount++;
+                const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'bilevel_raster_', expected: nStripes }, '/check-status');
+                if (check.errors > 0) {
+                    const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                    throw new Error(`${check.errors} raster tasks failed:\n${msgs}`);
+                }
+                if (check.done !== lastDone) {
+                    const delta = check.done - lastDone;
+                    log(`  raster poll #${pollCount}: ${check.done}/${nStripes} done (+${delta}, ${_fmtMs(performance.now() - tRaster)})`, '', 'render-log');
+                    lastDone = check.done;
+                    lastProgressTime = performance.now();
+                    lastStallLog = 0;
+                    document.getElementById('render-status').textContent = `BiLevel raster: ${check.done}/${nStripes} stripes...`;
+                }
+                if (check.complete) break;
+                const stallTime = performance.now() - lastProgressTime;
+                if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
+                    lastStallLog = stallTime;
+                    const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                    log(`  ⚠ raster stall ${_fmtMs(stallTime)}: ${lastDone}/${nStripes}, statuses=${sc}`, 'warn', 'render-log');
+                }
+                if (stallTime > POLL_TIMEOUT_MS) throw new Error(`Raster stalled: ${lastDone}/${nStripes} after ${_fmtMs(stallTime)}`);
+            }
+        }
+        const rasterMs = performance.now() - tRaster;
+        log(`  raster: ${_fmtMs(rasterMs)} wall (${nStripes} stripes)`, 'ok', 'render-log');
 
+        // Phase 2: Merge — one bilevel Lambda per tile, ORs stripe bitsets → tile PNG
+        const mergeJobs = [];
+        for (let t = 0; t < nTiles; t++) {
+            const tRow = Math.floor(t / nTileCols);
+            const tCol = t % nTileCols;
+            const tw = Math.min(tileSize, p.pix - tCol * tileSize);
+            const th = Math.min(tileSize, p.pix - tRow * tileSize);
+            mergeJobs.push({
+                phase: 'merge', job_id: p.jobId, tile_idx: t,
+                tile_w: tw, tile_h: th, n_stripes: nStripes,
+            });
+        }
+
+        document.getElementById('render-status').textContent = `BiLevel merge: dispatching ${nTiles} tile Lambdas...`;
+        const tMerge = performance.now();
+        {
+            const nBatches = Math.ceil(mergeJobs.length / BATCH_SIZE);
+            for (let i = 0; i < mergeJobs.length; i += BATCH_SIZE) {
+                const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+                const batch = mergeJobs.slice(i, i + BATCH_SIZE);
+                const dispResult = await lambdaPost('dispatch', { target: 'bilevel', jobs: batch, expected_keys: [] });
+                if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length))
+                    throw new Error(`Merge dispatch failed batch ${batchNum}: fired ${dispResult.fired || 0}/${batch.length}`);
+                log(`  merge dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired`, '', 'render-log');
+            }
+        }
+
+        // Poll merge
+        {
+            let lastDone = 0, pollCount = 0, lastProgressTime = performance.now(), lastStallLog = 0;
+            while (true) {
+                await new Promise(r => setTimeout(r, 3000));
+                pollCount++;
+                const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'bilevel_merge_', expected: nTiles }, '/check-status');
+                if (check.errors > 0) {
+                    const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                    throw new Error(`${check.errors} merge tasks failed:\n${msgs}`);
+                }
+                if (check.done !== lastDone) {
+                    const delta = check.done - lastDone;
+                    log(`  merge poll #${pollCount}: ${check.done}/${nTiles} done (+${delta}, ${_fmtMs(performance.now() - tMerge)})`, '', 'render-log');
+                    lastDone = check.done;
+                    lastProgressTime = performance.now();
+                    lastStallLog = 0;
+                    document.getElementById('render-status').textContent = `BiLevel merge: ${check.done}/${nTiles} tiles...`;
+                }
+                if (check.complete) break;
+                const stallTime = performance.now() - lastProgressTime;
+                if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
+                    lastStallLog = stallTime;
+                    const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                    log(`  ⚠ merge stall ${_fmtMs(stallTime)}: ${lastDone}/${nTiles}, statuses=${sc}`, 'warn', 'render-log');
+                }
+                if (stallTime > POLL_TIMEOUT_MS) throw new Error(`Merge stalled: ${lastDone}/${nTiles} after ${_fmtMs(stallTime)}`);
+            }
+        }
+        const mergeMs = performance.now() - tMerge;
+        log(`  merge: ${_fmtMs(mergeMs)} wall (${nTiles} tiles)`, 'ok', 'render-log');
+
+        // Phase 3: Stitch — single bilevel Lambda joins tile PNGs → final image
         const imageKey = `renders/${p.jobId}/image_bilevel.png`;
-        document.getElementById('render-status').textContent = `BiLevel: encoding final 1-bit PNG...`;
-        const tEncode = performance.now();
-        const encodeJob = {
-            job_id: p.jobId, out_key: imageKey,
-            format: 'png', bilevel: true,
-            width: p.pix, height: p.pix,
-            tile_grid: {
-                n_cols: nTileCols, n_rows: nTileRows,
-                tile_keys: tileKeys,
-            },
+        document.getElementById('render-status').textContent = `BiLevel stitch: assembling final PNG...`;
+        const tStitch = performance.now();
+        const stitchJob = {
+            phase: 'stitch', job_id: p.jobId,
+            n_tile_cols: nTileCols, n_tile_rows: nTileRows,
+            out_key: imageKey,
         };
-        const encDispResult = await lambdaPost('dispatch', { target: 'encode', jobs: [encodeJob], expected_keys: [] });
-        if ((encDispResult.fired || 0) !== 1) throw new Error(`Encode dispatch failed: fired ${encDispResult.fired || 0}/1`);
-        log(`  encode dispatched (stitch ${nTiles} tile PNGs)`, '', 'render-log');
+        const stitchDisp = await lambdaPost('dispatch', { target: 'bilevel', jobs: [stitchJob], expected_keys: [] });
+        if ((stitchDisp.fired || 0) !== 1) throw new Error(`Stitch dispatch failed: fired ${stitchDisp.fired || 0}/1`);
+        log(`  stitch dispatched`, '', 'render-log');
 
-        // Poll encode
-        let encPollCount = 0, encLastProgress = performance.now(), encLastStallLog = 0;
-        while (true) {
-            await new Promise(r => setTimeout(r, 3000));
-            encPollCount++;
-            const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'encode', expected: 1 }, '/check-status');
-            if (check.errors > 0) {
-                const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
-                throw new Error(`Encode failed:\n${msgs}`);
+        // Poll stitch
+        {
+            let pollCount = 0, lastProgressTime = performance.now(), lastStallLog = 0;
+            while (true) {
+                await new Promise(r => setTimeout(r, 3000));
+                pollCount++;
+                const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'bilevel_stitch', expected: 1 }, '/check-status');
+                if (check.errors > 0) {
+                    const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                    throw new Error(`Stitch failed:\n${msgs}`);
+                }
+                if (check.complete) break;
+                const stallTime = performance.now() - lastProgressTime;
+                if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
+                    lastStallLog = stallTime;
+                    const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                    log(`  ⚠ stitch stall ${_fmtMs(stallTime)}: statuses=${sc}`, 'warn', 'render-log');
+                }
+                if (stallTime > POLL_TIMEOUT_MS) throw new Error(`Stitch stalled after ${_fmtMs(stallTime)}`);
             }
-            if (check.complete) break;
-            const encStallTime = performance.now() - encLastProgress;
-            if (encStallTime > STALL_LOG_MS && encStallTime - encLastStallLog > STALL_LOG_MS) {
-                encLastStallLog = encStallTime;
-                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                log(`  ⚠ encode stall ${_fmtMs(encStallTime)}: statuses=${sc}`, 'warn', 'render-log');
-            }
-            if (encStallTime > POLL_TIMEOUT_MS) throw new Error(`Encode stalled after ${_fmtMs(encStallTime)}`);
         }
-        const encodeMs = performance.now() - tEncode;
+        const stitchMs = performance.now() - tStitch;
+        log(`  stitch: ${_fmtMs(stitchMs)}`, 'ok', 'render-log');
 
         const presignResult = await lambdaPost('storage', { key: imageKey }, '/presign');
         const imageUrl = presignResult.url;
         _lastDownloadKey = imageKey;
-        log(`  encode: ${_fmtMs(encodeMs)} (stitch bilevel png)`, 'ok', 'render-log');
-
-        lambdaPost('storage', { keys: [...tileKeys] }, '/cleanup').catch(() => {});
 
         const totalMs = performance.now() - tVp;
         const statusParts = [
-            'BiLevel', nTiles + ' tiles', nStripes + ' stripes/tile',
-            'render ' + _fmtMs(bilevelMs), 'encode ' + _fmtMs(encodeMs), '1-bit png',
+            'BiLevel', nStripes + ' stripes', nTiles + ' tiles',
+            'raster ' + _fmtMs(rasterMs), 'merge ' + _fmtMs(mergeMs), 'stitch ' + _fmtMs(stitchMs),
         ];
         document.getElementById('render-status').textContent = statusParts.join(' | ');
         document.getElementById('render-status').className = 'status ok';
@@ -2273,7 +2318,7 @@ async function runBilevelPipeline() {
         }
         document.getElementById('render-info').textContent =
             `Job: ${p.jobId} | ${p.pix}x${p.pix} | Degree: ${calcMeta.degree} | BiLevel 1-bit PNG`;
-        log(`Done: deg${calcMeta.degree} ${p.pix}px bilevel, ${nTiles} tiles x ${nStripes} stripes, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');
+        log(`Done: deg${calcMeta.degree} ${p.pix}px bilevel, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');
 
     } catch (e) {
         document.getElementById('render-status').textContent = 'BiLevel error: ' + e.message;

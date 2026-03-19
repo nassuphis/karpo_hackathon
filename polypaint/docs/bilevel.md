@@ -1,115 +1,132 @@
 # Bilevel Render Lambda
 
-Dedicated Lambda for rendering polynomial root images as 1-bit black/white PNGs. Designed for large renders (50K–100K pixels) where the old RGB pipeline hits memory and `/tmp` limits.
-
-## Why a separate Lambda
-
-The color render pipeline (raster → finalize → encode) carries RGB data throughout and only converts to 1-bit at the very end. For bilevel output this is wasteful:
-
-- raster emits 8-byte entries per pixel (pixel_idx + RGB) when only 1 bit is needed
-- finalize allocates a full RGB tile buffer (48 MB for 4096×4096) per tile
-- encode stitches all tiles into one giant raw file on `/tmp` then converts
-
-At 50K×50K the stitched raw file is ~7 GB. At 100K×100K it's ~28 GB — well beyond Lambda's 10 GB `/tmp` limit. The bilevel Lambda avoids this entirely by working with bitsets throughout.
+Dedicated Lambda for rendering polynomial root images as 1-bit black/white PNGs. Stripe-first architecture: each stripe is processed once, each root is projected once.
 
 ## Architecture
 
-One Lambda invocation per tile. Each processes all stripes for that tile:
+Three-phase stripe-first pipeline:
 
 ```
+Phase 1 — Raster (one Lambda per stripe):
+  Download stripe .bin → project roots → write per-tile .bits files to S3
+
+Phase 2 — Merge (one Lambda per tile):
+  Download stripe .bits files for tile → OR bitsets → write 1-bit tile PNG
+
+Phase 3 — Stitch (single Lambda):
+  Download tile PNGs → vips_arrayjoin → write final 1-bit PNG
+```
+
+### Why stripe-first
+
+The alternative (tile-first: one Lambda per tile, each downloads all stripes) was implemented first and rejected. Problems:
+
+1. **Duplicated work**: every stripe downloaded N_tiles times, every root projected N_tiles times
+2. **Duplicated IO**: with 10 stripes and 169 tiles, that's 1690 S3 downloads instead of 10
+3. **Slow**: each tile Lambda spent most of its time downloading stripes
+
+Stripe-first processes each stripe once, projects each root once, then fans out per-tile bitsets (tiny: 2 MB each) for the merge phase. The merge phase is trivial (bitwise OR).
+
+## Data flow
+
+```
+stripe_0.bin ──→ bits_s0000_t0000.bits  bits_s0000_t0001.bits  ...
+stripe_1.bin ──→ bits_s0001_t0000.bits  bits_s0001_t0001.bits  ...
+  ...
+
 For each tile:
-  For each stripe .bin:
-    download → project roots → set bits in tile bitset → delete .bin
-  Write 1-bit PNG from bitset via libvips
-  Upload tile PNG to S3
+  bits_s0000_tN.bits + bits_s0001_tN.bits + ... ──OR──→ bilevel_tN.png
+
+bilevel_t0000.png + bilevel_t0001.png + ... ──stitch──→ image_bilevel.png
 ```
-
-No intermediate RGB files. No finalize phase. No giant stitched raw.
-
-### Memory budget per Lambda
-
-- Tile bitset: `ceil(tile_w * tile_h / 8)` bytes — 2 MB for 4096×4096
-- One stripe .bin: typically 20–200 MB
-- Image buffer for PNG conversion: `tile_w * tile_h` bytes — 16 MB for 4096×4096
-- **Total: ~220 MB peak** — well within the 1769 MB Lambda memory
-
-### `/tmp` budget per Lambda
-
-Only one stripe and one bitset file on disk at any time:
-
-- `/tmp/current_stripe.bin`: one stripe (~200 MB)
-- `/tmp/bilevel_N.bits`: accumulated bitset (~2 MB)
-- `/tmp/tile.png`: final output (typically 50–200 KB)
-- **Total: ~200 MB** — fits easily in 10 GB `/tmp`
-
-## The `/tmp` exhaustion bug
-
-The initial implementation downloaded ALL stripe .bin files to `/tmp` before processing. With 10 stripes at 200 MB each, that's 2 GB per Lambda. With Lambda execution environment reuse and concurrent invocations sharing `/tmp`, this exhausted the 10 GB budget immediately.
-
-**Error:** `[Errno 28] No space left on device` on all 169 bilevel tiles.
-
-**Fix:** Process stripes one at a time. The C binary gained two flags:
-- `--bitset=path`: load/save a persistent bitset file between invocations
-- `--no-png=1`: skip PNG output during accumulation passes
-
-The handler now loops: for each stripe, download the .bin, run bilevel with `--no-png=1 --bitset=path`, delete the .bin. On the final stripe, it drops `--no-png` so the PNG is written.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `lambda/bilevel.c` | C binary: root projection → tile bitset → 1-bit PNG via libvips |
-| `lambda/handler_bilevel.py` | Lambda handler: stripe-by-stripe download, run binary, upload result |
-| `deploy.sh` | Compilation (Docker ARM64 + libvips), packaging, Lambda create/update |
+| `bilevel_raster.c` | Static binary: one stripe → per-tile .bits files. No libvips. |
+| `bilevel_merge.c` | Dynamic binary (libvips): merge .bits → tile PNG, or stitch tile PNGs → final PNG. |
+| `handler_bilevel.py` | Lambda handler: routes phase=raster/merge/stitch to appropriate binary. |
 
-## C binary interface
+## C binary interfaces
+
+### bilevel_raster
 
 ```
-bilevel --full_w=W --full_h=H --tile_col=C --tile_row=R
-        --tile_w=TW --tile_h=TH --tile_size=TS
-        --center_re=X --center_im=Y --scale=S --degree=D
-        [--rotation=R] [--bitset=path] [--no-png=1]
-        --output=tile.png
-        stripe.bin
+bilevel_raster stripe.bin /tmp/bits
+    --width=W --height=H --tile_size=TS
+    --n_tile_cols=C --n_tile_rows=R
+    --center_re=X --center_im=Y --scale=S --degree=D
+    [--rotation=R]
 ```
 
-- Positional args are `.bin` file paths (processed sequentially, freed after each)
-- `--bitset=path`: load existing bitset before processing, save after. Enables incremental accumulation across multiple invocations.
-- `--no-png=1`: skip PNG output (used during accumulation passes)
-- Output: JSON metadata to stdout, tile PNG to `--output` path
+Output: `{prefix}_t0000.bits`, `{prefix}_t0001.bits`, ... (only non-empty tiles)
+Each `.bits` file: raw packed bitset, `ceil(tile_w * tile_h / 8)` bytes. No header.
 
-## Frontend pipeline
+Build: `aarch64-linux-musl-gcc -O3 -static -o bilevel_raster bilevel_raster.c -lm`
 
-`runBilevelPipeline()` in `index.html`:
+### bilevel_merge
 
-1. **Viewport** — compute center/scale (same as color pipeline)
-2. **Bilevel tiles** — dispatch one `bilevel` Lambda per tile via `target: 'bilevel'`
-3. **Encode stitch** — existing encode Lambda joins tile PNGs into final image
+Merge mode (OR bitsets → tile PNG):
+```
+bilevel_merge merge --tile_w=TW --tile_h=TH --output=tile.png
+    bits1.bits bits2.bits ...
+```
 
-The old 3-phase pipeline (raster + finalize + encode) is replaced by 2 phases (bilevel + encode). The raster and finalize Lambdas are not involved.
+Stitch mode (join tile PNGs → final PNG):
+```
+bilevel_merge stitch --n_cols=C --n_rows=R --output=final.png
+    tile0.png tile1.png ...
+```
 
-## Scaling
+Build: Docker ARM64 with libvips (same as raw2jpeg).
 
-| Image size | Bitset per tile | RGB tile (old) | Reduction |
-|-----------|----------------|----------------|-----------|
-| 4096×4096 tile | 2 MB | 48 MB | 24× |
-| 50K×50K total | ~300 MB | ~7 GB | 24× |
-| 100K×100K total | ~1.2 GB | ~28 GB | 24× |
+## Memory budget
 
-The current encode stitch step still writes the final image to `/tmp`, so the absolute limit is around 60K for now (stitched 1-bit data fits in 10 GB). A streaming bilevel PNG encoder would remove that limit entirely.
+### Raster Lambda (per stripe)
+- One stripe .bin in memory: 20–200 MB
+- Per-tile bitsets: `nTiles × ceil(tileW × tileH / 8)` — 169 × 2 MB = 338 MB for 50K
+- **Total: ~500 MB** — fits in 1769 MB
+
+### Merge Lambda (per tile)
+- N stripe .bits files: N × 2 MB — 20 MB for 10 stripes
+- Image buffer for PNG conversion: 16 MB (4096×4096 × 1 byte)
+- **Total: ~40 MB**
+
+### Stitch Lambda (single)
+- libvips opens tile PNGs lazily (demand-driven, not all in memory)
+- Working set: a few rows of tiles at a time
+- Output streams to disk
 
 ## Deploy
-
-The bilevel Lambda is compiled in the same Docker container as raw2jpeg (needs libvips):
 
 ```bash
 ./deploy.sh create   # or update
 ```
 
-It gets:
+Single Lambda function `polypaint-bilevel` handles all three phases:
 - 1769 MB memory (1 vCPU)
 - 10 GB `/tmp`
 - libvips Lambda layer
-- Async retry disabled (fire-and-forget via dispatch)
+- Async retry disabled
 
-The dispatch Lambda's env vars include `BILEVEL_FUNCTION=polypaint-bilevel`.
+Two binaries in the zip: `bilevel_raster` (static) + `bilevel_merge` (dynamic/libvips).
+
+## Frontend pipeline
+
+`runBilevelPipeline()` dispatches three phases sequentially:
+1. Dispatch `nStripes` bilevel Lambdas with `phase: "raster"`
+2. Poll `bilevel_raster_*` tasks until all complete
+3. Dispatch `nTiles` bilevel Lambdas with `phase: "merge"`
+4. Poll `bilevel_merge_*` tasks until all complete
+5. Dispatch 1 bilevel Lambda with `phase: "stitch"`
+6. Poll `bilevel_stitch` task until complete
+7. Get presigned URL for final PNG
+
+## Scaling
+
+| Image size | Raster bitsets (total) | Merge input/tile | Old RGB pipeline |
+|-----------|----------------------|-----------------|-----------------|
+| 4096×4096 | 2 MB | 20 MB (10 stripes) | 48 MB/tile |
+| 50K×50K | ~338 MB | 20 MB/tile | ~7 GB stitched raw |
+| 100K×100K | ~1.2 GB | 20 MB/tile | ~28 GB (impossible) |

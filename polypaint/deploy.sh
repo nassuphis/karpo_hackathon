@@ -73,6 +73,9 @@ aarch64-linux-musl-gcc -O3 -static -o lambda/roots2pix lambda/roots2pix.c -lm
 echo "  pixassemble (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/pixassemble lambda/pixassemble.c -lm
 
+echo "  bilevel_raster (static, ARM64)..."
+aarch64-linux-musl-gcc -O3 -static -o lambda/bilevel_raster lambda/bilevel_raster.c -lm
+
 echo "  raw2jpeg (Docker ARM64, dynamically linked against libvips)..."
 LAYER_BUILD="$SCRIPT_DIR/lambda/layer-build"
 if [ ! -d "$LAYER_BUILD/lib" ] || [ ! -d "$LAYER_BUILD/include" ]; then
@@ -91,12 +94,12 @@ docker run --rm --platform linux/arm64 \
             -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
             -Wl,-rpath,/opt/lib
         echo "  raw2jpeg compiled: $(file /src/raw2jpeg)"
-        gcc -O3 -o /src/bilevel /src/bilevel.c \
+        gcc -O3 -o /src/bilevel_merge /src/bilevel_merge.c \
             -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
             -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
             -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
             -Wl,-rpath,/opt/lib
-        echo "  bilevel compiled: $(file /src/bilevel)"
+        echo "  bilevel_merge compiled: $(file /src/bilevel_merge)"
     '
 
 # --- Package 6 Lambdas ---
@@ -189,8 +192,8 @@ BILEVEL_DIR=/tmp/polypaint-bilevel
 rm -rf "$BILEVEL_DIR"
 mkdir -p "$BILEVEL_DIR"
 cp lambda/handler_bilevel.py lambda/shared.py "$BILEVEL_DIR/"
-cp lambda/bilevel "$BILEVEL_DIR/"
-chmod +x "$BILEVEL_DIR"/bilevel
+cp lambda/bilevel_raster lambda/bilevel_merge "$BILEVEL_DIR/"
+chmod +x "$BILEVEL_DIR"/bilevel_raster "$BILEVEL_DIR"/bilevel_merge
 cd "$BILEVEL_DIR" && zip -r9 /tmp/polypaint-bilevel.zip . -q && cd "$SCRIPT_DIR"
 echo "  Bilevel:  $(du -h /tmp/polypaint-bilevel.zip | cut -f1)  (bilevel + libvips layer)"
 

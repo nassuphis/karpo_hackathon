@@ -24,6 +24,7 @@ RASTER_NAME="polypaint-raster"
 FINALIZE_NAME="polypaint-finalize"
 COEFFGEN_NAME="polypaint-coeffgen"
 PREVIEW_NAME="polypaint-preview"
+BILEVEL_NAME="polypaint-bilevel"
 ROLE_NAME="polypaint-lambda-role"
 REGION="us-east-1"
 API_NAME="polypaint-api"
@@ -38,6 +39,7 @@ RASTER_MEMORY=1769    # 1 vCPU, roots2pix (no canvas allocation)
 FINALIZE_MEMORY=1769  # 1 vCPU, pixassemble (64 MB tile buffer for 4096²)
 COEFFGEN_MEMORY=1769  # 1 vCPU, coefficient generation (no solver, striped)
 PREVIEW_MEMORY=1024   # pure Python, PNG encoding via zlib (512 OOMs on large lores)
+BILEVEL_MEMORY=1769   # 1 vCPU + libvips for bilevel 1-bit PNG
 BINARY_TMP=10240      # /tmp size for Lambdas that process raw images (max 10GB)
 TIMEOUT=900
 BUCKET="polypaint"
@@ -89,6 +91,12 @@ docker run --rm --platform linux/arm64 \
             -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
             -Wl,-rpath,/opt/lib
         echo "  raw2jpeg compiled: $(file /src/raw2jpeg)"
+        gcc -O3 -o /src/bilevel /src/bilevel.c \
+            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
+            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
+            -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
+            -Wl,-rpath,/opt/lib
+        echo "  bilevel compiled: $(file /src/bilevel)"
     '
 
 # --- Package 6 Lambdas ---
@@ -175,6 +183,16 @@ mkdir -p "$PREVIEW_DIR"
 cp lambda/handler_preview.py lambda/shared.py "$PREVIEW_DIR/"
 cd "$PREVIEW_DIR" && zip -r9 /tmp/polypaint-preview.zip . -q && cd "$SCRIPT_DIR"
 echo "  Preview:  $(du -h /tmp/polypaint-preview.zip | cut -f1)  (pure Python)"
+
+# Bilevel: handler_bilevel.py + shared.py + bilevel (needs libvips layer)
+BILEVEL_DIR=/tmp/polypaint-bilevel
+rm -rf "$BILEVEL_DIR"
+mkdir -p "$BILEVEL_DIR"
+cp lambda/handler_bilevel.py lambda/shared.py "$BILEVEL_DIR/"
+cp lambda/bilevel "$BILEVEL_DIR/"
+chmod +x "$BILEVEL_DIR"/bilevel
+cd "$BILEVEL_DIR" && zip -r9 /tmp/polypaint-bilevel.zip . -q && cd "$SCRIPT_DIR"
+echo "  Bilevel:  $(du -h /tmp/polypaint-bilevel.zip | cut -f1)  (bilevel + libvips layer)"
 
 ACTION="${1:-create}"
 
@@ -293,7 +311,7 @@ setup_api_gateway() {
     }
 
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME"; do
+    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME" "$BILEVEL_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -467,7 +485,7 @@ if [ "$ACTION" = "create" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     create_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME"
+        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -481,8 +499,11 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$PREVIEW_NAME" "handler_preview.handler" "/tmp/polypaint-preview.zip" \
         "$PREVIEW_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
 
+    create_lambda "$BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip" \
+        "$BILEVEL_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
     # Disable async retries on fire-and-forget Lambdas (prevents retry storms)
-    for fn in "$RASTER_NAME" "$FINALIZE_NAME"; do
+    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \
@@ -506,6 +527,7 @@ if [ "$ACTION" = "create" ]; then
     echo "  Storage:  $STORAGE_NAME ($STORAGE_MEMORY MB)"
     echo "  Dispatch: $DISPATCH_NAME ($DISPATCH_MEMORY MB)"
     echo "  Preview:  $PREVIEW_NAME ($PREVIEW_MEMORY MB)"
+    echo "  Bilevel:  $BILEVEL_NAME ($BILEVEL_MEMORY MB)"
 
 elif [ "$ACTION" = "update" ]; then
     update_lambda "$SWEEP_NAME" "handler_sweep.handler" "/tmp/polypaint-sweep.zip" \
@@ -527,7 +549,7 @@ elif [ "$ACTION" = "update" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     update_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME"
+        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -541,8 +563,11 @@ elif [ "$ACTION" = "update" ]; then
     update_lambda "$PREVIEW_NAME" "handler_preview.handler" "/tmp/polypaint-preview.zip" \
         "$PREVIEW_MEMORY" "" "BUCKET=$BUCKET"
 
+    update_lambda "$BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip" \
+        "$BILEVEL_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
     # Disable async retries on fire-and-forget Lambdas (prevents retry storms)
-    for fn in "$RASTER_NAME" "$FINALIZE_NAME"; do
+    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \

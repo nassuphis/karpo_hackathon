@@ -24,6 +24,7 @@ FUNCTIONS = {
     "finalize": os.environ.get("FINALIZE_FUNCTION", "polypaint-finalize"),
     "encode": os.environ.get("ENCODE_FUNCTION", "polypaint-encode"),
     "sweep": os.environ.get("SWEEP_FUNCTION", "polypaint-sweep"),
+    "bilevel": os.environ.get("BILEVEL_FUNCTION", "polypaint-bilevel"),
 }
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_WORKERS = int(os.environ.get("DISPATCH_THREADS", "50"))

@@ -19,6 +19,7 @@ from shared import BUCKET, parse_body, ok_response, report_status, imgpipe_env
 
 s3 = boto3.client("s3")
 BILEVEL_RASTER = os.path.join(os.path.dirname(__file__), "bilevel_raster")
+COEFFS_BILEVEL_RASTER = os.path.join(os.path.dirname(__file__), "coeffs_bilevel_raster")
 BILEVEL_MERGE = os.path.join(os.path.dirname(__file__), "bilevel_merge")
 
 
@@ -28,6 +29,8 @@ def handler(event, context):
 
     if phase == "raster":
         return handle_raster(params)
+    elif phase == "coeff_raster":
+        return handle_coeff_raster(params)
     elif phase == "merge":
         return handle_merge(params)
     else:
@@ -110,6 +113,82 @@ def handle_raster(params):
         raise
 
 
+def handle_coeff_raster(params):
+    """One coeff stripe → per-tile bitset files. One Lambda per stripe."""
+    job_id = params["job_id"]
+    stripe_idx = params["stripe_idx"]
+    task_id = f"coeff_bilevel_raster_{stripe_idx}"
+
+    try:
+        report_status(job_id, task_id, "started")
+
+        # Download one coeff stripe .bin
+        bin_key = params.get("coeffs_key", f"renders/{job_id}/coeffs_{stripe_idx:04d}.bin")
+        bin_path = "/tmp/coeffs.bin"
+        t0 = time.time()
+        obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
+        with open(bin_path, "wb") as f:
+            for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
+                f.write(chunk)
+        dl_ms = int((time.time() - t0) * 1000)
+
+        # Run coeffs_bilevel_raster
+        out_prefix = "/tmp/coeff_bits"
+        cmd = [
+            COEFFS_BILEVEL_RASTER, bin_path, out_prefix,
+            f"--width={params['width']}", f"--height={params['height']}",
+            f"--tile_size={params['tile_size']}",
+            f"--n_tile_cols={params['n_tile_cols']}",
+            f"--n_tile_rows={params['n_tile_rows']}",
+            f"--center_re={params['center_re']}",
+            f"--center_im={params['center_im']}",
+            f"--scale={params['scale']}",
+            f"--n_coeffs={params['n_coeffs']}",
+            f"--rotation={params.get('rotation', 0.0)}",
+        ]
+        t1 = time.time()
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            raise RuntimeError(f"coeffs_bilevel_raster failed: {result.stderr.strip()}")
+        meta = json.loads(result.stdout)
+        raster_ms = int((time.time() - t1) * 1000)
+
+        os.remove(bin_path)
+
+        # Upload non-empty .bits files with coeff-specific naming
+        n_tiles = params['n_tile_cols'] * params['n_tile_rows']
+        uploaded = 0
+        for t in range(n_tiles):
+            bits_path = f"/tmp/coeff_bits_t{t:04d}.bits"
+            if os.path.exists(bits_path) and os.path.getsize(bits_path) > 0:
+                s3_key = f"renders/{job_id}/coeff_bits_s{stripe_idx:04d}_t{t:04d}.bits"
+                with open(bits_path, "rb") as fh:
+                    s3.upload_fileobj(fh, BUCKET, s3_key)
+                os.remove(bits_path)
+                uploaded += 1
+            elif os.path.exists(bits_path):
+                os.remove(bits_path)
+
+        report_status(job_id, task_id, "done")
+        return ok_response({
+            "stripe_idx": stripe_idx,
+            "tiles_with_hits": uploaded,
+            "roots_plotted": meta["roots_plotted"],
+            "roots_clipped": meta["roots_clipped"],
+            "dl_ms": dl_ms,
+            "raster_ms": raster_ms,
+        })
+
+    except Exception as e:
+        report_status(job_id, task_id, "error", str(e))
+        for p in ["/tmp/coeffs.bin"]:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        raise
+
+
 def handle_merge(params):
     """OR per-stripe bitsets for one tile → tile TIFF. One Lambda per tile."""
     job_id = params["job_id"]
@@ -117,7 +196,11 @@ def handle_merge(params):
     tile_w = params["tile_w"]
     tile_h = params["tile_h"]
     n_stripes = params["n_stripes"]
-    task_id = f"bilevel_merge_{tile_idx}"
+    # Support coeff vs root naming: coeff_bits_s... vs bits_s...
+    bits_prefix = params.get("bits_prefix", "bits")
+    tile_prefix = params.get("tile_prefix", "bilevel")
+    task_prefix = params.get("task_prefix", "bilevel_merge")
+    task_id = f"{task_prefix}_{tile_idx}"
 
     try:
         report_status(job_id, task_id, "started")
@@ -125,7 +208,7 @@ def handle_merge(params):
         # Download stripe .bits files for this tile
         bits_paths = []
         for s in range(n_stripes):
-            bits_key = f"renders/{job_id}/bits_s{s:04d}_t{tile_idx:04d}.bits"
+            bits_key = f"renders/{job_id}/{bits_prefix}_s{s:04d}_t{tile_idx:04d}.bits"
             local_path = f"/tmp/bits_s{s}.bits"
             try:
                 obj = s3.get_object(Bucket=BUCKET, Key=bits_key)
@@ -161,7 +244,7 @@ def handle_merge(params):
                 pass
 
         # Upload tile TIFF
-        tile_key = f"renders/{job_id}/bilevel_t{tile_idx:04d}.tif"
+        tile_key = f"renders/{job_id}/{tile_prefix}_t{tile_idx:04d}.tif"
         with open(out_path, "rb") as fh:
             s3.upload_fileobj(fh, BUCKET, tile_key)
         os.remove(out_path)

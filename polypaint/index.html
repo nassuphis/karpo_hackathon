@@ -1232,6 +1232,7 @@ button {
             <div style="margin-top:8px; display:flex; gap:6px; align-items:center">
                 <button class="btn-primary" id="btn-raster-all" onclick="runRasterPipeline()">Render</button>
                 <button class="btn-primary" id="btn-bilevel" onclick="runBilevelPipeline()" style="background:#444">BiLevel</button>
+                <button class="btn-primary" id="btn-coeffs" onclick="runCoeffBilevelPipeline()" style="background:#446">Coeffs</button>
             </div>
             <div class="status" id="render-status"></div>
             <div id="render-preview" style="max-width:600px; margin-top:8px"></div>
@@ -2327,6 +2328,262 @@ async function runBilevelPipeline() {
     } finally {
         btn.disabled = false;
         renderBtn.disabled = false;
+    }
+}
+
+async function runCoeffBilevelPipeline() {
+    const btn = document.getElementById('btn-coeffs');
+    const renderBtn = document.getElementById('btn-raster-all');
+    const bilevelBtn = document.getElementById('btn-bilevel');
+    btn.disabled = true;
+    renderBtn.disabled = true;
+    bilevelBtn.disabled = true;
+    document.getElementById('render-preview').innerHTML = '';
+    document.getElementById('render-info').textContent = '';
+
+    try {
+        const p = _renderCommonParams();
+        p.fmt = 'tif';
+
+        const tileSize = p.tileSize;
+        const nTileCols = Math.ceil(p.pix / tileSize);
+        const nTileRows = Math.ceil(p.pix / tileSize);
+        const nTiles = nTileCols * nTileRows;
+
+        document.getElementById('render-status').textContent = `Coeffs: cleaning old render files...`;
+        document.getElementById('render-status').className = 'status';
+        const cleanResult = await lambdaPost('storage', { job_id: p.jobId }, '/clean-render');
+        if (cleanResult.deleted > 0)
+            log(`  cleaned ${cleanResult.deleted} old render files`, '', 'render-log');
+
+        // Phase 0: viewport from lores_coeffs.bin
+        const tVp = performance.now();
+        let vpCenterRe, vpCenterIm, scale;
+        if (p.viewMode === 'square') {
+            const ext = p.squareExtent;
+            vpCenterRe = 0; vpCenterIm = 0;
+            scale = p.pix / (2 * ext);
+            log(`Coeffs: ${p.jobId}, ${p.pix}px, ${nTileCols}x${nTileRows}=${nTiles} tiles...`, '', 'render-log');
+        } else {
+            document.getElementById('render-status').textContent = `Coeffs: computing viewport from coefficients...`;
+            log(`Coeffs: ${p.jobId}, ${p.pix}px, ${nTileCols}x${nTileRows}=${nTiles} tiles...`, '', 'render-log');
+            const vpData = await lambdaPost('viewport', { job_id: p.jobId, quantile: p.quantile, shim: p.shim, source: 'coeffs' });
+            log(`  viewport: ${_fmtMs(performance.now()-tVp)} | ${vpData.n_roots.toLocaleString()} points`, 'ok', 'render-log');
+            const REF_SIZE = 4096;
+            scale = vpData.scale_ref * Math.min(p.pix, p.pix) / REF_SIZE;
+            vpCenterRe = vpData.center_re;
+            vpCenterIm = vpData.center_im;
+        }
+
+        let calcMeta = _lastCalcMeta && _lastCalcMeta.job_id === p.jobId ? _lastCalcMeta : null;
+        if (!calcMeta) {
+            const listData = await lambdaPost('storage', {}, '/list');
+            const jobResult = (listData.results || []).find(r => r.job_id === p.jobId);
+            if (!jobResult) throw new Error('Job not found in results');
+            calcMeta = jobResult;
+        }
+        const nStripes = calcMeta.n_stripes;
+        const nCoeffs = calcMeta.n_coeffs;
+        const coeffsKeys = calcMeta.coeffs_keys || [];
+
+        const BATCH_SIZE = 50;
+        const POLL_TIMEOUT_MS = 600000, STALL_LOG_MS = 30000;
+
+        // Phase 1: Coeff raster — one Lambda per coeff stripe
+        const rasterJobs = [];
+        for (let s = 0; s < nStripes; s++) {
+            rasterJobs.push({
+                phase: 'coeff_raster', job_id: p.jobId, stripe_idx: s,
+                coeffs_key: coeffsKeys[s] || `renders/${p.jobId}/coeffs_${String(s).padStart(4, '0')}.bin`,
+                width: p.pix, height: p.pix,
+                tile_size: tileSize, n_tile_cols: nTileCols, n_tile_rows: nTileRows,
+                center_re: vpCenterRe, center_im: vpCenterIm,
+                scale, rotation: p.rotation, n_coeffs: nCoeffs,
+            });
+        }
+
+        document.getElementById('render-status').textContent = `Coeffs raster: dispatching ${nStripes} stripe Lambdas...`;
+        const tRaster = performance.now();
+        {
+            const nBatches = Math.ceil(rasterJobs.length / BATCH_SIZE);
+            for (let i = 0; i < rasterJobs.length; i += BATCH_SIZE) {
+                const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+                const batch = rasterJobs.slice(i, i + BATCH_SIZE);
+                const dispResult = await lambdaPost('dispatch', { target: 'bilevel', jobs: batch, expected_keys: [] });
+                if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length))
+                    throw new Error(`Coeff raster dispatch failed batch ${batchNum}: fired ${dispResult.fired || 0}/${batch.length}`);
+                log(`  coeff raster dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired`, '', 'render-log');
+            }
+        }
+
+        // Poll coeff raster
+        {
+            let lastDone = 0, pollCount = 0, lastProgressTime = performance.now(), lastStallLog = 0;
+            while (true) {
+                await new Promise(r => setTimeout(r, 3000));
+                pollCount++;
+                const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'coeff_bilevel_raster_', expected: nStripes }, '/check-status');
+                if (check.errors > 0) {
+                    const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                    throw new Error(`${check.errors} coeff raster tasks failed:\n${msgs}`);
+                }
+                if (check.done !== lastDone) {
+                    const delta = check.done - lastDone;
+                    log(`  coeff raster poll #${pollCount}: ${check.done}/${nStripes} done (+${delta}, ${_fmtMs(performance.now() - tRaster)})`, '', 'render-log');
+                    lastDone = check.done;
+                    lastProgressTime = performance.now();
+                    lastStallLog = 0;
+                    document.getElementById('render-status').textContent = `Coeffs raster: ${check.done}/${nStripes} stripes...`;
+                }
+                if (check.complete) break;
+                const stallTime = performance.now() - lastProgressTime;
+                if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
+                    lastStallLog = stallTime;
+                    const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                    log(`  ⚠ coeff raster stall ${_fmtMs(stallTime)}: ${lastDone}/${nStripes}, statuses=${sc}`, 'warn', 'render-log');
+                }
+                if (stallTime > POLL_TIMEOUT_MS) throw new Error(`Coeff raster stalled: ${lastDone}/${nStripes} after ${_fmtMs(stallTime)}`);
+            }
+        }
+        const rasterMs = performance.now() - tRaster;
+        log(`  coeff raster: ${_fmtMs(rasterMs)} wall (${nStripes} stripes)`, 'ok', 'render-log');
+
+        // Phase 2: Merge — reuse bilevel merge with coeff-specific naming
+        const mergeJobs = [];
+        for (let t = 0; t < nTiles; t++) {
+            const tRow = Math.floor(t / nTileCols);
+            const tCol = t % nTileCols;
+            const tw = Math.min(tileSize, p.pix - tCol * tileSize);
+            const th = Math.min(tileSize, p.pix - tRow * tileSize);
+            mergeJobs.push({
+                phase: 'merge', job_id: p.jobId, tile_idx: t,
+                tile_w: tw, tile_h: th, n_stripes: nStripes,
+                bits_prefix: 'coeff_bits', tile_prefix: 'coeff',
+                task_prefix: 'coeff_bilevel_merge',
+            });
+        }
+
+        document.getElementById('render-status').textContent = `Coeffs merge: dispatching ${nTiles} tile Lambdas...`;
+        const tMerge = performance.now();
+        {
+            const nBatches = Math.ceil(mergeJobs.length / BATCH_SIZE);
+            for (let i = 0; i < mergeJobs.length; i += BATCH_SIZE) {
+                const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+                const batch = mergeJobs.slice(i, i + BATCH_SIZE);
+                const dispResult = await lambdaPost('dispatch', { target: 'bilevel', jobs: batch, expected_keys: [] });
+                if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length))
+                    throw new Error(`Coeff merge dispatch failed batch ${batchNum}: fired ${dispResult.fired || 0}/${batch.length}`);
+                log(`  coeff merge dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired`, '', 'render-log');
+            }
+        }
+
+        // Poll coeff merge
+        {
+            let lastDone = 0, pollCount = 0, lastProgressTime = performance.now(), lastStallLog = 0;
+            while (true) {
+                await new Promise(r => setTimeout(r, 3000));
+                pollCount++;
+                const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'coeff_bilevel_merge_', expected: nTiles }, '/check-status');
+                if (check.errors > 0) {
+                    const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                    throw new Error(`${check.errors} coeff merge tasks failed:\n${msgs}`);
+                }
+                if (check.done !== lastDone) {
+                    const delta = check.done - lastDone;
+                    log(`  coeff merge poll #${pollCount}: ${check.done}/${nTiles} done (+${delta}, ${_fmtMs(performance.now() - tMerge)})`, '', 'render-log');
+                    lastDone = check.done;
+                    lastProgressTime = performance.now();
+                    lastStallLog = 0;
+                    document.getElementById('render-status').textContent = `Coeffs merge: ${check.done}/${nTiles} tiles...`;
+                }
+                if (check.complete) break;
+                const stallTime = performance.now() - lastProgressTime;
+                if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
+                    lastStallLog = stallTime;
+                    const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                    log(`  ⚠ coeff merge stall ${_fmtMs(stallTime)}: ${lastDone}/${nTiles}, statuses=${sc}`, 'warn', 'render-log');
+                }
+                if (stallTime > POLL_TIMEOUT_MS) throw new Error(`Coeff merge stalled: ${lastDone}/${nTiles} after ${_fmtMs(stallTime)}`);
+            }
+        }
+        const mergeMs = performance.now() - tMerge;
+        log(`  coeff merge: ${_fmtMs(mergeMs)} wall (${nTiles} tiles)`, 'ok', 'render-log');
+
+        // Phase 3: Stitch — reuse bilevel stitch with coeff-specific naming
+        const imageKey = `renders/${p.jobId}/image_coeffs_bilevel.tif`;
+        document.getElementById('render-status').textContent = `Coeffs stitch: assembling final TIFF...`;
+        const tStitch = performance.now();
+        const stitchJob = {
+            job_id: p.jobId,
+            n_tile_cols: nTileCols, n_tile_rows: nTileRows,
+            out_key: imageKey,
+            tile_prefix: 'coeff',
+            task_id: 'coeff_bilevel_stitch',
+        };
+        const stitchDisp = await lambdaPost('dispatch', { target: 'bilevel_stitch', jobs: [stitchJob], expected_keys: [] });
+        if ((stitchDisp.fired || 0) !== 1) throw new Error(`Coeff stitch dispatch failed: fired ${stitchDisp.fired || 0}/1`);
+        log(`  coeff stitch dispatched`, '', 'render-log');
+
+        // Poll coeff stitch
+        {
+            let pollCount = 0, lastProgressTime = performance.now(), lastStallLog = 0;
+            while (true) {
+                await new Promise(r => setTimeout(r, 3000));
+                pollCount++;
+                const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'coeff_bilevel_stitch', expected: 1 }, '/check-status');
+                if (check.errors > 0) {
+                    const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+                    throw new Error(`Coeff stitch failed:\n${msgs}`);
+                }
+                if (check.complete) break;
+                const stallTime = performance.now() - lastProgressTime;
+                if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
+                    lastStallLog = stallTime;
+                    const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+                    log(`  ⚠ coeff stitch stall ${_fmtMs(stallTime)}: statuses=${sc}`, 'warn', 'render-log');
+                }
+                if (stallTime > 900000) throw new Error(`Coeff stitch stalled after ${_fmtMs(stallTime)}`);
+            }
+        }
+        const stitchMs = performance.now() - tStitch;
+        log(`  coeff stitch: ${_fmtMs(stitchMs)}`, 'ok', 'render-log');
+
+        const presignResult = await lambdaPost('storage', { key: imageKey }, '/presign');
+        const imageUrl = presignResult.url;
+        _lastDownloadKey = imageKey;
+
+        const totalMs = performance.now() - tVp;
+        const statusParts = [
+            'Coeffs BiLevel', nStripes + ' stripes', nTiles + ' tiles',
+            'raster ' + _fmtMs(rasterMs), 'merge ' + _fmtMs(mergeMs), 'stitch ' + _fmtMs(stitchMs),
+        ];
+        document.getElementById('render-status').textContent = statusParts.join(' | ');
+        document.getElementById('render-status').className = 'status ok';
+
+        const preview = document.getElementById('render-preview');
+        if (p.pix > 5000) {
+            preview.innerHTML = `<div style="padding:20px; text-align:center; background:#1a1a2e; border:1px solid #333; border-radius:8px">` +
+                `<div style="color:#aaa; margin-bottom:12px">${p.pix}x${p.pix} coeffs bilevel TIFF — too large to preview</div>` +
+                `<button class="btn-primary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_coeffs_bilevel.tif')" ` +
+                `style="padding:8px 24px; font-size:14px">Download TIFF</button></div>`;
+        } else {
+            preview.innerHTML = `<a href="${imageUrl}" target="_blank" title="Click to open full-size image">` +
+                `<img src="${imageUrl}" style="max-width:100%; border:1px solid #333; cursor:pointer; background:#000"></a>` +
+                `<div style="margin-top:8px"><button class="btn-secondary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_coeffs_bilevel.tif')" ` +
+                `style="padding:4px 12px">Download TIFF</button></div>`;
+        }
+        document.getElementById('render-info').textContent =
+            `Job: ${p.jobId} | ${p.pix}x${p.pix} | n_coeffs: ${nCoeffs} | Coeffs BiLevel TIFF (CCITT G4)`;
+        log(`Done: ${nCoeffs} coeffs ${p.pix}px coeffs bilevel, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');
+
+    } catch (e) {
+        document.getElementById('render-status').textContent = 'Coeffs error: ' + e.message;
+        document.getElementById('render-status').className = 'status error';
+        log(`Coeffs failed: ${e.message}`, 'err', 'render-log');
+    } finally {
+        btn.disabled = false;
+        renderBtn.disabled = false;
+        bilevelBtn.disabled = false;
     }
 }
 

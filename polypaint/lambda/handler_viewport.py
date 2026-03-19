@@ -20,14 +20,19 @@ def handler(event, context):
     quantile = params.get("quantile", 0.0)
     shim = params.get("shim", 0.05)
 
+    source = params.get("source", "roots")
     t0 = time.time()
 
-    # Read calc.json to locate lores.bin
-    obj = s3.get_object(Bucket=BUCKET, Key=f"renders/{job_id}/calc.json")
-    calc = json.loads(obj["Body"].read())
-    lores_key = calc["lores"]["bin_key"]
+    if source == "coeffs":
+        # Viewport from coefficient data (lores_coeffs.bin)
+        lores_key = f"renders/{job_id}/lores_coeffs.bin"
+    else:
+        # Viewport from root data (lores.bin)
+        obj = s3.get_object(Bucket=BUCKET, Key=f"renders/{job_id}/calc.json")
+        calc = json.loads(obj["Body"].read())
+        lores_key = calc["lores"]["bin_key"]
 
-    # Download lores.bin
+    # Download lores data
     obj = s3.get_object(Bucket=BUCKET, Key=lores_key)
     bin_data = obj["Body"].read()
 

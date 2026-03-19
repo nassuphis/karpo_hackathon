@@ -78,6 +78,9 @@ aarch64-linux-musl-gcc -O3 -static -o lambda/pixassemble lambda/pixassemble.c -l
 echo "  bilevel_raster (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/bilevel_raster lambda/bilevel_raster.c -lm
 
+echo "  coeffs_bilevel_raster (static, ARM64)..."
+aarch64-linux-musl-gcc -O3 -static -o lambda/coeffs_bilevel_raster lambda/coeffs_bilevel_raster.c -lm
+
 echo "  raw2jpeg (Docker ARM64, dynamically linked against libvips)..."
 LAYER_BUILD="$SCRIPT_DIR/lambda/layer-build"
 if [ ! -d "$LAYER_BUILD/lib" ] || [ ! -d "$LAYER_BUILD/include" ]; then
@@ -194,8 +197,8 @@ BILEVEL_DIR=/tmp/polypaint-bilevel
 rm -rf "$BILEVEL_DIR"
 mkdir -p "$BILEVEL_DIR"
 cp lambda/handler_bilevel.py lambda/shared.py "$BILEVEL_DIR/"
-cp lambda/bilevel_raster lambda/bilevel_merge "$BILEVEL_DIR/"
-chmod +x "$BILEVEL_DIR"/bilevel_raster "$BILEVEL_DIR"/bilevel_merge
+cp lambda/bilevel_raster lambda/coeffs_bilevel_raster lambda/bilevel_merge "$BILEVEL_DIR/"
+chmod +x "$BILEVEL_DIR"/bilevel_raster "$BILEVEL_DIR"/coeffs_bilevel_raster "$BILEVEL_DIR"/bilevel_merge
 cd "$BILEVEL_DIR" && zip -r9 /tmp/polypaint-bilevel.zip . -q && cd "$SCRIPT_DIR"
 echo "  Bilevel:  $(du -h /tmp/polypaint-bilevel.zip | cut -f1)  (bilevel raster+merge)"
 

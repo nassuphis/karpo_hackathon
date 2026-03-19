@@ -27,7 +27,8 @@ def handler(event, context):
     n_tile_rows = params["n_tile_rows"]
     n_tiles = n_tile_cols * n_tile_rows
     out_key = params["out_key"]
-    task_id = "bilevel_stitch"
+    tile_prefix = params.get("tile_prefix", "bilevel")
+    task_id = params.get("task_id", "bilevel_stitch")
 
     try:
         report_status(job_id, task_id, "started")
@@ -36,7 +37,7 @@ def handler(event, context):
         tile_paths = []
         t_dl = time.time()
         for t in range(n_tiles):
-            tile_key = f"renders/{job_id}/bilevel_t{t:04d}.tif"
+            tile_key = f"renders/{job_id}/{tile_prefix}_t{t:04d}.tif"
             local_path = f"/tmp/tile_{t:04d}.tif"
             obj = s3.get_object(Bucket=BUCKET, Key=tile_key)
             with open(local_path, "wb") as f:

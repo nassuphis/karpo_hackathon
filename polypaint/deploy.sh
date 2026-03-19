@@ -40,6 +40,8 @@ FINALIZE_MEMORY=1769  # 1 vCPU, pixassemble (64 MB tile buffer for 4096²)
 COEFFGEN_MEMORY=1769  # 1 vCPU, coefficient generation (no solver, striped)
 PREVIEW_MEMORY=1024   # pure Python, PNG encoding via zlib (512 OOMs on large lores)
 BILEVEL_MEMORY=1769   # 1 vCPU, bilevel raster + merge
+PARAM_DEBUG_NAME="polypaint-param-debug"
+PARAM_DEBUG_MEMORY=1769  # 1 vCPU + libvips for TIFF output
 BILEVEL_STITCH_NAME="polypaint-bilevel-stitch"
 BILEVEL_STITCH_MEMORY=6144  # ~4 vCPUs, libvips multithreaded stitch
 BINARY_TMP=10240      # /tmp size for Lambdas that process raw images (max 10GB)
@@ -212,6 +214,16 @@ chmod +x "$BILEVEL_STITCH_DIR"/bilevel_merge
 cd "$BILEVEL_STITCH_DIR" && zip -r9 /tmp/polypaint-bilevel-stitch.zip . -q && cd "$SCRIPT_DIR"
 echo "  BiStitch: $(du -h /tmp/polypaint-bilevel-stitch.zip | cut -f1)  (bilevel stitch + libvips layer)"
 
+# Param Debug: handler_param_debug.py + shared.py + bilevel_merge (needs libvips layer)
+PARAM_DEBUG_DIR=/tmp/polypaint-param-debug
+rm -rf "$PARAM_DEBUG_DIR"
+mkdir -p "$PARAM_DEBUG_DIR"
+cp lambda/handler_param_debug.py lambda/shared.py "$PARAM_DEBUG_DIR/"
+cp lambda/bilevel_merge "$PARAM_DEBUG_DIR/"
+chmod +x "$PARAM_DEBUG_DIR"/bilevel_merge
+cd "$PARAM_DEBUG_DIR" && zip -r9 /tmp/polypaint-param-debug.zip . -q && cd "$SCRIPT_DIR"
+echo "  ParamDbg: $(du -h /tmp/polypaint-param-debug.zip | cut -f1)  (param debug + libvips layer)"
+
 ACTION="${1:-create}"
 
 # Helper: create a Lambda function
@@ -329,7 +341,7 @@ setup_api_gateway() {
     }
 
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME"; do
+    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME" "$PARAM_DEBUG_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -357,9 +369,12 @@ setup_api_gateway() {
     RASTER_INT=$(create_integration "$RASTER_NAME")
     FINALIZE_INT=$(create_integration "$FINALIZE_NAME")
     PREVIEW_INT=$(create_integration "$PREVIEW_NAME")
+    local PARAM_DEBUG_INT
+    PARAM_DEBUG_INT=$(create_integration "$PARAM_DEBUG_NAME")
     ensure_route "POST /raster" "$RASTER_INT"
     ensure_route "POST /finalize" "$FINALIZE_INT"
     ensure_route "POST /preview" "$PREVIEW_INT"
+    ensure_route "POST /param-debug" "$PARAM_DEBUG_INT"
 
     ensure_route "POST /encode-upload" "$ENCODE_INT"
     ensure_route "POST /viewport" "$VIEWPORT_INT"
@@ -389,8 +404,9 @@ setup_api_gateway() {
   "viewport": "%s/viewport",
   "preview": "%s/preview",
   "storage": "%s",
-  "dispatch": "%s/dispatch-render"
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
+  "dispatch": "%s/dispatch-render",
+  "param-debug": "%s/param-debug"
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" --region "$REGION"
     echo "  config.json uploaded"
@@ -523,6 +539,9 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$BILEVEL_STITCH_NAME" "handler_bilevel_stitch.handler" "/tmp/polypaint-bilevel-stitch.zip" \
         "$BILEVEL_STITCH_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
+    create_lambda "$PARAM_DEBUG_NAME" "handler_param_debug.handler" "/tmp/polypaint-param-debug.zip" \
+        "$PARAM_DEBUG_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib"
+
     # Disable async retries on fire-and-forget Lambdas (prevents retry storms)
     for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME"; do
         aws lambda put-function-event-invoke-config \
@@ -590,6 +609,9 @@ elif [ "$ACTION" = "update" ]; then
 
     update_lambda "$BILEVEL_STITCH_NAME" "handler_bilevel_stitch.handler" "/tmp/polypaint-bilevel-stitch.zip" \
         "$BILEVEL_STITCH_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    update_lambda "$PARAM_DEBUG_NAME" "handler_param_debug.handler" "/tmp/polypaint-param-debug.zip" \
+        "$PARAM_DEBUG_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib"
 
     # Disable async retries on fire-and-forget Lambdas (prevents retry storms)
     for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME"; do

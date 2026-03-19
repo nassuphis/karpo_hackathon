@@ -1052,8 +1052,13 @@ button {
                     <option value="negate_odd">negate_odd</option>
                 </select>
             </div>
-            <div style="margin-top:8px">
+            <div style="margin-top:8px; display:flex; gap:6px; align-items:center">
                 <button class="btn-primary" id="btn-calculate" onclick="runCalculate()" style="background:#2a6">Calculate</button>
+                <button class="btn-primary" id="btn-param-debug" onclick="runParamDebug()" style="background:#446">Param</button>
+                <select id="param-debug-mode" style="width:7em; font-size:11px">
+                    <option value="together">together</option>
+                    <option value="separate">separate</option>
+                </select>
             </div>
             <div class="anim-row" style="margin-top:8px">
                 <label>Results Dir:</label>
@@ -2588,6 +2593,46 @@ async function runCoeffBilevelPipeline() {
 }
 
 let _lastCalcMeta = null;  // cache last compute metadata for render
+
+async function runParamDebug() {
+    const btn = document.getElementById('btn-param-debug');
+    btn.disabled = true;
+    try {
+        const n = parseInt(document.getElementById('render-n').value) || 500;
+        const mode = document.getElementById('param-debug-mode').value;
+        const paramTransforms = _ptChain.map(item =>
+            item.params && item.params.length ? [item.name, ...item.params] : [item.name]);
+        if (!paramTransforms.length) paramTransforms.push(['unit_circle']);
+
+        const ptDisplay = paramTransforms.map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(' → ');
+        log(`Param debug: N=${n}, mode=${mode}, transforms=[${ptDisplay}]...`);
+        document.getElementById('compute-status').textContent = 'Generating param debug image...';
+
+        const result = await lambdaPost('param-debug', {
+            n1: n, n2: n,
+            param_transforms: paramTransforms,
+            mode,
+            pix: 5000,
+            job_id: document.getElementById('results-dir').value.trim() || 'debug',
+        });
+
+        const images = result.images || [];
+        log(`  param debug: ${result.total_ms}ms, ${result.n_points} points, ${images.length} image(s)`, 'ok');
+
+        // Show download links
+        const links = images.map(img =>
+            `<a href="${img.url}" download="${img.label}_debug.tif" style="color:#4af; margin-right:12px">${img.label} (${img.pixels_set} px, ${(img.file_size/1024).toFixed(0)} KB)</a>`
+        ).join('');
+        document.getElementById('compute-status').innerHTML =
+            `Param debug done (${result.total_ms}ms) — ${links}`;
+
+    } catch (e) {
+        document.getElementById('compute-status').textContent = 'Param debug error: ' + e.message;
+        log(`Param debug failed: ${e.message}`, 'err');
+    } finally {
+        btn.disabled = false;
+    }
+}
 
 async function runCalculate() {
     const funcName = document.getElementById('render-function').value;

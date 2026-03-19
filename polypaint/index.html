@@ -2255,16 +2255,16 @@ async function runBilevelPipeline() {
         const mergeMs = performance.now() - tMerge;
         log(`  merge: ${_fmtMs(mergeMs)} wall (${nTiles} tiles)`, 'ok', 'render-log');
 
-        // Phase 3: Stitch — single bilevel Lambda joins tile PNGs → final image
+        // Phase 3: Stitch — separate bilevel-stitch Lambda (higher memory, more vCPUs for libvips)
         const imageKey = `renders/${p.jobId}/image_bilevel.tif`;
-        document.getElementById('render-status').textContent = `BiLevel stitch: assembling final PNG...`;
+        document.getElementById('render-status').textContent = `BiLevel stitch: assembling final TIFF...`;
         const tStitch = performance.now();
         const stitchJob = {
-            phase: 'stitch', job_id: p.jobId,
+            job_id: p.jobId,
             n_tile_cols: nTileCols, n_tile_rows: nTileRows,
             out_key: imageKey,
         };
-        const stitchDisp = await lambdaPost('dispatch', { target: 'bilevel', jobs: [stitchJob], expected_keys: [] });
+        const stitchDisp = await lambdaPost('dispatch', { target: 'bilevel_stitch', jobs: [stitchJob], expected_keys: [] });
         if ((stitchDisp.fired || 0) !== 1) throw new Error(`Stitch dispatch failed: fired ${stitchDisp.fired || 0}/1`);
         log(`  stitch dispatched`, '', 'render-log');
 
@@ -2286,7 +2286,7 @@ async function runBilevelPipeline() {
                     const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
                     log(`  ⚠ stitch stall ${_fmtMs(stallTime)}: statuses=${sc}`, 'warn', 'render-log');
                 }
-                if (stallTime > POLL_TIMEOUT_MS) throw new Error(`Stitch stalled after ${_fmtMs(stallTime)}`);
+                if (stallTime > 900000) throw new Error(`Stitch stalled after ${_fmtMs(stallTime)}`);
             }
         }
         const stitchMs = performance.now() - tStitch;

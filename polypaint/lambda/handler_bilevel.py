@@ -1,13 +1,11 @@
 """
-Bilevel Lambda handler — three phases for stripe-first bilevel rendering.
+Bilevel Lambda handler — raster and merge phases for stripe-first bilevel rendering.
 
   phase=raster: one stripe → per-tile bitset files (.bits)
-  phase=merge:  per-tile bitsets → tile PNG (1-bit, via libvips)
-  phase=stitch: tile PNGs → final image PNG (via libvips arrayjoin)
+  phase=merge:  per-tile bitsets → tile TIFF (1-bit CCITT G4, via libvips)
 
-All three phases are handled by one Lambda function. The dispatch
-Lambda sends all bilevel jobs to the same function; the handler
-routes based on the 'phase' parameter.
+Stitch phase is handled by a separate Lambda (handler_bilevel_stitch.py)
+with higher memory for libvips multithreaded encode.
 """
 import json
 import os
@@ -32,8 +30,6 @@ def handler(event, context):
         return handle_raster(params)
     elif phase == "merge":
         return handle_merge(params)
-    elif phase == "stitch":
-        return handle_stitch(params)
     else:
         raise ValueError(f"Unknown bilevel phase: {phase}")
 
@@ -115,7 +111,7 @@ def handle_raster(params):
 
 
 def handle_merge(params):
-    """OR per-stripe bitsets for one tile → tile PNG. One Lambda per tile."""
+    """OR per-stripe bitsets for one tile → tile TIFF. One Lambda per tile."""
     job_id = params["job_id"]
     tile_idx = params["tile_idx"]
     tile_w = params["tile_w"]
@@ -164,7 +160,7 @@ def handle_merge(params):
             except OSError:
                 pass
 
-        # Upload tile PNG
+        # Upload tile TIFF
         tile_key = f"renders/{job_id}/bilevel_t{tile_idx:04d}.tif"
         with open(out_path, "rb") as fh:
             s3.upload_fileobj(fh, BUCKET, tile_key)
@@ -174,71 +170,6 @@ def handle_merge(params):
         return ok_response({
             "tile_idx": tile_idx,
             "pixels_set": meta.get("pixels_set", 0),
-            "file_size": meta.get("file_size", 0),
-        })
-
-    except Exception as e:
-        report_status(job_id, task_id, "error", str(e))
-        raise
-
-
-def handle_stitch(params):
-    """Join tile PNGs → final image PNG. Single Lambda invocation."""
-    job_id = params["job_id"]
-    n_tile_cols = params["n_tile_cols"]
-    n_tile_rows = params["n_tile_rows"]
-    n_tiles = n_tile_cols * n_tile_rows
-    out_key = params["out_key"]
-    task_id = "bilevel_stitch"
-
-    try:
-        report_status(job_id, task_id, "started")
-
-        # Download all tile PNGs
-        tile_paths = []
-        for t in range(n_tiles):
-            tile_key = f"renders/{job_id}/bilevel_t{t:04d}.tif"
-            local_path = f"/tmp/tile_{t:04d}.png"
-            obj = s3.get_object(Bucket=BUCKET, Key=tile_key)
-            with open(local_path, "wb") as f:
-                for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
-                    f.write(chunk)
-            tile_paths.append(local_path)
-
-        report_status(job_id, task_id, "stitching")
-
-        # Run bilevel_merge stitch
-        out_path = "/tmp/final.tif"
-        cmd = [
-            BILEVEL_MERGE, "stitch",
-            f"--n_cols={n_tile_cols}",
-            f"--n_rows={n_tile_rows}",
-            f"--output={out_path}",
-        ] + tile_paths
-
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=600,
-            env=imgpipe_env()
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"bilevel_merge stitch failed: {result.stderr.strip()}")
-        meta = json.loads(result.stdout)
-
-        # Clean up tile PNGs
-        for p in tile_paths:
-            try:
-                os.remove(p)
-            except OSError:
-                pass
-
-        # Upload final PNG
-        with open(out_path, "rb") as f:
-            s3.put_object(Bucket=BUCKET, Key=out_key, Body=f, ContentType="image/tiff")
-        os.remove(out_path)
-
-        report_status(job_id, task_id, "done")
-        return ok_response({
-            "out_key": out_key,
             "file_size": meta.get("file_size", 0),
         })
 

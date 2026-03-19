@@ -34,24 +34,10 @@ def handler(event, context):
     try:
         report_status(job_id, task_id, "started")
 
-        # Download stripe .bin files to /tmp (sequentially, one at a time)
-        bin_paths = []
-        t_dl = time.time()
-        for s in range(n_stripes):
-            bin_key = f"renders/{job_id}/stripe_{s}.bin"
-            local_path = f"/tmp/stripe_{s}.bin"
-            obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
-            with open(local_path, "wb") as f:
-                for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
-                    f.write(chunk)
-            bin_paths.append(local_path)
-        dl_ms = int((time.time() - t_dl) * 1000)
-
-        report_status(job_id, task_id, "downloaded")
-
-        # Run bilevel binary
         out_path = "/tmp/tile.png"
-        cmd = [
+        bitset_path = f"/tmp/bilevel_{tile_idx}.bits"
+        bin_path = "/tmp/current_stripe.bin"
+        base_cmd = [
             BILEVEL,
             f"--full_w={params['full_w']}",
             f"--full_h={params['full_h']}",
@@ -65,25 +51,51 @@ def handler(event, context):
             f"--scale={params['scale']}",
             f"--degree={params['degree']}",
             f"--rotation={params.get('rotation', 0.0)}",
-            f"--output={out_path}",
-        ] + bin_paths
+            f"--bitset={bitset_path}",
+        ]
 
-        t_render = time.time()
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=600,
-            env=imgpipe_env()
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"bilevel failed: {result.stderr.strip()}")
-        render_meta = json.loads(result.stdout)
-        render_ms = int((time.time() - t_render) * 1000)
+        t_start = time.time()
+        render_meta = None
 
-        # Clean up stripe files
-        for p in bin_paths:
+        # Process stripes one at a time: download → project → delete
+        for s in range(n_stripes):
+            bin_key = f"renders/{job_id}/stripe_{s}.bin"
+            obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
+            with open(bin_path, "wb") as f:
+                for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
+                    f.write(chunk)
+
+            is_last = (s == n_stripes - 1)
+            cmd = list(base_cmd)
+            if is_last:
+                # Final stripe: write PNG output
+                cmd.append(f"--output={out_path}")
+            else:
+                # Accumulation pass: bitset only, no PNG
+                cmd.append(f"--output={out_path}")
+                cmd.append("--no-png=1")
+            cmd.append(bin_path)
+
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=600,
+                env=imgpipe_env()
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"bilevel failed on stripe {s}: {result.stderr.strip()}")
+            render_meta = json.loads(result.stdout)
+
             try:
-                os.remove(p)
+                os.remove(bin_path)
             except OSError:
                 pass
+
+        render_ms = int((time.time() - t_start) * 1000)
+
+        # Clean up bitset file
+        try:
+            os.remove(bitset_path)
+        except OSError:
+            pass
 
         report_status(job_id, task_id, "rendered")
 
@@ -111,7 +123,7 @@ def handler(event, context):
     except Exception as e:
         report_status(job_id, task_id, "error", str(e))
         # Clean up
-        for p in bin_paths if 'bin_paths' in dir() else []:
+        for p in ["/tmp/current_stripe.bin", f"/tmp/bilevel_{tile_idx}.bits", "/tmp/tile.png"]:
             try:
                 os.remove(p)
             except OSError:

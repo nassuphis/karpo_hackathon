@@ -79,18 +79,29 @@ int main(int argc, char **argv) {
     double cosA = cos(rotation), sinA = sin(rotation);
     int degree = getArgInt(argc, argv, "--degree", 25);
     const char *outPath = getArgStr(argc, argv, "--output", "/tmp/tile.png");
+    const char *bitsetPath = getArgStr(argc, argv, "--bitset", NULL);
+    int noPng = getArgInt(argc, argv, "--no-png", 0);
 
     /* Tile pixel offset in full image */
     int ox = tileCol * tileSize;
     int oy = tileRow * tileSize;
 
-    /* Allocate bitset */
+    /* Allocate bitset — load existing if --bitset specified */
     size_t nPixels = (size_t)tileW * tileH;
     size_t bitsetBytes = (nPixels + 7) / 8;
     uint8_t *bitset = calloc(1, bitsetBytes);
     if (!bitset) {
         fprintf(stderr, "Cannot allocate bitset (%zu bytes)\n", bitsetBytes);
         return 1;
+    }
+
+    /* Load existing bitset if accumulating */
+    if (bitsetPath) {
+        FILE *bf = fopen(bitsetPath, "rb");
+        if (bf) {
+            fread(bitset, 1, bitsetBytes, bf);
+            fclose(bf);
+        }
     }
 
     double halfW = fullW / 2.0;
@@ -168,6 +179,28 @@ int main(int argc, char **argv) {
 
         free(roots);
         stripesProcessed++;
+    }
+
+    /* Save bitset if accumulating */
+    if (bitsetPath) {
+        FILE *bf = fopen(bitsetPath, "wb");
+        if (bf) {
+            fwrite(bitset, 1, bitsetBytes, bf);
+            fclose(bf);
+        }
+    }
+
+    /* Skip PNG output if --no-png=1 (accumulation pass) */
+    if (noPng) {
+        printf("{\"tile_col\":%d,\"tile_row\":%d,\"tile_w\":%d,\"tile_h\":%d,"
+               "\"pixels_set\":%ld,\"pixels_clipped\":%ld,\"pixels_deduped\":%ld,"
+               "\"stripes\":%d,\"file_size\":0}\n",
+               tileCol, tileRow, tileW, tileH,
+               totalPlotted, totalClipped, totalDeduped,
+               stripesProcessed);
+        free(bitset);
+        vips_shutdown();
+        return 0;
     }
 
     /* Convert bitset to uchar image buffer (0 or 255) */

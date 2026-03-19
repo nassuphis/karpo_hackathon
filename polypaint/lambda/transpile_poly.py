@@ -1019,6 +1019,10 @@ class PolyTranspiler(ast.NodeVisitor):
                         self.declared.add(name)
                         self.emit(f"double {name} = {float(const_val)};")
                     else:
+                        # Pre-declare if RHS references the same variable (self-referencing assignment)
+                        if name not in self.declared and self._name_in_expr(name, stmt.value):
+                            self.declared.add(name)
+                            self.emit(f"double {name} = 0;")
                         val = self.expr_to_c(stmt.value)
                         if name not in self.declared:
                             self.declared.add(name)
@@ -1183,6 +1187,13 @@ class PolyTranspiler(ast.NodeVisitor):
             if isinstance(child, ast.Name) and child.id in self.arange_vars:
                 return child.id
         return None
+
+    def _name_in_expr(self, name, node):
+        """Check if a variable name appears anywhere in an expression AST."""
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and child.id == name:
+                return True
+        return False
 
     def _predeclare_if_vars(self, if_node):
         """Pre-declare variables that are first assigned inside if/elif/else branches."""

@@ -70,6 +70,14 @@ def handle_raster(params):
             f"--degree={params['degree']}",
             f"--rotation={params.get('rotation', 0.0)}",
         ]
+        # Write root transforms sidecar if present
+        rt_chain = params.get("root_transforms", [])
+        if rt_chain:
+            rt_path = "/tmp/root_xforms.json"
+            with open(rt_path, "w") as rtf:
+                rtf.write(json.dumps(rt_chain))
+            cmd.append(f"--root_xforms={rt_path}")
+
         t1 = time.time()
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:

@@ -28,6 +28,8 @@
 #include <math.h>
 #include <stdint.h>
 
+#include "root_xforms.h"
+
 #define MAX_TILES 4096
 
 /* ---- Arg parsing ---- */
@@ -46,6 +48,10 @@ static int getArgInt(int argc, char **argv, const char *key, int def) {
 static double getArgDouble(int argc, char **argv, const char *key, double def) {
     const char *v = getArg(argc, argv, key);
     return v ? atof(v) : def;
+}
+static const char *getArgStr(int argc, char **argv, const char *key, const char *def) {
+    const char *v = getArg(argc, argv, key);
+    return v ? v : def;
 }
 
 /* ---- Main ---- */
@@ -69,6 +75,11 @@ int main(int argc, char **argv) {
     double rotation = getArgDouble(argc, argv, "--rotation", 0.0);
     double cosA = cos(rotation), sinA = sin(rotation);
     int degree = getArgInt(argc, argv, "--degree", 25);
+    const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
+
+    /* Parse root transform chain */
+    RootXformEntry rtChain[MAX_RT_CHAIN];
+    int nRt = parse_root_xform_file(rtPath, rtChain, MAX_RT_CHAIN);
 
     int nTiles = nTileCols * nTileRows;
     if (nTiles > MAX_TILES) {
@@ -117,10 +128,28 @@ int main(int argc, char **argv) {
     double halfW = W / 2.0, halfH = H / 2.0;
     long rootsPlotted = 0, rootsClipped = 0, rootsDeduped = 0;
 
+    /* Working buffers for root transforms (deinterleaved re/im) */
+    float *wkRe = NULL, *wkIm = NULL;
+    if (nRt > 0) {
+        wkRe = malloc(degree * sizeof(float));
+        wkIm = malloc(degree * sizeof(float));
+    }
+
     for (long p = 0; p < nPoints; p++) {
         float *step = roots + p * stride;
+
+        /* Apply root transforms if any */
+        if (nRt > 0) {
+            for (int i = 0; i < degree; i++) {
+                wkRe[i] = step[i * 2];
+                wkIm[i] = step[i * 2 + 1];
+            }
+            apply_root_xforms(rtChain, nRt, wkRe, wkIm, degree);
+        }
+
         for (int i = 0; i < degree; i++) {
-            double re = step[i * 2], im = step[i * 2 + 1];
+            double re = nRt > 0 ? wkRe[i] : step[i * 2];
+            double im = nRt > 0 ? wkIm[i] : step[i * 2 + 1];
 
             /* Viewport transform with rotation */
             double dx = re - centerRe, dy = im - centerIm;
@@ -157,6 +186,8 @@ int main(int argc, char **argv) {
         }
     }
     free(roots);
+    if (wkRe) free(wkRe);
+    if (wkIm) free(wkIm);
 
     /* Write non-empty tile bitsets */
     int tilesWritten = 0;

@@ -1247,6 +1247,15 @@ button {
                     <option value="8192">8192</option>
                 </select>
             </div>
+            <div class="anim-row" style="flex-wrap:wrap; margin-top:8px">
+                <label style="min-width:90px">Root transforms:</label>
+                <div id="rt-chips" class="chip-container"></div>
+                <select id="rt-add" onchange="addChip('rt',this.value);this.value='';" style="width:120px; font-size:12px">
+                    <option value="">+ add...</option>
+                    <option value="rotate_roots">rotate_roots</option>
+                    <option value="pull_unit_circle">pull_unit_circle</option>
+                </select>
+            </div>
             <div style="margin-top:8px; display:flex; gap:6px; align-items:center">
                 <button class="btn-primary" id="btn-raster-all" onclick="runRasterPipeline()">Render</button>
                 <button class="btn-primary" id="btn-bilevel" onclick="runBilevelPipeline()" style="background:#444">BiLevel</button>
@@ -1685,14 +1694,22 @@ const _ptCatalog = {
     coeff6: {}, coeff7: {}, coeff8: {},
     coeff9: {}, coeff10: {}, coeff11: {}, coeff12: {},
 };
+
+const _rtCatalog = {
+    rotate_roots:     { params: [{ph:'turns', def:'0'}] },
+    pull_unit_circle: { params: [{ph:'sigma', def:'0.75'}, {ph:'alpha', def:'1'}] },
+};
+
 let _ptChain = [];  // parameter transform chain (array of {name, params: [str,...]})
 let _ctChain = [];  // coefficient transform chain (array of strings)
+let _rtChain = [];  // root transform chain (array of {name, params: [str,...]})
 
 function addChip(which, name) {
     if (!name) return;
-    const chain = which === 'pt' ? _ptChain : _ctChain;
-    if (which === 'pt') {
-        const spec = _ptCatalog[name] || {};
+    const chain = which === 'pt' ? _ptChain : which === 'rt' ? _rtChain : _ctChain;
+    if (which === 'pt' || which === 'rt') {
+        const catalog = which === 'pt' ? _ptCatalog : _rtCatalog;
+        const spec = catalog[name] || {};
         const p = spec.params || [];
         chain.push({ name, params: p.map(d => d.def || '') });
     } else {
@@ -1702,30 +1719,32 @@ function addChip(which, name) {
 }
 
 function removeChip(which, idx) {
-    const chain = which === 'pt' ? _ptChain : _ctChain;
+    const chain = which === 'pt' ? _ptChain : which === 'rt' ? _rtChain : _ctChain;
     chain.splice(idx, 1);
     _renderChips(which);
 }
 
-function updateChipParam(chipIdx, paramIdx, value) {
-    if (chipIdx >= 0 && chipIdx < _ptChain.length) {
-        _ptChain[chipIdx].params[paramIdx] = value;
+function updateChipParam(chipIdx, paramIdx, value, which) {
+    const chain = which === 'rt' ? _rtChain : _ptChain;
+    if (chipIdx >= 0 && chipIdx < chain.length) {
+        chain[chipIdx].params[paramIdx] = value;
     }
 }
 
 function _renderChips(which) {
-    const chain = which === 'pt' ? _ptChain : _ctChain;
+    const chain = which === 'pt' ? _ptChain : which === 'rt' ? _rtChain : _ctChain;
     const el = document.getElementById(which + '-chips');
     if (!el) return;
-    if (which === 'pt') {
+    if (which === 'pt' || which === 'rt') {
+        const catalog = which === 'pt' ? _ptCatalog : _rtCatalog;
         el.innerHTML = chain.map((item, i) => {
-            const spec = _ptCatalog[item.name] || {};
+            const spec = catalog[item.name] || {};
             const pDefs = spec.params || [];
             const inputsHtml = item.params.map((val, pi) =>
-                `<input class="chip-input" type="text" inputmode="decimal" value="${val}" placeholder="${(pDefs[pi]||{}).ph||''}" onchange="updateChipParam(${i},${pi},this.value)" onclick="event.stopPropagation()">`
+                `<input class="chip-input" type="text" inputmode="decimal" value="${val}" placeholder="${(pDefs[pi]||{}).ph||''}" onchange="updateChipParam(${i},${pi},this.value,'${which}')" onclick="event.stopPropagation()">`
             ).join('');
             const label = spec.label || item.name;
-            return `<span class="chip">${label}${inputsHtml}<span class="chip-x" onclick="removeChip('pt',${i})">x</span></span>`;
+            return `<span class="chip">${label}${inputsHtml}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
         }).join('');
     } else {
         el.innerHTML = chain.map((name, i) =>
@@ -1774,6 +1793,8 @@ function _renderCommonParams() {
             const dir = document.getElementById('render-rotation-dir').value;
             return (dir === 'cw' ? -turns : turns) * 2 * Math.PI;
         })(),
+        rootTransforms: _rtChain.map(item =>
+            item.params && item.params.length ? [item.name, ...item.params] : [item.name]),
     };
 }
 
@@ -1838,6 +1859,7 @@ async function runRasterPipeline() {
                 n_tile_cols: nTileCols, n_tile_rows: nTileRows,
                 center_re: vpCenterRe, center_im: vpCenterIm,
                 scale, rotation: p.rotation, degree: calcMeta.degree,
+                root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
                 color: renderColorMode, match: renderMatchMode,
                 palette: renderPalette, constant_color: p.constantColor,
             });
@@ -2175,6 +2197,7 @@ async function runBilevelPipeline() {
                 tile_size: tileSize, n_tile_cols: nTileCols, n_tile_rows: nTileRows,
                 center_re: vpCenterRe, center_im: vpCenterIm,
                 scale, rotation: p.rotation, degree: calcMeta.degree,
+                root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
             });
         }
 

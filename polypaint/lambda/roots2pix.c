@@ -29,6 +29,8 @@
 #include <math.h>
 #include <stdint.h>
 
+#include "root_xforms.h"
+
 #define MAXDEG 256
 #define MAX_TILES 4096  /* up to 64x64 grid */
 #define BUF_ENTRIES (128 * 1024)  /* 128K uint32s = 64K entries = 512 KB per tile */
@@ -293,6 +295,11 @@ int main(int argc, char **argv) {
     const char *matchStr = getArgStr(argc, argv, "--match", "none");
     const char *palName = getArgStr(argc, argv, "--palette", "inferno");
     const char *constColorStr = getArgStr(argc, argv, "--constant_color", "ffffff");
+    const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
+
+    /* Parse root transform chain */
+    RootXformEntry rtChain[MAX_RT_CHAIN];
+    int nRt = parse_root_xform_file(rtPath, rtChain, MAX_RT_CHAIN);
 
     enum ColorMode colorMode = COLOR_RAINBOW;
     if (strcmp(colorStr, "proximity") == 0) colorMode = COLOR_PROXIMITY;
@@ -385,6 +392,26 @@ int main(int argc, char **argv) {
     unsigned char rbPalR[MAXDEG], rbPalG[MAXDEG], rbPalB[MAXDEG];
     for (int i = 0; i < degree; i++)
         rainbowRGB(i, degree, &rbPalR[i], &rbPalG[i], &rbPalB[i]);
+
+    /* Apply root transforms in-place to entire root buffer */
+    if (nRt > 0) {
+        float *wkRe = malloc(degree * sizeof(float));
+        float *wkIm = malloc(degree * sizeof(float));
+        for (long p = 0; p < nPoints; p++) {
+            float *step = roots + p * stride;
+            for (int i = 0; i < degree; i++) {
+                wkRe[i] = step[i * 2];
+                wkIm[i] = step[i * 2 + 1];
+            }
+            apply_root_xforms(rtChain, nRt, wkRe, wkIm, degree);
+            for (int i = 0; i < degree; i++) {
+                step[i * 2] = wkRe[i];
+                step[i * 2 + 1] = wkIm[i];
+            }
+        }
+        free(wkRe);
+        free(wkIm);
+    }
 
     long rootsPlotted = 0, rootsClipped = 0;
     double halfW = W / 2.0, halfH = H / 2.0;

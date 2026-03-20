@@ -1814,6 +1814,19 @@ static void pt_zz3(double *z1r, double *z1i, double *z2r, double *z2i) {
     *z2r = c - b; *z2i = d + a;
 }
 
+/* crd(n, size): cardioid mapping on one parameter. n=0→t1, n=1→t2.
+ * x' = size * (1 + cos(theta)) * exp(i*theta), theta = 2*pi*Re(x). */
+static void pt_crd(double *z1r, double *z1i, double *z2r, double *z2i, int n, double size) {
+    double *xr, *xi;
+    if (n == 0) { xr = z1r; xi = z1i; }
+    else if (n == 1) { xr = z2r; xi = z2i; }
+    else return;
+    double theta = 2.0 * M_PI * (*xr);
+    double r = size * (1.0 + cos(theta));
+    *xr = r * cos(theta);
+    *xi = r * sin(theta);
+}
+
 static void pt_exp(double *z1r, double *z1i, double *z2r, double *z2i) {
     double e, r, i;
     e = exp(*z1r); r = e * cos(*z1i); i = e * sin(*z1i);
@@ -2332,6 +2345,12 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
         double a1 = 2.0 * M_PI * *z2r, a2 = 2.0 * M_PI * *z1r;
         *z1r = r1 * cos(a1); *z1i = r1 * sin(a1);
         *z2r = r2 * cos(a2); *z2i = r2 * sin(a2);
+        return 0;
+    }
+    if (strcmp(e->name, "crd") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 0;
+        double size = e->nArgs > 1 ? e->args[1] : 1.0;
+        pt_crd(z1r, z1i, z2r, z2i, n, size);
         return 0;
     }
     /* Fall back to standard param transforms (no extra args) */

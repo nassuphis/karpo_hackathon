@@ -1827,6 +1827,28 @@ static void pt_crd(double *z1r, double *z1i, double *z2r, double *z2i, int n, do
     *xi = r * sin(theta);
 }
 
+/* hrt(n, size, turns): heart curve on one parameter. n=0→t1, n=1→t2. */
+static void pt_hrt(double *z1r, double *z1i, double *z2r, double *z2i, int n, double size, double turns) {
+    double *xr, *xi;
+    if (n == 0) { xr = z1r; xi = z1i; }
+    else if (n == 1) { xr = z2r; xi = z2i; }
+    else return;
+    double u = *xr;
+    double t = 2.0 * M_PI * u + M_PI / 2.0;
+    double st = sin(t);
+    double xh = 16.0 * st * st * st;
+    double yh = 13.0*cos(t) - 5.0*cos(2.0*t) - 2.0*cos(3.0*t) - cos(4.0*t);
+    double hr = xh / 40.0;
+    double hi = yh / 40.0 + 0.1;
+    /* rotate: rot = exp(i * 2*pi*turns) */
+    double ra = 2.0 * M_PI * turns;
+    double rotr = cos(ra), roti = sin(ra);
+    /* result = rot * size * heart */
+    double sr = size * hr, si = size * hi;
+    *xr = rotr * sr - roti * si;
+    *xi = rotr * si + roti * sr;
+}
+
 static void pt_exp(double *z1r, double *z1i, double *z2r, double *z2i) {
     double e, r, i;
     e = exp(*z1r); r = e * cos(*z1i); i = e * sin(*z1i);
@@ -2351,6 +2373,13 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
         int n = e->nArgs > 0 ? (int)e->args[0] : 0;
         double size = e->nArgs > 1 ? e->args[1] : 1.0;
         pt_crd(z1r, z1i, z2r, z2i, n, size);
+        return 0;
+    }
+    if (strcmp(e->name, "hrt") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 0;
+        double size = e->nArgs > 1 ? e->args[1] : 1.0;
+        double turns = e->nArgs > 2 ? e->args[2] : 0.0;
+        pt_hrt(z1r, z1i, z2r, z2i, n, size, turns);
         return 0;
     }
     /* Fall back to standard param transforms (no extra args) */

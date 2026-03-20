@@ -2359,6 +2359,53 @@ WRAP_OLD(poly_110)
 #include "poly_generated_900.c"
 #include "poly_generated_900_funcs.h"
 
+/* p821: hand-written, sequential cf[k] = cf[k-1] * ... with conditionals */
+static void p821_c(double x1r, double x1i, double x2r, double x2i,
+                   double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 25;
+    for (int i = 0; i < 25; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    /* cf[0] = 3*t1 + 5j*t2 */
+    cRe[0] = 3.0*x1r - 5.0*x2i;
+    cIm[0] = 3.0*x1i + 5.0*x2r;
+
+    double mod_t1 = sqrt(x1r*x1r + x1i*x1i);
+    double arg_t2 = atan2(x2i, x2r);
+    double mr = mod_t1 + arg_t2;  /* real scalar */
+
+    for (int k = 1; k < 25; k++) {
+        /* cf[k] = cf[k-1] * (mod_t1 + arg_t2)  — real scalar multiply */
+        cRe[k] = cRe[k-1] * mr;
+        cIm[k] = cIm[k-1] * mr;
+
+        /* if cf[k].real < 0 and cf[k].imag < 0: cf[k] = conj(cf[k]) */
+        if (cRe[k] < 0 && cIm[k] < 0) {
+            cIm[k] = -cIm[k];
+        }
+
+        /* if |cf[k].real| > 10: cf[k] = cf[k] / mod_t1 */
+        if (fabs(cRe[k]) > 10.0 && mod_t1 > 1e-30) {
+            cRe[k] /= mod_t1;
+            cIm[k] /= mod_t1;
+        }
+
+        /* if |cf[k].imag| > 10: cf[k] = cf[k] / (1j * arg_t2) */
+        /* 1j * arg_t2 = (0 + arg_t2*j), so dividing by it:
+           (a+bi)/(0+ci) = (a+bi)*(-ci)/(c²) = (b/c) + (-a/c)i  when c=arg_t2 */
+        if (fabs(cIm[k]) > 10.0 && fabs(arg_t2) > 1e-30) {
+            double a = cRe[k], b = cIm[k];
+            double c = arg_t2;
+            cRe[k] = b / c;
+            cIm[k] = -a / c;
+        }
+    }
+
+    /* NaN guard */
+    for (int i = 0; i < 25; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
 static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_1") == 0)   return giga_1_c;
     if (strcmp(name, "giga_5") == 0)   return giga_5_c;
@@ -2373,6 +2420,7 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_230") == 0) return giga_230_c;
     if (strcmp(name, "giga_232") == 0) return giga_232_c;
     if (strcmp(name, "p7f") == 0)      return p7f_c;
+    if (strcmp(name, "p821") == 0)    return p821_c;
     if (strcmp(name, "poly_110") == 0) return poly_110_c;
     if (strcmp(name, "poly_2") == 0)   return poly_2_hand;
     if (strcmp(name, "poly_9") == 0)   return poly_9_hand;

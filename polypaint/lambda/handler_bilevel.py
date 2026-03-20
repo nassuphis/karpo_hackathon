@@ -56,6 +56,11 @@ def handle_raster(params):
                 f.write(chunk)
         dl_ms = int((time.time() - t0) * 1000)
 
+        # Clean stale .bits files from previous invocations (warm container reuse)
+        import glob
+        for stale in glob.glob("/tmp/bits_t*.bits"):
+            os.remove(stale)
+
         # Run bilevel_raster
         out_prefix = "/tmp/bits"
         cmd = [
@@ -139,6 +144,11 @@ def handle_coeff_raster(params):
             for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
                 f.write(chunk)
         dl_ms = int((time.time() - t0) * 1000)
+
+        # Clean stale .bits files from previous invocations (warm container reuse)
+        import glob
+        for stale in glob.glob("/tmp/coeff_bits_t*.bits"):
+            os.remove(stale)
 
         # Run coeffs_bilevel_raster
         out_prefix = "/tmp/coeff_bits"

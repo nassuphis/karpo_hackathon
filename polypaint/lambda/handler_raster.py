@@ -39,6 +39,11 @@ def handler(event, context):
 
         report_status(job_id, task_id, "bin_downloaded")
 
+        # Clean stale .pix files from previous invocations (warm container reuse)
+        import glob
+        for stale in glob.glob("/tmp/pix_t*.pix"):
+            os.remove(stale)
+
         # Run roots2pix — writes tile-bucketed .pix files to /tmp/pix_t*.pix
         t1 = time.time()
         cmd = [

@@ -262,13 +262,14 @@ def handle_check_status(event):
 
 
 def handle_clean_render(event):
-    """Delete render artifacts (.raw, .jpeg, .png) for a job, preserving .bin files.
+    """Delete render artifacts for a job, preserving .bin and calc.json.
+    Deletes: .raw, .jpeg, .jpg, .png, .pix, .bits, .tif
     Also clears DynamoDB status entries for the job.
     """
     params = parse_body(event)
     job_id = params["job_id"]
     prefix = f"renders/{job_id}/"
-    render_exts = ('.raw', '.jpeg', '.jpg', '.png', '.pix')
+    render_exts = ('.raw', '.jpeg', '.jpg', '.png', '.pix', '.bits', '.tif')
 
     objects = []
     paginator = s3.get_paginator('list_objects_v2')

@@ -2628,13 +2628,18 @@ async function runParamDebug() {
         const images = result.images || [];
         log(`  param debug: ${result.total_ms}ms, ${result.n_points} points, ${images.length} image(s)`, 'ok');
 
-        // Show download buttons
-        const links = images.map(img =>
-            `<button class="btn-primary" onclick="window.open('${img.url}')" style="padding:4px 12px; margin-right:8px; font-size:12px">` +
-            `Download ${img.label} (${img.pixels_set} px, ${(img.file_size/1024).toFixed(0)} KB)</button>`
-        ).join('');
+        // Show preview images + download buttons
+        const parts = images.map(img => {
+            const preview = img.preview_url
+                ? `<img src="${img.preview_url}" style="max-width:512px; border:1px solid #333; background:#000; display:block; margin-bottom:6px">`
+                : '';
+            return `<div style="display:inline-block; vertical-align:top; margin-right:12px">` +
+                preview +
+                `<button class="btn-primary" onclick="window.open('${img.url}')" style="padding:4px 12px; font-size:12px">` +
+                `Download ${img.label} TIFF (${img.pixels_set} px, ${(img.file_size/1024).toFixed(0)} KB)</button></div>`;
+        }).join('');
         document.getElementById('compute-status').innerHTML =
-            `Param debug done (${result.total_ms}ms, ${result.n_points} points) ` + links;
+            `<div style="margin-bottom:8px">Param debug done (${result.total_ms}ms, ${result.n_points} points)</div>` + parts;
 
     } catch (e) {
         document.getElementById('compute-status').textContent = 'Param debug error: ' + e.message;

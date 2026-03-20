@@ -45,7 +45,9 @@ static const char *getArgStr(int argc, char **argv, const char *key, const char 
 static int do_merge(int argc, char **argv) {
     int tileW = getArgInt(argc, argv, "--tile_w", 4096);
     int tileH = getArgInt(argc, argv, "--tile_h", 4096);
-    const char *outPath = getArgStr(argc, argv, "--output", "/tmp/tile.png");
+    const char *outPath = getArgStr(argc, argv, "--output", "/tmp/tile.tif");
+    const char *previewPath = getArgStr(argc, argv, "--preview", NULL);
+    int previewSize = getArgInt(argc, argv, "--preview_size", 512);
 
     size_t nPixels = (size_t)tileW * tileH;
     size_t bitsetBytes = (nPixels + 7) / 8;
@@ -123,6 +125,21 @@ static int do_merge(int argc, char **argv) {
         return 1;
     }
 
+    /* Write preview PNG (downscaled) if requested */
+    long previewFsize = 0;
+    if (previewPath) {
+        double scale = (double)previewSize / (tileW > tileH ? tileW : tileH);
+        if (scale >= 1.0) scale = 1.0;
+        VipsImage *small;
+        if (vips_resize(thresh, &small, scale, NULL) == 0) {
+            if (vips_pngsave(small, previewPath, "compression", 6, NULL) == 0) {
+                FILE *pf = fopen(previewPath, "rb");
+                if (pf) { fseek(pf, 0, SEEK_END); previewFsize = ftell(pf); fclose(pf); }
+            }
+            g_object_unref(small);
+        }
+    }
+
     g_object_unref(thresh);
     g_object_unref(img);
     free(imgBuf);
@@ -131,8 +148,8 @@ static int do_merge(int argc, char **argv) {
     long fsize = 0;
     if (fout) { fseek(fout, 0, SEEK_END); fsize = ftell(fout); fclose(fout); }
 
-    printf("{\"mode\":\"merge\",\"files_merged\":%d,\"pixels_set\":%ld,\"file_size\":%ld}\n",
-           nFiles, pixelsSet, fsize);
+    printf("{\"mode\":\"merge\",\"files_merged\":%d,\"pixels_set\":%ld,\"file_size\":%ld,\"preview_size\":%ld}\n",
+           nFiles, pixelsSet, fsize, previewFsize);
     return 0;
 }
 

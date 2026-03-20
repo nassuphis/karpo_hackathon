@@ -84,14 +84,17 @@ def write_tiff(bitset_bytes, w, h, out_path):
     bits_path = out_path + ".bits"
     with open(bits_path, "wb") as f:
         f.write(bitset_bytes)
+    preview_path = out_path.replace('.tif', '_preview.png')
     cmd = [BILEVEL_MERGE, "merge", f"--tile_w={w}", f"--tile_h={h}",
-           f"--output={out_path}", bits_path]
+           f"--output={out_path}",
+           f"--preview={preview_path}", "--preview_size=512",
+           bits_path]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
                             env=imgpipe_env())
     os.remove(bits_path)
     if result.returncode != 0:
         raise RuntimeError(f"bilevel_merge failed: {result.stderr.strip()}")
-    return json.loads(result.stdout)
+    return json.loads(result.stdout), preview_path
 
 
 def handler(event, context):
@@ -125,38 +128,33 @@ def handler(event, context):
     #                1 = z2 (re at offset 8, im at offset 12)
     results = []
 
-    if mode == "separate":
-        for label, indices in [("param1", [0]), ("param2", [1])]:
-            bitset, plotted = raster_points_from_bin(bin_path, 4, indices, pix)
-            out_path = f"/tmp/{label}_debug.tif"
-            meta = write_tiff(bitset, pix, pix, out_path)
+    items = [("param1", [0]), ("param2", [1])] if mode == "separate" else [("combined", [0, 1])]
+    for label, indices in items:
+        bitset, plotted = raster_points_from_bin(bin_path, 4, indices, pix)
+        out_path = f"/tmp/{label}_debug.tif"
+        meta, preview_file = write_tiff(bitset, pix, pix, out_path)
 
-            s3_key = f"debug/{job_id}/{label}_debug.tif"
-            with open(out_path, "rb") as f:
-                s3.put_object(Bucket=BUCKET, Key=s3_key, Body=f, ContentType="image/tiff")
-            os.remove(out_path)
-
-            url = s3.generate_presigned_url("get_object",
-                Params={"Bucket": BUCKET, "Key": s3_key}, ExpiresIn=PRESIGN_EXPIRY)
-            results.append({
-                "label": label, "key": s3_key, "url": url,
-                "pixels_set": plotted, "file_size": meta.get("file_size", 0),
-            })
-    else:
-        # Together: both z1 and z2 in one image
-        bitset, plotted = raster_points_from_bin(bin_path, 4, [0, 1], pix)
-        out_path = "/tmp/param_debug.tif"
-        meta = write_tiff(bitset, pix, pix, out_path)
-
-        s3_key = f"debug/{job_id}/param_debug.tif"
+        # Upload TIFF
+        tif_key = f"debug/{job_id}/{label}_debug.tif"
         with open(out_path, "rb") as f:
-            s3.put_object(Bucket=BUCKET, Key=s3_key, Body=f, ContentType="image/tiff")
+            s3.put_object(Bucket=BUCKET, Key=tif_key, Body=f, ContentType="image/tiff")
         os.remove(out_path)
+        tif_url = s3.generate_presigned_url("get_object",
+            Params={"Bucket": BUCKET, "Key": tif_key}, ExpiresIn=PRESIGN_EXPIRY)
 
-        url = s3.generate_presigned_url("get_object",
-            Params={"Bucket": BUCKET, "Key": s3_key}, ExpiresIn=PRESIGN_EXPIRY)
+        # Upload preview PNG
+        preview_url = ""
+        if os.path.exists(preview_file):
+            png_key = f"debug/{job_id}/{label}_preview.png"
+            with open(preview_file, "rb") as f:
+                s3.put_object(Bucket=BUCKET, Key=png_key, Body=f, ContentType="image/png")
+            os.remove(preview_file)
+            preview_url = s3.generate_presigned_url("get_object",
+                Params={"Bucket": BUCKET, "Key": png_key}, ExpiresIn=PRESIGN_EXPIRY)
+
         results.append({
-            "label": "combined", "key": s3_key, "url": url,
+            "label": label, "key": tif_key, "url": tif_url,
+            "preview_url": preview_url,
             "pixels_set": plotted, "file_size": meta.get("file_size", 0),
         })
 

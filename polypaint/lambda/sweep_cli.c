@@ -2507,6 +2507,56 @@ static void p821_c(double x1r, double x1i, double x2r, double x2i,
     }
 }
 
+/* moth4: 50 coefficients, sequential with complex sin/cos normalization */
+static void moth4_c(double x1r, double x1i, double x2r, double x2i,
+                    double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 50;
+    for (int i = 0; i < 50; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    /* cf[0] = t1 + t2 */
+    double sumr = x1r + x2r, sumi = x1i + x2i;
+    cRe[0] = sumr; cIm[0] = sumi;
+
+    for (int k = 1; k < 50; k++) {
+        /* v = sin(((k+4)%10) * cf[k-1]) + cos((k%10) * t1) */
+        int idx1 = (k + 4) % 10;
+        int idx2 = k % 10;
+
+        /* idx1 * cf[k-1] */
+        double mr = (double)idx1 * cRe[k-1], mi = (double)idx1 * cIm[k-1];
+        /* sin(mr + mi*i) */
+        double sr, si;
+        c_sin(mr, mi, &sr, &si);
+
+        /* idx2 * t1 */
+        double cr2 = (double)idx2 * x1r, ci2 = (double)idx2 * x1i;
+        /* cos(cr2 + ci2*i) */
+        double cosr, cosi;
+        c_cos(cr2, ci2, &cosr, &cosi);
+
+        /* v = sin_result + cos_result */
+        double vr = sr + cosr, vi = si + cosi;
+
+        /* av = |v| */
+        double av = sqrt(vr * vr + vi * vi);
+
+        if (isfinite(av) && av > 1e-10) {
+            /* cf[k] = v / av (normalize to unit circle) */
+            cRe[k] = vr / av;
+            cIm[k] = vi / av;
+        } else {
+            /* fallback: cf[k] = t1 + t2 */
+            cRe[k] = sumr;
+            cIm[k] = sumi;
+        }
+    }
+
+    /* NaN guard */
+    for (int i = 0; i < 50; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
 static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_1") == 0)   return giga_1_c;
     if (strcmp(name, "giga_5") == 0)   return giga_5_c;
@@ -2522,6 +2572,7 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_232") == 0) return giga_232_c;
     if (strcmp(name, "p7f") == 0)      return p7f_c;
     if (strcmp(name, "p821") == 0)    return p821_c;
+    if (strcmp(name, "moth4") == 0)  return moth4_c;
     if (strcmp(name, "poly_110") == 0) return poly_110_c;
     if (strcmp(name, "poly_2") == 0)   return poly_2_hand;
     if (strcmp(name, "poly_9") == 0)   return poly_9_hand;

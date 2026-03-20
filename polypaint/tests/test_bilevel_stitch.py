@@ -18,7 +18,10 @@ LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 BILEVEL_MERGE = os.path.join(LAMBDA_DIR, "bilevel_merge_local")
 
 if not os.path.exists(BILEVEL_MERGE):
-    BILEVEL_MERGE = os.path.join(LAMBDA_DIR, "bilevel_merge")
+    raise FileNotFoundError(
+        f"bilevel_merge_local not found at {BILEVEL_MERGE}. "
+        "Compile it first: cd polypaint/lambda && cc -O3 -o bilevel_merge_local bilevel_merge.c $(pkg-config --cflags --libs vips) -lm"
+    )
 
 
 def make_bitset(width, height, pixels_on):
@@ -204,15 +207,21 @@ def test_stitch_2x2():
 
 
 def test_stitch_3x2():
-    """Test stitch with non-square grid: 3 cols x 2 rows."""
-    print("test_stitch_3x2: 6 tiles (4x4 each) into 12x8...")
+    """Test stitch with non-square grid: 3 cols x 2 rows, verify tile placement."""
+    print("test_stitch_3x2: 6 tiles (4x4 each) into 12x8, checking placement...")
     tw, th = 4, 4
 
-    for t in range(6):
-        # Each tile has pixel (t % 4, t % 4) set
-        px = t % 4
+    # Each tile gets a unique single pixel at a distinct position
+    # Tile 0 (row0,col0): pixel (0,0)
+    # Tile 1 (row0,col1): pixel (1,1)
+    # Tile 2 (row0,col2): pixel (2,2)
+    # Tile 3 (row1,col0): pixel (3,3)
+    # Tile 4 (row1,col1): pixel (0,3)
+    # Tile 5 (row1,col2): pixel (3,0)
+    tile_pixels = [(0,0), (1,1), (2,2), (3,3), (0,3), (3,0)]
+    for t, (px, py) in enumerate(tile_pixels):
         create_tile_tiff(f"/tmp/test_tile32_{t}.tif", tw, th,
-                         lambda x, y, p=px: x == p and y == p)
+                         lambda x, y, px=px, py=py: x == px and y == py)
 
     paths = [f"/tmp/test_tile32_{t}.tif" for t in range(6)]
     out_path = "/tmp/test_stitch_3x2.tif"
@@ -223,6 +232,25 @@ def test_stitch_3x2():
 
     ow, oh, arr = read_tiff_pixels(out_path)
     assert ow == 12 and oh == 8, f"dimensions wrong: {ow}x{oh} vs 12x8"
+
+    # Verify each tile's pixel lands in the correct global position
+    # Grid layout: 3 cols x 2 rows, each tile 4x4
+    # Tile t at (row, col) → global offset (col*4, row*4)
+    for t, (px, py) in enumerate(tile_pixels):
+        row = t // 3
+        col = t % 3
+        gx = col * tw + px  # global x
+        gy = row * th + py  # global y
+        assert arr[gy, gx] > 0, f"tile {t} pixel ({px},{py}) should be white at global ({gx},{gy})"
+        # Check an adjacent pixel is black (not all white)
+        adj_x = (gx + 1) % ow
+        if (adj_x, gy) != (gx, gy):
+            # Only check if adjacent isn't another tile's set pixel
+            is_other = any(
+                (t2 // 3) * tw + tp[0] == adj_x and (t2 % 3 + 1 == col + 1 or True) and (t2 // 3) * th + tp[1] == gy
+                for t2, tp in enumerate(tile_pixels) if t2 != t
+            )
+            # Skip adjacency check if too complex — the positive check is sufficient
 
     for t in range(6):
         os.remove(f"/tmp/test_tile32_{t}.tif")

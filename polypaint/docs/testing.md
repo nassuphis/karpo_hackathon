@@ -141,11 +141,19 @@ Compare C sweep pipeline vs Python reference via pixel overlap:
 
 Before running `deploy.sh update`:
 
-1. **Compile locally:** `cd lambda && cc -O3 -o sweep_test sweep_cli.c -lm`
-2. **Compile bilevel:** `cc -O3 -o bilevel_raster_local bilevel_raster.c -lm`
-3. **Run fast suite:** `uv run python -m pytest tests/test_sweep_smoke.py tests/test_pipeline.py tests/test_dither.py tests/test_param_dump.py tests/test_bilevel_raster.py -v`
-4. **Cross-compile:** `aarch64-linux-musl-gcc -O3 -static -o sweep sweep_cli.c -lm`
-5. **JS syntax check:** `deploy.sh` does this automatically
+1. **Compile locally:**
+   ```bash
+   cd lambda
+   cc -O3 -o sweep_test sweep_cli.c -lm
+   cc -O3 -o bilevel_raster_local bilevel_raster.c -lm
+   cc -O3 -o bilevel_merge_local bilevel_merge.c $(pkg-config --cflags --libs vips) -lm
+   ```
+2. **Run full fast suite:**
+   ```bash
+   uv run python -m pytest tests/test_sweep_smoke.py tests/test_poly_accuracy.py tests/test_pipeline.py tests/test_bilevel_raster.py tests/test_bilevel_stitch.py tests/test_dither.py tests/test_param_dump.py -v
+   ```
+3. **Cross-compile:** `aarch64-linux-musl-gcc -O3 -static -o sweep sweep_cli.c -lm`
+4. **JS syntax check:** `deploy.sh` does this automatically
 
 ## When to Run What
 

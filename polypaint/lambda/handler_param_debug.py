@@ -99,8 +99,9 @@ def write_tiff(bitset_bytes, w, h, out_path):
 
 def handler(event, context):
     params = parse_body(event)
-    n1 = int(params.get("n1", 500))
-    n2 = int(params.get("n2", 500))
+    grid_n = int(params.get("N", params.get("n1", 500)))
+    n1 = grid_n
+    n2 = grid_n
     transform_chain = params.get("param_transforms", [])
     mode = params.get("mode", "together")  # "together" or "separate"
     pix = int(params.get("pix", 5000))
@@ -162,7 +163,7 @@ def handler(event, context):
     total_ms = int((time.time() - t0) * 1000)
 
     return ok_response({
-        "n1": n1, "n2": n2, "pix": pix, "mode": mode,
+        "N": grid_n, "pix": pix, "mode": mode,
         "gen_ms": gen_ms, "total_ms": total_ms,
         "n_points": gen_meta["n_points"],
         "images": results,

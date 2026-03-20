@@ -77,8 +77,8 @@ def handle_list(event):
             calc = json.loads(obj["Body"].read())
             entry["function"] = calc.get("function", "?")
             entry["degree"] = calc.get("degree", 0)
-            entry["n1"] = calc.get("n1", 0)
-            entry["n2"] = calc.get("n2", 0)
+            entry["N"] = calc.get("N", calc.get("n1", 0))
+            entry["n1"] = calc.get("n1", entry["N"])  # backward compat
             entry["n_stripes"] = calc.get("n_stripes", 0)
             entry["times"] = calc.get("times", 1)
             # Pipeline info

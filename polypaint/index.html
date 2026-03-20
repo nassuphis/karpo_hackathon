@@ -1312,7 +1312,7 @@ function renderResultsTable() {
             `<td style="color:#e0e0e0">${shortId} <span style="color:#555;font-size:9px">${indicators}</span></td>` +
             `<td style="color:#4ecca3">${r.function || '?'}</td>` +
             `<td style="text-align:right">${r.degree || ''}</td>` +
-            `<td style="text-align:right">${r.n1 || ''}</td>` +
+            `<td style="text-align:right">${r.N || r.n1 || ''}</td>` +
             `<td style="text-align:right">${r.n_stripes || ''}</td>` +
             `<td style="text-align:right;color:#888">${fmtSize(r.total_size || 0)}</td>`;
         tbody.appendChild(tr);
@@ -2618,7 +2618,7 @@ async function runParamDebug() {
         document.getElementById('compute-status').textContent = 'Generating param debug image...';
 
         const result = await lambdaPost('param-debug', {
-            n1: n, n2: n,
+            N: n,
             param_transforms: paramTransforms,
             mode,
             pix: n * 2,
@@ -2688,8 +2688,8 @@ async function runCalculate() {
                 param_transforms: paramTransforms,
                 function: funcName,
                 coeff_transforms: coeffTransforms,
-                n1: n, n2: n,
-                i1_start: i1Start, i1_end: i1End,
+                N: n,
+                row_start: i1Start, row_end: i1End,
                 times: times,
             });
         }
@@ -2718,8 +2718,8 @@ async function runCalculate() {
             param_transforms: paramTransforms,
             function: funcName,
             coeff_transforms: coeffTransforms,
-            n1: loresN, n2: loresN,
-            i1_start: 0, i1_end: loresN,
+            N: loresN,
+            row_start: 0, row_end: loresN,
             s3_key: `renders/${jobId}/lores_coeffs.bin`,
         });
         const totalCoeffsSize = coeffgenResults.reduce((s, r) => s + r.coeffs_size, 0);
@@ -2733,8 +2733,8 @@ async function runCalculate() {
             job_id: jobId, stripe_idx: 0,
             coeffs_key: loresCoeffResult.coeffs_key,
             n_coeffs: nCoeffs,
-            n1: loresN, n2: loresN,
-            i1_start: 0, i1_end: loresN,
+            N: loresN,
+            row_start: 0, row_end: loresN,
             s3_key: loresKey,
         });
         const loresMs = performance.now() - tLores;
@@ -2821,7 +2821,7 @@ async function runCalculate() {
                 coeff_transforms: coeffTransforms,
             },
             function: funcName,
-            n1: n, n2: n,
+            N: n,
             n_stripes: nStripes,
             times,
             degree,
@@ -2830,7 +2830,7 @@ async function runCalculate() {
             total_coeffs_size: totalCoeffsSize,
             lores: {
                 bin_key: loresKey,
-                n1: loresN, n2: loresN,
+                N: loresN,
                 bin_size: loresResult.bin_size,
             },
             stripes: stripeResults.map(r => ({

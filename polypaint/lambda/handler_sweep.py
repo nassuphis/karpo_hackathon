@@ -34,8 +34,10 @@ def handle_compute_only_stripe(event):
     params = parse_body(event)
     job_id = params["job_id"]
     stripe_idx = params["stripe_idx"]
-    i1_start = params["i1_start"]
-    i1_end = params["i1_end"]
+    # Accept N/row_start/row_end (new) or n1/n2/i1_start/i1_end (legacy)
+    grid_n = params.get("N", params.get("n1"))
+    i1_start = params.get("row_start", params.get("i1_start"))
+    i1_end = params.get("row_end", params.get("i1_end"))
     total_rows = i1_end - i1_start
 
     n_cpus = max(1, multiprocessing.cpu_count())
@@ -48,7 +50,7 @@ def handle_compute_only_stripe(event):
         spec = {
             "mode": "grid",
             "function": params["function"],
-            "n1": params["n1"], "n2": params["n2"],
+            "n1": grid_n, "n2": grid_n,
             "i1_start": i1_start, "i1_end": i1_end,
             "match_roots": False,
         }
@@ -75,7 +77,7 @@ def handle_compute_only_stripe(event):
             spec = {
                 "mode": "grid",
                 "function": params["function"],
-                "n1": params["n1"], "n2": params["n2"],
+                "n1": grid_n, "n2": grid_n,
                 "i1_start": sub_start, "i1_end": sub_end,
                 "match_roots": False,
             }
@@ -158,9 +160,9 @@ def handle_solve_from_coeffs(params):
     stripe_idx = params["stripe_idx"]
     coeffs_key = params["coeffs_key"]
     n_coeffs = params["n_coeffs"]
-    n2 = params["n2"]
-    i1_start = params["i1_start"]
-    i1_end = params["i1_end"]
+    n2 = params.get("N", params.get("n2"))
+    i1_start = params.get("row_start", params.get("i1_start"))
+    i1_end = params.get("row_end", params.get("i1_end"))
     task_id = f"sweep_{stripe_idx}"
 
     try:

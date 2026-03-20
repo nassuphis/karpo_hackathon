@@ -1652,9 +1652,13 @@ function setPalette(name) {
 /* ---- Chip-based transform chains ---- */
 // params: array of {placeholder, defaultValue} — one input per param. Empty = no params.
 const _ptCatalog = {
-    unit_circle: {}, rtheta: {},
+    unit_circle: {}, rtheta: { params: [{ph:'p', def:'1'}] },
     square: {}, cube: {}, reciprocal: {}, conjugate: {}, swap: {},
     add_sub: {}, mul_div: {}, moebius: {}, negate: {}, exp: {},
+    t1radd: { params: [{ph:'v', def:'0'}] },
+    t1iadd: { params: [{ph:'v', def:'0'}] },
+    t2radd: { params: [{ph:'v', def:'0'}] },
+    t2iadd: { params: [{ph:'v', def:'0'}] },
     radd:   { params: [{ph:'1', def:'1'}] },
     iadd:   { params: [{ph:'1', def:'1'}] },
     add:    { params: [{ph:'1', def:'1'}] },

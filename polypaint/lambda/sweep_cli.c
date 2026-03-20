@@ -1852,6 +1852,13 @@ static void pt_hrt(double *z1r, double *z1i, double *z2r, double *z2i, int n, do
     *xi = rotr * si + roti * sr;
 }
 
+/* xim: t1' = i*Re(t1), t2' = i*Re(t2). Real parts become imaginary, imag discarded. */
+static void pt_xim(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double a = *z1r, c = *z2r;
+    *z1r = 0; *z1i = a;
+    *z2r = 0; *z2i = c;
+}
+
 static void pt_exp(double *z1r, double *z1i, double *z2r, double *z2i) {
     double e, r, i;
     e = exp(*z1r); r = e * cos(*z1i); i = e * sin(*z1i);
@@ -2056,6 +2063,7 @@ static ParamTransform lookupParamTransform(const char *name) {
     if (strcmp(name, "scale10") == 0)     return pt_scale10;
     if (strcmp(name, "negate") == 0)      return pt_negate;
     if (strcmp(name, "zz") == 0)          return pt_zz;
+    if (strcmp(name, "xim") == 0)        return pt_xim;
     if (strcmp(name, "zzold") == 0)      return pt_zzold;
     if (strcmp(name, "zz1") == 0)        return pt_zz1;
     if (strcmp(name, "zz2") == 0)        return pt_zz2;

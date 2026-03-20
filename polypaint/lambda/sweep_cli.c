@@ -2104,6 +2104,42 @@ static void pt_sdith(double *z1r, double *z1i, double *z2r, double *z2i, double 
     *z2i += w * (rng_uniform() - 0.5);
 }
 
+/* ddith(d): disk dither — uniform random offset inside disk of radius d/N.
+ * Uses sqrt(u) for uniform area sampling (not biased toward center). */
+static void pt_ddith(double *z1r, double *z1i, double *z2r, double *z2i, double d, int gridN) {
+    if (d <= 0.0) d = 1.0;
+    double rmax = d / (gridN > 0 ? gridN : 1);
+    double u1, u2, r, theta;
+    /* t1 offset */
+    u1 = rng_uniform(); u2 = rng_uniform();
+    theta = 2.0 * M_PI * u1; r = sqrt(u2) * rmax;
+    *z1r += r * cos(theta); *z1i += r * sin(theta);
+    /* t2 offset */
+    u1 = rng_uniform(); u2 = rng_uniform();
+    theta = 2.0 * M_PI * u1; r = sqrt(u2) * rmax;
+    *z2r += r * cos(theta); *z2i += r * sin(theta);
+}
+
+/* ndith(d): normal dither — independent Gaussian jitter, sigma = d/N.
+ * Uses Box-Muller transform for normal samples. */
+static void pt_ndith(double *z1r, double *z1i, double *z2r, double *z2i, double d, int gridN) {
+    if (d <= 0.0) d = 1.0;
+    double sigma = d / (gridN > 0 ? gridN : 1);
+    double u1, u2, z0, z1_bm;
+    /* t1 real + imag */
+    u1 = rng_uniform(); u2 = rng_uniform();
+    if (u1 < 1e-30) u1 = 1e-30;
+    z0 = sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+    z1_bm = sqrt(-2.0 * log(u1)) * sin(2.0 * M_PI * u2);
+    *z1r += sigma * z0; *z1i += sigma * z1_bm;
+    /* t2 real + imag */
+    u1 = rng_uniform(); u2 = rng_uniform();
+    if (u1 < 1e-30) u1 = 1e-30;
+    z0 = sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+    z1_bm = sqrt(-2.0 * log(u1)) * sin(2.0 * M_PI * u2);
+    *z2r += sigma * z0; *z2i += sigma * z1_bm;
+}
+
 /* ==== Parameter transform dispatch (array-of-arrays format) ==== */
 
 #define MAX_PT_ARGS 4
@@ -2168,6 +2204,16 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
     if (strcmp(e->name, "sdith") == 0) {
         double d = e->nArgs > 0 ? e->args[0] : 1.0;
         pt_sdith(z1r, z1i, z2r, z2i, d, gridN);
+        return 0;
+    }
+    if (strcmp(e->name, "ddith") == 0) {
+        double d = e->nArgs > 0 ? e->args[0] : 1.0;
+        pt_ddith(z1r, z1i, z2r, z2i, d, gridN);
+        return 0;
+    }
+    if (strcmp(e->name, "ndith") == 0) {
+        double d = e->nArgs > 0 ? e->args[0] : 1.0;
+        pt_ndith(z1r, z1i, z2r, z2i, d, gridN);
         return 0;
     }
     /* t1radd(v): add v to real part of t1 only */

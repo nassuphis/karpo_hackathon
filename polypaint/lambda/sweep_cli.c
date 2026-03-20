@@ -1783,6 +1783,21 @@ static void pt_zzold(double *z1r, double *z1i, double *z2r, double *z2i) {
     *z1r = nr; *z1i = ni; *z2r = nr; *z2i = ni;
 }
 
+/* zz1: t1' = t1 + i*t2,  t2' = t1*t2 + i*(t1 + t2).  Both from originals. */
+static void pt_zz1(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double a = *z1r, b = *z1i, c = *z2r, d = *z2i;
+    /* t1' = t1 + i*t2 = (a - d) + i(b + c) */
+    double n1r = a - d, n1i = b + c;
+    /* t1*t2 = (ac - bd) + i(ad + bc) */
+    double pr = a*c - b*d, pi = a*d + b*c;
+    /* t1 + t2 = (a + c) + i(b + d) */
+    double sr = a + c, si = b + d;
+    /* i*(t1+t2) = -si + i*sr = -(b+d) + i(a+c) */
+    /* t2' = t1*t2 + i*(t1+t2) = (pr - si) + i(pi + sr) */
+    double n2r = pr - si, n2i = pi + sr;
+    *z1r = n1r; *z1i = n1i; *z2r = n2r; *z2i = n2i;
+}
+
 static void pt_exp(double *z1r, double *z1i, double *z2r, double *z2i) {
     double e, r, i;
     e = exp(*z1r); r = e * cos(*z1i); i = e * sin(*z1i);
@@ -1988,6 +2003,7 @@ static ParamTransform lookupParamTransform(const char *name) {
     if (strcmp(name, "negate") == 0)      return pt_negate;
     if (strcmp(name, "zz") == 0)          return pt_zz;
     if (strcmp(name, "zzold") == 0)      return pt_zzold;
+    if (strcmp(name, "zz1") == 0)        return pt_zz1;
     if (strcmp(name, "exp") == 0)         return pt_exp;
     if (strcmp(name, "coeff2") == 0)     return pt_coeff2;
     if (strcmp(name, "coeff3") == 0)     return pt_coeff3;

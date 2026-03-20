@@ -510,6 +510,7 @@ class TestCleanRenderDynamoDB(unittest.TestCase):
                 {"job_id": {"S": "j"}, "task_id": {"S": "tile_0"}},
             ],
         }
+        mock_ddb.batch_write_item.return_value = {"UnprocessedItems": {}}
 
         event = {"body": json.dumps({"job_id": "j"})}
         result = handle_clean_render(event)

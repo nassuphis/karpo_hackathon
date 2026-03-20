@@ -290,6 +290,22 @@ static void dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, 
         *z2r += w * (rng_uniform() - 0.5);
         return;
     }
+    if (strcmp(e->name, "t1radd") == 0) {
+        double v = e->nArgs > 0 ? e->args[0] : 0.0;
+        *z1r += v; return;
+    }
+    if (strcmp(e->name, "t1iadd") == 0) {
+        double v = e->nArgs > 0 ? e->args[0] : 0.0;
+        *z1i += v; return;
+    }
+    if (strcmp(e->name, "t2radd") == 0) {
+        double v = e->nArgs > 0 ? e->args[0] : 0.0;
+        *z2r += v; return;
+    }
+    if (strcmp(e->name, "t2iadd") == 0) {
+        double v = e->nArgs > 0 ? e->args[0] : 0.0;
+        *z2i += v; return;
+    }
     if (strcmp(e->name, "radd") == 0) {
         double v = e->nArgs > 0 ? e->args[0] : 0.0;
         *z1r += v; *z2r += v; return;

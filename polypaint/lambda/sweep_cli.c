@@ -2168,6 +2168,30 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
         pt_sdith(z1r, z1i, z2r, z2i, d, gridN);
         return 0;
     }
+    /* t1radd(v): add v to real part of t1 only */
+    if (strcmp(e->name, "t1radd") == 0) {
+        double v = e->nArgs > 0 ? e->args[0] : 0.0;
+        *z1r += v;
+        return 0;
+    }
+    /* t1iadd(v): add v to imaginary part of t1 only */
+    if (strcmp(e->name, "t1iadd") == 0) {
+        double v = e->nArgs > 0 ? e->args[0] : 0.0;
+        *z1i += v;
+        return 0;
+    }
+    /* t2radd(v): add v to real part of t2 only */
+    if (strcmp(e->name, "t2radd") == 0) {
+        double v = e->nArgs > 0 ? e->args[0] : 0.0;
+        *z2r += v;
+        return 0;
+    }
+    /* t2iadd(v): add v to imaginary part of t2 only */
+    if (strcmp(e->name, "t2iadd") == 0) {
+        double v = e->nArgs > 0 ? e->args[0] : 0.0;
+        *z2i += v;
+        return 0;
+    }
     /* radd(v): add v to real parts of both */
     if (strcmp(e->name, "radd") == 0) {
         double v = e->nArgs > 0 ? e->args[0] : 0.0;

@@ -2380,15 +2380,21 @@ async function runCoeffBilevelPipeline() {
             vpCenterIm = vpData.center_im;
         }
 
-        // Always load full metadata — Coeffs needs n_coeffs and coeffs_keys
-        // which the BiLevel/Render cache may not have
-        const listData = await lambdaPost('storage', {}, '/list');
-        const jobResult = (listData.results || []).find(r => r.job_id === p.jobId);
-        if (!jobResult) throw new Error('Job not found in results');
-        const nStripes = jobResult.n_stripes || 10;
-        const nCoeffs = jobResult.n_coeffs;
+        // Load full calc.json — Coeffs needs n_coeffs and coeffs_keys
+        // which /list and _lastCalcMeta may not have
+        let calcJson;
+        if (_lastCalcMeta && _lastCalcMeta.job_id === p.jobId && _lastCalcMeta.n_coeffs) {
+            calcJson = _lastCalcMeta;
+        } else {
+            const presignResult = await lambdaPost('storage', { key: `renders/${p.jobId}/calc.json` }, '/presign');
+            const calcResp = await fetch(presignResult.url);
+            if (!calcResp.ok) throw new Error('Cannot load calc.json for this job');
+            calcJson = await calcResp.json();
+        }
+        const nStripes = calcJson.n_stripes || 10;
+        const nCoeffs = calcJson.n_coeffs;
         if (!nCoeffs) throw new Error('Job metadata missing n_coeffs — was this computed with the current pipeline?');
-        const coeffsKeys = jobResult.coeffs_keys || [];
+        const coeffsKeys = calcJson.coeffs_keys || [];
 
         const BATCH_SIZE = 50;
         const POLL_TIMEOUT_MS = 600000, STALL_LOG_MS = 30000;

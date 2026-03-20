@@ -2607,7 +2607,7 @@ async function runParamDebug() {
         const mode = document.getElementById('param-debug-mode').value;
         const paramTransforms = _ptChain.map(item =>
             item.params && item.params.length ? [item.name, ...item.params] : [item.name]);
-        if (!paramTransforms.length) paramTransforms.push(['unit_circle']);
+        // Empty chain = identity: z1=x1, z2=x2 (no forced unit_circle)
 
         const ptDisplay = paramTransforms.map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(' → ');
         log(`Param debug: N=${n}, mode=${mode}, transforms=[${ptDisplay}]...`);

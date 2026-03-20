@@ -83,8 +83,7 @@ aarch64-linux-musl-gcc -O3 -static -o lambda/bilevel_raster lambda/bilevel_raste
 echo "  coeffs_bilevel_raster (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/coeffs_bilevel_raster lambda/coeffs_bilevel_raster.c -lm
 
-echo "  param_gen (static, ARM64)..."
-aarch64-linux-musl-gcc -O3 -static -o lambda/param_gen lambda/param_gen.c -lm
+# param_gen removed — param debug now uses sweep in param_dump mode
 
 echo "  raw2jpeg (Docker ARM64, dynamically linked against libvips)..."
 LAYER_BUILD="$SCRIPT_DIR/lambda/layer-build"
@@ -223,8 +222,8 @@ PARAM_DEBUG_DIR=/tmp/polypaint-param-debug
 rm -rf "$PARAM_DEBUG_DIR"
 mkdir -p "$PARAM_DEBUG_DIR"
 cp lambda/handler_param_debug.py lambda/shared.py "$PARAM_DEBUG_DIR/"
-cp lambda/param_gen lambda/bilevel_merge "$PARAM_DEBUG_DIR/"
-chmod +x "$PARAM_DEBUG_DIR"/param_gen "$PARAM_DEBUG_DIR"/bilevel_merge
+cp lambda/sweep lambda/bilevel_merge "$PARAM_DEBUG_DIR/"
+chmod +x "$PARAM_DEBUG_DIR"/sweep "$PARAM_DEBUG_DIR"/bilevel_merge
 cd "$PARAM_DEBUG_DIR" && zip -r9 /tmp/polypaint-param-debug.zip . -q && cd "$SCRIPT_DIR"
 echo "  ParamDbg: $(du -h /tmp/polypaint-param-debug.zip | cut -f1)  (param debug + libvips layer)"
 

@@ -2517,6 +2517,44 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
 
 /* ==== Coeffgen mode: generate coefficient vectors for the grid ==== */
 
+/* param_dump: output transformed parameter pairs only.
+ * Same grid + transform pipeline as coeffgen, but stops before calling
+ * the coefficient function. Output: raw f32 pairs (z1r, z1i, z2r, z2i). */
+static int runParamDump(const char *buf, const char *outPath) {
+    int n1 = 100, n2 = 100;
+    const char *cp;
+    cp = findKey(buf, "n1"); if (cp) n1 = (int)parseNum(&cp);
+    cp = findKey(buf, "n2"); if (cp) n2 = (int)parseNum(&cp);
+    if (n1 < 1) n1 = 1;
+    if (n2 < 1) n2 = 1;
+
+    PtEntry ptEntries[MAX_CHAIN];
+    int nPt = 0;
+    cp = findKey(buf, "param_transforms");
+    if (cp) nPt = parsePtChain(cp, ptEntries, MAX_CHAIN);
+
+    FILE *fout = fopen(outPath, "wb");
+    if (!fout) { fprintf(stderr, "Cannot open %s\n", outPath); return 1; }
+
+    long nPoints = (long)n1 * n2;
+    for (int i1 = 0; i1 < n1; i1++) {
+        double x1 = (double)i1 / (double)n1;
+        for (int i2 = 0; i2 < n2; i2++) {
+            double x2 = (double)i2 / (double)n2;
+            double z1r = x1, z1i = 0.0, z2r = x2, z2i = 0.0;
+            for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, n1);
+            float out[4] = { (float)z1r, (float)z1i, (float)z2r, (float)z2i };
+            fwrite(out, sizeof(float), 4, fout);
+        }
+    }
+    fclose(fout);
+
+    long dataBytes = nPoints * 4 * sizeof(float);
+    printf("{\"mode\":\"param_dump\",\"n_points\":%ld,\"data_bytes\":%ld,\"n1\":%d,\"n2\":%d}\n",
+           nPoints, dataBytes, n1, n2);
+    return 0;
+}
+
 static int runCoeffGen(const char *buf, const char *outPath) {
     char funcName[64] = "";
     const char *cp = findKey(buf, "function");
@@ -3017,6 +3055,11 @@ int main(int argc, char **argv) {
         }
         if (strcmp(mode, "solve") == 0) {
             int rc = runSolveFromCoeffs(buf, outPath);
+            free(buf);
+            return rc;
+        }
+        if (strcmp(mode, "param_dump") == 0) {
+            int rc = runParamDump(buf, outPath);
             free(buf);
             return rc;
         }

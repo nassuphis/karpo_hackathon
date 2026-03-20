@@ -19,7 +19,7 @@ import boto3
 from shared import BUCKET, parse_body, ok_response, imgpipe_env
 
 s3 = boto3.client("s3")
-PARAM_GEN = os.path.join(os.path.dirname(__file__), "param_gen")
+SWEEP = os.path.join(os.path.dirname(__file__), "sweep")
 BILEVEL_MERGE = os.path.join(os.path.dirname(__file__), "bilevel_merge")
 PRESIGN_EXPIRY = 3600
 
@@ -109,18 +109,19 @@ def handler(event, context):
 
     t0 = time.time()
 
-    # Generate transformed params using param_gen C binary (real transform pipeline)
+    # Generate transformed params using sweep in param_dump mode (exact same code path as coeffgen)
     bin_path = "/tmp/params.bin"
     spec = json.dumps({
+        "mode": "param_dump",
         "n1": n1, "n2": n2,
         "param_transforms": transform_chain,
     })
     gen_result = subprocess.run(
-        [PARAM_GEN, bin_path],
+        [SWEEP, bin_path],
         input=spec, capture_output=True, text=True, timeout=60
     )
     if gen_result.returncode != 0:
-        raise RuntimeError(f"param_gen failed: {gen_result.stderr.strip()}")
+        raise RuntimeError(f"sweep param_dump failed: {gen_result.stderr.strip()}")
     gen_meta = json.loads(gen_result.stdout)
     gen_ms = int((time.time() - t0) * 1000)
 

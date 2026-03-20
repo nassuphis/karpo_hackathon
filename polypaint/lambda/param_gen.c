@@ -285,9 +285,11 @@ static void dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, 
     if (strcmp(e->name, "sdith") == 0) {
         double d = e->nArgs > 0 ? e->args[0] : 1.0;
         if (d <= 0.0) d = 1.0;
-        double w = 1.0 / (d * gridN);
+        double w = d / (gridN > 0 ? gridN : 1);
         *z1r += w * (rng_uniform() - 0.5);
+        *z1i += w * (rng_uniform() - 0.5);
         *z2r += w * (rng_uniform() - 0.5);
+        *z2i += w * (rng_uniform() - 0.5);
         return;
     }
     if (strcmp(e->name, "t1radd") == 0) {

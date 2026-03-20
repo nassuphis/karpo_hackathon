@@ -2093,13 +2093,15 @@ static inline double rng_uniform(void) {
     return (xorshift64() >> 11) * (1.0 / 9007199254740992.0);
 }
 
-/* sdith: square dither — adds uniform noise with width 1/(d*N) to z1r, z2r */
+/* sdith(d): square dither — adds uniform noise to both re and im.
+ * Width = d/N where N is grid size. d=1 means one grid spacing, d=2 means twice. */
 static void pt_sdith(double *z1r, double *z1i, double *z2r, double *z2i, double d, int gridN) {
-    (void)z1i; (void)z2i;
     if (d <= 0.0) d = 1.0;
-    double w = 1.0 / (d * gridN);
+    double w = d / (gridN > 0 ? gridN : 1);
     *z1r += w * (rng_uniform() - 0.5);
+    *z1i += w * (rng_uniform() - 0.5);
     *z2r += w * (rng_uniform() - 0.5);
+    *z2i += w * (rng_uniform() - 0.5);
 }
 
 /* ==== Parameter transform dispatch (array-of-arrays format) ==== */

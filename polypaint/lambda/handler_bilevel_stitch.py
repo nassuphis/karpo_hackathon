@@ -50,11 +50,14 @@ def handler(event, context):
 
         # Run bilevel_merge stitch (timeout 870s — 30s headroom before Lambda's 900s limit)
         out_path = "/tmp/final.tif"
+        preview_path = "/tmp/final_preview.png"
         cmd = [
             BILEVEL_MERGE, "stitch",
             f"--n_cols={n_tile_cols}",
             f"--n_rows={n_tile_rows}",
             f"--output={out_path}",
+            f"--preview={preview_path}",
+            "--preview_size=1024",
         ] + tile_paths
 
         t_stitch = time.time()
@@ -79,9 +82,18 @@ def handler(event, context):
             s3.put_object(Bucket=BUCKET, Key=out_key, Body=f, ContentType="image/tiff")
         os.remove(out_path)
 
+        # Upload preview PNG
+        preview_key = out_key.replace('.tif', '_preview.png')
+        preview_url = ""
+        if os.path.exists(preview_path):
+            with open(preview_path, "rb") as f:
+                s3.put_object(Bucket=BUCKET, Key=preview_key, Body=f, ContentType="image/png")
+            os.remove(preview_path)
+
         report_status(job_id, task_id, "done")
         return ok_response({
             "out_key": out_key,
+            "preview_key": preview_key,
             "file_size": meta.get("file_size", 0),
             "dl_ms": dl_ms,
             "stitch_ms": stitch_ms,

@@ -158,7 +158,9 @@ static int do_merge(int argc, char **argv) {
 static int do_stitch(int argc, char **argv) {
     int nCols = getArgInt(argc, argv, "--n_cols", 1);
     int nRows = getArgInt(argc, argv, "--n_rows", 1);
-    const char *outPath = getArgStr(argc, argv, "--output", "/tmp/final.png");
+    const char *outPath = getArgStr(argc, argv, "--output", "/tmp/final.tif");
+    const char *previewPath = getArgStr(argc, argv, "--preview", NULL);
+    int previewSize = getArgInt(argc, argv, "--preview_size", 1024);
 
     int nTiles = nCols * nRows;
 
@@ -206,6 +208,22 @@ static int do_stitch(int argc, char **argv) {
         return 1;
     }
 
+    /* Write preview PNG if requested */
+    long previewFsize = 0;
+    if (previewPath) {
+        int maxDim = joined->Xsize > joined->Ysize ? joined->Xsize : joined->Ysize;
+        double scale = (double)previewSize / maxDim;
+        if (scale >= 1.0) scale = 1.0;
+        VipsImage *small;
+        if (vips_resize(joined, &small, scale, NULL) == 0) {
+            if (vips_pngsave(small, previewPath, "compression", 6, NULL) == 0) {
+                FILE *pf = fopen(previewPath, "rb");
+                if (pf) { fseek(pf, 0, SEEK_END); previewFsize = ftell(pf); fclose(pf); }
+            }
+            g_object_unref(small);
+        }
+    }
+
     g_object_unref(joined);
     for (int t = 0; t < nTiles; t++) g_object_unref(tiles[t]);
     free(tiles);
@@ -214,7 +232,7 @@ static int do_stitch(int argc, char **argv) {
     long fsize = 0;
     if (fout) { fseek(fout, 0, SEEK_END); fsize = ftell(fout); fclose(fout); }
 
-    printf("{\"mode\":\"stitch\",\"tiles\":%d,\"file_size\":%ld}\n", nTiles, fsize);
+    printf("{\"mode\":\"stitch\",\"tiles\":%d,\"file_size\":%ld,\"preview_size\":%ld}\n", nTiles, fsize, previewFsize);
     return 0;
 }
 

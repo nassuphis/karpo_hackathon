@@ -2311,6 +2311,11 @@ async function runBilevelPipeline() {
         const imageUrl = presignResult.url;
         _lastDownloadKey = imageKey;
 
+        // Get preview PNG URL
+        const previewKey = imageKey.replace('.tif', '_preview.png');
+        const previewPresign = await lambdaPost('storage', { key: previewKey }, '/presign');
+        const previewUrl = previewPresign.url;
+
         const totalMs = performance.now() - tVp;
         const statusParts = [
             'BiLevel', nStripes + ' stripes', nTiles + ' tiles',
@@ -2320,17 +2325,10 @@ async function runBilevelPipeline() {
         document.getElementById('render-status').className = 'status ok';
 
         const preview = document.getElementById('render-preview');
-        if (p.pix > 5000) {
-            preview.innerHTML = `<div style="padding:20px; text-align:center; background:#1a1a2e; border:1px solid #333; border-radius:8px">` +
-                `<div style="color:#aaa; margin-bottom:12px">${p.pix}x${p.pix} bilevel TIFF — too large to preview</div>` +
-                `<button class="btn-primary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_bilevel.tif')" ` +
-                `style="padding:8px 24px; font-size:14px">Download PNG</button></div>`;
-        } else {
-            preview.innerHTML = `<a href="${imageUrl}" target="_blank" title="Click to open full-size image">` +
-                `<img src="${imageUrl}" style="max-width:100%; border:1px solid #333; cursor:pointer; background:#000"></a>` +
-                `<div style="margin-top:8px"><button class="btn-secondary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_bilevel.tif')" ` +
-                `style="padding:4px 12px">Download PNG</button></div>`;
-        }
+        preview.innerHTML = `<div style="text-align:center">` +
+            `<img src="${previewUrl}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-bottom:8px">` +
+            `<button class="btn-primary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_bilevel.tif')" ` +
+            `style="padding:8px 24px; font-size:14px">Download TIFF (${p.pix}x${p.pix})</button></div>`;
         document.getElementById('render-info').textContent =
             `Job: ${p.jobId} | ${p.pix}x${p.pix} | Degree: ${calcMeta.degree} | BiLevel 1-bit TIFF (CCITT G4)`;
         log(`Done: deg${calcMeta.degree} ${p.pix}px bilevel, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');
@@ -2571,6 +2569,10 @@ async function runCoeffBilevelPipeline() {
         const imageUrl = presignResult.url;
         _lastDownloadKey = imageKey;
 
+        const previewKey = imageKey.replace('.tif', '_preview.png');
+        const previewPresign = await lambdaPost('storage', { key: previewKey }, '/presign');
+        const previewUrl = previewPresign.url;
+
         const totalMs = performance.now() - tVp;
         const statusParts = [
             'Coeffs BiLevel', nStripes + ' stripes', nTiles + ' tiles',
@@ -2580,17 +2582,10 @@ async function runCoeffBilevelPipeline() {
         document.getElementById('render-status').className = 'status ok';
 
         const preview = document.getElementById('render-preview');
-        if (p.pix > 5000) {
-            preview.innerHTML = `<div style="padding:20px; text-align:center; background:#1a1a2e; border:1px solid #333; border-radius:8px">` +
-                `<div style="color:#aaa; margin-bottom:12px">${p.pix}x${p.pix} coeffs bilevel TIFF — too large to preview</div>` +
-                `<button class="btn-primary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_coeffs_bilevel.tif')" ` +
-                `style="padding:8px 24px; font-size:14px">Download TIFF</button></div>`;
-        } else {
-            preview.innerHTML = `<a href="${imageUrl}" target="_blank" title="Click to open full-size image">` +
-                `<img src="${imageUrl}" style="max-width:100%; border:1px solid #333; cursor:pointer; background:#000"></a>` +
-                `<div style="margin-top:8px"><button class="btn-secondary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_coeffs_bilevel.tif')" ` +
-                `style="padding:4px 12px">Download TIFF</button></div>`;
-        }
+        preview.innerHTML = `<div style="text-align:center">` +
+            `<img src="${previewUrl}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-bottom:8px">` +
+            `<button class="btn-primary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_coeffs_bilevel.tif')" ` +
+            `style="padding:8px 24px; font-size:14px">Download TIFF (${p.pix}x${p.pix})</button></div>`;
         document.getElementById('render-info').textContent =
             `Job: ${p.jobId} | ${p.pix}x${p.pix} | n_coeffs: ${nCoeffs} | Coeffs BiLevel TIFF (CCITT G4)`;
         log(`Done: ${nCoeffs} coeffs ${p.pix}px coeffs bilevel, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');

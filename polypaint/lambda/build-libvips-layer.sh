@@ -22,7 +22,7 @@ docker run --rm --platform linux/arm64 \
     echo "--- Installing build tools ---"
     dnf install -y gcc gcc-c++ make meson ninja-build pkg-config \
       glib2-devel expat-devel libjpeg-turbo-devel libpng-devel \
-      libtiff-devel \
+      libtiff-devel libwebp-devel jbigkit-devel \
       zlib-devel tar xz wget 2>&1 | tail -3
 
     echo "--- Downloading libvips '"$VIPS_VERSION"' ---"
@@ -99,6 +99,8 @@ docker run --rm --platform linux/arm64 \
       libjpeg.so.62
       libpng16.so.16
       libtiff.so.5
+      libwebp.so.7
+      libjbig.so.2.1
     )
     for lib in "${DEPS[@]}"; do
       # Find the actual file (follow symlinks) and copy it + create symlinks

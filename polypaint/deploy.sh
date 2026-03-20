@@ -48,7 +48,7 @@ BINARY_TMP=10240      # /tmp size for Lambdas that process raw images (max 10GB)
 TIMEOUT=900
 BUCKET="polypaint"
 JOBS_TABLE="polypaint-jobs"
-LIBVIPS_LAYER="arn:aws:lambda:us-east-1:710848990594:layer:polypaint-libvips:6"
+LIBVIPS_LAYER="arn:aws:lambda:us-east-1:710848990594:layer:polypaint-libvips:7"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -94,6 +94,7 @@ docker run --rm --platform linux/arm64 \
     -v "$LAYER_BUILD:/opt" \
     public.ecr.aws/amazonlinux/amazonlinux:2023 \
     bash -c '
+        set -euo pipefail
         dnf install -y gcc glib2-devel 2>&1 | tail -1
         gcc -O3 -o /src/raw2jpeg /src/raw2jpeg.c \
             -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \

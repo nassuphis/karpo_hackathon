@@ -320,7 +320,8 @@ static void dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, 
         *z1r *= v; *z1i *= v; *z2r *= v; *z2i *= v; return;
     }
     if (strcmp(e->name, "rtheta") == 0) {
-        double r1 = *z1r, r2 = *z2r;
+        double p = e->nArgs > 0 ? e->args[0] : 1.0;
+        double r1 = pow(*z1r, p), r2 = pow(*z2r, p);
         double a1 = 2.0 * M_PI * *z2r, a2 = 2.0 * M_PI * *z1r;
         *z1r = r1 * cos(a1); *z1i = r1 * sin(a1);
         *z2r = r2 * cos(a2); *z2i = r2 * sin(a2);

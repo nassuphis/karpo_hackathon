@@ -181,6 +181,7 @@ button {
                     <option value="zzold">zzold (t1+i·t2 → both)</option>
                     <option value="zz1">zz1 (t1+i·t2, t1·t2+i·(t1+t2))</option>
                     <option value="zz2">zz2 (t1+i·t2, t1-i·t2)</option>
+                    <option value="zz3">zz3 (t1+i·t2, t2+i·t1)</option>
                     <option value="radd">radd (real +v)</option>
                     <option value="iadd">iadd (imag +v)</option>
                     <option value="add">add (both +v)</option>
@@ -1660,7 +1661,7 @@ function setPalette(name) {
 const _ptCatalog = {
     unit_circle: {}, rtheta: { params: [{ph:'p', def:'1'}] },
     square: {}, cube: {}, reciprocal: {}, conjugate: {}, swap: {},
-    add_sub: {}, mul_div: {}, moebius: {}, negate: {}, exp: {}, zzold: {}, zz1: {}, zz2: {},
+    add_sub: {}, mul_div: {}, moebius: {}, negate: {}, exp: {}, zzold: {}, zz1: {}, zz2: {}, zz3: {},
     t1radd: { label: 't1.re = t1.re +', params: [{ph:'v', def:'0'}] },
     t1iadd: { label: 't1.im = t1.im +', params: [{ph:'v', def:'0'}] },
     t2radd: { label: 't2.re = t2.re +', params: [{ph:'v', def:'0'}] },

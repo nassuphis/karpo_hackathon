@@ -2380,16 +2380,15 @@ async function runCoeffBilevelPipeline() {
             vpCenterIm = vpData.center_im;
         }
 
-        let calcMeta = _lastCalcMeta && _lastCalcMeta.job_id === p.jobId ? _lastCalcMeta : null;
-        if (!calcMeta) {
-            const listData = await lambdaPost('storage', {}, '/list');
-            const jobResult = (listData.results || []).find(r => r.job_id === p.jobId);
-            if (!jobResult) throw new Error('Job not found in results');
-            calcMeta = jobResult;
-        }
-        const nStripes = calcMeta.n_stripes;
-        const nCoeffs = calcMeta.n_coeffs;
-        const coeffsKeys = calcMeta.coeffs_keys || [];
+        // Always load full metadata — Coeffs needs n_coeffs and coeffs_keys
+        // which the BiLevel/Render cache may not have
+        const listData = await lambdaPost('storage', {}, '/list');
+        const jobResult = (listData.results || []).find(r => r.job_id === p.jobId);
+        if (!jobResult) throw new Error('Job not found in results');
+        const nStripes = jobResult.n_stripes || 10;
+        const nCoeffs = jobResult.n_coeffs;
+        if (!nCoeffs) throw new Error('Job metadata missing n_coeffs — was this computed with the current pipeline?');
+        const coeffsKeys = jobResult.coeffs_keys || [];
 
         const BATCH_SIZE = 50;
         const POLL_TIMEOUT_MS = 600000, STALL_LOG_MS = 30000;
@@ -2619,12 +2618,13 @@ async function runParamDebug() {
         const images = result.images || [];
         log(`  param debug: ${result.total_ms}ms, ${result.n_points} points, ${images.length} image(s)`, 'ok');
 
-        // Show download links
+        // Show download buttons
         const links = images.map(img =>
-            `<a href="${img.url}" download="${img.label}_debug.tif" style="color:#4af; margin-right:12px">${img.label} (${img.pixels_set} px, ${(img.file_size/1024).toFixed(0)} KB)</a>`
+            `<button class="btn-primary" onclick="window.open('${img.url}')" style="padding:4px 12px; margin-right:8px; font-size:12px">` +
+            `Download ${img.label} (${img.pixels_set} px, ${(img.file_size/1024).toFixed(0)} KB)</button>`
         ).join('');
         document.getElementById('compute-status').innerHTML =
-            `Param debug done (${result.total_ms}ms) — ${links}`;
+            `Param debug done (${result.total_ms}ms, ${result.n_points} points) ` + links;
 
     } catch (e) {
         document.getElementById('compute-status').textContent = 'Param debug error: ' + e.message;

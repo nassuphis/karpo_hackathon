@@ -1798,6 +1798,15 @@ static void pt_zz1(double *z1r, double *z1i, double *z2r, double *z2i) {
     *z1r = n1r; *z1i = n1i; *z2r = n2r; *z2i = n2i;
 }
 
+/* zz2: t1' = t1 + i*t2,  t2' = t1 - i*t2.  Both from originals. */
+static void pt_zz2(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double a = *z1r, b = *z1i, c = *z2r, d = *z2i;
+    /* t1' = t1 + i*t2 = (a-d) + i(b+c) */
+    /* t2' = t1 - i*t2 = (a+d) + i(b-c) */
+    *z1r = a - d; *z1i = b + c;
+    *z2r = a + d; *z2i = b - c;
+}
+
 static void pt_exp(double *z1r, double *z1i, double *z2r, double *z2i) {
     double e, r, i;
     e = exp(*z1r); r = e * cos(*z1i); i = e * sin(*z1i);
@@ -2004,6 +2013,7 @@ static ParamTransform lookupParamTransform(const char *name) {
     if (strcmp(name, "zz") == 0)          return pt_zz;
     if (strcmp(name, "zzold") == 0)      return pt_zzold;
     if (strcmp(name, "zz1") == 0)        return pt_zz1;
+    if (strcmp(name, "zz2") == 0)        return pt_zz2;
     if (strcmp(name, "exp") == 0)         return pt_exp;
     if (strcmp(name, "coeff2") == 0)     return pt_coeff2;
     if (strcmp(name, "coeff3") == 0)     return pt_coeff3;

@@ -2712,9 +2712,8 @@ async function runCalculate() {
         const nCoeffsEst = estDegree + 1;
         const rowsPerStripe = Math.ceil(n / nStripes);
         const bytesPerStripe = rowsPerStripe * n * times * nCoeffsEst * 2 * 4;
-        // Lambda constraints: 10 GB /tmp, 1769 MB memory
-        // coeffgen writes the file sequentially but OS may buffer
-        const maxSafe = 500 * 1024 * 1024; // 500 MB conservative limit per stripe
+        // Lambda /tmp = 10 GB (BINARY_TMP in deploy.sh), 80% safety margin
+        const maxSafe = 10 * 1024 * 1024 * 1024 * 0.8; // 8 GB
         if (bytesPerStripe > maxSafe) {
             const totalBytes = n * n * times * nCoeffsEst * 2 * 4;
             const minStripes = Math.ceil(totalBytes / maxSafe);

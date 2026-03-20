@@ -1655,10 +1655,10 @@ const _ptCatalog = {
     unit_circle: {}, rtheta: { params: [{ph:'p', def:'1'}] },
     square: {}, cube: {}, reciprocal: {}, conjugate: {}, swap: {},
     add_sub: {}, mul_div: {}, moebius: {}, negate: {}, exp: {},
-    t1radd: { params: [{ph:'v', def:'0'}] },
-    t1iadd: { params: [{ph:'v', def:'0'}] },
-    t2radd: { params: [{ph:'v', def:'0'}] },
-    t2iadd: { params: [{ph:'v', def:'0'}] },
+    t1radd: { label: 't1.re = t1.re +', params: [{ph:'v', def:'0'}] },
+    t1iadd: { label: 't1.im = t1.im +', params: [{ph:'v', def:'0'}] },
+    t2radd: { label: 't2.re = t2.re +', params: [{ph:'v', def:'0'}] },
+    t2iadd: { label: 't2.im = t2.im +', params: [{ph:'v', def:'0'}] },
     radd:   { params: [{ph:'1', def:'1'}] },
     iadd:   { params: [{ph:'1', def:'1'}] },
     add:    { params: [{ph:'1', def:'1'}] },
@@ -1711,7 +1711,8 @@ function _renderChips(which) {
             const inputsHtml = item.params.map((val, pi) =>
                 `<input class="chip-input" type="text" inputmode="decimal" value="${val}" placeholder="${(pDefs[pi]||{}).ph||''}" onchange="updateChipParam(${i},${pi},this.value)" onclick="event.stopPropagation()">`
             ).join('');
-            return `<span class="chip">${item.name}${inputsHtml}<span class="chip-x" onclick="removeChip('pt',${i})">x</span></span>`;
+            const label = spec.label || item.name;
+            return `<span class="chip">${label}${inputsHtml}<span class="chip-x" onclick="removeChip('pt',${i})">x</span></span>`;
         }).join('');
     } else {
         el.innerHTML = chain.map((name, i) =>

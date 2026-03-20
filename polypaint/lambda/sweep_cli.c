@@ -1689,10 +1689,13 @@ static void pt_none(double *z1r, double *z1i, double *z2r, double *z2i) {
     (void)z1r; (void)z1i; (void)z2r; (void)z2i;
 }
 
+/* unit_circle: z -> exp(i * 2*pi * z).  Full complex: exp(-2*pi*b) * exp(i*2*pi*a).
+ * Backward-compatible: for real inputs (b=0), reduces to cos(2*pi*a) + i*sin(2*pi*a). */
 static void pt_unit_circle(double *z1r, double *z1i, double *z2r, double *z2i) {
-    double a1 = 2.0 * M_PI * (*z1r), a2 = 2.0 * M_PI * (*z2r);
-    *z1r = cos(a1); *z1i = sin(a1);
-    *z2r = cos(a2); *z2i = sin(a2);
+    double u1 = 2.0 * M_PI * (*z1r), s1 = exp(-2.0 * M_PI * (*z1i));
+    double u2 = 2.0 * M_PI * (*z2r), s2 = exp(-2.0 * M_PI * (*z2i));
+    *z1r = s1 * cos(u1); *z1i = s1 * sin(u1);
+    *z2r = s2 * cos(u2); *z2i = s2 * sin(u2);
 }
 
 static void pt_square(double *z1r, double *z1i, double *z2r, double *z2i) {

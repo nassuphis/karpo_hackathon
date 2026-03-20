@@ -50,18 +50,15 @@ def raster_points_from_bin(bin_path, n_floats_per_point, point_indices, pix):
     if not reals:
         return bytearray((pix * pix + 7) // 8), 0
 
-    # Auto-viewport with 1% quantile trim, 5% shim
-    reals_sorted = sorted(reals)
-    imags_sorted = sorted(imags)
-    n = len(reals_sorted)
-    lo = max(0, int(n * 0.01))
-    hi = min(n - 1, int(n * 0.99))
-    min_re, max_re = reals_sorted[lo], reals_sorted[hi]
-    min_im, max_im = imags_sorted[lo], imags_sorted[hi]
+    # Auto-viewport: use full range (no quantile trim) with 10% shim
+    min_re, max_re = min(reals), max(reals)
+    min_im, max_im = min(imags), max(imags)
 
     cx = (min_re + max_re) / 2
     cy = (min_im + max_im) / 2
-    span = max((max_re - min_re) * 1.05, (max_im - min_im) * 1.05)
+    range_re = (max_re - min_re) * 1.1
+    range_im = (max_im - min_im) * 1.1
+    span = max(range_re, range_im)
     if span < 1e-10:
         span = 1.0
     scale = pix / span

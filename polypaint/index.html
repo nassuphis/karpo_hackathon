@@ -178,6 +178,7 @@ button {
                     <option value="negate">negate</option>
                     <option value="zz">zz</option>
                     <option value="exp">exp</option>
+                    <option value="zzold">zzold (t1+i·t2 → both)</option>
                     <option value="radd">radd (real +v)</option>
                     <option value="iadd">iadd (imag +v)</option>
                     <option value="add">add (both +v)</option>
@@ -1657,7 +1658,7 @@ function setPalette(name) {
 const _ptCatalog = {
     unit_circle: {}, rtheta: { params: [{ph:'p', def:'1'}] },
     square: {}, cube: {}, reciprocal: {}, conjugate: {}, swap: {},
-    add_sub: {}, mul_div: {}, moebius: {}, negate: {}, exp: {},
+    add_sub: {}, mul_div: {}, moebius: {}, negate: {}, exp: {}, zzold: {},
     t1radd: { label: 't1.re = t1.re +', params: [{ph:'v', def:'0'}] },
     t1iadd: { label: 't1.im = t1.im +', params: [{ph:'v', def:'0'}] },
     t2radd: { label: 't2.re = t2.re +', params: [{ph:'v', def:'0'}] },

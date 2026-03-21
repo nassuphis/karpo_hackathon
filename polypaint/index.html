@@ -2226,6 +2226,10 @@ function renderArtifactPanel(jobId, artifacts) {
         const colorKey = prefix + 'image.jpeg';
         html += `<button class="btn-primary" onclick="downloadPresignedFile('${artifacts[colorKey]}','${jobId}_color.jpeg','${colorKey}')" style="padding:6px 14px; font-size:12px; background:#264">Download Color JPEG</button>`;
     }
+    if (hasColorPng) {
+        const colorPngKey = prefix + 'image.png';
+        html += `<button class="btn-primary" onclick="downloadPresignedFile('${artifacts[colorPngKey]}','${jobId}_color.png','${colorPngKey}')" style="padding:6px 14px; font-size:12px; background:#264">Download Color PNG</button>`;
+    }
 
     html += '</div>';
 
@@ -2243,6 +2247,7 @@ function renderArtifactPanel(jobId, artifacts) {
     if (hasPng) found.push('PNG');
     if (hasCoeffTif) found.push('Coeffs TIFF');
     if (hasColorJpeg) found.push('Color JPEG');
+    if (hasColorPng) found.push('Color PNG');
     if (found.length) parts.push(found.join(', '));
     info.textContent = parts.join(' | ');
 }

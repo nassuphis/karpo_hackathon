@@ -116,24 +116,33 @@ Build: Docker ARM64 with libvips (same as raw2jpeg).
 ./deploy.sh create   # or update
 ```
 
-Single Lambda function `polypaint-bilevel` handles all three phases:
-- 1769 MB memory (1 vCPU)
-- 10 GB `/tmp`
-- libvips Lambda layer
-- Async retry disabled
+Two Lambda functions:
 
-Two binaries in the zip: `bilevel_raster` (static) + `bilevel_merge` (dynamic/libvips).
+**polypaint-bilevel** — raster + merge phases:
+- 1769 MB memory (1 vCPU), 10 GB `/tmp`, libvips layer
+- Async retry: **2 attempts, 3600s max event age** (not 0 — see below)
+- Two binaries: `bilevel_raster` (static) + `bilevel_merge` (dynamic/libvips)
+
+**polypaint-bilevel-stitch** — stitch phase:
+- 6144 MB memory (~4 vCPUs), 10 GB `/tmp`, libvips layer
+- Async retry: 0 (single invocation, not fan-out)
+- Binary: `bilevel_merge` (stitch mode)
+
+The stitch phase is a separate Lambda because libvips is multithreaded and benefits from extra vCPUs. The raster/merge Lambdas run at 500+ concurrency and don't need 6 GB each.
 
 ## Frontend pipeline
 
-`runBilevelPipeline()` dispatches three phases sequentially:
-1. Dispatch `nStripes` bilevel Lambdas with `phase: "raster"`
-2. Poll `bilevel_raster_*` tasks until all complete
-3. Dispatch `nTiles` bilevel Lambdas with `phase: "merge"`
-4. Poll `bilevel_merge_*` tasks until all complete
-5. Dispatch 1 bilevel Lambda with `phase: "stitch"`
+`runBilevelPipeline()` dispatches three phases sequentially, using `_bilevelDispatchAndPoll()` for the fan-out phases:
+
+1. **Raster**: wave-dispatch `nStripes` bilevel Lambdas (`phase: "raster"`, MAX_INFLIGHT=200)
+2. Poll `bilevel_raster_*` tasks; after 45s stall, query `return_ids`, re-dispatch missing (max 2 rounds)
+3. **Merge**: wave-dispatch `nTiles` bilevel Lambdas (`phase: "merge"`, MAX_INFLIGHT=200)
+4. Poll `bilevel_merge_*` tasks with same stall/re-dispatch logic
+5. **Stitch**: dispatch 1 bilevel-stitch Lambda
 6. Poll `bilevel_stitch` task until complete
-7. Get presigned URL for final TIFF
+7. Discover artifacts via `/head-keys`, display preview + download buttons
+
+See [lambdas.md — Dispatch Resilience](lambdas.md#dispatch-resilience) for why wave dispatch and re-dispatch were added.
 
 ## Scaling
 
@@ -184,3 +193,30 @@ Rewrote to stripe-first architecture but still used PNG output (`vips_pngsave`).
 ### v3: Stripe-first with TIFF CCITT G4 (current)
 
 Switched all output from PNG to TIFF with CCITT Group 4 compression. No zlib anywhere in the pipeline. CCITT G4 is purpose-built for bilevel data, has no size limits, and compresses faster with better ratios than PNG for 1-bit content.
+
+## Post-render exports
+
+After the bilevel TIFF is produced, the artifact panel offers on-demand conversions:
+
+| Export | Lambda | Purpose |
+|--------|--------|---------|
+| Preview-Compatible TIFF | polypaint-tiff-compat | macOS Preview can't open tiled TIFFs. Converts to strip-based layout. |
+| PNG | polypaint-png-export | 1-bit PNG via libvips. Smaller than TIFF for web use. |
+| DeepZoom | polypaint-deepzoom-export | OpenSeadragon tile pyramid for zoomable web viewing. |
+
+These are triggered by buttons in the artifact panel, not part of the render pipeline. Each runs a separate Lambda, uploads the result to S3, and refreshes the artifact panel.
+
+## Warm container /tmp bug
+
+**Symptom:** bilevel render produced corrupted output — tiles contained data from a previous render.
+
+**Root cause:** Lambda reuses containers. The `/tmp` directory persists between invocations. The raster phase writes `.bits` files to `/tmp/bits_t0000.bits`, etc. If a warm container runs a different stripe than last time, the old `.bits` files are still there. The upload loop iterates over all expected tile indices and uploads whatever `.bits` file exists at that path — including stale ones from the previous invocation.
+
+**Fix:** `handler_bilevel.py` now globs and removes all stale `.bits` files before each raster run:
+```python
+import glob
+for stale in glob.glob("/tmp/bits_t*.bits"):
+    os.remove(stale)
+```
+
+Same pattern for coeff raster (`/tmp/coeff_bits_t*.bits`).

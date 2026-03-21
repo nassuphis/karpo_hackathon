@@ -54,7 +54,7 @@ BINARY_TMP=10240      # /tmp size for Lambdas that process raw images (max 10GB)
 TIMEOUT=900
 BUCKET="polypaint"
 JOBS_TABLE="polypaint-jobs"
-LIBVIPS_LAYER="arn:aws:lambda:us-east-1:710848990594:layer:polypaint-libvips:8"
+LIBVIPS_LAYER="arn:aws:lambda:us-east-1:710848990594:layer:polypaint-libvips:9"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -134,6 +134,98 @@ docker run --rm --platform linux/arm64 \
             -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
             -Wl,-rpath,/opt/lib
         echo "  dz_export compiled: $(file /src/dz_export)"
+
+        # ── Runtime smoke tests ──────────────────────────────────────
+        # Verify libvips ops actually work, not just that binaries compile.
+        echo ""
+        echo "--- Runtime smoke tests ---"
+        export LD_LIBRARY_PATH=/opt/lib
+
+        # 1. Probe required libvips operations
+        cat > /tmp/probe_ops.c <<PROBE
+#include <stdio.h>
+#include <vips/vips.h>
+int main(int argc, char **argv) {
+    if (VIPS_INIT(argv[0])) { fprintf(stderr, "VIPS_INIT failed\\n"); return 1; }
+    const char *ops[] = {"tiffsave", "pngsave", "dzsave", NULL};
+    int fail = 0;
+    for (int i = 0; ops[i]; i++) {
+        GType t = vips_type_find("VipsForeignSave", ops[i]);
+        if (t == 0) { fprintf(stderr, "MISSING: %s\\n", ops[i]); fail = 1; }
+        else { printf("  OK: %s\\n", ops[i]); }
+    }
+    vips_shutdown();
+    return fail;
+}
+PROBE
+        gcc -O2 -o /tmp/probe_ops /tmp/probe_ops.c \
+            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
+            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
+            -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm -Wl,-rpath,/opt/lib
+        /tmp/probe_ops || { echo "FATAL: libvips missing required operations"; exit 1; }
+
+        # 2. Create a tiny test TIFF (8x8 white)
+        cat > /tmp/make_test_tif.c <<TIFTEST
+#include <stdio.h>
+#include <vips/vips.h>
+int main(int argc, char **argv) {
+    if (VIPS_INIT(argv[0])) return 1;
+    VipsImage *img = vips_image_new_matrix(8, 8);
+    if (!img) return 1;
+    vips_image_set_int(img, "bands", 1);
+    /* black+white 8x8 via vips_black then cast */
+    VipsImage *bw = NULL;
+    if (vips_black(&bw, 8, 8, "bands", 1, NULL)) return 1;
+    if (vips_tiffsave(bw, "/tmp/test_8x8.tif", NULL)) {
+        fprintf(stderr, "tiffsave failed: %s\\n", vips_error_buffer());
+        return 1;
+    }
+    g_object_unref(bw);
+    g_object_unref(img);
+    printf("  test TIFF written\\n");
+    vips_shutdown();
+    return 0;
+}
+TIFTEST
+        gcc -O2 -o /tmp/make_test_tif /tmp/make_test_tif.c \
+            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
+            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
+            -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm -Wl,-rpath,/opt/lib
+        /tmp/make_test_tif || { echo "FATAL: cannot create test TIFF"; exit 1; }
+
+        # 3. Smoke test dz_export (actual DeepZoom generation)
+        /src/dz_export /tmp/test_8x8.tif /tmp/dz_test/image || \
+            { echo "FATAL: dz_export failed on test TIFF"; exit 1; }
+        if [ ! -f /tmp/dz_test/image.dzi ]; then
+            echo "FATAL: dz_export did not produce .dzi file"
+            exit 1
+        fi
+        TILE_COUNT=$(find /tmp/dz_test/image_files -name "*.png" 2>/dev/null | wc -l)
+        if [ "$TILE_COUNT" -eq 0 ]; then
+            echo "FATAL: dz_export produced no tile PNGs"
+            exit 1
+        fi
+        echo "  dz_export: .dzi + $TILE_COUNT tiles OK"
+
+        # 4. Smoke test png_export
+        /src/png_export /tmp/test_8x8.tif /tmp/test_out.png || \
+            { echo "FATAL: png_export failed on test TIFF"; exit 1; }
+        if [ ! -f /tmp/test_out.png ]; then
+            echo "FATAL: png_export did not produce output PNG"
+            exit 1
+        fi
+        echo "  png_export OK"
+
+        # 5. Smoke test tiff_compat
+        /src/tiff_compat /tmp/test_8x8.tif /tmp/test_compat.tif || \
+            { echo "FATAL: tiff_compat failed on test TIFF"; exit 1; }
+        if [ ! -f /tmp/test_compat.tif ]; then
+            echo "FATAL: tiff_compat did not produce output TIFF"
+            exit 1
+        fi
+        echo "  tiff_compat OK"
+
+        echo "--- All smoke tests passed ---"
     '
 
 # --- Package 6 Lambdas ---

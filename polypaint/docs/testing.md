@@ -21,6 +21,9 @@ All tests live in `polypaint/tests/`.
 | `test_visual_601_700.py` | Visual comparison poly_601-700 | `sweep_test` compiled, numpy |
 | `test_visual_701_800.py` | Visual comparison poly_701-800 | `sweep_test` compiled, numpy |
 | `test_visual_801_821.py` | Visual comparison poly_801-821 | `sweep_test` compiled, numpy |
+| `test_tiff_compat.py` | tiff_compat: tiled→strip TIFF conversion | `tiff_compat_local` (needs libvips+libtiff) |
+| `test_png_export.py` | png_export: TIFF→1-bit PNG conversion | `png_export_local` (needs libvips) |
+| `test_dispatch_resilience.py` | Dispatch resilience: return_ids, head-keys, wave dispatch, missing-task detection | Python mocks only |
 
 ## Running Tests
 
@@ -155,6 +158,31 @@ Before running `deploy.sh update`:
 3. **Cross-compile:** `aarch64-linux-musl-gcc -O3 -static -o sweep sweep_cli.c -lm`
 4. **JS syntax check:** `deploy.sh` does this automatically
 
+### test_dispatch_resilience.py
+
+Tests for the dispatch resilience fixes (28 tests, pure mocks, no binaries):
+
+- **TestCheckStatusReturnIds** — `return_ids` flag: default off, explicit true/false, 449/500 gap detection with 51 missing tasks, paginated queries
+- **TestHeadKeys** — `/head-keys` endpoint: all exist, none exist, mixed existence (artifact discovery use case), empty list, single key, parallel HEAD execution
+- **TestDispatchBilevelTarget** — dispatch handler fires bilevel/stitch targets, non-202 status tracked, 200-job parallel batch
+- **TestStorageRouting** — `/head-keys` route wired to handler, unknown route returns 400
+- **TestMissingTaskDetection** — set-diff logic replicated from JS: no missing, all missing, contiguous 51-task gap (the real failure), scattered gaps, merge prefix, coeff prefix
+- **TestWaveDispatchLogic** — wave dispatch simulation: small batch (single wave), large batch (multiple waves), throttled (MAX_INFLIGHT respected), exact inflight, full inter-wave completion
+
+### test_tiff_compat.py
+
+Tests tiff_compat binary (needs libvips+libtiff):
+
+- Converts tiled TIFF to strip-based
+- Verifies output dimensions and pixel placement match input
+
+### test_png_export.py
+
+Tests png_export binary (needs libvips):
+
+- Converts bilevel TIFF to 1-bit PNG
+- Verifies output dimensions
+
 ## When to Run What
 
 | What changed | Tests to run |
@@ -164,5 +192,8 @@ Before running `deploy.sh update`:
 | Coefficient functions / transpiler | test_poly_accuracy + visual comparisons |
 | bilevel_raster.c | test_bilevel_raster |
 | bilevel_merge.c | test_bilevel_stitch |
-| Lambda handlers (Python) | test_pipeline |
+| Lambda handlers (Python) | test_pipeline + test_dispatch_resilience |
+| Dispatch / storage / check-status | test_dispatch_resilience |
+| tiff_compat.c | test_tiff_compat |
+| png_export.c | test_png_export |
 | Before any deploy | Fast suite (all non-visual tests) |

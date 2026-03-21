@@ -22,8 +22,10 @@ docker run --rm --platform linux/arm64 \
     echo "--- Installing build tools ---"
     dnf install -y gcc gcc-c++ make meson ninja-build pkg-config \
       glib2-devel expat-devel libjpeg-turbo-devel libpng-devel \
-      libtiff-devel libwebp-devel jbigkit-devel \
-      zlib-devel tar xz wget 2>&1 | tail -3
+      libtiff-devel libwebp-devel jbigkit-devel libxml2-devel \
+      libarchive-devel \
+      zlib-devel tar xz wget bzip2-devel 2>&1 | tail -3
+    echo "  libarchive: $(pkg-config --modversion libarchive 2>/dev/null || echo MISSING)"
 
     echo "--- Downloading libvips '"$VIPS_VERSION"' ---"
     cd /tmp
@@ -31,7 +33,7 @@ docker run --rm --platform linux/arm64 \
     tar xJf "vips-'"$VIPS_VERSION"'.tar.xz"
     cd "vips-'"$VIPS_VERSION"'"
 
-    echo "--- Configuring (JPEG+PNG+TIFF) ---"
+    echo "--- Configuring (JPEG+PNG+TIFF+dzsave) ---"
     meson setup builddir --prefix=/opt \
       --buildtype=release \
       -Dmodules=disabled \
@@ -51,7 +53,15 @@ docker run --rm --platform linux/arm64 \
       -Dopenslide=disabled \
       -Dexif=disabled \
       -Dlcms=disabled \
-      2>&1 | tail -5
+      2>&1 | grep -iE "pyramid|archive|tiff|png|jpeg|found|enabled|disabled|error" || true
+    # Hard check: dzsave requires libarchive (image pyramid save)
+    if ! meson configure builddir 2>&1 | grep -q "image pyramid save with libarchive.*YES"; then
+      echo "FATAL: libvips configured WITHOUT dzsave (libarchive missing)"
+      echo "Install libarchive-devel and re-run."
+      meson configure builddir 2>&1 | grep -i "pyramid"
+      exit 1
+    fi
+    echo "  dzsave (libarchive): confirmed"
 
     echo "--- Building ---"
     cd builddir
@@ -101,6 +111,9 @@ docker run --rm --platform linux/arm64 \
       libtiff.so.5
       libwebp.so.7
       libjbig.so.2.1
+      libxml2.so.2
+      libbz2.so.1
+      libarchive.so.13
     )
     for lib in "${DEPS[@]}"; do
       # Find the actual file (follow symlinks) and copy it + create symlinks

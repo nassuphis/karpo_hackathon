@@ -2085,10 +2085,6 @@ async function runRasterPipeline() {
         }
         const encodeMs = performance.now() - tEncode;
 
-        // Get presigned URL for the encoded image
-        const presignResult = await lambdaPost('storage', { key: imageKey }, '/presign');
-        const imageUrl = presignResult.url;
-        _lastDownloadKey = imageKey;
         log(`  encode: ${_fmtMs(encodeMs)} (${ext})`, 'ok', 'render-log');
 
         // Cleanup .pix and tile .raw files (fire-and-forget)
@@ -2108,23 +2104,8 @@ async function runRasterPipeline() {
         document.getElementById('render-status').textContent = statusParts.join(' | ');
         document.getElementById('render-status').className = 'status ok';
 
-        const preview = document.getElementById('render-preview');
-        if (p.pix > 5000) {
-            // Too large for browser preview — download-only
-            preview.innerHTML = `<div style="padding:20px; text-align:center; background:#1a1a2e; border:1px solid #333; border-radius:8px">` +
-                `<div style="color:#aaa; margin-bottom:12px">${p.pix}x${p.pix} image — too large to preview in browser</div>` +
-                `<button class="btn-primary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px.${ext}')" ` +
-                `style="padding:8px 24px; font-size:14px">Download ${ext.toUpperCase()}</button></div>`;
-        } else {
-            preview.innerHTML = `<a href="${imageUrl}" target="_blank" title="Click to open full-size image">` +
-                `<img src="${imageUrl}" style="max-width:100%; border:1px solid #333; cursor:pointer"></a>` +
-                `<div style="margin-top:8px"><button class="btn-secondary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px.${ext}')" ` +
-                `style="padding:4px 12px">Download ${ext.toUpperCase()}</button></div>`;
-        }
-
-        document.getElementById('render-info').textContent =
-            `Job: ${p.jobId} | ${p.pix}x${p.pix} | Degree: ${calcMeta.degree} | Sparse pipeline`;
-
+        _lastDownloadKey = imageKey;
+        await refreshRenderArtifacts(p.jobId);
         log(`Done: deg${calcMeta.degree} ${p.pix}px, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');
 
     } catch (e) {

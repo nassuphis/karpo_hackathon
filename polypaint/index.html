@@ -1577,13 +1577,13 @@ async function lambdaPost(name, body, path) {
 
 // Download a file via presigned URL with Content-Disposition: attachment
 // Gets a new presigned URL with download filename baked in, then navigates to it.
-async function downloadPresignedFile(originalUrl, filename) {
+async function downloadPresignedFile(originalUrl, filename, explicitKey) {
     const btn = event && event.target;
     const origText = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Preparing download...'; }
     try {
         // Re-presign with Content-Disposition: attachment so browser saves instead of displaying
-        const key = _lastDownloadKey;
+        const key = explicitKey || _lastDownloadKey;
         if (key) {
             const result = await lambdaPost('storage', { key, filename }, '/presign');
             window.location.href = result.url;
@@ -2148,7 +2148,8 @@ async function runTiffCompat(jobId, sourceKey, pix) {
         log(`  compat TIFF: ${result.convert_ms}ms, ${(result.file_size/1024).toFixed(0)} KB`, 'ok', 'render-log');
         if (btn) {
             btn.textContent = 'Download Preview-Compatible TIFF';
-            btn.onclick = () => downloadPresignedFile(url, `${jobId}_${pix}px_bilevel_compat.tif`);
+            const compatKey = result.compat_key;
+            btn.onclick = () => downloadPresignedFile(url, `${jobId}_${pix}px_bilevel_compat.tif`, compatKey);
             btn.disabled = false;
         }
     } catch (e) {
@@ -2170,7 +2171,8 @@ async function runPngExport(jobId, sourceKey, pix) {
         log(`  PNG export: ${result.convert_ms}ms, ${(result.file_size/1024).toFixed(0)} KB`, 'ok', 'render-log');
         if (btn) {
             btn.textContent = 'Download PNG';
-            btn.onclick = () => downloadPresignedFile(url, `${jobId}_${pix}px_bilevel.png`);
+            const pngKey = result.png_key;
+            btn.onclick = () => downloadPresignedFile(url, `${jobId}_${pix}px_bilevel.png`, pngKey);
             btn.disabled = false;
         }
     } catch (e) {

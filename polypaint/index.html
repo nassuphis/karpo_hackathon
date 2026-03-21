@@ -2135,6 +2135,28 @@ async function runRasterPipeline() {
     }
 }
 
+async function runTiffCompat(jobId, sourceKey, pix) {
+    const btn = document.getElementById('btn-tiff-compat');
+    if (btn) btn.disabled = true;
+    log(`TIFF compat: converting ${sourceKey}...`, '', 'render-log');
+    try {
+        const result = await lambdaPost('tiff-compat', {
+            job_id: jobId,
+            source_key: sourceKey,
+        });
+        const url = result.url;
+        log(`  compat TIFF: ${result.convert_ms}ms, ${(result.file_size/1024).toFixed(0)} KB`, 'ok', 'render-log');
+        if (btn) {
+            btn.textContent = 'Download Preview-Compatible TIFF';
+            btn.onclick = () => downloadPresignedFile(url, `${jobId}_${pix}px_bilevel_compat.tif`);
+            btn.disabled = false;
+        }
+    } catch (e) {
+        log(`  compat failed: ${e.message}`, 'err', 'render-log');
+        if (btn) { btn.textContent = 'Compat failed'; btn.disabled = false; }
+    }
+}
+
 async function runBilevelPipeline() {
     const btn = document.getElementById('btn-bilevel');
     const renderBtn = document.getElementById('btn-raster-all');
@@ -2367,7 +2389,9 @@ async function runBilevelPipeline() {
         preview.innerHTML = `<div style="text-align:center">` +
             `<img src="${previewUrl}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-bottom:8px">` +
             `<button class="btn-primary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_bilevel.tif')" ` +
-            `style="padding:8px 24px; font-size:14px">Download TIFF (${p.pix}x${p.pix})</button></div>`;
+            `style="padding:8px 24px; font-size:14px">Download TIFF (${p.pix}x${p.pix})</button> ` +
+            `<button class="btn-secondary" onclick="runTiffCompat('${p.jobId}','${imageKey}','${p.pix}')" ` +
+            `style="padding:8px 16px; font-size:12px; margin-left:8px" id="btn-tiff-compat">Preview-Compatible TIFF</button></div>`;
         document.getElementById('render-info').textContent =
             `Job: ${p.jobId} | ${p.pix}x${p.pix} | Degree: ${calcMeta.degree} | BiLevel 1-bit TIFF (CCITT G4)`;
         log(`Done: deg${calcMeta.degree} ${p.pix}px bilevel, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');

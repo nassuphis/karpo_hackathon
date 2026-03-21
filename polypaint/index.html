@@ -1159,6 +1159,7 @@ button {
             <div class="anim-row">
                 <label>Results Dir:</label>
                 <input type="text" id="render-results-dir" placeholder="populate via Compute tab or enter job_id" style="flex:1; font-family:monospace; font-size:12px">
+                <button class="btn-secondary" onclick="refreshRenderArtifacts()" style="padding:2px 10px; font-size:11px">Refresh</button>
             </div>
             <div class="color-box">
                 <div class="color-title">View</div>
@@ -2135,6 +2136,136 @@ async function runRasterPipeline() {
     }
 }
 
+/* ---- Render artifact discovery and UI rendering ---- */
+
+async function refreshRenderArtifacts(jobIdOverride) {
+    const jobId = jobIdOverride || document.getElementById('render-results-dir').value.trim();
+    if (!jobId) return;
+    document.getElementById('render-status').textContent = 'Discovering artifacts...';
+    document.getElementById('render-status').className = 'status';
+    try {
+        const artifacts = await discoverArtifacts(jobId);
+        renderArtifactPanel(jobId, artifacts);
+        document.getElementById('render-status').textContent = '';
+    } catch (e) {
+        document.getElementById('render-status').textContent = 'Refresh failed: ' + e.message;
+        document.getElementById('render-status').className = 'status error';
+    }
+}
+
+async function discoverArtifacts(jobId) {
+    // List all objects under renders/{jobId}/ and check for known artifact keys
+    const keysToCheck = [
+        `renders/${jobId}/image_bilevel.tif`,
+        `renders/${jobId}/image_bilevel_preview.png`,
+        `renders/${jobId}/image_bilevel_compat.tif`,
+        `renders/${jobId}/image_bilevel.png`,
+        `renders/${jobId}/image_coeffs_bilevel.tif`,
+        `renders/${jobId}/image_coeffs_bilevel_preview.png`,
+        `renders/${jobId}/image.jpeg`,
+        `renders/${jobId}/image.png`,
+    ];
+    // Check which keys exist via parallel presign attempts
+    const results = {};
+    const checks = keysToCheck.map(async (key) => {
+        try {
+            const r = await lambdaPost('storage', { key }, '/presign');
+            if (r.url) results[key] = r.url;
+        } catch (e) {
+            // Key doesn't exist
+        }
+    });
+    await Promise.all(checks);
+
+    // Also try to load calc.json for metadata
+    try {
+        const calcPresign = await lambdaPost('storage', { key: `renders/${jobId}/calc.json` }, '/presign');
+        if (calcPresign.url) {
+            const resp = await fetch(calcPresign.url);
+            if (resp.ok) results._calc = await resp.json();
+        }
+    } catch (e) {}
+
+    return results;
+}
+
+function renderArtifactPanel(jobId, artifacts) {
+    const preview = document.getElementById('render-preview');
+    const info = document.getElementById('render-info');
+    const calc = artifacts._calc;
+    const pix = calc ? (calc.N || calc.n1 || '?') : '?';
+    const degree = calc ? (calc.degree || '?') : '?';
+
+    const prefix = `renders/${jobId}/`;
+    const hasBilevelTif = !!artifacts[prefix + 'image_bilevel.tif'];
+    const hasBilevelPreview = !!artifacts[prefix + 'image_bilevel_preview.png'];
+    const hasCompatTif = !!artifacts[prefix + 'image_bilevel_compat.tif'];
+    const hasPng = !!artifacts[prefix + 'image_bilevel.png'];
+    const hasCoeffTif = !!artifacts[prefix + 'image_coeffs_bilevel.tif'];
+    const hasCoeffPreview = !!artifacts[prefix + 'image_coeffs_bilevel_preview.png'];
+    const hasColorJpeg = !!artifacts[prefix + 'image.jpeg'];
+    const hasColorPng = !!artifacts[prefix + 'image.png'];
+
+    const bilevelKey = prefix + 'image_bilevel.tif';
+    const compatKey = prefix + 'image_bilevel_compat.tif';
+    const pngKey = prefix + 'image_bilevel.png';
+
+    let html = '';
+
+    // Preview image
+    if (hasBilevelPreview) {
+        html += `<img src="${artifacts[prefix + 'image_bilevel_preview.png']}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-bottom:8px">`;
+    } else if (hasCoeffPreview) {
+        html += `<img src="${artifacts[prefix + 'image_coeffs_bilevel_preview.png']}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-bottom:8px">`;
+    }
+
+    // Buttons
+    html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:4px">';
+
+    if (hasBilevelTif) {
+        html += `<button class="btn-primary" onclick="downloadPresignedFile('${artifacts[bilevelKey]}','${jobId}_bilevel.tif','${bilevelKey}')" style="padding:6px 14px; font-size:12px">Download TIFF</button>`;
+    }
+    if (hasCompatTif) {
+        html += `<button class="btn-secondary" onclick="downloadPresignedFile('${artifacts[compatKey]}','${jobId}_bilevel_compat.tif','${compatKey}')" style="padding:6px 10px; font-size:11px">Download Compat TIFF</button>`;
+    } else if (hasBilevelTif) {
+        html += `<button class="btn-secondary" onclick="runTiffCompat('${jobId}','${bilevelKey}','${pix}')" style="padding:6px 10px; font-size:11px" id="btn-tiff-compat">Preview-Compatible TIFF</button>`;
+    }
+    if (hasPng) {
+        html += `<button class="btn-secondary" onclick="downloadPresignedFile('${artifacts[pngKey]}','${jobId}_bilevel.png','${pngKey}')" style="padding:6px 10px; font-size:11px">Download PNG</button>`;
+    } else if (hasBilevelTif) {
+        html += `<button class="btn-secondary" onclick="runPngExport('${jobId}','${bilevelKey}','${pix}')" style="padding:6px 10px; font-size:11px" id="btn-png-export">PNG</button>`;
+    }
+
+    if (hasCoeffTif) {
+        const coeffKey = prefix + 'image_coeffs_bilevel.tif';
+        html += `<button class="btn-primary" onclick="downloadPresignedFile('${artifacts[coeffKey]}','${jobId}_coeffs_bilevel.tif','${coeffKey}')" style="padding:6px 14px; font-size:12px; background:#446">Download Coeffs TIFF</button>`;
+    }
+
+    if (hasColorJpeg) {
+        const colorKey = prefix + 'image.jpeg';
+        html += `<button class="btn-primary" onclick="downloadPresignedFile('${artifacts[colorKey]}','${jobId}_color.jpeg','${colorKey}')" style="padding:6px 14px; font-size:12px; background:#264">Download Color JPEG</button>`;
+    }
+
+    html += '</div>';
+
+    preview.innerHTML = html;
+
+    // Info line
+    const parts = [`Job: ${jobId}`];
+    if (calc) {
+        if (calc.N || calc.n1) parts.push(`N=${calc.N || calc.n1}`);
+        if (calc.degree) parts.push(`degree ${calc.degree}`);
+    }
+    const found = [];
+    if (hasBilevelTif) found.push('BiLevel TIFF');
+    if (hasCompatTif) found.push('Compat TIFF');
+    if (hasPng) found.push('PNG');
+    if (hasCoeffTif) found.push('Coeffs TIFF');
+    if (hasColorJpeg) found.push('Color JPEG');
+    if (found.length) parts.push(found.join(', '));
+    info.textContent = parts.join(' | ');
+}
+
 async function runTiffCompat(jobId, sourceKey, pix) {
     const btn = document.getElementById('btn-tiff-compat');
     if (btn) btn.disabled = true;
@@ -2146,12 +2277,7 @@ async function runTiffCompat(jobId, sourceKey, pix) {
         });
         const url = result.url;
         log(`  compat TIFF: ${result.convert_ms}ms, ${(result.file_size/1024).toFixed(0)} KB`, 'ok', 'render-log');
-        if (btn) {
-            btn.textContent = 'Download Preview-Compatible TIFF';
-            const compatKey = result.compat_key;
-            btn.onclick = () => downloadPresignedFile(url, `${jobId}_${pix}px_bilevel_compat.tif`, compatKey);
-            btn.disabled = false;
-        }
+        await refreshRenderArtifacts(jobId);
     } catch (e) {
         log(`  compat failed: ${e.message}`, 'err', 'render-log');
         if (btn) { btn.textContent = 'Compat failed'; btn.disabled = false; }
@@ -2169,12 +2295,7 @@ async function runPngExport(jobId, sourceKey, pix) {
         });
         const url = result.url;
         log(`  PNG export: ${result.convert_ms}ms, ${(result.file_size/1024).toFixed(0)} KB`, 'ok', 'render-log');
-        if (btn) {
-            btn.textContent = 'Download PNG';
-            const pngKey = result.png_key;
-            btn.onclick = () => downloadPresignedFile(url, `${jobId}_${pix}px_bilevel.png`, pngKey);
-            btn.disabled = false;
-        }
+        await refreshRenderArtifacts(jobId);
     } catch (e) {
         log(`  PNG export failed: ${e.message}`, 'err', 'render-log');
         if (btn) { btn.textContent = 'PNG failed'; btn.disabled = false; }
@@ -2392,15 +2513,6 @@ async function runBilevelPipeline() {
         const stitchMs = performance.now() - tStitch;
         log(`  stitch: ${_fmtMs(stitchMs)}`, 'ok', 'render-log');
 
-        const presignResult = await lambdaPost('storage', { key: imageKey }, '/presign');
-        const imageUrl = presignResult.url;
-        _lastDownloadKey = imageKey;
-
-        // Get preview PNG URL
-        const previewKey = imageKey.replace('.tif', '_preview.png');
-        const previewPresign = await lambdaPost('storage', { key: previewKey }, '/presign');
-        const previewUrl = previewPresign.url;
-
         const totalMs = performance.now() - tVp;
         const statusParts = [
             'BiLevel', nStripes + ' stripes', nTiles + ' tiles',
@@ -2409,17 +2521,8 @@ async function runBilevelPipeline() {
         document.getElementById('render-status').textContent = statusParts.join(' | ');
         document.getElementById('render-status').className = 'status ok';
 
-        const preview = document.getElementById('render-preview');
-        preview.innerHTML = `<div style="text-align:center">` +
-            `<img src="${previewUrl}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-bottom:8px">` +
-            `<button class="btn-primary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_bilevel.tif')" ` +
-            `style="padding:8px 24px; font-size:14px">Download TIFF (${p.pix}x${p.pix})</button> ` +
-            `<button class="btn-secondary" onclick="runTiffCompat('${p.jobId}','${imageKey}','${p.pix}')" ` +
-            `style="padding:8px 16px; font-size:12px; margin-left:8px" id="btn-tiff-compat">Preview-Compatible TIFF</button> ` +
-            `<button class="btn-secondary" onclick="runPngExport('${p.jobId}','${imageKey}','${p.pix}')" ` +
-            `style="padding:8px 16px; font-size:12px; margin-left:4px" id="btn-png-export">PNG</button></div>`;
-        document.getElementById('render-info').textContent =
-            `Job: ${p.jobId} | ${p.pix}x${p.pix} | Degree: ${calcMeta.degree} | BiLevel 1-bit TIFF (CCITT G4)`;
+        _lastDownloadKey = imageKey;
+        await refreshRenderArtifacts(p.jobId);
         log(`Done: deg${calcMeta.degree} ${p.pix}px bilevel, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');
 
     } catch (e) {
@@ -2655,14 +2758,6 @@ async function runCoeffBilevelPipeline() {
         const stitchMs = performance.now() - tStitch;
         log(`  coeff stitch: ${_fmtMs(stitchMs)}`, 'ok', 'render-log');
 
-        const presignResult = await lambdaPost('storage', { key: imageKey }, '/presign');
-        const imageUrl = presignResult.url;
-        _lastDownloadKey = imageKey;
-
-        const previewKey = imageKey.replace('.tif', '_preview.png');
-        const previewPresign = await lambdaPost('storage', { key: previewKey }, '/presign');
-        const previewUrl = previewPresign.url;
-
         const totalMs = performance.now() - tVp;
         const statusParts = [
             'Coeffs BiLevel', nStripes + ' stripes', nTiles + ' tiles',
@@ -2671,13 +2766,8 @@ async function runCoeffBilevelPipeline() {
         document.getElementById('render-status').textContent = statusParts.join(' | ');
         document.getElementById('render-status').className = 'status ok';
 
-        const preview = document.getElementById('render-preview');
-        preview.innerHTML = `<div style="text-align:center">` +
-            `<img src="${previewUrl}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-bottom:8px">` +
-            `<button class="btn-primary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_coeffs_bilevel.tif')" ` +
-            `style="padding:8px 24px; font-size:14px">Download TIFF (${p.pix}x${p.pix})</button></div>`;
-        document.getElementById('render-info').textContent =
-            `Job: ${p.jobId} | ${p.pix}x${p.pix} | n_coeffs: ${nCoeffs} | Coeffs BiLevel TIFF (CCITT G4)`;
+        _lastDownloadKey = imageKey;
+        await refreshRenderArtifacts(p.jobId);
         log(`Done: ${nCoeffs} coeffs ${p.pix}px coeffs bilevel, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');
 
     } catch (e) {

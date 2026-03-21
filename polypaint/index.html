@@ -2158,13 +2158,18 @@ async function discoverArtifacts(jobId) {
     ];
     // Check which keys exist via parallel presign attempts
     const results = {};
-    const checks = keysToCheck.map(async (key) => {
+    // List all objects under renders/{jobId}/ to find which artifacts exist
+    const listResp = await lambdaPost('storage',
+        { prefix: `renders/${jobId}/`, max_keys: 500 }, '/list-prefix');
+    const existingKeys = new Set(listResp.keys || []);
+
+    // Presign only keys that actually exist
+    const existing = keysToCheck.filter(k => existingKeys.has(k));
+    const checks = existing.map(async (key) => {
         try {
             const r = await lambdaPost('storage', { key }, '/presign');
             if (r.url) results[key] = r.url;
-        } catch (e) {
-            // Key doesn't exist
-        }
+        } catch (e) {}
     });
     await Promise.all(checks);
 

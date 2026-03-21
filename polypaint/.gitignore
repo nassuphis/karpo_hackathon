@@ -5,11 +5,27 @@ lambda/sweep_cli
 lambda/sweep_cli_new
 lambda/solver
 lambda/roots2pix
+lambda/roots2pix_local
 lambda/pixassemble
 lambda/raw2jpeg
 lambda/lores_viewport
 lambda/lores_viewport_*
 lambda/imgpipe
+lambda/bilevel
+lambda/bilevel_raster
+lambda/bilevel_raster_local
+lambda/bilevel_merge
+lambda/bilevel_merge_local
+lambda/coeffs_bilevel_raster
+lambda/coeffs_bilevel_raster_local
+lambda/param_gen
+lambda/param_gen_local
+lambda/tiff_compat
+lambda/tiff_compat_local
+lambda/png_export
+lambda/png_export_local
+lambda/dz_export
+lambda/dz_export_local
 
 # Lambda packaging
 lambda/deploy.zip
@@ -27,6 +43,10 @@ lambda/*.bak
 # Test output binaries
 lambda/*.bin
 /tmp/
+
+# Large images
+images/*.tif
+images/*.png
 
 # macOS
 .DS_Store

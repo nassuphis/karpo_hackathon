@@ -2179,10 +2179,17 @@ async function discoverArtifacts(jobId) {
 
     // Check for DeepZoom exports under deepzoom/{jobId}/
     try {
-        const dzCheck = await lambdaPost('storage',
-            { prefix: `deepzoom/${jobId}/`, expected: 1, suffix: '.dzi' }, '/check-keys');
-        if (dzCheck.found > 0) {
-            results._deepzoom_exists = true;
+        const dzList = await lambdaPost('storage',
+            { prefix: `deepzoom/${jobId}/`, suffix: 'meta.json', max_keys: 5 }, '/list-prefix');
+        if (dzList.keys && dzList.keys.length > 0) {
+            // Load the latest meta.json to get the dzi_url
+            const lastKey = dzList.keys[dzList.keys.length - 1];
+            const presign = await lambdaPost('storage', { key: lastKey }, '/presign');
+            const resp = await fetch(presign.url);
+            if (resp.ok) {
+                const meta = await resp.json();
+                results._deepzoom_dzi_url = meta.dzi_url;
+            }
         }
     } catch (e) {}
 
@@ -2251,8 +2258,8 @@ function renderArtifactPanel(jobId, artifacts) {
     }
 
     // DeepZoom: check if export exists or offer creation
-    if (artifacts._deepzoom_exists) {
-        html += `<button class="btn-secondary" onclick="openDeepZoomViewer('${jobId}')" style="padding:6px 10px; font-size:11px; background:#446">Open DeepZoom</button>`;
+    if (artifacts._deepzoom_dzi_url) {
+        html += `<button class="btn-secondary" onclick="openDeepZoomViewer('${artifacts._deepzoom_dzi_url}')" style="padding:6px 10px; font-size:11px; background:#446">Open DeepZoom</button>`;
     } else if (hasBilevelTif) {
         html += `<button class="btn-secondary" onclick="runDeepZoomExport('${jobId}','${bilevelKey}')" style="padding:6px 10px; font-size:11px" id="btn-deepzoom">DeepZoom</button>`;
     }
@@ -2335,45 +2342,11 @@ async function runDeepZoomExport(jobId, sourceKey) {
 
 let _osdViewer = null;
 
-function openDeepZoomViewer(jobId) {
+async function openDeepZoomViewer(dziUrl) {
     switchTab('deepzoom');
-    // Find the DZI URL — list deepzoom/{jobId}/ to find the export
-    lambdaPost('storage', { prefix: `deepzoom/${jobId}/`, expected: 999, suffix: '.dzi' }, '/check-keys')
-        .then(() => {
-            // Construct URL from convention
-            const region = 'us-east-1';
-            // Find the first export_id by listing
-            return fetch(`https://polypaint.s3.${region}.amazonaws.com/deepzoom/${jobId}/`);
-        })
-        .catch(() => null);
-
-    // Use convention: latest export has meta.json
-    const region = 'us-east-1';
-    loadDeepZoomForJob(jobId);
-}
-
-async function loadDeepZoomForJob(jobId) {
-    // List objects to find export_id
-    try {
-        // Try to find meta.json files
-        const listResult = await lambdaPost('storage',
-            { prefix: `deepzoom/${jobId}/`, expected: 999, suffix: 'meta.json' }, '/check-keys');
-
-        if (listResult.found > 0) {
-            // List actual objects to find the export_id
-            // For simplicity, try the most recent by timestamp convention
-            // The handler names exports dz_{timestamp}, so alphabetically last = newest
-            const presign = await lambdaPost('storage',
-                { key: `deepzoom/${jobId}/` }, '/presign').catch(() => null);
-
-            // Use S3 list to find the export
-            // For now, use a simple approach: check known export_id patterns
-            // Better: list S3 directly via storage handler
-        }
-    } catch (e) {}
-
-    // Simpler approach: load the inventory and find this job's exports
-    await loadDeepZoomInventory();
+    if (dziUrl) {
+        viewDeepZoom(dziUrl);
+    }
 }
 
 async function loadDeepZoomInventory() {
@@ -2381,42 +2354,32 @@ async function loadDeepZoomInventory() {
     container.innerHTML = 'Loading...';
 
     try {
-        // List all deepzoom/ prefixes
-        const result = await lambdaPost('storage',
-            { prefix: 'deepzoom/', expected: 99999, suffix: 'meta.json' }, '/check-keys');
+        // Single call: list all meta.json files under deepzoom/
+        const listResp = await lambdaPost('storage',
+            { prefix: 'deepzoom/', suffix: 'meta.json', max_keys: 200 }, '/list-prefix');
+        const metaKeys = listResp.keys || [];
 
-        if (result.found === 0) {
+        if (metaKeys.length === 0) {
             container.innerHTML = '<div style="color:#666">No DeepZoom exports yet. Generate one from the Render tab.</div>';
             return;
         }
 
-        // We know meta.json files exist but check-keys only counts them.
-        // Use a dedicated list to find actual keys.
-        // For now, list all objects under deepzoom/ to find meta.json files
-        const listResp = await lambdaPost('storage', { prefix: 'deepzoom/' }, '/list-prefix');
-        const metaKeys = (listResp.keys || []).filter(k => k.endsWith('meta.json'));
-
-        if (metaKeys.length === 0) {
-            container.innerHTML = '<div style="color:#666">No DeepZoom exports found.</div>';
-            return;
-        }
-
-        // Load each meta.json
-        const exports = [];
-        for (const key of metaKeys) {
+        // Load all meta.json in parallel
+        const metaPromises = metaKeys.map(async (key) => {
             try {
                 const presign = await lambdaPost('storage', { key }, '/presign');
                 const resp = await fetch(presign.url);
-                if (resp.ok) exports.push(await resp.json());
-            } catch (e) {}
-        }
+                return resp.ok ? await resp.json() : null;
+            } catch (e) { return null; }
+        });
+        const exports = (await Promise.all(metaPromises)).filter(Boolean);
 
         if (exports.length === 0) {
             container.innerHTML = '<div style="color:#666">Could not load export metadata.</div>';
             return;
         }
 
-        // Render inventory
+        // Render inventory table
         let html = '<table style="width:100%; border-collapse:collapse">';
         html += '<tr style="border-bottom:1px solid #333"><th style="text-align:left;padding:4px">Job</th><th>Size</th><th>Created</th><th>Tiles</th><th></th></tr>';
         for (const ex of exports.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))) {

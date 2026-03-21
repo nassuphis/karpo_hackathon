@@ -145,6 +145,7 @@ button {
         <div class="tab-btn active" onclick="switchTab('compute')">Compute</div>
         <div class="tab-btn" onclick="switchTab('results')">Results</div>
         <div class="tab-btn" onclick="switchTab('render')">Render</div>
+        <div class="tab-btn" onclick="switchTab('deepzoom')">DeepZoom</div>
     </div>
     <div class="panel" style="border-radius:0 8px 8px 8px">
         <!-- Compute tab -->
@@ -1269,9 +1270,18 @@ button {
             <div id="render-info" style="font-size:12px; color:#888; margin-top:4px"></div>
             <div id="render-log" style="margin-top:8px"></div>
         </div>
+        <!-- DeepZoom tab -->
+        <div id="tab-deepzoom" class="tab-content">
+            <div style="margin-bottom:8px">
+                <button class="btn-secondary" onclick="loadDeepZoomInventory()" style="padding:4px 12px; font-size:12px">Refresh Inventory</button>
+            </div>
+            <div id="deepzoom-inventory" style="font-size:12px; color:#ccc"></div>
+            <div id="deepzoom-viewer" style="margin-top:12px; width:100%; height:500px; background:#000; border:1px solid #333; display:none"></div>
+        </div>
     </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js"></script>
 <script>
 /* ---- Logging ---- */
 function log(msg, cls='', target='compute-log') {
@@ -2167,6 +2177,15 @@ async function discoverArtifacts(jobId) {
         }
     } catch (e) {}
 
+    // Check for DeepZoom exports under deepzoom/{jobId}/
+    try {
+        const dzCheck = await lambdaPost('storage',
+            { prefix: `deepzoom/${jobId}/`, expected: 1, suffix: '.dzi' }, '/check-keys');
+        if (dzCheck.found > 0) {
+            results._deepzoom_exists = true;
+        }
+    } catch (e) {}
+
     return results;
 }
 
@@ -2231,6 +2250,13 @@ function renderArtifactPanel(jobId, artifacts) {
         html += `<button class="btn-primary" onclick="downloadPresignedFile('${artifacts[colorPngKey]}','${jobId}_color.png','${colorPngKey}')" style="padding:6px 14px; font-size:12px; background:#264">Download Color PNG</button>`;
     }
 
+    // DeepZoom: check if export exists or offer creation
+    if (artifacts._deepzoom_exists) {
+        html += `<button class="btn-secondary" onclick="openDeepZoomViewer('${jobId}')" style="padding:6px 10px; font-size:11px; background:#446">Open DeepZoom</button>`;
+    } else if (hasBilevelTif) {
+        html += `<button class="btn-secondary" onclick="runDeepZoomExport('${jobId}','${bilevelKey}')" style="padding:6px 10px; font-size:11px" id="btn-deepzoom">DeepZoom</button>`;
+    }
+
     html += '</div>';
 
     preview.innerHTML = html;
@@ -2286,6 +2312,146 @@ async function runPngExport(jobId, sourceKey, pix) {
         log(`  PNG export failed: ${e.message}`, 'err', 'render-log');
         if (btn) { btn.textContent = 'PNG failed'; btn.disabled = false; }
     }
+}
+
+/* ---- DeepZoom export and viewer ---- */
+
+async function runDeepZoomExport(jobId, sourceKey) {
+    const btn = document.getElementById('btn-deepzoom');
+    if (btn) { btn.disabled = true; btn.textContent = 'Creating...'; }
+    log(`DeepZoom: exporting ${sourceKey}...`, '', 'render-log');
+    try {
+        const result = await lambdaPost('deepzoom-export', {
+            job_id: jobId,
+            source_key: sourceKey,
+        });
+        log(`  DeepZoom: gen ${result.gen_ms}ms, upload ${result.upload_ms}ms, ${result.tiles_uploaded} tiles`, 'ok', 'render-log');
+        await refreshRenderArtifacts(jobId);
+    } catch (e) {
+        log(`  DeepZoom failed: ${e.message}`, 'err', 'render-log');
+        if (btn) { btn.textContent = 'DeepZoom failed'; btn.disabled = false; }
+    }
+}
+
+let _osdViewer = null;
+
+function openDeepZoomViewer(jobId) {
+    switchTab('deepzoom');
+    // Find the DZI URL — list deepzoom/{jobId}/ to find the export
+    lambdaPost('storage', { prefix: `deepzoom/${jobId}/`, expected: 999, suffix: '.dzi' }, '/check-keys')
+        .then(() => {
+            // Construct URL from convention
+            const region = 'us-east-1';
+            // Find the first export_id by listing
+            return fetch(`https://polypaint.s3.${region}.amazonaws.com/deepzoom/${jobId}/`);
+        })
+        .catch(() => null);
+
+    // Use convention: latest export has meta.json
+    const region = 'us-east-1';
+    loadDeepZoomForJob(jobId);
+}
+
+async function loadDeepZoomForJob(jobId) {
+    // List objects to find export_id
+    try {
+        // Try to find meta.json files
+        const listResult = await lambdaPost('storage',
+            { prefix: `deepzoom/${jobId}/`, expected: 999, suffix: 'meta.json' }, '/check-keys');
+
+        if (listResult.found > 0) {
+            // List actual objects to find the export_id
+            // For simplicity, try the most recent by timestamp convention
+            // The handler names exports dz_{timestamp}, so alphabetically last = newest
+            const presign = await lambdaPost('storage',
+                { key: `deepzoom/${jobId}/` }, '/presign').catch(() => null);
+
+            // Use S3 list to find the export
+            // For now, use a simple approach: check known export_id patterns
+            // Better: list S3 directly via storage handler
+        }
+    } catch (e) {}
+
+    // Simpler approach: load the inventory and find this job's exports
+    await loadDeepZoomInventory();
+}
+
+async function loadDeepZoomInventory() {
+    const container = document.getElementById('deepzoom-inventory');
+    container.innerHTML = 'Loading...';
+
+    try {
+        // List all deepzoom/ prefixes
+        const result = await lambdaPost('storage',
+            { prefix: 'deepzoom/', expected: 99999, suffix: 'meta.json' }, '/check-keys');
+
+        if (result.found === 0) {
+            container.innerHTML = '<div style="color:#666">No DeepZoom exports yet. Generate one from the Render tab.</div>';
+            return;
+        }
+
+        // We know meta.json files exist but check-keys only counts them.
+        // Use a dedicated list to find actual keys.
+        // For now, list all objects under deepzoom/ to find meta.json files
+        const listResp = await lambdaPost('storage', { prefix: 'deepzoom/' }, '/list-prefix');
+        const metaKeys = (listResp.keys || []).filter(k => k.endsWith('meta.json'));
+
+        if (metaKeys.length === 0) {
+            container.innerHTML = '<div style="color:#666">No DeepZoom exports found.</div>';
+            return;
+        }
+
+        // Load each meta.json
+        const exports = [];
+        for (const key of metaKeys) {
+            try {
+                const presign = await lambdaPost('storage', { key }, '/presign');
+                const resp = await fetch(presign.url);
+                if (resp.ok) exports.push(await resp.json());
+            } catch (e) {}
+        }
+
+        if (exports.length === 0) {
+            container.innerHTML = '<div style="color:#666">Could not load export metadata.</div>';
+            return;
+        }
+
+        // Render inventory
+        let html = '<table style="width:100%; border-collapse:collapse">';
+        html += '<tr style="border-bottom:1px solid #333"><th style="text-align:left;padding:4px">Job</th><th>Size</th><th>Created</th><th>Tiles</th><th></th></tr>';
+        for (const ex of exports.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))) {
+            html += `<tr style="border-bottom:1px solid #222">`;
+            html += `<td style="padding:4px; font-family:monospace; font-size:11px">${ex.job_id}</td>`;
+            html += `<td style="padding:4px; text-align:center">${ex.width}×${ex.height}</td>`;
+            html += `<td style="padding:4px; font-size:11px">${ex.created_at || ''}</td>`;
+            html += `<td style="padding:4px; text-align:center">${ex.tiles_uploaded || ''}</td>`;
+            html += `<td style="padding:4px"><button class="btn-secondary" onclick="viewDeepZoom('${ex.dzi_url}')" style="padding:2px 8px; font-size:11px">View</button></td>`;
+            html += `</tr>`;
+        }
+        html += '</table>';
+        container.innerHTML = html;
+    } catch (e) {
+        container.innerHTML = `<div style="color:#e94560">Error: ${e.message}</div>`;
+    }
+}
+
+function viewDeepZoom(dziUrl) {
+    const viewerEl = document.getElementById('deepzoom-viewer');
+    viewerEl.style.display = 'block';
+
+    if (_osdViewer) {
+        _osdViewer.destroy();
+        _osdViewer = null;
+    }
+
+    _osdViewer = OpenSeadragon({
+        element: viewerEl,
+        tileSources: dziUrl,
+        prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/images/',
+        showNavigator: true,
+        navigatorPosition: 'BOTTOM_RIGHT',
+        maxZoomPixelRatio: 4,
+    });
 }
 
 async function runBilevelPipeline() {

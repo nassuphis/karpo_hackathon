@@ -44,6 +44,8 @@ TIFF_COMPAT_NAME="polypaint-tiff-compat"
 TIFF_COMPAT_MEMORY=4096  # needs RAM for scanline buffer on large images
 PNG_EXPORT_NAME="polypaint-png-export"
 PNG_EXPORT_MEMORY=4096  # libvips PNG encode
+DZ_EXPORT_NAME="polypaint-deepzoom-export"
+DZ_EXPORT_MEMORY=4096  # libvips dzsave + parallel S3 upload
 PARAM_DEBUG_NAME="polypaint-param-debug"
 PARAM_DEBUG_MEMORY=1769  # 1 vCPU + libvips for TIFF output
 BILEVEL_STITCH_NAME="polypaint-bilevel-stitch"
@@ -126,6 +128,12 @@ docker run --rm --platform linux/arm64 \
             -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
             -Wl,-rpath,/opt/lib
         echo "  png_export compiled: $(file /src/png_export)"
+        gcc -O3 -o /src/dz_export /src/dz_export.c \
+            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
+            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
+            -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
+            -Wl,-rpath,/opt/lib
+        echo "  dz_export compiled: $(file /src/dz_export)"
     '
 
 # --- Package 6 Lambdas ---
@@ -263,6 +271,16 @@ chmod +x "$PNG_EXPORT_DIR"/png_export
 cd "$PNG_EXPORT_DIR" && zip -r9 /tmp/polypaint-png-export.zip . -q && cd "$SCRIPT_DIR"
 echo "  PngExp:  $(du -h /tmp/polypaint-png-export.zip | cut -f1)  (png_export + libvips layer)"
 
+# DeepZoom Export: handler_deepzoom_export.py + shared.py + dz_export (needs libvips layer)
+DZ_EXPORT_DIR=/tmp/polypaint-deepzoom-export
+rm -rf "$DZ_EXPORT_DIR"
+mkdir -p "$DZ_EXPORT_DIR"
+cp lambda/handler_deepzoom_export.py lambda/shared.py "$DZ_EXPORT_DIR/"
+cp lambda/dz_export "$DZ_EXPORT_DIR/"
+chmod +x "$DZ_EXPORT_DIR"/dz_export
+cd "$DZ_EXPORT_DIR" && zip -r9 /tmp/polypaint-deepzoom-export.zip . -q && cd "$SCRIPT_DIR"
+echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_export + libvips layer)"
+
 ACTION="${1:-create}"
 
 # Helper: create a Lambda function
@@ -380,7 +398,7 @@ setup_api_gateway() {
     }
 
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME"; do
+    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -420,6 +438,9 @@ setup_api_gateway() {
     local PNG_EXPORT_INT
     PNG_EXPORT_INT=$(create_integration "$PNG_EXPORT_NAME")
     ensure_route "POST /png-export" "$PNG_EXPORT_INT"
+    local DZ_EXPORT_INT
+    DZ_EXPORT_INT=$(create_integration "$DZ_EXPORT_NAME")
+    ensure_route "POST /deepzoom-export" "$DZ_EXPORT_INT"
 
     ensure_route "POST /encode-upload" "$ENCODE_INT"
     ensure_route "POST /viewport" "$VIEWPORT_INT"
@@ -432,6 +453,7 @@ setup_api_gateway() {
     ensure_route "POST /check-status" "$STORAGE_INT"
     ensure_route "POST /presign" "$STORAGE_INT"
     ensure_route "POST /detail" "$STORAGE_INT"
+    ensure_route "POST /list-prefix" "$STORAGE_INT"
     ensure_route "POST /dispatch-render" "$DISPATCH_INT"
 
     # Get API URL and write config.json
@@ -452,8 +474,9 @@ setup_api_gateway() {
   "dispatch": "%s/dispatch-render",
   "param-debug": "%s/param-debug",
   "tiff-compat": "%s/tiff-compat",
-  "png-export": "%s/png-export"
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
+  "png-export": "%s/png-export",
+  "deepzoom-export": "%s/deepzoom-export"
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" --region "$REGION"
     echo "  config.json uploaded"
@@ -595,6 +618,9 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$PNG_EXPORT_NAME" "handler_png_export.handler" "/tmp/polypaint-png-export.zip" \
         "$PNG_EXPORT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
+    create_lambda "$DZ_EXPORT_NAME" "handler_deepzoom_export.handler" "/tmp/polypaint-deepzoom-export.zip" \
+        "$DZ_EXPORT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
     # Disable async retries on fire-and-forget Lambdas (prevents retry storms)
     for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME"; do
         aws lambda put-function-event-invoke-config \
@@ -671,6 +697,9 @@ elif [ "$ACTION" = "update" ]; then
 
     update_lambda "$PNG_EXPORT_NAME" "handler_png_export.handler" "/tmp/polypaint-png-export.zip" \
         "$PNG_EXPORT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    update_lambda "$DZ_EXPORT_NAME" "handler_deepzoom_export.handler" "/tmp/polypaint-deepzoom-export.zip" \
+        "$DZ_EXPORT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     # Disable async retries on fire-and-forget Lambdas (prevents retry storms)
     for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME"; do

@@ -41,6 +41,8 @@ def handler(event, context):
         return handle_detail(event)
     elif path.endswith("/presign"):
         return handle_presign(event)
+    elif path.endswith("/list-prefix"):
+        return handle_list_prefix(event)
     return {
         "statusCode": 400,
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
@@ -169,6 +171,30 @@ def handle_delete(event):
     if errors:
         result["errors"] = errors
     return ok_response(result)
+
+
+def handle_list_prefix(event):
+    """List S3 keys under a prefix, optionally filtered by suffix.
+    Input: {prefix, suffix (optional), max_keys (optional, default 1000)}
+    Returns: {keys: [...]}
+    """
+    params = parse_body(event)
+    prefix = params["prefix"]
+    suffix = params.get("suffix", "")
+    max_keys = params.get("max_keys", 1000)
+
+    keys = []
+    paginator = s3.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+        for obj in page.get('Contents', []):
+            if not suffix or obj['Key'].endswith(suffix):
+                keys.append(obj['Key'])
+                if len(keys) >= max_keys:
+                    break
+        if len(keys) >= max_keys:
+            break
+
+    return ok_response({"keys": keys, "count": len(keys)})
 
 
 def handle_check_keys(event):

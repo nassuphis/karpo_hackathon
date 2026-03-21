@@ -238,21 +238,19 @@ def test_stitch_3x2():
     # Verify each tile's pixel lands in the correct global position
     # Grid layout: 3 cols x 2 rows, each tile 4x4
     # Tile t at (row, col) → global offset (col*4, row*4)
+    expected_globals = set()
     for t, (px, py) in enumerate(tile_pixels):
         row = t // 3
         col = t % 3
-        gx = col * tw + px  # global x
-        gy = row * th + py  # global y
+        gx = col * tw + px
+        gy = row * th + py
         assert arr[gy, gx] > 0, f"tile {t} pixel ({px},{py}) should be white at global ({gx},{gy})"
-        # Check an adjacent pixel is black (not all white)
-        adj_x = (gx + 1) % ow
-        if (adj_x, gy) != (gx, gy):
-            # Only check if adjacent isn't another tile's set pixel
-            is_other = any(
-                (t2 // 3) * tw + tp[0] == adj_x and (t2 % 3 + 1 == col + 1 or True) and (t2 // 3) * th + tp[1] == gy
-                for t2, tp in enumerate(tile_pixels) if t2 != t
-            )
-            # Skip adjacency check if too complex — the positive check is sufficient
+        expected_globals.add((gx, gy))
+
+    # Verify ONLY the expected pixels are set (no extra content)
+    total_white = int(np.sum(arr > 0))
+    assert total_white == len(expected_globals), \
+        f"expected {len(expected_globals)} white pixels, got {total_white} — extra content present"
 
     for t in range(6):
         os.remove(f"/tmp/test_tile32_{t}.tif")
@@ -322,6 +320,59 @@ def test_stitch_edge_tiles():
     print("  PASS")
 
 
+def test_stitch_nonsquare_remainder():
+    """Test stitch with different width/height remainders: 40x24, tileSize=16."""
+    print("test_stitch_nonsquare_remainder: 40x24, tileSize=16, 3x2 grid...")
+    tileSz = 16
+    fullW, fullH = 40, 24
+    nCols = 3  # widths: 16, 16, 8
+    nRows = 2  # heights: 16, 8
+
+    markers = [(2,2), (3,3), (1,1), (0,0), (4,4), (2,0)]
+    for t in range(6):
+        tc, tr = t % nCols, t // nCols
+        tw = 8 if tc == 2 else 16
+        th = 8 if tr == 1 else 16
+        mx = min(markers[t][0], tw - 1)
+        my = min(markers[t][1], th - 1)
+        create_tile_tiff(f"/tmp/test_nsq_{t}.tif", tw, th,
+                         lambda x, y, px=mx, py=my: x == px and y == py)
+
+    paths = [f"/tmp/test_nsq_{t}.tif" for t in range(6)]
+    out_path = "/tmp/test_nsq_stitch.tif"
+    cmd = [BILEVEL_MERGE, "stitch", f"--n_cols={nCols}", f"--n_rows={nRows}",
+           f"--width={fullW}", f"--height={fullH}", f"--tile_size={tileSz}",
+           f"--output={out_path}"] + paths
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, f"stitch failed: {r.stderr}"
+
+    ow, oh, arr = read_tiff_pixels(out_path)
+    assert ow == fullW and oh == fullH, f"dimensions wrong: {ow}x{oh} vs {fullW}x{fullH}"
+
+    # Verify markers and total count
+    expected = set()
+    for t in range(6):
+        tc, tr = t % nCols, t // nCols
+        tw = 8 if tc == 2 else 16
+        th = 8 if tr == 1 else 16
+        mx = min(markers[t][0], tw - 1)
+        my = min(markers[t][1], th - 1)
+        gx = tc * tileSz + mx
+        gy = tr * tileSz + my
+        assert arr[gy, gx] > 0, f"tile {t}: marker missing at ({gx},{gy})"
+        expected.add((gx, gy))
+
+    total_white = int(np.sum(arr > 0))
+    assert total_white == len(expected), \
+        f"expected {len(expected)} white pixels, got {total_white}"
+
+    for t in range(6):
+        os.remove(f"/tmp/test_nsq_{t}.tif")
+    os.remove(out_path)
+    print(f"  output exactly {fullW}x{fullH}, {len(expected)} markers correct, no extras")
+    print("  PASS")
+
+
 if __name__ == "__main__":
     test_merge_basic()
     test_merge_empty()
@@ -329,4 +380,5 @@ if __name__ == "__main__":
     test_stitch_3x2()
     test_stitch_missing_tile()
     test_stitch_edge_tiles()
+    test_stitch_nonsquare_remainder()
     print("\nAll bilevel_merge tests passed.")

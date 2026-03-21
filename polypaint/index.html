@@ -2157,6 +2157,28 @@ async function runTiffCompat(jobId, sourceKey, pix) {
     }
 }
 
+async function runPngExport(jobId, sourceKey, pix) {
+    const btn = document.getElementById('btn-png-export');
+    if (btn) { btn.disabled = true; btn.textContent = 'Converting...'; }
+    log(`PNG export: converting ${sourceKey}...`, '', 'render-log');
+    try {
+        const result = await lambdaPost('png-export', {
+            job_id: jobId,
+            source_key: sourceKey,
+        });
+        const url = result.url;
+        log(`  PNG export: ${result.convert_ms}ms, ${(result.file_size/1024).toFixed(0)} KB`, 'ok', 'render-log');
+        if (btn) {
+            btn.textContent = 'Download PNG';
+            btn.onclick = () => downloadPresignedFile(url, `${jobId}_${pix}px_bilevel.png`);
+            btn.disabled = false;
+        }
+    } catch (e) {
+        log(`  PNG export failed: ${e.message}`, 'err', 'render-log');
+        if (btn) { btn.textContent = 'PNG failed'; btn.disabled = false; }
+    }
+}
+
 async function runBilevelPipeline() {
     const btn = document.getElementById('btn-bilevel');
     const renderBtn = document.getElementById('btn-raster-all');
@@ -2391,7 +2413,9 @@ async function runBilevelPipeline() {
             `<button class="btn-primary" onclick="downloadPresignedFile('${imageUrl}', '${p.jobId}_${p.pix}px_bilevel.tif')" ` +
             `style="padding:8px 24px; font-size:14px">Download TIFF (${p.pix}x${p.pix})</button> ` +
             `<button class="btn-secondary" onclick="runTiffCompat('${p.jobId}','${imageKey}','${p.pix}')" ` +
-            `style="padding:8px 16px; font-size:12px; margin-left:8px" id="btn-tiff-compat">Preview-Compatible TIFF</button></div>`;
+            `style="padding:8px 16px; font-size:12px; margin-left:8px" id="btn-tiff-compat">Preview-Compatible TIFF</button> ` +
+            `<button class="btn-secondary" onclick="runPngExport('${p.jobId}','${imageKey}','${p.pix}')" ` +
+            `style="padding:8px 16px; font-size:12px; margin-left:4px" id="btn-png-export">PNG</button></div>`;
         document.getElementById('render-info').textContent =
             `Job: ${p.jobId} | ${p.pix}x${p.pix} | Degree: ${calcMeta.degree} | BiLevel 1-bit TIFF (CCITT G4)`;
         log(`Done: deg${calcMeta.degree} ${p.pix}px bilevel, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');

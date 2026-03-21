@@ -42,6 +42,8 @@ PREVIEW_MEMORY=1024   # pure Python, PNG encoding via zlib (512 OOMs on large lo
 BILEVEL_MEMORY=1769   # 1 vCPU, bilevel raster + merge
 TIFF_COMPAT_NAME="polypaint-tiff-compat"
 TIFF_COMPAT_MEMORY=4096  # needs RAM for scanline buffer on large images
+PNG_EXPORT_NAME="polypaint-png-export"
+PNG_EXPORT_MEMORY=4096  # libvips PNG encode
 PARAM_DEBUG_NAME="polypaint-param-debug"
 PARAM_DEBUG_MEMORY=1769  # 1 vCPU + libvips for TIFF output
 BILEVEL_STITCH_NAME="polypaint-bilevel-stitch"
@@ -118,6 +120,12 @@ docker run --rm --platform linux/arm64 \
             -L/opt/lib -lvips -ltiff -lgobject-2.0 -lglib-2.0 -lm \
             -Wl,-rpath,/opt/lib
         echo "  tiff_compat compiled: $(file /src/tiff_compat)"
+        gcc -O3 -o /src/png_export /src/png_export.c \
+            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
+            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
+            -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
+            -Wl,-rpath,/opt/lib
+        echo "  png_export compiled: $(file /src/png_export)"
     '
 
 # --- Package 6 Lambdas ---
@@ -245,6 +253,16 @@ chmod +x "$TIFF_COMPAT_DIR"/tiff_compat
 cd "$TIFF_COMPAT_DIR" && zip -r9 /tmp/polypaint-tiff-compat.zip . -q && cd "$SCRIPT_DIR"
 echo "  TiffCmp: $(du -h /tmp/polypaint-tiff-compat.zip | cut -f1)  (tiff_compat + libtiff layer)"
 
+# PNG Export: handler_png_export.py + shared.py + png_export (needs libvips layer)
+PNG_EXPORT_DIR=/tmp/polypaint-png-export
+rm -rf "$PNG_EXPORT_DIR"
+mkdir -p "$PNG_EXPORT_DIR"
+cp lambda/handler_png_export.py lambda/shared.py "$PNG_EXPORT_DIR/"
+cp lambda/png_export "$PNG_EXPORT_DIR/"
+chmod +x "$PNG_EXPORT_DIR"/png_export
+cd "$PNG_EXPORT_DIR" && zip -r9 /tmp/polypaint-png-export.zip . -q && cd "$SCRIPT_DIR"
+echo "  PngExp:  $(du -h /tmp/polypaint-png-export.zip | cut -f1)  (png_export + libvips layer)"
+
 ACTION="${1:-create}"
 
 # Helper: create a Lambda function
@@ -362,7 +380,7 @@ setup_api_gateway() {
     }
 
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME"; do
+    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -399,6 +417,9 @@ setup_api_gateway() {
     local TIFF_COMPAT_INT
     TIFF_COMPAT_INT=$(create_integration "$TIFF_COMPAT_NAME")
     ensure_route "POST /tiff-compat" "$TIFF_COMPAT_INT"
+    local PNG_EXPORT_INT
+    PNG_EXPORT_INT=$(create_integration "$PNG_EXPORT_NAME")
+    ensure_route "POST /png-export" "$PNG_EXPORT_INT"
 
     ensure_route "POST /encode-upload" "$ENCODE_INT"
     ensure_route "POST /viewport" "$VIEWPORT_INT"
@@ -430,8 +451,9 @@ setup_api_gateway() {
   "storage": "%s",
   "dispatch": "%s/dispatch-render",
   "param-debug": "%s/param-debug",
-  "tiff-compat": "%s/tiff-compat"
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
+  "tiff-compat": "%s/tiff-compat",
+  "png-export": "%s/png-export"
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" --region "$REGION"
     echo "  config.json uploaded"
@@ -570,6 +592,9 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$TIFF_COMPAT_NAME" "handler_tiff_compat.handler" "/tmp/polypaint-tiff-compat.zip" \
         "$TIFF_COMPAT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
+    create_lambda "$PNG_EXPORT_NAME" "handler_png_export.handler" "/tmp/polypaint-png-export.zip" \
+        "$PNG_EXPORT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
     # Disable async retries on fire-and-forget Lambdas (prevents retry storms)
     for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME"; do
         aws lambda put-function-event-invoke-config \
@@ -643,6 +668,9 @@ elif [ "$ACTION" = "update" ]; then
 
     update_lambda "$TIFF_COMPAT_NAME" "handler_tiff_compat.handler" "/tmp/polypaint-tiff-compat.zip" \
         "$TIFF_COMPAT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    update_lambda "$PNG_EXPORT_NAME" "handler_png_export.handler" "/tmp/polypaint-png-export.zip" \
+        "$PNG_EXPORT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     # Disable async retries on fire-and-forget Lambdas (prevents retry storms)
     for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME"; do

@@ -4,7 +4,7 @@ DeepZoom export Lambda — generates OpenSeadragon tile pyramid from TIFF.
 Downloads source TIFF, runs dz_export (libvips dzsave), uploads .dzi +
 tile files to S3 under deepzoom/{job_id}/{export_id}/.
 
-Tiles are uploaded with public-read ACL for direct browser access.
+Public access via bucket policy on deepzoom/ prefix (no per-object ACL).
 """
 import json
 import os
@@ -79,14 +79,13 @@ def handler(event, context):
                     ct = "image/png" if fname.endswith(".png") else "application/octet-stream"
                     upload_tasks.append((local, s3_key, ct))
 
-        # Parallel upload with public-read
+        # Parallel upload (public access via bucket policy on deepzoom/ prefix)
         def upload_one(task):
             local_path, s3_key, content_type = task
             with open(local_path, "rb") as fh:
                 s3.put_object(
                     Bucket=BUCKET, Key=s3_key, Body=fh.read(),
-                    ContentType=content_type, ACL="public-read"
-                )
+                    ContentType=content_type)
             return 1
 
         t2 = time.time()
@@ -114,8 +113,7 @@ def handler(event, context):
             Bucket=BUCKET,
             Key=f"{s3_prefix}/meta.json",
             Body=json.dumps(manifest),
-            ContentType="application/json",
-            ACL="public-read"
+            ContentType="application/json"
         )
 
         # Cleanup /tmp

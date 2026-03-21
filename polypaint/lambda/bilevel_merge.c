@@ -222,89 +222,101 @@ static int do_stitch(int argc, char **argv) {
     }
 
     long totalPixels = 0;
-
-    /* Load all tile pixel data (uchar 0/255) via libvips */
-    unsigned char **tilePixels = calloc(nTiles, sizeof(unsigned char *));
-    int *tileTw = malloc(nTiles * sizeof(int));
-    int *tileTh = malloc(nTiles * sizeof(int));
-    for (int t = 0; t < nTiles; t++) {
-        int tCol = t % nCols, tRow = t / nCols;
-        tileTw[t] = (tCol < nCols - 1 || fullW % tileSz == 0) ? tileSz : fullW - tCol * tileSz;
-        tileTh[t] = (tRow < nRows - 1 || fullH % tileSz == 0) ? tileSz : fullH - tRow * tileSz;
-
-        VipsImage *tileImg = vips_image_new_from_file(paths[t], NULL);
-        if (!tileImg) {
-            fprintf(stderr, "Cannot load tile %d (%s): %s\n", t, paths[t], vips_error_buffer());
-            free(tileBuf); TIFFClose(tif); return 1;
-        }
-        size_t sz;
-        tilePixels[t] = (unsigned char *)vips_image_write_to_memory(tileImg, &sz);
-        /* Use actual image dimensions if smaller */
-        if (tileImg->Xsize < tileTw[t]) tileTw[t] = tileImg->Xsize;
-        if (tileImg->Ysize < tileTh[t]) tileTh[t] = tileImg->Ysize;
-        g_object_unref(tileImg);
-    }
+    int writeError = 0;
 
     if (useTiled) {
-        /* Tiled BigTIFF: write each tile at its exact position */
-        for (int t = 0; t < nTiles; t++) {
+        /* Tiled BigTIFF: process one tile at a time (load → pack → write → free) */
+        for (int t = 0; t < nTiles && !writeError; t++) {
             int tCol = t % nCols, tRow = t / nCols;
-            memset(tileBuf, 0, tileBufSize);
+            int tw = tileSz, th = tileSz;
+            if (tCol == nCols - 1 && fullW % tileSz != 0) tw = fullW - tCol * tileSz;
+            if (tRow == nRows - 1 && fullH % tileSz != 0) th = fullH - tRow * tileSz;
 
-            int tw = tileTw[t], th = tileTh[t];
-            unsigned char *px = tilePixels[t];
-            if (px) {
-                for (int y = 0; y < th; y++)
-                    for (int x = 0; x < tw; x++)
-                        if (px[y * tw + x]) {
-                            tileBuf[y * tileRowBytes + x / 8] |= (1 << (7 - (x % 8)));
-                            totalPixels++;
-                        }
+            /* Load one tile TIFF */
+            VipsImage *tileImg = vips_image_new_from_file(paths[t], NULL);
+            if (!tileImg) {
+                fprintf(stderr, "Cannot load tile %d (%s): %s\n", t, paths[t], vips_error_buffer());
+                writeError = 1; break;
             }
+            size_t sz;
+            unsigned char *px = (unsigned char *)vips_image_write_to_memory(tileImg, &sz);
+            int imgW = tileImg->Xsize, imgH = tileImg->Ysize;
+            g_object_unref(tileImg);
+            if (!px) { writeError = 1; break; }
+
+            /* Pack into 1-bit tile buffer */
+            memset(tileBuf, 0, tileBufSize);
+            int copyW = imgW < tw ? imgW : tw;
+            int copyH = imgH < th ? imgH : th;
+            for (int y = 0; y < copyH; y++)
+                for (int x = 0; x < copyW; x++)
+                    if (px[y * imgW + x]) {
+                        tileBuf[y * tileRowBytes + x / 8] |= (1 << (7 - (x % 8)));
+                        totalPixels++;
+                    }
+            g_free(px);
+
+            /* Write tile */
             ttile_t ti = TIFFComputeTile(tif, tCol * tileSz, tRow * tileSz, 0, 0);
             if (TIFFWriteEncodedTile(tif, ti, tileBuf, tileBufSize) < 0) {
                 fprintf(stderr, "TIFFWriteEncodedTile failed for tile %d\n", t);
-                break;
+                writeError = 1;
             }
         }
     } else {
-        /* Strip-based: build full image scanline by scanline */
-        int fullRowBytes = (fullW + 7) / 8;
-        uint8_t *rowBuf = calloc(1, fullRowBytes);
-        for (int y = 0; y < fullH; y++) {
-            memset(rowBuf, 0, fullRowBytes);
-            /* Find which tile row this belongs to */
-            int tRow = y / tileSz;
-            int ly = y - tRow * tileSz;
-            for (int tCol = 0; tCol < nCols; tCol++) {
-                int t = tRow * nCols + tCol;
-                int tw = tileTw[t], th = tileTh[t];
-                if (ly >= th) continue;
-                unsigned char *px = tilePixels[t];
-                if (!px) continue;
-                int ox = tCol * tileSz;
-                for (int x = 0; x < tw; x++) {
-                    if (px[ly * tw + x]) {
-                        int gx = ox + x;
-                        rowBuf[gx / 8] |= (1 << (7 - (gx % 8)));
-                        totalPixels++;
-                    }
+        /* Strip-based fallback for small tiles (<16): load all tiles, write scanlines */
+        unsigned char **tilePixels = calloc(nTiles, sizeof(unsigned char *));
+        int *tileTw = malloc(nTiles * sizeof(int));
+        int *tileTh = malloc(nTiles * sizeof(int));
+        for (int t = 0; t < nTiles; t++) {
+            int tCol = t % nCols, tRow = t / nCols;
+            tileTw[t] = (tCol == nCols - 1 && fullW % tileSz != 0) ? fullW - tCol * tileSz : tileSz;
+            tileTh[t] = (tRow == nRows - 1 && fullH % tileSz != 0) ? fullH - tRow * tileSz : tileSz;
+            VipsImage *tileImg = vips_image_new_from_file(paths[t], NULL);
+            if (!tileImg) { writeError = 1; break; }
+            size_t sz;
+            tilePixels[t] = (unsigned char *)vips_image_write_to_memory(tileImg, &sz);
+            if (tileImg->Xsize < tileTw[t]) tileTw[t] = tileImg->Xsize;
+            if (tileImg->Ysize < tileTh[t]) tileTh[t] = tileImg->Ysize;
+            g_object_unref(tileImg);
+        }
+        if (!writeError) {
+            int fullRowBytes = (fullW + 7) / 8;
+            uint8_t *rowBuf = calloc(1, fullRowBytes);
+            for (int y = 0; y < fullH; y++) {
+                memset(rowBuf, 0, fullRowBytes);
+                int tRow = y / tileSz;
+                int ly = y - tRow * tileSz;
+                for (int tCol = 0; tCol < nCols; tCol++) {
+                    int t = tRow * nCols + tCol;
+                    if (ly >= tileTh[t] || !tilePixels[t]) continue;
+                    int ox = tCol * tileSz;
+                    for (int x = 0; x < tileTw[t]; x++)
+                        if (tilePixels[t][ly * tileTw[t] + x]) {
+                            int gx = ox + x;
+                            rowBuf[gx / 8] |= (1 << (7 - (gx % 8)));
+                            totalPixels++;
+                        }
+                }
+                if (TIFFWriteScanline(tif, rowBuf, y, 0) < 0) {
+                    fprintf(stderr, "TIFFWriteScanline failed at row %d\n", y);
+                    writeError = 1; break;
                 }
             }
-            TIFFWriteScanline(tif, rowBuf, y, 0);
+            free(rowBuf);
         }
-        free(rowBuf);
+        for (int t = 0; t < nTiles; t++)
+            if (tilePixels[t]) g_free(tilePixels[t]);
+        free(tilePixels); free(tileTw); free(tileTh);
     }
-
-    /* Cleanup tile pixels */
-    for (int t = 0; t < nTiles; t++)
-        if (tilePixels[t]) g_free(tilePixels[t]);
-    free(tilePixels);
-    free(tileTw);
-    free(tileTh);
 
     free(tileBuf);
     TIFFClose(tif);
+
+    if (writeError) {
+        fprintf(stderr, "Stitch failed with write errors\n");
+        return 1;
+    }
 
     /* Generate preview PNG from the finished TIFF using libvips */
     long previewFsize = 0;

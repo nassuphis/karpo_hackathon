@@ -43,6 +43,8 @@ def handler(event, context):
         return handle_presign(event)
     elif path.endswith("/list-prefix"):
         return handle_list_prefix(event)
+    elif path.endswith("/head-keys"):
+        return handle_head_keys(event)
     return {
         "statusCode": 400,
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
@@ -229,8 +231,11 @@ def handle_check_status(event):
     task_prefix = params["task_prefix"]
     expected = params["expected"]
 
+    return_ids = params.get("return_ids", False)
+
     ddb = _get_ddb()
     done = 0
+    found_ids = []  # all task_ids seen in DynamoDB (when return_ids=True)
     error_details = []
     stuck_tasks = []  # tasks in non-terminal status, with their actual status
     status_counts = {}  # track all statuses: started, tiles_read, tiles_merged, done, error
@@ -249,6 +254,8 @@ def handle_check_status(event):
         for item in resp["Items"]:
             status = item["task_status"]["S"]
             status_counts[status] = status_counts.get(status, 0) + 1
+            if return_ids:
+                found_ids.append(item["task_id"]["S"])
             if status == "done":
                 done += 1
                 rd = item.get("result_data", {}).get("S")
@@ -284,6 +291,8 @@ def handle_check_status(event):
     }
     if results:
         resp_body["results"] = results
+    if return_ids:
+        resp_body["found_ids"] = found_ids
     return ok_response(resp_body)
 
 
@@ -459,3 +468,25 @@ def handle_detail(event):
         pass
 
     return ok_response(result)
+
+
+def handle_head_keys(event):
+    """Check which S3 keys exist via HEAD (batch).
+    Input: {keys: ["renders/job/image_bilevel.tif", ...]}
+    Returns: {exists: ["renders/job/image_bilevel.tif", ...]}
+    Only returns keys that exist — caller can diff against input to find missing.
+    """
+    import concurrent.futures
+    params = parse_body(event)
+    keys = params["keys"]
+
+    if not keys:
+        return ok_response({"exists": []})
+
+    def check(key):
+        return key if _key_exists(key) else None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(keys), 20)) as pool:
+        results = list(pool.map(check, keys))
+
+    return ok_response({"exists": [k for k in results if k]})

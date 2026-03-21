@@ -454,6 +454,7 @@ setup_api_gateway() {
     ensure_route "POST /presign" "$STORAGE_INT"
     ensure_route "POST /detail" "$STORAGE_INT"
     ensure_route "POST /list-prefix" "$STORAGE_INT"
+    ensure_route "POST /head-keys" "$STORAGE_INT"
     ensure_route "POST /dispatch-render" "$DISPATCH_INT"
 
     # Get API URL and write config.json
@@ -621,14 +622,20 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$DZ_EXPORT_NAME" "handler_deepzoom_export.handler" "/tmp/polypaint-deepzoom-export.zip" \
         "$DZ_EXPORT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
-    # Disable async retries on fire-and-forget Lambdas (prevents retry storms)
-    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME"; do
+    # Async invoke config: no retries for most Lambdas (prevents retry storms),
+    # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
+    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \
             --maximum-event-age-in-seconds 300 \
             --region "$REGION" >/dev/null 2>&1
     done
+    aws lambda put-function-event-invoke-config \
+        --function-name "$BILEVEL_NAME" \
+        --maximum-retry-attempts 2 \
+        --maximum-event-age-in-seconds 3600 \
+        --region "$REGION" >/dev/null 2>&1
 
     # --- Set up API Gateway routes ---
     echo ""
@@ -701,14 +708,20 @@ elif [ "$ACTION" = "update" ]; then
     update_lambda "$DZ_EXPORT_NAME" "handler_deepzoom_export.handler" "/tmp/polypaint-deepzoom-export.zip" \
         "$DZ_EXPORT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
-    # Disable async retries on fire-and-forget Lambdas (prevents retry storms)
-    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME"; do
+    # Async invoke config: no retries for most Lambdas (prevents retry storms),
+    # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
+    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \
             --maximum-event-age-in-seconds 300 \
             --region "$REGION" >/dev/null 2>&1
     done
+    aws lambda put-function-event-invoke-config \
+        --function-name "$BILEVEL_NAME" \
+        --maximum-retry-attempts 2 \
+        --maximum-event-age-in-seconds 3600 \
+        --region "$REGION" >/dev/null 2>&1
 
     # Add Lambda invoke + DynamoDB permissions if missing
     ACCT=$(aws sts get-caller-identity --query 'Account' --output text)

@@ -2132,20 +2132,26 @@ async function runRasterPipeline() {
 async function refreshRenderArtifacts(jobIdOverride) {
     const jobId = jobIdOverride || document.getElementById('render-results-dir').value.trim();
     if (!jobId) return;
-    document.getElementById('render-status').textContent = 'Discovering artifacts...';
-    document.getElementById('render-status').className = 'status';
+    const statusEl = document.getElementById('render-status');
+    const prevStatus = statusEl.textContent;
+    const prevClass = statusEl.className;
+    statusEl.textContent = 'Discovering artifacts...';
+    statusEl.className = 'status';
     try {
         const artifacts = await discoverArtifacts(jobId);
         renderArtifactPanel(jobId, artifacts);
-        document.getElementById('render-status').textContent = '';
+        // Restore prior status text (e.g. timing summary) instead of blanking
+        statusEl.textContent = prevStatus;
+        statusEl.className = prevClass;
     } catch (e) {
-        document.getElementById('render-status').textContent = 'Refresh failed: ' + e.message;
-        document.getElementById('render-status').className = 'status error';
+        statusEl.textContent = 'Refresh failed: ' + e.message;
+        statusEl.className = 'status error';
     }
 }
 
 async function discoverArtifacts(jobId) {
-    // List all objects under renders/{jobId}/ and check for known artifact keys
+    // Check exact artifact keys via HEAD (not list-prefix, which gets swamped
+    // by stripe_*.bin / coeffs_*.bin on large jobs and misses the output files).
     const keysToCheck = [
         `renders/${jobId}/image_bilevel.tif`,
         `renders/${jobId}/image_bilevel_preview.png`,
@@ -2156,16 +2162,12 @@ async function discoverArtifacts(jobId) {
         `renders/${jobId}/image.jpeg`,
         `renders/${jobId}/image.png`,
     ];
-    // Check which keys exist via parallel presign attempts
     const results = {};
-    // List all objects under renders/{jobId}/ to find which artifacts exist
-    const listResp = await lambdaPost('storage',
-        { prefix: `renders/${jobId}/`, max_keys: 500 }, '/list-prefix');
-    const existingKeys = new Set(listResp.keys || []);
+    const headResp = await lambdaPost('storage', { keys: keysToCheck }, '/head-keys');
+    const existingKeys = new Set(headResp.exists || []);
 
     // Presign only keys that actually exist
-    const existing = keysToCheck.filter(k => existingKeys.has(k));
-    const checks = existing.map(async (key) => {
+    const checks = [...existingKeys].map(async (key) => {
         try {
             const r = await lambdaPost('storage', { key }, '/presign');
             if (r.url) results[key] = r.url;
@@ -2428,6 +2430,125 @@ function viewDeepZoom(dziUrl) {
     });
 }
 
+/**
+ * Wave-based dispatch + poll with missing-task re-dispatch.
+ * Dispatches jobs in waves (MAX_INFLIGHT), polls DynamoDB for completion,
+ * and re-dispatches any tasks that were accepted (202) but never executed.
+ *
+ * @param {Object} opts
+ * @param {Array} opts.jobs - Array of job payloads
+ * @param {string} opts.jobId - DynamoDB partition key
+ * @param {string} opts.taskPrefix - DynamoDB task_id prefix (e.g. 'bilevel_raster_')
+ * @param {string} opts.target - dispatch target (e.g. 'bilevel')
+ * @param {string} opts.label - human label for logs
+ * @param {string} opts.logTarget - log element id
+ * @returns {Promise<number>} elapsed ms
+ */
+async function _bilevelDispatchAndPoll(opts) {
+    const { jobs, jobId, taskPrefix, target, label, logTarget } = opts;
+    const MAX_INFLIGHT = 200;
+    const BATCH_SIZE = 50;
+    const POLL_MS = 3000;
+    const GRACE_MS = 45000;      // stall grace before re-dispatch
+    const MAX_REDISPATCH = 2;
+    const POLL_TIMEOUT_MS = 600000;
+    const STALL_LOG_MS = 30000;
+    const statusEl = document.getElementById('render-status');
+    const expected = jobs.length;
+    const t0 = performance.now();
+    let redispatchCount = 0;
+
+    // Dispatch a list of jobs in batches of BATCH_SIZE
+    async function dispatchBatch(jobList, batchLabel) {
+        for (let i = 0; i < jobList.length; i += BATCH_SIZE) {
+            const batch = jobList.slice(i, i + BATCH_SIZE);
+            const r = await lambdaPost('dispatch', { target, jobs: batch, expected_keys: [] });
+            if ((r.fired || 0) !== batch.length || (r.errors && r.errors.length))
+                throw new Error(`${batchLabel} dispatch failed: fired ${r.fired || 0}/${batch.length}`);
+        }
+    }
+
+    // Wave dispatch: keep MAX_INFLIGHT in-flight at a time
+    let cursor = 0;
+    let lastPollDone = 0;
+    while (cursor < expected) {
+        const inFlight = cursor - lastPollDone;
+        const canSend = Math.min(MAX_INFLIGHT - inFlight, expected - cursor);
+        if (canSend > 0) {
+            const waveEnd = cursor + canSend;
+            statusEl.textContent = `${label}: dispatching ${cursor + 1}-${waveEnd}/${expected}...`;
+            await dispatchBatch(jobs.slice(cursor, waveEnd), label);
+            log(`  ${label} dispatch: ${waveEnd}/${expected} sent`, '', logTarget);
+            cursor = waveEnd;
+        }
+        // If more to send, poll until in-flight drops below threshold
+        if (cursor < expected) {
+            await new Promise(r => setTimeout(r, POLL_MS));
+            const check = await lambdaPost('storage', {
+                job_id: jobId, task_prefix: taskPrefix, expected
+            }, '/check-status');
+            lastPollDone = check.done + (check.errors || 0);
+            statusEl.textContent = `${label}: ${check.done}/${cursor} done, dispatching...`;
+        }
+    }
+    log(`  ${label}: all ${expected} dispatched`, '', logTarget);
+
+    // Poll to completion with missing-task re-dispatch
+    let lastDone = 0, lastProgressTime = performance.now(), lastStallLog = 0;
+    while (true) {
+        await new Promise(r => setTimeout(r, POLL_MS));
+        const stallTime = performance.now() - lastProgressTime;
+        const wantIds = stallTime > GRACE_MS && redispatchCount < MAX_REDISPATCH;
+        const check = await lambdaPost('storage', {
+            job_id: jobId, task_prefix: taskPrefix, expected,
+            ...(wantIds ? { return_ids: true } : {})
+        }, '/check-status');
+
+        if (check.errors > 0) {
+            const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+            throw new Error(`${check.errors} ${label} tasks failed:\n${msgs}`);
+        }
+        if (check.done !== lastDone) {
+            const delta = check.done - lastDone;
+            log(`  ${label}: ${check.done}/${expected} done (+${delta}, ${_fmtMs(performance.now() - t0)})`, '', logTarget);
+            lastDone = check.done;
+            lastProgressTime = performance.now();
+            lastStallLog = 0;
+            statusEl.textContent = `${label}: ${check.done}/${expected}...`;
+        }
+        if (check.complete) break;
+
+        // Re-dispatch missing tasks on stall
+        if (wantIds && check.found_ids) {
+            const foundSet = new Set(check.found_ids);
+            const missingIndices = [];
+            for (let i = 0; i < expected; i++) {
+                if (!foundSet.has(`${taskPrefix}${i}`)) missingIndices.push(i);
+            }
+            if (missingIndices.length > 0) {
+                redispatchCount++;
+                const missingJobs = missingIndices.map(i => jobs[i]);
+                const idPreview = missingIndices.length <= 20 ? missingIndices.join(',') : missingIndices.slice(0, 20).join(',') + '...';
+                log(`  ⚠ ${label}: ${missingIndices.length} missing [${idPreview}], re-dispatching (attempt ${redispatchCount}/${MAX_REDISPATCH})`, 'warn', logTarget);
+                await dispatchBatch(missingJobs, `${label} re-dispatch`);
+                lastProgressTime = performance.now();
+                lastStallLog = 0;
+                continue;
+            }
+        }
+
+        if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
+            lastStallLog = stallTime;
+            const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
+            log(`  ⚠ ${label} stall ${_fmtMs(stallTime)}: ${lastDone}/${expected}, statuses=${sc}`, 'warn', logTarget);
+        }
+        if (stallTime > POLL_TIMEOUT_MS) {
+            throw new Error(`${label} stalled: ${lastDone}/${expected} after ${_fmtMs(stallTime)}`);
+        }
+    }
+    return performance.now() - t0;
+}
+
 async function runBilevelPipeline() {
     const btn = document.getElementById('btn-bilevel');
     const renderBtn = document.getElementById('btn-raster-all');
@@ -2480,9 +2601,6 @@ async function runBilevelPipeline() {
         }
         const nStripes = calcMeta.n_stripes;
 
-        const BATCH_SIZE = 50;
-        const POLL_TIMEOUT_MS = 600000, STALL_LOG_MS = 30000;
-
         // Phase 1: Raster — one bilevel Lambda per stripe → per-tile .bits files
         const rasterJobs = [];
         for (let s = 0; s < nStripes; s++) {
@@ -2496,50 +2614,10 @@ async function runBilevelPipeline() {
             });
         }
 
-        document.getElementById('render-status').textContent = `BiLevel raster: dispatching ${nStripes} stripe Lambdas...`;
-        const tRaster = performance.now();
-        {
-            const nBatches = Math.ceil(rasterJobs.length / BATCH_SIZE);
-            for (let i = 0; i < rasterJobs.length; i += BATCH_SIZE) {
-                const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-                const batch = rasterJobs.slice(i, i + BATCH_SIZE);
-                const dispResult = await lambdaPost('dispatch', { target: 'bilevel', jobs: batch, expected_keys: [] });
-                if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length))
-                    throw new Error(`Raster dispatch failed batch ${batchNum}: fired ${dispResult.fired || 0}/${batch.length}`);
-                log(`  raster dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired`, '', 'render-log');
-            }
-        }
-
-        // Poll raster
-        {
-            let lastDone = 0, pollCount = 0, lastProgressTime = performance.now(), lastStallLog = 0;
-            while (true) {
-                await new Promise(r => setTimeout(r, 3000));
-                pollCount++;
-                const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'bilevel_raster_', expected: nStripes }, '/check-status');
-                if (check.errors > 0) {
-                    const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
-                    throw new Error(`${check.errors} raster tasks failed:\n${msgs}`);
-                }
-                if (check.done !== lastDone) {
-                    const delta = check.done - lastDone;
-                    log(`  raster poll #${pollCount}: ${check.done}/${nStripes} done (+${delta}, ${_fmtMs(performance.now() - tRaster)})`, '', 'render-log');
-                    lastDone = check.done;
-                    lastProgressTime = performance.now();
-                    lastStallLog = 0;
-                    document.getElementById('render-status').textContent = `BiLevel raster: ${check.done}/${nStripes} stripes...`;
-                }
-                if (check.complete) break;
-                const stallTime = performance.now() - lastProgressTime;
-                if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
-                    lastStallLog = stallTime;
-                    const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                    log(`  ⚠ raster stall ${_fmtMs(stallTime)}: ${lastDone}/${nStripes}, statuses=${sc}`, 'warn', 'render-log');
-                }
-                if (stallTime > POLL_TIMEOUT_MS) throw new Error(`Raster stalled: ${lastDone}/${nStripes} after ${_fmtMs(stallTime)}`);
-            }
-        }
-        const rasterMs = performance.now() - tRaster;
+        const rasterMs = await _bilevelDispatchAndPoll({
+            jobs: rasterJobs, jobId: p.jobId, taskPrefix: 'bilevel_raster_',
+            target: 'bilevel', label: 'BiLevel raster', logTarget: 'render-log',
+        });
         log(`  raster: ${_fmtMs(rasterMs)} wall (${nStripes} stripes)`, 'ok', 'render-log');
 
         // Phase 2: Merge — one bilevel Lambda per tile, ORs stripe bitsets → tile PNG
@@ -2555,50 +2633,10 @@ async function runBilevelPipeline() {
             });
         }
 
-        document.getElementById('render-status').textContent = `BiLevel merge: dispatching ${nTiles} tile Lambdas...`;
-        const tMerge = performance.now();
-        {
-            const nBatches = Math.ceil(mergeJobs.length / BATCH_SIZE);
-            for (let i = 0; i < mergeJobs.length; i += BATCH_SIZE) {
-                const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-                const batch = mergeJobs.slice(i, i + BATCH_SIZE);
-                const dispResult = await lambdaPost('dispatch', { target: 'bilevel', jobs: batch, expected_keys: [] });
-                if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length))
-                    throw new Error(`Merge dispatch failed batch ${batchNum}: fired ${dispResult.fired || 0}/${batch.length}`);
-                log(`  merge dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired`, '', 'render-log');
-            }
-        }
-
-        // Poll merge
-        {
-            let lastDone = 0, pollCount = 0, lastProgressTime = performance.now(), lastStallLog = 0;
-            while (true) {
-                await new Promise(r => setTimeout(r, 3000));
-                pollCount++;
-                const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'bilevel_merge_', expected: nTiles }, '/check-status');
-                if (check.errors > 0) {
-                    const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
-                    throw new Error(`${check.errors} merge tasks failed:\n${msgs}`);
-                }
-                if (check.done !== lastDone) {
-                    const delta = check.done - lastDone;
-                    log(`  merge poll #${pollCount}: ${check.done}/${nTiles} done (+${delta}, ${_fmtMs(performance.now() - tMerge)})`, '', 'render-log');
-                    lastDone = check.done;
-                    lastProgressTime = performance.now();
-                    lastStallLog = 0;
-                    document.getElementById('render-status').textContent = `BiLevel merge: ${check.done}/${nTiles} tiles...`;
-                }
-                if (check.complete) break;
-                const stallTime = performance.now() - lastProgressTime;
-                if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
-                    lastStallLog = stallTime;
-                    const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                    log(`  ⚠ merge stall ${_fmtMs(stallTime)}: ${lastDone}/${nTiles}, statuses=${sc}`, 'warn', 'render-log');
-                }
-                if (stallTime > POLL_TIMEOUT_MS) throw new Error(`Merge stalled: ${lastDone}/${nTiles} after ${_fmtMs(stallTime)}`);
-            }
-        }
-        const mergeMs = performance.now() - tMerge;
+        const mergeMs = await _bilevelDispatchAndPoll({
+            jobs: mergeJobs, jobId: p.jobId, taskPrefix: 'bilevel_merge_',
+            target: 'bilevel', label: 'BiLevel merge', logTarget: 'render-log',
+        });
         log(`  merge: ${_fmtMs(mergeMs)} wall (${nTiles} tiles)`, 'ok', 'render-log');
 
         // Phase 3: Stitch — separate bilevel-stitch Lambda (higher memory, more vCPUs for libvips)
@@ -2628,7 +2666,7 @@ async function runBilevelPipeline() {
                 }
                 if (check.complete) break;
                 const stallTime = performance.now() - lastProgressTime;
-                if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
+                if (stallTime > 30000 && stallTime - lastStallLog > 30000) {
                     lastStallLog = stallTime;
                     const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
                     log(`  ⚠ stitch stall ${_fmtMs(stallTime)}: statuses=${sc}`, 'warn', 'render-log');
@@ -2721,9 +2759,6 @@ async function runCoeffBilevelPipeline() {
         if (!nCoeffs) throw new Error('Job metadata missing n_coeffs — was this computed with the current pipeline?');
         const coeffsKeys = calcJson.coeffs_keys || [];
 
-        const BATCH_SIZE = 50;
-        const POLL_TIMEOUT_MS = 600000, STALL_LOG_MS = 30000;
-
         // Phase 1: Coeff raster — one Lambda per coeff stripe
         const rasterJobs = [];
         for (let s = 0; s < nStripes; s++) {
@@ -2737,50 +2772,10 @@ async function runCoeffBilevelPipeline() {
             });
         }
 
-        document.getElementById('render-status').textContent = `Coeffs raster: dispatching ${nStripes} stripe Lambdas...`;
-        const tRaster = performance.now();
-        {
-            const nBatches = Math.ceil(rasterJobs.length / BATCH_SIZE);
-            for (let i = 0; i < rasterJobs.length; i += BATCH_SIZE) {
-                const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-                const batch = rasterJobs.slice(i, i + BATCH_SIZE);
-                const dispResult = await lambdaPost('dispatch', { target: 'bilevel', jobs: batch, expected_keys: [] });
-                if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length))
-                    throw new Error(`Coeff raster dispatch failed batch ${batchNum}: fired ${dispResult.fired || 0}/${batch.length}`);
-                log(`  coeff raster dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired`, '', 'render-log');
-            }
-        }
-
-        // Poll coeff raster
-        {
-            let lastDone = 0, pollCount = 0, lastProgressTime = performance.now(), lastStallLog = 0;
-            while (true) {
-                await new Promise(r => setTimeout(r, 3000));
-                pollCount++;
-                const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'coeff_bilevel_raster_', expected: nStripes }, '/check-status');
-                if (check.errors > 0) {
-                    const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
-                    throw new Error(`${check.errors} coeff raster tasks failed:\n${msgs}`);
-                }
-                if (check.done !== lastDone) {
-                    const delta = check.done - lastDone;
-                    log(`  coeff raster poll #${pollCount}: ${check.done}/${nStripes} done (+${delta}, ${_fmtMs(performance.now() - tRaster)})`, '', 'render-log');
-                    lastDone = check.done;
-                    lastProgressTime = performance.now();
-                    lastStallLog = 0;
-                    document.getElementById('render-status').textContent = `Coeffs raster: ${check.done}/${nStripes} stripes...`;
-                }
-                if (check.complete) break;
-                const stallTime = performance.now() - lastProgressTime;
-                if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
-                    lastStallLog = stallTime;
-                    const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                    log(`  ⚠ coeff raster stall ${_fmtMs(stallTime)}: ${lastDone}/${nStripes}, statuses=${sc}`, 'warn', 'render-log');
-                }
-                if (stallTime > POLL_TIMEOUT_MS) throw new Error(`Coeff raster stalled: ${lastDone}/${nStripes} after ${_fmtMs(stallTime)}`);
-            }
-        }
-        const rasterMs = performance.now() - tRaster;
+        const rasterMs = await _bilevelDispatchAndPoll({
+            jobs: rasterJobs, jobId: p.jobId, taskPrefix: 'coeff_bilevel_raster_',
+            target: 'bilevel', label: 'Coeffs raster', logTarget: 'render-log',
+        });
         log(`  coeff raster: ${_fmtMs(rasterMs)} wall (${nStripes} stripes)`, 'ok', 'render-log');
 
         // Phase 2: Merge — reuse bilevel merge with coeff-specific naming
@@ -2798,50 +2793,10 @@ async function runCoeffBilevelPipeline() {
             });
         }
 
-        document.getElementById('render-status').textContent = `Coeffs merge: dispatching ${nTiles} tile Lambdas...`;
-        const tMerge = performance.now();
-        {
-            const nBatches = Math.ceil(mergeJobs.length / BATCH_SIZE);
-            for (let i = 0; i < mergeJobs.length; i += BATCH_SIZE) {
-                const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-                const batch = mergeJobs.slice(i, i + BATCH_SIZE);
-                const dispResult = await lambdaPost('dispatch', { target: 'bilevel', jobs: batch, expected_keys: [] });
-                if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length))
-                    throw new Error(`Coeff merge dispatch failed batch ${batchNum}: fired ${dispResult.fired || 0}/${batch.length}`);
-                log(`  coeff merge dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired`, '', 'render-log');
-            }
-        }
-
-        // Poll coeff merge
-        {
-            let lastDone = 0, pollCount = 0, lastProgressTime = performance.now(), lastStallLog = 0;
-            while (true) {
-                await new Promise(r => setTimeout(r, 3000));
-                pollCount++;
-                const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'coeff_bilevel_merge_', expected: nTiles }, '/check-status');
-                if (check.errors > 0) {
-                    const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
-                    throw new Error(`${check.errors} coeff merge tasks failed:\n${msgs}`);
-                }
-                if (check.done !== lastDone) {
-                    const delta = check.done - lastDone;
-                    log(`  coeff merge poll #${pollCount}: ${check.done}/${nTiles} done (+${delta}, ${_fmtMs(performance.now() - tMerge)})`, '', 'render-log');
-                    lastDone = check.done;
-                    lastProgressTime = performance.now();
-                    lastStallLog = 0;
-                    document.getElementById('render-status').textContent = `Coeffs merge: ${check.done}/${nTiles} tiles...`;
-                }
-                if (check.complete) break;
-                const stallTime = performance.now() - lastProgressTime;
-                if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
-                    lastStallLog = stallTime;
-                    const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                    log(`  ⚠ coeff merge stall ${_fmtMs(stallTime)}: ${lastDone}/${nTiles}, statuses=${sc}`, 'warn', 'render-log');
-                }
-                if (stallTime > POLL_TIMEOUT_MS) throw new Error(`Coeff merge stalled: ${lastDone}/${nTiles} after ${_fmtMs(stallTime)}`);
-            }
-        }
-        const mergeMs = performance.now() - tMerge;
+        const mergeMs = await _bilevelDispatchAndPoll({
+            jobs: mergeJobs, jobId: p.jobId, taskPrefix: 'coeff_bilevel_merge_',
+            target: 'bilevel', label: 'Coeffs merge', logTarget: 'render-log',
+        });
         log(`  coeff merge: ${_fmtMs(mergeMs)} wall (${nTiles} tiles)`, 'ok', 'render-log');
 
         // Phase 3: Stitch — reuse bilevel stitch with coeff-specific naming
@@ -2873,7 +2828,7 @@ async function runCoeffBilevelPipeline() {
                 }
                 if (check.complete) break;
                 const stallTime = performance.now() - lastProgressTime;
-                if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
+                if (stallTime > 30000 && stallTime - lastStallLog > 30000) {
                     lastStallLog = stallTime;
                     const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
                     log(`  ⚠ coeff stitch stall ${_fmtMs(stallTime)}: statuses=${sc}`, 'warn', 'render-log');

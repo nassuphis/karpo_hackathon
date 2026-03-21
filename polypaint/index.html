@@ -2315,6 +2315,7 @@ async function runBilevelPipeline() {
         const stitchJob = {
             job_id: p.jobId,
             n_tile_cols: nTileCols, n_tile_rows: nTileRows,
+            width: p.pix, height: p.pix, tile_size: tileSize,
             out_key: imageKey,
         };
         const stitchDisp = await lambdaPost('dispatch', { target: 'bilevel_stitch', jobs: [stitchJob], expected_keys: [] });
@@ -2571,6 +2572,7 @@ async function runCoeffBilevelPipeline() {
         const stitchJob = {
             job_id: p.jobId,
             n_tile_cols: nTileCols, n_tile_rows: nTileRows,
+            width: p.pix, height: p.pix, tile_size: tileSize,
             out_key: imageKey,
             tile_prefix: 'coeff',
             task_id: 'coeff_bilevel_stitch',

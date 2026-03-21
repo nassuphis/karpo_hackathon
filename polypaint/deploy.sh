@@ -97,7 +97,7 @@ docker run --rm --platform linux/arm64 \
     public.ecr.aws/amazonlinux/amazonlinux:2023 \
     bash -c '
         set -euo pipefail
-        dnf install -y gcc glib2-devel 2>&1 | tail -1
+        dnf install -y gcc glib2-devel libtiff-devel 2>&1 | tail -1
         gcc -O3 -o /src/raw2jpeg /src/raw2jpeg.c \
             -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
             -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
@@ -107,7 +107,7 @@ docker run --rm --platform linux/arm64 \
         gcc -O3 -o /src/bilevel_merge /src/bilevel_merge.c \
             -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
             -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
-            -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
+            -L/opt/lib -lvips -ltiff -lgobject-2.0 -lglib-2.0 -lm \
             -Wl,-rpath,/opt/lib
         echo "  bilevel_merge compiled: $(file /src/bilevel_merge)"
     '

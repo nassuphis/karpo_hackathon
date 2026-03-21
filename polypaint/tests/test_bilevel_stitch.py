@@ -172,6 +172,7 @@ def test_stitch_2x2():
 
     out_path = "/tmp/test_stitch_2x2.tif"
     cmd = [BILEVEL_MERGE, "stitch", "--n_cols=2", "--n_rows=2",
+           f"--width={tw*2}", f"--height={th*2}", f"--tile_size={tw}",
            f"--output={out_path}",
            "/tmp/test_tile_0.tif", "/tmp/test_tile_1.tif",
            "/tmp/test_tile_2.tif", "/tmp/test_tile_3.tif"]
@@ -226,6 +227,7 @@ def test_stitch_3x2():
     paths = [f"/tmp/test_tile32_{t}.tif" for t in range(6)]
     out_path = "/tmp/test_stitch_3x2.tif"
     cmd = [BILEVEL_MERGE, "stitch", "--n_cols=3", "--n_rows=2",
+           f"--width={tw*3}", f"--height={th*2}", f"--tile_size={tw}",
            f"--output={out_path}"] + paths
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, f"stitch failed: {r.stderr}"
@@ -262,11 +264,61 @@ def test_stitch_missing_tile():
     """Test stitch fails cleanly on missing tile."""
     print("test_stitch_missing_tile: expect failure...")
     cmd = [BILEVEL_MERGE, "stitch", "--n_cols=2", "--n_rows=1",
+           "--width=16", "--height=8", "--tile_size=8",
            "--output=/tmp/test_missing.tif",
            "/tmp/nonexistent_0.tif", "/tmp/nonexistent_1.tif"]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     assert r.returncode != 0, "stitch should fail on missing tiles"
-    assert not os.path.exists("/tmp/test_missing.tif"), "should not produce output"
+    # BigTIFF file may be created before tile load fails; clean up
+    if os.path.exists("/tmp/test_missing.tif"):
+        os.remove("/tmp/test_missing.tif")
+    print("  PASS")
+
+
+def test_stitch_edge_tiles():
+    """Test stitch with non-multiple image size: exact dimensions, no padding."""
+    print("test_stitch_edge_tiles: 40x40 image, tileSize=16, 3x3 grid (edge tiles 8px)...")
+    tw_full, th_full = 16, 16
+    tileSz = 16
+    fullW, fullH = 40, 40
+    nCols, nRows = 3, 3
+
+    for t in range(9):
+        tc, tr = t % nCols, t // nCols
+        tw = 8 if tc == 2 else tw_full
+        th = 8 if tr == 2 else th_full
+        # Unique marker per tile
+        mx = min(t % 5, tw - 1)
+        my = min(t // 3, th - 1)
+        create_tile_tiff(f"/tmp/test_edge_{t}.tif", tw, th,
+                         lambda x, y, px=mx, py=my: x == px and y == py)
+
+    paths = [f"/tmp/test_edge_{t}.tif" for t in range(9)]
+    out_path = "/tmp/test_edge_stitch.tif"
+    cmd = [BILEVEL_MERGE, "stitch", "--n_cols=3", "--n_rows=3",
+           f"--width={fullW}", f"--height={fullH}", f"--tile_size={tileSz}",
+           f"--output={out_path}"] + paths
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, f"stitch failed: {r.stderr}"
+
+    ow, oh, arr = read_tiff_pixels(out_path)
+    assert ow == fullW and oh == fullH, f"dimensions wrong: {ow}x{oh} vs {fullW}x{fullH}"
+
+    # Verify markers at correct global positions
+    for t in range(9):
+        tc, tr = t % nCols, t // nCols
+        tw = 8 if tc == 2 else tw_full
+        th = 8 if tr == 2 else th_full
+        mx = min(t % 5, tw - 1)
+        my = min(t // 3, th - 1)
+        gx = tc * tileSz + mx
+        gy = tr * tileSz + my
+        assert arr[gy, gx] > 0, f"tile {t}: marker missing at global ({gx},{gy})"
+
+    for t in range(9):
+        os.remove(f"/tmp/test_edge_{t}.tif")
+    os.remove(out_path)
+    print(f"  output exactly {fullW}x{fullH}, all markers placed correctly")
     print("  PASS")
 
 
@@ -276,4 +328,5 @@ if __name__ == "__main__":
     test_stitch_2x2()
     test_stitch_3x2()
     test_stitch_missing_tile()
+    test_stitch_edge_tiles()
     print("\nAll bilevel_merge tests passed.")

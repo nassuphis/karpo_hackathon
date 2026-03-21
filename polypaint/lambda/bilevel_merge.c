@@ -153,18 +153,31 @@ static int do_merge(int argc, char **argv) {
     return 0;
 }
 
-/* ---- Stitch: join tile PNGs → final PNG ---- */
+/* ---- Stitch: exact-size tiled BigTIFF via libtiff ---- */
+
+#include <tiffio.h>
 
 static int do_stitch(int argc, char **argv) {
     int nCols = getArgInt(argc, argv, "--n_cols", 1);
     int nRows = getArgInt(argc, argv, "--n_rows", 1);
+    int fullW = getArgInt(argc, argv, "--width", 0);
+    int fullH = getArgInt(argc, argv, "--height", 0);
+    int tileSz = getArgInt(argc, argv, "--tile_size", 4096);
     const char *outPath = getArgStr(argc, argv, "--output", "/tmp/final.tif");
     const char *previewPath = getArgStr(argc, argv, "--preview", NULL);
     int previewSize = getArgInt(argc, argv, "--preview_size", 1024);
 
+    /* Fallback: if width/height not given, assume nCols*tileSz */
+    if (fullW <= 0) fullW = nCols * tileSz;
+    if (fullH <= 0) fullH = nRows * tileSz;
+
+    /* TIFF requires tile dimensions to be multiples of 16.
+     * For small test tiles, use strip-based output instead. */
+    int useTiled = (tileSz >= 16 && (tileSz % 16) == 0);
+
     int nTiles = nCols * nRows;
 
-    /* Collect tile PNG paths */
+    /* Collect tile TIFF paths */
     const char *paths[4096];
     int nPaths = 0;
     for (int i = 2; i < argc && nPaths < nTiles; i++) {
@@ -176,63 +189,150 @@ static int do_stitch(int argc, char **argv) {
         return 1;
     }
 
-    /* Load all tile images — fail hard on missing tiles */
-    VipsImage **tiles = malloc(nTiles * sizeof(VipsImage *));
+    /* Create exact-size tiled BigTIFF with libtiff */
+    TIFF *tif = TIFFOpen(outPath, "w8");
+    if (!tif) {
+        fprintf(stderr, "Cannot create BigTIFF %s\n", outPath);
+        return 1;
+    }
+
+    TIFFSetField(tif, TIFFTAG_IMAGEWIDTH, (uint32_t)fullW);
+    TIFFSetField(tif, TIFFTAG_IMAGELENGTH, (uint32_t)fullH);
+    TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, 1);
+    TIFFSetField(tif, TIFFTAG_SAMPLESPERPIXEL, 1);
+    TIFFSetField(tif, TIFFTAG_COMPRESSION, COMPRESSION_CCITTFAX4);
+    TIFFSetField(tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
+    TIFFSetField(tif, TIFFTAG_FILLORDER, FILLORDER_MSB2LSB);
+    TIFFSetField(tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+    if (useTiled) {
+        TIFFSetField(tif, TIFFTAG_TILEWIDTH, (uint32_t)tileSz);
+        TIFFSetField(tif, TIFFTAG_TILELENGTH, (uint32_t)tileSz);
+    } else {
+        TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, (uint32_t)fullH);
+    }
+
+    /* Packed 1-bit tile buffer (full tileSz × tileSz, zero-padded for edge tiles) */
+    int tileRowBytes = (tileSz + 7) / 8;
+    size_t tileBufSize = (size_t)tileSz * tileRowBytes;
+    uint8_t *tileBuf = calloc(1, tileBufSize);
+    if (!tileBuf) {
+        fprintf(stderr, "Cannot allocate tile buffer\n");
+        TIFFClose(tif);
+        return 1;
+    }
+
+    long totalPixels = 0;
+
+    /* Load all tile pixel data (uchar 0/255) via libvips */
+    unsigned char **tilePixels = calloc(nTiles, sizeof(unsigned char *));
+    int *tileTw = malloc(nTiles * sizeof(int));
+    int *tileTh = malloc(nTiles * sizeof(int));
     for (int t = 0; t < nTiles; t++) {
-        tiles[t] = vips_image_new_from_file(paths[t], NULL);
-        if (!tiles[t]) {
+        int tCol = t % nCols, tRow = t / nCols;
+        tileTw[t] = (tCol < nCols - 1 || fullW % tileSz == 0) ? tileSz : fullW - tCol * tileSz;
+        tileTh[t] = (tRow < nRows - 1 || fullH % tileSz == 0) ? tileSz : fullH - tRow * tileSz;
+
+        VipsImage *tileImg = vips_image_new_from_file(paths[t], NULL);
+        if (!tileImg) {
             fprintf(stderr, "Cannot load tile %d (%s): %s\n", t, paths[t], vips_error_buffer());
-            for (int j = 0; j < t; j++) g_object_unref(tiles[j]);
-            free(tiles);
-            return 1;
+            free(tileBuf); TIFFClose(tif); return 1;
         }
+        size_t sz;
+        tilePixels[t] = (unsigned char *)vips_image_write_to_memory(tileImg, &sz);
+        /* Use actual image dimensions if smaller */
+        if (tileImg->Xsize < tileTw[t]) tileTw[t] = tileImg->Xsize;
+        if (tileImg->Ysize < tileTh[t]) tileTh[t] = tileImg->Ysize;
+        g_object_unref(tileImg);
     }
 
-    /* Join into grid: arrayjoin with across=nCols */
-    VipsImage *joined;
-    if (vips_arrayjoin(tiles, &joined, nTiles, "across", nCols, NULL)) {
-        fprintf(stderr, "vips_arrayjoin failed: %s\n", vips_error_buffer());
-        for (int t = 0; t < nTiles; t++) g_object_unref(tiles[t]);
-        free(tiles);
-        return 1;
+    if (useTiled) {
+        /* Tiled BigTIFF: write each tile at its exact position */
+        for (int t = 0; t < nTiles; t++) {
+            int tCol = t % nCols, tRow = t / nCols;
+            memset(tileBuf, 0, tileBufSize);
+
+            int tw = tileTw[t], th = tileTh[t];
+            unsigned char *px = tilePixels[t];
+            if (px) {
+                for (int y = 0; y < th; y++)
+                    for (int x = 0; x < tw; x++)
+                        if (px[y * tw + x]) {
+                            tileBuf[y * tileRowBytes + x / 8] |= (1 << (7 - (x % 8)));
+                            totalPixels++;
+                        }
+            }
+            ttile_t ti = TIFFComputeTile(tif, tCol * tileSz, tRow * tileSz, 0, 0);
+            if (TIFFWriteEncodedTile(tif, ti, tileBuf, tileBufSize) < 0) {
+                fprintf(stderr, "TIFFWriteEncodedTile failed for tile %d\n", t);
+                break;
+            }
+        }
+    } else {
+        /* Strip-based: build full image scanline by scanline */
+        int fullRowBytes = (fullW + 7) / 8;
+        uint8_t *rowBuf = calloc(1, fullRowBytes);
+        for (int y = 0; y < fullH; y++) {
+            memset(rowBuf, 0, fullRowBytes);
+            /* Find which tile row this belongs to */
+            int tRow = y / tileSz;
+            int ly = y - tRow * tileSz;
+            for (int tCol = 0; tCol < nCols; tCol++) {
+                int t = tRow * nCols + tCol;
+                int tw = tileTw[t], th = tileTh[t];
+                if (ly >= th) continue;
+                unsigned char *px = tilePixels[t];
+                if (!px) continue;
+                int ox = tCol * tileSz;
+                for (int x = 0; x < tw; x++) {
+                    if (px[ly * tw + x]) {
+                        int gx = ox + x;
+                        rowBuf[gx / 8] |= (1 << (7 - (gx % 8)));
+                        totalPixels++;
+                    }
+                }
+            }
+            TIFFWriteScanline(tif, rowBuf, y, 0);
+        }
+        free(rowBuf);
     }
 
-    /* Save as 1-bit TIFF with CCITT G4 compression (no zlib, no size limits) */
-    if (vips_tiffsave(joined, outPath,
-                      "compression", VIPS_FOREIGN_TIFF_COMPRESSION_CCITTFAX4,
-                      "bitdepth", 1, NULL)) {
-        fprintf(stderr, "vips_tiffsave failed: %s\n", vips_error_buffer());
-        g_object_unref(joined);
-        for (int t = 0; t < nTiles; t++) g_object_unref(tiles[t]);
-        free(tiles);
-        return 1;
-    }
+    /* Cleanup tile pixels */
+    for (int t = 0; t < nTiles; t++)
+        if (tilePixels[t]) g_free(tilePixels[t]);
+    free(tilePixels);
+    free(tileTw);
+    free(tileTh);
 
-    /* Write preview PNG if requested */
+    free(tileBuf);
+    TIFFClose(tif);
+
+    /* Generate preview PNG from the finished TIFF using libvips */
     long previewFsize = 0;
     if (previewPath) {
-        int maxDim = joined->Xsize > joined->Ysize ? joined->Xsize : joined->Ysize;
-        double scale = (double)previewSize / maxDim;
-        if (scale >= 1.0) scale = 1.0;
-        VipsImage *small;
-        if (vips_resize(joined, &small, scale, NULL) == 0) {
-            if (vips_pngsave(small, previewPath, "compression", 6, NULL) == 0) {
-                FILE *pf = fopen(previewPath, "rb");
-                if (pf) { fseek(pf, 0, SEEK_END); previewFsize = ftell(pf); fclose(pf); }
+        VipsImage *finalImg = vips_image_new_from_file(outPath, NULL);
+        if (finalImg) {
+            int maxDim = finalImg->Xsize > finalImg->Ysize ? finalImg->Xsize : finalImg->Ysize;
+            double scale = (double)previewSize / maxDim;
+            if (scale >= 1.0) scale = 1.0;
+            VipsImage *small;
+            if (vips_resize(finalImg, &small, scale, NULL) == 0) {
+                if (vips_pngsave(small, previewPath, "compression", 6, NULL) == 0) {
+                    FILE *pf = fopen(previewPath, "rb");
+                    if (pf) { fseek(pf, 0, SEEK_END); previewFsize = ftell(pf); fclose(pf); }
+                }
+                g_object_unref(small);
             }
-            g_object_unref(small);
+            g_object_unref(finalImg);
         }
     }
-
-    g_object_unref(joined);
-    for (int t = 0; t < nTiles; t++) g_object_unref(tiles[t]);
-    free(tiles);
 
     FILE *fout = fopen(outPath, "rb");
     long fsize = 0;
     if (fout) { fseek(fout, 0, SEEK_END); fsize = ftell(fout); fclose(fout); }
 
-    printf("{\"mode\":\"stitch\",\"tiles\":%d,\"file_size\":%ld,\"preview_size\":%ld}\n", nTiles, fsize, previewFsize);
+    printf("{\"mode\":\"stitch\",\"tiles\":%d,\"width\":%d,\"height\":%d,"
+           "\"pixels_set\":%ld,\"file_size\":%ld,\"preview_size\":%ld}\n",
+           nTiles, fullW, fullH, totalPixels, fsize, previewFsize);
     return 0;
 }
 

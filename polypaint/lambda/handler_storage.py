@@ -45,6 +45,8 @@ def handler(event, context):
         return handle_list_prefix(event)
     elif path.endswith("/head-keys"):
         return handle_head_keys(event)
+    elif path.endswith("/delete-task"):
+        return handle_delete_task(event)
     return {
         "statusCode": 400,
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
@@ -177,26 +179,43 @@ def handle_delete(event):
 
 def handle_list_prefix(event):
     """List S3 keys under a prefix, optionally filtered by suffix.
-    Input: {prefix, suffix (optional), max_keys (optional, default 1000)}
-    Returns: {keys: [...]}
+    Input: {prefix, suffix (optional), delimiter (optional), max_keys (optional, default 1000)}
+    When delimiter is set, returns {prefixes: [...]} (CommonPrefixes) instead of keys.
+    Returns: {keys: [...]} or {prefixes: [...]}
     """
     params = parse_body(event)
     prefix = params["prefix"]
     suffix = params.get("suffix", "")
+    delimiter = params.get("delimiter", "")
     max_keys = params.get("max_keys", 1000)
 
-    keys = []
     paginator = s3.get_paginator('list_objects_v2')
-    for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
-        for obj in page.get('Contents', []):
-            if not suffix or obj['Key'].endswith(suffix):
-                keys.append(obj['Key'])
-                if len(keys) >= max_keys:
-                    break
-        if len(keys) >= max_keys:
-            break
+    paginate_kwargs = {"Bucket": BUCKET, "Prefix": prefix}
+    if delimiter:
+        paginate_kwargs["Delimiter"] = delimiter
 
-    return ok_response({"keys": keys, "count": len(keys)})
+    if delimiter:
+        # Return CommonPrefixes (folder-level listing)
+        prefixes = []
+        for page in paginator.paginate(**paginate_kwargs):
+            for cp in page.get('CommonPrefixes', []):
+                prefixes.append(cp['Prefix'])
+                if len(prefixes) >= max_keys:
+                    break
+            if len(prefixes) >= max_keys:
+                break
+        return ok_response({"prefixes": prefixes, "count": len(prefixes)})
+    else:
+        keys = []
+        for page in paginator.paginate(**paginate_kwargs):
+            for obj in page.get('Contents', []):
+                if not suffix or obj['Key'].endswith(suffix):
+                    keys.append(obj['Key'])
+                    if len(keys) >= max_keys:
+                        break
+            if len(keys) >= max_keys:
+                break
+        return ok_response({"keys": keys, "count": len(keys)})
 
 
 def handle_check_keys(event):
@@ -490,3 +509,19 @@ def handle_head_keys(event):
         results = list(pool.map(check, keys))
 
     return ok_response({"exists": [k for k in results if k]})
+
+
+def handle_delete_task(event):
+    """Delete a single DynamoDB task status row.
+    Input: {job_id, task_id}
+    Used to clear stale status before re-dispatching a task with a fixed task_id.
+    """
+    params = parse_body(event)
+    job_id = params["job_id"]
+    task_id = params["task_id"]
+    ddb = _get_ddb()
+    ddb.delete_item(
+        TableName=JOBS_TABLE,
+        Key={"job_id": {"S": job_id}, "task_id": {"S": task_id}},
+    )
+    return ok_response({"deleted": f"{job_id}/{task_id}"})

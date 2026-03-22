@@ -2341,11 +2341,41 @@ async function runDeepZoomExport(jobId, sourceKey) {
     if (btn) { btn.disabled = true; btn.textContent = 'Creating...'; }
     log(`DeepZoom: exporting ${sourceKey}...`, '', 'render-log');
     try {
-        const result = await lambdaPost('deepzoom-export', {
-            job_id: jobId,
-            source_key: sourceKey,
+        // Clear any stale deepzoom_export status row before dispatching,
+        // so we don't falsely complete against a previous run's "done".
+        // (task_id is fixed: "deepzoom_export" — shared across reruns of same job)
+        await lambdaPost('storage', { job_id: jobId, task_id: 'deepzoom_export' }, '/delete-task').catch(() => {});
+
+        // Dispatch async — API Gateway has a 30s hard limit, DeepZoom takes 30-120s
+        const dispResult = await lambdaPost('dispatch', {
+            target: 'deepzoom_export',
+            jobs: [{ job_id: jobId, source_key: sourceKey }],
+            expected_keys: [],
         });
-        log(`  DeepZoom: gen ${result.gen_ms}ms, upload ${result.upload_ms}ms, ${result.tiles_uploaded} tiles`, 'ok', 'render-log');
+        if ((dispResult.fired || 0) !== 1)
+            throw new Error(`DeepZoom dispatch failed: fired ${dispResult.fired || 0}/1`);
+        if (dispResult.non_202 && dispResult.non_202.length > 0)
+            throw new Error(`DeepZoom invoke rejected: status ${dispResult.non_202[0].status}`);
+
+        // Poll DynamoDB for completion (task_id = "deepzoom_export")
+        const t0 = performance.now();
+        const TIMEOUT_MS = 600000; // 10 min max
+        while (true) {
+            await new Promise(r => setTimeout(r, 3000));
+            const check = await lambdaPost('storage', {
+                job_id: jobId, task_prefix: 'deepzoom_export', expected: 1,
+            }, '/check-status');
+            if (check.errors > 0) {
+                const msg = check.error_details?.[0]?.error_msg || 'unknown';
+                throw new Error(`DeepZoom export failed: ${msg}`);
+            }
+            if (check.complete) break;
+            const elapsed = performance.now() - t0;
+            if (elapsed > TIMEOUT_MS)
+                throw new Error(`DeepZoom timed out after ${_fmtMs(elapsed)}`);
+            if (btn) btn.textContent = `Creating... ${check.status_counts?.started ? '(running)' : `(${_fmtMs(elapsed)})`}`;
+        }
+        log(`  DeepZoom export complete (${_fmtMs(performance.now() - t0)})`, 'ok', 'render-log');
         await refreshRenderArtifacts(jobId);
     } catch (e) {
         log(`  DeepZoom failed: ${e.message}`, 'err', 'render-log');
@@ -2367,18 +2397,31 @@ async function loadDeepZoomInventory() {
     container.innerHTML = 'Loading...';
 
     try {
-        // Single call: list all meta.json files under deepzoom/
-        const listResp = await lambdaPost('storage',
-            { prefix: 'deepzoom/', suffix: 'meta.json', max_keys: 200 }, '/list-prefix');
-        const metaKeys = listResp.keys || [];
+        // Two-level listing: first get job-level prefixes (fast, uses Delimiter),
+        // then list each job's exports. Avoids scanning 42K+ tile objects.
+        const jobsResp = await lambdaPost('storage',
+            { prefix: 'deepzoom/', delimiter: '/' }, '/list-prefix');
+        const jobPrefixes = jobsResp.prefixes || [];
+        // For each job, list export-level prefixes, then check for meta.json
+        const metaKeys = [];
+        await Promise.all(jobPrefixes.map(async (jobPrefix) => {
+            const exportsResp = await lambdaPost('storage',
+                { prefix: jobPrefix, delimiter: '/' }, '/list-prefix');
+            for (const exportPrefix of (exportsResp.prefixes || [])) {
+                metaKeys.push(exportPrefix + 'meta.json');
+            }
+        }));
+        // Verify which meta.json actually exist (HEAD check)
+        const headResp = await lambdaPost('storage', { keys: metaKeys }, '/head-keys');
+        const validMetaKeys = headResp.exists || [];
 
-        if (metaKeys.length === 0) {
+        if (validMetaKeys.length === 0) {
             container.innerHTML = '<div style="color:#666">No DeepZoom exports yet. Generate one from the Render tab.</div>';
             return;
         }
 
         // Load all meta.json in parallel
-        const metaPromises = metaKeys.map(async (key) => {
+        const metaPromises = validMetaKeys.map(async (key) => {
             try {
                 const presign = await lambdaPost('storage', { key }, '/presign');
                 const resp = await fetch(presign.url);

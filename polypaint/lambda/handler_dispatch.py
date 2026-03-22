@@ -26,6 +26,7 @@ FUNCTIONS = {
     "sweep": os.environ.get("SWEEP_FUNCTION", "polypaint-sweep"),
     "bilevel": os.environ.get("BILEVEL_FUNCTION", "polypaint-bilevel"),
     "bilevel_stitch": os.environ.get("BILEVEL_STITCH_FUNCTION", "polypaint-bilevel-stitch"),
+    "deepzoom_export": os.environ.get("DZ_EXPORT_FUNCTION", "polypaint-deepzoom-export"),
 }
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_WORKERS = int(os.environ.get("DISPATCH_THREADS", "50"))

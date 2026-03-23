@@ -87,6 +87,7 @@ Recovered from the previous auto-stub set:
 - `g41`
 - `g42`
 - `g46`
+- `g57`
 - `g59`
 - `g69`
 
@@ -96,7 +97,6 @@ Current remaining auto-stubbed `g1`-`g100` functions:
 - `g32`
 - `g47`
 - `g52`
-- `g57`
 - `g58`
 - `g62`
 - `g67`
@@ -113,56 +113,58 @@ Yes. Some of the current auto-stubbed functions are realistic next targets.
 
 These look like the best payoff for modest transpiler broadening.
 
-#### `g57`
+#### `g91`
 
-Sources:
+Source:
 
-- [g57](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/ops_poly.py#L1017)
+- [g91](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/ops_poly.py#L2222)
 
-Why they are promising:
+Why it is promising:
 
-- no loops
-- no nested helper defs
-- no `np.roots`
-- mostly scalar math composed from functionality the transpiler already mostly has
+- scalar-real-from-`z[0]` is already fixed
+- `.conjugate()` on arbitrary expressions is already implemented in [call_to_c()](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/transpile_poly.py#L277)
+- the remaining unsupported shape is narrow and local
 
-What is probably missing:
+What is probably missing now:
 
-- `np.arctan(...)`
-- `np.arcsinh(...)`
-- possibly one or two missing scalar transcendental cases in [numpy_call()](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/transpile_poly.py#L356)
+- slice self-read in expressions like:
+  - [ops_poly.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/ops_poly.py#L2230) `cf[2:70] = cf[2:70] + np.log(np.abs(t2-t1)+1)`
 
 Expected effort:
 
-- low
+- low to medium
 
 Expected payoff:
 
-- likely 1 recovered function with very contained changes
+- likely 1 recovered function
 
 Concrete fixes to implement:
 
-```python
-elif attr == "arctan":
-    arg = self.expr_to_c(args[0])
-    tmp = CVar.fresh("atan")
-    self.declare(tmp)
-    self.emit(f"c_atan({arg.r}, {arg.i}, &{tmp.r}, &{tmp.i});")
-    return tmp
+- Extend [expr_to_c_slice()](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/transpile_poly.py#L966) so reads from `cf[a:b]` on the RHS participate in the same per-element lowering path as named local arrays.
+- The key technique is:
+  - when lowering inside the generated slice loop,
+  - treat `cf[lo:hi]` as “current element at `_si_idx`”, not as a first-class vector value
 
-elif attr == "arcsinh":
-    arg = self.expr_to_c(args[0])
-    tmp = CVar.fresh("asinh")
-    self.declare(tmp)
-    self.emit(f"c_asinh({arg.r}, {arg.i}, &{tmp.r}, &{tmp.i});")
-    return tmp
+Suggested shape:
+
+```python
+if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == "cf":
+    sl = node.slice
+    if isinstance(sl, ast.Slice):
+        tmp = CVar.fresh("cfelem")
+        self.declare(tmp)
+        self.emit(f"{tmp.r} = cRe[_si_idx]; {tmp.i} = cIm[_si_idx];")
+        return tmp
 ```
+
+- That should only apply inside [expr_to_c_slice()](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/transpile_poly.py#L966), not in the general [expr_to_c()](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/transpile_poly.py#L67) path.
+- Keep `.conjugate()` as-is.
+  That part no longer looks like the blocker.
 
 Success condition:
 
-- `g57` generates a real body
-- no auto-stub
-- it should be a near-pass immediately if the missing calls were the blocker
+- `g91` no longer auto-stubs
+- generated C contains a normal loop for the `cf[2:70]` update
 
 #### `g62`
 
@@ -235,53 +237,6 @@ Success condition:
 
 - `g62` no longer auto-stubs
 - both list-comprehension slice fills and `np.abs(...)` / `np.angle(...)` slice expressions emit normal loops
-
-#### `g91`
-
-Source:
-
-- [g91](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/ops_poly.py#L2222)
-
-Why it is promising:
-
-- scalar-real-from-`z[0]` is already fixed
-- the loop body itself is simple
-- the tail operations are small and specific
-
-What is probably missing:
-
-- method-call lowering for `.conjugate()` on arbitrary complex expressions
-- maybe one remaining slice self-update pattern:
-  - `cf[2:70] = cf[2:70] + scalar`
-
-Expected effort:
-
-- medium
-
-Expected payoff:
-
-- likely 1 recovered function
-
-Concrete fixes to implement:
-
-- Extend [call_to_c()](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/transpile_poly.py#L263) so it recognizes method calls on arbitrary expressions, not just `np.xxx(...)`.
-- Add a narrow case:
-
-```python
-if isinstance(func, ast.Attribute) and func.attr == "conjugate":
-    base = self.expr_to_c(func.value)
-    tmp = CVar.fresh("conj")
-    self.declare(tmp)
-    self.emit(f"{tmp.r} = {base.r}; {tmp.i} = -({base.i});")
-    return tmp
-```
-
-- If `cf[2:70] = cf[2:70] + scalar` still stubs, extend [expr_to_c_slice()](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/transpile_poly.py#L966) so bare `cf` slice reads participate in the same per-element lowering path as named arrays.
-
-Success condition:
-
-- `g91` no longer auto-stubs
-- `.conjugate()` is lowered without broadening the method-call model much
 
 ### Redeemable, But Only If You Want More Language Coverage
 
@@ -401,24 +356,33 @@ If the goal is to maximize recovered auto-stubbed functions with controlled comp
 
 Implementation order inside the codebase:
 
-1. Patch [numpy_call()](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/transpile_poly.py#L356)
+1. Patch [expr_to_c_slice()](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/transpile_poly.py#L966) for `cf` slice self-reads
    Why first:
-   - smallest surface area
-   - should unlock `g57`
+   - smallest remaining high-value surface area
+   - should unlock `g91`
 
 2. Patch [expr_to_c_slice()](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/transpile_poly.py#L966) and [assign_cf_slice()](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/transpile_poly.py#L847)
    Why second:
    - needed for `g62`
 
-3. Patch [call_to_c()](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/transpile_poly.py#L263)
+3. Decide whether to broaden constant-array exponent vector support
    Why third:
-   - narrow and likely enough for `g91`
+   - would be needed for `g88`
 
 4. Only after each step, re-run the targeted subset before the full visual sweep
    Suggested subset progression:
-   - `g57`
+   - `g91`
    - then `g62`
-   - then `g91`
+   - then `g88`
+
+## Test Harness Note
+
+The visual harness needs to stay in sync with the real stub list.
+
+- [tests/test_visual_g1_g99.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_visual_g1_g99.py#L104) still lists `g57` as stubbed
+- `/tmp/g_transpile.log` now shows 11 stubs and `g57` is no longer one of them
+
+So the next visual sweep should first remove `57` from `STUBBED`, otherwise the test underreports recovered coverage.
 
 ## Concrete Regression Cases To Add
 

@@ -3336,6 +3336,188 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     return 0;
 }
 
+/* ==== Param-gen mode: generate full unrolled parameter stream ==== */
+/* Output: N*N*times records of (t1r, t1i, t2r, t2i) as float32.
+ * Order: pass-major, i1 ascending, serpentine i2. Matches coeffgen traversal exactly. */
+static int runParamGen(const char *buf, const char *outPath) {
+    int n1 = 100, n2 = 100;
+    const char *cp = findKey(buf, "n1"); if (cp) n1 = (int)parseNum(&cp);
+    cp = findKey(buf, "n2"); if (cp) n2 = (int)parseNum(&cp);
+
+    int times = 1;
+    cp = findKey(buf, "times"); if (cp) times = (int)parseNum(&cp);
+    if (times < 1) times = 1;
+
+    PtEntry ptEntries[MAX_CHAIN];
+    int nPt = 0;
+    cp = findKey(buf, "param_transforms");
+    if (cp) nPt = parsePtChain(cp, ptEntries, MAX_CHAIN);
+
+    /* outPath "-" means write binary data to stdout (for streaming to S3).
+     * Metadata JSON goes to stderr in that case. */
+    int streamMode = (strcmp(outPath, "-") == 0);
+    FILE *fout = streamMode ? stdout : fopen(outPath, "wb");
+    if (!fout) { fprintf(stderr, "Cannot open %s\n", outPath); return 1; }
+
+    long nSteps = (long)n1 * n2 * times;
+
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+
+    for (int pass = 0; pass < times; pass++) {
+        /* Seed RNG per pass — matches coeffgen exactly */
+        _rng_state = 0x123456789abcdef0ULL ^ ((uint64_t)pass * 2654435761ULL);
+        if (!_rng_state) _rng_state = 1;
+        for (int i1 = 0; i1 < n1; i1++) {
+            double x1 = (double)i1 / (double)n1;
+            for (int j = 0; j < n2; j++) {
+                int i2 = (i1 & 1) ? (n2 - 1 - j) : j;
+                double x2 = (double)i2 / (double)n2;
+
+                double z1r = x1, z1i = 0.0, z2r = x2, z2i = 0.0;
+                for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, n1);
+
+                float out[4] = { (float)z1r, (float)z1i, (float)z2r, (float)z2i };
+                fwrite(out, sizeof(float), 4, fout);
+            }
+        }
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    long elapsed_us = (t1.tv_sec - t0.tv_sec) * 1000000L +
+                      (t1.tv_nsec - t0.tv_nsec) / 1000L;
+    if (!streamMode) fclose(fout);
+    else fflush(stdout);
+
+    long dataBytes = nSteps * 4 * (long)sizeof(float);
+    /* In stream mode, metadata goes to stderr (stdout is binary data) */
+    FILE *metaOut = streamMode ? stderr : stdout;
+    fprintf(metaOut, "{\"mode\":\"param_gen\",\"n1\":%d,\"n2\":%d,\"times\":%d,"
+           "\"n_steps\":%ld,\"data_bytes\":%ld,\"elapsed_us\":%ld}\n",
+           n1, n2, times, nSteps, dataBytes, elapsed_us);
+    return 0;
+}
+
+/* ==== Coeffgen-chunked mode: read params slice, generate coefficients ==== */
+/* Reads step_count records from params_file starting at step_start,
+ * runs coefficient function + coeff transforms on each, writes coefficient output. */
+static int runCoeffGenChunked(const char *buf, const char *outPath) {
+    char funcName[64] = "";
+    const char *cp = findKey(buf, "function");
+    if (cp) parseString(cp, funcName, sizeof(funcName));
+
+    char paramsFile[256] = "";
+    cp = findKey(buf, "params_file");
+    if (cp) parseString(cp, paramsFile, sizeof(paramsFile));
+
+    long stepStart = 0, stepCount = 0;
+    cp = findKey(buf, "step_start"); if (cp) stepStart = (long)parseNum(&cp);
+    cp = findKey(buf, "step_count"); if (cp) stepCount = (long)parseNum(&cp);
+
+    if (stepCount <= 0) {
+        fprintf(stderr, "Empty chunk: step_count=%ld\n", stepCount);
+        return 1;
+    }
+
+    /* Parse coefficient transform chain */
+    char ctNames[MAX_CHAIN][64];
+    int nCt = 0;
+    cp = findKey(buf, "coeff_transforms");
+    if (cp) nCt = parseStringArray(cp, ctNames, MAX_CHAIN);
+    CoeffTransform ctChain[MAX_CHAIN];
+    for (int t = 0; t < nCt; t++) {
+        ctChain[t] = lookupCoeffTransform(ctNames[t]);
+        if (!ctChain[t]) {
+            fprintf(stderr, "Unknown coeff transform: %s\n", ctNames[t]);
+            return 1;
+        }
+    }
+
+    /* Look up coefficient function */
+    CoeffFuncC coeffFunc = lookupCoeffFuncC(funcName);
+    if (!coeffFunc) {
+        fprintf(stderr, "Unknown function: %s\n", funcName);
+        return 1;
+    }
+
+    /* Open params file and seek to our slice */
+    FILE *fin = fopen(paramsFile, "rb");
+    if (!fin) {
+        fprintf(stderr, "Cannot open params file: %s\n", paramsFile);
+        return 1;
+    }
+    long recordBytes = 4 * sizeof(float);  /* t1r, t1i, t2r, t2i */
+    fseek(fin, stepStart * recordBytes, SEEK_SET);
+
+    /* Probe degree from first record */
+    float probe[4];
+    if (fread(probe, sizeof(float), 4, fin) != 4) {
+        fprintf(stderr, "Cannot read probe record\n");
+        fclose(fin);
+        return 1;
+    }
+    fseek(fin, stepStart * recordBytes, SEEK_SET);  /* rewind */
+
+    double probeRe[MAX_COEFFS], probeIm[MAX_COEFFS];
+    int probeN;
+    coeffFunc((double)probe[0], (double)probe[1],
+              (double)probe[2], (double)probe[3],
+              probeRe, probeIm, &probeN);
+    for (int t = 0; t < nCt; t++) ctChain[t](probeRe, probeIm, &probeN);
+    int nCoeffsOut = probeN;
+    int degree = nCoeffsOut - 1;
+
+    /* Process all steps */
+    FILE *fout = fopen(outPath, "wb");
+    if (!fout) { fprintf(stderr, "Cannot open %s\n", outPath); fclose(fin); return 1; }
+
+    float *stepBuf = malloc(nCoeffsOut * 2 * sizeof(float));
+
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+
+    for (long s = 0; s < stepCount; s++) {
+        float params[4];
+        if (fread(params, sizeof(float), 4, fin) != 4) {
+            fprintf(stderr, "Short read at step %ld\n", stepStart + s);
+            break;
+        }
+
+        double cRe[MAX_COEFFS], cIm[MAX_COEFFS];
+        int nCoeffs;
+        coeffFunc((double)params[0], (double)params[1],
+                  (double)params[2], (double)params[3],
+                  cRe, cIm, &nCoeffs);
+        for (int t = 0; t < nCt; t++) ctChain[t](cRe, cIm, &nCoeffs);
+
+        for (int k = nCoeffs; k < nCoeffsOut; k++) { cRe[k] = 0; cIm[k] = 0; }
+
+        for (int k = 0; k < nCoeffsOut; k++) {
+            stepBuf[k * 2]     = (float)cRe[k];
+            stepBuf[k * 2 + 1] = (float)cIm[k];
+        }
+        fwrite(stepBuf, sizeof(float), nCoeffsOut * 2, fout);
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    long elapsed_us = (t1.tv_sec - t0.tv_sec) * 1000000L +
+                      (t1.tv_nsec - t0.tv_nsec) / 1000L;
+    fclose(fin);
+    fclose(fout);
+    free(stepBuf);
+
+    long dataBytes = stepCount * nCoeffsOut * 2 * (long)sizeof(float);
+    printf("{\"mode\":\"coeffgen_chunked\",\"function\":\"%s\","
+           "\"n_coeffs\":%d,\"degree\":%d,"
+           "\"step_start\":%ld,\"step_count\":%ld,"
+           "\"n_t\":%ld,\"data_bytes\":%ld,"
+           "\"elapsed_us\":%ld}\n",
+           funcName, nCoeffsOut, degree,
+           stepStart, stepCount,
+           stepCount, dataBytes, elapsed_us);
+    return 0;
+}
+
 /* ==== Solve-from-coefficients mode ==== */
 
 static int runSolveFromCoeffs(const char *buf, const char *outPath) {
@@ -3716,6 +3898,16 @@ int main(int argc, char **argv) {
         }
         if (strcmp(mode, "param_dump") == 0) {
             int rc = runParamDump(buf, outPath);
+            free(buf);
+            return rc;
+        }
+        if (strcmp(mode, "param_gen") == 0) {
+            int rc = runParamGen(buf, outPath);
+            free(buf);
+            return rc;
+        }
+        if (strcmp(mode, "coeffgen_chunked") == 0) {
+            int rc = runCoeffGenChunked(buf, outPath);
             free(buf);
             return rc;
         }

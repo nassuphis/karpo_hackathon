@@ -2966,7 +2966,7 @@ async function runParamDebug() {
 async function runCalculate() {
     const funcName = document.getElementById('render-function').value;
     const n = parseInt(document.getElementById('render-n').value);
-    const nStripes = Math.min(n, Math.max(1, parseInt(document.getElementById('render-stripes').value) || 10));
+    const nChunks = Math.max(1, parseInt(document.getElementById('render-stripes').value) || 10);
     const times = Math.max(1, parseInt(document.getElementById('render-times').value) || 1);
     const jobId = 'compute_' + Date.now().toString(36);
 
@@ -2977,24 +2977,21 @@ async function runCalculate() {
 
     const btn = document.getElementById('btn-calculate');
 
-    // Pre-flight check: estimate coeffgen file size per stripe
-    // Extract degree from dropdown label "(degree NN)" if present
+    // Pre-flight check: estimate total coeffgen size
     const selOpt = document.getElementById('render-function').selectedOptions[0];
     const degMatch = selOpt && selOpt.textContent.match(/degree\s+(\d+)/);
     if (degMatch) {
         const estDegree = parseInt(degMatch[1]);
         const nCoeffsEst = estDegree + 1;
-        const rowsPerStripe = Math.ceil(n / nStripes);
-        const bytesPerStripe = rowsPerStripe * n * times * nCoeffsEst * 2 * 4;
-        // Lambda /tmp = 10 GB (BINARY_TMP in deploy.sh), 80% safety margin
-        const maxSafe = 10 * 1024 * 1024 * 1024 * 0.8; // 8 GB
-        if (bytesPerStripe > maxSafe) {
-            const totalBytes = n * n * times * nCoeffsEst * 2 * 4;
-            const minStripes = Math.ceil(totalBytes / maxSafe);
-            const suggestion = Math.max(minStripes, 10);
-            const sizeMB = (bytesPerStripe / 1e6).toFixed(0);
-            alert(`Coeffgen stripe too large: ~${sizeMB} MB per stripe.\n\n` +
-                  `Suggested minimum Stripes: ${suggestion}\n` +
+        const nSteps = n * n * times;
+        const bytesPerChunk = Math.ceil(nSteps / nChunks) * nCoeffsEst * 2 * 4;
+        const maxSafe = 10 * 1024 * 1024 * 1024 * 0.8;
+        if (bytesPerChunk > maxSafe) {
+            const totalBytes = nSteps * nCoeffsEst * 2 * 4;
+            const minChunks = Math.ceil(totalBytes / maxSafe);
+            const sizeMB = (bytesPerChunk / 1e6).toFixed(0);
+            alert(`Coeffgen chunk too large: ~${sizeMB} MB per chunk.\n\n` +
+                  `Suggested minimum Chunks: ${Math.max(minChunks, 10)}\n` +
                   `(N=${n}, times=${times}, degree=${estDegree})`);
             return;
         }
@@ -3003,65 +3000,93 @@ async function runCalculate() {
     btn.disabled = true;
     document.getElementById('compute-status').textContent = `Computing ${pipelineStr} N=${n}...`;
     document.getElementById('compute-status').className = 'status';
-    log(`Compute: ${pipelineStr} N=${n}, stripes=${nStripes}${times > 1 ? ', times=' + times : ''}...`);
+    log(`Compute: ${pipelineStr} N=${n}, chunks=${nChunks}${times > 1 ? ', times=' + times : ''}...`);
     const fmtMs = (ms) => (ms/1000).toFixed(1) + 's';
 
     try {
         const tTotal = performance.now();
-        const rowsPer = Math.floor(n / nStripes);
 
-        // Phase 1: fan-out hires coeffgen stripes (times × nStripes)
-        document.getElementById('compute-status').textContent = `Generating coefficients 0/${nStripes}...`;
-        const tCoeffgen = performance.now();
-        let coeffgenDone = 0;
+        // Phase 0: generate params.bin (single Lambda, applies param transforms + dither)
+        document.getElementById('compute-status').textContent = `Generating parameter stream...`;
+        const tParamGen = performance.now();
+        const paramGenResult = await lambdaPost('coeffgen', {
+            phase: 'param_gen',
+            job_id: jobId,
+            N: n,
+            times: times,
+            param_transforms: paramTransforms,
+        });
+        const nSteps = paramGenResult.n_steps;
+        const paramsKey = paramGenResult.params_key;
+        log(`  param_gen: ${fmtMs(performance.now() - tParamGen)}, ${nSteps} steps, ${(paramGenResult.data_bytes/1e6).toFixed(1)}MB`, 'ok');
 
+        // Phase 1: chunk planner + fan-out coeffgen_chunked
+        const chunkSize = Math.ceil(nSteps / nChunks);
         const coeffgenJobs = [];
-        for (let s = 0; s < nStripes; s++) {
-            const i1Start = s * rowsPer;
-            const i1End = s < nStripes - 1 ? (s + 1) * rowsPer : n;
+        for (let c = 0; c < nChunks; c++) {
+            const stepStart = c * chunkSize;
+            const stepCount = Math.min(chunkSize, nSteps - stepStart);
+            if (stepCount <= 0) break; // skip empty tail chunks
             coeffgenJobs.push({
-                job_id: jobId, stripe_idx: s,
-                param_transforms: paramTransforms,
+                phase: 'coeffgen_chunked',
+                job_id: jobId, chunk_idx: c,
+                params_key: paramsKey,
+                step_start: stepStart,
+                step_count: stepCount,
                 function: funcName,
                 coeff_transforms: coeffTransforms,
-                N: n,
-                row_start: i1Start, row_end: i1End,
-                times: times,
             });
         }
+        const actualChunks = coeffgenJobs.length;
+
+        document.getElementById('compute-status').textContent = `Generating coefficients 0/${actualChunks}...`;
+        const tCoeffgen = performance.now();
+        let coeffgenDone = 0;
 
         const coeffgenResults = await asyncPool(50, coeffgenJobs, p =>
             lambdaPost('coeffgen', p).then(r => {
                 coeffgenDone++;
-                const count = Math.min(coeffgenDone, nStripes);
                 document.getElementById('compute-status').textContent =
-                    `Generating coefficients ${count}/${nStripes}...`;
+                    `Generating coefficients ${Math.min(coeffgenDone, actualChunks)}/${actualChunks}...`;
                 return r;
             })
         );
         const coeffgenMs = performance.now() - tCoeffgen;
         const degree = coeffgenResults[0].degree;
         const nCoeffs = coeffgenResults[0].n_coeffs;
+        const nStripes = actualChunks; // downstream still uses nStripes for DDB polling / metadata
 
         // Size lores grid to target ~250K roots for consistent previews
+        // Account for times: total roots ≈ loresN² × times × degree
         const TARGET_PREVIEW_ROOTS = 250000;
-        const loresN = Math.min(n, Math.max(10, Math.ceil(Math.sqrt(TARGET_PREVIEW_ROOTS / degree))));
+        const loresN = Math.min(n, Math.max(5, Math.ceil(Math.sqrt(TARGET_PREVIEW_ROOTS / (degree * times)))));
 
-        // Phase 1b: lores coeffgen (now that we know degree)
+        // Phase 1b: lores via chunk pipeline (same semantics as hires)
+        document.getElementById('compute-status').textContent = `Generating lores params...`;
+        const loresParamResult = await lambdaPost('coeffgen', {
+            phase: 'param_gen',
+            job_id: jobId,
+            N: loresN,
+            times: times,
+            param_transforms: paramTransforms,
+        });
+        const loresParamsKey = loresParamResult.params_key;
+        const loresSteps = loresParamResult.n_steps;
+
         document.getElementById('compute-status').textContent = `Generating lores coefficients...`;
         const loresCoeffResult = await lambdaPost('coeffgen', {
-            job_id: jobId, stripe_idx: 9999,
-            param_transforms: paramTransforms,
+            phase: 'coeffgen_chunked',
+            job_id: jobId, chunk_idx: 9999,
+            params_key: loresParamsKey,
+            step_start: 0, step_count: loresSteps,
             function: funcName,
             coeff_transforms: coeffTransforms,
-            N: loresN,
-            row_start: 0, row_end: loresN,
             s3_key: `renders/${jobId}/lores_coeffs.bin`,
         });
         const totalCoeffsSize = coeffgenResults.reduce((s, r) => s + r.coeffs_size, 0);
-        log(`  coeffgen: ${fmtMs(coeffgenMs)}, degree=${degree}, size=${(totalCoeffsSize/1e6).toFixed(1)}MB (${nStripes} stripes)`, 'ok');
+        log(`  coeffgen: ${fmtMs(coeffgenMs)}, degree=${degree}, size=${(totalCoeffsSize/1e6).toFixed(1)}MB (${actualChunks} chunks)`, 'ok');
 
-        // Phase 2: lores solve (reads lores_coeffs.bin)
+        // Phase 2: lores solve (single chunk)
         document.getElementById('compute-status').textContent = `Lores solve...`;
         const loresKey = `renders/${jobId}/lores.bin`;
         const tLores = performance.now();
@@ -3069,8 +3094,7 @@ async function runCalculate() {
             job_id: jobId, stripe_idx: 0,
             coeffs_key: loresCoeffResult.coeffs_key,
             n_coeffs: nCoeffs,
-            N: loresN,
-            row_start: 0, row_end: loresN,
+            n_steps: loresSteps,
             s3_key: loresKey,
         });
         const loresMs = performance.now() - tLores;
@@ -3082,14 +3106,12 @@ async function runCalculate() {
 
         const sweepJobs = [];
         for (let s = 0; s < nStripes; s++) {
-            const i1Start = s * rowsPer;
-            const i1End = s < nStripes - 1 ? (s + 1) * rowsPer : n;
+            const stepCount = coeffgenResults[s].coeffs_size / (nCoeffs * 2 * 4);
             sweepJobs.push({
                 job_id: jobId, stripe_idx: s,
                 coeffs_key: coeffgenResults[s].coeffs_key,
                 n_coeffs: nCoeffs,
-                N: n,
-                row_start: i1Start, row_end: i1End,
+                n_steps: stepCount,
             });
         }
 
@@ -3160,6 +3182,9 @@ async function runCalculate() {
             function: funcName,
             N: n,
             n_stripes: nStripes,
+            n_chunks: actualChunks,
+            n_steps: nSteps,
+            params_key: paramsKey,
             times,
             degree,
             n_coeffs: nCoeffs,
@@ -3168,6 +3193,7 @@ async function runCalculate() {
             lores: {
                 bin_key: loresKey,
                 N: loresN,
+                n_steps: loresSteps,
                 bin_size: loresResult.bin_size,
             },
             stripes: stripeResults.map(r => ({

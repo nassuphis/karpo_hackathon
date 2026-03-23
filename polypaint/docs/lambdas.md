@@ -5,30 +5,46 @@
 ## polypaint-coeffgen
 
 **Handler:** `handler_coeffgen.py`
-**Binary:** `sweep` (coeffgen mode)
+**Binary:** `sweep` (param_gen, coeffgen_chunked, or legacy coeffgen mode)
 **Route:** POST /coeffgen
 **Memory:** 1769 MB (1 vCPU), 10 GB /tmp
 
-Generates polynomial coefficients for one horizontal stripe of the parameter grid.
+Three phases, routed by `phase` parameter:
+
+### phase=param_gen
+
+Generates the full unrolled parameter stream (`params.bin`). Single Lambda call (not fanned out). Applies param transforms and dither. Output streams directly to S3 via multipart upload — no `/tmp` materialization, supports arbitrarily large files.
 
 **Input:**
-- `job_id`, `stripe_idx` — job and stripe identification
-- `function` — coefficient function name (e.g. "giga_30", "poly_17")
-- `param_transforms` — array-of-arrays, e.g. `[["unit_circle"], ["sdith", "3"]]`
-- `coeff_transforms` — array of names, e.g. `["safe", "rev"]`
-- `n1`, `n2` — grid dimensions
-- `i1_start`, `i1_end` — row range for this stripe
-- `times` — repeat count for dithering (default 1)
-- `s3_key` — optional override for S3 upload path
+- `job_id`, `N`, `times`
+- `param_transforms` — array-of-arrays
 
 **Process:**
-1. Builds JSON spec, pipes to `sweep` binary on stdin
-2. Binary writes coefficient `.bin` to `/tmp`
-3. Validates output file size matches `data_bytes` from metadata
-4. Uploads to S3: `renders/{job_id}/coeffs_{stripe_idx:04d}.bin`
-5. Reports status to DynamoDB (started/done/error)
+1. Launches `sweep -` (stdout mode) with `mode: "param_gen"`
+2. Pipes binary output to S3 multipart upload (8 MB parts)
+3. Metadata returned on stderr
 
-**Output:** `coeffs_key`, `coeffs_size`, `n_coeffs`, `degree`, `elapsed_us`
+**Output:** `params_key`, `n_steps`, `data_bytes`
+
+### phase=coeffgen_chunked
+
+Reads a slice of `params.bin` from S3 via range read, generates coefficients for that chunk. Fanned out — one Lambda per chunk.
+
+**Input:**
+- `job_id`, `chunk_idx`, `params_key`
+- `step_start`, `step_count` — contiguous range in params.bin
+- `function`, `coeff_transforms`
+
+**Process:**
+1. Range-reads `step_count × 16` bytes from S3
+2. Runs `sweep` in `coeffgen_chunked` mode
+3. Uploads `coeffs_{chunk_idx:04d}.bin`
+
+**Output:** `coeffs_key`, `coeffs_size`, `n_coeffs`, `degree`
+
+### Default (legacy)
+
+Old stripe-based coeffgen for backward compatibility with tests and scripts. Generates coefficients inline from grid parameters. Not used by the current frontend compute flow.
 
 See [coefficients.md](coefficients.md) for details on the coefficient pipeline.
 
@@ -37,29 +53,25 @@ See [coefficients.md](coefficients.md) for details on the coefficient pipeline.
 ## polypaint-sweep
 
 **Handler:** `handler_sweep.py`
-**Binary:** `sweep` (solve or grid mode)
+**Binary:** `sweep` (solve mode)
 **Route:** POST /sweep
 **Memory:** 10240 MB (6 vCPUs)
 
-Solves polynomial roots for one stripe. Two modes:
-
-### Solve mode (when `coeffs_key` present)
-Downloads pre-computed coefficients from S3, runs `sweep` in solve mode. The solver reads all coefficient sets from the file (supporting `times > 1`).
-
-### Grid mode (legacy, when no `coeffs_key`)
-Evaluates a coefficient function and solves inline. Spawns multiple `sweep` subprocesses to use all vCPUs. Merges sub-outputs into single `.bin`.
+Solves polynomial roots from a pre-computed coefficient file (one chunk). The solver reads coefficient records sequentially until EOF.
 
 **Input:**
-- `job_id`, `stripe_idx`, `i1_start`, `i1_end`, `n1`, `n2`
-- `coeffs_key` — S3 key for coefficient file (solve mode)
-- `n_coeffs` — coefficient count (solve mode)
-- `function` — polynomial function name (grid mode)
+- `job_id`, `stripe_idx` — job and chunk identification
+- `coeffs_key` — S3 key for coefficient file (required)
+- `n_coeffs` — coefficient count
+- `n_steps` — number of parameter steps in this chunk (preferred), or legacy `N`/`row_start`/`row_end`
 
 **Status reporting:** Reports progress to DynamoDB via `report_status()` with task_id `sweep_{stripe_idx}`. Status progression: `started` -> `done` (or `error`). On success, `result_data` includes sweep metadata (`bin_size`, `compute_us`, `n_t`, `avg_iterations`).
 
 **Output:** `s3_key`, `bin_size`, `n_t`, `degree`, `avg_iterations`, `n_procs`
 
 **Invocation:** Dispatched asynchronously via the dispatch Lambda (fire-and-forget). The frontend polls `/check-status` with `task_prefix: 'sweep_'` every 3 seconds to track completion, collecting sweep metadata from the `results` array in the response.
+
+Note: The legacy `handle_compute_only_stripe()` (grid mode, inline coefficient generation) was removed. All compute now flows through the chunked pipeline: `param_gen` → `coeffgen_chunked` → `solve`.
 
 See [roots.md](roots.md) for details on the solver.
 

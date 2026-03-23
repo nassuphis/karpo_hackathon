@@ -8,7 +8,8 @@ All tests live in `polypaint/tests/`.
 |------|--------------|----------|
 | `test_sweep_smoke.py` | sweep binary: coeffgen, solve, grid, dither uniqueness | `sweep_test` compiled |
 | `test_poly_accuracy.py` | Transpiled C poly functions match Python originals | `sweep_test` compiled, numpy |
-| `test_pipeline.py` | Lambda handlers: dispatch, storage, coeffgen, sweep, preview | Python mocks only |
+| `test_pipeline.py` | Lambda handlers: dispatch, storage, coeffgen, sweep (solve-only), preview | Python mocks only |
+| `test_chunking.py` | Chunked pipeline: param_gen, coeffgen_chunked, chunk planner, chunks>N | `sweep_test` compiled |
 | `test_bilevel_raster.py` | bilevel_raster: byte-exact bitset comparison vs Python | `bilevel_raster_local` + `sweep_test` |
 | `test_bilevel_stitch.py` | bilevel_merge: merge (OR bitsets → TIFF) and stitch (join tiles) | `bilevel_merge_local` (needs libvips) |
 | `test_dither.py` | sdith, ddith, ndith: bounds, scaling, isotropy, statistics | `sweep_test` compiled |
@@ -158,6 +159,17 @@ Before running `deploy.sh update`:
 3. **Cross-compile:** `aarch64-linux-musl-gcc -O3 -static -o sweep sweep_cli.c -lm`
 4. **JS syntax check:** `deploy.sh` does this automatically
 
+### test_chunking.py
+
+Tests the chunked coefficient pipeline (param_gen → coeffgen_chunked):
+
+- **test_param_gen_size** — output is exactly N×N×times×16 bytes for multiple (N, times) combos
+- **test_param_gen_deterministic** — identical output for same inputs (including dither RNG)
+- **test_coeffgen_chunked_matches_monolithic** — concatenated chunk output matches old monolithic coeffgen within float32 quantization (~1e-5)
+- **test_chunk_planner_coverage** — no gaps, no overlaps, full step coverage for various (n_steps, n_chunks)
+- **test_chunks_greater_than_n** — N=5, chunks=50 processes all 2500 steps (the original motivation)
+- **test_param_gen_with_dither** — different passes produce different dither values
+
 ### test_dispatch_resilience.py
 
 Tests for the dispatch resilience fixes (28 tests, pure mocks, no binaries):
@@ -192,7 +204,8 @@ Tests png_export binary (needs libvips):
 | Coefficient functions / transpiler | test_poly_accuracy + visual comparisons |
 | bilevel_raster.c | test_bilevel_raster |
 | bilevel_merge.c | test_bilevel_stitch |
-| Lambda handlers (Python) | test_pipeline + test_dispatch_resilience |
+| Lambda handlers (Python) | test_pipeline + test_dispatch_resilience + test_chunking |
+| Chunking / param_gen / coeffgen_chunked | test_chunking |
 | Dispatch / storage / check-status | test_dispatch_resilience |
 | tiff_compat.c | test_tiff_compat |
 | png_export.c | test_png_export |

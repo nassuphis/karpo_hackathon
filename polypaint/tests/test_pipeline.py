@@ -872,9 +872,11 @@ class TestSolveFromCoeffs(unittest.TestCase):
         spec = json.loads(call_args[1]["input"])
         self.assertEqual(spec["mode"], "solve")
         self.assertEqual(spec["n_coeffs"], 24)
-        # i1_start=0 because file contains only this stripe's rows
+        # Chunk-native: n_steps = (i1_end - i1_start) * n2 = 10 * 100 = 1000
+        # Passed as n2=1000, i1_start=0, i1_end=1
         self.assertEqual(spec["i1_start"], 0)
-        self.assertEqual(spec["i1_end"], 10)
+        self.assertEqual(spec["i1_end"], 1)
+        self.assertEqual(spec["n2"], 1000)
 
     @patch("handler_sweep.report_status")
     @patch("handler_sweep.os.path.getsize", return_value=400)
@@ -1029,55 +1031,7 @@ class TestSolveFromCoeffs(unittest.TestCase):
                 handler(event, None)
             self.assertIn("solve failed", str(ctx.exception))
 
-    @patch("handler_sweep.multiprocessing")
-    @patch("handler_sweep.os.path.getsize", return_value=200)
-    @patch("handler_sweep.os.remove")
-    @patch("handler_sweep.s3")
-    @patch("handler_sweep.subprocess")
-    def test_grid_mode_still_works(self, mock_subprocess, mock_s3, mock_remove, mock_getsize, mock_mp):
-        """Without coeffs_key, handler uses existing grid path."""
-        from handler_sweep import handler
-        mock_mp.cpu_count.return_value = 1
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = json.dumps({
-            "n_t": 100,
-            "degree": 24,
-            "avg_iterations": 10.0,
-        })
-        mock_subprocess.run.return_value = mock_result
-
-        import builtins
-        original_open = builtins.open
-
-        def mock_open(path, mode="r", **kwargs):
-            if "/tmp/" in str(path) and "b" in mode:
-                m = MagicMock()
-                m.__enter__ = MagicMock(return_value=m)
-                m.__exit__ = MagicMock(return_value=False)
-                m.read = MagicMock(return_value=b"\x00" * 200)
-                return m
-            return original_open(path, mode, **kwargs)
-
-        with patch("builtins.open", side_effect=mock_open):
-            event = self._make_event({
-                "job_id": "grid-test",
-                "stripe_idx": 0,
-                "function": "giga_1",
-                "n1": 10,
-                "n2": 10,
-                "i1_start": 0,
-                "i1_end": 5,
-            })
-            result = handler(event, None)
-
-        body = json.loads(result["body"])
-        self.assertEqual(result["statusCode"], 200)
-        self.assertEqual(body["bin_size"], 200)
-
-        # Verify sweep was called in grid mode (not solve)
-        spec = json.loads(mock_subprocess.run.call_args[1]["input"])
-        self.assertEqual(spec["mode"], "grid")
+    # test_grid_mode_still_works: removed — handle_compute_only_stripe deleted
 
 
 # ── Test: handler_preview.py (single-call preview generation) ────────────

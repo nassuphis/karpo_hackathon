@@ -8616,12 +8616,93 @@ static void g90_c(double x1r, double x1i, double x2r, double x2i,
     (void)x1r; (void)x1i; (void)x2r; (void)x2i;
 }
 
-/* g91: auto-stubbed (unhandled constructs in source) */
 static void g91_c(double x1r, double x1i, double x2r, double x2i,
                      double *cRe, double *cIm, int *nCoeffs) {
     *nCoeffs = 71;
     for (int _i = 0; _i < 71; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
-    (void)x1r; (void)x1i; (void)x2r; (void)x2i;
+    /* t1, t2 = z[0].real, z[0].imag — scalar-from-first-input */
+    double t1 = x1r;
+    double t2 = x1i;
+    double _add1r = 0, _add1i = 0;
+    _add1r = t1 + t2; _add1i = 0 + 0;
+    { int _idx = 0; if (_idx >= 0 && _idx < 71) { cRe[_idx] = _add1r; cIm[_idx] = _add1i; } }
+    for (int k = 1; k < 71; k++) {
+        double _abs2r = 0, _abs2i = 0;
+        _abs2r = c_abs(t1, 0); _abs2i = 0;
+        double _pow3r = 0, _pow3i = 0;
+        c_powr(_abs2r, _abs2i, k, &_pow3r, &_pow3i);
+        double _abs4r = 0, _abs4i = 0;
+        _abs4r = c_abs(t2, 0); _abs4i = 0;
+        double _c5r = 0, _c5i = 0;
+        _c5r = 71.0; _c5i = 0;
+        double _sub6r = 0, _sub6i = 0;
+        _sub6r = _c5r - k; _sub6i = _c5i - 0;
+        double _pow7r = 0, _pow7i = 0;
+        c_powc(_abs4r, _abs4i, _sub6r, _sub6i, &_pow7r, &_pow7i);
+        double _add8r = 0, _add8i = 0;
+        _add8r = _pow3r + _pow7r; _add8i = _pow3i + _pow7i;
+        double r_r = _add8r, r_i = _add8i;
+        double _ang9r = 0, _ang9i = 0;
+        _ang9r = c_arg(t1, 0); _ang9i = 0;
+        double _pow10r = 0, _pow10i = 0;
+        c_powr(_ang9r, _ang9i, k, &_pow10r, &_pow10i);
+        double _ang11r = 0, _ang11i = 0;
+        _ang11r = c_arg(t2, 0); _ang11i = 0;
+        double _c12r = 0, _c12i = 0;
+        _c12r = 71.0; _c12i = 0;
+        double _sub13r = 0, _sub13i = 0;
+        _sub13r = _c12r - k; _sub13i = _c12i - 0;
+        double _pow14r = 0, _pow14i = 0;
+        c_powc(_ang11r, _ang11i, _sub13r, _sub13i, &_pow14r, &_pow14i);
+        double _sub15r = 0, _sub15i = 0;
+        _sub15r = _pow10r - _pow14r; _sub15i = _pow10i - _pow14i;
+        double theta_r = _sub15r, theta_i = _sub15i;
+        double _cos16r = 0, _cos16i = 0;
+        c_cos(theta_r, theta_i, &_cos16r, &_cos16i);
+        double _mul17r = 0, _mul17i = 0;
+        c_mul(r_r, r_i, _cos16r, _cos16i, &_mul17r, &_mul17i);
+        double _sin18r = 0, _sin18i = 0;
+        c_sin(theta_r, theta_i, &_sin18r, &_sin18i);
+        double _mul19r = 0, _mul19i = 0;
+        c_mul(r_r, r_i, _sin18r, _sin18i, &_mul19r, &_mul19i);
+        double _c20r = 0, _c20i = 0;
+        _c20r = 0.0; _c20i = 1.0;
+        double _mul21r = 0, _mul21i = 0;
+        c_mul(_mul19r, _mul19i, _c20r, _c20i, &_mul21r, &_mul21i);
+        double _add22r = 0, _add22i = 0;
+        _add22r = _mul17r + _mul21r; _add22i = _mul17i + _mul21i;
+        { int _idx = k; if (_idx >= 0 && _idx < 71) { cRe[_idx] = _add22r; cIm[_idx] = _add22i; } }
+    }
+    for (int _si = 0; _si < 68; _si++) {
+        int _si_idx = _si + 2;
+        double _cfrd23r = 0, _cfrd23i = 0;
+        _cfrd23r = cRe[(_si + 2)]; _cfrd23i = cIm[(_si + 2)];
+        double _sub24r = 0, _sub24i = 0;
+        _sub24r = t2 - t1; _sub24i = 0 - 0;
+        double _abs25r = 0, _abs25i = 0;
+        _abs25r = c_abs(_sub24r, _sub24i); _abs25i = 0;
+        double _c26r = 0, _c26i = 0;
+        _c26r = 1.0; _c26i = 0;
+        double _add27r = 0, _add27i = 0;
+        _add27r = _abs25r + _c26r; _add27i = _abs25i + _c26i;
+        double _log28r = 0, _log28i = 0;
+        c_log(_add27r, _add27i, &_log28r, &_log28i);
+        double _sadd29r = 0, _sadd29i = 0;
+        _sadd29r = _cfrd23r + _log28r; _sadd29i = _cfrd23i + _log28i;
+        cRe[_si_idx] = _sadd29r; cIm[_si_idx] = _sadd29i;
+    }
+    double _cf30r = 0, _cf30i = 0;
+    { int _idx = 70; if (_idx >= 0 && _idx < 71) { _cf30r = cRe[_idx]; _cf30i = cIm[_idx]; } }
+    double _mul31r = 0, _mul31i = 0;
+    c_mul(t1, 0, t2, 0, &_mul31r, &_mul31i);
+    double _conj32r = 0, _conj32i = 0;
+    _conj32r = _mul31r; _conj32i = -(_mul31i);
+    double _add33r = 0, _add33i = 0;
+    _add33r = _cf30r + _conj32r; _add33i = _cf30i + _conj32i;
+    { int _idx = 70; if (_idx >= 0 && _idx < 71) { cRe[_idx] = _add33r; cIm[_idx] = _add33i; } }
+    for (int _i = 0; _i < 71; _i++) {
+        if (!isfinite(cRe[_i]) || !isfinite(cIm[_i])) { cRe[_i] = 0; cIm[_i] = 0; }
+    }
 }
 
 /* g92: too complex for auto-transpile, stubbed */

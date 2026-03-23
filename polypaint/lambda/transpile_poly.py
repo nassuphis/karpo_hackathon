@@ -945,8 +945,14 @@ class PolyTranspiler(ast.NodeVisitor):
             return
 
         # Fix 4: List comprehension — [expr for var in range(start, end)]
-        if isinstance(value_node, ast.ListComp):
-            comp = self.transpile_listcomp_slice(value_node, lo, count)
+        # Also handle np.array([expr for var in range(...)]) wrapper
+        listcomp_node = value_node
+        if (isinstance(value_node, ast.Call) and isinstance(value_node.func, ast.Attribute)
+                and value_node.func.attr == "array" and value_node.args
+                and isinstance(value_node.args[0], ast.ListComp)):
+            listcomp_node = value_node.args[0]
+        if isinstance(listcomp_node, ast.ListComp):
+            comp = self.transpile_listcomp_slice(listcomp_node, lo, count)
             if comp:
                 return
 
@@ -1075,6 +1081,34 @@ class PolyTranspiler(ast.NodeVisitor):
                 self.emit(f"{tmp.r} = {node.id}[{loop_var}]; {tmp.i} = 0;")
             return tmp
 
+        # cf[a:b] on RHS — read current coefficient at loop index
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == "cf":
+            sl = node.slice
+            if isinstance(sl, ast.Slice):
+                cf_lo = self.get_int(sl.lower) if sl.lower else 0
+                tmp = CVar.fresh("cfrd")
+                self.declare(tmp)
+                idx = f"({loop_var} + {cf_lo})" if cf_lo else loop_var
+                self.emit(f"{tmp.r} = cRe[{idx}]; {tmp.i} = cIm[{idx}];")
+                return tmp
+
+        # np.abs/np.angle/np.log over slice expressions
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if isinstance(node.func.value, ast.Name) and node.func.value.id == "np":
+                attr = node.func.attr
+                if attr in ("abs", "angle", "log") and node.args:
+                    if self.is_indexable_in_slice(node.args[0]):
+                        arg = self.expr_to_c_slice(node.args[0], loop_var, lo, count)
+                        tmp = CVar.fresh("sfn")
+                        self.declare(tmp)
+                        if attr == "abs":
+                            self.emit(f"{tmp.r} = c_abs({arg.r}, {arg.i}); {tmp.i} = 0;")
+                        elif attr == "angle":
+                            self.emit(f"{tmp.r} = c_arg({arg.r}, {arg.i}); {tmp.i} = 0;")
+                        elif attr == "log":
+                            self.emit(f"c_log({arg.r}, {arg.i}, &{tmp.r}, &{tmp.i});")
+                        return tmp
+
         # Fallback to normal expression
         return self.expr_to_c(node)
 
@@ -1096,12 +1130,23 @@ class PolyTranspiler(ast.NodeVisitor):
     def is_indexable_in_slice(self, node):
         """Check if an expression should be indexed element-wise in a slice context."""
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if isinstance(node.func.value, ast.Name) and node.func.value.id == "np" and node.func.attr == "arange":
+            if isinstance(node.func.value, ast.Name) and node.func.value.id == "np":
+                attr = node.func.attr
+                if attr == "arange":
+                    return True
+                # np.abs/np.angle/np.log over an indexable argument
+                if attr in ("abs", "angle", "log") and node.args:
+                    return self.is_indexable_in_slice(node.args[0])
+        # cf[a:b] is indexable
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == "cf":
+            if isinstance(node.slice, ast.Slice):
                 return True
         if isinstance(node, ast.Name) and node.id not in ("t1", "t2", "cf", "pi"):
             return True
         if isinstance(node, ast.BinOp):
             return self.is_indexable_in_slice(node.left) or self.is_indexable_in_slice(node.right)
+        if isinstance(node, ast.UnaryOp):
+            return self.is_indexable_in_slice(node.operand)
         return False
 
     def process_stmt(self, stmt):

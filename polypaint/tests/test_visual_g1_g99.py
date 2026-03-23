@@ -101,9 +101,9 @@ def run_py(func):
 
 # Stubbed functions (transpiler couldn't handle, produce zero output)
 # Manual stubs (compile errors): 7,8,11,31,38,48,49,50,51,71,82,84,90,92,95,97,98
-# Auto-stubs (unhandled constructs): 27,32,47,52,58,62,67,81,83,88,91
+# Auto-stubs (unhandled constructs): 27,32,47,52,58,62,67,81,83,88
 STUBBED = {7, 8, 11, 27, 31, 32, 38, 47, 48, 49, 50, 51, 52, 58,
-           62, 67, 71, 81, 82, 83, 84, 88, 90, 91, 92, 95, 97, 98}
+           62, 67, 71, 81, 82, 83, 84, 88, 90, 92, 95, 97, 98}
 
 names = [f'g{i}' for i in range(1, 100)]
 py_funcs = load_g_funcs(os.path.join(LAMBDA_DIR, 'ops_poly.py'), set(names))

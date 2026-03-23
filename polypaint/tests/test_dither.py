@@ -229,12 +229,158 @@ def test_identity_no_dither():
     print("  PASS")
 
 
+def test_adth_bounded():
+    """adth(both,1,0.4): all offsets within outer radius, none inside inner."""
+    print("test_adth_bounded...")
+    n = 200
+    points, _ = run_param_dump(n, [["adth", "2", "1", "0.4"]])
+    _, _, _, _, radial1, radial2 = offsets(points, n)
+    rmax = 1.0 / n
+    tol = rmax * 1.01
+    rmin = 0.4 * rmax
+    assert max(radial1) <= tol, f"adth outer exceeded: {max(radial1):.6f} > {rmax:.6f}"
+    assert max(radial2) <= tol, f"adth outer exceeded: {max(radial2):.6f} > {rmax:.6f}"
+    # Statistically: inner radius should exclude most points below rmin
+    below_inner = sum(1 for r in radial1 if r < rmin * 0.9)
+    total = len(radial1)
+    frac_below = below_inner / total
+    assert frac_below < 0.05, f"adth too many inside inner ring: {frac_below:.2%}"
+    print(f"  outer ok, {frac_below:.1%} below inner (expected <5%)")
+    print("  PASS")
+
+
+def test_adth_target_t1():
+    """adth(0,...): only t1 dithered."""
+    print("test_adth_target_t1...")
+    n = 100
+    points, _ = run_param_dump(n, [["adth", "0", "1", "0.3"]])
+    _, _, _, _, radial1, radial2 = offsets(points, n)
+    assert max(radial1) > 0, "t1 should be dithered"
+    assert max(radial2) < 1e-7, f"t2 should be unchanged: {max(radial2):.2e}"
+    print("  PASS")
+
+
+def test_ldth_on_line():
+    """ldth samples lie on the specified line direction."""
+    print("test_ldth_on_line...")
+    n = 300
+    angle = 0.0  # horizontal line
+    points, _ = run_param_dump(n, [["ldth", "2", "1", "1", str(angle)]])
+    d1_re, d1_im, _, _, _, _ = offsets(points, n)
+    # For angle=0, all offsets should be on real axis (im ≈ 0)
+    max_im = max(abs(x) for x in d1_im)
+    max_re = max(abs(x) for x in d1_re)
+    assert max_im < 1e-10, f"ldth angle=0: imag should be 0, got {max_im:.2e}"
+    assert max_re > 0, "ldth should produce real offsets"
+    print(f"  max_re={max_re:.6f}, max_im={max_im:.2e}")
+    print("  PASS")
+
+
+def test_ldth_bounded():
+    """ldth bounded by d*len/N."""
+    print("test_ldth_bounded...")
+    n = 200
+    points, _ = run_param_dump(n, [["ldth", "2", "1", "0.5", "0"]])
+    _, _, _, _, radial1, _ = offsets(points, n)
+    half_len = 1.0 * 0.5 / n
+    tol = half_len * 1.01
+    assert max(radial1) <= tol, f"ldth exceeded: {max(radial1):.6f} > {half_len:.6f}"
+    print("  PASS")
+
+
+def test_crdth_on_axes():
+    """crdth samples lie on horizontal or vertical axes."""
+    print("test_crdth_on_axes...")
+    n = 300
+    points, _ = run_param_dump(n, [["crdth", "2", "1"]])
+    d1_re, d1_im, _, _, _, _ = offsets(points, n)
+    # Each sample should have either re=0 or im=0 (on one axis)
+    on_axis = 0
+    for re, im in zip(d1_re, d1_im):
+        if abs(re) < 1e-6 or abs(im) < 1e-6:
+            on_axis += 1
+    frac = on_axis / len(d1_re)
+    assert frac > 0.95, f"crdth: only {frac:.1%} on axes (expected >95%)"
+    # Check roughly balanced
+    h_count = sum(1 for re, im in zip(d1_re, d1_im) if abs(im) < 1e-8 and abs(re) > 1e-8)
+    v_count = sum(1 for re, im in zip(d1_re, d1_im) if abs(re) < 1e-8 and abs(im) > 1e-8)
+    total_nz = h_count + v_count
+    if total_nz > 0:
+        ratio = h_count / total_nz
+        assert 0.3 < ratio < 0.7, f"crdth arm balance: h={h_count} v={v_count} ratio={ratio:.2f}"
+    print(f"  on_axis={frac:.1%}, h={h_count} v={v_count}")
+    print("  PASS")
+
+
+def test_crdth_bounded():
+    """crdth bounded by d/N."""
+    print("test_crdth_bounded...")
+    n = 200
+    points, _ = run_param_dump(n, [["crdth", "2", "1"]])
+    d1_re, d1_im, _, _, _, _ = offsets(points, n)
+    half_len = 1.0 / n
+    tol = half_len * 1.01
+    assert max(abs(x) for x in d1_re) <= tol, "crdth re exceeded"
+    assert max(abs(x) for x in d1_im) <= tol, "crdth im exceeded"
+    print("  PASS")
+
+
+def test_scdth_bounded():
+    """scdth bounded by d/N radius."""
+    print("test_scdth_bounded...")
+    n = 200
+    points, _ = run_param_dump(n, [["scdth", "2", "1", "0.25", "0"]])
+    _, _, _, _, radial1, _ = offsets(points, n)
+    rmax = 1.0 / n
+    tol = rmax * 1.01
+    assert max(radial1) <= tol, f"scdth exceeded: {max(radial1):.6f} > {rmax:.6f}"
+    print("  PASS")
+
+
+def test_scdth_sector():
+    """scdth angles stay within sector bounds."""
+    print("test_scdth_sector...")
+    n = 300
+    center = 0.0
+    half_ap_frac = 0.25  # half_ap = pi/4
+    points, _ = run_param_dump(n, [["scdth", "2", "1", str(half_ap_frac), str(center)]])
+    d1_re, d1_im, _, _, radial1, _ = offsets(points, n)
+    half_ap = math.pi * half_ap_frac
+    # Check angles of non-zero offsets
+    out_of_sector = 0
+    total_nz = 0
+    for re, im, r in zip(d1_re, d1_im, radial1):
+        if r < 1e-12:
+            continue
+        total_nz += 1
+        angle = math.atan2(im, re)
+        diff = abs(angle - center)
+        if diff > math.pi:
+            diff = 2 * math.pi - diff
+        if diff > half_ap * 1.01:
+            out_of_sector += 1
+    frac = out_of_sector / max(total_nz, 1)
+    assert frac < 0.02, f"scdth: {frac:.1%} outside sector (expected <2%)"
+    print(f"  {total_nz} nonzero, {frac:.1%} outside sector")
+    print("  PASS")
+
+
 if __name__ == "__main__":
     test_identity_no_dither()
     test_sdith_bounded()
     test_sdith_scaling()
     test_ddith_bounded()
+    test_ddith_target_t1_only()
+    test_ddith_exponent()
     test_ddith_isotropic()
     test_ndith_gaussian()
     test_ndith_unbounded()
+    test_adth_bounded()
+    test_adth_target_t1()
+    test_ldth_on_line()
+    test_ldth_bounded()
+    test_crdth_on_axes()
+    test_crdth_bounded()
+    test_scdth_bounded()
+    test_scdth_sector()
     print("\nAll dither tests passed.")

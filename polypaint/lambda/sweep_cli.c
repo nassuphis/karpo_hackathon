@@ -2354,6 +2354,28 @@ static void ct_max2one(double *cRe, double *cIm, int *nCoeffs) {
     cRe[best] = 1.0; cIm[best] = 0.0;
 }
 
+static void ct_swirler(double *cRe, double *cIm, int *nCoeffs) {
+    for (int k = 0; k < *nCoeffs; k++) {
+        double zr = cRe[k], zi = cIm[k];
+        /* a = |z*100| % 1 */
+        double mag100 = sqrt((zr*100)*(zr*100) + (zi*100)*(zi*100));
+        double a = fmod(mag100, 1.0);
+        if (a < 0) a += 1.0;
+        /* b = |z*10| % 1 */
+        double mag10 = sqrt((zr*10)*(zr*10) + (zi*10)*(zi*10));
+        double b = fmod(mag10, 1.0);
+        if (b < 0) b += 1.0;
+        /* exp(a^4 + b^4 + i*2*pi*b*a) */
+        double realExp = a*a*a*a + b*b*b*b;
+        double imagExp = 2.0 * M_PI * b * a;
+        double er = exp(realExp) * cos(imagExp);
+        double ei = exp(realExp) * sin(imagExp);
+        /* z * exp(...) */
+        cRe[k] = zr * er - zi * ei;
+        cIm[k] = zr * ei + zi * er;
+    }
+}
+
 static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "none") == 0)        return ct_none;
     if (strcmp(name, "rev") == 0)         return ct_rev;
@@ -2364,6 +2386,7 @@ static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "safe") == 0)        return ct_safe;
     if (strcmp(name, "negate_odd") == 0)  return ct_negate_odd;
     if (strcmp(name, "max2one") == 0)    return ct_max2one;
+    if (strcmp(name, "swirler") == 0)   return ct_swirler;
     return NULL;
 }
 
@@ -2426,6 +2449,69 @@ static void pt_ndith(double *z1r, double *z1i, double *z2r, double *z2i, double 
     z0 = sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
     z1_bm = sqrt(-2.0 * log(u1)) * sin(2.0 * M_PI * u2);
     *z2r += sigma * z0; *z2i += sigma * z1_bm;
+}
+
+/* adth(n, d, inner): annulus dither — uniform by area between inner*rmax and rmax. */
+static void pt_adth_one(double *xr, double *xi, double rmax, double inner_frac) {
+    if (inner_frac < 0) inner_frac = 0;
+    if (inner_frac > 1) inner_frac = 1;
+    double r0 = inner_frac * rmax, r1 = rmax;
+    double u = rng_uniform();
+    double r = sqrt(r0 * r0 + u * (r1 * r1 - r0 * r0));
+    double theta = 2.0 * M_PI * rng_uniform();
+    *xr += r * cos(theta);
+    *xi += r * sin(theta);
+}
+static void pt_adth(double *z1r, double *z1i, double *z2r, double *z2i, int n, double d, double inner_frac, int gridN) {
+    if (d <= 0.0) d = 1.0;
+    double rmax = d / (gridN > 0 ? gridN : 1);
+    if (n == 0 || n == 2) pt_adth_one(z1r, z1i, rmax, inner_frac);
+    if (n == 1 || n == 2) pt_adth_one(z2r, z2i, rmax, inner_frac);
+}
+
+/* ldth(n, d, len, angle): line dither — uniform on a rotated line segment. */
+static void pt_ldth_one(double *xr, double *xi, double half_len, double angle) {
+    double t = (2.0 * rng_uniform() - 1.0) * half_len;
+    *xr += t * cos(angle);
+    *xi += t * sin(angle);
+}
+static void pt_ldth(double *z1r, double *z1i, double *z2r, double *z2i, int n, double d, double len_frac, double angle, int gridN) {
+    if (d <= 0.0) d = 1.0;
+    double half_len = (d / (gridN > 0 ? gridN : 1)) * len_frac;
+    if (n == 0 || n == 2) pt_ldth_one(z1r, z1i, half_len, angle);
+    if (n == 1 || n == 2) pt_ldth_one(z2r, z2i, half_len, angle);
+}
+
+/* crdth(n, d): cross dither — 50% horizontal, 50% vertical, uniform along arm. */
+static void pt_crdth_one(double *xr, double *xi, double half_len) {
+    double t = (2.0 * rng_uniform() - 1.0) * half_len;
+    if (rng_uniform() < 0.5)
+        *xr += t;
+    else
+        *xi += t;
+}
+static void pt_crdth(double *z1r, double *z1i, double *z2r, double *z2i, int n, double d, int gridN) {
+    if (d <= 0.0) d = 1.0;
+    double half_len = d / (gridN > 0 ? gridN : 1);
+    if (n == 0 || n == 2) pt_crdth_one(z1r, z1i, half_len);
+    if (n == 1 || n == 2) pt_crdth_one(z2r, z2i, half_len);
+}
+
+/* scdth(n, d, half_ap, center): sector dither — area-uniform in circular sector. */
+static void pt_scdth_one(double *xr, double *xi, double rmax, double half_ap, double center) {
+    double r = sqrt(rng_uniform()) * rmax;
+    double theta = center + (2.0 * rng_uniform() - 1.0) * half_ap;
+    *xr += r * cos(theta);
+    *xi += r * sin(theta);
+}
+static void pt_scdth(double *z1r, double *z1i, double *z2r, double *z2i, int n, double d, double half_ap_frac, double center, int gridN) {
+    if (d <= 0.0) d = 1.0;
+    if (half_ap_frac < 0) half_ap_frac = 0;
+    if (half_ap_frac > 1) half_ap_frac = 1;
+    double rmax = d / (gridN > 0 ? gridN : 1);
+    double half_ap = M_PI * half_ap_frac;
+    if (n == 0 || n == 2) pt_scdth_one(z1r, z1i, rmax, half_ap, center);
+    if (n == 1 || n == 2) pt_scdth_one(z2r, z2i, rmax, half_ap, center);
 }
 
 /* ==== Parameter transform dispatch (array-of-arrays format) ==== */
@@ -2504,6 +2590,35 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
     if (strcmp(e->name, "ndith") == 0) {
         double d = e->nArgs > 0 ? e->args[0] : 1.0;
         pt_ndith(z1r, z1i, z2r, z2i, d, gridN);
+        return 0;
+    }
+    if (strcmp(e->name, "adth") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 2;
+        double d = e->nArgs > 1 ? e->args[1] : 1.0;
+        double inner = e->nArgs > 2 ? e->args[2] : 0.4;
+        pt_adth(z1r, z1i, z2r, z2i, n, d, inner, gridN);
+        return 0;
+    }
+    if (strcmp(e->name, "ldth") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 2;
+        double d = e->nArgs > 1 ? e->args[1] : 1.0;
+        double len = e->nArgs > 2 ? e->args[2] : 1.0;
+        double angle = e->nArgs > 3 ? e->args[3] : 0.0;
+        pt_ldth(z1r, z1i, z2r, z2i, n, d, len, angle, gridN);
+        return 0;
+    }
+    if (strcmp(e->name, "crdth") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 2;
+        double d = e->nArgs > 1 ? e->args[1] : 1.0;
+        pt_crdth(z1r, z1i, z2r, z2i, n, d, gridN);
+        return 0;
+    }
+    if (strcmp(e->name, "scdth") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 2;
+        double d = e->nArgs > 1 ? e->args[1] : 1.0;
+        double half_ap = e->nArgs > 2 ? e->args[2] : 0.25;
+        double center = e->nArgs > 3 ? e->args[3] : 0.0;
+        pt_scdth(z1r, z1i, z2r, z2i, n, d, half_ap, center, gridN);
         return 0;
     }
     /* t1radd(v): add v to real part of t1 only */
@@ -2849,121 +2964,8 @@ static void moth4_c(double x1r, double x1i, double x2r, double x2i,
     }
 }
 
-/* g39: 50 coefficients. Sparse constants + 4 parameter-dependent terms. */
-static void g39_c(double x1r, double x1i, double x2r, double x2i,
-                  double *cRe, double *cIm, int *nCoeffs) {
-    *nCoeffs = 50;
-    for (int i = 0; i < 50; i++) { cRe[i] = 0; cIm[i] = 0; }
-
-    /* Constants at sparse indices: [0]=1, [9]=2, [19]=-3, [29]=4, [39]=-5, [49]=6 */
-    cRe[0] = 1; cRe[9] = 2; cRe[19] = -3; cRe[29] = 4; cRe[39] = -5; cRe[49] = 6;
-
-    /* cf[14] = 100 * (t1^2 + t2^2) */
-    /* t1^2 = (x1r+ix1i)^2 = x1r^2-x1i^2 + 2*x1r*x1i*i */
-    double t1sq_r = x1r*x1r - x1i*x1i, t1sq_i = 2*x1r*x1i;
-    double t2sq_r = x2r*x2r - x2i*x2i, t2sq_i = 2*x2r*x2i;
-    cRe[14] = 100 * (t1sq_r + t2sq_r);
-    cIm[14] = 100 * (t1sq_i + t2sq_i);
-
-    /* cf[24] = 50 * (sin(t1) + i*cos(t2)) */
-    /* sin(a+bi) = sin(a)cosh(b) + i*cos(a)sinh(b) */
-    double s1r, s1i;
-    c_sin(x1r, x1i, &s1r, &s1i);
-    /* cos(t2) */
-    double c2r, c2i;
-    c_cos(x2r, x2i, &c2r, &c2i);
-    /* i*cos(t2) = -c2i + i*c2r */
-    cRe[24] = 50 * (s1r + (-c2i));
-    cIm[24] = 50 * (s1i + c2r);
-
-    /* cf[34] = 200*(t1*t2) + i*(t1^3 - t2^3) */
-    /* t1*t2 */
-    double pr = x1r*x2r - x1i*x2i, pi = x1r*x2i + x1i*x2r;
-    /* t1^3 = t1^2 * t1 */
-    double t1cu_r = t1sq_r*x1r - t1sq_i*x1i, t1cu_i = t1sq_r*x1i + t1sq_i*x1r;
-    /* t2^3 = t2^2 * t2 */
-    double t2cu_r = t2sq_r*x2r - t2sq_i*x2i, t2cu_i = t2sq_r*x2i + t2sq_i*x2r;
-    /* diff = t1^3 - t2^3 */
-    double difr = t1cu_r - t2cu_r, difi = t1cu_i - t2cu_i;
-    /* i*(diff) = -difi + i*difr */
-    cRe[34] = 200*pr + (-difi);
-    cIm[34] = 200*pi + difr;
-
-    /* cf[44] = exp(i*(t1+t2)) + exp(-i*(t1-t2)) */
-    /* i*(t1+t2) = -(x1i+x2i) + i*(x1r+x2r) */
-    double ea_r, ea_i;
-    c_exp2(-(x1i+x2i), x1r+x2r, &ea_r, &ea_i);
-    /* -i*(t1-t2) = (x1i-x2i) + i*(-(x1r-x2r)) = (x1i-x2i) + i*(x2r-x1r) */
-    double eb_r, eb_i;
-    c_exp2(x1i-x2i, x2r-x1r, &eb_r, &eb_i);
-    cRe[44] = ea_r + eb_r;
-    cIm[44] = ea_i + eb_i;
-
-    /* NaN guard */
-    for (int i = 0; i < 50; i++) {
-        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
-    }
-}
-
-/* g68: 25 coefficients, |t1|^((k+1)/2) * exp(i*(k+1)*arg(t2)) + corrections */
-static void g68_c(double x1r, double x1i, double x2r, double x2i,
-                  double *cRe, double *cIm, int *nCoeffs) {
-    *nCoeffs = 25;
-    double abs_t1 = sqrt(x1r * x1r + x1i * x1i);
-    double arg_t2 = atan2(x2i, x2r);
-
-    for (int k = 0; k < 25; k++) {
-        double e = (k + 1) / 2.0;
-        double r = pow(abs_t1, e);
-        double a = (k + 1) * arg_t2;
-        cRe[k] = r * cos(a);
-        cIm[k] = r * sin(a);
-    }
-
-    /* cf[4] += (log|t1| + log|t2|) / 2 — real addition */
-    double abs_t2 = sqrt(x2r * x2r + x2i * x2i);
-    double log_sum = (log(abs_t1 > 1e-300 ? abs_t1 : 1e-300) +
-                      log(abs_t2 > 1e-300 ? abs_t2 : 1e-300)) / 2.0;
-    cRe[4] += log_sum;
-
-    /* cf[9] += conj(t1 * t2) */
-    double pr = x1r * x2r - x1i * x2i;
-    double pi = x1r * x2i + x1i * x2r;
-    cRe[9] += pr;
-    cIm[9] -= pi;  /* conj */
-
-    /* cf[14] += |t2 - t1|^2 — real */
-    double dr = x2r - x1r, di = x2i - x1i;
-    cRe[14] += dr * dr + di * di;
-
-    /* cf[19] += (sin(arg(t1)) / cos(arg(t2)))^3 — real */
-    double arg_t1 = atan2(x1i, x1r);
-    double ca2 = cos(arg_t2);
-    double ratio = (fabs(ca2) > 1e-30) ? sin(arg_t1) / ca2 : 0.0;
-    cRe[19] += ratio * ratio * ratio;
-
-    /* cf[24] += ((i*t1 - t2)^2 / (1 + |t1+t2|^3))^4 */
-    /* i*t1 = -x1i + i*x1r */
-    double ar = -x1i - x2r, ai = x1r - x2i;   /* i*t1 - t2 */
-    /* (a)^2 = (ar+ai*i)^2 */
-    double a2r = ar * ar - ai * ai, a2i = 2 * ar * ai;
-    /* denom = 1 + |t1+t2|^3 */
-    double sr = x1r + x2r, si = x1i + x2i;
-    double abs_sum = sqrt(sr * sr + si * si);
-    double denom = 1.0 + abs_sum * abs_sum * abs_sum;
-    /* q = a^2 / denom (denom is real) */
-    double qr = a2r / denom, qi = a2i / denom;
-    /* q^4 = ((q)^2)^2 */
-    double q2r = qr * qr - qi * qi, q2i = 2 * qr * qi;
-    double q4r = q2r * q2r - q2i * q2i, q4i = 2 * q2r * q2i;
-    cRe[24] += q4r;
-    cIm[24] += q4i;
-
-    /* NaN guard */
-    for (int i = 0; i < 25; i++) {
-        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
-    }
-}
+/* Auto-generated g-functions from ops_poly.py (g1-g99+) */
+#include "g_generated.c"
 
 static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_1") == 0)   return giga_1_c;
@@ -2981,8 +2983,106 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "p7f") == 0)      return p7f_c;
     if (strcmp(name, "p821") == 0)    return p821_c;
     if (strcmp(name, "moth4") == 0)  return moth4_c;
-    if (strcmp(name, "g39") == 0)    return g39_c;
-    if (strcmp(name, "g68") == 0)    return g68_c;
+    /* Auto-generated g-functions (g1-g99+) */
+    if (strcmp(name, "g1") == 0) return g1_c;
+    if (strcmp(name, "g2") == 0) return g2_c;
+    if (strcmp(name, "g3") == 0) return g3_c;
+    if (strcmp(name, "g4") == 0) return g4_c;
+    if (strcmp(name, "g5") == 0) return g5_c;
+    if (strcmp(name, "g6") == 0) return g6_c;
+    if (strcmp(name, "g7") == 0) return g7_c;
+    if (strcmp(name, "g8") == 0) return g8_c;
+    if (strcmp(name, "g9") == 0) return g9_c;
+    if (strcmp(name, "g10") == 0) return g10_c;
+    if (strcmp(name, "g11") == 0) return g11_c;
+    if (strcmp(name, "g12") == 0) return g12_c;
+    if (strcmp(name, "g13") == 0) return g13_c;
+    if (strcmp(name, "g14") == 0) return g14_c;
+    if (strcmp(name, "g15") == 0) return g15_c;
+    if (strcmp(name, "g16") == 0) return g16_c;
+    if (strcmp(name, "g17") == 0) return g17_c;
+    if (strcmp(name, "g18") == 0) return g18_c;
+    if (strcmp(name, "g19") == 0) return g19_c;
+    if (strcmp(name, "g20") == 0) return g20_c;
+    if (strcmp(name, "g21") == 0) return g21_c;
+    if (strcmp(name, "g22") == 0) return g22_c;
+    if (strcmp(name, "g23") == 0) return g23_c;
+    if (strcmp(name, "g24") == 0) return g24_c;
+    if (strcmp(name, "g25") == 0) return g25_c;
+    if (strcmp(name, "g26") == 0) return g26_c;
+    if (strcmp(name, "g27") == 0) return g27_c;
+    if (strcmp(name, "g28") == 0) return g28_c;
+    if (strcmp(name, "g29") == 0) return g29_c;
+    if (strcmp(name, "g30") == 0) return g30_c;
+    if (strcmp(name, "g31") == 0) return g31_c;
+    if (strcmp(name, "g32") == 0) return g32_c;
+    if (strcmp(name, "g33") == 0) return g33_c;
+    if (strcmp(name, "g34") == 0) return g34_c;
+    if (strcmp(name, "g35") == 0) return g35_c;
+    if (strcmp(name, "g36") == 0) return g36_c;
+    if (strcmp(name, "g37") == 0) return g37_c;
+    if (strcmp(name, "g38") == 0) return g38_c;
+    if (strcmp(name, "g39") == 0) return g39_c;
+    if (strcmp(name, "g40") == 0) return g40_c;
+    if (strcmp(name, "g41") == 0) return g41_c;
+    if (strcmp(name, "g42") == 0) return g42_c;
+    if (strcmp(name, "g43") == 0) return g43_c;
+    if (strcmp(name, "g44") == 0) return g44_c;
+    if (strcmp(name, "g45") == 0) return g45_c;
+    if (strcmp(name, "g46") == 0) return g46_c;
+    if (strcmp(name, "g47") == 0) return g47_c;
+    if (strcmp(name, "g48") == 0) return g48_c;
+    if (strcmp(name, "g49") == 0) return g49_c;
+    if (strcmp(name, "g50") == 0) return g50_c;
+    if (strcmp(name, "g51") == 0) return g51_c;
+    if (strcmp(name, "g52") == 0) return g52_c;
+    if (strcmp(name, "g53") == 0) return g53_c;
+    if (strcmp(name, "g54") == 0) return g54_c;
+    if (strcmp(name, "g55") == 0) return g55_c;
+    if (strcmp(name, "g56") == 0) return g56_c;
+    if (strcmp(name, "g57") == 0) return g57_c;
+    if (strcmp(name, "g58") == 0) return g58_c;
+    if (strcmp(name, "g59") == 0) return g59_c;
+    if (strcmp(name, "g60") == 0) return g60_c;
+    if (strcmp(name, "g61") == 0) return g61_c;
+    if (strcmp(name, "g62") == 0) return g62_c;
+    if (strcmp(name, "g63") == 0) return g63_c;
+    if (strcmp(name, "g64") == 0) return g64_c;
+    if (strcmp(name, "g65") == 0) return g65_c;
+    if (strcmp(name, "g66") == 0) return g66_c;
+    if (strcmp(name, "g67") == 0) return g67_c;
+    if (strcmp(name, "g68") == 0) return g68_c;
+    if (strcmp(name, "g69") == 0) return g69_c;
+    if (strcmp(name, "g70") == 0) return g70_c;
+    if (strcmp(name, "g71") == 0) return g71_c;
+    if (strcmp(name, "g72") == 0) return g72_c;
+    if (strcmp(name, "g73") == 0) return g73_c;
+    if (strcmp(name, "g74") == 0) return g74_c;
+    if (strcmp(name, "g75") == 0) return g75_c;
+    if (strcmp(name, "g76") == 0) return g76_c;
+    if (strcmp(name, "g77") == 0) return g77_c;
+    if (strcmp(name, "g78") == 0) return g78_c;
+    if (strcmp(name, "g79") == 0) return g79_c;
+    if (strcmp(name, "g80") == 0) return g80_c;
+    if (strcmp(name, "g81") == 0) return g81_c;
+    /* g82: transpile failed, skipped */
+    if (strcmp(name, "g83") == 0) return g83_c;
+    if (strcmp(name, "g84") == 0) return g84_c;
+    if (strcmp(name, "g85") == 0) return g85_c;
+    if (strcmp(name, "g86") == 0) return g86_c;
+    if (strcmp(name, "g87") == 0) return g87_c;
+    if (strcmp(name, "g88") == 0) return g88_c;
+    if (strcmp(name, "g89") == 0) return g89_c;
+    if (strcmp(name, "g90") == 0) return g90_c;
+    if (strcmp(name, "g91") == 0) return g91_c;
+    if (strcmp(name, "g92") == 0) return g92_c;
+    if (strcmp(name, "g93") == 0) return g93_c;
+    if (strcmp(name, "g94") == 0) return g94_c;
+    if (strcmp(name, "g95") == 0) return g95_c;
+    if (strcmp(name, "g96") == 0) return g96_c;
+    if (strcmp(name, "g97") == 0) return g97_c;
+    if (strcmp(name, "g98") == 0) return g98_c;
+    if (strcmp(name, "g99") == 0) return g99_c;
     if (strcmp(name, "poly_110") == 0) return poly_110_c;
     if (strcmp(name, "poly_2") == 0)   return poly_2_hand;
     if (strcmp(name, "poly_9") == 0)   return poly_9_hand;

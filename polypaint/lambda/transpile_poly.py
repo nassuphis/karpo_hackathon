@@ -42,6 +42,7 @@ class PolyTranspiler(ast.NodeVisitor):
         self.func_name = func_name
         self.n_coeffs = n_coeffs
         self.lines = []
+        self._scalar_t1t2 = False  # set True for t1,t2 = z[0].real, z[0].imag
         self.declared = set()
         self.array_sizes = {}  # name -> int (number of elements)
         self.arange_vars = {}  # name -> (start, stop) for arange loop variables
@@ -82,8 +83,12 @@ class PolyTranspiler(ast.NodeVisitor):
         if isinstance(node, ast.Name):
             name = node.id
             if name == "t1":
+                if self._scalar_t1t2:
+                    return CVar("t1", "0")
                 return CVar("x1r", "x1i")
             elif name == "t2":
+                if self._scalar_t1t2:
+                    return CVar("t2", "0")
                 return CVar("x2r", "x2i")
             elif name == "pi":
                 return CVar("M_PI", "0")
@@ -728,10 +733,44 @@ class PolyTranspiler(ast.NodeVisitor):
         return f"(int)({self.expr_to_c(node).r})"
 
     def assign_cf(self, idx_node, value_node):
-        """Emit cf[idx] = value (bounds-checked)."""
+        """Emit cf[idx] = value (bounds-checked).
+        Handles fancy indexing: cf[np.array([i1,i2,...])] = np.array([v1,v2,...])
+        or cf[np.array([...])] = scalar."""
+        # Fancy index: cf[np.array([0, 9, 19])] = np.array([1, 2, -3])
+        idx_elts = self.extract_np_array_int_elements(idx_node)
+        if idx_elts is not None:
+            val_elts = self.extract_np_array_elements(value_node)
+            if val_elts is not None and len(val_elts) == len(idx_elts):
+                # Parallel assignment: cf[indices] = values
+                for idx_val, val_node in zip(idx_elts, val_elts):
+                    val = self.expr_to_c(val_node)
+                    self.emit(f"{{ int _idx = {idx_val}; if (_idx >= 0 && _idx < {self.n_coeffs}) {{ cRe[_idx] = {val.r}; cIm[_idx] = {val.i}; }} }}")
+                return
+            elif val_elts is not None and len(val_elts) != len(idx_elts):
+                # Try as a flat list of constants
+                pass
+            # Scalar broadcast: cf[indices] = scalar
+            val = self.expr_to_c(value_node)
+            for idx_val in idx_elts:
+                self.emit(f"{{ int _idx = {idx_val}; if (_idx >= 0 && _idx < {self.n_coeffs}) {{ cRe[_idx] = {val.r}; cIm[_idx] = {val.i}; }} }}")
+            return
+
         idx = self.index_expr(idx_node)
         val = self.expr_to_c(value_node)
         self.emit(f"{{ int _idx = {idx}; if (_idx >= 0 && _idx < {self.n_coeffs}) {{ cRe[_idx] = {val.r}; cIm[_idx] = {val.i}; }} }}")
+
+    def extract_np_array_int_elements(self, node):
+        """Extract integer elements from np.array([1, 2, 3]) for fancy indexing."""
+        if not isinstance(node, ast.Call):
+            return None
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "array":
+            if node.args and isinstance(node.args[0], ast.List):
+                try:
+                    return [int(e.value) for e in node.args[0].elts if isinstance(e, ast.Constant)]
+                except (ValueError, AttributeError):
+                    return None
+        return None
 
     def assign_cf_slice(self, sl, value_node):
         """Handle cf[a:b] = expr involving arrays."""
@@ -1032,14 +1071,37 @@ class PolyTranspiler(ast.NodeVisitor):
             elif isinstance(target, ast.Tuple):
                 # Tuple unpacking — handle simple cases
                 if isinstance(stmt.value, ast.Tuple):
-                    for tgt, val in zip(target.elts, stmt.value.elts):
-                        if isinstance(tgt, ast.Name):
-                            v = self.expr_to_c(val)
-                            if tgt.id not in self.declared:
-                                self.declared.add(tgt.id)
-                                self.emit(f"double {tgt.id} = {v.r};")
-                            else:
-                                self.emit(f"{tgt.id} = {v.r};")
+                    # Skip "t1, t2 = z[0], z[1]" — these are already mapped to x1r/x2r
+                    # Also handle "t1, t2 = z[0].real, z[0].imag" — map to x1r, x1i
+                    names = [t.id for t in target.elts if isinstance(t, ast.Name)]
+                    if set(names) == {"t1", "t2"}:
+                        # Check if it's z[0].real, z[0].imag pattern
+                        vals = stmt.value.elts
+                        is_real_imag = (
+                            len(vals) == 2 and
+                            all(isinstance(v, ast.Attribute) and v.attr in ("real", "imag") for v in vals)
+                        )
+                        if is_real_imag:
+                            # t1, t2 = z[0].real, z[0].imag → map t1=x1r, t2=x1i
+                            # These functions use t1/t2 as real scalars, not complex
+                            self.emit("/* t1, t2 = z[0].real, z[0].imag — scalar-from-first-input */")
+                            self.emit("double t1 = x1r;")
+                            self.emit("double t2 = x1i;")
+                            self.declared.add("t1")
+                            self.declared.add("t2")
+                            # Override: when we see t1/t2 in expressions, use scalar vars
+                            self._scalar_t1t2 = True
+                        else:
+                            pass  # standard z[0], z[1] — t1/t2 already mapped to x1r/x2r
+                    else:
+                        for tgt, val in zip(target.elts, stmt.value.elts):
+                            if isinstance(tgt, ast.Name):
+                                v = self.expr_to_c(val)
+                                if tgt.id not in self.declared:
+                                    self.declared.add(tgt.id)
+                                    self.emit(f"double {tgt.id} = {v.r};")
+                                else:
+                                    self.emit(f"{tgt.id} = {v.r};")
 
         elif isinstance(stmt, ast.AugAssign):
             target = stmt.target
@@ -1435,7 +1497,24 @@ class PolyTranspiler(ast.NodeVisitor):
 
 def extract_ncoeffs(func_node):
     """Extract the size of the cf array from np.zeros(N, ...) or np.arange(N)."""
-    # First try np.zeros(N, ...)
+    # First resolve any local variable assignments like n = 25
+    local_vars = {}
+    for stmt in ast.walk(func_node):
+        if isinstance(stmt, ast.Assign):
+            if (isinstance(stmt.targets[0], ast.Name) and
+                    isinstance(stmt.value, ast.Constant) and
+                    isinstance(stmt.value.value, (int, float))):
+                local_vars[stmt.targets[0].id] = int(stmt.value.value)
+
+    def _resolve_int(node):
+        """Resolve a node to an integer, following local variable references."""
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return int(node.value)
+        if isinstance(node, ast.Name) and node.id in local_vars:
+            return local_vars[node.id]
+        return None
+
+    # Try np.zeros(N, ...)
     for stmt in ast.walk(func_node):
         if isinstance(stmt, ast.Assign):
             if isinstance(stmt.targets[0], ast.Name) and stmt.targets[0].id == "cf":
@@ -1443,8 +1522,10 @@ def extract_ncoeffs(func_node):
                     func = stmt.value.func
                     if isinstance(func, ast.Attribute) and func.attr == "zeros":
                         args = stmt.value.args
-                        if args and isinstance(args[0], ast.Constant):
-                            return int(args[0].value)
+                        if args:
+                            val = _resolve_int(args[0])
+                            if val is not None:
+                                return val
     # Fall back to np.arange size (the arange determines cf length)
     for stmt in ast.walk(func_node):
         if isinstance(stmt, ast.Assign):
@@ -1592,7 +1673,24 @@ def transpile_function(func_node):
     lines.append(f"        if (!isfinite(cRe[_i]) || !isfinite(cIm[_i])) {{ cRe[_i] = 0; cIm[_i] = 0; }}")
     lines.append(f"    }}")
     lines.append(f"}}")
-    return "\n".join(lines), name, n_coeffs
+    c_code = "\n".join(lines)
+
+    # Auto-detect broken transpilations: if the C code contains unhandled warnings,
+    # replace with a stub to avoid silent wrong output.
+    if "WARNING: unhandled" in c_code or "WARNING: could not evaluate" in c_code:
+        import sys
+        print(f"  {name}: auto-stubbed (contains unhandled constructs)", file=sys.stderr)
+        stub_lines = []
+        stub_lines.append(f"/* {name}: auto-stubbed (unhandled constructs in source) */")
+        stub_lines.append(f"static void {name}_c(double x1r, double x1i, double x2r, double x2i,")
+        stub_lines.append(f"                     double *cRe, double *cIm, int *nCoeffs) {{")
+        stub_lines.append(f"    *nCoeffs = {n_coeffs};")
+        stub_lines.append(f"    for (int _i = 0; _i < {n_coeffs}; _i++) {{ cRe[_i] = 0; cIm[_i] = 0; }}")
+        stub_lines.append(f"    (void)x1r; (void)x1i; (void)x2r; (void)x2i;")
+        stub_lines.append(f"}}")
+        return "\n".join(stub_lines), name, n_coeffs
+
+    return c_code, name, n_coeffs
 
 
 def transpile_file(src_path, stub_funcs=None, skip_funcs=None, label=None):
@@ -1613,7 +1711,7 @@ def transpile_file(src_path, stub_funcs=None, skip_funcs=None, label=None):
 
     funcs = []
     for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.FunctionDef) and node.name.startswith("poly_"):
+        if isinstance(node, ast.FunctionDef) and (node.name.startswith("poly_") or node.name.startswith("g")):
             funcs.append(node)
 
     c_lines = []
@@ -1666,6 +1764,7 @@ def main():
         "poly100.py": {"poly_21", "poly_35", "poly_37", "poly_40", "poly_46", "poly_58", "poly_72", "poly_74", "poly_94", "poly_100"},
     }
 
+    STUBS["ops_poly.py"] = {"g7", "g8", "g11", "g31", "g38", "g48", "g49", "g50", "g51", "g71", "g82", "g84", "g90", "g92", "g95", "g97", "g98", "g224", "g227", "g232", "g2863", "g2864", "g2864a", "gp7f", "gpt1"}
     basename = src_path.rsplit("/", 1)[-1]
     stub_funcs = STUBS.get(basename, set())
 

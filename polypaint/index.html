@@ -151,12 +151,12 @@ button {
         <!-- Compute tab -->
         <div id="tab-compute" class="tab-content active">
             <div class="anim-row" style="flex-wrap:wrap; gap:6px; align-items:center">
-                <label>N (grid):</label>
+                <label>N:</label>
                 <input type="number" id="render-n" value="500" min="10" max="5000" step="10" style="width:5em">
-                <label>Stripes:</label>
-                <input type="number" id="render-stripes" value="10" min="10" max="500" step="1" style="width:5em">
                 <label>Times:</label>
                 <input type="number" id="render-times" value="1" min="1" max="100" step="1" style="width:5em">
+                <label>Chunks:</label>
+                <input type="number" id="render-stripes" value="10" min="1" max="500" step="1" style="width:5em">
                 <button class="btn-secondary" onclick="loadRenderPreset('fast')" style="margin-left:8px">Fast N=100</button>
                 <button class="btn-secondary" onclick="loadRenderPreset('medium')">Medium N=500</button>
                 <button class="btn-secondary" onclick="loadRenderPreset('hires')">Hi-res N=1K</button>
@@ -3148,7 +3148,7 @@ async function runCalculate() {
                 sweepLastDone = check.done;
                 sweepLastProgress = performance.now();
                 sweepLastStallLog = 0;
-                document.getElementById('compute-status').textContent = `Solving ${check.done}/${nStripes} stripes...`;
+                document.getElementById('compute-status').textContent = `Solving ${check.done}/${nStripes} chunks...`;
             }
             if (check.complete) {
                 stripeResults = (check.results || []).sort((a, b) => a.stripe_idx - b.stripe_idx);
@@ -3168,7 +3168,7 @@ async function runCalculate() {
             }
         }
         const computeWallMs = performance.now() - tCompute;
-        log(`  solve: ${fmtMs(computeWallMs)} wall (${nStripes} stripes)`, 'ok');
+        log(`  solve: ${fmtMs(computeWallMs)} wall (${nStripes} chunks)`, 'ok');
 
         // Phase 4: save calc.json metadata via storage Lambda
         const calcMeta = {
@@ -3221,15 +3221,15 @@ async function runCalculate() {
         document.getElementById('render-results-dir').value = jobId;
 
         document.getElementById('compute-status').textContent =
-            `Computed | ${nStripes} stripes | coeffgen ${fmtMs(coeffgenMs)} | solve ${fmtMs(computeWallMs)} | ` +
+            `Computed | ${nStripes} chunks | coeffgen ${fmtMs(coeffgenMs)} | solve ${fmtMs(computeWallMs)} | ` +
             `compute ${(totalComputeUs/1e6).toFixed(1)}s (sum) | deg ${degree} | total ${fmtMs(totalMs)}`;
         document.getElementById('compute-status').className = 'status ok';
 
         const lines = [];
         lines.push(`  total:    ${fmtMs(totalMs)}`);
-        lines.push(`  coeffgen: ${fmtMs(coeffgenMs)} (${(totalCoeffsSize/1e6).toFixed(1)}MB, ${nStripes} stripes)`);
+        lines.push(`  coeffgen: ${fmtMs(coeffgenMs)} (${(totalCoeffsSize/1e6).toFixed(1)}MB, ${nStripes} chunks)`);
         lines.push(`  total bin: ${(totalBinSize/1e6).toFixed(1)}MB + lores ${(loresResult.bin_size/1e3).toFixed(0)}KB`);
-        lines.push(`  solve: ${(totalComputeUs/1e6).toFixed(1)}s (sum) / ${fmtMs(computeWallMs)} wall (${nStripes} stripes)`);
+        lines.push(`  solve: ${(totalComputeUs/1e6).toFixed(1)}s (sum) / ${fmtMs(computeWallMs)} wall (${nStripes} chunks)`);
         lines.push(`  lores:    ${fmtMs(loresMs)}`);
         lines.push(`Compute ${jobId}: ${pipelineStr} deg${degree} N=${n}, avg_iters=${avgIters.toFixed(1)}`);
         for (const line of lines) log(line, 'ok');

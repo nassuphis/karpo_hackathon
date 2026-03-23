@@ -274,6 +274,16 @@ class PolyTranspiler(ast.NodeVisitor):
                 return self.math_call(attr, node.args)
             elif isinstance(obj, ast.Name) and obj.id == "cmath":
                 return self.cmath_call(attr, node.args)
+            # Method calls on expressions: expr.conjugate(), expr.real, expr.imag
+            elif attr == "conjugate" and not node.args:
+                base = self.expr_to_c(obj)
+                tmp = CVar.fresh("conj")
+                self.declare(tmp)
+                self.emit(f"{tmp.r} = {base.r}; {tmp.i} = -({base.i});")
+                return tmp
+            elif attr == "astype":
+                # x.astype(...) — just pass through the value
+                return self.expr_to_c(obj)
         elif isinstance(func, ast.Name):
             if func.id == "abs":
                 arg = self.expr_to_c(node.args[0])
@@ -418,6 +428,30 @@ class PolyTranspiler(ast.NodeVisitor):
             tmp = CVar.fresh("conj")
             self.declare(tmp)
             self.emit(f"{tmp.r} = {arg.r}; {tmp.i} = -({arg.i});")
+            return tmp
+        elif attr in ("arctan", "arctan2"):
+            arg = self.expr_to_c(args[0])
+            tmp = CVar.fresh("atan")
+            self.declare(tmp)
+            self.emit(f"c_atan({arg.r}, {arg.i}, &{tmp.r}, &{tmp.i});")
+            return tmp
+        elif attr == "arcsinh":
+            arg = self.expr_to_c(args[0])
+            tmp = CVar.fresh("asinh")
+            self.declare(tmp)
+            self.emit(f"c_asinh({arg.r}, {arg.i}, &{tmp.r}, &{tmp.i});")
+            return tmp
+        elif attr == "arcsin":
+            arg = self.expr_to_c(args[0])
+            tmp = CVar.fresh("asin")
+            self.declare(tmp)
+            self.emit(f"c_asin({arg.r}, {arg.i}, &{tmp.r}, &{tmp.i});")
+            return tmp
+        elif attr == "arccos":
+            arg = self.expr_to_c(args[0])
+            tmp = CVar.fresh("acos")
+            self.declare(tmp)
+            self.emit(f"c_acos({arg.r}, {arg.i}, &{tmp.r}, &{tmp.i});")
             return tmp
         elif attr == "isfinite":
             arg = self.expr_to_c(args[0])

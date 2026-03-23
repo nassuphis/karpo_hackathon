@@ -5317,12 +5317,175 @@ static void g56_c(double x1r, double x1i, double x2r, double x2i,
     }
 }
 
-/* g57: auto-stubbed (unhandled constructs in source) */
 static void g57_c(double x1r, double x1i, double x2r, double x2i,
                      double *cRe, double *cIm, int *nCoeffs) {
     *nCoeffs = 10;
     for (int _i = 0; _i < 10; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
-    (void)x1r; (void)x1i; (void)x2r; (void)x2i;
+    double _add1r = 0, _add1i = 0;
+    _add1r = x1r + x2r; _add1i = x1i + x2i;
+    double _abs2r = 0, _abs2i = 0;
+    _abs2r = c_abs(_add1r, _add1i); _abs2i = 0;
+    double _log3r = 0, _log3i = 0;
+    c_log(_abs2r, _abs2i, &_log3r, &_log3i);
+    double _sub4r = 0, _sub4i = 0;
+    _sub4r = x1r - x2r; _sub4i = x1i - x2i;
+    double _sin5r = 0, _sin5i = 0;
+    c_sin(_sub4r, _sub4i, &_sin5r, &_sin5i);
+    double _mul6r = 0, _mul6i = 0;
+    c_mul(_log3r, _log3i, _sin5r, _sin5i, &_mul6r, &_mul6i);
+    { int _idx = 0; if (_idx >= 0 && _idx < 10) { cRe[_idx] = _mul6r; cIm[_idx] = _mul6i; } }
+    double _attr7r = 0, _attr7i = 0;
+    _attr7r = x1r; _attr7i = 0;
+    double _exp8r = 0, _exp8i = 0;
+    c_exp2(_attr7r, _attr7i, &_exp8r, &_exp8i);
+    double _attr9r = 0, _attr9i = 0;
+    _attr9r = x2i; _attr9i = 0;
+    double _exp10r = 0, _exp10i = 0;
+    c_exp2(_attr9r, _attr9i, &_exp10r, &_exp10i);
+    double _add11r = 0, _add11i = 0;
+    _add11r = _exp8r + _exp10r; _add11i = _exp8i + _exp10i;
+    { int _idx = 1; if (_idx >= 0 && _idx < 10) { cRe[_idx] = _add11r; cIm[_idx] = _add11i; } }
+    double _abs12r = 0, _abs12i = 0;
+    _abs12r = c_abs(x1r, x1i); _abs12i = 0;
+    double _sqrt13r = 0, _sqrt13i = 0;
+    c_powr(_abs12r, _abs12i, 0.5, &_sqrt13r, &_sqrt13i);
+    double _cos14r = 0, _cos14i = 0;
+    c_cos(x2r, x2i, &_cos14r, &_cos14i);
+    double _mul15r = 0, _mul15i = 0;
+    c_mul(_sqrt13r, _sqrt13i, _cos14r, _cos14i, &_mul15r, &_mul15i);
+    { int _idx = 2; if (_idx >= 0 && _idx < 10) { cRe[_idx] = _mul15r; cIm[_idx] = _mul15i; } }
+    double _add16r = 0, _add16i = 0;
+    _add16r = x1r + x2r; _add16i = x1i + x2i;
+    double _attr17r = 0, _attr17i = 0;
+    _attr17r = _add16i; _attr17i = 0;
+    double _c18r = 0, _c18i = 0;
+    _c18r = 3.0; _c18i = 0;
+    double _pow19r = 0, _pow19i = 0;
+    c_mul(_attr17r, _attr17i, _attr17r, _attr17i, &_pow19r, &_pow19i);
+    c_mul(_pow19r, _pow19i, _attr17r, _attr17i, &_pow19r, &_pow19i);
+    double _sin20r = 0, _sin20i = 0;
+    c_sin(_pow19r, _pow19i, &_sin20r, &_sin20i);
+    double _sub21r = 0, _sub21i = 0;
+    _sub21r = x1r - x2r; _sub21i = x1i - x2i;
+    double _attr22r = 0, _attr22i = 0;
+    _attr22r = _sub21r; _attr22i = 0;
+    double _c23r = 0, _c23i = 0;
+    _c23r = 2.0; _c23i = 0;
+    double _pow24r = 0, _pow24i = 0;
+    c_mul(_attr22r, _attr22i, _attr22r, _attr22i, &_pow24r, &_pow24i);
+    double _exp25r = 0, _exp25i = 0;
+    c_exp2(_pow24r, _pow24i, &_exp25r, &_exp25i);
+    double _mul26r = 0, _mul26i = 0;
+    c_mul(_sin20r, _sin20i, _exp25r, _exp25i, &_mul26r, &_mul26i);
+    { int _idx = 3; if (_idx >= 0 && _idx < 10) { cRe[_idx] = _mul26r; cIm[_idx] = _mul26i; } }
+    double _mul27r = 0, _mul27i = 0;
+    c_mul(x1r, x1i, x2r, x2i, &_mul27r, &_mul27i);
+    double _attr28r = 0, _attr28i = 0;
+    _attr28r = _mul27i; _attr28i = 0;
+    double _tsin29r = 0, _tsin29i = 0;
+    double _tcos30r = 0, _tcos30i = 0;
+    double _tan31r = 0, _tan31i = 0;
+    c_sin(_attr28r, _attr28i, &_tsin29r, &_tsin29i);
+    c_cos(_attr28r, _attr28i, &_tcos30r, &_tcos30i);
+    c_div(_tsin29r, _tsin29i, _tcos30r, _tcos30i, &_tan31r, &_tan31i);
+    double _mul32r = 0, _mul32i = 0;
+    c_mul(x1r, x1i, x2r, x2i, &_mul32r, &_mul32i);
+    double _attr33r = 0, _attr33i = 0;
+    _attr33r = _mul32r; _attr33i = 0;
+    double _cosh34r = 0, _cosh34i = 0;
+    _cosh34r = cosh(_attr33r); _cosh34i = 0; /* approx real cosh */
+    double _mul35r = 0, _mul35i = 0;
+    c_mul(_tan31r, _tan31i, _cosh34r, _cosh34i, &_mul35r, &_mul35i);
+    { int _idx = 4; if (_idx >= 0 && _idx < 10) { cRe[_idx] = _mul35r; cIm[_idx] = _mul35i; } }
+    double _sub36r = 0, _sub36i = 0;
+    _sub36r = x1r - x2r; _sub36i = x1i - x2i;
+    double _abs37r = 0, _abs37i = 0;
+    _abs37r = c_abs(_sub36r, _sub36i); _abs37i = 0;
+    double _add38r = 0, _add38i = 0;
+    _add38r = x1r + x2r; _add38i = x1i + x2i;
+    double _ang39r = 0, _ang39i = 0;
+    _ang39r = c_arg(_add38r, _add38i); _ang39i = 0;
+    double _sinh40r = 0, _sinh40i = 0;
+    _sinh40r = sinh(_ang39r); _sinh40i = 0; /* approx real sinh */
+    double _mul41r = 0, _mul41i = 0;
+    c_mul(_abs37r, _abs37i, _sinh40r, _sinh40i, &_mul41r, &_mul41i);
+    { int _idx = 5; if (_idx >= 0 && _idx < 10) { cRe[_idx] = _mul41r; cIm[_idx] = _mul41i; } }
+    double _c42r = 0, _c42i = 0;
+    _c42r = 3.0; _c42i = 0;
+    double _pow43r = 0, _pow43i = 0;
+    c_mul(x1r, x1i, x1r, x1i, &_pow43r, &_pow43i);
+    c_mul(_pow43r, _pow43i, x1r, x1i, &_pow43r, &_pow43i);
+    double _c44r = 0, _c44i = 0;
+    _c44r = 2.0; _c44i = 0;
+    double _pow45r = 0, _pow45i = 0;
+    c_mul(x2r, x2i, x2r, x2i, &_pow45r, &_pow45i);
+    double _sub46r = 0, _sub46i = 0;
+    _sub46r = _pow43r - _pow45r; _sub46i = _pow43i - _pow45i;
+    double _attr47r = 0, _attr47i = 0;
+    _attr47r = _sub46i; _attr47i = 0;
+    double _mul48r = 0, _mul48i = 0;
+    c_mul(x1r, x1i, x2r, x2i, &_mul48r, &_mul48i);
+    double _attr49r = 0, _attr49i = 0;
+    _attr49r = _mul48r; _attr49i = 0;
+    double _tsin50r = 0, _tsin50i = 0;
+    double _tcos51r = 0, _tcos51i = 0;
+    double _tan52r = 0, _tan52i = 0;
+    c_sin(_attr49r, _attr49i, &_tsin50r, &_tsin50i);
+    c_cos(_attr49r, _attr49i, &_tcos51r, &_tcos51i);
+    c_div(_tsin50r, _tsin50i, _tcos51r, _tcos51i, &_tan52r, &_tan52i);
+    double _mul53r = 0, _mul53i = 0;
+    c_mul(_attr47r, _attr47i, _tan52r, _tan52i, &_mul53r, &_mul53i);
+    { int _idx = 6; if (_idx >= 0 && _idx < 10) { cRe[_idx] = _mul53r; cIm[_idx] = _mul53i; } }
+    double _abs54r = 0, _abs54i = 0;
+    _abs54r = c_abs(x1r, x1i); _abs54i = 0;
+    double _abs55r = 0, _abs55i = 0;
+    _abs55r = c_abs(x2r, x2i); _abs55i = 0;
+    double _mul56r = 0, _mul56i = 0;
+    c_mul(_abs54r, _abs54i, _abs55r, _abs55i, &_mul56r, &_mul56i);
+    double _tanh57r = 0, _tanh57i = 0;
+    _tanh57r = tanh(_mul56r); _tanh57i = 0; /* approx real tanh */
+    double _div58r = 0, _div58i = 0;
+    c_div(x1r, x1i, x2r, x2i, &_div58r, &_div58i);
+    double _ang59r = 0, _ang59i = 0;
+    _ang59r = c_arg(_div58r, _div58i); _ang59i = 0;
+    double _sin60r = 0, _sin60i = 0;
+    c_sin(_ang59r, _ang59i, &_sin60r, &_sin60i);
+    double _mul61r = 0, _mul61i = 0;
+    c_mul(_tanh57r, _tanh57i, _sin60r, _sin60i, &_mul61r, &_mul61i);
+    { int _idx = 7; if (_idx >= 0 && _idx < 10) { cRe[_idx] = _mul61r; cIm[_idx] = _mul61i; } }
+    double _sub62r = 0, _sub62i = 0;
+    _sub62r = x1r - x2r; _sub62i = x1i - x2i;
+    double _attr63r = 0, _attr63i = 0;
+    _attr63r = _sub62r; _attr63i = 0;
+    double _sgn64r = 0, _sgn64i = 0;
+    _sgn64r = (_attr63r > 0) ? 1.0 : (_attr63r < 0) ? -1.0 : 0.0; _sgn64i = 0;
+    double _mul65r = 0, _mul65i = 0;
+    c_mul(x1r, x1i, x2r, x2i, &_mul65r, &_mul65i);
+    double _ang66r = 0, _ang66i = 0;
+    _ang66r = c_arg(_mul65r, _mul65i); _ang66i = 0;
+    double _cosh67r = 0, _cosh67i = 0;
+    _cosh67r = cosh(_ang66r); _cosh67i = 0; /* approx real cosh */
+    double _mul68r = 0, _mul68i = 0;
+    c_mul(_sgn64r, _sgn64i, _cosh67r, _cosh67i, &_mul68r, &_mul68i);
+    { int _idx = 8; if (_idx >= 0 && _idx < 10) { cRe[_idx] = _mul68r; cIm[_idx] = _mul68i; } }
+    double _c69r = 0, _c69i = 0;
+    _c69r = 0.0; _c69i = 1.0;
+    double _mul70r = 0, _mul70i = 0;
+    c_mul(_c69r, _c69i, x1r, x1i, &_mul70r, &_mul70i);
+    double _div71r = 0, _div71i = 0;
+    c_div(_mul70r, _mul70i, x2r, x2i, &_div71r, &_div71i);
+    double _atan72r = 0, _atan72i = 0;
+    c_atan(_div71r, _div71i, &_atan72r, &_atan72i);
+    double _add73r = 0, _add73i = 0;
+    _add73r = x1r + x2r; _add73i = x1i + x2i;
+    double _asinh74r = 0, _asinh74i = 0;
+    c_asinh(_add73r, _add73i, &_asinh74r, &_asinh74i);
+    double _add75r = 0, _add75i = 0;
+    _add75r = _atan72r + _asinh74r; _add75i = _atan72i + _asinh74i;
+    { int _idx = 9; if (_idx >= 0 && _idx < 10) { cRe[_idx] = _add75r; cIm[_idx] = _add75i; } }
+    for (int _i = 0; _i < 10; _i++) {
+        if (!isfinite(cRe[_i]) || !isfinite(cIm[_i])) { cRe[_i] = 0; cIm[_i] = 0; }
+    }
 }
 
 /* g58: auto-stubbed (unhandled constructs in source) */
@@ -5539,12 +5702,12 @@ static void g59_c(double x1r, double x1i, double x2r, double x2i,
     double _sub83r = 0, _sub83i = 0;
     _sub83r = _mul79r - _mul82r; _sub83i = _mul79i - _mul82i;
     { int _idx = 9; if (_idx >= 0 && _idx < 11) { cRe[_idx] = _sub83r; cIm[_idx] = _sub83i; } }
-    double _at284r = 0, _at284i = 0;
-    _at284r = atan2(t1i, t1r); _at284i = 0;
-    double ang1_r = _at284r, ang1_i = _at284i;
-    double _at285r = 0, _at285i = 0;
-    _at285r = atan2(t2i, t2r); _at285i = 0;
-    double ang2_r = _at285r, ang2_i = _at285i;
+    double _atan84r = 0, _atan84i = 0;
+    c_atan(t1i, 0, &_atan84r, &_atan84i);
+    double ang1_r = _atan84r, ang1_i = _atan84i;
+    double _atan85r = 0, _atan85i = 0;
+    c_atan(t2i, 0, &_atan85r, &_atan85i);
+    double ang2_r = _atan85r, ang2_i = _atan85i;
     double _sub86r = 0, _sub86i = 0;
     _sub86r = ang1_r - ang2_r; _sub86i = ang1_i - ang2_i;
     double dphi_r = _sub86r, dphi_i = _sub86i;
@@ -6546,199 +6709,197 @@ static void g69_c(double x1r, double x1i, double x2r, double x2i,
     }
     double _attr7r = 0, _attr7i = 0;
     _attr7r = s_i; _attr7i = 0;
-    double _attr8r = 0, _attr8i = 0;
-    _attr8r = s_r; _attr8i = 0;
-    double _at29r = 0, _at29i = 0;
-    _at29r = atan2(_attr7r, _attr8r); _at29i = 0;
-    double theta_r = _at29r, theta_i = _at29i;
-    double _cos10r = 0, _cos10i = 0;
-    c_cos(theta_r, theta_i, &_cos10r, &_cos10i);
-    double _c11r = 0, _c11i = 0;
-    _c11r = 0.0; _c11i = 1.0;
-    double _sin12r = 0, _sin12i = 0;
-    c_sin(theta_r, theta_i, &_sin12r, &_sin12i);
-    double _mul13r = 0, _mul13i = 0;
-    c_mul(_c11r, _c11i, _sin12r, _sin12i, &_mul13r, &_mul13i);
-    double _add14r = 0, _add14i = 0;
-    _add14r = _cos10r + _mul13r; _add14i = _cos10i + _mul13i;
-    double phasor_r = _add14r, phasor_i = _add14i;
+    double _atan8r = 0, _atan8i = 0;
+    c_atan(_attr7r, _attr7i, &_atan8r, &_atan8i);
+    double theta_r = _atan8r, theta_i = _atan8i;
+    double _cos9r = 0, _cos9i = 0;
+    c_cos(theta_r, theta_i, &_cos9r, &_cos9i);
+    double _c10r = 0, _c10i = 0;
+    _c10r = 0.0; _c10i = 1.0;
+    double _sin11r = 0, _sin11i = 0;
+    c_sin(theta_r, theta_i, &_sin11r, &_sin11i);
+    double _mul12r = 0, _mul12i = 0;
+    c_mul(_c10r, _c10i, _sin11r, _sin11i, &_mul12r, &_mul12i);
+    double _add13r = 0, _add13i = 0;
+    _add13r = _cos9r + _mul12r; _add13i = _cos9i + _mul12i;
+    double phasor_r = _add13r, phasor_i = _add13i;
     for (int i = 0; i < 25; i++) {
+        double _attr14r = 0, _attr14i = 0;
+        _attr14r = x1r; _attr14i = 0;
+        double rpart_r = _attr14r, rpart_i = _attr14i;
         double _attr15r = 0, _attr15i = 0;
-        _attr15r = x1r; _attr15i = 0;
-        double rpart_r = _attr15r, rpart_i = _attr15i;
-        double _attr16r = 0, _attr16i = 0;
-        _attr16r = x2i; _attr16i = 0;
-        double ipart_r = _attr16r, ipart_i = _attr16i;
-        double _c17r = 0, _c17i = 0;
-        _c17r = 1.0; _c17i = 0;
-        double _add18r = 0, _add18i = 0;
-        _add18r = i + _c17r; _add18i = 0 + _c17i;
-        double _pow19r = 0, _pow19i = 0;
-        c_powc(rpart_r, rpart_i, _add18r, _add18i, &_pow19r, &_pow19i);
-        double _c20r = 0, _c20i = 0;
-        _c20r = 25.0; _c20i = 0;
-        double _sub21r = 0, _sub21i = 0;
-        _sub21r = _c20r - i; _sub21i = _c20i - 0;
-        double _pow22r = 0, _pow22i = 0;
-        c_powc(ipart_r, ipart_i, _sub21r, _sub21i, &_pow22r, &_pow22i);
-        double _add23r = 0, _add23i = 0;
-        _add23r = _pow19r + _pow22r; _add23i = _pow19i + _pow22i;
-        double num_r = _add23r, num_i = _add23i;
-        double _div24r = 0, _div24i = 0;
-        c_div(num_r, num_i, s_den_r, s_den_i, &_div24r, &_div24i);
-        double _mul25r = 0, _mul25i = 0;
-        c_mul(_div24r, _div24i, phasor_r, phasor_i, &_mul25r, &_mul25i);
-        { int _idx = i; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _mul25r; cIm[_idx] = _mul25i; } }
+        _attr15r = x2i; _attr15i = 0;
+        double ipart_r = _attr15r, ipart_i = _attr15i;
+        double _c16r = 0, _c16i = 0;
+        _c16r = 1.0; _c16i = 0;
+        double _add17r = 0, _add17i = 0;
+        _add17r = i + _c16r; _add17i = 0 + _c16i;
+        double _pow18r = 0, _pow18i = 0;
+        c_powc(rpart_r, rpart_i, _add17r, _add17i, &_pow18r, &_pow18i);
+        double _c19r = 0, _c19i = 0;
+        _c19r = 25.0; _c19i = 0;
+        double _sub20r = 0, _sub20i = 0;
+        _sub20r = _c19r - i; _sub20i = _c19i - 0;
+        double _pow21r = 0, _pow21i = 0;
+        c_powc(ipart_r, ipart_i, _sub20r, _sub20i, &_pow21r, &_pow21i);
+        double _add22r = 0, _add22i = 0;
+        _add22r = _pow18r + _pow21r; _add22i = _pow18i + _pow21i;
+        double num_r = _add22r, num_i = _add22i;
+        double _div23r = 0, _div23i = 0;
+        c_div(num_r, num_i, s_den_r, s_den_i, &_div23r, &_div23i);
+        double _mul24r = 0, _mul24i = 0;
+        c_mul(_div23r, _div23i, phasor_r, phasor_i, &_mul24r, &_mul24i);
+        { int _idx = i; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _mul24r; cIm[_idx] = _mul24i; } }
     }
-    double _c26r = 0, _c26i = 0;
-    _c26r = 3.0; _c26i = 0;
-    double _mul27r = 0, _mul27i = 0;
-    c_mul(x1r, x1i, x1r, x1i, &_mul27r, &_mul27i);
-    double _add28r = 0, _add28i = 0;
-    _add28r = _mul27r + x2r; _add28i = _mul27i + x2i;
-    double _conj29r = 0, _conj29i = 0;
-    _conj29r = _add28r; _conj29i = -(_add28i);
-    double _mul30r = 0, _mul30i = 0;
-    c_mul(_c26r, _c26i, _conj29r, _conj29i, &_mul30r, &_mul30i);
-    { int _idx = 2; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _mul30r; cIm[_idx] = _mul30i; } }
-    double _c31r = 0, _c31i = 0;
-    _c31r = 7.0; _c31i = 0;
-    double _mul32r = 0, _mul32i = 0;
-    c_mul(_c31r, _c31i, s_abs_r, s_abs_i, &_mul32r, &_mul32i);
-    { int _idx = 6; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _mul32r; cIm[_idx] = _mul32i; } }
+    double _c25r = 0, _c25i = 0;
+    _c25r = 3.0; _c25i = 0;
+    double _mul26r = 0, _mul26i = 0;
+    c_mul(x1r, x1i, x1r, x1i, &_mul26r, &_mul26i);
+    double _add27r = 0, _add27i = 0;
+    _add27r = _mul26r + x2r; _add27i = _mul26i + x2i;
+    double _conj28r = 0, _conj28i = 0;
+    _conj28r = _add27r; _conj28i = -(_add27i);
+    double _mul29r = 0, _mul29i = 0;
+    c_mul(_c25r, _c25i, _conj28r, _conj28i, &_mul29r, &_mul29i);
+    { int _idx = 2; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _mul29r; cIm[_idx] = _mul29i; } }
+    double _c30r = 0, _c30i = 0;
+    _c30r = 7.0; _c30i = 0;
+    double _mul31r = 0, _mul31i = 0;
+    c_mul(_c30r, _c30i, s_abs_r, s_abs_i, &_mul31r, &_mul31i);
+    { int _idx = 6; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _mul31r; cIm[_idx] = _mul31i; } }
+    double _c32r = 0, _c32i = 0;
+    _c32r = 0.0; _c32i = 0;
     double _c33r = 0, _c33i = 0;
-    _c33r = 0.0; _c33i = 0;
-    double _c34r = 0, _c34i = 0;
-    _c34r = 0.0; _c34i = 0.0;
-    double _add35r = 0, _add35i = 0;
-    _add35r = _c33r + _c34r; _add35i = _c33i + _c34i;
-    double term1_r = _add35r, term1_i = _add35i;
+    _c33r = 0.0; _c33i = 0.0;
+    double _add34r = 0, _add34i = 0;
+    _add34r = _c32r + _c33r; _add34i = _c32i + _c33i;
+    double term1_r = _add34r, term1_i = _add34i;
+    double _c35r = 0, _c35i = 0;
+    _c35r = 0.0; _c35i = 0;
     double _c36r = 0, _c36i = 0;
-    _c36r = 0.0; _c36i = 0;
-    double _c37r = 0, _c37i = 0;
-    _c37r = 0.0; _c37i = 0.0;
-    double _add38r = 0, _add38i = 0;
-    _add38r = _c36r + _c37r; _add38i = _c36i + _c37i;
-    double term2_r = _add38r, term2_i = _add38i;
+    _c36r = 0.0; _c36i = 0.0;
+    double _add37r = 0, _add37i = 0;
+    _add37r = _c35r + _c36r; _add37i = _c35i + _c36i;
+    double term2_r = _add37r, term2_i = _add37i;
+    double _abs38r = 0, _abs38i = 0;
+    _abs38r = c_abs(x2r, x2i); _abs38i = 0;
+    double a2_r = _abs38r, a2_i = _abs38i;
     double _abs39r = 0, _abs39i = 0;
-    _abs39r = c_abs(x2r, x2i); _abs39i = 0;
-    double a2_r = _abs39r, a2_i = _abs39i;
-    double _abs40r = 0, _abs40i = 0;
-    _abs40r = c_abs(x1r, x1i); _abs40i = 0;
-    double a1_r = _abs40r, a1_i = _abs40i;
-    double _fin41r = 0, _fin41i = 0;
-    _fin41r = (isfinite(a2_r) && isfinite(a2_i)) ? 1.0 : 0.0; _fin41i = 0;
-    if (((_fin41r != 0 || _fin41i != 0)) && (a2_r > EPS)) {
-        double _div42r = 0, _div42i = 0;
-        c_div(x1r, x1i, x2r, x2i, &_div42r, &_div42i);
-        term1_r = _div42r; term1_i = _div42i;
+    _abs39r = c_abs(x1r, x1i); _abs39i = 0;
+    double a1_r = _abs39r, a1_i = _abs39i;
+    double _fin40r = 0, _fin40i = 0;
+    _fin40r = (isfinite(a2_r) && isfinite(a2_i)) ? 1.0 : 0.0; _fin40i = 0;
+    if (((_fin40r != 0 || _fin40i != 0)) && (a2_r > EPS)) {
+        double _div41r = 0, _div41i = 0;
+        c_div(x1r, x1i, x2r, x2i, &_div41r, &_div41i);
+        term1_r = _div41r; term1_i = _div41i;
     }
-    double _fin43r = 0, _fin43i = 0;
-    _fin43r = (isfinite(a1_r) && isfinite(a1_i)) ? 1.0 : 0.0; _fin43i = 0;
-    if (((_fin43r != 0 || _fin43i != 0)) && (a1_r > EPS)) {
-        double _div44r = 0, _div44i = 0;
-        c_div(x2r, x2i, x1r, x1i, &_div44r, &_div44i);
-        double _conj45r = 0, _conj45i = 0;
-        _conj45r = _div44r; _conj45i = -(_div44i);
-        term2_r = _conj45r; term2_i = _conj45i;
+    double _fin42r = 0, _fin42i = 0;
+    _fin42r = (isfinite(a1_r) && isfinite(a1_i)) ? 1.0 : 0.0; _fin42i = 0;
+    if (((_fin42r != 0 || _fin42i != 0)) && (a1_r > EPS)) {
+        double _div43r = 0, _div43i = 0;
+        c_div(x2r, x2i, x1r, x1i, &_div43r, &_div43i);
+        double _conj44r = 0, _conj44i = 0;
+        _conj44r = _div43r; _conj44i = -(_div43i);
+        term2_r = _conj44r; term2_i = _conj44i;
     }
-    double _c46r = 0, _c46i = 0;
-    _c46r = 11.0; _c46i = 0;
-    double _add47r = 0, _add47i = 0;
-    _add47r = term1_r + term2_r; _add47i = term1_i + term2_i;
+    double _c45r = 0, _c45i = 0;
+    _c45r = 11.0; _c45i = 0;
+    double _add46r = 0, _add46i = 0;
+    _add46r = term1_r + term2_r; _add46i = term1_i + term2_i;
+    double _mul47r = 0, _mul47i = 0;
+    c_mul(_c45r, _c45i, _add46r, _add46i, &_mul47r, &_mul47i);
+    { int _idx = 10; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _mul47r; cIm[_idx] = _mul47i; } }
     double _mul48r = 0, _mul48i = 0;
-    c_mul(_c46r, _c46i, _add47r, _add47i, &_mul48r, &_mul48i);
-    { int _idx = 10; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _mul48r; cIm[_idx] = _mul48i; } }
-    double _mul49r = 0, _mul49i = 0;
-    c_mul(s_abs_r, s_abs_i, s_abs_r, s_abs_i, &_mul49r, &_mul49i);
-    double denom16_r = _mul49r, denom16_i = _mul49i;
-    double _fin50r = 0, _fin50i = 0;
-    _fin50r = (isfinite(denom16_r) && isfinite(denom16_i)) ? 1.0 : 0.0; _fin50i = 0;
-    if (((_fin50r != 0 || _fin50i != 0)) && (denom16_r > EPS)) {
-        double _c51r = 0, _c51i = 0;
-        _c51r = 17.0; _c51i = 0;
+    c_mul(s_abs_r, s_abs_i, s_abs_r, s_abs_i, &_mul48r, &_mul48i);
+    double denom16_r = _mul48r, denom16_i = _mul48i;
+    double _fin49r = 0, _fin49i = 0;
+    _fin49r = (isfinite(denom16_r) && isfinite(denom16_i)) ? 1.0 : 0.0; _fin49i = 0;
+    if (((_fin49r != 0 || _fin49i != 0)) && (denom16_r > EPS)) {
+        double _c50r = 0, _c50i = 0;
+        _c50r = 17.0; _c50i = 0;
+        double _abs51r = 0, _abs51i = 0;
+        _abs51r = c_abs(x1r, x1i); _abs51i = 0;
         double _abs52r = 0, _abs52i = 0;
-        _abs52r = c_abs(x1r, x1i); _abs52i = 0;
-        double _abs53r = 0, _abs53i = 0;
-        _abs53r = c_abs(x2r, x2i); _abs53i = 0;
-        double _mul54r = 0, _mul54i = 0;
-        c_mul(_abs52r, _abs52i, _abs53r, _abs53i, &_mul54r, &_mul54i);
-        double _div55r = 0, _div55i = 0;
-        c_div(_mul54r, _mul54i, denom16_r, denom16_i, &_div55r, &_div55i);
-        double _mul56r = 0, _mul56i = 0;
-        c_mul(_c51r, _c51i, _div55r, _div55i, &_mul56r, &_mul56i);
-        { int _idx = 16; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _mul56r; cIm[_idx] = _mul56i; } }
+        _abs52r = c_abs(x2r, x2i); _abs52i = 0;
+        double _mul53r = 0, _mul53i = 0;
+        c_mul(_abs51r, _abs51i, _abs52r, _abs52i, &_mul53r, &_mul53i);
+        double _div54r = 0, _div54i = 0;
+        c_div(_mul53r, _mul53i, denom16_r, denom16_i, &_div54r, &_div54i);
+        double _mul55r = 0, _mul55i = 0;
+        c_mul(_c50r, _c50i, _div54r, _div54i, &_mul55r, &_mul55i);
+        { int _idx = 16; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _mul55r; cIm[_idx] = _mul55i; } }
     } else {
+        double _c56r = 0, _c56i = 0;
+        _c56r = 0.0; _c56i = 0;
         double _c57r = 0, _c57i = 0;
-        _c57r = 0.0; _c57i = 0;
-        double _c58r = 0, _c58i = 0;
-        _c58r = 0.0; _c58i = 0.0;
-        double _add59r = 0, _add59i = 0;
-        _add59r = _c57r + _c58r; _add59i = _c57i + _c58i;
-        { int _idx = 16; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _add59r; cIm[_idx] = _add59i; } }
+        _c57r = 0.0; _c57i = 0.0;
+        double _add58r = 0, _add58i = 0;
+        _add58r = _c56r + _c57r; _add58i = _c56i + _c57i;
+        { int _idx = 16; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _add58r; cIm[_idx] = _add58i; } }
     }
-    double _conj60r = 0, _conj60i = 0;
-    _conj60r = x2r; _conj60i = -(x2i);
-    double _mul61r = 0, _mul61i = 0;
-    c_mul(x1r, x1i, _conj60r, _conj60i, &_mul61r, &_mul61i);
-    double prod12_r = _mul61r, prod12_i = _mul61i;
-    double _c62r = 0, _c62i = 0;
-    _c62r = 1.0; _c62i = 0;
-    double _abs63r = 0, _abs63i = 0;
-    _abs63r = c_abs(prod12_r, prod12_i); _abs63i = 0;
-    double _add64r = 0, _add64i = 0;
-    _add64r = _c62r + _abs63r; _add64i = _c62i + _abs63i;
-    double den22_r = _add64r, den22_i = _add64i;
-    double _fin65r = 0, _fin65i = 0;
-    _fin65r = (isfinite(den22_r) && isfinite(den22_i)) ? 1.0 : 0.0; _fin65i = 0;
-    double _c66r = 0, _c66i = 0;
-    _c66r = 0.0; _c66i = 0;
-    if ((!((_fin65r != 0 || _fin65i != 0))) || (den22_r <= _c66r)) {
-        double _c67r = 0, _c67i = 0;
-        _c67r = 1.0; _c67i = 0;
-        den22_r = _c67r; den22_i = _c67i;
+    double _conj59r = 0, _conj59i = 0;
+    _conj59r = x2r; _conj59i = -(x2i);
+    double _mul60r = 0, _mul60i = 0;
+    c_mul(x1r, x1i, _conj59r, _conj59i, &_mul60r, &_mul60i);
+    double prod12_r = _mul60r, prod12_i = _mul60i;
+    double _c61r = 0, _c61i = 0;
+    _c61r = 1.0; _c61i = 0;
+    double _abs62r = 0, _abs62i = 0;
+    _abs62r = c_abs(prod12_r, prod12_i); _abs62i = 0;
+    double _add63r = 0, _add63i = 0;
+    _add63r = _c61r + _abs62r; _add63i = _c61i + _abs62i;
+    double den22_r = _add63r, den22_i = _add63i;
+    double _fin64r = 0, _fin64i = 0;
+    _fin64r = (isfinite(den22_r) && isfinite(den22_i)) ? 1.0 : 0.0; _fin64i = 0;
+    double _c65r = 0, _c65i = 0;
+    _c65r = 0.0; _c65i = 0;
+    if ((!((_fin64r != 0 || _fin64i != 0))) || (den22_r <= _c65r)) {
+        double _c66r = 0, _c66i = 0;
+        _c66r = 1.0; _c66i = 0;
+        den22_r = _c66r; den22_i = _c66i;
     }
-    double _c68r = 0, _c68i = 0;
-    _c68r = 23.0; _c68i = 0;
-    double _conj69r = 0, _conj69i = 0;
-    _conj69r = x1r; _conj69i = -(x1i);
-    double _add70r = 0, _add70i = 0;
-    _add70r = _conj69r + x2r; _add70i = _conj69i + x2i;
-    double _div71r = 0, _div71i = 0;
-    c_div(_add70r, _add70i, den22_r, den22_i, &_div71r, &_div71i);
+    double _c67r = 0, _c67i = 0;
+    _c67r = 23.0; _c67i = 0;
+    double _conj68r = 0, _conj68i = 0;
+    _conj68r = x1r; _conj68i = -(x1i);
+    double _add69r = 0, _add69i = 0;
+    _add69r = _conj68r + x2r; _add69i = _conj68i + x2i;
+    double _div70r = 0, _div70i = 0;
+    c_div(_add69r, _add69i, den22_r, den22_i, &_div70r, &_div70i);
+    double _mul71r = 0, _mul71i = 0;
+    c_mul(_c67r, _c67i, _div70r, _div70i, &_mul71r, &_mul71i);
+    { int _idx = 22; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _mul71r; cIm[_idx] = _mul71i; } }
     double _mul72r = 0, _mul72i = 0;
-    c_mul(_c68r, _c68i, _div71r, _div71i, &_mul72r, &_mul72i);
-    { int _idx = 22; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _mul72r; cIm[_idx] = _mul72i; } }
-    double _mul73r = 0, _mul73i = 0;
-    c_mul(x1r, x1i, x2r, x2i, &_mul73r, &_mul73i);
-    double prod_r = _mul73r, prod_i = _mul73i;
-    double _abs74r = 0, _abs74i = 0;
-    _abs74r = c_abs(prod_r, prod_i); _abs74i = 0;
-    double prod_abs_r = _abs74r, prod_abs_i = _abs74i;
-    double _fin75r = 0, _fin75i = 0;
-    _fin75r = (isfinite(prod_abs_r) && isfinite(prod_abs_i)) ? 1.0 : 0.0; _fin75i = 0;
-    if (((_fin75r != 0 || _fin75i != 0)) && (prod_abs_r > EPS)) {
-        double _c76r = 0, _c76i = 0;
-        _c76r = 25.0; _c76i = 0;
+    c_mul(x1r, x1i, x2r, x2i, &_mul72r, &_mul72i);
+    double prod_r = _mul72r, prod_i = _mul72i;
+    double _abs73r = 0, _abs73i = 0;
+    _abs73r = c_abs(prod_r, prod_i); _abs73i = 0;
+    double prod_abs_r = _abs73r, prod_abs_i = _abs73i;
+    double _fin74r = 0, _fin74i = 0;
+    _fin74r = (isfinite(prod_abs_r) && isfinite(prod_abs_i)) ? 1.0 : 0.0; _fin74i = 0;
+    if (((_fin74r != 0 || _fin74i != 0)) && (prod_abs_r > EPS)) {
+        double _c75r = 0, _c75i = 0;
+        _c75r = 25.0; _c75i = 0;
+        double _conj76r = 0, _conj76i = 0;
+        _conj76r = x1r; _conj76i = -(x1i);
         double _conj77r = 0, _conj77i = 0;
-        _conj77r = x1r; _conj77i = -(x1i);
-        double _conj78r = 0, _conj78i = 0;
-        _conj78r = x2r; _conj78i = -(x2i);
-        double _add79r = 0, _add79i = 0;
-        _add79r = _conj77r + _conj78r; _add79i = _conj77i + _conj78i;
-        double _div80r = 0, _div80i = 0;
-        c_div(_add79r, _add79i, prod_abs_r, prod_abs_i, &_div80r, &_div80i);
-        double _mul81r = 0, _mul81i = 0;
-        c_mul(_c76r, _c76i, _div80r, _div80i, &_mul81r, &_mul81i);
-        { int _idx = 24; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _mul81r; cIm[_idx] = _mul81i; } }
+        _conj77r = x2r; _conj77i = -(x2i);
+        double _add78r = 0, _add78i = 0;
+        _add78r = _conj76r + _conj77r; _add78i = _conj76i + _conj77i;
+        double _div79r = 0, _div79i = 0;
+        c_div(_add78r, _add78i, prod_abs_r, prod_abs_i, &_div79r, &_div79i);
+        double _mul80r = 0, _mul80i = 0;
+        c_mul(_c75r, _c75i, _div79r, _div79i, &_mul80r, &_mul80i);
+        { int _idx = 24; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _mul80r; cIm[_idx] = _mul80i; } }
     } else {
+        double _c81r = 0, _c81i = 0;
+        _c81r = 0.0; _c81i = 0;
         double _c82r = 0, _c82i = 0;
-        _c82r = 0.0; _c82i = 0;
-        double _c83r = 0, _c83i = 0;
-        _c83r = 0.0; _c83i = 0.0;
-        double _add84r = 0, _add84i = 0;
-        _add84r = _c82r + _c83r; _add84i = _c82i + _c83i;
-        { int _idx = 24; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _add84r; cIm[_idx] = _add84i; } }
+        _c82r = 0.0; _c82i = 0.0;
+        double _add83r = 0, _add83i = 0;
+        _add83r = _c81r + _c82r; _add83i = _c81i + _c82i;
+        { int _idx = 24; if (_idx >= 0 && _idx < 25) { cRe[_idx] = _add83r; cIm[_idx] = _add83i; } }
     }
     for (int _i = 0; _i < 25; _i++) {
         if (!isfinite(cRe[_i]) || !isfinite(cIm[_i])) { cRe[_i] = 0; cIm[_i] = 0; }

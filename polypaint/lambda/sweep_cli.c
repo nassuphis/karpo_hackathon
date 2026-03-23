@@ -2110,6 +2110,34 @@ static inline void c_powc(double ar, double ai, double br, double bi, double *rr
     c_exp2(mr, mi, rr, ri);
 }
 
+/* Complex inverse trig (needs c_powr defined above) */
+static inline void c_atan(double ar, double ai, double *rr, double *ri) {
+    double p1r = 1 - ai, p1i = ar;
+    double p2r = 1 + ai, p2i = -ar;
+    double qr, qi; c_div(p1r, p1i, p2r, p2i, &qr, &qi);
+    double lr, li; c_log(qr, qi, &lr, &li);
+    *rr = li / 2; *ri = -lr / 2;
+}
+static inline void c_asinh(double ar, double ai, double *rr, double *ri) {
+    double z2r, z2i; c_mul(ar, ai, ar, ai, &z2r, &z2i);
+    z2r += 1;
+    double sr, si; c_powr(z2r, z2i, 0.5, &sr, &si);
+    sr += ar; si += ai;
+    c_log(sr, si, rr, ri);
+}
+static inline void c_asin(double ar, double ai, double *rr, double *ri) {
+    double z2r, z2i; c_mul(ar, ai, ar, ai, &z2r, &z2i);
+    double wr = 1 - z2r, wi = -z2i;
+    double sr, si; c_powr(wr, wi, 0.5, &sr, &si);
+    sr += -ai; si += ar;
+    double lr, li; c_log(sr, si, &lr, &li);
+    *rr = li; *ri = -lr;
+}
+static inline void c_acos(double ar, double ai, double *rr, double *ri) {
+    double asr, asi; c_asin(ar, ai, &asr, &asi);
+    *rr = M_PI/2 - asr; *ri = -asi;
+}
+
 /* coeff2: (t1+t2, t1*t2) */
 static void pt_coeff2(double *z1r, double *z1i, double *z2r, double *z2i) {
     double a1r=*z1r, a1i=*z1i, a2r=*z2r, a2i=*z2i;

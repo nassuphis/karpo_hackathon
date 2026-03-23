@@ -43,6 +43,7 @@ class PolyTranspiler(ast.NodeVisitor):
         self.n_coeffs = n_coeffs
         self.lines = []
         self._scalar_t1t2 = False  # set True for t1,t2 = z[0].real, z[0].imag
+        self.const_arrays = {}  # name -> [int, ...] for fancy indexing
         self.declared = set()
         self.array_sizes = {}  # name -> int (number of elements)
         self.arange_vars = {}  # name -> (start, stop) for arange loop variables
@@ -96,7 +97,11 @@ class PolyTranspiler(ast.NodeVisitor):
                 # Synthetic marker for cf[loop_var] inside arange loop
                 return CVar("_cf_r", "_cf_i")
             else:
-                # loop variable or local — treat as real
+                # Check if this is a complex local
+                cl = getattr(self, '_complex_locals', {})
+                if name in cl:
+                    return cl[name]
+                # loop variable or other local — treat as real
                 return CVar(name, "0")
 
         if isinstance(node, ast.Attribute):
@@ -238,8 +243,11 @@ class PolyTranspiler(ast.NodeVisitor):
                 else:
                     self.emit(f"c_powr({left.r}, {left.i}, {float(p)}, &{tmp.r}, &{tmp.i});")
             else:
-                # Power is a complex expression — use c_powr with real part
-                self.emit(f"c_powr({left.r}, {left.i}, {right.r}, &{tmp.r}, &{tmp.i});")
+                # Power with complex exponent — use c_pow if imaginary part is nonzero
+                if right.i in ("0", "0.0"):
+                    self.emit(f"c_powr({left.r}, {left.i}, {right.r}, &{tmp.r}, &{tmp.i});")
+                else:
+                    self.emit(f"c_powc({left.r}, {left.i}, {right.r}, {right.i}, &{tmp.r}, &{tmp.i});")
             return tmp
         elif isinstance(node.op, ast.Mod):
             tmp = CVar.fresh("mod")
@@ -405,11 +413,17 @@ class PolyTranspiler(ast.NodeVisitor):
             self.declare(tmp)
             self.emit(f"{tmp.r} = {arg.i}; {tmp.i} = 0;")
             return tmp
-        elif attr == "conj":
+        elif attr == "conj" or attr == "conjugate":
             arg = self.expr_to_c(args[0])
             tmp = CVar.fresh("conj")
             self.declare(tmp)
             self.emit(f"{tmp.r} = {arg.r}; {tmp.i} = -({arg.i});")
+            return tmp
+        elif attr == "isfinite":
+            arg = self.expr_to_c(args[0])
+            tmp = CVar.fresh("fin")
+            self.declare(tmp)
+            self.emit(f"{tmp.r} = (isfinite({arg.r}) && isfinite({arg.i})) ? 1.0 : 0.0; {tmp.i} = 0;")
             return tmp
         elif attr == "zeros":
             # just return a zero
@@ -638,6 +652,68 @@ class PolyTranspiler(ast.NodeVisitor):
         except Exception:
             return None
 
+    def _is_np_zeros(self, node):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            return node.func.attr == "zeros" and isinstance(node.func.value, ast.Name) and node.func.value.id == "np"
+        return False
+
+    def _is_np_empty(self, node):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            return node.func.attr == "empty" and isinstance(node.func.value, ast.Name) and node.func.value.id == "np"
+        return False
+
+    def _is_vector_expr(self, node):
+        """Check if expression is composed of known-length arrays and scalars."""
+        if isinstance(node, ast.Name):
+            return node.id in self.array_sizes
+        if isinstance(node, ast.BinOp):
+            return self._is_vector_expr(node.left) or self._is_vector_expr(node.right)
+        if isinstance(node, ast.UnaryOp):
+            return self._is_vector_expr(node.operand)
+        return False
+
+    def _lower_vector_assign(self, rhs_node):
+        """Lower cf = <vector expr> into an elementwise loop."""
+        n = self.n_coeffs
+        self.emit(f"for (int _vi = 0; _vi < {n}; _vi++) {{")
+        self.indent += 1
+        val = self._expr_to_c_vector(rhs_node, "_vi")
+        self.emit(f"cRe[_vi] = {val.r}; cIm[_vi] = {val.i};")
+        self.indent -= 1
+        self.emit(f"}}")
+
+    def _expr_to_c_vector(self, node, idx_var):
+        """Evaluate a vector expression elementwise at idx_var."""
+        if isinstance(node, ast.Name) and node.id in self.array_sizes:
+            return CVar(f"{node.id}[{idx_var}]", "0")
+        if isinstance(node, ast.BinOp):
+            left = self._expr_to_c_vector(node.left, idx_var) if self._is_vector_expr(node.left) else self.expr_to_c(node.left)
+            right = self._expr_to_c_vector(node.right, idx_var) if self._is_vector_expr(node.right) else self.expr_to_c(node.right)
+            tmp = CVar.fresh("vec")
+            self.declare(tmp)
+            if isinstance(node.op, ast.Add):
+                self.emit(f"{tmp.r} = {left.r} + {right.r}; {tmp.i} = {left.i} + {right.i};")
+            elif isinstance(node.op, ast.Sub):
+                self.emit(f"{tmp.r} = {left.r} - {right.r}; {tmp.i} = {left.i} - {right.i};")
+            elif isinstance(node.op, ast.Mult):
+                self.emit(f"c_mul({left.r}, {left.i}, {right.r}, {right.i}, &{tmp.r}, &{tmp.i});")
+            elif isinstance(node.op, ast.Pow):
+                self.emit(f"c_powr({left.r}, {left.i}, {right.r}, &{tmp.r}, &{tmp.i});")
+            elif isinstance(node.op, ast.Div):
+                self.emit(f"c_div({left.r}, {left.i}, {right.r}, {right.i}, &{tmp.r}, &{tmp.i});")
+            else:
+                self.emit(f"/* WARNING: unhandled vector binop {type(node.op).__name__} */")
+                self.emit(f"{tmp.r} = 0; {tmp.i} = 0;")
+            return tmp
+        # Scalar fallback
+        return self.expr_to_c(node)
+
+    def _extract_sequence_elements(self, node):
+        """Extract element AST nodes from np.array([...]), [...], or (...)."""
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return node.elts
+        return self.extract_np_array_elements(node)
+
     def is_np_array_literal(self, node):
         """Check if node is np.array([...]) with constant elements."""
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
@@ -701,6 +777,10 @@ class PolyTranspiler(ast.NodeVisitor):
             return str(int(node.value))
         if isinstance(node, ast.Name):
             name = node.id
+            # Check if this is a complex local — use real part for indexing
+            cl = getattr(self, '_complex_locals', {})
+            if name in cl:
+                return f"(int)({cl[name].r})"
             # Loop variables (declared via for-loop) are int; other locals are double and need cast
             if name in self.declared and name not in self._loop_vars:
                 return f"(int)({name})"
@@ -737,9 +817,13 @@ class PolyTranspiler(ast.NodeVisitor):
         Handles fancy indexing: cf[np.array([i1,i2,...])] = np.array([v1,v2,...])
         or cf[np.array([...])] = scalar."""
         # Fancy index: cf[np.array([0, 9, 19])] = np.array([1, 2, -3])
+        # Also handle cf[i] where i was assigned as np.array([...]) — look up static arrays
         idx_elts = self.extract_np_array_int_elements(idx_node)
+        if idx_elts is None and isinstance(idx_node, ast.Name):
+            # Look up structurally stored const array
+            idx_elts = self.const_arrays.get(idx_node.id)
         if idx_elts is not None:
-            val_elts = self.extract_np_array_elements(value_node)
+            val_elts = self._extract_sequence_elements(value_node)
             if val_elts is not None and len(val_elts) == len(idx_elts):
                 # Parallel assignment: cf[indices] = values
                 for idx_val, val_node in zip(idx_elts, val_elts):
@@ -760,17 +844,27 @@ class PolyTranspiler(ast.NodeVisitor):
         self.emit(f"{{ int _idx = {idx}; if (_idx >= 0 && _idx < {self.n_coeffs}) {{ cRe[_idx] = {val.r}; cIm[_idx] = {val.i}; }} }}")
 
     def extract_np_array_int_elements(self, node):
-        """Extract integer elements from np.array([1, 2, 3]) for fancy indexing."""
-        if not isinstance(node, ast.Call):
-            return None
-        func = node.func
-        if isinstance(func, ast.Attribute) and func.attr == "array":
+        """Extract integer elements from np.array([1, 2, 3]), [1,2,3], or (1,2,3) for fancy indexing."""
+        elts = None
+        if isinstance(node, (ast.List, ast.Tuple)):
+            elts = node.elts
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "array":
             if node.args and isinstance(node.args[0], ast.List):
-                try:
-                    return [int(e.value) for e in node.args[0].elts if isinstance(e, ast.Constant)]
-                except (ValueError, AttributeError):
+                elts = node.args[0].elts
+        if elts is None:
+            return None
+        try:
+            result = []
+            for e in elts:
+                if isinstance(e, ast.Constant):
+                    result.append(int(e.value))
+                elif isinstance(e, ast.UnaryOp) and isinstance(e.op, ast.USub) and isinstance(e.operand, ast.Constant):
+                    result.append(-int(e.operand.value))
+                else:
                     return None
-        return None
+            return result
+        except (ValueError, AttributeError):
+            return None
 
     def assign_cf_slice(self, sl, value_node):
         """Handle cf[a:b] = expr involving arrays."""
@@ -996,8 +1090,13 @@ class PolyTranspiler(ast.NodeVisitor):
             elif isinstance(target, ast.Name):
                 name = target.id
                 if name == "cf":
-                    # cf = np.zeros(...) — skip, already zero
-                    pass
+                    if self._is_np_zeros(stmt.value) or self._is_np_empty(stmt.value):
+                        pass  # skip — already zero-initialized
+                    elif self._is_vector_expr(stmt.value):
+                        # cf = <vector expression> — emit elementwise loop
+                        self._lower_vector_assign(stmt.value)
+                    else:
+                        pass  # skip other cf assignments (np.zeros variant, etc.)
                 elif self.is_np_array_literal(stmt.value):
                     # np.array([1, 2, 3]) -> static const double name[] = {1, 2, 3};
                     elts = self.extract_array_elements(stmt.value)
@@ -1005,6 +1104,11 @@ class PolyTranspiler(ast.NodeVisitor):
                         vals = ", ".join(str(float(v)) for v in elts)
                         self.declared.add(name)
                         self.array_sizes[name] = len(elts)
+                        # Store int values for fancy indexing
+                        try:
+                            self.const_arrays[name] = [int(v) for v in elts]
+                        except (ValueError, TypeError):
+                            pass
                         self.emit(f"static const double {name}[] = {{{vals}}};")
                     else:
                         self.declared.add(name)
@@ -1061,13 +1165,35 @@ class PolyTranspiler(ast.NodeVisitor):
                         # Pre-declare if RHS references the same variable (self-referencing assignment)
                         if name not in self.declared and self._name_in_expr(name, stmt.value):
                             self.declared.add(name)
-                            self.emit(f"double {name} = 0;")
+                            # Declare as complex pair for self-referencing vars
+                            nr, ni = f"{name}_r", f"{name}_i"
+                            self.declared.add(nr)
+                            self.declared.add(ni)
+                            self.emit(f"double {nr} = 0, {ni} = 0;")
+                            self._complex_locals = getattr(self, '_complex_locals', {})
+                            self._complex_locals[name] = CVar(nr, ni)
                         val = self.expr_to_c(stmt.value)
                         if name not in self.declared:
                             self.declared.add(name)
-                            self.emit(f"double {name} = {val.r}; /* +{val.i}i */")
+                            # If imaginary part is trivially zero, keep as plain real
+                            is_real = (val.i == "0" or val.i == "0.0")
+                            if is_real:
+                                self.emit(f"double {name} = {val.r};")
+                            else:
+                                # Store as complex pair (re + im)
+                                nr, ni = f"{name}_r", f"{name}_i"
+                                self.declared.add(nr)
+                                self.declared.add(ni)
+                                self.emit(f"double {nr} = {val.r}, {ni} = {val.i};")
+                                self._complex_locals = getattr(self, '_complex_locals', {})
+                                self._complex_locals[name] = CVar(nr, ni)
                         else:
-                            self.emit(f"{name} = {val.r};")
+                            cl = getattr(self, '_complex_locals', {})
+                            if name in cl:
+                                cv = cl[name]
+                                self.emit(f"{cv.r} = {val.r}; {cv.i} = {val.i};")
+                            else:
+                                self.emit(f"{name} = {val.r};")
             elif isinstance(target, ast.Tuple):
                 # Tuple unpacking — handle simple cases
                 if isinstance(stmt.value, ast.Tuple):
@@ -1514,18 +1640,57 @@ def extract_ncoeffs(func_node):
             return local_vars[node.id]
         return None
 
-    # Try np.zeros(N, ...)
+    # Also track array sizes from linspace/etc for return-shape fallback
+    array_sizes = {}
+
+    # Try np.zeros/np.empty/np.ones(N, ...) assigned to cf
     for stmt in ast.walk(func_node):
         if isinstance(stmt, ast.Assign):
-            if isinstance(stmt.targets[0], ast.Name) and stmt.targets[0].id == "cf":
-                if isinstance(stmt.value, ast.Call):
-                    func = stmt.value.func
-                    if isinstance(func, ast.Attribute) and func.attr == "zeros":
-                        args = stmt.value.args
-                        if args:
-                            val = _resolve_int(args[0])
-                            if val is not None:
-                                return val
+            tgt = stmt.targets[0]
+            if isinstance(stmt.value, ast.Call) and isinstance(stmt.value.func, ast.Attribute):
+                attr = stmt.value.func.attr
+                if isinstance(stmt.value.func.value, ast.Name) and stmt.value.func.value.id == "np":
+                    # Track any array constructor size
+                    if attr in ("zeros", "empty", "ones", "full", "linspace"):
+                        sz_arg = stmt.value.args[2] if attr == "linspace" and len(stmt.value.args) >= 3 else (stmt.value.args[0] if stmt.value.args else None)
+                        if sz_arg:
+                            sz = _resolve_int(sz_arg)
+                            if sz is not None and isinstance(tgt, ast.Name):
+                                array_sizes[tgt.id] = sz
+                    # Direct cf assignment
+                    if isinstance(tgt, ast.Name) and tgt.id == "cf":
+                        if attr in ("zeros", "empty", "ones", "full"):
+                            args = stmt.value.args
+                            if args:
+                                val = _resolve_int(args[0])
+                                if val is not None:
+                                    return val
+
+    # Check if cf is assigned from a vector expression over known-sized arrays
+    for stmt in ast.walk(func_node):
+        if isinstance(stmt, ast.Assign):
+            tgt = stmt.targets[0]
+            if isinstance(tgt, ast.Name) and tgt.id == "cf":
+                # cf = <expr> — try to find array size from participating names
+                for name_node in ast.walk(stmt.value):
+                    if isinstance(name_node, ast.Name) and name_node.id in array_sizes:
+                        return array_sizes[name_node.id]
+
+    # Check return statements for cf.astype(...) or named array
+    for stmt in ast.walk(func_node):
+        if isinstance(stmt, ast.Return) and stmt.value is not None:
+            ret = stmt.value
+            # return cf.astype(...) → cf size already found above
+            if isinstance(ret, ast.Call) and isinstance(ret.func, ast.Attribute):
+                if ret.func.attr == "astype" and isinstance(ret.func.value, ast.Name):
+                    name = ret.func.value.id
+                    if name == "cf" and "cf" in array_sizes:
+                        return array_sizes["cf"]
+                    if name in array_sizes:
+                        return array_sizes[name]
+            # return <name> where name has known size
+            if isinstance(ret, ast.Name) and ret.id in array_sizes:
+                return array_sizes[ret.id]
     # Fall back to np.arange size (the arange determines cf length)
     for stmt in ast.walk(func_node):
         if isinstance(stmt, ast.Assign):

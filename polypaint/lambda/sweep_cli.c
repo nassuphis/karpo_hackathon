@@ -1819,23 +1819,21 @@ static void pt_zz3(double *z1r, double *z1i, double *z2r, double *z2i) {
 
 /* crd(n, size): cardioid mapping on one parameter. n=0→t1, n=1→t2.
  * x' = size * (1 + cos(theta)) * exp(i*theta), theta = 2*pi*Re(x). */
-static void pt_crd(double *z1r, double *z1i, double *z2r, double *z2i, int n, double size) {
-    double *xr, *xi;
-    if (n == 0) { xr = z1r; xi = z1i; }
-    else if (n == 1) { xr = z2r; xi = z2i; }
-    else return;
+static void pt_crd_one(double *xr, double *xi, double size) {
     double theta = 2.0 * M_PI * (*xr);
     double r = size * (1.0 + cos(theta));
     *xr = r * cos(theta);
     *xi = r * sin(theta);
 }
 
-/* hrt(n, size, turns): heart curve on one parameter. n=0→t1, n=1→t2. */
-static void pt_hrt(double *z1r, double *z1i, double *z2r, double *z2i, int n, double size, double turns) {
-    double *xr, *xi;
-    if (n == 0) { xr = z1r; xi = z1i; }
-    else if (n == 1) { xr = z2r; xi = z2i; }
-    else return;
+/* crd(n, size): cardioid curve. n=0→t1, n=1→t2, n=2→both. */
+static void pt_crd(double *z1r, double *z1i, double *z2r, double *z2i, int n, double size) {
+    if (n == 0)      pt_crd_one(z1r, z1i, size);
+    else if (n == 1) pt_crd_one(z2r, z2i, size);
+    else if (n == 2) { pt_crd_one(z1r, z1i, size); pt_crd_one(z2r, z2i, size); }
+}
+
+static void pt_hrt_one(double *xr, double *xi, double size, double turns) {
     double u = *xr;
     double t = 2.0 * M_PI * u + M_PI / 2.0;
     double st = sin(t);
@@ -1843,13 +1841,214 @@ static void pt_hrt(double *z1r, double *z1i, double *z2r, double *z2i, int n, do
     double yh = 13.0*cos(t) - 5.0*cos(2.0*t) - 2.0*cos(3.0*t) - cos(4.0*t);
     double hr = xh / 40.0;
     double hi = yh / 40.0 + 0.1;
-    /* rotate: rot = exp(i * 2*pi*turns) */
     double ra = 2.0 * M_PI * turns;
     double rotr = cos(ra), roti = sin(ra);
-    /* result = rot * size * heart */
     double sr = size * hr, si = size * hi;
     *xr = rotr * sr - roti * si;
     *xi = rotr * si + roti * sr;
+}
+
+/* hrt(n, size, turns): heart curve. n=0→t1, n=1→t2, n=2→both. */
+static void pt_hrt(double *z1r, double *z1i, double *z2r, double *z2i, int n, double size, double turns) {
+    if (n == 0)      pt_hrt_one(z1r, z1i, size, turns);
+    else if (n == 1) pt_hrt_one(z2r, z2i, size, turns);
+    else if (n == 2) { pt_hrt_one(z1r, z1i, size, turns); pt_hrt_one(z2r, z2i, size, turns); }
+}
+
+/* spdl(n, va, vb, vp): spindle / superellipse-like. */
+static void pt_spdl_one(double *xr, double *xi, double va, double vb, double vp) {
+    double theta = 2.0 * M_PI * (*xr);
+    double ct = cos(theta), st = sin(theta);
+    double e = 2.0 / (vp > 0.01 ? vp : 0.01);
+    *xr = va * (ct >= 0 ? 1 : -1) * pow(fabs(ct), e);
+    *xi = vb * (st >= 0 ? 1 : -1) * pow(fabs(st), e);
+}
+static void pt_spdl(double *z1r, double *z1i, double *z2r, double *z2i, int n, double va, double vb, double vp) {
+    if (n == 0)      pt_spdl_one(z1r, z1i, va, vb, vp);
+    else if (n == 1) pt_spdl_one(z2r, z2i, va, vb, vp);
+    else if (n == 2) { pt_spdl_one(z1r, z1i, va, vb, vp); pt_spdl_one(z2r, z2i, va, vb, vp); }
+}
+
+/* lmc(n, a, b): limacon. r = a + b*cos(theta). */
+static void pt_lmc_one(double *xr, double *xi, double a, double b) {
+    double theta = 2.0 * M_PI * (*xr);
+    double r = a + b * cos(theta);
+    *xr = r * cos(theta);
+    *xi = r * sin(theta);
+}
+static void pt_lmc(double *z1r, double *z1i, double *z2r, double *z2i, int n, double a, double b) {
+    if (n == 0)      pt_lmc_one(z1r, z1i, a, b);
+    else if (n == 1) pt_lmc_one(z2r, z2i, a, b);
+    else if (n == 2) { pt_lmc_one(z1r, z1i, a, b); pt_lmc_one(z2r, z2i, a, b); }
+}
+
+/* rsc(n, amp, k): rose curve. r = amp*cos(k*theta). */
+static void pt_rsc_one(double *xr, double *xi, double amp, double k) {
+    double theta = 2.0 * M_PI * (*xr);
+    double r = amp * cos(k * theta);
+    *xr = r * cos(theta);
+    *xi = r * sin(theta);
+}
+static void pt_rsc(double *z1r, double *z1i, double *z2r, double *z2i, int n, double amp, double k) {
+    if (n == 0)      pt_rsc_one(z1r, z1i, amp, k);
+    else if (n == 1) pt_rsc_one(z2r, z2i, amp, k);
+    else if (n == 2) { pt_rsc_one(z1r, z1i, amp, k); pt_rsc_one(z2r, z2i, amp, k); }
+}
+
+/* lss(n, A, B, a, b, phase): Lissajous. X = A*sin(a*theta+delta), Y = B*sin(b*theta). */
+static void pt_lss_one(double *xr, double *xi, double A, double B, double a, double b, double phase) {
+    double theta = 2.0 * M_PI * (*xr);
+    double delta = M_PI * phase;
+    *xr = A * sin(a * theta + delta);
+    *xi = B * sin(b * theta);
+}
+static void pt_lss(double *z1r, double *z1i, double *z2r, double *z2i, int n, double A, double B, double a, double b, double phase) {
+    if (n == 0)      pt_lss_one(z1r, z1i, A, B, a, b, phase);
+    else if (n == 1) pt_lss_one(z2r, z2i, A, B, a, b, phase);
+    else if (n == 2) { pt_lss_one(z1r, z1i, A, B, a, b, phase); pt_lss_one(z2r, z2i, A, B, a, b, phase); }
+}
+
+/* ast(n, scale): astroid. X = scale*cos^3, Y = scale*sin^3. */
+static void pt_ast_one(double *xr, double *xi, double scale) {
+    double theta = 2.0 * M_PI * (*xr);
+    double ct = cos(theta), st = sin(theta);
+    *xr = scale * ct * ct * ct;
+    *xi = scale * st * st * st;
+}
+static void pt_ast(double *z1r, double *z1i, double *z2r, double *z2i, int n, double scale) {
+    if (n == 0)      pt_ast_one(z1r, z1i, scale);
+    else if (n == 1) pt_ast_one(z2r, z2i, scale);
+    else if (n == 2) { pt_ast_one(z1r, z1i, scale); pt_ast_one(z2r, z2i, scale); }
+}
+
+/* asp(n, a, b): Archimedean spiral. r = a + b*theta. */
+static void pt_asp_one(double *xr, double *xi, double a, double b) {
+    double theta = 2.0 * M_PI * (*xr);
+    double r = a + b * theta;
+    *xr = r * cos(theta);
+    *xi = r * sin(theta);
+}
+static void pt_asp(double *z1r, double *z1i, double *z2r, double *z2i, int n, double a, double b) {
+    if (n == 0)      pt_asp_one(z1r, z1i, a, b);
+    else if (n == 1) pt_asp_one(z2r, z2i, a, b);
+    else if (n == 2) { pt_asp_one(z1r, z1i, a, b); pt_asp_one(z2r, z2i, a, b); }
+}
+
+/* lsp(n, a, b): logarithmic spiral. r = a*exp(b*theta). */
+static void pt_lsp_one(double *xr, double *xi, double a, double b) {
+    double theta = 2.0 * M_PI * (*xr);
+    double r = a * exp(b * theta);
+    *xr = r * cos(theta);
+    *xi = r * sin(theta);
+}
+static void pt_lsp(double *z1r, double *z1i, double *z2r, double *z2i, int n, double a, double b) {
+    if (n == 0)      pt_lsp_one(z1r, z1i, a, b);
+    else if (n == 1) pt_lsp_one(z2r, z2i, a, b);
+    else if (n == 2) { pt_lsp_one(z1r, z1i, a, b); pt_lsp_one(z2r, z2i, a, b); }
+}
+
+/* dlt(n, R): deltoid. X = R*(2cos + cos2)/3, Y = R*(2sin - sin2)/3. */
+static void pt_dlt_one(double *xr, double *xi, double R) {
+    double theta = 2.0 * M_PI * (*xr);
+    *xr = R * (2.0 * cos(theta) + cos(2.0 * theta)) / 3.0;
+    *xi = R * (2.0 * sin(theta) - sin(2.0 * theta)) / 3.0;
+}
+static void pt_dlt(double *z1r, double *z1i, double *z2r, double *z2i, int n, double R) {
+    if (n == 0)      pt_dlt_one(z1r, z1i, R);
+    else if (n == 1) pt_dlt_one(z2r, z2i, R);
+    else if (n == 2) { pt_dlt_one(z1r, z1i, R); pt_dlt_one(z2r, z2i, R); }
+}
+
+/* rply(n, sides, radius, turns): regular polygon perimeter walk. */
+static void pt_rply_one(double *xr, double *xi, double sides, double radius, double turns) {
+    int ns = (int)sides;
+    if (ns < 3) ns = 3;
+    double t = fmod(*xr, 1.0);
+    if (t < 0) t += 1.0;
+    double pos = t * ns;           /* position along edges: [0, ns) */
+    int edge = (int)pos;
+    if (edge >= ns) edge = ns - 1;
+    double frac = pos - edge;      /* fraction along this edge */
+    /* vertices: v_k at angle 2*pi*k/ns */
+    double a0 = 2.0 * M_PI * edge / ns;
+    double a1 = 2.0 * M_PI * (edge + 1) / ns;
+    double px = radius * ((1 - frac) * cos(a0) + frac * cos(a1));
+    double py = radius * ((1 - frac) * sin(a0) + frac * sin(a1));
+    /* apply rotation */
+    double ra = 2.0 * M_PI * turns;
+    *xr = cos(ra) * px - sin(ra) * py;
+    *xi = sin(ra) * px + cos(ra) * py;
+}
+static void pt_rply(double *z1r, double *z1i, double *z2r, double *z2i, int n, double sides, double radius, double turns) {
+    if (n == 0)      pt_rply_one(z1r, z1i, sides, radius, turns);
+    else if (n == 1) pt_rply_one(z2r, z2i, sides, radius, turns);
+    else if (n == 2) { pt_rply_one(z1r, z1i, sides, radius, turns); pt_rply_one(z2r, z2i, sides, radius, turns); }
+}
+
+/* star(n, points, outer, inner_ratio): star perimeter walk. */
+static void pt_star_one(double *xr, double *xi, double points, double outer, double inner_ratio) {
+    int np = (int)points;
+    if (np < 3) np = 3;
+    int nv = 2 * np;               /* alternating outer/inner vertices */
+    double t = fmod(*xr, 1.0);
+    if (t < 0) t += 1.0;
+    double pos = t * nv;
+    int edge = (int)pos;
+    if (edge >= nv) edge = nv - 1;
+    double frac = pos - edge;
+    /* vertex k: even=outer at angle pi*k/np, odd=inner at same angle scheme */
+    double r0 = (edge % 2 == 0) ? outer : outer * inner_ratio;
+    double r1 = ((edge + 1) % 2 == 0) ? outer : outer * inner_ratio;
+    double a0 = 2.0 * M_PI * edge / nv;
+    double a1 = 2.0 * M_PI * (edge + 1) / nv;
+    *xr = (1 - frac) * r0 * cos(a0) + frac * r1 * cos(a1);
+    *xi = (1 - frac) * r0 * sin(a0) + frac * r1 * sin(a1);
+}
+static void pt_star(double *z1r, double *z1i, double *z2r, double *z2i, int n, double points, double outer, double inner_ratio) {
+    if (n == 0)      pt_star_one(z1r, z1i, points, outer, inner_ratio);
+    else if (n == 1) pt_star_one(z2r, z2i, points, outer, inner_ratio);
+    else if (n == 2) { pt_star_one(z1r, z1i, points, outer, inner_ratio); pt_star_one(z2r, z2i, points, outer, inner_ratio); }
+}
+
+/* rect(n, width, height, turns): rectangle perimeter walk by arc length, then rotate. */
+static void pt_rect_one(double *xr, double *xi, double w, double h, double turns) {
+    double perim = 2.0 * (w + h);
+    double t = fmod(*xr, 1.0);
+    if (t < 0) t += 1.0;
+    double d = t * perim;           /* distance along perimeter */
+    double px, py;
+    double hw = w / 2.0, hh = h / 2.0;
+    if (d < w) {                    /* bottom: left to right */
+        px = -hw + d;  py = -hh;
+    } else if (d < w + h) {         /* right: bottom to top */
+        px = hw;  py = -hh + (d - w);
+    } else if (d < 2 * w + h) {     /* top: right to left */
+        px = hw - (d - w - h);  py = hh;
+    } else {                         /* left: top to bottom */
+        px = -hw;  py = hh - (d - 2 * w - h);
+    }
+    double ra = 2.0 * M_PI * turns;
+    *xr = cos(ra) * px - sin(ra) * py;
+    *xi = sin(ra) * px + cos(ra) * py;
+}
+static void pt_rect(double *z1r, double *z1i, double *z2r, double *z2i, int n, double w, double h, double turns) {
+    if (n == 0)      pt_rect_one(z1r, z1i, w, h, turns);
+    else if (n == 1) pt_rect_one(z2r, z2i, w, h, turns);
+    else if (n == 2) { pt_rect_one(z1r, z1i, w, h, turns); pt_rect_one(z2r, z2i, w, h, turns); }
+}
+
+/* rrect(n, width, height, m): rounded rectangle via superellipse. */
+static void pt_rrect_one(double *xr, double *xi, double w, double h, double m) {
+    double theta = 2.0 * M_PI * fmod(*xr, 1.0);
+    double ct = cos(theta), st = sin(theta);
+    double e = 2.0 / (m > 0.01 ? m : 0.01);
+    *xr = (w / 2.0) * (ct >= 0 ? 1 : -1) * pow(fabs(ct), e);
+    *xi = (h / 2.0) * (st >= 0 ? 1 : -1) * pow(fabs(st), e);
+}
+static void pt_rrect(double *z1r, double *z1i, double *z2r, double *z2i, int n, double w, double h, double m) {
+    if (n == 0)      pt_rrect_one(z1r, z1i, w, h, m);
+    else if (n == 1) pt_rrect_one(z2r, z2i, w, h, m);
+    else if (n == 2) { pt_rrect_one(z1r, z1i, w, h, m); pt_rrect_one(z2r, z2i, w, h, m); }
 }
 
 /* xim: t1' = i*Re(t1), t2' = i*Re(t2). Real parts become imaginary, imag discarded. */
@@ -2192,20 +2391,21 @@ static void pt_sdith(double *z1r, double *z1i, double *z2r, double *z2i, double 
     *z2i += w * (rng_uniform() - 0.5);
 }
 
-/* ddith(d): disk dither — uniform random offset inside disk of radius d/N.
- * Uses sqrt(u) for uniform area sampling (not biased toward center). */
-static void pt_ddith(double *z1r, double *z1i, double *z2r, double *z2i, double d, int gridN) {
+/* ddith(n, d, exp): disk dither — random offset inside disk of radius d/N.
+ * n=0→t1, n=1→t2, n=2→both. exp controls radial distribution (0.5 = uniform area). */
+static void pt_ddith_one(double *xr, double *xi, double rmax, double ex) {
+    double u1 = rng_uniform(), u2 = rng_uniform();
+    double theta = 2.0 * M_PI * u1;
+    double r = pow(u2, ex) * rmax;
+    *xr += r * cos(theta);
+    *xi += r * sin(theta);
+}
+static void pt_ddith(double *z1r, double *z1i, double *z2r, double *z2i, int n, double d, double ex, int gridN) {
     if (d <= 0.0) d = 1.0;
+    if (ex <= 0.0) ex = 0.5;
     double rmax = d / (gridN > 0 ? gridN : 1);
-    double u1, u2, r, theta;
-    /* t1 offset */
-    u1 = rng_uniform(); u2 = rng_uniform();
-    theta = 2.0 * M_PI * u1; r = sqrt(u2) * rmax;
-    *z1r += r * cos(theta); *z1i += r * sin(theta);
-    /* t2 offset */
-    u1 = rng_uniform(); u2 = rng_uniform();
-    theta = 2.0 * M_PI * u1; r = sqrt(u2) * rmax;
-    *z2r += r * cos(theta); *z2i += r * sin(theta);
+    if (n == 0 || n == 2) pt_ddith_one(z1r, z1i, rmax, ex);
+    if (n == 1 || n == 2) pt_ddith_one(z2r, z2i, rmax, ex);
 }
 
 /* ndith(d): normal dither — independent Gaussian jitter, sigma = d/N.
@@ -2230,7 +2430,7 @@ static void pt_ndith(double *z1r, double *z1i, double *z2r, double *z2i, double 
 
 /* ==== Parameter transform dispatch (array-of-arrays format) ==== */
 
-#define MAX_PT_ARGS 4
+#define MAX_PT_ARGS 12
 
 typedef struct {
     char name[64];
@@ -2295,8 +2495,10 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
         return 0;
     }
     if (strcmp(e->name, "ddith") == 0) {
-        double d = e->nArgs > 0 ? e->args[0] : 1.0;
-        pt_ddith(z1r, z1i, z2r, z2i, d, gridN);
+        int n = e->nArgs > 0 ? (int)e->args[0] : 2;
+        double d = e->nArgs > 1 ? e->args[1] : 1.0;
+        double ex = e->nArgs > 2 ? e->args[2] : 0.5;
+        pt_ddith(z1r, z1i, z2r, z2i, n, d, ex, gridN);
         return 0;
     }
     if (strcmp(e->name, "ndith") == 0) {
@@ -2391,6 +2593,96 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
         double size = e->nArgs > 1 ? e->args[1] : 1.0;
         double turns = e->nArgs > 2 ? e->args[2] : 0.0;
         pt_hrt(z1r, z1i, z2r, z2i, n, size, turns);
+        return 0;
+    }
+    if (strcmp(e->name, "spdl") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 0;
+        double va = e->nArgs > 1 ? e->args[1] : 0.5;
+        double vb = e->nArgs > 2 ? e->args[2] : 0.2;
+        double vp = e->nArgs > 3 ? e->args[3] : 1.5;
+        pt_spdl(z1r, z1i, z2r, z2i, n, va, vb, vp);
+        return 0;
+    }
+    if (strcmp(e->name, "lmc") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 0;
+        double a = e->nArgs > 1 ? e->args[1] : 0.3;
+        double b = e->nArgs > 2 ? e->args[2] : 0.5;
+        pt_lmc(z1r, z1i, z2r, z2i, n, a, b);
+        return 0;
+    }
+    if (strcmp(e->name, "rsc") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 0;
+        double amp = e->nArgs > 1 ? e->args[1] : 0.5;
+        double k = e->nArgs > 2 ? e->args[2] : 2.0;
+        pt_rsc(z1r, z1i, z2r, z2i, n, amp, k);
+        return 0;
+    }
+    if (strcmp(e->name, "lss") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 0;
+        double A = e->nArgs > 1 ? e->args[1] : 0.5;
+        double B = e->nArgs > 2 ? e->args[2] : 0.5;
+        double a = e->nArgs > 3 ? e->args[3] : 3.0;
+        double b = e->nArgs > 4 ? e->args[4] : 2.0;
+        double phase = e->nArgs > 5 ? e->args[5] : 0.5;
+        pt_lss(z1r, z1i, z2r, z2i, n, A, B, a, b, phase);
+        return 0;
+    }
+    if (strcmp(e->name, "ast") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 0;
+        double scale = e->nArgs > 1 ? e->args[1] : 1.0;
+        pt_ast(z1r, z1i, z2r, z2i, n, scale);
+        return 0;
+    }
+    if (strcmp(e->name, "asp") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 0;
+        double a = e->nArgs > 1 ? e->args[1] : 0.0;
+        double b = e->nArgs > 2 ? e->args[2] : 0.1;
+        pt_asp(z1r, z1i, z2r, z2i, n, a, b);
+        return 0;
+    }
+    if (strcmp(e->name, "lsp") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 0;
+        double a = e->nArgs > 1 ? e->args[1] : 0.1;
+        double b = e->nArgs > 2 ? e->args[2] : 0.15;
+        pt_lsp(z1r, z1i, z2r, z2i, n, a, b);
+        return 0;
+    }
+    if (strcmp(e->name, "dlt") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 0;
+        double R = e->nArgs > 1 ? e->args[1] : 1.0;
+        pt_dlt(z1r, z1i, z2r, z2i, n, R);
+        return 0;
+    }
+    if (strcmp(e->name, "rply") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 0;
+        double sides = e->nArgs > 1 ? e->args[1] : 5.0;
+        double radius = e->nArgs > 2 ? e->args[2] : 1.0;
+        double turns = e->nArgs > 3 ? e->args[3] : 0.0;
+        pt_rply(z1r, z1i, z2r, z2i, n, sides, radius, turns);
+        return 0;
+    }
+    if (strcmp(e->name, "star") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 0;
+        double points = e->nArgs > 1 ? e->args[1] : 5.0;
+        double outer = e->nArgs > 2 ? e->args[2] : 1.0;
+        double inner_ratio = e->nArgs > 3 ? e->args[3] : 0.5;
+        pt_star(z1r, z1i, z2r, z2i, n, points, outer, inner_ratio);
+        return 0;
+    }
+    if (strcmp(e->name, "rect") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 0;
+        double w = e->nArgs > 1 ? e->args[1] : 2.0;
+        double h = e->nArgs > 2 ? e->args[2] : 1.0;
+        double turns = e->nArgs > 3 ? e->args[3] : 0.0;
+        pt_rect(z1r, z1i, z2r, z2i, n, w, h, turns);
+        return 0;
+    }
+    if (strcmp(e->name, "rrect") == 0) {
+        int n = e->nArgs > 0 ? (int)e->args[0] : 0;
+        double w = e->nArgs > 1 ? e->args[1] : 2.0;
+        double h = e->nArgs > 2 ? e->args[2] : 1.0;
+        double m = e->nArgs > 3 ? e->args[3] : 4.0;
+        pt_rrect(z1r, z1i, z2r, z2i, n, w, h, m);
         return 0;
     }
     /* Fall back to standard param transforms (no extra args) */
@@ -2557,6 +2849,122 @@ static void moth4_c(double x1r, double x1i, double x2r, double x2i,
     }
 }
 
+/* g39: 50 coefficients. Sparse constants + 4 parameter-dependent terms. */
+static void g39_c(double x1r, double x1i, double x2r, double x2i,
+                  double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 50;
+    for (int i = 0; i < 50; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    /* Constants at sparse indices: [0]=1, [9]=2, [19]=-3, [29]=4, [39]=-5, [49]=6 */
+    cRe[0] = 1; cRe[9] = 2; cRe[19] = -3; cRe[29] = 4; cRe[39] = -5; cRe[49] = 6;
+
+    /* cf[14] = 100 * (t1^2 + t2^2) */
+    /* t1^2 = (x1r+ix1i)^2 = x1r^2-x1i^2 + 2*x1r*x1i*i */
+    double t1sq_r = x1r*x1r - x1i*x1i, t1sq_i = 2*x1r*x1i;
+    double t2sq_r = x2r*x2r - x2i*x2i, t2sq_i = 2*x2r*x2i;
+    cRe[14] = 100 * (t1sq_r + t2sq_r);
+    cIm[14] = 100 * (t1sq_i + t2sq_i);
+
+    /* cf[24] = 50 * (sin(t1) + i*cos(t2)) */
+    /* sin(a+bi) = sin(a)cosh(b) + i*cos(a)sinh(b) */
+    double s1r, s1i;
+    c_sin(x1r, x1i, &s1r, &s1i);
+    /* cos(t2) */
+    double c2r, c2i;
+    c_cos(x2r, x2i, &c2r, &c2i);
+    /* i*cos(t2) = -c2i + i*c2r */
+    cRe[24] = 50 * (s1r + (-c2i));
+    cIm[24] = 50 * (s1i + c2r);
+
+    /* cf[34] = 200*(t1*t2) + i*(t1^3 - t2^3) */
+    /* t1*t2 */
+    double pr = x1r*x2r - x1i*x2i, pi = x1r*x2i + x1i*x2r;
+    /* t1^3 = t1^2 * t1 */
+    double t1cu_r = t1sq_r*x1r - t1sq_i*x1i, t1cu_i = t1sq_r*x1i + t1sq_i*x1r;
+    /* t2^3 = t2^2 * t2 */
+    double t2cu_r = t2sq_r*x2r - t2sq_i*x2i, t2cu_i = t2sq_r*x2i + t2sq_i*x2r;
+    /* diff = t1^3 - t2^3 */
+    double difr = t1cu_r - t2cu_r, difi = t1cu_i - t2cu_i;
+    /* i*(diff) = -difi + i*difr */
+    cRe[34] = 200*pr + (-difi);
+    cIm[34] = 200*pi + difr;
+
+    /* cf[44] = exp(i*(t1+t2)) + exp(-i*(t1-t2)) */
+    /* i*(t1+t2) = -(x1i+x2i) + i*(x1r+x2r) */
+    double ea_r, ea_i;
+    c_exp2(-(x1i+x2i), x1r+x2r, &ea_r, &ea_i);
+    /* -i*(t1-t2) = (x1i-x2i) + i*(-(x1r-x2r)) = (x1i-x2i) + i*(x2r-x1r) */
+    double eb_r, eb_i;
+    c_exp2(x1i-x2i, x2r-x1r, &eb_r, &eb_i);
+    cRe[44] = ea_r + eb_r;
+    cIm[44] = ea_i + eb_i;
+
+    /* NaN guard */
+    for (int i = 0; i < 50; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+/* g68: 25 coefficients, |t1|^((k+1)/2) * exp(i*(k+1)*arg(t2)) + corrections */
+static void g68_c(double x1r, double x1i, double x2r, double x2i,
+                  double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 25;
+    double abs_t1 = sqrt(x1r * x1r + x1i * x1i);
+    double arg_t2 = atan2(x2i, x2r);
+
+    for (int k = 0; k < 25; k++) {
+        double e = (k + 1) / 2.0;
+        double r = pow(abs_t1, e);
+        double a = (k + 1) * arg_t2;
+        cRe[k] = r * cos(a);
+        cIm[k] = r * sin(a);
+    }
+
+    /* cf[4] += (log|t1| + log|t2|) / 2 — real addition */
+    double abs_t2 = sqrt(x2r * x2r + x2i * x2i);
+    double log_sum = (log(abs_t1 > 1e-300 ? abs_t1 : 1e-300) +
+                      log(abs_t2 > 1e-300 ? abs_t2 : 1e-300)) / 2.0;
+    cRe[4] += log_sum;
+
+    /* cf[9] += conj(t1 * t2) */
+    double pr = x1r * x2r - x1i * x2i;
+    double pi = x1r * x2i + x1i * x2r;
+    cRe[9] += pr;
+    cIm[9] -= pi;  /* conj */
+
+    /* cf[14] += |t2 - t1|^2 — real */
+    double dr = x2r - x1r, di = x2i - x1i;
+    cRe[14] += dr * dr + di * di;
+
+    /* cf[19] += (sin(arg(t1)) / cos(arg(t2)))^3 — real */
+    double arg_t1 = atan2(x1i, x1r);
+    double ca2 = cos(arg_t2);
+    double ratio = (fabs(ca2) > 1e-30) ? sin(arg_t1) / ca2 : 0.0;
+    cRe[19] += ratio * ratio * ratio;
+
+    /* cf[24] += ((i*t1 - t2)^2 / (1 + |t1+t2|^3))^4 */
+    /* i*t1 = -x1i + i*x1r */
+    double ar = -x1i - x2r, ai = x1r - x2i;   /* i*t1 - t2 */
+    /* (a)^2 = (ar+ai*i)^2 */
+    double a2r = ar * ar - ai * ai, a2i = 2 * ar * ai;
+    /* denom = 1 + |t1+t2|^3 */
+    double sr = x1r + x2r, si = x1i + x2i;
+    double abs_sum = sqrt(sr * sr + si * si);
+    double denom = 1.0 + abs_sum * abs_sum * abs_sum;
+    /* q = a^2 / denom (denom is real) */
+    double qr = a2r / denom, qi = a2i / denom;
+    /* q^4 = ((q)^2)^2 */
+    double q2r = qr * qr - qi * qi, q2i = 2 * qr * qi;
+    double q4r = q2r * q2r - q2i * q2i, q4i = 2 * q2r * q2i;
+    cRe[24] += q4r;
+    cIm[24] += q4i;
+
+    /* NaN guard */
+    for (int i = 0; i < 25; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
 static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_1") == 0)   return giga_1_c;
     if (strcmp(name, "giga_5") == 0)   return giga_5_c;
@@ -2573,6 +2981,8 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "p7f") == 0)      return p7f_c;
     if (strcmp(name, "p821") == 0)    return p821_c;
     if (strcmp(name, "moth4") == 0)  return moth4_c;
+    if (strcmp(name, "g39") == 0)    return g39_c;
+    if (strcmp(name, "g68") == 0)    return g68_c;
     if (strcmp(name, "poly_110") == 0) return poly_110_c;
     if (strcmp(name, "poly_2") == 0)   return poly_2_hand;
     if (strcmp(name, "poly_9") == 0)   return poly_9_hand;

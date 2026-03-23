@@ -90,6 +90,7 @@ def handle_list(event):
             # Pipeline info
             pipeline = calc.get("pipeline", {})
             entry["param_transforms"] = pipeline.get("param_transforms", [])
+            entry["param_transforms_display"] = pipeline.get("param_transforms_display", [])
             entry["coeff_transforms"] = pipeline.get("coeff_transforms", [])
             # Compute total bin size and root count from stripe metadata
             stripes = calc.get("stripes", [])

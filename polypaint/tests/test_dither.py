@@ -107,11 +107,11 @@ def test_sdith_scaling():
 
 
 def test_ddith_bounded():
-    """ddith(1): all offsets within disk of radius d/N."""
+    """ddith(both,1,0.5): all offsets within disk of radius d/N."""
     print("test_ddith_bounded...")
     d = 1.0
     n = 200
-    points, _ = run_param_dump(n, [["ddith", str(d)]])
+    points, _ = run_param_dump(n, [["ddith", "2", str(d), "0.5"]])
     _, _, _, _, radial1, radial2 = offsets(points, n)
 
     rmax = d / n  # 0.005
@@ -120,7 +120,7 @@ def test_ddith_bounded():
     assert max(radial1) <= tol, f"ddith t1 radial exceeded {max(radial1):.6f} > {rmax:.6f}"
     assert max(radial2) <= tol, f"ddith t2 radial exceeded {max(radial2):.6f} > {rmax:.6f}"
 
-    # Not concentrated at center (sqrt sampling)
+    # Not concentrated at center (sqrt sampling with exp=0.5)
     median1 = sorted(radial1)[len(radial1) // 2]
     assert median1 > rmax * 0.4, f"ddith median too small {median1:.6f}, may be biased toward center"
 
@@ -129,11 +129,40 @@ def test_ddith_bounded():
     print("  PASS")
 
 
+def test_ddith_target_t1_only():
+    """ddith(0,1,0.5): only t1 is dithered, t2 unchanged."""
+    print("test_ddith_target_t1_only...")
+    n = 100
+    points, _ = run_param_dump(n, [["ddith", "0", "1", "0.5"]])
+    _, _, _, _, radial1, radial2 = offsets(points, n)
+    assert max(radial1) > 0, "t1 should be dithered"
+    assert max(radial2) < 1e-7, f"t2 should be unchanged, max radial={max(radial2):.2e}"
+    print("  PASS")
+
+
+def test_ddith_exponent():
+    """ddith with exp=1 (linear radius) should be more center-biased than exp=0.5."""
+    print("test_ddith_exponent...")
+    n = 300
+    # exp=0.5 (uniform area)
+    pts_05, _ = run_param_dump(n, [["ddith", "2", "1", "0.5"]])
+    _, _, _, _, rad1_05, _ = offsets(pts_05, n)
+    # exp=1.0 (linear, biased toward center)
+    pts_10, _ = run_param_dump(n, [["ddith", "2", "1", "1.0"]])
+    _, _, _, _, rad1_10, _ = offsets(pts_10, n)
+    median_05 = sorted(rad1_05)[len(rad1_05) // 2]
+    median_10 = sorted(rad1_10)[len(rad1_10) // 2]
+    # exp=1 should have smaller median (more points near center)
+    assert median_10 < median_05, f"exp=1 median={median_10:.6f} should be < exp=0.5 median={median_05:.6f}"
+    print(f"  median(exp=0.5)={median_05:.6f} median(exp=1.0)={median_10:.6f}")
+    print("  PASS")
+
+
 def test_ddith_isotropic():
     """ddith should be rotationally symmetric — similar spread in re and im."""
     print("test_ddith_isotropic...")
     n = 300
-    points, _ = run_param_dump(n, [["ddith", "1"]])
+    points, _ = run_param_dump(n, [["ddith", "2", "1", "0.5"]])
     d1_re, d1_im, _, _, _, _ = offsets(points, n)
 
     std_re = np.std(d1_re)

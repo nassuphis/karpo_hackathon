@@ -2733,6 +2733,13 @@ static void _roots_minmax(double *rr, double *ri, int n,
     *lrg_r = rr[imax]; *lrg_i = ri[imax];
 }
 
+/* sum_prod: t1' = t1+t2, t2' = t1*t2. */
+static void pt_sum_prod(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double sr = *z1r + *z2r, si = *z1i + *z2i;
+    double pr, pi; c_mul(*z1r, *z1i, *z2r, *z2i, &pr, &pi);
+    *z1r = sr; *z1i = si; *z2r = pr; *z2i = pi;
+}
+
 /* roots3: cubic root param transform. a=t1+t2, b=1, c=1, d=t1*t2. */
 static void pt_roots3(double *z1r, double *z1i, double *z2r, double *z2i) {
     double ar = *z1r + *z2r, ai = *z1i + *z2i;
@@ -3069,6 +3076,10 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
         double h = e->nArgs > 2 ? e->args[2] : 1.0;
         double m = e->nArgs > 3 ? e->args[3] : 4.0;
         pt_rrect(z1r, z1i, z2r, z2i, n, w, h, m);
+        return 0;
+    }
+    if (strcmp(e->name, "sum_prod") == 0) {
+        pt_sum_prod(z1r, z1i, z2r, z2i);
         return 0;
     }
     if (strcmp(e->name, "roots3") == 0) {

@@ -151,6 +151,22 @@ static void rt_roots_toline(float *re, float *im, int degree) {
     }
 }
 
+/* pull_towards_center(alpha, sigma): Gaussian radial shrink toward origin.
+ * r' = r * (1 - alpha * exp(-(r/sigma)^2)). */
+static void rt_pull_towards_center(float *re, float *im, int degree, double alpha, double sigma) {
+    if (sigma < 1e-10) sigma = 1e-10;
+    double inv_sig2 = 1.0 / (sigma * sigma);
+    for (int k = 0; k < degree; k++) {
+        double x = re[k], y = im[k];
+        double r = sqrt(x * x + y * y);
+        if (r < 1e-30) continue;
+        double shrink = alpha * exp(-r * r * inv_sig2);
+        double s = 1.0 - shrink;
+        re[k] = (float)(x * s);
+        im[k] = (float)(y * s);
+    }
+}
+
 /* ---- Dispatch ---- */
 
 static void apply_root_xforms(const RootXformEntry *entries, int n_entries,
@@ -166,6 +182,10 @@ static void apply_root_xforms(const RootXformEntry *entries, int n_entries,
             rt_pull_unit_circle(re, im, degree, sigma, alpha);
         } else if (strcmp(e->name, "roots_toline") == 0) {
             rt_roots_toline(re, im, degree);
+        } else if (strcmp(e->name, "pull_towards_center") == 0) {
+            double alpha = e->n_args > 0 ? e->args[0] : 1.0;
+            double sigma = e->n_args > 1 ? e->args[1] : 0.75;
+            rt_pull_towards_center(re, im, degree, alpha, sigma);
         }
         /* unknown transforms silently ignored */
     }

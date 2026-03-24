@@ -217,13 +217,13 @@ def test_output_size():
 def test_ae_vs_cm_comparison():
     """Both solvers should produce finite roots with small residuals on the same input."""
     if not os.path.exists(SWEEP_AE):
-        print("  SKIPPED: sweep_test not compiled")
+        print("  SKIPPED: lambda/sweep not found (run deploy.sh to compile)")
         return
-    # Check if AE binary is actually runnable (might be wrong arch)
+    # Check if AE binary is actually runnable (might be wrong arch on host)
     try:
         subprocess.run([SWEEP_AE], capture_output=True, timeout=2)
     except (OSError, subprocess.TimeoutExpired):
-        print("  SKIPPED: sweep_test not runnable on this platform")
+        print("  SKIPPED: lambda/sweep not runnable on this platform (use Docker)")
         return
 
     polys = [

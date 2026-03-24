@@ -55,6 +55,9 @@ TIMEOUT=900
 BUCKET="polypaint"
 JOBS_TABLE="polypaint-jobs"
 LIBVIPS_LAYER="arn:aws:lambda:us-east-1:710848990594:layer:polypaint-libvips:9"
+LAPACK_LAYER="arn:aws:lambda:us-east-1:710848990594:layer:polypaint-lapack:1"
+SWEEP_CM_NAME="polypaint-sweep-cm"
+SWEEP_CM_MEMORY=4096  # companion matrix eigensolve needs more memory
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -569,8 +572,9 @@ setup_api_gateway() {
   "param-debug": "%s/param-debug",
   "tiff-compat": "%s/tiff-compat",
   "png-export": "%s/png-export",
-  "deepzoom-export": "%s/deepzoom-export"
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
+  "deepzoom-export": "%s/deepzoom-export",
+  "sweep-cm": "%s/sweep-cm"
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" --region "$REGION"
     echo "  config.json uploaded"
@@ -683,7 +687,7 @@ if [ "$ACTION" = "create" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     create_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME"
+        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -769,7 +773,7 @@ elif [ "$ACTION" = "update" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     update_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME"
+        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"

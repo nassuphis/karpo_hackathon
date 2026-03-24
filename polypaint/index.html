@@ -1186,6 +1186,7 @@ button {
             </div>
             <div style="margin-top:8px; display:flex; gap:6px; align-items:center">
                 <button class="btn-primary" id="btn-calculate" onclick="runCalculate()" style="background:#2a6">Calculate</button>
+                <button class="btn-primary" id="btn-calculate-cm" onclick="runCalculateCM()" style="background:#64a">Calculate-CM</button>
                 <button class="btn-primary" id="btn-param-debug" onclick="runParamDebug()" style="background:#446">Param</button>
                 <select id="param-debug-mode" style="width:7em; font-size:11px">
                     <option value="together">together</option>
@@ -3137,7 +3138,9 @@ async function runParamDebug() {
     }
 }
 
-async function runCalculate() {
+async function runCalculate() { return runCalculateWithSolver('aberth'); }
+async function runCalculateCM() { return runCalculateWithSolver('companion_matrix'); }
+async function runCalculateWithSolver(solverMode) {
     const funcName = document.getElementById('render-function').value;
     const n = parseInt(document.getElementById('render-n').value);
     const nChunks = Math.max(1, parseInt(document.getElementById('render-stripes').value) || 10);
@@ -3299,7 +3302,8 @@ async function runCalculate() {
         document.getElementById('compute-status').textContent = `Lores solve...`;
         const loresKey = `renders/${jobId}/lores.bin`;
         const tLores = performance.now();
-        const loresResult = await lambdaPost('sweep', {
+        const loresSolveLambda = solverMode === 'companion_matrix' ? 'sweep-cm' : 'sweep';
+        const loresResult = await lambdaPost(loresSolveLambda, {
             job_id: jobId, stripe_idx: 0,
             coeffs_key: loresCoeffResult.coeffs_key,
             n_coeffs: nCoeffs,
@@ -3325,10 +3329,12 @@ async function runCalculate() {
         }
 
         // Dispatch all sweep jobs via dispatch Lambda (fire-and-forget)
+        const solverTarget = solverMode === 'companion_matrix' ? 'sweep_cm' : 'sweep';
+        const solverLabel = solverMode === 'companion_matrix' ? 'CM' : 'AE';
         const SWEEP_BATCH = 500;
         for (let i = 0; i < sweepJobs.length; i += SWEEP_BATCH) {
             const batch = sweepJobs.slice(i, i + SWEEP_BATCH);
-            const dispResult = await lambdaPost('dispatch', { target: 'sweep', jobs: batch, expected_keys: [] });
+            const dispResult = await lambdaPost('dispatch', { target: solverTarget, jobs: batch, expected_keys: [] });
             if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length)) {
                 throw new Error(`Sweep dispatch failed: fired ${dispResult.fired || 0}/${batch.length}`);
             }
@@ -3391,6 +3397,7 @@ async function runCalculate() {
             function: funcName,
             N: n,
             n_stripes: nStripes,
+            solver: solverMode,
             n_chunks: actualChunks,
             n_steps: nSteps,
             params_key: paramsKey,

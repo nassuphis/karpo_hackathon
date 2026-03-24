@@ -2553,87 +2553,186 @@ static void _cbrt_c(double zr, double zi, double *rr, double *ri) {
     *rr = r * cos(th); *ri = r * sin(th);
 }
 
-static void pt_roots5(double *z1r, double *z1i, double *z2r, double *z2i) {
-    /* a = cos(100*t1), b = i*t1, c = i*t2, d = sin(100*t2) */
-    /* cos(100*t1) — complex */
-    double ar, ai; c_cos(100.0 * (*z1r), 100.0 * (*z1i), &ar, &ai);
-    /* b = i*t1 = -z1i + i*z1r */
-    double br = -(*z1i), bi = *z1r;
-    /* c = i*t2 = -z2i + i*z2r */
-    double cr = -(*z2i), ci = *z2r;
-    /* d = sin(100*t2) — complex */
-    double dr, di; c_sin(100.0 * (*z2r), 100.0 * (*z2i), &dr, &di);
+/* Polynomial root solvers (complex coefficients). Returns roots in out[] arrays, returns count. */
+#define MAX_POLY_ROOTS 4
+static const double _omega_r = -0.5, _omega_i = 0.86602540378443864676;  /* exp(2pi*i/3) */
+static const double _omega2_r = -0.5, _omega2_i = -0.86602540378443864676;
 
-    /* Cardano: solve a*z^3 + b*z^2 + c*z + d = 0 */
-    /* If |a| tiny, degenerate — fall back to t1'=t2'=0 */
-    double amag = ar*ar + ai*ai;
-    if (amag < 1e-60) { *z1r = 0; *z1i = 0; *z2r = 0; *z2i = 0; return; }
+static int _solve_linear(double ar, double ai, double br, double bi,
+                         double *outr, double *outi) {
+    double m = ar*ar + ai*ai;
+    if (m < 1e-60) return 0;
+    c_div(-br, -bi, ar, ai, &outr[0], &outi[0]);
+    return 1;
+}
 
-    /* A = b/a, B = c/a, C = d/a */
+static int _solve_quadratic(double ar, double ai, double br, double bi,
+                            double cr, double ci, double *outr, double *outi) {
+    double m = ar*ar + ai*ai;
+    if (m < 1e-60) return _solve_linear(br, bi, cr, ci, outr, outi);
+    /* disc = b^2 - 4ac */
+    double b2r, b2i; c_mul(br, bi, br, bi, &b2r, &b2i);
+    double acr, aci; c_mul(ar, ai, cr, ci, &acr, &aci);
+    double dr = b2r - 4*acr, di = b2i - 4*aci;
+    double sr, si; c_powr(dr, di, 0.5, &sr, &si);
+    double a2r = 2*ar, a2i = 2*ai;
+    c_div(-br + sr, -bi + si, a2r, a2i, &outr[0], &outi[0]);
+    c_div(-br - sr, -bi - si, a2r, a2i, &outr[1], &outi[1]);
+    return 2;
+}
+
+static int _solve_cubic(double ar, double ai, double br, double bi,
+                        double cr, double ci, double dr, double di,
+                        double *outr, double *outi) {
+    double m = ar*ar + ai*ai;
+    if (m < 1e-60) return _solve_quadratic(br, bi, cr, ci, dr, di, outr, outi);
+    /* A=b/a, B=c/a, C=d/a */
     double Ar, Ai; c_div(br, bi, ar, ai, &Ar, &Ai);
     double Br, Bi; c_div(cr, ci, ar, ai, &Br, &Bi);
     double Cr, Ci; c_div(dr, di, ar, ai, &Cr, &Ci);
-
     /* p = B - A^2/3 */
     double A2r, A2i; c_mul(Ar, Ai, Ar, Ai, &A2r, &A2i);
-    double pr = Br - A2r/3.0, pi = Bi - A2i/3.0;
-
+    double pr = Br - A2r/3, pi_ = Bi - A2i/3;
     /* q = 2A^3/27 - AB/3 + C */
     double A3r, A3i; c_mul(A2r, A2i, Ar, Ai, &A3r, &A3i);
     double ABr, ABi; c_mul(Ar, Ai, Br, Bi, &ABr, &ABi);
-    double qr = 2.0*A3r/27.0 - ABr/3.0 + Cr;
-    double qi = 2.0*A3i/27.0 - ABi/3.0 + Ci;
-
+    double qr = 2*A3r/27 - ABr/3 + Cr, qi = 2*A3i/27 - ABi/3 + Ci;
     /* delta = (q/2)^2 + (p/3)^3 */
     double q2r, q2i; c_mul(qr/2, qi/2, qr/2, qi/2, &q2r, &q2i);
-    double p3r, p3i; c_mul(pr/3, pi/3, pr/3, pi/3, &p3r, &p3i);
-    c_mul(p3r, p3i, pr/3, pi/3, &p3r, &p3i);
+    double p3r, p3i; c_mul(pr/3, pi_/3, pr/3, pi_/3, &p3r, &p3i);
+    c_mul(p3r, p3i, pr/3, pi_/3, &p3r, &p3i);
     double delr = q2r + p3r, deli = q2i + p3i;
-
-    /* sqrt(delta) */
     double sdr, sdi; c_powr(delr, deli, 0.5, &sdr, &sdi);
-
-    /* u = cbrt(-q/2 + sqrt_delta), v = cbrt(-q/2 - sqrt_delta) */
     double ur, ui, vr, vi;
     _cbrt_c(-qr/2 + sdr, -qi/2 + sdi, &ur, &ui);
     _cbrt_c(-qr/2 - sdr, -qi/2 - sdi, &vr, &vi);
+    double shr = Ar/3, shi = Ai/3;
+    outr[0] = ur + vr - shr; outi[0] = ui + vi - shi;
+    double t1r, t1i; c_mul(_omega_r, _omega_i, ur, ui, &t1r, &t1i);
+    double t2r, t2i; c_mul(_omega2_r, _omega2_i, vr, vi, &t2r, &t2i);
+    outr[1] = t1r + t2r - shr; outi[1] = t1i + t2i - shi;
+    c_mul(_omega2_r, _omega2_i, ur, ui, &t1r, &t1i);
+    c_mul(_omega_r, _omega_i, vr, vi, &t2r, &t2i);
+    outr[2] = t1r + t2r - shr; outi[2] = t1i + t2i - shi;
+    return 3;
+}
 
-    /* omega = -0.5 + i*sqrt(3)/2, omega2 = -0.5 - i*sqrt(3)/2 */
-    double s3h = 0.86602540378443864676; /* sqrt(3)/2 */
-    double shift_r = Ar/3, shift_i = Ai/3;
+static int _solve_quartic(double ar, double ai, double br, double bi,
+                          double cr, double ci, double dr_, double di_,
+                          double er, double ei, double *outr, double *outi) {
+    double m = ar*ar + ai*ai;
+    if (m < 1e-60) return _solve_cubic(br, bi, cr, ci, dr_, di_, er, ei, outr, outi);
+    /* Monic: A=b/a, B=c/a, C=d/a, D=e/a */
+    double Ar, Ai; c_div(br, bi, ar, ai, &Ar, &Ai);
+    double Br, Bi; c_div(cr, ci, ar, ai, &Br, &Bi);
+    double Cr, Ci; c_div(dr_, di_, ar, ai, &Cr, &Ci);
+    double Dr, Di; c_div(er, ei, ar, ai, &Dr, &Di);
+    /* Depress: x = y - A/4 => y^4 + p y^2 + q y + r */
+    double A2r, A2i; c_mul(Ar, Ai, Ar, Ai, &A2r, &A2i);
+    double A3r, A3i; c_mul(A2r, A2i, Ar, Ai, &A3r, &A3i);
+    double A4r, A4i; c_mul(A2r, A2i, A2r, A2i, &A4r, &A4i);
+    double ABr, ABi; c_mul(Ar, Ai, Br, Bi, &ABr, &ABi);
+    double ACr, ACi; c_mul(Ar, Ai, Cr, Ci, &ACr, &ACi);
+    double A2Br, A2Bi; c_mul(A2r, A2i, Br, Bi, &A2Br, &A2Bi);
+    double pr = Br - 3*A2r/8, pi_ = Bi - 3*A2i/8;
+    double qr = Cr - ABr/2 + A3r/8, qi = Ci - ABi/2 + A3i/8;
+    double rr = Dr - ACr/4 + A2Br/16 - 3*A4r/256;
+    double ri = Di - ACi/4 + A2Bi/16 - 3*A4i/256;
+    /* Biquadratic case: q≈0 */
+    double qmag = qr*qr + qi*qi;
+    double shift_r = Ar/4, shift_i = Ai/4;
+    if (qmag < 1e-60) {
+        double zr[2], zi[2];
+        int nz = _solve_quadratic(1, 0, pr, pi_, rr, ri, zr, zi);
+        int n = 0;
+        for (int j = 0; j < nz; j++) {
+            double sr2, si2; c_powr(zr[j], zi[j], 0.5, &sr2, &si2);
+            outr[n] = sr2 - shift_r; outi[n] = si2 - shift_i; n++;
+            outr[n] = -sr2 - shift_r; outi[n] = -si2 - shift_i; n++;
+        }
+        return n;
+    }
+    /* Resolvent cubic: m^3 - (p/2)m^2 - r*m + (r*p/2 - q^2/8) */
+    double rpr, rpi; c_mul(rr, ri, pr, pi_, &rpr, &rpi);
+    double q2r2, q2i2; c_mul(qr, qi, qr, qi, &q2r2, &q2i2);
+    double rc_r[3], rc_i[3];
+    int nrc = _solve_cubic(1, 0, -pr/2, -pi_/2, -rr, -ri,
+                           rpr/2 - q2r2/8, rpi/2 - q2i2/8, rc_r, rc_i);
+    /* Pick resolvent root with largest magnitude */
+    int best = 0; double bestm = 0;
+    for (int j = 0; j < nrc; j++) {
+        double mm = rc_r[j]*rc_r[j] + rc_i[j]*rc_i[j];
+        if (mm > bestm) { bestm = mm; best = j; }
+    }
+    double mr2 = rc_r[best], mi2 = rc_i[best];
+    /* s = sqrt(2m - p) */
+    double sr, si; c_powr(2*mr2 - pr, 2*mi2 - pi_, 0.5, &sr, &si);
+    double smag = sr*sr + si*si;
+    if (smag < 1e-60 && nrc > 0) {
+        mr2 = rc_r[0]; mi2 = rc_i[0];
+        c_powr(2*mr2 - pr, 2*mi2 - pi_, 0.5, &sr, &si);
+    }
+    /* t = -q / (2s) */
+    double tr, ti; c_div(-qr, -qi, 2*sr, 2*si, &tr, &ti);
+    int n = 0;
+    n += _solve_quadratic(1, 0, sr, si, mr2 + tr, mi2 + ti, outr + n, outi + n);
+    n += _solve_quadratic(1, 0, -sr, -si, mr2 - tr, mi2 - ti, outr + n, outi + n);
+    for (int j = 0; j < n; j++) { outr[j] -= shift_r; outi[j] -= shift_i; }
+    return n;
+}
 
-    /* Three roots */
-    double r0r = ur + vr - shift_r, r0i = ui + vi - shift_i;
+/* Helper: sort roots by magnitude, return (smallest, largest) */
+static void _roots_minmax(double *rr, double *ri, int n,
+                          double *sml_r, double *sml_i, double *lrg_r, double *lrg_i) {
+    if (n <= 0) { *sml_r=0; *sml_i=0; *lrg_r=0; *lrg_i=0; return; }
+    int imin = 0, imax = 0;
+    double mmin = rr[0]*rr[0]+ri[0]*ri[0], mmax = mmin;
+    for (int j = 1; j < n; j++) {
+        double m = rr[j]*rr[j] + ri[j]*ri[j];
+        if (m < mmin) { mmin = m; imin = j; }
+        if (m > mmax) { mmax = m; imax = j; }
+    }
+    *sml_r = rr[imin]; *sml_i = ri[imin];
+    *lrg_r = rr[imax]; *lrg_i = ri[imax];
+}
 
-    double ou_r, ou_i; c_mul(-0.5, s3h, ur, ui, &ou_r, &ou_i);
-    double o2v_r, o2v_i; c_mul(-0.5, -s3h, vr, vi, &o2v_r, &o2v_i);
-    double r1r = ou_r + o2v_r - shift_r, r1i = ou_i + o2v_i - shift_i;
+/* roots5: cubic root param transform. a=cos(100t1), b=it1, c=it2, d=sin(100t2). */
+static void pt_roots5(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double ar, ai; c_cos(100.0*(*z1r), 100.0*(*z1i), &ar, &ai);
+    double br = -(*z1i), bi = *z1r;
+    double cr = -(*z2i), ci = *z2r;
+    double dr, di; c_sin(100.0*(*z2r), 100.0*(*z2i), &dr, &di);
+    double rr[3], ri[3];
+    int n = _solve_cubic(ar, ai, br, bi, cr, ci, dr, di, rr, ri);
+    double sr, si, lr, li;
+    _roots_minmax(rr, ri, n, &sr, &si, &lr, &li);
+    *z1r = sr; *z1i = si; *z2r = lr; *z2i = li;
+    if (!isfinite(*z1r)||!isfinite(*z1i)) { *z1r=0; *z1i=0; }
+    if (!isfinite(*z2r)||!isfinite(*z2i)) { *z2r=0; *z2i=0; }
+}
 
-    double o2u_r, o2u_i; c_mul(-0.5, -s3h, ur, ui, &o2u_r, &o2u_i);
-    double ov_r, ov_i; c_mul(-0.5, s3h, vr, vi, &ov_r, &ov_i);
-    double r2r = o2u_r + ov_r - shift_r, r2i = o2u_i + ov_i - shift_i;
-
-    /* Sort by magnitude, return smallest and largest */
-    double m0 = r0r*r0r + r0i*r0i;
-    double m1 = r1r*r1r + r1i*r1i;
-    double m2_ = r2r*r2r + r2i*r2i;
-
-    double sml_r, sml_i, lrg_r, lrg_i;
-    /* Find min and max */
-    if (m0 <= m1 && m0 <= m2_) { sml_r = r0r; sml_i = r0i; }
-    else if (m1 <= m2_) { sml_r = r1r; sml_i = r1i; }
-    else { sml_r = r2r; sml_i = r2i; }
-
-    if (m0 >= m1 && m0 >= m2_) { lrg_r = r0r; lrg_i = r0i; }
-    else if (m1 >= m2_) { lrg_r = r1r; lrg_i = r1i; }
-    else { lrg_r = r2r; lrg_i = r2i; }
-
-    *z1r = sml_r; *z1i = sml_i;
-    *z2r = lrg_r; *z2i = lrg_i;
-
-    /* NaN guard */
-    if (!isfinite(*z1r) || !isfinite(*z1i)) { *z1r = 0; *z1i = 0; }
-    if (!isfinite(*z2r) || !isfinite(*z2i)) { *z2r = 0; *z2i = 0; }
+/* roots6: quartic root param transform.
+ * a=sin(5t1), b=it1, c=(t1-t2)^3+(t1+t2)^2+t1*t2+1, d=it2, e=sin(t2). */
+static void pt_roots6(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double ar, ai; c_sin(5.0*(*z1r), 5.0*(*z1i), &ar, &ai);
+    double br = -(*z1i), bi = *z1r;
+    /* c = (t1-t2)^3 + (t1+t2)^2 + t1*t2 + 1 */
+    double diffr = *z1r - *z2r, diffi = *z1i - *z2i;
+    double sumr = *z1r + *z2r, sumi = *z1i + *z2i;
+    double d3r, d3i; c_mul(diffr, diffi, diffr, diffi, &d3r, &d3i);
+    c_mul(d3r, d3i, diffr, diffi, &d3r, &d3i); /* (t1-t2)^3 */
+    double s2r, s2i; c_mul(sumr, sumi, sumr, sumi, &s2r, &s2i); /* (t1+t2)^2 */
+    double t1t2r, t1t2i; c_mul(*z1r, *z1i, *z2r, *z2i, &t1t2r, &t1t2i);
+    double cr = d3r + s2r + t1t2r + 1.0, ci = d3i + s2i + t1t2i;
+    double dr = -(*z2i), di = *z2r; /* i*t2 */
+    double er, ei; c_sin(*z2r, *z2i, &er, &ei);
+    double rr[MAX_POLY_ROOTS], ri[MAX_POLY_ROOTS];
+    int n = _solve_quartic(ar, ai, br, bi, cr, ci, dr, di, er, ei, rr, ri);
+    double sr, si, lr, li;
+    _roots_minmax(rr, ri, n, &sr, &si, &lr, &li);
+    *z1r = sr; *z1i = si; *z2r = lr; *z2i = li;
+    if (!isfinite(*z1r)||!isfinite(*z1i)) { *z1r=0; *z1i=0; }
+    if (!isfinite(*z2r)||!isfinite(*z2i)) { *z2r=0; *z2i=0; }
 }
 
 /* ==== Parameter transform dispatch (array-of-arrays format) ==== */
@@ -2924,6 +3023,10 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
     }
     if (strcmp(e->name, "roots5") == 0) {
         pt_roots5(z1r, z1i, z2r, z2i);
+        return 0;
+    }
+    if (strcmp(e->name, "roots6") == 0) {
+        pt_roots6(z1r, z1i, z2r, z2i);
         return 0;
     }
     /* Fall back to standard param transforms (no extra args) */

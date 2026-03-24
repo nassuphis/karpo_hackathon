@@ -2445,6 +2445,31 @@ static void ct_cumsum(double *cRe, double *cIm, int *nCoeffs) {
     for (int k = 1; k < *nCoeffs; k++) { cRe[k] += cRe[k-1]; cIm[k] += cIm[k-1]; }
 }
 
+/* sort_cumsum: reorder coefficients by ascending magnitude of cumulative sum. */
+static void ct_sort_cumsum(double *cRe, double *cIm, int *nCoeffs) {
+    int n = *nCoeffs;
+    /* Compute cumsum magnitudes */
+    double cumR = 0, cumI = 0;
+    double mags[MAX_COEFFS];
+    int idx[MAX_COEFFS];
+    for (int k = 0; k < n; k++) {
+        cumR += cRe[k]; cumI += cIm[k];
+        mags[k] = cumR * cumR + cumI * cumI;
+        idx[k] = k;
+    }
+    /* Sort indices by cumsum magnitude (insertion sort) */
+    for (int i = 1; i < n; i++) {
+        double km = mags[i]; int ki = idx[i];
+        int j = i - 1;
+        while (j >= 0 && mags[j] > km) { mags[j+1] = mags[j]; idx[j+1] = idx[j]; j--; }
+        mags[j+1] = km; idx[j+1] = ki;
+    }
+    /* Reorder coefficients */
+    double tmpR[MAX_COEFFS], tmpI[MAX_COEFFS];
+    for (int k = 0; k < n; k++) { tmpR[k] = cRe[k]; tmpI[k] = cIm[k]; }
+    for (int k = 0; k < n; k++) { cRe[k] = tmpR[idx[k]]; cIm[k] = tmpI[idx[k]]; }
+}
+
 static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "none") == 0)        return ct_none;
     if (strcmp(name, "rev") == 0)         return ct_rev;
@@ -2459,6 +2484,7 @@ static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "sort_mod_keep_angle") == 0)  return ct_sort_mod;
     if (strcmp(name, "sort_abs") == 0)  return ct_sort_abs;
     if (strcmp(name, "cumsum") == 0)   return ct_cumsum;
+    if (strcmp(name, "sort_cumsum") == 0) return ct_sort_cumsum;
     return NULL;
 }
 

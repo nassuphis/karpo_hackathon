@@ -2605,7 +2605,13 @@ static int _solve_cubic(double ar, double ai, double br, double bi,
     double sdr, sdi; c_powr(delr, deli, 0.5, &sdr, &sdi);
     double ur, ui, vr, vi;
     _cbrt_c(-qr/2 + sdr, -qi/2 + sdi, &ur, &ui);
-    _cbrt_c(-qr/2 - sdr, -qi/2 - sdi, &vr, &vi);
+    /* Enforce Cardano relation: u*v = -p/3. Independent cbrt is wrong for complex. */
+    double umag = ur*ur + ui*ui;
+    if (umag > 1e-24) {
+        c_div(-pr/3, -pi_/3, ur, ui, &vr, &vi);
+    } else {
+        _cbrt_c(-qr/2 - sdr, -qi/2 - sdi, &vr, &vi);
+    }
     double shr = Ar/3, shi = Ai/3;
     outr[0] = ur + vr - shr; outi[0] = ui + vi - shi;
     double t1r, t1i; c_mul(_omega_r, _omega_i, ur, ui, &t1r, &t1i);
@@ -2672,6 +2678,9 @@ static int _solve_quartic(double ar, double ai, double br, double bi,
         mr2 = rc_r[0]; mi2 = rc_i[0];
         c_powr(2*mr2 - pr, 2*mi2 - pi_, 0.5, &sr, &si);
     }
+    /* Final s guard — if still tiny after fallback, bail */
+    smag = sr*sr + si*si;
+    if (smag < 1e-60) return 0;
     /* t = -q / (2s) */
     double tr, ti; c_div(-qr, -qi, 2*sr, 2*si, &tr, &ti);
     int n = 0;

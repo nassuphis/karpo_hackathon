@@ -3366,6 +3366,43 @@ static void creative10_hand_c(double x1r, double x1i, double x2r, double x2i,
     }
 }
 
+/* creative8: Hamiltonian-like terms with position/momentum mixing. */
+static void creative8_c(double x1r, double x1i, double x2r, double x2i,
+                        double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    /* Pass 1: even k → q-terms, odd k → p-terms */
+    for (int k = 0; k < 71; k++) {
+        if (k % 2 == 0) {
+            double q = (k / 2 + 1) * x1r;  /* (k//2+1) * t1.real */
+            cRe[k] = q * q;                 /* q^2 real part */
+            cIm[k] = q * x2i;              /* i*q*t2.imag → imag = q*t2.imag */
+        } else {
+            double p = (k / 2 + 1) * x1i;  /* (k//2+1) * t1.imag */
+            cRe[k] = p * p;                 /* p^2 real part */
+            cIm[k] = -(p * x2r);           /* -i*p*t2.real → imag = -p*t2.real */
+        }
+    }
+    /* Pass 2: cf[even] += conj(cf[odd]), cf[odd] -= conj(cf[even]) */
+    /* Need temps since we read and write overlapping ranges */
+    double tmpR[71], tmpI[71];
+    for (int k = 0; k < 71; k++) { tmpR[k] = cRe[k]; tmpI[k] = cIm[k]; }
+    for (int k = 0; k < 71; k += 2) {
+        if (k + 1 < 71) {
+            /* cf[k] += conj(cf[k+1]) = (tmpR[k+1], -tmpI[k+1]) */
+            cRe[k] = tmpR[k] + tmpR[k + 1];
+            cIm[k] = tmpI[k] + (-tmpI[k + 1]);
+        }
+    }
+    for (int k = 1; k < 71; k += 2) {
+        /* cf[k] -= conj(cf[k-1]) using original even values */
+        cRe[k] = tmpR[k] - tmpR[k - 1];
+        cIm[k] = tmpI[k] - (-tmpI[k - 1]);  /* -= conj → -re, +im */
+    }
+    for (int k = 0; k < 71; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0; cIm[k] = 0; }
+    }
+}
+
 /* creative9: Fourier series with frequency decay and neighbor mixing. */
 static void creative9_c(double x1r, double x1i, double x2r, double x2i,
                         double *cRe, double *cIm, int *nCoeffs) {
@@ -3431,6 +3468,7 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "p821") == 0)    return p821_c;
     if (strcmp(name, "moth4") == 0)  return moth4_c;
     if (strcmp(name, "p11b3") == 0)  return p11b3_c;
+    if (strcmp(name, "creative8") == 0) return creative8_c;
     if (strcmp(name, "creative9") == 0) return creative9_c;
     if (strcmp(name, "creative10") == 0) return creative10_hand_c;
     /* Auto-generated giga functions from giga.py */

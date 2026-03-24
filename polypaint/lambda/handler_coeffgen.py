@@ -132,14 +132,14 @@ def handle_param_gen(params):
             raise RuntimeError(
                 f"params.bin size mismatch: expected {meta['data_bytes']}, uploaded {total_bytes}")
 
-        report_status(job_id, task_id, "done")
-        return ok_response({
-            "job_id": job_id,
+        result_data = {
             "params_key": params_key,
             "n_steps": meta["n_steps"],
             "data_bytes": meta["data_bytes"],
             "elapsed_us": int((time.time() - t0) * 1e6),
-        })
+        }
+        report_status(job_id, task_id, "done", result_data=result_data)
+        return ok_response({"job_id": job_id, **result_data})
 
     except Exception as e:
         report_status(job_id, task_id, "error", str(e))

@@ -3176,18 +3176,42 @@ async function runCalculate() {
     try {
         const tTotal = performance.now();
 
-        // Phase 0: generate params.bin (single Lambda, applies param transforms + dither)
+        // Phase 0: generate params.bin (async dispatch + poll)
         document.getElementById('compute-status').textContent = `Generating parameter stream...`;
         const tParamGen = performance.now();
-        const paramGenResult = await lambdaPost('coeffgen', {
-            phase: 'param_gen',
-            job_id: jobId,
-            N: n,
-            times: times,
-            param_transforms: paramTransforms,
+        // Clear stale param_gen status
+        await lambdaPost('storage', { job_id: jobId, task_id: 'param_gen' }, '/delete-task').catch(() => {});
+        // Dispatch async
+        const pgDisp = await lambdaPost('dispatch', {
+            target: 'coeffgen',
+            jobs: [{ phase: 'param_gen', job_id: jobId, N: n, times: times, param_transforms: paramTransforms }],
+            expected_keys: [],
         });
+        if ((pgDisp.fired || 0) !== 1) throw new Error(`param_gen dispatch failed: fired ${pgDisp.fired || 0}/1`);
+        if (pgDisp.non_202 && pgDisp.non_202.length > 0) throw new Error(`param_gen invoke rejected: status ${pgDisp.non_202[0].status}`);
+        // Poll DynamoDB for completion
+        let paramGenResult;
+        const PG_TIMEOUT = 600000;
+        while (true) {
+            await new Promise(r => setTimeout(r, 3000));
+            const check = await lambdaPost('storage', {
+                job_id: jobId, task_prefix: 'param_gen', expected: 1,
+            }, '/check-status');
+            if (check.errors > 0) {
+                const msg = check.error_details?.[0]?.error_msg || 'unknown';
+                throw new Error(`param_gen failed: ${msg}`);
+            }
+            if (check.complete) {
+                paramGenResult = (check.results || [])[0] || {};
+                break;
+            }
+            const elapsed = performance.now() - tParamGen;
+            if (elapsed > PG_TIMEOUT) throw new Error(`param_gen timed out after ${fmtMs(elapsed)}`);
+            document.getElementById('compute-status').textContent = `Generating parameter stream (${fmtMs(elapsed)})...`;
+        }
         const nSteps = paramGenResult.n_steps;
         const paramsKey = paramGenResult.params_key;
+        if (!paramsKey) throw new Error('param_gen completed but no params_key in result_data');
         log(`  param_gen: ${fmtMs(performance.now() - tParamGen)}, ${nSteps} steps, ${(paramGenResult.data_bytes/1e6).toFixed(1)}MB`, 'ok');
 
         // Phase 1: chunk planner + fan-out coeffgen_chunked
@@ -3232,14 +3256,22 @@ async function runCalculate() {
         const loresN = Math.min(n, Math.max(5, Math.ceil(Math.sqrt(TARGET_PREVIEW_ROOTS / (degree * times)))));
 
         // Phase 1b: lores via chunk pipeline (same semantics as hires)
+        // Lores is small — dispatch async for consistency but it'll complete quickly
         document.getElementById('compute-status').textContent = `Generating lores params...`;
-        const loresParamResult = await lambdaPost('coeffgen', {
-            phase: 'param_gen',
-            job_id: jobId,
-            N: loresN,
-            times: times,
-            param_transforms: paramTransforms,
+        await lambdaPost('storage', { job_id: jobId, task_id: 'param_gen' }, '/delete-task').catch(() => {});
+        const loresPgDisp = await lambdaPost('dispatch', {
+            target: 'coeffgen',
+            jobs: [{ phase: 'param_gen', job_id: jobId, N: loresN, times: times, param_transforms: paramTransforms }],
+            expected_keys: [],
         });
+        if ((loresPgDisp.fired || 0) !== 1) throw new Error(`lores param_gen dispatch failed`);
+        let loresParamResult;
+        while (true) {
+            await new Promise(r => setTimeout(r, 2000));
+            const check = await lambdaPost('storage', { job_id: jobId, task_prefix: 'param_gen', expected: 1 }, '/check-status');
+            if (check.errors > 0) throw new Error(`lores param_gen failed: ${check.error_details?.[0]?.error_msg || 'unknown'}`);
+            if (check.complete) { loresParamResult = (check.results || [])[0] || {}; break; }
+        }
         const loresParamsKey = loresParamResult.params_key;
         const loresSteps = loresParamResult.n_steps;
 

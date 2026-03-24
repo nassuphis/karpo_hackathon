@@ -75,13 +75,17 @@ static int solve_companion(const double *cfRe, const double *cfIm, int nCoeffs,
         double m = cfRe[k] * cfRe[k] + cfIm[k] * cfIm[k];
         if (m > maxMag) maxMag = m;
     }
+    /* All-zero polynomial: no roots */
+    if (maxMag < 1e-60) {
+        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
+        return nCoeffs - 1;
+    }
     double thr = maxMag * 1e-15;
     while (first < nCoeffs - 1 && (cfRe[first] * cfRe[first] + cfIm[first] * cfIm[first]) < thr)
         first++;
 
     int degree = nCoeffs - 1 - first;
     if (degree <= 0) {
-        /* No roots — fill with zeros */
         for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
         return nCoeffs - 1;
     }

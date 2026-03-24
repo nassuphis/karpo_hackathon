@@ -3152,7 +3152,7 @@ async function runCalculateWithSolver(solverMode) {
     const ptDisplay = _displayParamTransforms().map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(',');
     const pipelineStr = `[${ptDisplay||'none'}] ${funcName} [${coeffTransforms.join(',')||'none'}]`;
 
-    const btn = document.getElementById('btn-calculate');
+    const btn = document.getElementById(solverMode === 'companion_matrix' ? 'btn-calculate-cm' : 'btn-calculate');
 
     // Pre-flight check: estimate total coeffgen size
     const selOpt = document.getElementById('render-function').selectedOptions[0];

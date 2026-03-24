@@ -26,13 +26,15 @@ lambda/png_export
 lambda/png_export_local
 lambda/dz_export
 lambda/dz_export_local
+lambda/sweep_cm
 
 # Lambda packaging
 lambda/deploy.zip
 lambda/*.zip
 
-# libvips cross-compile layer (large, built separately)
+# Cross-compile layers (large, built separately)
 lambda/layer-build/
+lambda/layer-build-lapack/
 
 # Python bytecode
 lambda/__pycache__/

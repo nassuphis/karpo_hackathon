@@ -231,7 +231,44 @@ TIFTEST
         echo "--- All smoke tests passed ---"
     '
 
-# --- Package 6 Lambdas ---
+# Compile sweep_cm (companion matrix solver, needs LAPACK/OpenBLAS)
+echo "  sweep_cm (Docker ARM64, dynamically linked against LAPACK)..."
+LAPACK_BUILD="$SCRIPT_DIR/lambda/layer-build-lapack"
+if [ ! -d "$LAPACK_BUILD/lib" ]; then
+    echo "ERROR: LAPACK layer-build directory missing. Run lambda/build-lapack-layer.sh first."
+    exit 1
+fi
+docker run --rm --platform linux/arm64 \
+    -v "$SCRIPT_DIR/lambda:/src" \
+    -v "$LAPACK_BUILD:/opt" \
+    public.ecr.aws/amazonlinux/amazonlinux:2023 \
+    bash -c '
+        set -euo pipefail
+        dnf install -y gcc 2>&1 | tail -1
+        export LD_LIBRARY_PATH=/opt/lib
+        gcc -O3 -o /src/sweep_cm /src/sweep_cm.c \
+            -L/opt/lib -llapack -lopenblas -lm -Wl,-rpath,/opt/lib
+        echo "  sweep_cm compiled: $(file /src/sweep_cm)"
+        # Smoke test: known cubic x^3 - 6x^2 + 11x - 6
+        python3 -c "
+import struct
+data = b\"\"
+for c in [1, -6, 11, -6]:
+    data += struct.pack(\"<ff\", float(c), 0.0)
+with open(\"/tmp/test_cf.bin\", \"wb\") as f:
+    f.write(data)
+"
+        echo "{\"mode\":\"solve_cm\",\"coeffs_file\":\"/tmp/test_cf.bin\",\"n_coeffs\":4,\"n_steps\":1}" | /src/sweep_cm /tmp/test_out.bin > /dev/null
+        python3 -c "
+import struct
+with open(\"/tmp/test_out.bin\", \"rb\") as f: data = f.read()
+roots = sorted([abs(struct.unpack_from(\"<ff\", data, i*8)[0]) for i in range(3)])
+assert abs(roots[0]-1)<0.01 and abs(roots[1]-2)<0.01 and abs(roots[2]-3)<0.01, f\"Bad roots: {roots}\"
+print(\"  sweep_cm smoke test: PASSED (roots 1,2,3)\")
+"
+    '
+
+# --- Package Lambdas ---
 echo "Packaging Lambdas..."
 
 # Sweep: handler_sweep.py + shared.py + sweep
@@ -376,6 +413,16 @@ chmod +x "$DZ_EXPORT_DIR"/dz_export
 cd "$DZ_EXPORT_DIR" && zip -r9 /tmp/polypaint-deepzoom-export.zip . -q && cd "$SCRIPT_DIR"
 echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_export + libvips layer)"
 
+# Sweep-CM: handler_sweep_cm.py + shared.py + sweep_cm (needs LAPACK layer)
+CM_DIR=/tmp/polypaint-sweep-cm
+rm -rf "$CM_DIR"
+mkdir -p "$CM_DIR"
+cp lambda/handler_sweep_cm.py lambda/shared.py "$CM_DIR/"
+cp lambda/sweep_cm "$CM_DIR/"
+chmod +x "$CM_DIR"/sweep_cm
+cd "$CM_DIR" && zip -r9 /tmp/polypaint-sweep-cm.zip . -q && cd "$SCRIPT_DIR"
+echo "  SweepCM: $(du -h /tmp/polypaint-sweep-cm.zip | cut -f1)  (sweep_cm + LAPACK layer)"
+
 ACTION="${1:-create}"
 
 # Helper: create a Lambda function
@@ -493,7 +540,7 @@ setup_api_gateway() {
     }
 
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME"; do
+    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -536,6 +583,9 @@ setup_api_gateway() {
     local DZ_EXPORT_INT
     DZ_EXPORT_INT=$(create_integration "$DZ_EXPORT_NAME")
     ensure_route "POST /deepzoom-export" "$DZ_EXPORT_INT"
+    local SWEEP_CM_INT
+    SWEEP_CM_INT=$(create_integration "$SWEEP_CM_NAME")
+    ensure_route "POST /sweep-cm" "$SWEEP_CM_INT"
 
     ensure_route "POST /encode-upload" "$ENCODE_INT"
     ensure_route "POST /viewport" "$VIEWPORT_INT"
@@ -719,6 +769,9 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$DZ_EXPORT_NAME" "handler_deepzoom_export.handler" "/tmp/polypaint-deepzoom-export.zip" \
         "$DZ_EXPORT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
+    create_lambda "$SWEEP_CM_NAME" "handler_sweep_cm.handler" "/tmp/polypaint-sweep-cm.zip" \
+        "$SWEEP_CM_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
     # Async invoke config: no retries for most Lambdas (prevents retry storms),
     # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
     for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME"; do
@@ -804,6 +857,9 @@ elif [ "$ACTION" = "update" ]; then
 
     update_lambda "$DZ_EXPORT_NAME" "handler_deepzoom_export.handler" "/tmp/polypaint-deepzoom-export.zip" \
         "$DZ_EXPORT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    update_lambda "$SWEEP_CM_NAME" "handler_sweep_cm.handler" "/tmp/polypaint-sweep-cm.zip" \
+        "$SWEEP_CM_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     # Async invoke config: no retries for most Lambdas (prevents retry storms),
     # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.

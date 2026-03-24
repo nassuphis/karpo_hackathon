@@ -32,7 +32,7 @@ def handle_solve_from_coeffs(params):
     uploads root .bin to S3. Reports status to DynamoDB for async polling.
     """
     job_id = params["job_id"]
-    stripe_idx = params["stripe_idx"]
+    stripe_idx = params.get("chunk_idx", params.get("stripe_idx"))
     coeffs_key = params["coeffs_key"]
     n_coeffs = params["n_coeffs"]
     # Accept chunk-native n_steps, or legacy N/row_start/row_end

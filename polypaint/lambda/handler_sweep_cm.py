@@ -25,7 +25,7 @@ def handler(event, context):
 def handle_solve_cm(params):
     """Solve roots from coefficient file using companion matrix eigenvalues."""
     job_id = params["job_id"]
-    stripe_idx = params["stripe_idx"]
+    stripe_idx = params.get("chunk_idx", params.get("stripe_idx"))
     coeffs_key = params["coeffs_key"]
     n_coeffs = params["n_coeffs"]
     n_steps = params.get("n_steps")

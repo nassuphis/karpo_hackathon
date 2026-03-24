@@ -1463,7 +1463,7 @@ function renderResultsTable() {
             `<td style="color:#4ecca3">${r.function || '?'}</td>` +
             `<td style="text-align:right">${r.degree || ''}</td>` +
             `<td style="text-align:right">${r.N || r.n1 || ''}</td>` +
-            `<td style="text-align:right">${r.n_stripes || ''}</td>` +
+            `<td style="text-align:right">${r.n_chunks || r.n_stripes || ''}</td>` +
             `<td style="text-align:right;color:#888">${fmtSize(r.total_size || 0)}</td>`;
         tbody.appendChild(tr);
     }
@@ -1514,7 +1514,7 @@ function selectResult(jobId) {
         document.getElementById('res-cfun').textContent = r.function || '?';
         document.getElementById('res-cform').textContent = ct.length ? ct.join(', ') : 'none';
         document.getElementById('res-degree').textContent = r.degree || '-';
-        document.getElementById('res-stripes').textContent = r.n_stripes || '-';
+        document.getElementById('res-stripes').textContent = r.n_chunks || r.n_stripes || '-';
         document.getElementById('res-times').textContent = r.times || '-';
         document.getElementById('res-nroots').textContent = r.total_roots
             ? r.total_roots.toLocaleString() : '-';
@@ -3255,7 +3255,7 @@ async function runCalculateWithSolver(solverMode) {
         const coeffgenMs = performance.now() - tCoeffgen;
         const degree = coeffgenResults[0].degree;
         const nCoeffs = coeffgenResults[0].n_coeffs;
-        const nStripes = actualChunks; // downstream still uses nStripes for DDB polling / metadata
+        const nChunks = actualChunks;
 
         // Size lores grid to target ~250K roots for consistent previews
         // Account for times: total roots ≈ loresN² × times × degree
@@ -3304,7 +3304,7 @@ async function runCalculateWithSolver(solverMode) {
         const tLores = performance.now();
         const loresSolveLambda = solverMode === 'companion_matrix' ? 'sweep-cm' : 'sweep';
         const loresResult = await lambdaPost(loresSolveLambda, {
-            job_id: jobId, stripe_idx: 0,
+            job_id: jobId, chunk_idx: 0,
             coeffs_key: loresCoeffResult.coeffs_key,
             n_coeffs: nCoeffs,
             n_steps: loresSteps,
@@ -3314,14 +3314,14 @@ async function runCalculateWithSolver(solverMode) {
         log(`  lores solve: ${fmtMs(loresMs)}`, 'ok');
 
         // Phase 3: fan-out hires solve via async dispatch + DynamoDB polling
-        document.getElementById('compute-status').textContent = `Dispatching ${nStripes} solve Lambdas...`;
+        document.getElementById('compute-status').textContent = `Dispatching ${nChunks} solve Lambdas...`;
         const tCompute = performance.now();
 
         const sweepJobs = [];
-        for (let s = 0; s < nStripes; s++) {
+        for (let s = 0; s < nChunks; s++) {
             const stepCount = coeffgenResults[s].coeffs_size / (nCoeffs * 2 * 4);
             sweepJobs.push({
-                job_id: jobId, stripe_idx: s,
+                job_id: jobId, chunk_idx: s,
                 coeffs_key: coeffgenResults[s].coeffs_key,
                 n_coeffs: nCoeffs,
                 n_steps: stepCount,
@@ -3339,19 +3339,19 @@ async function runCalculateWithSolver(solverMode) {
                 throw new Error(`Sweep dispatch failed: fired ${dispResult.fired || 0}/${batch.length}`);
             }
         }
-        log(`  sweep dispatched: ${nStripes} Lambdas (${fmtMs(performance.now() - tCompute)})`, 'ok');
+        log(`  sweep dispatched: ${nChunks} Lambdas (${fmtMs(performance.now() - tCompute)})`, 'ok');
 
         // Poll DynamoDB for sweep completion
         let sweepLastDone = 0;
         let sweepLastProgress = performance.now();
         let sweepPollCount = 0;
         let sweepLastStallLog = 0;
-        let stripeResults = [];
+        let chunkResults = [];
         while (true) {
             await new Promise(r => setTimeout(r, 3000));
             sweepPollCount++;
             const check = await lambdaPost('storage', {
-                job_id: jobId, task_prefix: 'sweep_', expected: nStripes,
+                job_id: jobId, task_prefix: 'sweep_', expected: nChunks,
             }, '/check-status');
             if (check.errors > 0) {
                 const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
@@ -3359,14 +3359,14 @@ async function runCalculateWithSolver(solverMode) {
             }
             if (check.done !== sweepLastDone) {
                 const delta = check.done - sweepLastDone;
-                log(`  solve poll #${sweepPollCount}: ${check.done}/${nStripes} done (+${delta}, ${fmtMs(performance.now() - tCompute)})`);
+                log(`  solve poll #${sweepPollCount}: ${check.done}/${nChunks} done (+${delta}, ${fmtMs(performance.now() - tCompute)})`);
                 sweepLastDone = check.done;
                 sweepLastProgress = performance.now();
                 sweepLastStallLog = 0;
-                document.getElementById('compute-status').textContent = `Solving ${check.done}/${nStripes} chunks...`;
+                document.getElementById('compute-status').textContent = `Solving ${check.done}/${nChunks} chunks...`;
             }
             if (check.complete) {
-                stripeResults = (check.results || []).sort((a, b) => a.stripe_idx - b.stripe_idx);
+                chunkResults = (check.results || []).sort((a, b) => a.chunk_idx - b.chunk_idx);
                 break;
             }
             const stallTime = performance.now() - sweepLastProgress;
@@ -3374,16 +3374,16 @@ async function runCalculateWithSolver(solverMode) {
                 sweepLastStallLog = stallTime;
                 const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
                 const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
-                log(`  \u26a0 solve stall ${fmtMs(stallTime)}: ${sweepLastDone}/${nStripes}, statuses=${sc}${stuckInfo ? ', stuck: ' + stuckInfo : ''}`, 'warn');
+                log(`  \u26a0 solve stall ${fmtMs(stallTime)}: ${sweepLastDone}/${nChunks}, statuses=${sc}${stuckInfo ? ', stuck: ' + stuckInfo : ''}`, 'warn');
             }
             if (stallTime > 600000) {
                 const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
                 const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
-                throw new Error(`Solve stalled: ${sweepLastDone}/${nStripes} after ${fmtMs(stallTime)}, statuses=${sc}, stuck: ${stuckInfo || 'none'}`);
+                throw new Error(`Solve stalled: ${sweepLastDone}/${nChunks} after ${fmtMs(stallTime)}, statuses=${sc}, stuck: ${stuckInfo || 'none'}`);
             }
         }
         const computeWallMs = performance.now() - tCompute;
-        log(`  solve: ${fmtMs(computeWallMs)} wall (${nStripes} chunks)`, 'ok');
+        log(`  solve: ${fmtMs(computeWallMs)} wall (${nChunks} chunks)`, 'ok');
 
         // Phase 4: save calc.json metadata via storage Lambda
         const calcMeta = {
@@ -3396,9 +3396,9 @@ async function runCalculateWithSolver(solverMode) {
             },
             function: funcName,
             N: n,
-            n_stripes: nStripes,
+            n_stripes: nChunks,  // backward compat for old readers
             solver: solverMode,
-            n_chunks: actualChunks,
+            n_chunks: nChunks,
             n_steps: nSteps,
             params_key: paramsKey,
             times,
@@ -3412,40 +3412,40 @@ async function runCalculateWithSolver(solverMode) {
                 n_steps: loresSteps,
                 bin_size: loresResult.bin_size,
             },
-            stripes: stripeResults.map(r => ({
-                idx: r.stripe_idx,
+            chunks: chunkResults.map(r => ({
+                idx: r.chunk_idx,
                 bin_key: r.s3_key,
                 bin_size: r.bin_size,
                 compute_us: r.compute_us,
                 n_t: r.n_t,
                 avg_iterations: r.avg_iterations,
             })),
-            total_roots: stripeResults.reduce((s, r) => s + (r.bin_size || 0), 0) / 8,
+            total_roots: chunkResults.reduce((s, r) => s + (r.bin_size || 0), 0) / 8,
         };
         await lambdaPost('storage', { job_id: jobId, metadata: calcMeta }, '/save-metadata');
         _lastCalcMeta = calcMeta;
 
         const totalMs = performance.now() - tTotal;
-        const totalBinSize = stripeResults.reduce((s, r) => s + r.bin_size, 0);
-        const totalComputeUs = stripeResults.reduce((s, r) => s + r.compute_us, 0);
-        const totalSteps = stripeResults.reduce((s, r) => s + r.n_t, 0);
+        const totalBinSize = chunkResults.reduce((s, r) => s + r.bin_size, 0);
+        const totalComputeUs = chunkResults.reduce((s, r) => s + r.compute_us, 0);
+        const totalSteps = chunkResults.reduce((s, r) => s + r.n_t, 0);
         const avgIters = totalSteps > 0
-            ? stripeResults.reduce((s, r) => s + r.avg_iterations * r.n_t, 0) / totalSteps
+            ? chunkResults.reduce((s, r) => s + r.avg_iterations * r.n_t, 0) / totalSteps
             : 0;
 
         document.getElementById('results-dir').value = jobId;
         document.getElementById('render-results-dir').value = jobId;
 
         document.getElementById('compute-status').textContent =
-            `Computed | ${nStripes} chunks | coeffgen ${fmtMs(coeffgenMs)} | solve ${fmtMs(computeWallMs)} | ` +
+            `Computed | ${nChunks} chunks | coeffgen ${fmtMs(coeffgenMs)} | solve ${fmtMs(computeWallMs)} | ` +
             `compute ${(totalComputeUs/1e6).toFixed(1)}s (sum) | deg ${degree} | total ${fmtMs(totalMs)}`;
         document.getElementById('compute-status').className = 'status ok';
 
         const lines = [];
         lines.push(`  total:    ${fmtMs(totalMs)}`);
-        lines.push(`  coeffgen: ${fmtMs(coeffgenMs)} (${(totalCoeffsSize/1e6).toFixed(1)}MB, ${nStripes} chunks)`);
+        lines.push(`  coeffgen: ${fmtMs(coeffgenMs)} (${(totalCoeffsSize/1e6).toFixed(1)}MB, ${nChunks} chunks)`);
         lines.push(`  total bin: ${(totalBinSize/1e6).toFixed(1)}MB + lores ${(loresResult.bin_size/1e3).toFixed(0)}KB`);
-        lines.push(`  solve: ${(totalComputeUs/1e6).toFixed(1)}s (sum) / ${fmtMs(computeWallMs)} wall (${nStripes} chunks)`);
+        lines.push(`  solve: ${(totalComputeUs/1e6).toFixed(1)}s (sum) / ${fmtMs(computeWallMs)} wall (${nChunks} chunks)`);
         lines.push(`  lores:    ${fmtMs(loresMs)}`);
         lines.push(`Compute ${jobId}: ${pipelineStr} deg${degree} N=${n}, avg_iters=${avgIters.toFixed(1)}`);
         for (const line of lines) log(line, 'ok');

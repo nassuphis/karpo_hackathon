@@ -2995,6 +2995,9 @@ static void moth4_c(double x1r, double x1i, double x2r, double x2i,
 /* Auto-generated g-functions from ops_poly.py (g1-g99+) */
 #include "g_generated.c"
 
+/* Auto-generated giga functions from giga.py */
+#include "giga_generated.c"
+
 static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_1") == 0)   return giga_1_c;
     if (strcmp(name, "giga_5") == 0)   return giga_5_c;
@@ -3011,6 +3014,106 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "p7f") == 0)      return p7f_c;
     if (strcmp(name, "p821") == 0)    return p821_c;
     if (strcmp(name, "moth4") == 0)  return moth4_c;
+    /* Auto-generated giga functions from giga.py */
+    if (strcmp(name, "giga_1") == 0) return poly_giga_1_c;
+    if (strcmp(name, "giga_2") == 0) return poly_giga_2_c;
+    if (strcmp(name, "giga_3") == 0) return poly_giga_3_c;
+    if (strcmp(name, "giga_4") == 0) return poly_giga_4_c;
+    if (strcmp(name, "giga_5") == 0) return poly_giga_5_c;
+    if (strcmp(name, "giga_6") == 0) return poly_giga_6_c;
+    if (strcmp(name, "giga_7") == 0) return poly_giga_7_c;
+    if (strcmp(name, "giga_7a") == 0) return poly_giga_7a_c;
+    if (strcmp(name, "giga_7b") == 0) return poly_giga_7b_c;
+    if (strcmp(name, "giga_7c") == 0) return poly_giga_7c_c;
+    if (strcmp(name, "giga_7d") == 0) return poly_giga_7d_c;
+    if (strcmp(name, "giga_9") == 0) return poly_giga_9_c;
+    if (strcmp(name, "giga_13") == 0) return poly_giga_13_c;
+    if (strcmp(name, "giga_16") == 0) return poly_giga_16_c;
+    if (strcmp(name, "giga_19_fixed1") == 0) return poly_giga_19_fixed1_c;
+    if (strcmp(name, "giga_19_fixed2") == 0) return poly_giga_19_fixed2_c;
+    if (strcmp(name, "giga_20") == 0) return poly_giga_20_c;
+    if (strcmp(name, "giga_21") == 0) return poly_giga_21_c;
+    if (strcmp(name, "giga_22") == 0) return poly_giga_22_c;
+    if (strcmp(name, "giga_25") == 0) return poly_giga_25_c;
+    if (strcmp(name, "giga_26") == 0) return poly_giga_26_c;
+    if (strcmp(name, "giga_28") == 0) return poly_giga_28_c;
+    if (strcmp(name, "giga_29") == 0) return poly_giga_29_c;
+    if (strcmp(name, "giga_30") == 0) return poly_giga_30_c;
+    if (strcmp(name, "giga_33") == 0) return poly_giga_33_c;
+    if (strcmp(name, "giga_34") == 0) return poly_giga_34_c;
+    if (strcmp(name, "giga_35") == 0) return poly_giga_35_c;
+    if (strcmp(name, "giga_36") == 0) return poly_giga_36_c;
+    if (strcmp(name, "giga_37") == 0) return poly_giga_37_c;
+    if (strcmp(name, "giga_39") == 0) return poly_giga_39_c;
+    if (strcmp(name, "giga_40") == 0) return poly_giga_40_c;
+    if (strcmp(name, "giga_41") == 0) return poly_giga_41_c;
+    if (strcmp(name, "giga_42") == 0) return poly_giga_42_c;
+    if (strcmp(name, "giga_43") == 0) return poly_giga_43_c;
+    if (strcmp(name, "giga_44") == 0) return poly_giga_44_c;
+    if (strcmp(name, "giga_45") == 0) return poly_giga_45_c;
+    if (strcmp(name, "giga_46") == 0) return poly_giga_46_c;
+    if (strcmp(name, "giga_51") == 0) return poly_giga_51_c;
+    if (strcmp(name, "giga_53") == 0) return poly_giga_53_c;
+    if (strcmp(name, "giga_54") == 0) return poly_giga_54_c;
+    if (strcmp(name, "giga_55") == 0) return poly_giga_55_c;
+    if (strcmp(name, "giga_56") == 0) return poly_giga_56_c;
+    if (strcmp(name, "giga_57") == 0) return poly_giga_57_c;
+    if (strcmp(name, "giga_58") == 0) return poly_giga_58_c;
+    if (strcmp(name, "giga_59") == 0) return poly_giga_59_c;
+    if (strcmp(name, "giga_60") == 0) return poly_giga_60_c;
+    if (strcmp(name, "giga_61") == 0) return poly_giga_61_c;
+    if (strcmp(name, "giga_63") == 0) return poly_giga_63_c;
+    if (strcmp(name, "giga_64") == 0) return poly_giga_64_c;
+    if (strcmp(name, "giga_65") == 0) return poly_giga_65_c;
+    if (strcmp(name, "giga_66") == 0) return poly_giga_66_c;
+    if (strcmp(name, "giga_67") == 0) return poly_giga_67_c;
+    if (strcmp(name, "giga_68") == 0) return poly_giga_68_c;
+    if (strcmp(name, "giga_69") == 0) return poly_giga_69_c;
+    if (strcmp(name, "giga_70") == 0) return poly_giga_70_c;
+    if (strcmp(name, "giga_72") == 0) return poly_giga_72_c;
+    if (strcmp(name, "giga_73") == 0) return poly_giga_73_c;
+    if (strcmp(name, "giga_74") == 0) return poly_giga_74_c;
+    if (strcmp(name, "giga_75") == 0) return poly_giga_75_c;
+    if (strcmp(name, "giga_76") == 0) return poly_giga_76_c;
+    if (strcmp(name, "giga_77") == 0) return poly_giga_77_c;
+    if (strcmp(name, "giga_78") == 0) return poly_giga_78_c;
+    if (strcmp(name, "giga_79") == 0) return poly_giga_79_c;
+    if (strcmp(name, "giga_80") == 0) return poly_giga_80_c;
+    if (strcmp(name, "giga_81") == 0) return poly_giga_81_c;
+    if (strcmp(name, "giga_83") == 0) return poly_giga_83_c;
+    if (strcmp(name, "giga_85") == 0) return poly_giga_85_c;
+    if (strcmp(name, "giga_86") == 0) return poly_giga_86_c;
+    if (strcmp(name, "giga_87") == 0) return poly_giga_87_c;
+    if (strcmp(name, "giga_89") == 0) return poly_giga_89_c;
+    if (strcmp(name, "giga_93") == 0) return poly_giga_93_c;
+    if (strcmp(name, "giga_96") == 0) return poly_giga_96_c;
+    if (strcmp(name, "giga_99") == 0) return poly_giga_99_c;
+    if (strcmp(name, "giga_104") == 0) return poly_giga_104_c;
+    if (strcmp(name, "giga_106") == 0) return poly_giga_106_c;
+    if (strcmp(name, "giga_108") == 0) return poly_giga_108_c;
+    if (strcmp(name, "giga_111") == 0) return poly_giga_111_c;
+    if (strcmp(name, "giga_113") == 0) return poly_giga_113_c;
+    if (strcmp(name, "giga_115") == 0) return poly_giga_115_c;
+    if (strcmp(name, "giga_116") == 0) return poly_giga_116_c;
+    if (strcmp(name, "giga_118") == 0) return poly_giga_118_c;
+    if (strcmp(name, "giga_119") == 0) return poly_giga_119_c;
+    if (strcmp(name, "giga_120") == 0) return poly_giga_120_c;
+    if (strcmp(name, "giga_121") == 0) return poly_giga_121_c;
+    if (strcmp(name, "giga_122") == 0) return poly_giga_122_c;
+    if (strcmp(name, "giga_124") == 0) return poly_giga_124_c;
+    if (strcmp(name, "giga_125") == 0) return poly_giga_125_c;
+    if (strcmp(name, "giga_127") == 0) return poly_giga_127_c;
+    if (strcmp(name, "giga_128") == 0) return poly_giga_128_c;
+    if (strcmp(name, "giga_129") == 0) return poly_giga_129_c;
+    if (strcmp(name, "giga_130") == 0) return poly_giga_130_c;
+    if (strcmp(name, "giga_131") == 0) return poly_giga_131_c;
+    if (strcmp(name, "giga_132") == 0) return poly_giga_132_c;
+    if (strcmp(name, "giga_133") == 0) return poly_giga_133_c;
+    if (strcmp(name, "giga_134") == 0) return poly_giga_134_c;
+    if (strcmp(name, "giga_136") == 0) return poly_giga_136_c;
+    if (strcmp(name, "giga_137") == 0) return poly_giga_137_c;
+    if (strcmp(name, "giga_139") == 0) return poly_giga_139_c;
+
     /* Auto-generated g-functions (g1-g99+) */
     if (strcmp(name, "g1") == 0) return g1_c;
     if (strcmp(name, "g2") == 0) return g2_c;

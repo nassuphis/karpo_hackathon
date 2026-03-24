@@ -16,7 +16,7 @@ import tempfile
 
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 SWEEP_CM = os.path.join(LAMBDA_DIR, "sweep_cm")
-SWEEP_AE = os.path.join(LAMBDA_DIR, "sweep_test")
+SWEEP_AE = os.path.join(LAMBDA_DIR, "sweep")  # Deploy binary, not sweep_test
 
 # Skip all tests if sweep_cm not compiled locally
 if not os.path.exists(SWEEP_CM):

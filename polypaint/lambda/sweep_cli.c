@@ -2426,6 +2426,21 @@ static void ct_sort_mod(double *cRe, double *cIm, int *nCoeffs) {
     }
 }
 
+/* sort_abs: reorder coefficients by ascending magnitude. */
+static void ct_sort_abs(double *cRe, double *cIm, int *nCoeffs) {
+    int n = *nCoeffs;
+    /* Insertion sort by magnitude — n is small */
+    for (int i = 1; i < n; i++) {
+        double kr = cRe[i], ki = cIm[i];
+        double km = kr*kr + ki*ki;
+        int j = i - 1;
+        while (j >= 0 && (cRe[j]*cRe[j] + cIm[j]*cIm[j]) > km) {
+            cRe[j+1] = cRe[j]; cIm[j+1] = cIm[j]; j--;
+        }
+        cRe[j+1] = kr; cIm[j+1] = ki;
+    }
+}
+
 static void ct_cumsum(double *cRe, double *cIm, int *nCoeffs) {
     for (int k = 1; k < *nCoeffs; k++) { cRe[k] += cRe[k-1]; cIm[k] += cIm[k-1]; }
 }
@@ -2441,7 +2456,8 @@ static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "negate_odd") == 0)  return ct_negate_odd;
     if (strcmp(name, "max2one") == 0)    return ct_max2one;
     if (strcmp(name, "swirler") == 0)   return ct_swirler;
-    if (strcmp(name, "sort_mod") == 0)  return ct_sort_mod;
+    if (strcmp(name, "sort_mod_keep_angle") == 0)  return ct_sort_mod;
+    if (strcmp(name, "sort_abs") == 0)  return ct_sort_abs;
     if (strcmp(name, "cumsum") == 0)   return ct_cumsum;
     return NULL;
 }

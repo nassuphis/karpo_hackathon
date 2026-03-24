@@ -2749,6 +2749,13 @@ static void _roots_minmax(double *rr, double *ri, int n,
     *lrg_r = rr[imax]; *lrg_i = ri[imax];
 }
 
+/* z01: mirror remix of real parts. t1' = Re(t1) + i*Re(t2), t2' = Re(t2) + i*Re(t1). */
+static void pt_z01(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double r1 = *z1r, r2 = *z2r;
+    *z1r = r1; *z1i = r2;
+    *z2r = r2; *z2i = r1;
+}
+
 /* sum_prod: t1' = t1+t2, t2' = t1*t2. */
 static void pt_sum_prod(double *z1r, double *z1i, double *z2r, double *z2i) {
     double sr = *z1r + *z2r, si = *z1i + *z2i;
@@ -3092,6 +3099,10 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
         double h = e->nArgs > 2 ? e->args[2] : 1.0;
         double m = e->nArgs > 3 ? e->args[3] : 4.0;
         pt_rrect(z1r, z1i, z2r, z2i, n, w, h, m);
+        return 0;
+    }
+    if (strcmp(e->name, "z01") == 0) {
+        pt_z01(z1r, z1i, z2r, z2i);
         return 0;
     }
     if (strcmp(e->name, "sum_prod") == 0) {

@@ -2404,6 +2404,28 @@ static void ct_swirler(double *cRe, double *cIm, int *nCoeffs) {
     }
 }
 
+/* sort_mod: sort moduli ascending, keep original angles.
+ * cf[k] = sorted_moduli[k] * exp(i * angle(cf[k])). */
+static void ct_sort_mod(double *cRe, double *cIm, int *nCoeffs) {
+    int n = *nCoeffs;
+    /* Extract moduli */
+    double mods[MAX_COEFFS];
+    for (int k = 0; k < n; k++) mods[k] = sqrt(cRe[k]*cRe[k] + cIm[k]*cIm[k]);
+    /* Sort moduli ascending (simple insertion sort — n is small) */
+    for (int i = 1; i < n; i++) {
+        double key = mods[i];
+        int j = i - 1;
+        while (j >= 0 && mods[j] > key) { mods[j+1] = mods[j]; j--; }
+        mods[j+1] = key;
+    }
+    /* Reconstruct: sorted modulus with original angle */
+    for (int k = 0; k < n; k++) {
+        double angle = atan2(cIm[k], cRe[k]);
+        cRe[k] = mods[k] * cos(angle);
+        cIm[k] = mods[k] * sin(angle);
+    }
+}
+
 static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "none") == 0)        return ct_none;
     if (strcmp(name, "rev") == 0)         return ct_rev;
@@ -2415,6 +2437,7 @@ static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "negate_odd") == 0)  return ct_negate_odd;
     if (strcmp(name, "max2one") == 0)    return ct_max2one;
     if (strcmp(name, "swirler") == 0)   return ct_swirler;
+    if (strcmp(name, "sort_mod") == 0)  return ct_sort_mod;
     return NULL;
 }
 

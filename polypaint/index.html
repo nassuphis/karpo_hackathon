@@ -3256,21 +3256,24 @@ async function runCalculate() {
         const loresN = Math.min(n, Math.max(5, Math.ceil(Math.sqrt(TARGET_PREVIEW_ROOTS / (degree * times)))));
 
         // Phase 1b: lores via chunk pipeline (same semantics as hires)
-        // Lores is small — dispatch async for consistency but it'll complete quickly
         document.getElementById('compute-status').textContent = `Generating lores params...`;
-        await lambdaPost('storage', { job_id: jobId, task_id: 'param_gen' }, '/delete-task').catch(() => {});
+        const loresTaskId = 'lores_param_gen';
+        await lambdaPost('storage', { job_id: jobId, task_id: loresTaskId }, '/delete-task').catch(() => {});
         const loresPgDisp = await lambdaPost('dispatch', {
             target: 'coeffgen',
-            jobs: [{ phase: 'param_gen', job_id: jobId, N: loresN, times: times, param_transforms: paramTransforms }],
+            jobs: [{ phase: 'param_gen', job_id: jobId, N: loresN, times: times, param_transforms: paramTransforms, task_id: loresTaskId }],
             expected_keys: [],
         });
         if ((loresPgDisp.fired || 0) !== 1) throw new Error(`lores param_gen dispatch failed`);
+        if (loresPgDisp.non_202 && loresPgDisp.non_202.length > 0) throw new Error(`lores param_gen rejected: ${loresPgDisp.non_202[0].status}`);
         let loresParamResult;
+        const tLoresPg = performance.now();
         while (true) {
             await new Promise(r => setTimeout(r, 2000));
-            const check = await lambdaPost('storage', { job_id: jobId, task_prefix: 'param_gen', expected: 1 }, '/check-status');
+            const check = await lambdaPost('storage', { job_id: jobId, task_prefix: loresTaskId, expected: 1 }, '/check-status');
             if (check.errors > 0) throw new Error(`lores param_gen failed: ${check.error_details?.[0]?.error_msg || 'unknown'}`);
             if (check.complete) { loresParamResult = (check.results || [])[0] || {}; break; }
+            if (performance.now() - tLoresPg > 300000) throw new Error(`lores param_gen timed out`);
         }
         const loresParamsKey = loresParamResult.params_key;
         const loresSteps = loresParamResult.n_steps;

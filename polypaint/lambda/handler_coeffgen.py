@@ -43,7 +43,7 @@ def handle_param_gen(params):
     upload — no /tmp materialization. Supports arbitrarily large params.bin.
     """
     job_id = params["job_id"]
-    task_id = "param_gen"
+    task_id = params.get("task_id", "param_gen")
 
     try:
         report_status(job_id, task_id, "started")

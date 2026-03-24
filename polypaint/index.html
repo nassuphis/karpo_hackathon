@@ -3255,7 +3255,7 @@ async function runCalculateWithSolver(solverMode) {
         const coeffgenMs = performance.now() - tCoeffgen;
         const degree = coeffgenResults[0].degree;
         const nCoeffs = coeffgenResults[0].n_coeffs;
-        const nChunks = actualChunks;
+        // actualChunks is from outer scope (user-requested); actualChunks is the real count after planner
 
         // Size lores grid to target ~250K roots for consistent previews
         // Account for times: total roots ≈ loresN² × times × degree
@@ -3314,11 +3314,11 @@ async function runCalculateWithSolver(solverMode) {
         log(`  lores solve: ${fmtMs(loresMs)}`, 'ok');
 
         // Phase 3: fan-out hires solve via async dispatch + DynamoDB polling
-        document.getElementById('compute-status').textContent = `Dispatching ${nChunks} solve Lambdas...`;
+        document.getElementById('compute-status').textContent = `Dispatching ${actualChunks} solve Lambdas...`;
         const tCompute = performance.now();
 
         const sweepJobs = [];
-        for (let s = 0; s < nChunks; s++) {
+        for (let s = 0; s < actualChunks; s++) {
             const stepCount = coeffgenResults[s].coeffs_size / (nCoeffs * 2 * 4);
             sweepJobs.push({
                 job_id: jobId, chunk_idx: s,
@@ -3339,7 +3339,7 @@ async function runCalculateWithSolver(solverMode) {
                 throw new Error(`Sweep dispatch failed: fired ${dispResult.fired || 0}/${batch.length}`);
             }
         }
-        log(`  sweep dispatched: ${nChunks} Lambdas (${fmtMs(performance.now() - tCompute)})`, 'ok');
+        log(`  sweep dispatched: ${actualChunks} Lambdas (${fmtMs(performance.now() - tCompute)})`, 'ok');
 
         // Poll DynamoDB for sweep completion
         let sweepLastDone = 0;
@@ -3351,7 +3351,7 @@ async function runCalculateWithSolver(solverMode) {
             await new Promise(r => setTimeout(r, 3000));
             sweepPollCount++;
             const check = await lambdaPost('storage', {
-                job_id: jobId, task_prefix: 'sweep_', expected: nChunks,
+                job_id: jobId, task_prefix: 'sweep_', expected: actualChunks,
             }, '/check-status');
             if (check.errors > 0) {
                 const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
@@ -3359,11 +3359,11 @@ async function runCalculateWithSolver(solverMode) {
             }
             if (check.done !== sweepLastDone) {
                 const delta = check.done - sweepLastDone;
-                log(`  solve poll #${sweepPollCount}: ${check.done}/${nChunks} done (+${delta}, ${fmtMs(performance.now() - tCompute)})`);
+                log(`  solve poll #${sweepPollCount}: ${check.done}/${actualChunks} done (+${delta}, ${fmtMs(performance.now() - tCompute)})`);
                 sweepLastDone = check.done;
                 sweepLastProgress = performance.now();
                 sweepLastStallLog = 0;
-                document.getElementById('compute-status').textContent = `Solving ${check.done}/${nChunks} chunks...`;
+                document.getElementById('compute-status').textContent = `Solving ${check.done}/${actualChunks} chunks...`;
             }
             if (check.complete) {
                 chunkResults = (check.results || []).sort((a, b) => a.chunk_idx - b.chunk_idx);
@@ -3374,16 +3374,16 @@ async function runCalculateWithSolver(solverMode) {
                 sweepLastStallLog = stallTime;
                 const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
                 const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
-                log(`  \u26a0 solve stall ${fmtMs(stallTime)}: ${sweepLastDone}/${nChunks}, statuses=${sc}${stuckInfo ? ', stuck: ' + stuckInfo : ''}`, 'warn');
+                log(`  \u26a0 solve stall ${fmtMs(stallTime)}: ${sweepLastDone}/${actualChunks}, statuses=${sc}${stuckInfo ? ', stuck: ' + stuckInfo : ''}`, 'warn');
             }
             if (stallTime > 600000) {
                 const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
                 const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
-                throw new Error(`Solve stalled: ${sweepLastDone}/${nChunks} after ${fmtMs(stallTime)}, statuses=${sc}, stuck: ${stuckInfo || 'none'}`);
+                throw new Error(`Solve stalled: ${sweepLastDone}/${actualChunks} after ${fmtMs(stallTime)}, statuses=${sc}, stuck: ${stuckInfo || 'none'}`);
             }
         }
         const computeWallMs = performance.now() - tCompute;
-        log(`  solve: ${fmtMs(computeWallMs)} wall (${nChunks} chunks)`, 'ok');
+        log(`  solve: ${fmtMs(computeWallMs)} wall (${actualChunks} chunks)`, 'ok');
 
         // Phase 4: save calc.json metadata via storage Lambda
         const calcMeta = {
@@ -3396,9 +3396,9 @@ async function runCalculateWithSolver(solverMode) {
             },
             function: funcName,
             N: n,
-            n_stripes: nChunks,  // backward compat for old readers
+            n_stripes: actualChunks,  // backward compat for old readers
             solver: solverMode,
-            n_chunks: nChunks,
+            n_chunks: actualChunks,
             n_steps: nSteps,
             params_key: paramsKey,
             times,
@@ -3437,15 +3437,15 @@ async function runCalculateWithSolver(solverMode) {
         document.getElementById('render-results-dir').value = jobId;
 
         document.getElementById('compute-status').textContent =
-            `Computed | ${nChunks} chunks | coeffgen ${fmtMs(coeffgenMs)} | solve ${fmtMs(computeWallMs)} | ` +
+            `Computed | ${actualChunks} chunks | coeffgen ${fmtMs(coeffgenMs)} | solve ${fmtMs(computeWallMs)} | ` +
             `compute ${(totalComputeUs/1e6).toFixed(1)}s (sum) | deg ${degree} | total ${fmtMs(totalMs)}`;
         document.getElementById('compute-status').className = 'status ok';
 
         const lines = [];
         lines.push(`  total:    ${fmtMs(totalMs)}`);
-        lines.push(`  coeffgen: ${fmtMs(coeffgenMs)} (${(totalCoeffsSize/1e6).toFixed(1)}MB, ${nChunks} chunks)`);
+        lines.push(`  coeffgen: ${fmtMs(coeffgenMs)} (${(totalCoeffsSize/1e6).toFixed(1)}MB, ${actualChunks} chunks)`);
         lines.push(`  total bin: ${(totalBinSize/1e6).toFixed(1)}MB + lores ${(loresResult.bin_size/1e3).toFixed(0)}KB`);
-        lines.push(`  solve: ${(totalComputeUs/1e6).toFixed(1)}s (sum) / ${fmtMs(computeWallMs)} wall (${nChunks} chunks)`);
+        lines.push(`  solve: ${(totalComputeUs/1e6).toFixed(1)}s (sum) / ${fmtMs(computeWallMs)} wall (${actualChunks} chunks)`);
         lines.push(`  lores:    ${fmtMs(loresMs)}`);
         lines.push(`Compute ${jobId}: ${pipelineStr} deg${degree} N=${n}, avg_iters=${avgIters.toFixed(1)}`);
         for (const line of lines) log(line, 'ok');

@@ -268,6 +268,11 @@ print(\"  sweep_cm smoke test: PASSED (roots 1,2,3)\")
 "
     '
 
+# --- Docker Runtime Regression Test (AE + CM) ---
+echo ""
+echo "Running Docker runtime regression test..."
+bash "$SCRIPT_DIR/scripts/test-docker-runtime.sh" || { echo "FATAL: Docker runtime test failed"; exit 1; }
+
 # --- Package Lambdas ---
 echo "Packaging Lambdas..."
 

@@ -142,7 +142,7 @@ static void rt_roots_toline(float *re, float *im, int degree) {
         double dr = 1.0 - zr, di = -zi;
         /* num/den */
         double d2 = dr * dr + di * di;
-        if (d2 < 1e-30) { re[k] = 0; im[k] = 0; continue; }
+        if (d2 < 1e-30) { re[k] = 1e15f; im[k] = 1e15f; continue; }  /* pole at z=1 → ∞ */
         double qr = (nr * dr + ni * di) / d2;
         double qi = (ni * dr - nr * di) / d2;
         /* i * (num/den) = -qi + i*qr */

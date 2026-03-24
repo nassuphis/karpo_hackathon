@@ -3330,6 +3330,31 @@ static void p11b3_c(double x1r, double x1i, double x2r, double x2i,
     }
 }
 
+/* poly_creative10: geometric algebra product terms with alternating signs.
+ * gp = dot(t1,t2) + i*wedge(t1,t2), cf[k] = gp^(k+1), cf[even] *= -1. */
+static void creative10_hand_c(double x1r, double x1i, double x2r, double x2i,
+                               double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    double dot = x1r * x2r + x1i * x2i;
+    double wedge = x1r * x2i - x1i * x2r;
+    /* gp = dot + i*wedge */
+    double gr = dot, gi = wedge;
+    /* gp^1 */
+    double pr = gr, pi_ = gi;
+    for (int k = 0; k < 71; k++) {
+        cRe[k] = pr; cIm[k] = pi_;
+        /* Negate even indices */
+        if (k % 2 == 0) { cRe[k] = -cRe[k]; cIm[k] = -cIm[k]; }
+        /* gp^(k+2) = gp^(k+1) * gp */
+        double nr = pr * gr - pi_ * gi;
+        double ni = pr * gi + pi_ * gr;
+        pr = nr; pi_ = ni;
+    }
+    for (int k = 0; k < 71; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0; cIm[k] = 0; }
+    }
+}
+
 /* Auto-generated g-functions from ops_poly.py (g1-g99+) */
 #include "g_generated.c"
 
@@ -3359,6 +3384,7 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "p821") == 0)    return p821_c;
     if (strcmp(name, "moth4") == 0)  return moth4_c;
     if (strcmp(name, "p11b3") == 0)  return p11b3_c;
+    if (strcmp(name, "creative10") == 0) return creative10_hand_c;
     /* Auto-generated giga functions from giga.py */
     if (strcmp(name, "giga_1") == 0) return poly_giga_1_c;
     if (strcmp(name, "giga_2") == 0) return poly_giga_2_c;

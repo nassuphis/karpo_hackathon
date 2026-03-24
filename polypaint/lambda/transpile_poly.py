@@ -2009,7 +2009,7 @@ def main():
     }
 
     STUBS["ops_poly.py"] = {"g7", "g8", "g11", "g31", "g38", "g48", "g49", "g50", "g51", "g71", "g82", "g84", "g90", "g92", "g95", "g97", "g98", "g224", "g227", "g232", "g2863", "g2864", "g2864a", "gp7f", "gpt1"}
-    STUBS["giga.py"] = {"poly_giga_7", "poly_giga_7a", "poly_giga_7b", "poly_giga_7c", "poly_giga_7d", "poly_giga_51", "poly_giga_104", "poly_giga_129", "poly_giga_137", "p11b3", "companion_matrix", "sort_abs"}
+    STUBS["giga.py"] = {"poly_giga_7", "poly_giga_7a", "poly_giga_7b", "poly_giga_7c", "poly_giga_7d", "poly_giga_51", "poly_giga_104", "poly_giga_129", "poly_giga_137", "poly_giga_139", "p11b3", "companion_matrix", "sort_abs"}
     basename = src_path.rsplit("/", 1)[-1]
     stub_funcs = STUBS.get(basename, set())
 

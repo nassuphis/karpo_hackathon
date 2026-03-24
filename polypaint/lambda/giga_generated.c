@@ -12007,124 +12007,12 @@ static void poly_giga_138_c(double x1r, double x1i, double x2r, double x2i,
     (void)x1r; (void)x1i; (void)x2r; (void)x2i;
 }
 
+/* poly_giga_139: too complex for auto-transpile, stubbed */
 static void poly_giga_139_c(double x1r, double x1i, double x2r, double x2i,
                      double *cRe, double *cIm, int *nCoeffs) {
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
-    double _add1r = 0, _add1i = 0;
-    _add1r = x1r + x2r; _add1i = x1i + x2i;
-    double t_r = _add1r, t_i = _add1i;
-    double _add2r = 0, _add2i = 0;
-    _add2r = x1r + x2r; _add2i = x1i + x2i;
-    double _abs3r = 0, _abs3i = 0;
-    _abs3r = c_abs(_add2r, _add2i); _abs3i = 0;
-    double _c4r = 0, _c4i = 0;
-    _c4r = 2.0; _c4i = 0;
-    double _div5r = 0, _div5i = 0;
-    c_div(_abs3r, _abs3i, _c4r, _c4i, &_div5r, &_div5i);
-    double a_r = _div5r, a_i = _div5i;
-    double _c6r = 0, _c6i = 0;
-    _c6r = 251.0; _c6i = 0;
-    double _mul7r = 0, _mul7i = 0;
-    c_mul(a_r, a_i, _c6r, _c6i, &_mul7r, &_mul7i);
-    double _int8r = 0, _int8i = 0;
-    _int8r = (int)(_mul7r); _int8i = 0;
-    double _c9r = 0, _c9i = 0;
-    _c9r = 37.0; _c9i = 0;
-    double _mod10r = 0, _mod10i = 0;
-    _mod10r = fmod(_int8r, _c9r); _mod10i = 0;
-    double m_r = _mod10r, m_i = _mod10i;
-    double _c11r = 0, _c11i = 0;
-    _c11r = 1.0; _c11i = 0;
-    double _add12r = 0, _add12i = 0;
-    _add12r = 0 + _c11r; _add12i = 0 + _c11i;
-    double _c13r = 0, _c13i = 0;
-    _c13r = 4.0; _c13i = 0;
-    double _add14r = 0, _add14i = 0;
-    _add14r = t_r + _c13r; _add14i = t_i + _c13i;
-    double _div15r = 0, _div15i = 0;
-    c_div(_add12r, _add12i, _add14r, _add14i, &_div15r, &_div15i);
-    double v_r = _div15r, v_i = _div15i;
-    double _c16r = 0, _c16i = 0;
-    _c16r = 7.0; _c16i = 0;
-    double _mul17r = 0, _mul17i = 0;
-    c_mul(_c16r, _c16i, a_r, a_i, &_mul17r, &_mul17i);
-    double _len18r = 0, _len18i = 0;
-    /* WARNING: len(v) unknown */
-    double _mul19r = 0, _mul19i = 0;
-    c_mul(_mul17r, _mul17i, _len18r, _len18i, &_mul19r, &_mul19i);
-    double _int20r = 0, _int20i = 0;
-    _int20r = (int)(_mul19r); _int20i = 0;
-    double _len21r = 0, _len21i = 0;
-    /* WARNING: len(v) unknown */
-    double _mod22r = 0, _mod22i = 0;
-    _mod22r = fmod(_int20r, _len21r); _mod22i = 0;
-    double p1_r = _mod22r, p1_i = _mod22i;
-    double _c23r = 0, _c23i = 0;
-    _c23r = 1.0; _c23i = 0;
-    double _add24r = 0, _add24i = 0;
-    _add24r = p1_r + _c23r; _add24i = p1_i + _c23i;
-    double _abs25r = 0, _abs25i = 0;
-    _abs25r = c_abs(t_r, t_i); _abs25i = 0;
-    double _c26r = 0, _c26i = 0;
-    _c26r = 2.0; _c26i = 0;
-    double _mul27r = 0, _mul27i = 0;
-    c_mul(_abs25r, _abs25i, _c26r, _c26i, &_mul27r, &_mul27i);
-    double _add28r = 0, _add28i = 0;
-    _add28r = t_r + _mul27r; _add28i = t_i + _mul27i;
-    double _c29r = 0, _c29i = 0;
-    _c29r = 1.0; _c29i = 0;
-    double _add30r = 0, _add30i = 0;
-    _add30r = _add28r + _c29r; _add30i = _add28i + _c29i;
-    double _add31r = 0, _add31i = 0;
-    _add31r = _add30r + m_r; _add31i = _add30i + m_i;
-    double _div32r = 0, _div32i = 0;
-    c_div(_add24r, _add24i, _add31r, _add31i, &_div32r, &_div32i);
-    /* v[(int)(p1_r)] assignment — skipped (local array) */
-    double _c33r = 0, _c33i = 0;
-    _c33r = 619.0; _c33i = 0;
-    double _mul34r = 0, _mul34i = 0;
-    c_mul(_c33r, _c33i, a_r, a_i, &_mul34r, &_mul34i);
-    double _len35r = 0, _len35i = 0;
-    /* WARNING: len(v) unknown */
-    double _mul36r = 0, _mul36i = 0;
-    c_mul(_mul34r, _mul34i, _len35r, _len35i, &_mul36r, &_mul36i);
-    double _int37r = 0, _int37i = 0;
-    _int37r = (int)(_mul36r); _int37i = 0;
-    double _len38r = 0, _len38i = 0;
-    /* WARNING: len(v) unknown */
-    double _mod39r = 0, _mod39i = 0;
-    _mod39r = fmod(_int37r, _len38r); _mod39i = 0;
-    double p2_r = _mod39r, p2_i = _mod39i;
-    double _c40r = 0, _c40i = 0;
-    _c40r = 1.0; _c40i = 0;
-    double _add41r = 0, _add41i = 0;
-    _add41r = p2_r + _c40r; _add41i = p2_i + _c40i;
-    double _abs42r = 0, _abs42i = 0;
-    _abs42r = c_abs(t_r, t_i); _abs42i = 0;
-    double _c43r = 0, _c43i = 0;
-    _c43r = 2.0; _c43i = 0;
-    double _mul44r = 0, _mul44i = 0;
-    c_mul(_abs42r, _abs42i, _c43r, _c43i, &_mul44r, &_mul44i);
-    double _add45r = 0, _add45i = 0;
-    _add45r = t_r + _mul44r; _add45i = t_i + _mul44i;
-    double _c46r = 0, _c46i = 0;
-    _c46r = 1.0; _c46i = 0;
-    double _add47r = 0, _add47i = 0;
-    _add47r = _add45r + _c46r; _add47i = _add45i + _c46i;
-    double _c48r = 0, _c48i = 0;
-    _c48r = 2.0; _c48i = 0;
-    double _fdiv49r = 0, _fdiv49i = 0;
-    c_div(m_r, m_i, _c48r, _c48i, &_fdiv49r, &_fdiv49i);
-    _fdiv49r = floor(_fdiv49r); _fdiv49i = 0;
-    double _add50r = 0, _add50i = 0;
-    _add50r = _add47r + _fdiv49r; _add50i = _add47i + _fdiv49i;
-    double _div51r = 0, _div51i = 0;
-    c_div(_add41r, _add41i, _add50r, _add50i, &_div51r, &_div51i);
-    /* v[(int)(p2_r)] assignment — skipped (local array) */
-    for (int _i = 0; _i < 36; _i++) {
-        if (!isfinite(cRe[_i]) || !isfinite(cIm[_i])) { cRe[_i] = 0; cIm[_i] = 0; }
-    }
+    (void)x1r; (void)x1i; (void)x2r; (void)x2i;
 }
 
 /* poly_giga_140: auto-stubbed (unhandled constructs in source) */

@@ -2999,19 +2999,12 @@ static void moth4_c(double x1r, double x1i, double x2r, double x2i,
 #include "giga_generated.c"
 
 static CoeffFuncC lookupCoeffFuncC(const char *name) {
-    if (strcmp(name, "giga_1") == 0)   return giga_1_c;
-    if (strcmp(name, "giga_5") == 0)   return giga_5_c;
+    /* Stubbed transpilations — fall back to old hand-written versions */
     if (strcmp(name, "giga_19") == 0)  return giga_19_c;
-    if (strcmp(name, "giga_30") == 0)  return giga_30_c;
-    if (strcmp(name, "giga_39") == 0)  return giga_39_c;
-    if (strcmp(name, "giga_40") == 0)  return giga_40_c;
-    if (strcmp(name, "giga_42") == 0)  return giga_42_c;
-    if (strcmp(name, "giga_43") == 0)  return giga_43_c;
-    if (strcmp(name, "giga_87") == 0)  return giga_87_c;
     if (strcmp(name, "giga_227") == 0) return giga_227_c;
     if (strcmp(name, "giga_230") == 0) return giga_230_c;
     if (strcmp(name, "giga_232") == 0) return giga_232_c;
-    /* Old hand-written giga implementations for comparison */
+    /* Old hand-written giga implementations — accessible as old_giga_* */
     if (strcmp(name, "old_giga_1") == 0)   return giga_1_c;
     if (strcmp(name, "old_giga_5") == 0)   return giga_5_c;
     if (strcmp(name, "old_giga_19") == 0)  return giga_19_c;
@@ -3034,11 +3027,6 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_4") == 0) return poly_giga_4_c;
     if (strcmp(name, "giga_5") == 0) return poly_giga_5_c;
     if (strcmp(name, "giga_6") == 0) return poly_giga_6_c;
-    if (strcmp(name, "giga_7") == 0) return poly_giga_7_c;
-    if (strcmp(name, "giga_7a") == 0) return poly_giga_7a_c;
-    if (strcmp(name, "giga_7b") == 0) return poly_giga_7b_c;
-    if (strcmp(name, "giga_7c") == 0) return poly_giga_7c_c;
-    if (strcmp(name, "giga_7d") == 0) return poly_giga_7d_c;
     if (strcmp(name, "giga_9") == 0) return poly_giga_9_c;
     if (strcmp(name, "giga_13") == 0) return poly_giga_13_c;
     if (strcmp(name, "giga_16") == 0) return poly_giga_16_c;
@@ -3065,7 +3053,6 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_44") == 0) return poly_giga_44_c;
     if (strcmp(name, "giga_45") == 0) return poly_giga_45_c;
     if (strcmp(name, "giga_46") == 0) return poly_giga_46_c;
-    if (strcmp(name, "giga_51") == 0) return poly_giga_51_c;
     if (strcmp(name, "giga_53") == 0) return poly_giga_53_c;
     if (strcmp(name, "giga_54") == 0) return poly_giga_54_c;
     if (strcmp(name, "giga_55") == 0) return poly_giga_55_c;
@@ -3101,7 +3088,6 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_93") == 0) return poly_giga_93_c;
     if (strcmp(name, "giga_96") == 0) return poly_giga_96_c;
     if (strcmp(name, "giga_99") == 0) return poly_giga_99_c;
-    if (strcmp(name, "giga_104") == 0) return poly_giga_104_c;
     if (strcmp(name, "giga_106") == 0) return poly_giga_106_c;
     if (strcmp(name, "giga_108") == 0) return poly_giga_108_c;
     if (strcmp(name, "giga_111") == 0) return poly_giga_111_c;
@@ -3117,15 +3103,12 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_125") == 0) return poly_giga_125_c;
     if (strcmp(name, "giga_127") == 0) return poly_giga_127_c;
     if (strcmp(name, "giga_128") == 0) return poly_giga_128_c;
-    if (strcmp(name, "giga_129") == 0) return poly_giga_129_c;
     if (strcmp(name, "giga_130") == 0) return poly_giga_130_c;
     if (strcmp(name, "giga_131") == 0) return poly_giga_131_c;
     if (strcmp(name, "giga_132") == 0) return poly_giga_132_c;
     if (strcmp(name, "giga_133") == 0) return poly_giga_133_c;
     if (strcmp(name, "giga_134") == 0) return poly_giga_134_c;
     if (strcmp(name, "giga_136") == 0) return poly_giga_136_c;
-    if (strcmp(name, "giga_137") == 0) return poly_giga_137_c;
-    if (strcmp(name, "giga_139") == 0) return poly_giga_139_c;
 
     /* Auto-generated g-functions (g1-g99+) */
     if (strcmp(name, "g1") == 0) return g1_c;

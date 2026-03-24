@@ -3984,6 +3984,11 @@ static int runParamGen(const char *buf, const char *outPath) {
     const char *cp = findKey(buf, "n1"); if (cp) n1 = (int)parseNum(&cp);
     cp = findKey(buf, "n2"); if (cp) n2 = (int)parseNum(&cp);
 
+    /* gridN: override for dither/transform scaling. If not set, defaults to n1.
+     * Used by lores preview to match hires dither amplitude. */
+    int gridN = n1;
+    cp = findKey(buf, "gridN"); if (cp) gridN = (int)parseNum(&cp);
+
     int times = 1;
     cp = findKey(buf, "times"); if (cp) times = (int)parseNum(&cp);
     if (times < 1) times = 1;
@@ -4015,7 +4020,7 @@ static int runParamGen(const char *buf, const char *outPath) {
                 double x2 = (double)i2 / (double)n2;
 
                 double z1r = x1, z1i = 0.0, z2r = x2, z2i = 0.0;
-                for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, n1);
+                for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, gridN);
 
                 float out[4] = { (float)z1r, (float)z1i, (float)z2r, (float)z2i };
                 fwrite(out, sizeof(float), 4, fout);

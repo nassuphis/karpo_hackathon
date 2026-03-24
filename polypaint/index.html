@@ -3268,7 +3268,7 @@ async function runCalculateWithSolver(solverMode) {
         await lambdaPost('storage', { job_id: jobId, task_id: loresTaskId }, '/delete-task').catch(() => {});
         const loresPgDisp = await lambdaPost('dispatch', {
             target: 'coeffgen',
-            jobs: [{ phase: 'param_gen', job_id: jobId, N: loresN, times: times, param_transforms: paramTransforms, task_id: loresTaskId, params_key: `renders/${jobId}/lores_params.bin` }],
+            jobs: [{ phase: 'param_gen', job_id: jobId, N: loresN, gridN: n, times: times, param_transforms: paramTransforms, task_id: loresTaskId, params_key: `renders/${jobId}/lores_params.bin` }],
             expected_keys: [],
         });
         if ((loresPgDisp.fired || 0) !== 1) throw new Error(`lores param_gen dispatch failed`);

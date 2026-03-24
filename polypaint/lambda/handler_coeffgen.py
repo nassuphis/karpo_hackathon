@@ -53,6 +53,8 @@ def handle_param_gen(params):
         params_key = params.get("params_key", f"renders/{job_id}/params.bin")
         t0 = time.time()
 
+        # gridN: override for dither scaling (lores uses full N, not loresN)
+        grid_n_override = params.get("gridN")
         spec = {
             "mode": "param_gen",
             "n1": grid_n,
@@ -60,6 +62,8 @@ def handle_param_gen(params):
             "times": times,
             "param_transforms": params.get("param_transforms", []),
         }
+        if grid_n_override:
+            spec["gridN"] = grid_n_override
 
         # Launch sweep with "-" as output path → binary goes to stdout
         proc = subprocess.Popen(

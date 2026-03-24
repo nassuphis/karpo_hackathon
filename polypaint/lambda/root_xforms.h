@@ -131,6 +131,26 @@ static void rt_pull_unit_circle(float *re, float *im, int degree, double sigma, 
     }
 }
 
+/* roots_toline(): Cayley transform w = i*(1+z)/(1-z).
+ * Maps unit circle → real line, unit disk interior → upper half-plane. */
+static void rt_roots_toline(float *re, float *im, int degree) {
+    for (int k = 0; k < degree; k++) {
+        double zr = re[k], zi = im[k];
+        /* num = 1 + z */
+        double nr = 1.0 + zr, ni = zi;
+        /* den = 1 - z */
+        double dr = 1.0 - zr, di = -zi;
+        /* num/den */
+        double d2 = dr * dr + di * di;
+        if (d2 < 1e-30) { re[k] = 0; im[k] = 0; continue; }
+        double qr = (nr * dr + ni * di) / d2;
+        double qi = (ni * dr - nr * di) / d2;
+        /* i * (num/den) = -qi + i*qr */
+        re[k] = (float)(-qi);
+        im[k] = (float)(qr);
+    }
+}
+
 /* ---- Dispatch ---- */
 
 static void apply_root_xforms(const RootXformEntry *entries, int n_entries,
@@ -144,6 +164,8 @@ static void apply_root_xforms(const RootXformEntry *entries, int n_entries,
             double sigma = e->n_args > 0 ? e->args[0] : 0.75;
             double alpha = e->n_args > 1 ? e->args[1] : 1.0;
             rt_pull_unit_circle(re, im, degree, sigma, alpha);
+        } else if (strcmp(e->name, "roots_toline") == 0) {
+            rt_roots_toline(re, im, degree);
         }
         /* unknown transforms silently ignored */
     }

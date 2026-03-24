@@ -3011,6 +3011,19 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_227") == 0) return giga_227_c;
     if (strcmp(name, "giga_230") == 0) return giga_230_c;
     if (strcmp(name, "giga_232") == 0) return giga_232_c;
+    /* Old hand-written giga implementations for comparison */
+    if (strcmp(name, "old_giga_1") == 0)   return giga_1_c;
+    if (strcmp(name, "old_giga_5") == 0)   return giga_5_c;
+    if (strcmp(name, "old_giga_19") == 0)  return giga_19_c;
+    if (strcmp(name, "old_giga_30") == 0)  return giga_30_c;
+    if (strcmp(name, "old_giga_39") == 0)  return giga_39_c;
+    if (strcmp(name, "old_giga_40") == 0)  return giga_40_c;
+    if (strcmp(name, "old_giga_42") == 0)  return giga_42_c;
+    if (strcmp(name, "old_giga_43") == 0)  return giga_43_c;
+    if (strcmp(name, "old_giga_87") == 0)  return giga_87_c;
+    if (strcmp(name, "old_giga_227") == 0) return giga_227_c;
+    if (strcmp(name, "old_giga_230") == 0) return giga_230_c;
+    if (strcmp(name, "old_giga_232") == 0) return giga_232_c;
     if (strcmp(name, "p7f") == 0)      return p7f_c;
     if (strcmp(name, "p821") == 0)    return p821_c;
     if (strcmp(name, "moth4") == 0)  return moth4_c;

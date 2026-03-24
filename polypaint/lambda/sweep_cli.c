@@ -2992,6 +2992,62 @@ static void moth4_c(double x1r, double x1i, double x2r, double x2i,
     }
 }
 
+/* p11b3: 11 coefficients, array mutation with integer indexing */
+static void p11b3_c(double x1r, double x1i, double x2r, double x2i,
+                    double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 11;
+    /* t = t1 + t2 */
+    double tr = x1r + x2r, ti = x1i + x2i;
+    /* a = |t1+t2| / 2 */
+    double a = sqrt(tr * tr + ti * ti) / 2.0;
+    /* m = int(a * 251) % 37 */
+    int m = ((int)(a * 251.0)) % 37;
+    /* v[k] = (k+1) / (t + 4) for k=0..10 */
+    double vr[11], vi[11];
+    double dr = tr + 4.0, di = ti;
+    double d2 = dr * dr + di * di;
+    if (d2 < 1e-30) d2 = 1e-30;
+    for (int k = 0; k < 11; k++) {
+        double nr = (double)(k + 1);
+        /* (k+1) / (t+4) — real numerator, complex denominator */
+        vr[k] = nr * dr / d2;
+        vi[k] = -nr * di / d2;
+    }
+    /* p1 = int(7 * a * 11) % 11; v[p1] = (p1+1) / (t + |t|*2 + 1 + m) */
+    double abst = sqrt(tr * tr + ti * ti);
+    int p1 = ((int)(7.0 * a * 11.0)) % 11;
+    {
+        double denr = tr + abst * 2.0 + 1.0 + m, deni = ti;
+        double dd = denr * denr + deni * deni;
+        if (dd < 1e-30) dd = 1e-30;
+        double nr = (double)(p1 + 1);
+        vr[p1] = nr * denr / dd;
+        vi[p1] = -nr * deni / dd;
+    }
+    /* p2 = int(619 * a * 11) % 11; v[p2] = (p2+1) / (t + |t|*2 + 1 + m//2) */
+    int p2 = ((int)(619.0 * a * 11.0)) % 11;
+    {
+        double denr = tr + abst * 2.0 + 1.0 + (m / 2), deni = ti;
+        double dd = denr * denr + deni * deni;
+        if (dd < 1e-30) dd = 1e-30;
+        double nr = (double)(p2 + 1);
+        vr[p2] = nr * denr / dd;
+        vi[p2] = -nr * deni / dd;
+    }
+    /* cf = exp(i * pi * v) */
+    for (int k = 0; k < 11; k++) {
+        /* i*pi*v = -pi*vi + i*pi*vr */
+        double er = -M_PI * vi[k], ei = M_PI * vr[k];
+        double e = exp(er);
+        cRe[k] = e * cos(ei);
+        cIm[k] = e * sin(ei);
+    }
+    /* NaN guard */
+    for (int k = 0; k < 11; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0; cIm[k] = 0; }
+    }
+}
+
 /* Auto-generated g-functions from ops_poly.py (g1-g99+) */
 #include "g_generated.c"
 
@@ -3020,6 +3076,7 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "p7f") == 0)      return p7f_c;
     if (strcmp(name, "p821") == 0)    return p821_c;
     if (strcmp(name, "moth4") == 0)  return moth4_c;
+    if (strcmp(name, "p11b3") == 0)  return p11b3_c;
     /* Auto-generated giga functions from giga.py */
     if (strcmp(name, "giga_1") == 0) return poly_giga_1_c;
     if (strcmp(name, "giga_2") == 0) return poly_giga_2_c;

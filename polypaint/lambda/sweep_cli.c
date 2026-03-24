@@ -2542,6 +2542,100 @@ static void pt_scdth(double *z1r, double *z1i, double *z2r, double *z2i, int n, 
     if (n == 1 || n == 2) pt_scdth_one(z2r, z2i, rmax, half_ap, center);
 }
 
+/* roots5: cubic root parameter transform.
+ * Solves a*z^3 + b*z^2 + c*z + d = 0 via Cardano's formula,
+ * returns (smallest root, largest root) by magnitude. */
+static void _cbrt_c(double zr, double zi, double *rr, double *ri) {
+    double m2 = zr*zr + zi*zi;
+    if (m2 < 1e-60) { *rr = 0; *ri = 0; return; }
+    double r = pow(sqrt(m2), 1.0/3.0);
+    double th = atan2(zi, zr) / 3.0;
+    *rr = r * cos(th); *ri = r * sin(th);
+}
+
+static void pt_roots5(double *z1r, double *z1i, double *z2r, double *z2i) {
+    /* a = cos(100*t1), b = i*t1, c = i*t2, d = sin(100*t2) */
+    /* cos(100*t1) — complex */
+    double ar, ai; c_cos(100.0 * (*z1r), 100.0 * (*z1i), &ar, &ai);
+    /* b = i*t1 = -z1i + i*z1r */
+    double br = -(*z1i), bi = *z1r;
+    /* c = i*t2 = -z2i + i*z2r */
+    double cr = -(*z2i), ci = *z2r;
+    /* d = sin(100*t2) — complex */
+    double dr, di; c_sin(100.0 * (*z2r), 100.0 * (*z2i), &dr, &di);
+
+    /* Cardano: solve a*z^3 + b*z^2 + c*z + d = 0 */
+    /* If |a| tiny, degenerate — fall back to t1'=t2'=0 */
+    double amag = ar*ar + ai*ai;
+    if (amag < 1e-60) { *z1r = 0; *z1i = 0; *z2r = 0; *z2i = 0; return; }
+
+    /* A = b/a, B = c/a, C = d/a */
+    double Ar, Ai; c_div(br, bi, ar, ai, &Ar, &Ai);
+    double Br, Bi; c_div(cr, ci, ar, ai, &Br, &Bi);
+    double Cr, Ci; c_div(dr, di, ar, ai, &Cr, &Ci);
+
+    /* p = B - A^2/3 */
+    double A2r, A2i; c_mul(Ar, Ai, Ar, Ai, &A2r, &A2i);
+    double pr = Br - A2r/3.0, pi = Bi - A2i/3.0;
+
+    /* q = 2A^3/27 - AB/3 + C */
+    double A3r, A3i; c_mul(A2r, A2i, Ar, Ai, &A3r, &A3i);
+    double ABr, ABi; c_mul(Ar, Ai, Br, Bi, &ABr, &ABi);
+    double qr = 2.0*A3r/27.0 - ABr/3.0 + Cr;
+    double qi = 2.0*A3i/27.0 - ABi/3.0 + Ci;
+
+    /* delta = (q/2)^2 + (p/3)^3 */
+    double q2r, q2i; c_mul(qr/2, qi/2, qr/2, qi/2, &q2r, &q2i);
+    double p3r, p3i; c_mul(pr/3, pi/3, pr/3, pi/3, &p3r, &p3i);
+    c_mul(p3r, p3i, pr/3, pi/3, &p3r, &p3i);
+    double delr = q2r + p3r, deli = q2i + p3i;
+
+    /* sqrt(delta) */
+    double sdr, sdi; c_powr(delr, deli, 0.5, &sdr, &sdi);
+
+    /* u = cbrt(-q/2 + sqrt_delta), v = cbrt(-q/2 - sqrt_delta) */
+    double ur, ui, vr, vi;
+    _cbrt_c(-qr/2 + sdr, -qi/2 + sdi, &ur, &ui);
+    _cbrt_c(-qr/2 - sdr, -qi/2 - sdi, &vr, &vi);
+
+    /* omega = -0.5 + i*sqrt(3)/2, omega2 = -0.5 - i*sqrt(3)/2 */
+    double s3h = 0.86602540378443864676; /* sqrt(3)/2 */
+    double shift_r = Ar/3, shift_i = Ai/3;
+
+    /* Three roots */
+    double r0r = ur + vr - shift_r, r0i = ui + vi - shift_i;
+
+    double ou_r, ou_i; c_mul(-0.5, s3h, ur, ui, &ou_r, &ou_i);
+    double o2v_r, o2v_i; c_mul(-0.5, -s3h, vr, vi, &o2v_r, &o2v_i);
+    double r1r = ou_r + o2v_r - shift_r, r1i = ou_i + o2v_i - shift_i;
+
+    double o2u_r, o2u_i; c_mul(-0.5, -s3h, ur, ui, &o2u_r, &o2u_i);
+    double ov_r, ov_i; c_mul(-0.5, s3h, vr, vi, &ov_r, &ov_i);
+    double r2r = o2u_r + ov_r - shift_r, r2i = o2u_i + ov_i - shift_i;
+
+    /* Sort by magnitude, return smallest and largest */
+    double m0 = r0r*r0r + r0i*r0i;
+    double m1 = r1r*r1r + r1i*r1i;
+    double m2_ = r2r*r2r + r2i*r2i;
+
+    double sml_r, sml_i, lrg_r, lrg_i;
+    /* Find min and max */
+    if (m0 <= m1 && m0 <= m2_) { sml_r = r0r; sml_i = r0i; }
+    else if (m1 <= m2_) { sml_r = r1r; sml_i = r1i; }
+    else { sml_r = r2r; sml_i = r2i; }
+
+    if (m0 >= m1 && m0 >= m2_) { lrg_r = r0r; lrg_i = r0i; }
+    else if (m1 >= m2_) { lrg_r = r1r; lrg_i = r1i; }
+    else { lrg_r = r2r; lrg_i = r2i; }
+
+    *z1r = sml_r; *z1i = sml_i;
+    *z2r = lrg_r; *z2i = lrg_i;
+
+    /* NaN guard */
+    if (!isfinite(*z1r) || !isfinite(*z1i)) { *z1r = 0; *z1i = 0; }
+    if (!isfinite(*z2r) || !isfinite(*z2i)) { *z2r = 0; *z2i = 0; }
+}
+
 /* ==== Parameter transform dispatch (array-of-arrays format) ==== */
 
 #define MAX_PT_ARGS 12
@@ -2826,6 +2920,10 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
         double h = e->nArgs > 2 ? e->args[2] : 1.0;
         double m = e->nArgs > 3 ? e->args[3] : 4.0;
         pt_rrect(z1r, z1i, z2r, z2i, n, w, h, m);
+        return 0;
+    }
+    if (strcmp(e->name, "roots5") == 0) {
+        pt_roots5(z1r, z1i, z2r, z2i);
         return 0;
     }
     /* Fall back to standard param transforms (no extra args) */

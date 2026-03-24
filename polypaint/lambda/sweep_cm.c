@@ -130,12 +130,24 @@ static int solve_companion(const double *cfRe, const double *cfIm, int nCoeffs,
     /* Workspace query */
     zgeev_(&jobvl, &jobvr, &n, A, &n, W, NULL, &ldvl, NULL, &ldvr,
            &wkopt, &lwork, rwork, &info);
+    if (info != 0) {
+        /* Workspace query failed — zero output */
+        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
+        free(rwork); free(W); free(A);
+        return nCoeffs - 1;
+    }
     lwork = (int)creal(wkopt);
     double _Complex *work = malloc(lwork * sizeof(double _Complex));
 
     /* Actual eigensolve */
     zgeev_(&jobvl, &jobvr, &n, A, &n, W, NULL, &ldvl, NULL, &ldvr,
            work, &lwork, rwork, &info);
+    if (info != 0) {
+        /* Eigensolve failed or partially converged — zero output */
+        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
+        free(work); free(rwork); free(W); free(A);
+        return nCoeffs - 1;
+    }
 
     /* Write roots */
     for (int k = 0; k < n; k++) {

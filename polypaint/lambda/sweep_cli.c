@@ -3449,14 +3449,12 @@ static void creative9_c(double x1r, double x1i, double x2r, double x2i,
         cIm[k] = si * decay;
     }
 
-    /* Pass 2: neighbor mixing cf[k] = (cf[k-1] + cf[k+1]) * 0.5 * (t1+t2) */
-    /* Need temp copy since we read neighbors */
-    double tmpR[71], tmpI[71];
-    for (int k = 0; k < 71; k++) { tmpR[k] = cRe[k]; tmpI[k] = cIm[k]; }
+    /* Pass 2: neighbor mixing cf[k] = (cf[k-1] + cf[k+1]) * 0.5 * (t1+t2)
+     * Python modifies in-place: cf[k-1] at step k is already the mixed value. */
     double sumr = x1r + x2r, sumi = x1i + x2i;
     for (int k = 1; k < 70; k++) {
-        double avgr = (tmpR[k-1] + tmpR[k+1]) * 0.5;
-        double avgi = (tmpI[k-1] + tmpI[k+1]) * 0.5;
+        double avgr = (cRe[k-1] + cRe[k+1]) * 0.5;
+        double avgi = (cIm[k-1] + cIm[k+1]) * 0.5;
         c_mul(avgr, avgi, sumr, sumi, &cRe[k], &cIm[k]);
     }
 

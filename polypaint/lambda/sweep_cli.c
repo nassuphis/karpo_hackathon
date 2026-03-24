@@ -3366,6 +3366,42 @@ static void creative10_hand_c(double x1r, double x1i, double x2r, double x2i,
     }
 }
 
+/* creative9: Fourier series with frequency decay and neighbor mixing. */
+static void creative9_c(double x1r, double x1i, double x2r, double x2i,
+                        double *cRe, double *cIm, int *nCoeffs) {
+    *nCoeffs = 71;
+    double phase_t1 = atan2(x1i, x1r);
+    double phase_t2 = atan2(x2i, x2r);
+    /* |t1*t2| */
+    double pr, pi_; c_mul(x1r, x1i, x2r, x2i, &pr, &pi_);
+    double abs_t1t2 = sqrt(pr*pr + pi_*pi_);
+
+    /* Pass 1: cf[k] = (sin(freq_t1) + i*cos(freq_t2)) * exp(-|t1*t2|*k/n) */
+    for (int k = 0; k < 71; k++) {
+        double freq_t1 = (k + 1) * phase_t1;
+        double freq_t2 = (k + 1) * phase_t2;
+        double sr = sin(freq_t1), si = cos(freq_t2); /* sin + i*cos */
+        double decay = exp(-abs_t1t2 * k / 71.0);
+        cRe[k] = sr * decay;
+        cIm[k] = si * decay;
+    }
+
+    /* Pass 2: neighbor mixing cf[k] = (cf[k-1] + cf[k+1]) * 0.5 * (t1+t2) */
+    /* Need temp copy since we read neighbors */
+    double tmpR[71], tmpI[71];
+    for (int k = 0; k < 71; k++) { tmpR[k] = cRe[k]; tmpI[k] = cIm[k]; }
+    double sumr = x1r + x2r, sumi = x1i + x2i;
+    for (int k = 1; k < 70; k++) {
+        double avgr = (tmpR[k-1] + tmpR[k+1]) * 0.5;
+        double avgi = (tmpI[k-1] + tmpI[k+1]) * 0.5;
+        c_mul(avgr, avgi, sumr, sumi, &cRe[k], &cIm[k]);
+    }
+
+    for (int k = 0; k < 71; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0; cIm[k] = 0; }
+    }
+}
+
 /* Auto-generated g-functions from ops_poly.py (g1-g99+) */
 #include "g_generated.c"
 
@@ -3395,6 +3431,7 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "p821") == 0)    return p821_c;
     if (strcmp(name, "moth4") == 0)  return moth4_c;
     if (strcmp(name, "p11b3") == 0)  return p11b3_c;
+    if (strcmp(name, "creative9") == 0) return creative9_c;
     if (strcmp(name, "creative10") == 0) return creative10_hand_c;
     /* Auto-generated giga functions from giga.py */
     if (strcmp(name, "giga_1") == 0) return poly_giga_1_c;

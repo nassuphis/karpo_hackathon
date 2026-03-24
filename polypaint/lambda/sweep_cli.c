@@ -2705,6 +2705,19 @@ static void _roots_minmax(double *rr, double *ri, int n,
     *lrg_r = rr[imax]; *lrg_i = ri[imax];
 }
 
+/* roots3: cubic root param transform. a=t1+t2, b=1, c=1, d=t1*t2. */
+static void pt_roots3(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double ar = *z1r + *z2r, ai = *z1i + *z2i;
+    double dr, di; c_mul(*z1r, *z1i, *z2r, *z2i, &dr, &di);
+    double rr[3], ri[3];
+    int n = _solve_cubic(ar, ai, 1, 0, 1, 0, dr, di, rr, ri);
+    double sr, si, lr, li;
+    _roots_minmax(rr, ri, n, &sr, &si, &lr, &li);
+    *z1r = sr; *z1i = si; *z2r = lr; *z2i = li;
+    if (!isfinite(*z1r)||!isfinite(*z1i)) { *z1r=0; *z1i=0; }
+    if (!isfinite(*z2r)||!isfinite(*z2i)) { *z2r=0; *z2i=0; }
+}
+
 /* roots5: cubic root param transform. a=cos(100t1), b=it1, c=it2, d=sin(100t2). */
 static void pt_roots5(double *z1r, double *z1i, double *z2r, double *z2i) {
     double ar, ai; c_cos(100.0*(*z1r), 100.0*(*z1i), &ar, &ai);
@@ -3028,6 +3041,10 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
         double h = e->nArgs > 2 ? e->args[2] : 1.0;
         double m = e->nArgs > 3 ? e->args[3] : 4.0;
         pt_rrect(z1r, z1i, z2r, z2i, n, w, h, m);
+        return 0;
+    }
+    if (strcmp(e->name, "roots3") == 0) {
+        pt_roots3(z1r, z1i, z2r, z2i);
         return 0;
     }
     if (strcmp(e->name, "roots5") == 0) {

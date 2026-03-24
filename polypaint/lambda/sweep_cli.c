@@ -2426,6 +2426,10 @@ static void ct_sort_mod(double *cRe, double *cIm, int *nCoeffs) {
     }
 }
 
+static void ct_cumsum(double *cRe, double *cIm, int *nCoeffs) {
+    for (int k = 1; k < *nCoeffs; k++) { cRe[k] += cRe[k-1]; cIm[k] += cIm[k-1]; }
+}
+
 static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "none") == 0)        return ct_none;
     if (strcmp(name, "rev") == 0)         return ct_rev;
@@ -2438,6 +2442,7 @@ static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "max2one") == 0)    return ct_max2one;
     if (strcmp(name, "swirler") == 0)   return ct_swirler;
     if (strcmp(name, "sort_mod") == 0)  return ct_sort_mod;
+    if (strcmp(name, "cumsum") == 0)   return ct_cumsum;
     return NULL;
 }
 

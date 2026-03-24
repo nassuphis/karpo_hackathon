@@ -93,6 +93,7 @@ def handle_solve_from_coeffs(params):
 
         result_data = {
             "stripe_idx": stripe_idx,
+            "chunk_idx": stripe_idx,
             "s3_key": s3_key,
             "bin_size": bin_size,
             "compute_us": compute_us,

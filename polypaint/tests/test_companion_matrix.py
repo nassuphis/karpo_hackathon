@@ -18,10 +18,19 @@ LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 SWEEP_CM = os.path.join(LAMBDA_DIR, "sweep_cm")
 SWEEP_AE = os.path.join(LAMBDA_DIR, "sweep")  # Deploy binary, not sweep_test
 
-# Skip all tests if sweep_cm not compiled locally
-if not os.path.exists(SWEEP_CM):
+# Skip all tests if sweep_cm not available or not runnable on this platform.
+# These tests run authoritatively in Docker (scripts/test-docker-runtime.sh).
+# Host runs are convenience only.
+_cm_runnable = False
+if os.path.exists(SWEEP_CM):
+    try:
+        subprocess.run([SWEEP_CM], capture_output=True, timeout=2)
+        _cm_runnable = True
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+if not _cm_runnable:
     import pytest
-    pytest.skip("sweep_cm not compiled locally", allow_module_level=True)
+    pytest.skip("sweep_cm not runnable (ARM64 ELF on non-ARM host — use Docker)", allow_module_level=True)
 
 
 def write_coeff_file(path, polys, n_coeffs):

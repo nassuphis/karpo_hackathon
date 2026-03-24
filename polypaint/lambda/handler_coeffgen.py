@@ -50,7 +50,7 @@ def handle_param_gen(params):
 
         grid_n = params.get("N", params.get("n1"))
         times = params.get("times", 1)
-        params_key = f"renders/{job_id}/params.bin"
+        params_key = params.get("params_key", f"renders/{job_id}/params.bin")
         t0 = time.time()
 
         spec = {

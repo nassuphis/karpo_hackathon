@@ -837,7 +837,8 @@ async function testPipeline(name, call) {
             }
             console.log('  arrow key navigation: OK (up:1→0, down:0→1, down:1→1)');
         } else {
-            console.log('  arrow key navigation: SKIP (could not extract handler)');
+            console.error('FATAL: could not extract arrow key handler from app code');
+            process.exit(1);
         }
     }
 

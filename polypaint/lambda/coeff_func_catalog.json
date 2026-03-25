@@ -2,127 +2,126 @@
   {
     "name": "giga_19",
     "c_symbol": "giga_19_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "giga_227",
     "c_symbol": "giga_227_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "giga_230",
     "c_symbol": "giga_230_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "giga_232",
     "c_symbol": "giga_232_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "old_giga_1",
     "c_symbol": "giga_1_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "old_giga_5",
     "c_symbol": "giga_5_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "old_giga_19",
     "c_symbol": "giga_19_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "old_giga_30",
     "c_symbol": "giga_30_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "old_giga_39",
     "c_symbol": "giga_39_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "old_giga_40",
     "c_symbol": "giga_40_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "old_giga_42",
     "c_symbol": "giga_42_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "old_giga_43",
     "c_symbol": "giga_43_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "old_giga_87",
     "c_symbol": "giga_87_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "old_giga_227",
     "c_symbol": "giga_227_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "old_giga_230",
     "c_symbol": "giga_230_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "old_giga_232",
     "c_symbol": "giga_232_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "p7f",
     "c_symbol": "p7f_c",
-    "kind": "wrapped",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "wrapped"
   },
   {
     "name": "p821",
     "c_symbol": "p821_c",
-    "kind": "hand",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "hand"
   },
   {
     "name": "moth4",
     "c_symbol": "moth4_c",
-    "kind": "hand",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "hand"
   },
   {
     "name": "p11b3",
     "c_symbol": "p11b3_c",
-    "kind": "hand",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "hand"
   },
   {
     "name": "creative8",
     "c_symbol": "creative8_c",
-    "kind": "hand",
     "source": "sweep_cli.c",
     "params": [
       {
@@ -132,12 +131,12 @@
         "min": 2,
         "max": 256
       }
-    ]
+    ],
+    "kind": "hand"
   },
   {
     "name": "creative9",
     "c_symbol": "creative9_c",
-    "kind": "hand",
     "source": "sweep_cli.c",
     "params": [
       {
@@ -147,6396 +146,6397 @@
         "min": 2,
         "max": 256
       }
-    ]
+    ],
+    "kind": "hand"
   },
   {
     "name": "creative10",
     "c_symbol": "creative10_hand_c",
-    "kind": "hand",
-    "source": "sweep_cli.c"
+    "source": "sweep_cli.c",
+    "kind": "hand"
   },
   {
     "name": "giga_1",
     "c_symbol": "poly_giga_1_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_2",
     "c_symbol": "poly_giga_2_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_3",
     "c_symbol": "poly_giga_3_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_4",
     "c_symbol": "poly_giga_4_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_5",
     "c_symbol": "poly_giga_5_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_6",
     "c_symbol": "poly_giga_6_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_9",
     "c_symbol": "poly_giga_9_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_13",
     "c_symbol": "poly_giga_13_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_16",
     "c_symbol": "poly_giga_16_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_19_fixed1",
     "c_symbol": "poly_giga_19_fixed1_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_19_fixed2",
     "c_symbol": "poly_giga_19_fixed2_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_20",
     "c_symbol": "poly_giga_20_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_21",
     "c_symbol": "poly_giga_21_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_22",
     "c_symbol": "poly_giga_22_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_25",
     "c_symbol": "poly_giga_25_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_26",
     "c_symbol": "poly_giga_26_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_28",
     "c_symbol": "poly_giga_28_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_29",
     "c_symbol": "poly_giga_29_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_30",
     "c_symbol": "poly_giga_30_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_33",
     "c_symbol": "poly_giga_33_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_34",
     "c_symbol": "poly_giga_34_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_35",
     "c_symbol": "poly_giga_35_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_36",
     "c_symbol": "poly_giga_36_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_37",
     "c_symbol": "poly_giga_37_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_39",
     "c_symbol": "poly_giga_39_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_40",
     "c_symbol": "poly_giga_40_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_41",
     "c_symbol": "poly_giga_41_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_42",
     "c_symbol": "poly_giga_42_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_43",
     "c_symbol": "poly_giga_43_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_44",
     "c_symbol": "poly_giga_44_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_45",
     "c_symbol": "poly_giga_45_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_46",
     "c_symbol": "poly_giga_46_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_53",
     "c_symbol": "poly_giga_53_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_54",
     "c_symbol": "poly_giga_54_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_55",
     "c_symbol": "poly_giga_55_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_56",
     "c_symbol": "poly_giga_56_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_57",
     "c_symbol": "poly_giga_57_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_58",
     "c_symbol": "poly_giga_58_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_59",
     "c_symbol": "poly_giga_59_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_60",
     "c_symbol": "poly_giga_60_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_61",
     "c_symbol": "poly_giga_61_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_63",
     "c_symbol": "poly_giga_63_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_64",
     "c_symbol": "poly_giga_64_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_65",
     "c_symbol": "poly_giga_65_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_66",
     "c_symbol": "poly_giga_66_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_67",
     "c_symbol": "poly_giga_67_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_68",
     "c_symbol": "poly_giga_68_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_69",
     "c_symbol": "poly_giga_69_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_70",
     "c_symbol": "poly_giga_70_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_72",
     "c_symbol": "poly_giga_72_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_73",
     "c_symbol": "poly_giga_73_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_74",
     "c_symbol": "poly_giga_74_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_75",
     "c_symbol": "poly_giga_75_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_76",
     "c_symbol": "poly_giga_76_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_77",
     "c_symbol": "poly_giga_77_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_78",
     "c_symbol": "poly_giga_78_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_79",
     "c_symbol": "poly_giga_79_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_80",
     "c_symbol": "poly_giga_80_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_81",
     "c_symbol": "poly_giga_81_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_83",
     "c_symbol": "poly_giga_83_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_85",
     "c_symbol": "poly_giga_85_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_86",
     "c_symbol": "poly_giga_86_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_87",
     "c_symbol": "poly_giga_87_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_89",
     "c_symbol": "poly_giga_89_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_93",
     "c_symbol": "poly_giga_93_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_96",
     "c_symbol": "poly_giga_96_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_99",
     "c_symbol": "poly_giga_99_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_106",
     "c_symbol": "poly_giga_106_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_108",
     "c_symbol": "poly_giga_108_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_111",
     "c_symbol": "poly_giga_111_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_113",
     "c_symbol": "poly_giga_113_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_115",
     "c_symbol": "poly_giga_115_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_116",
     "c_symbol": "poly_giga_116_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_118",
     "c_symbol": "poly_giga_118_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_119",
     "c_symbol": "poly_giga_119_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_120",
     "c_symbol": "poly_giga_120_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_121",
     "c_symbol": "poly_giga_121_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_122",
     "c_symbol": "poly_giga_122_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_124",
     "c_symbol": "poly_giga_124_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_125",
     "c_symbol": "poly_giga_125_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_127",
     "c_symbol": "poly_giga_127_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_128",
     "c_symbol": "poly_giga_128_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_130",
     "c_symbol": "poly_giga_130_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_131",
     "c_symbol": "poly_giga_131_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_132",
     "c_symbol": "poly_giga_132_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_133",
     "c_symbol": "poly_giga_133_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_134",
     "c_symbol": "poly_giga_134_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "giga_136",
     "c_symbol": "poly_giga_136_c",
-    "kind": "transpiled",
-    "source": "giga.py"
+    "source": "giga.py",
+    "kind": "transpiled"
   },
   {
     "name": "g1",
     "c_symbol": "g1_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g2",
     "c_symbol": "g2_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g3",
     "c_symbol": "g3_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g4",
     "c_symbol": "g4_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g5",
     "c_symbol": "g5_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g6",
     "c_symbol": "g6_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g7",
     "c_symbol": "g7_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g8",
     "c_symbol": "g8_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g9",
     "c_symbol": "g9_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g10",
     "c_symbol": "g10_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g11",
     "c_symbol": "g11_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g12",
     "c_symbol": "g12_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g13",
     "c_symbol": "g13_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g14",
     "c_symbol": "g14_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g15",
     "c_symbol": "g15_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g16",
     "c_symbol": "g16_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g17",
     "c_symbol": "g17_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g18",
     "c_symbol": "g18_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g19",
     "c_symbol": "g19_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g20",
     "c_symbol": "g20_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g21",
     "c_symbol": "g21_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g22",
     "c_symbol": "g22_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g23",
     "c_symbol": "g23_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g24",
     "c_symbol": "g24_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g25",
     "c_symbol": "g25_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g26",
     "c_symbol": "g26_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g27",
     "c_symbol": "g27_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g28",
     "c_symbol": "g28_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g29",
     "c_symbol": "g29_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g30",
     "c_symbol": "g30_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g31",
     "c_symbol": "g31_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g32",
     "c_symbol": "g32_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g33",
     "c_symbol": "g33_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g34",
     "c_symbol": "g34_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g35",
     "c_symbol": "g35_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g36",
     "c_symbol": "g36_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g37",
     "c_symbol": "g37_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g38",
     "c_symbol": "g38_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g39",
     "c_symbol": "g39_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g40",
     "c_symbol": "g40_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g41",
     "c_symbol": "g41_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g42",
     "c_symbol": "g42_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g43",
     "c_symbol": "g43_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g44",
     "c_symbol": "g44_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g45",
     "c_symbol": "g45_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g46",
     "c_symbol": "g46_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g47",
     "c_symbol": "g47_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g48",
     "c_symbol": "g48_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g49",
     "c_symbol": "g49_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g50",
     "c_symbol": "g50_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g51",
     "c_symbol": "g51_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g52",
     "c_symbol": "g52_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g53",
     "c_symbol": "g53_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g54",
     "c_symbol": "g54_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g55",
     "c_symbol": "g55_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g56",
     "c_symbol": "g56_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g57",
     "c_symbol": "g57_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g58",
     "c_symbol": "g58_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g59",
     "c_symbol": "g59_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g60",
     "c_symbol": "g60_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g61",
     "c_symbol": "g61_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g62",
     "c_symbol": "g62_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g63",
     "c_symbol": "g63_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g64",
     "c_symbol": "g64_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g65",
     "c_symbol": "g65_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g66",
     "c_symbol": "g66_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g67",
     "c_symbol": "g67_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g68",
     "c_symbol": "g68_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g69",
     "c_symbol": "g69_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g70",
     "c_symbol": "g70_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g71",
     "c_symbol": "g71_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g72",
     "c_symbol": "g72_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g73",
     "c_symbol": "g73_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g74",
     "c_symbol": "g74_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g75",
     "c_symbol": "g75_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g76",
     "c_symbol": "g76_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g77",
     "c_symbol": "g77_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g78",
     "c_symbol": "g78_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g79",
     "c_symbol": "g79_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g80",
     "c_symbol": "g80_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g81",
     "c_symbol": "g81_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g83",
     "c_symbol": "g83_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g84",
     "c_symbol": "g84_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g85",
     "c_symbol": "g85_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g86",
     "c_symbol": "g86_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g87",
     "c_symbol": "g87_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g88",
     "c_symbol": "g88_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g89",
     "c_symbol": "g89_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g90",
     "c_symbol": "g90_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g91",
     "c_symbol": "g91_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g92",
     "c_symbol": "g92_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g93",
     "c_symbol": "g93_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g94",
     "c_symbol": "g94_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g95",
     "c_symbol": "g95_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g96",
     "c_symbol": "g96_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g97",
     "c_symbol": "g97_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g98",
     "c_symbol": "g98_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "g99",
     "c_symbol": "g99_c",
-    "kind": "transpiled",
-    "source": "ops_poly.py"
+    "source": "ops_poly.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_110",
     "c_symbol": "poly_110_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_2",
     "c_symbol": "poly_2_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_9",
     "c_symbol": "poly_9_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_21",
     "c_symbol": "poly_21_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_29",
     "c_symbol": "poly_29_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_33",
     "c_symbol": "poly_33_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_35",
     "c_symbol": "poly_35_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_37",
     "c_symbol": "poly_37_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_40",
     "c_symbol": "poly_40_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_42",
     "c_symbol": "poly_42_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_42_serendipity",
     "c_symbol": "poly_42_serendipity",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_44",
     "c_symbol": "poly_44_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_45",
     "c_symbol": "poly_45_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_46",
     "c_symbol": "poly_46_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_50",
     "c_symbol": "poly_50_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_54",
     "c_symbol": "poly_54_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_55",
     "c_symbol": "poly_55_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_58",
     "c_symbol": "poly_58_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_61",
     "c_symbol": "poly_61_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_62",
     "c_symbol": "poly_62_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_65",
     "c_symbol": "poly_65_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_70",
     "c_symbol": "poly_70_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_72",
     "c_symbol": "poly_72_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_73",
     "c_symbol": "poly_73_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_74",
     "c_symbol": "poly_74_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_78",
     "c_symbol": "poly_78_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_81",
     "c_symbol": "poly_81_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_82",
     "c_symbol": "poly_82_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_94",
     "c_symbol": "poly_94_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_95",
     "c_symbol": "poly_95_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_96",
     "c_symbol": "poly_96_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_97",
     "c_symbol": "poly_97_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_100",
     "c_symbol": "poly_100_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_102_serendipity",
     "c_symbol": "poly_102_serendipity",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_117",
     "c_symbol": "poly_117_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_118",
     "c_symbol": "poly_118_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_120",
     "c_symbol": "poly_120_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_125",
     "c_symbol": "poly_125_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_128",
     "c_symbol": "poly_128_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_134",
     "c_symbol": "poly_134_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_135",
     "c_symbol": "poly_135_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_142",
     "c_symbol": "poly_142_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_146",
     "c_symbol": "poly_146_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_150",
     "c_symbol": "poly_150_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_152",
     "c_symbol": "poly_152_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_153",
     "c_symbol": "poly_153_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_157",
     "c_symbol": "poly_157_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_164",
     "c_symbol": "poly_164_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_167",
     "c_symbol": "poly_167_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_171",
     "c_symbol": "poly_171_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_179",
     "c_symbol": "poly_179_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_180",
     "c_symbol": "poly_180_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_184",
     "c_symbol": "poly_184_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_187",
     "c_symbol": "poly_187_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_188",
     "c_symbol": "poly_188_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_189",
     "c_symbol": "poly_189_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_190",
     "c_symbol": "poly_190_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_191",
     "c_symbol": "poly_191_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_192",
     "c_symbol": "poly_192_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_193",
     "c_symbol": "poly_193_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_194",
     "c_symbol": "poly_194_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_195",
     "c_symbol": "poly_195_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_196",
     "c_symbol": "poly_196_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_197",
     "c_symbol": "poly_197_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_198",
     "c_symbol": "poly_198_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_199",
     "c_symbol": "poly_199_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_123",
     "c_symbol": "poly_123_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_161",
     "c_symbol": "poly_161_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_103",
     "c_symbol": "poly_103_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_201",
     "c_symbol": "poly_201_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_202",
     "c_symbol": "poly_202_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_203",
     "c_symbol": "poly_203_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_204",
     "c_symbol": "poly_204_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_205",
     "c_symbol": "poly_205_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_206",
     "c_symbol": "poly_206_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_207",
     "c_symbol": "poly_207_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_208",
     "c_symbol": "poly_208_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_209",
     "c_symbol": "poly_209_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_210",
     "c_symbol": "poly_210_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_211",
     "c_symbol": "poly_211_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_212",
     "c_symbol": "poly_212_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_213",
     "c_symbol": "poly_213_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_214",
     "c_symbol": "poly_214_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_215",
     "c_symbol": "poly_215_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_216",
     "c_symbol": "poly_216_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_217",
     "c_symbol": "poly_217_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_218",
     "c_symbol": "poly_218_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_219",
     "c_symbol": "poly_219_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_220",
     "c_symbol": "poly_220_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_221",
     "c_symbol": "poly_221_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_222",
     "c_symbol": "poly_222_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_223",
     "c_symbol": "poly_223_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_224",
     "c_symbol": "poly_224_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_225",
     "c_symbol": "poly_225_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_226",
     "c_symbol": "poly_226_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_227",
     "c_symbol": "poly_227_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_228",
     "c_symbol": "poly_228_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_229",
     "c_symbol": "poly_229_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_230",
     "c_symbol": "poly_230_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_231",
     "c_symbol": "poly_231_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_232",
     "c_symbol": "poly_232_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_233",
     "c_symbol": "poly_233_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_234",
     "c_symbol": "poly_234_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_235",
     "c_symbol": "poly_235_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_236",
     "c_symbol": "poly_236_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_237",
     "c_symbol": "poly_237_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_238",
     "c_symbol": "poly_238_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_239",
     "c_symbol": "poly_239_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_240",
     "c_symbol": "poly_240_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_241",
     "c_symbol": "poly_241_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_242",
     "c_symbol": "poly_242_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_243",
     "c_symbol": "poly_243_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_244",
     "c_symbol": "poly_244_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_245",
     "c_symbol": "poly_245_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_246",
     "c_symbol": "poly_246_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_247",
     "c_symbol": "poly_247_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_248",
     "c_symbol": "poly_248_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_249",
     "c_symbol": "poly_249_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_250",
     "c_symbol": "poly_250_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_251",
     "c_symbol": "poly_251_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_252",
     "c_symbol": "poly_252_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_253",
     "c_symbol": "poly_253_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_254",
     "c_symbol": "poly_254_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_255",
     "c_symbol": "poly_255_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_256",
     "c_symbol": "poly_256_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_257",
     "c_symbol": "poly_257_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_258",
     "c_symbol": "poly_258_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_259",
     "c_symbol": "poly_259_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_260",
     "c_symbol": "poly_260_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_261",
     "c_symbol": "poly_261_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_262",
     "c_symbol": "poly_262_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_263",
     "c_symbol": "poly_263_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_264",
     "c_symbol": "poly_264_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_265",
     "c_symbol": "poly_265_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_266",
     "c_symbol": "poly_266_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_267",
     "c_symbol": "poly_267_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_268",
     "c_symbol": "poly_268_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_269",
     "c_symbol": "poly_269_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_270",
     "c_symbol": "poly_270_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_271",
     "c_symbol": "poly_271_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_272",
     "c_symbol": "poly_272_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_273",
     "c_symbol": "poly_273_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_274",
     "c_symbol": "poly_274_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_275",
     "c_symbol": "poly_275_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_276",
     "c_symbol": "poly_276_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_277",
     "c_symbol": "poly_277_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_278",
     "c_symbol": "poly_278_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_279",
     "c_symbol": "poly_279_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_280",
     "c_symbol": "poly_280_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_281",
     "c_symbol": "poly_281_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_282",
     "c_symbol": "poly_282_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_283",
     "c_symbol": "poly_283_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_284",
     "c_symbol": "poly_284_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_285",
     "c_symbol": "poly_285_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_286",
     "c_symbol": "poly_286_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_287",
     "c_symbol": "poly_287_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_288",
     "c_symbol": "poly_288_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_289",
     "c_symbol": "poly_289_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_290",
     "c_symbol": "poly_290_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_291",
     "c_symbol": "poly_291_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_292",
     "c_symbol": "poly_292_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_293",
     "c_symbol": "poly_293_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_294",
     "c_symbol": "poly_294_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_295",
     "c_symbol": "poly_295_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_296",
     "c_symbol": "poly_296_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_297",
     "c_symbol": "poly_297_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_298",
     "c_symbol": "poly_298_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_299",
     "c_symbol": "poly_299_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_300",
     "c_symbol": "poly_300_hand",
-    "kind": "hand",
-    "source": "poly_hand.h"
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_1",
     "c_symbol": "poly_1_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_3",
     "c_symbol": "poly_3_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_4",
     "c_symbol": "poly_4_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_5",
     "c_symbol": "poly_5_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_6",
     "c_symbol": "poly_6_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_7",
     "c_symbol": "poly_7_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_8",
     "c_symbol": "poly_8_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_10",
     "c_symbol": "poly_10_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_11",
     "c_symbol": "poly_11_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_12",
     "c_symbol": "poly_12_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_13",
     "c_symbol": "poly_13_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_14",
     "c_symbol": "poly_14_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_15",
     "c_symbol": "poly_15_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_16",
     "c_symbol": "poly_16_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_17",
     "c_symbol": "poly_17_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_18",
     "c_symbol": "poly_18_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_19",
     "c_symbol": "poly_19_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_20",
     "c_symbol": "poly_20_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_22",
     "c_symbol": "poly_22_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_23",
     "c_symbol": "poly_23_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_24",
     "c_symbol": "poly_24_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_25",
     "c_symbol": "poly_25_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_26",
     "c_symbol": "poly_26_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_27",
     "c_symbol": "poly_27_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_28",
     "c_symbol": "poly_28_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_30",
     "c_symbol": "poly_30_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_31",
     "c_symbol": "poly_31_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_32",
     "c_symbol": "poly_32_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_34",
     "c_symbol": "poly_34_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_36",
     "c_symbol": "poly_36_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_38",
     "c_symbol": "poly_38_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_39",
     "c_symbol": "poly_39_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_41",
     "c_symbol": "poly_41_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_43",
     "c_symbol": "poly_43_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_47",
     "c_symbol": "poly_47_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_48",
     "c_symbol": "poly_48_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_49",
     "c_symbol": "poly_49_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_51",
     "c_symbol": "poly_51_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_52",
     "c_symbol": "poly_52_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_53",
     "c_symbol": "poly_53_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_56",
     "c_symbol": "poly_56_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_57",
     "c_symbol": "poly_57_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_59",
     "c_symbol": "poly_59_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_60",
     "c_symbol": "poly_60_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_63",
     "c_symbol": "poly_63_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_64",
     "c_symbol": "poly_64_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_66",
     "c_symbol": "poly_66_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_67",
     "c_symbol": "poly_67_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_68",
     "c_symbol": "poly_68_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_69",
     "c_symbol": "poly_69_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_71",
     "c_symbol": "poly_71_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_75",
     "c_symbol": "poly_75_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_76",
     "c_symbol": "poly_76_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_77",
     "c_symbol": "poly_77_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_79",
     "c_symbol": "poly_79_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_80",
     "c_symbol": "poly_80_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_83",
     "c_symbol": "poly_83_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_84",
     "c_symbol": "poly_84_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_85",
     "c_symbol": "poly_85_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_86",
     "c_symbol": "poly_86_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_87",
     "c_symbol": "poly_87_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_88",
     "c_symbol": "poly_88_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_89",
     "c_symbol": "poly_89_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_90",
     "c_symbol": "poly_90_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_91",
     "c_symbol": "poly_91_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_92",
     "c_symbol": "poly_92_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_93",
     "c_symbol": "poly_93_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_98",
     "c_symbol": "poly_98_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_99",
     "c_symbol": "poly_99_c",
-    "kind": "transpiled",
-    "source": "poly100.py"
+    "source": "poly100.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_101",
     "c_symbol": "poly_101_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_102",
     "c_symbol": "poly_102_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_104",
     "c_symbol": "poly_104_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_105",
     "c_symbol": "poly_105_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_106",
     "c_symbol": "poly_106_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_107",
     "c_symbol": "poly_107_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_108",
     "c_symbol": "poly_108_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_109",
     "c_symbol": "poly_109_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_111",
     "c_symbol": "poly_111_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_112",
     "c_symbol": "poly_112_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_113",
     "c_symbol": "poly_113_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_114",
     "c_symbol": "poly_114_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_115",
     "c_symbol": "poly_115_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_116",
     "c_symbol": "poly_116_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_121",
     "c_symbol": "poly_121_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_123_old",
     "c_symbol": "poly_123_old_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_124",
     "c_symbol": "poly_124_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_126",
     "c_symbol": "poly_126_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_127",
     "c_symbol": "poly_127_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_129",
     "c_symbol": "poly_129_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_130",
     "c_symbol": "poly_130_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_131",
     "c_symbol": "poly_131_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_132",
     "c_symbol": "poly_132_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_133",
     "c_symbol": "poly_133_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_136",
     "c_symbol": "poly_136_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_137",
     "c_symbol": "poly_137_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_138",
     "c_symbol": "poly_138_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_139",
     "c_symbol": "poly_139_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_140",
     "c_symbol": "poly_140_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_141",
     "c_symbol": "poly_141_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_143",
     "c_symbol": "poly_143_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_144",
     "c_symbol": "poly_144_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_145",
     "c_symbol": "poly_145_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_147",
     "c_symbol": "poly_147_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_148",
     "c_symbol": "poly_148_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_149",
     "c_symbol": "poly_149_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_151",
     "c_symbol": "poly_151_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_154",
     "c_symbol": "poly_154_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_155",
     "c_symbol": "poly_155_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_156",
     "c_symbol": "poly_156_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_158",
     "c_symbol": "poly_158_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_159",
     "c_symbol": "poly_159_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_160",
     "c_symbol": "poly_160_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_162",
     "c_symbol": "poly_162_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_163",
     "c_symbol": "poly_163_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_165",
     "c_symbol": "poly_165_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_166",
     "c_symbol": "poly_166_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_168",
     "c_symbol": "poly_168_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_169",
     "c_symbol": "poly_169_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_170",
     "c_symbol": "poly_170_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_172",
     "c_symbol": "poly_172_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_173",
     "c_symbol": "poly_173_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_174",
     "c_symbol": "poly_174_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_175",
     "c_symbol": "poly_175_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_176",
     "c_symbol": "poly_176_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_177",
     "c_symbol": "poly_177_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_178",
     "c_symbol": "poly_178_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_181",
     "c_symbol": "poly_181_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_182",
     "c_symbol": "poly_182_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_183",
     "c_symbol": "poly_183_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_185",
     "c_symbol": "poly_185_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_186",
     "c_symbol": "poly_186_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_200",
     "c_symbol": "poly_200_c",
-    "kind": "transpiled",
-    "source": "poly200.py"
+    "source": "poly200.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_301",
     "c_symbol": "poly_301_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_302",
     "c_symbol": "poly_302_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_303",
     "c_symbol": "poly_303_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_304",
     "c_symbol": "poly_304_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_305",
     "c_symbol": "poly_305_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_306",
     "c_symbol": "poly_306_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_307",
     "c_symbol": "poly_307_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_308",
     "c_symbol": "poly_308_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_309",
     "c_symbol": "poly_309_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_310",
     "c_symbol": "poly_310_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_311",
     "c_symbol": "poly_311_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_312",
     "c_symbol": "poly_312_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_313",
     "c_symbol": "poly_313_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_314",
     "c_symbol": "poly_314_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_315",
     "c_symbol": "poly_315_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_316",
     "c_symbol": "poly_316_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_317",
     "c_symbol": "poly_317_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_318",
     "c_symbol": "poly_318_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_319",
     "c_symbol": "poly_319_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_320",
     "c_symbol": "poly_320_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_321",
     "c_symbol": "poly_321_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_322",
     "c_symbol": "poly_322_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_323",
     "c_symbol": "poly_323_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_324",
     "c_symbol": "poly_324_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_325",
     "c_symbol": "poly_325_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_326",
     "c_symbol": "poly_326_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_327",
     "c_symbol": "poly_327_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_328",
     "c_symbol": "poly_328_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_329",
     "c_symbol": "poly_329_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_330",
     "c_symbol": "poly_330_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_331",
     "c_symbol": "poly_331_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_332",
     "c_symbol": "poly_332_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_333",
     "c_symbol": "poly_333_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_334",
     "c_symbol": "poly_334_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_335",
     "c_symbol": "poly_335_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_336",
     "c_symbol": "poly_336_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_337",
     "c_symbol": "poly_337_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_338",
     "c_symbol": "poly_338_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_339",
     "c_symbol": "poly_339_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_340",
     "c_symbol": "poly_340_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_341",
     "c_symbol": "poly_341_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_342",
     "c_symbol": "poly_342_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_343",
     "c_symbol": "poly_343_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_344",
     "c_symbol": "poly_344_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_345",
     "c_symbol": "poly_345_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_346",
     "c_symbol": "poly_346_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_347",
     "c_symbol": "poly_347_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_348",
     "c_symbol": "poly_348_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_349",
     "c_symbol": "poly_349_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_350",
     "c_symbol": "poly_350_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_351",
     "c_symbol": "poly_351_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_352",
     "c_symbol": "poly_352_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_353",
     "c_symbol": "poly_353_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_354",
     "c_symbol": "poly_354_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_355",
     "c_symbol": "poly_355_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_356",
     "c_symbol": "poly_356_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_357",
     "c_symbol": "poly_357_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_358",
     "c_symbol": "poly_358_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_359",
     "c_symbol": "poly_359_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_360",
     "c_symbol": "poly_360_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_361",
     "c_symbol": "poly_361_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_362",
     "c_symbol": "poly_362_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_363",
     "c_symbol": "poly_363_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_364",
     "c_symbol": "poly_364_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_365",
     "c_symbol": "poly_365_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_366",
     "c_symbol": "poly_366_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_367",
     "c_symbol": "poly_367_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_368",
     "c_symbol": "poly_368_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_369",
     "c_symbol": "poly_369_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_370",
     "c_symbol": "poly_370_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_371",
     "c_symbol": "poly_371_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_372",
     "c_symbol": "poly_372_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_373",
     "c_symbol": "poly_373_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_374",
     "c_symbol": "poly_374_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_375",
     "c_symbol": "poly_375_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_376",
     "c_symbol": "poly_376_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_377",
     "c_symbol": "poly_377_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_378",
     "c_symbol": "poly_378_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_379",
     "c_symbol": "poly_379_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_380",
     "c_symbol": "poly_380_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_381",
     "c_symbol": "poly_381_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_382",
     "c_symbol": "poly_382_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_383",
     "c_symbol": "poly_383_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_384",
     "c_symbol": "poly_384_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_385",
     "c_symbol": "poly_385_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_386",
     "c_symbol": "poly_386_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_387",
     "c_symbol": "poly_387_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_388",
     "c_symbol": "poly_388_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_389",
     "c_symbol": "poly_389_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_390",
     "c_symbol": "poly_390_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_391",
     "c_symbol": "poly_391_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_392",
     "c_symbol": "poly_392_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_393",
     "c_symbol": "poly_393_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_394",
     "c_symbol": "poly_394_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_395",
     "c_symbol": "poly_395_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_396",
     "c_symbol": "poly_396_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_397",
     "c_symbol": "poly_397_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_398",
     "c_symbol": "poly_398_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_399",
     "c_symbol": "poly_399_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_400",
     "c_symbol": "poly_400_c",
-    "kind": "transpiled",
-    "source": "poly400.py"
+    "source": "poly400.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_401",
     "c_symbol": "poly_401_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_402",
     "c_symbol": "poly_402_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_403",
     "c_symbol": "poly_403_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_404",
     "c_symbol": "poly_404_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_405",
     "c_symbol": "poly_405_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_406",
     "c_symbol": "poly_406_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_407",
     "c_symbol": "poly_407_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_408",
     "c_symbol": "poly_408_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_409",
     "c_symbol": "poly_409_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_410",
     "c_symbol": "poly_410_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_411",
     "c_symbol": "poly_411_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_412",
     "c_symbol": "poly_412_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_413",
     "c_symbol": "poly_413_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_414",
     "c_symbol": "poly_414_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_415",
     "c_symbol": "poly_415_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_416",
     "c_symbol": "poly_416_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_417",
     "c_symbol": "poly_417_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_418",
     "c_symbol": "poly_418_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_419",
     "c_symbol": "poly_419_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_420",
     "c_symbol": "poly_420_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_421",
     "c_symbol": "poly_421_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_422",
     "c_symbol": "poly_422_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_423",
     "c_symbol": "poly_423_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_424",
     "c_symbol": "poly_424_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_425",
     "c_symbol": "poly_425_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_426",
     "c_symbol": "poly_426_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_427",
     "c_symbol": "poly_427_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_428",
     "c_symbol": "poly_428_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_429",
     "c_symbol": "poly_429_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_430",
     "c_symbol": "poly_430_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_431",
     "c_symbol": "poly_431_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_432",
     "c_symbol": "poly_432_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_433",
     "c_symbol": "poly_433_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_434",
     "c_symbol": "poly_434_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_435",
     "c_symbol": "poly_435_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_436",
     "c_symbol": "poly_436_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_437",
     "c_symbol": "poly_437_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_438",
     "c_symbol": "poly_438_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_439",
     "c_symbol": "poly_439_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_440",
     "c_symbol": "poly_440_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_441",
     "c_symbol": "poly_441_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_442",
     "c_symbol": "poly_442_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_443",
     "c_symbol": "poly_443_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_444",
     "c_symbol": "poly_444_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_445",
     "c_symbol": "poly_445_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_446",
     "c_symbol": "poly_446_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_447",
     "c_symbol": "poly_447_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_448",
     "c_symbol": "poly_448_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_449",
     "c_symbol": "poly_449_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_450",
     "c_symbol": "poly_450_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_451",
     "c_symbol": "poly_451_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_452",
     "c_symbol": "poly_452_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_453",
     "c_symbol": "poly_453_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_454",
     "c_symbol": "poly_454_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_455",
     "c_symbol": "poly_455_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_456",
     "c_symbol": "poly_456_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_457",
     "c_symbol": "poly_457_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_458",
     "c_symbol": "poly_458_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_459",
     "c_symbol": "poly_459_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_460",
     "c_symbol": "poly_460_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_461",
     "c_symbol": "poly_461_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_462",
     "c_symbol": "poly_462_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_463",
     "c_symbol": "poly_463_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_464",
     "c_symbol": "poly_464_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_465",
     "c_symbol": "poly_465_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_466",
     "c_symbol": "poly_466_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_467",
     "c_symbol": "poly_467_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_467_old",
     "c_symbol": "poly_467_old_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_468",
     "c_symbol": "poly_468_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_469",
     "c_symbol": "poly_469_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_470",
     "c_symbol": "poly_470_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_471",
     "c_symbol": "poly_471_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_472",
     "c_symbol": "poly_472_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_473",
     "c_symbol": "poly_473_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_474",
     "c_symbol": "poly_474_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_475",
     "c_symbol": "poly_475_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_476",
     "c_symbol": "poly_476_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_477",
     "c_symbol": "poly_477_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_478",
     "c_symbol": "poly_478_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_479",
     "c_symbol": "poly_479_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_480",
     "c_symbol": "poly_480_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_481",
     "c_symbol": "poly_481_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_482",
     "c_symbol": "poly_482_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_483",
     "c_symbol": "poly_483_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_484",
     "c_symbol": "poly_484_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_484_old",
     "c_symbol": "poly_484_old_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_485",
     "c_symbol": "poly_485_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_486",
     "c_symbol": "poly_486_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_487",
     "c_symbol": "poly_487_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_488",
     "c_symbol": "poly_488_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_489",
     "c_symbol": "poly_489_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_490",
     "c_symbol": "poly_490_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_491",
     "c_symbol": "poly_491_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_492",
     "c_symbol": "poly_492_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_493",
     "c_symbol": "poly_493_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_494",
     "c_symbol": "poly_494_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_495",
     "c_symbol": "poly_495_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_496",
     "c_symbol": "poly_496_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_497",
     "c_symbol": "poly_497_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_498",
     "c_symbol": "poly_498_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_499",
     "c_symbol": "poly_499_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_500",
     "c_symbol": "poly_500_c",
-    "kind": "transpiled",
-    "source": "poly500.py"
+    "source": "poly500.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_501",
     "c_symbol": "poly_501_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_502",
     "c_symbol": "poly_502_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_503",
     "c_symbol": "poly_503_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_504",
     "c_symbol": "poly_504_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_505",
     "c_symbol": "poly_505_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_506",
     "c_symbol": "poly_506_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_507",
     "c_symbol": "poly_507_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_508",
     "c_symbol": "poly_508_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_509",
     "c_symbol": "poly_509_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_510",
     "c_symbol": "poly_510_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_511",
     "c_symbol": "poly_511_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_512",
     "c_symbol": "poly_512_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_513",
     "c_symbol": "poly_513_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_514",
     "c_symbol": "poly_514_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_515",
     "c_symbol": "poly_515_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_516",
     "c_symbol": "poly_516_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_517",
     "c_symbol": "poly_517_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_518",
     "c_symbol": "poly_518_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_519",
     "c_symbol": "poly_519_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_520",
     "c_symbol": "poly_520_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_521",
     "c_symbol": "poly_521_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_522",
     "c_symbol": "poly_522_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_523",
     "c_symbol": "poly_523_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_524",
     "c_symbol": "poly_524_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_525",
     "c_symbol": "poly_525_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_526",
     "c_symbol": "poly_526_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_527",
     "c_symbol": "poly_527_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_528",
     "c_symbol": "poly_528_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_529",
     "c_symbol": "poly_529_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_530",
     "c_symbol": "poly_530_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_531",
     "c_symbol": "poly_531_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_532",
     "c_symbol": "poly_532_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_533",
     "c_symbol": "poly_533_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_534",
     "c_symbol": "poly_534_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_535",
     "c_symbol": "poly_535_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_536",
     "c_symbol": "poly_536_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_537",
     "c_symbol": "poly_537_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_538",
     "c_symbol": "poly_538_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_539",
     "c_symbol": "poly_539_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_540",
     "c_symbol": "poly_540_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_541",
     "c_symbol": "poly_541_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_542",
     "c_symbol": "poly_542_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_543",
     "c_symbol": "poly_543_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_544",
     "c_symbol": "poly_544_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_545",
     "c_symbol": "poly_545_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_546",
     "c_symbol": "poly_546_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_547",
     "c_symbol": "poly_547_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_548",
     "c_symbol": "poly_548_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_549",
     "c_symbol": "poly_549_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_550",
     "c_symbol": "poly_550_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_551",
     "c_symbol": "poly_551_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_552",
     "c_symbol": "poly_552_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_553",
     "c_symbol": "poly_553_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_554",
     "c_symbol": "poly_554_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_555",
     "c_symbol": "poly_555_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_556",
     "c_symbol": "poly_556_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_557",
     "c_symbol": "poly_557_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_558",
     "c_symbol": "poly_558_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_559",
     "c_symbol": "poly_559_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_560",
     "c_symbol": "poly_560_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_561",
     "c_symbol": "poly_561_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_562",
     "c_symbol": "poly_562_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_563",
     "c_symbol": "poly_563_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_564",
     "c_symbol": "poly_564_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_565",
     "c_symbol": "poly_565_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_566",
     "c_symbol": "poly_566_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_567",
     "c_symbol": "poly_567_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_568",
     "c_symbol": "poly_568_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_569",
     "c_symbol": "poly_569_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_570",
     "c_symbol": "poly_570_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_571",
     "c_symbol": "poly_571_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_572",
     "c_symbol": "poly_572_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_573",
     "c_symbol": "poly_573_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_574",
     "c_symbol": "poly_574_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_575",
     "c_symbol": "poly_575_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_576",
     "c_symbol": "poly_576_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_577",
     "c_symbol": "poly_577_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_578",
     "c_symbol": "poly_578_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_579",
     "c_symbol": "poly_579_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_580",
     "c_symbol": "poly_580_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_581",
     "c_symbol": "poly_581_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_582",
     "c_symbol": "poly_582_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_583",
     "c_symbol": "poly_583_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_584",
     "c_symbol": "poly_584_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_585",
     "c_symbol": "poly_585_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_586",
     "c_symbol": "poly_586_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_587",
     "c_symbol": "poly_587_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_588",
     "c_symbol": "poly_588_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_589",
     "c_symbol": "poly_589_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_590",
     "c_symbol": "poly_590_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_591",
     "c_symbol": "poly_591_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_592",
     "c_symbol": "poly_592_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_593",
     "c_symbol": "poly_593_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_594",
     "c_symbol": "poly_594_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_595",
     "c_symbol": "poly_595_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_596",
     "c_symbol": "poly_596_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_597",
     "c_symbol": "poly_597_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_598",
     "c_symbol": "poly_598_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_599",
     "c_symbol": "poly_599_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_600",
     "c_symbol": "poly_600_c",
-    "kind": "transpiled",
-    "source": "poly600.py"
+    "source": "poly600.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_601",
     "c_symbol": "poly_601_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_602",
     "c_symbol": "poly_602_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_603",
     "c_symbol": "poly_603_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_604",
     "c_symbol": "poly_604_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_605",
     "c_symbol": "poly_605_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_606",
     "c_symbol": "poly_606_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_607",
     "c_symbol": "poly_607_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_608",
     "c_symbol": "poly_608_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_609",
     "c_symbol": "poly_609_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_610",
     "c_symbol": "poly_610_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_611",
     "c_symbol": "poly_611_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_612",
     "c_symbol": "poly_612_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_613",
     "c_symbol": "poly_613_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_614",
     "c_symbol": "poly_614_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_615",
     "c_symbol": "poly_615_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_616",
     "c_symbol": "poly_616_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_617",
     "c_symbol": "poly_617_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_618",
     "c_symbol": "poly_618_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_619",
     "c_symbol": "poly_619_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_620",
     "c_symbol": "poly_620_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_621",
     "c_symbol": "poly_621_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_622",
     "c_symbol": "poly_622_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_623",
     "c_symbol": "poly_623_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_624",
     "c_symbol": "poly_624_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_625",
     "c_symbol": "poly_625_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_626",
     "c_symbol": "poly_626_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_627",
     "c_symbol": "poly_627_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_628",
     "c_symbol": "poly_628_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_629",
     "c_symbol": "poly_629_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_630",
     "c_symbol": "poly_630_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_631",
     "c_symbol": "poly_631_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_632",
     "c_symbol": "poly_632_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_633",
     "c_symbol": "poly_633_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_634",
     "c_symbol": "poly_634_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_635",
     "c_symbol": "poly_635_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_636",
     "c_symbol": "poly_636_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_637",
     "c_symbol": "poly_637_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_638",
     "c_symbol": "poly_638_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_639",
     "c_symbol": "poly_639_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_640",
     "c_symbol": "poly_640_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_641",
     "c_symbol": "poly_641_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_642",
     "c_symbol": "poly_642_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_643",
     "c_symbol": "poly_643_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_644",
     "c_symbol": "poly_644_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_645",
     "c_symbol": "poly_645_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_646",
     "c_symbol": "poly_646_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_647",
     "c_symbol": "poly_647_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_648",
     "c_symbol": "poly_648_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_649",
     "c_symbol": "poly_649_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_650",
     "c_symbol": "poly_650_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_651",
     "c_symbol": "poly_651_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_652",
     "c_symbol": "poly_652_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_653",
     "c_symbol": "poly_653_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_654",
     "c_symbol": "poly_654_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_655",
     "c_symbol": "poly_655_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_656",
     "c_symbol": "poly_656_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_657",
     "c_symbol": "poly_657_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_658",
     "c_symbol": "poly_658_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_659",
     "c_symbol": "poly_659_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_660",
     "c_symbol": "poly_660_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_661",
     "c_symbol": "poly_661_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_662",
     "c_symbol": "poly_662_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_663",
     "c_symbol": "poly_663_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_664",
     "c_symbol": "poly_664_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_665",
     "c_symbol": "poly_665_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_666",
     "c_symbol": "poly_666_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_667",
     "c_symbol": "poly_667_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_668",
     "c_symbol": "poly_668_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_669",
     "c_symbol": "poly_669_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_670",
     "c_symbol": "poly_670_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_671",
     "c_symbol": "poly_671_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_672",
     "c_symbol": "poly_672_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_673",
     "c_symbol": "poly_673_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_674",
     "c_symbol": "poly_674_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_675",
     "c_symbol": "poly_675_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_676",
     "c_symbol": "poly_676_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_677",
     "c_symbol": "poly_677_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_678",
     "c_symbol": "poly_678_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_679",
     "c_symbol": "poly_679_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_680",
     "c_symbol": "poly_680_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_681",
     "c_symbol": "poly_681_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_682",
     "c_symbol": "poly_682_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_683",
     "c_symbol": "poly_683_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_684",
     "c_symbol": "poly_684_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_685",
     "c_symbol": "poly_685_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_686",
     "c_symbol": "poly_686_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_687",
     "c_symbol": "poly_687_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_688",
     "c_symbol": "poly_688_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_689",
     "c_symbol": "poly_689_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_690",
     "c_symbol": "poly_690_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_691",
     "c_symbol": "poly_691_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_692",
     "c_symbol": "poly_692_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_693",
     "c_symbol": "poly_693_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_694",
     "c_symbol": "poly_694_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_695",
     "c_symbol": "poly_695_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_696",
     "c_symbol": "poly_696_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_697",
     "c_symbol": "poly_697_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_698",
     "c_symbol": "poly_698_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_699",
     "c_symbol": "poly_699_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_700",
     "c_symbol": "poly_700_c",
-    "kind": "transpiled",
-    "source": "poly700.py"
+    "source": "poly700.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_701",
     "c_symbol": "poly_701_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_702",
     "c_symbol": "poly_702_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_703",
     "c_symbol": "poly_703_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_704",
     "c_symbol": "poly_704_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_705",
     "c_symbol": "poly_705_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_706",
     "c_symbol": "poly_706_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_707",
     "c_symbol": "poly_707_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_708",
     "c_symbol": "poly_708_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_709",
     "c_symbol": "poly_709_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_710",
     "c_symbol": "poly_710_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_711",
     "c_symbol": "poly_711_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_712",
     "c_symbol": "poly_712_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_713",
     "c_symbol": "poly_713_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_714",
     "c_symbol": "poly_714_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_715",
     "c_symbol": "poly_715_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_716",
     "c_symbol": "poly_716_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_717",
     "c_symbol": "poly_717_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_718",
     "c_symbol": "poly_718_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_719",
     "c_symbol": "poly_719_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_720",
     "c_symbol": "poly_720_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_721",
     "c_symbol": "poly_721_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_722",
     "c_symbol": "poly_722_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_723",
     "c_symbol": "poly_723_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_724",
     "c_symbol": "poly_724_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_725",
     "c_symbol": "poly_725_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_726",
     "c_symbol": "poly_726_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_727_old",
     "c_symbol": "poly_727_old_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_727",
     "c_symbol": "poly_727_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_727_v1",
     "c_symbol": "poly_727_v1_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_727a",
     "c_symbol": "poly_727a_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_727b",
     "c_symbol": "poly_727b_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_727c",
     "c_symbol": "poly_727c_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_727d",
     "c_symbol": "poly_727d_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_727_alt",
     "c_symbol": "poly_727_alt_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_728",
     "c_symbol": "poly_728_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_729",
     "c_symbol": "poly_729_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_730",
     "c_symbol": "poly_730_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_731",
     "c_symbol": "poly_731_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_732",
     "c_symbol": "poly_732_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_733",
     "c_symbol": "poly_733_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_734",
     "c_symbol": "poly_734_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_735",
     "c_symbol": "poly_735_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_736",
     "c_symbol": "poly_736_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_737",
     "c_symbol": "poly_737_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_738",
     "c_symbol": "poly_738_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_739",
     "c_symbol": "poly_739_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_740",
     "c_symbol": "poly_740_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_741",
     "c_symbol": "poly_741_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_742",
     "c_symbol": "poly_742_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_743",
     "c_symbol": "poly_743_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_744",
     "c_symbol": "poly_744_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_745",
     "c_symbol": "poly_745_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_746",
     "c_symbol": "poly_746_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_747",
     "c_symbol": "poly_747_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_748",
     "c_symbol": "poly_748_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_749",
     "c_symbol": "poly_749_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_750",
     "c_symbol": "poly_750_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_751",
     "c_symbol": "poly_751_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_752",
     "c_symbol": "poly_752_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_753",
     "c_symbol": "poly_753_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_754",
     "c_symbol": "poly_754_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_755",
     "c_symbol": "poly_755_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_756",
     "c_symbol": "poly_756_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_757",
     "c_symbol": "poly_757_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_758",
     "c_symbol": "poly_758_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_759",
     "c_symbol": "poly_759_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_760",
     "c_symbol": "poly_760_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_761",
     "c_symbol": "poly_761_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_762",
     "c_symbol": "poly_762_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_763",
     "c_symbol": "poly_763_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_764",
     "c_symbol": "poly_764_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_765",
     "c_symbol": "poly_765_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_766",
     "c_symbol": "poly_766_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_767",
     "c_symbol": "poly_767_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_768",
     "c_symbol": "poly_768_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_769",
     "c_symbol": "poly_769_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_770",
     "c_symbol": "poly_770_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_771",
     "c_symbol": "poly_771_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_772",
     "c_symbol": "poly_772_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_773",
     "c_symbol": "poly_773_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_774",
     "c_symbol": "poly_774_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_775",
     "c_symbol": "poly_775_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_776",
     "c_symbol": "poly_776_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_777",
     "c_symbol": "poly_777_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_778",
     "c_symbol": "poly_778_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_779",
     "c_symbol": "poly_779_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_780",
     "c_symbol": "poly_780_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_781",
     "c_symbol": "poly_781_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_781_v1",
     "c_symbol": "poly_781_v1_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_782",
     "c_symbol": "poly_782_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_783",
     "c_symbol": "poly_783_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_784",
     "c_symbol": "poly_784_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_785",
     "c_symbol": "poly_785_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_786",
     "c_symbol": "poly_786_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_787",
     "c_symbol": "poly_787_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_788",
     "c_symbol": "poly_788_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_789",
     "c_symbol": "poly_789_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_790",
     "c_symbol": "poly_790_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_791",
     "c_symbol": "poly_791_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_792",
     "c_symbol": "poly_792_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_793",
     "c_symbol": "poly_793_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_794",
     "c_symbol": "poly_794_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_795",
     "c_symbol": "poly_795_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_796",
     "c_symbol": "poly_796_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_797",
     "c_symbol": "poly_797_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_798",
     "c_symbol": "poly_798_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_799",
     "c_symbol": "poly_799_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_800",
     "c_symbol": "poly_800_c",
-    "kind": "transpiled",
-    "source": "poly800.py"
+    "source": "poly800.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_801",
     "c_symbol": "poly_801_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_802",
     "c_symbol": "poly_802_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_803",
     "c_symbol": "poly_803_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_804",
     "c_symbol": "poly_804_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_805",
     "c_symbol": "poly_805_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_806",
     "c_symbol": "poly_806_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_807",
     "c_symbol": "poly_807_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_808",
     "c_symbol": "poly_808_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_809",
     "c_symbol": "poly_809_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_810",
     "c_symbol": "poly_810_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_811",
     "c_symbol": "poly_811_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_812",
     "c_symbol": "poly_812_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_813",
     "c_symbol": "poly_813_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_814",
     "c_symbol": "poly_814_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_815",
     "c_symbol": "poly_815_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_816",
     "c_symbol": "poly_816_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_817",
     "c_symbol": "poly_817_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_818",
     "c_symbol": "poly_818_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_819",
     "c_symbol": "poly_819_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_820",
     "c_symbol": "poly_820_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_821",
     "c_symbol": "poly_821_c",
-    "kind": "transpiled",
-    "source": "poly900.py"
+    "source": "poly900.py",
+    "kind": "transpiled"
   },
   {
     "name": "poly_creative3",
     "c_symbol": "poly_creative3_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_creative4",
     "c_symbol": "poly_creative4_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_creative5",
     "c_symbol": "poly_creative5_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_creative6",
     "c_symbol": "poly_creative6_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_creative7",
     "c_symbol": "poly_creative7_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_creative8",
     "c_symbol": "poly_creative8_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_creative9",
     "c_symbol": "poly_creative9_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_creative10",
     "c_symbol": "poly_creative10_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_neuralnet",
     "c_symbol": "poly_neuralnet_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_neuralnet1",
     "c_symbol": "poly_neuralnet1_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_ca",
     "c_symbol": "poly_ca_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_quantum",
     "c_symbol": "poly_quantum_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_topological",
     "c_symbol": "poly_topological_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_sonic",
     "c_symbol": "poly_sonic_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_cryptic",
     "c_symbol": "poly_cryptic_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_holographic",
     "c_symbol": "poly_holographic_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_chaosmorph",
     "c_symbol": "poly_chaosmorph_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_quasicrystal",
     "c_symbol": "poly_quasicrystal_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_astro",
     "c_symbol": "poly_astro_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_metamaterial",
     "c_symbol": "poly_metamaterial_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_sync",
     "c_symbol": "poly_sync_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_memristor",
     "c_symbol": "poly_memristor_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_swarm",
     "c_symbol": "poly_swarm_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_cogniverse",
     "c_symbol": "poly_cogniverse_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_spinglass",
     "c_symbol": "poly_spinglass_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_letter_old",
     "c_symbol": "poly_letter_old_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_letter",
     "c_symbol": "poly_letter_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_letter_2",
     "c_symbol": "poly_letter_2_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_letter1",
     "c_symbol": "poly_letter1_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_letter_roots",
     "c_symbol": "poly_letter_roots_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_letter_path",
     "c_symbol": "poly_letter_path_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_letter2",
     "c_symbol": "poly_letter2_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_chess",
     "c_symbol": "poly_chess_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_chess1",
     "c_symbol": "poly_chess1_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_chess2",
     "c_symbol": "poly_chess2_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_chess3",
     "c_symbol": "poly_chess3_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_chess5_old",
     "c_symbol": "poly_chess5_old_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_chess5",
     "c_symbol": "poly_chess5_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_path",
     "c_symbol": "poly_path_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_rnd_path1",
     "c_symbol": "poly_rnd_path1_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_rnd_path2",
     "c_symbol": "poly_rnd_path2_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_rnd_path3",
     "c_symbol": "poly_rnd_path3_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_rnd_path4",
     "c_symbol": "poly_rnd_path4_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_rnd_path5",
     "c_symbol": "poly_rnd_path5_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_rnd_path6",
     "c_symbol": "poly_rnd_path6_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   },
   {
     "name": "poly_rnd_path7",
     "c_symbol": "poly_rnd_path7_c",
-    "kind": "transpiled",
-    "source": "unknown"
+    "source": "unknown",
+    "kind": "transpiled"
   }
 ]

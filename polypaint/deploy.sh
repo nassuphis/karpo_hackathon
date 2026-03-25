@@ -55,8 +55,11 @@ BINARY_TMP=10240      # /tmp size for Lambdas that process raw images (max 10GB)
 TIMEOUT=900
 BUCKET="polypaint"
 JOBS_TABLE="polypaint-jobs"
-LIBVIPS_LAYER="arn:aws:lambda:us-east-1:710848990594:layer:polypaint-libvips:9"
-LAPACK_LAYER="arn:aws:lambda:us-east-1:710848990594:layer:polypaint-lapack:1"
+LIBVIPS_LAYER_NAME="polypaint-libvips"
+LAPACK_LAYER_NAME="polypaint-lapack"
+# These get set dynamically by build_and_publish_layers
+LIBVIPS_LAYER=""
+LAPACK_LAYER=""
 SWEEP_CM_NAME="polypaint-sweep-cm"
 SWEEP_CM_MEMORY=4096  # companion matrix eigensolve needs more memory
 
@@ -123,6 +126,58 @@ if [ $? -ne 0 ]; then
 fi
 rm -f /tmp/_jscheck.js
 echo "  JS syntax OK"
+
+# --- Build and publish Lambda layers ---
+echo ""
+echo "Building and publishing Lambda layers..."
+
+build_and_publish_layer() {
+    local LAYER_NAME="$1" BUILD_SCRIPT="$2" ZIP_NAME="$3" BUILD_DIR="$4"
+    local ZIP_PATH="$BUILD_DIR/$ZIP_NAME"
+    local HASH_FILE="$BUILD_DIR/.build_hash"
+    local SCRIPT_HASH
+    SCRIPT_HASH=$(shasum "$BUILD_SCRIPT" | cut -d' ' -f1)
+
+    # Skip rebuild if zip exists and build script hasn't changed
+    if [ -f "$ZIP_PATH" ] && [ -f "$HASH_FILE" ] && [ "$(cat "$HASH_FILE")" = "$SCRIPT_HASH" ]; then
+        echo "  $LAYER_NAME: zip up to date (skipping rebuild)"
+    else
+        echo "  $LAYER_NAME: building..."
+        bash "$BUILD_SCRIPT" || { echo "FATAL: $BUILD_SCRIPT failed"; exit 1; }
+        if [ ! -f "$ZIP_PATH" ]; then
+            echo "FATAL: $ZIP_PATH not found after build"
+            exit 1
+        fi
+        echo "$SCRIPT_HASH" > "$HASH_FILE"
+    fi
+
+    echo "  $LAYER_NAME: publishing layer version..."
+    local ARN
+    ARN=$(aws lambda publish-layer-version \
+        --layer-name "$LAYER_NAME" \
+        --zip-file "fileb://$ZIP_PATH" \
+        --compatible-runtimes python3.12 python3.13 \
+        --compatible-architectures arm64 \
+        --region "$REGION" \
+        --query 'LayerVersionArn' --output text)
+    echo "  $LAYER_NAME: $ARN"
+    echo "$ARN"
+}
+
+LIBVIPS_LAYER=$(build_and_publish_layer \
+    "$LIBVIPS_LAYER_NAME" \
+    "$SCRIPT_DIR/lambda/build-libvips-layer.sh" \
+    "libvips-layer.zip" \
+    "$SCRIPT_DIR/lambda/layer-build")
+
+LAPACK_LAYER=$(build_and_publish_layer \
+    "$LAPACK_LAYER_NAME" \
+    "$SCRIPT_DIR/lambda/build-lapack-layer.sh" \
+    "lapack-layer.zip" \
+    "$SCRIPT_DIR/lambda/layer-build-lapack")
+
+echo "  LIBVIPS_LAYER=$LIBVIPS_LAYER"
+echo "  LAPACK_LAYER=$LAPACK_LAYER"
 
 # --- Regenerate catalog artifacts ---
 # Step 1: Generate C lookup header from catalog JSON (no binary needed)

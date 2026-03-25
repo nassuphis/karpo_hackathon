@@ -1419,6 +1419,8 @@ async function discoverArtifacts(jobId) {
         `renders/${jobId}/image_coeffs_bilevel_preview.png`,
         `renders/${jobId}/image.jpeg`,
         `renders/${jobId}/image.png`,
+        `renders/${jobId}/preview_color.png`,
+        `renders/${jobId}/preview_bilevel.png`,
         `renders/${jobId}/calc.json`,
     ];
     const results = {};
@@ -1611,13 +1613,16 @@ function renderArtifactPanel(jobId, artifacts) {
     // --- Preview section ---
     html += `<hr style="border:none; border-top:1px solid #444; margin:12px 0 8px">`;
 
-    // Determine available preview sources (existing preview or generatable from source)
-    const colorPreviewUrl = hasColorPng ? artifacts[colorPngKey]
-        : hasColorJpeg ? artifacts[colorJpegKey] : null;
-    const bilevelPreviewUrl = hasBilevelPreview ? artifacts[prefix + 'image_bilevel_preview.png']
-        : hasCoeffPreview ? artifacts[prefix + 'image_coeffs_bilevel_preview.png'] : null;
+    // Determine available preview sources — always use cached thumbnails, never full images
+    const hasCachedColorPreview = !!artifacts[prefix + 'preview_color.png'];
+    const hasCachedBilevelPreview = !!artifacts[prefix + 'preview_bilevel.png'];
 
-    // Can generate preview if source image exists but preview doesn't
+    const colorPreviewUrl = hasCachedColorPreview ? artifacts[prefix + 'preview_color.png'] : null;
+    const bilevelPreviewUrl = hasBilevelPreview ? artifacts[prefix + 'image_bilevel_preview.png']
+        : hasCoeffPreview ? artifacts[prefix + 'image_coeffs_bilevel_preview.png']
+        : hasCachedBilevelPreview ? artifacts[prefix + 'preview_bilevel.png'] : null;
+
+    // On-demand generation: source image exists but no preview
     const colorSourceKey = hasColorPng ? colorPngKey : hasColorJpeg ? colorJpegKey : null;
     const bilevelSourceKey = hasBilevelTif ? bilevelKey : hasCoeffTif ? coeffKey : null;
     const colorCanGen = !colorPreviewUrl && colorSourceKey;

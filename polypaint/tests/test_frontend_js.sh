@@ -630,6 +630,116 @@ async function testPipeline(name, call) {
         }
     }
 
+    // Step 10: DeepZoom inventory UI tests
+    console.log('');
+    console.log('--- DeepZoom inventory ---');
+
+    // Stub lambdaPost for inventory loading
+    vm.runInContext(`
+        var _dzListCalls = 0;
+        lambdaPost = async function lambdaPost(name, body, path) {
+            if (name === 'storage' && path === '/list-prefix' && body.delimiter) {
+                _dzListCalls++;
+                if (body.prefix === 'deepzoom/') {
+                    return { prefixes: ['deepzoom/job_a/', 'deepzoom/job_b/'] };
+                }
+                // Per-job export prefixes
+                return { prefixes: [body.prefix + 'export_1/'] };
+            }
+            if (name === 'storage' && path === '/head-keys') {
+                return { exists: body.keys || [], meta: {} };
+            }
+            if (name === 'storage' && path === '/presign') {
+                return { url: 'https://fake/' + body.key };
+            }
+            return {};
+        };
+    `, ctx);
+
+    // Mock fetch for meta.json loading
+    ctx.fetch = async (url) => ({
+        ok: true,
+        json: async () => {
+            if (url.includes('job_a')) return { job_id: 'job_a', width: 4096, height: 4096, created_at: '2026-03-25T10:00:00', tiles_uploaded: 100, dzi_url: 'https://dz/job_a.dzi' };
+            return { job_id: 'job_b', width: 8192, height: 8192, created_at: '2026-03-25T12:00:00', tiles_uploaded: 400, dzi_url: 'https://dz/job_b.dzi' };
+        }
+    });
+
+    // Test: loadDeepZoomInventory populates the inventory
+    try {
+        await vm.runInContext('(async()=>{ await loadDeepZoomInventory(); })()', ctx);
+        const inv = vm.runInContext('window._dzInventory', ctx);
+        if (!inv || inv.length !== 2) {
+            console.error('FATAL: inventory should have 2 entries, got ' + (inv ? inv.length : 'null'));
+            process.exit(1);
+        }
+        // Sorted newest first — job_b (12:00) before job_a (10:00)
+        if (inv[0].job_id !== 'job_b') {
+            console.error('FATAL: newest should be first, got ' + inv[0].job_id);
+            process.exit(1);
+        }
+        console.log('  inventory load: OK (2 entries, newest first)');
+    } catch (e) {
+        console.error('FATAL: inventory load: ' + e.message);
+        process.exit(1);
+    }
+
+    // Test: auto-selects first (newest) entry
+    {
+        const idx = vm.runInContext('window._dzSelectedIdx', ctx);
+        if (idx !== 0) {
+            console.error('FATAL: auto-select should be 0, got ' + idx);
+            process.exit(1);
+        }
+        console.log('  auto-select newest: OK (idx=0, job_b)');
+    }
+
+    // Test: _dzSelect changes selection and viewer
+    try {
+        vm.runInContext('_dzSelect(1)', ctx);
+        const idx = vm.runInContext('window._dzSelectedIdx', ctx);
+        if (idx !== 1) {
+            console.error('FATAL: _dzSelect(1) should set idx=1, got ' + idx);
+            process.exit(1);
+        }
+        console.log('  click select: OK (idx=1, job_a)');
+    } catch (e) {
+        console.error('FATAL: _dzSelect: ' + e.message);
+        process.exit(1);
+    }
+
+    // Test: _dzSelect out of bounds is safe
+    try {
+        vm.runInContext('_dzSelect(-1)', ctx);
+        vm.runInContext('_dzSelect(999)', ctx);
+        const idx = vm.runInContext('window._dzSelectedIdx', ctx);
+        if (idx !== 1) {
+            console.error('FATAL: out-of-bounds select should not change idx, got ' + idx);
+            process.exit(1);
+        }
+        console.log('  out-of-bounds select: OK (idx unchanged)');
+    } catch (e) {
+        console.error('FATAL: out-of-bounds _dzSelect: ' + e.message);
+        process.exit(1);
+    }
+
+    // Test: switchTab('deepzoom') triggers inventory load
+    {
+        vm.runInContext('_dzListCalls = 0', ctx);
+        try {
+            await vm.runInContext("(async()=>{ switchTab('deepzoom'); await new Promise(r => setTimeout(r, 0)); })()", ctx);
+            const calls = vm.runInContext('_dzListCalls', ctx);
+            if (calls < 1) {
+                console.error('FATAL: switchTab(deepzoom) should trigger loadDeepZoomInventory, got ' + calls + ' list calls');
+                process.exit(1);
+            }
+            console.log('  tab switch auto-load: OK (' + calls + ' list calls)');
+        } catch (e) {
+            console.error('FATAL: tab switch auto-load: ' + e.message);
+            process.exit(1);
+        }
+    }
+
     console.log('');
     console.log('=== Frontend JS Execution Test PASSED ===');
 })().catch(e => { console.error('FATAL: ' + e.message); process.exit(1); });

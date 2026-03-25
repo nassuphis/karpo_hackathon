@@ -319,7 +319,7 @@ def handle_check_status(event):
 
 def handle_clean_render(event):
     """Delete intermediate render artifacts for a job, preserving final images.
-    Deletes: pix_*.pix, raw_*.raw, tile_*.raw (intermediates)
+    Deletes: pix_*, raw_*, tile_*, bilevel_t*, coeff_t* (intermediates)
     Preserves: image.jpeg, image.png, image_bilevel.tif, *_preview.png, calc.json, *.bin
     Also clears DynamoDB status entries for the job.
     """

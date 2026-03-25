@@ -327,12 +327,15 @@ def handle_clean_render(event):
     prefix = f"renders/{job_id}/"
     render_exts = ('.raw', '.jpeg', '.jpg', '.png', '.pix', '.bits', '.tif')
 
+    # List only render artifact prefixes to avoid scanning thousands of .bin files
+    render_prefixes = ['pix_', 'raw_', 'tile_', 'image', 'preview']
     objects = []
     paginator = s3.get_paginator('list_objects_v2')
-    for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
-        for obj in page.get('Contents', []):
-            if obj['Key'].endswith(render_exts) and not obj['Key'].endswith('preview.png'):
-                objects.append(obj)
+    for rp in render_prefixes:
+        for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix + rp):
+            for obj in page.get('Contents', []):
+                if obj['Key'].endswith(render_exts) and not obj['Key'].endswith('preview.png'):
+                    objects.append(obj)
 
     total_deleted = 0
     if objects:

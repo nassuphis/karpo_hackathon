@@ -3586,18 +3586,31 @@ static int runCoeffGen(const char *buf, const char *outPath) {
         }
     }
 
-    /* Look up coefficient function */
-    CoeffFuncC coeffFunc = lookupCoeffFuncC(funcName);
-    if (!coeffFunc) {
+    /* Look up coefficient function spec */
+    const CoeffFuncSpec *spec = lookupCoeffFuncSpec(funcName);
+    if (!spec) {
         fprintf(stderr, "Unknown function: %s\n", funcName);
         return 1;
     }
+    CoeffFuncC coeffFunc = spec->func;
 
-    /* Parse CFPV (coefficient function parameter vector) */
+    /* Parse and normalize CFPV from spec */
     double cfpv[MAX_CFPV];
     int n_cfpv = 0;
     cp = findKey(buf, "cfpv");
     if (cp) n_cfpv = parseNumArray(cp, cfpv, MAX_CFPV);
+    if (spec->n_params == 0) {
+        n_cfpv = 0;
+    } else {
+        if (n_cfpv > spec->n_params) {
+            fprintf(stderr, "Too many cfpv params for %s: got %d, expected %d\n",
+                    spec->name, n_cfpv, spec->n_params);
+            return 1;
+        }
+        for (int i = n_cfpv; i < spec->n_params; i++)
+            cfpv[i] = spec->defaults[i];
+        n_cfpv = spec->n_params;
+    }
 
     /* Probe degree at (0,0) with transforms applied */
     double probeRe[MAX_COEFFS], probeIm[MAX_COEFFS];
@@ -3786,18 +3799,31 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
         }
     }
 
-    /* Look up coefficient function */
-    CoeffFuncC coeffFunc = lookupCoeffFuncC(funcName);
-    if (!coeffFunc) {
+    /* Look up coefficient function spec */
+    const CoeffFuncSpec *spec = lookupCoeffFuncSpec(funcName);
+    if (!spec) {
         fprintf(stderr, "Unknown function: %s\n", funcName);
         return 1;
     }
+    CoeffFuncC coeffFunc = spec->func;
 
-    /* Parse CFPV (coefficient function parameter vector) */
+    /* Parse and normalize CFPV from spec */
     double cfpv[MAX_CFPV];
     int n_cfpv = 0;
     cp = findKey(buf, "cfpv");
     if (cp) n_cfpv = parseNumArray(cp, cfpv, MAX_CFPV);
+    if (spec->n_params == 0) {
+        n_cfpv = 0;
+    } else {
+        if (n_cfpv > spec->n_params) {
+            fprintf(stderr, "Too many cfpv params for %s: got %d, expected %d\n",
+                    spec->name, n_cfpv, spec->n_params);
+            return 1;
+        }
+        for (int i = n_cfpv; i < spec->n_params; i++)
+            cfpv[i] = spec->defaults[i];
+        n_cfpv = spec->n_params;
+    }
 
     /* Open params file and seek to our slice */
     FILE *fin = fopen(paramsFile, "rb");

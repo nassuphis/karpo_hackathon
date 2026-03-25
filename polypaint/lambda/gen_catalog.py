@@ -148,6 +148,8 @@ def generate_js(catalog, metrics):
             js_entry["probe_failed"] = True
         if "agreement_pct" in met:
             js_entry["agreement_pct"] = met["agreement_pct"]
+        if met.get("stubbed"):
+            js_entry["stubbed"] = True
 
         entries.append(js_entry)
 

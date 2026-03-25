@@ -244,6 +244,57 @@ def test_cfpv_clamp_too_small():
           f"rc={rc}, n_coeffs={meta.get('n_coeffs') if meta else '?'}")
 
 
+def test_spec_too_many_cfpv():
+    """Too many cfpv params for a function should be rejected."""
+    meta, rc, stderr = run_sweep({
+        "mode": "coeffgen",
+        "function": "creative9",
+        "n1": 3, "n2": 3, "i1_start": 0, "i1_end": 3,
+        "param_transforms": [["unit_circle"]],
+        "coeff_transforms": [], "times": 1,
+        "cfpv": [30, 99],
+    })
+    check("too many cfpv rejected",
+          rc != 0 and "Too many" in (stderr or ""),
+          f"rc={rc}, stderr={stderr[:100] if stderr else ''}")
+
+
+def test_spec_absent_uses_defaults():
+    """Absent cfpv on parametric function should use spec defaults."""
+    meta, rc, _ = run_sweep({
+        "mode": "coeffgen",
+        "function": "creative9",
+        "n1": 3, "n2": 3, "i1_start": 0, "i1_end": 3,
+        "param_transforms": [["unit_circle"]],
+        "coeff_transforms": [], "times": 1,
+    })
+    check("absent cfpv uses spec default 71",
+          rc == 0 and meta and meta["n_coeffs"] == 71,
+          f"rc={rc}, n_coeffs={meta.get('n_coeffs') if meta else '?'}")
+
+
+def test_spec_nonparametric_cfpv_forced_zero():
+    """Non-parametric function ignores cfpv via spec (n_params=0 → forced zero)."""
+    m1, rc1, _ = run_sweep({
+        "mode": "coeffgen",
+        "function": "g1",
+        "n1": 3, "n2": 3, "i1_start": 0, "i1_end": 3,
+        "param_transforms": [["unit_circle"]],
+        "coeff_transforms": [], "times": 1,
+    })
+    m2, rc2, _ = run_sweep({
+        "mode": "coeffgen",
+        "function": "g1",
+        "n1": 3, "n2": 3, "i1_start": 0, "i1_end": 3,
+        "param_transforms": [["unit_circle"]],
+        "coeff_transforms": [], "times": 1,
+        "cfpv": [999],
+    })
+    check("non-parametric cfpv forced to zero by spec",
+          rc1 == 0 and rc2 == 0 and m1 and m2 and m1["n_coeffs"] == m2["n_coeffs"],
+          f"without={m1.get('n_coeffs') if m1 else '?'}, with={m2.get('n_coeffs') if m2 else '?'}")
+
+
 def test_multiple_g_functions():
     """Several non-parametric transpiled/hand-written functions work with new ABI."""
     funcs = ["g1", "g2", "g12", "giga_1", "giga_5", "creative8", "p821"]
@@ -434,6 +485,11 @@ if __name__ == "__main__":
     test_nonparametric_ignores_cfpv()
     test_transpiled_function_unaffected()
     test_multiple_g_functions()
+
+    print("\n--- spec-driven normalization ---")
+    test_spec_too_many_cfpv()
+    test_spec_absent_uses_defaults()
+    test_spec_nonparametric_cfpv_forced_zero()
 
     print("\n--- edge cases ---")
     test_empty_cfpv()

@@ -891,16 +891,20 @@ function populateDropdown() {
         const opt = document.createElement('option');
         opt.value = e.name;
         let label = e.name;
-        // Kind indicator
-        if (e.kind === 'transpiled' || e.kind === 'hand') label = '· ' + label;
-        // Agreement %
-        if (e.agreement_pct !== undefined) label += ` [${e.agreement_pct}%]`;
+        // Stubbed / agreement
+        if (e.stubbed) {
+            label += ' [stub]';
+        } else if (e.agreement_pct !== undefined) {
+            label += ` [${e.agreement_pct}%]`;
+        }
         // Degree
         if (e.probe_failed) {
             label += ' (degree ?)';
         } else {
             label += ` (degree ${e.degree})`;
         }
+        // Impl kind
+        label += ` (${e.kind})`;
         // Parametric indicator
         if (e.params && e.params.length) label += ' *';
         opt.textContent = label;

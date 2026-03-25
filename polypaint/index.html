@@ -1544,8 +1544,12 @@ function renderArtifactPanel(jobId, artifacts) {
 
     let html = '';
 
-    // Preview image
-    if (hasBilevelPreview) {
+    // Preview image: prefer color render output, fall back to bilevel/coeff previews
+    if (hasColorPng) {
+        html += `<img src="${artifacts[prefix + 'image.png']}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-bottom:8px">`;
+    } else if (hasColorJpeg) {
+        html += `<img src="${artifacts[prefix + 'image.jpeg']}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-bottom:8px">`;
+    } else if (hasBilevelPreview) {
         html += `<img src="${artifacts[prefix + 'image_bilevel_preview.png']}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-bottom:8px">`;
     } else if (hasCoeffPreview) {
         html += `<img src="${artifacts[prefix + 'image_coeffs_bilevel_preview.png']}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-bottom:8px">`;

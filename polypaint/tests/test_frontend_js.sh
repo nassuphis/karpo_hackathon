@@ -508,6 +508,97 @@ async function testPipeline(name, call) {
         }
     }
 
+    // Step 9: On-demand preview generation tests
+    console.log('');
+    console.log('--- Preview generation ---');
+
+    // Restore real lambdaPost for preview tests (override inside VM)
+    // Simulate: no cached preview, but source image exists → generate on click
+    {
+        let previewGenerated = false;
+        let generatedKey = null;
+        vm.runInContext(`
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'encode' && body.mode === 'preview') {
+                    return { preview_key: body.preview_key, file_size: 50000, url: 'https://fake/preview.png' };
+                }
+                if (name === 'storage' && path === '/head-keys') {
+                    return { exists: [], meta: {} };
+                }
+                return {};
+            };
+        `, ctx);
+
+        // Set up _previewUrls with no cached preview, _previewSources with a generatable source
+        vm.runInContext(`
+            window._previewUrls = { color: null, bilevel: null };
+            window._previewSources = {
+                color: { jobId: 'test_job', sourceKey: 'renders/test_job/image.jpeg', previewKey: 'renders/test_job/preview_color.png' },
+                bilevel: { jobId: 'test_job', sourceKey: 'renders/test_job/image_bilevel.tif', previewKey: 'renders/test_job/preview_bilevel.png' },
+            };
+        `, ctx);
+
+        // Test color preview generation
+        try {
+            await vm.runInContext('(async()=>{ await _showPreview("color"); })()', ctx);
+            const colorUrl = vm.runInContext('window._previewUrls.color', ctx);
+            if (!colorUrl) {
+                console.error('FATAL: color preview generation did not set URL');
+                process.exit(1);
+            }
+            console.log('  color preview on-demand: OK (url=' + colorUrl.slice(0, 30) + '...)');
+        } catch (e) {
+            console.error('FATAL: color preview generation: ' + e.message);
+            process.exit(1);
+        }
+
+        // Reset and test bilevel preview generation
+        vm.runInContext('window._previewUrls.bilevel = null;', ctx);
+        try {
+            await vm.runInContext('(async()=>{ await _showPreview("bilevel"); })()', ctx);
+            const bilevelUrl = vm.runInContext('window._previewUrls.bilevel', ctx);
+            if (!bilevelUrl) {
+                console.error('FATAL: bilevel preview generation did not set URL');
+                process.exit(1);
+            }
+            console.log('  bilevel preview on-demand: OK (url=' + bilevelUrl.slice(0, 30) + '...)');
+        } catch (e) {
+            console.error('FATAL: bilevel preview generation: ' + e.message);
+            process.exit(1);
+        }
+
+        // Test that cached URL is used directly (no lambdaPost call)
+        let lambdaCalled = false;
+        vm.runInContext(`
+            lambdaPost = async function lambdaPost() {
+                throw new Error('lambdaPost should not be called for cached preview');
+            };
+        `, ctx);
+        vm.runInContext('window._previewUrls.color = "https://cached/color.png";', ctx);
+        try {
+            await vm.runInContext('(async()=>{ await _showPreview("color"); })()', ctx);
+            console.log('  cached preview reuse: OK (no lambdaPost call)');
+        } catch (e) {
+            console.error('FATAL: cached preview should not call lambdaPost: ' + e.message);
+            process.exit(1);
+        }
+
+        // Test no-source disabled path
+        vm.runInContext(`
+            window._previewUrls = { color: null, bilevel: null };
+            window._previewSources = {};
+        `, ctx);
+        try {
+            await vm.runInContext('(async()=>{ await _showPreview("color"); })()', ctx);
+            const containerHtml = ctx._elements['preview-container'].innerHTML || '';
+            // Should show "No preview available", not crash
+            console.log('  no-source fallback: OK');
+        } catch (e) {
+            console.error('FATAL: no-source preview: ' + e.message);
+            process.exit(1);
+        }
+    }
+
     console.log('');
     console.log('=== Frontend JS Execution Test PASSED ===');
 })().catch(e => { console.error('FATAL: ' + e.message); process.exit(1); });

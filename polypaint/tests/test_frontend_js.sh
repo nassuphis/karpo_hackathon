@@ -26,11 +26,15 @@ const fs = require('fs');
 
 // Minimal DOM stubs
 const _elements = {};
-const _mkEl = () => ({
-    value: '', textContent: '', innerHTML: '', style: {}, id: '', dataset: {},
-    appendChild() {}, removeChild() {}, setAttribute() {}, insertBefore() {},
+const _mkEl = () => {
+    const el = {
+    value: '', textContent: '', style: {}, id: '', dataset: {},
+    appendChild(child) { el.children.push(child); },
+    removeChild() {}, setAttribute() {}, insertBefore() {},
     selectedOptions: [{ textContent: '' }],
     options: [], children: [],
+    get innerHTML() { return el._html || ''; },
+    set innerHTML(v) { el._html = v; el.children = []; },
     classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } },
     addEventListener() {}, removeEventListener() {},
     getBoundingClientRect() { return {top:0,left:0,width:100,height:100}; },
@@ -41,7 +45,9 @@ const _mkEl = () => ({
     set onchange(v) {},
     set onclick(v) {},
     set oninput(v) {},
-});
+    };
+    return el;
+};
 
 const docStub = {
     getElementById(id) {
@@ -137,7 +143,7 @@ if (missing.length) {
 }
 console.log('  required functions: all present');
 
-// Step 4: Run populateDropdown
+// Step 4: Run populateDropdown and verify actual option count
 try {
     vm.runInContext('populateDropdown()', ctx);
 } catch (e) {
@@ -145,11 +151,27 @@ try {
     console.error(e.stack.split('\n').slice(0, 5).join('\n'));
     process.exit(1);
 }
-if (catLen < 100) {
-    console.error('FATAL: catalog has only ' + catLen + ' entries');
+const sel = ctx._elements['render-function'];
+const optCount = sel ? sel.children.length : 0;
+if (optCount < 100) {
+    console.error('FATAL: populateDropdown() produced ' + optCount + ' options (expected 1000+)');
     process.exit(1);
 }
-console.log('  populateDropdown(): OK (' + catLen + ' entries)');
+console.log('  populateDropdown(): ' + optCount + ' options added');
+
+// Step 4b: Negative test — empty catalog should produce error option
+const savedCat = ctx._coeffFuncCatalog;
+ctx._coeffFuncCatalog = [];
+vm.runInContext('populateDropdown()', ctx);
+const emptyOpts = ctx._elements['render-function'].children.length;
+ctx._coeffFuncCatalog = savedCat;
+if (emptyOpts !== 1) {
+    console.error('FATAL: empty catalog should produce 1 error option, got ' + emptyOpts);
+    process.exit(1);
+}
+console.log('  populateDropdown(empty): shows error option');
+// Restore by re-populating
+vm.runInContext('populateDropdown()', ctx);
 
 // Step 5: Test updateCfpvRow for parametric function
 ctx._elements['render-function'] = { ...ctx._mkEl(), value: 'creative9' };

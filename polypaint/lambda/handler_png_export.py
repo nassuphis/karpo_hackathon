@@ -55,10 +55,23 @@ def handler(event, context):
 
         os.remove(in_path)
 
+        # Copy width/height metadata from source
+        img_meta = {}
+        try:
+            src_head = s3.head_object(Bucket=BUCKET, Key=source_key)
+            src_meta = src_head.get("Metadata", {})
+            if "width" in src_meta:
+                img_meta["width"] = src_meta["width"]
+            if "height" in src_meta:
+                img_meta["height"] = src_meta["height"]
+        except Exception:
+            pass
+
         # Upload PNG
         with open(out_path, "rb") as f:
             s3.put_object(Bucket=BUCKET, Key=png_key,
-                          Body=f, ContentType="image/png")
+                          Body=f, ContentType="image/png",
+                          Metadata=img_meta)
         os.remove(out_path)
 
         url = s3.generate_presigned_url(

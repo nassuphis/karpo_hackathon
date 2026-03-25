@@ -6,6 +6,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LAPACK_BUILD="$ROOT/lambda/layer-build-lapack"
+LIBVIPS_BUILD="$ROOT/lambda/layer-build"
 
 echo "=== Docker Runtime Regression Test ==="
 
@@ -27,13 +28,25 @@ if [ ! -d "$LAPACK_BUILD/lib" ]; then
     exit 1
 fi
 
+if [ ! -d "$LIBVIPS_BUILD/lib" ]; then
+    echo "FATAL: libvips layer not built. Run lambda/build-libvips-layer.sh."
+    exit 1
+fi
+
 docker run --rm --platform linux/arm64 \
   -v "$ROOT/lambda:/src" \
-  -v "$LAPACK_BUILD:/opt" \
+  -v "$LAPACK_BUILD:/opt-lapack" \
+  -v "$LIBVIPS_BUILD:/opt-vips" \
   public.ecr.aws/amazonlinux/amazonlinux:2023 \
   bash -c '
     set -euo pipefail
+    # Merge both layers into /opt (Lambda runtime layout)
+    cp -a /opt-lapack/lib /opt/ 2>/dev/null || true
+    cp -a /opt-vips/lib/* /opt/lib/ 2>/dev/null || true
+    mkdir -p /opt/bin
+    cp -a /opt-vips/bin/* /opt/bin/ 2>/dev/null || true
     export LD_LIBRARY_PATH=/opt/lib
+    export PATH="/opt/bin:$PATH"
 
     echo "--- Binary validation ---"
     # Check ELF magic bytes and that binaries are executable
@@ -211,6 +224,79 @@ assert m1 and m2 and m1["n_coeffs"] == m2["n_coeffs"], "g1 cfpv should be ignore
 print("  g1 unaffected by cfpv: OK")
 
 print("=== CFPV coeffgen tests PASSED ===")
+
+# --- Render preview (vipsthumbnail) regression ---
+print("\n--- Render preview (vipsthumbnail) ---")
+
+# Check vipsthumbnail binary exists and runs
+vt_path = "/opt/bin/vipsthumbnail"
+assert os.path.exists(vt_path), f"vipsthumbnail not found at {vt_path}"
+r = subprocess.run([vt_path, "--vips-version"], capture_output=True, text=True, timeout=5)
+print(f"  vipsthumbnail: {r.stdout.strip() or r.stderr.strip()}")
+
+# Create a test JPEG via raw2jpeg (8x8 solid color)
+test_raw = "/tmp/preview_test.raw"
+test_jpeg = "/tmp/preview_test.jpeg"
+test_png = "/tmp/preview_test_thumb.png"
+
+with open(test_raw, "wb") as f:
+    # raw2jpeg format: uint32 width, height, channels, then RGB pixels
+    f.write(struct.pack("<III", 8, 8, 3))
+    for _ in range(8 * 8):
+        f.write(bytes([100, 150, 200]))  # solid blue-ish
+
+r = subprocess.run(
+    ["/src/raw2jpeg", test_raw, test_jpeg, "--quality=90"],
+    capture_output=True, text=True, timeout=10,
+    env={**os.environ, "LD_LIBRARY_PATH": "/opt/lib"}
+)
+assert r.returncode == 0, f"raw2jpeg failed: {r.stderr[:200]}"
+jpeg_size = os.path.getsize(test_jpeg)
+assert jpeg_size > 0, "test JPEG is empty"
+print(f"  test JPEG: {jpeg_size} bytes")
+
+# Run vipsthumbnail on the JPEG
+r = subprocess.run(
+    [vt_path, test_jpeg, "-s", "4x4", "-o", test_png + "[strip]"],
+    capture_output=True, text=True, timeout=10,
+    env={**os.environ, "LD_LIBRARY_PATH": "/opt/lib", "PATH": "/opt/bin:" + os.environ.get("PATH", "")}
+)
+assert r.returncode == 0, f"vipsthumbnail failed: {r.stderr[:200]}"
+png_size = os.path.getsize(test_png)
+assert png_size > 0, "thumbnail PNG is empty"
+print(f"  thumbnail PNG: {png_size} bytes")
+
+# Also test with a TIFF input (bilevel preview path)
+test_tif = "/tmp/preview_test.tif"
+# Create a minimal TIFF via tiff_compat path — or just use vips to save one
+r = subprocess.run(
+    ["/opt/bin/vips", "im_copy", test_jpeg, test_tif],
+    capture_output=True, text=True, timeout=10,
+    env={**os.environ, "LD_LIBRARY_PATH": "/opt/lib", "PATH": "/opt/bin:" + os.environ.get("PATH", "")}
+)
+if r.returncode == 0:
+    test_tif_thumb = "/tmp/preview_test_tif_thumb.png"
+    r = subprocess.run(
+        [vt_path, test_tif, "-s", "4x4", "-o", test_tif_thumb + "[strip]"],
+        capture_output=True, text=True, timeout=10,
+        env={**os.environ, "LD_LIBRARY_PATH": "/opt/lib", "PATH": "/opt/bin:" + os.environ.get("PATH", "")}
+    )
+    assert r.returncode == 0, f"vipsthumbnail TIFF failed: {r.stderr[:200]}"
+    tif_png_size = os.path.getsize(test_tif_thumb)
+    assert tif_png_size > 0, "TIFF thumbnail is empty"
+    print(f"  TIFF thumbnail PNG: {tif_png_size} bytes")
+else:
+    print(f"  SKIP TIFF test: vips im_copy not available ({r.stderr.strip()[:60]})")
+
+# Cleanup
+for f in [test_raw, test_jpeg, test_png, test_tif,
+          "/tmp/preview_test_tif_thumb.png"]:
+    try:
+        os.remove(f)
+    except OSError:
+        pass
+
+print("=== Render preview tests PASSED ===")
 
 # --- Catalog degree verification ---
 # Compare host-generated JS catalog degrees against deploy binary probes

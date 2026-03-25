@@ -307,6 +307,207 @@ async function testPipeline(name, call) {
     await testPipeline('runBilevelPipeline', '(async()=>{ await runBilevelPipeline(); })()');
     await testPipeline('runCoeffBilevelPipeline', '(async()=>{ await runCoeffBilevelPipeline(); })()');
 
+    // Step 8: Direct _bilevelDispatchAndPoll tests
+    console.log('');
+    console.log('--- _bilevelDispatchAndPoll direct tests ---');
+
+    // Restore the REAL _bilevelDispatchAndPoll (we stubbed it for pipeline tests)
+    // Re-eval the app code to get it back, but first save our stubs
+    vm.runInContext(`
+        // Re-load from source to restore _bilevelDispatchAndPoll
+        // (it was overwritten by stub above)
+    `, ctx);
+    // Actually, we need to re-eval just the function. Extract it from appCode.
+    const bdpMatch = appCode.match(/async function _bilevelDispatchAndPoll\(opts\) \{[\s\S]*?^}/m);
+    if (!bdpMatch) {
+        console.error('FATAL: could not extract _bilevelDispatchAndPoll from app code');
+        process.exit(1);
+    }
+    vm.runInContext(bdpMatch[0], ctx);
+    console.log('  _bilevelDispatchAndPoll restored from app code');
+
+    // --- Test 8a: basic completion (300 jobs, all succeed) ---
+    {
+        let dispatched = 0;
+        let pollCount = 0;
+        let fakeT = 0;
+        vm.runInContext(`
+            performance = { now: function() { return _bdp_fakeT; } };
+            var _bdp_fakeT = 0;
+            var _bdp_dispatched = 0;
+            var _bdp_pollCount = 0;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch') {
+                    _bdp_dispatched += body.jobs.length;
+                    return { fired: body.jobs.length, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    _bdp_pollCount++;
+                    _bdp_fakeT += 1000;
+                    // Complete after first poll
+                    return { errors: 0, done: body.expected, complete: true, status_counts: { done: body.expected } };
+                }
+                return {};
+            };
+        `, ctx);
+
+        const jobs = Array.from({length: 300}, (_, i) => ({ idx: i }));
+        try {
+            const ms = await vm.runInContext(`
+                (async () => {
+                    const jobs = ${JSON.stringify(jobs)};
+                    return await _bilevelDispatchAndPoll({
+                        jobs, jobId: 'test1', taskPrefix: 'raster_',
+                        target: 'raster', label: 'Test', logTarget: 'render-log'
+                    });
+                })()
+            `, ctx);
+            const d = vm.runInContext('_bdp_dispatched', ctx);
+            if (d !== 300) {
+                console.error('FATAL: expected 300 dispatched, got ' + d);
+                process.exit(1);
+            }
+            console.log('  8a basic completion (300 jobs): OK, dispatched=' + d);
+        } catch (e) {
+            console.error('FATAL: 8a basic completion: ' + e.message);
+            process.exit(1);
+        }
+    }
+
+    // --- Test 8b: wave dispatch throttling (500 jobs, slow completion) ---
+    {
+        vm.runInContext(`
+            var _bdp_fakeT = 0;
+            var _bdp_dispatched = 0;
+            var _bdp_dispatchCalls = 0;
+            var _bdp_maxBatch = 0;
+            var _bdp_pollDoneProgress = 0;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch') {
+                    _bdp_dispatchCalls++;
+                    _bdp_dispatched += body.jobs.length;
+                    if (body.jobs.length > _bdp_maxBatch) _bdp_maxBatch = body.jobs.length;
+                    return { fired: body.jobs.length, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    _bdp_fakeT += 1000;
+                    // Simulate slow progress: report 50 more done each poll
+                    _bdp_pollDoneProgress = Math.min(_bdp_pollDoneProgress + 50, body.expected);
+                    return {
+                        errors: 0,
+                        done: _bdp_pollDoneProgress,
+                        complete: _bdp_pollDoneProgress >= body.expected,
+                        status_counts: { done: _bdp_pollDoneProgress }
+                    };
+                }
+                return {};
+            };
+            performance = { now: function() { _bdp_fakeT += 100; return _bdp_fakeT; } };
+        `, ctx);
+
+        try {
+            await vm.runInContext(`
+                (async () => {
+                    const jobs = Array.from({length: 500}, (_, i) => ({ idx: i }));
+                    await _bilevelDispatchAndPoll({
+                        jobs, jobId: 'test2', taskPrefix: 'raster_',
+                        target: 'raster', label: 'Wave', logTarget: 'render-log'
+                    });
+                })()
+            `, ctx);
+            const d = vm.runInContext('_bdp_dispatched', ctx);
+            const maxB = vm.runInContext('_bdp_maxBatch', ctx);
+            const calls = vm.runInContext('_bdp_dispatchCalls', ctx);
+            if (d !== 500) {
+                console.error('FATAL: expected 500 dispatched, got ' + d);
+                process.exit(1);
+            }
+            // Max batch should be <= 50 (BATCH_SIZE)
+            if (maxB > 50) {
+                console.error('FATAL: max dispatch batch ' + maxB + ' exceeds BATCH_SIZE=50');
+                process.exit(1);
+            }
+            // Should have multiple dispatch calls (wave pattern, not single blast)
+            if (calls < 5) {
+                console.error('FATAL: only ' + calls + ' dispatch calls for 500 jobs (expected wave pattern)');
+                process.exit(1);
+            }
+            console.log('  8b wave dispatch (500 jobs): OK, batches=' + calls + ', maxBatch=' + maxB);
+        } catch (e) {
+            console.error('FATAL: 8b wave dispatch: ' + e.message);
+            process.exit(1);
+        }
+    }
+
+    // --- Test 8c: stall triggers re-dispatch of missing tasks ---
+    {
+        vm.runInContext(`
+            var _bdp_fakeT = 0;
+            var _bdp_dispatched = 0;
+            var _bdp_redispatched = 0;
+            var _bdp_pollCount = 0;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch') {
+                    if (_bdp_dispatched >= 10) {
+                        _bdp_redispatched += body.jobs.length;
+                    }
+                    _bdp_dispatched += body.jobs.length;
+                    return { fired: body.jobs.length, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    _bdp_pollCount++;
+                    // Simulate stall: done stays at 5, time advances
+                    // Poll 1 in completion phase: done=5 (sets lastDone=5, resets lastProgressTime)
+                    // Poll 2+: done still 5, no progress, stallTime accumulates
+                    // After GRACE_MS (45s): helper requests return_ids
+                    _bdp_fakeT += 50000; // advance well past GRACE_MS each poll
+                    if (body.return_ids) {
+                        // Helper asked for IDs — return only 0-4, missing 5-9
+                        return {
+                            errors: 0, done: 5, complete: false,
+                            status_counts: { done: 5 },
+                            found_ids: ['raster_0','raster_1','raster_2','raster_3','raster_4']
+                        };
+                    }
+                    if (_bdp_redispatched > 0) {
+                        // After re-dispatch: complete
+                        return {
+                            errors: 0, done: 10, complete: true,
+                            status_counts: { done: 10 }
+                        };
+                    }
+                    return {
+                        errors: 0, done: 5, complete: false,
+                        status_counts: { done: 5 }
+                    };
+                }
+                return {};
+            };
+            performance = { now: function() { _bdp_fakeT += 100; return _bdp_fakeT; } };
+        `, ctx);
+
+        try {
+            await vm.runInContext(`
+                (async () => {
+                    const jobs = Array.from({length: 10}, (_, i) => ({ idx: i }));
+                    await _bilevelDispatchAndPoll({
+                        jobs, jobId: 'test3', taskPrefix: 'raster_',
+                        target: 'raster', label: 'Redispatch', logTarget: 'render-log'
+                    });
+                })()
+            `, ctx);
+            const rd = vm.runInContext('_bdp_redispatched', ctx);
+            if (rd < 1) {
+                console.error('FATAL: expected re-dispatch of missing tasks, got 0');
+                process.exit(1);
+            }
+            console.log('  8c stall re-dispatch (10 jobs, 5 missing): OK, re-dispatched=' + rd);
+        } catch (e) {
+            console.error('FATAL: 8c stall re-dispatch: ' + e.message);
+            process.exit(1);
+        }
+    }
+
     console.log('');
     console.log('=== Frontend JS Execution Test PASSED ===');
 })().catch(e => { console.error('FATAL: ' + e.message); process.exit(1); });

@@ -132,7 +132,7 @@ echo ""
 echo "Building and publishing Lambda layers..."
 
 build_and_publish_layer() {
-    local LAYER_NAME="$1" BUILD_SCRIPT="$2" ZIP_NAME="$3" BUILD_DIR="$4"
+    local LAYER_NAME="$1" BUILD_SCRIPT="$2" ZIP_NAME="$3" BUILD_DIR="$4" ARN_FILE="$5"
     local ZIP_PATH="$BUILD_DIR/$ZIP_NAME"
     local HASH_FILE="$BUILD_DIR/.build_hash"
     local SCRIPT_HASH
@@ -143,7 +143,11 @@ build_and_publish_layer() {
         echo "  $LAYER_NAME: zip up to date (skipping rebuild)"
     else
         echo "  $LAYER_NAME: building..."
-        bash "$BUILD_SCRIPT" || { echo "FATAL: $BUILD_SCRIPT failed"; exit 1; }
+        bash "$BUILD_SCRIPT"
+        if [ $? -ne 0 ]; then
+            echo "FATAL: $BUILD_SCRIPT failed"
+            exit 1
+        fi
         if [ ! -f "$ZIP_PATH" ]; then
             echo "FATAL: $ZIP_PATH not found after build"
             exit 1
@@ -152,29 +156,35 @@ build_and_publish_layer() {
     fi
 
     echo "  $LAYER_NAME: publishing layer version..."
-    local ARN
-    ARN=$(aws lambda publish-layer-version \
+    aws lambda publish-layer-version \
         --layer-name "$LAYER_NAME" \
         --zip-file "fileb://$ZIP_PATH" \
         --compatible-runtimes python3.12 python3.13 \
         --compatible-architectures arm64 \
         --region "$REGION" \
-        --query 'LayerVersionArn' --output text)
-    echo "  $LAYER_NAME: $ARN"
-    echo "$ARN"
+        --query 'LayerVersionArn' --output text > "$ARN_FILE"
+    if [ $? -ne 0 ] || [ ! -s "$ARN_FILE" ]; then
+        echo "FATAL: failed to publish $LAYER_NAME layer"
+        exit 1
+    fi
+    echo "  $LAYER_NAME: $(cat "$ARN_FILE")"
 }
 
-LIBVIPS_LAYER=$(build_and_publish_layer \
+build_and_publish_layer \
     "$LIBVIPS_LAYER_NAME" \
     "$SCRIPT_DIR/lambda/build-libvips-layer.sh" \
     "libvips-layer.zip" \
-    "$SCRIPT_DIR/lambda/layer-build")
+    "$SCRIPT_DIR/lambda/layer-build" \
+    /tmp/_libvips_layer_arn
+LIBVIPS_LAYER=$(cat /tmp/_libvips_layer_arn)
 
-LAPACK_LAYER=$(build_and_publish_layer \
+build_and_publish_layer \
     "$LAPACK_LAYER_NAME" \
     "$SCRIPT_DIR/lambda/build-lapack-layer.sh" \
     "lapack-layer.zip" \
-    "$SCRIPT_DIR/lambda/layer-build-lapack")
+    "$SCRIPT_DIR/lambda/layer-build-lapack" \
+    /tmp/_lapack_layer_arn
+LAPACK_LAYER=$(cat /tmp/_lapack_layer_arn)
 
 echo "  LIBVIPS_LAYER=$LIBVIPS_LAYER"
 echo "  LAPACK_LAYER=$LAPACK_LAYER"

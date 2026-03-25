@@ -70,6 +70,17 @@ def handler(event, context):
                 rtf.write(json.dumps(rt_chain))
             cmd.append(f"--root_xforms={rt_path}")
 
+        # Solve proximity bins: download JSON, parse, pass as CLI args
+        sp_bins_key = params.get("solve_proximity_bins_key")
+        sp_bins_path = None
+        if sp_bins_key and params.get("color") == "solve_proximity":
+            sp_bins_path = "/tmp/solve_proximity_bins.json"
+            sp_obj = s3.get_object(Bucket=BUCKET, Key=sp_bins_key)
+            sp_data = json.loads(sp_obj["Body"].read())
+            cmd.append(f"--solve_prox_clip_lo={sp_data['clip_lo']}")
+            cmd.append(f"--solve_prox_clip_hi={sp_data['clip_hi']}")
+            cmd.append(f"--solve_prox_cuts={','.join(str(c) for c in sp_data['cuts_norm'])}")
+
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:
             raise RuntimeError(f"roots2pix failed: {result.stderr.strip()}")

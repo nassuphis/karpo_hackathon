@@ -265,7 +265,7 @@ static inline void emit_pixel(int tile_id, uint32_t pix_idx, uint32_t rgb) {
 
 /* ---- Main ---- */
 
-enum ColorMode { COLOR_RAINBOW = 0, COLOR_PROXIMITY = 1, COLOR_CONSTANT = 2 };
+enum ColorMode { COLOR_RAINBOW = 0, COLOR_PROXIMITY = 1, COLOR_CONSTANT = 2, COLOR_SOLVE_PROXIMITY = 3 };
 enum MatchMode { MATCH_NONE = 0, MATCH_GREEDY = 1, MATCH_HUNGARIAN = 2 };
 
 int main(int argc, char **argv) {
@@ -273,9 +273,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Usage: roots2pix stripe.bin /tmp/pix "
                 "--width=W --height=H --center_re=X --center_im=Y --scale=S "
                 "--degree=D --tile_size=T --n_tile_cols=C --n_tile_rows=R "
-                "[--color=rainbow|proximity|constant] "
+                "[--color=rainbow|proximity|solve_proximity|constant] "
                 "[--match=none|greedy|hungarian] [--palette=inferno|...] "
-                "[--constant_color=RRGGBB]\n");
+                "[--constant_color=RRGGBB] "
+                "[--solve_prox_clip_lo=X --solve_prox_clip_hi=Y --solve_prox_cuts=c1,c2,...,c9]\n");
         return 1;
     }
     const char *binPath = argv[1];
@@ -303,6 +304,7 @@ int main(int argc, char **argv) {
 
     enum ColorMode colorMode = COLOR_RAINBOW;
     if (strcmp(colorStr, "proximity") == 0) colorMode = COLOR_PROXIMITY;
+    else if (strcmp(colorStr, "solve_proximity") == 0) colorMode = COLOR_SOLVE_PROXIMITY;
     else if (strcmp(colorStr, "constant") == 0) colorMode = COLOR_CONSTANT;
 
     unsigned int constHex = 0xffffff;
@@ -310,6 +312,25 @@ int main(int argc, char **argv) {
     unsigned char constR = (constHex >> 16) & 0xff;
     unsigned char constG = (constHex >> 8) & 0xff;
     unsigned char constB = constHex & 0xff;
+
+    /* Solve proximity args */
+    double solveProxClipLo = getArgDouble(argc, argv, "--solve_prox_clip_lo", 0);
+    double solveProxClipHi = getArgDouble(argc, argv, "--solve_prox_clip_hi", 0);
+    double solveProxCuts[9] = {0};
+    int nSolveProxCuts = 0;
+    {
+        const char *cutsStr = getArgStr(argc, argv, "--solve_prox_cuts", NULL);
+        if (cutsStr) {
+            char tmp[256];
+            strncpy(tmp, cutsStr, sizeof(tmp) - 1);
+            tmp[sizeof(tmp) - 1] = '\0';
+            char *tok = strtok(tmp, ",");
+            while (tok && nSolveProxCuts < 9) {
+                solveProxCuts[nSolveProxCuts++] = atof(tok);
+                tok = strtok(NULL, ",");
+            }
+        }
+    }
 
     enum MatchMode matchMode = MATCH_NONE;
     if (strcmp(matchStr, "greedy") == 0) matchMode = MATCH_GREEDY;
@@ -504,6 +525,75 @@ int main(int argc, char **argv) {
                 rootsPlotted++;
             }
         }
+    } else if (colorMode == COLOR_SOLVE_PROXIMITY) {
+        float *wkRe = malloc(degree * sizeof(float));
+        float *wkIm = malloc(degree * sizeof(float));
+        /* Precompute 10 palette colors */
+        unsigned char spPalR[10], spPalG[10], spPalB[10];
+        for (int b = 0; b < 10; b++) {
+            paletteRGB(proxPal, (b + 0.5) / 10.0, &spPalR[b], &spPalG[b], &spPalB[b]);
+        }
+        double spRange = solveProxClipHi - solveProxClipLo;
+        if (spRange < 1e-12) spRange = 1.0;
+        #define SP_EPS2 1e-300
+
+        for (long p = 0; p < nPoints; p++) {
+            float *step = roots + p * stride;
+            if (nRt > 0) {
+                for (int k = 0; k < degree; k++) { wkRe[k] = step[k*2]; wkIm[k] = step[k*2+1]; }
+                apply_root_xforms(rtChain, nRt, wkRe, wkIm, degree);
+            }
+
+            /* Compute d2_min for this solve */
+            double d2_min = 1e300;
+            for (int i = 0; i < degree; i++) {
+                double ri_re = nRt > 0 ? wkRe[i] : step[i*2];
+                double ri_im = nRt > 0 ? wkIm[i] : step[i*2+1];
+                for (int j = i + 1; j < degree; j++) {
+                    double rj_re = nRt > 0 ? wkRe[j] : step[j*2];
+                    double rj_im = nRt > 0 ? wkIm[j] : step[j*2+1];
+                    double dr = ri_re - rj_re, di = ri_im - rj_im;
+                    double d2 = dr * dr + di * di;
+                    if (d2 < d2_min) d2_min = d2;
+                }
+            }
+            double score = -0.5 * log10(d2_min > SP_EPS2 ? d2_min : SP_EPS2);
+            double u = (score - solveProxClipLo) / spRange;
+            if (u < 0) u = 0; if (u > 1) u = 1;
+
+            /* Find bin from cuts */
+            int bin = 9;
+            for (int c = 0; c < nSolveProxCuts; c++) {
+                if (u <= solveProxCuts[c]) { bin = c; break; }
+            }
+            uint32_t rgb = ((uint32_t)spPalR[bin] << 16) | ((uint32_t)spPalG[bin] << 8) | spPalB[bin];
+
+            /* Emit all roots in this solve with the same color */
+            for (int r = 0; r < degree; r++) {
+                double re = nRt > 0 ? wkRe[r] : step[r*2];
+                double im = nRt > 0 ? wkIm[r] : step[r*2+1];
+                double dx = re - centerRe, dy = im - centerIm;
+                double rx = dx * cosA - dy * sinA, ry = dx * sinA + dy * cosA;
+                int px = (int)(halfW + rx * scale);
+                int py = (int)(halfH - ry * scale);
+                if (px >= 0 && px < W && py >= 0 && py < H) {
+                    int tile_col = px / tileSize;
+                    int tile_row = py / tileSize;
+                    int tile_id = tile_row * nTileCols + tile_col;
+                    uint32_t local_x = px - tile_col * tileSize;
+                    uint32_t local_y = py - tile_row * tileSize;
+                    uint32_t pix_idx = local_y * (uint32_t)tileW[tile_id] + local_x;
+                    uint32_t byte_idx = pix_idx >> 3;
+                    uint8_t bit_mask = 1u << (pix_idx & 7);
+                    if (!(tileBits[tile_id][byte_idx] & bit_mask)) {
+                        tileBits[tile_id][byte_idx] |= bit_mask;
+                        emit_pixel(tile_id, pix_idx, rgb);
+                        rootsPlotted++;
+                    }
+                }
+            }
+        }
+        free(wkRe); free(wkIm);
     } else if (colorMode == COLOR_CONSTANT) {
         uint32_t constRGB = ((uint32_t)constR << 16) | ((uint32_t)constG << 8) | constB;
 
@@ -645,6 +735,8 @@ int main(int argc, char **argv) {
            nTiles, tilesWithData, totalEntries);
     if (colorMode == COLOR_PROXIMITY)
         printf(",\"palette\":\"%s\"", palName);
+    else if (colorMode == COLOR_SOLVE_PROXIMITY)
+        printf(",\"palette\":\"%s\",\"solve_proximity\":true", palName);
     else if (colorMode == COLOR_CONSTANT)
         printf(",\"constant_color\":\"%s\"", constColorStr);
     printf("}\n");

@@ -53,3 +53,4 @@ images/*.png
 # macOS
 .DS_Store
 node_modules
+lambda/solve_proximity_stats_test

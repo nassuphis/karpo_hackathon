@@ -1487,18 +1487,20 @@ async function _showPreview(which) {
     if (sources[which]) {
         const { jobId, sourceKey, previewKey } = sources[which];
         const taskId = 'render_preview_' + which;
+        // Disable both buttons to prevent overlapping jobs
+        const cb = document.getElementById('prev-btn-color');
+        const bb = document.getElementById('prev-btn-bilevel');
+        if (cb) cb.disabled = true;
+        if (bb) bb.disabled = true;
         el.innerHTML = '<div style="color:#888; font-size:12px; padding:12px 0">Generating preview...</div>';
         try {
-            // Clear stale status
             await lambdaPost('storage', { job_id: jobId, task_id: taskId }, '/delete-task').catch(() => {});
-            // Dispatch async
             const dispResult = await lambdaPost('dispatch', {
                 target: 'render_preview',
                 jobs: [{ job_id: jobId, source_key: sourceKey, preview_key: previewKey, task_id: taskId }],
                 expected_keys: [],
             });
             if ((dispResult.fired || 0) !== 1) throw new Error('Preview dispatch failed');
-            // Poll for completion with rich status display
             const t0 = performance.now();
             while (true) {
                 await new Promise(r => setTimeout(r, 2000));
@@ -1510,7 +1512,6 @@ async function _showPreview(which) {
                     throw new Error(msg);
                 }
                 if (check.complete) {
-                    // Show final stats from result_data
                     const rd = check.results?.[0];
                     if (rd) {
                         const parts = [];
@@ -1528,20 +1529,15 @@ async function _showPreview(which) {
                     break;
                 }
                 const elapsed = (performance.now() - t0) / 1000;
-                // Show phase from status_counts
-                const sc = check.status_counts || {};
-                const phase = Object.keys(sc).filter(k => k !== 'done')[0] || 'waiting';
-                let statusMsg = phase + '... ' + elapsed.toFixed(0) + 's';
-                // If we have result_data from intermediate status, show richer info
+                // Use phase from result_data (authoritative), not status_counts key
                 const rd = check.results?.[0];
-                if (rd) {
-                    if (rd.source_size_human) statusMsg = phase + ' (' + rd.source_size_human + ')... ' + elapsed.toFixed(0) + 's';
-                    if (rd.dl_speed && phase === 'generating') statusMsg = 'generating (downloaded ' + rd.source_size_human + ' at ' + rd.dl_speed + ')... ' + elapsed.toFixed(0) + 's';
-                }
+                const phase = rd?.phase || 'working';
+                let statusMsg = phase + '... ' + elapsed.toFixed(0) + 's';
+                if (rd?.dl_speed) statusMsg = phase + ' (downloaded ' + rd.source_size_human + ' at ' + rd.dl_speed + ')... ' + elapsed.toFixed(0) + 's';
+                else if (rd?.source_size_human) statusMsg = phase + ' (' + rd.source_size_human + ')... ' + elapsed.toFixed(0) + 's';
                 el.innerHTML = '<div style="color:#888; font-size:12px; padding:12px 0">' + statusMsg + '</div>';
                 if (elapsed > 300) throw new Error('Preview generation timed out');
             }
-            // Presign the generated preview
             const headResp = await lambdaPost('storage', { keys: [previewKey], presign: true }, '/head-keys');
             const previewUrl = headResp.meta?.[previewKey]?.url;
             if (previewUrl) {
@@ -1552,6 +1548,10 @@ async function _showPreview(which) {
             }
         } catch (e) {
             el.innerHTML = '<div style="color:#c44; font-size:12px; padding:12px 0">Preview failed: ' + e.message + '</div>';
+        } finally {
+            // Re-enable buttons
+            if (cb) cb.disabled = false;
+            if (bb) bb.disabled = false;
         }
         return;
     }

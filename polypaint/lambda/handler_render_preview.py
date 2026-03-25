@@ -76,6 +76,7 @@ def handler(event, context):
     progress = {"runtime": runtime, "source_key": source_key}
 
     try:
+        progress["phase"] = "downloading"
         report_status(job_id, task_id, "started", result_data=progress)
 
         # Download source image with progress

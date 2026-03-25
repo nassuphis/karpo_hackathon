@@ -277,14 +277,15 @@ def handle_check_status(event):
             status_counts[status] = status_counts.get(status, 0) + 1
             if return_ids:
                 found_ids.append(item["task_id"]["S"])
+            # Collect result_data from any status (not just done)
+            rd = item.get("result_data", {}).get("S")
+            if rd:
+                try:
+                    results.append(json.loads(rd))
+                except Exception:
+                    pass
             if status == "done":
                 done += 1
-                rd = item.get("result_data", {}).get("S")
-                if rd:
-                    try:
-                        results.append(json.loads(rd))
-                    except Exception:
-                        pass
             elif status == "error":
                 error_details.append({
                     "task_id": item["task_id"]["S"],

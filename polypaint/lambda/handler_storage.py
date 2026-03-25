@@ -328,7 +328,7 @@ def handle_clean_render(event):
     prefix = f"renders/{job_id}/"
 
     # Only delete known intermediate file prefixes
-    intermediate_prefixes = ['pix_', 'raw_', 'tile_']
+    intermediate_prefixes = ['pix_', 'raw_', 'tile_', 'bilevel_t', 'coeff_t']
     objects = []
     paginator = s3.get_paginator('list_objects_v2')
     for rp in intermediate_prefixes:

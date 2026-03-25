@@ -1501,7 +1501,7 @@ function renderArtifactPanel(jobId, artifacts) {
         html += `<div style="${rowStyle}">`;
         html += `<strong style="min-width:110px; font-size:12px">Color JPEG</strong>`;
         html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[colorJpegKey]}','${jobId}_color.jpeg','${colorJpegKey}')">Download</button>`;
-        html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${colorJpegKey}')">DeepZoom</button>`;
+        html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${colorJpegKey}',this)">DeepZoom</button>`;
         html += `</div>`;
     }
 
@@ -1510,7 +1510,7 @@ function renderArtifactPanel(jobId, artifacts) {
         html += `<div style="${rowStyle}">`;
         html += `<strong style="min-width:110px; font-size:12px">Color PNG</strong>`;
         html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[colorPngKey]}','${jobId}_color.png','${colorPngKey}')">Download</button>`;
-        html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${colorPngKey}')">DeepZoom</button>`;
+        html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${colorPngKey}',this)">DeepZoom</button>`;
         html += `</div>`;
     }
 
@@ -1529,7 +1529,7 @@ function renderArtifactPanel(jobId, artifacts) {
         } else {
             html += `<button class="btn-secondary" style="${btnStyle}" onclick="runPngExport('${jobId}','${bilevelKey}','${pix}')" id="btn-png-export">PNG</button>`;
         }
-        html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${bilevelKey}')">DeepZoom</button>`;
+        html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${bilevelKey}',this)">DeepZoom</button>`;
         html += `</div>`;
     }
 
@@ -1538,7 +1538,7 @@ function renderArtifactPanel(jobId, artifacts) {
         html += `<div style="${rowStyle}">`;
         html += `<strong style="min-width:110px; font-size:12px">Coeffs TIFF</strong>`;
         html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[coeffKey]}','${jobId}_coeffs_bilevel.tif','${coeffKey}')">Download</button>`;
-        html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${coeffKey}')">DeepZoom</button>`;
+        html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${coeffKey}',this)">DeepZoom</button>`;
         html += `</div>`;
     }
 
@@ -1610,8 +1610,8 @@ async function runPngExport(jobId, sourceKey, pix) {
 
 /* ---- DeepZoom export and viewer ---- */
 
-async function runDeepZoomExport(jobId, sourceKey) {
-    const btn = document.getElementById('btn-deepzoom');
+async function runDeepZoomExport(jobId, sourceKey, btnEl) {
+    const btn = btnEl || document.getElementById('btn-deepzoom');
     if (btn) { btn.disabled = true; btn.textContent = 'Creating...'; }
     log(`DeepZoom: exporting ${sourceKey}...`, '', 'render-log');
     try {

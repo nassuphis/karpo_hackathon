@@ -83,9 +83,10 @@ def handler(event, context):
             except OSError:
                 pass
 
-        # Upload final TIFF
+        # Upload final TIFF with dimensions in S3 metadata
         with open(out_path, "rb") as f:
-            s3.put_object(Bucket=BUCKET, Key=out_key, Body=f, ContentType="image/tiff")
+            s3.put_object(Bucket=BUCKET, Key=out_key, Body=f, ContentType="image/tiff",
+                          Metadata={"width": str(full_w), "height": str(full_h)})
         os.remove(out_path)
 
         # Upload preview PNG

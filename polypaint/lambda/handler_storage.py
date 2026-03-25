@@ -508,10 +508,16 @@ def handle_head_keys(event):
     def check(key):
         try:
             resp = s3.head_object(Bucket=BUCKET, Key=key)
-            return key, {
+            info = {
                 "size": resp.get("ContentLength", 0),
                 "type": resp.get("ContentType", ""),
             }
+            # Include image dimensions if stored in user metadata
+            user_meta = resp.get("Metadata", {})
+            if "width" in user_meta and "height" in user_meta:
+                info["width"] = int(user_meta["width"])
+                info["height"] = int(user_meta["height"])
+            return key, info
         except Exception:
             return None, None
 

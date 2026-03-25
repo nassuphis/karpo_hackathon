@@ -1499,7 +1499,14 @@ function renderArtifactPanel(jobId, artifacts) {
     const calc = artifacts._calc;
     const pix = calc ? (calc.N || calc.n1 || '?') : '?';
     const meta = artifacts._meta || {};
-    const sizeOf = (key) => { const m = meta[key]; return m && m.size ? _fmtSize(m.size) : ''; };
+    const infoOf = (key) => {
+        const m = meta[key];
+        if (!m) return '';
+        const parts = [];
+        if (m.width && m.height) parts.push(`${m.width}x${m.height}`);
+        if (m.size) parts.push(_fmtSize(m.size));
+        return parts.join(', ');
+    };
 
     const prefix = `renders/${jobId}/`;
     const hasBilevelTif = !!artifacts[prefix + 'image_bilevel.tif'];
@@ -1529,7 +1536,7 @@ function renderArtifactPanel(jobId, artifacts) {
     if (hasColorJpeg) {
         html += `<div style="${rowStyle}">`;
         html += `<strong style="min-width:110px; font-size:12px">Color JPEG</strong>`;
-        html += `<span style="${dimStyle}">${sizeOf(colorJpegKey)}</span>`;
+        html += `<span style="${dimStyle}">${infoOf(colorJpegKey)}</span>`;
         html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[colorJpegKey]}','${jobId}_color.jpeg','${colorJpegKey}')">Download</button>`;
         html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${colorJpegKey}',this)">DeepZoom</button>`;
         html += `</div>`;
@@ -1539,7 +1546,7 @@ function renderArtifactPanel(jobId, artifacts) {
     if (hasColorPng) {
         html += `<div style="${rowStyle}">`;
         html += `<strong style="min-width:110px; font-size:12px">Color PNG</strong>`;
-        html += `<span style="${dimStyle}">${sizeOf(colorPngKey)}</span>`;
+        html += `<span style="${dimStyle}">${infoOf(colorPngKey)}</span>`;
         html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[colorPngKey]}','${jobId}_color.png','${colorPngKey}')">Download</button>`;
         html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${colorPngKey}',this)">DeepZoom</button>`;
         html += `</div>`;
@@ -1549,7 +1556,7 @@ function renderArtifactPanel(jobId, artifacts) {
     if (hasBilevelTif) {
         html += `<div style="${rowStyle}">`;
         html += `<strong style="min-width:110px; font-size:12px">BiLevel TIFF</strong>`;
-        html += `<span style="${dimStyle}">${sizeOf(bilevelKey)}</span>`;
+        html += `<span style="${dimStyle}">${infoOf(bilevelKey)}</span>`;
         html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[bilevelKey]}','${jobId}_bilevel.tif','${bilevelKey}')">Download</button>`;
         if (hasCompatTif) {
             html += `<button class="btn-secondary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[compatKey]}','${jobId}_bilevel_compat.tif','${compatKey}')">Compat TIFF</button>`;
@@ -1569,7 +1576,7 @@ function renderArtifactPanel(jobId, artifacts) {
     if (hasCoeffTif) {
         html += `<div style="${rowStyle}">`;
         html += `<strong style="min-width:110px; font-size:12px">Coeffs TIFF</strong>`;
-        html += `<span style="${dimStyle}">${sizeOf(coeffKey)}</span>`;
+        html += `<span style="${dimStyle}">${infoOf(coeffKey)}</span>`;
         html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[coeffKey]}','${jobId}_coeffs_bilevel.tif','${coeffKey}')">Download</button>`;
         html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${coeffKey}',this)">DeepZoom</button>`;
         html += `</div>`;

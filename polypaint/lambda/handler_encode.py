@@ -80,11 +80,12 @@ def handler(event, context):
             raise RuntimeError(f"raw2jpeg failed: {result.stderr.strip()}")
         encode_meta = json.loads(result.stdout)
 
-        # Upload
+        # Upload with dimensions in S3 metadata
         content_type = "image/jpeg" if ext == "jpeg" else "image/png"
         with open(out_path, "rb") as f:
             s3.put_object(Bucket=BUCKET, Key=out_key,
-                          Body=f, ContentType=content_type)
+                          Body=f, ContentType=content_type,
+                          Metadata={"width": str(total_w), "height": str(total_h)})
 
         image_url = s3.generate_presigned_url(
             "get_object",

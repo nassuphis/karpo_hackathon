@@ -62,6 +62,40 @@ SWEEP_CM_MEMORY=4096  # companion matrix eigensolve needs more memory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# --- S3 website bucket setup (idempotent) ---
+ensure_bucket_website() {
+    echo "Ensuring S3 website config..."
+
+    # Website hosting
+    aws s3api put-bucket-website --bucket "$BUCKET" \
+        --website-configuration '{"IndexDocument":{"Suffix":"index.html"}}' \
+        --region "$REGION"
+    echo "  website hosting: OK"
+
+    # Public access block off (required for anonymous GetObject)
+    aws s3api put-public-access-block --bucket "$BUCKET" \
+        --public-access-block-configuration \
+        '{"BlockPublicAcls":false,"IgnorePublicAcls":false,"BlockPublicPolicy":false,"RestrictPublicBuckets":false}' \
+        --region "$REGION"
+    echo "  public access block: disabled"
+
+    # Bucket policy: anonymous read on all objects
+    aws s3api put-bucket-policy --bucket "$BUCKET" --region "$REGION" \
+        --policy "{
+  \"Version\": \"2012-10-17\",
+  \"Statement\": [
+    {
+      \"Sid\": \"PublicReadSiteAssets\",
+      \"Effect\": \"Allow\",
+      \"Principal\": \"*\",
+      \"Action\": \"s3:GetObject\",
+      \"Resource\": \"arn:aws:s3:::${BUCKET}/*\"
+    }
+  ]
+}"
+    echo "  bucket policy: public read on ${BUCKET}/*"
+}
+
 # --- Deployed frontend smoke test ---
 verify_frontend_assets() {
     local SITE_URL="http://${BUCKET}.s3-website-${REGION}.amazonaws.com"
@@ -71,7 +105,6 @@ verify_frontend_assets() {
         STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/${asset}")
         if [ "$STATUS" != "200" ]; then
             echo "FATAL: ${SITE_URL}/${asset} returned HTTP ${STATUS} (expected 200)"
-            echo "  Check S3 bucket policy allows public read for this file type"
             exit 1
         fi
         echo "  ${asset}: HTTP ${STATUS} OK"
@@ -843,6 +876,9 @@ if [ "$ACTION" = "create" ]; then
     echo "Setting up API Gateway..."
     setup_api_gateway
 
+    # Ensure bucket is configured for website hosting
+    ensure_bucket_website
+
     # Upload frontend assets to S3
     echo "Uploading frontend assets to S3..."
     aws s3 cp "$SCRIPT_DIR/index.html" "s3://$BUCKET/index.html" \
@@ -978,6 +1014,9 @@ elif [ "$ACTION" = "update" ]; then
     echo ""
     echo "Setting up API Gateway..."
     setup_api_gateway
+
+    # Ensure bucket is configured for website hosting
+    ensure_bucket_website
 
     # Upload index.html and JS catalog to S3
     echo "Uploading index.html to S3..."

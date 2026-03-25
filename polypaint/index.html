@@ -1466,19 +1466,42 @@ async function discoverArtifacts(jobId) {
     return results;
 }
 
-function _showPreview(which) {
-    const url = (window._previewUrls || {})[which];
+async function _showPreview(which) {
+    const urls = window._previewUrls || {};
+    const sources = window._previewSources || {};
     const el = document.getElementById('preview-container');
     if (!el) return;
-    if (!url) {
-        el.innerHTML = '<div style="color:#888; font-size:12px; padding:12px 0">No preview available</div>';
-        return;
-    }
-    el.innerHTML = '<img src="' + url + '" style="max-width:100%; border:1px solid #333; background:#000; display:block">';
     const cb = document.getElementById('prev-btn-color');
     const bb = document.getElementById('prev-btn-bilevel');
     if (cb) cb.style.fontWeight = which === 'color' ? 'bold' : '';
     if (bb) bb.style.fontWeight = which === 'bilevel' ? 'bold' : '';
+
+    if (urls[which]) {
+        el.innerHTML = '<img src="' + urls[which] + '" style="max-width:100%; border:1px solid #333; background:#000; display:block">';
+        return;
+    }
+
+    // No preview URL but source image exists — generate preview
+    if (sources[which]) {
+        const { jobId, sourceKey, previewKey } = sources[which];
+        el.innerHTML = '<div style="color:#888; font-size:12px; padding:12px 0">Generating preview...</div>';
+        try {
+            const result = await lambdaPost('encode', {
+                mode: 'preview',
+                source_key: sourceKey,
+                preview_key: previewKey,
+            });
+            if (result.url) {
+                urls[which] = result.url;
+                el.innerHTML = '<img src="' + result.url + '" style="max-width:100%; border:1px solid #333; background:#000; display:block">';
+            }
+        } catch (e) {
+            el.innerHTML = '<div style="color:#c44; font-size:12px; padding:12px 0">Preview generation failed: ' + e.message + '</div>';
+        }
+        return;
+    }
+
+    el.innerHTML = '<div style="color:#888; font-size:12px; padding:12px 0">No preview available</div>';
 }
 
 function _fmtSize(bytes) {
@@ -1588,27 +1611,43 @@ function renderArtifactPanel(jobId, artifacts) {
     // --- Preview section ---
     html += `<hr style="border:none; border-top:1px solid #444; margin:12px 0 8px">`;
 
-    // Determine available preview sources
+    // Determine available preview sources (existing preview or generatable from source)
     const colorPreviewUrl = hasColorPng ? artifacts[colorPngKey]
         : hasColorJpeg ? artifacts[colorJpegKey] : null;
     const bilevelPreviewUrl = hasBilevelPreview ? artifacts[prefix + 'image_bilevel_preview.png']
         : hasCoeffPreview ? artifacts[prefix + 'image_coeffs_bilevel_preview.png'] : null;
 
+    // Can generate preview if source image exists but preview doesn't
+    const colorSourceKey = hasColorPng ? colorPngKey : hasColorJpeg ? colorJpegKey : null;
+    const bilevelSourceKey = hasBilevelTif ? bilevelKey : hasCoeffTif ? coeffKey : null;
+    const colorCanGen = !colorPreviewUrl && colorSourceKey;
+    const bilevelCanGen = !bilevelPreviewUrl && bilevelSourceKey;
+    const colorEnabled = colorPreviewUrl || colorCanGen;
+    const bilevelEnabled = bilevelPreviewUrl || bilevelCanGen;
+    const bilevelLabel = hasBilevelPreview || hasBilevelTif ? 'Bilevel' : hasCoeffPreview || hasCoeffTif ? 'Coeffs' : 'Bilevel';
+
     html += `<div style="display:flex; gap:6px; margin-bottom:6px">`;
-    html += `<button id="prev-btn-color" class="btn-secondary" style="${btnStyle}${!colorPreviewUrl ? '; opacity:0.4; cursor:default' : ''}" `
-        + (colorPreviewUrl ? `onclick="_showPreview('color')"` : `disabled`)
+    html += `<button id="prev-btn-color" class="btn-secondary" style="${btnStyle}${!colorEnabled ? '; opacity:0.4; cursor:default' : ''}" `
+        + (colorEnabled ? `onclick="_showPreview('color')"` : `disabled`)
         + `>Color preview</button>`;
-    html += `<button id="prev-btn-bilevel" class="btn-secondary" style="${btnStyle}${!bilevelPreviewUrl ? '; opacity:0.4; cursor:default' : ''}" `
-        + (bilevelPreviewUrl ? `onclick="_showPreview('bilevel')"` : `disabled`)
-        + `>${hasBilevelPreview ? 'Bilevel' : hasCoeffPreview ? 'Coeffs' : 'Bilevel'} preview</button>`;
+    html += `<button id="prev-btn-bilevel" class="btn-secondary" style="${btnStyle}${!bilevelEnabled ? '; opacity:0.4; cursor:default' : ''}" `
+        + (bilevelEnabled ? `onclick="_showPreview('bilevel')"` : `disabled`)
+        + `>${bilevelLabel} preview</button>`;
     html += `</div>`;
 
     html += `<div id="preview-container"><div style="color:#888; font-size:12px; padding:12px 0">No preview selected</div></div>`;
 
     preview.innerHTML = html;
 
-    // Store URLs and show default preview
+    // Store URLs and generatable sources for on-demand preview
     window._previewUrls = { color: colorPreviewUrl, bilevel: bilevelPreviewUrl };
+    window._previewSources = {};
+    if (colorCanGen) {
+        window._previewSources.color = { jobId, sourceKey: colorSourceKey, previewKey: prefix + 'preview_color.png' };
+    }
+    if (bilevelCanGen) {
+        window._previewSources.bilevel = { jobId, sourceKey: bilevelSourceKey, previewKey: prefix + 'preview_bilevel.png' };
+    }
     const defaultTab = colorPreviewUrl ? 'color' : bilevelPreviewUrl ? 'bilevel' : null;
     if (defaultTab) _showPreview(defaultTab);
 

@@ -19,6 +19,76 @@ RAW2JPEG = os.path.join(os.path.dirname(__file__), "raw2jpeg")
 
 def handler(event, context):
     params = parse_body(event)
+    mode = params.get("mode", "encode")
+    if mode == "preview":
+        return handle_preview(params)
+    return handle_encode(params)
+
+
+def handle_preview(params):
+    """Generate a 1024px max-dimension preview PNG from any S3 image."""
+    source_key = params["source_key"]
+    preview_key = params["preview_key"]
+    max_size = params.get("max_size", 1024)
+
+    ext = source_key.rsplit('.', 1)[-1].lower()
+    in_path = f"/tmp/preview_in.{ext}"
+    out_path = "/tmp/preview_out.png"
+
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=source_key)
+        with open(in_path, "wb") as f:
+            for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
+                f.write(chunk)
+
+        # Use vipsthumbnail from libvips layer
+        result = subprocess.run(
+            ["vipsthumbnail", in_path, "-s", f"{max_size}x{max_size}",
+             "-o", out_path + "[strip]"],
+            capture_output=True, text=True, timeout=120,
+            env=imgpipe_env(),
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"vipsthumbnail failed: {result.stderr.strip()}")
+
+        file_size = os.path.getsize(out_path)
+
+        # Copy width/height metadata from source if available
+        img_meta = {}
+        try:
+            src_head = s3.head_object(Bucket=BUCKET, Key=source_key)
+            src_meta = src_head.get("Metadata", {})
+            if "width" in src_meta:
+                img_meta["width"] = src_meta["width"]
+            if "height" in src_meta:
+                img_meta["height"] = src_meta["height"]
+        except Exception:
+            pass
+
+        with open(out_path, "rb") as f:
+            s3.put_object(Bucket=BUCKET, Key=preview_key,
+                          Body=f, ContentType="image/png",
+                          Metadata=img_meta)
+
+        url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": BUCKET, "Key": preview_key},
+            ExpiresIn=PRESIGN_EXPIRY)
+
+        return ok_response({
+            "preview_key": preview_key,
+            "file_size": file_size,
+            "url": url,
+        })
+    finally:
+        for p in [in_path, out_path]:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+def handle_encode(params):
     out_key = params["out_key"]
     fmt = params.get("format", "jpeg")
     quality = params.get("quality", 90)

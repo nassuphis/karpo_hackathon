@@ -92,6 +92,7 @@ def handle_list(event):
             entry["param_transforms"] = pipeline.get("param_transforms", [])
             entry["param_transforms_display"] = pipeline.get("param_transforms_display", [])
             entry["coeff_transforms"] = pipeline.get("coeff_transforms", [])
+            entry["pipeline"] = pipeline
             # Compute total bin size and root count from chunk/stripe metadata
             stripes = calc.get("chunks", calc.get("stripes", []))
             entry["total_size"] = sum(s.get("bin_size", 0) for s in stripes)

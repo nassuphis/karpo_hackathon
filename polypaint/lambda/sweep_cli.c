@@ -163,6 +163,22 @@ static const char *findKeyIn(const char *start, const char *end, const char *key
     return NULL;
 }
 
+/* Parse a JSON array of numbers: [1.0, 2.0, ...] */
+static int parseNumArray(const char *p, double *out, int maxCount) {
+    p = skip(p);
+    if (*p != '[') return 0;
+    p++;
+    int count = 0;
+    while (*p && *p != ']' && count < maxCount) {
+        p = skip(p);
+        if (*p == ']') break;
+        out[count++] = parseNum(&p);
+        p = skip(p);
+        if (*p == ',') p++;
+    }
+    return count;
+}
+
 static int parseCoefficients(const char *p, double *re, double *im) {
     p = skip(p);
     if (*p != '[') return 0;
@@ -3159,12 +3175,19 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
 
 /* ==== Wrapped coefficient functions (accept complex inputs) ==== */
 
-typedef void (*CoeffFuncC)(double, double, double, double, double*, double*, int*);
+/* CoeffFuncC: coefficient function ABI.
+ * (x1r, x1i, x2r, x2i, cfpv, n_cfpv, cRe, cIm, nCoeffs) */
+typedef void (*CoeffFuncC)(double, double, double, double,
+                           const double*, int,
+                           double*, double*, int*);
+
+#define MAX_CFPV 16
 
 #define WRAP_OLD(fname) \
     static void fname##_c(double x1r, double x1i, double x2r, double x2i, \
+                          const double *cfpv, int n_cfpv, \
                           double *cRe, double *cIm, int *nCoeffs) { \
-        (void)x1i; (void)x2i; \
+        (void)x1i; (void)x2i; (void)cfpv; (void)n_cfpv; \
         fname(x1r, x2r, cRe, cIm, nCoeffs); \
     }
 
@@ -3216,7 +3239,9 @@ WRAP_OLD(poly_110)
 
 /* p821: hand-written, sequential cf[k] = cf[k-1] * ... with conditionals */
 static void p821_c(double x1r, double x1i, double x2r, double x2i,
-                   double *cRe, double *cIm, int *nCoeffs) {
+                   const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 25;
     for (int i = 0; i < 25; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -3263,7 +3288,9 @@ static void p821_c(double x1r, double x1i, double x2r, double x2i,
 
 /* moth4: 50 coefficients, sequential with complex sin/cos normalization */
 static void moth4_c(double x1r, double x1i, double x2r, double x2i,
-                    double *cRe, double *cIm, int *nCoeffs) {
+                    const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 50;
     for (int i = 0; i < 50; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -3313,7 +3340,9 @@ static void moth4_c(double x1r, double x1i, double x2r, double x2i,
 
 /* p11b3: 11 coefficients, array mutation with integer indexing */
 static void p11b3_c(double x1r, double x1i, double x2r, double x2i,
-                    double *cRe, double *cIm, int *nCoeffs) {
+                    const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 11;
     /* t = t1 + t2 */
     double tr = x1r + x2r, ti = x1i + x2i;
@@ -3370,7 +3399,9 @@ static void p11b3_c(double x1r, double x1i, double x2r, double x2i,
 /* poly_creative10: geometric algebra product terms with alternating signs.
  * gp = dot(t1,t2) + i*wedge(t1,t2), cf[k] = gp^(k+1), cf[even] *= -1. */
 static void creative10_hand_c(double x1r, double x1i, double x2r, double x2i,
-                               double *cRe, double *cIm, int *nCoeffs) {
+                               const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     double dot = x1r * x2r + x1i * x2i;
     double wedge = x1r * x2i - x1i * x2r;
@@ -3392,47 +3423,51 @@ static void creative10_hand_c(double x1r, double x1i, double x2r, double x2i,
     }
 }
 
-/* creative8: Hamiltonian-like terms with position/momentum mixing. */
+/* creative8: Hamiltonian-like terms with position/momentum mixing.
+ * CFPV[0] = n (degree+1, default 71). */
 static void creative8_c(double x1r, double x1i, double x2r, double x2i,
-                        double *cRe, double *cIm, int *nCoeffs) {
-    *nCoeffs = 71;
+                        const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    int n = (n_cfpv > 0 && cfpv[0] >= 2 && cfpv[0] <= MAX_COEFFS)
+            ? (int)cfpv[0] : 71;
+    *nCoeffs = n;
     /* Pass 1: even k → q-terms, odd k → p-terms */
-    for (int k = 0; k < 71; k++) {
+    for (int k = 0; k < n; k++) {
         if (k % 2 == 0) {
-            double q = (k / 2 + 1) * x1r;  /* (k//2+1) * t1.real */
-            cRe[k] = q * q;                 /* q^2 real part */
-            cIm[k] = q * x2i;              /* i*q*t2.imag → imag = q*t2.imag */
+            double q = (k / 2 + 1) * x1r;
+            cRe[k] = q * q;
+            cIm[k] = q * x2i;
         } else {
-            double p = (k / 2 + 1) * x1i;  /* (k//2+1) * t1.imag */
-            cRe[k] = p * p;                 /* p^2 real part */
-            cIm[k] = -(p * x2r);           /* -i*p*t2.real → imag = -p*t2.real */
+            double p = (k / 2 + 1) * x1i;
+            cRe[k] = p * p;
+            cIm[k] = -(p * x2r);
         }
     }
     /* Pass 2: cf[even] += conj(cf[odd]), cf[odd] -= conj(cf[even]) */
-    /* Need temps since we read and write overlapping ranges */
-    double tmpR[71], tmpI[71];
-    for (int k = 0; k < 71; k++) { tmpR[k] = cRe[k]; tmpI[k] = cIm[k]; }
-    for (int k = 0; k < 71; k += 2) {
-        if (k + 1 < 71) {
-            /* cf[k] += conj(cf[k+1]) = (tmpR[k+1], -tmpI[k+1]) */
+    double tmpR[MAX_COEFFS], tmpI[MAX_COEFFS];
+    for (int k = 0; k < n; k++) { tmpR[k] = cRe[k]; tmpI[k] = cIm[k]; }
+    for (int k = 0; k < n; k += 2) {
+        if (k + 1 < n) {
             cRe[k] = tmpR[k] + tmpR[k + 1];
             cIm[k] = tmpI[k] + (-tmpI[k + 1]);
         }
     }
-    for (int k = 1; k < 71; k += 2) {
-        /* cf[k] -= conj(cf[k-1]) using original even values */
+    for (int k = 1; k < n; k += 2) {
         cRe[k] = tmpR[k] - tmpR[k - 1];
-        cIm[k] = tmpI[k] - (-tmpI[k - 1]);  /* -= conj → -re, +im */
+        cIm[k] = tmpI[k] - (-tmpI[k - 1]);
     }
-    for (int k = 0; k < 71; k++) {
+    for (int k = 0; k < n; k++) {
         if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0; cIm[k] = 0; }
     }
 }
 
-/* creative9: Fourier series with frequency decay and neighbor mixing. */
+/* creative9: Fourier series with frequency decay and neighbor mixing.
+ * CFPV[0] = n (degree+1, default 71). */
 static void creative9_c(double x1r, double x1i, double x2r, double x2i,
-                        double *cRe, double *cIm, int *nCoeffs) {
-    *nCoeffs = 71;
+                        const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    int n = (n_cfpv > 0 && cfpv[0] >= 2 && cfpv[0] <= MAX_COEFFS) ? (int)cfpv[0] : 71;
+    *nCoeffs = n;
     double phase_t1 = atan2(x1i, x1r);
     double phase_t2 = atan2(x2i, x2r);
     /* |t1*t2| */
@@ -3440,25 +3475,24 @@ static void creative9_c(double x1r, double x1i, double x2r, double x2i,
     double abs_t1t2 = sqrt(pr*pr + pi_*pi_);
 
     /* Pass 1: cf[k] = (sin(freq_t1) + i*cos(freq_t2)) * exp(-|t1*t2|*k/n) */
-    for (int k = 0; k < 71; k++) {
+    for (int k = 0; k < n; k++) {
         double freq_t1 = (k + 1) * phase_t1;
         double freq_t2 = (k + 1) * phase_t2;
-        double sr = sin(freq_t1), si = cos(freq_t2); /* sin + i*cos */
-        double decay = exp(-abs_t1t2 * k / 71.0);
+        double sr = sin(freq_t1), si = cos(freq_t2);
+        double decay = exp(-abs_t1t2 * k / (double)n);
         cRe[k] = sr * decay;
         cIm[k] = si * decay;
     }
 
-    /* Pass 2: neighbor mixing cf[k] = (cf[k-1] + cf[k+1]) * 0.5 * (t1+t2)
-     * Python modifies in-place: cf[k-1] at step k is already the mixed value. */
+    /* Pass 2: neighbor mixing (in-place) */
     double sumr = x1r + x2r, sumi = x1i + x2i;
-    for (int k = 1; k < 70; k++) {
+    for (int k = 1; k < n - 1; k++) {
         double avgr = (cRe[k-1] + cRe[k+1]) * 0.5;
         double avgi = (cIm[k-1] + cIm[k+1]) * 0.5;
         c_mul(avgr, avgi, sumr, sumi, &cRe[k], &cIm[k]);
     }
 
-    for (int k = 0; k < 71; k++) {
+    for (int k = 0; k < n; k++) {
         if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0; cIm[k] = 0; }
     }
 }
@@ -3469,409 +3503,7 @@ static void creative9_c(double x1r, double x1i, double x2r, double x2i,
 /* Auto-generated giga functions from giga.py */
 #include "giga_generated.c"
 
-static CoeffFuncC lookupCoeffFuncC(const char *name) {
-    /* Stubbed transpilations — fall back to old hand-written versions */
-    if (strcmp(name, "giga_19") == 0)  return giga_19_c;
-    if (strcmp(name, "giga_227") == 0) return giga_227_c;
-    if (strcmp(name, "giga_230") == 0) return giga_230_c;
-    if (strcmp(name, "giga_232") == 0) return giga_232_c;
-    /* Old hand-written giga implementations — accessible as old_giga_* */
-    if (strcmp(name, "old_giga_1") == 0)   return giga_1_c;
-    if (strcmp(name, "old_giga_5") == 0)   return giga_5_c;
-    if (strcmp(name, "old_giga_19") == 0)  return giga_19_c;
-    if (strcmp(name, "old_giga_30") == 0)  return giga_30_c;
-    if (strcmp(name, "old_giga_39") == 0)  return giga_39_c;
-    if (strcmp(name, "old_giga_40") == 0)  return giga_40_c;
-    if (strcmp(name, "old_giga_42") == 0)  return giga_42_c;
-    if (strcmp(name, "old_giga_43") == 0)  return giga_43_c;
-    if (strcmp(name, "old_giga_87") == 0)  return giga_87_c;
-    if (strcmp(name, "old_giga_227") == 0) return giga_227_c;
-    if (strcmp(name, "old_giga_230") == 0) return giga_230_c;
-    if (strcmp(name, "old_giga_232") == 0) return giga_232_c;
-    if (strcmp(name, "p7f") == 0)      return p7f_c;
-    if (strcmp(name, "p821") == 0)    return p821_c;
-    if (strcmp(name, "moth4") == 0)  return moth4_c;
-    if (strcmp(name, "p11b3") == 0)  return p11b3_c;
-    if (strcmp(name, "creative8") == 0) return creative8_c;
-    if (strcmp(name, "creative9") == 0) return creative9_c;
-    if (strcmp(name, "creative10") == 0) return creative10_hand_c;
-    /* Auto-generated giga functions from giga.py */
-    if (strcmp(name, "giga_1") == 0) return poly_giga_1_c;
-    if (strcmp(name, "giga_2") == 0) return poly_giga_2_c;
-    if (strcmp(name, "giga_3") == 0) return poly_giga_3_c;
-    if (strcmp(name, "giga_4") == 0) return poly_giga_4_c;
-    if (strcmp(name, "giga_5") == 0) return poly_giga_5_c;
-    if (strcmp(name, "giga_6") == 0) return poly_giga_6_c;
-    if (strcmp(name, "giga_9") == 0) return poly_giga_9_c;
-    if (strcmp(name, "giga_13") == 0) return poly_giga_13_c;
-    if (strcmp(name, "giga_16") == 0) return poly_giga_16_c;
-    if (strcmp(name, "giga_19_fixed1") == 0) return poly_giga_19_fixed1_c;
-    if (strcmp(name, "giga_19_fixed2") == 0) return poly_giga_19_fixed2_c;
-    if (strcmp(name, "giga_20") == 0) return poly_giga_20_c;
-    if (strcmp(name, "giga_21") == 0) return poly_giga_21_c;
-    if (strcmp(name, "giga_22") == 0) return poly_giga_22_c;
-    if (strcmp(name, "giga_25") == 0) return poly_giga_25_c;
-    if (strcmp(name, "giga_26") == 0) return poly_giga_26_c;
-    if (strcmp(name, "giga_28") == 0) return poly_giga_28_c;
-    if (strcmp(name, "giga_29") == 0) return poly_giga_29_c;
-    if (strcmp(name, "giga_30") == 0) return poly_giga_30_c;
-    if (strcmp(name, "giga_33") == 0) return poly_giga_33_c;
-    if (strcmp(name, "giga_34") == 0) return poly_giga_34_c;
-    if (strcmp(name, "giga_35") == 0) return poly_giga_35_c;
-    if (strcmp(name, "giga_36") == 0) return poly_giga_36_c;
-    if (strcmp(name, "giga_37") == 0) return poly_giga_37_c;
-    if (strcmp(name, "giga_39") == 0) return poly_giga_39_c;
-    if (strcmp(name, "giga_40") == 0) return poly_giga_40_c;
-    if (strcmp(name, "giga_41") == 0) return poly_giga_41_c;
-    if (strcmp(name, "giga_42") == 0) return poly_giga_42_c;
-    if (strcmp(name, "giga_43") == 0) return poly_giga_43_c;
-    if (strcmp(name, "giga_44") == 0) return poly_giga_44_c;
-    if (strcmp(name, "giga_45") == 0) return poly_giga_45_c;
-    if (strcmp(name, "giga_46") == 0) return poly_giga_46_c;
-    if (strcmp(name, "giga_53") == 0) return poly_giga_53_c;
-    if (strcmp(name, "giga_54") == 0) return poly_giga_54_c;
-    if (strcmp(name, "giga_55") == 0) return poly_giga_55_c;
-    if (strcmp(name, "giga_56") == 0) return poly_giga_56_c;
-    if (strcmp(name, "giga_57") == 0) return poly_giga_57_c;
-    if (strcmp(name, "giga_58") == 0) return poly_giga_58_c;
-    if (strcmp(name, "giga_59") == 0) return poly_giga_59_c;
-    if (strcmp(name, "giga_60") == 0) return poly_giga_60_c;
-    if (strcmp(name, "giga_61") == 0) return poly_giga_61_c;
-    if (strcmp(name, "giga_63") == 0) return poly_giga_63_c;
-    if (strcmp(name, "giga_64") == 0) return poly_giga_64_c;
-    if (strcmp(name, "giga_65") == 0) return poly_giga_65_c;
-    if (strcmp(name, "giga_66") == 0) return poly_giga_66_c;
-    if (strcmp(name, "giga_67") == 0) return poly_giga_67_c;
-    if (strcmp(name, "giga_68") == 0) return poly_giga_68_c;
-    if (strcmp(name, "giga_69") == 0) return poly_giga_69_c;
-    if (strcmp(name, "giga_70") == 0) return poly_giga_70_c;
-    if (strcmp(name, "giga_72") == 0) return poly_giga_72_c;
-    if (strcmp(name, "giga_73") == 0) return poly_giga_73_c;
-    if (strcmp(name, "giga_74") == 0) return poly_giga_74_c;
-    if (strcmp(name, "giga_75") == 0) return poly_giga_75_c;
-    if (strcmp(name, "giga_76") == 0) return poly_giga_76_c;
-    if (strcmp(name, "giga_77") == 0) return poly_giga_77_c;
-    if (strcmp(name, "giga_78") == 0) return poly_giga_78_c;
-    if (strcmp(name, "giga_79") == 0) return poly_giga_79_c;
-    if (strcmp(name, "giga_80") == 0) return poly_giga_80_c;
-    if (strcmp(name, "giga_81") == 0) return poly_giga_81_c;
-    if (strcmp(name, "giga_83") == 0) return poly_giga_83_c;
-    if (strcmp(name, "giga_85") == 0) return poly_giga_85_c;
-    if (strcmp(name, "giga_86") == 0) return poly_giga_86_c;
-    if (strcmp(name, "giga_87") == 0) return poly_giga_87_c;
-    if (strcmp(name, "giga_89") == 0) return poly_giga_89_c;
-    if (strcmp(name, "giga_93") == 0) return poly_giga_93_c;
-    if (strcmp(name, "giga_96") == 0) return poly_giga_96_c;
-    if (strcmp(name, "giga_99") == 0) return poly_giga_99_c;
-    if (strcmp(name, "giga_106") == 0) return poly_giga_106_c;
-    if (strcmp(name, "giga_108") == 0) return poly_giga_108_c;
-    if (strcmp(name, "giga_111") == 0) return poly_giga_111_c;
-    if (strcmp(name, "giga_113") == 0) return poly_giga_113_c;
-    if (strcmp(name, "giga_115") == 0) return poly_giga_115_c;
-    if (strcmp(name, "giga_116") == 0) return poly_giga_116_c;
-    if (strcmp(name, "giga_118") == 0) return poly_giga_118_c;
-    if (strcmp(name, "giga_119") == 0) return poly_giga_119_c;
-    if (strcmp(name, "giga_120") == 0) return poly_giga_120_c;
-    if (strcmp(name, "giga_121") == 0) return poly_giga_121_c;
-    if (strcmp(name, "giga_122") == 0) return poly_giga_122_c;
-    if (strcmp(name, "giga_124") == 0) return poly_giga_124_c;
-    if (strcmp(name, "giga_125") == 0) return poly_giga_125_c;
-    if (strcmp(name, "giga_127") == 0) return poly_giga_127_c;
-    if (strcmp(name, "giga_128") == 0) return poly_giga_128_c;
-    if (strcmp(name, "giga_130") == 0) return poly_giga_130_c;
-    if (strcmp(name, "giga_131") == 0) return poly_giga_131_c;
-    if (strcmp(name, "giga_132") == 0) return poly_giga_132_c;
-    if (strcmp(name, "giga_133") == 0) return poly_giga_133_c;
-    if (strcmp(name, "giga_134") == 0) return poly_giga_134_c;
-    if (strcmp(name, "giga_136") == 0) return poly_giga_136_c;
-
-    /* Auto-generated g-functions (g1-g99+) */
-    if (strcmp(name, "g1") == 0) return g1_c;
-    if (strcmp(name, "g2") == 0) return g2_c;
-    if (strcmp(name, "g3") == 0) return g3_c;
-    if (strcmp(name, "g4") == 0) return g4_c;
-    if (strcmp(name, "g5") == 0) return g5_c;
-    if (strcmp(name, "g6") == 0) return g6_c;
-    if (strcmp(name, "g7") == 0) return g7_c;
-    if (strcmp(name, "g8") == 0) return g8_c;
-    if (strcmp(name, "g9") == 0) return g9_c;
-    if (strcmp(name, "g10") == 0) return g10_c;
-    if (strcmp(name, "g11") == 0) return g11_c;
-    if (strcmp(name, "g12") == 0) return g12_c;
-    if (strcmp(name, "g13") == 0) return g13_c;
-    if (strcmp(name, "g14") == 0) return g14_c;
-    if (strcmp(name, "g15") == 0) return g15_c;
-    if (strcmp(name, "g16") == 0) return g16_c;
-    if (strcmp(name, "g17") == 0) return g17_c;
-    if (strcmp(name, "g18") == 0) return g18_c;
-    if (strcmp(name, "g19") == 0) return g19_c;
-    if (strcmp(name, "g20") == 0) return g20_c;
-    if (strcmp(name, "g21") == 0) return g21_c;
-    if (strcmp(name, "g22") == 0) return g22_c;
-    if (strcmp(name, "g23") == 0) return g23_c;
-    if (strcmp(name, "g24") == 0) return g24_c;
-    if (strcmp(name, "g25") == 0) return g25_c;
-    if (strcmp(name, "g26") == 0) return g26_c;
-    if (strcmp(name, "g27") == 0) return g27_c;
-    if (strcmp(name, "g28") == 0) return g28_c;
-    if (strcmp(name, "g29") == 0) return g29_c;
-    if (strcmp(name, "g30") == 0) return g30_c;
-    if (strcmp(name, "g31") == 0) return g31_c;
-    if (strcmp(name, "g32") == 0) return g32_c;
-    if (strcmp(name, "g33") == 0) return g33_c;
-    if (strcmp(name, "g34") == 0) return g34_c;
-    if (strcmp(name, "g35") == 0) return g35_c;
-    if (strcmp(name, "g36") == 0) return g36_c;
-    if (strcmp(name, "g37") == 0) return g37_c;
-    if (strcmp(name, "g38") == 0) return g38_c;
-    if (strcmp(name, "g39") == 0) return g39_c;
-    if (strcmp(name, "g40") == 0) return g40_c;
-    if (strcmp(name, "g41") == 0) return g41_c;
-    if (strcmp(name, "g42") == 0) return g42_c;
-    if (strcmp(name, "g43") == 0) return g43_c;
-    if (strcmp(name, "g44") == 0) return g44_c;
-    if (strcmp(name, "g45") == 0) return g45_c;
-    if (strcmp(name, "g46") == 0) return g46_c;
-    if (strcmp(name, "g47") == 0) return g47_c;
-    if (strcmp(name, "g48") == 0) return g48_c;
-    if (strcmp(name, "g49") == 0) return g49_c;
-    if (strcmp(name, "g50") == 0) return g50_c;
-    if (strcmp(name, "g51") == 0) return g51_c;
-    if (strcmp(name, "g52") == 0) return g52_c;
-    if (strcmp(name, "g53") == 0) return g53_c;
-    if (strcmp(name, "g54") == 0) return g54_c;
-    if (strcmp(name, "g55") == 0) return g55_c;
-    if (strcmp(name, "g56") == 0) return g56_c;
-    if (strcmp(name, "g57") == 0) return g57_c;
-    if (strcmp(name, "g58") == 0) return g58_c;
-    if (strcmp(name, "g59") == 0) return g59_c;
-    if (strcmp(name, "g60") == 0) return g60_c;
-    if (strcmp(name, "g61") == 0) return g61_c;
-    if (strcmp(name, "g62") == 0) return g62_c;
-    if (strcmp(name, "g63") == 0) return g63_c;
-    if (strcmp(name, "g64") == 0) return g64_c;
-    if (strcmp(name, "g65") == 0) return g65_c;
-    if (strcmp(name, "g66") == 0) return g66_c;
-    if (strcmp(name, "g67") == 0) return g67_c;
-    if (strcmp(name, "g68") == 0) return g68_c;
-    if (strcmp(name, "g69") == 0) return g69_c;
-    if (strcmp(name, "g70") == 0) return g70_c;
-    if (strcmp(name, "g71") == 0) return g71_c;
-    if (strcmp(name, "g72") == 0) return g72_c;
-    if (strcmp(name, "g73") == 0) return g73_c;
-    if (strcmp(name, "g74") == 0) return g74_c;
-    if (strcmp(name, "g75") == 0) return g75_c;
-    if (strcmp(name, "g76") == 0) return g76_c;
-    if (strcmp(name, "g77") == 0) return g77_c;
-    if (strcmp(name, "g78") == 0) return g78_c;
-    if (strcmp(name, "g79") == 0) return g79_c;
-    if (strcmp(name, "g80") == 0) return g80_c;
-    if (strcmp(name, "g81") == 0) return g81_c;
-    /* g82: transpile failed, skipped */
-    if (strcmp(name, "g83") == 0) return g83_c;
-    if (strcmp(name, "g84") == 0) return g84_c;
-    if (strcmp(name, "g85") == 0) return g85_c;
-    if (strcmp(name, "g86") == 0) return g86_c;
-    if (strcmp(name, "g87") == 0) return g87_c;
-    if (strcmp(name, "g88") == 0) return g88_c;
-    if (strcmp(name, "g89") == 0) return g89_c;
-    if (strcmp(name, "g90") == 0) return g90_c;
-    if (strcmp(name, "g91") == 0) return g91_c;
-    if (strcmp(name, "g92") == 0) return g92_c;
-    if (strcmp(name, "g93") == 0) return g93_c;
-    if (strcmp(name, "g94") == 0) return g94_c;
-    if (strcmp(name, "g95") == 0) return g95_c;
-    if (strcmp(name, "g96") == 0) return g96_c;
-    if (strcmp(name, "g97") == 0) return g97_c;
-    if (strcmp(name, "g98") == 0) return g98_c;
-    if (strcmp(name, "g99") == 0) return g99_c;
-    if (strcmp(name, "poly_110") == 0) return poly_110_c;
-    if (strcmp(name, "poly_2") == 0)   return poly_2_hand;
-    if (strcmp(name, "poly_9") == 0)   return poly_9_hand;
-    if (strcmp(name, "poly_21") == 0)  return poly_21_hand;
-    if (strcmp(name, "poly_29") == 0)  return poly_29_hand;
-    if (strcmp(name, "poly_33") == 0)  return poly_33_hand;
-    if (strcmp(name, "poly_35") == 0)  return poly_35_hand;
-    if (strcmp(name, "poly_37") == 0)  return poly_37_hand;
-    if (strcmp(name, "poly_40") == 0)  return poly_40_hand;
-    if (strcmp(name, "poly_42") == 0)  return poly_42_hand;
-    if (strcmp(name, "poly_42_serendipity") == 0) return poly_42_serendipity;
-    if (strcmp(name, "poly_44") == 0)  return poly_44_hand;
-    if (strcmp(name, "poly_45") == 0)  return poly_45_hand;
-    if (strcmp(name, "poly_46") == 0)  return poly_46_hand;
-    if (strcmp(name, "poly_50") == 0)  return poly_50_hand;
-    if (strcmp(name, "poly_54") == 0)  return poly_54_hand;
-    if (strcmp(name, "poly_55") == 0)  return poly_55_hand;
-    if (strcmp(name, "poly_58") == 0)  return poly_58_hand;
-    if (strcmp(name, "poly_61") == 0)  return poly_61_hand;
-    if (strcmp(name, "poly_62") == 0)  return poly_62_hand;
-    if (strcmp(name, "poly_65") == 0)  return poly_65_hand;
-    if (strcmp(name, "poly_70") == 0)  return poly_70_hand;
-    if (strcmp(name, "poly_72") == 0)  return poly_72_hand;
-    if (strcmp(name, "poly_73") == 0)  return poly_73_hand;
-    if (strcmp(name, "poly_74") == 0)  return poly_74_hand;
-    if (strcmp(name, "poly_78") == 0)  return poly_78_hand;
-    if (strcmp(name, "poly_81") == 0)  return poly_81_hand;
-    if (strcmp(name, "poly_82") == 0)  return poly_82_hand;
-    if (strcmp(name, "poly_94") == 0)  return poly_94_hand;
-    if (strcmp(name, "poly_95") == 0)  return poly_95_hand;
-    if (strcmp(name, "poly_96") == 0)  return poly_96_hand;
-    if (strcmp(name, "poly_97") == 0)  return poly_97_hand;
-    if (strcmp(name, "poly_100") == 0) return poly_100_hand;
-    if (strcmp(name, "poly_102_serendipity") == 0) return poly_102_serendipity;
-    if (strcmp(name, "poly_117") == 0) return poly_117_hand;
-    if (strcmp(name, "poly_118") == 0) return poly_118_hand;
-    if (strcmp(name, "poly_120") == 0) return poly_120_hand;
-    if (strcmp(name, "poly_125") == 0) return poly_125_hand;
-    if (strcmp(name, "poly_128") == 0) return poly_128_hand;
-    /* batch 2 */
-    if (strcmp(name, "poly_134") == 0) return poly_134_hand;
-    if (strcmp(name, "poly_135") == 0) return poly_135_hand;
-    if (strcmp(name, "poly_142") == 0) return poly_142_hand;
-    if (strcmp(name, "poly_146") == 0) return poly_146_hand;
-    if (strcmp(name, "poly_150") == 0) return poly_150_hand;
-    /* batch 3 */
-    if (strcmp(name, "poly_152") == 0) return poly_152_hand;
-    if (strcmp(name, "poly_153") == 0) return poly_153_hand;
-    if (strcmp(name, "poly_157") == 0) return poly_157_hand;
-    if (strcmp(name, "poly_164") == 0) return poly_164_hand;
-    if (strcmp(name, "poly_167") == 0) return poly_167_hand;
-    /* batch 4 */
-    if (strcmp(name, "poly_171") == 0) return poly_171_hand;
-    if (strcmp(name, "poly_179") == 0) return poly_179_hand;
-    if (strcmp(name, "poly_180") == 0) return poly_180_hand;
-    if (strcmp(name, "poly_184") == 0) return poly_184_hand;
-    if (strcmp(name, "poly_187") == 0) return poly_187_hand;
-    /* batch 5 */
-    if (strcmp(name, "poly_188") == 0) return poly_188_hand;
-    if (strcmp(name, "poly_189") == 0) return poly_189_hand;
-    if (strcmp(name, "poly_190") == 0) return poly_190_hand;
-    if (strcmp(name, "poly_191") == 0) return poly_191_hand;
-    if (strcmp(name, "poly_192") == 0) return poly_192_hand;
-    /* batch 6 */
-    if (strcmp(name, "poly_193") == 0) return poly_193_hand;
-    if (strcmp(name, "poly_194") == 0) return poly_194_hand;
-    if (strcmp(name, "poly_195") == 0) return poly_195_hand;
-    if (strcmp(name, "poly_196") == 0) return poly_196_hand;
-    if (strcmp(name, "poly_197") == 0) return poly_197_hand;
-    /* batch 7 */
-    if (strcmp(name, "poly_198") == 0) return poly_198_hand;
-    if (strcmp(name, "poly_199") == 0) return poly_199_hand;
-    if (strcmp(name, "poly_123") == 0) return poly_123_hand;
-    if (strcmp(name, "poly_161") == 0) return poly_161_hand;
-    if (strcmp(name, "poly_103") == 0) return poly_103_hand;
-    /* poly_201-300 hand-written overrides */
-    if (strcmp(name, "poly_201") == 0) return poly_201_hand;
-    if (strcmp(name, "poly_202") == 0) return poly_202_hand;
-    if (strcmp(name, "poly_203") == 0) return poly_203_hand;
-    if (strcmp(name, "poly_204") == 0) return poly_204_hand;
-    if (strcmp(name, "poly_205") == 0) return poly_205_hand;
-    if (strcmp(name, "poly_206") == 0) return poly_206_hand;
-    if (strcmp(name, "poly_207") == 0) return poly_207_hand;
-    if (strcmp(name, "poly_208") == 0) return poly_208_hand;
-    if (strcmp(name, "poly_209") == 0) return poly_209_hand;
-    if (strcmp(name, "poly_210") == 0) return poly_210_hand;
-    if (strcmp(name, "poly_211") == 0) return poly_211_hand;
-    if (strcmp(name, "poly_212") == 0) return poly_212_hand;
-    if (strcmp(name, "poly_213") == 0) return poly_213_hand;
-    if (strcmp(name, "poly_214") == 0) return poly_214_hand;
-    if (strcmp(name, "poly_215") == 0) return poly_215_hand;
-    if (strcmp(name, "poly_216") == 0) return poly_216_hand;
-    if (strcmp(name, "poly_217") == 0) return poly_217_hand;
-    if (strcmp(name, "poly_218") == 0) return poly_218_hand;
-    if (strcmp(name, "poly_219") == 0) return poly_219_hand;
-    if (strcmp(name, "poly_220") == 0) return poly_220_hand;
-    if (strcmp(name, "poly_221") == 0) return poly_221_hand;
-    if (strcmp(name, "poly_222") == 0) return poly_222_hand;
-    if (strcmp(name, "poly_223") == 0) return poly_223_hand;
-    if (strcmp(name, "poly_224") == 0) return poly_224_hand;
-    if (strcmp(name, "poly_225") == 0) return poly_225_hand;
-    if (strcmp(name, "poly_226") == 0) return poly_226_hand;
-    if (strcmp(name, "poly_227") == 0) return poly_227_hand;
-    if (strcmp(name, "poly_228") == 0) return poly_228_hand;
-    if (strcmp(name, "poly_229") == 0) return poly_229_hand;
-    if (strcmp(name, "poly_230") == 0) return poly_230_hand;
-    if (strcmp(name, "poly_231") == 0) return poly_231_hand;
-    if (strcmp(name, "poly_232") == 0) return poly_232_hand;
-    if (strcmp(name, "poly_233") == 0) return poly_233_hand;
-    if (strcmp(name, "poly_234") == 0) return poly_234_hand;
-    if (strcmp(name, "poly_235") == 0) return poly_235_hand;
-    if (strcmp(name, "poly_236") == 0) return poly_236_hand;
-    if (strcmp(name, "poly_237") == 0) return poly_237_hand;
-    if (strcmp(name, "poly_238") == 0) return poly_238_hand;
-    if (strcmp(name, "poly_239") == 0) return poly_239_hand;
-    if (strcmp(name, "poly_240") == 0) return poly_240_hand;
-    if (strcmp(name, "poly_241") == 0) return poly_241_hand;
-    if (strcmp(name, "poly_242") == 0) return poly_242_hand;
-    if (strcmp(name, "poly_243") == 0) return poly_243_hand;
-    if (strcmp(name, "poly_244") == 0) return poly_244_hand;
-    if (strcmp(name, "poly_245") == 0) return poly_245_hand;
-    if (strcmp(name, "poly_246") == 0) return poly_246_hand;
-    if (strcmp(name, "poly_247") == 0) return poly_247_hand;
-    if (strcmp(name, "poly_248") == 0) return poly_248_hand;
-    if (strcmp(name, "poly_249") == 0) return poly_249_hand;
-    if (strcmp(name, "poly_250") == 0) return poly_250_hand;
-    if (strcmp(name, "poly_251") == 0) return poly_251_hand;
-    if (strcmp(name, "poly_252") == 0) return poly_252_hand;
-    if (strcmp(name, "poly_253") == 0) return poly_253_hand;
-    if (strcmp(name, "poly_254") == 0) return poly_254_hand;
-    if (strcmp(name, "poly_255") == 0) return poly_255_hand;
-    if (strcmp(name, "poly_256") == 0) return poly_256_hand;
-    if (strcmp(name, "poly_257") == 0) return poly_257_hand;
-    if (strcmp(name, "poly_258") == 0) return poly_258_hand;
-    if (strcmp(name, "poly_259") == 0) return poly_259_hand;
-    if (strcmp(name, "poly_260") == 0) return poly_260_hand;
-    if (strcmp(name, "poly_261") == 0) return poly_261_hand;
-    if (strcmp(name, "poly_262") == 0) return poly_262_hand;
-    if (strcmp(name, "poly_263") == 0) return poly_263_hand;
-    if (strcmp(name, "poly_264") == 0) return poly_264_hand;
-    if (strcmp(name, "poly_265") == 0) return poly_265_hand;
-    if (strcmp(name, "poly_266") == 0) return poly_266_hand;
-    if (strcmp(name, "poly_267") == 0) return poly_267_hand;
-    if (strcmp(name, "poly_268") == 0) return poly_268_hand;
-    if (strcmp(name, "poly_269") == 0) return poly_269_hand;
-    if (strcmp(name, "poly_270") == 0) return poly_270_hand;
-    if (strcmp(name, "poly_271") == 0) return poly_271_hand;
-    if (strcmp(name, "poly_272") == 0) return poly_272_hand;
-    if (strcmp(name, "poly_273") == 0) return poly_273_hand;
-    if (strcmp(name, "poly_274") == 0) return poly_274_hand;
-    if (strcmp(name, "poly_275") == 0) return poly_275_hand;
-    if (strcmp(name, "poly_276") == 0) return poly_276_hand;
-    if (strcmp(name, "poly_277") == 0) return poly_277_hand;
-    if (strcmp(name, "poly_278") == 0) return poly_278_hand;
-    if (strcmp(name, "poly_279") == 0) return poly_279_hand;
-    if (strcmp(name, "poly_280") == 0) return poly_280_hand;
-    if (strcmp(name, "poly_281") == 0) return poly_281_hand;
-    if (strcmp(name, "poly_282") == 0) return poly_282_hand;
-    if (strcmp(name, "poly_283") == 0) return poly_283_hand;
-    if (strcmp(name, "poly_284") == 0) return poly_284_hand;
-    if (strcmp(name, "poly_285") == 0) return poly_285_hand;
-    if (strcmp(name, "poly_286") == 0) return poly_286_hand;
-    if (strcmp(name, "poly_287") == 0) return poly_287_hand;
-    if (strcmp(name, "poly_288") == 0) return poly_288_hand;
-    if (strcmp(name, "poly_289") == 0) return poly_289_hand;
-    if (strcmp(name, "poly_290") == 0) return poly_290_hand;
-    if (strcmp(name, "poly_291") == 0) return poly_291_hand;
-    if (strcmp(name, "poly_292") == 0) return poly_292_hand;
-    if (strcmp(name, "poly_293") == 0) return poly_293_hand;
-    if (strcmp(name, "poly_294") == 0) return poly_294_hand;
-    if (strcmp(name, "poly_295") == 0) return poly_295_hand;
-    if (strcmp(name, "poly_296") == 0) return poly_296_hand;
-    if (strcmp(name, "poly_297") == 0) return poly_297_hand;
-    if (strcmp(name, "poly_298") == 0) return poly_298_hand;
-    if (strcmp(name, "poly_299") == 0) return poly_299_hand;
-    if (strcmp(name, "poly_300") == 0) return poly_300_hand;
-#include "poly_generated_lookups.h"
-#include "poly_generated_200_lookups.h"
-/* poly_generated_300_lookups.h not needed — hand-written lookups above */
-#include "poly_generated_400_lookups.h"
-#include "poly_generated_500_lookups.h"
-#include "poly_generated_600_lookups.h"
-#include "poly_generated_700_lookups.h"
-#include "poly_generated_800_lookups.h"
-#include "poly_generated_900_lookups.h"
-    return NULL;
-}
+#include "coeff_func_lookup.h"
 
 /* ==== Coeffgen mode: generate coefficient vectors for the grid ==== */
 
@@ -3961,13 +3593,19 @@ static int runCoeffGen(const char *buf, const char *outPath) {
         return 1;
     }
 
+    /* Parse CFPV (coefficient function parameter vector) */
+    double cfpv[MAX_CFPV];
+    int n_cfpv = 0;
+    cp = findKey(buf, "cfpv");
+    if (cp) n_cfpv = parseNumArray(cp, cfpv, MAX_CFPV);
+
     /* Probe degree at (0,0) with transforms applied */
     double probeRe[MAX_COEFFS], probeIm[MAX_COEFFS];
     int probeN;
     {
         double z1r = 0, z1i = 0, z2r = 0, z2i = 0;
         for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, n1);
-        coeffFunc(z1r, z1i, z2r, z2i, probeRe, probeIm, &probeN);
+        coeffFunc(z1r, z1i, z2r, z2i, cfpv, n_cfpv, probeRe, probeIm, &probeN);
         for (int t = 0; t < nCt; t++) ctChain[t](probeRe, probeIm, &probeN);
     }
     int nCoeffsOut = probeN;
@@ -4004,8 +3642,16 @@ static int runCoeffGen(const char *buf, const char *outPath) {
 
             double cRe[MAX_COEFFS], cIm[MAX_COEFFS];
             int nCoeffs;
-            coeffFunc(z1r, z1i, z2r, z2i, cRe, cIm, &nCoeffs);
+            coeffFunc(z1r, z1i, z2r, z2i, cfpv, n_cfpv, cRe, cIm, &nCoeffs);
             for (int t = 0; t < nCt; t++) ctChain[t](cRe, cIm, &nCoeffs);
+
+            if (nCoeffs != nCoeffsOut) {
+                fprintf(stderr, "nCoeffs mismatch: probe returned %d but step (%d,%d) pass %d returned %d\n",
+                        nCoeffsOut, i1, i2, pass, nCoeffs);
+                fclose(fout);
+                free(stepBuf);
+                return 1;
+            }
 
             /* Pad or truncate to nCoeffsOut */
             for (int k = nCoeffs; k < nCoeffsOut; k++) { cRe[k] = 0; cIm[k] = 0; }
@@ -4147,6 +3793,12 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
         return 1;
     }
 
+    /* Parse CFPV (coefficient function parameter vector) */
+    double cfpv[MAX_CFPV];
+    int n_cfpv = 0;
+    cp = findKey(buf, "cfpv");
+    if (cp) n_cfpv = parseNumArray(cp, cfpv, MAX_CFPV);
+
     /* Open params file and seek to our slice */
     FILE *fin = fopen(paramsFile, "rb");
     if (!fin) {
@@ -4169,7 +3821,7 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
     int probeN;
     coeffFunc((double)probe[0], (double)probe[1],
               (double)probe[2], (double)probe[3],
-              probeRe, probeIm, &probeN);
+              cfpv, n_cfpv, probeRe, probeIm, &probeN);
     for (int t = 0; t < nCt; t++) ctChain[t](probeRe, probeIm, &probeN);
     int nCoeffsOut = probeN;
     int degree = nCoeffsOut - 1;
@@ -4194,8 +3846,17 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
         int nCoeffs;
         coeffFunc((double)params[0], (double)params[1],
                   (double)params[2], (double)params[3],
-                  cRe, cIm, &nCoeffs);
+                  cfpv, n_cfpv, cRe, cIm, &nCoeffs);
         for (int t = 0; t < nCt; t++) ctChain[t](cRe, cIm, &nCoeffs);
+
+        if (nCoeffs != nCoeffsOut) {
+            fprintf(stderr, "nCoeffs mismatch: probe returned %d but step %ld returned %d\n",
+                    nCoeffsOut, stepStart + s, nCoeffs);
+            fclose(fin);
+            fclose(fout);
+            free(stepBuf);
+            return 1;
+        }
 
         for (int k = nCoeffs; k < nCoeffsOut; k++) { cRe[k] = 0; cIm[k] = 0; }
 

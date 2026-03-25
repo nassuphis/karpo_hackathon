@@ -17,7 +17,9 @@
  *      + (np.angle(t1) * k - np.angle(t2)) * 1j
  */
 static void poly_188_hand(double x1r, double x1i, double x2r, double x2i,
+                           const double *cfpv, int n_cfpv,
                            double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -70,7 +72,9 @@ static void poly_188_hand(double x1r, double x1i, double x2r, double x2i,
  * t1**(70-k) and t2**k are complex powers.
  */
 static void poly_189_hand(double x1r, double x1i, double x2r, double x2i,
+                           const double *cfpv, int n_cfpv,
                            double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -116,7 +120,9 @@ static void poly_189_hand(double x1r, double x1i, double x2r, double x2i,
  *   cf = t1**exponents + (-1)**exponents * t2**(exponents + 1)
  */
 static void poly_190_hand(double x1r, double x1i, double x2r, double x2i,
+                           const double *cfpv, int n_cfpv,
                            double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -157,7 +163,9 @@ static void poly_190_hand(double x1r, double x1i, double x2r, double x2i,
  * so np.sin(...) and np.cos(...) produce real scalars per element.
  */
 static void poly_191_hand(double x1r, double x1i, double x2r, double x2i,
+                           const double *cfpv, int n_cfpv,
                            double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -199,7 +207,9 @@ static void poly_191_hand(double x1r, double x1i, double x2r, double x2i,
  *   cf = (t1**degrees) * (np.conj(t2)**(degrees % 7)) * (-1)**(degrees // 6) * (1 + degrees / 70)
  */
 static void poly_192_hand(double x1r, double x1i, double x2r, double x2i,
+                           const double *cfpv, int n_cfpv,
                            double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 

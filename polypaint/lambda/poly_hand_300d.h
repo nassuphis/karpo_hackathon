@@ -1,7 +1,9 @@
 /* poly_hand_300d.h — Hand-written C for poly_261 through poly_280 */
 
 static void poly_261_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs, j in 1..35):
      *   mag = log(1 + abs(t1)**j + abs(t2)**(35-j)) + sin(j*angle(t1) + angle(t2))
@@ -31,7 +33,9 @@ static void poly_261_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_262_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs):
      *   cf[[2,7,15,23,29]] = [2+1j, -3+2j, 4-1.5j, -2.2+0.8j, 0.6-0.4j]
@@ -120,7 +124,9 @@ static void poly_262_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_263_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs): Complex branching with j%4, j%3, j%5, else.
      * Plus overlay loops and fixed overrides.
@@ -252,7 +258,9 @@ static void poly_263_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_264_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs):
      *   Main loop k in 1..35:
@@ -329,7 +337,9 @@ static void poly_264_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_265_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs, j in 1..35):
      *   angle = angle(t1)*j + angle(t2)*(35-j)
@@ -363,7 +373,9 @@ static void poly_265_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_266_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs, k in 1..35):
      *   mag = sin(abs(t1)*(k**2)) + cos(abs(t2)/k) + log(abs(t1)+1)*log(abs(t2)+1)
@@ -393,7 +405,9 @@ static void poly_266_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_267_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs):
      *   Main loop j in 1..35:
@@ -479,7 +493,9 @@ static void poly_267_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_268_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs):
      *   Main loop j in 1..35 (all real result):
@@ -638,7 +654,9 @@ static void poly_268_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_269_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs):
      *   Main loop j in 1..35 with j%3 branches:
@@ -732,7 +750,9 @@ static void poly_269_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_270_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs):
      *   Main loop j in 1..35:
@@ -810,7 +830,9 @@ static void poly_270_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_271_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs, j in 1..35):
      *   mag = log(abs(t1)+j)*sin(j*angle(t2)) + cos(abs(t2)*j)
@@ -838,7 +860,9 @@ static void poly_271_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_272_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs, k in 1..35):
      *   j = (k+3)%6+1; r = k//4+1
@@ -881,7 +905,9 @@ static void poly_272_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_273_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs):
      *   cf[[0,5,11,17,23,29]] = [2, -3+1j, 4, -5j, 6+2j, -7]
@@ -983,7 +1009,9 @@ static void poly_273_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_274_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs):
      *   Main loop j in 1..35:
@@ -1043,7 +1071,9 @@ static void poly_274_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_275_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs, j in 1..35):
      *   k = (j*4)%8+1; r = j//5+2
@@ -1090,7 +1120,9 @@ static void poly_275_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_276_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs): j%5 branches + 7 overrides
      */
@@ -1222,7 +1254,9 @@ static void poly_276_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_277_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs): 7 ranges of 5, each with different formula.
      * Plus 4 overrides at 11,17,26,33.
@@ -1336,7 +1370,9 @@ static void poly_277_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_278_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs):
      *   Fixed: cf[0]=2, cf[3]=-3, cf[9]=5+2j, cf[15]=-4+1j, cf[21]=3.5, cf[29]=-2.2
@@ -1430,7 +1466,9 @@ static void poly_278_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_279_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs):
      *   Loop j in 0..34:
@@ -1505,7 +1543,9 @@ static void poly_279_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_280_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (35 coeffs): (j+1)%6 branches + fixed overrides
      */

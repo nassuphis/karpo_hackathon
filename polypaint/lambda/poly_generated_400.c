@@ -2,7 +2,9 @@
 /* 100 coefficient functions */
 
 static void poly_301_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -139,7 +141,9 @@ static void poly_301_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_302_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -260,7 +264,9 @@ static void poly_302_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_303_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     for (int j = 1; j < 36; j++) {
@@ -406,14 +412,18 @@ static void poly_303_c(double x1r, double x1i, double x2r, double x2i,
 
 /* poly_304: too complex for auto-transpile, stubbed */
 static void poly_304_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     (void)x1r; (void)x1i; (void)x2r; (void)x2i;
 }
 
 static void poly_305_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -538,7 +548,9 @@ static void poly_305_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_306_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -719,7 +731,9 @@ static void poly_306_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_307_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -836,7 +850,9 @@ static void poly_307_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_308_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -1013,7 +1029,9 @@ static void poly_308_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_309_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -1140,7 +1158,9 @@ static void poly_309_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_310_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -1245,7 +1265,9 @@ static void poly_310_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_311_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -1372,7 +1394,9 @@ static void poly_311_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_312_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -1475,7 +1499,9 @@ static void poly_312_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_313_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -1782,7 +1808,9 @@ static void poly_313_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_314_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -1916,7 +1944,9 @@ static void poly_314_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_315_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -2035,7 +2065,9 @@ static void poly_315_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_316_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -2179,7 +2211,9 @@ static void poly_316_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_317_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -2291,7 +2325,9 @@ static void poly_317_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_318_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -2386,7 +2422,9 @@ static void poly_318_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_319_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -2507,7 +2545,9 @@ static void poly_319_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_320_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -2624,7 +2664,9 @@ static void poly_320_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_321_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -2723,7 +2765,9 @@ static void poly_321_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_322_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -2834,7 +2878,9 @@ static void poly_322_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_323_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -2913,7 +2959,9 @@ static void poly_323_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_324_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -3039,14 +3087,18 @@ static void poly_324_c(double x1r, double x1i, double x2r, double x2i,
 
 /* poly_325: too complex for auto-transpile, stubbed */
 static void poly_325_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     (void)x1r; (void)x1i; (void)x2r; (void)x2i;
 }
 
 static void poly_326_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -3183,7 +3235,9 @@ static void poly_326_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_327_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -3289,7 +3343,9 @@ static void poly_327_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_328_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -3423,7 +3479,9 @@ static void poly_328_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_329_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -3544,7 +3602,9 @@ static void poly_329_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_330_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -3675,7 +3735,9 @@ static void poly_330_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_331_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -3767,14 +3829,18 @@ static void poly_331_c(double x1r, double x1i, double x2r, double x2i,
 
 /* poly_332: too complex for auto-transpile, stubbed */
 static void poly_332_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     (void)x1r; (void)x1i; (void)x2r; (void)x2i;
 }
 
 static void poly_333_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -3873,7 +3939,9 @@ static void poly_333_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_334_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -3998,7 +4066,9 @@ static void poly_334_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_335_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -4185,7 +4255,9 @@ static void poly_335_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_336_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -4319,7 +4391,9 @@ static void poly_336_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_337_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -4404,7 +4478,9 @@ static void poly_337_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_338_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -4555,14 +4631,18 @@ static void poly_338_c(double x1r, double x1i, double x2r, double x2i,
 
 /* poly_339: too complex for auto-transpile, stubbed */
 static void poly_339_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     (void)x1r; (void)x1i; (void)x2r; (void)x2i;
 }
 
 static void poly_340_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -4645,7 +4725,9 @@ static void poly_340_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_341_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -4751,7 +4833,9 @@ static void poly_341_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_342_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -4863,7 +4947,9 @@ static void poly_342_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_343_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -4972,7 +5058,9 @@ static void poly_343_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_344_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -5095,7 +5183,9 @@ static void poly_344_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_345_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -5189,7 +5279,9 @@ static void poly_345_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_346_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -5315,14 +5407,18 @@ static void poly_346_c(double x1r, double x1i, double x2r, double x2i,
 
 /* poly_347: too complex for auto-transpile, stubbed */
 static void poly_347_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     (void)x1r; (void)x1i; (void)x2r; (void)x2i;
 }
 
 static void poly_348_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -5449,14 +5545,18 @@ static void poly_348_c(double x1r, double x1i, double x2r, double x2i,
 
 /* poly_349: too complex for auto-transpile, stubbed */
 static void poly_349_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     (void)x1r; (void)x1i; (void)x2r; (void)x2i;
 }
 
 static void poly_350_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -5559,7 +5659,9 @@ static void poly_350_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_351_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -5666,7 +5768,9 @@ static void poly_351_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_352_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -5804,7 +5908,9 @@ static void poly_352_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_353_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -5913,7 +6019,9 @@ static void poly_353_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_354_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -6041,7 +6149,9 @@ static void poly_354_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_355_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -6135,7 +6245,9 @@ static void poly_355_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_356_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -6245,7 +6357,9 @@ static void poly_356_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_357_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -6329,7 +6443,9 @@ static void poly_357_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_358_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -6470,7 +6586,9 @@ static void poly_358_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_359_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -6598,7 +6716,9 @@ static void poly_359_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_360_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -6703,7 +6823,9 @@ static void poly_360_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_361_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -6830,7 +6952,9 @@ static void poly_361_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_362_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -6954,7 +7078,9 @@ static void poly_362_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_363_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -7110,7 +7236,9 @@ static void poly_363_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_364_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -7208,14 +7336,18 @@ static void poly_364_c(double x1r, double x1i, double x2r, double x2i,
 
 /* poly_365: too complex for auto-transpile, stubbed */
 static void poly_365_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     (void)x1r; (void)x1i; (void)x2r; (void)x2i;
 }
 
 static void poly_366_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     for (int j = 1; j < 36; j++) {
@@ -7332,7 +7464,9 @@ static void poly_366_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_367_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -7467,7 +7601,9 @@ static void poly_367_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_368_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -7598,7 +7734,9 @@ static void poly_368_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_369_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     for (int j = 1; j < 36; j++) {
@@ -7738,14 +7876,18 @@ static void poly_369_c(double x1r, double x1i, double x2r, double x2i,
 
 /* poly_370: too complex for auto-transpile, stubbed */
 static void poly_370_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     (void)x1r; (void)x1i; (void)x2r; (void)x2i;
 }
 
 static void poly_371_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -7832,7 +7974,9 @@ static void poly_371_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_372_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -7949,7 +8093,9 @@ static void poly_372_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_373_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double _re1r = 0, _re1i = 0;
@@ -8063,7 +8209,9 @@ static void poly_373_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_374_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -8160,7 +8308,9 @@ static void poly_374_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_375_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     for (int j = 1; j < 36; j++) {
@@ -8246,7 +8396,9 @@ static void poly_375_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_376_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     for (int j = 1; j < 36; j++) {
@@ -8326,7 +8478,9 @@ static void poly_376_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_377_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -8431,7 +8585,9 @@ static void poly_377_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_378_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -8551,7 +8707,9 @@ static void poly_378_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_379_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -8656,7 +8814,9 @@ static void poly_379_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_380_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -8763,7 +8923,9 @@ static void poly_380_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_381_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -8911,7 +9073,9 @@ static void poly_381_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_382_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -9080,7 +9244,9 @@ static void poly_382_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_383_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -9165,7 +9331,9 @@ static void poly_383_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_384_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     for (int j = 1; j < 36; j++) {
@@ -9257,7 +9425,9 @@ static void poly_384_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_385_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -9359,7 +9529,9 @@ static void poly_385_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_386_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     for (int j = 1; j < 36; j++) {
@@ -9461,7 +9633,9 @@ static void poly_386_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_387_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -9549,7 +9723,9 @@ static void poly_387_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_388_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -9652,7 +9828,9 @@ static void poly_388_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_389_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -9792,7 +9970,9 @@ static void poly_389_c(double x1r, double x1i, double x2r, double x2i,
 
 /* poly_390: too complex for auto-transpile, stubbed */
 static void poly_390_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     (void)x1r; (void)x1i; (void)x2r; (void)x2i;
@@ -9800,14 +9980,18 @@ static void poly_390_c(double x1r, double x1i, double x2r, double x2i,
 
 /* poly_391: too complex for auto-transpile, stubbed */
 static void poly_391_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     (void)x1r; (void)x1i; (void)x2r; (void)x2i;
 }
 
 static void poly_392_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -9952,7 +10136,9 @@ static void poly_392_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_393_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     for (int j = 1; j < 36; j++) {
@@ -10022,7 +10208,9 @@ static void poly_393_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_394_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     for (int j = 1; j < 36; j++) {
@@ -10135,7 +10323,9 @@ static void poly_394_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_395_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -10274,7 +10464,9 @@ static void poly_395_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_396_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -10396,7 +10588,9 @@ static void poly_396_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_397_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;
@@ -10545,7 +10739,9 @@ static void poly_397_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_398_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     for (int j = 1; j < 36; j++) {
@@ -10643,7 +10839,9 @@ static void poly_398_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_399_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int _i = 0; _i < 35; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     for (int j = 1; j < 36; j++) {
@@ -10812,7 +11010,9 @@ static void poly_399_c(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_400_c(double x1r, double x1i, double x2r, double x2i,
+                     const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     double n = 35.0;

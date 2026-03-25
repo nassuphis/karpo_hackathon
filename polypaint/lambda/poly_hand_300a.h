@@ -1,7 +1,9 @@
 /* poly_hand_300a.h — Hand-written C for poly_201 through poly_220 */
 
 static void poly_201_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (vectorized over j=0..70):
      *   cf = (np.real(t1)**j * np.sin(j * np.angle(t2)) +
@@ -39,7 +41,9 @@ static void poly_201_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_202_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (vectorized over k=0..70):
      *   cf = (t1**k * np.sin(k * np.angle(t1) + np.real(t2)) +
@@ -98,7 +102,9 @@ static void poly_202_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_203_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (k=1..71, so index j = k-1 = 0..70):
      *   real_part = real(t1)^k * sin(k*angle(t2)) + real(t2)^k * cos(k*angle(t1))
@@ -147,7 +153,9 @@ static void poly_203_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_204_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (j=1..71, index = j-1 = 0..70):
      *   cf = real(t1)^j + real(t2)^(71-j) * cos(j*angle(t1) + (71-j)*angle(t2))
@@ -186,7 +194,9 @@ static void poly_204_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_205_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   cf[j] = (real(t1)*(j+1)^2 + imag(t2)*(j+1)) * sin((j+1)*angle(t1+t2))
@@ -221,7 +231,9 @@ static void poly_205_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_206_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   real_part = real(t1)^(j+1) * sin((j+1)*angle(t2) + log(abs(t1)+1))
@@ -258,7 +270,9 @@ static void poly_206_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_207_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   Loop 1 (j=0..70):
@@ -300,7 +314,9 @@ static void poly_207_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_208_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   mag = log(abs(t1)*(j+1) + abs(t2)*(j+1)^2 + 1)
@@ -329,7 +345,9 @@ static void poly_208_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_209_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   for j in range(71):
@@ -367,7 +385,9 @@ static void poly_209_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_210_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   mag = log(abs(t1)^(j+1) + abs(t2)^(70-j) + 1)
@@ -401,7 +421,9 @@ static void poly_210_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_211_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   mag = log(abs(t1)*(j+1) + abs(t2)*sqrt(j+1) + 1)
@@ -436,7 +458,9 @@ static void poly_211_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_212_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   cf[j] = (real(t1)^j + imag(t2)^(70-j)) * cos(j*angle(t1+t2))
@@ -473,7 +497,9 @@ static void poly_212_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_213_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   k = (j+1)*3 + (j // 7)
@@ -511,7 +537,9 @@ static void poly_213_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_214_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   cf[0] = real(t1) + imag(t2)*1j
@@ -553,7 +581,9 @@ static void poly_214_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_215_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   cf[j] = (real(t1) + (j+1)) * sin((j+1)*angle(t1))
@@ -593,7 +623,9 @@ static void poly_215_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_216_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   k = ((j+1)*5) % 20 + 1
@@ -633,7 +665,9 @@ static void poly_216_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_217_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   angle = angle(t1)*(j+1) + angle(t2)*(71-(j+1))
@@ -666,7 +700,9 @@ static void poly_217_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_218_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   mag = sin((k+1)*abs(t1)) + cos((k+1)*abs(t2)) + log(abs(t1)+(k+1))
@@ -695,7 +731,9 @@ static void poly_218_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_219_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   angle = angle(t1)*(k+1) - angle(t2)*(71-(k+1))
@@ -724,7 +762,9 @@ static void poly_219_hand(double x1r, double x1i, double x2r, double x2i,
 }
 
 static void poly_220_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   cf[j] = (real(t1)*(j+1) + imag(t2)*(j+1)^2) * sin(angle(t1)*(j+1))

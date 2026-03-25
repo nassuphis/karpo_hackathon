@@ -15,6 +15,7 @@
  * Forward declaration: poly_42_c from poly_generated_funcs.h (used by serendipity wrapper)
  */
 static void poly_42_c(double x1r, double x1i, double x2r, double x2i,
+                      const double *cfpv, int n_cfpv,
                       double *cRe, double *cIm, int *nCoeffs);
 
 /* ---- poly_29_hand ----
@@ -31,7 +32,9 @@ static void poly_42_c(double x1r, double x1i, double x2r, double x2i,
  *   cf[50]   = |t1+t2| * angle(t1*t2)
  */
 static void poly_29_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -126,7 +129,9 @@ static void poly_29_hand(double x1r, double x1i, double x2r, double x2i,
  *   NaN/inf → 0
  */
 static void poly_33_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -190,7 +195,9 @@ static void poly_33_hand(double x1r, double x1i, double x2r, double x2i,
  *   cf[70]    = prod(cf[0:70])
  */
 static void poly_55_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -312,7 +319,9 @@ static void poly_55_hand(double x1r, double x1i, double x2r, double x2i,
  *   cf[36:71] = root_coeff * [cos(2k*t1)*sin(2k*t2)/log(|2k+1|) for k=1..35]
  */
 static void poly_58_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -442,7 +451,9 @@ static void poly_58_hand(double x1r, double x1i, double x2r, double x2i,
  * Lagrange-basis construction using 51st roots of unity.
  */
 static void poly_21_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -485,7 +496,9 @@ static void poly_21_hand(double x1r, double x1i, double x2r, double x2i,
  * cf[k-1] = cos(t1)*t1^k - sin(t2)*t2^k for k=1..70; cf[70] = |t1*t2|
  */
 static void poly_35_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     double cosT1r, cosT1i; c_cos(x1r, x1i, &cosT1r, &cosT1i);
@@ -514,7 +527,9 @@ static void poly_35_hand(double x1r, double x1i, double x2r, double x2i,
  * cf[[6,13,20,27,34,41,48,55,62,69]] += sin(t1)^71-cos(t2)^71
  */
 static void poly_37_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     for (int i = 1; i <= 71; i++) {
@@ -549,7 +564,9 @@ static void poly_37_hand(double x1r, double x1i, double x2r, double x2i,
  * cf[k-1] = Re(t1)^(k+1)*sin(angle(t2*k)) + Im(t2)^k*cos(angle(t1/k)); cf[70]=|t1|+|t2|
  */
 static void poly_40_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     double angT1 = atan2(x1i, x1r);
@@ -572,7 +589,9 @@ static void poly_40_hand(double x1r, double x1i, double x2r, double x2i,
  * cf[70]=sum(t1^(k+k^2))+sum(t2^k)^2
  */
 static void poly_46_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     static const double P[]={2,3,5,7,11,17,19,23,29,31,37,41,43,47,53,59,61,67};
@@ -606,7 +625,9 @@ static void poly_46_hand(double x1r, double x1i, double x2r, double x2i,
  * cf = Re(cf)+Im(cf)+(sin(angle(cf+1))+i*cos(angle(cf+1)))
  */
 static void poly_72_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     cRe[0]=x1r+x2r; cIm[0]=x1i+x2i;
@@ -629,7 +650,9 @@ static void poly_72_hand(double x1r, double x1i, double x2r, double x2i,
  * cf[i-1]=i*(t1+i*t2)^(1/i) for i=1..35; cf[70]=conj(cf[34]); cf[35]=2*t1+3*|t2|
  */
 static void poly_74_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     for(int i=1;i<=35;i++){
@@ -649,7 +672,9 @@ static void poly_74_hand(double x1r, double x1i, double x2r, double x2i,
  * Sparse powers of t1/t2 at specific indices, then cf[3:71] *= sin(t1)*sin(t2)-cos(t1)*cos(t2)
  */
 static void poly_94_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     double t1p[10],t1pi[10]; t1p[1]=x1r;t1pi[1]=x1i;
@@ -678,7 +703,9 @@ static void poly_94_hand(double x1r, double x1i, double x2r, double x2i,
  * iter=1; for j=1..71: cf[j-1]=iter; iter *= (log(|t1+i*t2|+1)/(71-j+1) + conj(iter))
  */
 static void poly_100_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     double zr=x1r-x2i,zi=x1i+x2r;
@@ -704,7 +731,9 @@ static void poly_100_hand(double x1r, double x1i, double x2r, double x2i,
  *   cf[70-i] = -cf[71-i]*(|t2|+0.5) - log(|t1|+1)  (sequential from end)
  */
 static void poly_45_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -767,8 +796,10 @@ static void poly_45_hand(double x1r, double x1i, double x2r, double x2i,
  * from poly_generated_funcs.h — that function is never modified.
  */
 static void poly_42_serendipity(double x1r, double x1i, double x2r, double x2i,
+                                const double *cfpv, int n_cfpv,
                                 double *cRe, double *cIm, int *nCoeffs) {
-    poly_42_c(x1r, x1i, x2r, x2i, cRe, cIm, nCoeffs);
+    (void)cfpv; (void)n_cfpv;
+    poly_42_c(x1r, x1i, x2r, x2i, cfpv, n_cfpv, cRe, cIm, nCoeffs);
 }
 
 /* ---- poly_42_hand ----
@@ -778,7 +809,9 @@ static void poly_42_serendipity(double x1r, double x1i, double x2r, double x2i,
  * cf[70] = t1*t2 + i*sum(log(|cf[0:70]|+1))
  */
 static void poly_42_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     double absT1 = c_abs(x1r, x1i);
@@ -808,7 +841,9 @@ static void poly_42_hand(double x1r, double x1i, double x2r, double x2i,
  * cf[17], cf[31], cf[35] overwritten
  */
 static void poly_2_hand(double x1r, double x1i, double x2r, double x2i,
+                        const double *cfpv, int n_cfpv,
                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 36;
     for (int i = 0; i < 36; i++) { cRe[i] = 0; cIm[i] = 0; }
     cRe[0] = x1r + x2r; cIm[0] = x1i + x2i;
@@ -847,7 +882,9 @@ static void poly_2_hand(double x1r, double x1i, double x2r, double x2i,
  * 51 coefficients. Loop sets cf, then post-loop reads/slice assignments.
  */
 static void poly_9_hand(double x1r, double x1i, double x2r, double x2i,
+                        const double *cfpv, int n_cfpv,
                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 51;
     for (int i = 0; i < 51; i++) { cRe[i] = 0; cIm[i] = 0; }
     cRe[0] = x1r + x2r; cIm[0] = x1i + x2i;
@@ -888,7 +925,9 @@ static void poly_9_hand(double x1r, double x1i, double x2r, double x2i,
 
 /* ---- poly_44_hand ---- */
 static void poly_44_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     double sr,si,cr,ci;
@@ -919,7 +958,9 @@ static void poly_44_hand(double x1r, double x1i, double x2r, double x2i,
  * Loop with conditional cf[k-2], cf[k-3], cf[k-4] dependencies
  */
 static void poly_50_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     double sr,si,cr,ci;
@@ -946,7 +987,9 @@ static void poly_50_hand(double x1r, double x1i, double x2r, double x2i,
  * Loop sets cf, then cf[0:30] *= (|t1|*|t2|)^arange(1,31)
  */
 static void poly_54_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     for(int i=1;i<=71;i++){
@@ -983,7 +1026,9 @@ static void poly_54_hand(double x1r, double x1i, double x2r, double x2i,
  * cf[70] = |t1|*angle(t2) - |t2|*angle(t1)
  */
 static void poly_61_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     for(int k=1;k<=35;k++){
@@ -1005,7 +1050,9 @@ static void poly_61_hand(double x1r, double x1i, double x2r, double x2i,
  * Sequential: cf[i-1] = i*cf[i-2]^2, then post-loop modifications
  */
 static void poly_62_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     /* cf[0] = t1^5 + t2^5 */
@@ -1045,7 +1092,9 @@ static void poly_62_hand(double x1r, double x1i, double x2r, double x2i,
 
 /* ---- poly_65_hand ---- */
 static void poly_65_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     double sumR=x1r+x2r, sumI=x1i+x2i;
@@ -1095,7 +1144,9 @@ static void poly_65_hand(double x1r, double x1i, double x2r, double x2i,
  * cf[1::2] *= -1; cf[k where k^2<=71] += i*|t1|*|t2|
  */
 static void poly_70_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     double absT1=c_abs(x1r,x1i), absT2=c_abs(x2r,x2i);
@@ -1127,7 +1178,9 @@ static void poly_70_hand(double x1r, double x1i, double x2r, double x2i,
  * Large-scale coefficients with powers of 10. Multiple loops, each covering different ranges.
  */
 static void poly_73_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     double sR=x1r+x2r, sI=x1i+x2i, dR=x1r-x2r, dI=x1i-x2i;
@@ -1168,7 +1221,9 @@ static void poly_73_hand(double x1r, double x1i, double x2r, double x2i,
  * 7 slice assignments with fractional powers and alternating signs
  */
 static void poly_78_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     double a1=c_abs(x1r,x1i), a2=c_abs(x2r,x2i);
@@ -1226,7 +1281,9 @@ static void poly_78_hand(double x1r, double x1i, double x2r, double x2i,
  * Loop + fancy indexing (np.arange slices with step)
  */
 static void poly_81_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     double a1=c_abs(x1r,x1i), a2=c_abs(x2r,x2i);
@@ -1267,7 +1324,9 @@ static void poly_81_hand(double x1r, double x1i, double x2r, double x2i,
  * Then reverse loop, then cf[70]=sum
  */
 static void poly_82_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     double mr,mi; c_mul(x1r,x1i,x2r,x2i,&mr,&mi);
@@ -1309,7 +1368,9 @@ static void poly_82_hand(double x1r, double x1i, double x2r, double x2i,
  * Loop + slice modifications reading loop-set values
  */
 static void poly_95_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     cRe[0]=x1r*x1r*x1r - x1i*x1i + 2*x1i*x1r - x2r + x2i*x2i; cIm[0]=0;
@@ -1341,7 +1402,9 @@ static void poly_95_hand(double x1r, double x1i, double x2r, double x2i,
  * Two sequential loops with cf[k-1]=k*cf[k-2]+... dependency
  */
 static void poly_96_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     /* cf[0] = t1^5 - t2^4 + t1^2 - t2^2 + |t1| + |t2| */
@@ -1386,7 +1449,9 @@ static void poly_96_hand(double x1r, double x1i, double x2r, double x2i,
  * Three loops: first sets all, second overwrites [0:10], third overwrites [60:71] reading cf[k-2]
  */
 static void poly_97_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     /* z = t1 + i*t2 = (x1r - x2i) + i*(x1i + x2r) */
@@ -1429,7 +1494,9 @@ static void poly_97_hand(double x1r, double x1i, double x2r, double x2i,
  * The original overflows float32 (~k! growth). Clamping |cf[k]| to 1e30
  * creates a different but visually interesting pattern. */
 static void poly_102_serendipity(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
     #define CLAMP102 1e30
@@ -1507,7 +1574,9 @@ static void poly_102_serendipity(double x1r, double x1i, double x2r, double x2i,
  * cf[0:10] += (t1^2+t2^2)^(1/3)
  * cf[61:71] *= exp(-i*angle(t1)) */
 static void poly_117_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -1562,7 +1631,9 @@ static void poly_117_hand(double x1r, double x1i, double x2r, double x2i,
 /* poly_118: primes array used in scalar sums and slice multiplications.
  * Transpiler passes array to c_mul — needs hand-written element-wise loops. */
 static void poly_118_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -1641,7 +1712,9 @@ static void poly_118_hand(double x1r, double x1i, double x2r, double x2i,
  *   cf[70]    = 2556 / 15!  ≈ 1.954e-9
  */
 static void poly_120_hand(double x1r, double x1i, double x2r, double x2i,
+                           const double *cfpv, int n_cfpv,
                            double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -1712,7 +1785,9 @@ static void poly_120_hand(double x1r, double x1i, double x2r, double x2i,
  *   for k=1..71: cf[k-1] = (-1)^k * (t1^k + conj(t2)^(71-k)) * (72-k)
  */
 static void poly_128_hand(double x1r, double x1i, double x2r, double x2i,
+                           const double *cfpv, int n_cfpv,
                            double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -1756,7 +1831,9 @@ static void poly_128_hand(double x1r, double x1i, double x2r, double x2i,
  * Python source has bug: cf[61:70] = [... range(61,71)] — 9 slots, 10 values → crash.
  * Hand-written to match the fixed (intended) behavior. */
 static void poly_125_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 

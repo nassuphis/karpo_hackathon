@@ -1,7 +1,9 @@
 /* poly_hand_300e.h — Hand-written C for poly_281 through poly_300 */
 
 static void poly_281_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python: sparse assignment at indices [0,4,9,14,19,24,29,34],
      * then loop over specific indices with branching on j%5.
@@ -92,7 +94,9 @@ static void poly_281_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_282_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -198,7 +202,9 @@ static void poly_282_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_283_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -270,7 +276,9 @@ static void poly_283_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_284_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -299,7 +307,9 @@ static void poly_284_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_285_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * For each j in 1..35:
      *   real_seq = linspace(real(t1), real(t2), j)  -- j elements
@@ -348,7 +358,9 @@ static void poly_285_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_286_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -385,7 +397,9 @@ static void poly_286_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_287_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -419,7 +433,9 @@ static void poly_287_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_288_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Uses linspace, nested loop, and np.prod(np.repeat(abs(t1)+k, j%3+1)).
      * np.repeat(val, count) creates array of val repeated count times.
@@ -481,7 +497,9 @@ static void poly_288_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_289_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -509,7 +527,9 @@ static void poly_289_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_290_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -557,7 +577,9 @@ static void poly_290_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_291_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Complex function with factorial, trig sums, and perturbation.
      * np.prod(np.arange(1,j+1))**0.5 = sqrt(j!)
@@ -608,7 +630,9 @@ static void poly_291_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_292_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -634,7 +658,9 @@ static void poly_292_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_293_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -661,7 +687,9 @@ static void poly_293_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_294_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -697,7 +725,9 @@ static void poly_294_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_295_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -734,7 +764,9 @@ static void poly_295_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_296_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -780,7 +812,9 @@ static void poly_296_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_297_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -813,7 +847,9 @@ static void poly_297_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_298_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -860,7 +896,9 @@ static void poly_298_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_299_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * mag = abs(t1)**j + abs(t2)**(n-j+1) + sum(sin(j*pi/(arange(1,6)+1)))
      * ang = angle(t1)*log(j+1) + angle(t2)*arctan(j) + sum(cos(arange(1,4)*pi/j))
@@ -904,7 +942,9 @@ static void poly_299_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_300_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 

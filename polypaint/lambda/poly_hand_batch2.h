@@ -18,7 +18,9 @@
  *       cf[k-1] = (np.sin(t1 * k) + np.cos(np.conj(t2) * k)) * (-1)**k / (k + 1)
  */
 static void poly_134_hand(double x1r, double x1i, double x2r, double x2i,
+                           const double *cfpv, int n_cfpv,
                            double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -62,7 +64,9 @@ static void poly_134_hand(double x1r, double x1i, double x2r, double x2i,
  *   cf[70] = (np.log(np.abs(t1) + np.abs(t2) + 1) + np.sin(t1 * t2)) / 71
  */
 static void poly_135_hand(double x1r, double x1i, double x2r, double x2i,
+                           const double *cfpv, int n_cfpv,
                            double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -137,7 +141,9 @@ static void poly_135_hand(double x1r, double x1i, double x2r, double x2i,
  *   cf[70] = (t1**5 + t2**5) / (1 + np.abs(t1*t2))
  */
 static void poly_142_hand(double x1r, double x1i, double x2r, double x2i,
+                           const double *cfpv, int n_cfpv,
                            double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -238,7 +244,9 @@ static void poly_142_hand(double x1r, double x1i, double x2r, double x2i,
  *   cf[70]    = sum(cf[0:70])
  */
 static void poly_146_hand(double x1r, double x1i, double x2r, double x2i,
+                           const double *cfpv, int n_cfpv,
                            double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -332,7 +340,9 @@ static void poly_146_hand(double x1r, double x1i, double x2r, double x2i,
  * (t1 + j*t2) is complex, (-1)**j is real, (j+1) is real.
  */
 static void poly_150_hand(double x1r, double x1i, double x2r, double x2i,
+                           const double *cfpv, int n_cfpv,
                            double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 71;
     for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
 

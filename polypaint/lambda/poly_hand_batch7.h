@@ -1,7 +1,9 @@
 /* poly_hand_batch7.h — Hand-written C for poly_198, poly_199, poly_123, poly_161, poly_103 */
 
 static void poly_198_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   k = np.arange(71)
@@ -49,7 +51,9 @@ static void poly_198_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_199_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   j = np.arange(71)
@@ -86,7 +90,9 @@ static void poly_199_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_123_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python (no try/except — always succeeds):
      *   cf[0]     = t1.real**2 - t2.imag**2
@@ -200,7 +206,9 @@ static void poly_123_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_161_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   k = np.arange(1, 71)
@@ -264,7 +272,9 @@ static void poly_161_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_103_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   cf[0] = t2 * log(abs(t1)+1)

@@ -1908,8 +1908,10 @@ def transpile_function(func_node):
     # Build the C function
     lines = []
     lines.append(f"static void {name}_c(double x1r, double x1i, double x2r, double x2i,")
+    lines.append(f"                     const double *cfpv, int n_cfpv,")
     lines.append(f"                     double *cRe, double *cIm, int *nCoeffs) {{")
     lines.append(f"    *nCoeffs = {n_coeffs};")
+    lines.append(f"    (void)cfpv; (void)n_cfpv;")
     lines.append(f"    for (int _i = 0; _i < {n_coeffs}; _i++) {{ cRe[_i] = 0; cIm[_i] = 0; }}")
     lines.extend(tp.lines)
     # Add isfinite check
@@ -1927,8 +1929,10 @@ def transpile_function(func_node):
         stub_lines = []
         stub_lines.append(f"/* {name}: auto-stubbed (unhandled constructs in source) */")
         stub_lines.append(f"static void {name}_c(double x1r, double x1i, double x2r, double x2i,")
+        stub_lines.append(f"                     const double *cfpv, int n_cfpv,")
         stub_lines.append(f"                     double *cRe, double *cIm, int *nCoeffs) {{")
         stub_lines.append(f"    *nCoeffs = {n_coeffs};")
+        stub_lines.append(f"    (void)cfpv; (void)n_cfpv;")
         stub_lines.append(f"    for (int _i = 0; _i < {n_coeffs}; _i++) {{ cRe[_i] = 0; cIm[_i] = 0; }}")
         stub_lines.append(f"    (void)x1r; (void)x1i; (void)x2r; (void)x2i;")
         stub_lines.append(f"}}")
@@ -1977,8 +1981,10 @@ def transpile_file(src_path, stub_funcs=None, skip_funcs=None, label=None):
                 n_coeffs = extract_ncoeffs(func_node)
                 c_lines.append(f"/* {func_node.name}: too complex for auto-transpile, stubbed */")
                 c_lines.append(f"static void {func_node.name}_c(double x1r, double x1i, double x2r, double x2i,")
+                c_lines.append(f"                     const double *cfpv, int n_cfpv,")
                 c_lines.append(f"                     double *cRe, double *cIm, int *nCoeffs) {{")
                 c_lines.append(f"    *nCoeffs = {n_coeffs};")
+                c_lines.append(f"    (void)cfpv; (void)n_cfpv;")
                 c_lines.append(f"    for (int _i = 0; _i < {n_coeffs}; _i++) {{ cRe[_i] = 0; cIm[_i] = 0; }}")
                 c_lines.append(f"    (void)x1r; (void)x1i; (void)x2r; (void)x2i;")
                 c_lines.append(f"}}")
@@ -1994,7 +2000,7 @@ def transpile_file(src_path, stub_funcs=None, skip_funcs=None, label=None):
             c_lines.append("")
 
     for name, _ in names_and_ncoeffs:
-        header_lines.append(f"static void {name}_c(double x1r, double x1i, double x2r, double x2i, double *cRe, double *cIm, int *nCoeffs);")
+        header_lines.append(f"static void {name}_c(double x1r, double x1i, double x2r, double x2i, const double *cfpv, int n_cfpv, double *cRe, double *cIm, int *nCoeffs);")
         lookup_lines.append(f'    if (strcmp(name, "{name}") == 0) return {name}_c;')
 
     return "\n".join(c_lines), "\n".join(header_lines), "\n".join(lookup_lines)

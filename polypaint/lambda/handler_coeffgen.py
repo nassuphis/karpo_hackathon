@@ -187,6 +187,8 @@ def handle_coeffgen_chunked(params):
             "step_start": 0,  # file contains only our slice
             "step_count": step_count,
         }
+        if params.get("cfpv"):
+            spec["cfpv"] = params["cfpv"]
 
         result = subprocess.run(
             [SWEEP, bin_path],
@@ -263,6 +265,8 @@ def handle_legacy_coeffgen(params):
             "i1_end": i1_end,
             "times": params.get("times", 1),
         }
+        if params.get("cfpv"):
+            spec["cfpv"] = params["cfpv"]
 
         result = subprocess.run(
             [SWEEP, bin_path],

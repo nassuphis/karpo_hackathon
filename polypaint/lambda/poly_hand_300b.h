@@ -1,7 +1,9 @@
 /* poly_hand_300b.h — Hand-written C for poly_221 through poly_240 */
 
 static void poly_221_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   for j in range(71):
@@ -57,7 +59,9 @@ static void poly_221_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_222_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   prev = t1 + t2
@@ -94,7 +98,9 @@ static void poly_222_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_223_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   for j in range(71):
@@ -124,7 +130,9 @@ static void poly_223_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_224_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python: cf = np.zeros(35, dtype=complex)
      * Branching on (j+1)%4, fixed overrides, etc.
@@ -253,7 +261,9 @@ static void poly_224_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_225_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python: 35 coeffs, fixed indices, loop with mag/angle, additional loops.
      * cf[35] assignment is OOB for a 35-element array — ignored in C (Python silently
@@ -356,7 +366,9 @@ static void poly_225_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_226_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -424,7 +436,9 @@ static void poly_226_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_227_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     /*
      * Python:
      *   for j in range(35):
@@ -468,7 +482,9 @@ static void poly_227_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_228_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -534,7 +550,9 @@ static void poly_228_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_229_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -616,7 +634,9 @@ static void poly_229_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_230_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -682,7 +702,9 @@ static void poly_230_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_231_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 50;
     for (int i = 0; i < 50; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -756,7 +778,9 @@ static void poly_231_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_232_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -1008,7 +1032,9 @@ static void poly_232_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_233_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -1126,7 +1152,9 @@ static void poly_233_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_234_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -1200,7 +1228,9 @@ static void poly_234_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_235_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -1258,7 +1288,9 @@ static void poly_235_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_236_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -1334,7 +1366,9 @@ static void poly_236_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_237_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -1409,7 +1443,9 @@ static void poly_237_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_238_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -1553,7 +1589,9 @@ static void poly_238_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_239_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 
@@ -1675,7 +1713,9 @@ static void poly_239_hand(double x1r, double x1i, double x2r, double x2i,
 
 
 static void poly_240_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
                           double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
     *nCoeffs = 35;
     for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
 

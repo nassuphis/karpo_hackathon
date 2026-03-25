@@ -161,7 +161,90 @@ for i, (cf, ae_r, cm_r, label) in enumerate(zip(polys, ae_roots, cm_roots, test_
 
     print(f"  {label}: AE OK, CM OK")
 
-print("=== All Docker runtime tests PASSED ===")
+print("=== AE/CM solver tests PASSED ===")
+
+# --- CFPV coeffgen regression ---
+print("\n--- CFPV coeffgen regression ---")
+
+def run_coeffgen(func, cfpv=None):
+    spec = {
+        "mode": "coeffgen",
+        "function": func,
+        "n1": 4, "n2": 4,
+        "i1_start": 0, "i1_end": 4,
+        "param_transforms": [["unit_circle"]],
+        "coeff_transforms": [],
+        "times": 1,
+    }
+    if cfpv is not None:
+        spec["cfpv"] = cfpv
+    r = subprocess.run(["/src/sweep", "/tmp/cfpv_test.bin"],
+        input=json.dumps(spec), capture_output=True, text=True, timeout=10)
+    if r.returncode != 0:
+        return None, r.stderr
+    return json.loads(r.stdout), None
+
+# creative9 default
+m, err = run_coeffgen("creative9")
+assert m and m["n_coeffs"] == 71, f"creative9 default: {err or m}"
+print("  creative9 default (n=71): OK")
+
+# creative9 with cfpv=[30]
+m, err = run_coeffgen("creative9", [30])
+assert m and m["n_coeffs"] == 30, f"creative9 cfpv=[30]: {err or m}"
+print("  creative9 cfpv=[30] (n=30): OK")
+
+# creative8 default
+m, err = run_coeffgen("creative8")
+assert m and m["n_coeffs"] == 71, f"creative8 default: {err or m}"
+print("  creative8 default (n=71): OK")
+
+# creative8 with cfpv=[40]
+m, err = run_coeffgen("creative8", [40])
+assert m and m["n_coeffs"] == 40, f"creative8 cfpv=[40]: {err or m}"
+print("  creative8 cfpv=[40] (n=40): OK")
+
+# non-parametric unaffected by cfpv
+m1, _ = run_coeffgen("g1")
+m2, _ = run_coeffgen("g1", [999])
+assert m1 and m2 and m1["n_coeffs"] == m2["n_coeffs"], "g1 cfpv should be ignored"
+print("  g1 unaffected by cfpv: OK")
+
+print("=== CFPV coeffgen tests PASSED ===")
+
+# --- Catalog degree verification ---
+# Compare host-generated JS catalog degrees against deploy binary probes
+print("\n--- Catalog degree verification ---")
+catalog_path = "/src/../coeff_func_catalog_js.js"
+if os.path.exists(catalog_path):
+    with open(catalog_path) as f:
+        js_text = f.read()
+    import re
+    cat_json = js_text.split("window._coeffFuncCatalog = ")[1].rstrip(";\n")
+    catalog = json.loads(cat_json)
+    mismatches = []
+    tested = 0
+    for entry in catalog:
+        if entry.get("probe_failed"):
+            continue
+        m, err = run_coeffgen(entry["name"])
+        if m is None:
+            continue  # skip functions that fail in Docker too
+        actual_degree = m["n_coeffs"] - 1
+        if actual_degree != entry["degree"]:
+            mismatches.append(f"{entry['name']}: catalog={entry['degree']} deploy={actual_degree}")
+        tested += 1
+    if mismatches:
+        print(f"  FAIL: {len(mismatches)} degree mismatches:")
+        for mm in mismatches[:10]:
+            print(f"    {mm}")
+        sys.exit(1)
+    print(f"  {tested} functions: all degrees match between host catalog and deploy binary")
+    print("=== Catalog degree verification PASSED ===")
+else:
+    print("  SKIP: coeff_func_catalog_js.js not found (run gen_catalog.py first)")
+
+print("\n=== All Docker runtime tests PASSED ===")
 PYEOF
   '
 

@@ -74,6 +74,36 @@ fi
 rm -f /tmp/_jscheck.js
 echo "  JS syntax OK"
 
+# --- Regenerate catalog artifacts ---
+# Step 1: Generate C lookup header from catalog JSON (no binary needed)
+echo "Generating C lookup header from catalog..."
+(cd lambda && python3 -c "
+from gen_catalog import load_catalog, generate_c_header, H_OUT
+catalog = load_catalog()
+h = generate_c_header(catalog)
+with open(H_OUT, 'w') as f:
+    f.write(h)
+print(f'  coeff_func_lookup.h: {len(catalog)} entries')
+") || { echo "FATAL: C header generation failed"; exit 1; }
+
+# Step 2: Build host binary (now uses fresh lookup header)
+echo "Building sweep_test (host, for probing)..."
+cc -O2 -o lambda/sweep_test lambda/sweep_cli.c -lm
+
+# Step 3: Probe degrees and generate JS catalog
+echo "Generating JS catalog (probing degrees)..."
+(cd lambda && python3 -c "
+from gen_catalog import load_catalog, load_metrics, generate_js, JS_OUT
+catalog = load_catalog()
+metrics = load_metrics()
+js = generate_js(catalog, metrics)
+with open(JS_OUT, 'w') as f:
+    f.write(js)
+import re
+count = len(re.findall(r'\"name\":', js))
+print(f'  coeff_func_catalog_js.js: {count} entries')
+" 2>&1) || { echo "FATAL: JS catalog generation failed"; exit 1; }
+
 # --- Compile binaries ---
 echo "Compiling binaries..."
 
@@ -797,6 +827,13 @@ if [ "$ACTION" = "create" ]; then
     echo "Setting up API Gateway..."
     setup_api_gateway
 
+    # Upload frontend assets to S3
+    echo "Uploading frontend assets to S3..."
+    aws s3 cp "$SCRIPT_DIR/index.html" "s3://$BUCKET/index.html" \
+        --content-type "text/html" --region "$REGION"
+    aws s3 cp "$SCRIPT_DIR/coeff_func_catalog_js.js" "s3://$BUCKET/coeff_func_catalog_js.js" \
+        --content-type "application/javascript" --region "$REGION"
+
     echo ""
     echo "=== DEPLOYED ==="
     echo "  Sweep:    $SWEEP_NAME ($SWEEP_MEMORY MB)"
@@ -925,10 +962,13 @@ elif [ "$ACTION" = "update" ]; then
     echo "Setting up API Gateway..."
     setup_api_gateway
 
-    # Upload index.html to S3
+    # Upload index.html and JS catalog to S3
     echo "Uploading index.html to S3..."
     aws s3 cp "$SCRIPT_DIR/index.html" "s3://$BUCKET/index.html" \
         --content-type "text/html" --region "$REGION"
+    echo "Uploading coeff_func_catalog_js.js to S3..."
+    aws s3 cp "$SCRIPT_DIR/coeff_func_catalog_js.js" "s3://$BUCKET/coeff_func_catalog_js.js" \
+        --content-type "application/javascript" --region "$REGION"
 
     echo ""
     echo "=== UPDATED ==="

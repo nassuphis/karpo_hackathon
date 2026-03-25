@@ -1223,10 +1223,11 @@ async function runRasterPipeline() {
         const tFinalize = performance.now();
 
         // Dispatch finalize Lambdas
-        const finBatches = Math.ceil(finalizeJobs.length / BATCH_SIZE);
-        for (let i = 0; i < finalizeJobs.length; i += BATCH_SIZE) {
-            const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-            const batch = finalizeJobs.slice(i, i + BATCH_SIZE);
+        const FINALIZE_BATCH = 50;
+        const finBatches = Math.ceil(finalizeJobs.length / FINALIZE_BATCH);
+        for (let i = 0; i < finalizeJobs.length; i += FINALIZE_BATCH) {
+            const batchNum = Math.floor(i / FINALIZE_BATCH) + 1;
+            const batch = finalizeJobs.slice(i, i + FINALIZE_BATCH);
             const dispResult = await lambdaPost('dispatch', { target: 'finalize', jobs: batch, expected_keys: [] });
             if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length)) {
                 throw new Error(

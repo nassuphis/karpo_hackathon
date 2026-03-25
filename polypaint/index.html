@@ -1128,6 +1128,8 @@ async function runRasterPipeline() {
     btn.disabled = true;
     document.getElementById('render-preview').innerHTML = '';
     document.getElementById('render-info').textContent = '';
+    const POLL_TIMEOUT_MS = 600000;
+    const STALL_LOG_MS = 30000;
 
     try {
         const p = _renderCommonParams();

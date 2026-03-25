@@ -72,12 +72,11 @@ def handler(event, context):
     in_path = f"/tmp/preview_in.{ext}"
     out_path = "/tmp/preview_out.png"
 
+    runtime = _get_runtime_info()
+    progress = {"runtime": runtime, "source_key": source_key}
+
     try:
-        runtime = _get_runtime_info()
-        report_status(job_id, task_id, "started", result_data={
-            "runtime": runtime,
-            "source_key": source_key,
-        })
+        report_status(job_id, task_id, "started", result_data=progress)
 
         # Download source image with progress
         t0 = time.time()
@@ -91,15 +90,14 @@ def handler(event, context):
         dl_ms = int((time.time() - t0) * 1000)
         dl_speed = source_size / (dl_ms / 1000) if dl_ms > 0 else 0
 
-        report_status(job_id, task_id, "generating", result_data={
-            "runtime": runtime,
-            "source_key": source_key,
+        progress.update({
             "source_size": source_size,
             "source_size_human": _fmt_size(source_size),
             "dl_ms": dl_ms,
             "dl_speed": f"{_fmt_size(int(dl_speed))}/s",
             "phase": "vipsthumbnail",
         })
+        report_status(job_id, task_id, "generating", result_data=progress)
 
         # Generate thumbnail via vipsthumbnail (shrink-on-load for JPEG)
         vipsthumbnail = "/opt/bin/vipsthumbnail"
@@ -164,7 +162,8 @@ def handler(event, context):
         return ok_response(result_data)
 
     except Exception as e:
-        report_status(job_id, task_id, "error", str(e))
+        progress["error"] = str(e)
+        report_status(job_id, task_id, "error", str(e), result_data=progress)
         raise
     finally:
         for p in [in_path, out_path]:

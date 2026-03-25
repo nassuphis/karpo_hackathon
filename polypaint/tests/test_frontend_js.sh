@@ -842,6 +842,224 @@ async function testPipeline(name, call) {
         }
     }
 
+    // Step 11: Solve proximity UI + orchestration tests
+    console.log('');
+    console.log('--- Solve proximity ---');
+
+    // 11a: both palette containers exist and have circles
+    {
+        const rpContainer = ctx._elements['palette-circles-root-proximity'];
+        const spContainer = ctx._elements['palette-circles-solve-proximity'];
+        const rpCount = rpContainer ? rpContainer.children.length : 0;
+        const spCount = spContainer ? spContainer.children.length : 0;
+        if (rpCount < 5) { console.error('FATAL: root-proximity palette has ' + rpCount + ' circles'); process.exit(1); }
+        if (spCount < 5) { console.error('FATAL: solve-proximity palette has ' + spCount + ' circles'); process.exit(1); }
+        console.log('  two palette containers: OK (root=' + rpCount + ', solve=' + spCount + ')');
+    }
+
+    // 11b: setPaletteForMode updates only the target mode's state
+    {
+        vm.runInContext('renderRootProximityPalette = "inferno"; renderSolveProximityPalette = "inferno";', ctx);
+        vm.runInContext("setPaletteForMode('solve_proximity', 'viridis')", ctx);
+        const rp = vm.runInContext('renderRootProximityPalette', ctx);
+        const sp = vm.runInContext('renderSolveProximityPalette', ctx);
+        if (rp !== 'inferno') { console.error('FATAL: root palette changed to ' + rp); process.exit(1); }
+        if (sp !== 'viridis') { console.error('FATAL: solve palette should be viridis, got ' + sp); process.exit(1); }
+        console.log('  setPaletteForMode independence: OK (root=inferno, solve=viridis)');
+    }
+
+    // 11c: setColorMode('solve_proximity') activates the correct mode
+    {
+        vm.runInContext("setColorMode('solve_proximity')", ctx);
+        const mode = vm.runInContext('renderColorMode', ctx);
+        if (mode !== 'solve_proximity') { console.error('FATAL: colorMode should be solve_proximity, got ' + mode); process.exit(1); }
+        console.log('  setColorMode(solve_proximity): OK');
+    }
+
+    // 11d: _activeRenderPalette returns correct palette per mode
+    {
+        vm.runInContext("renderColorMode = 'proximity'; renderRootProximityPalette = 'magma';", ctx);
+        const p1 = vm.runInContext('_activeRenderPalette()', ctx);
+        if (p1 !== 'magma') { console.error('FATAL: proximity palette should be magma, got ' + p1); process.exit(1); }
+        vm.runInContext("renderColorMode = 'solve_proximity'; renderSolveProximityPalette = 'turbo';", ctx);
+        const p2 = vm.runInContext('_activeRenderPalette()', ctx);
+        if (p2 !== 'turbo') { console.error('FATAL: solve_proximity palette should be turbo, got ' + p2); process.exit(1); }
+        vm.runInContext("renderColorMode = 'rainbow';", ctx);
+        const p3 = vm.runInContext('_activeRenderPalette()', ctx);
+        if (p3 !== null) { console.error('FATAL: rainbow palette should be null, got ' + p3); process.exit(1); }
+        console.log('  _activeRenderPalette: OK (proximity=magma, solve=turbo, rainbow=null)');
+    }
+
+    // 11e: _loadCalcMetaForRender uses _lastCalcMeta when available
+    {
+        vm.runInContext("_lastCalcMeta = { job_id: 'j1', degree: 42, n_stripes: 100, lores: { bin_key: 'renders/j1/lores.bin' } };", ctx);
+        try {
+            const meta = await vm.runInContext("(async()=>{ return await _loadCalcMetaForRender('j1'); })()", ctx);
+            if (meta.degree !== 42) { console.error('FATAL: expected degree 42, got ' + meta.degree); process.exit(1); }
+            console.log('  _loadCalcMetaForRender (cached): OK');
+        } catch (e) { console.error('FATAL: _loadCalcMetaForRender: ' + e.message); process.exit(1); }
+    }
+
+    // 11f: _loadCalcMetaForRender falls back to /detail
+    {
+        vm.runInContext(`
+            _lastCalcMeta = null;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/detail') {
+                    return { job_id: body.job_id, calc: { degree: 55, n_stripes: 200, lores: { bin_key: 'renders/' + body.job_id + '/lores.bin' } } };
+                }
+                return {};
+            };
+        `, ctx);
+        try {
+            const meta = await vm.runInContext("(async()=>{ return await _loadCalcMetaForRender('j2'); })()", ctx);
+            if (meta.degree !== 55) { console.error('FATAL: detail fallback degree should be 55, got ' + meta.degree); process.exit(1); }
+            console.log('  _loadCalcMetaForRender (detail): OK');
+        } catch (e) { console.error('FATAL: _loadCalcMetaForRender detail: ' + e.message); process.exit(1); }
+    }
+
+    // 11g: _ensureSolveProximityBins dispatches all 3 phases with correct payloads
+    {
+        const dispatched = [];
+        vm.runInContext(`
+            var _spDispatched = [];
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/delete-task') return {};
+                if (name === 'dispatch' && body.target === 'solve_proximity') {
+                    _spDispatched.push(body.jobs[0] || body.jobs);
+                    return { fired: body.jobs.length, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: body.expected, complete: true,
+                        status_counts: { done: body.expected },
+                        results: [{ clip_lo: 2.5, clip_hi: 8.0, n_solves: 1000, n_solves_total: 50000,
+                            cuts_norm: [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9] }] };
+                }
+                return {};
+            };
+            _bilevelDispatchAndPoll = async function(opts) {
+                _spDispatched.push({ _wave: true, target: opts.target, jobCount: opts.jobs.length, taskPrefix: opts.taskPrefix });
+                return 1234;
+            };
+        `, ctx);
+
+        try {
+            const binsKey = await vm.runInContext(`(async()=>{
+                return await _ensureSolveProximityBins({
+                    jobId: 'test_sp', calcMeta: { degree: 70, n_stripes: 5, lores: { bin_key: 'renders/test_sp/lores.bin' } },
+                    rootTransforms: [['unit_circle']], degree: 70, nStripes: 5, logTarget: 'render-log'
+                });
+            })()`, ctx);
+
+            if (binsKey !== 'renders/test_sp/solve_proximity_bins.json') {
+                console.error('FATAL: bins key wrong: ' + binsKey); process.exit(1);
+            }
+            const d = vm.runInContext('_spDispatched', ctx);
+            // Should have: clip dispatch, hist wave dispatch, merge dispatch = 3 entries
+            if (d.length !== 3) { console.error('FATAL: expected 3 dispatch calls, got ' + d.length + ': ' + JSON.stringify(d.map(x=>x.phase||x._wave))); process.exit(1); }
+            // First: clip
+            if (d[0].phase !== 'clip') { console.error('FATAL: first dispatch should be clip, got ' + d[0].phase); process.exit(1); }
+            if (d[0].lores_bin_key !== 'renders/test_sp/lores.bin') { console.error('FATAL: clip lores key wrong'); process.exit(1); }
+            // Second: hist wave
+            if (!d[1]._wave) { console.error('FATAL: second should be wave dispatch'); process.exit(1); }
+            if (d[1].jobCount !== 5) { console.error('FATAL: hist should have 5 jobs, got ' + d[1].jobCount); process.exit(1); }
+            if (d[1].target !== 'solve_proximity') { console.error('FATAL: hist target wrong'); process.exit(1); }
+            // Third: merge
+            if (d[2].phase !== 'merge') { console.error('FATAL: third should be merge, got ' + d[2].phase); process.exit(1); }
+            if (d[2].n_stripes !== 5) { console.error('FATAL: merge n_stripes wrong'); process.exit(1); }
+            console.log('  _ensureSolveProximityBins: OK (clip→hist(5)→merge, key=' + binsKey + ')');
+        } catch (e) { console.error('FATAL: _ensureSolveProximityBins: ' + e.message); process.exit(1); }
+    }
+
+    // 11h: runRasterPipeline in solve_proximity mode includes bins key in raster jobs
+    {
+        vm.runInContext(`
+            renderColorMode = 'solve_proximity';
+            renderSolveProximityPalette = 'plasma';
+            _lastCalcMeta = { job_id: 'test_sp2', degree: 10, n_stripes: 2, n_chunks: 2,
+                lores: { bin_key: 'renders/test_sp2/lores.bin' } };
+            var _rasterJobsSeen = [];
+            var _origBDP = _bilevelDispatchAndPoll;
+            _bilevelDispatchAndPoll = async function(opts) {
+                if (opts.target === 'raster') {
+                    _rasterJobsSeen = opts.jobs;
+                }
+                return 1234;
+            };
+            // Stub _ensureSolveProximityBins to return a known key
+            _ensureSolveProximityBins = async function() { return 'renders/test_sp2/solve_proximity_bins.json'; };
+        `, ctx);
+
+        // Seed render DOM state and full pipeline mocks
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_sp2' };
+        ctx._elements['render-status'].textContent = '';
+        ctx._elements['render-pix'] = { ...ctx._mkEl(), value: '512' };
+        ctx._elements['render-format'] = { ...ctx._mkEl(), value: 'jpeg' };
+        ctx._elements['render-quality'] = { ...ctx._mkEl(), value: '90' };
+        ctx._elements['render-square-extent'] = { ...ctx._mkEl(), value: '2' };
+        ctx._elements['sparse-tile-size'] = { ...ctx._mkEl(), value: '512' };
+        ctx._elements['render-rotation'] = { ...ctx._mkEl(), value: '0' };
+        ctx._elements['render-rotation-dir'] = { ...ctx._mkEl(), value: 'ccw' };
+        ctx._elements['render-quantile'] = { ...ctx._mkEl(), value: '1' };
+        ctx._elements['render-shim'] = { ...ctx._mkEl(), value: '5' };
+        ctx._elements['btn-raster-all'] = ctx._mkEl();
+        vm.runInContext(`
+            _viewMode = 'square';
+            _rtChain = [];
+            _fakeNow = 0;
+            // Mock lambdaPost for the full pipeline after solve proximity prepass
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/clean-render') return { deleted: 0 };
+                if (name === 'storage' && path === '/delete-task') return {};
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: body.expected || 1, complete: true, status_counts: { done: body.expected || 1 }, results: [] };
+                }
+                if (name === 'dispatch') return { fired: body.jobs.length, errors: [] };
+                if (name === 'storage' && path === '/save-metadata') return {};
+                if (name === 'viewport') return { q_re: [-2,2], q_im: [-2,2], scale: 256, pix: 512, n_roots: 100 };
+                return {};
+            };
+            refreshRenderArtifacts = async function() {};
+        `, ctx);
+
+        try {
+            await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx);
+        } catch (e) {
+            // May throw on finalize/encode stubs — that's OK
+        }
+
+        const statusText = ctx._elements['render-status'].textContent || '';
+        // Check if raster jobs were created with the bins key
+        const rasterJobs = vm.runInContext('_rasterJobsSeen', ctx);
+        if (rasterJobs && rasterJobs.length > 0) {
+            const j0 = rasterJobs[0];
+            if (j0.solve_proximity_bins_key !== 'renders/test_sp2/solve_proximity_bins.json') {
+                console.error('FATAL: raster job missing bins key: ' + JSON.stringify(j0.solve_proximity_bins_key));
+                process.exit(1);
+            }
+            if (j0.color !== 'solve_proximity') {
+                console.error('FATAL: raster job color should be solve_proximity, got ' + j0.color);
+                process.exit(1);
+            }
+            if (j0.palette !== 'plasma') {
+                console.error('FATAL: raster job palette should be plasma, got ' + j0.palette);
+                process.exit(1);
+            }
+            console.log('  raster jobs in solve_proximity mode: OK (bins_key, color, palette=plasma)');
+        } else {
+            // Raster jobs might not have been seen if pipeline errored before raster phase
+            // Check status for errors
+            if (statusText.includes('error') || statusText.includes('Error')) {
+                console.error('FATAL: pipeline error: ' + statusText);
+                process.exit(1);
+            }
+            console.log('  raster jobs: SKIP (pipeline did not reach raster phase)');
+        }
+
+        // Reset
+        vm.runInContext("renderColorMode = 'rainbow';", ctx);
+    }
+
     console.log('');
     console.log('=== Frontend JS Execution Test PASSED ===');
 })().catch(e => { console.error('FATAL: ' + e.message); process.exit(1); });

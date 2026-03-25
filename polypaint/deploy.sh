@@ -32,6 +32,7 @@ RUNTIME="python3.12"
 ARCH="arm64"
 SWEEP_MEMORY=10240    # 6 vCPUs for multi-process sweep
 ENCODE_MEMORY=1769    # 1 vCPU + libvips for JPEG/PNG encoding
+ENCODE_EPHEMERAL=3072 # 3GB /tmp for preview generation from large images
 VIEWPORT_MEMORY=512   # pure Python
 STORAGE_MEMORY=512    # pure Python
 DISPATCH_MEMORY=1769  # 1 vCPU — 50 threads doing SSL need real CPU

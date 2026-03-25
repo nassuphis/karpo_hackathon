@@ -41,12 +41,15 @@ def handle_preview(params):
             for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
                 f.write(chunk)
 
-        # Use vipsthumbnail from libvips layer
+        # Use vipsthumbnail from libvips layer (/opt/bin/)
+        vipsthumbnail = "/opt/bin/vipsthumbnail"
+        env = imgpipe_env()
+        env["PATH"] = "/opt/bin:" + env.get("PATH", "")
         result = subprocess.run(
-            ["vipsthumbnail", in_path, "-s", f"{max_size}x{max_size}",
+            [vipsthumbnail, in_path, "-s", f"{max_size}x{max_size}",
              "-o", out_path + "[strip]"],
             capture_output=True, text=True, timeout=120,
-            env=imgpipe_env(),
+            env=env,
         )
         if result.returncode != 0:
             raise RuntimeError(f"vipsthumbnail failed: {result.stderr.strip()}")

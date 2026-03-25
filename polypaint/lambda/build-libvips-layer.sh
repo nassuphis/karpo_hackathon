@@ -86,6 +86,18 @@ docker run --rm --platform linux/arm64 \
       cp "$GLIBCONFIG" /out/lib/glib-2.0/include/
     fi
 
+    # Copy vipsthumbnail CLI binary (used for preview generation)
+    mkdir -p /out/bin
+    for vbin in vipsthumbnail vips; do
+      VBIN_PATH=$(find /staging/opt -name "$vbin" -type f 2>/dev/null | head -1)
+      if [ -n "$VBIN_PATH" ]; then
+        cp "$VBIN_PATH" /out/bin/
+        echo "  bundled binary: $vbin"
+      else
+        echo "  WARNING: $vbin not found in staging"
+      fi
+    done
+
     # Copy pkg-config
     mkdir -p /out/lib/pkgconfig
     cp /staging/opt/lib64/pkgconfig/vips*.pc /out/lib/pkgconfig/ 2>/dev/null || \
@@ -144,6 +156,6 @@ docker run --rm --platform linux/arm64 \
 
 echo "=== Creating layer zip ==="
 cd "$OUTDIR"
-# Zip lib/ and include/ at root level
-zip -r9 "$OUTDIR/libvips-layer.zip" lib/ include/
+# Zip lib/, bin/, and include/ at root level
+zip -r9 "$OUTDIR/libvips-layer.zip" lib/ bin/ include/
 echo "Layer zip: $OUTDIR/libvips-layer.zip ($(du -h libvips-layer.zip | cut -f1))"

@@ -1123,11 +1123,7 @@ async function _loadCalcMetaForRender(jobId) {
     if (_lastCalcMeta && _lastCalcMeta.job_id === jobId) return _lastCalcMeta;
     const detail = await lambdaPost('storage', { job_id: jobId }, '/detail');
     if (detail.calc) return detail.calc;
-    // Fallback: try list API
-    const listData = await lambdaPost('storage', {}, '/list');
-    const jobResult = (listData.results || []).find(r => r.job_id === jobId);
-    if (jobResult) return { n_stripes: jobResult.n_stripes || 10, degree: jobResult.degree || 1, job_id: jobId };
-    throw new Error(`Render metadata missing for ${jobId}; calc.json required for solve proximity`);
+    throw new Error(`Render metadata missing for ${jobId}; calc.json/lores.bin required for solve proximity`);
 }
 
 async function _ensureSolveProximityBins({ jobId, calcMeta, rootTransforms, degree, nStripes, logTarget }) {

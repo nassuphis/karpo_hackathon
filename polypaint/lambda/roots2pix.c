@@ -526,9 +526,18 @@ int main(int argc, char **argv) {
             }
         }
     } else if (colorMode == COLOR_SOLVE_PROXIMITY) {
-        float *wkRe = malloc(degree * sizeof(float));
-        float *wkIm = malloc(degree * sizeof(float));
-        /* Precompute 10 palette colors */
+        /* Roots are already transformed in-place (line 417-435).
+         * Score on already-transformed roots — do NOT re-apply transforms. */
+        if (nSolveProxCuts != 9) {
+            fprintf(stderr, "solve_proximity requires exactly 9 cuts (got %d). "
+                    "Pass --solve_prox_cuts=c1,c2,...,c9\n", nSolveProxCuts);
+            return 1;
+        }
+        if (solveProxClipHi - solveProxClipLo < 1e-12) {
+            fprintf(stderr, "solve_proximity requires valid clip range "
+                    "(got lo=%.6g hi=%.6g)\n", solveProxClipLo, solveProxClipHi);
+            return 1;
+        }
         unsigned char spPalR[10], spPalG[10], spPalB[10];
         for (int b = 0; b < 10; b++) {
             paletteRGB(proxPal, (b + 0.5) / 10.0, &spPalR[b], &spPalG[b], &spPalB[b]);
@@ -539,20 +548,13 @@ int main(int argc, char **argv) {
 
         for (long p = 0; p < nPoints; p++) {
             float *step = roots + p * stride;
-            if (nRt > 0) {
-                for (int k = 0; k < degree; k++) { wkRe[k] = step[k*2]; wkIm[k] = step[k*2+1]; }
-                apply_root_xforms(rtChain, nRt, wkRe, wkIm, degree);
-            }
 
-            /* Compute d2_min for this solve */
+            /* Compute d2_min for this solve (roots already transformed) */
             double d2_min = 1e300;
             for (int i = 0; i < degree; i++) {
-                double ri_re = nRt > 0 ? wkRe[i] : step[i*2];
-                double ri_im = nRt > 0 ? wkIm[i] : step[i*2+1];
+                double ri_re = step[i*2], ri_im = step[i*2+1];
                 for (int j = i + 1; j < degree; j++) {
-                    double rj_re = nRt > 0 ? wkRe[j] : step[j*2];
-                    double rj_im = nRt > 0 ? wkIm[j] : step[j*2+1];
-                    double dr = ri_re - rj_re, di = ri_im - rj_im;
+                    double dr = ri_re - step[j*2], di = ri_im - step[j*2+1];
                     double d2 = dr * dr + di * di;
                     if (d2 < d2_min) d2_min = d2;
                 }
@@ -570,8 +572,7 @@ int main(int argc, char **argv) {
 
             /* Emit all roots in this solve with the same color */
             for (int r = 0; r < degree; r++) {
-                double re = nRt > 0 ? wkRe[r] : step[r*2];
-                double im = nRt > 0 ? wkIm[r] : step[r*2+1];
+                double re = step[r*2], im = step[r*2+1];
                 double dx = re - centerRe, dy = im - centerIm;
                 double rx = dx * cosA - dy * sinA, ry = dx * sinA + dy * cosA;
                 int px = (int)(halfW + rx * scale);
@@ -593,7 +594,6 @@ int main(int argc, char **argv) {
                 }
             }
         }
-        free(wkRe); free(wkIm);
     } else if (colorMode == COLOR_CONSTANT) {
         uint32_t constRGB = ((uint32_t)constR << 16) | ((uint32_t)constG << 8) | constB;
 

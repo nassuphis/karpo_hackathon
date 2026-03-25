@@ -72,7 +72,8 @@ def handler(event, context):
 
         # Solve proximity bins: download JSON, parse, pass as CLI args
         sp_bins_key = params.get("solve_proximity_bins_key")
-        sp_bins_path = None
+        if params.get("color") == "solve_proximity" and not sp_bins_key:
+            raise RuntimeError("solve_proximity color mode requires solve_proximity_bins_key")
         if sp_bins_key and params.get("color") == "solve_proximity":
             sp_bins_path = "/tmp/solve_proximity_bins.json"
             sp_obj = s3.get_object(Bucket=BUCKET, Key=sp_bins_key)

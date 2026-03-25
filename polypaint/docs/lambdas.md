@@ -117,7 +117,7 @@ Converts one stripe of root data into tile-bucketed sparse pixel files.
 - `tile_size`, `n_tile_cols`, `n_tile_rows` — tile grid
 - `center_re`, `center_im`, `scale` — viewport
 - `degree` — polynomial degree
-- `color` — "rainbow", "proximity", or "constant"
+- `color` — "rainbow", "proximity", "solve_proximity", or "constant"
 - `match` — root matching: "none", "greedy", or "hungarian"
 - `palette` — for proximity mode: "inferno", "viridis", etc.
 - `constant_color` — hex RGB for constant mode
@@ -140,8 +140,21 @@ Converts one stripe of root data into tile-bucketed sparse pixel files.
 | Mode | Algorithm |
 |------|-----------|
 | rainbow | Fixed HSL gradient per root index |
-| proximity | Nearest-neighbor distance → palette interpolation (2-pass) |
+| proximity | Root-level nearest-neighbor distance → palette interpolation (stripe-normalized, 2-pass) |
+| solve_proximity | Solve-level min pair distance → equal-density binned (global histogram, 3-phase prepass) |
 | constant | Single hex color for all roots |
+
+### Solve Proximity Pipeline
+
+When `color=solve_proximity`, a 3-phase prepass runs before raster:
+
+1. **clip** — read lores roots, compute scores, emit quantile clip bounds
+2. **hist** — per-stripe 100-bin histogram of scores within clip range
+3. **merge** — sum histograms, derive 10 equal-density bin cut points
+
+Lambda: `polypaint-solve-proximity` (handler: `handler_solve_proximity.py`)
+Binary: `solve_proximity_stats` (clip + hist modes)
+Artifacts: `solve_proximity_clip.json`, `solve_proximity/stripe_*_hist.json`, `solve_proximity_bins.json`
 
 ### Root Matching
 

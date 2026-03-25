@@ -302,6 +302,40 @@ class TestDispatchBilevelTarget(unittest.TestCase):
         self.assertEqual(body["total"], 200)
         self.assertEqual(mock_client.invoke.call_count, 200)
 
+    @patch("handler_dispatch.lambda_client")
+    def test_dispatch_solve_proximity_target(self, mock_client):
+        """solve_proximity target fires jobs to polypaint-solve-proximity."""
+        from handler_dispatch import handler
+        mock_client.invoke.return_value = {"StatusCode": 202}
+        jobs = [{"phase": "clip", "job_id": "j", "degree": 70,
+                 "lores_bin_key": "renders/j/lores.bin",
+                 "out_key": "renders/j/solve_proximity_clip.json",
+                 "task_id": "solve_proximity_clip"}]
+        event = self._make_event({"target": "solve_proximity", "jobs": jobs})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["fired"], 1)
+        invoke_call = mock_client.invoke.call_args
+        self.assertIn("polypaint-solve-proximity", invoke_call[1]["FunctionName"])
+
+    @patch("handler_dispatch.lambda_client")
+    def test_dispatch_solve_proximity_non_202(self, mock_client):
+        """solve_proximity non-202 responses are tracked."""
+        from handler_dispatch import handler
+        mock_client.invoke.return_value = {"StatusCode": 429}
+        jobs = [{"phase": "hist", "job_id": "j", "stripe_idx": 0,
+                 "bin_key": "renders/j/stripe_0.bin", "degree": 70,
+                 "clip_key": "renders/j/solve_proximity_clip.json",
+                 "hist_bins": 100,
+                 "out_key": "renders/j/solve_proximity/stripe_0_hist.json",
+                 "task_id": "solve_proximity_hist_0"}]
+        event = self._make_event({"target": "solve_proximity", "jobs": jobs})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["fired"], 1)
+        self.assertEqual(len(body["non_202"]), 1)
+        self.assertEqual(body["non_202"][0]["status"], 429)
+
 
 # ── Test: handler_storage routing ─────────────────────────────────────────
 

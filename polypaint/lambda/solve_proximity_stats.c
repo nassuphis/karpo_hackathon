@@ -145,7 +145,14 @@ int main(int argc, char **argv) {
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
     RootXformEntry rtChain[MAX_RT_CHAIN];
     int nRt = 0;
-    if (rtPath) nRt = parse_root_xform_file(rtPath, rtChain, MAX_RT_CHAIN);
+    if (rtPath) {
+        nRt = parse_root_xform_file(rtPath, rtChain, MAX_RT_CHAIN);
+        if (nRt == 0) {
+            fprintf(stderr, "Failed to parse root transforms from %s\n", rtPath);
+            free(buf);
+            return 1;
+        }
+    }
 
     /* Working buffers for transformed roots (float to match root_xforms.h) */
     float wkRe[MAXDEG], wkIm[MAXDEG];

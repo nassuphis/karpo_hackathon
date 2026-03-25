@@ -300,7 +300,14 @@ int main(int argc, char **argv) {
 
     /* Parse root transform chain */
     RootXformEntry rtChain[MAX_RT_CHAIN];
-    int nRt = parse_root_xform_file(rtPath, rtChain, MAX_RT_CHAIN);
+    int nRt = 0;
+    if (rtPath) {
+        nRt = parse_root_xform_file(rtPath, rtChain, MAX_RT_CHAIN);
+        if (nRt == 0) {
+            fprintf(stderr, "Failed to parse root transforms from %s\n", rtPath);
+            return 1;
+        }
+    }
 
     enum ColorMode colorMode = COLOR_RAINBOW;
     if (strcmp(colorStr, "proximity") == 0) colorMode = COLOR_PROXIMITY;
@@ -586,11 +593,15 @@ int main(int argc, char **argv) {
                     uint32_t pix_idx = local_y * (uint32_t)tileW[tile_id] + local_x;
                     uint32_t byte_idx = pix_idx >> 3;
                     uint8_t bit_mask = 1u << (pix_idx & 7);
-                    if (!(tileBits[tile_id][byte_idx] & bit_mask)) {
-                        tileBits[tile_id][byte_idx] |= bit_mask;
-                        emit_pixel(tile_id, pix_idx, rgb);
-                        rootsPlotted++;
+                    if (tileBits[tile_id][byte_idx] & bit_mask) {
+                        rootsDeduped++;
+                        continue;
                     }
+                    tileBits[tile_id][byte_idx] |= bit_mask;
+                    emit_pixel(tile_id, pix_idx, rgb);
+                    rootsPlotted++;
+                } else {
+                    rootsClipped++;
                 }
             }
         }

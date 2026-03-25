@@ -1483,22 +1483,48 @@ async function _showPreview(which) {
         return;
     }
 
-    // No preview URL but source image exists — generate preview
+    // No preview URL but source image exists — dispatch async preview generation
     if (sources[which]) {
         const { jobId, sourceKey, previewKey } = sources[which];
+        const taskId = 'render_preview_' + which;
         el.innerHTML = '<div style="color:#888; font-size:12px; padding:12px 0">Generating preview...</div>';
         try {
-            const result = await lambdaPost('encode', {
-                mode: 'preview',
-                source_key: sourceKey,
-                preview_key: previewKey,
+            // Clear stale status
+            await lambdaPost('storage', { job_id: jobId, task_id: taskId }, '/delete-task').catch(() => {});
+            // Dispatch async
+            const dispResult = await lambdaPost('dispatch', {
+                target: 'render_preview',
+                jobs: [{ job_id: jobId, source_key: sourceKey, preview_key: previewKey, task_id: taskId }],
+                expected_keys: [],
             });
-            if (result.url) {
-                urls[which] = result.url;
-                el.innerHTML = '<img src="' + result.url + '" style="max-width:100%; border:1px solid #333; background:#000; display:block">';
+            if ((dispResult.fired || 0) !== 1) throw new Error('Preview dispatch failed');
+            // Poll for completion
+            const t0 = performance.now();
+            while (true) {
+                await new Promise(r => setTimeout(r, 2000));
+                const check = await lambdaPost('storage', {
+                    job_id: jobId, task_prefix: taskId, expected: 1,
+                }, '/check-status');
+                if (check.errors > 0) {
+                    const msg = check.error_details?.[0]?.error_msg || 'unknown';
+                    throw new Error(msg);
+                }
+                if (check.complete) break;
+                const elapsed = (performance.now() - t0) / 1000;
+                el.innerHTML = '<div style="color:#888; font-size:12px; padding:12px 0">Generating preview... ' + elapsed.toFixed(0) + 's</div>';
+                if (elapsed > 300) throw new Error('Preview generation timed out');
+            }
+            // Presign the generated preview
+            const headResp = await lambdaPost('storage', { keys: [previewKey], presign: true }, '/head-keys');
+            const previewUrl = headResp.meta?.[previewKey]?.url;
+            if (previewUrl) {
+                urls[which] = previewUrl;
+                el.innerHTML = '<img src="' + previewUrl + '" style="max-width:100%; border:1px solid #333; background:#000; display:block">';
+            } else {
+                el.innerHTML = '<div style="color:#c44; font-size:12px; padding:12px 0">Preview generated but not found</div>';
             }
         } catch (e) {
-            el.innerHTML = '<div style="color:#c44; font-size:12px; padding:12px 0">Preview generation failed: ' + e.message + '</div>';
+            el.innerHTML = '<div style="color:#c44; font-size:12px; padding:12px 0">Preview failed: ' + e.message + '</div>';
         }
         return;
     }

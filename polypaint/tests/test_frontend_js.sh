@@ -515,13 +515,28 @@ async function testPipeline(name, call) {
     // Restore real lambdaPost for preview tests (override inside VM)
     // Simulate: no cached preview, but source image exists → generate on click
     {
-        // Track the exact encode request to verify source_key and preview_key
+        // Mock dispatch+poll flow for async preview generation
         vm.runInContext(`
-            var _lastEncodeRequest = null;
+            var _lastDispatchRequest = null;
             lambdaPost = async function lambdaPost(name, body, path) {
-                if (name === 'encode' && body.mode === 'preview') {
-                    _lastEncodeRequest = { source_key: body.source_key, preview_key: body.preview_key };
-                    return { preview_key: body.preview_key, file_size: 50000, url: 'https://fake/' + body.preview_key };
+                // Delete stale task
+                if (name === 'storage' && path === '/delete-task') return {};
+                // Dispatch
+                if (name === 'dispatch' && body.target === 'render_preview') {
+                    _lastDispatchRequest = body.jobs[0];
+                    return { fired: 1, errors: [] };
+                }
+                // Poll — complete immediately
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: 1, complete: true, status_counts: { done: 1 } };
+                }
+                // Presign the generated preview
+                if (name === 'storage' && path === '/head-keys' && body.presign) {
+                    var meta = {};
+                    (body.keys || []).forEach(function(k) {
+                        meta[k] = { size: 50000, url: 'https://fake/' + k };
+                    });
+                    return { exists: body.keys || [], meta: meta };
                 }
                 if (name === 'storage' && path === '/head-keys') {
                     return { exists: [], meta: {} };
@@ -542,7 +557,7 @@ async function testPipeline(name, call) {
         try {
             await vm.runInContext('(async()=>{ await _showPreview("color"); })()', ctx);
             const colorUrl = vm.runInContext('window._previewUrls.color', ctx);
-            const req = vm.runInContext('_lastEncodeRequest', ctx);
+            const req = vm.runInContext('_lastDispatchRequest', ctx);
             if (!colorUrl) { console.error('FATAL: color preview did not set URL'); process.exit(1); }
             if (!req || req.source_key !== 'renders/test_job/image.jpeg') {
                 console.error('FATAL: color preview sent wrong source_key: ' + JSON.stringify(req));
@@ -559,11 +574,11 @@ async function testPipeline(name, call) {
         }
 
         // Test bilevel preview generation — verify request shape
-        vm.runInContext('window._previewUrls.bilevel = null; _lastEncodeRequest = null;', ctx);
+        vm.runInContext('window._previewUrls.bilevel = null; _lastDispatchRequest = null;', ctx);
         try {
             await vm.runInContext('(async()=>{ await _showPreview("bilevel"); })()', ctx);
             const bilevelUrl = vm.runInContext('window._previewUrls.bilevel', ctx);
-            const req = vm.runInContext('_lastEncodeRequest', ctx);
+            const req = vm.runInContext('_lastDispatchRequest', ctx);
             if (!bilevelUrl) { console.error('FATAL: bilevel preview did not set URL'); process.exit(1); }
             if (!req || req.source_key !== 'renders/test_job/image_bilevel.tif') {
                 console.error('FATAL: bilevel preview sent wrong source_key: ' + JSON.stringify(req));

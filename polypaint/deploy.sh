@@ -51,6 +51,8 @@ PARAM_DEBUG_NAME="polypaint-param-debug"
 PARAM_DEBUG_MEMORY=1769  # 1 vCPU + libvips for TIFF output
 BILEVEL_STITCH_NAME="polypaint-bilevel-stitch"
 BILEVEL_STITCH_MEMORY=6144  # ~4 vCPUs, libvips multithreaded stitch
+RENDER_PREVIEW_NAME="polypaint-render-preview"
+RENDER_PREVIEW_MEMORY=4096  # libvips vipsthumbnail on large images
 BINARY_TMP=10240      # /tmp size for Lambdas that process raw images (max 10GB)
 TIMEOUT=900
 BUCKET="polypaint"
@@ -557,6 +559,14 @@ chmod +x "$PNG_EXPORT_DIR"/png_export
 cd "$PNG_EXPORT_DIR" && zip -r9 /tmp/polypaint-png-export.zip . -q && cd "$SCRIPT_DIR"
 echo "  PngExp:  $(du -h /tmp/polypaint-png-export.zip | cut -f1)  (png_export + libvips layer)"
 
+# Render Preview: handler_render_preview.py + shared.py (needs libvips layer for vipsthumbnail)
+RENDER_PREVIEW_DIR=/tmp/polypaint-render-preview
+rm -rf "$RENDER_PREVIEW_DIR"
+mkdir -p "$RENDER_PREVIEW_DIR"
+cp lambda/handler_render_preview.py lambda/shared.py "$RENDER_PREVIEW_DIR/"
+cd "$RENDER_PREVIEW_DIR" && zip -r9 /tmp/polypaint-render-preview.zip . -q && cd "$SCRIPT_DIR"
+echo "  RndPrev: $(du -h /tmp/polypaint-render-preview.zip | cut -f1)  (vipsthumbnail via libvips layer)"
+
 # DeepZoom Export: handler_deepzoom_export.py + shared.py + dz_export (needs libvips layer)
 DZ_EXPORT_DIR=/tmp/polypaint-deepzoom-export
 rm -rf "$DZ_EXPORT_DIR"
@@ -923,6 +933,9 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$DZ_EXPORT_NAME" "handler_deepzoom_export.handler" "/tmp/polypaint-deepzoom-export.zip" \
         "$DZ_EXPORT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
+    create_lambda "$RENDER_PREVIEW_NAME" "handler_render_preview.handler" "/tmp/polypaint-render-preview.zip" \
+        "$RENDER_PREVIEW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
     create_lambda "$SWEEP_CM_NAME" "handler_sweep_cm.handler" "/tmp/polypaint-sweep-cm.zip" \
         "$SWEEP_CM_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
@@ -1022,6 +1035,9 @@ elif [ "$ACTION" = "update" ]; then
 
     update_lambda "$DZ_EXPORT_NAME" "handler_deepzoom_export.handler" "/tmp/polypaint-deepzoom-export.zip" \
         "$DZ_EXPORT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    update_lambda "$RENDER_PREVIEW_NAME" "handler_render_preview.handler" "/tmp/polypaint-render-preview.zip" \
+        "$RENDER_PREVIEW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     update_lambda "$SWEEP_CM_NAME" "handler_sweep_cm.handler" "/tmp/polypaint-sweep-cm.zip" \
         "$SWEEP_CM_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"

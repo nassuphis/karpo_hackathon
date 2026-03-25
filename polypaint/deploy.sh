@@ -153,6 +153,10 @@ count = len(re.findall(r'\"name\":', js))
 print(f'  coeff_func_catalog_js.js: {count} entries')
 " 2>&1) || { echo "FATAL: JS catalog generation failed"; exit 1; }
 
+# --- Frontend JS execution test ---
+echo "Running frontend JS execution test..."
+bash "$SCRIPT_DIR/tests/test_frontend_js.sh" || { echo "FATAL: Frontend JS test failed"; exit 1; }
+
 # --- Compile binaries ---
 echo "Compiling binaries..."
 

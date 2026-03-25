@@ -53,6 +53,8 @@ BILEVEL_STITCH_NAME="polypaint-bilevel-stitch"
 BILEVEL_STITCH_MEMORY=6144  # ~4 vCPUs, libvips multithreaded stitch
 RENDER_PREVIEW_NAME="polypaint-render-preview"
 RENDER_PREVIEW_MEMORY=4096  # libvips vipsthumbnail on large images
+SOLVE_PROXIMITY_NAME="polypaint-solve-proximity"
+SOLVE_PROXIMITY_MEMORY=1769  # 1 vCPU, solve_proximity_stats binary
 BINARY_TMP=10240      # /tmp size for Lambdas that process raw images (max 10GB)
 TIMEOUT=900
 BUCKET="polypaint"
@@ -242,6 +244,9 @@ aarch64-linux-musl-gcc -O3 -static -o lambda/bilevel_raster lambda/bilevel_raste
 
 echo "  coeffs_bilevel_raster (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/coeffs_bilevel_raster lambda/coeffs_bilevel_raster.c -lm
+
+echo "  solve_proximity_stats (static, ARM64)..."
+aarch64-linux-musl-gcc -O3 -static -o lambda/solve_proximity_stats lambda/solve_proximity_stats.c -lm
 
 # param_gen removed — param debug now uses sweep in param_dump mode
 
@@ -577,6 +582,16 @@ chmod +x "$DZ_EXPORT_DIR"/dz_export
 cd "$DZ_EXPORT_DIR" && zip -r9 /tmp/polypaint-deepzoom-export.zip . -q && cd "$SCRIPT_DIR"
 echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_export + libvips layer)"
 
+# Solve Proximity: handler_solve_proximity.py + shared.py + solve_proximity_stats binary
+SP_DIR=/tmp/polypaint-solve-proximity
+rm -rf "$SP_DIR"
+mkdir -p "$SP_DIR"
+cp lambda/handler_solve_proximity.py lambda/shared.py "$SP_DIR/"
+cp lambda/solve_proximity_stats "$SP_DIR/"
+chmod +x "$SP_DIR"/solve_proximity_stats
+cd "$SP_DIR" && zip -r9 /tmp/polypaint-solve-proximity.zip . -q && cd "$SCRIPT_DIR"
+echo "  SolvPrx: $(du -h /tmp/polypaint-solve-proximity.zip | cut -f1)  (solve_proximity_stats binary)"
+
 # Sweep-CM: handler_sweep_cm.py + shared.py + sweep_cm (needs LAPACK layer)
 CM_DIR=/tmp/polypaint-sweep-cm
 rm -rf "$CM_DIR"
@@ -901,7 +916,7 @@ if [ "$ACTION" = "create" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     create_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME"
+        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -936,12 +951,15 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$RENDER_PREVIEW_NAME" "handler_render_preview.handler" "/tmp/polypaint-render-preview.zip" \
         "$RENDER_PREVIEW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
+    create_lambda "$SOLVE_PROXIMITY_NAME" "handler_solve_proximity.handler" "/tmp/polypaint-solve-proximity.zip" \
+        "$SOLVE_PROXIMITY_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+
     create_lambda "$SWEEP_CM_NAME" "handler_sweep_cm.handler" "/tmp/polypaint-sweep-cm.zip" \
         "$SWEEP_CM_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     # Async invoke config: no retries for most Lambdas (prevents retry storms),
     # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
-    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME"; do
+    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$SOLVE_PROXIMITY_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \
@@ -1004,7 +1022,7 @@ elif [ "$ACTION" = "update" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     update_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME"
+        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -1039,12 +1057,15 @@ elif [ "$ACTION" = "update" ]; then
     update_lambda "$RENDER_PREVIEW_NAME" "handler_render_preview.handler" "/tmp/polypaint-render-preview.zip" \
         "$RENDER_PREVIEW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
+    update_lambda "$SOLVE_PROXIMITY_NAME" "handler_solve_proximity.handler" "/tmp/polypaint-solve-proximity.zip" \
+        "$SOLVE_PROXIMITY_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+
     update_lambda "$SWEEP_CM_NAME" "handler_sweep_cm.handler" "/tmp/polypaint-sweep-cm.zip" \
         "$SWEEP_CM_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     # Async invoke config: no retries for most Lambdas (prevents retry storms),
     # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
-    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME"; do
+    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$SOLVE_PROXIMITY_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \

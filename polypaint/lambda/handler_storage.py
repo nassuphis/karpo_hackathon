@@ -329,13 +329,16 @@ def handle_clean_render(event):
     prefix = f"renders/{job_id}/"
 
     # Only delete known intermediate file prefixes
-    intermediate_prefixes = ['pix_', 'raw_', 'tile_', 'bilevel_t', 'coeff_t']
+    intermediate_prefixes = ['pix_', 'raw_', 'tile_', 'bilevel_t', 'coeff_t', 'solve_proximity/']
     objects = []
     paginator = s3.get_paginator('list_objects_v2')
     for rp in intermediate_prefixes:
         for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix + rp):
             for obj in page.get('Contents', []):
                 objects.append(obj)
+    # Also delete top-level solve-proximity artifacts
+    for key_suffix in ['solve_proximity_clip.json', 'solve_proximity_bins.json']:
+        objects.append({"Key": prefix + key_suffix})
 
     total_deleted = 0
     if objects:
@@ -488,6 +491,14 @@ def handle_detail(event):
         view = json.loads(vobj["Body"].read())
         result["q_re"] = view.get("q_re")
         result["q_im"] = view.get("q_im")
+    except Exception:
+        pass
+
+    # Read calc.json for full compute metadata
+    try:
+        cobj = s3.get_object(Bucket=BUCKET,
+                             Key=f"renders/{job_id}/calc.json")
+        result["calc"] = json.loads(cobj["Body"].read())
     except Exception:
         pass
 

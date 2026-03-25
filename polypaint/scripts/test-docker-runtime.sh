@@ -298,6 +298,52 @@ for f in [test_raw, test_jpeg, test_png, test_tif,
 
 print("=== Render preview tests PASSED ===")
 
+# --- solve_proximity_stats regression ---
+print("\n--- solve_proximity_stats ---")
+
+sps_path = "/src/solve_proximity_stats"
+if os.path.exists(sps_path):
+    # Verify binary
+    MAGIC = open(sps_path, "rb").read(4)
+    assert MAGIC == b"\x7fELF", f"solve_proximity_stats is not ELF"
+    print(f"  {sps_path}: ELF OK")
+
+    # Create tiny synthetic .bin: 3 solves, degree=2
+    # Solve A: roots (0,0),(1,0) → d2=1.0 → score=0.0
+    # Solve B: roots (0,0),(0.01,0) → d2=0.0001 → score=2.0
+    # Solve C: roots (0,0),(0.1,0) → d2≈0.01 → score≈1.0
+    sps_bin = "/tmp/sps_test.bin"
+    with open(sps_bin, "wb") as f:
+        for roots in [[(0,0),(1,0)], [(0,0),(0.01,0)], [(0,0),(0.1,0)]]:
+            for re, im in roots:
+                f.write(struct.pack("<ff", re, im))
+
+    # Test clip mode
+    r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2"],
+        capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, f"clip failed: {r.stderr[:200]}"
+    clip = json.loads(r.stdout)
+    assert clip["n_solves"] == 3
+    assert clip["degree"] == 2
+    assert clip["clip_lo"] <= clip["clip_hi"]
+    print(f"  clip: OK (n={clip['n_solves']}, lo={clip['clip_lo']:.2f}, hi={clip['clip_hi']:.2f})")
+
+    # Test hist mode
+    r = subprocess.run([sps_path, sps_bin, "--mode=hist", "--degree=2",
+        f"--clip_lo={clip['clip_lo']}", f"--clip_hi={clip['clip_hi']}",
+        "--hist_bins=10"],
+        capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, f"hist failed: {r.stderr[:200]}"
+    hist = json.loads(r.stdout)
+    assert len(hist["hist"]) == 10
+    assert sum(hist["hist"]) == 3
+    print(f"  hist: OK (bins={len(hist['hist'])}, total={sum(hist['hist'])})")
+
+    os.remove(sps_bin)
+    print("=== solve_proximity_stats tests PASSED ===")
+else:
+    print(f"  SKIP: {sps_path} not found (not yet compiled)")
+
 # --- Catalog degree verification ---
 # Compare host-generated JS catalog degrees against deploy binary probes
 print("\n--- Catalog degree verification ---")

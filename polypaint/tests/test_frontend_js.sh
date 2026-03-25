@@ -35,7 +35,7 @@ const _mkEl = () => {
     selectedOptions: [{ textContent: '' }],
     options: [], children: [],
     get innerHTML() { return el._html || ''; },
-    set innerHTML(v) { el._html = v; el.children = []; },
+    set innerHTML(v) { el._html = v; el.children = []; el._innerHTMLSet = true; },
     classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } },
     addEventListener() {}, removeEventListener() {},
     getBoundingClientRect() { return {top:0,left:0,width:100,height:100}; },
@@ -737,6 +737,107 @@ async function testPipeline(name, call) {
         } catch (e) {
             console.error('FATAL: tab switch auto-load: ' + e.message);
             process.exit(1);
+        }
+    }
+
+    // Test: rendered inventory has correct row count
+    // Re-load to ensure clean state after tab switch test
+    await vm.runInContext('(async()=>{ await loadDeepZoomInventory(); })()', ctx);
+    {
+        const container = ctx._elements['deepzoom-inventory'];
+        const html = container.innerHTML || '';
+        const rowCount = (html.match(/dz-inv-row/g) || []).length;
+        if (rowCount !== 2) {
+            console.error('FATAL: rendered inventory should have 2 rows, got ' + rowCount);
+            process.exit(1);
+        }
+        console.log('  rendered rows: OK (' + rowCount + ' dz-inv-row elements)');
+    }
+
+    // Test: viewer element made visible after auto-select
+    {
+        const viewer = ctx._elements['deepzoom-viewer'];
+        if (viewer.style.display !== 'block') {
+            console.error('FATAL: viewer should be visible after auto-select, display=' + viewer.style.display);
+            process.exit(1);
+        }
+        console.log('  viewer visible after load: OK');
+    }
+
+    // Test: _dzSelect calls viewDeepZoom with correct URL
+    {
+        let viewedUrl = null;
+        vm.runInContext(`
+            var _lastViewedDziUrl = null;
+            var _origViewDeepZoom = viewDeepZoom;
+            viewDeepZoom = function(url) { _lastViewedDziUrl = url; _origViewDeepZoom(url); };
+        `, ctx);
+        vm.runInContext('_dzSelect(0)', ctx);
+        const url = vm.runInContext('_lastViewedDziUrl', ctx);
+        if (url !== 'https://dz/job_b.dzi') {
+            console.error('FATAL: _dzSelect(0) should view job_b dzi, got ' + url);
+            process.exit(1);
+        }
+        vm.runInContext('_dzSelect(1)', ctx);
+        const url2 = vm.runInContext('_lastViewedDziUrl', ctx);
+        if (url2 !== 'https://dz/job_a.dzi') {
+            console.error('FATAL: _dzSelect(1) should view job_a dzi, got ' + url2);
+            process.exit(1);
+        }
+        console.log('  select→viewDeepZoom URL: OK (job_b.dzi, job_a.dzi)');
+    }
+
+    // Test: arrow key events change selection
+    {
+        // Start at idx=1 (from previous test)
+        // Simulate ArrowUp → should go to 0
+        const KeyboardEvent = vm.runInContext('typeof KeyboardEvent', ctx);
+        // Can't construct real KeyboardEvent in VM, but we can call the handler directly
+        // The handler is registered via document.addEventListener('keydown', fn)
+        // Our stub doesn't capture it, so test via direct function call
+        vm.runInContext(`
+            // Make the deepzoom tab "active" for the handler
+            document.getElementById('tab-deepzoom').classList = { contains: function(c) { return c === 'active'; } };
+            window._dzSelectedIdx = 1;
+        `, ctx);
+        // Simulate ArrowUp
+        vm.runInContext(`
+            // Find the keydown handler — it was registered but our stub discarded it
+            // Instead, directly invoke the navigation logic
+            var _fakeEvent = { key: 'ArrowUp', preventDefault: function(){} };
+            // Re-register so we can call it
+            var _dzKeyHandler = null;
+            var _origAddEvt = document.addEventListener;
+            document.addEventListener = function(evt, fn) { if (evt === 'keydown') _dzKeyHandler = fn; };
+        `, ctx);
+        // Re-eval just the arrow key handler to capture it
+        const appCode = fs.readFileSync(process.argv[3], 'utf8');
+        const handlerMatch = appCode.match(/\/\/ Arrow key navigation[\s\S]*?(?=\nfunction viewDeepZoom)/);
+        if (handlerMatch) {
+            vm.runInContext(handlerMatch[0], ctx);
+            // Now call it
+            vm.runInContext('if (_dzKeyHandler) _dzKeyHandler({key:"ArrowUp",preventDefault:function(){}})', ctx);
+            const idx = vm.runInContext('window._dzSelectedIdx', ctx);
+            if (idx !== 0) {
+                console.error('FATAL: ArrowUp from 1 should select 0, got ' + idx);
+                process.exit(1);
+            }
+            vm.runInContext('if (_dzKeyHandler) _dzKeyHandler({key:"ArrowDown",preventDefault:function(){}})', ctx);
+            const idx2 = vm.runInContext('window._dzSelectedIdx', ctx);
+            if (idx2 !== 1) {
+                console.error('FATAL: ArrowDown from 0 should select 1, got ' + idx2);
+                process.exit(1);
+            }
+            // ArrowDown at end stays at end
+            vm.runInContext('if (_dzKeyHandler) _dzKeyHandler({key:"ArrowDown",preventDefault:function(){}})', ctx);
+            const idx3 = vm.runInContext('window._dzSelectedIdx', ctx);
+            if (idx3 !== 1) {
+                console.error('FATAL: ArrowDown at end should stay at 1, got ' + idx3);
+                process.exit(1);
+            }
+            console.log('  arrow key navigation: OK (up:1→0, down:0→1, down:1→1)');
+        } else {
+            console.log('  arrow key navigation: SKIP (could not extract handler)');
         }
     }
 

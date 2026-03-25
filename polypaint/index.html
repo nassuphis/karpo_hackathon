@@ -97,7 +97,7 @@ button {
     margin-bottom: 6px;
 }
 .color-row {
-    display: flex; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 10px;
+    display: flex; gap: 8px; align-items: center; margin-bottom: 10px; font-size: 10px;
 }
 .view-row {
     display: flex; gap: 8px; align-items: center; margin-bottom: 4px; font-size: 10px; cursor: pointer;
@@ -358,8 +358,13 @@ button {
                 </div>
                 <div class="color-row">
                     <span class="color-dot" data-mode="proximity" onclick="setColorMode('proximity')"></span>
-                    <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('proximity')">Proximity</span>
-                    <div id="palette-circles" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:12px"></div>
+                    <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('proximity')">Root proximity</span>
+                    <div id="palette-circles-root-proximity" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:12px"></div>
+                </div>
+                <div class="color-row">
+                    <span class="color-dot" data-mode="solve_proximity" onclick="setColorMode('solve_proximity')"></span>
+                    <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('solve_proximity')">Solve proximity</span>
+                    <div id="palette-circles-solve-proximity" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:12px"></div>
                 </div>
                 <div class="color-row">
                     <span class="color-dot" data-mode="constant" onclick="setColorMode('constant')"></span>
@@ -773,7 +778,8 @@ loadLambdaConfig();
 /* ---- Color controls ---- */
 let renderColorMode = 'rainbow';
 let renderMatchMode = 'none';
-let renderPalette = 'inferno';
+let renderRootProximityPalette = 'inferno';
+let renderSolveProximityPalette = 'inferno';
 
 const PALETTE_DEFS = [
     { name: 'inferno',  stops: ['#000004','#420a68','#932667','#dd513a','#fca50a','#fcffa4'] },
@@ -790,7 +796,7 @@ function setColorMode(mode) {
     renderColorMode = mode;
     document.querySelectorAll('.color-dot').forEach(d => {
         d.classList.toggle('active', d.dataset.mode === mode);
-        d.nextElementSibling.style.color = d.dataset.mode === mode ? '#aaa' : '#888';
+        if (d.nextElementSibling) d.nextElementSibling.style.color = d.dataset.mode === mode ? '#aaa' : '#888';
     });
 }
 
@@ -799,24 +805,37 @@ function setMatch(mode) {
     document.querySelectorAll('.strat-chip').forEach(c => c.classList.toggle('active', c.dataset.match === mode));
 }
 
-function setPalette(name) {
-    renderPalette = name;
-    document.querySelectorAll('.pal-circle').forEach(c => c.classList.toggle('active', c.dataset.palette === name));
+function setPaletteForMode(mode, name) {
+    if (mode === 'proximity') renderRootProximityPalette = name;
+    else if (mode === 'solve_proximity') renderSolveProximityPalette = name;
+    const containerId = mode === 'proximity' ? 'palette-circles-root-proximity' : 'palette-circles-solve-proximity';
+    const container = document.getElementById(containerId);
+    if (container) {
+        container.querySelectorAll('.pal-circle').forEach(c => c.classList.toggle('active', c.dataset.palette === name));
+    }
 }
 
-// Build palette circles on load
-(function buildPaletteCircles() {
-    const container = document.getElementById('palette-circles');
+function _activeRenderPalette() {
+    if (renderColorMode === 'proximity') return renderRootProximityPalette;
+    if (renderColorMode === 'solve_proximity') return renderSolveProximityPalette;
+    return null;
+}
+
+function buildPaletteCircles(containerId, mode, getCurrentPalette) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
     PALETTE_DEFS.forEach(p => {
         const el = document.createElement('div');
-        el.className = 'pal-circle' + (p.name === renderPalette ? ' active' : '');
+        el.className = 'pal-circle' + (p.name === getCurrentPalette() ? ' active' : '');
         el.dataset.palette = p.name;
         el.title = p.name;
         el.style.background = `linear-gradient(to top, ${p.stops.map((s, i) => s + ' ' + Math.round(i/(p.stops.length-1)*100) + '%').join(', ')})`;
-        el.onclick = () => { setPalette(p.name); setColorMode('proximity'); };
+        el.onclick = () => { setPaletteForMode(mode, p.name); setColorMode(mode); };
         container.appendChild(el);
     });
-})();
+}
+buildPaletteCircles('palette-circles-root-proximity', 'proximity', () => renderRootProximityPalette);
+buildPaletteCircles('palette-circles-solve-proximity', 'solve_proximity', () => renderSolveProximityPalette);
 
 /* ---- Render ---- */
 /* ---- Chip-based transform chains ---- */
@@ -1100,6 +1119,97 @@ function selectViewMode(mode) {
     document.getElementById('view-row-square').classList.toggle('active', mode === 'square');
 }
 
+async function _loadCalcMetaForRender(jobId) {
+    if (_lastCalcMeta && _lastCalcMeta.job_id === jobId) return _lastCalcMeta;
+    const detail = await lambdaPost('storage', { job_id: jobId }, '/detail');
+    if (detail.calc) return detail.calc;
+    // Fallback: try list API
+    const listData = await lambdaPost('storage', {}, '/list');
+    const jobResult = (listData.results || []).find(r => r.job_id === jobId);
+    if (jobResult) return { n_stripes: jobResult.n_stripes || 10, degree: jobResult.degree || 1, job_id: jobId };
+    throw new Error(`Render metadata missing for ${jobId}; calc.json required for solve proximity`);
+}
+
+async function _ensureSolveProximityBins({ jobId, calcMeta, rootTransforms, degree, nStripes, logTarget }) {
+    const prefix = `renders/${jobId}/`;
+    const clipKey = prefix + 'solve_proximity_clip.json';
+    const binsKey = prefix + 'solve_proximity_bins.json';
+    const histPrefix = prefix + 'solve_proximity/';
+    const loresBinKey = calcMeta.lores && calcMeta.lores.bin_key;
+    if (!loresBinKey) throw new Error('No lores.bin_key in calc metadata — needed for solve proximity clip');
+    const rt = rootTransforms && rootTransforms.length ? rootTransforms : undefined;
+
+    // Phase A: clip
+    log('Solve proximity: clip...', '', logTarget);
+    document.getElementById('render-status').textContent = 'Solve proximity: clip...';
+    await lambdaPost('storage', { job_id: jobId, task_id: 'solve_proximity_clip' }, '/delete-task').catch(() => {});
+    const clipDisp = await lambdaPost('dispatch', {
+        target: 'solve_proximity',
+        jobs: [{
+            phase: 'clip', job_id: jobId, degree, lores_bin_key: loresBinKey,
+            root_transforms: rt, out_key: clipKey, task_id: 'solve_proximity_clip',
+        }],
+        expected_keys: [],
+    });
+    if ((clipDisp.fired || 0) !== 1) throw new Error('Solve proximity clip dispatch failed');
+    while (true) {
+        await new Promise(r => setTimeout(r, 2000));
+        const check = await lambdaPost('storage', { job_id: jobId, task_prefix: 'solve_proximity_clip', expected: 1 }, '/check-status');
+        if (check.errors > 0) throw new Error('Clip failed: ' + (check.error_details?.[0]?.error_msg || 'unknown'));
+        if (check.complete) {
+            const rd = check.results?.[0];
+            if (rd) log(`  clip: lo=${rd.clip_lo?.toFixed(2)}, hi=${rd.clip_hi?.toFixed(2)}, ${rd.n_solves} lores solves`, 'ok', logTarget);
+            break;
+        }
+    }
+
+    // Phase B: hist (parallel per stripe)
+    log('Solve proximity: hist...', '', logTarget);
+    document.getElementById('render-status').textContent = 'Solve proximity: hist...';
+    const histJobs = [];
+    for (let s = 0; s < nStripes; s++) {
+        histJobs.push({
+            phase: 'hist', job_id: jobId, stripe_idx: s,
+            bin_key: `renders/${jobId}/stripe_${s}.bin`, degree,
+            clip_key: clipKey, hist_bins: 100, root_transforms: rt,
+            out_key: `${histPrefix}stripe_${s}_hist.json`,
+            task_id: `solve_proximity_hist_${s}`,
+        });
+    }
+    const histMs = await _bilevelDispatchAndPoll({
+        jobs: histJobs, jobId, taskPrefix: 'solve_proximity_hist_',
+        target: 'solve_proximity', label: 'Solve proximity hist', logTarget,
+    });
+    log(`  hist: ${_fmtMs(histMs)} (${nStripes} stripes)`, 'ok', logTarget);
+
+    // Phase C: merge
+    log('Solve proximity: merge...', '', logTarget);
+    document.getElementById('render-status').textContent = 'Solve proximity: merge...';
+    await lambdaPost('storage', { job_id: jobId, task_id: 'solve_proximity_merge' }, '/delete-task').catch(() => {});
+    const mergeDisp = await lambdaPost('dispatch', {
+        target: 'solve_proximity',
+        jobs: [{
+            phase: 'merge', job_id: jobId, n_stripes: nStripes,
+            hist_prefix: histPrefix, clip_key: clipKey,
+            out_key: binsKey, task_id: 'solve_proximity_merge',
+        }],
+        expected_keys: [],
+    });
+    if ((mergeDisp.fired || 0) !== 1) throw new Error('Solve proximity merge dispatch failed');
+    while (true) {
+        await new Promise(r => setTimeout(r, 2000));
+        const check = await lambdaPost('storage', { job_id: jobId, task_prefix: 'solve_proximity_merge', expected: 1 }, '/check-status');
+        if (check.errors > 0) throw new Error('Merge failed: ' + (check.error_details?.[0]?.error_msg || 'unknown'));
+        if (check.complete) {
+            const rd = check.results?.[0];
+            if (rd) log(`  merge: ${rd.n_solves_total?.toLocaleString()} total solves, cuts=[${rd.cuts_norm?.map(c => c.toFixed(2)).join(',')}]`, 'ok', logTarget);
+            break;
+        }
+    }
+
+    return binsKey;
+}
+
 function _renderCommonParams() {
     const jobId = document.getElementById('render-results-dir').value.trim();
     if (!jobId) throw new Error('No results dir — run Calculate first');
@@ -1140,7 +1250,9 @@ async function runRasterPipeline() {
         const nTileRows = Math.ceil(p.pix / tileSize);
         const nTiles = nTileCols * nTileRows;
         const colorDesc = renderColorMode === 'constant' ? `constant/#${p.constantColor}` :
-            renderColorMode === 'proximity' ? `proximity/${renderPalette}` : `rainbow/${renderMatchMode}`;
+            renderColorMode === 'proximity' ? `proximity/${renderRootProximityPalette}` :
+            renderColorMode === 'solve_proximity' ? `solve_proximity/${renderSolveProximityPalette}` :
+            `rainbow/${renderMatchMode}`;
 
         // Clean up old render artifacts (.raw/.jpeg/.png/.pix), preserve .bin
         document.getElementById('render-status').textContent = `Cleaning old render files...`;
@@ -1168,19 +1280,26 @@ async function runRasterPipeline() {
             vpCenterIm = vpData.center_im;
         }
 
-        let calcMeta = _lastCalcMeta && _lastCalcMeta.job_id === p.jobId ? _lastCalcMeta : null;
-        if (!calcMeta) {
-            const listData = await lambdaPost('storage', {}, '/list');
-            const jobResult = (listData.results || []).find(r => r.job_id === p.jobId);
-            if (!jobResult) throw new Error('Job not found in results');
-            calcMeta = { n_stripes: jobResult.n_stripes || 10, degree: jobResult.degree || 1 };
+        const calcMeta = await _loadCalcMetaForRender(p.jobId);
+        const nStripes = calcMeta.n_stripes || calcMeta.n_chunks;
+
+        // Solve-proximity prepass: clip → hist → merge
+        let solveProximityBinsKey = null;
+        if (renderColorMode === 'solve_proximity') {
+            solveProximityBinsKey = await _ensureSolveProximityBins({
+                jobId: p.jobId,
+                calcMeta,
+                rootTransforms: p.rootTransforms,
+                degree: calcMeta.degree,
+                nStripes,
+                logTarget: 'render-log',
+            });
         }
-        const nStripes = calcMeta.n_stripes;
 
         // Phase 2: Raster — one Lambda per compute stripe
         const rasterJobs = [];
         for (let s = 0; s < nStripes; s++) {
-            rasterJobs.push({
+            const job = {
                 job_id: p.jobId, stripe_idx: s,
                 bin_key: `renders/${p.jobId}/stripe_${s}.bin`,
                 width: p.pix, height: p.pix,
@@ -1190,8 +1309,10 @@ async function runRasterPipeline() {
                 scale, rotation: p.rotation, degree: calcMeta.degree,
                 root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
                 color: renderColorMode, match: renderMatchMode,
-                palette: renderPalette, constant_color: p.constantColor,
-            });
+                palette: _activeRenderPalette() || 'inferno', constant_color: p.constantColor,
+            };
+            if (solveProximityBinsKey) job.solve_proximity_bins_key = solveProximityBinsKey;
+            rasterJobs.push(job);
         }
 
         log(`Raster: ${p.jobId}, ${p.pix}px ${p.fmt}, ${colorDesc}, ${nStripes} stripes, ${nTileCols}x${nTileRows}=${nTiles} tiles (${tileSize}px)...`, '', 'render-log');

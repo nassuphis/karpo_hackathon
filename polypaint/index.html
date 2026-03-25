@@ -404,11 +404,12 @@ button {
         </div>
         <!-- DeepZoom tab -->
         <div id="tab-deepzoom" class="tab-content">
-            <div style="margin-bottom:8px">
-                <button class="btn-secondary" onclick="loadDeepZoomInventory()" style="padding:4px 12px; font-size:12px">Refresh Inventory</button>
+            <div id="deepzoom-viewer" style="width:100%; height:500px; background:#000; border:1px solid #333; display:none"></div>
+            <div style="margin-top:8px; margin-bottom:4px; display:flex; align-items:center; gap:8px">
+                <button class="btn-secondary" onclick="loadDeepZoomInventory()" style="padding:4px 12px; font-size:12px">Refresh</button>
+                <span style="font-size:11px; color:#666">Click row to view. Arrow keys to navigate.</span>
             </div>
-            <div id="deepzoom-inventory" style="font-size:12px; color:#ccc"></div>
-            <div id="deepzoom-viewer" style="margin-top:12px; width:100%; height:500px; background:#000; border:1px solid #333; display:none"></div>
+            <div id="deepzoom-inventory" style="font-size:12px; color:#ccc; max-height:200px; overflow-y:auto; border:1px solid #333; border-radius:4px"></div>
         </div>
     </div>
 </div>
@@ -1855,24 +1856,57 @@ async function loadDeepZoomInventory() {
             return;
         }
 
+        // Sort newest first, store for keyboard navigation
+        const sorted = exports.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+        window._dzInventory = sorted;
+        window._dzSelectedIdx = -1;
+
         // Render inventory table
-        let html = '<table style="width:100%; border-collapse:collapse">';
-        html += '<tr style="border-bottom:1px solid #333"><th style="text-align:left;padding:4px">Job</th><th>Size</th><th>Created</th><th>Tiles</th><th></th></tr>';
-        for (const ex of exports.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))) {
-            html += `<tr style="border-bottom:1px solid #222">`;
+        let html = '<table style="width:100%; border-collapse:collapse" id="dz-inv-table">';
+        html += '<tr style="border-bottom:1px solid #333; position:sticky; top:0; background:#1a1a2e"><th style="text-align:left;padding:4px">Job</th><th>Size</th><th>Created</th><th>Tiles</th></tr>';
+        sorted.forEach((ex, i) => {
+            html += `<tr class="dz-inv-row" data-idx="${i}" style="border-bottom:1px solid #222; cursor:pointer" onclick="_dzSelect(${i})" tabindex="-1">`;
             html += `<td style="padding:4px; font-family:monospace; font-size:11px">${ex.job_id}</td>`;
             html += `<td style="padding:4px; text-align:center">${ex.width}×${ex.height}</td>`;
-            html += `<td style="padding:4px; font-size:11px">${ex.created_at || ''}</td>`;
+            html += `<td style="padding:4px; font-size:11px">${(ex.created_at || '').replace('T', ' ').slice(0, 19)}</td>`;
             html += `<td style="padding:4px; text-align:center">${ex.tiles_uploaded || ''}</td>`;
-            html += `<td style="padding:4px"><button class="btn-secondary" onclick="viewDeepZoom('${ex.dzi_url}')" style="padding:2px 8px; font-size:11px">View</button></td>`;
             html += `</tr>`;
-        }
+        });
         html += '</table>';
         container.innerHTML = html;
+
+        // Auto-select first and view it
+        if (sorted.length > 0) _dzSelect(0);
     } catch (e) {
         container.innerHTML = `<div style="color:#e94560">Error: ${e.message}</div>`;
     }
 }
+
+function _dzSelect(idx) {
+    const inv = window._dzInventory || [];
+    if (idx < 0 || idx >= inv.length) return;
+    window._dzSelectedIdx = idx;
+    // Highlight selected row
+    document.querySelectorAll('.dz-inv-row').forEach((r, i) => {
+        r.style.background = i === idx ? '#2a2a4e' : '';
+    });
+    // Scroll selected row into view
+    const row = document.querySelector(`.dz-inv-row[data-idx="${idx}"]`);
+    if (row) row.scrollIntoView({ block: 'nearest' });
+    // View it
+    viewDeepZoom(inv[idx].dzi_url);
+}
+
+// Arrow key navigation for deepzoom inventory
+document.addEventListener('keydown', function(e) {
+    const dzTab = document.getElementById('tab-deepzoom');
+    if (!dzTab || !dzTab.classList.contains('active')) return;
+    const inv = window._dzInventory || [];
+    if (!inv.length) return;
+    let idx = window._dzSelectedIdx ?? -1;
+    if (e.key === 'ArrowDown') { e.preventDefault(); _dzSelect(Math.min(idx + 1, inv.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); _dzSelect(Math.max(idx - 1, 0)); }
+});
 
 function viewDeepZoom(dziUrl) {
     const viewerEl = document.getElementById('deepzoom-viewer');

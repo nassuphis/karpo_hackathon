@@ -30,7 +30,8 @@ const _mkEl = () => {
     const el = {
     value: '', textContent: '', style: {}, id: '', dataset: {},
     appendChild(child) { el.children.push(child); },
-    removeChild() {}, setAttribute() {}, insertBefore() {},
+    removeChild() {}, setAttribute() {}, insertBefore() {}, prepend() {}, append() {},
+    replaceChildren() { el.children = []; },
     selectedOptions: [{ textContent: '' }],
     options: [], children: [],
     get innerHTML() { return el._html || ''; },
@@ -193,7 +194,122 @@ try {
     process.exit(1);
 }
 
-console.log('=== Frontend JS Execution Test PASSED ===');
+// Step 7: Render pipeline orchestration smoke test
+// Stubs network/expensive parts, seeds DOM state, runs runRasterPipeline()
+// to catch scope bugs like STALL_LOG_MS/BATCH_SIZE not defined.
+console.log('');
+console.log('--- Render pipeline orchestration ---');
+
+// Seed DOM state for Render tab
+const renderEls = {
+    'render-results-dir': { value: 'test_job' },
+    'render-pix': { value: '1024' },
+    'render-format': { value: 'jpeg' },
+    'render-quality': { value: '90' },
+    'render-square-extent': { value: '2' },
+    'sparse-tile-size': { value: '512' },
+    'render-rotation': { value: '0' },
+    'render-rotation-dir': { value: 'ccw' },
+    'render-color-mode': { value: 'rainbow' },
+    'render-match-mode': { value: 'none' },
+    'render-palette': { value: 'inferno' },
+    'render-constant-color': { value: 'ffffff' },
+    'render-status': {},
+    'render-preview': {},
+    'render-info': {},
+    'render-log': {},
+    'btn-raster-all': {},
+    'btn-bilevel-all': {},
+    'btn-coeff-bilevel-all': {},
+};
+for (const [id, overrides] of Object.entries(renderEls)) {
+    ctx._elements[id] = { ...ctx._mkEl(), ...overrides };
+}
+
+// Seed required global state
+vm.runInContext(`
+    _lastCalcMeta = { job_id: 'test_job', n_stripes: 4, degree: 7, n_coeffs: 8 };
+    _rtChain = [];
+    renderColorMode = 'rainbow';
+    renderMatchMode = 'none';
+    renderPalette = 'inferno';
+`, ctx);
+
+// Stub network + async helpers — MUST be inside VM to override function declarations
+vm.runInContext(`
+    var _tilePolls = 0, _encodePolls = 0;
+
+    _bilevelDispatchAndPoll = async () => 1234;
+    refreshRenderArtifacts = async () => {};
+
+    lambdaPost = async function lambdaPost(name, body, path) {
+        if (name === 'storage' && path === '/clean-render') return { deleted: 0 };
+        if (name === 'viewport') return { q_re: [-2, 2], q_im: [-2, 2], scale: 256, pix: 1024, n_roots: 1000 };
+        if (name === 'dispatch' && body.target === 'finalize') return { fired: body.jobs.length, errors: [] };
+        if (name === 'dispatch' && body.target === 'bilevel_stitch') return { fired: 1, errors: [] };
+        if (name === 'dispatch' && body.target === 'bilevel') return { fired: body.jobs.length, errors: [] };
+        if (name === 'dispatch' && body.target === 'deepzoom_export') return { fired: 1, errors: [] };
+        if (name === 'storage' && path === '/check-status' && body.task_prefix === 'tile_') {
+            _tilePolls++;
+            if (_tilePolls === 1) return { errors: 0, done: 0, complete: false, status_counts: {} };
+            return { errors: 0, done: body.expected, complete: true, status_counts: { done: body.expected } };
+        }
+        if (name === 'dispatch' && body.target === 'encode') return { fired: 1, errors: [] };
+        if (name === 'storage' && path === '/check-status' && body.task_prefix === 'encode') {
+            _encodePolls++;
+            return { errors: 0, done: 1, complete: true, status_counts: { done: 1 } };
+        }
+        if (name === 'storage' && path === '/check-status' && body.task_prefix === 'bilevel_stitch') {
+            return { errors: 0, done: 1, complete: true, status_counts: { done: 1 } };
+        }
+        if (name === 'storage' && path === '/check-status' && body.task_prefix === 'coeff_bilevel_stitch') {
+            return { errors: 0, done: 1, complete: true, status_counts: { done: 1 } };
+        }
+        if (name === 'storage' && path === '/check-status') {
+            return { errors: 0, done: body.expected || 1, complete: true, status_counts: { done: body.expected || 1 } };
+        }
+        if (name === 'storage' && path === '/save-metadata') return { ok: true };
+        if (name === 'storage') return { ok: true };
+        return { ok: true };
+    };
+
+    // Fast fake time for stall checks
+    var _fakeNow = 0;
+    performance = { now: function() { _fakeNow += 35000; return _fakeNow; } };
+`, ctx);
+
+// setTimeout must resolve promises (for await new Promise(r => setTimeout(r, ms)))
+ctx.setTimeout = (fn) => { if (typeof fn === 'function') fn(); return 0; };
+
+async function testPipeline(name, call) {
+    vm.runInContext('_tilePolls = 0; _encodePolls = 0; _fakeNow = 0;', ctx);
+    // Clear status element to detect pipeline-caught errors
+    ctx._elements['render-status'].textContent = '';
+    try {
+        await vm.runInContext(call, ctx);
+    } catch (e) {
+        if (e instanceof ReferenceError) {
+            console.error('FATAL: ' + name + ': ' + e.message);
+            process.exit(1);
+        }
+    }
+    // The pipeline has its own try/catch that swallows errors into render-status
+    const statusText = ctx._elements['render-status'].textContent || '';
+    if (statusText.includes('error:') || statusText.includes('Error:')) {
+        console.error('FATAL: ' + name + ' failed: ' + statusText);
+        process.exit(1);
+    }
+    console.log('  ' + name + ': OK');
+}
+
+(async () => {
+    await testPipeline('runRasterPipeline', '(async()=>{ await runRasterPipeline(); })()');
+    await testPipeline('runBilevelPipeline', '(async()=>{ await runBilevelPipeline(); })()');
+    await testPipeline('runCoeffBilevelPipeline', '(async()=>{ await runCoeffBilevelPipeline(); })()');
+
+    console.log('');
+    console.log('=== Frontend JS Execution Test PASSED ===');
+})().catch(e => { console.error('FATAL: ' + e.message); process.exit(1); });
 HARNESS_EOF
 
 node /tmp/_fe_test_harness.cjs "$CATALOG_JS" /tmp/_fe_test_app.js 2>&1

@@ -887,6 +887,15 @@ function populateDropdown() {
     const sel = document.getElementById('render-function');
     sel.innerHTML = '';
     const cat = window._coeffFuncCatalog || [];
+    if (!cat.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'ERROR: catalog failed to load';
+        opt.style.color = 'red';
+        sel.appendChild(opt);
+        console.error('coeff_func_catalog_js.js did not load — dropdown is empty');
+        return;
+    }
     for (const e of cat) {
         const opt = document.createElement('option');
         opt.value = e.name;

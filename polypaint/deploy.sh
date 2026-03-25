@@ -62,6 +62,22 @@ SWEEP_CM_MEMORY=4096  # companion matrix eigensolve needs more memory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# --- Deployed frontend smoke test ---
+verify_frontend_assets() {
+    local SITE_URL="http://${BUCKET}.s3-website-${REGION}.amazonaws.com"
+    echo "Verifying deployed frontend assets..."
+    for asset in index.html coeff_func_catalog_js.js; do
+        local STATUS
+        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/${asset}")
+        if [ "$STATUS" != "200" ]; then
+            echo "FATAL: ${SITE_URL}/${asset} returned HTTP ${STATUS} (expected 200)"
+            echo "  Check S3 bucket policy allows public read for this file type"
+            exit 1
+        fi
+        echo "  ${asset}: HTTP ${STATUS} OK"
+    done
+}
+
 # --- JS syntax check ---
 echo "Checking index.html JS syntax..."
 sed -n '/<script>/,/<\/script>/p' index.html | sed '1d;$d' > /tmp/_jscheck.js
@@ -833,6 +849,7 @@ if [ "$ACTION" = "create" ]; then
         --content-type "text/html" --region "$REGION"
     aws s3 cp "$SCRIPT_DIR/coeff_func_catalog_js.js" "s3://$BUCKET/coeff_func_catalog_js.js" \
         --content-type "application/javascript" --region "$REGION"
+    verify_frontend_assets
 
     echo ""
     echo "=== DEPLOYED ==="
@@ -969,6 +986,7 @@ elif [ "$ACTION" = "update" ]; then
     echo "Uploading coeff_func_catalog_js.js to S3..."
     aws s3 cp "$SCRIPT_DIR/coeff_func_catalog_js.js" "s3://$BUCKET/coeff_func_catalog_js.js" \
         --content-type "application/javascript" --region "$REGION"
+    verify_frontend_assets
 
     echo ""
     echo "=== UPDATED ==="

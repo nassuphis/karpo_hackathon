@@ -505,6 +505,8 @@ def handle_head_keys(event):
     if not keys:
         return ok_response({"exists": [], "meta": {}})
 
+    presign = params.get("presign", False)
+
     def check(key):
         try:
             resp = s3.head_object(Bucket=BUCKET, Key=key)
@@ -512,11 +514,15 @@ def handle_head_keys(event):
                 "size": resp.get("ContentLength", 0),
                 "type": resp.get("ContentType", ""),
             }
-            # Include image dimensions if stored in user metadata
             user_meta = resp.get("Metadata", {})
             if "width" in user_meta and "height" in user_meta:
                 info["width"] = int(user_meta["width"])
                 info["height"] = int(user_meta["height"])
+            if presign:
+                info["url"] = s3.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": BUCKET, "Key": key},
+                    ExpiresIn=3600)
             return key, info
         except Exception:
             return None, None

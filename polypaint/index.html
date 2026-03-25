@@ -1419,44 +1419,39 @@ async function discoverArtifacts(jobId) {
         `renders/${jobId}/image_coeffs_bilevel_preview.png`,
         `renders/${jobId}/image.jpeg`,
         `renders/${jobId}/image.png`,
+        `renders/${jobId}/calc.json`,
     ];
     const results = {};
-    results._meta = {};  // key → {size, type}
-    const headResp = await lambdaPost('storage', { keys: keysToCheck }, '/head-keys');
-    const existingKeys = new Set(headResp.exists || []);
+    results._meta = {};
+    // Single batch call: HEAD + presign for all keys at once
+    const headResp = await lambdaPost('storage', { keys: keysToCheck, presign: true }, '/head-keys');
     if (headResp.meta) {
-        for (const [k, v] of Object.entries(headResp.meta)) results._meta[k] = v;
+        for (const [k, v] of Object.entries(headResp.meta)) {
+            results._meta[k] = v;
+            if (v.url) results[k] = v.url;
+        }
     }
 
-    // Presign only keys that actually exist
-    const checks = [...existingKeys].map(async (key) => {
+    // Load calc.json if it exists
+    const calcKey = `renders/${jobId}/calc.json`;
+    if (results[calcKey]) {
         try {
-            const r = await lambdaPost('storage', { key }, '/presign');
-            if (r.url) results[key] = r.url;
-        } catch (e) {}
-    });
-    await Promise.all(checks);
-
-    // Also try to load calc.json for metadata
-    try {
-        const calcPresign = await lambdaPost('storage', { key: `renders/${jobId}/calc.json` }, '/presign');
-        if (calcPresign.url) {
-            const resp = await fetch(calcPresign.url);
+            const resp = await fetch(results[calcKey]);
             if (resp.ok) results._calc = await resp.json();
-        }
-    } catch (e) {}
+        } catch (e) {}
+    }
 
-    // Check for DeepZoom exports under deepzoom/{jobId}/
-    // List ALL meta.json files, pick the newest by created_at
+    // Check for DeepZoom exports — batch presign via /head-keys
     try {
         const dzList = await lambdaPost('storage',
-            { prefix: `deepzoom/${jobId}/`, suffix: 'meta.json', max_keys: 1000 }, '/list-prefix');
+            { prefix: `deepzoom/${jobId}/`, suffix: 'meta.json', max_keys: 10 }, '/list-prefix');
         if (dzList.keys && dzList.keys.length > 0) {
-            // Load all meta.json in parallel, pick newest
-            const metas = await Promise.all(dzList.keys.map(async (key) => {
+            const dzHead = await lambdaPost('storage', { keys: dzList.keys, presign: true }, '/head-keys');
+            const metas = await Promise.all((dzHead.exists || []).map(async (key) => {
                 try {
-                    const presign = await lambdaPost('storage', { key }, '/presign');
-                    const resp = await fetch(presign.url);
+                    const url = dzHead.meta[key]?.url;
+                    if (!url) return null;
+                    const resp = await fetch(url);
                     return resp.ok ? await resp.json() : null;
                 } catch (e) { return null; }
             }));

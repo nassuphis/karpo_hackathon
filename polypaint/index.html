@@ -1421,8 +1421,12 @@ async function discoverArtifacts(jobId) {
         `renders/${jobId}/image.png`,
     ];
     const results = {};
+    results._meta = {};  // key → {size, type}
     const headResp = await lambdaPost('storage', { keys: keysToCheck }, '/head-keys');
     const existingKeys = new Set(headResp.exists || []);
+    if (headResp.meta) {
+        for (const [k, v] of Object.entries(headResp.meta)) results._meta[k] = v;
+    }
 
     // Presign only keys that actually exist
     const checks = [...existingKeys].map(async (key) => {
@@ -1467,11 +1471,35 @@ async function discoverArtifacts(jobId) {
     return results;
 }
 
+function _showPreview(which) {
+    const url = (window._previewUrls || {})[which];
+    const el = document.getElementById('preview-container');
+    if (!el) return;
+    if (!url) {
+        el.innerHTML = '<div style="color:#888; font-size:12px; padding:12px 0">No preview available</div>';
+        return;
+    }
+    el.innerHTML = '<img src="' + url + '" style="max-width:100%; border:1px solid #333; background:#000; display:block">';
+    const cb = document.getElementById('prev-btn-color');
+    const bb = document.getElementById('prev-btn-bilevel');
+    if (cb) cb.style.fontWeight = which === 'color' ? 'bold' : '';
+    if (bb) bb.style.fontWeight = which === 'bilevel' ? 'bold' : '';
+}
+
+function _fmtSize(bytes) {
+    if (!bytes || bytes <= 0) return '';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
 function renderArtifactPanel(jobId, artifacts) {
     const preview = document.getElementById('render-preview');
     const info = document.getElementById('render-info');
     const calc = artifacts._calc;
     const pix = calc ? (calc.N || calc.n1 || '?') : '?';
+    const meta = artifacts._meta || {};
+    const sizeOf = (key) => { const m = meta[key]; return m ? _fmtSize(m.size) : ''; };
 
     const prefix = `renders/${jobId}/`;
     const hasBilevelTif = !!artifacts[prefix + 'image_bilevel.tif'];
@@ -1493,6 +1521,11 @@ function renderArtifactPanel(jobId, artifacts) {
 
     const btnStyle = 'padding:4px 10px; font-size:11px; margin-right:4px';
     const rowStyle = 'display:flex; align-items:center; gap:6px; margin-bottom:6px; flex-wrap:wrap';
+    const dimStyle = 'font-size:11px; color:#888; min-width:90px';
+    const dimStr = (key) => {
+        const sz = sizeOf(key);
+        return pix !== '?' ? `${pix}x${pix}` + (sz ? `, ${sz}` : '') : sz || '';
+    };
 
     let html = '';
 
@@ -1500,6 +1533,7 @@ function renderArtifactPanel(jobId, artifacts) {
     if (hasColorJpeg) {
         html += `<div style="${rowStyle}">`;
         html += `<strong style="min-width:110px; font-size:12px">Color JPEG</strong>`;
+        html += `<span style="${dimStyle}">${dimStr(colorJpegKey)}</span>`;
         html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[colorJpegKey]}','${jobId}_color.jpeg','${colorJpegKey}')">Download</button>`;
         html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${colorJpegKey}',this)">DeepZoom</button>`;
         html += `</div>`;
@@ -1509,6 +1543,7 @@ function renderArtifactPanel(jobId, artifacts) {
     if (hasColorPng) {
         html += `<div style="${rowStyle}">`;
         html += `<strong style="min-width:110px; font-size:12px">Color PNG</strong>`;
+        html += `<span style="${dimStyle}">${dimStr(colorPngKey)}</span>`;
         html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[colorPngKey]}','${jobId}_color.png','${colorPngKey}')">Download</button>`;
         html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${colorPngKey}',this)">DeepZoom</button>`;
         html += `</div>`;
@@ -1518,6 +1553,7 @@ function renderArtifactPanel(jobId, artifacts) {
     if (hasBilevelTif) {
         html += `<div style="${rowStyle}">`;
         html += `<strong style="min-width:110px; font-size:12px">BiLevel TIFF</strong>`;
+        html += `<span style="${dimStyle}">${dimStr(bilevelKey)}</span>`;
         html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[bilevelKey]}','${jobId}_bilevel.tif','${bilevelKey}')">Download</button>`;
         if (hasCompatTif) {
             html += `<button class="btn-secondary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[compatKey]}','${jobId}_bilevel_compat.tif','${compatKey}')">Compat TIFF</button>`;
@@ -1537,6 +1573,7 @@ function renderArtifactPanel(jobId, artifacts) {
     if (hasCoeffTif) {
         html += `<div style="${rowStyle}">`;
         html += `<strong style="min-width:110px; font-size:12px">Coeffs TIFF</strong>`;
+        html += `<span style="${dimStyle}">${dimStr(coeffKey)}</span>`;
         html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[coeffKey]}','${jobId}_coeffs_bilevel.tif','${coeffKey}')">Download</button>`;
         html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${coeffKey}',this)">DeepZoom</button>`;
         html += `</div>`;
@@ -1550,18 +1587,32 @@ function renderArtifactPanel(jobId, artifacts) {
         html += `</div>`;
     }
 
-    // --- Preview image (best available) ---
-    if (hasColorPng) {
-        html += `<img src="${artifacts[colorPngKey]}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-top:8px">`;
-    } else if (hasColorJpeg) {
-        html += `<img src="${artifacts[colorJpegKey]}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-top:8px">`;
-    } else if (hasBilevelPreview) {
-        html += `<img src="${artifacts[prefix + 'image_bilevel_preview.png']}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-top:8px">`;
-    } else if (hasCoeffPreview) {
-        html += `<img src="${artifacts[prefix + 'image_coeffs_bilevel_preview.png']}" style="max-width:100%; border:1px solid #333; background:#000; display:block; margin-top:8px">`;
-    }
+    // --- Preview section ---
+    html += `<hr style="border:none; border-top:1px solid #444; margin:12px 0 8px">`;
+
+    // Determine available preview sources
+    const colorPreviewUrl = hasColorPng ? artifacts[colorPngKey]
+        : hasColorJpeg ? artifacts[colorJpegKey] : null;
+    const bilevelPreviewUrl = hasBilevelPreview ? artifacts[prefix + 'image_bilevel_preview.png']
+        : hasCoeffPreview ? artifacts[prefix + 'image_coeffs_bilevel_preview.png'] : null;
+
+    html += `<div style="display:flex; gap:6px; margin-bottom:6px">`;
+    html += `<button id="prev-btn-color" class="btn-secondary" style="${btnStyle}${!colorPreviewUrl ? '; opacity:0.4; cursor:default' : ''}" `
+        + (colorPreviewUrl ? `onclick="_showPreview('color')"` : `disabled`)
+        + `>Color preview</button>`;
+    html += `<button id="prev-btn-bilevel" class="btn-secondary" style="${btnStyle}${!bilevelPreviewUrl ? '; opacity:0.4; cursor:default' : ''}" `
+        + (bilevelPreviewUrl ? `onclick="_showPreview('bilevel')"` : `disabled`)
+        + `>Bilevel preview</button>`;
+    html += `</div>`;
+
+    html += `<div id="preview-container"><div style="color:#888; font-size:12px; padding:12px 0">No preview selected</div></div>`;
 
     preview.innerHTML = html;
+
+    // Store URLs and show default preview
+    window._previewUrls = { color: colorPreviewUrl, bilevel: bilevelPreviewUrl };
+    const defaultTab = colorPreviewUrl ? 'color' : bilevelPreviewUrl ? 'bilevel' : null;
+    if (defaultTab) _showPreview(defaultTab);
 
     // Info line
     const parts = [`Job: ${jobId}`];

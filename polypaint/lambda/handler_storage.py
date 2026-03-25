@@ -494,25 +494,38 @@ def handle_detail(event):
 
 
 def handle_head_keys(event):
-    """Check which S3 keys exist via HEAD (batch).
+    """Check which S3 keys exist via HEAD (batch), return metadata.
     Input: {keys: ["renders/job/image_bilevel.tif", ...]}
-    Returns: {exists: ["renders/job/image_bilevel.tif", ...]}
-    Only returns keys that exist — caller can diff against input to find missing.
+    Returns: {exists: ["key", ...], meta: {"key": {"size": 12345, "type": "image/tiff"}, ...}}
     """
     import concurrent.futures
     params = parse_body(event)
     keys = params["keys"]
 
     if not keys:
-        return ok_response({"exists": []})
+        return ok_response({"exists": [], "meta": {}})
 
     def check(key):
-        return key if _key_exists(key) else None
+        try:
+            resp = s3.head_object(Bucket=BUCKET, Key=key)
+            return key, {
+                "size": resp.get("ContentLength", 0),
+                "type": resp.get("ContentType", ""),
+            }
+        except Exception:
+            return None, None
 
+    meta = {}
+    exists = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(keys), 20)) as pool:
         results = list(pool.map(check, keys))
 
-    return ok_response({"exists": [k for k in results if k]})
+    for key, info in results:
+        if key:
+            exists.append(key)
+            meta[key] = info
+
+    return ok_response({"exists": exists, "meta": meta})
 
 
 def handle_delete_task(event):

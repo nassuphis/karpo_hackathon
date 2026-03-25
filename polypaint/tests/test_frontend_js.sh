@@ -515,12 +515,13 @@ async function testPipeline(name, call) {
     // Restore real lambdaPost for preview tests (override inside VM)
     // Simulate: no cached preview, but source image exists → generate on click
     {
-        let previewGenerated = false;
-        let generatedKey = null;
+        // Track the exact encode request to verify source_key and preview_key
         vm.runInContext(`
+            var _lastEncodeRequest = null;
             lambdaPost = async function lambdaPost(name, body, path) {
                 if (name === 'encode' && body.mode === 'preview') {
-                    return { preview_key: body.preview_key, file_size: 50000, url: 'https://fake/preview.png' };
+                    _lastEncodeRequest = { source_key: body.source_key, preview_key: body.preview_key };
+                    return { preview_key: body.preview_key, file_size: 50000, url: 'https://fake/' + body.preview_key };
                 }
                 if (name === 'storage' && path === '/head-keys') {
                     return { exists: [], meta: {} };
@@ -529,7 +530,6 @@ async function testPipeline(name, call) {
             };
         `, ctx);
 
-        // Set up _previewUrls with no cached preview, _previewSources with a generatable source
         vm.runInContext(`
             window._previewUrls = { color: null, bilevel: null };
             window._previewSources = {
@@ -538,37 +538,48 @@ async function testPipeline(name, call) {
             };
         `, ctx);
 
-        // Test color preview generation
+        // Test color preview generation — verify request shape
         try {
             await vm.runInContext('(async()=>{ await _showPreview("color"); })()', ctx);
             const colorUrl = vm.runInContext('window._previewUrls.color', ctx);
-            if (!colorUrl) {
-                console.error('FATAL: color preview generation did not set URL');
+            const req = vm.runInContext('_lastEncodeRequest', ctx);
+            if (!colorUrl) { console.error('FATAL: color preview did not set URL'); process.exit(1); }
+            if (!req || req.source_key !== 'renders/test_job/image.jpeg') {
+                console.error('FATAL: color preview sent wrong source_key: ' + JSON.stringify(req));
                 process.exit(1);
             }
-            console.log('  color preview on-demand: OK (url=' + colorUrl.slice(0, 30) + '...)');
+            if (req.preview_key !== 'renders/test_job/preview_color.png') {
+                console.error('FATAL: color preview sent wrong preview_key: ' + req.preview_key);
+                process.exit(1);
+            }
+            console.log('  color preview on-demand: OK (source=' + req.source_key + ', key=' + req.preview_key + ')');
         } catch (e) {
             console.error('FATAL: color preview generation: ' + e.message);
             process.exit(1);
         }
 
-        // Reset and test bilevel preview generation
-        vm.runInContext('window._previewUrls.bilevel = null;', ctx);
+        // Test bilevel preview generation — verify request shape
+        vm.runInContext('window._previewUrls.bilevel = null; _lastEncodeRequest = null;', ctx);
         try {
             await vm.runInContext('(async()=>{ await _showPreview("bilevel"); })()', ctx);
             const bilevelUrl = vm.runInContext('window._previewUrls.bilevel', ctx);
-            if (!bilevelUrl) {
-                console.error('FATAL: bilevel preview generation did not set URL');
+            const req = vm.runInContext('_lastEncodeRequest', ctx);
+            if (!bilevelUrl) { console.error('FATAL: bilevel preview did not set URL'); process.exit(1); }
+            if (!req || req.source_key !== 'renders/test_job/image_bilevel.tif') {
+                console.error('FATAL: bilevel preview sent wrong source_key: ' + JSON.stringify(req));
                 process.exit(1);
             }
-            console.log('  bilevel preview on-demand: OK (url=' + bilevelUrl.slice(0, 30) + '...)');
+            if (req.preview_key !== 'renders/test_job/preview_bilevel.png') {
+                console.error('FATAL: bilevel preview sent wrong preview_key: ' + req.preview_key);
+                process.exit(1);
+            }
+            console.log('  bilevel preview on-demand: OK (source=' + req.source_key + ', key=' + req.preview_key + ')');
         } catch (e) {
             console.error('FATAL: bilevel preview generation: ' + e.message);
             process.exit(1);
         }
 
-        // Test that cached URL is used directly (no lambdaPost call)
-        let lambdaCalled = false;
+        // Test cached URL — no lambdaPost call
         vm.runInContext(`
             lambdaPost = async function lambdaPost() {
                 throw new Error('lambdaPost should not be called for cached preview');
@@ -583,16 +594,21 @@ async function testPipeline(name, call) {
             process.exit(1);
         }
 
-        // Test no-source disabled path
+        // Test no-source fallback — assert "No preview available" message
         vm.runInContext(`
             window._previewUrls = { color: null, bilevel: null };
             window._previewSources = {};
+            lambdaPost = async function lambdaPost() { return {}; };
         `, ctx);
         try {
             await vm.runInContext('(async()=>{ await _showPreview("color"); })()', ctx);
-            const containerHtml = ctx._elements['preview-container'].innerHTML || '';
-            // Should show "No preview available", not crash
-            console.log('  no-source fallback: OK');
+            const container = ctx._elements['preview-container'];
+            const text = (container.children.length && container.children[0].textContent) || container.innerHTML || '';
+            if (!text.includes('No preview')) {
+                console.error('FATAL: no-source should show "No preview available", got: ' + text.slice(0, 60));
+                process.exit(1);
+            }
+            console.log('  no-source fallback: OK ("' + text.trim().slice(0, 30) + '")');
         } catch (e) {
             console.error('FATAL: no-source preview: ' + e.message);
             process.exit(1);

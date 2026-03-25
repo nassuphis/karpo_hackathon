@@ -1191,73 +1191,16 @@ async function runRasterPipeline() {
         }
 
         log(`Raster: ${p.jobId}, ${p.pix}px ${p.fmt}, ${colorDesc}, ${nStripes} stripes, ${nTileCols}x${nTileRows}=${nTiles} tiles (${tileSize}px)...`, '', 'render-log');
-        document.getElementById('render-status').textContent = `Dispatching ${nStripes} raster Lambdas...`;
-        const tRaster = performance.now();
 
-        // Dispatch raster Lambdas in batches
-        const BATCH_SIZE = 500;
-        const nBatches = Math.ceil(rasterJobs.length / BATCH_SIZE);
-        for (let i = 0; i < rasterJobs.length; i += BATCH_SIZE) {
-            const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-            const batch = rasterJobs.slice(i, i + BATCH_SIZE);
-            document.getElementById('render-status').textContent = `Dispatching raster batch ${batchNum}/${nBatches} (${batch.length} jobs)...`;
-            const tBatch = performance.now();
-            // Raster jobs don't produce simple expected keys — pass empty to skip key derivation
-            const dispResult = await lambdaPost('dispatch', { target: 'raster', jobs: batch, expected_keys: [] });
-            if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length)) {
-                throw new Error(
-                    `Raster dispatch failed batch ${batchNum}: ` +
-                    `fired ${dispResult.fired || 0}/${batch.length}, ` +
-                    `errors ${dispResult.errors ? dispResult.errors.length : 0}`
-                );
-            }
-            let rasterDispMsg = `  raster dispatch ${batchNum}/${nBatches}: ${dispResult.fired}/${batch.length} fired (${_fmtMs(performance.now() - tBatch)})`;
-            if (dispResult.non_202 && dispResult.non_202.length) rasterDispMsg += ` (${dispResult.non_202.length} non-202: ${JSON.stringify(dispResult.non_202)})`;
-            if (dispResult.errors && dispResult.errors.length) rasterDispMsg += ` ERRORS: ${JSON.stringify(dispResult.errors)}`;
-            log(rasterDispMsg, dispResult.errors?.length ? 'warn' : '', 'render-log');
-        }
-        log(`  dispatched: ${_fmtMs(performance.now() - tRaster)} (${nStripes} raster Lambdas)`, 'ok', 'render-log');
-
-        // Poll DynamoDB for raster completion
-        let lastDone = 0;
-        let pollCount = 0;
-        let lastProgressTime = performance.now();
-        const POLL_TIMEOUT_MS = 600000;
-        const STALL_LOG_MS = 30000;  // log diagnostics after 30s no progress
-        let lastStallLog = 0;
-        while (true) {
-            await new Promise(r => setTimeout(r, 3000));
-            pollCount++;
-            const check = await lambdaPost('storage', {
-                job_id: p.jobId, task_prefix: 'raster_', expected: nStripes,
-            }, '/check-status');
-            if (check.errors > 0) {
-                const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
-                throw new Error(`${check.errors} raster tasks failed:\n${msgs}`);
-            }
-            if (check.done !== lastDone) {
-                const delta = check.done - lastDone;
-                log(`  raster poll #${pollCount}: ${check.done}/${nStripes} done (+${delta}, ${_fmtMs(performance.now() - tRaster)})`, '', 'render-log');
-                lastDone = check.done;
-                lastProgressTime = performance.now();
-                lastStallLog = 0;
-                document.getElementById('render-status').textContent = `Rasterizing ${check.done}/${nStripes}...`;
-            }
-            if (check.complete) break;
-            const stallTime = performance.now() - lastProgressTime;
-            if (stallTime > STALL_LOG_MS && stallTime - lastStallLog > STALL_LOG_MS) {
-                lastStallLog = stallTime;
-                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
-                log(`  ⚠ raster stall ${_fmtMs(stallTime)}: ${lastDone}/${nStripes} done, statuses=${sc}${stuckInfo ? ', stuck: ' + stuckInfo : ''}`, 'warn', 'render-log');
-            }
-            if (stallTime > POLL_TIMEOUT_MS) {
-                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
-                throw new Error(`Raster stalled: ${lastDone}/${nStripes} after ${_fmtMs(stallTime)}, statuses=${sc}, stuck: ${stuckInfo || 'none (missing from DDB)'}`);
-            }
-        }
-        const rasterMs = performance.now() - tRaster;
+        // Wave dispatch + missing-task re-dispatch (same as bilevel)
+        const rasterMs = await _bilevelDispatchAndPoll({
+            jobs: rasterJobs,
+            jobId: p.jobId,
+            taskPrefix: 'raster_',
+            target: 'raster',
+            label: 'Raster',
+            logTarget: 'render-log',
+        });
         log(`  raster: ${_fmtMs(rasterMs)} wall (${nStripes} stripes)`, 'ok', 'render-log');
 
         // Phase 3: Finalize — one Lambda per tile

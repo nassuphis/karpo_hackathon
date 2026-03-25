@@ -318,24 +318,23 @@ def handle_check_status(event):
 
 
 def handle_clean_render(event):
-    """Delete render artifacts for a job, preserving .bin and calc.json.
-    Deletes: .raw, .jpeg, .jpg, .png, .pix, .bits, .tif
+    """Delete intermediate render artifacts for a job, preserving final images.
+    Deletes: pix_*.pix, raw_*.raw, tile_*.raw (intermediates)
+    Preserves: image.jpeg, image.png, image_bilevel.tif, *_preview.png, calc.json, *.bin
     Also clears DynamoDB status entries for the job.
     """
     params = parse_body(event)
     job_id = params["job_id"]
     prefix = f"renders/{job_id}/"
-    render_exts = ('.raw', '.jpeg', '.jpg', '.png', '.pix', '.bits', '.tif')
 
-    # List only render artifact prefixes to avoid scanning thousands of .bin files
-    render_prefixes = ['pix_', 'raw_', 'tile_', 'image', 'preview']
+    # Only delete known intermediate file prefixes
+    intermediate_prefixes = ['pix_', 'raw_', 'tile_']
     objects = []
     paginator = s3.get_paginator('list_objects_v2')
-    for rp in render_prefixes:
+    for rp in intermediate_prefixes:
         for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix + rp):
             for obj in page.get('Contents', []):
-                if obj['Key'].endswith(render_exts) and not obj['Key'].endswith('preview.png'):
-                    objects.append(obj)
+                objects.append(obj)
 
     total_deleted = 0
     if objects:

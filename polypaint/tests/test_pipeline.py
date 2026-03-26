@@ -1413,5 +1413,95 @@ class TestRenderSummary(unittest.TestCase):
         mock_s3.get_paginator.assert_not_called()
 
 
+class TestDeepZoomExportPointerWrite(unittest.TestCase):
+    """Test that handler_deepzoom_export writes both meta.json and deepzoom_latest.json."""
+
+    @patch("handler_deepzoom_export.report_status")
+    @patch("handler_deepzoom_export.s3")
+    @patch("handler_deepzoom_export.subprocess")
+    def test_export_writes_meta_and_pointer(self, mock_subprocess, mock_s3, mock_report):
+        """Running the export handler produces two JSON writes with the correct keys."""
+        import handler_deepzoom_export as dze
+
+        # Mock S3 download
+        mock_s3.get_object.return_value = {
+            "Body": MagicMock(iter_chunks=lambda chunk_size=None: [b"fake image data"])
+        }
+
+        # Mock the dz_export subprocess
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({"width": 64, "height": 64})
+        mock_subprocess.run.return_value = mock_result
+
+        # Track put_object calls
+        put_calls = []
+        def track_put(**kwargs):
+            put_calls.append(kwargs)
+        mock_s3.put_object.side_effect = track_put
+
+        # Mock file system operations needed by the handler
+        import tempfile, shutil
+        tmp_dir = tempfile.mkdtemp()
+        dz_dir = os.path.join(tmp_dir, "dz")
+        os.makedirs(dz_dir)
+        # Create fake dzi and tile files
+        dz_base = os.path.join(dz_dir, "image")
+        with open(dz_base + ".dzi", "w") as f:
+            f.write("<Image/>")
+        tiles_dir = dz_base + "_files"
+        os.makedirs(os.path.join(tiles_dir, "0"))
+        with open(os.path.join(tiles_dir, "0", "0_0.png"), "wb") as f:
+            f.write(b"fake tile")
+
+        # Patch paths to use our temp dir
+        with patch.object(os, 'makedirs', side_effect=lambda *a, **kw: None), \
+             patch.object(os, 'remove', side_effect=lambda *a: None), \
+             patch.object(os.path, 'exists', return_value=True), \
+             patch.object(os.path, 'isdir', return_value=True), \
+             patch.object(os, 'walk', return_value=[(tiles_dir + "/0", [], ["0_0.png"])]), \
+             patch('shutil.rmtree'), \
+             patch('builtins.open', MagicMock(return_value=MagicMock(
+                 __enter__=MagicMock(return_value=MagicMock(read=lambda: b"fake", write=lambda x: None)),
+                 __exit__=MagicMock(return_value=False)))):
+
+            try:
+                dze.handler({"body": json.dumps({
+                    "job_id": "test_dz", "source_key": "renders/test_dz/image_bilevel.tif",
+                    "export_id": "dz_test_123"
+                })}, None)
+            except Exception:
+                pass  # may fail on cleanup, that's OK
+
+        # Verify the two JSON writes
+        json_puts = [c for c in put_calls
+                     if c.get("ContentType") == "application/json"]
+        meta_puts = [c for c in json_puts if "meta.json" in c.get("Key", "")]
+        pointer_puts = [c for c in json_puts if "deepzoom_latest.json" in c.get("Key", "")]
+
+        self.assertGreaterEqual(len(meta_puts), 1,
+            "Expected at least one meta.json write, got: %s" % [c.get("Key") for c in json_puts])
+        self.assertGreaterEqual(len(pointer_puts), 1,
+            "Expected at least one deepzoom_latest.json write, got: %s" % [c.get("Key") for c in json_puts])
+
+        # Verify pointer key is under renders/{job_id}/
+        pointer_key = pointer_puts[0]["Key"]
+        self.assertEqual(pointer_key, "renders/test_dz/deepzoom_latest.json")
+
+        # Verify both writes have the same body
+        meta_body = meta_puts[0].get("Body", "")
+        pointer_body = pointer_puts[0].get("Body", "")
+        self.assertEqual(meta_body, pointer_body, "meta.json and pointer should have same body")
+
+        # Verify the body is valid JSON with expected fields
+        manifest = json.loads(meta_body)
+        self.assertEqual(manifest["job_id"], "test_dz")
+        self.assertIn("dzi_url", manifest)
+        self.assertIn("width", manifest)
+        self.assertIn("height", manifest)
+
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

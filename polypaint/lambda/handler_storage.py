@@ -45,6 +45,8 @@ def handler(event, context):
         return handle_list_prefix(event)
     elif path.endswith("/head-keys"):
         return handle_head_keys(event)
+    elif path.endswith("/render-summary"):
+        return handle_render_summary(event)
     elif path.endswith("/delete-task"):
         return handle_delete_task(event)
     return {
@@ -511,26 +513,23 @@ def handle_detail(event):
     return ok_response(result)
 
 
-def handle_head_keys(event):
-    """Check which S3 keys exist via HEAD (batch), return metadata.
-    Input: {keys: ["renders/job/image_bilevel.tif", ...]}
-    Returns: {exists: ["key", ...], meta: {"key": {"size": 12345, "type": "image/tiff"}, ...}}
-    """
+def _head_artifact_keys(keys, presign=True):
+    """HEAD-check a list of S3 keys in parallel. Returns {key: {size, type, width?, height?, url?}}."""
     import concurrent.futures
-    params = parse_body(event)
-    keys = params["keys"]
-
     if not keys:
-        return ok_response({"exists": [], "meta": {}})
-
-    presign = params.get("presign", False)
+        return {}
 
     def check(key):
         try:
             resp = s3.head_object(Bucket=BUCKET, Key=key)
             info = {
+                "exists": True,
+                "key": key,
                 "size": resp.get("ContentLength", 0),
                 "type": resp.get("ContentType", ""),
+                "width": None,
+                "height": None,
+                "url": None,
             }
             user_meta = resp.get("Metadata", {})
             if "width" in user_meta and "height" in user_meta:
@@ -543,19 +542,100 @@ def handle_head_keys(event):
                     ExpiresIn=3600)
             return key, info
         except Exception:
-            return None, None
+            return key, {"exists": False, "key": key, "size": 0, "type": "", "width": None, "height": None, "url": None}
 
-    meta = {}
-    exists = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(keys), 20)) as pool:
-        results = list(pool.map(check, keys))
+        results = dict(pool.map(check, keys))
+    return results
 
-    for key, info in results:
-        if key:
-            exists.append(key)
-            meta[key] = info
 
+def handle_head_keys(event):
+    """Check which S3 keys exist via HEAD (batch), return metadata."""
+    params = parse_body(event)
+    keys = params.get("keys", [])
+    presign = params.get("presign", False)
+
+    if not keys:
+        return ok_response({"exists": [], "meta": {}})
+
+    result = _head_artifact_keys(keys, presign=presign)
+    exists = [k for k, v in result.items() if v["exists"]]
+    meta = {k: v for k, v in result.items() if v["exists"]}
     return ok_response({"exists": exists, "meta": meta})
+
+
+def handle_render_summary(event):
+    """Single-call Render refresh: HEAD artifacts, read calc.json, read deepzoom pointer.
+    No pagination, no list-prefix, no DeepZoom scan."""
+    params = parse_body(event)
+    job_id = params["job_id"]
+    prefix = f"renders/{job_id}/"
+
+    # 1. HEAD-check the exact 10 artifact keys
+    artifact_map = {
+        "color_jpeg": prefix + "image.jpeg",
+        "color_png": prefix + "image.png",
+        "bilevel_tif": prefix + "image_bilevel.tif",
+        "bilevel_preview_png": prefix + "image_bilevel_preview.png",
+        "bilevel_compat_tif": prefix + "image_bilevel_compat.tif",
+        "bilevel_png": prefix + "image_bilevel.png",
+        "coeff_tif": prefix + "image_coeffs_bilevel.tif",
+        "coeff_preview_png": prefix + "image_coeffs_bilevel_preview.png",
+        "preview_color_png": prefix + "preview_color.png",
+        "preview_bilevel_png": prefix + "preview_bilevel.png",
+    }
+    head_results = _head_artifact_keys(list(artifact_map.values()), presign=True)
+    artifacts = {}
+    for logical_name, s3_key in artifact_map.items():
+        artifacts[logical_name] = head_results.get(s3_key, {
+            "exists": False, "key": s3_key, "size": 0, "type": "",
+            "width": None, "height": None, "url": None
+        })
+
+    # 2. Read calc.json server-side
+    calc = {"exists": False, "N": None, "n1": None, "degree": None}
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=prefix + "calc.json")
+        calc_data = json.loads(obj["Body"].read())
+        calc = {
+            "exists": True,
+            "N": calc_data.get("N", calc_data.get("n1")),
+            "n1": calc_data.get("n1", calc_data.get("N")),
+            "degree": calc_data.get("degree"),
+        }
+    except Exception:
+        pass
+
+    # 3. Read deepzoom pointer server-side (no list/scan)
+    deepzoom_latest = {"exists": False}
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=prefix + "deepzoom_latest.json")
+        dz_data = json.loads(obj["Body"].read())
+        # Presign the DZI URL for browser access
+        dzi_key = dz_data.get("dzi_key", "")
+        dzi_url = dz_data.get("dzi_url", "")
+        deepzoom_latest = {
+            "exists": True,
+            "export_id": dz_data.get("export_id", ""),
+            "created_at": dz_data.get("created_at", ""),
+            "source_key": dz_data.get("source_key", ""),
+            "dzi_key": dzi_key,
+            "dzi_url": dzi_url,
+            "tile_prefix": dz_data.get("tile_prefix", ""),
+            "width": dz_data.get("width"),
+            "height": dz_data.get("height"),
+            "tiles_uploaded": dz_data.get("tiles_uploaded"),
+        }
+    except Exception:
+        pass
+
+    return ok_response({
+        "job_id": job_id,
+        "schema_version": 1,
+        "calc": calc,
+        "artifacts": artifacts,
+        "deepzoom_latest": deepzoom_latest,
+    })
 
 
 def handle_delete_task(event):

@@ -1464,12 +1464,11 @@ async function refreshRenderArtifacts(jobIdOverride) {
     const statusEl = document.getElementById('render-status');
     const prevStatus = statusEl.textContent;
     const prevClass = statusEl.className;
-    statusEl.textContent = 'Discovering artifacts...';
+    statusEl.textContent = 'Loading...';
     statusEl.className = 'status';
     try {
-        const artifacts = await discoverArtifacts(jobId);
-        renderArtifactPanel(jobId, artifacts);
-        // Restore prior status text (e.g. timing summary) instead of blanking
+        const summary = await lambdaPost('storage', { job_id: jobId }, '/render-summary');
+        renderArtifactPanel(jobId, summary);
         statusEl.textContent = prevStatus;
         statusEl.className = prevClass;
     } catch (e) {
@@ -1478,66 +1477,7 @@ async function refreshRenderArtifacts(jobIdOverride) {
     }
 }
 
-async function discoverArtifacts(jobId) {
-    // Check exact artifact keys via HEAD (not list-prefix, which gets swamped
-    // by stripe_*.bin / coeffs_*.bin on large jobs and misses the output files).
-    const keysToCheck = [
-        `renders/${jobId}/image_bilevel.tif`,
-        `renders/${jobId}/image_bilevel_preview.png`,
-        `renders/${jobId}/image_bilevel_compat.tif`,
-        `renders/${jobId}/image_bilevel.png`,
-        `renders/${jobId}/image_coeffs_bilevel.tif`,
-        `renders/${jobId}/image_coeffs_bilevel_preview.png`,
-        `renders/${jobId}/image.jpeg`,
-        `renders/${jobId}/image.png`,
-        `renders/${jobId}/preview_color.png`,
-        `renders/${jobId}/preview_bilevel.png`,
-        `renders/${jobId}/calc.json`,
-    ];
-    const results = {};
-    results._meta = {};
-    // Single batch call: HEAD + presign for all keys at once
-    const headResp = await lambdaPost('storage', { keys: keysToCheck, presign: true }, '/head-keys');
-    if (headResp.meta) {
-        for (const [k, v] of Object.entries(headResp.meta)) {
-            results._meta[k] = v;
-            if (v.url) results[k] = v.url;
-        }
-    }
 
-    // Load calc.json if it exists
-    const calcKey = `renders/${jobId}/calc.json`;
-    if (results[calcKey]) {
-        try {
-            const resp = await fetch(results[calcKey]);
-            if (resp.ok) results._calc = await resp.json();
-        } catch (e) {}
-    }
-
-    // Check for DeepZoom exports — batch presign via /head-keys
-    try {
-        const dzList = await lambdaPost('storage',
-            { prefix: `deepzoom/${jobId}/`, suffix: 'meta.json', max_keys: 10 }, '/list-prefix');
-        if (dzList.keys && dzList.keys.length > 0) {
-            const dzHead = await lambdaPost('storage', { keys: dzList.keys, presign: true }, '/head-keys');
-            const metas = await Promise.all((dzHead.exists || []).map(async (key) => {
-                try {
-                    const url = dzHead.meta[key]?.url;
-                    if (!url) return null;
-                    const resp = await fetch(url);
-                    return resp.ok ? await resp.json() : null;
-                } catch (e) { return null; }
-            }));
-            const valid = metas.filter(Boolean);
-            if (valid.length > 0) {
-                valid.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
-                results._deepzoom_dzi_url = valid[0].dzi_url;
-            }
-        }
-    } catch (e) {}
-
-    return results;
-}
 
 async function _showPreview(which) {
     const urls = window._previewUrls || {};
@@ -1637,38 +1577,21 @@ function _fmtSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-function renderArtifactPanel(jobId, artifacts) {
+function renderArtifactPanel(jobId, summary) {
     const preview = document.getElementById('render-preview');
     const info = document.getElementById('render-info');
-    const calc = artifacts._calc;
-    const pix = calc ? (calc.N || calc.n1 || '?') : '?';
-    const meta = artifacts._meta || {};
-    const infoOf = (key) => {
-        const m = meta[key];
-        if (!m) return '';
+    const a = summary.artifacts || {};
+    const calc = summary.calc || {};
+    const dz = summary.deepzoom_latest || {};
+    const pix = calc.exists ? (calc.N || calc.n1 || '?') : '?';
+
+    const infoOf = (art) => {
+        if (!art || !art.exists) return '';
         const parts = [];
-        if (m.width && m.height) parts.push(`${m.width}x${m.height}`);
-        if (m.size) parts.push(_fmtSize(m.size));
+        if (art.width && art.height) parts.push(art.width + 'x' + art.height);
+        if (art.size) parts.push(_fmtSize(art.size));
         return parts.join(', ');
     };
-
-    const prefix = `renders/${jobId}/`;
-    const hasBilevelTif = !!artifacts[prefix + 'image_bilevel.tif'];
-    const hasBilevelPreview = !!artifacts[prefix + 'image_bilevel_preview.png'];
-    const hasCompatTif = !!artifacts[prefix + 'image_bilevel_compat.tif'];
-    const hasBilevelPng = !!artifacts[prefix + 'image_bilevel.png'];
-    const hasCoeffTif = !!artifacts[prefix + 'image_coeffs_bilevel.tif'];
-    const hasCoeffPreview = !!artifacts[prefix + 'image_coeffs_bilevel_preview.png'];
-    const hasColorJpeg = !!artifacts[prefix + 'image.jpeg'];
-    const hasColorPng = !!artifacts[prefix + 'image.png'];
-    const hasDeepZoom = !!artifacts._deepzoom_dzi_url;
-
-    const bilevelKey = prefix + 'image_bilevel.tif';
-    const compatKey = prefix + 'image_bilevel_compat.tif';
-    const bilevelPngKey = prefix + 'image_bilevel.png';
-    const colorJpegKey = prefix + 'image.jpeg';
-    const colorPngKey = prefix + 'image.png';
-    const coeffKey = prefix + 'image_coeffs_bilevel.tif';
 
     const btnStyle = 'padding:4px 10px; font-size:11px; margin-right:4px';
     const rowStyle = 'display:flex; align-items:center; gap:6px; margin-bottom:6px; flex-wrap:wrap';
@@ -1677,94 +1600,96 @@ function renderArtifactPanel(jobId, artifacts) {
     let html = '';
 
     // --- Color JPEG row ---
-    if (hasColorJpeg) {
-        html += `<div style="${rowStyle}">`;
-        html += `<strong style="min-width:110px; font-size:12px">Color JPEG</strong>`;
-        html += `<span style="${dimStyle}">${infoOf(colorJpegKey)}</span>`;
-        html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[colorJpegKey]}','${jobId}_color.jpeg','${colorJpegKey}')">Download</button>`;
-        html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${colorJpegKey}',this)">DeepZoom</button>`;
-        html += `</div>`;
+    if (a.color_jpeg && a.color_jpeg.exists) {
+        html += '<div style="' + rowStyle + '">';
+        html += '<strong style="min-width:110px; font-size:12px">Color JPEG</strong>';
+        html += '<span style="' + dimStyle + '">' + infoOf(a.color_jpeg) + '</span>';
+        html += '<button class="btn-primary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.color_jpeg.url + '\',\'' + jobId + '_color.jpeg\',\'' + a.color_jpeg.key + '\')">Download</button>';
+        html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runDeepZoomExport(\'' + jobId + '\',\'' + a.color_jpeg.key + '\',this)">DeepZoom</button>';
+        html += '</div>';
     }
 
     // --- Color PNG row ---
-    if (hasColorPng) {
-        html += `<div style="${rowStyle}">`;
-        html += `<strong style="min-width:110px; font-size:12px">Color PNG</strong>`;
-        html += `<span style="${dimStyle}">${infoOf(colorPngKey)}</span>`;
-        html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[colorPngKey]}','${jobId}_color.png','${colorPngKey}')">Download</button>`;
-        html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${colorPngKey}',this)">DeepZoom</button>`;
-        html += `</div>`;
+    if (a.color_png && a.color_png.exists) {
+        html += '<div style="' + rowStyle + '">';
+        html += '<strong style="min-width:110px; font-size:12px">Color PNG</strong>';
+        html += '<span style="' + dimStyle + '">' + infoOf(a.color_png) + '</span>';
+        html += '<button class="btn-primary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.color_png.url + '\',\'' + jobId + '_color.png\',\'' + a.color_png.key + '\')">Download</button>';
+        html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runDeepZoomExport(\'' + jobId + '\',\'' + a.color_png.key + '\',this)">DeepZoom</button>';
+        html += '</div>';
     }
 
     // --- BiLevel TIFF row ---
-    if (hasBilevelTif) {
-        html += `<div style="${rowStyle}">`;
-        html += `<strong style="min-width:110px; font-size:12px">BiLevel TIFF</strong>`;
-        html += `<span style="${dimStyle}">${infoOf(bilevelKey)}</span>`;
-        html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[bilevelKey]}','${jobId}_bilevel.tif','${bilevelKey}')">Download</button>`;
-        if (hasCompatTif) {
-            html += `<button class="btn-secondary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[compatKey]}','${jobId}_bilevel_compat.tif','${compatKey}')">Compat TIFF</button>`;
+    if (a.bilevel_tif && a.bilevel_tif.exists) {
+        html += '<div style="' + rowStyle + '">';
+        html += '<strong style="min-width:110px; font-size:12px">BiLevel TIFF</strong>';
+        html += '<span style="' + dimStyle + '">' + infoOf(a.bilevel_tif) + '</span>';
+        html += '<button class="btn-primary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.bilevel_tif.url + '\',\'' + jobId + '_bilevel.tif\',\'' + a.bilevel_tif.key + '\')">Download</button>';
+        if (a.bilevel_compat_tif && a.bilevel_compat_tif.exists) {
+            html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.bilevel_compat_tif.url + '\',\'' + jobId + '_bilevel_compat.tif\',\'' + a.bilevel_compat_tif.key + '\')">Compat TIFF</button>';
         } else {
-            html += `<button class="btn-secondary" style="${btnStyle}" onclick="runTiffCompat('${jobId}','${bilevelKey}','${pix}')" id="btn-tiff-compat">Compat TIFF</button>`;
+            html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runTiffCompat(\'' + jobId + '\',\'' + a.bilevel_tif.key + '\',\'' + pix + '\')" id="btn-tiff-compat">Compat TIFF</button>';
         }
-        if (hasBilevelPng) {
-            html += `<button class="btn-secondary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[bilevelPngKey]}','${jobId}_bilevel.png','${bilevelPngKey}')">PNG</button>`;
+        if (a.bilevel_png && a.bilevel_png.exists) {
+            html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.bilevel_png.url + '\',\'' + jobId + '_bilevel.png\',\'' + a.bilevel_png.key + '\')">PNG</button>';
         } else {
-            html += `<button class="btn-secondary" style="${btnStyle}" onclick="runPngExport('${jobId}','${bilevelKey}','${pix}')" id="btn-png-export">PNG</button>`;
+            html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runPngExport(\'' + jobId + '\',\'' + a.bilevel_tif.key + '\',\'' + pix + '\')" id="btn-png-export">PNG</button>';
         }
-        html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${bilevelKey}',this)">DeepZoom</button>`;
-        html += `</div>`;
+        html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runDeepZoomExport(\'' + jobId + '\',\'' + a.bilevel_tif.key + '\',this)">DeepZoom</button>';
+        html += '</div>';
     }
 
     // --- Coeffs BiLevel TIFF row ---
-    if (hasCoeffTif) {
-        html += `<div style="${rowStyle}">`;
-        html += `<strong style="min-width:110px; font-size:12px">Coeffs TIFF</strong>`;
-        html += `<span style="${dimStyle}">${infoOf(coeffKey)}</span>`;
-        html += `<button class="btn-primary" style="${btnStyle}" onclick="downloadPresignedFile('${artifacts[coeffKey]}','${jobId}_coeffs_bilevel.tif','${coeffKey}')">Download</button>`;
-        html += `<button class="btn-secondary" style="${btnStyle}" onclick="runDeepZoomExport('${jobId}','${coeffKey}',this)">DeepZoom</button>`;
-        html += `</div>`;
+    if (a.coeff_tif && a.coeff_tif.exists) {
+        html += '<div style="' + rowStyle + '">';
+        html += '<strong style="min-width:110px; font-size:12px">Coeffs TIFF</strong>';
+        html += '<span style="' + dimStyle + '">' + infoOf(a.coeff_tif) + '</span>';
+        html += '<button class="btn-primary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.coeff_tif.url + '\',\'' + jobId + '_coeffs_bilevel.tif\',\'' + a.coeff_tif.key + '\')">Download</button>';
+        html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runDeepZoomExport(\'' + jobId + '\',\'' + a.coeff_tif.key + '\',this)">DeepZoom</button>';
+        html += '</div>';
     }
 
-    // --- DeepZoom viewer (if any exists) ---
-    if (hasDeepZoom) {
-        html += `<div style="${rowStyle}">`;
-        html += `<strong style="min-width:110px; font-size:12px">DeepZoom</strong>`;
-        html += `<button class="btn-secondary" style="${btnStyle}; background:#446" onclick="openDeepZoomViewer('${artifacts._deepzoom_dzi_url}')">Open Viewer</button>`;
-        html += `</div>`;
+    // --- DeepZoom viewer ---
+    if (dz.exists) {
+        html += '<div style="' + rowStyle + '">';
+        html += '<strong style="min-width:110px; font-size:12px">DeepZoom</strong>';
+        html += '<button class="btn-secondary" style="' + btnStyle + '; background:#446" onclick="openDeepZoomViewer(\'' + dz.dzi_url + '\')">Open Viewer</button>';
+        html += '</div>';
     }
 
     // --- Preview section ---
-    html += `<hr style="border:none; border-top:1px solid #444; margin:12px 0 8px">`;
+    html += '<hr style="border:none; border-top:1px solid #444; margin:12px 0 8px">';
 
-    // Determine available preview sources — always use cached thumbnails, never full images
-    const hasCachedColorPreview = !!artifacts[prefix + 'preview_color.png'];
-    const hasCachedBilevelPreview = !!artifacts[prefix + 'preview_bilevel.png'];
+    // Determine available preview sources
+    const colorPreviewUrl = (a.preview_color_png && a.preview_color_png.exists) ? a.preview_color_png.url : null;
+    const bilevelPreviewUrl = (a.bilevel_preview_png && a.bilevel_preview_png.exists) ? a.bilevel_preview_png.url
+        : (a.coeff_preview_png && a.coeff_preview_png.exists) ? a.coeff_preview_png.url
+        : (a.preview_bilevel_png && a.preview_bilevel_png.exists) ? a.preview_bilevel_png.url : null;
 
-    const colorPreviewUrl = hasCachedColorPreview ? artifacts[prefix + 'preview_color.png'] : null;
-    const bilevelPreviewUrl = hasBilevelPreview ? artifacts[prefix + 'image_bilevel_preview.png']
-        : hasCoeffPreview ? artifacts[prefix + 'image_coeffs_bilevel_preview.png']
-        : hasCachedBilevelPreview ? artifacts[prefix + 'preview_bilevel.png'] : null;
-
-    // On-demand generation: source image exists but no preview
-    const colorSourceKey = hasColorPng ? colorPngKey : hasColorJpeg ? colorJpegKey : null;
-    const bilevelSourceKey = hasBilevelTif ? bilevelKey : hasCoeffTif ? coeffKey : null;
+    const colorSourceKey = (a.color_png && a.color_png.exists) ? a.color_png.key
+        : (a.color_jpeg && a.color_jpeg.exists) ? a.color_jpeg.key : null;
+    const bilevelSourceKey = (a.bilevel_tif && a.bilevel_tif.exists) ? a.bilevel_tif.key
+        : (a.coeff_tif && a.coeff_tif.exists) ? a.coeff_tif.key : null;
     const colorCanGen = !colorPreviewUrl && colorSourceKey;
     const bilevelCanGen = !bilevelPreviewUrl && bilevelSourceKey;
     const colorEnabled = colorPreviewUrl || colorCanGen;
     const bilevelEnabled = bilevelPreviewUrl || bilevelCanGen;
+    const hasBilevelPreview = a.bilevel_preview_png && a.bilevel_preview_png.exists;
+    const hasBilevelTif = a.bilevel_tif && a.bilevel_tif.exists;
+    const hasCoeffPreview = a.coeff_preview_png && a.coeff_preview_png.exists;
+    const hasCoeffTif = a.coeff_tif && a.coeff_tif.exists;
     const bilevelLabel = hasBilevelPreview || hasBilevelTif ? 'Bilevel' : hasCoeffPreview || hasCoeffTif ? 'Coeffs' : 'Bilevel';
 
-    html += `<div style="display:flex; gap:6px; margin-bottom:6px">`;
-    html += `<button id="prev-btn-color" class="btn-secondary" style="${btnStyle}${!colorEnabled ? '; opacity:0.4; cursor:default' : ''}" `
-        + (colorEnabled ? `onclick="_showPreview('color')"` : `disabled`)
-        + `>Color preview</button>`;
-    html += `<button id="prev-btn-bilevel" class="btn-secondary" style="${btnStyle}${!bilevelEnabled ? '; opacity:0.4; cursor:default' : ''}" `
-        + (bilevelEnabled ? `onclick="_showPreview('bilevel')"` : `disabled`)
-        + `>${bilevelLabel} preview</button>`;
-    html += `</div>`;
+    html += '<div style="display:flex; gap:6px; margin-bottom:6px">';
+    html += '<button id="prev-btn-color" class="btn-secondary" style="' + btnStyle + (!colorEnabled ? '; opacity:0.4; cursor:default' : '') + '" '
+        + (colorEnabled ? 'onclick="_showPreview(\'color\')"' : 'disabled')
+        + '>Color preview</button>';
+    html += '<button id="prev-btn-bilevel" class="btn-secondary" style="' + btnStyle + (!bilevelEnabled ? '; opacity:0.4; cursor:default' : '') + '" '
+        + (bilevelEnabled ? 'onclick="_showPreview(\'bilevel\')"' : 'disabled')
+        + '>' + bilevelLabel + ' preview</button>';
+    html += '</div>';
 
-    html += `<div id="preview-container"><div style="color:#888; font-size:12px; padding:12px 0">No preview selected</div></div>`;
+    html += '<div id="preview-container"><div style="color:#888; font-size:12px; padding:12px 0">No preview selected</div></div>';
 
     preview.innerHTML = html;
 
@@ -1772,19 +1697,19 @@ function renderArtifactPanel(jobId, artifacts) {
     window._previewUrls = { color: colorPreviewUrl, bilevel: bilevelPreviewUrl };
     window._previewSources = {};
     if (colorCanGen) {
-        window._previewSources.color = { jobId, sourceKey: colorSourceKey, previewKey: prefix + 'preview_color.png' };
+        window._previewSources.color = { jobId: jobId, sourceKey: colorSourceKey, previewKey: 'renders/' + jobId + '/preview_color.png' };
     }
     if (bilevelCanGen) {
-        window._previewSources.bilevel = { jobId, sourceKey: bilevelSourceKey, previewKey: prefix + 'preview_bilevel.png' };
+        window._previewSources.bilevel = { jobId: jobId, sourceKey: bilevelSourceKey, previewKey: 'renders/' + jobId + '/preview_bilevel.png' };
     }
     const defaultTab = colorPreviewUrl ? 'color' : bilevelPreviewUrl ? 'bilevel' : null;
     if (defaultTab) _showPreview(defaultTab);
 
     // Info line
-    const parts = [`Job: ${jobId}`];
-    if (calc) {
-        if (calc.N || calc.n1) parts.push(`N=${calc.N || calc.n1}`);
-        if (calc.degree) parts.push(`degree ${calc.degree}`);
+    const parts = ['Job: ' + jobId];
+    if (calc.exists) {
+        if (calc.N || calc.n1) parts.push('N=' + (calc.N || calc.n1));
+        if (calc.degree) parts.push('degree ' + calc.degree);
     }
     info.textContent = parts.join(' | ');
 }

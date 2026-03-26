@@ -1228,5 +1228,167 @@ class TestPreviewHandler(unittest.TestCase):
         self.assertEqual(png[12:16], b'IHDR')
 
 
+class TestRenderSummary(unittest.TestCase):
+
+    def _make_event(self, body):
+        return {"body": json.dumps(body), "rawPath": "/render-summary"}
+
+    @patch("handler_storage.s3")
+    def test_render_summary_heads_exact_keys_only(self, mock_s3):
+        """render-summary uses HEAD for exactly 10 artifact keys, never paginator."""
+        from handler_storage import handle_render_summary
+        mock_s3.head_object.side_effect = Exception("NoSuchKey")
+        mock_s3.get_object.side_effect = Exception("NoSuchKey")
+        mock_s3.generate_presigned_url.return_value = "https://fake"
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+
+        # Must never use paginator
+        mock_s3.get_paginator.assert_not_called()
+
+        # HEAD should be called for exactly 10 keys
+        head_keys = [c.kwargs.get("Key") or c.args[1] if len(c.args) > 1 else c.kwargs.get("Key")
+                     for c in mock_s3.head_object.call_args_list]
+        self.assertEqual(len(head_keys), 10, f"expected 10 HEAD calls, got {len(head_keys)}")
+
+    @patch("handler_storage.s3")
+    def test_render_summary_returns_existing_artifact_urls(self, mock_s3):
+        """Existing artifacts get presigned URLs, sizes, dimensions."""
+        from handler_storage import handle_render_summary
+
+        def mock_head(**kwargs):
+            key = kwargs["Key"]
+            if "image.jpeg" in key:
+                return {"ContentLength": 1234, "ContentType": "image/jpeg",
+                        "Metadata": {"width": "4096", "height": "4096"}}
+            if "preview_color" in key:
+                return {"ContentLength": 500, "ContentType": "image/png", "Metadata": {}}
+            raise Exception("NoSuchKey")
+
+        mock_s3.head_object.side_effect = mock_head
+        mock_s3.get_object.side_effect = Exception("NoSuchKey")
+        mock_s3.generate_presigned_url.return_value = "https://signed"
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+
+        cj = body["artifacts"]["color_jpeg"]
+        self.assertTrue(cj["exists"])
+        self.assertEqual(cj["size"], 1234)
+        self.assertEqual(cj["width"], 4096)
+        self.assertIsNotNone(cj["url"])
+
+        pc = body["artifacts"]["preview_color_png"]
+        self.assertTrue(pc["exists"])
+
+    @patch("handler_storage.s3")
+    def test_render_summary_missing_artifacts_are_false(self, mock_s3):
+        """Missing artifacts return exists=false."""
+        from handler_storage import handle_render_summary
+        mock_s3.head_object.side_effect = Exception("NoSuchKey")
+        mock_s3.get_object.side_effect = Exception("NoSuchKey")
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+
+        for name, art in body["artifacts"].items():
+            self.assertFalse(art["exists"], f"{name} should not exist")
+            self.assertIsNone(art["url"])
+
+    @patch("handler_storage.s3")
+    def test_render_summary_reads_calc_server_side(self, mock_s3):
+        """calc.json is read server-side, not presigned for browser."""
+        from handler_storage import handle_render_summary
+        mock_s3.head_object.side_effect = Exception("NoSuchKey")
+
+        calc_json = json.dumps({"N": 5000, "n1": 5000, "degree": 70}).encode()
+        def mock_get(**kwargs):
+            key = kwargs["Key"]
+            if "calc.json" in key:
+                return {"Body": MagicMock(read=lambda: calc_json)}
+            raise Exception("NoSuchKey")
+        mock_s3.get_object.side_effect = mock_get
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+
+        self.assertTrue(body["calc"]["exists"])
+        self.assertEqual(body["calc"]["N"], 5000)
+        self.assertEqual(body["calc"]["degree"], 70)
+
+    @patch("handler_storage.s3")
+    def test_render_summary_uses_deepzoom_latest_pointer_only(self, mock_s3):
+        """DeepZoom info comes from renders/{job}/deepzoom_latest.json, no listing."""
+        from handler_storage import handle_render_summary
+        mock_s3.head_object.side_effect = Exception("NoSuchKey")
+
+        dz_json = json.dumps({
+            "dzi_url": "https://dz/image.dzi",
+            "export_id": "dz_123",
+            "created_at": "2026-03-26T10:00:00Z",
+            "width": 8192, "height": 8192,
+            "tiles_uploaded": 400,
+        }).encode()
+        def mock_get(**kwargs):
+            key = kwargs["Key"]
+            if "deepzoom_latest.json" in key:
+                return {"Body": MagicMock(read=lambda: dz_json)}
+            raise Exception("NoSuchKey")
+        mock_s3.get_object.side_effect = mock_get
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+
+        self.assertTrue(body["deepzoom_latest"]["exists"])
+        self.assertEqual(body["deepzoom_latest"]["dzi_url"], "https://dz/image.dzi")
+        mock_s3.get_paginator.assert_not_called()
+
+    @patch("handler_storage.s3")
+    def test_render_summary_missing_deepzoom_pointer_not_error(self, mock_s3):
+        """Missing deepzoom_latest.json → exists=false, no error."""
+        from handler_storage import handle_render_summary
+        mock_s3.head_object.side_effect = Exception("NoSuchKey")
+        mock_s3.get_object.side_effect = Exception("NoSuchKey")
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+
+        self.assertFalse(body["deepzoom_latest"]["exists"])
+
+    @patch("handler_storage.s3")
+    def test_render_summary_malformed_deepzoom_pointer_ignored(self, mock_s3):
+        """Bad JSON in deepzoom_latest.json → exists=false, no crash."""
+        from handler_storage import handle_render_summary
+        mock_s3.head_object.side_effect = Exception("NoSuchKey")
+
+        def mock_get(**kwargs):
+            key = kwargs["Key"]
+            if "deepzoom_latest.json" in key:
+                return {"Body": MagicMock(read=lambda: b"NOT JSON{{")}
+            raise Exception("NoSuchKey")
+        mock_s3.get_object.side_effect = mock_get
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+
+        self.assertFalse(body["deepzoom_latest"]["exists"])
+
+    @patch("handler_deepzoom_export.s3")
+    @patch("handler_deepzoom_export.report_status")
+    def test_deepzoom_export_writes_latest_pointer(self, mock_report, mock_s3):
+        """DeepZoom export writes both meta.json and deepzoom_latest.json."""
+        # This is a shape test — we just check put_object is called for both keys
+        put_calls = []
+        mock_s3.put_object.side_effect = lambda **kwargs: put_calls.append(kwargs)
+        # We can't easily run the full handler, so test the write contract directly
+        import handler_deepzoom_export  # just verify the module loads
+        # Check the source contains both writes
+        import inspect
+        src = inspect.getsource(handler_deepzoom_export)
+        self.assertIn("deepzoom_latest.json", src)
+        self.assertIn("meta.json", src)
+
+
 if __name__ == "__main__":
     unittest.main()

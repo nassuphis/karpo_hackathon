@@ -109,10 +109,18 @@ def handler(event, context):
             "height": meta["height"],
             "tiles_uploaded": uploaded,
         }
+        manifest_json = json.dumps(manifest)
         s3.put_object(
             Bucket=BUCKET,
             Key=f"{s3_prefix}/meta.json",
-            Body=json.dumps(manifest),
+            Body=manifest_json,
+            ContentType="application/json"
+        )
+        # Also write canonical pointer for fast Render-tab refresh
+        s3.put_object(
+            Bucket=BUCKET,
+            Key=f"renders/{job_id}/deepzoom_latest.json",
+            Body=manifest_json,
             ContentType="application/json"
         )
 

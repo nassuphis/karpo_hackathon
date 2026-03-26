@@ -1253,7 +1253,7 @@ async function runRasterPipeline() {
         // Clean up old render artifacts (.raw/.jpeg/.png/.pix), preserve .bin
         document.getElementById('render-status').textContent = `Cleaning old render files...`;
         document.getElementById('render-status').className = 'status';
-        const cleanResult = await lambdaPost('storage', { job_id: p.jobId }, '/clean-render');
+        const cleanResult = await lambdaPost('storage', { job_id: p.jobId, pipeline: 'color' }, '/clean-render');
         if (cleanResult.deleted > 0)
             log(`  cleaned ${cleanResult.deleted} old render files`, '', 'render-log');
 
@@ -2184,7 +2184,7 @@ async function runBilevelPipeline() {
         // Clean up old render artifacts
         document.getElementById('render-status').textContent = `BiLevel: cleaning old render files...`;
         document.getElementById('render-status').className = 'status';
-        const cleanResult = await lambdaPost('storage', { job_id: p.jobId }, '/clean-render');
+        const cleanResult = await lambdaPost('storage', { job_id: p.jobId, pipeline: 'bilevel' }, '/clean-render');
         if (cleanResult.deleted > 0)
             log(`  cleaned ${cleanResult.deleted} old render files`, '', 'render-log');
 
@@ -2335,7 +2335,7 @@ async function runCoeffBilevelPipeline() {
 
         document.getElementById('render-status').textContent = `Coeffs: cleaning old render files...`;
         document.getElementById('render-status').className = 'status';
-        const cleanResult = await lambdaPost('storage', { job_id: p.jobId }, '/clean-render');
+        const cleanResult = await lambdaPost('storage', { job_id: p.jobId, pipeline: 'coeff_bilevel' }, '/clean-render');
         if (cleanResult.deleted > 0)
             log(`  cleaned ${cleanResult.deleted} old render files`, '', 'render-log');
 

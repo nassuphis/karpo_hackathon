@@ -336,10 +336,15 @@ def handle_clean_render(event):
         for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix + rp):
             for obj in page.get('Contents', []):
                 objects.append(obj)
-    # Also delete top-level solve-proximity artifacts and cached previews
-    for key_suffix in ['solve_proximity_clip.json', 'solve_proximity_bins.json',
-                       'preview_color.png', 'preview_bilevel.png']:
+    # Also delete top-level solve-proximity artifacts
+    for key_suffix in ['solve_proximity_clip.json', 'solve_proximity_bins.json']:
         objects.append({"Key": prefix + key_suffix})
+    # Delete only the relevant cached preview based on pipeline type
+    pipeline = params.get("pipeline", "color")
+    if pipeline == "color":
+        objects.append({"Key": prefix + "preview_color.png"})
+    elif pipeline in ("bilevel", "coeff_bilevel"):
+        objects.append({"Key": prefix + "preview_bilevel.png"})
 
     total_deleted = 0
     if objects:

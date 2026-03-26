@@ -184,6 +184,48 @@ class TestCoeffOrchestrator(unittest.TestCase):
         assert ri < mi < si
 
 
+    @patch("handler_render_orchestrator.ddb")
+    @patch("handler_render_orchestrator.lambda_client")
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator._storage_call")
+    def test_coeff_uses_coeffs_keys_from_metadata(
+        self, mock_storage, mock_report, mock_lambda, mock_ddb
+    ):
+        """Coeff bilevel uses coeffs_keys from calc metadata, not synthesized keys."""
+        real_keys = ["renders/j/coeffs_0000.bin", "renders/j/coeffs_0001.bin"]
+        mock_storage.side_effect = lambda path, body: (
+            {"deleted": 0} if "clean" in path else
+            {"job_id": "j", "calc": {
+                "degree": 5, "n_stripes": 2, "n_chunks": 2,
+                "n_coeffs": 6,
+                "coeffs_keys": real_keys,
+            }} if "detail" in path else {}
+        )
+        mock_ddb.query.return_value = _mock_poll_done(100)
+
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_ck", "mode": "coeff_bilevel",
+            "params": {"pix": 512, "tile_size": 512, "view_mode": "square", "square_extent": 2.0, "rotation": 0}
+        })
+        handler(event, None)
+
+        # Check dispatched coeff raster jobs used the real keys
+        dispatched_payloads = []
+        for c in mock_lambda.invoke.call_args_list:
+            payload = json.loads(c[1].get("Payload", b"{}"))
+            if payload.get("phase") == "coeff_raster":
+                dispatched_payloads.append(payload)
+
+        assert len(dispatched_payloads) == 2, f"expected 2 coeff raster jobs, got {len(dispatched_payloads)}"
+        assert dispatched_payloads[0]["coeffs_key"] == real_keys[0], \
+            f"stripe 0 key wrong: {dispatched_payloads[0].get('coeffs_key')}"
+        assert dispatched_payloads[1]["coeffs_key"] == real_keys[1], \
+            f"stripe 1 key wrong: {dispatched_payloads[1].get('coeffs_key')}"
+        assert dispatched_payloads[0]["n_coeffs"] == 6, \
+            f"n_coeffs should be 6 from metadata, got {dispatched_payloads[0].get('n_coeffs')}"
+
+
 class TestOrchestratorCheckpoint(unittest.TestCase):
 
     @patch("handler_render_orchestrator.ddb")

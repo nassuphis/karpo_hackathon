@@ -146,6 +146,13 @@ def _dispatch_async(function_name, payload):
     )
 
 
+def _dispatch_single(function_name, payload, progress):
+    """Dispatch one job and store in progress for checkpoint-safe re-dispatch."""
+    _dispatch_async(function_name, payload)
+    progress["_last_dispatched_jobs"] = [payload]
+    progress["_last_dispatch_function"] = function_name
+
+
 def _dispatch_batch(function_name, jobs, progress, batch_size=50):
     """Dispatch jobs in batches. Store in progress for checkpoint-safe re-dispatch."""
     for i in range(0, len(jobs), batch_size):
@@ -294,11 +301,11 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
         if not lores_key:
             raise RuntimeError("lores.bin_key missing — needed for solve proximity")
         rt = rp.get("root_transforms") or None
-        _dispatch_async(FUNCTIONS["solve_proximity"], {
+        _dispatch_single(FUNCTIONS["solve_proximity"], {
             "phase": "clip", "job_id": job_id, "degree": degree,
             "lores_bin_key": lores_key, "root_transforms": rt,
             "out_key": clip_key, "task_id": clip_task,
-        })
+        }, progress)
         _poll_completion(job_id, clip_task, 1, task_id, progress, context)
         progress["_clip_key"] = clip_key
         phase = "solve_proximity_hist"
@@ -327,11 +334,11 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
         _update_progress(task_id, progress, "solve_proximity_merge", "Solve proximity: merge", context)
         bins_key = f"renders/{job_id}/solve_proximity_bins.json"
         merge_task = f"render_{run_id}_solve_proximity_merge"
-        _dispatch_async(FUNCTIONS["solve_proximity"], {
+        _dispatch_single(FUNCTIONS["solve_proximity"], {
             "phase": "merge", "job_id": job_id, "n_stripes": n_stripes,
             "hist_prefix": f"renders/{job_id}/solve_proximity/",
             "clip_key": clip_key, "out_key": bins_key, "task_id": merge_task,
-        })
+        }, progress)
         _poll_completion(job_id, merge_task, 1, task_id, progress, context)
         solve_prox_bins_key = bins_key
         progress["solve_prox_bins_key"] = bins_key
@@ -411,7 +418,7 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
         tile_keys = []
         for t in range(n_tiles):
             tile_keys.append(f"renders/{job_id}/tile_{t:04d}.raw")
-        _dispatch_async(FUNCTIONS["encode"], {
+        _dispatch_single(FUNCTIONS["encode"], {
             "job_id": job_id,
             "task_id": f"render_{run_id}_encode",
             "out_key": out_key,
@@ -422,7 +429,7 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
                 "n_cols": n_tile_cols, "n_rows": n_tile_rows,
                 "tile_keys": tile_keys,
             },
-        })
+        }, progress)
         progress["image_key"] = out_key
         phase = "encode_poll"
 
@@ -543,13 +550,13 @@ def run_bilevel(params, rp, task_id, progress, checkpoint, context):
     if phase == "bilevel_stitch_dispatch":
         _update_progress(task_id, progress, "bilevel_stitch_dispatch", "BiLevel stitch", context)
         out_key = f"renders/{job_id}/image_bilevel.tif"
-        _dispatch_async(FUNCTIONS["bilevel_stitch"], {
+        _dispatch_single(FUNCTIONS["bilevel_stitch"], {
             "job_id": job_id,
             "task_id": f"render_{run_id}_bilevel_stitch",
             "n_tile_cols": n_tile_cols, "n_tile_rows": n_tile_rows,
             "width": pix, "height": pix, "tile_size": tile_size,
             "out_key": out_key,
-        })
+        }, progress)
         progress["image_key"] = out_key
         phase = "bilevel_stitch_poll"
 
@@ -669,14 +676,14 @@ def run_coeff_bilevel(params, rp, task_id, progress, checkpoint, context):
     if phase == "coeff_stitch_dispatch":
         _update_progress(task_id, progress, "coeff_stitch_dispatch", "Coeffs stitch", context)
         out_key = f"renders/{job_id}/image_coeffs_bilevel.tif"
-        _dispatch_async(FUNCTIONS["bilevel_stitch"], {
+        _dispatch_single(FUNCTIONS["bilevel_stitch"], {
             "job_id": job_id,
             "task_id": f"render_{run_id}_coeff_bilevel_stitch",
             "n_tile_cols": n_tile_cols, "n_tile_rows": n_tile_rows,
             "width": pix, "height": pix, "tile_size": tile_size,
             "out_key": out_key,
             "tile_prefix": "coeff",
-        })
+        }, progress)
         progress["image_key"] = out_key
         phase = "coeff_stitch_poll"
 

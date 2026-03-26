@@ -62,8 +62,6 @@
       "Default": "ReportError"
     },
 
-    "_comment_color": "═══════════════════ COLOR PIPELINE ═══════════════════",
-
     "ColorSolveScoreChoice": {
       "Type": "Choice",
       "Choices": [
@@ -420,8 +418,6 @@
       "Next": "Succeed"
     },
 
-    "_comment_bilevel": "═══════════════════ BILEVEL PIPELINE ═══════════════════",
-
     "BilevelRasterPhase": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
@@ -613,8 +609,6 @@
       "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
       "Next": "Succeed"
     },
-
-    "_comment_coeff": "═══════════════════ COEFF BILEVEL PIPELINE ═══════════════════",
 
     "CoeffRasterPhase": {
       "Type": "Task",
@@ -812,8 +806,6 @@
       "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
       "Next": "Succeed"
     },
-
-    "_comment_terminal": "═══════════════════ TERMINAL STATES ═══════════════════",
 
     "Succeed": {
       "Type": "Succeed"

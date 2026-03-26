@@ -1226,14 +1226,50 @@ elif [ "$ACTION" = "update" ]; then
         -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
         stepfunctions/render_workflow.asl.json.template > /tmp/render_workflow.asl.json
 
-    if [ -n "$SFN_ROLE_ARN" ]; then
-        aws stepfunctions update-state-machine \
-            --state-machine-arn "$RENDER_SM_ARN" \
-            --definition "file:///tmp/render_workflow.asl.json" \
-            --role-arn "$SFN_ROLE_ARN" \
-            --region "$REGION" >/dev/null 2>&1 || echo "  WARNING: state machine update failed"
+    SFN_TRUST='{
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "states.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+        }]
+    }'
+    if [ -z "$SFN_ROLE_ARN" ]; then
+        echo "  Creating SFN execution role..."
+        SFN_ROLE_ARN=$(aws iam create-role \
+            --role-name "$SFN_ROLE_NAME" \
+            --assume-role-policy-document "$SFN_TRUST" \
+            --query 'Role.Arn' --output text 2>/dev/null || \
+            aws iam get-role --role-name "$SFN_ROLE_NAME" --query 'Role.Arn' --output text)
+        aws iam put-role-policy --role-name "$SFN_ROLE_NAME" \
+            --policy-name polypaint-sfn-lambda-invoke \
+            --policy-document "{
+                \"Version\": \"2012-10-17\",
+                \"Statement\": [{
+                    \"Effect\": \"Allow\",
+                    \"Action\": \"lambda:InvokeFunction\",
+                    \"Resource\": \"arn:aws:lambda:${REGION}:${ACCT}:function:polypaint-*\"
+                }]
+            }"
+        sleep 5  # IAM propagation
     fi
-    echo "  State machine updated: $RENDER_STATE_MACHINE_NAME"
+
+    # Create or update state machine
+    aws stepfunctions update-state-machine \
+        --state-machine-arn "$RENDER_SM_ARN" \
+        --definition "$(cat /tmp/render_workflow.asl.json)" \
+        --role-arn "$SFN_ROLE_ARN" \
+        --region "$REGION" >/dev/null 2>&1 || {
+        echo "  State machine doesn't exist, creating..."
+        aws stepfunctions create-state-machine \
+            --name "$RENDER_STATE_MACHINE_NAME" \
+            --definition "$(cat /tmp/render_workflow.asl.json)" \
+            --role-arn "$SFN_ROLE_ARN" \
+            --type STANDARD \
+            --region "$REGION" \
+            --query 'stateMachineArn' --output text
+    }
+    echo "  State machine: $RENDER_STATE_MACHINE_NAME"
 
     # Starter Lambda — uses state machine ARN, not worker names
     update_lambda "$RENDER_ORCHESTRATOR_NAME" "handler_render_orchestrator.handler" "/tmp/polypaint-render-orchestrator.zip" \

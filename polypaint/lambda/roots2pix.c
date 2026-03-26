@@ -30,6 +30,7 @@
 #include <stdint.h>
 
 #include "root_xforms.h"
+#include "solve_score.h"
 
 #define MAXDEG 256
 #define MAX_TILES 4096  /* up to 64x64 grid */
@@ -265,7 +266,7 @@ static inline void emit_pixel(int tile_id, uint32_t pix_idx, uint32_t rgb) {
 
 /* ---- Main ---- */
 
-enum ColorMode { COLOR_RAINBOW = 0, COLOR_PROXIMITY = 1, COLOR_CONSTANT = 2, COLOR_SOLVE_PROXIMITY = 3 };
+enum ColorMode { COLOR_RAINBOW = 0, COLOR_PROXIMITY = 1, COLOR_CONSTANT = 2, COLOR_SOLVE_PROXIMITY = 3, COLOR_SOLVE_SCORE = 4 };
 enum MatchMode { MATCH_NONE = 0, MATCH_GREEDY = 1, MATCH_HUNGARIAN = 2 };
 
 int main(int argc, char **argv) {
@@ -273,10 +274,12 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Usage: roots2pix stripe.bin /tmp/pix "
                 "--width=W --height=H --center_re=X --center_im=Y --scale=S "
                 "--degree=D --tile_size=T --n_tile_cols=C --n_tile_rows=R "
-                "[--color=rainbow|proximity|solve_proximity|constant] "
+                "[--color=rainbow|proximity|solve_score|solve_proximity|constant] "
                 "[--match=none|greedy|hungarian] [--palette=inferno|...] "
                 "[--constant_color=RRGGBB] "
-                "[--solve_prox_clip_lo=X --solve_prox_clip_hi=Y --solve_prox_cuts=c1,c2,...,c9]\n");
+                "[--solve_metric=proximity|crowding|spread|anisotropy|area] "
+                "[--solve_score_clip_lo=X --solve_score_clip_hi=Y --solve_score_cuts=c1,...,c9] "
+                "[--solve_prox_clip_lo=X --solve_prox_clip_hi=Y --solve_prox_cuts=c1,...,c9]\n");
         return 1;
     }
     const char *binPath = argv[1];
@@ -311,7 +314,8 @@ int main(int argc, char **argv) {
 
     enum ColorMode colorMode = COLOR_RAINBOW;
     if (strcmp(colorStr, "proximity") == 0) colorMode = COLOR_PROXIMITY;
-    else if (strcmp(colorStr, "solve_proximity") == 0) colorMode = COLOR_SOLVE_PROXIMITY;
+    else if (strcmp(colorStr, "solve_score") == 0) colorMode = COLOR_SOLVE_SCORE;
+    else if (strcmp(colorStr, "solve_proximity") == 0) colorMode = COLOR_SOLVE_SCORE;  /* legacy alias */
     else if (strcmp(colorStr, "constant") == 0) colorMode = COLOR_CONSTANT;
 
     unsigned int constHex = 0xffffff;
@@ -320,20 +324,27 @@ int main(int argc, char **argv) {
     unsigned char constG = (constHex >> 8) & 0xff;
     unsigned char constB = constHex & 0xff;
 
-    /* Solve proximity args */
-    double solveProxClipLo = getArgDouble(argc, argv, "--solve_prox_clip_lo", 0);
-    double solveProxClipHi = getArgDouble(argc, argv, "--solve_prox_clip_hi", 0);
-    double solveProxCuts[9] = {0};
-    int nSolveProxCuts = 0;
+    /* Solve-score args (new generic names, with legacy aliases) */
+    const char *solveMetricStr = getArgStr(argc, argv, "--solve_metric", "proximity");
+    enum SolveMetric solveMetric = SOLVE_METRIC_PROXIMITY;
+    parse_solve_metric(solveMetricStr, &solveMetric);
+
+    double solveScoreClipLo = getArgDouble(argc, argv, "--solve_score_clip_lo",
+                               getArgDouble(argc, argv, "--solve_prox_clip_lo", 0));
+    double solveScoreClipHi = getArgDouble(argc, argv, "--solve_score_clip_hi",
+                               getArgDouble(argc, argv, "--solve_prox_clip_hi", 0));
+    double solveScoreCuts[9] = {0};
+    int nSolveScoreCuts = 0;
     {
-        const char *cutsStr = getArgStr(argc, argv, "--solve_prox_cuts", NULL);
+        const char *cutsStr = getArgStr(argc, argv, "--solve_score_cuts",
+                               getArgStr(argc, argv, "--solve_prox_cuts", NULL));
         if (cutsStr) {
             char tmp[256];
             strncpy(tmp, cutsStr, sizeof(tmp) - 1);
             tmp[sizeof(tmp) - 1] = '\0';
             char *tok = strtok(tmp, ",");
-            while (tok && nSolveProxCuts < 9) {
-                solveProxCuts[nSolveProxCuts++] = atof(tok);
+            while (tok && nSolveScoreCuts < 9) {
+                solveScoreCuts[nSolveScoreCuts++] = atof(tok);
                 tok = strtok(NULL, ",");
             }
         }
@@ -532,52 +543,37 @@ int main(int argc, char **argv) {
                 rootsPlotted++;
             }
         }
-    } else if (colorMode == COLOR_SOLVE_PROXIMITY) {
-        /* Roots are already transformed in-place (line 417-435).
-         * Score on already-transformed roots — do NOT re-apply transforms. */
-        if (nSolveProxCuts != 9) {
-            fprintf(stderr, "solve_proximity requires exactly 9 cuts (got %d). "
-                    "Pass --solve_prox_cuts=c1,c2,...,c9\n", nSolveProxCuts);
+    } else if (colorMode == COLOR_SOLVE_SCORE || colorMode == COLOR_SOLVE_PROXIMITY) {
+        /* Roots are already transformed in-place.
+         * Score using shared metric helper — do NOT re-apply transforms. */
+        if (nSolveScoreCuts != 9) {
+            fprintf(stderr, "solve_score requires exactly 9 cuts (got %d)\n", nSolveScoreCuts);
             return 1;
         }
-        if (solveProxClipHi - solveProxClipLo < 1e-12) {
-            fprintf(stderr, "solve_proximity requires valid clip range "
-                    "(got lo=%.6g hi=%.6g)\n", solveProxClipLo, solveProxClipHi);
+        if (solveScoreClipHi - solveScoreClipLo < 1e-12) {
+            fprintf(stderr, "solve_score requires valid clip range (lo=%.6g hi=%.6g)\n",
+                    solveScoreClipLo, solveScoreClipHi);
             return 1;
         }
-        unsigned char spPalR[10], spPalG[10], spPalB[10];
+        unsigned char ssPalR[10], ssPalG[10], ssPalB[10];
         for (int b = 0; b < 10; b++) {
-            paletteRGB(proxPal, (b + 0.5) / 10.0, &spPalR[b], &spPalG[b], &spPalB[b]);
+            paletteRGB(proxPal, (b + 0.5) / 10.0, &ssPalR[b], &ssPalG[b], &ssPalB[b]);
         }
-        double spRange = solveProxClipHi - solveProxClipLo;
-        if (spRange < 1e-12) spRange = 1.0;
-        #define SP_EPS2 1e-300
+        double ssRange = solveScoreClipHi - solveScoreClipLo;
 
         for (long p = 0; p < nPoints; p++) {
             float *step = roots + p * stride;
 
-            /* Compute d2_min for this solve (roots already transformed) */
-            double d2_min = 1e300;
-            for (int i = 0; i < degree; i++) {
-                double ri_re = step[i*2], ri_im = step[i*2+1];
-                for (int j = i + 1; j < degree; j++) {
-                    double dr = ri_re - step[j*2], di = ri_im - step[j*2+1];
-                    double d2 = dr * dr + di * di;
-                    if (d2 < d2_min) d2_min = d2;
-                }
-            }
-            double score = -0.5 * log10(d2_min > SP_EPS2 ? d2_min : SP_EPS2);
-            double u = (score - solveProxClipLo) / spRange;
+            double score = compute_solve_metric_score(step, degree, solveMetric);
+            double u = (score - solveScoreClipLo) / ssRange;
             if (u < 0) u = 0; if (u > 1) u = 1;
 
-            /* Find bin from cuts */
             int bin = 9;
-            for (int c = 0; c < nSolveProxCuts; c++) {
-                if (u <= solveProxCuts[c]) { bin = c; break; }
+            for (int c = 0; c < nSolveScoreCuts; c++) {
+                if (u <= solveScoreCuts[c]) { bin = c; break; }
             }
-            uint32_t rgb = ((uint32_t)spPalR[bin] << 16) | ((uint32_t)spPalG[bin] << 8) | spPalB[bin];
+            uint32_t rgb = ((uint32_t)ssPalR[bin] << 16) | ((uint32_t)ssPalG[bin] << 8) | ssPalB[bin];
 
-            /* Emit all roots in this solve with the same color */
             for (int r = 0; r < degree; r++) {
                 double re = step[r*2], im = step[r*2+1];
                 double dx = re - centerRe, dy = im - centerIm;
@@ -746,8 +742,9 @@ int main(int argc, char **argv) {
            nTiles, tilesWithData, totalEntries);
     if (colorMode == COLOR_PROXIMITY)
         printf(",\"palette\":\"%s\"", palName);
-    else if (colorMode == COLOR_SOLVE_PROXIMITY)
-        printf(",\"palette\":\"%s\",\"solve_proximity\":true", palName);
+    else if (colorMode == COLOR_SOLVE_SCORE || colorMode == COLOR_SOLVE_PROXIMITY)
+        printf(",\"palette\":\"%s\",\"solve_score\":true,\"solve_metric\":\"%s\"",
+               palName, solve_metric_name(solveMetric));
     else if (colorMode == COLOR_CONSTANT)
         printf(",\"constant_color\":\"%s\"", constColorStr);
     printf("}\n");

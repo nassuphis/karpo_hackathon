@@ -1086,7 +1086,7 @@ async function testPipeline(name, call) {
     // 12c: runCoeffBilevelPipeline dispatches one render_orchestrator job
     {
         vm.runInContext('_orchDispatched = null;', ctx);
-        ctx._elements['btn-coeff-bilevel'] = ctx._mkEl();
+        ctx._elements['btn-coeffs'] = ctx._mkEl();
         await vm.runInContext('(async()=>{ await runCoeffBilevelPipeline(); })()', ctx);
         const orch = vm.runInContext('_orchDispatched', ctx);
         if (!orch) { console.error('FATAL: runCoeffBilevelPipeline did not dispatch orchestrator'); process.exit(1); }

@@ -84,6 +84,11 @@ def handler(event, context):
             req_metric = params.get("solve_metric", "proximity")
             if ss_data.get("metric") != req_metric:
                 raise RuntimeError(f"Bins metric mismatch: expected {req_metric}, got {ss_data.get('metric')}")
+            req_q = params.get("solve_score_quantile", 0.001)
+            if "clip_quantile" not in ss_data:
+                raise RuntimeError("Bins artifact missing clip_quantile")
+            if ss_data["clip_quantile"] != req_q:
+                raise RuntimeError(f"Bins quantile mismatch: expected {req_q}, got {ss_data['clip_quantile']}")
             ss_metric = ss_data.get("metric", params.get("solve_metric", "proximity"))
             cmd.append(f"--color=solve_score")
             cmd.append(f"--solve_metric={ss_metric}")

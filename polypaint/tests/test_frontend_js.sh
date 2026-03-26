@@ -224,6 +224,10 @@ const renderEls = {
     'render-match-mode': { value: 'none' },
     'render-palette': { value: 'inferno' },
     'render-constant-color': { value: 'ffffff' },
+    'render-quantile': { value: '0' },
+    'render-shim': { value: '5.0' },
+    'render-solve-score-quantile': { value: '0.1' },
+    'render-solve-score-quantile-val': {},
     'render-status': {},
     'render-preview': {},
     'render-info': {},
@@ -991,6 +995,92 @@ async function testPipeline(name, call) {
         const exists = vm.runInContext('typeof _ensureSolveProximityBins', ctx);
         if (exists === 'function') { console.error('FATAL: dead _ensureSolveProximityBins should be deleted'); process.exit(1); }
         console.log('  dead _ensureSolveProximityBins removed: OK');
+    }
+
+    // 11h: solve-score quantile slider exists with default 0.1
+    {
+        const slider = ctx._elements['render-solve-score-quantile'];
+        if (!slider) { console.error('FATAL: render-solve-score-quantile not found'); process.exit(1); }
+        if (slider.value !== '0.1') { console.error('FATAL: default should be 0.1, got ' + slider.value); process.exit(1); }
+        const valSpan = ctx._elements['render-solve-score-quantile-val'];
+        if (!valSpan) { console.error('FATAL: render-solve-score-quantile-val not found'); process.exit(1); }
+        console.log('  solve-score quantile slider: OK (default=0.1)');
+    }
+
+    // 11i: solveScoreQuantile in _renderCommonParams
+    {
+        // Set slider to 2.0 (= q=0.02)
+        ctx._elements['render-solve-score-quantile'].value = '2.0';
+        const cp = vm.runInContext('_renderCommonParams()', ctx);
+        if (Math.abs(cp.solveScoreQuantile - 0.02) > 0.001) {
+            console.error('FATAL: solveScoreQuantile should be 0.02, got ' + cp.solveScoreQuantile);
+            process.exit(1);
+        }
+        console.log('  solveScoreQuantile in commonParams: OK (0.02)');
+        ctx._elements['render-solve-score-quantile'].value = '0.1';
+    }
+
+    // 11j: solve_score_quantile in orchestrator payload only when solve_score mode
+    {
+        vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'proximity';", ctx);
+        ctx._elements['render-solve-score-quantile'].value = '3.0';
+        vm.runInContext(`
+            var _qOrchPayload = null;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch' && body.target === 'render_orchestrator') {
+                    _qOrchPayload = body.jobs[0];
+                    return { fired: 1, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: 1, complete: true, results: [{ phase: 'done' }] };
+                }
+                return {};
+            };
+            refreshRenderArtifacts = async function() {};
+        `, ctx);
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_q' };
+        ctx._elements['render-status'].textContent = '';
+        ctx._elements['btn-raster-all'] = ctx._mkEl();
+        vm.runInContext("_viewMode = 'square'; _rtChain = [];", ctx);
+        try { await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx); } catch(e) {}
+        const qp = vm.runInContext('_qOrchPayload', ctx);
+        if (!qp || qp.params.solve_score_quantile === undefined) {
+            console.error('FATAL: payload missing solve_score_quantile');
+            process.exit(1);
+        }
+        if (Math.abs(qp.params.solve_score_quantile - 0.03) > 0.001) {
+            console.error('FATAL: solve_score_quantile should be 0.03, got ' + qp.params.solve_score_quantile);
+            process.exit(1);
+        }
+        console.log('  solve_score_quantile in payload: OK (0.03)');
+        // Now test rainbow mode — should NOT have solve_score_quantile
+        vm.runInContext("renderColorMode = 'rainbow';", ctx);
+        vm.runInContext('_qOrchPayload = null;', ctx);
+        try { await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx); } catch(e) {}
+        const rp = vm.runInContext('_qOrchPayload', ctx);
+        if (rp && rp.params.solve_score_quantile !== undefined) {
+            console.error('FATAL: rainbow mode should not have solve_score_quantile');
+            process.exit(1);
+        }
+        console.log('  solve_score_quantile absent in rainbow: OK');
+        vm.runInContext("renderColorMode = 'rainbow';", ctx);
+        ctx._elements['render-solve-score-quantile'].value = '0.1';
+    }
+
+    // 11k: viewport quantile and solve-score quantile are independent
+    {
+        ctx._elements['render-quantile'].value = '2.5';
+        ctx._elements['render-solve-score-quantile'].value = '4.0';
+        const cp2 = vm.runInContext('_renderCommonParams()', ctx);
+        if (Math.abs(cp2.quantile - 0.025) > 0.001) {
+            console.error('FATAL: viewport quantile should be 0.025'); process.exit(1);
+        }
+        if (Math.abs(cp2.solveScoreQuantile - 0.04) > 0.001) {
+            console.error('FATAL: solveScoreQuantile should be 0.04'); process.exit(1);
+        }
+        console.log('  viewport q and solve-score q independent: OK');
+        ctx._elements['render-quantile'].value = '0';
+        ctx._elements['render-solve-score-quantile'].value = '0.1';
     }
 
     // Step 12: Orchestrator launch + observer tests (spec section 20.3)

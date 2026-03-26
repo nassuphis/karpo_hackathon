@@ -184,6 +184,76 @@ test.describe('Solve Score UI', () => {
     expect(payload.params.solve_metric).toBe('clusteriness');
   });
 
+  test('solve-score quantile slider present with 0.1% default', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const slider = page.locator('#render-solve-score-quantile');
+    await expect(slider).toBeVisible();
+    const val = await slider.inputValue();
+    expect(val).toBe('0.1');
+    const text = await page.locator('#render-solve-score-quantile-val').textContent();
+    expect(text.trim()).toBe('0.1');
+  });
+
+  test('changing solve-score quantile slider updates displayed text', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      const s = document.getElementById('render-solve-score-quantile');
+      s.value = '3.0';
+      s.dispatchEvent(new Event('input'));
+    });
+    const text = await page.locator('#render-solve-score-quantile-val').textContent();
+    expect(text.trim()).toBe('3.0');
+  });
+
+  test('dispatch payload includes solve_score_quantile', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const solveCircle = page.locator('#palette-circles-solve-score .pal-circle').first();
+    await solveCircle.click();
+    await page.evaluate(() => {
+      document.getElementById('render-solve-score-quantile').value = '2.0';
+    });
+
+    await page.evaluate(() => {
+      window._qPayload = null;
+      window.lambdaPost = async function(name, body, path) {
+        if (name === 'dispatch' && body.target === 'render_orchestrator') {
+          window._qPayload = body.jobs[0];
+          return { fired: 1, errors: [] };
+        }
+        if (name === 'storage' && path === '/check-status') {
+          return { errors: 0, done: 1, complete: true, results: [{ phase: 'done' }] };
+        }
+        return {};
+      };
+      window.refreshRenderArtifacts = async function() {};
+      document.getElementById('render-results-dir').value = 'test_q';
+      document.getElementById('render-pix').value = '512';
+      window._viewMode = 'square';
+      window._rtChain = [];
+    });
+
+    await page.evaluate(async () => {
+      try { await runRasterPipeline(); } catch(e) {}
+    });
+
+    const payload = await page.evaluate(() => window._qPayload);
+    expect(payload).not.toBeNull();
+    expect(payload.params.solve_score_quantile).toBeCloseTo(0.02, 3);
+  });
+
+  test('viewport quantile and solve-score quantile are independent', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    // Set viewport quantile to 2.0, solve-score quantile to 4.0
+    await page.evaluate(() => {
+      document.getElementById('render-quantile').value = '2.0';
+      document.getElementById('render-solve-score-quantile').value = '4.0';
+    });
+    const vq = await page.locator('#render-quantile').inputValue();
+    const sq = await page.locator('#render-solve-score-quantile').inputValue();
+    expect(vq).toBe('2');
+    expect(sq).toBe('4');
+  });
+
   test('real_axis_proximity dispatch sends correct solve_metric', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     const solveCircle = page.locator('#palette-circles-solve-score .pal-circle').first();

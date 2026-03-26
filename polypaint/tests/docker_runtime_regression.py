@@ -310,6 +310,16 @@ def test_solve_proximity_stats():
     assert rap["n_solves"] == 3
     print("  real_axis_proximity clip: OK (lo=%.2f, hi=%.2f)" % (rap["clip_lo"], rap["clip_hi"]))
 
+    # 6. Non-default quantile clip (q=0.05)
+    _write_sps_bin(sps_bin)
+    r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=proximity",
+                        "--quantile_lo=0.05", "--quantile_hi=0.95"],
+                       capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "q=0.05 clip failed: " + r.stderr[:200]
+    q05 = json.loads(r.stdout)
+    assert q05["n_solves"] == 3
+    print("  proximity clip q=5%%: OK (lo=%.2f, hi=%.2f)" % (q05["clip_lo"], q05["clip_hi"]))
+
     cleanup(sps_bin)
     print("=== solve_proximity_stats tests PASSED ===")
 

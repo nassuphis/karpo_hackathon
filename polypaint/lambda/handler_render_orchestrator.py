@@ -299,6 +299,14 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
         if not rp.get("solve_metric"):
             rp["solve_metric"] = "proximity"
     solve_metric = rp.get("solve_metric", "proximity")
+    solve_score_quantile = rp.get("solve_score_quantile", 0.001)
+    if color_mode == "solve_score":
+        try:
+            solve_score_quantile = float(solve_score_quantile)
+        except (TypeError, ValueError):
+            raise RuntimeError(f"solve_score_quantile must be numeric, got {solve_score_quantile!r}")
+        if not (0.001 <= solve_score_quantile <= 0.05):
+            raise RuntimeError(f"solve_score_quantile must be in [0.001, 0.05], got {solve_score_quantile}")
     solve_score_bins_key = checkpoint.get("solve_score_bins_key")
 
     if phase == "solve_score_check":
@@ -309,8 +317,9 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
 
     if phase == "solve_score_clip":
         metric_label = solve_metric.capitalize()
+        q_pct = f"{solve_score_quantile * 100:.1f}"
         _update_progress(task_id, progress, "solve_score_clip",
-                         f"Solve score ({metric_label}): clip", context)
+                         f"Solve score ({metric_label}, q={q_pct}%): clip", context)
         clip_key = f"renders/{job_id}/solve_scores/{solve_metric}_clip.json"
         clip_task = f"render_{run_id}_solve_score_clip"
         lores_key = calc.get("lores", {}).get("bin_key")
@@ -320,6 +329,7 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
         _dispatch_single(FUNCTIONS["solve_proximity"], {
             "phase": "clip", "job_id": job_id, "degree": degree,
             "metric": solve_metric,
+            "solve_score_quantile": solve_score_quantile,
             "lores_bin_key": lores_key, "root_transforms": rt,
             "out_key": clip_key, "task_id": clip_task,
         }, progress)
@@ -331,8 +341,9 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
 
     if phase == "solve_score_hist":
         metric_label = solve_metric.capitalize()
+        q_pct = f"{solve_score_quantile * 100:.1f}"
         _update_progress(task_id, progress, "solve_score_hist",
-                         f"Solve score ({metric_label}): hist", context)
+                         f"Solve score ({metric_label}, q={q_pct}%): hist", context)
         hist_prefix = f"renders/{job_id}/solve_scores/{solve_metric}/"
         rt = rp.get("root_transforms") or None
         hist_jobs = []
@@ -340,6 +351,7 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
             hist_jobs.append({
                 "phase": "hist", "job_id": job_id, "stripe_idx": s,
                 "metric": solve_metric,
+                "solve_score_quantile": solve_score_quantile,
                 "bin_key": f"renders/{job_id}/stripe_{s}.bin", "degree": degree,
                 "clip_key": clip_key, "hist_bins": 100, "root_transforms": rt,
                 "out_key": f"{hist_prefix}stripe_{s}_hist.json",
@@ -352,13 +364,15 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
 
     if phase == "solve_score_merge":
         metric_label = solve_metric.capitalize()
+        q_pct = f"{solve_score_quantile * 100:.1f}"
         _update_progress(task_id, progress, "solve_score_merge",
-                         f"Solve score ({metric_label}): merge", context)
+                         f"Solve score ({metric_label}, q={q_pct}%): merge", context)
         bins_key = f"renders/{job_id}/solve_scores/{solve_metric}_bins.json"
         merge_task = f"render_{run_id}_solve_score_merge"
         _dispatch_single(FUNCTIONS["solve_proximity"], {
             "phase": "merge", "job_id": job_id, "n_stripes": n_stripes,
             "metric": solve_metric,
+            "solve_score_quantile": solve_score_quantile,
             "hist_prefix": f"renders/{job_id}/solve_scores/{solve_metric}/",
             "clip_key": clip_key, "out_key": bins_key, "task_id": merge_task,
         }, progress)
@@ -399,6 +413,7 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
             if solve_score_bins_key:
                 job["solve_score_bins_key"] = solve_score_bins_key
                 job["solve_metric"] = solve_metric
+                job["solve_score_quantile"] = solve_score_quantile
                 job["color"] = "solve_score"
             raster_jobs.append(job)
         _dispatch_batch(FUNCTIONS["raster"], raster_jobs, progress)

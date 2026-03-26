@@ -69,12 +69,24 @@ def handler(event, context):
         raise RuntimeError(f"Unknown phase: {phase}")
 
 
+def _validate_quantile(q):
+    """Validate solve_score_quantile is in [0.001, 0.05]."""
+    try:
+        q = float(q)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"solve_score_quantile must be numeric, got {q!r}")
+    if not (0.001 <= q <= 0.05):
+        raise RuntimeError(f"solve_score_quantile must be in [0.001, 0.05], got {q}")
+    return q
+
+
 def handle_clip(params):
     job_id = params["job_id"]
     task_id = params["task_id"]
     degree = params["degree"]
     metric = params.get("metric", "proximity")
     _validate_metric(metric)
+    solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
     lores_bin_key = params["lores_bin_key"]
     root_transforms = params.get("root_transforms")
     out_key = params["out_key"]
@@ -92,8 +104,10 @@ def handle_clip(params):
 
         report_status(job_id, task_id, "bin_downloaded", result_data=progress)
 
+        quantile_lo = solve_score_quantile
+        quantile_hi = 1.0 - solve_score_quantile
         cmd = [BINARY, _TMP_INPUT, "--mode=clip", f"--degree={degree}",
-               f"--metric={metric}", "--quantile_lo=0.001", "--quantile_hi=0.999"]
+               f"--metric={metric}", f"--quantile_lo={quantile_lo}", f"--quantile_hi={quantile_hi}"]
         xf_path = _write_xforms(root_transforms)
         if xf_path:
             cmd.append(f"--root_xforms={xf_path}")
@@ -117,6 +131,7 @@ def handle_clip(params):
             "version": 1,
             "job_id": job_id,
             "metric": metric,
+            "clip_quantile": solve_score_quantile,
             "clip_lo": clip_data["clip_lo"],
             "clip_hi": clip_data["clip_hi"],
             "n_solves": clip_data["n_solves"],
@@ -147,6 +162,7 @@ def handle_hist(params):
     stripe_idx = params["stripe_idx"]
     metric = params.get("metric", "proximity")
     _validate_metric(metric)
+    solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
     bin_key = params["bin_key"]
     degree = params["degree"]
     clip_key = params["clip_key"]
@@ -193,6 +209,7 @@ def handle_hist(params):
             "version": 1,
             "job_id": job_id,
             "metric": metric,
+            "clip_quantile": solve_score_quantile,
             "stripe_idx": stripe_idx,
             "hist_bins": hist_bins,
             "clip_lo": clip_data["clip_lo"],
@@ -222,6 +239,7 @@ def handle_merge(params):
     task_id = params["task_id"]
     metric = params.get("metric", "proximity")
     _validate_metric(metric)
+    solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
     n_stripes = params["n_stripes"]
     hist_prefix = params["hist_prefix"]
     clip_key = params["clip_key"]
@@ -237,6 +255,8 @@ def handle_merge(params):
         clip_data = json.loads(clip_obj["Body"].read())
         if clip_data.get("family") == "solve_score" and clip_data.get("metric") != metric:
             raise RuntimeError(f"Clip metric mismatch: expected {metric}, got {clip_data.get('metric')}")
+        if clip_data.get("family") == "solve_score" and clip_data.get("clip_quantile") != solve_score_quantile:
+            raise RuntimeError(f"Clip quantile mismatch: expected {solve_score_quantile}, got {clip_data.get('clip_quantile')}")
         hist_bins = 100
 
         total_hist = [0] * hist_bins
@@ -249,6 +269,8 @@ def handle_merge(params):
                 # Validate metric match
                 if data.get("family") == "solve_score" and data.get("metric") != metric:
                     raise RuntimeError(f"Stripe {s} metric mismatch: expected {metric}, got {data.get('metric')}")
+                if data.get("family") == "solve_score" and data.get("clip_quantile") != solve_score_quantile:
+                    raise RuntimeError(f"Stripe {s} quantile mismatch: expected {solve_score_quantile}, got {data.get('clip_quantile')}")
                 stripe_hist = data["hist"]
                 if len(stripe_hist) != hist_bins:
                     raise RuntimeError(f"Stripe {s} histogram has {len(stripe_hist)} bins, expected {hist_bins}")
@@ -290,6 +312,7 @@ def handle_merge(params):
             "version": 1,
             "job_id": job_id,
             "metric": metric,
+            "clip_quantile": solve_score_quantile,
             "hist_bins": hist_bins,
             "final_bins": final_bins,
             "clip_lo": clip_data["clip_lo"],

@@ -419,6 +419,121 @@ class TestColorOrchestrator(unittest.TestCase):
         assert "real_axis_proximity" in raster_payloads[0]["solve_score_bins_key"]
 
 
+    @patch("handler_render_orchestrator.ddb")
+    @patch("handler_render_orchestrator.lambda_client")
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator._storage_call")
+    def test_solve_score_quantile_in_all_payloads(
+        self, mock_storage, mock_report, mock_lambda, mock_ddb
+    ):
+        """Non-default solve_score_quantile passes through clip, hist, merge, raster."""
+        mock_storage.side_effect = lambda path, body: (
+            {"deleted": 0} if "clean" in path else
+            {"job_id": "j", "calc": {
+                "degree": 5, "n_stripes": 2, "n_chunks": 2,
+                "lores": {"bin_key": "renders/j/lores.bin"}
+            }} if "detail" in path else {}
+        )
+        mock_ddb.query.return_value = _mock_poll_done(100)
+
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_q", "mode": "color",
+            "params": {
+                "pix": 512, "fmt": "jpeg", "quality": 90,
+                "view_mode": "square", "square_extent": 2.0,
+                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
+                "solve_metric": "proximity",
+                "solve_score_quantile": 0.01,
+                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
+            }
+        })
+        handler(event, None)
+
+        all_payloads = [
+            json.loads(c[1].get("Payload", b"{}"))
+            for c in mock_lambda.invoke.call_args_list
+        ]
+        clip = [p for p in all_payloads if p.get("phase") == "clip"]
+        hist = [p for p in all_payloads if p.get("phase") == "hist"]
+        merge = [p for p in all_payloads if p.get("phase") == "merge"
+                 and "solve_score_merge" in p.get("task_id", "")]
+        raster = [p for p in all_payloads
+                  if "raster_" in p.get("task_id", "")
+                  and "solve_score" not in p.get("task_id", "")]
+
+        assert len(clip) == 1, f"expected 1 clip, got {len(clip)}"
+        assert clip[0]["solve_score_quantile"] == 0.01
+        assert len(hist) == 2, f"expected 2 hist, got {len(hist)}"
+        for h in hist:
+            assert h["solve_score_quantile"] == 0.01
+        assert len(merge) == 1, f"expected 1 merge, got {len(merge)}"
+        assert merge[0]["solve_score_quantile"] == 0.01
+        assert len(raster) == 2, f"expected 2 raster, got {len(raster)}"
+        for r in raster:
+            assert r["solve_score_quantile"] == 0.01
+
+    @patch("handler_render_orchestrator.ddb")
+    @patch("handler_render_orchestrator.lambda_client")
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator._storage_call")
+    def test_solve_score_quantile_too_low_fails(
+        self, mock_storage, mock_report, mock_lambda, mock_ddb
+    ):
+        """solve_score_quantile below 0.001 raises."""
+        mock_storage.side_effect = lambda path, body: (
+            {"deleted": 0} if "clean" in path else
+            {"job_id": "j", "calc": {
+                "degree": 5, "n_stripes": 2, "n_chunks": 2,
+                "lores": {"bin_key": "renders/j/lores.bin"}
+            }} if "detail" in path else {}
+        )
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_qlo", "mode": "color",
+            "params": {
+                "pix": 512, "fmt": "jpeg", "quality": 90,
+                "view_mode": "square", "square_extent": 2.0,
+                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
+                "solve_metric": "proximity",
+                "solve_score_quantile": 0.0001,
+                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
+            }
+        })
+        with self.assertRaises(RuntimeError):
+            handler(event, None)
+
+    @patch("handler_render_orchestrator.ddb")
+    @patch("handler_render_orchestrator.lambda_client")
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator._storage_call")
+    def test_solve_score_quantile_too_high_fails(
+        self, mock_storage, mock_report, mock_lambda, mock_ddb
+    ):
+        """solve_score_quantile above 0.05 raises."""
+        mock_storage.side_effect = lambda path, body: (
+            {"deleted": 0} if "clean" in path else
+            {"job_id": "j", "calc": {
+                "degree": 5, "n_stripes": 2, "n_chunks": 2,
+                "lores": {"bin_key": "renders/j/lores.bin"}
+            }} if "detail" in path else {}
+        )
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_qhi", "mode": "color",
+            "params": {
+                "pix": 512, "fmt": "jpeg", "quality": 90,
+                "view_mode": "square", "square_extent": 2.0,
+                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
+                "solve_metric": "proximity",
+                "solve_score_quantile": 0.1,
+                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
+            }
+        })
+        with self.assertRaises(RuntimeError):
+            handler(event, None)
+
+
 class TestBilevelOrchestrator(unittest.TestCase):
 
     @patch("handler_render_orchestrator.ddb")

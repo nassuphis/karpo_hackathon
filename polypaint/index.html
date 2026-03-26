@@ -364,7 +364,7 @@ button {
                 <div class="color-row">
                     <span class="color-dot" data-mode="solve_score" onclick="setColorMode('solve_score')"></span>
                     <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('solve_score')">Solve score</span>
-                    <select id="render-solve-score" onchange="setSolveMetric(this.value)" style="font-size:10px; margin-left:6px; width:90px">
+                    <select id="render-solve-score" onchange="setSolveMetric(this.value)" style="font-size:10px; margin-left:6px; width:108px">
                         <option value="proximity">Proximity</option>
                         <option value="crowding">Crowding</option>
                         <option value="spread">Spread</option>
@@ -377,6 +377,12 @@ button {
                         <option value="real_axis_proximity">Real-axis proximity</option>
                     </select>
                     <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:6px"></div>
+                </div>
+                <div class="color-row" style="padding-left:18px">
+                    <label style="color:#888; font-size:10px; min-width:70px">Score clip q:</label>
+                    <span id="render-solve-score-quantile-val" style="font-size:10px; display:inline-block; width:2.5em; text-align:right">0.1</span><span style="font-size:10px">%</span>
+                    <input type="range" id="render-solve-score-quantile" min="0.1" max="5.0" step="0.1" value="0.1" style="width:120px; margin-left:4px"
+                        oninput="document.getElementById('render-solve-score-quantile-val').textContent=parseFloat(this.value).toFixed(1)">
                 </div>
                 <div class="color-row">
                     <span class="color-dot" data-mode="constant" onclick="setColorMode('constant')"></span>
@@ -803,6 +809,11 @@ const PALETTE_DEFS = [
     { name: 'cividis',  stops: ['#00204c','#31446b','#666870','#958f78','#cebe5a','#fde724'] },
     { name: 'warm',     stops: ['#6e40aa','#e04f7e','#f19938','#c3e032','#aff05b','#aff05b'] },
     { name: 'cool',     stops: ['#6e40aa','#4775de','#1bb5a8','#52f667','#aff05b','#aff05b'] },
+    { name: 'bwred',    stops: ['#2166ac','#67a9cf','#c7e5f4','#fde0dd','#e57e6b','#960612'] },
+    { name: 'neon_v',   stops: ['#ff0080','#550070','#0f0519','#1d1e4b','#5a8cd2','#8cffff'] },
+    { name: 'gilded',   stops: ['#ffd700','#c89b14','#64142d','#2d0a19','#9119b4','#dc64ff'] },
+    { name: 'reef',     stops: ['#00ffdc','#008c8c','#0a2340','#0c1223','#a04b0f','#ffc832'] },
+    { name: 'abyss',    stops: ['#beff32','#6e9e1c','#1e2616','#0a0f14','#371c64','#d26eff'] },
 ];
 
 function setColorMode(mode) {
@@ -1159,6 +1170,7 @@ function _renderCommonParams() {
         shim: parseFloat(document.getElementById('render-shim').value) / 100,
         squareExtent: parseFloat(document.getElementById('render-square-extent').value) || 2.0,
         constantColor: document.getElementById('render-constant-color').value.replace('#', ''),
+        solveScoreQuantile: parseFloat(document.getElementById('render-solve-score-quantile').value) / 100,
         tileSize: parseInt(document.getElementById('sparse-tile-size').value),
         rotation: (() => {
             const turns = parseFloat(document.getElementById('render-rotation').value) || 0;
@@ -1224,6 +1236,7 @@ async function _launchRenderOrchestrator(mode) {
             constant_color: p.constantColor,
             color_mode: renderColorMode,
             solve_metric: renderColorMode === 'solve_score' ? renderSolveMetric : undefined,
+            solve_score_quantile: renderColorMode === 'solve_score' ? p.solveScoreQuantile : undefined,
             match_mode: renderMatchMode,
             palette: _activeRenderPalette() || 'inferno',
             root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,

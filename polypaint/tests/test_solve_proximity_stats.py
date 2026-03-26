@@ -501,7 +501,36 @@ def test_hist_clusteriness():
 
 
 # ================================================================
-# 12. Hist for non-proximity metric (spread)
+# 12. Clip quantile narrows range
+# ================================================================
+
+def test_clip_quantile_narrows_range():
+    """Wider quantile clip (q=0.05) produces strictly narrower range than q=0.001."""
+    path = "/tmp/sp_test_quantile.bin"
+    solves = []
+    for i in range(200):
+        d = 0.001 + (i / 200.0) * 2.0
+        solves.append([(0.0, 0.0), (d, 0.0)])
+    write_bin(path, solves, 2)
+
+    r_narrow, err = run_clip(path, 2, metric="proximity",
+                             quantile_lo="0.001", quantile_hi="0.999")
+    assert r_narrow is not None, f"narrow clip failed: {err}"
+
+    r_wide, err = run_clip(path, 2, metric="proximity",
+                           quantile_lo="0.05", quantile_hi="0.95")
+    assert r_wide is not None, f"wide clip failed: {err}"
+
+    # q=0.05 should produce a narrower [clip_lo, clip_hi] range
+    narrow_range = r_narrow["clip_hi"] - r_narrow["clip_lo"]
+    wide_range = r_wide["clip_hi"] - r_wide["clip_lo"]
+    assert wide_range < narrow_range, \
+        f"q=0.05 range ({wide_range}) should be narrower than q=0.001 range ({narrow_range})"
+    os.remove(path)
+
+
+# ================================================================
+# 13. Hist for non-proximity metric (spread)
 # ================================================================
 
 def test_hist_spread():
@@ -615,6 +644,8 @@ if __name__ == "__main__":
         # Non-proximity hist
         ("hist clusteriness metric", test_hist_clusteriness),
         ("hist spread metric", test_hist_spread),
+        # Quantile tests
+        ("clip quantile narrows range", test_clip_quantile_narrows_range),
         # Error handling
         ("invalid metric", test_invalid_metric),
         # Root transforms

@@ -1364,6 +1364,19 @@ async function _pollActiveRenderRun() {
         }
 
         const rd = check.results?.[0] || {};
+
+        // No DDB row found — run is stale or TTL'd
+        if (!rd.phase && !rd.phase_label) {
+            const age_ms = Date.now() - (run.started_at_ms || 0);
+            if (age_ms > 120000) {  // >2 min with no row = stale
+                document.getElementById('render-status').textContent = 'Ready';
+                document.getElementById('render-status').className = 'status';
+                _clearActiveRun();
+                stopActiveRenderObserver();
+                return;
+            }
+        }
+
         const phase = rd.phase_label || rd.phase || 'working';
 
         if (check.complete || rd.phase === 'done') {
@@ -1438,8 +1451,13 @@ async function refreshRenderArtifacts(jobIdOverride) {
     try {
         const summary = await lambdaPost('storage', { job_id: jobId }, '/render-summary');
         renderArtifactPanel(jobId, summary);
-        statusEl.textContent = prevStatus;
-        statusEl.className = prevClass;
+        if (!_activeRenderRun) {
+            statusEl.textContent = 'Ready';
+            statusEl.className = 'status ok';
+        } else {
+            statusEl.textContent = prevStatus;
+            statusEl.className = prevClass;
+        }
     } catch (e) {
         statusEl.textContent = 'Refresh failed: ' + e.message;
         statusEl.className = 'status error';

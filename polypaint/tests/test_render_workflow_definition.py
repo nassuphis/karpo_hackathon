@@ -31,7 +31,13 @@ class TestWorkflowDefinition(unittest.TestCase):
 
     def setUp(self):
         self.asl = _load_asl()
-        self.states = self.asl["States"]
+        self.top_states = self.asl["States"]
+        # Inner states live inside the Parallel branch
+        wrapper = self.top_states.get("WorkflowWrapper", {})
+        branches = wrapper.get("Branches", [{}])
+        self.states = branches[0].get("States", {}) if branches else {}
+        # Merge top-level states for tests that check ReportError/Succeed/Fail
+        self.all_states = {**self.top_states, **self.states}
 
     def test_template_parses_as_valid_json(self):
         """ASL template renders to valid JSON."""
@@ -40,11 +46,12 @@ class TestWorkflowDefinition(unittest.TestCase):
         assert len(self.states) > 0
 
     def test_required_top_level_states(self):
-        """Required top-level states exist."""
+        """Required states exist (top-level or inside Parallel branch)."""
         for name in ["CleanRender", "BuildPlan", "ModeChoice",
-                      "ReportDoneColor", "ReportDoneBilevel", "ReportDoneCoeffBilevel",
-                      "Succeed", "ReportError", "Fail"]:
-            assert name in self.states, f"missing state: {name}"
+                      "ReportDoneColor", "ReportDoneBilevel", "ReportDoneCoeffBilevel"]:
+            assert name in self.states, f"missing inner state: {name}"
+        for name in ["Succeed", "ReportError", "Fail", "WorkflowWrapper"]:
+            assert name in self.top_states, f"missing top-level state: {name}"
 
     def test_required_color_states(self):
         """Required color pipeline states exist."""
@@ -106,22 +113,23 @@ class TestWorkflowDefinition(unittest.TestCase):
 
     def test_report_states_use_null_result_path(self):
         """Status/report states must use ResultPath: null."""
-        report_states = [n for n in self.states if "Phase" in n or "Report" in n]
+        report_states = [n for n in self.all_states
+                         if isinstance(self.all_states[n], dict) and ("Phase" in n or "Report" in n)]
         for name in report_states:
-            s = self.states[name]
-            if s["Type"] == "Task":
+            s = self.all_states[name]
+            if s.get("Type") == "Task":
                 assert s.get("ResultPath") is None, \
                     f"{name} must use ResultPath: null, got {s.get('ResultPath')}"
 
     def test_worker_states_do_not_overwrite_plan(self):
         """Worker Task and Map states must not overwrite top-level plan data."""
         worker_states = [n for n in self.states
-                         if "Map" in n or "Task" in n
+                         if isinstance(self.states[n], dict)
+                         and ("Map" in n or "Task" in n)
                          and n not in ("BuildPlan", "ParsePlan")]
         for name in worker_states:
             s = self.states[name]
             rp = s.get("ResultPath")
-            # ResultPath must be null or a sub-path, never "$" (which overwrites everything)
             assert rp != "$", f"{name} overwrites entire state with ResultPath: $"
 
     def test_map_concurrency_set(self):
@@ -147,8 +155,8 @@ class TestWorkflowDefinition(unittest.TestCase):
             assert mc == 32, f"{name} MaxConcurrency={mc}, expected 32"
 
     def test_retry_policy_on_top_level_invoke_states(self):
-        """Top-level Lambda invoke Task states must have retry policy."""
-        for name, s in self.states.items():
+        """Lambda invoke Task states must have retry policy."""
+        for name, s in self.all_states.items():
             if not isinstance(s, dict):
                 continue
             if s.get("Type") == "Task" and "lambda:invoke" in str(s.get("Resource", "")):
@@ -182,6 +190,15 @@ class TestWorkflowDefinition(unittest.TestCase):
 
         coeff = self.states["ReportDoneCoeffBilevel"]
         assert "outputs.coeff_bilevel_key" in json.dumps(coeff)
+
+    def test_parallel_wrapper_catches_all(self):
+        """WorkflowWrapper Parallel must catch States.ALL including States.Runtime."""
+        wrapper = self.top_states["WorkflowWrapper"]
+        assert wrapper["Type"] == "Parallel"
+        catch = wrapper.get("Catch", [])
+        assert len(catch) > 0, "WorkflowWrapper missing Catch"
+        assert "States.ALL" in catch[0]["ErrorEquals"]
+        assert catch[0]["Next"] == "ReportError"
 
     def test_worker_states_target_real_workers(self):
         """Worker states inside Map processors target real worker Lambdas, not intermediaries."""

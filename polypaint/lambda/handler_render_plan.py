@@ -71,21 +71,23 @@ def handler(event, context):
             "tile_w": tw, "tile_h": th,
         })
 
-    # Ensure optional fields always exist (ASL JSONPath crashes on missing paths)
-    if "root_transforms" not in rp:
-        rp["root_transforms"] = []
-    if "rotation" not in rp:
-        rp["rotation"] = 0
-    if "constant_color" not in rp:
-        rp["constant_color"] = "ffffff"
-    if "palette" not in rp:
-        rp["palette"] = "inferno"
-    if "match_mode" not in rp:
-        rp["match_mode"] = "none"
-    if "quality" not in rp:
-        rp["quality"] = 90
-    if "fmt" not in rp:
-        rp["fmt"] = "jpeg"
+    # Ensure ALL fields referenced by ASL JSONPaths exist in params.
+    # ASL crashes with States.Runtime on missing paths — no null fallback.
+    _PARAM_DEFAULTS = {
+        "root_transforms": [],
+        "rotation": 0,
+        "constant_color": "ffffff",
+        "palette": "inferno",
+        "match_mode": "none",
+        "quality": 90,
+        "fmt": "jpeg",
+        "color_mode": "rainbow",
+        "solve_metric": "proximity",
+        "solve_score_quantile": 0.001,
+    }
+    for key, default in _PARAM_DEFAULTS.items():
+        if key not in rp:
+            rp[key] = default
 
     # Normalize solve-score params
     color_mode = rp.get("color_mode", "rainbow")
@@ -135,7 +137,7 @@ def handler(event, context):
         "calc": {
             "degree": degree,
             "n_stripes": n_stripes,
-            "lores_bin_key": calc.get("lores", {}).get("bin_key"),
+            "lores_bin_key": calc.get("lores", {}).get("bin_key", ""),
             "coeffs_keys": calc.get("coeffs_keys", []),
             "n_coeffs": calc.get("n_coeffs", degree + 1),
         },

@@ -1365,12 +1365,24 @@ async function _pollActiveRenderRun() {
 
         const rd = check.results?.[0] || {};
 
-        // No DDB row found — run is stale or TTL'd
+        // No DDB row found or row stuck in non-terminal state
         if (!rd.phase && !rd.phase_label) {
             const age_ms = Date.now() - (run.started_at_ms || 0);
             if (age_ms > 120000) {  // >2 min with no row = stale
                 document.getElementById('render-status').textContent = 'Ready';
                 document.getElementById('render-status').className = 'status';
+                _clearActiveRun();
+                stopActiveRenderObserver();
+                return;
+            }
+        }
+        // Row exists but stuck (updated_at_ms stale for >5 min = execution likely dead)
+        if (rd.updated_at_ms && rd.phase !== 'done' && rd.phase !== 'error') {
+            const stale_ms = Date.now() - rd.updated_at_ms;
+            if (stale_ms > 300000) {
+                document.getElementById('render-status').textContent = 'Render stalled (no progress for 5+ min)';
+                document.getElementById('render-status').className = 'status error';
+                log('Render stalled — SFN execution may have failed silently', 'err', 'render-log');
                 _clearActiveRun();
                 stopActiveRenderObserver();
                 return;

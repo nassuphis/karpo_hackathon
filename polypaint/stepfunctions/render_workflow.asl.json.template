@@ -1,815 +1,613 @@
 {
-  "Comment": "PolyPaint render workflow — color, bilevel, coeff_bilevel pipelines",
-  "StartAt": "CleanRender",
+  "Comment": "PolyPaint render workflow — color, bilevel, coeff_bilevel pipelines. Wrapped in Parallel to catch States.Runtime from parameter resolution errors.",
+  "StartAt": "WorkflowWrapper",
   "States": {
 
-    "CleanRender": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "phase",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "phase": "plan",
-          "phase_label": "Clean + plan"
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "BuildPlan"
-    },
-
-    "BuildPlan": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${PlanFunctionArn}",
-        "Payload.$": "$"
-      },
-      "ResultSelector": {
-        "plan.$": "$.Payload.body"
-      },
-      "ResultPath": "$.plan_raw",
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error_info", "Next": "ReportError"}],
-      "Next": "ParsePlan"
-    },
-
-    "ParsePlan": {
-      "Type": "Pass",
-      "Parameters": {
-        "job_id.$": "$.job_id",
-        "run_id.$": "$.run_id",
-        "task_id.$": "$.task_id",
-        "mode.$": "$.mode",
-        "params.$": "$.params",
-        "plan.$": "States.StringToJson($.plan_raw.plan)"
-      },
-      "Next": "ModeChoice"
-    },
-
-    "ModeChoice": {
-      "Type": "Choice",
-      "Choices": [
-        {"Variable": "$.mode", "StringEquals": "color", "Next": "ColorSolveScoreChoice"},
-        {"Variable": "$.mode", "StringEquals": "bilevel", "Next": "BilevelRasterPhase"},
-        {"Variable": "$.mode", "StringEquals": "coeff_bilevel", "Next": "CoeffRasterPhase"}
-      ],
-      "Default": "ReportError"
-    },
-
-    "ColorSolveScoreChoice": {
-      "Type": "Choice",
-      "Choices": [
-        {"Variable": "$.plan.solve_score.enabled", "BooleanEquals": true, "Next": "ColorSolveScoreClipPhase"}
-      ],
-      "Default": "ColorRasterPhase"
-    },
-
-    "ColorSolveScoreClipPhase": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "phase",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "phase": "solve_score_clip",
-          "phase_label": "Solve score: clip",
-          "expected": 1
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "ColorSolveScoreClipTask"
-    },
-
-    "ColorSolveScoreClipTask": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${SolveProximityFunctionArn}",
-        "Payload": {
-          "phase": "clip",
-          "job_id.$": "$.job_id",
-          "degree.$": "$.plan.calc.degree",
-          "metric.$": "$.plan.solve_score.metric",
-          "solve_score_quantile.$": "$.plan.solve_score.quantile",
-          "lores_bin_key.$": "$.plan.calc.lores_bin_key",
-          "root_transforms.$": "$.plan.params.root_transforms",
-          "out_key.$": "$.plan.solve_score.clip_key",
-          "task_id.$": "States.Format('render_{}_solve_score_clip', $.run_id)"
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error_info", "Next": "ReportError"}],
-      "Next": "ColorSolveScoreHistPhase"
-    },
-
-    "ColorSolveScoreHistPhase": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "phase",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "phase": "solve_score_hist",
-          "phase_label": "Solve score: hist",
-          "expected.$": "$.plan.calc.n_stripes",
-          "subtask_prefix.$": "States.Format('render_{}_solve_score_hist_', $.run_id)"
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "ColorSolveScoreHistMap"
-    },
-
-    "ColorSolveScoreHistMap": {
-      "Type": "Map",
-      "ItemsPath": "$.plan.stripe_items",
-      "MaxConcurrency": 10,
-      "ItemSelector": {
-        "phase": "hist",
-        "job_id.$": "$.job_id",
-        "stripe_idx.$": "$$.Map.Item.Value.stripe_idx",
-        "metric.$": "$.plan.solve_score.metric",
-        "solve_score_quantile.$": "$.plan.solve_score.quantile",
-        "bin_key.$": "States.Format('renders/{}/stripe_{}.bin', $.job_id, $$.Map.Item.Value.stripe_idx)",
-        "degree.$": "$.plan.calc.degree",
-        "clip_key.$": "$.plan.solve_score.clip_key",
-        "hist_bins": 100,
-        "root_transforms.$": "$.plan.params.root_transforms",
-        "out_key.$": "States.Format('{}stripe_{}_hist.json', $.plan.solve_score.hist_prefix, $$.Map.Item.Value.stripe_idx)",
-        "task_id.$": "States.Format('render_{}_solve_score_hist_{}', $.run_id, $$.Map.Item.Value.stripe_idx)"
-      },
-      "ItemProcessor": {
-        "ProcessorConfig": {"Mode": "INLINE"},
-        "StartAt": "SolveHistWorker",
+    "WorkflowWrapper": {
+      "Type": "Parallel",
+      "Branches": [{
+        "StartAt": "CleanRender",
         "States": {
-          "SolveHistWorker": {
+
+          "CleanRender": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "mode.$": "$.mode",
+                "phase": "plan",
+                "phase_label": "Clean + plan"
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "BuildPlan"
+          },
+
+          "BuildPlan": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${PlanFunctionArn}",
+              "Payload.$": "$"
+            },
+            "ResultSelector": {
+              "plan.$": "$.Payload.body"
+            },
+            "ResultPath": "$.plan_raw",
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ParsePlan"
+          },
+
+          "ParsePlan": {
+            "Type": "Pass",
+            "Parameters": {
+              "job_id.$": "$.job_id",
+              "run_id.$": "$.run_id",
+              "task_id.$": "$.task_id",
+              "mode.$": "$.mode",
+              "params.$": "$.params",
+              "plan.$": "States.StringToJson($.plan_raw.plan)"
+            },
+            "Next": "ModeChoice"
+          },
+
+          "ModeChoice": {
+            "Type": "Choice",
+            "Choices": [
+              {"Variable": "$.mode", "StringEquals": "color", "Next": "ColorSolveScoreChoice"},
+              {"Variable": "$.mode", "StringEquals": "bilevel", "Next": "BilevelRasterPhase"},
+              {"Variable": "$.mode", "StringEquals": "coeff_bilevel", "Next": "CoeffRasterPhase"}
+            ],
+            "Default": "InnerFail"
+          },
+
+          "ColorSolveScoreChoice": {
+            "Type": "Choice",
+            "Choices": [
+              {"Variable": "$.plan.solve_score.enabled", "BooleanEquals": true, "Next": "ColorSolveScoreClipPhase"}
+            ],
+            "Default": "ColorRasterPhase"
+          },
+
+          "ColorSolveScoreClipPhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "mode.$": "$.mode",
+                "phase": "solve_score_clip",
+                "phase_label": "Solve score: clip",
+                "expected": 1
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ColorSolveScoreClipTask"
+          },
+
+          "ColorSolveScoreClipTask": {
             "Type": "Task",
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${SolveProximityFunctionArn}",
-              "Payload.$": "$"
+              "Payload": {
+                "phase": "clip",
+                "job_id.$": "$.job_id",
+                "degree.$": "$.plan.calc.degree",
+                "metric.$": "$.plan.solve_score.metric",
+                "solve_score_quantile.$": "$.plan.solve_score.quantile",
+                "lores_bin_key.$": "$.plan.calc.lores_bin_key",
+                "root_transforms.$": "$.plan.params.root_transforms",
+                "out_key.$": "$.plan.solve_score.clip_key",
+                "task_id.$": "States.Format('render_{}_solve_score_clip', $.run_id)"
+              }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "End": true
-          }
-        }
-      },
-      "ResultPath": null,
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error_info", "Next": "ReportError"}],
-      "Next": "ColorSolveScoreMergePhase"
-    },
+            "Next": "ColorSolveScoreHistPhase"
+          },
 
-    "ColorSolveScoreMergePhase": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "phase",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "phase": "solve_score_merge",
-          "phase_label": "Solve score: merge",
-          "expected": 1
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "ColorSolveScoreMergeTask"
-    },
-
-    "ColorSolveScoreMergeTask": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${SolveProximityFunctionArn}",
-        "Payload": {
-          "phase": "merge",
-          "job_id.$": "$.job_id",
-          "n_stripes.$": "$.plan.calc.n_stripes",
-          "metric.$": "$.plan.solve_score.metric",
-          "solve_score_quantile.$": "$.plan.solve_score.quantile",
-          "hist_prefix.$": "$.plan.solve_score.hist_prefix",
-          "clip_key.$": "$.plan.solve_score.clip_key",
-          "out_key.$": "$.plan.solve_score.bins_key",
-          "task_id.$": "States.Format('render_{}_solve_score_merge', $.run_id)"
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error_info", "Next": "ReportError"}],
-      "Next": "ColorRasterPhase"
-    },
-
-    "ColorRasterPhase": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "phase",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "phase": "raster",
-          "phase_label": "Raster",
-          "expected.$": "$.plan.calc.n_stripes",
-          "subtask_prefix.$": "States.Format('render_{}_raster_', $.run_id)"
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "ColorRasterMap"
-    },
-
-    "ColorRasterMap": {
-      "Type": "Map",
-      "ItemsPath": "$.plan.stripe_items",
-      "MaxConcurrency": 10,
-      "ItemSelector": {
-        "job_id.$": "$.job_id",
-        "stripe_idx.$": "$$.Map.Item.Value.stripe_idx",
-        "task_id.$": "States.Format('render_{}_raster_{}', $.run_id, $$.Map.Item.Value.stripe_idx)",
-        "bin_key.$": "States.Format('renders/{}/stripe_{}.bin', $.job_id, $$.Map.Item.Value.stripe_idx)",
-        "width.$": "$.plan.grid.pix",
-        "height.$": "$.plan.grid.pix",
-        "tile_size.$": "$.plan.grid.tile_size",
-        "n_tile_cols.$": "$.plan.grid.n_tile_cols",
-        "n_tile_rows.$": "$.plan.grid.n_tile_rows",
-        "center_re.$": "$.plan.viewport.center_re",
-        "center_im.$": "$.plan.viewport.center_im",
-        "scale.$": "$.plan.viewport.scale",
-        "rotation.$": "$.plan.params.rotation",
-        "degree.$": "$.plan.calc.degree",
-        "color.$": "$.plan.params.color_mode",
-        "match.$": "$.plan.params.match_mode",
-        "palette.$": "$.plan.params.palette",
-        "constant_color.$": "$.plan.params.constant_color",
-        "root_transforms.$": "$.plan.params.root_transforms",
-        "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
-        "solve_metric.$": "$.plan.solve_score.metric",
-        "solve_score_quantile.$": "$.plan.solve_score.quantile"
-      },
-      "ItemProcessor": {
-        "ProcessorConfig": {"Mode": "INLINE"},
-        "StartAt": "RasterWorker",
-        "States": {
-          "RasterWorker": {
+          "ColorSolveScoreHistPhase": {
             "Type": "Task",
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
-              "FunctionName": "${RasterFunctionArn}",
-              "Payload.$": "$"
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "mode.$": "$.mode",
+                "phase": "solve_score_hist",
+                "phase_label": "Solve score: hist",
+                "expected.$": "$.plan.calc.n_stripes",
+                "subtask_prefix.$": "States.Format('render_{}_solve_score_hist_', $.run_id)"
+              }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "End": true
-          }
-        }
-      },
-      "ResultPath": null,
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error_info", "Next": "ReportError"}],
-      "Next": "ColorFinalizePhase"
-    },
+            "Next": "ColorSolveScoreHistMap"
+          },
 
-    "ColorFinalizePhase": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "phase",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "phase": "finalize",
-          "phase_label": "Finalize",
-          "expected.$": "$.plan.grid.n_tiles",
-          "subtask_prefix.$": "States.Format('render_{}_tile_', $.run_id)"
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "ColorFinalizeMap"
-    },
+          "ColorSolveScoreHistMap": {
+            "Type": "Map",
+            "ItemsPath": "$.plan.stripe_items",
+            "MaxConcurrency": 10,
+            "ItemSelector": {
+              "phase": "hist",
+              "job_id.$": "$.job_id",
+              "stripe_idx.$": "$$.Map.Item.Value.stripe_idx",
+              "metric.$": "$.plan.solve_score.metric",
+              "solve_score_quantile.$": "$.plan.solve_score.quantile",
+              "bin_key.$": "States.Format('renders/{}/stripe_{}.bin', $.job_id, $$.Map.Item.Value.stripe_idx)",
+              "degree.$": "$.plan.calc.degree",
+              "clip_key.$": "$.plan.solve_score.clip_key",
+              "hist_bins": 100,
+              "root_transforms.$": "$.plan.params.root_transforms",
+              "out_key.$": "States.Format('{}stripe_{}_hist.json', $.plan.solve_score.hist_prefix, $$.Map.Item.Value.stripe_idx)",
+              "task_id.$": "States.Format('render_{}_solve_score_hist_{}', $.run_id, $$.Map.Item.Value.stripe_idx)"
+            },
+            "ItemProcessor": {
+              "ProcessorConfig": {"Mode": "INLINE"},
+              "StartAt": "SolveHistWorker",
+              "States": {
+                "SolveHistWorker": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": { "FunctionName": "${SolveProximityFunctionArn}", "Payload.$": "$" },
+                  "ResultPath": null,
+                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+                  "End": true
+                }
+              }
+            },
+            "ResultPath": null,
+            "Next": "ColorSolveScoreMergePhase"
+          },
 
-    "ColorFinalizeMap": {
-      "Type": "Map",
-      "ItemsPath": "$.plan.tile_items",
-      "MaxConcurrency": 32,
-      "ItemSelector": {
-        "job_id.$": "$.job_id",
-        "tile_idx.$": "$$.Map.Item.Value.tile_idx",
-        "task_id.$": "States.Format('render_{}_tile_{}', $.run_id, $$.Map.Item.Value.tile_idx)",
-        "tile_row.$": "$$.Map.Item.Value.tile_row",
-        "tile_col.$": "$$.Map.Item.Value.tile_col",
-        "n_stripes.$": "$.plan.calc.n_stripes",
-        "tile_w.$": "$$.Map.Item.Value.tile_w",
-        "tile_h.$": "$$.Map.Item.Value.tile_h",
-        "n_tile_cols.$": "$.plan.grid.n_tile_cols",
-        "n_tile_rows.$": "$.plan.grid.n_tile_rows"
-      },
-      "ItemProcessor": {
-        "ProcessorConfig": {"Mode": "INLINE"},
-        "StartAt": "FinalizeWorker",
-        "States": {
-          "FinalizeWorker": {
+          "ColorSolveScoreMergePhase": {
             "Type": "Task",
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
-              "FunctionName": "${FinalizeFunctionArn}",
-              "Payload.$": "$"
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "mode.$": "$.mode",
+                "phase": "solve_score_merge",
+                "phase_label": "Solve score: merge",
+                "expected": 1
+              }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "End": true
-          }
-        }
-      },
-      "ResultPath": null,
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error_info", "Next": "ReportError"}],
-      "Next": "ColorEncodePhase"
-    },
+            "Next": "ColorSolveScoreMergeTask"
+          },
 
-    "ColorEncodePhase": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "phase",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "phase": "encode",
-          "phase_label": "Encode",
-          "expected": 1
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "ColorEncodeTask"
-    },
+          "ColorSolveScoreMergeTask": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${SolveProximityFunctionArn}",
+              "Payload": {
+                "phase": "merge",
+                "job_id.$": "$.job_id",
+                "n_stripes.$": "$.plan.calc.n_stripes",
+                "metric.$": "$.plan.solve_score.metric",
+                "solve_score_quantile.$": "$.plan.solve_score.quantile",
+                "hist_prefix.$": "$.plan.solve_score.hist_prefix",
+                "clip_key.$": "$.plan.solve_score.clip_key",
+                "out_key.$": "$.plan.solve_score.bins_key",
+                "task_id.$": "States.Format('render_{}_solve_score_merge', $.run_id)"
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ColorRasterPhase"
+          },
 
-    "ColorEncodeTask": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${EncodeFunctionArn}",
-        "Payload": {
-          "job_id.$": "$.job_id",
-          "task_id.$": "States.Format('render_{}_encode', $.run_id)",
-          "out_key.$": "$.plan.outputs.image_key",
-          "format.$": "$.plan.params.fmt",
-          "quality.$": "$.plan.params.quality",
-          "width.$": "$.plan.grid.pix",
-          "height.$": "$.plan.grid.pix",
-          "tile_grid": {
-            "n_cols.$": "$.plan.grid.n_tile_cols",
-            "n_rows.$": "$.plan.grid.n_tile_rows",
-            "tile_keys.$": "$.plan.grid.tile_keys"
-          }
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error_info", "Next": "ReportError"}],
-      "Next": "ReportDoneColor"
-    },
+          "ColorRasterPhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "mode.$": "$.mode",
+                "phase": "raster",
+                "phase_label": "Raster",
+                "expected.$": "$.plan.calc.n_stripes",
+                "subtask_prefix.$": "States.Format('render_{}_raster_', $.run_id)"
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ColorRasterMap"
+          },
 
-    "ReportDoneColor": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "done",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "image_key.$": "$.plan.outputs.image_key"
+          "ColorRasterMap": {
+            "Type": "Map",
+            "ItemsPath": "$.plan.stripe_items",
+            "MaxConcurrency": 10,
+            "ItemSelector": {
+              "job_id.$": "$.job_id",
+              "stripe_idx.$": "$$.Map.Item.Value.stripe_idx",
+              "task_id.$": "States.Format('render_{}_raster_{}', $.run_id, $$.Map.Item.Value.stripe_idx)",
+              "bin_key.$": "States.Format('renders/{}/stripe_{}.bin', $.job_id, $$.Map.Item.Value.stripe_idx)",
+              "width.$": "$.plan.grid.pix",
+              "height.$": "$.plan.grid.pix",
+              "tile_size.$": "$.plan.grid.tile_size",
+              "n_tile_cols.$": "$.plan.grid.n_tile_cols",
+              "n_tile_rows.$": "$.plan.grid.n_tile_rows",
+              "center_re.$": "$.plan.viewport.center_re",
+              "center_im.$": "$.plan.viewport.center_im",
+              "scale.$": "$.plan.viewport.scale",
+              "rotation.$": "$.plan.params.rotation",
+              "degree.$": "$.plan.calc.degree",
+              "color.$": "$.plan.params.color_mode",
+              "match.$": "$.plan.params.match_mode",
+              "palette.$": "$.plan.params.palette",
+              "constant_color.$": "$.plan.params.constant_color",
+              "root_transforms.$": "$.plan.params.root_transforms",
+              "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
+              "solve_metric.$": "$.plan.solve_score.metric",
+              "solve_score_quantile.$": "$.plan.solve_score.quantile"
+            },
+            "ItemProcessor": {
+              "ProcessorConfig": {"Mode": "INLINE"},
+              "StartAt": "RasterWorker",
+              "States": {
+                "RasterWorker": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": { "FunctionName": "${RasterFunctionArn}", "Payload.$": "$" },
+                  "ResultPath": null,
+                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+                  "End": true
+                }
+              }
+            },
+            "ResultPath": null,
+            "Next": "ColorFinalizePhase"
+          },
+
+          "ColorFinalizePhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "mode.$": "$.mode",
+                "phase": "finalize",
+                "phase_label": "Finalize",
+                "expected.$": "$.plan.grid.n_tiles",
+                "subtask_prefix.$": "States.Format('render_{}_tile_', $.run_id)"
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ColorFinalizeMap"
+          },
+
+          "ColorFinalizeMap": {
+            "Type": "Map",
+            "ItemsPath": "$.plan.tile_items",
+            "MaxConcurrency": 32,
+            "ItemSelector": {
+              "job_id.$": "$.job_id",
+              "tile_idx.$": "$$.Map.Item.Value.tile_idx",
+              "task_id.$": "States.Format('render_{}_tile_{}', $.run_id, $$.Map.Item.Value.tile_idx)",
+              "tile_row.$": "$$.Map.Item.Value.tile_row",
+              "tile_col.$": "$$.Map.Item.Value.tile_col",
+              "n_stripes.$": "$.plan.calc.n_stripes",
+              "tile_w.$": "$$.Map.Item.Value.tile_w",
+              "tile_h.$": "$$.Map.Item.Value.tile_h",
+              "n_tile_cols.$": "$.plan.grid.n_tile_cols",
+              "n_tile_rows.$": "$.plan.grid.n_tile_rows"
+            },
+            "ItemProcessor": {
+              "ProcessorConfig": {"Mode": "INLINE"},
+              "StartAt": "FinalizeWorker",
+              "States": {
+                "FinalizeWorker": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": { "FunctionName": "${FinalizeFunctionArn}", "Payload.$": "$" },
+                  "ResultPath": null,
+                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+                  "End": true
+                }
+              }
+            },
+            "ResultPath": null,
+            "Next": "ColorEncodePhase"
+          },
+
+          "ColorEncodePhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "mode.$": "$.mode",
+                "phase": "encode",
+                "phase_label": "Encode",
+                "expected": 1
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ColorEncodeTask"
+          },
+
+          "ColorEncodeTask": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${EncodeFunctionArn}",
+              "Payload": {
+                "job_id.$": "$.job_id",
+                "task_id.$": "States.Format('render_{}_encode', $.run_id)",
+                "out_key.$": "$.plan.outputs.image_key",
+                "format.$": "$.plan.params.fmt",
+                "quality.$": "$.plan.params.quality",
+                "width.$": "$.plan.grid.pix",
+                "height.$": "$.plan.grid.pix",
+                "tile_grid": {
+                  "n_cols.$": "$.plan.grid.n_tile_cols",
+                  "n_rows.$": "$.plan.grid.n_tile_rows",
+                  "tile_keys.$": "$.plan.grid.tile_keys"
+                }
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ReportDoneColor"
+          },
+
+          "ReportDoneColor": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "image_key.$": "$.plan.outputs.image_key" }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "InnerSucceed"
+          },
+
+          "BilevelRasterPhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "bilevel_raster", "phase_label": "BiLevel raster", "expected.$": "$.plan.calc.n_stripes", "subtask_prefix.$": "States.Format('render_{}_bilevel_raster_', $.run_id)" }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "BilevelRasterMap"
+          },
+
+          "BilevelRasterMap": {
+            "Type": "Map",
+            "ItemsPath": "$.plan.stripe_items",
+            "MaxConcurrency": 10,
+            "ItemSelector": {
+              "phase": "raster", "job_id.$": "$.job_id",
+              "stripe_idx.$": "$$.Map.Item.Value.stripe_idx",
+              "task_id.$": "States.Format('render_{}_bilevel_raster_{}', $.run_id, $$.Map.Item.Value.stripe_idx)",
+              "bin_key.$": "States.Format('renders/{}/stripe_{}.bin', $.job_id, $$.Map.Item.Value.stripe_idx)",
+              "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix",
+              "tile_size.$": "$.plan.grid.tile_size", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows",
+              "center_re.$": "$.plan.viewport.center_re", "center_im.$": "$.plan.viewport.center_im", "scale.$": "$.plan.viewport.scale",
+              "rotation.$": "$.plan.params.rotation", "degree.$": "$.plan.calc.degree",
+              "root_transforms.$": "$.plan.params.root_transforms"
+            },
+            "ItemProcessor": { "ProcessorConfig": {"Mode": "INLINE"}, "StartAt": "BilevelRasterWorker", "States": { "BilevelRasterWorker": { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${BilevelFunctionArn}", "Payload.$": "$" }, "ResultPath": null, "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}], "End": true } } },
+            "ResultPath": null, "Next": "BilevelMergePhase"
+          },
+
+          "BilevelMergePhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "bilevel_merge", "phase_label": "BiLevel merge", "expected.$": "$.plan.grid.n_tiles", "subtask_prefix.$": "States.Format('render_{}_bilevel_merge_', $.run_id)" }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "BilevelMergeMap"
+          },
+
+          "BilevelMergeMap": {
+            "Type": "Map",
+            "ItemsPath": "$.plan.tile_items",
+            "MaxConcurrency": 32,
+            "ItemSelector": {
+              "phase": "merge", "job_id.$": "$.job_id",
+              "tile_idx.$": "$$.Map.Item.Value.tile_idx",
+              "task_id.$": "States.Format('render_{}_bilevel_merge_{}', $.run_id, $$.Map.Item.Value.tile_idx)",
+              "tile_row.$": "$$.Map.Item.Value.tile_row", "tile_col.$": "$$.Map.Item.Value.tile_col",
+              "tile_w.$": "$$.Map.Item.Value.tile_w", "tile_h.$": "$$.Map.Item.Value.tile_h",
+              "n_stripes.$": "$.plan.calc.n_stripes", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows",
+              "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix", "tile_size.$": "$.plan.grid.tile_size"
+            },
+            "ItemProcessor": { "ProcessorConfig": {"Mode": "INLINE"}, "StartAt": "BilevelMergeWorker", "States": { "BilevelMergeWorker": { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${BilevelFunctionArn}", "Payload.$": "$" }, "ResultPath": null, "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}], "End": true } } },
+            "ResultPath": null, "Next": "BilevelStitchPhase"
+          },
+
+          "BilevelStitchPhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "bilevel_stitch", "phase_label": "BiLevel stitch", "expected": 1 }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "BilevelStitchTask"
+          },
+
+          "BilevelStitchTask": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${BilevelStitchFunctionArn}",
+              "Payload": { "job_id.$": "$.job_id", "task_id.$": "States.Format('render_{}_bilevel_stitch', $.run_id)", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows", "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix", "tile_size.$": "$.plan.grid.tile_size", "out_key.$": "$.plan.outputs.bilevel_key" }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ReportDoneBilevel"
+          },
+
+          "ReportDoneBilevel": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "image_key.$": "$.plan.outputs.bilevel_key" }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "InnerSucceed"
+          },
+
+          "CoeffRasterPhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "coeff_raster", "phase_label": "Coeffs raster", "expected.$": "$.plan.calc.n_stripes", "subtask_prefix.$": "States.Format('render_{}_coeff_bilevel_raster_', $.run_id)" }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "CoeffRasterMap"
+          },
+
+          "CoeffRasterMap": {
+            "Type": "Map",
+            "ItemsPath": "$.plan.stripe_items",
+            "MaxConcurrency": 10,
+            "ItemSelector": {
+              "phase": "coeff_raster", "job_id.$": "$.job_id",
+              "stripe_idx.$": "$$.Map.Item.Value.stripe_idx",
+              "task_id.$": "States.Format('render_{}_coeff_bilevel_raster_{}', $.run_id, $$.Map.Item.Value.stripe_idx)",
+              "coeffs_key.$": "States.ArrayGetItem($.plan.calc.coeffs_keys, $$.Map.Item.Index)",
+              "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix",
+              "tile_size.$": "$.plan.grid.tile_size", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows",
+              "center_re.$": "$.plan.viewport.center_re", "center_im.$": "$.plan.viewport.center_im", "scale.$": "$.plan.viewport.scale",
+              "rotation.$": "$.plan.params.rotation", "degree.$": "$.plan.calc.degree", "n_coeffs.$": "$.plan.calc.n_coeffs",
+              "root_transforms.$": "$.plan.params.root_transforms"
+            },
+            "ItemProcessor": { "ProcessorConfig": {"Mode": "INLINE"}, "StartAt": "CoeffRasterWorker", "States": { "CoeffRasterWorker": { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${BilevelFunctionArn}", "Payload.$": "$" }, "ResultPath": null, "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}], "End": true } } },
+            "ResultPath": null, "Next": "CoeffMergePhase"
+          },
+
+          "CoeffMergePhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "coeff_merge", "phase_label": "Coeffs merge", "expected.$": "$.plan.grid.n_tiles", "subtask_prefix.$": "States.Format('render_{}_coeff_bilevel_merge_', $.run_id)" }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "CoeffMergeMap"
+          },
+
+          "CoeffMergeMap": {
+            "Type": "Map",
+            "ItemsPath": "$.plan.tile_items",
+            "MaxConcurrency": 32,
+            "ItemSelector": {
+              "phase": "merge", "job_id.$": "$.job_id",
+              "tile_idx.$": "$$.Map.Item.Value.tile_idx",
+              "task_id.$": "States.Format('render_{}_coeff_bilevel_merge_{}', $.run_id, $$.Map.Item.Value.tile_idx)",
+              "tile_row.$": "$$.Map.Item.Value.tile_row", "tile_col.$": "$$.Map.Item.Value.tile_col",
+              "tile_w.$": "$$.Map.Item.Value.tile_w", "tile_h.$": "$$.Map.Item.Value.tile_h",
+              "n_stripes.$": "$.plan.calc.n_stripes", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows",
+              "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix", "tile_size.$": "$.plan.grid.tile_size",
+              "bits_prefix": "coeff_bits", "tile_prefix": "coeff", "task_prefix": "coeff_bilevel_merge"
+            },
+            "ItemProcessor": { "ProcessorConfig": {"Mode": "INLINE"}, "StartAt": "CoeffMergeWorker", "States": { "CoeffMergeWorker": { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${BilevelFunctionArn}", "Payload.$": "$" }, "ResultPath": null, "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}], "End": true } } },
+            "ResultPath": null, "Next": "CoeffStitchPhase"
+          },
+
+          "CoeffStitchPhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "coeff_stitch", "phase_label": "Coeffs stitch", "expected": 1 }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "CoeffStitchTask"
+          },
+
+          "CoeffStitchTask": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${BilevelStitchFunctionArn}",
+              "Payload": { "job_id.$": "$.job_id", "task_id.$": "States.Format('render_{}_coeff_bilevel_stitch', $.run_id)", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows", "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix", "tile_size.$": "$.plan.grid.tile_size", "out_key.$": "$.plan.outputs.coeff_bilevel_key", "tile_prefix": "coeff" }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ReportDoneCoeffBilevel"
+          },
+
+          "ReportDoneCoeffBilevel": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "image_key.$": "$.plan.outputs.coeff_bilevel_key" }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "InnerSucceed"
+          },
+
+          "InnerSucceed": { "Type": "Succeed" },
+          "InnerFail": { "Type": "Fail", "Error": "InvalidMode", "Cause": "Unknown render mode" }
         }
-      },
+      }],
       "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error_info",
+        "Next": "ReportError"
+      }],
       "Next": "Succeed"
     },
 
-    "BilevelRasterPhase": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "phase",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "phase": "bilevel_raster",
-          "phase_label": "BiLevel raster",
-          "expected.$": "$.plan.calc.n_stripes",
-          "subtask_prefix.$": "States.Format('render_{}_bilevel_raster_', $.run_id)"
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "BilevelRasterMap"
-    },
-
-    "BilevelRasterMap": {
-      "Type": "Map",
-      "ItemsPath": "$.plan.stripe_items",
-      "MaxConcurrency": 10,
-      "ItemSelector": {
-        "phase": "raster",
-        "job_id.$": "$.job_id",
-        "stripe_idx.$": "$$.Map.Item.Value.stripe_idx",
-        "task_id.$": "States.Format('render_{}_bilevel_raster_{}', $.run_id, $$.Map.Item.Value.stripe_idx)",
-        "bin_key.$": "States.Format('renders/{}/stripe_{}.bin', $.job_id, $$.Map.Item.Value.stripe_idx)",
-        "width.$": "$.plan.grid.pix",
-        "height.$": "$.plan.grid.pix",
-        "tile_size.$": "$.plan.grid.tile_size",
-        "n_tile_cols.$": "$.plan.grid.n_tile_cols",
-        "n_tile_rows.$": "$.plan.grid.n_tile_rows",
-        "center_re.$": "$.plan.viewport.center_re",
-        "center_im.$": "$.plan.viewport.center_im",
-        "scale.$": "$.plan.viewport.scale",
-        "rotation.$": "$.plan.params.rotation",
-        "degree.$": "$.plan.calc.degree",
-        "root_transforms.$": "$.plan.params.root_transforms"
-      },
-      "ItemProcessor": {
-        "ProcessorConfig": {"Mode": "INLINE"},
-        "StartAt": "BilevelRasterWorker",
-        "States": {
-          "BilevelRasterWorker": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${BilevelFunctionArn}",
-              "Payload.$": "$"
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "End": true
-          }
-        }
-      },
-      "ResultPath": null,
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error_info", "Next": "ReportError"}],
-      "Next": "BilevelMergePhase"
-    },
-
-    "BilevelMergePhase": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "phase",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "phase": "bilevel_merge",
-          "phase_label": "BiLevel merge",
-          "expected.$": "$.plan.grid.n_tiles",
-          "subtask_prefix.$": "States.Format('render_{}_bilevel_merge_', $.run_id)"
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "BilevelMergeMap"
-    },
-
-    "BilevelMergeMap": {
-      "Type": "Map",
-      "ItemsPath": "$.plan.tile_items",
-      "MaxConcurrency": 32,
-      "ItemSelector": {
-        "phase": "merge",
-        "job_id.$": "$.job_id",
-        "tile_idx.$": "$$.Map.Item.Value.tile_idx",
-        "task_id.$": "States.Format('render_{}_bilevel_merge_{}', $.run_id, $$.Map.Item.Value.tile_idx)",
-        "tile_row.$": "$$.Map.Item.Value.tile_row",
-        "tile_col.$": "$$.Map.Item.Value.tile_col",
-        "tile_w.$": "$$.Map.Item.Value.tile_w",
-        "tile_h.$": "$$.Map.Item.Value.tile_h",
-        "n_stripes.$": "$.plan.calc.n_stripes",
-        "n_tile_cols.$": "$.plan.grid.n_tile_cols",
-        "n_tile_rows.$": "$.plan.grid.n_tile_rows",
-        "width.$": "$.plan.grid.pix",
-        "height.$": "$.plan.grid.pix",
-        "tile_size.$": "$.plan.grid.tile_size"
-      },
-      "ItemProcessor": {
-        "ProcessorConfig": {"Mode": "INLINE"},
-        "StartAt": "BilevelMergeWorker",
-        "States": {
-          "BilevelMergeWorker": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${BilevelFunctionArn}",
-              "Payload.$": "$"
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "End": true
-          }
-        }
-      },
-      "ResultPath": null,
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error_info", "Next": "ReportError"}],
-      "Next": "BilevelStitchPhase"
-    },
-
-    "BilevelStitchPhase": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "phase",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "phase": "bilevel_stitch",
-          "phase_label": "BiLevel stitch",
-          "expected": 1
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "BilevelStitchTask"
-    },
-
-    "BilevelStitchTask": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${BilevelStitchFunctionArn}",
-        "Payload": {
-          "job_id.$": "$.job_id",
-          "task_id.$": "States.Format('render_{}_bilevel_stitch', $.run_id)",
-          "n_tile_cols.$": "$.plan.grid.n_tile_cols",
-          "n_tile_rows.$": "$.plan.grid.n_tile_rows",
-          "width.$": "$.plan.grid.pix",
-          "height.$": "$.plan.grid.pix",
-          "tile_size.$": "$.plan.grid.tile_size",
-          "out_key.$": "$.plan.outputs.bilevel_key"
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error_info", "Next": "ReportError"}],
-      "Next": "ReportDoneBilevel"
-    },
-
-    "ReportDoneBilevel": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "done",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "image_key.$": "$.plan.outputs.bilevel_key"
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "Succeed"
-    },
-
-    "CoeffRasterPhase": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "phase",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "phase": "coeff_raster",
-          "phase_label": "Coeffs raster",
-          "expected.$": "$.plan.calc.n_stripes",
-          "subtask_prefix.$": "States.Format('render_{}_coeff_bilevel_raster_', $.run_id)"
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "CoeffRasterMap"
-    },
-
-    "CoeffRasterMap": {
-      "Type": "Map",
-      "ItemsPath": "$.plan.stripe_items",
-      "MaxConcurrency": 10,
-      "ItemSelector": {
-        "phase": "coeff_raster",
-        "job_id.$": "$.job_id",
-        "stripe_idx.$": "$$.Map.Item.Value.stripe_idx",
-        "task_id.$": "States.Format('render_{}_coeff_bilevel_raster_{}', $.run_id, $$.Map.Item.Value.stripe_idx)",
-        "coeffs_key.$": "States.ArrayGetItem($.plan.calc.coeffs_keys, $$.Map.Item.Index)",
-        "width.$": "$.plan.grid.pix",
-        "height.$": "$.plan.grid.pix",
-        "tile_size.$": "$.plan.grid.tile_size",
-        "n_tile_cols.$": "$.plan.grid.n_tile_cols",
-        "n_tile_rows.$": "$.plan.grid.n_tile_rows",
-        "center_re.$": "$.plan.viewport.center_re",
-        "center_im.$": "$.plan.viewport.center_im",
-        "scale.$": "$.plan.viewport.scale",
-        "rotation.$": "$.plan.params.rotation",
-        "degree.$": "$.plan.calc.degree",
-        "n_coeffs.$": "$.plan.calc.n_coeffs",
-        "root_transforms.$": "$.plan.params.root_transforms"
-      },
-      "ItemProcessor": {
-        "ProcessorConfig": {"Mode": "INLINE"},
-        "StartAt": "CoeffRasterWorker",
-        "States": {
-          "CoeffRasterWorker": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${BilevelFunctionArn}",
-              "Payload.$": "$"
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "End": true
-          }
-        }
-      },
-      "ResultPath": null,
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error_info", "Next": "ReportError"}],
-      "Next": "CoeffMergePhase"
-    },
-
-    "CoeffMergePhase": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "phase",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "phase": "coeff_merge",
-          "phase_label": "Coeffs merge",
-          "expected.$": "$.plan.grid.n_tiles",
-          "subtask_prefix.$": "States.Format('render_{}_coeff_bilevel_merge_', $.run_id)"
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "CoeffMergeMap"
-    },
-
-    "CoeffMergeMap": {
-      "Type": "Map",
-      "ItemsPath": "$.plan.tile_items",
-      "MaxConcurrency": 32,
-      "ItemSelector": {
-        "phase": "merge",
-        "job_id.$": "$.job_id",
-        "tile_idx.$": "$$.Map.Item.Value.tile_idx",
-        "task_id.$": "States.Format('render_{}_coeff_bilevel_merge_{}', $.run_id, $$.Map.Item.Value.tile_idx)",
-        "tile_row.$": "$$.Map.Item.Value.tile_row",
-        "tile_col.$": "$$.Map.Item.Value.tile_col",
-        "tile_w.$": "$$.Map.Item.Value.tile_w",
-        "tile_h.$": "$$.Map.Item.Value.tile_h",
-        "n_stripes.$": "$.plan.calc.n_stripes",
-        "n_tile_cols.$": "$.plan.grid.n_tile_cols",
-        "n_tile_rows.$": "$.plan.grid.n_tile_rows",
-        "width.$": "$.plan.grid.pix",
-        "height.$": "$.plan.grid.pix",
-        "tile_size.$": "$.plan.grid.tile_size",
-        "bits_prefix": "coeff_bits",
-        "tile_prefix": "coeff",
-        "task_prefix": "coeff_bilevel_merge"
-      },
-      "ItemProcessor": {
-        "ProcessorConfig": {"Mode": "INLINE"},
-        "StartAt": "CoeffMergeWorker",
-        "States": {
-          "CoeffMergeWorker": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${BilevelFunctionArn}",
-              "Payload.$": "$"
-            },
-            "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "End": true
-          }
-        }
-      },
-      "ResultPath": null,
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error_info", "Next": "ReportError"}],
-      "Next": "CoeffStitchPhase"
-    },
-
-    "CoeffStitchPhase": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "phase",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "phase": "coeff_stitch",
-          "phase_label": "Coeffs stitch",
-          "expected": 1
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "CoeffStitchTask"
-    },
-
-    "CoeffStitchTask": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${BilevelStitchFunctionArn}",
-        "Payload": {
-          "job_id.$": "$.job_id",
-          "task_id.$": "States.Format('render_{}_coeff_bilevel_stitch', $.run_id)",
-          "n_tile_cols.$": "$.plan.grid.n_tile_cols",
-          "n_tile_rows.$": "$.plan.grid.n_tile_rows",
-          "width.$": "$.plan.grid.pix",
-          "height.$": "$.plan.grid.pix",
-          "tile_size.$": "$.plan.grid.tile_size",
-          "out_key.$": "$.plan.outputs.coeff_bilevel_key",
-          "tile_prefix": "coeff"
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error_info", "Next": "ReportError"}],
-      "Next": "ReportDoneCoeffBilevel"
-    },
-
-    "ReportDoneCoeffBilevel": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${StatusFunctionArn}",
-        "Payload": {
-          "action": "done",
-          "job_id.$": "$.job_id",
-          "task_id.$": "$.task_id",
-          "run_id.$": "$.run_id",
-          "mode.$": "$.mode",
-          "image_key.$": "$.plan.outputs.coeff_bilevel_key"
-        }
-      },
-      "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-      "Next": "Succeed"
-    },
-
-    "Succeed": {
-      "Type": "Succeed"
-    },
+    "Succeed": { "Type": "Succeed" },
 
     "ReportError": {
       "Type": "Task",

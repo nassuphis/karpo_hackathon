@@ -1374,20 +1374,43 @@ class TestRenderSummary(unittest.TestCase):
 
         self.assertFalse(body["deepzoom_latest"]["exists"])
 
-    @patch("handler_deepzoom_export.s3")
-    @patch("handler_deepzoom_export.report_status")
-    def test_deepzoom_export_writes_latest_pointer(self, mock_report, mock_s3):
-        """DeepZoom export writes both meta.json and deepzoom_latest.json."""
-        # This is a shape test — we just check put_object is called for both keys
-        put_calls = []
-        mock_s3.put_object.side_effect = lambda **kwargs: put_calls.append(kwargs)
-        # We can't easily run the full handler, so test the write contract directly
-        import handler_deepzoom_export  # just verify the module loads
-        # Check the source contains both writes
-        import inspect
-        src = inspect.getsource(handler_deepzoom_export)
-        self.assertIn("deepzoom_latest.json", src)
-        self.assertIn("meta.json", src)
+    @patch("handler_storage.s3")
+    def test_render_summary_deepzoom_pointer_has_expected_fields(self, mock_s3):
+        """deepzoom_latest.json read returns all expected fields."""
+        from handler_storage import handle_render_summary
+        mock_s3.head_object.side_effect = Exception("NoSuchKey")
+
+        dz_manifest = {
+            "job_id": "j", "export_id": "dz_123",
+            "created_at": "2026-03-26T10:00:00Z",
+            "source_key": "renders/j/image.jpeg",
+            "dzi_key": "deepzoom/j/dz_123/image.dzi",
+            "dzi_url": "https://bucket.s3.amazonaws.com/deepzoom/j/dz_123/image.dzi",
+            "tile_prefix": "deepzoom/j/dz_123/image_files",
+            "width": 8192, "height": 8192,
+            "tiles_uploaded": 400,
+        }
+
+        def mock_get(**kwargs):
+            key = kwargs["Key"]
+            if "deepzoom_latest.json" in key:
+                return {"Body": MagicMock(read=lambda: json.dumps(dz_manifest).encode())}
+            raise Exception("NoSuchKey")
+        mock_s3.get_object.side_effect = mock_get
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+        dz = body["deepzoom_latest"]
+
+        self.assertTrue(dz["exists"])
+        self.assertEqual(dz["export_id"], "dz_123")
+        self.assertEqual(dz["created_at"], "2026-03-26T10:00:00Z")
+        self.assertEqual(dz["source_key"], "renders/j/image.jpeg")
+        self.assertEqual(dz["dzi_url"], "https://bucket.s3.amazonaws.com/deepzoom/j/dz_123/image.dzi")
+        self.assertEqual(dz["width"], 8192)
+        self.assertEqual(dz["height"], 8192)
+        self.assertEqual(dz["tiles_uploaded"], 400)
+        mock_s3.get_paginator.assert_not_called()
 
 
 if __name__ == "__main__":

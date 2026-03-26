@@ -790,6 +790,7 @@ setup_api_gateway() {
     ensure_route "POST /list-prefix" "$STORAGE_INT"
     ensure_route "POST /head-keys" "$STORAGE_INT"
     ensure_route "POST /delete-task" "$STORAGE_INT"
+    ensure_route "POST /render-summary" "$STORAGE_INT"
     ensure_route "POST /dispatch-render" "$DISPATCH_INT"
 
     # Get API URL and write config.json

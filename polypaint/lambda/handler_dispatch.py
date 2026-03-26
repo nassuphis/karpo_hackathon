@@ -31,6 +31,7 @@ FUNCTIONS = {
     "sweep_cm": os.environ.get("SWEEP_CM_FUNCTION", "polypaint-sweep-cm"),
     "render_preview": os.environ.get("RENDER_PREVIEW_FUNCTION", "polypaint-render-preview"),
     "solve_proximity": os.environ.get("SOLVE_PROXIMITY_FUNCTION", "polypaint-solve-proximity"),
+    "render_orchestrator": os.environ.get("RENDER_ORCHESTRATOR_FUNCTION", "polypaint-render-orchestrator"),
 }
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_WORKERS = int(os.environ.get("DISPATCH_THREADS", "50"))

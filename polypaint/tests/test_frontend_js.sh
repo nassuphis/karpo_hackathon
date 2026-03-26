@@ -62,6 +62,7 @@ const docStub = {
     body: _mkEl(),
     head: _mkEl(),
     addEventListener() {},
+    visibilityState: 'visible',
     createEvent() { return { initEvent() {} }; },
 };
 
@@ -69,7 +70,14 @@ const docStub = {
 const ctx = {
     console,
     document: docStub,
-    localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
+    localStorage: (() => {
+        const store = {};
+        return {
+            getItem(k) { return store[k] || null; },
+            setItem(k, v) { store[k] = v; },
+            removeItem(k) { delete store[k]; },
+        };
+    })(),
     performance: { now() { return Date.now(); } },
     AudioContext: class { constructor() {} },
     OfflineAudioContext: class { constructor() {} },
@@ -101,6 +109,8 @@ const ctx = {
     _elements,
     _mkEl,
 };
+ctx.addEventListener = function() {};
+ctx.removeEventListener = function() {};
 ctx.window = ctx;
 ctx.globalThis = ctx;
 ctx.self = ctx;
@@ -194,9 +204,9 @@ try {
     process.exit(1);
 }
 
-// Step 7: Render pipeline orchestration smoke test
-// Stubs network/expensive parts, seeds DOM state, runs runRasterPipeline()
-// to catch scope bugs like STALL_LOG_MS/BATCH_SIZE not defined.
+// Step 7: Render orchestrator launch smoke test
+// Verifies that runRasterPipeline/runBilevelPipeline/runCoeffBilevelPipeline
+// each dispatch one render_orchestrator job and don't dispatch worker phases directly.
 console.log('');
 console.log('--- Render pipeline orchestration ---');
 
@@ -245,6 +255,7 @@ vm.runInContext(`
     lambdaPost = async function lambdaPost(name, body, path) {
         if (name === 'storage' && path === '/clean-render') return { deleted: 0 };
         if (name === 'viewport') return { q_re: [-2, 2], q_im: [-2, 2], scale: 256, pix: 1024, n_roots: 1000 };
+        if (name === 'dispatch' && body.target === 'render_orchestrator') return { fired: 1, errors: [] };
         if (name === 'dispatch' && body.target === 'finalize') return { fired: body.jobs.length, errors: [] };
         if (name === 'dispatch' && body.target === 'bilevel_stitch') return { fired: 1, errors: [] };
         if (name === 'dispatch' && body.target === 'bilevel') return { fired: body.jobs.length, errors: [] };
@@ -266,7 +277,8 @@ vm.runInContext(`
             return { errors: 0, done: 1, complete: true, status_counts: { done: 1 } };
         }
         if (name === 'storage' && path === '/check-status') {
-            return { errors: 0, done: body.expected || 1, complete: true, status_counts: { done: body.expected || 1 } };
+            return { errors: 0, done: body.expected || 1, complete: true, status_counts: { done: body.expected || 1 },
+                results: [{ phase: 'done', phase_label: 'Done' }] };
         }
         if (name === 'storage' && path === '/save-metadata') return { ok: true };
         if (name === 'storage') return { ok: true };
@@ -278,8 +290,10 @@ vm.runInContext(`
     performance = { now: function() { _fakeNow += 35000; return _fakeNow; } };
 `, ctx);
 
-// setTimeout must resolve promises (for await new Promise(r => setTimeout(r, ms)))
+// setTimeout/setInterval must resolve promises and run callbacks for the observer
 ctx.setTimeout = (fn) => { if (typeof fn === 'function') fn(); return 0; };
+ctx.setInterval = (fn, ms) => { if (typeof fn === 'function') fn(); return 42; };
+ctx.clearInterval = () => {};
 
 async function testPipeline(name, call) {
     vm.runInContext('_tilePolls = 0; _encodePolls = 0; _fakeNow = 0;', ctx);
@@ -971,26 +985,26 @@ async function testPipeline(name, call) {
         } catch (e) { console.error('FATAL: _ensureSolveProximityBins: ' + e.message); process.exit(1); }
     }
 
-    // 11h: runRasterPipeline in solve_proximity mode includes bins key in raster jobs
+    // 11h: runRasterPipeline in solve_proximity mode dispatches orchestrator with correct params
     {
         vm.runInContext(`
             renderColorMode = 'solve_proximity';
             renderSolveProximityPalette = 'plasma';
-            _lastCalcMeta = { job_id: 'test_sp2', degree: 10, n_stripes: 2, n_chunks: 2,
-                lores: { bin_key: 'renders/test_sp2/lores.bin' } };
-            var _rasterJobsSeen = [];
-            var _origBDP = _bilevelDispatchAndPoll;
-            _bilevelDispatchAndPoll = async function(opts) {
-                if (opts.target === 'raster') {
-                    _rasterJobsSeen = opts.jobs;
+            var _lastOrchPayload = null;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch' && body.target === 'render_orchestrator') {
+                    _lastOrchPayload = body.jobs[0];
+                    return { fired: 1, errors: [] };
                 }
-                return 1234;
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: 1, complete: true, status_counts: { done: 1 },
+                        results: [{ phase: 'done', phase_label: 'Done' }] };
+                }
+                return {};
             };
-            // Stub _ensureSolveProximityBins to return a known key
-            _ensureSolveProximityBins = async function() { return 'renders/test_sp2/solve_proximity_bins.json'; };
+            refreshRenderArtifacts = async function() {};
         `, ctx);
 
-        // Seed render DOM state and full pipeline mocks
         ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_sp2' };
         ctx._elements['render-status'].textContent = '';
         ctx._elements['render-pix'] = { ...ctx._mkEl(), value: '512' };
@@ -1003,61 +1017,119 @@ async function testPipeline(name, call) {
         ctx._elements['render-quantile'] = { ...ctx._mkEl(), value: '1' };
         ctx._elements['render-shim'] = { ...ctx._mkEl(), value: '5' };
         ctx._elements['btn-raster-all'] = ctx._mkEl();
+        vm.runInContext("_viewMode = 'square'; _rtChain = [];", ctx);
+
+        try {
+            await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx);
+        } catch (e) {}
+
+        const payload = vm.runInContext('_lastOrchPayload', ctx);
+        if (!payload) { console.error('FATAL: no orchestrator dispatch for solve_proximity'); process.exit(1); }
+        if (payload.mode !== 'color') { console.error('FATAL: orchestrator mode should be color, got ' + payload.mode); process.exit(1); }
+        if (payload.params.color_mode !== 'solve_proximity') {
+            console.error('FATAL: orchestrator color_mode should be solve_proximity, got ' + payload.params.color_mode);
+            process.exit(1);
+        }
+        if (payload.params.palette !== 'plasma') {
+            console.error('FATAL: orchestrator palette should be plasma, got ' + payload.params.palette);
+            process.exit(1);
+        }
+        console.log('  orchestrator dispatch in solve_proximity: OK (mode=color, color_mode=solve_proximity, palette=plasma)');
+
+        vm.runInContext("renderColorMode = 'rainbow';", ctx);
+    }
+
+    // Step 12: Orchestrator launch + observer tests (spec section 20.3)
+    console.log('');
+    console.log('--- Orchestrator launch + observer ---');
+
+    // 12a: runRasterPipeline dispatches one render_orchestrator job
+    {
+        let orchDispatched = null;
         vm.runInContext(`
-            _viewMode = 'square';
-            _rtChain = [];
-            _fakeNow = 0;
-            // Mock lambdaPost for the full pipeline after solve proximity prepass
+            renderColorMode = 'rainbow';
+            var _orchDispatched = null;
             lambdaPost = async function lambdaPost(name, body, path) {
-                if (name === 'storage' && path === '/clean-render') return { deleted: 0 };
-                if (name === 'storage' && path === '/delete-task') return {};
-                if (name === 'storage' && path === '/check-status') {
-                    return { errors: 0, done: body.expected || 1, complete: true, status_counts: { done: body.expected || 1 }, results: [] };
+                if (name === 'dispatch' && body.target === 'render_orchestrator') {
+                    _orchDispatched = body.jobs[0];
+                    return { fired: 1, errors: [] };
                 }
-                if (name === 'dispatch') return { fired: body.jobs.length, errors: [] };
-                if (name === 'storage' && path === '/save-metadata') return {};
-                if (name === 'viewport') return { q_re: [-2,2], q_im: [-2,2], scale: 256, pix: 512, n_roots: 100 };
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: 1, complete: true, results: [{ phase: 'done' }] };
+                }
                 return {};
             };
             refreshRenderArtifacts = async function() {};
         `, ctx);
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_orch' };
+        ctx._elements['render-status'].textContent = '';
+        ctx._elements['btn-raster-all'] = ctx._mkEl();
+        vm.runInContext("_viewMode = 'square'; _rtChain = [];", ctx);
+        await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx);
+        orchDispatched = vm.runInContext('_orchDispatched', ctx);
+        if (!orchDispatched) { console.error('FATAL: runRasterPipeline did not dispatch orchestrator'); process.exit(1); }
+        if (orchDispatched.mode !== 'color') { console.error('FATAL: mode should be color, got ' + orchDispatched.mode); process.exit(1); }
+        console.log('  12a runRasterPipeline dispatches orchestrator: OK (mode=color)');
+    }
 
-        try {
-            await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx);
-        } catch (e) {
-            // May throw on finalize/encode stubs — that's OK
+    // 12b: runBilevelPipeline dispatches one render_orchestrator job
+    {
+        vm.runInContext('_orchDispatched = null;', ctx);
+        ctx._elements['btn-bilevel'] = ctx._mkEl();
+        await vm.runInContext('(async()=>{ await runBilevelPipeline(); })()', ctx);
+        const orch = vm.runInContext('_orchDispatched', ctx);
+        if (!orch) { console.error('FATAL: runBilevelPipeline did not dispatch orchestrator'); process.exit(1); }
+        if (orch.mode !== 'bilevel') { console.error('FATAL: mode should be bilevel, got ' + orch.mode); process.exit(1); }
+        console.log('  12b runBilevelPipeline dispatches orchestrator: OK (mode=bilevel)');
+    }
+
+    // 12c: runCoeffBilevelPipeline dispatches one render_orchestrator job
+    {
+        vm.runInContext('_orchDispatched = null;', ctx);
+        ctx._elements['btn-coeff-bilevel'] = ctx._mkEl();
+        await vm.runInContext('(async()=>{ await runCoeffBilevelPipeline(); })()', ctx);
+        const orch = vm.runInContext('_orchDispatched', ctx);
+        if (!orch) { console.error('FATAL: runCoeffBilevelPipeline did not dispatch orchestrator'); process.exit(1); }
+        if (orch.mode !== 'coeff_bilevel') { console.error('FATAL: mode should be coeff_bilevel, got ' + orch.mode); process.exit(1); }
+        console.log('  12c runCoeffBilevelPipeline dispatches orchestrator: OK (mode=coeff_bilevel)');
+    }
+
+    // 12d: browser no longer dispatches raster/finalize/encode/stitch directly
+    {
+        // Search the source for direct dispatch of worker phases in the new launch functions
+        const launchCode = [
+            vm.runInContext('runRasterPipeline.toString()', ctx),
+            vm.runInContext('runBilevelPipeline.toString()', ctx),
+            vm.runInContext('runCoeffBilevelPipeline.toString()', ctx),
+        ].join('\n');
+        const forbidden = ["target: 'raster'", "target: 'finalize'", "target: 'encode'", "target: 'bilevel_stitch'"];
+        const found = forbidden.filter(f => launchCode.includes(f));
+        if (found.length) {
+            console.error('FATAL: launch functions still dispatch worker phases: ' + found.join(', '));
+            process.exit(1);
         }
+        console.log('  12d no direct worker dispatch in launch functions: OK');
+    }
 
-        const statusText = ctx._elements['render-status'].textContent || '';
-        // Check if raster jobs were created with the bins key
-        const rasterJobs = vm.runInContext('_rasterJobsSeen', ctx);
-        if (rasterJobs && rasterJobs.length > 0) {
-            const j0 = rasterJobs[0];
-            if (j0.solve_proximity_bins_key !== 'renders/test_sp2/solve_proximity_bins.json') {
-                console.error('FATAL: raster job missing bins key: ' + JSON.stringify(j0.solve_proximity_bins_key));
-                process.exit(1);
-            }
-            if (j0.color !== 'solve_proximity') {
-                console.error('FATAL: raster job color should be solve_proximity, got ' + j0.color);
-                process.exit(1);
-            }
-            if (j0.palette !== 'plasma') {
-                console.error('FATAL: raster job palette should be plasma, got ' + j0.palette);
-                process.exit(1);
-            }
-            console.log('  raster jobs in solve_proximity mode: OK (bins_key, color, palette=plasma)');
-        } else {
-            // Raster jobs might not have been seen if pipeline errored before raster phase
-            // Check status for errors
-            if (statusText.includes('error') || statusText.includes('Error')) {
-                console.error('FATAL: pipeline error: ' + statusText);
-                process.exit(1);
-            }
-            console.log('  raster jobs: SKIP (pipeline did not reach raster phase)');
-        }
+    // 12e: active run record written to localStorage
+    {
+        const stored = ctx.localStorage.getItem('polypaint_active_render_run');
+        // After the runs above, localStorage should have been written (then cleared on 'done')
+        // The mock returns done immediately, so it gets cleared. Check that _saveActiveRun exists and works.
+        vm.runInContext("_saveActiveRun({job_id:'j',mode:'color',run_id:'r1',task_id:'t1'})", ctx);
+        const val = ctx.localStorage.getItem('polypaint_active_render_run');
+        if (!val) { console.error('FATAL: _saveActiveRun did not write to localStorage'); process.exit(1); }
+        const parsed = JSON.parse(val);
+        if (parsed.run_id !== 'r1') { console.error('FATAL: wrong run_id in localStorage'); process.exit(1); }
+        console.log('  12e active run record in localStorage: OK');
+    }
 
-        // Reset
-        vm.runInContext("renderColorMode = 'rainbow';", ctx);
+    // 12f: _clearActiveRun removes from localStorage
+    {
+        vm.runInContext('_clearActiveRun()', ctx);
+        const val = ctx.localStorage.getItem('polypaint_active_render_run');
+        if (val) { console.error('FATAL: _clearActiveRun did not remove from localStorage'); process.exit(1); }
+        console.log('  12f _clearActiveRun removes localStorage: OK');
     }
 
     console.log('');

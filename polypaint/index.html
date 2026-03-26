@@ -1231,278 +1231,230 @@ function _renderCommonParams() {
     };
 }
 
+
+// ── Render Orchestrator Launchers ────────────────────────────────────────
+// Browser dispatches one orchestrator job, then observes via DDB polling.
+// The backend orchestrator owns all phase transitions.
+
+let _activeRenderRun = null;
+let _renderObserverTimer = null;
+
+function _generateRunId() {
+    const ms = Date.now();
+    const rand = Math.random().toString(36).slice(2, 8);
+    return 'run_' + ms + '_' + rand;
+}
+
+function _saveActiveRun(record) {
+    _activeRenderRun = record;
+    try { localStorage.setItem('polypaint_active_render_run', JSON.stringify(record)); } catch(e) {}
+}
+
+function _clearActiveRun() {
+    _activeRenderRun = null;
+    try { localStorage.removeItem('polypaint_active_render_run'); } catch(e) {}
+}
+
+function _loadActiveRun() {
+    try {
+        const s = localStorage.getItem('polypaint_active_render_run');
+        if (s) return JSON.parse(s);
+    } catch(e) {}
+    return null;
+}
+
+async function _launchRenderOrchestrator(mode) {
+    const p = _renderCommonParams();
+    const runId = _generateRunId();
+    const taskId = 'render_run_' + mode + '_' + runId;
+
+    const orchPayload = {
+        job_id: p.jobId,
+        run_id: runId,
+        mode: mode,
+        params: {
+            pix: p.pix,
+            fmt: p.fmt,
+            quality: p.quality,
+            view_mode: _viewMode,
+            quantile: p.quantile,
+            shim: p.shim,
+            square_extent: p.squareExtent,
+            tile_size: p.tileSize,
+            rotation: p.rotation,
+            constant_color: p.constantColor,
+            color_mode: renderColorMode,
+            match_mode: renderMatchMode,
+            palette: _activeRenderPalette() || 'inferno',
+            root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
+        },
+    };
+
+    // Save active run record
+    const record = {
+        job_id: p.jobId, mode, run_id: runId, task_id: taskId,
+        started_at_ms: Date.now(),
+    };
+    _saveActiveRun(record);
+
+    log('Render: dispatching ' + mode + ' orchestrator (' + runId + ')...', '', 'render-log');
+    document.getElementById('render-status').textContent = 'Dispatching orchestrator...';
+    document.getElementById('render-status').className = 'status';
+
+    // Dispatch via dispatch Lambda
+    const dispResult = await lambdaPost('dispatch', {
+        target: 'render_orchestrator',
+        jobs: [orchPayload],
+        expected_keys: [],
+    });
+    if ((dispResult.fired || 0) !== 1) throw new Error('Orchestrator dispatch failed');
+
+    log('  orchestrator dispatched: ' + runId, 'ok', 'render-log');
+
+    // Start observing
+    startActiveRenderObserver();
+}
+
 async function runRasterPipeline() {
     const btn = document.getElementById('btn-raster-all');
     btn.disabled = true;
     document.getElementById('render-preview').innerHTML = '';
     document.getElementById('render-info').textContent = '';
-    const POLL_TIMEOUT_MS = 600000;
-    const STALL_LOG_MS = 30000;
-
     try {
-        const p = _renderCommonParams();
-        const tileSize = p.tileSize;
-        const nTileCols = Math.ceil(p.pix / tileSize);
-        const nTileRows = Math.ceil(p.pix / tileSize);
-        const nTiles = nTileCols * nTileRows;
-        const colorDesc = renderColorMode === 'constant' ? `constant/#${p.constantColor}` :
-            renderColorMode === 'proximity' ? `proximity/${renderRootProximityPalette}` :
-            renderColorMode === 'solve_proximity' ? `solve_proximity/${renderSolveProximityPalette}` :
-            `rainbow/${renderMatchMode}`;
-
-        // Clean up old render artifacts (.raw/.jpeg/.png/.pix), preserve .bin
-        document.getElementById('render-status').textContent = `Cleaning old render files...`;
-        document.getElementById('render-status').className = 'status';
-        const cleanResult = await lambdaPost('storage', { job_id: p.jobId, pipeline: 'color' }, '/clean-render');
-        if (cleanResult.deleted > 0)
-            log(`  cleaned ${cleanResult.deleted} old render files`, '', 'render-log');
-
-        // Phase 1: viewport
-        const tVp = performance.now();
-        let vpCenterRe, vpCenterIm, scale;
-        if (p.viewMode === 'square') {
-            const ext = p.squareExtent;
-            vpCenterRe = 0; vpCenterIm = 0;
-            scale = p.pix / (2 * ext);
-            log(`Viewport: square ext=${ext} → [${-ext}, ${ext}]`, 'ok', 'render-log');
-        } else {
-            document.getElementById('render-status').textContent = `Computing viewport...`;
-            log(`Viewport: ${p.jobId}, quantile=${(p.quantile*100).toFixed(1)}%, shim=${(p.shim*100).toFixed(1)}%...`, '', 'render-log');
-            const vpData = await lambdaPost('viewport', { job_id: p.jobId, quantile: p.quantile, shim: p.shim });
-            log(`  viewport: ${_fmtMs(performance.now()-tVp)} | ${vpData.n_roots.toLocaleString()} roots`, 'ok', 'render-log');
-            const REF_SIZE = 4096;
-            scale = vpData.scale_ref * Math.min(p.pix, p.pix) / REF_SIZE;
-            vpCenterRe = vpData.center_re;
-            vpCenterIm = vpData.center_im;
-        }
-
-        const calcMeta = await _loadCalcMetaForRender(p.jobId);
-        const nStripes = calcMeta.n_stripes || calcMeta.n_chunks;
-
-        // Solve-proximity prepass: clip → hist → merge
-        let solveProximityBinsKey = null;
-        if (renderColorMode === 'solve_proximity') {
-            solveProximityBinsKey = await _ensureSolveProximityBins({
-                jobId: p.jobId,
-                calcMeta,
-                rootTransforms: p.rootTransforms,
-                degree: calcMeta.degree,
-                nStripes,
-                logTarget: 'render-log',
-            });
-        }
-
-        // Phase 2: Raster — one Lambda per compute stripe
-        const rasterJobs = [];
-        for (let s = 0; s < nStripes; s++) {
-            const job = {
-                job_id: p.jobId, stripe_idx: s,
-                bin_key: `renders/${p.jobId}/stripe_${s}.bin`,
-                width: p.pix, height: p.pix,
-                tile_size: tileSize,
-                n_tile_cols: nTileCols, n_tile_rows: nTileRows,
-                center_re: vpCenterRe, center_im: vpCenterIm,
-                scale, rotation: p.rotation, degree: calcMeta.degree,
-                root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
-                color: renderColorMode, match: renderMatchMode,
-                palette: _activeRenderPalette() || 'inferno', constant_color: p.constantColor,
-            };
-            if (solveProximityBinsKey) job.solve_proximity_bins_key = solveProximityBinsKey;
-            rasterJobs.push(job);
-        }
-
-        log(`Raster: ${p.jobId}, ${p.pix}px ${p.fmt}, ${colorDesc}, ${nStripes} stripes, ${nTileCols}x${nTileRows}=${nTiles} tiles (${tileSize}px)...`, '', 'render-log');
-
-        // Wave dispatch + missing-task re-dispatch (same as bilevel)
-        const rasterMs = await _bilevelDispatchAndPoll({
-            jobs: rasterJobs,
-            jobId: p.jobId,
-            taskPrefix: 'raster_',
-            target: 'raster',
-            label: 'Raster',
-            logTarget: 'render-log',
-        });
-        log(`  raster: ${_fmtMs(rasterMs)} wall (${nStripes} stripes)`, 'ok', 'render-log');
-
-        // Phase 3: Finalize — one Lambda per tile
-        const finalizeJobs = [];
-        const tileKeys = [];
-        for (let t = 0; t < nTiles; t++) {
-            const tRow = Math.floor(t / nTileCols);
-            const tCol = t % nTileCols;
-            const tw = Math.min(tileSize, p.pix - tCol * tileSize);
-            const th = Math.min(tileSize, p.pix - tRow * tileSize);
-            finalizeJobs.push({
-                job_id: p.jobId, tile_idx: t, n_stripes: nStripes,
-                tile_w: tw, tile_h: th,
-            });
-            tileKeys.push(`renders/${p.jobId}/tile_${String(t).padStart(4, '0')}.raw`);
-        }
-
-        log(`Finalize: ${nTiles} tiles (${nTileCols}x${nTileRows})...`, '', 'render-log');
-        document.getElementById('render-status').textContent = `Dispatching ${nTiles} finalize Lambdas...`;
-        const tFinalize = performance.now();
-
-        // Dispatch finalize Lambdas
-        const FINALIZE_BATCH = 50;
-        const finBatches = Math.ceil(finalizeJobs.length / FINALIZE_BATCH);
-        for (let i = 0; i < finalizeJobs.length; i += FINALIZE_BATCH) {
-            const batchNum = Math.floor(i / FINALIZE_BATCH) + 1;
-            const batch = finalizeJobs.slice(i, i + FINALIZE_BATCH);
-            const dispResult = await lambdaPost('dispatch', { target: 'finalize', jobs: batch, expected_keys: [] });
-            if ((dispResult.fired || 0) !== batch.length || (dispResult.errors && dispResult.errors.length)) {
-                throw new Error(
-                    `Finalize dispatch failed batch ${batchNum}: ` +
-                    `fired ${dispResult.fired || 0}/${batch.length}`
-                );
-            }
-            let finDispMsg = `  finalize dispatch ${batchNum}/${finBatches}: ${dispResult.fired}/${batch.length} fired`;
-            if (dispResult.non_202 && dispResult.non_202.length) finDispMsg += ` (${dispResult.non_202.length} non-202: ${JSON.stringify(dispResult.non_202)})`;
-            if (dispResult.errors && dispResult.errors.length) finDispMsg += ` ERRORS: ${JSON.stringify(dispResult.errors)}`;
-            log(finDispMsg, dispResult.errors?.length ? 'warn' : '', 'render-log');
-        }
-
-        // Poll DynamoDB for finalize completion
-        let finLastDone = 0;
-        let finPollCount = 0;
-        let finLastProgress = performance.now();
-        let finLastStallLog = 0;
-        let finLastStatusSig = '';  // track status changes (e.g. reading_10 → reading_20)
-        while (true) {
-            await new Promise(r => setTimeout(r, 3000));
-            finPollCount++;
-            const check = await lambdaPost('storage', {
-                job_id: p.jobId, task_prefix: 'tile_', expected: nTiles,
-            }, '/check-status');
-            if (check.errors > 0) {
-                const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
-                throw new Error(`${check.errors} finalize tasks failed:\n${msgs}`);
-            }
-            // Detect any status change (done count or intermediate status like reading_N)
-            const statusSig = JSON.stringify(check.status_counts || {});
-            const statusChanged = check.done !== finLastDone || statusSig !== finLastStatusSig;
-            if (statusChanged) {
-                if (check.done !== finLastDone) {
-                    const delta = check.done - finLastDone;
-                    log(`  finalize poll #${finPollCount}: ${check.done}/${nTiles} done (+${delta}, ${_fmtMs(performance.now() - tFinalize)})`, '', 'render-log');
-                    finLastDone = check.done;
-                } else {
-                    // Intermediate progress — show what tiles are doing
-                    const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
-                    document.getElementById('render-status').textContent = `Finalizing ${check.done}/${nTiles} tiles... ${stuckInfo}`;
-                }
-                finLastProgress = performance.now();
-                finLastStallLog = 0;
-                finLastStatusSig = statusSig;
-                document.getElementById('render-status').textContent = `Finalizing ${check.done}/${nTiles} tiles...` +
-                    ((check.stuck || []).length ? ' (' + (check.stuck || []).map(s => s.status).join(', ') + ')' : '');
-            }
-            if (check.complete) break;
-            const finStallTime = performance.now() - finLastProgress;
-            if (finStallTime > STALL_LOG_MS && finStallTime - finLastStallLog > STALL_LOG_MS) {
-                finLastStallLog = finStallTime;
-                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
-                const missing = nTiles - (check.done + (check.errors || 0) + (check.stuck || []).length);
-                log(`  ⚠ finalize stall ${_fmtMs(finStallTime)}: ${finLastDone}/${nTiles} done, statuses=${sc}${stuckInfo ? ', stuck: ' + stuckInfo : ''}${missing > 0 ? ', missing from DDB: ' + missing : ''}`, 'warn', 'render-log');
-            }
-            if (finStallTime > POLL_TIMEOUT_MS) {
-                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
-                const missing = nTiles - (check.done + (check.errors || 0) + (check.stuck || []).length);
-                throw new Error(`Finalize stalled: ${finLastDone}/${nTiles} after ${_fmtMs(finStallTime)}, statuses=${sc}, stuck: ${stuckInfo || 'none'}, missing from DDB: ${missing}`);
-            }
-        }
-        const finalizeMs = performance.now() - tFinalize;
-        log(`  finalize: ${_fmtMs(finalizeMs)} wall (${finLastDone}/${nTiles} tiles)`, 'ok', 'render-log');
-
-        // Phase 4: Encode — dispatch async, poll for completion
-        const ext = p.fmt !== 'png' ? 'jpeg' : 'png';
-        document.getElementById('render-status').textContent = `Dispatching encode (${ext})...`;
-        const tEncode = performance.now();
-        const imageKey = `renders/${p.jobId}/image.${ext}`;
-        const encodeJob = {
-            job_id: p.jobId,
-            out_key: imageKey, format: ext, quality: p.quality,
-            width: p.pix, height: p.pix,
-            tile_grid: {
-                n_cols: nTileCols, n_rows: nTileRows,
-                tile_size: tileSize, tile_keys: tileKeys,
-            },
-        };
-
-        // Dispatch encode Lambda asynchronously
-        const encDispResult = await lambdaPost('dispatch', { target: 'encode', jobs: [encodeJob], expected_keys: [] });
-        if ((encDispResult.fired || 0) !== 1) {
-            throw new Error(`Encode dispatch failed: fired ${encDispResult.fired || 0}/1`);
-        }
-        log(`  encode dispatched (${ext})`, '', 'render-log');
-
-        // Poll DynamoDB for encode completion
-        let encPollCount = 0;
-        let encLastProgress = performance.now();
-        let encLastStallLog = 0;
-        while (true) {
-            await new Promise(r => setTimeout(r, 3000));
-            encPollCount++;
-            const check = await lambdaPost('storage', {
-                job_id: p.jobId, task_prefix: 'encode', expected: 1,
-            }, '/check-status');
-            if (check.errors > 0) {
-                const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
-                throw new Error(`Encode failed:\n${msgs}`);
-            }
-            const statusStr = check.status_counts ? Object.entries(check.status_counts).map(([k,v]) => k).join('/') : '';
-            if (statusStr && encPollCount % 3 === 0) {
-                document.getElementById('render-status').textContent = `Encoding... (${statusStr})`;
-            }
-            if (check.complete) break;
-            const encStallTime = performance.now() - encLastProgress;
-            if (encStallTime > STALL_LOG_MS && encStallTime - encLastStallLog > STALL_LOG_MS) {
-                encLastStallLog = encStallTime;
-                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
-                log(`  ⚠ encode stall ${_fmtMs(encStallTime)}: statuses=${sc}${stuckInfo ? ', stuck: ' + stuckInfo : ''}`, 'warn', 'render-log');
-            }
-            if (encStallTime > POLL_TIMEOUT_MS) {
-                const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                const stuckInfo = (check.stuck || []).map(s => `${s.task_id}=${s.status}`).join(', ');
-                throw new Error(`Encode stalled after ${_fmtMs(encStallTime)}, statuses=${sc}, stuck: ${stuckInfo || 'none'}`);
-            }
-        }
-        const encodeMs = performance.now() - tEncode;
-
-        log(`  encode: ${_fmtMs(encodeMs)} (${ext})`, 'ok', 'render-log');
-
-        // Cleanup .pix and tile .raw files (fire-and-forget)
-        const cleanupKeys = [...tileKeys];
-        lambdaPost('storage', { keys: cleanupKeys }, '/cleanup').catch(() => {});
-
-        // Show results
-        const totalMs = performance.now() - tVp;
-        const statusParts = [
-            nStripes + ' stripes',
-            nTiles + ' tiles',
-            'raster ' + _fmtMs(rasterMs),
-            'finalize ' + _fmtMs(finalizeMs),
-            'encode ' + _fmtMs(encodeMs),
-            ext,
-        ];
-        document.getElementById('render-status').textContent = statusParts.join(' | ');
-        document.getElementById('render-status').className = 'status ok';
-
-        _lastDownloadKey = imageKey;
-        await refreshRenderArtifacts(p.jobId);
-        log(`Done: deg${calcMeta.degree} ${p.pix}px, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');
-
+        await _launchRenderOrchestrator('color');
     } catch (e) {
         document.getElementById('render-status').textContent = 'Render error: ' + e.message;
         document.getElementById('render-status').className = 'status error';
-        log(`Render failed: ${e.message}`, 'err', 'render-log');
+        log('Render failed: ' + e.message, 'err', 'render-log');
     } finally {
         btn.disabled = false;
     }
 }
+
+async function runBilevelPipeline() {
+    const btn = document.getElementById('btn-bilevel');
+    const renderBtn = document.getElementById('btn-raster-all');
+    if (btn) btn.disabled = true;
+    if (renderBtn) renderBtn.disabled = true;
+    document.getElementById('render-preview').innerHTML = '';
+    document.getElementById('render-info').textContent = '';
+    try {
+        await _launchRenderOrchestrator('bilevel');
+    } catch (e) {
+        document.getElementById('render-status').textContent = 'BiLevel error: ' + e.message;
+        document.getElementById('render-status').className = 'status error';
+        log('BiLevel failed: ' + e.message, 'err', 'render-log');
+    } finally {
+        if (btn) btn.disabled = false;
+        if (renderBtn) renderBtn.disabled = false;
+    }
+}
+
+async function runCoeffBilevelPipeline() {
+    const btn = document.getElementById('btn-coeff-bilevel');
+    const renderBtn = document.getElementById('btn-raster-all');
+    if (btn) btn.disabled = true;
+    if (renderBtn) renderBtn.disabled = true;
+    document.getElementById('render-preview').innerHTML = '';
+    document.getElementById('render-info').textContent = '';
+    try {
+        await _launchRenderOrchestrator('coeff_bilevel');
+    } catch (e) {
+        document.getElementById('render-status').textContent = 'Coeffs error: ' + e.message;
+        document.getElementById('render-status').className = 'status error';
+        log('Coeffs failed: ' + e.message, 'err', 'render-log');
+    } finally {
+        if (btn) btn.disabled = false;
+        if (renderBtn) renderBtn.disabled = false;
+    }
+}
+
+// ── Render Observer ──────────────────────────────────────────────────────
+
+function startActiveRenderObserver() {
+    stopActiveRenderObserver();
+    _renderObserverTimer = setInterval(_pollActiveRenderRun, 3000);
+    _pollActiveRenderRun(); // immediate first poll
+}
+
+function stopActiveRenderObserver() {
+    if (_renderObserverTimer) {
+        clearInterval(_renderObserverTimer);
+        _renderObserverTimer = null;
+    }
+}
+
+function resumeActiveRenderObserver() {
+    const run = _loadActiveRun();
+    if (!run) return;
+    _activeRenderRun = run;
+    startActiveRenderObserver();
+}
+
+async function _pollActiveRenderRun() {
+    const run = _activeRenderRun || _loadActiveRun();
+    if (!run) { stopActiveRenderObserver(); return; }
+
+    try {
+        const check = await lambdaPost('storage', {
+            job_id: run.job_id, task_prefix: run.task_id, expected: 1,
+        }, '/check-status');
+
+        if (check.errors > 0) {
+            const msg = check.error_details?.[0]?.error_msg || 'unknown error';
+            document.getElementById('render-status').textContent = 'Render error: ' + msg;
+            document.getElementById('render-status').className = 'status error';
+            log('Render failed: ' + msg, 'err', 'render-log');
+            _clearActiveRun();
+            stopActiveRenderObserver();
+            return;
+        }
+
+        const rd = check.results?.[0] || {};
+        const phase = rd.phase_label || rd.phase || 'working';
+        const done = rd.done || 0;
+        const expected = rd.expected || 0;
+
+        if (check.complete || rd.phase === 'done') {
+            document.getElementById('render-status').textContent = 'Render complete';
+            document.getElementById('render-status').className = 'status ok';
+            log('Render complete: ' + (rd.image_key || run.mode), 'ok', 'render-log');
+            _clearActiveRun();
+            stopActiveRenderObserver();
+            refreshRenderArtifacts(run.job_id);
+            return;
+        }
+
+        // Update progress
+        let statusMsg = phase;
+        if (expected > 0) statusMsg += ' ' + done + '/' + expected;
+        document.getElementById('render-status').textContent = statusMsg;
+
+    } catch (e) {
+        // Poll error — keep trying
+    }
+}
+
+// Visibility/focus handlers for observer
+document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') {
+        resumeActiveRenderObserver();
+    } else {
+        stopActiveRenderObserver();
+    }
+});
+window.addEventListener('focus', function() {
+    resumeActiveRenderObserver();
+});
+
+// Restore active run on page load
+(function() {
+    const run = _loadActiveRun();
+    if (run) {
+        _activeRenderRun = run;
+        startActiveRenderObserver();
+    }
+})();
 
 /* ---- Render artifact discovery and UI rendering ---- */
 
@@ -2163,321 +2115,6 @@ async function _bilevelDispatchAndPoll(opts) {
     }
     return performance.now() - t0;
 }
-
-async function runBilevelPipeline() {
-    const btn = document.getElementById('btn-bilevel');
-    const renderBtn = document.getElementById('btn-raster-all');
-    btn.disabled = true;
-    renderBtn.disabled = true;
-    document.getElementById('render-preview').innerHTML = '';
-    document.getElementById('render-info').textContent = '';
-
-    try {
-        const p = _renderCommonParams();
-        p.fmt = 'png';
-
-        const tileSize = p.tileSize;
-        const nTileCols = Math.ceil(p.pix / tileSize);
-        const nTileRows = Math.ceil(p.pix / tileSize);
-        const nTiles = nTileCols * nTileRows;
-
-        // Clean up old render artifacts
-        document.getElementById('render-status').textContent = `BiLevel: cleaning old render files...`;
-        document.getElementById('render-status').className = 'status';
-        const cleanResult = await lambdaPost('storage', { job_id: p.jobId, pipeline: 'bilevel' }, '/clean-render');
-        if (cleanResult.deleted > 0)
-            log(`  cleaned ${cleanResult.deleted} old render files`, '', 'render-log');
-
-        // Phase 0: viewport
-        const tVp = performance.now();
-        let vpCenterRe, vpCenterIm, scale;
-        if (p.viewMode === 'square') {
-            const ext = p.squareExtent;
-            vpCenterRe = 0; vpCenterIm = 0;
-            scale = p.pix / (2 * ext);
-            log(`BiLevel: ${p.jobId}, ${p.pix}px, ${nTileCols}x${nTileRows}=${nTiles} tiles...`, '', 'render-log');
-        } else {
-            document.getElementById('render-status').textContent = `BiLevel: computing viewport...`;
-            log(`BiLevel: ${p.jobId}, ${p.pix}px, ${nTileCols}x${nTileRows}=${nTiles} tiles...`, '', 'render-log');
-            const vpData = await lambdaPost('viewport', { job_id: p.jobId, quantile: p.quantile, shim: p.shim });
-            log(`  viewport: ${_fmtMs(performance.now()-tVp)} | ${vpData.n_roots.toLocaleString()} roots`, 'ok', 'render-log');
-            const REF_SIZE = 4096;
-            scale = vpData.scale_ref * Math.min(p.pix, p.pix) / REF_SIZE;
-            vpCenterRe = vpData.center_re;
-            vpCenterIm = vpData.center_im;
-        }
-
-        let calcMeta = _lastCalcMeta && _lastCalcMeta.job_id === p.jobId ? _lastCalcMeta : null;
-        if (!calcMeta) {
-            const listData = await lambdaPost('storage', {}, '/list');
-            const jobResult = (listData.results || []).find(r => r.job_id === p.jobId);
-            if (!jobResult) throw new Error('Job not found in results');
-            calcMeta = { n_stripes: jobResult.n_stripes || 10, degree: jobResult.degree || 1 };
-        }
-        const nStripes = calcMeta.n_stripes;
-
-        // Phase 1: Raster — one bilevel Lambda per stripe → per-tile .bits files
-        const rasterJobs = [];
-        for (let s = 0; s < nStripes; s++) {
-            rasterJobs.push({
-                phase: 'raster', job_id: p.jobId, stripe_idx: s,
-                width: p.pix, height: p.pix,
-                tile_size: tileSize, n_tile_cols: nTileCols, n_tile_rows: nTileRows,
-                center_re: vpCenterRe, center_im: vpCenterIm,
-                scale, rotation: p.rotation, degree: calcMeta.degree,
-                root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
-            });
-        }
-
-        const rasterMs = await _bilevelDispatchAndPoll({
-            jobs: rasterJobs, jobId: p.jobId, taskPrefix: 'bilevel_raster_',
-            target: 'bilevel', label: 'BiLevel raster', logTarget: 'render-log',
-        });
-        log(`  raster: ${_fmtMs(rasterMs)} wall (${nStripes} stripes)`, 'ok', 'render-log');
-
-        // Phase 2: Merge — one bilevel Lambda per tile, ORs stripe bitsets → tile PNG
-        const mergeJobs = [];
-        for (let t = 0; t < nTiles; t++) {
-            const tRow = Math.floor(t / nTileCols);
-            const tCol = t % nTileCols;
-            const tw = Math.min(tileSize, p.pix - tCol * tileSize);
-            const th = Math.min(tileSize, p.pix - tRow * tileSize);
-            mergeJobs.push({
-                phase: 'merge', job_id: p.jobId, tile_idx: t,
-                tile_w: tw, tile_h: th, n_stripes: nStripes,
-            });
-        }
-
-        const mergeMs = await _bilevelDispatchAndPoll({
-            jobs: mergeJobs, jobId: p.jobId, taskPrefix: 'bilevel_merge_',
-            target: 'bilevel', label: 'BiLevel merge', logTarget: 'render-log',
-        });
-        log(`  merge: ${_fmtMs(mergeMs)} wall (${nTiles} tiles)`, 'ok', 'render-log');
-
-        // Phase 3: Stitch — separate bilevel-stitch Lambda (higher memory, more vCPUs for libvips)
-        const imageKey = `renders/${p.jobId}/image_bilevel.tif`;
-        document.getElementById('render-status').textContent = `BiLevel stitch: assembling final TIFF...`;
-        const tStitch = performance.now();
-        const stitchJob = {
-            job_id: p.jobId,
-            n_tile_cols: nTileCols, n_tile_rows: nTileRows,
-            width: p.pix, height: p.pix, tile_size: tileSize,
-            out_key: imageKey,
-        };
-        const stitchDisp = await lambdaPost('dispatch', { target: 'bilevel_stitch', jobs: [stitchJob], expected_keys: [] });
-        if ((stitchDisp.fired || 0) !== 1) throw new Error(`Stitch dispatch failed: fired ${stitchDisp.fired || 0}/1`);
-        log(`  stitch dispatched`, '', 'render-log');
-
-        // Poll stitch
-        {
-            let pollCount = 0, lastProgressTime = performance.now(), lastStallLog = 0;
-            while (true) {
-                await new Promise(r => setTimeout(r, 3000));
-                pollCount++;
-                const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'bilevel_stitch', expected: 1 }, '/check-status');
-                if (check.errors > 0) {
-                    const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
-                    throw new Error(`Stitch failed:\n${msgs}`);
-                }
-                if (check.complete) break;
-                const stallTime = performance.now() - lastProgressTime;
-                if (stallTime > 30000 && stallTime - lastStallLog > 30000) {
-                    lastStallLog = stallTime;
-                    const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                    log(`  ⚠ stitch stall ${_fmtMs(stallTime)}: statuses=${sc}`, 'warn', 'render-log');
-                }
-                if (stallTime > 900000) throw new Error(`Stitch stalled after ${_fmtMs(stallTime)}`);
-            }
-        }
-        const stitchMs = performance.now() - tStitch;
-        log(`  stitch: ${_fmtMs(stitchMs)}`, 'ok', 'render-log');
-
-        const totalMs = performance.now() - tVp;
-        const statusParts = [
-            'BiLevel', nStripes + ' stripes', nTiles + ' tiles',
-            'raster ' + _fmtMs(rasterMs), 'merge ' + _fmtMs(mergeMs), 'stitch ' + _fmtMs(stitchMs),
-        ];
-        document.getElementById('render-status').textContent = statusParts.join(' | ');
-        document.getElementById('render-status').className = 'status ok';
-
-        _lastDownloadKey = imageKey;
-        await refreshRenderArtifacts(p.jobId);
-        log(`Done: deg${calcMeta.degree} ${p.pix}px bilevel, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');
-
-    } catch (e) {
-        document.getElementById('render-status').textContent = 'BiLevel error: ' + e.message;
-        document.getElementById('render-status').className = 'status error';
-        log(`BiLevel failed: ${e.message}`, 'err', 'render-log');
-    } finally {
-        btn.disabled = false;
-        renderBtn.disabled = false;
-    }
-}
-
-async function runCoeffBilevelPipeline() {
-    const btn = document.getElementById('btn-coeffs');
-    const renderBtn = document.getElementById('btn-raster-all');
-    const bilevelBtn = document.getElementById('btn-bilevel');
-    btn.disabled = true;
-    renderBtn.disabled = true;
-    bilevelBtn.disabled = true;
-    document.getElementById('render-preview').innerHTML = '';
-    document.getElementById('render-info').textContent = '';
-
-    try {
-        const p = _renderCommonParams();
-        p.fmt = 'tif';
-
-        const tileSize = p.tileSize;
-        const nTileCols = Math.ceil(p.pix / tileSize);
-        const nTileRows = Math.ceil(p.pix / tileSize);
-        const nTiles = nTileCols * nTileRows;
-
-        document.getElementById('render-status').textContent = `Coeffs: cleaning old render files...`;
-        document.getElementById('render-status').className = 'status';
-        const cleanResult = await lambdaPost('storage', { job_id: p.jobId, pipeline: 'coeff_bilevel' }, '/clean-render');
-        if (cleanResult.deleted > 0)
-            log(`  cleaned ${cleanResult.deleted} old render files`, '', 'render-log');
-
-        // Phase 0: viewport from lores_coeffs.bin
-        const tVp = performance.now();
-        let vpCenterRe, vpCenterIm, scale;
-        if (p.viewMode === 'square') {
-            const ext = p.squareExtent;
-            vpCenterRe = 0; vpCenterIm = 0;
-            scale = p.pix / (2 * ext);
-            log(`Coeffs: ${p.jobId}, ${p.pix}px, ${nTileCols}x${nTileRows}=${nTiles} tiles...`, '', 'render-log');
-        } else {
-            document.getElementById('render-status').textContent = `Coeffs: computing viewport from coefficients...`;
-            log(`Coeffs: ${p.jobId}, ${p.pix}px, ${nTileCols}x${nTileRows}=${nTiles} tiles...`, '', 'render-log');
-            const vpData = await lambdaPost('viewport', { job_id: p.jobId, quantile: p.quantile, shim: p.shim, source: 'coeffs' });
-            log(`  viewport: ${_fmtMs(performance.now()-tVp)} | ${vpData.n_roots.toLocaleString()} points`, 'ok', 'render-log');
-            const REF_SIZE = 4096;
-            scale = vpData.scale_ref * Math.min(p.pix, p.pix) / REF_SIZE;
-            vpCenterRe = vpData.center_re;
-            vpCenterIm = vpData.center_im;
-        }
-
-        // Load full calc.json — Coeffs needs n_coeffs and coeffs_keys
-        // which /list and _lastCalcMeta may not have
-        let calcJson;
-        if (_lastCalcMeta && _lastCalcMeta.job_id === p.jobId && _lastCalcMeta.n_coeffs) {
-            calcJson = _lastCalcMeta;
-        } else {
-            const presignResult = await lambdaPost('storage', { key: `renders/${p.jobId}/calc.json` }, '/presign');
-            const calcResp = await fetch(presignResult.url);
-            if (!calcResp.ok) throw new Error('Cannot load calc.json for this job');
-            calcJson = await calcResp.json();
-        }
-        const nStripes = calcJson.n_stripes || 10;
-        const nCoeffs = calcJson.n_coeffs;
-        if (!nCoeffs) throw new Error('Job metadata missing n_coeffs — was this computed with the current pipeline?');
-        const coeffsKeys = calcJson.coeffs_keys || [];
-
-        // Phase 1: Coeff raster — one Lambda per coeff stripe
-        const rasterJobs = [];
-        for (let s = 0; s < nStripes; s++) {
-            rasterJobs.push({
-                phase: 'coeff_raster', job_id: p.jobId, stripe_idx: s,
-                coeffs_key: coeffsKeys[s] || `renders/${p.jobId}/coeffs_${String(s).padStart(4, '0')}.bin`,
-                width: p.pix, height: p.pix,
-                tile_size: tileSize, n_tile_cols: nTileCols, n_tile_rows: nTileRows,
-                center_re: vpCenterRe, center_im: vpCenterIm,
-                scale, rotation: p.rotation, n_coeffs: nCoeffs,
-            });
-        }
-
-        const rasterMs = await _bilevelDispatchAndPoll({
-            jobs: rasterJobs, jobId: p.jobId, taskPrefix: 'coeff_bilevel_raster_',
-            target: 'bilevel', label: 'Coeffs raster', logTarget: 'render-log',
-        });
-        log(`  coeff raster: ${_fmtMs(rasterMs)} wall (${nStripes} stripes)`, 'ok', 'render-log');
-
-        // Phase 2: Merge — reuse bilevel merge with coeff-specific naming
-        const mergeJobs = [];
-        for (let t = 0; t < nTiles; t++) {
-            const tRow = Math.floor(t / nTileCols);
-            const tCol = t % nTileCols;
-            const tw = Math.min(tileSize, p.pix - tCol * tileSize);
-            const th = Math.min(tileSize, p.pix - tRow * tileSize);
-            mergeJobs.push({
-                phase: 'merge', job_id: p.jobId, tile_idx: t,
-                tile_w: tw, tile_h: th, n_stripes: nStripes,
-                bits_prefix: 'coeff_bits', tile_prefix: 'coeff',
-                task_prefix: 'coeff_bilevel_merge',
-            });
-        }
-
-        const mergeMs = await _bilevelDispatchAndPoll({
-            jobs: mergeJobs, jobId: p.jobId, taskPrefix: 'coeff_bilevel_merge_',
-            target: 'bilevel', label: 'Coeffs merge', logTarget: 'render-log',
-        });
-        log(`  coeff merge: ${_fmtMs(mergeMs)} wall (${nTiles} tiles)`, 'ok', 'render-log');
-
-        // Phase 3: Stitch — reuse bilevel stitch with coeff-specific naming
-        const imageKey = `renders/${p.jobId}/image_coeffs_bilevel.tif`;
-        document.getElementById('render-status').textContent = `Coeffs stitch: assembling final TIFF...`;
-        const tStitch = performance.now();
-        const stitchJob = {
-            job_id: p.jobId,
-            n_tile_cols: nTileCols, n_tile_rows: nTileRows,
-            width: p.pix, height: p.pix, tile_size: tileSize,
-            out_key: imageKey,
-            tile_prefix: 'coeff',
-            task_id: 'coeff_bilevel_stitch',
-        };
-        const stitchDisp = await lambdaPost('dispatch', { target: 'bilevel_stitch', jobs: [stitchJob], expected_keys: [] });
-        if ((stitchDisp.fired || 0) !== 1) throw new Error(`Coeff stitch dispatch failed: fired ${stitchDisp.fired || 0}/1`);
-        log(`  coeff stitch dispatched`, '', 'render-log');
-
-        // Poll coeff stitch
-        {
-            let pollCount = 0, lastProgressTime = performance.now(), lastStallLog = 0;
-            while (true) {
-                await new Promise(r => setTimeout(r, 3000));
-                pollCount++;
-                const check = await lambdaPost('storage', { job_id: p.jobId, task_prefix: 'coeff_bilevel_stitch', expected: 1 }, '/check-status');
-                if (check.errors > 0) {
-                    const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
-                    throw new Error(`Coeff stitch failed:\n${msgs}`);
-                }
-                if (check.complete) break;
-                const stallTime = performance.now() - lastProgressTime;
-                if (stallTime > 30000 && stallTime - lastStallLog > 30000) {
-                    lastStallLog = stallTime;
-                    const sc = check.status_counts ? JSON.stringify(check.status_counts) : '{}';
-                    log(`  ⚠ coeff stitch stall ${_fmtMs(stallTime)}: statuses=${sc}`, 'warn', 'render-log');
-                }
-                if (stallTime > 900000) throw new Error(`Coeff stitch stalled after ${_fmtMs(stallTime)}`);
-            }
-        }
-        const stitchMs = performance.now() - tStitch;
-        log(`  coeff stitch: ${_fmtMs(stitchMs)}`, 'ok', 'render-log');
-
-        const totalMs = performance.now() - tVp;
-        const statusParts = [
-            'Coeffs BiLevel', nStripes + ' stripes', nTiles + ' tiles',
-            'raster ' + _fmtMs(rasterMs), 'merge ' + _fmtMs(mergeMs), 'stitch ' + _fmtMs(stitchMs),
-        ];
-        document.getElementById('render-status').textContent = statusParts.join(' | ');
-        document.getElementById('render-status').className = 'status ok';
-
-        _lastDownloadKey = imageKey;
-        await refreshRenderArtifacts(p.jobId);
-        log(`Done: ${nCoeffs} coeffs ${p.pix}px coeffs bilevel, ${nStripes} stripes, ${nTiles} tiles, total ${_fmtMs(totalMs)}`, 'ok', 'render-log');
-
-    } catch (e) {
-        document.getElementById('render-status').textContent = 'Coeffs error: ' + e.message;
-        document.getElementById('render-status').className = 'status error';
-        log(`Coeffs failed: ${e.message}`, 'err', 'render-log');
-    } finally {
-        btn.disabled = false;
-        renderBtn.disabled = false;
-        bilevelBtn.disabled = false;
-    }
-}
-
-let _lastCalcMeta = null;  // cache last compute metadata for render
 
 async function runParamDebug() {
     const btn = document.getElementById('btn-param-debug');

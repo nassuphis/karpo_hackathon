@@ -41,7 +41,7 @@ def handle_raster(params):
     """One stripe → per-tile bitset files. One Lambda per stripe."""
     job_id = params["job_id"]
     stripe_idx = params["stripe_idx"]
-    task_id = f"bilevel_raster_{stripe_idx}"
+    task_id = params.get("task_id", f"bilevel_raster_{stripe_idx}")
 
     try:
         report_status(job_id, task_id, "started")
@@ -130,7 +130,7 @@ def handle_coeff_raster(params):
     """One coeff stripe → per-tile bitset files. One Lambda per stripe."""
     job_id = params["job_id"]
     stripe_idx = params["stripe_idx"]
-    task_id = f"coeff_bilevel_raster_{stripe_idx}"
+    task_id = params.get("task_id", f"coeff_bilevel_raster_{stripe_idx}")
 
     try:
         report_status(job_id, task_id, "started")
@@ -218,7 +218,7 @@ def handle_merge(params):
     bits_prefix = params.get("bits_prefix", "bits")
     tile_prefix = params.get("tile_prefix", "bilevel")
     task_prefix = params.get("task_prefix", "bilevel_merge")
-    task_id = f"{task_prefix}_{tile_idx}"
+    task_id = params.get("task_id", f"{task_prefix}_{tile_idx}")
 
     try:
         report_status(job_id, task_id, "started")

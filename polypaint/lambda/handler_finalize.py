@@ -30,7 +30,7 @@ def handler(event, context):
     n_stripes = params["n_stripes"]
     tile_w = params["tile_w"]
     tile_h = params["tile_h"]
-    task_id = f"tile_{tile_idx}"
+    task_id = params.get("task_id", f"tile_{tile_idx}")
 
     t0 = time.time()
     logger.info(f"[{task_id}] START tile_idx={tile_idx} n_stripes={n_stripes} tile={tile_w}x{tile_h}")

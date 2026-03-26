@@ -26,7 +26,7 @@ def handler(event, context):
     n_tile_cols = params["n_tile_cols"]
     n_tile_rows = params["n_tile_rows"]
     n_tiles = n_tile_cols * n_tile_rows
-    task_id = f"raster_{stripe_idx}"
+    task_id = params.get("task_id", f"raster_{stripe_idx}")
 
     try:
         report_status(job_id, task_id, "started")

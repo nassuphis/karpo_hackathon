@@ -23,7 +23,7 @@ def handler(event, context):
     fmt = params.get("format", "jpeg")
     quality = params.get("quality", 90)
     job_id = params.get("job_id")
-    task_id = "encode"
+    task_id = params.get("task_id", "encode")
 
     try:
         if job_id:

@@ -292,6 +292,24 @@ def test_solve_proximity_stats():
     assert spread["n_solves"] == 3
     print("  spread clip: OK (lo=%.2f, hi=%.2f)" % (spread["clip_lo"], spread["clip_hi"]))
 
+    # 4. Clusteriness clip (v2 metric)
+    r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=clusteriness"],
+                       capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "clusteriness clip failed: " + r.stderr[:200]
+    clust = json.loads(r.stdout)
+    assert clust["metric"] == "clusteriness"
+    assert clust["n_solves"] == 3
+    print("  clusteriness clip: OK (lo=%.2f, hi=%.2f)" % (clust["clip_lo"], clust["clip_hi"]))
+
+    # 5. Real-axis proximity clip (v2 metric)
+    r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=real_axis_proximity"],
+                       capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "real_axis_proximity clip failed: " + r.stderr[:200]
+    rap = json.loads(r.stdout)
+    assert rap["metric"] == "real_axis_proximity"
+    assert rap["n_solves"] == 3
+    print("  real_axis_proximity clip: OK (lo=%.2f, hi=%.2f)" % (rap["clip_lo"], rap["clip_hi"]))
+
     cleanup(sps_bin)
     print("=== solve_proximity_stats tests PASSED ===")
 
@@ -331,6 +349,23 @@ def test_roots2pix_solve_score():
     assert meta["roots_plotted"] >= 0
     print("  roots2pix --color=solve_score: OK (plotted=%d, clipped=%d)" %
           (meta["roots_plotted"], meta["roots_clipped"]))
+
+    # Smoke for clusteriness (v2 metric)
+    r = subprocess.run([
+        r2p_path, sps_bin, "/tmp/r2p_ss_pix",
+        "--width=4", "--height=4", "--tile_size=4",
+        "--n_tile_cols=1", "--n_tile_rows=1",
+        "--center_re=0.5", "--center_im=0",
+        "--scale=2", "--degree=2",
+        "--color=solve_score",
+        "--solve_metric=clusteriness",
+        "--solve_score_clip_lo=0.0",
+        "--solve_score_clip_hi=2.0",
+        "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
+    ], capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "roots2pix solve_score clusteriness failed: " + r.stderr[:200]
+    meta2 = json.loads(r.stdout)
+    print("  roots2pix --solve_metric=clusteriness: OK (plotted=%d)" % meta2["roots_plotted"])
 
     # Clean up any .pix files
     import glob

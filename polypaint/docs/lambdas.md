@@ -141,7 +141,7 @@ Converts one stripe of root data into tile-bucketed sparse pixel files.
 |------|-----------|
 | rainbow | Fixed HSL gradient per root index |
 | proximity | Root-level nearest-neighbor distance → palette interpolation (stripe-normalized, 2-pass) |
-| solve_score | Solve-level metric → equal-density binned (global histogram, 3-phase prepass). Metrics: proximity, crowding, spread, anisotropy, area |
+| solve_score | Solve-level metric → equal-density binned (global histogram, 3-phase prepass). 10 metrics available |
 | constant | Single hex color for all roots |
 
 ### Solve Score Pipeline
@@ -166,6 +166,11 @@ Artifacts: `solve_scores/{metric}_clip.json`, `solve_scores/{metric}/stripe_*_hi
 | spread | `0.5 * log10(RMS radius²)` | Cloud size from centroid |
 | anisotropy | `log10(λ_max / λ_min)` of covariance | Elongation (line vs circle) |
 | area | `0.5 * log10(λ_max × λ_min)` of covariance | 2D cloud area |
+| clusteriness | `s1_max - median(s1)` where s1 = NN scores | One exceptional local collision vs typical |
+| shelliness | `-log10(σ_ρ / (μ_ρ + ε) + ε)` | Thin-shell / ring detector |
+| outlierness | `log10((ρ_max + ε) / (ρ_median + ε))` | Radial outlier strength |
+| nn_variation | `stddev(s1)` where s1 = NN scores | Heterogeneity of local spacing |
+| real_axis_proximity | `-log10(median(\|im\|) + ε)` | Closeness to real axis |
 
 Legacy `color=solve_proximity` is accepted and coerced to `solve_score` with `metric=proximity`.
 

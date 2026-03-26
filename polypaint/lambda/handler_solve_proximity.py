@@ -18,7 +18,8 @@ from shared import BUCKET, parse_body, ok_response, report_status
 s3 = boto3.client("s3")
 BINARY = os.path.join(os.path.dirname(__file__), "solve_proximity_stats")
 
-VALID_METRICS = {"proximity", "crowding", "spread", "anisotropy", "area"}
+VALID_METRICS = {"proximity", "crowding", "spread", "anisotropy", "area",
+                 "clusteriness", "shelliness", "outlierness", "nn_variation", "real_axis_proximity"}
 
 _TMP_INPUT = "/tmp/solve_prox_input.bin"
 _TMP_XFORMS = "/tmp/solve_prox_root_xforms.json"

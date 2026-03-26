@@ -321,6 +321,103 @@ class TestColorOrchestrator(unittest.TestCase):
         assert raster_payloads[0]["solve_metric"] == "proximity", \
             f"legacy should default to proximity, got {raster_payloads[0].get('solve_metric')}"
 
+    @patch("handler_render_orchestrator.ddb")
+    @patch("handler_render_orchestrator.lambda_client")
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator._storage_call")
+    def test_solve_score_clusteriness_prepass_and_raster(
+        self, mock_storage, mock_report, mock_lambda, mock_ddb
+    ):
+        """New metric clusteriness runs full prepass and raster with correct payload."""
+        mock_storage.side_effect = lambda path, body: (
+            {"deleted": 0} if "clean" in path else
+            {"job_id": "j", "calc": {
+                "degree": 5, "n_stripes": 2, "n_chunks": 2,
+                "lores": {"bin_key": "renders/j/lores.bin"}
+            }} if "detail" in path else {}
+        )
+        mock_ddb.query.return_value = _mock_poll_done(100)
+
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_cl", "mode": "color",
+            "params": {
+                "pix": 512, "fmt": "jpeg", "quality": 90,
+                "view_mode": "square", "square_extent": 2.0,
+                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
+                "solve_metric": "clusteriness",
+                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
+            }
+        })
+        handler(event, None)
+
+        # Verify prepass ran
+        phases = [c.args[2] for c in mock_report.call_args_list if len(c.args) >= 3]
+        assert "solve_score_clip" in phases
+
+        # Verify raster payloads
+        raster_payloads = [
+            json.loads(c[1].get("Payload", b"{}"))
+            for c in mock_lambda.invoke.call_args_list
+            if "raster_" in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
+               and "solve_score" not in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
+        ]
+        assert len(raster_payloads) == 2
+        for p in raster_payloads:
+            assert p["color"] == "solve_score"
+            assert p["solve_metric"] == "clusteriness"
+            assert "clusteriness" in p["solve_score_bins_key"]
+
+    @patch("handler_render_orchestrator.ddb")
+    @patch("handler_render_orchestrator.lambda_client")
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator._storage_call")
+    def test_solve_score_real_axis_proximity_raster_payload(
+        self, mock_storage, mock_report, mock_lambda, mock_ddb
+    ):
+        """New metric real_axis_proximity passes through all payloads correctly."""
+        mock_storage.side_effect = lambda path, body: (
+            {"deleted": 0} if "clean" in path else
+            {"job_id": "j", "calc": {
+                "degree": 5, "n_stripes": 1, "n_chunks": 1,
+                "lores": {"bin_key": "renders/j/lores.bin"}
+            }} if "detail" in path else {}
+        )
+        mock_ddb.query.return_value = _mock_poll_done(100)
+
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_rap", "mode": "color",
+            "params": {
+                "pix": 512, "fmt": "jpeg", "quality": 90,
+                "view_mode": "square", "square_extent": 2.0,
+                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
+                "solve_metric": "real_axis_proximity",
+                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
+            }
+        })
+        handler(event, None)
+
+        # Check clip payload
+        clip_payloads = [
+            json.loads(c[1].get("Payload", b"{}"))
+            for c in mock_lambda.invoke.call_args_list
+            if json.loads(c[1].get("Payload", b"{}")).get("phase") == "clip"
+        ]
+        assert len(clip_payloads) == 1
+        assert clip_payloads[0]["metric"] == "real_axis_proximity"
+
+        # Check raster payload
+        raster_payloads = [
+            json.loads(c[1].get("Payload", b"{}"))
+            for c in mock_lambda.invoke.call_args_list
+            if "raster_" in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
+               and "solve_score" not in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
+        ]
+        assert len(raster_payloads) == 1
+        assert raster_payloads[0]["solve_metric"] == "real_axis_proximity"
+        assert "real_axis_proximity" in raster_payloads[0]["solve_score_bins_key"]
+
 
 class TestBilevelOrchestrator(unittest.TestCase):
 

@@ -914,6 +914,48 @@ async function testPipeline(name, call) {
         console.log('  setSolveMetric: OK (crowding)');
     }
 
+    // 11e2: setSolveMetric with new v2 metrics
+    {
+        vm.runInContext("setSolveMetric('clusteriness')", ctx);
+        const m1 = vm.runInContext('renderSolveMetric', ctx);
+        if (m1 !== 'clusteriness') { console.error('FATAL: metric should be clusteriness, got ' + m1); process.exit(1); }
+        vm.runInContext("setSolveMetric('real_axis_proximity')", ctx);
+        const m2 = vm.runInContext('renderSolveMetric', ctx);
+        if (m2 !== 'real_axis_proximity') { console.error('FATAL: metric should be real_axis_proximity, got ' + m2); process.exit(1); }
+        console.log('  setSolveMetric v2: OK (clusteriness, real_axis_proximity)');
+    }
+
+    // 11e3: orchestrator dispatch with new metric carries it unchanged
+    {
+        vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'nn_variation';", ctx);
+        vm.runInContext(`
+            var _nnOrchPayload = null;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch' && body.target === 'render_orchestrator') {
+                    _nnOrchPayload = body.jobs[0];
+                    return { fired: 1, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: 1, complete: true, results: [{ phase: 'done' }] };
+                }
+                return {};
+            };
+            refreshRenderArtifacts = async function() {};
+        `, ctx);
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_nn' };
+        ctx._elements['render-status'].textContent = '';
+        ctx._elements['btn-raster-all'] = ctx._mkEl();
+        vm.runInContext("_viewMode = 'square'; _rtChain = [];", ctx);
+        try { await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx); } catch(e) {}
+        const nnPayload = vm.runInContext('_nnOrchPayload', ctx);
+        if (!nnPayload || nnPayload.params.solve_metric !== 'nn_variation') {
+            console.error('FATAL: nn_variation dispatch failed: ' + JSON.stringify(nnPayload && nnPayload.params));
+            process.exit(1);
+        }
+        console.log('  orchestrator dispatch v2: OK (solve_metric=nn_variation)');
+        vm.runInContext("renderColorMode = 'rainbow';", ctx);
+    }
+
     // 11f: orchestrator dispatch with solve_score contains metric
     {
         vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'spread';", ctx);

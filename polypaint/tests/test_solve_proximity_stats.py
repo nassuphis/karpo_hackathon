@@ -348,7 +348,160 @@ def test_area_ranking():
 
 
 # ================================================================
-# 6. Hist for non-proximity metric (spread)
+# 6. Clusteriness ranking test
+# ================================================================
+
+def test_clusteriness_ranking():
+    """One tight pair vs uniform spacing → tight pair has higher clusteriness."""
+    # Uniform: evenly spaced along x-axis
+    uniform = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0)]
+    # One-pair: one very tight pair, rest normal
+    one_pair = [(0.0, 0.0), (0.001, 0.0), (1.0, 0.0), (2.0, 0.0)]
+
+    path_u = "/tmp/sp_test_cluster_uniform.bin"
+    path_p = "/tmp/sp_test_cluster_onepair.bin"
+    write_bin(path_u, [uniform], 4)
+    write_bin(path_p, [one_pair], 4)
+    r_u, err = run_clip(path_u, 4, metric="clusteriness")
+    assert r_u is not None, f"uniform clusteriness failed: {err}"
+    r_p, err = run_clip(path_p, 4, metric="clusteriness")
+    assert r_p is not None, f"one-pair clusteriness failed: {err}"
+    assert r_u["metric"] == "clusteriness"
+    assert r_p["metric"] == "clusteriness"
+    assert r_p["min_score"] > r_u["min_score"], \
+        f"one-pair ({r_p['min_score']}) should have higher clusteriness than uniform ({r_u['min_score']})"
+    for p in [path_u, path_p]:
+        os.remove(p)
+
+
+# ================================================================
+# 7. Shelliness ranking test
+# ================================================================
+
+def test_shelliness_ranking():
+    """Ring vs filled → ring has higher shelliness."""
+    import math
+    sq = math.sqrt(0.5)
+    # Shell: all roots near unit circle
+    shell = [(1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0), (sq, sq)]
+    # Filled: 4 on circle + 1 at center
+    filled = [(1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0), (0.0, 0.0)]
+
+    path_sh = "/tmp/sp_test_shell_shell.bin"
+    path_fi = "/tmp/sp_test_shell_filled.bin"
+    write_bin(path_sh, [shell], 5)
+    write_bin(path_fi, [filled], 5)
+    r_sh, err = run_clip(path_sh, 5, metric="shelliness")
+    assert r_sh is not None, f"shell shelliness failed: {err}"
+    r_fi, err = run_clip(path_fi, 5, metric="shelliness")
+    assert r_fi is not None, f"filled shelliness failed: {err}"
+    assert r_sh["metric"] == "shelliness"
+    assert r_fi["metric"] == "shelliness"
+    assert r_sh["min_score"] > r_fi["min_score"], \
+        f"shell ({r_sh['min_score']}) should have higher shelliness than filled ({r_fi['min_score']})"
+    for p in [path_sh, path_fi]:
+        os.remove(p)
+
+
+# ================================================================
+# 8. Outlierness ranking test
+# ================================================================
+
+def test_outlierness_ranking():
+    """Compact cloud vs one outlier root → outlier has higher outlierness."""
+    compact = [(-1.0, 0.0), (1.0, 0.0), (0.0, 1.0), (0.0, -1.0), (0.5, 0.5)]
+    outlier = [(-1.0, 0.0), (1.0, 0.0), (0.0, 1.0), (0.0, -1.0), (100.0, 0.0)]
+
+    path_c = "/tmp/sp_test_outlier_compact.bin"
+    path_o = "/tmp/sp_test_outlier_outlier.bin"
+    write_bin(path_c, [compact], 5)
+    write_bin(path_o, [outlier], 5)
+    r_c, err = run_clip(path_c, 5, metric="outlierness")
+    assert r_c is not None, f"compact outlierness failed: {err}"
+    r_o, err = run_clip(path_o, 5, metric="outlierness")
+    assert r_o is not None, f"outlier outlierness failed: {err}"
+    assert r_c["metric"] == "outlierness"
+    assert r_o["metric"] == "outlierness"
+    assert r_o["min_score"] > r_c["min_score"], \
+        f"outlier ({r_o['min_score']}) should have higher outlierness than compact ({r_c['min_score']})"
+    for p in [path_c, path_o]:
+        os.remove(p)
+
+
+# ================================================================
+# 9. NN variation ranking test
+# ================================================================
+
+def test_nn_variation_ranking():
+    """Uniform spacing vs mixed → mixed has higher nn_variation."""
+    uniform = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0)]
+    mixed = [(0.0, 0.0), (0.001, 0.0), (1.0, 0.0), (10.0, 0.0)]
+
+    path_u = "/tmp/sp_test_nnvar_uniform.bin"
+    path_m = "/tmp/sp_test_nnvar_mixed.bin"
+    write_bin(path_u, [uniform], 4)
+    write_bin(path_m, [mixed], 4)
+    r_u, err = run_clip(path_u, 4, metric="nn_variation")
+    assert r_u is not None, f"uniform nn_variation failed: {err}"
+    r_m, err = run_clip(path_m, 4, metric="nn_variation")
+    assert r_m is not None, f"mixed nn_variation failed: {err}"
+    assert r_u["metric"] == "nn_variation"
+    assert r_m["metric"] == "nn_variation"
+    assert r_m["min_score"] > r_u["min_score"], \
+        f"mixed ({r_m['min_score']}) should have higher nn_variation than uniform ({r_u['min_score']})"
+    for p in [path_u, path_m]:
+        os.remove(p)
+
+
+# ================================================================
+# 10. Real-axis proximity ranking test
+# ================================================================
+
+def test_real_axis_proximity_ranking():
+    """Near-real roots vs off-axis → near-real has higher real_axis_proximity."""
+    near_real = [(0.0, 0.001), (1.0, -0.001), (2.0, 0.002), (3.0, -0.002)]
+    off_axis = [(0.0, 10.0), (1.0, -10.0), (2.0, 12.0), (3.0, -12.0)]
+
+    path_nr = "/tmp/sp_test_realprox_near.bin"
+    path_oa = "/tmp/sp_test_realprox_off.bin"
+    write_bin(path_nr, [near_real], 4)
+    write_bin(path_oa, [off_axis], 4)
+    r_nr, err = run_clip(path_nr, 4, metric="real_axis_proximity")
+    assert r_nr is not None, f"near-real real_axis_proximity failed: {err}"
+    r_oa, err = run_clip(path_oa, 4, metric="real_axis_proximity")
+    assert r_oa is not None, f"off-axis real_axis_proximity failed: {err}"
+    assert r_nr["metric"] == "real_axis_proximity"
+    assert r_oa["metric"] == "real_axis_proximity"
+    assert r_nr["min_score"] > r_oa["min_score"], \
+        f"near-real ({r_nr['min_score']}) should have higher real_axis_proximity than off-axis ({r_oa['min_score']})"
+    for p in [path_nr, path_oa]:
+        os.remove(p)
+
+
+# ================================================================
+# 11. Hist for clusteriness
+# ================================================================
+
+def test_hist_clusteriness():
+    """Histogram with clusteriness metric — counts sum, JSON has metric."""
+    uniform = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0)]
+    one_pair = [(0.0, 0.0), (0.001, 0.0), (1.0, 0.0), (2.0, 0.0)]
+    path = "/tmp/sp_test_hist_cluster.bin"
+    write_bin(path, [uniform, one_pair], 4)
+    clip_r, err = run_clip(path, 4, metric="clusteriness")
+    assert clip_r is not None, f"clusteriness clip failed: {err}"
+    hist_r, err = run_hist(path, 4, clip_r["clip_lo"], clip_r["clip_hi"],
+                           hist_bins=10, metric="clusteriness")
+    assert hist_r is not None, f"clusteriness hist failed: {err}"
+    assert hist_r["metric"] == "clusteriness"
+    assert hist_r["n_solves"] == 2
+    assert len(hist_r["hist"]) == 10
+    assert sum(hist_r["hist"]) == 2
+    os.remove(path)
+
+
+# ================================================================
+# 12. Hist for non-proximity metric (spread)
 # ================================================================
 
 def test_hist_spread():
@@ -448,12 +601,19 @@ if __name__ == "__main__":
         ("proximity degree 3", test_degree_3),
         ("proximity empty file", test_empty_file),
         ("proximity invalid clip range", test_invalid_clip_range),
-        # Metric ranking
+        # Metric ranking (v1)
         ("crowding ranking", test_crowding_ranking),
         ("spread ranking", test_spread_ranking),
         ("anisotropy ranking", test_anisotropy_ranking),
         ("area ranking", test_area_ranking),
+        # Metric ranking (v2)
+        ("clusteriness ranking", test_clusteriness_ranking),
+        ("shelliness ranking", test_shelliness_ranking),
+        ("outlierness ranking", test_outlierness_ranking),
+        ("nn_variation ranking", test_nn_variation_ranking),
+        ("real_axis_proximity ranking", test_real_axis_proximity_ranking),
         # Non-proximity hist
+        ("hist clusteriness metric", test_hist_clusteriness),
         ("hist spread metric", test_hist_spread),
         # Error handling
         ("invalid metric", test_invalid_metric),

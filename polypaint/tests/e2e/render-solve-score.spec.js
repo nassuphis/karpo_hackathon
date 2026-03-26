@@ -45,7 +45,10 @@ test.describe('Solve Score UI', () => {
     const dropdown = page.locator('#render-solve-score');
     await expect(dropdown).toBeVisible();
     const options = await dropdown.locator('option').allTextContents();
-    expect(options).toEqual(['Proximity', 'Crowding', 'Spread', 'Anisotropy', 'Area']);
+    expect(options).toEqual([
+      'Proximity', 'Crowding', 'Spread', 'Anisotropy', 'Area',
+      'Clusteriness', 'Shelliness', 'Outlierness', 'NN variation', 'Real-axis proximity',
+    ]);
   });
 
   test('clicking solve-score palette activates solve_score mode', async ({ page }) => {
@@ -144,5 +147,75 @@ test.describe('Solve Score UI', () => {
     // Root-proximity active should be unchanged
     const rootActiveAfter = await page.locator('#palette-circles-root-proximity .pal-circle.active').getAttribute('title');
     expect(rootActiveAfter).toBe(rootActive);
+  });
+
+  test('clusteriness dispatch sends correct solve_metric', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const solveCircle = page.locator('#palette-circles-solve-score .pal-circle').first();
+    await solveCircle.click();
+    await page.locator('#render-solve-score').selectOption('clusteriness');
+
+    await page.evaluate(() => {
+      window._orchPayload = null;
+      window.lambdaPost = async function(name, body, path) {
+        if (name === 'dispatch' && body.target === 'render_orchestrator') {
+          window._orchPayload = body.jobs[0];
+          return { fired: 1, errors: [] };
+        }
+        if (name === 'storage' && path === '/check-status') {
+          return { errors: 0, done: 1, complete: true, results: [{ phase: 'done' }] };
+        }
+        return {};
+      };
+      window.refreshRenderArtifacts = async function() {};
+      document.getElementById('render-results-dir').value = 'test_cl';
+      document.getElementById('render-pix').value = '512';
+      window._viewMode = 'square';
+      window._rtChain = [];
+    });
+
+    await page.evaluate(async () => {
+      try { await runRasterPipeline(); } catch(e) {}
+    });
+
+    const payload = await page.evaluate(() => window._orchPayload);
+    expect(payload).not.toBeNull();
+    expect(payload.params.color_mode).toBe('solve_score');
+    expect(payload.params.solve_metric).toBe('clusteriness');
+  });
+
+  test('real_axis_proximity dispatch sends correct solve_metric', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const solveCircle = page.locator('#palette-circles-solve-score .pal-circle').first();
+    await solveCircle.click();
+    await page.locator('#render-solve-score').selectOption('real_axis_proximity');
+
+    await page.evaluate(() => {
+      window._orchPayload = null;
+      window.lambdaPost = async function(name, body, path) {
+        if (name === 'dispatch' && body.target === 'render_orchestrator') {
+          window._orchPayload = body.jobs[0];
+          return { fired: 1, errors: [] };
+        }
+        if (name === 'storage' && path === '/check-status') {
+          return { errors: 0, done: 1, complete: true, results: [{ phase: 'done' }] };
+        }
+        return {};
+      };
+      window.refreshRenderArtifacts = async function() {};
+      document.getElementById('render-results-dir').value = 'test_rap';
+      document.getElementById('render-pix').value = '512';
+      window._viewMode = 'square';
+      window._rtChain = [];
+    });
+
+    await page.evaluate(async () => {
+      try { await runRasterPipeline(); } catch(e) {}
+    });
+
+    const payload = await page.evaluate(() => window._orchPayload);
+    expect(payload).not.toBeNull();
+    expect(payload.params.color_mode).toBe('solve_score');
+    expect(payload.params.solve_metric).toBe('real_axis_proximity');
   });
 });

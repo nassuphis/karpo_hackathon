@@ -223,6 +223,44 @@ def test_merge_artifact_cuts_norm_length_9():
         f"expected 9 cuts, got {len(artifact['cuts_norm'])}"
 
 
+def test_merge_new_metric_clusteriness():
+    """Merge works for a v2 metric (clusteriness)."""
+    clip_data, hist_responses = _uniform_hist_data(
+        "renders/test/solve_scores/", 2, metric="clusteriness")
+    body, artifact = _run_merge(2, clip_data, hist_responses, metric="clusteriness")
+    assert artifact["metric"] == "clusteriness"
+    assert artifact["family"] == "solve_score"
+    assert len(artifact["cuts_norm"]) == 9
+
+
+def test_merge_rejects_clip_mismatch_new_metric():
+    """Merge rejects clip artifact with wrong metric (new metric name)."""
+    clip_data = {
+        "family": "solve_score", "metric": "shelliness",
+        "clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": [],
+    }
+    hist_responses = {
+        "renders/test/solve_scores/stripe_0_hist.json": {
+            "family": "solve_score", "metric": "real_axis_proximity",
+            "hist": [10] * 100, "n_solves": 1000,
+        }
+    }
+    try:
+        _run_merge(1, clip_data, hist_responses, metric="real_axis_proximity")
+        assert False, "should have raised on clip metric mismatch"
+    except RuntimeError as e:
+        assert "mismatch" in str(e).lower(), f"wrong error: {e}"
+
+
+def test_merge_new_metric_artifact_family():
+    """Merge output for nn_variation still has family == 'solve_score'."""
+    clip_data, hist_responses = _uniform_hist_data(
+        "renders/test/solve_scores/", 1, metric="nn_variation")
+    _, artifact = _run_merge(1, clip_data, hist_responses, metric="nn_variation")
+    assert artifact["family"] == "solve_score"
+    assert artifact["metric"] == "nn_variation"
+
+
 if __name__ == "__main__":
     tests = [
         ("uniform histogram", test_merge_uniform_histogram),
@@ -234,6 +272,9 @@ if __name__ == "__main__":
         ("rejects stripe wrong metric", test_merge_rejects_stripe_wrong_metric),
         ("artifact has solve_score family", test_merge_artifact_has_solve_score_family),
         ("artifact cuts_norm length 9", test_merge_artifact_cuts_norm_length_9),
+        ("new metric clusteriness", test_merge_new_metric_clusteriness),
+        ("rejects clip mismatch new metric", test_merge_rejects_clip_mismatch_new_metric),
+        ("new metric artifact family", test_merge_new_metric_artifact_family),
     ]
 
     print("solve_proximity handler tests (metric-aware)")

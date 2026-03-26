@@ -364,12 +364,17 @@ button {
                 <div class="color-row">
                     <span class="color-dot" data-mode="solve_score" onclick="setColorMode('solve_score')"></span>
                     <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('solve_score')">Solve score</span>
-                    <select id="render-solve-score" onchange="setSolveMetric(this.value)" style="font-size:10px; margin-left:6px">
+                    <select id="render-solve-score" onchange="setSolveMetric(this.value)" style="font-size:10px; margin-left:6px; width:90px">
                         <option value="proximity">Proximity</option>
                         <option value="crowding">Crowding</option>
                         <option value="spread">Spread</option>
                         <option value="anisotropy">Anisotropy</option>
                         <option value="area">Area</option>
+                        <option value="clusteriness">Clusteriness</option>
+                        <option value="shelliness">Shelliness</option>
+                        <option value="outlierness">Outlierness</option>
+                        <option value="nn_variation">NN variation</option>
+                        <option value="real_axis_proximity">Real-axis proximity</option>
                     </select>
                     <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:6px"></div>
                 </div>
@@ -830,7 +835,8 @@ function _activeRenderPalette() {
 }
 
 function setSolveMetric(name) {
-    const valid = ['proximity', 'crowding', 'spread', 'anisotropy', 'area'];
+    const valid = ['proximity', 'crowding', 'spread', 'anisotropy', 'area',
+                   'clusteriness', 'shelliness', 'outlierness', 'nn_variation', 'real_axis_proximity'];
     if (valid.includes(name)) {
         renderSolveMetric = name;
         setColorMode('solve_score');

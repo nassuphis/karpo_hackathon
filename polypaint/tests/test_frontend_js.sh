@@ -1176,6 +1176,44 @@ async function testPipeline(name, call) {
         console.log('  12f _clearActiveRun removes localStorage: OK');
     }
 
+    // 12g: observer secondary poll for subtask counts
+    {
+        // Set up active run and mock lambdaPost that returns subtask_prefix + expected
+        vm.runInContext("_activeRenderRun = {job_id:'j', mode:'color', run_id:'r_sub', task_id:'render_run_color_r_sub'};", ctx);
+        let secondaryPollCalled = false;
+        vm.runInContext(`
+            var _subPollCalled = false;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/check-status') {
+                    if (body.task_prefix === 'render_run_color_r_sub') {
+                        // Top-level row: in-progress with subtask info
+                        return {
+                            errors: 0, done: 0, complete: false,
+                            results: [{
+                                phase: 'raster', phase_label: 'Raster',
+                                subtask_prefix: 'render_r_sub_raster_',
+                                expected: 10
+                            }]
+                        };
+                    }
+                    if (body.task_prefix === 'render_r_sub_raster_') {
+                        // Secondary poll — subtask counts
+                        _subPollCalled = true;
+                        return { errors: 0, done: 7, expected: 10, complete: false };
+                    }
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await _pollActiveRenderRun(); })()', ctx); } catch(e) {}
+        const subCalled = vm.runInContext('_subPollCalled', ctx);
+        if (!subCalled) { console.error('FATAL: secondary subtask poll not called'); process.exit(1); }
+        const statusText = ctx._elements['render-status'].textContent;
+        if (!statusText.includes('7/10')) { console.error('FATAL: status should show 7/10, got: ' + statusText); process.exit(1); }
+        console.log('  12g observer secondary subtask poll: OK (' + statusText + ')');
+        vm.runInContext('_activeRenderRun = null;', ctx);
+    }
+
     // Step 13: Render refresh — tested in Playwright (VM cannot override let-scoped lambdaPost/fetch)
     // See tests/e2e/render-refresh.spec.js for real browser coverage.
 

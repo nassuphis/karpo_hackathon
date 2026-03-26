@@ -1365,8 +1365,6 @@ async function _pollActiveRenderRun() {
 
         const rd = check.results?.[0] || {};
         const phase = rd.phase_label || rd.phase || 'working';
-        const done = rd.done || 0;
-        const expected = rd.expected || 0;
 
         if (check.complete || rd.phase === 'done') {
             document.getElementById('render-status').textContent = 'Render complete';
@@ -1378,7 +1376,20 @@ async function _pollActiveRenderRun() {
             return;
         }
 
-        // Update progress
+        // Update progress — use secondary poll for subtask counts if available
+        let done = 0, expected = 0;
+        if (rd.subtask_prefix && rd.expected) {
+            try {
+                const subcheck = await lambdaPost('storage', {
+                    job_id: run.job_id, task_prefix: rd.subtask_prefix, expected: rd.expected,
+                }, '/check-status');
+                done = subcheck.done || 0;
+                expected = subcheck.expected || rd.expected || 0;
+            } catch(e) {
+                // Secondary poll failed — show phase only
+                expected = rd.expected || 0;
+            }
+        }
         let statusMsg = phase;
         if (expected > 0) statusMsg += ' ' + done + '/' + expected;
         document.getElementById('render-status').textContent = statusMsg;

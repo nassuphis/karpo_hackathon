@@ -1,8 +1,12 @@
 """
-Tests for handler_render_orchestrator.py.
+Tests for the render orchestrator starter Lambda.
 
-Validates phase ordering, checkpoint/self-reinvoke, subtask ID format,
-and error handling for all three render modes.
+Validates that the starter:
+- validates mode
+- calls StartExecution exactly once
+- writes queued DDB row
+- returns execution_arn
+- does NOT self-invoke, poll, or dispatch workers
 
 Run: cd polypaint && uv run python -m pytest tests/test_render_orchestrator.py -v
 """
@@ -10,921 +14,120 @@ import json
 import os
 import sys
 import unittest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 
 def _make_event(payload):
-    return payload  # handler_render_orchestrator uses parse_body which handles raw dicts
+    return payload
 
 
-def _mock_poll_done(n=1):
-    """Return a DDB query response where n tasks are done."""
-    return {
-        "Items": [
-            {"task_id": {"S": f"t_{i}"}, "task_status": {"S": "done"}}
-            for i in range(n)
-        ]
-    }
+class TestStarterLambda(unittest.TestCase):
 
-
-class TestColorOrchestrator(unittest.TestCase):
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
     @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_color_dispatches_raster_then_finalize_then_encode(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """Color mode runs: clean→viewport→calc_meta→raster→finalize→encode."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {"degree": 5, "n_stripes": 2, "n_chunks": 2}} if "detail" in path else
-            {}
-        )
-        # All polls return done immediately
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_test", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "rainbow",
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        result = handler(event, None)
-        body = json.loads(result["body"])
-        assert body["phase"] == "done"
-
-        # Check phase order from report_status calls
-        phases = [c.args[2] for c in mock_report.call_args_list if len(c.args) >= 3]
-        assert "clean" in phases
-        assert "viewport" in phases
-        assert "raster_dispatch" in phases
-        assert "finalize_dispatch" in phases
-        assert "encode_dispatch" in phases
-        # raster before finalize before encode
-        ri = phases.index("raster_dispatch")
-        fi = phases.index("finalize_dispatch")
-        ei = phases.index("encode_dispatch")
-        assert ri < fi < ei
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_color_solve_score_prepass_before_raster(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """Color + solve_score runs clip→hist→merge before raster."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {
-                "degree": 5, "n_stripes": 2, "n_chunks": 2,
-                "lores": {"bin_key": "renders/j/lores.bin"}
-            }} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_ss", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
-                "solve_metric": "crowding",
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        result = handler(event, None)
-        body = json.loads(result["body"])
-        assert body["phase"] == "done"
-
-        phases = [c.args[2] for c in mock_report.call_args_list if len(c.args) >= 3]
-        assert "solve_score_clip" in phases
-        assert "solve_score_hist" in phases
-        assert "solve_score_merge" in phases
-        assert "raster_dispatch" in phases
-        ci = phases.index("solve_score_clip")
-        ri = phases.index("raster_dispatch")
-        assert ci < ri
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_solve_score_clip_payload_contains_metric(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """Clip dispatch payload contains the requested metric."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {
-                "degree": 5, "n_stripes": 2, "n_chunks": 2,
-                "lores": {"bin_key": "renders/j/lores.bin"}
-            }} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_clip_m", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
-                "solve_metric": "spread",
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        handler(event, None)
-
-        clip_payloads = [
-            json.loads(c[1].get("Payload", b"{}"))
-            for c in mock_lambda.invoke.call_args_list
-            if json.loads(c[1].get("Payload", b"{}")).get("phase") == "clip"
-        ]
-        assert len(clip_payloads) == 1, f"expected 1 clip job, got {len(clip_payloads)}"
-        assert clip_payloads[0]["metric"] == "spread", \
-            f"clip metric={clip_payloads[0].get('metric')}"
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_solve_score_hist_payloads_contain_metric(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """Hist dispatch payloads contain the requested metric."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {
-                "degree": 5, "n_stripes": 3, "n_chunks": 3,
-                "lores": {"bin_key": "renders/j/lores.bin"}
-            }} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_hist_m", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
-                "solve_metric": "anisotropy",
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        handler(event, None)
-
-        hist_payloads = [
-            json.loads(c[1].get("Payload", b"{}"))
-            for c in mock_lambda.invoke.call_args_list
-            if json.loads(c[1].get("Payload", b"{}")).get("phase") == "hist"
-        ]
-        assert len(hist_payloads) == 3, f"expected 3 hist jobs, got {len(hist_payloads)}"
-        for p in hist_payloads:
-            assert p["metric"] == "anisotropy", f"hist metric={p.get('metric')}"
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_solve_score_merge_payload_contains_metric(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """Merge dispatch payload contains the requested metric."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {
-                "degree": 5, "n_stripes": 2, "n_chunks": 2,
-                "lores": {"bin_key": "renders/j/lores.bin"}
-            }} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_merge_m", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
-                "solve_metric": "area",
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        handler(event, None)
-
-        merge_payloads = [
-            json.loads(c[1].get("Payload", b"{}"))
-            for c in mock_lambda.invoke.call_args_list
-            if json.loads(c[1].get("Payload", b"{}")).get("phase") == "merge"
-               and "solve_score_merge" in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
-        ]
-        assert len(merge_payloads) == 1, f"expected 1 merge job, got {len(merge_payloads)}"
-        assert merge_payloads[0]["metric"] == "area", \
-            f"merge metric={merge_payloads[0].get('metric')}"
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_solve_score_raster_payload_contract(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """Raster payload contains color=solve_score, solve_metric, and solve_score_bins_key."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {
-                "degree": 5, "n_stripes": 2, "n_chunks": 2,
-                "lores": {"bin_key": "renders/j/lores.bin"}
-            }} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_rp", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
-                "solve_metric": "crowding",
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        handler(event, None)
-
-        raster_payloads = [
-            json.loads(c[1].get("Payload", b"{}"))
-            for c in mock_lambda.invoke.call_args_list
-            if "raster_" in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
-               and "solve_score" not in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
-        ]
-        assert len(raster_payloads) == 2, f"expected 2 raster jobs, got {len(raster_payloads)}"
-        for p in raster_payloads:
-            assert p["color"] == "solve_score", f"color={p.get('color')}"
-            assert p["solve_metric"] == "crowding", f"solve_metric={p.get('solve_metric')}"
-            assert "solve_score_bins_key" in p, f"missing solve_score_bins_key"
-            assert "crowding" in p["solve_score_bins_key"], \
-                f"bins key should contain metric: {p['solve_score_bins_key']}"
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_legacy_solve_proximity_coerces_to_solve_score(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """Legacy color_mode=solve_proximity coerces to solve_score + metric=proximity."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {
-                "degree": 5, "n_stripes": 2, "n_chunks": 2,
-                "lores": {"bin_key": "renders/j/lores.bin"}
-            }} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_legacy", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "solve_proximity",
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        handler(event, None)
-
-        # Should run solve_score phases (not solve_proximity)
-        phases = [c.args[2] for c in mock_report.call_args_list if len(c.args) >= 3]
-        assert "solve_score_clip" in phases, f"expected solve_score_clip phase, got: {phases}"
-
-        # Raster should get metric=proximity
-        raster_payloads = [
-            json.loads(c[1].get("Payload", b"{}"))
-            for c in mock_lambda.invoke.call_args_list
-            if "raster_" in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
-               and "solve_score" not in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
-        ]
-        assert len(raster_payloads) > 0
-        assert raster_payloads[0]["solve_metric"] == "proximity", \
-            f"legacy should default to proximity, got {raster_payloads[0].get('solve_metric')}"
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_solve_score_clusteriness_prepass_and_raster(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """New metric clusteriness runs full prepass and raster with correct payload."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {
-                "degree": 5, "n_stripes": 2, "n_chunks": 2,
-                "lores": {"bin_key": "renders/j/lores.bin"}
-            }} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_cl", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
-                "solve_metric": "clusteriness",
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        handler(event, None)
-
-        # Verify prepass ran
-        phases = [c.args[2] for c in mock_report.call_args_list if len(c.args) >= 3]
-        assert "solve_score_clip" in phases
-
-        # Verify raster payloads
-        raster_payloads = [
-            json.loads(c[1].get("Payload", b"{}"))
-            for c in mock_lambda.invoke.call_args_list
-            if "raster_" in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
-               and "solve_score" not in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
-        ]
-        assert len(raster_payloads) == 2
-        for p in raster_payloads:
-            assert p["color"] == "solve_score"
-            assert p["solve_metric"] == "clusteriness"
-            assert "clusteriness" in p["solve_score_bins_key"]
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_solve_score_real_axis_proximity_raster_payload(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """New metric real_axis_proximity passes through all payloads correctly."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {
-                "degree": 5, "n_stripes": 1, "n_chunks": 1,
-                "lores": {"bin_key": "renders/j/lores.bin"}
-            }} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_rap", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
-                "solve_metric": "real_axis_proximity",
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        handler(event, None)
-
-        # Check clip payload
-        clip_payloads = [
-            json.loads(c[1].get("Payload", b"{}"))
-            for c in mock_lambda.invoke.call_args_list
-            if json.loads(c[1].get("Payload", b"{}")).get("phase") == "clip"
-        ]
-        assert len(clip_payloads) == 1
-        assert clip_payloads[0]["metric"] == "real_axis_proximity"
-
-        # Check raster payload
-        raster_payloads = [
-            json.loads(c[1].get("Payload", b"{}"))
-            for c in mock_lambda.invoke.call_args_list
-            if "raster_" in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
-               and "solve_score" not in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
-        ]
-        assert len(raster_payloads) == 1
-        assert raster_payloads[0]["solve_metric"] == "real_axis_proximity"
-        assert "real_axis_proximity" in raster_payloads[0]["solve_score_bins_key"]
-
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_solve_score_quantile_in_all_payloads(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """Non-default solve_score_quantile passes through clip, hist, merge, raster."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {
-                "degree": 5, "n_stripes": 2, "n_chunks": 2,
-                "lores": {"bin_key": "renders/j/lores.bin"}
-            }} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_q", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
-                "solve_metric": "proximity",
-                "solve_score_quantile": 0.01,
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        handler(event, None)
-
-        all_payloads = [
-            json.loads(c[1].get("Payload", b"{}"))
-            for c in mock_lambda.invoke.call_args_list
-        ]
-        clip = [p for p in all_payloads if p.get("phase") == "clip"]
-        hist = [p for p in all_payloads if p.get("phase") == "hist"]
-        merge = [p for p in all_payloads if p.get("phase") == "merge"
-                 and "solve_score_merge" in p.get("task_id", "")]
-        raster = [p for p in all_payloads
-                  if "raster_" in p.get("task_id", "")
-                  and "solve_score" not in p.get("task_id", "")]
-
-        assert len(clip) == 1, f"expected 1 clip, got {len(clip)}"
-        assert clip[0]["solve_score_quantile"] == 0.01
-        assert len(hist) == 2, f"expected 2 hist, got {len(hist)}"
-        for h in hist:
-            assert h["solve_score_quantile"] == 0.01
-        assert len(merge) == 1, f"expected 1 merge, got {len(merge)}"
-        assert merge[0]["solve_score_quantile"] == 0.01
-        assert len(raster) == 2, f"expected 2 raster, got {len(raster)}"
-        for r in raster:
-            assert r["solve_score_quantile"] == 0.01
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_solve_score_quantile_too_low_fails(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """solve_score_quantile below 0.001 raises."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {
-                "degree": 5, "n_stripes": 2, "n_chunks": 2,
-                "lores": {"bin_key": "renders/j/lores.bin"}
-            }} if "detail" in path else {}
-        )
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_qlo", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
-                "solve_metric": "proximity",
-                "solve_score_quantile": 0.0001,
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        with self.assertRaises(RuntimeError):
-            handler(event, None)
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_solve_score_quantile_too_high_fails(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """solve_score_quantile above 0.05 raises."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {
-                "degree": 5, "n_stripes": 2, "n_chunks": 2,
-                "lores": {"bin_key": "renders/j/lores.bin"}
-            }} if "detail" in path else {}
-        )
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_qhi", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
-                "solve_metric": "proximity",
-                "solve_score_quantile": 0.1,
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        with self.assertRaises(RuntimeError):
-            handler(event, None)
-
-
-class TestBilevelOrchestrator(unittest.TestCase):
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_bilevel_dispatches_raster_merge_stitch(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {"degree": 5, "n_stripes": 2, "n_chunks": 2}} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_bi", "mode": "bilevel",
-            "params": {"pix": 512, "tile_size": 512, "view_mode": "square", "square_extent": 2.0, "rotation": 0}
-        })
-        result = handler(event, None)
-        body = json.loads(result["body"])
-        assert body["phase"] == "done"
-
-        phases = [c.args[2] for c in mock_report.call_args_list if len(c.args) >= 3]
-        assert "bilevel_raster_dispatch" in phases
-        assert "bilevel_merge_dispatch" in phases
-        assert "bilevel_stitch_dispatch" in phases
-        ri = phases.index("bilevel_raster_dispatch")
-        mi = phases.index("bilevel_merge_dispatch")
-        si = phases.index("bilevel_stitch_dispatch")
-        assert ri < mi < si
-
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_bilevel_merge_payload_has_tile_w_tile_h(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """Merge jobs must include tile_w and tile_h (worker contract)."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {"degree": 5, "n_stripes": 2, "n_chunks": 2}} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_mw", "mode": "bilevel",
-            "params": {"pix": 1024, "tile_size": 512, "view_mode": "square", "square_extent": 2.0, "rotation": 0}
-        })
-        handler(event, None)
-
-        # Find merge dispatch payloads
-        merge_payloads = []
-        for c in mock_lambda.invoke.call_args_list:
-            payload = json.loads(c[1].get("Payload", b"{}"))
-            if payload.get("phase") == "merge" and "bilevel_merge" in payload.get("task_id", ""):
-                merge_payloads.append(payload)
-
-        assert len(merge_payloads) > 0, "No bilevel merge jobs dispatched"
-        for p in merge_payloads:
-            assert "tile_w" in p, f"merge payload missing tile_w: {p.get('task_id')}"
-            assert "tile_h" in p, f"merge payload missing tile_h: {p.get('task_id')}"
-            assert p["tile_w"] > 0, f"tile_w must be > 0"
-            assert p["tile_h"] > 0, f"tile_h must be > 0"
-
-
-class TestCoeffOrchestrator(unittest.TestCase):
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_coeff_dispatches_raster_merge_stitch(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {"degree": 5, "n_stripes": 2, "n_chunks": 2}} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_cb", "mode": "coeff_bilevel",
-            "params": {"pix": 512, "tile_size": 512, "view_mode": "square", "square_extent": 2.0, "rotation": 0}
-        })
-        result = handler(event, None)
-        body = json.loads(result["body"])
-        assert body["phase"] == "done"
-
-        phases = [c.args[2] for c in mock_report.call_args_list if len(c.args) >= 3]
-        assert "coeff_raster_dispatch" in phases
-        assert "coeff_merge_dispatch" in phases
-        assert "coeff_stitch_dispatch" in phases
-        ri = phases.index("coeff_raster_dispatch")
-        mi = phases.index("coeff_merge_dispatch")
-        si = phases.index("coeff_stitch_dispatch")
-        assert ri < mi < si
-
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_coeff_uses_coeffs_keys_from_metadata(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """Coeff bilevel uses coeffs_keys from calc metadata, not synthesized keys."""
-        # Use keys and n_coeffs that DIFFER from the fallback to prove metadata is used
-        real_keys = ["renders/j/custom_chunk_A.bin", "renders/j/custom_chunk_B.bin"]
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {
-                "degree": 5, "n_stripes": 2, "n_chunks": 2,
-                "n_coeffs": 99,  # != degree+1 (6), proves metadata is used
-                "coeffs_keys": real_keys,
-            }} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_ck", "mode": "coeff_bilevel",
-            "params": {"pix": 512, "tile_size": 512, "view_mode": "square", "square_extent": 2.0, "rotation": 0}
-        })
-        handler(event, None)
-
-        # Check dispatched coeff raster jobs used the real keys
-        dispatched_payloads = []
-        for c in mock_lambda.invoke.call_args_list:
-            payload = json.loads(c[1].get("Payload", b"{}"))
-            if payload.get("phase") == "coeff_raster":
-                dispatched_payloads.append(payload)
-
-        assert len(dispatched_payloads) == 2, f"expected 2 coeff raster jobs, got {len(dispatched_payloads)}"
-        assert dispatched_payloads[0]["coeffs_key"] == "renders/j/custom_chunk_A.bin", \
-            f"stripe 0 key wrong: {dispatched_payloads[0].get('coeffs_key')}"
-        assert dispatched_payloads[1]["coeffs_key"] == "renders/j/custom_chunk_B.bin", \
-            f"stripe 1 key wrong: {dispatched_payloads[1].get('coeffs_key')}"
-        assert dispatched_payloads[0]["n_coeffs"] == 99, \
-            f"n_coeffs should be 99 from metadata, got {dispatched_payloads[0].get('n_coeffs')}"
-
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_coeff_merge_payload_has_tile_w_tile_h(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """Coeff merge jobs must include tile_w and tile_h."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {"degree": 5, "n_stripes": 2, "n_chunks": 2, "n_coeffs": 6}} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_cmw", "mode": "coeff_bilevel",
-            "params": {"pix": 1024, "tile_size": 512, "view_mode": "square", "square_extent": 2.0, "rotation": 0}
-        })
-        handler(event, None)
-
-        merge_payloads = []
-        for c in mock_lambda.invoke.call_args_list:
-            payload = json.loads(c[1].get("Payload", b"{}"))
-            if payload.get("phase") == "merge" and "coeff_bilevel_merge" in payload.get("task_id", ""):
-                merge_payloads.append(payload)
-
-        assert len(merge_payloads) > 0, "No coeff merge jobs dispatched"
-        for p in merge_payloads:
-            assert "tile_w" in p, f"coeff merge payload missing tile_w: {p.get('task_id')}"
-            assert "tile_h" in p, f"coeff merge payload missing tile_h: {p.get('task_id')}"
-
-
-class TestOrchestratorCheckpoint(unittest.TestCase):
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_resumed_encode_poll_uses_stored_single_job(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """Resume from encode_poll checkpoint uses stored single-job dispatch info."""
-        mock_storage.side_effect = lambda path, body: {}
-        # First poll: not done → triggers stall check. Second: done.
-        poll_count = [0]
-        def mock_query(**kwargs):
-            poll_count[0] += 1
-            if poll_count[0] <= 1:
-                return {"Items": []}  # not done yet
-            return {"Items": [{"task_id": {"S": "render_run_enc_encode"}, "task_status": {"S": "done"}}]}
-        mock_ddb.query.side_effect = mock_query
-
-        # Build checkpoint as if encode_dispatch just completed
-        encode_job = {
-            "job_id": "j", "task_id": "render_run_enc_encode",
-            "out_key": "renders/j/image.jpeg", "format": "jpeg",
-            "quality": 90, "width": 512, "height": 512,
-            "tile_grid": {"n_cols": 1, "n_rows": 1, "tile_keys": ["renders/j/tile_0000.raw"]},
+    @patch("handler_render_orchestrator.sfn_client")
+    def test_starter_calls_start_execution_once(self, mock_sfn, mock_report):
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123:execution:polypaint-render-workflow:render_color_run_abc"
         }
-        checkpoint = {
-            "phase": "encode_poll",
-            "started_at_ms": 1000,
-            "job_id": "j", "run_id": "run_enc", "mode": "color",
-            "_params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "rainbow",
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            },
-            "_viewport": {"center_re": 0, "center_im": 0, "scale": 128},
-            "_calc": {"degree": 5, "n_stripes": 2, "n_chunks": 2},
-            "n_stripes": 2, "degree": 5, "n_tiles": 1,
-            "image_key": "renders/j/image.jpeg",
-            # This is what _dispatch_single stores:
-            "_last_dispatched_jobs": [encode_job],
-            "_last_dispatch_function": "polypaint-encode",
-        }
-
         from handler_render_orchestrator import handler
         event = _make_event({
-            "job_id": "j", "run_id": "run_enc", "mode": "color",
-            "params": checkpoint["_params"],
-            "_checkpoint": checkpoint,
+            "job_id": "j", "run_id": "run_abc", "mode": "color",
+            "params": {"pix": 512}
         })
         result = handler(event, None)
         body = json.loads(result["body"])
-        assert body["phase"] == "done", f"expected done, got {body['phase']}"
 
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
+        assert mock_sfn.start_execution.call_count == 1
+        call_kwargs = mock_sfn.start_execution.call_args[1]
+        assert "polypaint" in call_kwargs["stateMachineArn"] or call_kwargs["stateMachineArn"] == ""
+        assert call_kwargs["name"] == "render_color_run_abc"
+        sfn_input = json.loads(call_kwargs["input"])
+        assert sfn_input["job_id"] == "j"
+        assert sfn_input["mode"] == "color"
+
     @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_checkpoints_and_self_reinvokes_when_time_low(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """If remaining time < 60s, orchestrator checkpoints and self-invokes."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {"degree": 5, "n_stripes": 2, "n_chunks": 2}} if "detail" in path else {}
-        )
-        # Make raster poll return not-done so we stay in poll loop
-        mock_ddb.query.return_value = {"Items": []}
-
-        # Fake context that returns low remaining time
-        mock_context = MagicMock()
-        mock_context.get_remaining_time_in_millis.return_value = 30000  # 30s < 60s threshold
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_ck", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "rainbow",
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        result = handler(event, mock_context)
-        body = json.loads(result["body"])
-        assert body["status"] == "reinvoked"
-
-        # Verify self-invoke was called
-        self_invoke_calls = [
-            c for c in mock_lambda.invoke.call_args_list
-            if c[1].get("InvocationType") == "Event"
-            and "render-orchestrator" in c[1].get("FunctionName", "")
-        ]
-        assert len(self_invoke_calls) >= 1, "should have self-invoked"
-
-
-class TestOrchestratorStatusAndTaskIds(unittest.TestCase):
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_writes_status_each_phase(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {"degree": 5, "n_stripes": 2, "n_chunks": 2}} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        event = _make_event({
-            "job_id": "j", "run_id": "run_st", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "rainbow",
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        handler(event, None)
-
-        # Every report_status call should include phase in result_data
-        for c in mock_report.call_args_list:
-            if len(c.args) >= 3 and c.kwargs.get("result_data"):
-                rd = c.kwargs["result_data"]
-                assert "phase" in rd, f"result_data missing phase: {rd}"
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_worker_task_ids_include_run_id(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """All dispatched worker jobs must have task_id containing run_id."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {"degree": 5, "n_stripes": 2, "n_chunks": 2}} if "detail" in path else {}
-        )
-        mock_ddb.query.return_value = _mock_poll_done(100)
-
-        from handler_render_orchestrator import handler
-        run_id = "run_tid_test"
-        event = _make_event({
-            "job_id": "j", "run_id": run_id, "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "rainbow",
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
-        })
-        handler(event, None)
-
-        # Check all async invocations for task_id
-        for c in mock_lambda.invoke.call_args_list:
-            payload_bytes = c[1].get("Payload", b"{}")
-            if isinstance(payload_bytes, bytes):
-                payload = json.loads(payload_bytes)
-            else:
-                payload = json.loads(payload_bytes)
-            if "task_id" in payload:
-                assert run_id in payload["task_id"], \
-                    f"task_id {payload['task_id']} missing run_id {run_id}"
-
-
-class TestOrchestratorError(unittest.TestCase):
-
-    @patch("handler_render_orchestrator.ddb")
-    @patch("handler_render_orchestrator.lambda_client")
-    @patch("handler_render_orchestrator.report_status")
-    @patch("handler_render_orchestrator._storage_call")
-    def test_error_sets_terminal_error_status(
-        self, mock_storage, mock_report, mock_lambda, mock_ddb
-    ):
-        """Downstream error → orchestrator row marked error."""
-        mock_storage.side_effect = lambda path, body: (
-            {"deleted": 0} if "clean" in path else
-            {"job_id": "j", "calc": {"degree": 5, "n_stripes": 2, "n_chunks": 2}} if "detail" in path else {}
-        )
-        # Raster poll returns an error
-        mock_ddb.query.return_value = {
-            "Items": [
-                {"task_id": {"S": "t_0"}, "task_status": {"S": "error"},
-                 "error_msg": {"S": "raster exploded"}}
-            ]
+    @patch("handler_render_orchestrator.sfn_client")
+    def test_starter_writes_queued_ddb_row(self, mock_sfn, mock_report):
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123:execution:test:test"
         }
-
         from handler_render_orchestrator import handler
         event = _make_event({
-            "job_id": "j", "run_id": "run_err", "mode": "color",
-            "params": {
-                "pix": 512, "fmt": "jpeg", "quality": 90,
-                "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "rainbow",
-                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
-            }
+            "job_id": "j", "run_id": "run_q", "mode": "bilevel",
+            "params": {"pix": 512}
         })
-        try:
-            handler(event, None)
-            assert False, "should have raised"
-        except RuntimeError as e:
-            assert "raster exploded" in str(e)
+        handler(event, None)
 
-        # Last report_status should be error
-        last_call = mock_report.call_args_list[-1]
-        assert last_call.args[2] == "error"
+        mock_report.assert_called_once()
+        args = mock_report.call_args
+        assert args[0][0] == "j"  # job_id
+        assert args[0][1] == "render_run_bilevel_run_q"  # task_id
+        assert args[0][2] == "queued"  # status
+        rd = args[1]["result_data"]
+        assert rd["phase"] == "queued"
+        assert rd["phase_label"] == "Queued"
+        assert "execution_arn" in rd
+
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator.sfn_client")
+    def test_starter_returns_execution_arn(self, mock_sfn, mock_report):
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123:execution:wf:exec1"
+        }
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_r", "mode": "color",
+            "params": {"pix": 512}
+        })
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        assert body["execution_arn"] == "arn:aws:states:us-east-1:123:execution:wf:exec1"
+        assert body["task_id"] == "render_run_color_run_r"
+        assert body["run_id"] == "run_r"
+
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator.sfn_client")
+    def test_starter_rejects_invalid_mode(self, mock_sfn, mock_report):
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_bad", "mode": "invalid_mode",
+            "params": {"pix": 512}
+        })
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(event, None)
+        assert "invalid_mode" in str(ctx.exception).lower()
+        mock_sfn.start_execution.assert_not_called()
+
+    def test_starter_has_no_self_invoke(self):
+        """The starter module must not contain self-invocation patterns."""
+        import handler_render_orchestrator as mod
+        source = open(mod.__file__).read()
+        assert "_SelfReinvoke" not in source, "starter still contains _SelfReinvoke"
+        assert "SELF_FUNCTION" not in source, "starter still contains SELF_FUNCTION"
+        assert "_check_timeout" not in source, "starter still contains _check_timeout"
+        assert "_poll_completion" not in source, "starter still contains _poll_completion"
+        assert "run_color" not in source, "starter still contains run_color"
+
+    def test_starter_does_not_block_on_execution(self):
+        """The starter must not call DescribeExecution or poll for completion."""
+        import handler_render_orchestrator as mod
+        source = open(mod.__file__).read()
+        assert "describe_execution" not in source.lower(), "starter must not call DescribeExecution"
+        assert "poll_completion" not in source, "starter must not have poll_completion"
+        assert "_poll" not in source, "starter must not have _poll"
+
+    def test_dispatch_handler_uses_starter_not_sfn(self):
+        """handler_dispatch.py must invoke the starter Lambda, not Step Functions directly."""
+        dispatch_path = os.path.join(os.path.dirname(__file__), "..", "lambda", "handler_dispatch.py")
+        source = open(dispatch_path).read()
+        assert "start_execution" not in source.lower(), \
+            "dispatch handler must not call StartExecution directly"
+        assert "stepfunctions" not in source.lower(), \
+            "dispatch handler must not import stepfunctions client"
+        assert "render_orchestrator" in source, \
+            "dispatch handler must still have render_orchestrator target"
 
 
 if __name__ == "__main__":

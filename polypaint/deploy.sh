@@ -56,7 +56,12 @@ RENDER_PREVIEW_MEMORY=4096  # libvips vipsthumbnail on large images
 SOLVE_PROXIMITY_NAME="polypaint-solve-proximity"
 SOLVE_PROXIMITY_MEMORY=1769  # 1 vCPU, solve_proximity_stats binary
 RENDER_ORCHESTRATOR_NAME="polypaint-render-orchestrator"
-RENDER_ORCHESTRATOR_MEMORY=512  # pure Python, just polls and dispatches
+RENDER_ORCHESTRATOR_MEMORY=512  # starter only — validates + starts Step Functions
+RENDER_PLAN_NAME="polypaint-render-plan"
+RENDER_PLAN_MEMORY=512
+RENDER_STATUS_NAME="polypaint-render-status"
+RENDER_STATUS_MEMORY=256
+RENDER_STATE_MACHINE_NAME="polypaint-render-workflow"
 BINARY_TMP=10240      # /tmp size for Lambdas that process raw images (max 10GB)
 TIMEOUT=900
 BUCKET="polypaint"
@@ -594,13 +599,29 @@ chmod +x "$SP_DIR"/solve_proximity_stats
 cd "$SP_DIR" && zip -r9 /tmp/polypaint-solve-proximity.zip . -q && cd "$SCRIPT_DIR"
 echo "  SolvPrx: $(du -h /tmp/polypaint-solve-proximity.zip | cut -f1)  (solve_proximity_stats binary)"
 
-# Render Orchestrator: handler_render_orchestrator.py + shared.py (pure Python)
+# Render Orchestrator (starter): handler_render_orchestrator.py + shared.py
 ORCH_DIR=/tmp/polypaint-render-orchestrator
 rm -rf "$ORCH_DIR"
 mkdir -p "$ORCH_DIR"
 cp lambda/handler_render_orchestrator.py lambda/shared.py "$ORCH_DIR/"
 cd "$ORCH_DIR" && zip -r9 /tmp/polypaint-render-orchestrator.zip . -q && cd "$SCRIPT_DIR"
-echo "  RndOrch: $(du -h /tmp/polypaint-render-orchestrator.zip | cut -f1)  (pure Python orchestrator)"
+echo "  RndOrch: $(du -h /tmp/polypaint-render-orchestrator.zip | cut -f1)  (starter only)"
+
+# Render Plan: handler_render_plan.py + shared.py
+PLAN_DIR=/tmp/polypaint-render-plan
+rm -rf "$PLAN_DIR"
+mkdir -p "$PLAN_DIR"
+cp lambda/handler_render_plan.py lambda/shared.py "$PLAN_DIR/"
+cd "$PLAN_DIR" && zip -r9 /tmp/polypaint-render-plan.zip . -q && cd "$SCRIPT_DIR"
+echo "  RndPlan: $(du -h /tmp/polypaint-render-plan.zip | cut -f1)  (plan builder)"
+
+# Render Status: handler_render_status.py + shared.py
+STATUS_DIR=/tmp/polypaint-render-status
+rm -rf "$STATUS_DIR"
+mkdir -p "$STATUS_DIR"
+cp lambda/handler_render_status.py lambda/shared.py "$STATUS_DIR/"
+cd "$STATUS_DIR" && zip -r9 /tmp/polypaint-render-status.zip . -q && cd "$SCRIPT_DIR"
+echo "  RndStat: $(du -h /tmp/polypaint-render-status.zip | cut -f1)  (status updater)"
 
 # Sweep-CM: handler_sweep_cm.py + shared.py + sweep_cm (needs LAPACK layer)
 CM_DIR=/tmp/polypaint-sweep-cm
@@ -965,8 +986,99 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$SOLVE_PROXIMITY_NAME" "handler_solve_proximity.handler" "/tmp/polypaint-solve-proximity.zip" \
         "$SOLVE_PROXIMITY_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
+    # Render plan + status Lambdas
+    create_lambda "$RENDER_PLAN_NAME" "handler_render_plan.handler" "/tmp/polypaint-render-plan.zip" \
+        "$RENDER_PLAN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME"
+
+    create_lambda "$RENDER_STATUS_NAME" "handler_render_status.handler" "/tmp/polypaint-render-status.zip" \
+        "$RENDER_STATUS_MEMORY" "$ROLE_ARN" "" "JOBS_TABLE=$JOBS_TABLE"
+
+    # Step Functions state machine
+    echo "Deploying Step Functions state machine..."
+    ACCT=$(aws sts get-caller-identity --query 'Account' --output text)
+
+    # Create Step Functions execution role
+    SFN_ROLE_NAME="polypaint-sfn-execution-role"
+    SFN_TRUST='{
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "states.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+        }]
+    }'
+    SFN_ROLE_ARN=$(aws iam create-role \
+        --role-name "$SFN_ROLE_NAME" \
+        --assume-role-policy-document "$SFN_TRUST" \
+        --query 'Role.Arn' --output text 2>/dev/null || \
+        aws iam get-role --role-name "$SFN_ROLE_NAME" --query 'Role.Arn' --output text)
+
+    aws iam put-role-policy --role-name "$SFN_ROLE_NAME" \
+        --policy-name polypaint-sfn-lambda-invoke \
+        --policy-document "{
+            \"Version\": \"2012-10-17\",
+            \"Statement\": [{
+                \"Effect\": \"Allow\",
+                \"Action\": \"lambda:InvokeFunction\",
+                \"Resource\": \"arn:aws:lambda:${REGION}:${ACCT}:function:polypaint-*\"
+            }]
+        }"
+
+    # Render ASL template with actual Lambda ARNs
+    RENDER_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PLAN_NAME}"
+    RENDER_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_STATUS_NAME}"
+    RASTER_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RASTER_NAME}"
+    FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_NAME}"
+    ENCODE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ENCODE_NAME}"
+    STORAGE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${STORAGE_NAME}"
+    BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
+    BILEVEL_STITCH_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_STITCH_NAME}"
+    SOLVE_PROXIMITY_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
+
+    sed -e "s|\${PlanFunctionArn}|${RENDER_PLAN_ARN}|g" \
+        -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
+        -e "s|\${RasterFunctionArn}|${RASTER_ARN}|g" \
+        -e "s|\${FinalizeFunctionArn}|${FINALIZE_ARN}|g" \
+        -e "s|\${EncodeFunctionArn}|${ENCODE_ARN}|g" \
+        -e "s|\${StorageFunctionArn}|${STORAGE_ARN}|g" \
+        -e "s|\${BilevelFunctionArn}|${BILEVEL_ARN}|g" \
+        -e "s|\${BilevelStitchFunctionArn}|${BILEVEL_STITCH_ARN}|g" \
+        -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
+        stepfunctions/render_workflow.asl.json.template > /tmp/render_workflow.asl.json
+
+    # Create or update state machine
+    RENDER_SM_ARN=$(aws stepfunctions create-state-machine \
+        --name "$RENDER_STATE_MACHINE_NAME" \
+        --definition "file:///tmp/render_workflow.asl.json" \
+        --role-arn "$SFN_ROLE_ARN" \
+        --type STANDARD \
+        --region "$REGION" \
+        --query 'stateMachineArn' --output text 2>/dev/null || \
+        aws stepfunctions update-state-machine \
+            --state-machine-arn "arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}" \
+            --definition "file:///tmp/render_workflow.asl.json" \
+            --role-arn "$SFN_ROLE_ARN" \
+            --region "$REGION" \
+            --query 'updateDate' --output text)
+    echo "  State machine: $RENDER_STATE_MACHINE_NAME ($RENDER_SM_ARN)"
+
+    RENDER_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}"
+
+    # Starter Lambda — now only needs state machine ARN, not all worker names
     create_lambda "$RENDER_ORCHESTRATOR_NAME" "handler_render_orchestrator.handler" "/tmp/polypaint-render-orchestrator.zip" \
-        "$RENDER_ORCHESTRATOR_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME"
+        "$RENDER_ORCHESTRATOR_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RENDER_STATE_MACHINE_ARN=$RENDER_SM_ARN"
+
+    # Add states:StartExecution permission to Lambda role
+    aws iam put-role-policy --role-name "$ROLE_NAME" \
+        --policy-name polypaint-sfn-start \
+        --policy-document "{
+            \"Version\": \"2012-10-17\",
+            \"Statement\": [{
+                \"Effect\": \"Allow\",
+                \"Action\": \"states:StartExecution\",
+                \"Resource\": \"${RENDER_SM_ARN}\"
+            }]
+        }"
 
     create_lambda "$SWEEP_CM_NAME" "handler_sweep_cm.handler" "/tmp/polypaint-sweep-cm.zip" \
         "$SWEEP_CM_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -1080,8 +1192,64 @@ elif [ "$ACTION" = "update" ]; then
     update_lambda "$SOLVE_PROXIMITY_NAME" "handler_solve_proximity.handler" "/tmp/polypaint-solve-proximity.zip" \
         "$SOLVE_PROXIMITY_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
+    update_lambda "$RENDER_PLAN_NAME" "handler_render_plan.handler" "/tmp/polypaint-render-plan.zip" \
+        "$RENDER_PLAN_MEMORY" "" "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME"
+
+    update_lambda "$RENDER_STATUS_NAME" "handler_render_status.handler" "/tmp/polypaint-render-status.zip" \
+        "$RENDER_STATUS_MEMORY" "" "JOBS_TABLE=$JOBS_TABLE"
+
+    # Update Step Functions state machine
+    echo "Updating Step Functions state machine..."
+    ACCT=$(aws sts get-caller-identity --query 'Account' --output text)
+    RENDER_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PLAN_NAME}"
+    RENDER_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_STATUS_NAME}"
+    RASTER_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RASTER_NAME}"
+    FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_NAME}"
+    ENCODE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ENCODE_NAME}"
+    STORAGE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${STORAGE_NAME}"
+    BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
+    BILEVEL_STITCH_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_STITCH_NAME}"
+    SOLVE_PROXIMITY_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
+    RENDER_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}"
+
+    SFN_ROLE_NAME="polypaint-sfn-execution-role"
+    SFN_ROLE_ARN=$(aws iam get-role --role-name "$SFN_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || echo "")
+
+    sed -e "s|\${PlanFunctionArn}|${RENDER_PLAN_ARN}|g" \
+        -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
+        -e "s|\${RasterFunctionArn}|${RASTER_ARN}|g" \
+        -e "s|\${FinalizeFunctionArn}|${FINALIZE_ARN}|g" \
+        -e "s|\${EncodeFunctionArn}|${ENCODE_ARN}|g" \
+        -e "s|\${StorageFunctionArn}|${STORAGE_ARN}|g" \
+        -e "s|\${BilevelFunctionArn}|${BILEVEL_ARN}|g" \
+        -e "s|\${BilevelStitchFunctionArn}|${BILEVEL_STITCH_ARN}|g" \
+        -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
+        stepfunctions/render_workflow.asl.json.template > /tmp/render_workflow.asl.json
+
+    if [ -n "$SFN_ROLE_ARN" ]; then
+        aws stepfunctions update-state-machine \
+            --state-machine-arn "$RENDER_SM_ARN" \
+            --definition "file:///tmp/render_workflow.asl.json" \
+            --role-arn "$SFN_ROLE_ARN" \
+            --region "$REGION" >/dev/null 2>&1 || echo "  WARNING: state machine update failed"
+    fi
+    echo "  State machine updated: $RENDER_STATE_MACHINE_NAME"
+
+    # Starter Lambda — uses state machine ARN, not worker names
     update_lambda "$RENDER_ORCHESTRATOR_NAME" "handler_render_orchestrator.handler" "/tmp/polypaint-render-orchestrator.zip" \
-        "$RENDER_ORCHESTRATOR_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME"
+        "$RENDER_ORCHESTRATOR_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RENDER_STATE_MACHINE_ARN=$RENDER_SM_ARN"
+
+    # Ensure states:StartExecution permission
+    aws iam put-role-policy --role-name "$ROLE_NAME" \
+        --policy-name polypaint-sfn-start \
+        --policy-document "{
+            \"Version\": \"2012-10-17\",
+            \"Statement\": [{
+                \"Effect\": \"Allow\",
+                \"Action\": \"states:StartExecution\",
+                \"Resource\": \"${RENDER_SM_ARN}\"
+            }]
+        }" 2>/dev/null || true
 
     update_lambda "$SWEEP_CM_NAME" "handler_sweep_cm.handler" "/tmp/polypaint-sweep-cm.zip" \
         "$SWEEP_CM_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"

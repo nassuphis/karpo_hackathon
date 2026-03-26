@@ -1,0 +1,200 @@
+"""
+Tests for the Step Functions ASL template.
+
+Validates structural correctness: required states exist, Map states
+have correct concurrency, no state targets the starter Lambda,
+ResultPath conventions are followed, retry policies exist.
+
+Run: cd polypaint && uv run python -m pytest tests/test_render_workflow_definition.py -v
+"""
+import json
+import os
+import re
+import sys
+import unittest
+
+TEMPLATE_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "stepfunctions", "render_workflow.asl.json.template"
+)
+
+
+def _load_asl():
+    """Load and render the ASL template with placeholder ARNs."""
+    with open(TEMPLATE_PATH) as f:
+        raw = f.read()
+    # Replace all ${...Arn} placeholders with dummy ARNs
+    rendered = re.sub(r'\$\{(\w+)\}', r'arn:aws:lambda:us-east-1:123456789012:function:placeholder-\1', raw)
+    return json.loads(rendered)
+
+
+class TestWorkflowDefinition(unittest.TestCase):
+
+    def setUp(self):
+        self.asl = _load_asl()
+        self.states = self.asl["States"]
+
+    def test_template_parses_as_valid_json(self):
+        """ASL template renders to valid JSON."""
+        assert "StartAt" in self.asl
+        assert "States" in self.asl
+        assert len(self.states) > 0
+
+    def test_required_top_level_states(self):
+        """Required top-level states exist."""
+        for name in ["CleanRender", "BuildPlan", "ModeChoice",
+                      "ReportDoneColor", "ReportDoneBilevel", "ReportDoneCoeffBilevel",
+                      "Succeed", "ReportError", "Fail"]:
+            assert name in self.states, f"missing state: {name}"
+
+    def test_required_color_states(self):
+        """Required color pipeline states exist."""
+        for name in [
+            "ColorSolveScoreChoice",
+            "ColorSolveScoreClipPhase", "ColorSolveScoreClipTask",
+            "ColorSolveScoreHistPhase", "ColorSolveScoreHistMap",
+            "ColorSolveScoreMergePhase", "ColorSolveScoreMergeTask",
+            "ColorRasterPhase", "ColorRasterMap",
+            "ColorFinalizePhase", "ColorFinalizeMap",
+            "ColorEncodePhase", "ColorEncodeTask",
+        ]:
+            assert name in self.states, f"missing color state: {name}"
+
+    def test_required_bilevel_states(self):
+        """Required bilevel pipeline states exist."""
+        for name in [
+            "BilevelRasterPhase", "BilevelRasterMap",
+            "BilevelMergePhase", "BilevelMergeMap",
+            "BilevelStitchPhase", "BilevelStitchTask",
+        ]:
+            assert name in self.states, f"missing bilevel state: {name}"
+
+    def test_required_coeff_states(self):
+        """Required coeff bilevel pipeline states exist."""
+        for name in [
+            "CoeffRasterPhase", "CoeffRasterMap",
+            "CoeffMergePhase", "CoeffMergeMap",
+            "CoeffStitchPhase", "CoeffStitchTask",
+        ]:
+            assert name in self.states, f"missing coeff state: {name}"
+
+    def test_required_map_states(self):
+        """All expected Map states are actually Map type."""
+        map_names = [
+            "ColorSolveScoreHistMap", "ColorRasterMap", "ColorFinalizeMap",
+            "BilevelRasterMap", "BilevelMergeMap",
+            "CoeffRasterMap", "CoeffMergeMap",
+        ]
+        for name in map_names:
+            assert self.states[name]["Type"] == "Map", f"{name} should be Map"
+
+    def test_no_state_targets_orchestrator(self):
+        """No state should invoke polypaint-render-orchestrator."""
+        asl_str = json.dumps(self.asl)
+        assert "polypaint-render-orchestrator" not in asl_str, \
+            "state machine must not invoke the starter Lambda"
+
+    def test_no_generic_phase_lambda(self):
+        """No state targets a generic 'sfn-phase' style Lambda."""
+        asl_str = json.dumps(self.asl)
+        assert "sfn-phase" not in asl_str
+        assert "sfn_phase" not in asl_str
+
+    def test_build_plan_writes_to_plan(self):
+        """BuildPlan must write results (plan data flows through $.plan)."""
+        bp = self.states["BuildPlan"]
+        assert bp.get("ResultPath") is not None, "BuildPlan must have ResultPath"
+
+    def test_report_states_use_null_result_path(self):
+        """Status/report states must use ResultPath: null."""
+        report_states = [n for n in self.states if "Phase" in n or "Report" in n]
+        for name in report_states:
+            s = self.states[name]
+            if s["Type"] == "Task":
+                assert s.get("ResultPath") is None, \
+                    f"{name} must use ResultPath: null, got {s.get('ResultPath')}"
+
+    def test_worker_states_do_not_overwrite_plan(self):
+        """Worker Task and Map states must not overwrite top-level plan data."""
+        worker_states = [n for n in self.states
+                         if "Map" in n or "Task" in n
+                         and n not in ("BuildPlan", "ParsePlan")]
+        for name in worker_states:
+            s = self.states[name]
+            rp = s.get("ResultPath")
+            # ResultPath must be null or a sub-path, never "$" (which overwrites everything)
+            assert rp != "$", f"{name} overwrites entire state with ResultPath: $"
+
+    def test_map_concurrency_set(self):
+        """Map states must have MaxConcurrency > 1."""
+        map_states = [n for n in self.states
+                      if isinstance(self.states[n], dict) and self.states[n].get("Type") == "Map"]
+        assert len(map_states) > 0, "no Map states found"
+        for name in map_states:
+            mc = self.states[name].get("MaxConcurrency", 0)
+            assert mc > 1, f"{name} has MaxConcurrency={mc}, must be > 1"
+
+    def test_stripe_maps_concurrency_10(self):
+        """Stripe-based maps must have MaxConcurrency=10."""
+        for name in ["ColorRasterMap", "ColorSolveScoreHistMap",
+                      "BilevelRasterMap", "CoeffRasterMap"]:
+            mc = self.states[name].get("MaxConcurrency", 0)
+            assert mc == 10, f"{name} MaxConcurrency={mc}, expected 10"
+
+    def test_tile_maps_concurrency_32(self):
+        """Tile-based maps must have MaxConcurrency=32."""
+        for name in ["ColorFinalizeMap", "BilevelMergeMap", "CoeffMergeMap"]:
+            mc = self.states[name].get("MaxConcurrency", 0)
+            assert mc == 32, f"{name} MaxConcurrency={mc}, expected 32"
+
+    def test_retry_policy_on_top_level_invoke_states(self):
+        """Top-level Lambda invoke Task states must have retry policy."""
+        for name, s in self.states.items():
+            if not isinstance(s, dict):
+                continue
+            if s.get("Type") == "Task" and "lambda:invoke" in str(s.get("Resource", "")):
+                retry = s.get("Retry", [])
+                assert len(retry) > 0, f"{name} missing Retry policy"
+                errors = retry[0].get("ErrorEquals", [])
+                assert "Lambda.ServiceException" in errors, \
+                    f"{name} Retry missing Lambda.ServiceException"
+
+    def test_retry_policy_on_map_worker_states(self):
+        """Worker states inside Map processors must have retry policy."""
+        for name, s in self.states.items():
+            if not isinstance(s, dict):
+                continue
+            if s.get("Type") == "Map":
+                processor = s.get("ItemProcessor", {})
+                inner_states = processor.get("States", {})
+                for iname, ist in inner_states.items():
+                    if ist.get("Type") == "Task" and "lambda:invoke" in str(ist.get("Resource", "")):
+                        retry = ist.get("Retry", [])
+                        assert len(retry) > 0, f"{name}/{iname} missing Retry policy"
+
+    def test_mode_specific_done_states(self):
+        """Each mode has its own ReportDone with the correct output key."""
+        color = self.states["ReportDoneColor"]
+        assert "image_key" in json.dumps(color["Parameters"]["Payload"])
+        assert "outputs.image_key" in json.dumps(color)
+
+        bilevel = self.states["ReportDoneBilevel"]
+        assert "outputs.bilevel_key" in json.dumps(bilevel)
+
+        coeff = self.states["ReportDoneCoeffBilevel"]
+        assert "outputs.coeff_bilevel_key" in json.dumps(coeff)
+
+    def test_worker_states_target_real_workers(self):
+        """Worker states inside Map processors target real worker Lambdas, not intermediaries."""
+        # Check that Map item processors invoke actual worker functions
+        asl_str = json.dumps(self.asl)
+        # The rendered template should contain placeholder ARNs for real workers
+        assert "placeholder-RasterFunctionArn" in asl_str
+        assert "placeholder-FinalizeFunctionArn" in asl_str
+        assert "placeholder-EncodeFunctionArn" in asl_str
+        assert "placeholder-BilevelFunctionArn" in asl_str
+        assert "placeholder-BilevelStitchFunctionArn" in asl_str
+        assert "placeholder-SolveProximityFunctionArn" in asl_str
+
+
+if __name__ == "__main__":
+    unittest.main()

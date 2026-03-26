@@ -327,7 +327,10 @@ int main(int argc, char **argv) {
     /* Solve-score args (new generic names, with legacy aliases) */
     const char *solveMetricStr = getArgStr(argc, argv, "--solve_metric", "proximity");
     enum SolveMetric solveMetric = SOLVE_METRIC_PROXIMITY;
-    parse_solve_metric(solveMetricStr, &solveMetric);
+    if (!parse_solve_metric(solveMetricStr, &solveMetric)) {
+        fprintf(stderr, "ERROR: unknown solve_metric '%s'\n", solveMetricStr);
+        return 1;
+    }
 
     double solveScoreClipLo = getArgDouble(argc, argv, "--solve_score_clip_lo",
                                getArgDouble(argc, argv, "--solve_prox_clip_lo", 0));

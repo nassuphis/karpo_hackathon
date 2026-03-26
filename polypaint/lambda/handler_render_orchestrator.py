@@ -284,69 +284,87 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
         progress["_calc"] = calc
         progress["n_stripes"] = calc.get("n_stripes", calc.get("n_chunks", 10))
         progress["degree"] = calc.get("degree", 1)
-        phase = "solve_proximity_check"
+        phase = "solve_score_check"
 
     calc = progress.get("_calc", checkpoint.get("_calc", {}))
     n_stripes = progress.get("n_stripes", checkpoint.get("n_stripes", 10))
     degree = progress.get("degree", checkpoint.get("degree", 1))
 
-    # Phase: solve_proximity prepass (optional)
-    solve_prox_bins_key = checkpoint.get("solve_prox_bins_key")
-    if phase == "solve_proximity_check":
-        if rp.get("color_mode") == "solve_proximity":
-            phase = "solve_proximity_clip"
+    # Phase: solve-score prepass (optional)
+    # Determine metric — coerce legacy solve_proximity to solve_score + proximity
+    color_mode = rp.get("color_mode", "rainbow")
+    if color_mode == "solve_proximity":
+        color_mode = "solve_score"
+        rp["color_mode"] = "solve_score"
+        if not rp.get("solve_metric"):
+            rp["solve_metric"] = "proximity"
+    solve_metric = rp.get("solve_metric", "proximity")
+    solve_score_bins_key = checkpoint.get("solve_score_bins_key")
+
+    if phase == "solve_score_check":
+        if color_mode == "solve_score":
+            phase = "solve_score_clip"
         else:
             phase = "raster_dispatch"
 
-    if phase == "solve_proximity_clip":
-        _update_progress(task_id, progress, "solve_proximity_clip", "Solve proximity: clip", context)
-        clip_key = f"renders/{job_id}/solve_proximity_clip.json"
-        clip_task = f"render_{run_id}_solve_proximity_clip"
+    if phase == "solve_score_clip":
+        metric_label = solve_metric.capitalize()
+        _update_progress(task_id, progress, "solve_score_clip",
+                         f"Solve score ({metric_label}): clip", context)
+        clip_key = f"renders/{job_id}/solve_scores/{solve_metric}_clip.json"
+        clip_task = f"render_{run_id}_solve_score_clip"
         lores_key = calc.get("lores", {}).get("bin_key")
         if not lores_key:
-            raise RuntimeError("lores.bin_key missing — needed for solve proximity")
+            raise RuntimeError("lores.bin_key missing — needed for solve score")
         rt = rp.get("root_transforms") or None
         _dispatch_single(FUNCTIONS["solve_proximity"], {
             "phase": "clip", "job_id": job_id, "degree": degree,
+            "metric": solve_metric,
             "lores_bin_key": lores_key, "root_transforms": rt,
             "out_key": clip_key, "task_id": clip_task,
         }, progress)
         _poll_completion(job_id, clip_task, 1, task_id, progress, context)
         progress["_clip_key"] = clip_key
-        phase = "solve_proximity_hist"
+        phase = "solve_score_hist"
 
     clip_key = progress.get("_clip_key", checkpoint.get("_clip_key"))
 
-    if phase == "solve_proximity_hist":
-        _update_progress(task_id, progress, "solve_proximity_hist", "Solve proximity: hist", context)
-        hist_prefix = f"renders/{job_id}/solve_proximity/"
+    if phase == "solve_score_hist":
+        metric_label = solve_metric.capitalize()
+        _update_progress(task_id, progress, "solve_score_hist",
+                         f"Solve score ({metric_label}): hist", context)
+        hist_prefix = f"renders/{job_id}/solve_scores/{solve_metric}/"
         rt = rp.get("root_transforms") or None
         hist_jobs = []
         for s in range(n_stripes):
             hist_jobs.append({
                 "phase": "hist", "job_id": job_id, "stripe_idx": s,
+                "metric": solve_metric,
                 "bin_key": f"renders/{job_id}/stripe_{s}.bin", "degree": degree,
                 "clip_key": clip_key, "hist_bins": 100, "root_transforms": rt,
                 "out_key": f"{hist_prefix}stripe_{s}_hist.json",
-                "task_id": f"render_{run_id}_solve_proximity_hist_{s}",
+                "task_id": f"render_{run_id}_solve_score_hist_{s}",
             })
         _dispatch_batch(FUNCTIONS["solve_proximity"], hist_jobs, progress)
-        _poll_completion(job_id, f"render_{run_id}_solve_proximity_hist_",
+        _poll_completion(job_id, f"render_{run_id}_solve_score_hist_",
                          n_stripes, task_id, progress, context)
-        phase = "solve_proximity_merge"
+        phase = "solve_score_merge"
 
-    if phase == "solve_proximity_merge":
-        _update_progress(task_id, progress, "solve_proximity_merge", "Solve proximity: merge", context)
-        bins_key = f"renders/{job_id}/solve_proximity_bins.json"
-        merge_task = f"render_{run_id}_solve_proximity_merge"
+    if phase == "solve_score_merge":
+        metric_label = solve_metric.capitalize()
+        _update_progress(task_id, progress, "solve_score_merge",
+                         f"Solve score ({metric_label}): merge", context)
+        bins_key = f"renders/{job_id}/solve_scores/{solve_metric}_bins.json"
+        merge_task = f"render_{run_id}_solve_score_merge"
         _dispatch_single(FUNCTIONS["solve_proximity"], {
             "phase": "merge", "job_id": job_id, "n_stripes": n_stripes,
-            "hist_prefix": f"renders/{job_id}/solve_proximity/",
+            "metric": solve_metric,
+            "hist_prefix": f"renders/{job_id}/solve_scores/{solve_metric}/",
             "clip_key": clip_key, "out_key": bins_key, "task_id": merge_task,
         }, progress)
         _poll_completion(job_id, merge_task, 1, task_id, progress, context)
-        solve_prox_bins_key = bins_key
-        progress["solve_prox_bins_key"] = bins_key
+        solve_score_bins_key = bins_key
+        progress["solve_score_bins_key"] = bins_key
         phase = "raster_dispatch"
 
     # Phase: raster
@@ -378,8 +396,10 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
             }
             if rp.get("root_transforms"):
                 job["root_transforms"] = rp["root_transforms"]
-            if solve_prox_bins_key:
-                job["solve_proximity_bins_key"] = solve_prox_bins_key
+            if solve_score_bins_key:
+                job["solve_score_bins_key"] = solve_score_bins_key
+                job["solve_metric"] = solve_metric
+                job["color"] = "solve_score"
             raster_jobs.append(job)
         _dispatch_batch(FUNCTIONS["raster"], raster_jobs, progress)
         phase = "raster_poll"

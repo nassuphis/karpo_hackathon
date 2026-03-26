@@ -1,10 +1,8 @@
 """
-Solve proximity Lambda — async 3-phase precompute for solve-proximity color mode.
+Solve score Lambda — async 3-phase prepass for solve-level color modes.
 
-Phases:
-  clip  — read lores roots, compute scores, emit clip bounds
-  hist  — read one hires stripe, compute 100-bin histogram
-  merge — sum stripe histograms, derive 10 equal-density bin cuts
+Supports multiple metrics: proximity, crowding, spread, anisotropy, area.
+Phases: clip, hist, merge.
 
 Dispatched async via dispatch handler, reports status to DynamoDB.
 """
@@ -20,7 +18,8 @@ from shared import BUCKET, parse_body, ok_response, report_status
 s3 = boto3.client("s3")
 BINARY = os.path.join(os.path.dirname(__file__), "solve_proximity_stats")
 
-# Temp file namespace
+VALID_METRICS = {"proximity", "crowding", "spread", "anisotropy", "area"}
+
 _TMP_INPUT = "/tmp/solve_prox_input.bin"
 _TMP_XFORMS = "/tmp/solve_prox_root_xforms.json"
 _TMP_CLIP = "/tmp/solve_prox_clip.json"
@@ -44,12 +43,16 @@ def _download(key, path):
 
 
 def _write_xforms(root_transforms):
-    """Write root_transforms to sidecar JSON file if present."""
     if root_transforms:
         with open(_TMP_XFORMS, "w") as f:
             json.dump(root_transforms, f)
         return _TMP_XFORMS
     return None
+
+
+def _validate_metric(metric):
+    if metric not in VALID_METRICS:
+        raise RuntimeError(f"Invalid metric: {metric} (valid: {', '.join(sorted(VALID_METRICS))})")
 
 
 def handler(event, context):
@@ -69,16 +72,17 @@ def handle_clip(params):
     job_id = params["job_id"]
     task_id = params["task_id"]
     degree = params["degree"]
+    metric = params.get("metric", "proximity")
+    _validate_metric(metric)
     lores_bin_key = params["lores_bin_key"]
     root_transforms = params.get("root_transforms")
     out_key = params["out_key"]
-    progress = {"phase": "clip", "source_key": lores_bin_key}
+    progress = {"phase": "clip", "metric": metric, "source_key": lores_bin_key}
 
     try:
         _cleanup_tmp()
         report_status(job_id, task_id, "started", result_data=progress)
 
-        # Download lores roots
         t0 = time.time()
         size = _download(lores_bin_key, _TMP_INPUT)
         dl_ms = int((time.time() - t0) * 1000)
@@ -87,14 +91,12 @@ def handle_clip(params):
 
         report_status(job_id, task_id, "bin_downloaded", result_data=progress)
 
-        # Build command
         cmd = [BINARY, _TMP_INPUT, "--mode=clip", f"--degree={degree}",
-               "--quantile_lo=0.001", "--quantile_hi=0.999"]
+               f"--metric={metric}", "--quantile_lo=0.001", "--quantile_hi=0.999"]
         xf_path = _write_xforms(root_transforms)
         if xf_path:
             cmd.append(f"--root_xforms={xf_path}")
 
-        # Run
         t1 = time.time()
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         compute_ms = int((time.time() - t1) * 1000)
@@ -109,14 +111,11 @@ def handle_clip(params):
 
         report_status(job_id, task_id, "computed", result_data=progress)
 
-        # Build full artifact JSON
         artifact = {
-            "mode": "solve_proximity",
+            "family": "solve_score",
             "version": 1,
             "job_id": job_id,
-            "score": "-0.5*log10(d2_min)",
-            "eps2": 1e-300,
-            "quantiles": [0.001, 0.999],
+            "metric": metric,
             "clip_lo": clip_data["clip_lo"],
             "clip_hi": clip_data["clip_hi"],
             "n_solves": clip_data["n_solves"],
@@ -145,24 +144,24 @@ def handle_hist(params):
     job_id = params["job_id"]
     task_id = params["task_id"]
     stripe_idx = params["stripe_idx"]
+    metric = params.get("metric", "proximity")
+    _validate_metric(metric)
     bin_key = params["bin_key"]
     degree = params["degree"]
     clip_key = params["clip_key"]
     hist_bins = params.get("hist_bins", 100)
     root_transforms = params.get("root_transforms")
     out_key = params["out_key"]
-    progress = {"phase": "hist", "stripe_idx": stripe_idx}
+    progress = {"phase": "hist", "metric": metric, "stripe_idx": stripe_idx}
 
     try:
         _cleanup_tmp()
         report_status(job_id, task_id, "started", result_data=progress)
 
-        # Download stripe .bin
         t0 = time.time()
         size = _download(bin_key, _TMP_INPUT)
         progress["source_size"] = size
 
-        # Download clip JSON
         clip_obj = s3.get_object(Bucket=BUCKET, Key=clip_key)
         clip_data = json.loads(clip_obj["Body"].read())
         dl_ms = int((time.time() - t0) * 1000)
@@ -170,15 +169,14 @@ def handle_hist(params):
 
         report_status(job_id, task_id, "bin_downloaded", result_data=progress)
 
-        # Build command
         cmd = [BINARY, _TMP_INPUT, "--mode=hist", f"--degree={degree}",
+               f"--metric={metric}",
                f"--clip_lo={clip_data['clip_lo']}", f"--clip_hi={clip_data['clip_hi']}",
                f"--hist_bins={hist_bins}"]
         xf_path = _write_xforms(root_transforms)
         if xf_path:
             cmd.append(f"--root_xforms={xf_path}")
 
-        # Run
         t1 = time.time()
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         compute_ms = int((time.time() - t1) * 1000)
@@ -189,11 +187,11 @@ def handle_hist(params):
         progress["compute_ms"] = compute_ms
         progress["n_solves"] = hist_data["n_solves"]
 
-        # Build artifact JSON
         artifact = {
-            "mode": "solve_proximity",
+            "family": "solve_score",
             "version": 1,
             "job_id": job_id,
+            "metric": metric,
             "stripe_idx": stripe_idx,
             "hist_bins": hist_bins,
             "clip_lo": clip_data["clip_lo"],
@@ -221,22 +219,25 @@ def handle_hist(params):
 def handle_merge(params):
     job_id = params["job_id"]
     task_id = params["task_id"]
+    metric = params.get("metric", "proximity")
+    _validate_metric(metric)
     n_stripes = params["n_stripes"]
     hist_prefix = params["hist_prefix"]
     clip_key = params["clip_key"]
     out_key = params["out_key"]
-    progress = {"phase": "merge", "n_stripes": n_stripes}
+    progress = {"phase": "merge", "metric": metric, "n_stripes": n_stripes}
 
     try:
         _cleanup_tmp()
         report_status(job_id, task_id, "started", result_data=progress)
 
-        # Load clip data
+        # Load and validate clip data
         clip_obj = s3.get_object(Bucket=BUCKET, Key=clip_key)
         clip_data = json.loads(clip_obj["Body"].read())
+        if clip_data.get("family") == "solve_score" and clip_data.get("metric") != metric:
+            raise RuntimeError(f"Clip metric mismatch: expected {metric}, got {clip_data.get('metric')}")
         hist_bins = 100
 
-        # Load all stripe histograms
         total_hist = [0] * hist_bins
         total_solves = 0
         for s in range(n_stripes):
@@ -244,6 +245,9 @@ def handle_merge(params):
             try:
                 obj = s3.get_object(Bucket=BUCKET, Key=key)
                 data = json.loads(obj["Body"].read())
+                # Validate metric match
+                if data.get("family") == "solve_score" and data.get("metric") != metric:
+                    raise RuntimeError(f"Stripe {s} metric mismatch: expected {metric}, got {data.get('metric')}")
                 stripe_hist = data["hist"]
                 if len(stripe_hist) != hist_bins:
                     raise RuntimeError(f"Stripe {s} histogram has {len(stripe_hist)} bins, expected {hist_bins}")
@@ -256,7 +260,7 @@ def handle_merge(params):
         progress["n_solves_total"] = total_solves
         report_status(job_id, task_id, "merged", result_data=progress)
 
-        # Derive 10 equal-density bins from cumulative histogram
+        # Derive 10 equal-density bins
         final_bins = 10
         total_count = sum(total_hist)
         cuts_norm = []
@@ -275,18 +279,16 @@ def handle_merge(params):
                         frac = 1.0
                     cut = (i + frac) / hist_bins
                     break
-            # Clamp to [0, 1]
             cut = max(0.0, min(1.0, cut))
-            # Enforce monotonicity
             if cuts_norm and cut < cuts_norm[-1]:
                 cut = cuts_norm[-1]
             cuts_norm.append(cut)
 
-        # Build final artifact
         artifact = {
-            "mode": "solve_proximity",
+            "family": "solve_score",
             "version": 1,
             "job_id": job_id,
+            "metric": metric,
             "hist_bins": hist_bins,
             "final_bins": final_bins,
             "clip_lo": clip_data["clip_lo"],

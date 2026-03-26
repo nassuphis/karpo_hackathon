@@ -227,10 +227,18 @@ def test_render_preview():
     print("=== Render preview tests PASSED ===")
 
 
-# ── solve_proximity_stats Tests ──────────────────────────────────────────
+# ── solve_proximity_stats Tests (all metrics) ────────────────────────────
+
+def _write_sps_bin(path):
+    """Write 3-solve degree-2 test fixture for solve_proximity_stats."""
+    with open(path, "wb") as f:
+        for roots in [[(0, 0), (1, 0)], [(0, 0), (0.01, 0)], [(0, 0), (0.1, 0)]]:
+            for re, im in roots:
+                f.write(struct.pack("<ff", re, im))
+
 
 def test_solve_proximity_stats():
-    print("\n--- solve_proximity_stats ---")
+    print("\n--- solve_proximity_stats (multi-metric) ---")
 
     sps_path = "/src/solve_proximity_stats"
     if not os.path.exists(sps_path):
@@ -242,36 +250,94 @@ def test_solve_proximity_stats():
     print("  %s: ELF OK" % sps_path)
 
     sps_bin = "/tmp/sps_test.bin"
-    with open(sps_bin, "wb") as f:
-        for roots in [[(0, 0), (1, 0)], [(0, 0), (0.01, 0)], [(0, 0), (0.1, 0)]]:
-            for re, im in roots:
-                f.write(struct.pack("<ff", re, im))
+    _write_sps_bin(sps_bin)
 
-    # Clip mode
-    r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2"],
+    # 1. Proximity clip
+    r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=proximity"],
                        capture_output=True, text=True, timeout=10)
-    assert r.returncode == 0, "clip failed: " + r.stderr[:200]
+    assert r.returncode == 0, "proximity clip failed: " + r.stderr[:200]
     clip = json.loads(r.stdout)
     assert clip["n_solves"] == 3
-    assert clip["degree"] == 2
+    assert clip["metric"] == "proximity"
     assert clip["clip_lo"] <= clip["clip_hi"]
-    print("  clip: OK (n=%d, lo=%.2f, hi=%.2f)" % (clip["n_solves"], clip["clip_lo"], clip["clip_hi"]))
+    print("  proximity clip: OK (n=%d, lo=%.2f, hi=%.2f)" % (clip["n_solves"], clip["clip_lo"], clip["clip_hi"]))
 
     # Hist mode
-    r = subprocess.run([sps_path, sps_bin, "--mode=hist", "--degree=2",
+    r = subprocess.run([sps_path, sps_bin, "--mode=hist", "--degree=2", "--metric=proximity",
                         "--clip_lo=" + str(clip["clip_lo"]),
                         "--clip_hi=" + str(clip["clip_hi"]),
                         "--hist_bins=10"],
                        capture_output=True, text=True, timeout=10)
-    assert r.returncode == 0, "hist failed: " + r.stderr[:200]
+    assert r.returncode == 0, "proximity hist failed: " + r.stderr[:200]
     hist = json.loads(r.stdout)
-    h_bins = hist["hist"]
-    assert len(h_bins) == 10
-    assert sum(h_bins) == 3
-    print("  hist: OK (bins=%d, total=%d)" % (len(h_bins), sum(h_bins)))
+    assert len(hist["hist"]) == 10
+    assert sum(hist["hist"]) == 3
+    print("  proximity hist: OK (bins=%d, total=%d)" % (len(hist["hist"]), sum(hist["hist"])))
+
+    # 2. Crowding clip
+    r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=crowding"],
+                       capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "crowding clip failed: " + r.stderr[:200]
+    crowd = json.loads(r.stdout)
+    assert crowd["metric"] == "crowding"
+    assert crowd["n_solves"] == 3
+    print("  crowding clip: OK (lo=%.2f, hi=%.2f)" % (crowd["clip_lo"], crowd["clip_hi"]))
+
+    # 3. Spread clip
+    r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=spread"],
+                       capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "spread clip failed: " + r.stderr[:200]
+    spread = json.loads(r.stdout)
+    assert spread["metric"] == "spread"
+    assert spread["n_solves"] == 3
+    print("  spread clip: OK (lo=%.2f, hi=%.2f)" % (spread["clip_lo"], spread["clip_hi"]))
 
     cleanup(sps_bin)
     print("=== solve_proximity_stats tests PASSED ===")
+
+
+# ── roots2pix solve_score smoke ──────────────────────────────────────────
+
+def test_roots2pix_solve_score():
+    """Smoke test: roots2pix --color=solve_score --solve_metric=proximity."""
+    print("\n--- roots2pix solve_score smoke ---")
+
+    r2p_path = "/src/roots2pix"
+    if not os.path.exists(r2p_path):
+        print("  SKIP: %s not found (not yet compiled)" % r2p_path)
+        return
+
+    # Write tiny 4x4 pixel test: 2 solves, degree 2
+    sps_bin = "/tmp/r2p_ss_test.bin"
+    with open(sps_bin, "wb") as f:
+        for roots in [[(0, 0), (1, 0)], [(0, 0), (0.5, 0)]]:
+            for re, im in roots:
+                f.write(struct.pack("<ff", re, im))
+
+    r = subprocess.run([
+        r2p_path, sps_bin, "/tmp/r2p_ss_pix",
+        "--width=4", "--height=4", "--tile_size=4",
+        "--n_tile_cols=1", "--n_tile_rows=1",
+        "--center_re=0.5", "--center_im=0",
+        "--scale=2", "--degree=2",
+        "--color=solve_score",
+        "--solve_metric=proximity",
+        "--solve_score_clip_lo=0.0",
+        "--solve_score_clip_hi=2.0",
+        "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
+    ], capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "roots2pix solve_score failed: " + r.stderr[:200]
+    meta = json.loads(r.stdout)
+    assert meta["roots_plotted"] >= 0
+    print("  roots2pix --color=solve_score: OK (plotted=%d, clipped=%d)" %
+          (meta["roots_plotted"], meta["roots_clipped"]))
+
+    # Clean up any .pix files
+    import glob
+    for f in glob.glob("/tmp/r2p_ss_pix*.pix"):
+        cleanup(f)
+    cleanup(sps_bin)
+    print("=== roots2pix solve_score smoke PASSED ===")
 
 
 # ── Catalog Degree Verification ──────────────────────────────────────────
@@ -327,6 +393,7 @@ if __name__ == "__main__":
     test_cfpv_coeffgen()
     test_render_preview()
     test_solve_proximity_stats()
+    test_roots2pix_solve_score()
     test_catalog_degrees()
 
     print("\n=== All Docker runtime tests PASSED ===")

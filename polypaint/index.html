@@ -362,9 +362,16 @@ button {
                     <div id="palette-circles-root-proximity" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:12px"></div>
                 </div>
                 <div class="color-row">
-                    <span class="color-dot" data-mode="solve_proximity" onclick="setColorMode('solve_proximity')"></span>
-                    <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('solve_proximity')">Solve proximity</span>
-                    <div id="palette-circles-solve-proximity" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:12px"></div>
+                    <span class="color-dot" data-mode="solve_score" onclick="setColorMode('solve_score')"></span>
+                    <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('solve_score')">Solve score</span>
+                    <select id="render-solve-score" onchange="setSolveMetric(this.value)" style="font-size:10px; margin-left:6px">
+                        <option value="proximity">Proximity</option>
+                        <option value="crowding">Crowding</option>
+                        <option value="spread">Spread</option>
+                        <option value="anisotropy">Anisotropy</option>
+                        <option value="area">Area</option>
+                    </select>
+                    <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:6px"></div>
                 </div>
                 <div class="color-row">
                     <span class="color-dot" data-mode="constant" onclick="setColorMode('constant')"></span>
@@ -779,7 +786,8 @@ loadLambdaConfig();
 let renderColorMode = 'rainbow';
 let renderMatchMode = 'none';
 let renderRootProximityPalette = 'inferno';
-let renderSolveProximityPalette = 'inferno';
+let renderSolveScorePalette = 'inferno';
+let renderSolveMetric = 'proximity';
 
 const PALETTE_DEFS = [
     { name: 'inferno',  stops: ['#000004','#420a68','#932667','#dd513a','#fca50a','#fcffa4'] },
@@ -807,8 +815,8 @@ function setMatch(mode) {
 
 function setPaletteForMode(mode, name) {
     if (mode === 'proximity') renderRootProximityPalette = name;
-    else if (mode === 'solve_proximity') renderSolveProximityPalette = name;
-    const containerId = mode === 'proximity' ? 'palette-circles-root-proximity' : 'palette-circles-solve-proximity';
+    else if (mode === 'solve_score') renderSolveScorePalette = name;
+    const containerId = mode === 'proximity' ? 'palette-circles-root-proximity' : 'palette-circles-solve-score';
     const container = document.getElementById(containerId);
     if (container) {
         container.querySelectorAll('.pal-circle').forEach(c => c.classList.toggle('active', c.dataset.palette === name));
@@ -817,8 +825,16 @@ function setPaletteForMode(mode, name) {
 
 function _activeRenderPalette() {
     if (renderColorMode === 'proximity') return renderRootProximityPalette;
-    if (renderColorMode === 'solve_proximity') return renderSolveProximityPalette;
+    if (renderColorMode === 'solve_score') return renderSolveScorePalette;
     return null;
+}
+
+function setSolveMetric(name) {
+    const valid = ['proximity', 'crowding', 'spread', 'anisotropy', 'area'];
+    if (valid.includes(name)) {
+        renderSolveMetric = name;
+        setColorMode('solve_score');
+    }
 }
 
 function buildPaletteCircles(containerId, mode, getCurrentPalette) {
@@ -835,7 +851,7 @@ function buildPaletteCircles(containerId, mode, getCurrentPalette) {
     });
 }
 buildPaletteCircles('palette-circles-root-proximity', 'proximity', () => renderRootProximityPalette);
-buildPaletteCircles('palette-circles-solve-proximity', 'solve_proximity', () => renderSolveProximityPalette);
+buildPaletteCircles('palette-circles-solve-score', 'solve_score', () => renderSolveScorePalette);
 
 /* ---- Render ---- */
 /* ---- Chip-based transform chains ---- */
@@ -1119,92 +1135,9 @@ function selectViewMode(mode) {
     document.getElementById('view-row-square').classList.toggle('active', mode === 'square');
 }
 
-async function _loadCalcMetaForRender(jobId) {
-    if (_lastCalcMeta && _lastCalcMeta.job_id === jobId) return _lastCalcMeta;
-    const detail = await lambdaPost('storage', { job_id: jobId }, '/detail');
-    if (detail.calc) return detail.calc;
-    throw new Error(`Render metadata missing for ${jobId}; calc.json/lores.bin required for solve proximity`);
-}
 
-async function _ensureSolveProximityBins({ jobId, calcMeta, rootTransforms, degree, nStripes, logTarget }) {
-    const prefix = `renders/${jobId}/`;
-    const clipKey = prefix + 'solve_proximity_clip.json';
-    const binsKey = prefix + 'solve_proximity_bins.json';
-    const histPrefix = prefix + 'solve_proximity/';
-    const loresBinKey = calcMeta.lores && calcMeta.lores.bin_key;
-    if (!loresBinKey) throw new Error('No lores.bin_key in calc metadata — needed for solve proximity clip');
-    const rt = rootTransforms && rootTransforms.length ? rootTransforms : undefined;
 
-    // Phase A: clip
-    log('Solve proximity: clip...', '', logTarget);
-    document.getElementById('render-status').textContent = 'Solve proximity: clip...';
-    await lambdaPost('storage', { job_id: jobId, task_id: 'solve_proximity_clip' }, '/delete-task').catch(() => {});
-    const clipDisp = await lambdaPost('dispatch', {
-        target: 'solve_proximity',
-        jobs: [{
-            phase: 'clip', job_id: jobId, degree, lores_bin_key: loresBinKey,
-            root_transforms: rt, out_key: clipKey, task_id: 'solve_proximity_clip',
-        }],
-        expected_keys: [],
-    });
-    if ((clipDisp.fired || 0) !== 1) throw new Error('Solve proximity clip dispatch failed');
-    while (true) {
-        await new Promise(r => setTimeout(r, 2000));
-        const check = await lambdaPost('storage', { job_id: jobId, task_prefix: 'solve_proximity_clip', expected: 1 }, '/check-status');
-        if (check.errors > 0) throw new Error('Clip failed: ' + (check.error_details?.[0]?.error_msg || 'unknown'));
-        if (check.complete) {
-            const rd = check.results?.[0];
-            if (rd) log(`  clip: lo=${rd.clip_lo?.toFixed(2)}, hi=${rd.clip_hi?.toFixed(2)}, ${rd.n_solves} lores solves`, 'ok', logTarget);
-            break;
-        }
-    }
 
-    // Phase B: hist (parallel per stripe)
-    log('Solve proximity: hist...', '', logTarget);
-    document.getElementById('render-status').textContent = 'Solve proximity: hist...';
-    const histJobs = [];
-    for (let s = 0; s < nStripes; s++) {
-        histJobs.push({
-            phase: 'hist', job_id: jobId, stripe_idx: s,
-            bin_key: `renders/${jobId}/stripe_${s}.bin`, degree,
-            clip_key: clipKey, hist_bins: 100, root_transforms: rt,
-            out_key: `${histPrefix}stripe_${s}_hist.json`,
-            task_id: `solve_proximity_hist_${s}`,
-        });
-    }
-    const histMs = await _bilevelDispatchAndPoll({
-        jobs: histJobs, jobId, taskPrefix: 'solve_proximity_hist_',
-        target: 'solve_proximity', label: 'Solve proximity hist', logTarget,
-    });
-    log(`  hist: ${_fmtMs(histMs)} (${nStripes} stripes)`, 'ok', logTarget);
-
-    // Phase C: merge
-    log('Solve proximity: merge...', '', logTarget);
-    document.getElementById('render-status').textContent = 'Solve proximity: merge...';
-    await lambdaPost('storage', { job_id: jobId, task_id: 'solve_proximity_merge' }, '/delete-task').catch(() => {});
-    const mergeDisp = await lambdaPost('dispatch', {
-        target: 'solve_proximity',
-        jobs: [{
-            phase: 'merge', job_id: jobId, n_stripes: nStripes,
-            hist_prefix: histPrefix, clip_key: clipKey,
-            out_key: binsKey, task_id: 'solve_proximity_merge',
-        }],
-        expected_keys: [],
-    });
-    if ((mergeDisp.fired || 0) !== 1) throw new Error('Solve proximity merge dispatch failed');
-    while (true) {
-        await new Promise(r => setTimeout(r, 2000));
-        const check = await lambdaPost('storage', { job_id: jobId, task_prefix: 'solve_proximity_merge', expected: 1 }, '/check-status');
-        if (check.errors > 0) throw new Error('Merge failed: ' + (check.error_details?.[0]?.error_msg || 'unknown'));
-        if (check.complete) {
-            const rd = check.results?.[0];
-            if (rd) log(`  merge: ${rd.n_solves_total?.toLocaleString()} total solves, cuts=[${rd.cuts_norm?.map(c => c.toFixed(2)).join(',')}]`, 'ok', logTarget);
-            break;
-        }
-    }
-
-    return binsKey;
-}
 
 function _renderCommonParams() {
     const jobId = document.getElementById('render-results-dir').value.trim();
@@ -1284,6 +1217,7 @@ async function _launchRenderOrchestrator(mode) {
             rotation: p.rotation,
             constant_color: p.constantColor,
             color_mode: renderColorMode,
+            solve_metric: renderColorMode === 'solve_score' ? renderSolveMetric : undefined,
             match_mode: renderMatchMode,
             palette: _activeRenderPalette() || 'inferno',
             root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,

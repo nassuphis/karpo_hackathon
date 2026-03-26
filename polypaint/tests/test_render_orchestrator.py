@@ -78,10 +78,10 @@ class TestColorOrchestrator(unittest.TestCase):
     @patch("handler_render_orchestrator.lambda_client")
     @patch("handler_render_orchestrator.report_status")
     @patch("handler_render_orchestrator._storage_call")
-    def test_color_solve_proximity_prepass_before_raster(
+    def test_color_solve_score_prepass_before_raster(
         self, mock_storage, mock_report, mock_lambda, mock_ddb
     ):
-        """Color + solve_proximity runs clip→hist→merge before raster."""
+        """Color + solve_score runs clip→hist→merge before raster."""
         mock_storage.side_effect = lambda path, body: (
             {"deleted": 0} if "clean" in path else
             {"job_id": "j", "calc": {
@@ -93,11 +93,12 @@ class TestColorOrchestrator(unittest.TestCase):
 
         from handler_render_orchestrator import handler
         event = _make_event({
-            "job_id": "j", "run_id": "run_sp", "mode": "color",
+            "job_id": "j", "run_id": "run_ss", "mode": "color",
             "params": {
                 "pix": 512, "fmt": "jpeg", "quality": 90,
                 "view_mode": "square", "square_extent": 2.0,
-                "tile_size": 512, "rotation": 0, "color_mode": "solve_proximity",
+                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
+                "solve_metric": "crowding",
                 "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
             }
         })
@@ -106,14 +107,219 @@ class TestColorOrchestrator(unittest.TestCase):
         assert body["phase"] == "done"
 
         phases = [c.args[2] for c in mock_report.call_args_list if len(c.args) >= 3]
-        assert "solve_proximity_clip" in phases
-        assert "solve_proximity_hist" in phases
-        assert "solve_proximity_merge" in phases
+        assert "solve_score_clip" in phases
+        assert "solve_score_hist" in phases
+        assert "solve_score_merge" in phases
         assert "raster_dispatch" in phases
-        # solve proximity before raster
-        ci = phases.index("solve_proximity_clip")
+        ci = phases.index("solve_score_clip")
         ri = phases.index("raster_dispatch")
         assert ci < ri
+
+    @patch("handler_render_orchestrator.ddb")
+    @patch("handler_render_orchestrator.lambda_client")
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator._storage_call")
+    def test_solve_score_clip_payload_contains_metric(
+        self, mock_storage, mock_report, mock_lambda, mock_ddb
+    ):
+        """Clip dispatch payload contains the requested metric."""
+        mock_storage.side_effect = lambda path, body: (
+            {"deleted": 0} if "clean" in path else
+            {"job_id": "j", "calc": {
+                "degree": 5, "n_stripes": 2, "n_chunks": 2,
+                "lores": {"bin_key": "renders/j/lores.bin"}
+            }} if "detail" in path else {}
+        )
+        mock_ddb.query.return_value = _mock_poll_done(100)
+
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_clip_m", "mode": "color",
+            "params": {
+                "pix": 512, "fmt": "jpeg", "quality": 90,
+                "view_mode": "square", "square_extent": 2.0,
+                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
+                "solve_metric": "spread",
+                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
+            }
+        })
+        handler(event, None)
+
+        clip_payloads = [
+            json.loads(c[1].get("Payload", b"{}"))
+            for c in mock_lambda.invoke.call_args_list
+            if json.loads(c[1].get("Payload", b"{}")).get("phase") == "clip"
+        ]
+        assert len(clip_payloads) == 1, f"expected 1 clip job, got {len(clip_payloads)}"
+        assert clip_payloads[0]["metric"] == "spread", \
+            f"clip metric={clip_payloads[0].get('metric')}"
+
+    @patch("handler_render_orchestrator.ddb")
+    @patch("handler_render_orchestrator.lambda_client")
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator._storage_call")
+    def test_solve_score_hist_payloads_contain_metric(
+        self, mock_storage, mock_report, mock_lambda, mock_ddb
+    ):
+        """Hist dispatch payloads contain the requested metric."""
+        mock_storage.side_effect = lambda path, body: (
+            {"deleted": 0} if "clean" in path else
+            {"job_id": "j", "calc": {
+                "degree": 5, "n_stripes": 3, "n_chunks": 3,
+                "lores": {"bin_key": "renders/j/lores.bin"}
+            }} if "detail" in path else {}
+        )
+        mock_ddb.query.return_value = _mock_poll_done(100)
+
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_hist_m", "mode": "color",
+            "params": {
+                "pix": 512, "fmt": "jpeg", "quality": 90,
+                "view_mode": "square", "square_extent": 2.0,
+                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
+                "solve_metric": "anisotropy",
+                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
+            }
+        })
+        handler(event, None)
+
+        hist_payloads = [
+            json.loads(c[1].get("Payload", b"{}"))
+            for c in mock_lambda.invoke.call_args_list
+            if json.loads(c[1].get("Payload", b"{}")).get("phase") == "hist"
+        ]
+        assert len(hist_payloads) == 3, f"expected 3 hist jobs, got {len(hist_payloads)}"
+        for p in hist_payloads:
+            assert p["metric"] == "anisotropy", f"hist metric={p.get('metric')}"
+
+    @patch("handler_render_orchestrator.ddb")
+    @patch("handler_render_orchestrator.lambda_client")
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator._storage_call")
+    def test_solve_score_merge_payload_contains_metric(
+        self, mock_storage, mock_report, mock_lambda, mock_ddb
+    ):
+        """Merge dispatch payload contains the requested metric."""
+        mock_storage.side_effect = lambda path, body: (
+            {"deleted": 0} if "clean" in path else
+            {"job_id": "j", "calc": {
+                "degree": 5, "n_stripes": 2, "n_chunks": 2,
+                "lores": {"bin_key": "renders/j/lores.bin"}
+            }} if "detail" in path else {}
+        )
+        mock_ddb.query.return_value = _mock_poll_done(100)
+
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_merge_m", "mode": "color",
+            "params": {
+                "pix": 512, "fmt": "jpeg", "quality": 90,
+                "view_mode": "square", "square_extent": 2.0,
+                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
+                "solve_metric": "area",
+                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
+            }
+        })
+        handler(event, None)
+
+        merge_payloads = [
+            json.loads(c[1].get("Payload", b"{}"))
+            for c in mock_lambda.invoke.call_args_list
+            if json.loads(c[1].get("Payload", b"{}")).get("phase") == "merge"
+               and "solve_score_merge" in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
+        ]
+        assert len(merge_payloads) == 1, f"expected 1 merge job, got {len(merge_payloads)}"
+        assert merge_payloads[0]["metric"] == "area", \
+            f"merge metric={merge_payloads[0].get('metric')}"
+
+    @patch("handler_render_orchestrator.ddb")
+    @patch("handler_render_orchestrator.lambda_client")
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator._storage_call")
+    def test_solve_score_raster_payload_contract(
+        self, mock_storage, mock_report, mock_lambda, mock_ddb
+    ):
+        """Raster payload contains color=solve_score, solve_metric, and solve_score_bins_key."""
+        mock_storage.side_effect = lambda path, body: (
+            {"deleted": 0} if "clean" in path else
+            {"job_id": "j", "calc": {
+                "degree": 5, "n_stripes": 2, "n_chunks": 2,
+                "lores": {"bin_key": "renders/j/lores.bin"}
+            }} if "detail" in path else {}
+        )
+        mock_ddb.query.return_value = _mock_poll_done(100)
+
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_rp", "mode": "color",
+            "params": {
+                "pix": 512, "fmt": "jpeg", "quality": 90,
+                "view_mode": "square", "square_extent": 2.0,
+                "tile_size": 512, "rotation": 0, "color_mode": "solve_score",
+                "solve_metric": "crowding",
+                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
+            }
+        })
+        handler(event, None)
+
+        raster_payloads = [
+            json.loads(c[1].get("Payload", b"{}"))
+            for c in mock_lambda.invoke.call_args_list
+            if "raster_" in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
+               and "solve_score" not in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
+        ]
+        assert len(raster_payloads) == 2, f"expected 2 raster jobs, got {len(raster_payloads)}"
+        for p in raster_payloads:
+            assert p["color"] == "solve_score", f"color={p.get('color')}"
+            assert p["solve_metric"] == "crowding", f"solve_metric={p.get('solve_metric')}"
+            assert "solve_score_bins_key" in p, f"missing solve_score_bins_key"
+            assert "crowding" in p["solve_score_bins_key"], \
+                f"bins key should contain metric: {p['solve_score_bins_key']}"
+
+    @patch("handler_render_orchestrator.ddb")
+    @patch("handler_render_orchestrator.lambda_client")
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator._storage_call")
+    def test_legacy_solve_proximity_coerces_to_solve_score(
+        self, mock_storage, mock_report, mock_lambda, mock_ddb
+    ):
+        """Legacy color_mode=solve_proximity coerces to solve_score + metric=proximity."""
+        mock_storage.side_effect = lambda path, body: (
+            {"deleted": 0} if "clean" in path else
+            {"job_id": "j", "calc": {
+                "degree": 5, "n_stripes": 2, "n_chunks": 2,
+                "lores": {"bin_key": "renders/j/lores.bin"}
+            }} if "detail" in path else {}
+        )
+        mock_ddb.query.return_value = _mock_poll_done(100)
+
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_legacy", "mode": "color",
+            "params": {
+                "pix": 512, "fmt": "jpeg", "quality": 90,
+                "view_mode": "square", "square_extent": 2.0,
+                "tile_size": 512, "rotation": 0, "color_mode": "solve_proximity",
+                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
+            }
+        })
+        handler(event, None)
+
+        # Should run solve_score phases (not solve_proximity)
+        phases = [c.args[2] for c in mock_report.call_args_list if len(c.args) >= 3]
+        assert "solve_score_clip" in phases, f"expected solve_score_clip phase, got: {phases}"
+
+        # Raster should get metric=proximity
+        raster_payloads = [
+            json.loads(c[1].get("Payload", b"{}"))
+            for c in mock_lambda.invoke.call_args_list
+            if "raster_" in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
+               and "solve_score" not in json.loads(c[1].get("Payload", b"{}")).get("task_id", "")
+        ]
+        assert len(raster_payloads) > 0
+        assert raster_payloads[0]["solve_metric"] == "proximity", \
+            f"legacy should default to proximity, got {raster_payloads[0].get('solve_metric')}"
 
 
 class TestBilevelOrchestrator(unittest.TestCase):

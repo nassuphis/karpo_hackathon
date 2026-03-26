@@ -1,10 +1,15 @@
 """
-Tests for solve_proximity_stats binary.
+Tests for solve_proximity_stats binary — all 5 solve metrics.
 
 Validates the algorithmic contract using the Docker runtime (deploy binary):
-- clip mode: score computation, sort, quantile clip bounds, fallback rules
-- hist mode: histogram bin counts with known clip bounds
-- degenerate cases: identical roots, single solve
+- proximity: clip/hist reference tests (existing)
+- crowding: ranking test — globally clustered > spread-out
+- spread: ranking test — large cloud > small cloud
+- anisotropy: ranking test — line-like > isotropic
+- area: ranking test — large 2D cloud > small 2D cloud
+- hist for non-proximity metric (spread)
+- invalid metric rejection
+- root-transform metric test
 
 Run: cd polypaint && uv run python tests/test_solve_proximity_stats.py
 """
@@ -42,16 +47,22 @@ def write_bin(path, solves, degree):
                 f.write(struct.pack("<ff", 0.0, 0.0))
 
 
-def run_clip(bin_path, degree, **kwargs):
+def write_xforms(path, xforms):
+    """Write root transforms JSON sidecar."""
+    with open(path, "w") as f:
+        json.dump(xforms, f)
+
+
+def run_clip(bin_path, degree, metric="proximity", **kwargs):
     """Run clip mode via Docker."""
-    # Copy test bin into lambda dir so Docker can see it
     docker_bin = "/src/_test_input.bin"
     host_bin = os.path.join(LAMBDA_DIR, "_test_input.bin")
-    # Copy the test file to lambda dir
     import shutil
     shutil.copy(bin_path, host_bin)
+    # Copy xforms sidecar if present
+    xforms_host = kwargs.pop("_xforms_host", None)
     try:
-        args = f"/src/solve_proximity_stats {docker_bin} --mode=clip --degree={degree}"
+        args = f"/src/solve_proximity_stats {docker_bin} --mode=clip --degree={degree} --metric={metric}"
         for k, v in kwargs.items():
             args += f" --{k}={v}"
         r = _docker_run(args)
@@ -63,16 +74,22 @@ def run_clip(bin_path, degree, **kwargs):
             os.remove(host_bin)
         except OSError:
             pass
+        if xforms_host:
+            try:
+                os.remove(xforms_host)
+            except OSError:
+                pass
 
 
-def run_hist(bin_path, degree, clip_lo, clip_hi, hist_bins=100, **kwargs):
+def run_hist(bin_path, degree, clip_lo, clip_hi, hist_bins=100, metric="proximity", **kwargs):
     """Run hist mode via Docker."""
     import shutil
     host_bin = os.path.join(LAMBDA_DIR, "_test_input.bin")
     shutil.copy(bin_path, host_bin)
     try:
         args = (f"/src/solve_proximity_stats /src/_test_input.bin --mode=hist "
-                f"--degree={degree} --clip_lo={clip_lo} --clip_hi={clip_hi} --hist_bins={hist_bins}")
+                f"--degree={degree} --clip_lo={clip_lo} --clip_hi={clip_hi} "
+                f"--hist_bins={hist_bins} --metric={metric}")
         for k, v in kwargs.items():
             args += f" --{k}={v}"
         r = _docker_run(args)
@@ -86,8 +103,8 @@ def run_hist(bin_path, degree, clip_lo, clip_hi, hist_bins=100, **kwargs):
             pass
 
 
-def expected_score(roots):
-    """Python reference implementation of solve score."""
+def expected_proximity_score(roots):
+    """Python reference for proximity metric."""
     d2_min = float('inf')
     for i in range(len(roots)):
         for j in range(i + 1, len(roots)):
@@ -106,16 +123,21 @@ SOLVE_B = [(0.0, 0.0), (0.01, 0.0)]
 SOLVE_C = [(0.0, 0.0), (0.1, 0.0)]
 
 
+# ================================================================
+# 1. Proximity reference tests (existing)
+# ================================================================
+
 def test_clip_basic():
-    """Clip with 3 known solves, verify scores and bounds."""
+    """Clip with 3 known solves, verify proximity scores and bounds."""
     path = "/tmp/sp_test_clip.bin"
     write_bin(path, [SOLVE_A, SOLVE_B, SOLVE_C], 2)
-    result, err = run_clip(path, 2)
+    result, err = run_clip(path, 2, metric="proximity")
     assert result is not None, f"clip failed: {err}"
     assert result["n_solves"] == 3
     assert result["degree"] == 2
-    score_a = expected_score(SOLVE_A)
-    score_b = expected_score(SOLVE_B)
+    assert result["metric"] == "proximity"
+    score_a = expected_proximity_score(SOLVE_A)
+    score_b = expected_proximity_score(SOLVE_B)
     assert abs(result["min_score"] - score_a) < 0.01, f"min_score={result['min_score']}, expected ~{score_a}"
     assert abs(result["max_score"] - score_b) < 0.01, f"max_score={result['max_score']}, expected ~{score_b}"
     assert abs(result["clip_lo"] - result["min_score"]) < 1e-10
@@ -131,7 +153,7 @@ def test_clip_many_solves():
         d = 0.001 + (i / 200.0) * 2.0
         solves.append([(0.0, 0.0), (d, 0.0)])
     write_bin(path, solves, 2)
-    result, err = run_clip(path, 2)
+    result, err = run_clip(path, 2, metric="proximity")
     assert result is not None, f"clip failed: {err}"
     assert result["n_solves"] == 200
     assert result["clip_lo"] < result["clip_hi"]
@@ -141,12 +163,13 @@ def test_clip_many_solves():
 
 
 def test_hist_basic():
-    """Histogram with known scores and clip bounds."""
+    """Histogram with known proximity scores and clip bounds."""
     path = "/tmp/sp_test_hist.bin"
     write_bin(path, [SOLVE_A, SOLVE_B, SOLVE_C], 2)
-    result, err = run_hist(path, 2, clip_lo=0.0, clip_hi=2.0, hist_bins=10)
+    result, err = run_hist(path, 2, clip_lo=0.0, clip_hi=2.0, hist_bins=10, metric="proximity")
     assert result is not None, f"hist failed: {err}"
     assert result["n_solves"] == 3
+    assert result["metric"] == "proximity"
     assert len(result["hist"]) == 10
     assert sum(result["hist"]) == 3
     assert result["hist"][0] >= 1, f"bin 0 should have solve_a: {result['hist']}"
@@ -159,7 +182,7 @@ def test_hist_100_bins():
     """Histogram with default 100 bins."""
     path = "/tmp/sp_test_hist100.bin"
     write_bin(path, [SOLVE_A, SOLVE_B, SOLVE_C], 2)
-    result, err = run_hist(path, 2, clip_lo=0.0, clip_hi=2.0)
+    result, err = run_hist(path, 2, clip_lo=0.0, clip_hi=2.0, metric="proximity")
     assert result is not None, f"hist failed: {err}"
     assert len(result["hist"]) == 100
     assert sum(result["hist"]) == 3
@@ -167,11 +190,11 @@ def test_hist_100_bins():
 
 
 def test_identical_roots():
-    """Degenerate: all roots identical -> very high score."""
+    """Degenerate: all roots identical -> very high proximity score."""
     path = "/tmp/sp_test_identical.bin"
     solve = [(1.0, 1.0), (1.0, 1.0), (1.0, 1.0)]
     write_bin(path, [solve], 3)
-    result, err = run_clip(path, 3)
+    result, err = run_clip(path, 3, metric="proximity")
     assert result is not None, f"identical roots failed: {err}"
     assert result["min_score"] > 100, f"score should be very high: {result['min_score']}"
     os.remove(path)
@@ -182,9 +205,9 @@ def test_degree_3():
     path = "/tmp/sp_test_d3.bin"
     solve = [(0.0, 0.0), (1.0, 0.0), (10.0, 0.0)]
     write_bin(path, [solve], 3)
-    result, err = run_clip(path, 3)
+    result, err = run_clip(path, 3, metric="proximity")
     assert result is not None, f"degree 3 failed: {err}"
-    expected = expected_score(solve)
+    expected = expected_proximity_score(solve)
     assert abs(result["min_score"] - expected) < 0.01, f"score={result['min_score']}, expected={expected}"
     os.remove(path)
 
@@ -194,7 +217,7 @@ def test_empty_file():
     path = "/tmp/sp_test_empty.bin"
     with open(path, "wb") as f:
         pass
-    result, err = run_clip(path, 2)
+    result, err = run_clip(path, 2, metric="proximity")
     assert result is None, "empty file should have failed"
     os.remove(path)
 
@@ -203,9 +226,200 @@ def test_invalid_clip_range():
     """Hist with zero-width clip range should fail."""
     path = "/tmp/sp_test_badclip.bin"
     write_bin(path, [SOLVE_A], 2)
-    result, err = run_hist(path, 2, clip_lo=5.0, clip_hi=5.0)
+    result, err = run_hist(path, 2, clip_lo=5.0, clip_hi=5.0, metric="proximity")
     assert result is None, "invalid clip range should have failed"
     os.remove(path)
+
+
+# ================================================================
+# 2. Crowding ranking test
+# ================================================================
+
+def test_crowding_ranking():
+    """Same d_min, different global spacing → clustered solve has higher crowding."""
+    # Spread-out: roots at (0,0), (0.1,0), (100,0) — close pair + one far away
+    # Clustered:  roots at (0,0), (0.1,0), (0.2,0) — all roots close together
+    # Crowding = mean of -0.5*log10(d2) over all pairs.
+    # Clustered: all 3 pairs small → high mean. Spread-out: 2 pairs huge → low mean.
+    spread_solve = [(0.0, 0.0), (0.1, 0.0), (100.0, 0.0)]
+    cluster_solve = [(0.0, 0.0), (0.1, 0.0), (0.2, 0.0)]
+
+    # Write spread first (index 0), cluster second (index 1)
+    path = "/tmp/sp_test_crowding.bin"
+    write_bin(path, [spread_solve, cluster_solve], 3)
+    result, err = run_clip(path, 3, metric="crowding")
+    assert result is not None, f"crowding clip failed: {err}"
+    assert result["metric"] == "crowding"
+    assert result["n_solves"] == 2
+    # Clustered (index 1) should be max, spread-out (index 0) should be min
+    assert result["max_score"] > result["min_score"], \
+        f"clustered should score higher than spread-out: max={result['max_score']}, min={result['min_score']}"
+
+    # Verify by running each solve alone to confirm which is which
+    path_sp = "/tmp/sp_test_crowding_spread.bin"
+    path_cl = "/tmp/sp_test_crowding_cluster.bin"
+    write_bin(path_sp, [spread_solve], 3)
+    write_bin(path_cl, [cluster_solve], 3)
+    r_sp, _ = run_clip(path_sp, 3, metric="crowding")
+    r_cl, _ = run_clip(path_cl, 3, metric="crowding")
+    assert r_sp is not None and r_cl is not None
+    assert r_cl["min_score"] > r_sp["min_score"], \
+        f"cluster score {r_cl['min_score']} should exceed spread score {r_sp['min_score']}"
+    for p in [path, path_sp, path_cl]:
+        os.remove(p)
+
+
+# ================================================================
+# 3. Spread ranking test
+# ================================================================
+
+def test_spread_ranking():
+    """Same centroid, different scale → larger cloud has higher spread."""
+    small = [(0.0, 0.1), (0.0, -0.1), (0.1, 0.0), (-0.1, 0.0)]
+    large = [(0.0, 10.0), (0.0, -10.0), (10.0, 0.0), (-10.0, 0.0)]
+
+    # Verify each solve's score individually
+    path_sm = "/tmp/sp_test_spread_small.bin"
+    path_lg = "/tmp/sp_test_spread_large.bin"
+    write_bin(path_sm, [small], 4)
+    write_bin(path_lg, [large], 4)
+    r_sm, err = run_clip(path_sm, 4, metric="spread")
+    assert r_sm is not None, f"small spread failed: {err}"
+    r_lg, err = run_clip(path_lg, 4, metric="spread")
+    assert r_lg is not None, f"large spread failed: {err}"
+    assert r_sm["metric"] == "spread"
+    assert r_lg["metric"] == "spread"
+    assert r_lg["min_score"] > r_sm["min_score"], \
+        f"large cloud ({r_lg['min_score']}) should have higher spread than small ({r_sm['min_score']})"
+    for p in [path_sm, path_lg]:
+        os.remove(p)
+
+
+# ================================================================
+# 4. Anisotropy ranking test
+# ================================================================
+
+def test_anisotropy_ranking():
+    """Isotropic vs line-like → line-like has higher anisotropy."""
+    # Isotropic: roots roughly circular (lambda_max ≈ lambda_min)
+    iso = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)]
+    # Line-like: all roots along x-axis (lambda_min ≈ 0)
+    line = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0)]
+
+    path_iso = "/tmp/sp_test_aniso_iso.bin"
+    path_line = "/tmp/sp_test_aniso_line.bin"
+    write_bin(path_iso, [iso], 4)
+    write_bin(path_line, [line], 4)
+    r_iso, err = run_clip(path_iso, 4, metric="anisotropy")
+    assert r_iso is not None, f"iso anisotropy failed: {err}"
+    r_line, err = run_clip(path_line, 4, metric="anisotropy")
+    assert r_line is not None, f"line anisotropy failed: {err}"
+    assert r_iso["metric"] == "anisotropy"
+    assert r_line["metric"] == "anisotropy"
+    assert r_line["min_score"] > r_iso["min_score"], \
+        f"line-like ({r_line['min_score']}) should have higher anisotropy than isotropic ({r_iso['min_score']})"
+    for p in [path_iso, path_line]:
+        os.remove(p)
+
+
+# ================================================================
+# 5. Area ranking test
+# ================================================================
+
+def test_area_ranking():
+    """Small 2D cloud vs large 2D cloud → large has higher area."""
+    small = [(0.0, 0.0), (0.1, 0.0), (0.0, 0.1), (0.1, 0.1)]
+    large = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (10.0, 10.0)]
+
+    path_sm = "/tmp/sp_test_area_small.bin"
+    path_lg = "/tmp/sp_test_area_large.bin"
+    write_bin(path_sm, [small], 4)
+    write_bin(path_lg, [large], 4)
+    r_sm, err = run_clip(path_sm, 4, metric="area")
+    assert r_sm is not None, f"small area failed: {err}"
+    r_lg, err = run_clip(path_lg, 4, metric="area")
+    assert r_lg is not None, f"large area failed: {err}"
+    assert r_sm["metric"] == "area"
+    assert r_lg["metric"] == "area"
+    assert r_lg["min_score"] > r_sm["min_score"], \
+        f"large cloud ({r_lg['min_score']}) should have higher area than small ({r_sm['min_score']})"
+    for p in [path_sm, path_lg]:
+        os.remove(p)
+
+
+# ================================================================
+# 6. Hist for non-proximity metric (spread)
+# ================================================================
+
+def test_hist_spread():
+    """Histogram with spread metric — counts sum correctly, JSON has metric."""
+    small = [(0.0, 0.1), (0.0, -0.1), (0.1, 0.0), (-0.1, 0.0)]
+    large = [(0.0, 10.0), (0.0, -10.0), (10.0, 0.0), (-10.0, 0.0)]
+    mid = [(0.0, 1.0), (0.0, -1.0), (1.0, 0.0), (-1.0, 0.0)]
+
+    path = "/tmp/sp_test_hist_spread.bin"
+    write_bin(path, [small, mid, large], 4)
+
+    # Get clip bounds first
+    clip_result, err = run_clip(path, 4, metric="spread")
+    assert clip_result is not None, f"spread clip failed: {err}"
+
+    hist_result, err = run_hist(path, 4, clip_result["clip_lo"], clip_result["clip_hi"],
+                                hist_bins=10, metric="spread")
+    assert hist_result is not None, f"spread hist failed: {err}"
+    assert hist_result["metric"] == "spread"
+    assert hist_result["n_solves"] == 3
+    assert len(hist_result["hist"]) == 10
+    assert sum(hist_result["hist"]) == 3
+    os.remove(path)
+
+
+# ================================================================
+# 7. Invalid metric fails
+# ================================================================
+
+def test_invalid_metric():
+    """Nonexistent metric name → nonzero exit code."""
+    path = "/tmp/sp_test_invalid_metric.bin"
+    write_bin(path, [SOLVE_A], 2)
+    result, err = run_clip(path, 2, metric="bogus")
+    assert result is None, f"invalid metric should fail, got: {result}"
+    os.remove(path)
+
+
+# ================================================================
+# 8. Root-transform metric test
+# ================================================================
+
+def test_root_transform_affects_score():
+    """Root transforms change the metric score (pull_towards_center changes spread)."""
+    # Roots at distance ~1-2 from origin
+    solve = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.5)]
+    path = "/tmp/sp_test_xform.bin"
+    write_bin(path, [solve], 4)
+    xforms_host = os.path.join(LAMBDA_DIR, "_test_xforms.json")
+
+    try:
+        # Without transforms
+        result_plain, err = run_clip(path, 4, metric="spread")
+        assert result_plain is not None, f"plain spread failed: {err}"
+
+        # With pull_towards_center(alpha=0.9, sigma=2.0) — shrinks roots toward origin
+        # Format: [["name", "arg1", "arg2"]]
+        write_xforms(xforms_host, [["pull_towards_center", "0.9", "2.0"]])
+        result_pulled, err = run_clip(path, 4, metric="spread",
+                                      root_xforms="/src/_test_xforms.json")
+        assert result_pulled is not None, f"pulled spread failed: {err}"
+
+        # pull_towards_center shrinks → spread should decrease
+        assert result_pulled["min_score"] != result_plain["min_score"], \
+            f"transform should change score: plain={result_plain['min_score']}, pulled={result_pulled['min_score']}"
+    finally:
+        for p in [path, xforms_host]:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
@@ -221,18 +435,30 @@ if __name__ == "__main__":
         print(f"ERROR: {binary} not found. Run deploy.sh to compile.")
         sys.exit(1)
 
-    print("solve_proximity_stats tests (Docker ARM64)")
+    print("solve_proximity_stats tests — all metrics (Docker ARM64)")
     print("=" * 50)
 
     tests = [
-        ("clip basic", test_clip_basic),
-        ("clip many solves", test_clip_many_solves),
-        ("hist basic", test_hist_basic),
-        ("hist 100 bins", test_hist_100_bins),
-        ("identical roots", test_identical_roots),
-        ("degree 3", test_degree_3),
-        ("empty file", test_empty_file),
-        ("invalid clip range", test_invalid_clip_range),
+        # Proximity reference
+        ("proximity clip basic", test_clip_basic),
+        ("proximity clip many solves", test_clip_many_solves),
+        ("proximity hist basic", test_hist_basic),
+        ("proximity hist 100 bins", test_hist_100_bins),
+        ("proximity identical roots", test_identical_roots),
+        ("proximity degree 3", test_degree_3),
+        ("proximity empty file", test_empty_file),
+        ("proximity invalid clip range", test_invalid_clip_range),
+        # Metric ranking
+        ("crowding ranking", test_crowding_ranking),
+        ("spread ranking", test_spread_ranking),
+        ("anisotropy ranking", test_anisotropy_ranking),
+        ("area ranking", test_area_ranking),
+        # Non-proximity hist
+        ("hist spread metric", test_hist_spread),
+        # Error handling
+        ("invalid metric", test_invalid_metric),
+        # Root transforms
+        ("root transform affects score", test_root_transform_affects_score),
     ]
 
     passed = 0

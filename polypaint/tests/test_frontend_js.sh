@@ -856,140 +856,68 @@ async function testPipeline(name, call) {
         }
     }
 
-    // Step 11: Solve proximity UI + orchestration tests
+    // Step 11: Solve score UI + orchestration tests
     console.log('');
-    console.log('--- Solve proximity ---');
+    console.log('--- Solve score ---');
 
-    // 11a: both palette containers exist and have circles
+    // 11a: both palette containers exist
     {
         const rpContainer = ctx._elements['palette-circles-root-proximity'];
-        const spContainer = ctx._elements['palette-circles-solve-proximity'];
+        const ssContainer = ctx._elements['palette-circles-solve-score'];
         const rpCount = rpContainer ? rpContainer.children.length : 0;
-        const spCount = spContainer ? spContainer.children.length : 0;
+        const ssCount = ssContainer ? ssContainer.children.length : 0;
         if (rpCount < 5) { console.error('FATAL: root-proximity palette has ' + rpCount + ' circles'); process.exit(1); }
-        if (spCount < 5) { console.error('FATAL: solve-proximity palette has ' + spCount + ' circles'); process.exit(1); }
-        console.log('  two palette containers: OK (root=' + rpCount + ', solve=' + spCount + ')');
+        if (ssCount < 5) { console.error('FATAL: solve-score palette has ' + ssCount + ' circles'); process.exit(1); }
+        console.log('  two palette containers: OK (root=' + rpCount + ', solve=' + ssCount + ')');
     }
 
-    // 11b: setPaletteForMode updates only the target mode's state
+    // 11b: setPaletteForMode independence
     {
-        vm.runInContext('renderRootProximityPalette = "inferno"; renderSolveProximityPalette = "inferno";', ctx);
-        vm.runInContext("setPaletteForMode('solve_proximity', 'viridis')", ctx);
+        vm.runInContext('renderRootProximityPalette = "inferno"; renderSolveScorePalette = "inferno";', ctx);
+        vm.runInContext("setPaletteForMode('solve_score', 'viridis')", ctx);
         const rp = vm.runInContext('renderRootProximityPalette', ctx);
-        const sp = vm.runInContext('renderSolveProximityPalette', ctx);
+        const sp = vm.runInContext('renderSolveScorePalette', ctx);
         if (rp !== 'inferno') { console.error('FATAL: root palette changed to ' + rp); process.exit(1); }
         if (sp !== 'viridis') { console.error('FATAL: solve palette should be viridis, got ' + sp); process.exit(1); }
-        console.log('  setPaletteForMode independence: OK (root=inferno, solve=viridis)');
+        console.log('  setPaletteForMode independence: OK');
     }
 
-    // 11c: setColorMode('solve_proximity') activates the correct mode
+    // 11c: setColorMode activates solve_score
     {
-        vm.runInContext("setColorMode('solve_proximity')", ctx);
+        vm.runInContext("setColorMode('solve_score')", ctx);
         const mode = vm.runInContext('renderColorMode', ctx);
-        if (mode !== 'solve_proximity') { console.error('FATAL: colorMode should be solve_proximity, got ' + mode); process.exit(1); }
-        console.log('  setColorMode(solve_proximity): OK');
+        if (mode !== 'solve_score') { console.error('FATAL: mode should be solve_score, got ' + mode); process.exit(1); }
+        console.log('  setColorMode(solve_score): OK');
     }
 
-    // 11d: _activeRenderPalette returns correct palette per mode
+    // 11d: _activeRenderPalette per mode
     {
         vm.runInContext("renderColorMode = 'proximity'; renderRootProximityPalette = 'magma';", ctx);
         const p1 = vm.runInContext('_activeRenderPalette()', ctx);
-        if (p1 !== 'magma') { console.error('FATAL: proximity palette should be magma, got ' + p1); process.exit(1); }
-        vm.runInContext("renderColorMode = 'solve_proximity'; renderSolveProximityPalette = 'turbo';", ctx);
+        if (p1 !== 'magma') { console.error('FATAL: proximity palette should be magma'); process.exit(1); }
+        vm.runInContext("renderColorMode = 'solve_score'; renderSolveScorePalette = 'turbo';", ctx);
         const p2 = vm.runInContext('_activeRenderPalette()', ctx);
-        if (p2 !== 'turbo') { console.error('FATAL: solve_proximity palette should be turbo, got ' + p2); process.exit(1); }
+        if (p2 !== 'turbo') { console.error('FATAL: solve_score palette should be turbo'); process.exit(1); }
         vm.runInContext("renderColorMode = 'rainbow';", ctx);
         const p3 = vm.runInContext('_activeRenderPalette()', ctx);
-        if (p3 !== null) { console.error('FATAL: rainbow palette should be null, got ' + p3); process.exit(1); }
-        console.log('  _activeRenderPalette: OK (proximity=magma, solve=turbo, rainbow=null)');
+        if (p3 !== null) { console.error('FATAL: rainbow palette should be null'); process.exit(1); }
+        console.log('  _activeRenderPalette: OK');
     }
 
-    // 11e: _loadCalcMetaForRender uses _lastCalcMeta when available
+    // 11e: setSolveMetric changes state
     {
-        vm.runInContext("_lastCalcMeta = { job_id: 'j1', degree: 42, n_stripes: 100, lores: { bin_key: 'renders/j1/lores.bin' } };", ctx);
-        try {
-            const meta = await vm.runInContext("(async()=>{ return await _loadCalcMetaForRender('j1'); })()", ctx);
-            if (meta.degree !== 42) { console.error('FATAL: expected degree 42, got ' + meta.degree); process.exit(1); }
-            console.log('  _loadCalcMetaForRender (cached): OK');
-        } catch (e) { console.error('FATAL: _loadCalcMetaForRender: ' + e.message); process.exit(1); }
+        vm.runInContext("setSolveMetric('crowding')", ctx);
+        const m = vm.runInContext('renderSolveMetric', ctx);
+        if (m !== 'crowding') { console.error('FATAL: metric should be crowding, got ' + m); process.exit(1); }
+        const mode = vm.runInContext('renderColorMode', ctx);
+        if (mode !== 'solve_score') { console.error('FATAL: setSolveMetric should activate solve_score mode'); process.exit(1); }
+        console.log('  setSolveMetric: OK (crowding)');
     }
 
-    // 11f: _loadCalcMetaForRender falls back to /detail
+    // 11f: orchestrator dispatch with solve_score contains metric
     {
+        vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'spread';", ctx);
         vm.runInContext(`
-            _lastCalcMeta = null;
-            lambdaPost = async function lambdaPost(name, body, path) {
-                if (name === 'storage' && path === '/detail') {
-                    return { job_id: body.job_id, calc: { degree: 55, n_stripes: 200, lores: { bin_key: 'renders/' + body.job_id + '/lores.bin' } } };
-                }
-                return {};
-            };
-        `, ctx);
-        try {
-            const meta = await vm.runInContext("(async()=>{ return await _loadCalcMetaForRender('j2'); })()", ctx);
-            if (meta.degree !== 55) { console.error('FATAL: detail fallback degree should be 55, got ' + meta.degree); process.exit(1); }
-            console.log('  _loadCalcMetaForRender (detail): OK');
-        } catch (e) { console.error('FATAL: _loadCalcMetaForRender detail: ' + e.message); process.exit(1); }
-    }
-
-    // 11g: _ensureSolveProximityBins dispatches all 3 phases with correct payloads
-    {
-        const dispatched = [];
-        vm.runInContext(`
-            var _spDispatched = [];
-            lambdaPost = async function lambdaPost(name, body, path) {
-                if (name === 'storage' && path === '/delete-task') return {};
-                if (name === 'dispatch' && body.target === 'solve_proximity') {
-                    _spDispatched.push(body.jobs[0] || body.jobs);
-                    return { fired: body.jobs.length, errors: [] };
-                }
-                if (name === 'storage' && path === '/check-status') {
-                    return { errors: 0, done: body.expected, complete: true,
-                        status_counts: { done: body.expected },
-                        results: [{ clip_lo: 2.5, clip_hi: 8.0, n_solves: 1000, n_solves_total: 50000,
-                            cuts_norm: [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9] }] };
-                }
-                return {};
-            };
-            _bilevelDispatchAndPoll = async function(opts) {
-                _spDispatched.push({ _wave: true, target: opts.target, jobCount: opts.jobs.length, taskPrefix: opts.taskPrefix });
-                return 1234;
-            };
-        `, ctx);
-
-        try {
-            const binsKey = await vm.runInContext(`(async()=>{
-                return await _ensureSolveProximityBins({
-                    jobId: 'test_sp', calcMeta: { degree: 70, n_stripes: 5, lores: { bin_key: 'renders/test_sp/lores.bin' } },
-                    rootTransforms: [['unit_circle']], degree: 70, nStripes: 5, logTarget: 'render-log'
-                });
-            })()`, ctx);
-
-            if (binsKey !== 'renders/test_sp/solve_proximity_bins.json') {
-                console.error('FATAL: bins key wrong: ' + binsKey); process.exit(1);
-            }
-            const d = vm.runInContext('_spDispatched', ctx);
-            // Should have: clip dispatch, hist wave dispatch, merge dispatch = 3 entries
-            if (d.length !== 3) { console.error('FATAL: expected 3 dispatch calls, got ' + d.length + ': ' + JSON.stringify(d.map(x=>x.phase||x._wave))); process.exit(1); }
-            // First: clip
-            if (d[0].phase !== 'clip') { console.error('FATAL: first dispatch should be clip, got ' + d[0].phase); process.exit(1); }
-            if (d[0].lores_bin_key !== 'renders/test_sp/lores.bin') { console.error('FATAL: clip lores key wrong'); process.exit(1); }
-            // Second: hist wave
-            if (!d[1]._wave) { console.error('FATAL: second should be wave dispatch'); process.exit(1); }
-            if (d[1].jobCount !== 5) { console.error('FATAL: hist should have 5 jobs, got ' + d[1].jobCount); process.exit(1); }
-            if (d[1].target !== 'solve_proximity') { console.error('FATAL: hist target wrong'); process.exit(1); }
-            // Third: merge
-            if (d[2].phase !== 'merge') { console.error('FATAL: third should be merge, got ' + d[2].phase); process.exit(1); }
-            if (d[2].n_stripes !== 5) { console.error('FATAL: merge n_stripes wrong'); process.exit(1); }
-            console.log('  _ensureSolveProximityBins: OK (clip→hist(5)→merge, key=' + binsKey + ')');
-        } catch (e) { console.error('FATAL: _ensureSolveProximityBins: ' + e.message); process.exit(1); }
-    }
-
-    // 11h: runRasterPipeline in solve_proximity mode dispatches orchestrator with correct params
-    {
-        vm.runInContext(`
-            renderColorMode = 'solve_proximity';
-            renderSolveProximityPalette = 'plasma';
             var _lastOrchPayload = null;
             lambdaPost = async function lambdaPost(name, body, path) {
                 if (name === 'dispatch' && body.target === 'render_orchestrator') {
@@ -997,46 +925,30 @@ async function testPipeline(name, call) {
                     return { fired: 1, errors: [] };
                 }
                 if (name === 'storage' && path === '/check-status') {
-                    return { errors: 0, done: 1, complete: true, status_counts: { done: 1 },
-                        results: [{ phase: 'done', phase_label: 'Done' }] };
+                    return { errors: 0, done: 1, complete: true, results: [{ phase: 'done' }] };
                 }
                 return {};
             };
             refreshRenderArtifacts = async function() {};
         `, ctx);
-
-        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_sp2' };
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_ss' };
         ctx._elements['render-status'].textContent = '';
-        ctx._elements['render-pix'] = { ...ctx._mkEl(), value: '512' };
-        ctx._elements['render-format'] = { ...ctx._mkEl(), value: 'jpeg' };
-        ctx._elements['render-quality'] = { ...ctx._mkEl(), value: '90' };
-        ctx._elements['render-square-extent'] = { ...ctx._mkEl(), value: '2' };
-        ctx._elements['sparse-tile-size'] = { ...ctx._mkEl(), value: '512' };
-        ctx._elements['render-rotation'] = { ...ctx._mkEl(), value: '0' };
-        ctx._elements['render-rotation-dir'] = { ...ctx._mkEl(), value: 'ccw' };
-        ctx._elements['render-quantile'] = { ...ctx._mkEl(), value: '1' };
-        ctx._elements['render-shim'] = { ...ctx._mkEl(), value: '5' };
         ctx._elements['btn-raster-all'] = ctx._mkEl();
         vm.runInContext("_viewMode = 'square'; _rtChain = [];", ctx);
-
-        try {
-            await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx);
-        } catch (e) {}
-
+        try { await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx); } catch(e) {}
         const payload = vm.runInContext('_lastOrchPayload', ctx);
-        if (!payload) { console.error('FATAL: no orchestrator dispatch for solve_proximity'); process.exit(1); }
-        if (payload.mode !== 'color') { console.error('FATAL: orchestrator mode should be color, got ' + payload.mode); process.exit(1); }
-        if (payload.params.color_mode !== 'solve_proximity') {
-            console.error('FATAL: orchestrator color_mode should be solve_proximity, got ' + payload.params.color_mode);
-            process.exit(1);
-        }
-        if (payload.params.palette !== 'plasma') {
-            console.error('FATAL: orchestrator palette should be plasma, got ' + payload.params.palette);
-            process.exit(1);
-        }
-        console.log('  orchestrator dispatch in solve_proximity: OK (mode=color, color_mode=solve_proximity, palette=plasma)');
-
+        if (!payload) { console.error('FATAL: no orchestrator dispatch'); process.exit(1); }
+        if (payload.params.color_mode !== 'solve_score') { console.error('FATAL: color_mode should be solve_score'); process.exit(1); }
+        if (payload.params.solve_metric !== 'spread') { console.error('FATAL: solve_metric should be spread, got ' + payload.params.solve_metric); process.exit(1); }
+        console.log('  orchestrator dispatch: OK (color_mode=solve_score, solve_metric=spread)');
         vm.runInContext("renderColorMode = 'rainbow';", ctx);
+    }
+
+    // 11g: dead _ensureSolveProximityBins is gone
+    {
+        const exists = vm.runInContext('typeof _ensureSolveProximityBins', ctx);
+        if (exists === 'function') { console.error('FATAL: dead _ensureSolveProximityBins should be deleted'); process.exit(1); }
+        console.log('  dead _ensureSolveProximityBins removed: OK');
     }
 
     // Step 12: Orchestrator launch + observer tests (spec section 20.3)

@@ -70,17 +70,28 @@ def handler(event, context):
                 rtf.write(json.dumps(rt_chain))
             cmd.append(f"--root_xforms={rt_path}")
 
-        # Solve proximity bins: download JSON, parse, pass as CLI args
-        sp_bins_key = params.get("solve_proximity_bins_key")
-        if params.get("color") == "solve_proximity" and not sp_bins_key:
-            raise RuntimeError("solve_proximity color mode requires solve_proximity_bins_key")
-        if sp_bins_key and params.get("color") == "solve_proximity":
-            sp_bins_path = "/tmp/solve_proximity_bins.json"
-            sp_obj = s3.get_object(Bucket=BUCKET, Key=sp_bins_key)
-            sp_data = json.loads(sp_obj["Body"].read())
-            cmd.append(f"--solve_prox_clip_lo={sp_data['clip_lo']}")
-            cmd.append(f"--solve_prox_clip_hi={sp_data['clip_hi']}")
-            cmd.append(f"--solve_prox_cuts={','.join(str(c) for c in sp_data['cuts_norm'])}")
+        # Solve-score bins: download JSON, parse, pass as CLI args
+        color = params.get("color", "rainbow")
+        ss_bins_key = params.get("solve_score_bins_key") or params.get("solve_proximity_bins_key")
+        if color in ("solve_score", "solve_proximity") and not ss_bins_key:
+            raise RuntimeError(f"{color} color mode requires solve_score_bins_key")
+        if ss_bins_key and color in ("solve_score", "solve_proximity"):
+            ss_obj = s3.get_object(Bucket=BUCKET, Key=ss_bins_key)
+            ss_data = json.loads(ss_obj["Body"].read())
+            # Validate bins artifact — must have family and matching metric
+            if ss_data.get("family") != "solve_score":
+                raise RuntimeError(f"Bins artifact missing or wrong family: {ss_data.get('family')}")
+            req_metric = params.get("solve_metric", "proximity")
+            if ss_data.get("metric") != req_metric:
+                raise RuntimeError(f"Bins metric mismatch: expected {req_metric}, got {ss_data.get('metric')}")
+            ss_metric = ss_data.get("metric", params.get("solve_metric", "proximity"))
+            cmd.append(f"--color=solve_score")
+            cmd.append(f"--solve_metric={ss_metric}")
+            cmd.append(f"--solve_score_clip_lo={ss_data['clip_lo']}")
+            cmd.append(f"--solve_score_clip_hi={ss_data['clip_hi']}")
+            cmd.append(f"--solve_score_cuts={','.join(str(c) for c in ss_data['cuts_norm'])}")
+            # Override the color arg already in cmd (was set to "solve_proximity" or "solve_score")
+            cmd = [a for a in cmd if not a.startswith("--color=") or a == f"--color=solve_score"]
 
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:

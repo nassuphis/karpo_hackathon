@@ -332,7 +332,7 @@ class TestStorageCleanRender(unittest.TestCase):
 
     @patch("handler_storage.s3")
     def test_clean_render_deletes_solve_proximity_artifacts(self, mock_s3):
-        """Clean-render deletes solve_proximity intermediate artifacts."""
+        """Clean-render deletes legacy solve_proximity intermediate artifacts."""
         from handler_storage import handle_clean_render
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
@@ -347,6 +347,27 @@ class TestStorageCleanRender(unittest.TestCase):
         self.assertIn("renders/j/solve_proximity/stripe_0_hist.json", deleted_keys)
         self.assertIn("renders/j/solve_proximity_clip.json", deleted_keys)
         self.assertIn("renders/j/solve_proximity_bins.json", deleted_keys)
+
+    @patch("handler_storage.s3")
+    def test_clean_render_deletes_solve_scores_artifacts(self, mock_s3):
+        """Clean-render deletes solve_scores/ intermediate artifacts (new naming)."""
+        from handler_storage import handle_clean_render
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"Contents": [
+            {"Key": "renders/j/solve_scores/proximity/stripe_0_hist.json"},
+            {"Key": "renders/j/solve_scores/proximity_clip.json"},
+        ]}]
+        mock_s3.delete_objects.return_value = {"Deleted": [
+            {"Key": "renders/j/solve_scores/proximity/stripe_0_hist.json"},
+            {"Key": "renders/j/solve_scores/proximity_clip.json"},
+        ]}
+        event = {"body": json.dumps({"job_id": "j", "pipeline": "color"})}
+        handle_clean_render(event)
+        call_args = mock_s3.delete_objects.call_args
+        deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
+        self.assertIn("renders/j/solve_scores/proximity/stripe_0_hist.json", deleted_keys)
+        self.assertIn("renders/j/solve_scores/proximity_clip.json", deleted_keys)
 
 
 class TestStoragePresign(unittest.TestCase):

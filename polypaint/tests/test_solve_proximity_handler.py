@@ -4,6 +4,9 @@ Tests for handler_solve_proximity.py merge phase logic.
 The clip and hist phases delegate to the C binary (tested in test_solve_proximity_stats.py).
 The merge phase is pure Python — derive 9 equal-density bin cuts from summed histograms.
 
+Tests metric awareness: preserves requested metric, rejects mismatched artifacts,
+output artifact has correct family and cuts_norm length.
+
 Run: cd polypaint && uv run python tests/test_solve_proximity_handler.py
 """
 import json
@@ -33,7 +36,7 @@ def _make_mock_s3(clip_data, hist_responses):
     return mock_s3
 
 
-def _run_merge(n_stripes, clip_data, hist_responses):
+def _run_merge(n_stripes, clip_data, hist_responses, metric="proximity"):
     """Run merge phase with mocked S3."""
     import handler_solve_proximity as hsp
     mock_s3 = _make_mock_s3(clip_data, hist_responses)
@@ -44,26 +47,44 @@ def _run_merge(n_stripes, clip_data, hist_responses):
         result = hsp.handle_merge({
             "job_id": "test",
             "task_id": "merge_test",
+            "metric": metric,
             "n_stripes": n_stripes,
-            "hist_prefix": "renders/test/solve_proximity/",
-            "clip_key": "renders/test/solve_proximity_clip.json",
-            "out_key": "renders/test/solve_proximity_bins.json",
+            "hist_prefix": "renders/test/solve_scores/",
+            "clip_key": "renders/test/solve_scores/clip.json",
+            "out_key": "renders/test/solve_scores/bins.json",
         })
-        return json.loads(result["body"])
+        # Capture what was written to S3
+        put_calls = mock_s3.put_object.call_args_list
+        written_artifact = None
+        if put_calls:
+            body_bytes = put_calls[0][1].get("Body", b"{}")
+            written_artifact = json.loads(body_bytes)
+        return json.loads(result["body"]), written_artifact
     finally:
         hsp.s3 = orig_s3
         hsp.report_status = orig_report
 
 
+def _uniform_hist_data(prefix, n_stripes, metric="proximity"):
+    """Generate uniform histogram responses for n_stripes."""
+    clip_data = {
+        "family": "solve_score", "metric": metric,
+        "clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": [],
+    }
+    hist_responses = {}
+    for s in range(n_stripes):
+        hist_responses[f"{prefix}stripe_{s}_hist.json"] = {
+            "family": "solve_score", "metric": metric,
+            "hist": [20] * 100, "n_solves": 2000,
+        }
+    return clip_data, hist_responses
+
+
 def test_merge_uniform_histogram():
     """Uniform histogram -> evenly spaced cuts."""
-    clip_data = {"clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": []}
-    hist_responses = {}
-    for s in range(5):
-        hist_responses[f"renders/test/solve_proximity/stripe_{s}_hist.json"] = {
-            "hist": [20] * 100, "n_solves": 2000
-        }
-    body = _run_merge(5, clip_data, hist_responses)
+    clip_data, hist_responses = _uniform_hist_data(
+        "renders/test/solve_scores/", 5, metric="proximity")
+    body, artifact = _run_merge(5, clip_data, hist_responses, metric="proximity")
     cuts = body["cuts_norm"]
     assert len(cuts) == 9, f"expected 9 cuts, got {len(cuts)}"
     for i in range(9):
@@ -74,12 +95,18 @@ def test_merge_uniform_histogram():
 
 def test_merge_skewed_histogram():
     """Skewed histogram -> concentrated cuts."""
-    clip_data = {"clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": []}
+    clip_data = {
+        "family": "solve_score", "metric": "proximity",
+        "clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": [],
+    }
     hist = [900] * 10 + [11] * 90
     hist_responses = {
-        "renders/test/solve_proximity/stripe_0_hist.json": {"hist": hist, "n_solves": 9990}
+        "renders/test/solve_scores/stripe_0_hist.json": {
+            "family": "solve_score", "metric": "proximity",
+            "hist": hist, "n_solves": 9990,
+        }
     }
-    body = _run_merge(1, clip_data, hist_responses)
+    body, _ = _run_merge(1, clip_data, hist_responses, metric="proximity")
     cuts = body["cuts_norm"]
     assert len(cuts) == 9
     low_cuts = sum(1 for c in cuts if c < 0.15)
@@ -89,13 +116,19 @@ def test_merge_skewed_histogram():
 
 def test_merge_single_bin_histogram():
     """All data in one bin -> degenerate but valid cuts."""
-    clip_data = {"clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": []}
+    clip_data = {
+        "family": "solve_score", "metric": "proximity",
+        "clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": [],
+    }
     hist = [0] * 100
     hist[50] = 10000
     hist_responses = {
-        "renders/test/solve_proximity/stripe_0_hist.json": {"hist": hist, "n_solves": 10000}
+        "renders/test/solve_scores/stripe_0_hist.json": {
+            "family": "solve_score", "metric": "proximity",
+            "hist": hist, "n_solves": 10000,
+        }
     }
-    body = _run_merge(1, clip_data, hist_responses)
+    body, _ = _run_merge(1, clip_data, hist_responses, metric="proximity")
     cuts = body["cuts_norm"]
     assert len(cuts) == 9
     assert all(0 <= c <= 1 for c in cuts), f"cuts out of range: {cuts}"
@@ -104,15 +137,90 @@ def test_merge_single_bin_histogram():
 
 def test_merge_error_missing_stripe():
     """Missing stripe histogram should raise."""
-    clip_data = {"clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": []}
+    clip_data = {
+        "family": "solve_score", "metric": "proximity",
+        "clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": [],
+    }
     hist_responses = {
-        "renders/test/solve_proximity/stripe_0_hist.json": {"hist": [10] * 100, "n_solves": 1000}
+        "renders/test/solve_scores/stripe_0_hist.json": {
+            "family": "solve_score", "metric": "proximity",
+            "hist": [10] * 100, "n_solves": 1000,
+        }
     }
     try:
-        _run_merge(2, clip_data, hist_responses)
+        _run_merge(2, clip_data, hist_responses, metric="proximity")
         assert False, "should have raised"
     except RuntimeError as e:
         assert "Missing histogram" in str(e), f"wrong error: {e}"
+
+
+# ================================================================
+# Metric-aware merge tests (spec 9.2)
+# ================================================================
+
+def test_merge_preserves_requested_metric():
+    """Merge output contains the requested metric name."""
+    for metric in ["proximity", "crowding", "spread", "anisotropy", "area"]:
+        clip_data, hist_responses = _uniform_hist_data(
+            "renders/test/solve_scores/", 1, metric=metric)
+        body, artifact = _run_merge(1, clip_data, hist_responses, metric=metric)
+        assert artifact["metric"] == metric, \
+            f"expected metric={metric}, got {artifact.get('metric')}"
+
+
+def test_merge_rejects_clip_wrong_metric():
+    """Merge with clip artifact having wrong metric raises."""
+    clip_data = {
+        "family": "solve_score", "metric": "crowding",
+        "clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": [],
+    }
+    hist_responses = {
+        "renders/test/solve_scores/stripe_0_hist.json": {
+            "family": "solve_score", "metric": "proximity",
+            "hist": [10] * 100, "n_solves": 1000,
+        }
+    }
+    try:
+        _run_merge(1, clip_data, hist_responses, metric="proximity")
+        assert False, "should have raised on clip metric mismatch"
+    except RuntimeError as e:
+        assert "mismatch" in str(e).lower(), f"wrong error: {e}"
+
+
+def test_merge_rejects_stripe_wrong_metric():
+    """Merge with stripe histogram having wrong metric raises."""
+    clip_data = {
+        "family": "solve_score", "metric": "spread",
+        "clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": [],
+    }
+    hist_responses = {
+        "renders/test/solve_scores/stripe_0_hist.json": {
+            "family": "solve_score", "metric": "crowding",
+            "hist": [10] * 100, "n_solves": 1000,
+        }
+    }
+    try:
+        _run_merge(1, clip_data, hist_responses, metric="spread")
+        assert False, "should have raised on stripe metric mismatch"
+    except RuntimeError as e:
+        assert "mismatch" in str(e).lower(), f"wrong error: {e}"
+
+
+def test_merge_artifact_has_solve_score_family():
+    """Merge output artifact has family == 'solve_score'."""
+    clip_data, hist_responses = _uniform_hist_data(
+        "renders/test/solve_scores/", 2, metric="area")
+    _, artifact = _run_merge(2, clip_data, hist_responses, metric="area")
+    assert artifact["family"] == "solve_score", f"family={artifact.get('family')}"
+
+
+def test_merge_artifact_cuts_norm_length_9():
+    """Merge output artifact has exactly 9 cut values (10 bins → 9 cuts)."""
+    clip_data, hist_responses = _uniform_hist_data(
+        "renders/test/solve_scores/", 3, metric="anisotropy")
+    _, artifact = _run_merge(3, clip_data, hist_responses, metric="anisotropy")
+    assert len(artifact["cuts_norm"]) == 9, \
+        f"expected 9 cuts, got {len(artifact['cuts_norm'])}"
 
 
 if __name__ == "__main__":
@@ -121,9 +229,14 @@ if __name__ == "__main__":
         ("skewed histogram", test_merge_skewed_histogram),
         ("single bin histogram", test_merge_single_bin_histogram),
         ("missing stripe error", test_merge_error_missing_stripe),
+        ("preserves requested metric", test_merge_preserves_requested_metric),
+        ("rejects clip wrong metric", test_merge_rejects_clip_wrong_metric),
+        ("rejects stripe wrong metric", test_merge_rejects_stripe_wrong_metric),
+        ("artifact has solve_score family", test_merge_artifact_has_solve_score_family),
+        ("artifact cuts_norm length 9", test_merge_artifact_cuts_norm_length_9),
     ]
 
-    print("solve_proximity handler tests")
+    print("solve_proximity handler tests (metric-aware)")
     print("=" * 50)
 
     passed = 0

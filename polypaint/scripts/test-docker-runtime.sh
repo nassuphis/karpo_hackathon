@@ -62,7 +62,7 @@ docker run --rm --platform linux/arm64 \
     echo "--- Generating test fixtures ---"
     dnf install -y python3 2>&1 | tail -1
 
-    python3 - <<'PYEOF'
+    python3 - <<PYEOF
 import json, struct, os, subprocess, sys, math
 
 def write_cf(path, coeffs_list, n_coeffs):
@@ -321,23 +321,27 @@ if os.path.exists(sps_path):
     # Test clip mode
     r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2"],
         capture_output=True, text=True, timeout=10)
-    assert r.returncode == 0, f"clip failed: {r.stderr[:200]}"
+    assert r.returncode == 0, "clip failed: " + r.stderr[:200]
     clip = json.loads(r.stdout)
     assert clip["n_solves"] == 3
     assert clip["degree"] == 2
     assert clip["clip_lo"] <= clip["clip_hi"]
-    print(f"  clip: OK (n={clip['n_solves']}, lo={clip['clip_lo']:.2f}, hi={clip['clip_hi']:.2f})")
+    c_n = clip["n_solves"]
+    c_lo = clip["clip_lo"]
+    c_hi = clip["clip_hi"]
+    print("  clip: OK (n=%d, lo=%.2f, hi=%.2f)" % (c_n, c_lo, c_hi))
 
     # Test hist mode
     r = subprocess.run([sps_path, sps_bin, "--mode=hist", "--degree=2",
-        f"--clip_lo={clip['clip_lo']}", f"--clip_hi={clip['clip_hi']}",
+        "--clip_lo=" + str(c_lo), "--clip_hi=" + str(c_hi),
         "--hist_bins=10"],
         capture_output=True, text=True, timeout=10)
-    assert r.returncode == 0, f"hist failed: {r.stderr[:200]}"
+    assert r.returncode == 0, "hist failed: " + r.stderr[:200]
     hist = json.loads(r.stdout)
-    assert len(hist["hist"]) == 10
-    assert sum(hist["hist"]) == 3
-    print(f"  hist: OK (bins={len(hist['hist'])}, total={sum(hist['hist'])})")
+    h_bins = hist["hist"]
+    assert len(h_bins) == 10
+    assert sum(h_bins) == 3
+    print("  hist: OK (bins=%d, total=%d)" % (len(h_bins), sum(h_bins)))
 
     os.remove(sps_bin)
     print("=== solve_proximity_stats tests PASSED ===")
@@ -364,7 +368,7 @@ if os.path.exists(catalog_path):
             continue  # skip functions that fail in Docker too
         actual_degree = m["n_coeffs"] - 1
         if actual_degree != entry["degree"]:
-            mismatches.append(f"{entry['name']}: catalog={entry['degree']} deploy={actual_degree}")
+            mismatches.append("%s: catalog=%s deploy=%s" % (entry["name"], entry["degree"], actual_degree))
         tested += 1
     if mismatches:
         print(f"  FAIL: {len(mismatches)} degree mismatches:")

@@ -1132,7 +1132,9 @@ async function testPipeline(name, call) {
         console.log('  12f _clearActiveRun removes localStorage: OK');
     }
 
-    console.log('');
+    // Step 13: Render refresh — tested in Playwright (VM cannot override let-scoped lambdaPost/fetch)
+    // See tests/e2e/render-refresh.spec.js for real browser coverage.
+
     console.log('=== Frontend JS Execution Test PASSED ===');
 })().catch(e => { console.error('FATAL: ' + e.message); process.exit(1); });
 HARNESS_EOF

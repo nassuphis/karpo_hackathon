@@ -336,8 +336,9 @@ def handle_clean_render(event):
         for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix + rp):
             for obj in page.get('Contents', []):
                 objects.append(obj)
-    # Also delete top-level solve-proximity artifacts
-    for key_suffix in ['solve_proximity_clip.json', 'solve_proximity_bins.json']:
+    # Also delete top-level solve-proximity artifacts and cached previews
+    for key_suffix in ['solve_proximity_clip.json', 'solve_proximity_bins.json',
+                       'preview_color.png', 'preview_bilevel.png']:
         objects.append({"Key": prefix + key_suffix})
 
     total_deleted = 0

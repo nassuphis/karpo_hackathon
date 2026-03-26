@@ -536,10 +536,13 @@ def run_bilevel(params, rp, task_id, progress, checkpoint, context):
         for t in range(n_tiles):
             t_row = t // n_tile_cols
             t_col = t % n_tile_cols
+            tw = min(tile_size, pix - t_col * tile_size)
+            th = min(tile_size, pix - t_row * tile_size)
             merge_jobs.append({
                 "phase": "merge", "job_id": job_id, "tile_idx": t,
                 "task_id": f"render_{run_id}_bilevel_merge_{t}",
                 "tile_row": t_row, "tile_col": t_col,
+                "tile_w": tw, "tile_h": th,
                 "n_stripes": n_stripes, "n_tile_cols": n_tile_cols, "n_tile_rows": n_tile_rows,
                 "width": pix, "height": pix, "tile_size": tile_size,
             })
@@ -660,10 +663,13 @@ def run_coeff_bilevel(params, rp, task_id, progress, checkpoint, context):
         for t in range(n_tiles):
             t_row = t // n_tile_cols
             t_col = t % n_tile_cols
+            tw = min(tile_size, pix - t_col * tile_size)
+            th = min(tile_size, pix - t_row * tile_size)
             merge_jobs.append({
                 "phase": "merge", "job_id": job_id, "tile_idx": t,
                 "task_id": f"render_{run_id}_coeff_bilevel_merge_{t}",
                 "tile_row": t_row, "tile_col": t_col,
+                "tile_w": tw, "tile_h": th,
                 "n_stripes": n_stripes, "n_tile_cols": n_tile_cols, "n_tile_rows": n_tile_rows,
                 "width": pix, "height": pix, "tile_size": tile_size,
                 "bits_prefix": "coeff_bits", "tile_prefix": "coeff",

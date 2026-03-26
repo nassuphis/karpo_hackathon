@@ -150,6 +150,42 @@ class TestBilevelOrchestrator(unittest.TestCase):
         assert ri < mi < si
 
 
+    @patch("handler_render_orchestrator.ddb")
+    @patch("handler_render_orchestrator.lambda_client")
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator._storage_call")
+    def test_bilevel_merge_payload_has_tile_w_tile_h(
+        self, mock_storage, mock_report, mock_lambda, mock_ddb
+    ):
+        """Merge jobs must include tile_w and tile_h (worker contract)."""
+        mock_storage.side_effect = lambda path, body: (
+            {"deleted": 0} if "clean" in path else
+            {"job_id": "j", "calc": {"degree": 5, "n_stripes": 2, "n_chunks": 2}} if "detail" in path else {}
+        )
+        mock_ddb.query.return_value = _mock_poll_done(100)
+
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_mw", "mode": "bilevel",
+            "params": {"pix": 1024, "tile_size": 512, "view_mode": "square", "square_extent": 2.0, "rotation": 0}
+        })
+        handler(event, None)
+
+        # Find merge dispatch payloads
+        merge_payloads = []
+        for c in mock_lambda.invoke.call_args_list:
+            payload = json.loads(c[1].get("Payload", b"{}"))
+            if payload.get("phase") == "merge" and "bilevel_merge" in payload.get("task_id", ""):
+                merge_payloads.append(payload)
+
+        assert len(merge_payloads) > 0, "No bilevel merge jobs dispatched"
+        for p in merge_payloads:
+            assert "tile_w" in p, f"merge payload missing tile_w: {p.get('task_id')}"
+            assert "tile_h" in p, f"merge payload missing tile_h: {p.get('task_id')}"
+            assert p["tile_w"] > 0, f"tile_w must be > 0"
+            assert p["tile_h"] > 0, f"tile_h must be > 0"
+
+
 class TestCoeffOrchestrator(unittest.TestCase):
 
     @patch("handler_render_orchestrator.ddb")
@@ -225,6 +261,39 @@ class TestCoeffOrchestrator(unittest.TestCase):
             f"stripe 1 key wrong: {dispatched_payloads[1].get('coeffs_key')}"
         assert dispatched_payloads[0]["n_coeffs"] == 99, \
             f"n_coeffs should be 99 from metadata, got {dispatched_payloads[0].get('n_coeffs')}"
+
+
+    @patch("handler_render_orchestrator.ddb")
+    @patch("handler_render_orchestrator.lambda_client")
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator._storage_call")
+    def test_coeff_merge_payload_has_tile_w_tile_h(
+        self, mock_storage, mock_report, mock_lambda, mock_ddb
+    ):
+        """Coeff merge jobs must include tile_w and tile_h."""
+        mock_storage.side_effect = lambda path, body: (
+            {"deleted": 0} if "clean" in path else
+            {"job_id": "j", "calc": {"degree": 5, "n_stripes": 2, "n_chunks": 2, "n_coeffs": 6}} if "detail" in path else {}
+        )
+        mock_ddb.query.return_value = _mock_poll_done(100)
+
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_cmw", "mode": "coeff_bilevel",
+            "params": {"pix": 1024, "tile_size": 512, "view_mode": "square", "square_extent": 2.0, "rotation": 0}
+        })
+        handler(event, None)
+
+        merge_payloads = []
+        for c in mock_lambda.invoke.call_args_list:
+            payload = json.loads(c[1].get("Payload", b"{}"))
+            if payload.get("phase") == "merge" and "coeff_bilevel_merge" in payload.get("task_id", ""):
+                merge_payloads.append(payload)
+
+        assert len(merge_payloads) > 0, "No coeff merge jobs dispatched"
+        for p in merge_payloads:
+            assert "tile_w" in p, f"coeff merge payload missing tile_w: {p.get('task_id')}"
+            assert "tile_h" in p, f"coeff merge payload missing tile_h: {p.get('task_id')}"
 
 
 class TestOrchestratorCheckpoint(unittest.TestCase):

@@ -237,35 +237,116 @@ class TestStorageCheckKeys(unittest.TestCase):
 class TestStorageCleanRender(unittest.TestCase):
 
     @patch("handler_storage.s3")
-    def test_clean_render_deletes_raw_jpeg_pix_files(self, mock_s3):
+    def test_clean_render_deletes_intermediates_only(self, mock_s3):
+        """Clean-render deletes pix/raw/tile intermediates, preserves final images."""
         from handler_storage import handle_clean_render
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
+        # Paginator returns per-prefix results — only intermediates match
         mock_paginator.paginate.return_value = [{
             "Contents": [
                 {"Key": "renders/j/tile_0000.raw"},
                 {"Key": "renders/j/pix_0000_t0000.pix"},
-                {"Key": "renders/j/image.jpeg"},
-                {"Key": "renders/j/calc.json"},
-                {"Key": "renders/j/stripe_0.bin"},
             ]
         }]
         mock_s3.delete_objects.return_value = {"Deleted": [
             {"Key": "renders/j/tile_0000.raw"},
             {"Key": "renders/j/pix_0000_t0000.pix"},
-            {"Key": "renders/j/image.jpeg"},
         ]}
-        event = {"body": json.dumps({"job_id": "j"})}
+        event = {"body": json.dumps({"job_id": "j", "pipeline": "color"})}
         result = handle_clean_render(event)
         body = json.loads(result["body"])
-        self.assertEqual(body["deleted"], 3)
+        self.assertGreaterEqual(body["deleted"], 2)
 
-        # Verify which files were passed to delete_objects
         call_args = mock_s3.delete_objects.call_args
         deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
-        self.assertNotIn("renders/j/calc.json", deleted_keys)
-        self.assertNotIn("renders/j/stripe_0.bin", deleted_keys)
         self.assertIn("renders/j/pix_0000_t0000.pix", deleted_keys)
+        self.assertIn("renders/j/tile_0000.raw", deleted_keys)
+        self.assertIn("renders/j/preview_color.png", deleted_keys)
+
+
+    @patch("handler_storage.s3")
+    def test_clean_render_color_deletes_only_color_preview(self, mock_s3):
+        """Color pipeline deletes preview_color.png but not preview_bilevel.png."""
+        from handler_storage import handle_clean_render
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"Contents": []}]
+        mock_s3.delete_objects.return_value = {"Deleted": []}
+        event = {"body": json.dumps({"job_id": "j", "pipeline": "color"})}
+        handle_clean_render(event)
+        call_args = mock_s3.delete_objects.call_args
+        deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
+        self.assertIn("renders/j/preview_color.png", deleted_keys)
+        self.assertNotIn("renders/j/preview_bilevel.png", deleted_keys)
+
+    @patch("handler_storage.s3")
+    def test_clean_render_bilevel_deletes_only_bilevel_preview(self, mock_s3):
+        """Bilevel pipeline deletes preview_bilevel.png but not preview_color.png."""
+        from handler_storage import handle_clean_render
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"Contents": []}]
+        mock_s3.delete_objects.return_value = {"Deleted": []}
+        event = {"body": json.dumps({"job_id": "j", "pipeline": "bilevel"})}
+        handle_clean_render(event)
+        call_args = mock_s3.delete_objects.call_args
+        deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
+        self.assertIn("renders/j/preview_bilevel.png", deleted_keys)
+        self.assertNotIn("renders/j/preview_color.png", deleted_keys)
+
+    @patch("handler_storage.s3")
+    def test_clean_render_default_pipeline_is_color(self, mock_s3):
+        """No pipeline param defaults to color (backward compat)."""
+        from handler_storage import handle_clean_render
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"Contents": []}]
+        mock_s3.delete_objects.return_value = {"Deleted": []}
+        event = {"body": json.dumps({"job_id": "j"})}
+        handle_clean_render(event)
+        call_args = mock_s3.delete_objects.call_args
+        deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
+        self.assertIn("renders/j/preview_color.png", deleted_keys)
+        self.assertNotIn("renders/j/preview_bilevel.png", deleted_keys)
+
+    @patch("handler_storage.s3")
+    def test_clean_render_preserves_final_images(self, mock_s3):
+        """Clean-render does not delete final output images."""
+        from handler_storage import handle_clean_render
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"Contents": []}]
+        mock_s3.delete_objects.return_value = {"Deleted": []}
+        event = {"body": json.dumps({"job_id": "j", "pipeline": "color"})}
+        handle_clean_render(event)
+        call_args = mock_s3.delete_objects.call_args
+        deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
+        # Only explicit keys should be here, no final images
+        for key in deleted_keys:
+            self.assertFalse(key.endswith("image.jpeg"), "image.jpeg should not be deleted")
+            self.assertFalse(key.endswith("image.png"), "image.png should not be deleted")
+            self.assertFalse(key.endswith("image_bilevel.tif"), "image_bilevel.tif should not be deleted")
+            self.assertFalse(key.endswith("calc.json") and "solve_proximity" not in key,
+                             "calc.json should not be deleted")
+
+    @patch("handler_storage.s3")
+    def test_clean_render_deletes_solve_proximity_artifacts(self, mock_s3):
+        """Clean-render deletes solve_proximity intermediate artifacts."""
+        from handler_storage import handle_clean_render
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"Contents": [
+            {"Key": "renders/j/solve_proximity/stripe_0_hist.json"},
+        ]}]
+        mock_s3.delete_objects.return_value = {"Deleted": [{"Key": "renders/j/solve_proximity/stripe_0_hist.json"}]}
+        event = {"body": json.dumps({"job_id": "j", "pipeline": "color"})}
+        handle_clean_render(event)
+        call_args = mock_s3.delete_objects.call_args
+        deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
+        self.assertIn("renders/j/solve_proximity/stripe_0_hist.json", deleted_keys)
+        self.assertIn("renders/j/solve_proximity_clip.json", deleted_keys)
+        self.assertIn("renders/j/solve_proximity_bins.json", deleted_keys)
 
 
 class TestStoragePresign(unittest.TestCase):

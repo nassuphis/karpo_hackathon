@@ -192,12 +192,13 @@ class TestCoeffOrchestrator(unittest.TestCase):
         self, mock_storage, mock_report, mock_lambda, mock_ddb
     ):
         """Coeff bilevel uses coeffs_keys from calc metadata, not synthesized keys."""
-        real_keys = ["renders/j/coeffs_0000.bin", "renders/j/coeffs_0001.bin"]
+        # Use keys and n_coeffs that DIFFER from the fallback to prove metadata is used
+        real_keys = ["renders/j/custom_chunk_A.bin", "renders/j/custom_chunk_B.bin"]
         mock_storage.side_effect = lambda path, body: (
             {"deleted": 0} if "clean" in path else
             {"job_id": "j", "calc": {
                 "degree": 5, "n_stripes": 2, "n_chunks": 2,
-                "n_coeffs": 6,
+                "n_coeffs": 99,  # != degree+1 (6), proves metadata is used
                 "coeffs_keys": real_keys,
             }} if "detail" in path else {}
         )
@@ -218,15 +219,69 @@ class TestCoeffOrchestrator(unittest.TestCase):
                 dispatched_payloads.append(payload)
 
         assert len(dispatched_payloads) == 2, f"expected 2 coeff raster jobs, got {len(dispatched_payloads)}"
-        assert dispatched_payloads[0]["coeffs_key"] == real_keys[0], \
+        assert dispatched_payloads[0]["coeffs_key"] == "renders/j/custom_chunk_A.bin", \
             f"stripe 0 key wrong: {dispatched_payloads[0].get('coeffs_key')}"
-        assert dispatched_payloads[1]["coeffs_key"] == real_keys[1], \
+        assert dispatched_payloads[1]["coeffs_key"] == "renders/j/custom_chunk_B.bin", \
             f"stripe 1 key wrong: {dispatched_payloads[1].get('coeffs_key')}"
-        assert dispatched_payloads[0]["n_coeffs"] == 6, \
-            f"n_coeffs should be 6 from metadata, got {dispatched_payloads[0].get('n_coeffs')}"
+        assert dispatched_payloads[0]["n_coeffs"] == 99, \
+            f"n_coeffs should be 99 from metadata, got {dispatched_payloads[0].get('n_coeffs')}"
 
 
 class TestOrchestratorCheckpoint(unittest.TestCase):
+
+    @patch("handler_render_orchestrator.ddb")
+    @patch("handler_render_orchestrator.lambda_client")
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator._storage_call")
+    def test_resumed_encode_poll_uses_stored_single_job(
+        self, mock_storage, mock_report, mock_lambda, mock_ddb
+    ):
+        """Resume from encode_poll checkpoint uses stored single-job dispatch info."""
+        mock_storage.side_effect = lambda path, body: {}
+        # First poll: not done → triggers stall check. Second: done.
+        poll_count = [0]
+        def mock_query(**kwargs):
+            poll_count[0] += 1
+            if poll_count[0] <= 1:
+                return {"Items": []}  # not done yet
+            return {"Items": [{"task_id": {"S": "render_run_enc_encode"}, "task_status": {"S": "done"}}]}
+        mock_ddb.query.side_effect = mock_query
+
+        # Build checkpoint as if encode_dispatch just completed
+        encode_job = {
+            "job_id": "j", "task_id": "render_run_enc_encode",
+            "out_key": "renders/j/image.jpeg", "format": "jpeg",
+            "quality": 90, "width": 512, "height": 512,
+            "tile_grid": {"n_cols": 1, "n_rows": 1, "tile_keys": ["renders/j/tile_0000.raw"]},
+        }
+        checkpoint = {
+            "phase": "encode_poll",
+            "started_at_ms": 1000,
+            "job_id": "j", "run_id": "run_enc", "mode": "color",
+            "_params": {
+                "pix": 512, "fmt": "jpeg", "quality": 90,
+                "view_mode": "square", "square_extent": 2.0,
+                "tile_size": 512, "rotation": 0, "color_mode": "rainbow",
+                "match_mode": "none", "palette": "inferno", "constant_color": "ffffff",
+            },
+            "_viewport": {"center_re": 0, "center_im": 0, "scale": 128},
+            "_calc": {"degree": 5, "n_stripes": 2, "n_chunks": 2},
+            "n_stripes": 2, "degree": 5, "n_tiles": 1,
+            "image_key": "renders/j/image.jpeg",
+            # This is what _dispatch_single stores:
+            "_last_dispatched_jobs": [encode_job],
+            "_last_dispatch_function": "polypaint-encode",
+        }
+
+        from handler_render_orchestrator import handler
+        event = _make_event({
+            "job_id": "j", "run_id": "run_enc", "mode": "color",
+            "params": checkpoint["_params"],
+            "_checkpoint": checkpoint,
+        })
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        assert body["phase"] == "done", f"expected done, got {body['phase']}"
 
     @patch("handler_render_orchestrator.ddb")
     @patch("handler_render_orchestrator.lambda_client")

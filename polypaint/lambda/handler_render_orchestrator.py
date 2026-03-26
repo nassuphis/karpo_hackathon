@@ -138,12 +138,17 @@ def _invoke_sync(function_name, payload):
 
 
 def _dispatch_async(function_name, payload):
-    """Invoke a Lambda asynchronously (fire and forget)."""
-    lambda_client.invoke(
+    """Invoke a Lambda asynchronously. Logs non-202 but doesn't fail (stall loop recovers)."""
+    resp = lambda_client.invoke(
         FunctionName=function_name,
         InvocationType="Event",
         Payload=json.dumps(payload).encode(),
     )
+    status = resp.get("StatusCode", 0)
+    if status != 202:
+        import logging
+        logging.warning("Non-202 async invoke: %s → %d (task_id=%s)",
+                        function_name, status, payload.get("task_id", "?"))
 
 
 def _dispatch_single(function_name, payload, progress):

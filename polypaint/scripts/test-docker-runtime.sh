@@ -62,7 +62,7 @@ docker run --rm --platform linux/arm64 \
     echo "--- Generating test fixtures ---"
     dnf install -y python3 2>&1 | tail -1
 
-    python3 - <<PYEOF
+    python3 - <<'PYEOF'
 import json, struct, os, subprocess, sys, math
 
 def write_cf(path, coeffs_list, n_coeffs):

@@ -147,15 +147,25 @@ def _dispatch_async(function_name, payload):
 
 
 def _dispatch_batch(function_name, jobs, batch_size=50):
-    """Dispatch jobs in batches."""
+    """Dispatch jobs in batches, return list of jobs for potential re-dispatch."""
     for i in range(0, len(jobs), batch_size):
         batch = jobs[i:i + batch_size]
         for job in batch:
             _dispatch_async(function_name, job)
+    return jobs  # keep reference for re-dispatch
 
 
-def _poll_completion(job_id, task_prefix, expected, task_id, progress, context):
-    """Poll DDB until all expected tasks complete or error."""
+STALL_GRACE_S = 45
+MAX_REDISPATCH = 2
+
+
+def _poll_completion(job_id, task_prefix, expected, task_id, progress, context,
+                     jobs=None, function_name=None):
+    """Poll DDB until all expected tasks complete or error. Re-dispatch on stall."""
+    last_done = 0
+    last_progress_time = time.time()
+    redispatch_count = 0
+
     while True:
         time.sleep(POLL_INTERVAL)
         resp = ddb.query(
@@ -170,9 +180,11 @@ def _poll_completion(job_id, task_prefix, expected, task_id, progress, context):
         done = 0
         errors = []
         status_counts = {}
+        found_ids = set()
         for item in resp.get("Items", []):
             status = item["task_status"]["S"]
             status_counts[status] = status_counts.get(status, 0) + 1
+            found_ids.add(item["task_id"]["S"])
             if status == "done":
                 done += 1
             elif status == "error":
@@ -180,6 +192,10 @@ def _poll_completion(job_id, task_prefix, expected, task_id, progress, context):
 
         if errors:
             raise RuntimeError(f"{len(errors)} tasks failed: {errors[0][:200]}")
+
+        if done != last_done:
+            last_done = done
+            last_progress_time = time.time()
 
         progress["done"] = done
         progress["expected"] = expected
@@ -189,6 +205,16 @@ def _poll_completion(job_id, task_prefix, expected, task_id, progress, context):
 
         if done >= expected:
             return
+
+        # Stall detection: re-dispatch missing tasks
+        stall_s = time.time() - last_progress_time
+        if stall_s > STALL_GRACE_S and redispatch_count < MAX_REDISPATCH and jobs and function_name:
+            missing_jobs = [j for j in jobs if j.get("task_id") and j["task_id"] not in found_ids]
+            if missing_jobs:
+                redispatch_count += 1
+                for j in missing_jobs:
+                    _dispatch_async(function_name, j)
+                last_progress_time = time.time()
 
         _check_timeout(progress, task_id, context)
 
@@ -290,7 +316,8 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
             })
         _dispatch_batch(FUNCTIONS["solve_proximity"], hist_jobs)
         _poll_completion(job_id, f"render_{run_id}_solve_proximity_hist_",
-                         n_stripes, task_id, progress, context)
+                         n_stripes, task_id, progress, context,
+                         jobs=hist_jobs, function_name=FUNCTIONS["solve_proximity"])
         phase = "solve_proximity_merge"
 
     if phase == "solve_proximity_merge":
@@ -345,7 +372,8 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
     if phase == "raster_poll":
         _update_progress(task_id, progress, "raster_poll", "Raster", context)
         _poll_completion(job_id, f"render_{run_id}_raster_",
-                         n_stripes, task_id, progress, context)
+                         n_stripes, task_id, progress, context,
+                         jobs=raster_jobs, function_name=FUNCTIONS["raster"])
         phase = "finalize_dispatch"
 
     # Phase: finalize
@@ -370,7 +398,8 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
     if phase == "finalize_poll":
         _update_progress(task_id, progress, "finalize_poll", "Finalize", context)
         _poll_completion(job_id, f"render_{run_id}_tile_",
-                         n_tiles, task_id, progress, context)
+                         n_tiles, task_id, progress, context,
+                         jobs=finalize_jobs, function_name=FUNCTIONS["finalize"])
         phase = "encode_dispatch"
 
     # Phase: encode
@@ -380,9 +409,7 @@ def run_color(params, rp, task_id, progress, checkpoint, context):
         out_key = f"renders/{job_id}/image.{ext}"
         tile_keys = []
         for t in range(n_tiles):
-            t_row = t // n_tile_cols
-            t_col = t % n_tile_cols
-            tile_keys.append(f"renders/{job_id}/tile_{t_row}_{t_col}.raw")
+            tile_keys.append(f"renders/{job_id}/tile_{t:04d}.raw")
         _dispatch_async(FUNCTIONS["encode"], {
             "job_id": job_id,
             "task_id": f"render_{run_id}_encode",
@@ -487,7 +514,8 @@ def run_bilevel(params, rp, task_id, progress, checkpoint, context):
     if phase == "bilevel_raster_poll":
         _update_progress(task_id, progress, "bilevel_raster_poll", "BiLevel raster", context)
         _poll_completion(job_id, f"render_{run_id}_bilevel_raster_",
-                         n_stripes, task_id, progress, context)
+                         n_stripes, task_id, progress, context,
+                         jobs=raster_jobs, function_name=FUNCTIONS["bilevel"])
         phase = "bilevel_merge_dispatch"
 
     if phase == "bilevel_merge_dispatch":
@@ -509,7 +537,8 @@ def run_bilevel(params, rp, task_id, progress, checkpoint, context):
     if phase == "bilevel_merge_poll":
         _update_progress(task_id, progress, "bilevel_merge_poll", "BiLevel merge", context)
         _poll_completion(job_id, f"render_{run_id}_bilevel_merge_",
-                         n_tiles, task_id, progress, context)
+                         n_tiles, task_id, progress, context,
+                         jobs=merge_jobs, function_name=FUNCTIONS["bilevel"])
         phase = "bilevel_stitch_dispatch"
 
     if phase == "bilevel_stitch_dispatch":
@@ -589,15 +618,16 @@ def run_coeff_bilevel(params, rp, task_id, progress, checkpoint, context):
         _update_progress(task_id, progress, "coeff_raster_dispatch", "Coeffs raster: dispatching", context)
         raster_jobs = []
         for s in range(n_stripes):
+            n_coeffs = calc.get("n_coeffs", degree + 1)
             job = {
                 "phase": "coeff_raster", "job_id": job_id, "stripe_idx": s,
                 "task_id": f"render_{run_id}_coeff_bilevel_raster_{s}",
-                "bin_key": f"renders/{job_id}/coeffs_{s:04d}.bin",
+                "coeffs_key": f"renders/{job_id}/coeffs_{s:04d}.bin",
                 "width": pix, "height": pix, "tile_size": tile_size,
                 "n_tile_cols": n_tile_cols, "n_tile_rows": n_tile_rows,
                 "center_re": vp.get("center_re", 0), "center_im": vp.get("center_im", 0),
                 "scale": vp.get("scale", 256), "rotation": rp.get("rotation", 0),
-                "degree": degree, "n_coeffs": degree + 1,
+                "degree": degree, "n_coeffs": n_coeffs,
             }
             if rp.get("root_transforms"):
                 job["root_transforms"] = rp["root_transforms"]
@@ -608,7 +638,8 @@ def run_coeff_bilevel(params, rp, task_id, progress, checkpoint, context):
     if phase == "coeff_raster_poll":
         _update_progress(task_id, progress, "coeff_raster_poll", "Coeffs raster", context)
         _poll_completion(job_id, f"render_{run_id}_coeff_bilevel_raster_",
-                         n_stripes, task_id, progress, context)
+                         n_stripes, task_id, progress, context,
+                         jobs=raster_jobs, function_name=FUNCTIONS["bilevel"])
         phase = "coeff_merge_dispatch"
 
     if phase == "coeff_merge_dispatch":
@@ -632,7 +663,8 @@ def run_coeff_bilevel(params, rp, task_id, progress, checkpoint, context):
     if phase == "coeff_merge_poll":
         _update_progress(task_id, progress, "coeff_merge_poll", "Coeffs merge", context)
         _poll_completion(job_id, f"render_{run_id}_coeff_bilevel_merge_",
-                         n_tiles, task_id, progress, context)
+                         n_tiles, task_id, progress, context,
+                         jobs=merge_jobs, function_name=FUNCTIONS["bilevel"])
         phase = "coeff_stitch_dispatch"
 
     if phase == "coeff_stitch_dispatch":

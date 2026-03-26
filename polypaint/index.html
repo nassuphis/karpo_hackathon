@@ -1290,13 +1290,6 @@ async function _launchRenderOrchestrator(mode) {
         },
     };
 
-    // Save active run record
-    const record = {
-        job_id: p.jobId, mode, run_id: runId, task_id: taskId,
-        started_at_ms: Date.now(),
-    };
-    _saveActiveRun(record);
-
     log('Render: dispatching ' + mode + ' orchestrator (' + runId + ')...', '', 'render-log');
     document.getElementById('render-status').textContent = 'Dispatching orchestrator...';
     document.getElementById('render-status').className = 'status';
@@ -1308,6 +1301,13 @@ async function _launchRenderOrchestrator(mode) {
         expected_keys: [],
     });
     if ((dispResult.fired || 0) !== 1) throw new Error('Orchestrator dispatch failed');
+
+    // Save active run record AFTER successful dispatch
+    const record = {
+        job_id: p.jobId, mode, run_id: runId, task_id: taskId,
+        started_at_ms: Date.now(),
+    };
+    _saveActiveRun(record);
 
     log('  orchestrator dispatched: ' + runId, 'ok', 'render-log');
 
@@ -1351,7 +1351,7 @@ async function runBilevelPipeline() {
 }
 
 async function runCoeffBilevelPipeline() {
-    const btn = document.getElementById('btn-coeff-bilevel');
+    const btn = document.getElementById('btn-coeffs');
     const renderBtn = document.getElementById('btn-raster-all');
     if (btn) btn.disabled = true;
     if (renderBtn) renderBtn.disabled = true;

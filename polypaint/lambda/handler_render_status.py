@@ -73,6 +73,12 @@ def _write_phase(params, job_id, task_id):
         result_data["expected"] = params["expected"]
     if "subtask_prefix" in params:
         result_data["subtask_prefix"] = params["subtask_prefix"]
+    # Build timestamped log for richer browser display
+    log_entry = f"[{_ts()}] {params['phase_label']}"
+    if "expected" in params:
+        log_entry += f" ({params['expected']} items)"
+    prev_log = params.get("_prev_log", "")
+    result_data["log"] = (prev_log + "\n" + log_entry).strip() if prev_log else log_entry
     _put_row(job_id, task_id, params["phase"], result_data)
     return ok_response({"action": "phase", "phase": params["phase"]})
 
@@ -146,6 +152,12 @@ def _extract_error_message(params):
         return str(error)[:1000]
 
     return "Unknown error"
+
+
+def _ts():
+    """UTC timestamp for log entries."""
+    import datetime
+    return datetime.datetime.utcnow().strftime("%H:%M:%S")
 
 
 def _put_row(job_id, task_id, status, result_data, error_msg=None):

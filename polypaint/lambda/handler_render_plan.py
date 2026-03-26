@@ -71,6 +71,22 @@ def handler(event, context):
             "tile_w": tw, "tile_h": th,
         })
 
+    # Ensure optional fields always exist (ASL JSONPath crashes on missing paths)
+    if "root_transforms" not in rp:
+        rp["root_transforms"] = []
+    if "rotation" not in rp:
+        rp["rotation"] = 0
+    if "constant_color" not in rp:
+        rp["constant_color"] = "ffffff"
+    if "palette" not in rp:
+        rp["palette"] = "inferno"
+    if "match_mode" not in rp:
+        rp["match_mode"] = "none"
+    if "quality" not in rp:
+        rp["quality"] = 90
+    if "fmt" not in rp:
+        rp["fmt"] = "jpeg"
+
     # Normalize solve-score params
     color_mode = rp.get("color_mode", "rainbow")
     if color_mode == "solve_proximity":

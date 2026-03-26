@@ -1393,6 +1393,11 @@ async function _pollActiveRenderRun() {
         let statusMsg = phase;
         if (expected > 0) statusMsg += ' ' + done + '/' + expected;
         document.getElementById('render-status').textContent = statusMsg;
+        // Show timestamped log in render-log if available
+        if (rd.log) {
+            const logEl = document.getElementById('render-log');
+            if (logEl) logEl.innerHTML = rd.log.replace(/\n/g, '<br>');
+        }
 
     } catch (e) {
         // Poll error — keep trying

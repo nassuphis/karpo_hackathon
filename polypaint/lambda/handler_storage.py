@@ -379,14 +379,12 @@ def handle_clean_render(event):
         objects.append({"Key": prefix + key_suffix})
     # Delete only the relevant cached preview based on pipeline type
     pipeline = params.get("pipeline", "color")
+    # Family-scoped cleanup: each family only deletes its own preview cache
     if pipeline == "color":
         objects.append({"Key": prefix + "preview_color.png"})
-        objects.append({"Key": prefix + "image_palette.jpeg"})
-        objects.append({"Key": prefix + "preview_palette.png"})
     elif pipeline == "bilevel":
         objects.append({"Key": prefix + "preview_bilevel.png"})
     elif pipeline == "coeff_bilevel":
-        objects.append({"Key": prefix + "preview_bilevel.png"})
         objects.append({"Key": prefix + "preview_coeffs.png"})
 
     total_deleted = 0

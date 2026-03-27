@@ -372,8 +372,8 @@ class TestStorageCleanRender(unittest.TestCase):
 
 
     @patch("handler_storage.s3")
-    def test_clean_render_deletes_palette_artifacts(self, mock_s3):
-        """Clean-render for color pipeline deletes image_palette.jpeg and preview_palette.png."""
+    def test_color_cleanup_preserves_palette_artifacts(self, mock_s3):
+        """Color cleanup must NOT delete palette family artifacts."""
         from handler_storage import handle_clean_render
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
@@ -383,8 +383,59 @@ class TestStorageCleanRender(unittest.TestCase):
         handle_clean_render(event)
         call_args = mock_s3.delete_objects.call_args
         deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
-        self.assertIn("renders/j/image_palette.jpeg", deleted_keys)
-        self.assertIn("renders/j/preview_palette.png", deleted_keys)
+        self.assertNotIn("renders/j/image_palette.jpeg", deleted_keys)
+        self.assertNotIn("renders/j/preview_palette.png", deleted_keys)
+
+    @patch("handler_storage.s3")
+    def test_color_cleanup_preserves_bilevel_artifacts(self, mock_s3):
+        """Color cleanup must NOT delete bilevel/coeff family artifacts."""
+        from handler_storage import handle_clean_render
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"Contents": []}]
+        mock_s3.delete_objects.return_value = {"Deleted": []}
+        event = {"body": json.dumps({"job_id": "j", "pipeline": "color"})}
+        handle_clean_render(event)
+        call_args = mock_s3.delete_objects.call_args
+        deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
+        self.assertNotIn("renders/j/preview_bilevel.png", deleted_keys)
+        self.assertNotIn("renders/j/preview_coeffs.png", deleted_keys)
+
+    @patch("handler_storage.s3")
+    def test_bilevel_cleanup_preserves_other_families(self, mock_s3):
+        """Bilevel cleanup must NOT delete color/palette/coeff artifacts."""
+        from handler_storage import handle_clean_render
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"Contents": []}]
+        mock_s3.delete_objects.return_value = {"Deleted": []}
+        event = {"body": json.dumps({"job_id": "j", "pipeline": "bilevel"})}
+        handle_clean_render(event)
+        call_args = mock_s3.delete_objects.call_args
+        deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
+        self.assertIn("renders/j/preview_bilevel.png", deleted_keys)
+        self.assertNotIn("renders/j/preview_color.png", deleted_keys)
+        self.assertNotIn("renders/j/preview_coeffs.png", deleted_keys)
+        self.assertNotIn("renders/j/preview_palette.png", deleted_keys)
+        self.assertNotIn("renders/j/image_palette.jpeg", deleted_keys)
+
+    @patch("handler_storage.s3")
+    def test_coeff_cleanup_preserves_other_families(self, mock_s3):
+        """Coeff cleanup must NOT delete color/bilevel/palette artifacts."""
+        from handler_storage import handle_clean_render
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"Contents": []}]
+        mock_s3.delete_objects.return_value = {"Deleted": []}
+        event = {"body": json.dumps({"job_id": "j", "pipeline": "coeff_bilevel"})}
+        handle_clean_render(event)
+        call_args = mock_s3.delete_objects.call_args
+        deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
+        self.assertIn("renders/j/preview_coeffs.png", deleted_keys)
+        self.assertNotIn("renders/j/preview_color.png", deleted_keys)
+        self.assertNotIn("renders/j/preview_bilevel.png", deleted_keys)
+        self.assertNotIn("renders/j/preview_palette.png", deleted_keys)
+        self.assertNotIn("renders/j/image_palette.jpeg", deleted_keys)
 
 
 class TestRenderSummaryPalette(unittest.TestCase):

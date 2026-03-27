@@ -312,8 +312,8 @@ class TestStorageCleanRender(unittest.TestCase):
         self.assertNotIn("renders/j/preview_bilevel.png", deleted_keys)
 
     @patch("handler_storage.s3")
-    def test_clean_render_preserves_final_images(self, mock_s3):
-        """Clean-render does not delete final output images."""
+    def test_color_cleanup_deletes_stale_format_siblings(self, mock_s3):
+        """Color cleanup deletes both image.jpeg and image.png (stale sibling cleanup)."""
         from handler_storage import handle_clean_render
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
@@ -323,13 +323,12 @@ class TestStorageCleanRender(unittest.TestCase):
         handle_clean_render(event)
         call_args = mock_s3.delete_objects.call_args
         deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
-        # Only explicit keys should be here, no final images
-        for key in deleted_keys:
-            self.assertFalse(key.endswith("image.jpeg"), "image.jpeg should not be deleted")
-            self.assertFalse(key.endswith("image.png"), "image.png should not be deleted")
-            self.assertFalse(key.endswith("image_bilevel.tif"), "image_bilevel.tif should not be deleted")
-            self.assertFalse(key.endswith("calc.json") and "solve_proximity" not in key,
-                             "calc.json should not be deleted")
+        self.assertIn("renders/j/image.jpeg", deleted_keys)
+        self.assertIn("renders/j/image.png", deleted_keys)
+        # Cross-family finals must NOT be deleted
+        self.assertNotIn("renders/j/image_bilevel.tif", deleted_keys)
+        self.assertNotIn("renders/j/image_coeffs_bilevel.tif", deleted_keys)
+        self.assertNotIn("renders/j/image_palette.jpeg", deleted_keys)
 
     @patch("handler_storage.s3")
     def test_clean_render_deletes_solve_proximity_artifacts(self, mock_s3):
@@ -413,11 +412,18 @@ class TestStorageCleanRender(unittest.TestCase):
         handle_clean_render(event)
         call_args = mock_s3.delete_objects.call_args
         deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
+        # Bilevel family: own preview + stale siblings
         self.assertIn("renders/j/preview_bilevel.png", deleted_keys)
+        self.assertIn("renders/j/image_bilevel_compat.tif", deleted_keys)
+        self.assertIn("renders/j/image_bilevel.png", deleted_keys)
+        # Must NOT touch other families
         self.assertNotIn("renders/j/preview_color.png", deleted_keys)
         self.assertNotIn("renders/j/preview_coeffs.png", deleted_keys)
         self.assertNotIn("renders/j/preview_palette.png", deleted_keys)
         self.assertNotIn("renders/j/image_palette.jpeg", deleted_keys)
+        self.assertNotIn("renders/j/image.jpeg", deleted_keys)
+        # Must NOT touch color/coeff intermediates
+        self.assertNotIn("renders/j/solve_proximity_clip.json", deleted_keys)
 
     @patch("handler_storage.s3")
     def test_coeff_cleanup_preserves_other_families(self, mock_s3):
@@ -431,11 +437,18 @@ class TestStorageCleanRender(unittest.TestCase):
         handle_clean_render(event)
         call_args = mock_s3.delete_objects.call_args
         deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
+        # Coeff family: own preview + stale legacy preview
         self.assertIn("renders/j/preview_coeffs.png", deleted_keys)
+        self.assertIn("renders/j/image_coeffs_bilevel_preview.png", deleted_keys)
+        # Must NOT touch other families
         self.assertNotIn("renders/j/preview_color.png", deleted_keys)
         self.assertNotIn("renders/j/preview_bilevel.png", deleted_keys)
         self.assertNotIn("renders/j/preview_palette.png", deleted_keys)
         self.assertNotIn("renders/j/image_palette.jpeg", deleted_keys)
+        self.assertNotIn("renders/j/image.jpeg", deleted_keys)
+        self.assertNotIn("renders/j/image_bilevel.tif", deleted_keys)
+        # Must NOT touch color/bilevel intermediates
+        self.assertNotIn("renders/j/solve_proximity_clip.json", deleted_keys)
 
 
 class TestRenderSummaryPalette(unittest.TestCase):

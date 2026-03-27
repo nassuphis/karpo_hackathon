@@ -356,36 +356,57 @@ def handle_check_status(event):
     return ok_response(resp_body)
 
 
+# Canonical ownership mapping: each family owns its own intermediates, previews, and stale siblings
+ARTIFACT_FAMILIES = {
+    "color": {
+        "intermediate_prefixes": ["pix_", "raw_", "tile_", "solve_proximity/", "solve_scores/"],
+        "intermediate_keys": ["solve_proximity_clip.json", "solve_proximity_bins.json"],
+        "preview": ["preview_color.png"],
+        "same_family_stale": ["image.jpeg", "image.png"],  # format switch: delete both, new one overwrites
+    },
+    "bilevel": {
+        "intermediate_prefixes": ["bilevel_t"],
+        "intermediate_keys": [],
+        "preview": ["preview_bilevel.png"],
+        "same_family_stale": ["image_bilevel_compat.tif", "image_bilevel.png", "image_bilevel_preview.png"],
+    },
+    "coeff_bilevel": {
+        "intermediate_prefixes": ["coeff_t"],
+        "intermediate_keys": [],
+        "preview": ["preview_coeffs.png"],
+        "same_family_stale": ["image_coeffs_bilevel_preview.png"],
+    },
+    "palette": {
+        "intermediate_prefixes": [],
+        "intermediate_keys": [],
+        "preview": ["preview_palette.png"],
+        "same_family_stale": [],
+    },
+}
+
+
 def handle_clean_render(event):
-    """Delete intermediate render artifacts for a job, preserving final images.
-    Deletes: pix_*, raw_*, tile_*, bilevel_t*, coeff_t* (intermediates)
-    Preserves: image.jpeg, image.png, image_bilevel.tif, *_preview.png, calc.json, *.bin
-    Also clears DynamoDB status entries for the job.
-    """
+    """Family-scoped cleanup: delete only the specified family's intermediates,
+    previews, and stale same-family siblings. Never touches other families."""
     params = parse_body(event)
     job_id = params["job_id"]
     prefix = f"renders/{job_id}/"
+    pipeline = params.get("pipeline", "color")
 
-    # Only delete known intermediate file prefixes
-    intermediate_prefixes = ['pix_', 'raw_', 'tile_', 'bilevel_t', 'coeff_t', 'solve_proximity/', 'solve_scores/']
+    family = ARTIFACT_FAMILIES.get(pipeline, ARTIFACT_FAMILIES["color"])
+
     objects = []
     paginator = s3.get_paginator('list_objects_v2')
-    for rp in intermediate_prefixes:
+    for rp in family["intermediate_prefixes"]:
         for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix + rp):
             for obj in page.get('Contents', []):
                 objects.append(obj)
-    # Also delete top-level solve-proximity artifacts
-    for key_suffix in ['solve_proximity_clip.json', 'solve_proximity_bins.json']:
+    for key_suffix in family["intermediate_keys"]:
         objects.append({"Key": prefix + key_suffix})
-    # Delete only the relevant cached preview based on pipeline type
-    pipeline = params.get("pipeline", "color")
-    # Family-scoped cleanup: each family only deletes its own preview cache
-    if pipeline == "color":
-        objects.append({"Key": prefix + "preview_color.png"})
-    elif pipeline == "bilevel":
-        objects.append({"Key": prefix + "preview_bilevel.png"})
-    elif pipeline == "coeff_bilevel":
-        objects.append({"Key": prefix + "preview_coeffs.png"})
+    for key_suffix in family["preview"]:
+        objects.append({"Key": prefix + key_suffix})
+    for key_suffix in family["same_family_stale"]:
+        objects.append({"Key": prefix + key_suffix})
 
     total_deleted = 0
     if objects:

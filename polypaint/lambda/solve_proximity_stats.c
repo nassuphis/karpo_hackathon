@@ -2,12 +2,13 @@
  * solve_proximity_stats — compute solve-level metric scores from root .bin files.
  *
  * Supports multiple metrics via --metric (default: proximity).
- * Metrics: proximity, crowding, spread, anisotropy, area.
+ * Metrics: proximity, crowding, spread, anisotropy, area,
+ *          clusteriness, shelliness, outlierness, nn_variation, real_axis_proximity.
  *
  * Three modes:
  *   --mode=clip      Compute score array, sort, emit clip bounds (quantiles).
  *   --mode=hist      Compute per-solve scores, emit 100-bin histogram using given clip bounds.
- *   --mode=summary   Compute full debug summary: quantiles, stats, clip, occupancy, 32-bin histogram.
+ *   --mode=summary   Compute full debug summary: quantiles, stats, clip, occupancy, actual 10 solve-score color bins.
  *
  * Usage:
  *   solve_proximity_stats input.bin --mode=clip --degree=D [--metric=proximity] [--quantile_lo=0.001] [--quantile_hi=0.999] [--root_xforms=file.json]
@@ -243,7 +244,6 @@ int main(int argc, char **argv) {
         /* ---- SUMMARY MODE ---- */
         double quantileLo = getArgDouble(argc, argv, "--quantile_lo", 0.001);
         double quantileHi = getArgDouble(argc, argv, "--quantile_hi", 0.999);
-        int histBins = 32;
 
         double *scores = malloc(nSolves * sizeof(double));
         if (!scores) { fprintf(stderr, "Out of memory for scores\n"); free(buf); return 1; }

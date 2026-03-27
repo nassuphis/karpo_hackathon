@@ -30,7 +30,9 @@ const _mkEl = () => {
     const el = {
     value: '', textContent: '', style: {}, id: '', dataset: {},
     appendChild(child) { el.children.push(child); },
-    removeChild() {}, setAttribute() {}, insertBefore() {}, prepend() {}, append() {},
+    removeChild() {}, setAttribute() {}, insertBefore() {},
+    prepend(child) { if (child && child.textContent) el.textContent = child.textContent + '\n' + (el.textContent || ''); },
+    append() {},
     replaceChildren() { el.children = []; },
     selectedOptions: [{ textContent: '' }],
     options: [], children: [],
@@ -1365,8 +1367,12 @@ async function testPipeline(name, call) {
     // 13d: sends correct payload and does not dispatch orchestrator
     {
         vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'crowding'; _activeRenderRun = null;", ctx);
+        vm.runInContext("_lastCalcHasLores = true;", ctx);
         ctx._elements['render-solve-score-quantile'].value = '2.0';
         ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_hist_job' };
+        ctx._elements['render-status'] = ctx._mkEl();
+        ctx._elements['render-log'] = ctx._mkEl();
+        ctx._elements['btn-solve-histogram'] = ctx._mkEl();
         vm.runInContext(`
             var _histTarget = null;
             var _histBody = null;
@@ -1384,7 +1390,13 @@ async function testPipeline(name, call) {
                         clip_below_count: 2, clip_inrange_count: 46, clip_above_count: 2,
                         clip_below_frac: 0.04, clip_inrange_frac: 0.92, clip_above_frac: 0.04,
                         clip_fallback: false, clip_fallback_reason: null,
-                        hist_bins: 32, hist_full: Array(32).fill(1),
+                        intermediate_hist_bins: 100, final_bins: 10,
+                        cuts_norm: [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9],
+                        cuts_score: [-0.3,-0.1,0.1,0.3,0.5,0.7,0.9,1.1,1.3],
+                        final_bin_counts: [5,5,5,5,4,5,5,4,4,4],
+                        final_bin_fracs: [0.109,0.109,0.109,0.109,0.087,0.109,0.109,0.087,0.087,0.087],
+                        min_score_count: 1, max_score_count: 3, clip_lo_count: 0, clip_hi_count: 3,
+                        n_unique_scores: 48,
                         dl_ms: 5, compute_ms: 3,
                     };
                 }
@@ -1407,7 +1419,18 @@ async function testPipeline(name, call) {
         // Verify _activeRenderRun was not set
         const runSet = vm.runInContext('_activeRenderRun !== null', ctx);
         if (runSet) { console.error('FATAL: histogram must not set _activeRenderRun'); process.exit(1); }
+        // Verify log output contains the 10-bin table, not 32-bin full range
+        const logHtml = ctx._elements['render-log'].innerHTML || '';
+        const logText = ctx._elements['render-log'].textContent || '';
+        if (!logText.includes('final color bins (10')) { console.error('FATAL: log should show final color bins (10)'); process.exit(1); }
+        if (!logText.includes('b0')) { console.error('FATAL: log should show b0 row'); process.exit(1); }
+        if (!logText.includes('b9')) { console.error('FATAL: log should show b9 row'); process.exit(1); }
+        if (logText.includes('32 bins')) { console.error('FATAL: log must not show 32 bins'); process.exit(1); }
+        if (logText.includes('full range')) { console.error('FATAL: log must not show full range'); process.exit(1); }
+        if (!logText.includes('extremes:')) { console.error('FATAL: log should show outlier extremes'); process.exit(1); }
+        if (!logText.includes('max_count=3')) { console.error('FATAL: log should show max_count=3'); process.exit(1); }
         console.log('  13d correct payload, no dispatch, no activeRun: OK');
+        console.log('  13e log shows 10-bin table, no 32-bin, has extremes: OK');
     }
 
     // Step 14: Palette debug button

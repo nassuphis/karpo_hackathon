@@ -1190,6 +1190,10 @@ function _renderCommonParams() {
 let _activeRenderRun = null;
 let _renderObserverTimer = null;
 let _lastLoggedPhase = null;
+let _lastWarnState = null;  // null, 'warn', 'hard'
+const RENDER_NO_ROW_STALE_MS = 120000;
+const RENDER_WARN_STALE_MS = 300000;
+const RENDER_HARD_STALE_MS = 900000;
 
 function _generateRunId() {
     const ms = Date.now();
@@ -1205,6 +1209,7 @@ function _saveActiveRun(record) {
 function _clearActiveRun() {
     _activeRenderRun = null;
     _lastLoggedPhase = null;
+    _lastWarnState = null;
     try { localStorage.removeItem('polypaint_active_render_run'); } catch(e) {}
 }
 
@@ -1346,19 +1351,26 @@ function resumeActiveRenderObserver() {
     startActiveRenderObserver();
 }
 
+function _fmtAge(ms) {
+    if (ms < 60000) return Math.round(ms / 1000) + 's';
+    return Math.round(ms / 60000) + 'm';
+}
+
 async function _pollActiveRenderRun() {
     const run = _activeRenderRun || _loadActiveRun();
     if (!run) { stopActiveRenderObserver(); return; }
+    const statusEl = document.getElementById('render-status');
 
     try {
         const check = await lambdaPost('storage', {
             job_id: run.job_id, task_prefix: run.task_id, expected: 1,
         }, '/check-status');
 
+        // Terminal error
         if (check.errors > 0) {
             const msg = check.error_details?.[0]?.error_msg || 'unknown error';
-            document.getElementById('render-status').textContent = 'Render error: ' + msg;
-            document.getElementById('render-status').className = 'status error';
+            statusEl.textContent = 'Render error: ' + msg;
+            statusEl.className = 'status error';
             log('Render failed: ' + msg, 'err', 'render-log');
             _clearActiveRun();
             stopActiveRenderObserver();
@@ -1367,22 +1379,24 @@ async function _pollActiveRenderRun() {
 
         const rd = check.results?.[0] || {};
 
-        // No DDB row found or row stuck in non-terminal state
+        // No DDB row found — abandoned run
         if (!rd.phase && !rd.phase_label) {
             const age_ms = Date.now() - (run.started_at_ms || 0);
-            if (age_ms > 120000) {  // >2 min with no row = stale
-                document.getElementById('render-status').textContent = 'Ready';
-                document.getElementById('render-status').className = 'status';
+            if (age_ms > RENDER_NO_ROW_STALE_MS) {
+                statusEl.textContent = 'Ready';
+                statusEl.className = 'status';
                 _clearActiveRun();
                 stopActiveRenderObserver();
                 return;
             }
         }
+
         const phase = rd.phase_label || rd.phase || 'working';
 
+        // Terminal done
         if (check.complete || rd.phase === 'done') {
-            document.getElementById('render-status').textContent = 'Render complete';
-            document.getElementById('render-status').className = 'status ok';
+            statusEl.textContent = 'Render complete';
+            statusEl.className = 'status ok';
             log('Render complete: ' + (rd.image_key || run.mode), 'ok', 'render-log');
             _clearActiveRun();
             stopActiveRenderObserver();
@@ -1390,8 +1404,8 @@ async function _pollActiveRenderRun() {
             return;
         }
 
-        // Secondary poll for subtask counts — must happen before stale check
-        let done = 0, expected = 0;
+        // Secondary poll for subtask counts + freshness
+        let done = 0, expected = 0, workerFreshMs = null;
         if (rd.subtask_prefix && rd.expected) {
             try {
                 const subcheck = await lambdaPost('storage', {
@@ -1399,28 +1413,55 @@ async function _pollActiveRenderRun() {
                 }, '/check-status');
                 done = subcheck.done || 0;
                 expected = subcheck.expected || rd.expected || 0;
+                if (subcheck.latest_update_ms) {
+                    workerFreshMs = Date.now() - subcheck.latest_update_ms;
+                }
             } catch(e) {
                 expected = rd.expected || 0;
             }
         }
 
-        // Row exists but stuck — only flag stale if no subtask progress either
-        if (rd.updated_at_ms && rd.phase !== 'done' && rd.phase !== 'error') {
-            const stale_ms = Date.now() - rd.updated_at_ms;
-            if (stale_ms > 300000 && !(rd.subtask_prefix && done > 0)) {
-                document.getElementById('render-status').textContent = 'Render stalled (no progress for 5+ min)';
-                document.getElementById('render-status').className = 'status error';
-                log('Render stalled — SFN execution may have failed silently', 'err', 'render-log');
-                _clearActiveRun();
-                stopActiveRenderObserver();
-                return;
-            }
+        // Determine liveness signal
+        // Primary: worker freshness from secondary poll
+        // Fallback: top-level row updated_at_ms (for non-subtask phases)
+        let freshMs = workerFreshMs;
+        if (freshMs === null && check.latest_update_ms) {
+            freshMs = Date.now() - check.latest_update_ms;
         }
+
+        // Build status text
         let statusMsg = phase;
         if (expected > 0) statusMsg += ' ' + done + '/' + expected;
-        document.getElementById('render-status').textContent = statusMsg;
+        if (freshMs !== null && freshMs > 10000) {
+            statusMsg += ' \u00b7 last update ' + _fmtAge(freshMs) + ' ago';
+        }
 
-        // Log each phase transition once
+        // Liveness: warning / hard stall (never auto-clear)
+        if (freshMs !== null && freshMs > RENDER_HARD_STALE_MS) {
+            statusEl.textContent = 'Render stalled (no worker update for 15+ min)';
+            statusEl.className = 'status error';
+            if (_lastWarnState !== 'hard') {
+                _lastWarnState = 'hard';
+                log('Render stalled — no worker update for 15+ min', 'err', 'render-log');
+            }
+        } else if (freshMs !== null && freshMs > RENDER_WARN_STALE_MS) {
+            statusEl.textContent = statusMsg + ' \u00b7 no worker update for 5+ min';
+            statusEl.className = 'status';
+            if (_lastWarnState !== 'warn') {
+                _lastWarnState = 'warn';
+                log('Warning: no worker update for 5+ min', '', 'render-log');
+            }
+        } else {
+            statusEl.textContent = statusMsg;
+            statusEl.className = 'status';
+            // Recovery from warn/hard
+            if (_lastWarnState) {
+                log('Workers active again', 'ok', 'render-log');
+                _lastWarnState = null;
+            }
+        }
+
+        // Log phase transitions once
         const phaseKey = (rd.phase || '') + '_' + done;
         if (phaseKey !== _lastLoggedPhase) {
             _lastLoggedPhase = phaseKey;

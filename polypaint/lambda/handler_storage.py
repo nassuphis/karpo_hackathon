@@ -256,13 +256,20 @@ def handle_check_status(event):
 
     return_ids = params.get("return_ids", False)
 
+    now_ms = int(time.time() * 1000)
     ddb = _get_ddb()
     done = 0
-    found_ids = []  # all task_ids seen in DynamoDB (when return_ids=True)
+    found_ids = []
     error_details = []
-    stuck_tasks = []  # tasks in non-terminal status, with their actual status
-    status_counts = {}  # track all statuses: started, tiles_read, tiles_merged, done, error
-    results = []  # result_data from completed tasks (for sweep metadata)
+    stuck_tasks = []
+    status_counts = {}
+    results = []
+    # Freshness tracking
+    latest_update_ms = None
+    latest_done_ms = None
+    latest_nonterminal_ms = None
+    newest_task = None
+
     kwargs = {
         "TableName": JOBS_TABLE,
         "KeyConditionExpression": "job_id = :jid AND begins_with(task_id, :pfx)",
@@ -270,34 +277,57 @@ def handle_check_status(event):
             ":jid": {"S": job_id},
             ":pfx": {"S": task_prefix},
         },
-        "ProjectionExpression": "task_id, task_status, error_msg, result_data",
+        "ProjectionExpression": "task_id, task_status, error_msg, result_data, updated_at_ms",
     }
     while True:
         resp = ddb.query(**kwargs)
         for item in resp["Items"]:
             status = item["task_status"]["S"]
+            task_id_val = item["task_id"]["S"]
             status_counts[status] = status_counts.get(status, 0) + 1
             if return_ids:
-                found_ids.append(item["task_id"]["S"])
-            # Collect result_data from any status (not just done)
+                found_ids.append(task_id_val)
+
+            # Parse updated_at_ms (may be absent on old rows)
+            row_ms = None
+            if "updated_at_ms" in item:
+                try:
+                    row_ms = int(item["updated_at_ms"]["N"])
+                except (ValueError, KeyError):
+                    pass
+
+            # Track freshness
+            if row_ms is not None:
+                if latest_update_ms is None or row_ms > latest_update_ms:
+                    latest_update_ms = row_ms
+                    newest_task = {"task_id": task_id_val, "status": status, "updated_at_ms": row_ms}
+                if status == "done" and (latest_done_ms is None or row_ms > latest_done_ms):
+                    latest_done_ms = row_ms
+                if status not in ("done", "error") and (latest_nonterminal_ms is None or row_ms > latest_nonterminal_ms):
+                    latest_nonterminal_ms = row_ms
+
+            # Collect result_data
             rd = item.get("result_data", {}).get("S")
             if rd:
                 try:
                     results.append(json.loads(rd))
                 except Exception:
                     pass
+
             if status == "done":
                 done += 1
             elif status == "error":
                 error_details.append({
-                    "task_id": item["task_id"]["S"],
+                    "task_id": task_id_val,
                     "error_msg": item.get("error_msg", {}).get("S", "unknown"),
                 })
             else:
-                stuck_tasks.append({
-                    "task_id": item["task_id"]["S"],
-                    "status": status,
-                })
+                entry = {"task_id": task_id_val, "status": status}
+                if row_ms is not None:
+                    entry["updated_at_ms"] = row_ms
+                    entry["age_ms"] = now_ms - row_ms
+                stuck_tasks.append(entry)
+
         if "LastEvaluatedKey" not in resp:
             break
         kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
@@ -312,7 +342,13 @@ def handle_check_status(event):
         "total": total,
         "expected": expected,
         "complete": total >= expected,
+        "latest_update_ms": latest_update_ms,
+        "latest_done_ms": latest_done_ms,
+        "latest_nonterminal_ms": latest_nonterminal_ms,
+        "stale_for_ms": (now_ms - latest_update_ms) if latest_update_ms else None,
     }
+    if newest_task:
+        resp_body["newest_task"] = newest_task
     if results:
         resp_body["results"] = results
     if return_ids:

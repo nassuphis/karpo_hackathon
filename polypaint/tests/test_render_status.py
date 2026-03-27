@@ -121,6 +121,26 @@ class TestRenderStatus(unittest.TestCase):
         # Should NOT just say "Lambda.Unknown"
         assert item["error_msg"]["S"] != "Lambda.Unknown"
 
+    @patch("handler_render_status._get_ddb")
+    def test_all_rows_include_updated_at_ms(self, mock_get_ddb):
+        """Every row written by the status Lambda includes top-level updated_at_ms."""
+        from handler_render_status import handler
+        import time
+        now_ms = int(time.time() * 1000)
+        for action, extra in [
+            ("queued", {"run_id": "r", "mode": "color"}),
+            ("phase", {"run_id": "r", "mode": "color", "phase": "raster", "phase_label": "Raster"}),
+            ("done", {"run_id": "r", "mode": "color"}),
+            ("error", {"run_id": "r", "mode": "color", "error_msg": "boom"}),
+        ]:
+            mock_get_ddb.return_value.put_item.reset_mock()
+            event = {"action": action, "job_id": "j", "task_id": "t", **extra}
+            handler(event, None)
+            item = mock_get_ddb.return_value.put_item.call_args[1]["Item"]
+            self.assertIn("updated_at_ms", item, f"{action} row missing updated_at_ms")
+            ms = int(item["updated_at_ms"]["N"])
+            self.assertAlmostEqual(ms, now_ms, delta=5000)
+
     def test_status_does_not_dispatch_or_poll(self):
         """Status Lambda must not contain dispatch/poll logic."""
         import handler_render_status as mod

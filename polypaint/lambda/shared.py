@@ -28,10 +28,12 @@ def _get_ddb():
 def report_status(job_id, task_id, status, error_msg=None, result_data=None):
     """Write task completion status to DynamoDB. TTL = 24h auto-cleanup.
     Optional result_data dict is stored as JSON string for later retrieval."""
+    now_ms = int(time.time() * 1000)
     item = {
         "job_id": {"S": job_id},
         "task_id": {"S": task_id},
         "task_status": {"S": status},
+        "updated_at_ms": {"N": str(now_ms)},
         "ttl": {"N": str(int(time.time()) + 86400)},
     }
     if error_msg:

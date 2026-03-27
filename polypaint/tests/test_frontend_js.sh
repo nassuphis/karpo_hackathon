@@ -1214,6 +1214,107 @@ async function testPipeline(name, call) {
         vm.runInContext('_activeRenderRun = null;', ctx);
     }
 
+    // 12h: stale top-level + fresh worker heartbeat => NOT stalled
+    {
+        vm.runInContext("_activeRenderRun = {job_id:'j', mode:'color', run_id:'r_fresh', task_id:'render_run_color_r_fresh', started_at_ms: Date.now() - 600000};", ctx);
+        vm.runInContext("_lastWarnState = null;", ctx);
+        vm.runInContext(`
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/check-status') {
+                    if (body.task_prefix === 'render_run_color_r_fresh') {
+                        return {
+                            errors: 0, done: 0, complete: false,
+                            latest_update_ms: Date.now() - 600000,
+                            results: [{
+                                phase: 'raster', phase_label: 'Raster',
+                                subtask_prefix: 'render_r_fresh_raster_',
+                                expected: 10, updated_at_ms: Date.now() - 600000
+                            }]
+                        };
+                    }
+                    if (body.task_prefix === 'render_r_fresh_raster_') {
+                        return { errors: 0, done: 3, expected: 10, complete: false, latest_update_ms: Date.now() - 5000 };
+                    }
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await _pollActiveRenderRun(); })()', ctx); } catch(e) {}
+        const st = ctx._elements['render-status'].textContent;
+        if (st.includes('stall') || st.includes('Stall')) { console.error('FATAL: fresh workers should not show stalled: ' + st); process.exit(1); }
+        if (!st.includes('3/10')) { console.error('FATAL: should show 3/10: ' + st); process.exit(1); }
+        console.log('  12h stale top + fresh workers => not stalled: OK');
+        vm.runInContext('_activeRenderRun = null;', ctx);
+    }
+
+    // 12i: stale workers (>5 min, <15 min) => warning, does NOT clear active run
+    {
+        vm.runInContext("_activeRenderRun = {job_id:'j', mode:'color', run_id:'r_warn', task_id:'render_run_color_r_warn', started_at_ms: Date.now() - 900000};", ctx);
+        vm.runInContext("_lastWarnState = null;", ctx);
+        vm.runInContext(`
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/check-status') {
+                    if (body.task_prefix === 'render_run_color_r_warn') {
+                        return {
+                            errors: 0, done: 0, complete: false,
+                            latest_update_ms: Date.now() - 400000,
+                            results: [{
+                                phase: 'raster', phase_label: 'Raster',
+                                subtask_prefix: 'render_r_warn_raster_',
+                                expected: 10, updated_at_ms: Date.now() - 400000
+                            }]
+                        };
+                    }
+                    if (body.task_prefix === 'render_r_warn_raster_') {
+                        return { errors: 0, done: 0, expected: 10, complete: false, latest_update_ms: Date.now() - 400000 };
+                    }
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await _pollActiveRenderRun(); })()', ctx); } catch(e) {}
+        const st = ctx._elements['render-status'].textContent;
+        if (!st.includes('5+ min')) { console.error('FATAL: should show 5+ min warning: ' + st); process.exit(1); }
+        const runStillActive = vm.runInContext('_activeRenderRun !== null', ctx);
+        if (!runStillActive) { console.error('FATAL: warning should NOT clear active run'); process.exit(1); }
+        console.log('  12i stale workers 5+ min => warning, run kept: OK');
+        vm.runInContext('_activeRenderRun = null;', ctx);
+    }
+
+    // 12j: very stale workers (>15 min) => hard stall, does NOT clear active run
+    {
+        vm.runInContext("_activeRenderRun = {job_id:'j', mode:'color', run_id:'r_hard', task_id:'render_run_color_r_hard', started_at_ms: Date.now() - 1200000};", ctx);
+        vm.runInContext("_lastWarnState = null;", ctx);
+        vm.runInContext(`
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/check-status') {
+                    if (body.task_prefix === 'render_run_color_r_hard') {
+                        return {
+                            errors: 0, done: 0, complete: false,
+                            latest_update_ms: Date.now() - 1000000,
+                            results: [{
+                                phase: 'raster', phase_label: 'Raster',
+                                subtask_prefix: 'render_r_hard_raster_',
+                                expected: 10, updated_at_ms: Date.now() - 1000000
+                            }]
+                        };
+                    }
+                    if (body.task_prefix === 'render_r_hard_raster_') {
+                        return { errors: 0, done: 0, expected: 10, complete: false, latest_update_ms: Date.now() - 1000000 };
+                    }
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await _pollActiveRenderRun(); })()', ctx); } catch(e) {}
+        const st = ctx._elements['render-status'].textContent;
+        if (!st.includes('15+ min')) { console.error('FATAL: should show 15+ min hard stall: ' + st); process.exit(1); }
+        const runStillActive = vm.runInContext('_activeRenderRun !== null', ctx);
+        if (!runStillActive) { console.error('FATAL: hard stall should NOT clear active run'); process.exit(1); }
+        console.log('  12j stale workers 15+ min => hard stall, run kept: OK');
+        vm.runInContext('_activeRenderRun = null;', ctx);
+    }
+
     // Step 13: Render refresh — tested in Playwright (VM cannot override let-scoped lambdaPost/fetch)
     // See tests/e2e/render-refresh.spec.js for real browser coverage.
 

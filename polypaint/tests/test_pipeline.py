@@ -7,6 +7,7 @@ import json
 import os
 import struct
 import sys
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -471,6 +472,25 @@ class TestReportStatus(unittest.TestCase):
         self.assertEqual(item["task_status"]["S"], "done")
         self.assertIn("ttl", item)
         self.assertNotIn("error_msg", item)
+        self.assertIn("updated_at_ms", item)
+        self.assertTrue(int(item["updated_at_ms"]["N"]) > 0)
+        shared._ddb = None
+
+    @patch("shared._ddb", None)
+    @patch("shared.boto3")
+    def test_report_status_writes_updated_at_ms(self, mock_boto3):
+        import shared
+        shared._ddb = None
+        mock_ddb = MagicMock()
+        mock_boto3.client.return_value = mock_ddb
+        shared.report_status("j", "t", "started")
+        item = mock_ddb.put_item.call_args[1]["Item"]
+        self.assertIn("updated_at_ms", item)
+        ms = int(item["updated_at_ms"]["N"])
+        # Should be a recent epoch ms (within last 10 seconds)
+        import time
+        now_ms = int(time.time() * 1000)
+        self.assertAlmostEqual(ms, now_ms, delta=10000)
         shared._ddb = None
 
     @patch("shared._ddb", None)
@@ -525,6 +545,65 @@ class TestCheckStatus(unittest.TestCase):
         self.assertEqual(body["done"], 3)
         self.assertEqual(body["errors"], 0)
         self.assertTrue(body["complete"])
+
+    @patch("handler_storage._get_ddb")
+    def test_freshness_fields_with_timestamps(self, mock_get_ddb):
+        """check-status returns latest_update_ms, latest_done_ms, latest_nonterminal_ms, stale_for_ms."""
+        from handler_storage import handle_check_status
+        mock_ddb = MagicMock()
+        mock_get_ddb.return_value = mock_ddb
+        now = int(time.time() * 1000)
+        mock_ddb.query.return_value = {
+            "Items": [
+                {"task_id": {"S": "r_0"}, "task_status": {"S": "done"}, "updated_at_ms": {"N": str(now - 5000)}},
+                {"task_id": {"S": "r_1"}, "task_status": {"S": "started"}, "updated_at_ms": {"N": str(now - 2000)}},
+                {"task_id": {"S": "r_2"}, "task_status": {"S": "error"}, "error_msg": {"S": "fail"},
+                 "updated_at_ms": {"N": str(now - 10000)}},
+            ],
+        }
+        event = {"body": json.dumps({"job_id": "j", "task_prefix": "r_", "expected": 3})}
+        body = json.loads(handle_check_status(event)["body"])
+        self.assertEqual(body["done"], 1)
+        self.assertEqual(body["errors"], 1)
+        self.assertAlmostEqual(body["latest_update_ms"], now - 2000, delta=100)
+        self.assertAlmostEqual(body["latest_done_ms"], now - 5000, delta=100)
+        self.assertAlmostEqual(body["latest_nonterminal_ms"], now - 2000, delta=100)
+        self.assertAlmostEqual(body["stale_for_ms"], 2000, delta=1000)
+        self.assertEqual(body["newest_task"]["task_id"], "r_1")
+
+    @patch("handler_storage._get_ddb")
+    def test_stuck_entries_include_age(self, mock_get_ddb):
+        """Stuck entries include updated_at_ms and age_ms."""
+        from handler_storage import handle_check_status
+        mock_ddb = MagicMock()
+        mock_get_ddb.return_value = mock_ddb
+        now = int(time.time() * 1000)
+        mock_ddb.query.return_value = {
+            "Items": [
+                {"task_id": {"S": "r_0"}, "task_status": {"S": "started"}, "updated_at_ms": {"N": str(now - 60000)}},
+            ],
+        }
+        event = {"body": json.dumps({"job_id": "j", "task_prefix": "r_", "expected": 1})}
+        body = json.loads(handle_check_status(event)["body"])
+        s = body["stuck"][0]
+        self.assertIn("updated_at_ms", s)
+        self.assertAlmostEqual(s["age_ms"], 60000, delta=2000)
+
+    @patch("handler_storage._get_ddb")
+    def test_missing_updated_at_ms_rows(self, mock_get_ddb):
+        """Rows without updated_at_ms don't crash aggregation."""
+        from handler_storage import handle_check_status
+        mock_ddb = MagicMock()
+        mock_get_ddb.return_value = mock_ddb
+        mock_ddb.query.return_value = {
+            "Items": [
+                {"task_id": {"S": "r_0"}, "task_status": {"S": "done"}},
+            ],
+        }
+        event = {"body": json.dumps({"job_id": "j", "task_prefix": "r_", "expected": 1})}
+        body = json.loads(handle_check_status(event)["body"])
+        self.assertIsNone(body["latest_update_ms"])
+        self.assertIsNone(body["stale_for_ms"])
 
     @patch("handler_storage._get_ddb")
     def test_partial_with_errors(self, mock_get_ddb):

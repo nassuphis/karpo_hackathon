@@ -1378,20 +1378,6 @@ async function _pollActiveRenderRun() {
                 return;
             }
         }
-        // Row exists but stuck — only flag stale if no subtask progress either
-        if (rd.updated_at_ms && rd.phase !== 'done' && rd.phase !== 'error') {
-            const stale_ms = Date.now() - rd.updated_at_ms;
-            if (stale_ms > 300000 && !(rd.subtask_prefix && done > 0)) {
-                // Top-level row stale >5 min AND no subtask progress = likely dead
-                document.getElementById('render-status').textContent = 'Render stalled (no progress for 5+ min)';
-                document.getElementById('render-status').className = 'status error';
-                log('Render stalled — SFN execution may have failed silently', 'err', 'render-log');
-                _clearActiveRun();
-                stopActiveRenderObserver();
-                return;
-            }
-        }
-
         const phase = rd.phase_label || rd.phase || 'working';
 
         if (check.complete || rd.phase === 'done') {
@@ -1404,7 +1390,7 @@ async function _pollActiveRenderRun() {
             return;
         }
 
-        // Update progress — use secondary poll for subtask counts if available
+        // Secondary poll for subtask counts — must happen before stale check
         let done = 0, expected = 0;
         if (rd.subtask_prefix && rd.expected) {
             try {
@@ -1414,8 +1400,20 @@ async function _pollActiveRenderRun() {
                 done = subcheck.done || 0;
                 expected = subcheck.expected || rd.expected || 0;
             } catch(e) {
-                // Secondary poll failed — show phase only
                 expected = rd.expected || 0;
+            }
+        }
+
+        // Row exists but stuck — only flag stale if no subtask progress either
+        if (rd.updated_at_ms && rd.phase !== 'done' && rd.phase !== 'error') {
+            const stale_ms = Date.now() - rd.updated_at_ms;
+            if (stale_ms > 300000 && !(rd.subtask_prefix && done > 0)) {
+                document.getElementById('render-status').textContent = 'Render stalled (no progress for 5+ min)';
+                document.getElementById('render-status').className = 'status error';
+                log('Render stalled — SFN execution may have failed silently', 'err', 'render-log');
+                _clearActiveRun();
+                stopActiveRenderObserver();
+                return;
             }
         }
         let statusMsg = phase;

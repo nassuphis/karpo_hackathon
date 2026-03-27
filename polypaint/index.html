@@ -1189,6 +1189,7 @@ function _renderCommonParams() {
 
 let _activeRenderRun = null;
 let _renderObserverTimer = null;
+let _lastLoggedPhase = null;
 
 function _generateRunId() {
     const ms = Date.now();
@@ -1203,6 +1204,7 @@ function _saveActiveRun(record) {
 
 function _clearActiveRun() {
     _activeRenderRun = null;
+    _lastLoggedPhase = null;
     try { localStorage.removeItem('polypaint_active_render_run'); } catch(e) {}
 }
 
@@ -1419,10 +1421,14 @@ async function _pollActiveRenderRun() {
         let statusMsg = phase;
         if (expected > 0) statusMsg += ' ' + done + '/' + expected;
         document.getElementById('render-status').textContent = statusMsg;
-        // Show timestamped log in render-log if available
-        if (rd.log) {
-            const logEl = document.getElementById('render-log');
-            if (logEl) logEl.innerHTML = rd.log.replace(/\n/g, '<br>');
+
+        // Log each phase transition once
+        const phaseKey = (rd.phase || '') + '_' + done;
+        if (phaseKey !== _lastLoggedPhase) {
+            _lastLoggedPhase = phaseKey;
+            let logMsg = phase;
+            if (expected > 0) logMsg += ' ' + done + '/' + expected;
+            log(logMsg, '', 'render-log');
         }
 
     } catch (e) {

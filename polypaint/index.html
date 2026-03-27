@@ -1682,8 +1682,10 @@ async function _showPreview(which) {
     if (!el) return;
     const cb = document.getElementById('prev-btn-color');
     const bb = document.getElementById('prev-btn-bilevel');
+    const pb = document.getElementById('prev-btn-palette');
     if (cb) cb.style.fontWeight = which === 'color' ? 'bold' : '';
     if (bb) bb.style.fontWeight = which === 'bilevel' ? 'bold' : '';
+    if (pb) pb.style.fontWeight = which === 'palette' ? 'bold' : '';
 
     if (urls[which]) {
         el.innerHTML = '<img src="' + urls[which] + '" style="max-width:100%; border:1px solid #333; background:#000; display:block">';
@@ -1694,11 +1696,13 @@ async function _showPreview(which) {
     if (sources[which]) {
         const { jobId, sourceKey, previewKey } = sources[which];
         const taskId = 'render_preview_' + which;
-        // Disable both buttons to prevent overlapping jobs
+        // Disable all preview buttons to prevent overlapping jobs
         const cb = document.getElementById('prev-btn-color');
         const bb = document.getElementById('prev-btn-bilevel');
+        const pb = document.getElementById('prev-btn-palette');
         if (cb) cb.disabled = true;
         if (bb) bb.disabled = true;
+        if (pb) pb.disabled = true;
         el.innerHTML = '<div style="color:#888; font-size:12px; padding:12px 0">Generating preview...</div>';
         try {
             await lambdaPost('storage', { job_id: jobId, task_id: taskId }, '/delete-task').catch(() => {});
@@ -1759,6 +1763,7 @@ async function _showPreview(which) {
             // Re-enable buttons
             if (cb) cb.disabled = false;
             if (bb) bb.disabled = false;
+            if (pb) pb.disabled = false;
         }
         return;
     }

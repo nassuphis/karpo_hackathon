@@ -87,6 +87,16 @@ int main(int argc, char **argv) {
         return 1;
     }
     const RGB *pal = findPalette(palName);
+    /* Validate palette name — reject unknown instead of silent fallback */
+    {
+        int found = 0;
+        for (int i = 0; PALETTES[i].name; i++)
+            if (strcmp(PALETTES[i].name, palName) == 0) { found = 1; break; }
+        if (!found) {
+            fprintf(stderr, "Invalid palette: %s\n", palName);
+            return 1;
+        }
+    }
 
     /* Read input file */
     FILE *f = fopen(inPath, "rb");

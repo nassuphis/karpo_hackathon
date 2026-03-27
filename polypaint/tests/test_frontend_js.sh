@@ -532,124 +532,58 @@ async function testPipeline(name, call) {
 
     // Step 9: On-demand preview generation tests
     console.log('');
-    console.log('--- Preview generation ---');
+    console.log('--- Preview tabs (passive viewers) ---');
 
-    // Restore real lambdaPost for preview tests (override inside VM)
-    // Simulate: no cached preview, but source image exists → generate on click
     {
-        // Mock dispatch+poll flow for async preview generation
-        vm.runInContext(`
-            var _lastDispatchRequest = null;
-            lambdaPost = async function lambdaPost(name, body, path) {
-                // Delete stale task
-                if (name === 'storage' && path === '/delete-task') return {};
-                // Dispatch
-                if (name === 'dispatch' && body.target === 'render_preview') {
-                    _lastDispatchRequest = body.jobs[0];
-                    return { fired: 1, errors: [] };
-                }
-                // Poll — complete immediately
-                if (name === 'storage' && path === '/check-status') {
-                    return { errors: 0, done: 1, complete: true, status_counts: { done: 1 } };
-                }
-                // Presign the generated preview
-                if (name === 'storage' && path === '/head-keys' && body.presign) {
-                    var meta = {};
-                    (body.keys || []).forEach(function(k) {
-                        meta[k] = { size: 50000, url: 'https://fake/' + k };
-                    });
-                    return { exists: body.keys || [], meta: meta };
-                }
-                if (name === 'storage' && path === '/head-keys') {
-                    return { exists: [], meta: {} };
-                }
-                return {};
-            };
-        `, ctx);
-
-        vm.runInContext(`
-            window._previewUrls = { color: null, bilevel: null };
-            window._previewSources = {
-                color: { jobId: 'test_job', sourceKey: 'renders/test_job/image.jpeg', previewKey: 'renders/test_job/preview_color.png' },
-                bilevel: { jobId: 'test_job', sourceKey: 'renders/test_job/image_bilevel.tif', previewKey: 'renders/test_job/preview_bilevel.png' },
-            };
-        `, ctx);
-
-        // Test color preview generation — verify request shape
-        try {
-            await vm.runInContext('(async()=>{ await _showPreview("color"); })()', ctx);
-            const colorUrl = vm.runInContext('window._previewUrls.color', ctx);
-            const req = vm.runInContext('_lastDispatchRequest', ctx);
-            if (!colorUrl) { console.error('FATAL: color preview did not set URL'); process.exit(1); }
-            if (!req || req.source_key !== 'renders/test_job/image.jpeg') {
-                console.error('FATAL: color preview sent wrong source_key: ' + JSON.stringify(req));
-                process.exit(1);
-            }
-            if (req.preview_key !== 'renders/test_job/preview_color.png') {
-                console.error('FATAL: color preview sent wrong preview_key: ' + req.preview_key);
-                process.exit(1);
-            }
-            console.log('  color preview on-demand: OK (source=' + req.source_key + ', key=' + req.preview_key + ')');
-        } catch (e) {
-            console.error('FATAL: color preview generation: ' + e.message);
-            process.exit(1);
-        }
-
-        // Test bilevel preview generation — verify request shape
-        vm.runInContext('window._previewUrls.bilevel = null; _lastDispatchRequest = null;', ctx);
-        try {
-            await vm.runInContext('(async()=>{ await _showPreview("bilevel"); })()', ctx);
-            const bilevelUrl = vm.runInContext('window._previewUrls.bilevel', ctx);
-            const req = vm.runInContext('_lastDispatchRequest', ctx);
-            if (!bilevelUrl) { console.error('FATAL: bilevel preview did not set URL'); process.exit(1); }
-            if (!req || req.source_key !== 'renders/test_job/image_bilevel.tif') {
-                console.error('FATAL: bilevel preview sent wrong source_key: ' + JSON.stringify(req));
-                process.exit(1);
-            }
-            if (req.preview_key !== 'renders/test_job/preview_bilevel.png') {
-                console.error('FATAL: bilevel preview sent wrong preview_key: ' + req.preview_key);
-                process.exit(1);
-            }
-            console.log('  bilevel preview on-demand: OK (source=' + req.source_key + ', key=' + req.preview_key + ')');
-        } catch (e) {
-            console.error('FATAL: bilevel preview generation: ' + e.message);
-            process.exit(1);
-        }
-
-        // Test cached URL — no lambdaPost call
+        // _showPreview is now synchronous and never dispatches Lambdas
         vm.runInContext(`
             lambdaPost = async function lambdaPost() {
-                throw new Error('lambdaPost should not be called for cached preview');
+                throw new Error('_showPreview must not call lambdaPost');
             };
         `, ctx);
-        vm.runInContext('window._previewUrls.color = "https://cached/color.png";', ctx);
+
+        // Set up preview URLs for all 4 families
+        vm.runInContext(`
+            window._previewUrls = {
+                color: 'https://cached/color.png',
+                bilevel: 'https://cached/bilevel.png',
+                coeffs: null,
+                palette: 'https://cached/palette.png',
+            };
+        `, ctx);
+        ctx._elements['preview-container'] = ctx._mkEl();
+        for (const m of ['color', 'bilevel', 'coeffs', 'palette']) {
+            ctx._elements['preview-tab-' + m] = ctx._mkEl();
+        }
+
+        // Test: cached preview shows image (no Lambda call)
+        vm.runInContext('_showPreview("color")', ctx);
+        const colorHtml = ctx._elements['preview-container'].innerHTML;
+        if (!colorHtml.includes('cached/color.png')) { console.error('FATAL: color tab should show cached URL'); process.exit(1); }
+        console.log('  cached color preview: OK');
+
+        // Test: tab click never calls lambdaPost (even for missing preview)
         try {
-            await vm.runInContext('(async()=>{ await _showPreview("color"); })()', ctx);
-            console.log('  cached preview reuse: OK (no lambdaPost call)');
+            vm.runInContext('_showPreview("coeffs")', ctx);
+            const coeffsHtml = ctx._elements['preview-container'].innerHTML;
+            if (!coeffsHtml.includes('No preview')) { console.error('FATAL: missing preview should show No preview: ' + coeffsHtml.slice(0, 60)); process.exit(1); }
+            console.log('  missing coeffs preview shows empty state, no Lambda: OK');
         } catch (e) {
-            console.error('FATAL: cached preview should not call lambdaPost: ' + e.message);
+            console.error('FATAL: _showPreview called lambdaPost: ' + e.message);
             process.exit(1);
         }
 
-        // Test no-source fallback — assert "No preview available" message
-        vm.runInContext(`
-            window._previewUrls = { color: null, bilevel: null };
-            window._previewSources = {};
-            lambdaPost = async function lambdaPost() { return {}; };
-        `, ctx);
-        try {
-            await vm.runInContext('(async()=>{ await _showPreview("color"); })()', ctx);
-            const container = ctx._elements['preview-container'];
-            const text = (container.children.length && container.children[0].textContent) || container.innerHTML || '';
-            if (!text.includes('No preview')) {
-                console.error('FATAL: no-source should show "No preview available", got: ' + text.slice(0, 60));
-                process.exit(1);
-            }
-            console.log('  no-source fallback: OK ("' + text.trim().slice(0, 30) + '")');
-        } catch (e) {
-            console.error('FATAL: no-source preview: ' + e.message);
-            process.exit(1);
-        }
+        // Test: switching tabs updates panel
+        vm.runInContext('_showPreview("palette")', ctx);
+        const palHtml = ctx._elements['preview-container'].innerHTML;
+        if (!palHtml.includes('cached/palette.png')) { console.error('FATAL: palette tab should show cached URL'); process.exit(1); }
+        console.log('  tab switching shows correct preview: OK');
+
+        // Test: all 4 families coexist (no shared slot)
+        vm.runInContext('_showPreview("bilevel")', ctx);
+        const bilHtml = ctx._elements['preview-container'].innerHTML;
+        if (!bilHtml.includes('cached/bilevel.png')) { console.error('FATAL: bilevel tab should show cached URL'); process.exit(1); }
+        console.log('  all 4 preview families independent: OK');
     }
 
     // Step 10: DeepZoom inventory UI tests

@@ -1059,6 +1059,7 @@ if [ "$ACTION" = "create" ]; then
     BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
     BILEVEL_STITCH_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_STITCH_NAME}"
     SOLVE_PROXIMITY_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
+    PREVIEW_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PREVIEW_NAME}"
 
     sed -e "s|\${PlanFunctionArn}|${RENDER_PLAN_ARN}|g" \
         -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
@@ -1069,6 +1070,7 @@ if [ "$ACTION" = "create" ]; then
         -e "s|\${BilevelFunctionArn}|${BILEVEL_ARN}|g" \
         -e "s|\${BilevelStitchFunctionArn}|${BILEVEL_STITCH_ARN}|g" \
         -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
+        -e "s|\${PreviewFunctionArn}|${PREVIEW_ARN}|g" \
         stepfunctions/render_workflow.asl.json.template > /tmp/render_workflow.asl.json
 
     # Create or update state machine
@@ -1243,6 +1245,8 @@ elif [ "$ACTION" = "update" ]; then
     SFN_ROLE_NAME="polypaint-sfn-execution-role"
     SFN_ROLE_ARN=$(aws iam get-role --role-name "$SFN_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || echo "")
 
+    PREVIEW_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PREVIEW_NAME}"
+
     sed -e "s|\${PlanFunctionArn}|${RENDER_PLAN_ARN}|g" \
         -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
         -e "s|\${RasterFunctionArn}|${RASTER_ARN}|g" \
@@ -1252,6 +1256,7 @@ elif [ "$ACTION" = "update" ]; then
         -e "s|\${BilevelFunctionArn}|${BILEVEL_ARN}|g" \
         -e "s|\${BilevelStitchFunctionArn}|${BILEVEL_STITCH_ARN}|g" \
         -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
+        -e "s|\${PreviewFunctionArn}|${PREVIEW_ARN}|g" \
         stepfunctions/render_workflow.asl.json.template > /tmp/render_workflow.asl.json
 
     SFN_TRUST='{

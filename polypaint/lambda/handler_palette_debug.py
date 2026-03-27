@@ -120,6 +120,27 @@ def handler(event, context):
             s3.upload_fileobj(fh, BUCKET, out_key,
                               ExtraArgs={"ContentType": "image/jpeg", "Metadata": s3_metadata})
 
+        # Generate preview eagerly (tabs are passive viewers, no lazy generation)
+        tmp_preview = "/tmp/palette_preview.png"
+        try:
+            vt_path = "/opt/bin/vipsthumbnail"
+            env = imgpipe_env()
+            prev_result = subprocess.run(
+                [vt_path, tmp_jpeg, "-s", "512x512", "-o", tmp_preview + "[strip]"],
+                capture_output=True, text=True, timeout=30, env=env,
+            )
+            if prev_result.returncode == 0 and os.path.exists(tmp_preview):
+                with open(tmp_preview, "rb") as pfh:
+                    s3.upload_fileobj(pfh, BUCKET, preview_key,
+                                      ExtraArgs={"ContentType": "image/png"})
+        except Exception:
+            pass  # preview generation is best-effort, don't fail the whole action
+        finally:
+            try:
+                os.remove(tmp_preview)
+            except OSError:
+                pass
+
         # Presign URL
         image_url = s3.generate_presigned_url(
             "get_object", Params={"Bucket": BUCKET, "Key": out_key},

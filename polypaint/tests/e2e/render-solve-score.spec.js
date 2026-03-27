@@ -399,7 +399,7 @@ test.describe('Solve Score UI', () => {
       });
     });
     // Palette JPEG row should exist
-    const row = page.locator('strong:text("Palette JPEG")');
+    const row = page.locator('strong:text("Palette")');
     await expect(row).toBeVisible();
     // Download and DeepZoom buttons should be in that row's parent
     const rowDiv = row.locator('..');
@@ -431,12 +431,10 @@ test.describe('Solve Score UI', () => {
         deepzoom_latest: { exists: false },
       });
     });
-    // All four preview buttons should be present and enabled
-    for (const id of ['prev-btn-color', 'prev-btn-bilevel', 'prev-btn-coeffs', 'prev-btn-palette']) {
-      const btn = page.locator('#' + id);
-      await expect(btn).toBeVisible();
-      const disabled = await btn.getAttribute('disabled');
-      expect(disabled).toBeNull();
+    // All four preview tabs should be present
+    for (const id of ['preview-tab-color', 'preview-tab-bilevel', 'preview-tab-coeffs', 'preview-tab-palette']) {
+      const tab = page.locator('#' + id);
+      await expect(tab).toBeVisible();
     }
   });
 
@@ -457,10 +455,66 @@ test.describe('Solve Score UI', () => {
         deepzoom_latest: { exists: false },
       });
     });
-    const palBtn = page.locator('#prev-btn-palette');
-    await expect(palBtn).toBeVisible();
-    // Should not be disabled since palette_jpeg exists (can generate preview)
-    const disabled = await palBtn.getAttribute('disabled');
-    expect(disabled).toBeNull();
+    const palTab = page.locator('#preview-tab-palette');
+    await expect(palTab).toBeVisible();
+  });
+
+  test('preview tab click does not trigger network calls', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    // Set up artifacts with preview URLs
+    await page.evaluate(() => {
+      renderArtifactPanel('test_job', {
+        artifacts: {
+          color_jpeg: { exists: true, key: 'k', url: 'u', size: 1, width: 1, height: 1 },
+          color_png: { exists: false }, bilevel_tif: { exists: false },
+          bilevel_preview_png: { exists: false }, bilevel_compat_tif: { exists: false },
+          bilevel_png: { exists: false }, coeff_tif: { exists: false },
+          coeff_preview_png: { exists: false }, preview_color_png: { exists: true, url: 'https://cached/c.png' },
+          preview_bilevel_png: { exists: false }, palette_jpeg: { exists: false },
+          preview_palette_png: { exists: false }, preview_coeffs_png: { exists: false },
+        },
+        calc: { exists: true, N: 100, degree: 5 },
+        deepzoom_latest: { exists: false },
+      });
+      // Track any network calls from _showPreview
+      window._previewNetCalls = 0;
+      const origFetch = window.fetch;
+      window.fetch = function() { window._previewNetCalls++; return origFetch.apply(this, arguments); };
+    });
+    // Click each tab
+    for (const mode of ['color', 'bilevel', 'coeffs', 'palette']) {
+      await page.click('#preview-tab-' + mode);
+    }
+    const calls = await page.evaluate(() => window._previewNetCalls);
+    expect(calls).toBe(0);
+  });
+
+  test('4 fixed artifact rows always present', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    // All artifacts absent
+    await page.evaluate(() => {
+      renderArtifactPanel('empty_job', {
+        artifacts: {
+          color_jpeg: { exists: false }, color_png: { exists: false },
+          bilevel_tif: { exists: false }, bilevel_preview_png: { exists: false },
+          bilevel_compat_tif: { exists: false }, bilevel_png: { exists: false },
+          coeff_tif: { exists: false }, coeff_preview_png: { exists: false },
+          preview_color_png: { exists: false }, preview_bilevel_png: { exists: false },
+          palette_jpeg: { exists: false }, preview_palette_png: { exists: false },
+          preview_coeffs_png: { exists: false },
+        },
+        calc: { exists: false },
+        deepzoom_latest: { exists: false },
+      });
+    });
+    // All 4 rows must exist with "None" for absent
+    for (const label of ['Render', 'BiLevel', 'Coeffs', 'Palette']) {
+      const row = page.locator('strong:text("' + label + '")');
+      await expect(row).toBeVisible();
+    }
+    // Check "None" appears
+    const panelText = await page.locator('#render-preview').textContent();
+    const noneCount = (panelText.match(/None/g) || []).length;
+    expect(noneCount).toBe(4);
   });
 });

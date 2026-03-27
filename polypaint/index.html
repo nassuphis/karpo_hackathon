@@ -1711,98 +1711,28 @@ async function refreshRenderArtifacts(jobIdOverride) {
 
 
 
-async function _showPreview(which) {
+function _showPreview(which) {
     const urls = window._previewUrls || {};
-    const sources = window._previewSources || {};
     const el = document.getElementById('preview-container');
     if (!el) return;
-    const prevBtns = {
-        color: document.getElementById('prev-btn-color'),
-        bilevel: document.getElementById('prev-btn-bilevel'),
-        coeffs: document.getElementById('prev-btn-coeffs'),
-        palette: document.getElementById('prev-btn-palette'),
-    };
-    for (const [mode, btn] of Object.entries(prevBtns)) {
-        if (btn) btn.style.fontWeight = mode === which ? 'bold' : '';
-    }
 
-    if (urls[which]) {
-        el.innerHTML = '<img src="' + urls[which] + '" style="max-width:100%; border:1px solid #333; background:#000; display:block">';
-        return;
-    }
-
-    // No preview URL but source image exists — dispatch async preview generation
-    if (sources[which]) {
-        const { jobId, sourceKey, previewKey } = sources[which];
-        const taskId = 'render_preview_' + which;
-        // Disable all preview buttons to prevent overlapping jobs
-        const allPrevBtns = ['prev-btn-color','prev-btn-bilevel','prev-btn-coeffs','prev-btn-palette']
-            .map(id => document.getElementById(id)).filter(Boolean);
-        allPrevBtns.forEach(b => b.disabled = true);
-        el.innerHTML = '<div style="color:#888; font-size:12px; padding:12px 0">Generating preview...</div>';
-        try {
-            await lambdaPost('storage', { job_id: jobId, task_id: taskId }, '/delete-task').catch(() => {});
-            const dispResult = await lambdaPost('dispatch', {
-                target: 'render_preview',
-                jobs: [{ job_id: jobId, source_key: sourceKey, preview_key: previewKey, task_id: taskId }],
-                expected_keys: [],
-            });
-            if ((dispResult.fired || 0) !== 1) throw new Error('Preview dispatch failed');
-            const t0 = performance.now();
-            while (true) {
-                await new Promise(r => setTimeout(r, 2000));
-                const check = await lambdaPost('storage', {
-                    job_id: jobId, task_prefix: taskId, expected: 1,
-                }, '/check-status');
-                if (check.errors > 0) {
-                    const msg = check.error_details?.[0]?.error_msg || 'unknown';
-                    throw new Error(msg);
-                }
-                if (check.complete) {
-                    const rd = check.results?.[0];
-                    if (rd) {
-                        const parts = [];
-                        if (rd.source_dims) parts.push(rd.source_dims);
-                        if (rd.source_size_human) parts.push('src ' + rd.source_size_human);
-                        if (rd.dl_ms) parts.push('dl ' + (rd.dl_ms/1000).toFixed(1) + 's');
-                        if (rd.gen_ms) parts.push('gen ' + (rd.gen_ms/1000).toFixed(1) + 's');
-                        if (rd.vips_mem_mb) parts.push('mem ' + rd.vips_mem_mb + 'MB');
-                        if (rd.runtime) {
-                            const rt = rd.runtime;
-                            parts.push(rt.cpus + ' cpu, ' + rt.mem_limit_mb + 'MB limit');
-                        }
-                        log('  preview: ' + parts.join(', '), 'ok', 'render-log');
-                    }
-                    break;
-                }
-                const elapsed = (performance.now() - t0) / 1000;
-                // Use phase from result_data (authoritative), not status_counts key
-                const rd = check.results?.[0];
-                const phase = rd?.phase || 'working';
-                let statusMsg = phase + '... ' + elapsed.toFixed(0) + 's';
-                if (rd?.dl_speed) statusMsg = phase + ' (downloaded ' + rd.source_size_human + ' at ' + rd.dl_speed + ')... ' + elapsed.toFixed(0) + 's';
-                else if (rd?.source_size_human) statusMsg = phase + ' (' + rd.source_size_human + ')... ' + elapsed.toFixed(0) + 's';
-                el.innerHTML = '<div style="color:#888; font-size:12px; padding:12px 0">' + statusMsg + '</div>';
-                if (elapsed > 300) throw new Error('Preview generation timed out');
-            }
-            const headResp = await lambdaPost('storage', { keys: [previewKey], presign: true }, '/head-keys');
-            const previewUrl = headResp.meta?.[previewKey]?.url;
-            if (previewUrl) {
-                urls[which] = previewUrl;
-                el.innerHTML = '<img src="' + previewUrl + '" style="max-width:100%; border:1px solid #333; background:#000; display:block">';
-            } else {
-                el.innerHTML = '<div style="color:#c44; font-size:12px; padding:12px 0">Preview generated but not found</div>';
-            }
-        } catch (e) {
-            el.innerHTML = '<div style="color:#c44; font-size:12px; padding:12px 0">Preview failed: ' + e.message + '</div>';
-        } finally {
-            // Re-enable buttons
-            allPrevBtns.forEach(b => b.disabled = false);
+    // Update tab styling
+    for (const mode of ['color', 'bilevel', 'coeffs', 'palette']) {
+        const tab = document.getElementById('preview-tab-' + mode);
+        if (tab) {
+            tab.style.fontWeight = mode === which ? 'bold' : '';
+            tab.style.background = mode === which ? '#222' : '#333';
+            tab.style.color = mode === which ? '#fff' : '#aaa';
+            tab.style.borderBottomColor = mode === which ? '#222' : '#555';
         }
-        return;
     }
 
-    el.innerHTML = '<div style="color:#888; font-size:12px; padding:12px 0">No preview available</div>';
+    // Show cached preview or empty state — no generation on click
+    if (urls[which]) {
+        el.innerHTML = '<img src="' + urls[which] + '" style="max-width:100%; background:#000; display:block">';
+    } else {
+        el.innerHTML = '<div style="color:#666; font-size:12px; padding:12px 0">No preview available</div>';
+    }
 }
 
 function _fmtSize(bytes) {
@@ -1838,78 +1768,56 @@ function renderArtifactPanel(jobId, summary) {
 
     let html = '';
 
-    // --- Color JPEG row ---
-    if (a.color_jpeg && a.color_jpeg.exists) {
-        html += '<div style="' + rowStyle + '">';
-        html += '<strong style="min-width:110px; font-size:12px">Color JPEG</strong>';
-        html += '<span style="' + dimStyle + '">' + infoOf(a.color_jpeg) + '</span>';
-        html += '<button class="btn-primary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.color_jpeg.url + '\',\'' + jobId + '_color.jpeg\',\'' + a.color_jpeg.key + '\')">Download</button>';
-        html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runDeepZoomExport(\'' + jobId + '\',\'' + a.color_jpeg.key + '\',this)">DeepZoom</button>';
-        html += '</div>';
-    }
-
-    // --- Color PNG row ---
-    if (a.color_png && a.color_png.exists) {
-        html += '<div style="' + rowStyle + '">';
-        html += '<strong style="min-width:110px; font-size:12px">Color PNG</strong>';
-        html += '<span style="' + dimStyle + '">' + infoOf(a.color_png) + '</span>';
-        html += '<button class="btn-primary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.color_png.url + '\',\'' + jobId + '_color.png\',\'' + a.color_png.key + '\')">Download</button>';
-        html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runDeepZoomExport(\'' + jobId + '\',\'' + a.color_png.key + '\',this)">DeepZoom</button>';
-        html += '</div>';
-    }
-
-    // --- BiLevel TIFF row ---
-    if (a.bilevel_tif && a.bilevel_tif.exists) {
-        html += '<div style="' + rowStyle + '">';
-        html += '<strong style="min-width:110px; font-size:12px">BiLevel TIFF</strong>';
-        html += '<span style="' + dimStyle + '">' + infoOf(a.bilevel_tif) + '</span>';
-        html += '<button class="btn-primary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.bilevel_tif.url + '\',\'' + jobId + '_bilevel.tif\',\'' + a.bilevel_tif.key + '\')">Download</button>';
-        if (a.bilevel_compat_tif && a.bilevel_compat_tif.exists) {
-            html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.bilevel_compat_tif.url + '\',\'' + jobId + '_bilevel_compat.tif\',\'' + a.bilevel_compat_tif.key + '\')">Compat TIFF</button>';
+    // Helper: build one artifact row (always present, shows None if absent)
+    const _artRow = (label, art, dlName, extraBtns) => {
+        let row = '<div style="' + rowStyle + '">';
+        row += '<strong style="min-width:80px; font-size:12px">' + label + '</strong>';
+        if (art && art.exists) {
+            row += '<span style="' + dimStyle + '">' + infoOf(art) + '</span>';
+            row += '<button class="btn-primary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + art.url + '\',\'' + dlName + '\',\'' + art.key + '\')">Download</button>';
+            row += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runDeepZoomExport(\'' + jobId + '\',\'' + art.key + '\',this)">DeepZoom</button>';
+            if (extraBtns) row += extraBtns;
         } else {
-            html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runTiffCompat(\'' + jobId + '\',\'' + a.bilevel_tif.key + '\',\'' + pix + '\')" id="btn-tiff-compat">Compat TIFF</button>';
+            row += '<span style="' + dimStyle + '; color:#666">None</span>';
+        }
+        row += '</div>';
+        return row;
+    };
+
+    // --- 4 fixed semantic artifact rows ---
+    const colorArt = (a.color_jpeg && a.color_jpeg.exists) ? a.color_jpeg
+        : (a.color_png && a.color_png.exists) ? a.color_png : null;
+    const colorExt = colorArt ? (colorArt.key.endsWith('.png') ? '.png' : '.jpeg') : '.jpeg';
+    html += _artRow('Render', colorArt, jobId + '_color' + colorExt, '');
+
+    let bilevelExtra = '';
+    if (a.bilevel_tif && a.bilevel_tif.exists) {
+        if (a.bilevel_compat_tif && a.bilevel_compat_tif.exists) {
+            bilevelExtra += '<button class="btn-secondary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.bilevel_compat_tif.url + '\',\'' + jobId + '_bilevel_compat.tif\',\'' + a.bilevel_compat_tif.key + '\')">Compat</button>';
+        } else {
+            bilevelExtra += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runTiffCompat(\'' + jobId + '\',\'' + a.bilevel_tif.key + '\',\'' + pix + '\')" id="btn-tiff-compat">Compat</button>';
         }
         if (a.bilevel_png && a.bilevel_png.exists) {
-            html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.bilevel_png.url + '\',\'' + jobId + '_bilevel.png\',\'' + a.bilevel_png.key + '\')">PNG</button>';
+            bilevelExtra += '<button class="btn-secondary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.bilevel_png.url + '\',\'' + jobId + '_bilevel.png\',\'' + a.bilevel_png.key + '\')">PNG</button>';
         } else {
-            html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runPngExport(\'' + jobId + '\',\'' + a.bilevel_tif.key + '\',\'' + pix + '\')" id="btn-png-export">PNG</button>';
+            bilevelExtra += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runPngExport(\'' + jobId + '\',\'' + a.bilevel_tif.key + '\',\'' + pix + '\')" id="btn-png-export">PNG</button>';
         }
-        html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runDeepZoomExport(\'' + jobId + '\',\'' + a.bilevel_tif.key + '\',this)">DeepZoom</button>';
-        html += '</div>';
     }
+    html += _artRow('BiLevel', a.bilevel_tif, jobId + '_bilevel.tif', bilevelExtra);
+    html += _artRow('Coeffs', a.coeff_tif, jobId + '_coeffs_bilevel.tif', '');
+    html += _artRow('Palette', a.palette_jpeg, jobId + '_palette.jpeg', '');
 
-    // --- Coeffs BiLevel TIFF row ---
-    if (a.coeff_tif && a.coeff_tif.exists) {
-        html += '<div style="' + rowStyle + '">';
-        html += '<strong style="min-width:110px; font-size:12px">Coeffs TIFF</strong>';
-        html += '<span style="' + dimStyle + '">' + infoOf(a.coeff_tif) + '</span>';
-        html += '<button class="btn-primary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.coeff_tif.url + '\',\'' + jobId + '_coeffs_bilevel.tif\',\'' + a.coeff_tif.key + '\')">Download</button>';
-        html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runDeepZoomExport(\'' + jobId + '\',\'' + a.coeff_tif.key + '\',this)">DeepZoom</button>';
-        html += '</div>';
-    }
-
-    // --- Palette JPEG row ---
-    if (a.palette_jpeg && a.palette_jpeg.exists) {
-        html += '<div style="' + rowStyle + '">';
-        html += '<strong style="min-width:110px; font-size:12px">Palette JPEG</strong>';
-        html += '<span style="' + dimStyle + '">' + infoOf(a.palette_jpeg) + '</span>';
-        html += '<button class="btn-primary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.palette_jpeg.url + '\',\'' + jobId + '_palette.jpeg\',\'' + a.palette_jpeg.key + '\')">Download</button>';
-        html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runDeepZoomExport(\'' + jobId + '\',\'' + a.palette_jpeg.key + '\',this)">DeepZoom</button>';
-        html += '</div>';
-    }
-
-    // --- DeepZoom viewer ---
+    // --- DeepZoom viewer (optional, not a fixed row) ---
     if (dz.exists) {
         html += '<div style="' + rowStyle + '">';
-        html += '<strong style="min-width:110px; font-size:12px">DeepZoom</strong>';
+        html += '<strong style="min-width:80px; font-size:12px">DeepZoom</strong>';
         html += '<button class="btn-secondary" style="' + btnStyle + '; background:#446" onclick="openDeepZoomViewer(\'' + dz.dzi_url + '\')">Open Viewer</button>';
         html += '</div>';
     }
 
-    // --- Preview section ---
+    // --- Preview tabs (passive viewers, no generation on click) ---
     html += '<hr style="border:none; border-top:1px solid #444; margin:12px 0 8px">';
 
-    // Determine available preview sources — four independent modes
     const colorPreviewUrl = (a.preview_color_png && a.preview_color_png.exists) ? a.preview_color_png.url : null;
     const bilevelPreviewUrl = (a.bilevel_preview_png && a.bilevel_preview_png.exists) ? a.bilevel_preview_png.url
         : (a.preview_bilevel_png && a.preview_bilevel_png.exists) ? a.preview_bilevel_png.url : null;
@@ -1917,50 +1825,27 @@ function renderArtifactPanel(jobId, summary) {
         : (a.coeff_preview_png && a.coeff_preview_png.exists) ? a.coeff_preview_png.url : null;
     const palettePreviewUrl = (a.preview_palette_png && a.preview_palette_png.exists) ? a.preview_palette_png.url : null;
 
-    const colorSourceKey = (a.color_png && a.color_png.exists) ? a.color_png.key
-        : (a.color_jpeg && a.color_jpeg.exists) ? a.color_jpeg.key : null;
-    const bilevelSourceKey = (a.bilevel_tif && a.bilevel_tif.exists) ? a.bilevel_tif.key : null;
-    const coeffSourceKey = (a.coeff_tif && a.coeff_tif.exists) ? a.coeff_tif.key : null;
-    const paletteSourceKey = (a.palette_jpeg && a.palette_jpeg.exists) ? a.palette_jpeg.key : null;
+    const tabStyle = 'padding:4px 12px; font-size:11px; cursor:pointer; border:1px solid #555; background:#333; color:#aaa; border-radius:3px 3px 0 0; margin-right:2px';
+    const tabActiveExtra = '; background:#222; color:#fff; font-weight:bold; border-bottom-color:#222';
 
-    const colorCanGen = !colorPreviewUrl && colorSourceKey;
-    const bilevelCanGen = !bilevelPreviewUrl && bilevelSourceKey;
-    const coeffCanGen = !coeffPreviewUrl && coeffSourceKey;
-    const paletteCanGen = !palettePreviewUrl && paletteSourceKey;
-    const colorEnabled = colorPreviewUrl || colorCanGen;
-    const bilevelEnabled = bilevelPreviewUrl || bilevelCanGen;
-    const coeffEnabled = coeffPreviewUrl || coeffCanGen;
-    const paletteEnabled = palettePreviewUrl || paletteCanGen;
-
-    html += '<div style="display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap">';
-    const _prevBtn = (id, label, mode, enabled) =>
-        '<button id="' + id + '" class="btn-secondary" style="' + btnStyle + (!enabled ? '; opacity:0.4; cursor:default' : '') + '" '
-        + (enabled ? 'onclick="_showPreview(\'' + mode + '\')"' : 'disabled') + '>' + label + '</button>';
-    html += _prevBtn('prev-btn-color', 'Color', 'color', colorEnabled);
-    html += _prevBtn('prev-btn-bilevel', 'Bilevel', 'bilevel', bilevelEnabled);
-    html += _prevBtn('prev-btn-coeffs', 'Coeffs', 'coeffs', coeffEnabled);
-    html += _prevBtn('prev-btn-palette', 'Palette', 'palette', paletteEnabled);
+    html += '<div style="display:flex; flex-wrap:wrap; margin-bottom:0">';
+    for (const [id, label, mode] of [
+        ['preview-tab-color', 'Color', 'color'],
+        ['preview-tab-bilevel', 'BiLevel', 'bilevel'],
+        ['preview-tab-coeffs', 'Coeffs', 'coeffs'],
+        ['preview-tab-palette', 'Palette', 'palette'],
+    ]) {
+        html += '<div id="' + id + '" style="' + tabStyle + '" onclick="_showPreview(\'' + mode + '\')">' + label + '</div>';
+    }
     html += '</div>';
-
-    html += '<div id="preview-container"><div style="color:#888; font-size:12px; padding:12px 0">No preview selected</div></div>';
+    html += '<div id="preview-container" style="border:1px solid #555; border-top:none; padding:8px; min-height:60px; background:#222"><div style="color:#666; font-size:12px">Select a preview tab</div></div>';
 
     preview.innerHTML = html;
 
-    // Store URLs and generatable sources for on-demand preview
+    // Store preview URLs (no sources — tabs are passive, no generation on click)
     window._previewUrls = { color: colorPreviewUrl, bilevel: bilevelPreviewUrl, coeffs: coeffPreviewUrl, palette: palettePreviewUrl };
-    window._previewSources = {};
-    if (colorCanGen) {
-        window._previewSources.color = { jobId: jobId, sourceKey: colorSourceKey, previewKey: 'renders/' + jobId + '/preview_color.png' };
-    }
-    if (bilevelCanGen) {
-        window._previewSources.bilevel = { jobId: jobId, sourceKey: bilevelSourceKey, previewKey: 'renders/' + jobId + '/preview_bilevel.png' };
-    }
-    if (coeffCanGen) {
-        window._previewSources.coeffs = { jobId: jobId, sourceKey: coeffSourceKey, previewKey: 'renders/' + jobId + '/preview_coeffs.png' };
-    }
-    if (paletteCanGen) {
-        window._previewSources.palette = { jobId: jobId, sourceKey: paletteSourceKey, previewKey: 'renders/' + jobId + '/preview_palette.png' };
-    }
+    window._previewSources = {};  // empty — no lazy generation
+
     const defaultTab = colorPreviewUrl ? 'color' : bilevelPreviewUrl ? 'bilevel' : coeffPreviewUrl ? 'coeffs' : palettePreviewUrl ? 'palette' : null;
     if (defaultTab) _showPreview(defaultTab);
 

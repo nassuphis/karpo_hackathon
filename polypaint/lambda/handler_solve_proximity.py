@@ -65,6 +65,8 @@ def handler(event, context):
         return handle_hist(params)
     elif phase == "merge":
         return handle_merge(params)
+    elif phase == "summary":
+        return handle_summary(params)
     else:
         raise RuntimeError(f"Unknown phase: {phase}")
 
@@ -335,5 +337,47 @@ def handle_merge(params):
         progress["error"] = str(e)
         report_status(job_id, task_id, "error", str(e), result_data=progress)
         raise
+    finally:
+        _cleanup_tmp()
+
+
+def handle_summary(params):
+    """Synchronous debug summary — no side effects, no DDB writes, no S3 artifacts."""
+    degree = params["degree"]
+    metric = params.get("metric", "proximity")
+    _validate_metric(metric)
+    solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
+    lores_bin_key = params["lores_bin_key"]
+    root_transforms = params.get("root_transforms")
+
+    try:
+        _cleanup_tmp()
+
+        t0 = time.time()
+        size = _download(lores_bin_key, _TMP_INPUT)
+        dl_ms = int((time.time() - t0) * 1000)
+
+        quantile_lo = solve_score_quantile
+        quantile_hi = 1.0 - solve_score_quantile
+        cmd = [BINARY, _TMP_INPUT, "--mode=summary", f"--degree={degree}",
+               f"--metric={metric}",
+               f"--quantile_lo={quantile_lo}", f"--quantile_hi={quantile_hi}"]
+        xf_path = _write_xforms(root_transforms)
+        if xf_path:
+            cmd.append(f"--root_xforms={xf_path}")
+
+        t1 = time.time()
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        compute_ms = int((time.time() - t1) * 1000)
+        if result.returncode != 0:
+            raise RuntimeError(f"solve_proximity_stats summary failed: {result.stderr.strip()}")
+
+        summary = json.loads(result.stdout)
+        summary["dl_ms"] = dl_ms
+        summary["compute_ms"] = compute_ms
+        summary["source_size"] = size
+
+        return ok_response(summary)
+
     finally:
         _cleanup_tmp()

@@ -238,8 +238,128 @@ int main(int argc, char **argv) {
 
         free(hist);
 
+    } else if (strcmp(mode, "summary") == 0) {
+        /* ---- SUMMARY MODE ---- */
+        double quantileLo = getArgDouble(argc, argv, "--quantile_lo", 0.001);
+        double quantileHi = getArgDouble(argc, argv, "--quantile_hi", 0.999);
+        int histBins = 32;
+
+        double *scores = malloc(nSolves * sizeof(double));
+        if (!scores) { fprintf(stderr, "Out of memory for scores\n"); free(buf); return 1; }
+
+        for (long s = 0; s < nSolves; s++) {
+            const float *roots = buf + s * stride;
+            scores[s] = (nRt > 0)
+                ? score_xformed(roots, degree, metric, rtChain, nRt, wkRe, wkIm)
+                : compute_solve_metric_score(roots, degree, metric);
+        }
+        qsort(scores, nSolves, sizeof(double), cmp_double);
+
+        /* Extremes */
+        double minScore = scores[0];
+        double maxScore = scores[nSolves - 1];
+
+        /* Mean + stddev */
+        double sum = 0;
+        for (long s = 0; s < nSolves; s++) sum += scores[s];
+        double meanScore = sum / nSolves;
+        double var = 0;
+        for (long s = 0; s < nSolves; s++) {
+            double d = scores[s] - meanScore;
+            var += d * d;
+        }
+        double stddevScore = sqrt(var / nSolves);
+
+        /* Quantiles (same convention as clip mode) */
+        #define QI(q) ((long)((nSolves - 1) * (q)))
+        double q05 = scores[QI(0.05)];
+        double q10 = scores[QI(0.10)];
+        double q25 = scores[QI(0.25)];
+        double q50 = scores[QI(0.50)];
+        double q75 = scores[QI(0.75)];
+        double q90 = scores[QI(0.90)];
+        double q95 = scores[QI(0.95)];
+
+        /* Clip bounds using same logic as clip mode */
+        double clipLo, clipHi;
+        const char *fallbackReason = NULL;
+        int clipFallback = 0;
+        if (nSolves < 100) {
+            clipLo = minScore; clipHi = maxScore;
+            clipFallback = 1; fallbackReason = "small_sample";
+        } else {
+            long loIdx = (long)((nSolves - 1) * quantileLo);
+            long hiIdx = (long)((nSolves - 1) * quantileHi);
+            if (hiIdx <= loIdx) {
+                clipLo = minScore; clipHi = maxScore;
+                clipFallback = 1; fallbackReason = "degenerate_quantile_range";
+            } else {
+                clipLo = scores[loIdx]; clipHi = scores[hiIdx];
+                if (clipHi - clipLo < 1e-12) {
+                    clipLo = minScore; clipHi = maxScore;
+                    clipFallback = 1; fallbackReason = "degenerate_quantile_range";
+                }
+            }
+        }
+        if (clipHi - clipLo < 1e-12) {
+            clipLo = minScore - 0.5; clipHi = minScore + 0.5;
+            clipFallback = 1; fallbackReason = "zero_full_range_expanded";
+        }
+
+        double fullRange = maxScore - minScore;
+        double clipRange = clipHi - clipLo;
+
+        /* Clip occupancy */
+        long belowCount = 0, inrangeCount = 0, aboveCount = 0;
+        for (long s = 0; s < nSolves; s++) {
+            if (scores[s] < clipLo) belowCount++;
+            else if (scores[s] > clipHi) aboveCount++;
+            else inrangeCount++;
+        }
+
+        /* Histogram over full range */
+        long *hist = calloc(histBins, sizeof(long));
+        if (!hist) { fprintf(stderr, "Out of memory for histogram\n"); free(scores); free(buf); return 1; }
+        double hRange = (fullRange > 1e-12) ? fullRange : 1.0;
+        for (long s = 0; s < nSolves; s++) {
+            double u = (scores[s] - minScore) / hRange;
+            if (u < 0) u = 0;
+            if (u > 1) u = 1;
+            int h = (int)(u * histBins);
+            if (h >= histBins) h = histBins - 1;
+            hist[h]++;
+        }
+
+        /* Emit JSON */
+        printf("{\"mode\":\"summary\",\"metric\":\"%s\",\"n_solves\":%ld,\"degree\":%d,",
+               metricName, nSolves, degree);
+        printf("\"min_score\":%.15g,\"max_score\":%.15g,", minScore, maxScore);
+        printf("\"mean_score\":%.15g,\"stddev_score\":%.15g,", meanScore, stddevScore);
+        printf("\"q05\":%.15g,\"q10\":%.15g,\"q25\":%.15g,\"q50\":%.15g,", q05, q10, q25, q50);
+        printf("\"q75\":%.15g,\"q90\":%.15g,\"q95\":%.15g,", q75, q90, q95);
+        printf("\"clip_quantile\":%.15g,\"clip_lo\":%.15g,\"clip_hi\":%.15g,", quantileLo, clipLo, clipHi);
+        printf("\"full_range\":%.15g,\"clip_range\":%.15g,", fullRange, clipRange);
+        printf("\"clip_below_count\":%ld,\"clip_inrange_count\":%ld,\"clip_above_count\":%ld,",
+               belowCount, inrangeCount, aboveCount);
+        printf("\"clip_below_frac\":%.6f,\"clip_inrange_frac\":%.6f,\"clip_above_frac\":%.6f,",
+               (double)belowCount / nSolves, (double)inrangeCount / nSolves, (double)aboveCount / nSolves);
+        printf("\"clip_fallback\":%s,", clipFallback ? "true" : "false");
+        if (fallbackReason)
+            printf("\"clip_fallback_reason\":\"%s\",", fallbackReason);
+        else
+            printf("\"clip_fallback_reason\":null,");
+        printf("\"hist_bins\":%d,\"hist_full\":[", histBins);
+        for (int i = 0; i < histBins; i++) {
+            if (i > 0) printf(",");
+            printf("%ld", hist[i]);
+        }
+        printf("]}\n");
+
+        free(hist);
+        free(scores);
+
     } else {
-        fprintf(stderr, "Unknown mode: %s (use clip or hist)\n", mode);
+        fprintf(stderr, "Unknown mode: %s (use clip, hist, or summary)\n", mode);
         free(buf);
         return 1;
     }

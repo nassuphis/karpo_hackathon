@@ -501,7 +501,104 @@ def test_hist_clusteriness():
 
 
 # ================================================================
-# 12. Clip quantile narrows range
+# 12. Summary mode
+# ================================================================
+
+def run_summary(bin_path, degree, metric="proximity", quantile_lo="0.001", quantile_hi="0.999"):
+    """Run summary mode via Docker."""
+    import shutil
+    host_bin = os.path.join(LAMBDA_DIR, "_test_input.bin")
+    shutil.copy(bin_path, host_bin)
+    try:
+        args = (f"/src/solve_proximity_stats /src/_test_input.bin --mode=summary "
+                f"--degree={degree} --metric={metric} "
+                f"--quantile_lo={quantile_lo} --quantile_hi={quantile_hi}")
+        r = _docker_run(args)
+        if r.returncode != 0:
+            return None, r.stderr
+        return json.loads(r.stdout), None
+    finally:
+        try:
+            os.remove(host_bin)
+        except OSError:
+            pass
+
+
+def test_summary_all_fields():
+    """Summary returns all required fields."""
+    path = "/tmp/sp_test_summary.bin"
+    solves = []
+    for i in range(200):
+        d = 0.001 + (i / 200.0) * 2.0
+        solves.append([(0.0, 0.0), (d, 0.0)])
+    write_bin(path, solves, 2)
+    result, err = run_summary(path, 2, metric="proximity", quantile_lo="0.05", quantile_hi="0.95")
+    assert result is not None, f"summary failed: {err}"
+    assert result["mode"] == "summary"
+    assert result["metric"] == "proximity"
+    assert result["n_solves"] == 200
+    assert result["degree"] == 2
+    for field in ["min_score", "max_score", "mean_score", "stddev_score",
+                  "q05", "q10", "q25", "q50", "q75", "q90", "q95",
+                  "clip_lo", "clip_hi", "full_range", "clip_range",
+                  "clip_below_count", "clip_inrange_count", "clip_above_count",
+                  "clip_below_frac", "clip_inrange_frac", "clip_above_frac",
+                  "clip_fallback", "clip_fallback_reason",
+                  "hist_bins", "hist_full"]:
+        assert field in result, f"missing field: {field}"
+    os.remove(path)
+
+
+def test_summary_quantiles_monotone():
+    """Quantiles are monotone: min <= q05 <= ... <= q95 <= max."""
+    path = "/tmp/sp_test_summary_mono.bin"
+    solves = [[(0.0, 0.0), (d, 0.0)] for d in [0.001 + i * 0.01 for i in range(200)]]
+    write_bin(path, solves, 2)
+    r, _ = run_summary(path, 2)
+    assert r is not None
+    vals = [r["min_score"], r["q05"], r["q10"], r["q25"], r["q50"], r["q75"], r["q90"], r["q95"], r["max_score"]]
+    for i in range(len(vals) - 1):
+        assert vals[i] <= vals[i + 1] + 1e-10, f"not monotone at index {i}: {vals}"
+    os.remove(path)
+
+
+def test_summary_hist_sum_equals_n():
+    """Histogram bin sum equals n_solves."""
+    path = "/tmp/sp_test_summary_hsum.bin"
+    solves = [[(0.0, 0.0), (d, 0.0)] for d in [0.1 * i for i in range(50)]]
+    write_bin(path, solves, 2)
+    r, _ = run_summary(path, 2)
+    assert r is not None
+    assert sum(r["hist_full"]) == r["n_solves"]
+    assert r["hist_bins"] == 32
+    os.remove(path)
+
+
+def test_summary_occupancy_sum():
+    """Clip occupancy counts sum to n_solves."""
+    path = "/tmp/sp_test_summary_occ.bin"
+    solves = [[(0.0, 0.0), (0.001 + i * 0.01, 0.0)] for i in range(200)]
+    write_bin(path, solves, 2)
+    r, _ = run_summary(path, 2, quantile_lo="0.05", quantile_hi="0.95")
+    assert r is not None
+    total = r["clip_below_count"] + r["clip_inrange_count"] + r["clip_above_count"]
+    assert total == r["n_solves"], f"occupancy sum {total} != n_solves {r['n_solves']}"
+    os.remove(path)
+
+
+def test_summary_fallback_on_small_sample():
+    """Small sample triggers fallback."""
+    path = "/tmp/sp_test_summary_small.bin"
+    write_bin(path, [SOLVE_A, SOLVE_B], 2)
+    r, _ = run_summary(path, 2)
+    assert r is not None
+    assert r["clip_fallback"] is True
+    assert r["clip_fallback_reason"] == "small_sample"
+    os.remove(path)
+
+
+# ================================================================
+# 13. Clip quantile narrows range
 # ================================================================
 
 def test_clip_quantile_narrows_range():
@@ -644,6 +741,12 @@ if __name__ == "__main__":
         # Non-proximity hist
         ("hist clusteriness metric", test_hist_clusteriness),
         ("hist spread metric", test_hist_spread),
+        # Summary mode
+        ("summary all fields", test_summary_all_fields),
+        ("summary quantiles monotone", test_summary_quantiles_monotone),
+        ("summary hist sum", test_summary_hist_sum_equals_n),
+        ("summary occupancy sum", test_summary_occupancy_sum),
+        ("summary fallback small", test_summary_fallback_on_small_sample),
         # Quantile tests
         ("clip quantile narrows range", test_clip_quantile_narrows_range),
         # Error handling

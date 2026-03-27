@@ -288,4 +288,66 @@ test.describe('Solve Score UI', () => {
     expect(payload.params.color_mode).toBe('solve_score');
     expect(payload.params.solve_metric).toBe('real_axis_proximity');
   });
+
+  test('Histogram button is visible beside Score clip q', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const btn = page.locator('#btn-solve-histogram');
+    await expect(btn).toBeVisible();
+    expect(await btn.textContent()).toBe('Histogram');
+  });
+
+  test('Histogram button calls solve_proximity with summary phase', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    // Activate solve_score mode
+    const solveCircle = page.locator('#palette-circles-solve-score .pal-circle').first();
+    await solveCircle.click();
+    // Set quantile
+    await page.evaluate(() => {
+      document.getElementById('render-solve-score-quantile').value = '3.0';
+      document.getElementById('render-results-dir').value = 'test_hist';
+    });
+
+    // Intercept lambdaPost calls
+    await page.evaluate(() => {
+      window._histPayload = null;
+      window.lambdaPost = async function(name, body, path) {
+        if (name === 'solve_proximity') {
+          window._histPayload = body;
+          return {
+            mode: 'summary', metric: 'proximity', n_solves: 100, degree: 5,
+            min_score: -1, max_score: 2, mean_score: 0.5, stddev_score: 0.3,
+            q05: -0.5, q10: -0.3, q25: 0.1, q50: 0.5, q75: 0.9, q90: 1.2, q95: 1.5,
+            clip_quantile: 0.03, clip_lo: -0.5, clip_hi: 1.5, full_range: 3, clip_range: 2,
+            clip_below_count: 5, clip_inrange_count: 90, clip_above_count: 5,
+            clip_below_frac: 0.05, clip_inrange_frac: 0.9, clip_above_frac: 0.05,
+            clip_fallback: false, clip_fallback_reason: null,
+            hist_bins: 32, hist_full: Array(32).fill(3),
+            dl_ms: 10, compute_ms: 5,
+          };
+        }
+        if (name === 'storage' && path === '/detail') {
+          return { calc: { degree: 5, lores: { bin_key: 'renders/test_hist/lores.bin' } } };
+        }
+        return {};
+      };
+    });
+
+    await page.click('#btn-solve-histogram');
+    // Wait a tick for async completion
+    await page.waitForTimeout(500);
+
+    const payload = await page.evaluate(() => window._histPayload);
+    expect(payload).not.toBeNull();
+    expect(payload.phase).toBe('summary');
+    expect(payload.metric).toBe('proximity');
+    expect(payload.solve_score_quantile).toBeCloseTo(0.03, 3);
+    expect(payload.lores_bin_key).toBe('renders/test_hist/lores.bin');
+    expect(payload.degree).toBe(5);
+
+    // Check log output contains histogram lines
+    const logText = await page.locator('#render-log').textContent();
+    expect(logText).toContain('Solve histogram');
+    expect(logText).toContain('median=');
+    expect(logText).toContain('clip');
+  });
 });

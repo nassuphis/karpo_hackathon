@@ -383,6 +383,7 @@ button {
                     <span id="render-solve-score-quantile-val" style="font-size:10px; display:inline-block; width:2.5em; text-align:right">0.1</span><span style="font-size:10px">%</span>
                     <input type="range" id="render-solve-score-quantile" min="0.1" max="5.0" step="0.1" value="0.1" style="width:120px; margin-left:4px"
                         oninput="document.getElementById('render-solve-score-quantile-val').textContent=parseFloat(this.value).toFixed(1)">
+                    <button id="btn-solve-histogram" onclick="runSolveScoreHistogramDebug()" style="font-size:10px; margin-left:8px; padding:1px 8px">Histogram</button>
                 </div>
                 <div class="color-row">
                     <span class="color-dot" data-mode="constant" onclick="setColorMode('constant')"></span>
@@ -1326,6 +1327,87 @@ async function runCoeffBilevelPipeline() {
     } finally {
         if (btn) btn.disabled = false;
         if (renderBtn) renderBtn.disabled = false;
+    }
+}
+
+// ── Solve Histogram Debug ────────────────────────────────────────────────
+
+async function runSolveScoreHistogramDebug() {
+    const btn = document.getElementById('btn-solve-histogram');
+    const statusEl = document.getElementById('render-status');
+    const jobId = document.getElementById('render-results-dir').value.trim();
+
+    if (!jobId) { log('Histogram: no results dir', 'err', 'render-log'); return; }
+    if (renderColorMode !== 'solve_score') { log('Histogram: select Solve score mode first', 'err', 'render-log'); return; }
+
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Histogram...'; }
+        statusEl.textContent = 'Computing solve histogram...';
+        statusEl.className = 'status';
+        log('Solve histogram: starting...', '', 'render-log');
+
+        // Load calc metadata
+        const detail = await lambdaPost('storage', { job_id: jobId }, '/detail');
+        const calc = detail.calc || {};
+        const degree = calc.degree;
+        const loresKey = calc.lores && calc.lores.bin_key;
+        if (!degree || !loresKey) {
+            throw new Error('calc.json missing degree or lores.bin_key');
+        }
+
+        // Build payload from current UI state
+        const q = parseFloat(document.getElementById('render-solve-score-quantile').value) / 100;
+        const p = _renderCommonParams();
+        const payload = {
+            phase: 'summary',
+            job_id: jobId,
+            degree: degree,
+            metric: renderSolveMetric,
+            solve_score_quantile: q,
+            lores_bin_key: loresKey,
+            root_transforms: p.rootTransforms || [],
+        };
+
+        const summary = await lambdaPost('solve_proximity', payload);
+
+        // Format and log results
+        const s = summary;
+        const fmt = (v) => typeof v === 'number' ? v.toFixed(3) : v;
+        const pct = (v) => typeof v === 'number' ? (v * 100).toFixed(1) + '%' : v;
+
+        log(`Solve histogram: metric=${s.metric}, q=${(q*100).toFixed(1)}%, n=${s.n_solves}, degree=${s.degree}`, '', 'render-log');
+        log(`  min=${fmt(s.min_score)}  p05=${fmt(s.q05)}  p10=${fmt(s.q10)}  p25=${fmt(s.q25)}  median=${fmt(s.q50)}  p75=${fmt(s.q75)}  p90=${fmt(s.q90)}  p95=${fmt(s.q95)}  max=${fmt(s.max_score)}`, '', 'render-log');
+        log(`  mean=${fmt(s.mean_score)}  std=${fmt(s.stddev_score)}`, '', 'render-log');
+        log(`  clip[q..1-q]: lo=${fmt(s.clip_lo)}  hi=${fmt(s.clip_hi)}  width=${fmt(s.clip_range)} / full=${fmt(s.full_range)}`, '', 'render-log');
+        log(`  clip occupancy: below=${s.clip_below_count} (${pct(s.clip_below_frac)})  in=${s.clip_inrange_count} (${pct(s.clip_inrange_frac)})  above=${s.clip_above_count} (${pct(s.clip_above_frac)})`, '', 'render-log');
+        if (s.clip_fallback) {
+            log(`  fallback: ${s.clip_fallback_reason}`, 'err', 'render-log');
+        }
+        log(`  lores timings: download=${s.dl_ms}ms  compute=${s.compute_ms}ms`, '', 'render-log');
+
+        // ASCII histogram
+        const hist = s.hist_full || [];
+        if (hist.length > 0) {
+            const maxCount = Math.max(...hist);
+            const barWidth = 40;
+            log(`  histogram (${s.hist_bins} bins, full range):`, '', 'render-log');
+            for (let i = 0; i < hist.length; i++) {
+                const bar = maxCount > 0 ? '#'.repeat(Math.round(hist[i] / maxCount * barWidth)) : '';
+                const idx = String(i).padStart(2, '0');
+                const cnt = String(hist[i]).padStart(6, ' ');
+                log(`    ${idx} ${cnt} |${bar}`, '', 'render-log');
+            }
+        }
+
+        statusEl.textContent = 'Ready';
+        statusEl.className = 'status ok';
+
+    } catch (e) {
+        log('Solve histogram failed: ' + e.message, 'err', 'render-log');
+        statusEl.textContent = 'Solve histogram failed';
+        statusEl.className = 'status error';
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Histogram'; }
     }
 }
 

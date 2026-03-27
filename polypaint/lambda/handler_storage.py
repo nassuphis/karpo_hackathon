@@ -383,8 +383,11 @@ def handle_clean_render(event):
         objects.append({"Key": prefix + "preview_color.png"})
         objects.append({"Key": prefix + "image_palette.jpeg"})
         objects.append({"Key": prefix + "preview_palette.png"})
-    elif pipeline in ("bilevel", "coeff_bilevel"):
+    elif pipeline == "bilevel":
         objects.append({"Key": prefix + "preview_bilevel.png"})
+    elif pipeline == "coeff_bilevel":
+        objects.append({"Key": prefix + "preview_bilevel.png"})
+        objects.append({"Key": prefix + "preview_coeffs.png"})
 
     total_deleted = 0
     if objects:
@@ -619,6 +622,7 @@ def handle_render_summary(event):
         "bilevel_png": prefix + "image_bilevel.png",
         "coeff_tif": prefix + "image_coeffs_bilevel.tif",
         "coeff_preview_png": prefix + "image_coeffs_bilevel_preview.png",
+        "preview_coeffs_png": prefix + "preview_coeffs.png",
         "preview_color_png": prefix + "preview_color.png",
         "preview_bilevel_png": prefix + "preview_bilevel.png",
         "palette_jpeg": prefix + "image_palette.jpeg",

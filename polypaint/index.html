@@ -1913,7 +1913,8 @@ function renderArtifactPanel(jobId, summary) {
     const colorPreviewUrl = (a.preview_color_png && a.preview_color_png.exists) ? a.preview_color_png.url : null;
     const bilevelPreviewUrl = (a.bilevel_preview_png && a.bilevel_preview_png.exists) ? a.bilevel_preview_png.url
         : (a.preview_bilevel_png && a.preview_bilevel_png.exists) ? a.preview_bilevel_png.url : null;
-    const coeffPreviewUrl = (a.coeff_preview_png && a.coeff_preview_png.exists) ? a.coeff_preview_png.url : null;
+    const coeffPreviewUrl = (a.preview_coeffs_png && a.preview_coeffs_png.exists) ? a.preview_coeffs_png.url
+        : (a.coeff_preview_png && a.coeff_preview_png.exists) ? a.coeff_preview_png.url : null;
     const palettePreviewUrl = (a.preview_palette_png && a.preview_palette_png.exists) ? a.preview_palette_png.url : null;
 
     const colorSourceKey = (a.color_png && a.color_png.exists) ? a.color_png.key

@@ -55,6 +55,7 @@ def handle_raster(params):
             for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
                 f.write(chunk)
         dl_ms = int((time.time() - t0) * 1000)
+        report_status(job_id, task_id, "bin_downloaded")
 
         # Clean stale .bits files from previous invocations (warm container reuse)
         import glob
@@ -144,6 +145,7 @@ def handle_coeff_raster(params):
             for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
                 f.write(chunk)
         dl_ms = int((time.time() - t0) * 1000)
+        report_status(job_id, task_id, "bin_downloaded")
 
         # Clean stale .bits files from previous invocations (warm container reuse)
         import glob
@@ -237,6 +239,7 @@ def handle_merge(params):
                 if e.response['Error']['Code'] == 'NoSuchKey':
                     continue  # No hits from this stripe for this tile
                 raise
+        report_status(job_id, task_id, "bits_downloaded")
 
         # Run bilevel_merge
         out_path = "/tmp/tile.tif"

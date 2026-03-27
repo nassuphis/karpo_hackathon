@@ -1716,12 +1716,15 @@ async function _showPreview(which) {
     const sources = window._previewSources || {};
     const el = document.getElementById('preview-container');
     if (!el) return;
-    const cb = document.getElementById('prev-btn-color');
-    const bb = document.getElementById('prev-btn-bilevel');
-    const pb = document.getElementById('prev-btn-palette');
-    if (cb) cb.style.fontWeight = which === 'color' ? 'bold' : '';
-    if (bb) bb.style.fontWeight = which === 'bilevel' ? 'bold' : '';
-    if (pb) pb.style.fontWeight = which === 'palette' ? 'bold' : '';
+    const prevBtns = {
+        color: document.getElementById('prev-btn-color'),
+        bilevel: document.getElementById('prev-btn-bilevel'),
+        coeffs: document.getElementById('prev-btn-coeffs'),
+        palette: document.getElementById('prev-btn-palette'),
+    };
+    for (const [mode, btn] of Object.entries(prevBtns)) {
+        if (btn) btn.style.fontWeight = mode === which ? 'bold' : '';
+    }
 
     if (urls[which]) {
         el.innerHTML = '<img src="' + urls[which] + '" style="max-width:100%; border:1px solid #333; background:#000; display:block">';
@@ -1733,12 +1736,9 @@ async function _showPreview(which) {
         const { jobId, sourceKey, previewKey } = sources[which];
         const taskId = 'render_preview_' + which;
         // Disable all preview buttons to prevent overlapping jobs
-        const cb = document.getElementById('prev-btn-color');
-        const bb = document.getElementById('prev-btn-bilevel');
-        const pb = document.getElementById('prev-btn-palette');
-        if (cb) cb.disabled = true;
-        if (bb) bb.disabled = true;
-        if (pb) pb.disabled = true;
+        const allPrevBtns = ['prev-btn-color','prev-btn-bilevel','prev-btn-coeffs','prev-btn-palette']
+            .map(id => document.getElementById(id)).filter(Boolean);
+        allPrevBtns.forEach(b => b.disabled = true);
         el.innerHTML = '<div style="color:#888; font-size:12px; padding:12px 0">Generating preview...</div>';
         try {
             await lambdaPost('storage', { job_id: jobId, task_id: taskId }, '/delete-task').catch(() => {});
@@ -1797,9 +1797,7 @@ async function _showPreview(which) {
             el.innerHTML = '<div style="color:#c44; font-size:12px; padding:12px 0">Preview failed: ' + e.message + '</div>';
         } finally {
             // Re-enable buttons
-            if (cb) cb.disabled = false;
-            if (bb) bb.disabled = false;
-            if (pb) pb.disabled = false;
+            allPrevBtns.forEach(b => b.disabled = false);
         }
         return;
     }
@@ -1911,41 +1909,36 @@ function renderArtifactPanel(jobId, summary) {
     // --- Preview section ---
     html += '<hr style="border:none; border-top:1px solid #444; margin:12px 0 8px">';
 
-    // Determine available preview sources
+    // Determine available preview sources — four independent modes
     const colorPreviewUrl = (a.preview_color_png && a.preview_color_png.exists) ? a.preview_color_png.url : null;
     const bilevelPreviewUrl = (a.bilevel_preview_png && a.bilevel_preview_png.exists) ? a.bilevel_preview_png.url
-        : (a.coeff_preview_png && a.coeff_preview_png.exists) ? a.coeff_preview_png.url
         : (a.preview_bilevel_png && a.preview_bilevel_png.exists) ? a.preview_bilevel_png.url : null;
+    const coeffPreviewUrl = (a.coeff_preview_png && a.coeff_preview_png.exists) ? a.coeff_preview_png.url : null;
+    const palettePreviewUrl = (a.preview_palette_png && a.preview_palette_png.exists) ? a.preview_palette_png.url : null;
 
     const colorSourceKey = (a.color_png && a.color_png.exists) ? a.color_png.key
         : (a.color_jpeg && a.color_jpeg.exists) ? a.color_jpeg.key : null;
-    const bilevelSourceKey = (a.bilevel_tif && a.bilevel_tif.exists) ? a.bilevel_tif.key
-        : (a.coeff_tif && a.coeff_tif.exists) ? a.coeff_tif.key : null;
-    const palettePreviewUrl = (a.preview_palette_png && a.preview_palette_png.exists) ? a.preview_palette_png.url : null;
+    const bilevelSourceKey = (a.bilevel_tif && a.bilevel_tif.exists) ? a.bilevel_tif.key : null;
+    const coeffSourceKey = (a.coeff_tif && a.coeff_tif.exists) ? a.coeff_tif.key : null;
     const paletteSourceKey = (a.palette_jpeg && a.palette_jpeg.exists) ? a.palette_jpeg.key : null;
 
     const colorCanGen = !colorPreviewUrl && colorSourceKey;
     const bilevelCanGen = !bilevelPreviewUrl && bilevelSourceKey;
+    const coeffCanGen = !coeffPreviewUrl && coeffSourceKey;
     const paletteCanGen = !palettePreviewUrl && paletteSourceKey;
     const colorEnabled = colorPreviewUrl || colorCanGen;
     const bilevelEnabled = bilevelPreviewUrl || bilevelCanGen;
+    const coeffEnabled = coeffPreviewUrl || coeffCanGen;
     const paletteEnabled = palettePreviewUrl || paletteCanGen;
-    const hasBilevelPreview = a.bilevel_preview_png && a.bilevel_preview_png.exists;
-    const hasBilevelTif = a.bilevel_tif && a.bilevel_tif.exists;
-    const hasCoeffPreview = a.coeff_preview_png && a.coeff_preview_png.exists;
-    const hasCoeffTif = a.coeff_tif && a.coeff_tif.exists;
-    const bilevelLabel = hasBilevelPreview || hasBilevelTif ? 'Bilevel' : hasCoeffPreview || hasCoeffTif ? 'Coeffs' : 'Bilevel';
 
-    html += '<div style="display:flex; gap:6px; margin-bottom:6px">';
-    html += '<button id="prev-btn-color" class="btn-secondary" style="' + btnStyle + (!colorEnabled ? '; opacity:0.4; cursor:default' : '') + '" '
-        + (colorEnabled ? 'onclick="_showPreview(\'color\')"' : 'disabled')
-        + '>Color preview</button>';
-    html += '<button id="prev-btn-bilevel" class="btn-secondary" style="' + btnStyle + (!bilevelEnabled ? '; opacity:0.4; cursor:default' : '') + '" '
-        + (bilevelEnabled ? 'onclick="_showPreview(\'bilevel\')"' : 'disabled')
-        + '>' + bilevelLabel + ' preview</button>';
-    html += '<button id="prev-btn-palette" class="btn-secondary" style="' + btnStyle + (!paletteEnabled ? '; opacity:0.4; cursor:default' : '') + '" '
-        + (paletteEnabled ? 'onclick="_showPreview(\'palette\')"' : 'disabled')
-        + '>Palette preview</button>';
+    html += '<div style="display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap">';
+    const _prevBtn = (id, label, mode, enabled) =>
+        '<button id="' + id + '" class="btn-secondary" style="' + btnStyle + (!enabled ? '; opacity:0.4; cursor:default' : '') + '" '
+        + (enabled ? 'onclick="_showPreview(\'' + mode + '\')"' : 'disabled') + '>' + label + '</button>';
+    html += _prevBtn('prev-btn-color', 'Color', 'color', colorEnabled);
+    html += _prevBtn('prev-btn-bilevel', 'Bilevel', 'bilevel', bilevelEnabled);
+    html += _prevBtn('prev-btn-coeffs', 'Coeffs', 'coeffs', coeffEnabled);
+    html += _prevBtn('prev-btn-palette', 'Palette', 'palette', paletteEnabled);
     html += '</div>';
 
     html += '<div id="preview-container"><div style="color:#888; font-size:12px; padding:12px 0">No preview selected</div></div>';
@@ -1953,7 +1946,7 @@ function renderArtifactPanel(jobId, summary) {
     preview.innerHTML = html;
 
     // Store URLs and generatable sources for on-demand preview
-    window._previewUrls = { color: colorPreviewUrl, bilevel: bilevelPreviewUrl, palette: palettePreviewUrl };
+    window._previewUrls = { color: colorPreviewUrl, bilevel: bilevelPreviewUrl, coeffs: coeffPreviewUrl, palette: palettePreviewUrl };
     window._previewSources = {};
     if (colorCanGen) {
         window._previewSources.color = { jobId: jobId, sourceKey: colorSourceKey, previewKey: 'renders/' + jobId + '/preview_color.png' };
@@ -1961,10 +1954,13 @@ function renderArtifactPanel(jobId, summary) {
     if (bilevelCanGen) {
         window._previewSources.bilevel = { jobId: jobId, sourceKey: bilevelSourceKey, previewKey: 'renders/' + jobId + '/preview_bilevel.png' };
     }
+    if (coeffCanGen) {
+        window._previewSources.coeffs = { jobId: jobId, sourceKey: coeffSourceKey, previewKey: 'renders/' + jobId + '/preview_coeffs.png' };
+    }
     if (paletteCanGen) {
         window._previewSources.palette = { jobId: jobId, sourceKey: paletteSourceKey, previewKey: 'renders/' + jobId + '/preview_palette.png' };
     }
-    const defaultTab = colorPreviewUrl ? 'color' : bilevelPreviewUrl ? 'bilevel' : palettePreviewUrl ? 'palette' : null;
+    const defaultTab = colorPreviewUrl ? 'color' : bilevelPreviewUrl ? 'bilevel' : coeffPreviewUrl ? 'coeffs' : palettePreviewUrl ? 'palette' : null;
     if (defaultTab) _showPreview(defaultTab);
 
     // Info line

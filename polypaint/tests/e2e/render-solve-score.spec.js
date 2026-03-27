@@ -409,6 +409,37 @@ test.describe('Solve Score UI', () => {
     await expect(deepzoom).toBeVisible();
   });
 
+  test('all four preview modes show when all artifacts exist', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      renderArtifactPanel('test_job', {
+        artifacts: {
+          color_jpeg: { exists: true, key: 'renders/test_job/image.jpeg', url: 'https://example.com/c.jpeg', size: 50000, width: 1000, height: 1000 },
+          color_png: { exists: false },
+          bilevel_tif: { exists: true, key: 'renders/test_job/image_bilevel.tif', url: 'https://example.com/b.tif', size: 60000, width: 1000, height: 1000 },
+          bilevel_preview_png: { exists: false },
+          bilevel_compat_tif: { exists: false },
+          bilevel_png: { exists: false },
+          coeff_tif: { exists: true, key: 'renders/test_job/image_coeffs_bilevel.tif', url: 'https://example.com/co.tif', size: 70000, width: 1000, height: 1000 },
+          coeff_preview_png: { exists: false },
+          preview_color_png: { exists: false },
+          preview_bilevel_png: { exists: false },
+          palette_jpeg: { exists: true, key: 'renders/test_job/image_palette.jpeg', url: 'https://example.com/p.jpeg', size: 40000, width: 1000, height: 1000 },
+          preview_palette_png: { exists: false },
+        },
+        calc: { exists: true, N: 1000, degree: 5 },
+        deepzoom_latest: { exists: false },
+      });
+    });
+    // All four preview buttons should be present and enabled
+    for (const id of ['prev-btn-color', 'prev-btn-bilevel', 'prev-btn-coeffs', 'prev-btn-palette']) {
+      const btn = page.locator('#' + id);
+      await expect(btn).toBeVisible();
+      const disabled = await btn.getAttribute('disabled');
+      expect(disabled).toBeNull();
+    }
+  });
+
   test('preview section shows Palette toggle when artifact exists', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(() => {

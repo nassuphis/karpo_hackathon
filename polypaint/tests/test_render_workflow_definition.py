@@ -63,6 +63,7 @@ class TestWorkflowDefinition(unittest.TestCase):
             "ColorRasterPhase", "ColorRasterMap",
             "ColorFinalizePhase", "ColorFinalizeMap",
             "ColorEncodePhase", "ColorEncodeTask",
+            "ColorPreviewTask",
         ]:
             assert name in self.states, f"missing color state: {name}"
 
@@ -72,6 +73,7 @@ class TestWorkflowDefinition(unittest.TestCase):
             "BilevelRasterPhase", "BilevelRasterMap",
             "BilevelMergePhase", "BilevelMergeMap",
             "BilevelStitchPhase", "BilevelStitchTask",
+            "BilevelPreviewTask",
         ]:
             assert name in self.states, f"missing bilevel state: {name}"
 
@@ -81,6 +83,7 @@ class TestWorkflowDefinition(unittest.TestCase):
             "CoeffRasterPhase", "CoeffRasterMap",
             "CoeffMergePhase", "CoeffMergeMap",
             "CoeffStitchPhase", "CoeffStitchTask",
+            "CoeffPreviewTask",
         ]:
             assert name in self.states, f"missing coeff state: {name}"
 
@@ -199,6 +202,17 @@ class TestWorkflowDefinition(unittest.TestCase):
         assert len(catch) > 0, "WorkflowWrapper missing Catch"
         assert "States.ALL" in catch[0]["ErrorEquals"]
         assert catch[0]["Next"] == "ReportError"
+
+    def test_preview_tasks_target_preview_lambda(self):
+        """Each pipeline's preview task invokes the preview Lambda."""
+        asl_str = json.dumps(self.asl)
+        assert "placeholder-PreviewFunctionArn" in asl_str, "missing PreviewFunctionArn placeholder"
+        for name in ["ColorPreviewTask", "BilevelPreviewTask", "CoeffPreviewTask"]:
+            assert name in self.states, f"missing preview state: {name}"
+            s = self.states[name]
+            assert s["Type"] == "Task"
+            params = json.dumps(s.get("Parameters", {}))
+            assert "PreviewFunctionArn" in params, f"{name} should target preview Lambda"
 
     def test_worker_states_target_real_workers(self):
         """Worker states inside Map processors target real worker Lambdas, not intermediaries."""

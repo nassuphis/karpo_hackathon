@@ -92,6 +92,13 @@ def handler(event, context):
             raise RuntimeError(f"raw2jpeg failed: {enc_result.stderr.strip()}")
 
         # Upload to S3
+        # Delete stale cached preview so browser regenerates from new source
+        preview_key = f"renders/{job_id}/preview_palette.png"
+        try:
+            s3.delete_object(Bucket=BUCKET, Key=preview_key)
+        except Exception:
+            pass
+
         out_key = f"renders/{job_id}/image_palette.jpeg"
         file_size = os.path.getsize(tmp_jpeg)
         s3_metadata = {

@@ -229,6 +229,7 @@ const renderEls = {
     'render-solve-score-quantile': { value: '0.1' },
     'render-solve-score-quantile-val': {},
     'btn-solve-histogram': {},
+    'btn-palette-debug': {},
     'render-status': {},
     'render-preview': {},
     'render-info': {},
@@ -1409,7 +1410,78 @@ async function testPipeline(name, call) {
         console.log('  13d correct payload, no dispatch, no activeRun: OK');
     }
 
-    // Step 14: Render refresh — tested in Playwright (VM cannot override let-scoped lambdaPost/fetch)
+    // Step 14: Palette debug button
+    console.log('');
+    console.log('--- Palette debug ---');
+
+    // 14a: button exists
+    {
+        const btn = ctx._elements['btn-palette-debug'];
+        if (!btn) { console.error('FATAL: btn-palette-debug not found'); process.exit(1); }
+        console.log('  14a palette button exists: OK');
+    }
+
+    // 14b: refuses in non-solve mode
+    {
+        vm.runInContext("renderColorMode = 'rainbow'; _activeRenderRun = null;", ctx);
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_pal_job' };
+        vm.runInContext("var _palLogMsg = ''; var _palOrigLog = log; log = function(m,c,t){ _palLogMsg += m + ' '; _palOrigLog(m,c,t); };", ctx);
+        try { await vm.runInContext('(async()=>{ await runPaletteDebug(); })()', ctx); } catch(e) {}
+        const msg = vm.runInContext('_palLogMsg', ctx);
+        if (!msg.includes('Solve score mode')) { console.error('FATAL: palette should reject non-solve mode: ' + msg); process.exit(1); }
+        vm.runInContext('log = _palOrigLog;', ctx);
+        console.log('  14b refuses in non-solve mode: OK');
+    }
+
+    // 14c: sends correct payload
+    {
+        vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'area'; _activeRenderRun = null;", ctx);
+        vm.runInContext("renderSolveScorePalette = 'turbo';", ctx);
+        ctx._elements['render-solve-score-quantile'].value = '1.0';
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'pal_test' };
+        vm.runInContext(`
+            var _palTarget = null; var _palBody = null; var _palDispatch = false;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch') { _palDispatch = true; return {}; }
+                if (name === 'palette-debug') {
+                    _palTarget = name;
+                    _palBody = body;
+                    return {
+                        job_id: 'pal_test', out_key: 'renders/pal_test/image_palette.jpeg',
+                        image_url: 'https://example.com/pal.jpeg',
+                        width: 100, height: 100, metric: 'area', palette: 'turbo',
+                        solve_score_quantile: 0.01, lores_N: 10, N: 100, times: 1,
+                        n_samples_used: 100, clip_lo: -1, clip_hi: 1, cuts_norm: [],
+                        clip_fallback: false, clip_fallback_reason: null,
+                        dl_ms: 5, compute_ms: 3, encode_ms: 2, file_size: 1024, using_pass: 0,
+                    };
+                }
+                if (name === 'storage' && path === '/detail') {
+                    return { calc: { degree: 5, N: 100, times: 1, lores: { N: 10, bin_key: 'renders/pal_test/lores.bin' } } };
+                }
+                if (name === 'storage' && path === '/render-summary') {
+                    return { artifacts: {}, calc: { exists: true, N: 100 } };
+                }
+                return {};
+            };
+            refreshRenderArtifacts = async function() {};
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await runPaletteDebug(); })()', ctx); } catch(e) {}
+        const target = vm.runInContext('_palTarget', ctx);
+        const body = vm.runInContext('_palBody', ctx);
+        const dispatched = vm.runInContext('_palDispatch', ctx);
+        if (target !== 'palette-debug') { console.error('FATAL: should call palette-debug, got ' + target); process.exit(1); }
+        if (body.metric !== 'area') { console.error('FATAL: metric should be area'); process.exit(1); }
+        if (body.palette !== 'turbo') { console.error('FATAL: palette should be turbo'); process.exit(1); }
+        if (body.N !== 100) { console.error('FATAL: N should be 100'); process.exit(1); }
+        if (body.lores_N !== 10) { console.error('FATAL: lores_N should be 10'); process.exit(1); }
+        if (dispatched) { console.error('FATAL: palette must not call dispatch'); process.exit(1); }
+        const runSet = vm.runInContext('_activeRenderRun !== null', ctx);
+        if (runSet) { console.error('FATAL: palette must not set _activeRenderRun'); process.exit(1); }
+        console.log('  14c correct payload, no dispatch: OK');
+    }
+
+    // Step 15: Render refresh — tested in Playwright (VM cannot override let-scoped lambdaPost/fetch)
     // See tests/e2e/render-refresh.spec.js for real browser coverage.
 
     console.log('=== Frontend JS Execution Test PASSED ===');

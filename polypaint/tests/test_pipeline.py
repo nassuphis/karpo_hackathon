@@ -1335,7 +1335,7 @@ class TestRenderSummary(unittest.TestCase):
 
     @patch("handler_storage.s3")
     def test_render_summary_heads_exact_keys_only(self, mock_s3):
-        """render-summary uses HEAD for exactly 10 artifact keys, never paginator."""
+        """render-summary uses HEAD for exactly 12 artifact keys, never paginator."""
         from handler_storage import handle_render_summary
         mock_s3.head_object.side_effect = Exception("NoSuchKey")
         mock_s3.get_object.side_effect = Exception("NoSuchKey")
@@ -1350,7 +1350,7 @@ class TestRenderSummary(unittest.TestCase):
         # HEAD should be called for exactly 10 keys
         head_keys = [c.kwargs.get("Key") or c.args[1] if len(c.args) > 1 else c.kwargs.get("Key")
                      for c in mock_s3.head_object.call_args_list]
-        self.assertEqual(len(head_keys), 10, f"expected 10 HEAD calls, got {len(head_keys)}")
+        self.assertEqual(len(head_keys), 12, f"expected 12 HEAD calls, got {len(head_keys)}")
 
     @patch("handler_storage.s3")
     def test_render_summary_returns_existing_artifact_urls(self, mock_s3):

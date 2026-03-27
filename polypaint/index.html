@@ -420,6 +420,7 @@ button {
                 <button class="btn-primary" id="btn-raster-all" onclick="runRasterPipeline()">Render</button>
                 <button class="btn-primary" id="btn-bilevel" onclick="runBilevelPipeline()" style="background:#444">BiLevel</button>
                 <button class="btn-primary" id="btn-coeffs" onclick="runCoeffBilevelPipeline()" style="background:#446">Coeffs</button>
+                <button class="btn-primary" id="btn-palette-debug" onclick="runPaletteDebug()" style="background:#545">Palette</button>
             </div>
             <div class="status" id="render-status"></div>
             <div id="render-preview" style="max-width:600px; margin-top:8px"></div>
@@ -1412,6 +1413,73 @@ async function runSolveScoreHistogramDebug() {
     }
 }
 
+// ── Palette Debug ────────────────────────────────────────────────────────
+
+async function runPaletteDebug() {
+    const btn = document.getElementById('btn-palette-debug');
+    const statusEl = document.getElementById('render-status');
+    const jobId = document.getElementById('render-results-dir').value.trim();
+
+    if (!jobId) { log('Palette: no results dir', 'err', 'render-log'); return; }
+    if (renderColorMode !== 'solve_score') { log('Palette: select Solve score mode first', 'err', 'render-log'); return; }
+    if (_activeRenderRun) { log('Palette: render in progress, wait for completion', 'err', 'render-log'); return; }
+
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Palette...'; }
+        statusEl.textContent = 'Generating palette JPEG...';
+        statusEl.className = 'status';
+        log('Palette debug: starting...', '', 'render-log');
+
+        // Load calc metadata
+        const detail = await lambdaPost('storage', { job_id: jobId }, '/detail');
+        const calc = detail.calc || {};
+        const degree = calc.degree;
+        const fullN = calc.N;
+        const loresN = calc.lores && calc.lores.N;
+        const loresKey = calc.lores && calc.lores.bin_key;
+        const times = calc.times || 1;
+        if (!degree || !fullN || !loresN || !loresKey) {
+            throw new Error('calc.json missing degree, N, lores.N, or lores.bin_key');
+        }
+
+        const q = parseFloat(document.getElementById('render-solve-score-quantile').value) / 100;
+        const p = _renderCommonParams();
+        const payload = {
+            job_id: jobId,
+            degree: degree,
+            N: fullN,
+            lores_N: loresN,
+            times: times,
+            lores_bin_key: loresKey,
+            metric: renderSolveMetric,
+            palette: _activeRenderPalette() || 'inferno',
+            solve_score_quantile: q,
+            root_transforms: p.rootTransforms || [],
+        };
+
+        const result = await lambdaPost('palette-debug', payload);
+
+        // Log results
+        const fb = result.clip_fallback ? result.clip_fallback_reason : 'none';
+        log(`Palette debug: metric=${result.metric}, palette=${result.palette}, q=${(q*100).toFixed(1)}%`, '', 'render-log');
+        log(`  lores grid: ${loresN}x${loresN}, target: ${fullN}x${fullN}, times=${times}, using pass=0${times > 1 ? ' only' : ''}`, '', 'render-log');
+        log(`  note: lores-only debug; not final hires solve-score bins`, '', 'render-log');
+        log(`  clip: lo=${result.clip_lo?.toFixed(3)}, hi=${result.clip_hi?.toFixed(3)}, fallback=${fb}`, '', 'render-log');
+        log(`  encode: ${Math.round(result.file_size/1024)} KB, dl=${result.dl_ms}ms, compute=${result.compute_ms}ms, encode=${result.encode_ms}ms`, '', 'render-log');
+
+        statusEl.textContent = 'Ready';
+        statusEl.className = 'status ok';
+        refreshRenderArtifacts(jobId);
+
+    } catch (e) {
+        log('Palette debug failed: ' + e.message, 'err', 'render-log');
+        statusEl.textContent = 'Palette failed';
+        statusEl.className = 'status error';
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Palette'; }
+    }
+}
+
 // ── Render Observer ──────────────────────────────────────────────────────
 
 function startActiveRenderObserver() {
@@ -1777,6 +1845,16 @@ function renderArtifactPanel(jobId, summary) {
         html += '</div>';
     }
 
+    // --- Palette JPEG row ---
+    if (a.palette_jpeg && a.palette_jpeg.exists) {
+        html += '<div style="' + rowStyle + '">';
+        html += '<strong style="min-width:110px; font-size:12px">Palette JPEG</strong>';
+        html += '<span style="' + dimStyle + '">' + infoOf(a.palette_jpeg) + '</span>';
+        html += '<button class="btn-primary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.palette_jpeg.url + '\',\'' + jobId + '_palette.jpeg\',\'' + a.palette_jpeg.key + '\')">Download</button>';
+        html += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runDeepZoomExport(\'' + jobId + '\',\'' + a.palette_jpeg.key + '\',this)">DeepZoom</button>';
+        html += '</div>';
+    }
+
     // --- DeepZoom viewer ---
     if (dz.exists) {
         html += '<div style="' + rowStyle + '">';
@@ -1798,10 +1876,15 @@ function renderArtifactPanel(jobId, summary) {
         : (a.color_jpeg && a.color_jpeg.exists) ? a.color_jpeg.key : null;
     const bilevelSourceKey = (a.bilevel_tif && a.bilevel_tif.exists) ? a.bilevel_tif.key
         : (a.coeff_tif && a.coeff_tif.exists) ? a.coeff_tif.key : null;
+    const palettePreviewUrl = (a.preview_palette_png && a.preview_palette_png.exists) ? a.preview_palette_png.url : null;
+    const paletteSourceKey = (a.palette_jpeg && a.palette_jpeg.exists) ? a.palette_jpeg.key : null;
+
     const colorCanGen = !colorPreviewUrl && colorSourceKey;
     const bilevelCanGen = !bilevelPreviewUrl && bilevelSourceKey;
+    const paletteCanGen = !palettePreviewUrl && paletteSourceKey;
     const colorEnabled = colorPreviewUrl || colorCanGen;
     const bilevelEnabled = bilevelPreviewUrl || bilevelCanGen;
+    const paletteEnabled = palettePreviewUrl || paletteCanGen;
     const hasBilevelPreview = a.bilevel_preview_png && a.bilevel_preview_png.exists;
     const hasBilevelTif = a.bilevel_tif && a.bilevel_tif.exists;
     const hasCoeffPreview = a.coeff_preview_png && a.coeff_preview_png.exists;
@@ -1815,6 +1898,9 @@ function renderArtifactPanel(jobId, summary) {
     html += '<button id="prev-btn-bilevel" class="btn-secondary" style="' + btnStyle + (!bilevelEnabled ? '; opacity:0.4; cursor:default' : '') + '" '
         + (bilevelEnabled ? 'onclick="_showPreview(\'bilevel\')"' : 'disabled')
         + '>' + bilevelLabel + ' preview</button>';
+    html += '<button id="prev-btn-palette" class="btn-secondary" style="' + btnStyle + (!paletteEnabled ? '; opacity:0.4; cursor:default' : '') + '" '
+        + (paletteEnabled ? 'onclick="_showPreview(\'palette\')"' : 'disabled')
+        + '>Palette preview</button>';
     html += '</div>';
 
     html += '<div id="preview-container"><div style="color:#888; font-size:12px; padding:12px 0">No preview selected</div></div>';
@@ -1822,7 +1908,7 @@ function renderArtifactPanel(jobId, summary) {
     preview.innerHTML = html;
 
     // Store URLs and generatable sources for on-demand preview
-    window._previewUrls = { color: colorPreviewUrl, bilevel: bilevelPreviewUrl };
+    window._previewUrls = { color: colorPreviewUrl, bilevel: bilevelPreviewUrl, palette: palettePreviewUrl };
     window._previewSources = {};
     if (colorCanGen) {
         window._previewSources.color = { jobId: jobId, sourceKey: colorSourceKey, previewKey: 'renders/' + jobId + '/preview_color.png' };
@@ -1830,7 +1916,10 @@ function renderArtifactPanel(jobId, summary) {
     if (bilevelCanGen) {
         window._previewSources.bilevel = { jobId: jobId, sourceKey: bilevelSourceKey, previewKey: 'renders/' + jobId + '/preview_bilevel.png' };
     }
-    const defaultTab = colorPreviewUrl ? 'color' : bilevelPreviewUrl ? 'bilevel' : null;
+    if (paletteCanGen) {
+        window._previewSources.palette = { jobId: jobId, sourceKey: paletteSourceKey, previewKey: 'renders/' + jobId + '/preview_palette.png' };
+    }
+    const defaultTab = colorPreviewUrl ? 'color' : bilevelPreviewUrl ? 'bilevel' : palettePreviewUrl ? 'palette' : null;
     if (defaultTab) _showPreview(defaultTab);
 
     // Info line

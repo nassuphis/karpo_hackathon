@@ -381,6 +381,8 @@ def handle_clean_render(event):
     pipeline = params.get("pipeline", "color")
     if pipeline == "color":
         objects.append({"Key": prefix + "preview_color.png"})
+        objects.append({"Key": prefix + "image_palette.jpeg"})
+        objects.append({"Key": prefix + "preview_palette.png"})
     elif pipeline in ("bilevel", "coeff_bilevel"):
         objects.append({"Key": prefix + "preview_bilevel.png"})
 
@@ -619,6 +621,8 @@ def handle_render_summary(event):
         "coeff_preview_png": prefix + "image_coeffs_bilevel_preview.png",
         "preview_color_png": prefix + "preview_color.png",
         "preview_bilevel_png": prefix + "preview_bilevel.png",
+        "palette_jpeg": prefix + "image_palette.jpeg",
+        "preview_palette_png": prefix + "preview_palette.png",
     }
     head_results = _head_artifact_keys(list(artifact_map.values()), presign=True)
     artifacts = {}

@@ -350,4 +350,11 @@ test.describe('Solve Score UI', () => {
     expect(logText).toContain('median=');
     expect(logText).toContain('clip');
   });
+
+  test('Palette button is visible', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const btn = page.locator('#btn-palette-debug');
+    await expect(btn).toBeVisible();
+    expect(await btn.textContent()).toBe('Palette');
+  });
 });

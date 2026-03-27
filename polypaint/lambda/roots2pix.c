@@ -36,10 +36,14 @@
 #define MAX_TILES 4096  /* up to 64x64 grid */
 #define BUF_ENTRIES (128 * 1024)  /* 128K uint32s = 64K entries = 512 KB per tile */
 
-/* ---- RGB type and palette definitions (16-step) ---- */
+/* ---- Palette definitions (shared header) ---- */
 
-typedef struct { unsigned char r, g, b; } RGB;
+#include "palette_lut.h"
 
+/* roots2pix used to define palettes inline — now in palette_lut.h */
+static const int _PALETTE_LUT_INCLUDED = 1; /* suppress unused warning */
+
+#if 0  /* old inline definitions removed — kept for git blame reference */
 static const RGB PAL_INFERNO[16] = {
     {0,0,4}, {16,11,53}, {43,15,95}, {72,12,119},
     {101,14,118}, {126,34,102}, {148,56,81}, {168,81,60},
@@ -168,6 +172,7 @@ static void paletteRGB(const RGB *pal, double t,
     *g = (unsigned char)(pal[lo].g * (1-f) + pal[hi].g * f + 0.5);
     *b = (unsigned char)(pal[lo].b * (1-f) + pal[hi].b * f + 0.5);
 }
+#endif /* old inline definitions */
 
 /* ---- Rainbow palette (HSL) ---- */
 

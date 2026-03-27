@@ -62,6 +62,8 @@ RENDER_PLAN_MEMORY=512
 RENDER_STATUS_NAME="polypaint-render-status"
 RENDER_STATUS_MEMORY=256
 RENDER_STATE_MACHINE_NAME="polypaint-render-workflow"
+PALETTE_DEBUG_NAME="polypaint-palette-debug"
+PALETTE_DEBUG_MEMORY=1769
 BINARY_TMP=10240      # /tmp size for Lambdas that process raw images (max 10GB)
 TIMEOUT=900
 BUCKET="polypaint"
@@ -254,6 +256,8 @@ aarch64-linux-musl-gcc -O3 -static -o lambda/coeffs_bilevel_raster lambda/coeffs
 
 echo "  solve_proximity_stats (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/solve_proximity_stats lambda/solve_proximity_stats.c -lm
+echo "  solve_palette_debug (static, ARM64)..."
+aarch64-linux-musl-gcc -O3 -static -o lambda/solve_palette_debug lambda/solve_palette_debug.c -lm
 
 # param_gen removed — param debug now uses sweep in param_dump mode
 
@@ -599,6 +603,16 @@ chmod +x "$SP_DIR"/solve_proximity_stats
 cd "$SP_DIR" && zip -r9 /tmp/polypaint-solve-proximity.zip . -q && cd "$SCRIPT_DIR"
 echo "  SolvPrx: $(du -h /tmp/polypaint-solve-proximity.zip | cut -f1)  (solve_proximity_stats binary)"
 
+# Palette Debug: handler_palette_debug.py + shared.py + solve_palette_debug + raw2jpeg (needs libvips layer)
+PD_DIR=/tmp/polypaint-palette-debug
+rm -rf "$PD_DIR"
+mkdir -p "$PD_DIR"
+cp lambda/handler_palette_debug.py lambda/shared.py "$PD_DIR/"
+cp lambda/solve_palette_debug lambda/raw2jpeg "$PD_DIR/"
+chmod +x "$PD_DIR"/solve_palette_debug "$PD_DIR"/raw2jpeg
+cd "$PD_DIR" && zip -r9 /tmp/polypaint-palette-debug.zip . -q && cd "$SCRIPT_DIR"
+echo "  PalDbg:  $(du -h /tmp/polypaint-palette-debug.zip | cut -f1)  (palette debug)"
+
 # Render Orchestrator (starter): handler_render_orchestrator.py + shared.py
 ORCH_DIR=/tmp/polypaint-render-orchestrator
 rm -rf "$ORCH_DIR"
@@ -750,7 +764,7 @@ setup_api_gateway() {
     }
 
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME" "$SOLVE_PROXIMITY_NAME"; do
+    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_DEBUG_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -799,6 +813,9 @@ setup_api_gateway() {
     local SOLVE_PROXIMITY_INT
     SOLVE_PROXIMITY_INT=$(create_integration "$SOLVE_PROXIMITY_NAME")
     ensure_route "POST /solve-proximity" "$SOLVE_PROXIMITY_INT"
+    local PALETTE_DEBUG_INT
+    PALETTE_DEBUG_INT=$(create_integration "$PALETTE_DEBUG_NAME")
+    ensure_route "POST /palette-debug" "$PALETTE_DEBUG_INT"
 
     ensure_route "POST /encode-upload" "$ENCODE_INT"
     ensure_route "POST /viewport" "$VIEWPORT_INT"
@@ -838,8 +855,9 @@ setup_api_gateway() {
   "png-export": "%s/png-export",
   "deepzoom-export": "%s/deepzoom-export",
   "sweep-cm": "%s/sweep-cm",
-  "solve_proximity": "%s/solve-proximity"
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
+  "solve_proximity": "%s/solve-proximity",
+  "palette-debug": "%s/palette-debug"
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" --region "$REGION"
     echo "  config.json uploaded"
@@ -989,6 +1007,9 @@ if [ "$ACTION" = "create" ]; then
 
     create_lambda "$SOLVE_PROXIMITY_NAME" "handler_solve_proximity.handler" "/tmp/polypaint-solve-proximity.zip" \
         "$SOLVE_PROXIMITY_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+
+    create_lambda "$PALETTE_DEBUG_NAME" "handler_palette_debug.handler" "/tmp/polypaint-palette-debug.zip" \
+        "$PALETTE_DEBUG_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     # Render plan + status Lambdas
     create_lambda "$RENDER_PLAN_NAME" "handler_render_plan.handler" "/tmp/polypaint-render-plan.zip" \
@@ -1195,6 +1216,9 @@ elif [ "$ACTION" = "update" ]; then
 
     update_lambda "$SOLVE_PROXIMITY_NAME" "handler_solve_proximity.handler" "/tmp/polypaint-solve-proximity.zip" \
         "$SOLVE_PROXIMITY_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+
+    update_lambda "$PALETTE_DEBUG_NAME" "handler_palette_debug.handler" "/tmp/polypaint-palette-debug.zip" \
+        "$PALETTE_DEBUG_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     update_lambda "$RENDER_PLAN_NAME" "handler_render_plan.handler" "/tmp/polypaint-render-plan.zip" \
         "$RENDER_PLAN_MEMORY" "" "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME"

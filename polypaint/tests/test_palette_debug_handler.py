@@ -93,7 +93,8 @@ class TestPaletteDebugHandler(unittest.TestCase):
         })
         mock_sub.run.side_effect = [
             MagicMock(returncode=0, stdout=meta_json, stderr=''),
-            MagicMock(returncode=0, stdout='', stderr=''),
+            MagicMock(returncode=0, stdout='', stderr=''),  # raw2jpeg
+            MagicMock(returncode=0, stdout='', stderr=''),  # vipsthumbnail preview
         ]
 
         with patch("os.path.getsize", return_value=2048):
@@ -127,7 +128,8 @@ class TestPaletteDebugHandler(unittest.TestCase):
         })
         mock_sub.run.side_effect = [
             MagicMock(returncode=0, stdout=meta_json, stderr=''),
-            MagicMock(returncode=0, stdout='', stderr=''),
+            MagicMock(returncode=0, stdout='', stderr=''),  # raw2jpeg
+            MagicMock(returncode=0, stdout='', stderr=''),  # vipsthumbnail preview
         ]
 
         with patch("os.path.getsize", return_value=4096):
@@ -166,7 +168,8 @@ class TestPaletteDebugHandler(unittest.TestCase):
         })
         mock_sub.run.side_effect = [
             MagicMock(returncode=0, stdout=meta_json, stderr=''),
-            MagicMock(returncode=0, stdout='', stderr=''),
+            MagicMock(returncode=0, stdout='', stderr=''),  # raw2jpeg
+            MagicMock(returncode=0, stdout='', stderr=''),  # vipsthumbnail preview
         ]
 
         with patch("os.path.getsize", return_value=4096):

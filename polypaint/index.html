@@ -425,7 +425,7 @@ button {
             <div class="status" id="render-status"></div>
             <div id="render-preview" style="max-width:600px; margin-top:8px"></div>
             <div id="render-info" style="font-size:12px; color:#888; margin-top:4px"></div>
-            <div id="render-log" style="margin-top:8px"></div>
+            <div id="render-log" style="margin-top:8px; font-family:monospace; font-size:11px"></div>
         </div>
         <!-- DeepZoom tab -->
         <div id="tab-deepzoom" class="tab-content">
@@ -1391,28 +1391,50 @@ async function runSolveScoreHistogramDebug() {
         const fmt = (v) => typeof v === 'number' ? v.toFixed(3) : v;
         const pct = (v) => typeof v === 'number' ? (v * 100).toFixed(1) + '%' : v;
 
-        log(`Solve histogram: metric=${s.metric}, q=${(q*100).toFixed(1)}%, n=${s.n_solves}, degree=${s.degree}`, '', 'render-log');
-        log(`  min=${fmt(s.min_score)}  p05=${fmt(s.q05)}  p10=${fmt(s.q10)}  p25=${fmt(s.q25)}  median=${fmt(s.q50)}  p75=${fmt(s.q75)}  p90=${fmt(s.q90)}  p95=${fmt(s.q95)}  max=${fmt(s.max_score)}`, '', 'render-log');
-        log(`  mean=${fmt(s.mean_score)}  std=${fmt(s.stddev_score)}`, '', 'render-log');
-        log(`  clip[q..1-q]: lo=${fmt(s.clip_lo)}  hi=${fmt(s.clip_hi)}  width=${fmt(s.clip_range)} / full=${fmt(s.full_range)}`, '', 'render-log');
-        log(`  clip occupancy: below=${s.clip_below_count} (${pct(s.clip_below_frac)})  in=${s.clip_inrange_count} (${pct(s.clip_inrange_frac)})  above=${s.clip_above_count} (${pct(s.clip_above_frac)})`, '', 'render-log');
-        if (s.clip_fallback) {
-            log(`  fallback: ${s.clip_fallback_reason}`, 'err', 'render-log');
-        }
-        log(`  lores timings: download=${s.dl_ms}ms  compute=${s.compute_ms}ms`, '', 'render-log');
+        // Build the full log block as a <pre> for fixed-width alignment
+        const lines = [];
+        lines.push(`Solve histogram: metric=${s.metric}, q=${(q*100).toFixed(1)}%, n=${s.n_solves}, degree=${s.degree}`);
+        lines.push(`  lores-only debug; mirrors actual 10 solve-score color bins`);
+        lines.push(`  min=${fmt(s.min_score)}  p05=${fmt(s.q05)}  p10=${fmt(s.q10)}  p25=${fmt(s.q25)}  p50=${fmt(s.q50)}  p75=${fmt(s.q75)}  p90=${fmt(s.q90)}  p95=${fmt(s.q95)}  max=${fmt(s.max_score)}`);
+        lines.push(`  mean=${fmt(s.mean_score)}  std=${fmt(s.stddev_score)}`);
+        lines.push(`  clip[q..1-q]: lo=${fmt(s.clip_lo)}  hi=${fmt(s.clip_hi)}  width=${fmt(s.clip_range)} / full=${fmt(s.full_range)}`);
+        lines.push(`  occupancy: below=${s.clip_below_count} (${pct(s.clip_below_frac)})  in=${s.clip_inrange_count} (${pct(s.clip_inrange_frac)})  above=${s.clip_above_count} (${pct(s.clip_above_frac)})`);
+        lines.push(`  fallback: ${s.clip_fallback ? s.clip_fallback_reason : 'none'}`);
 
-        // ASCII histogram
-        const hist = s.hist_full || [];
-        if (hist.length > 0) {
-            const maxCount = Math.max(...hist);
-            const barWidth = 40;
-            log(`  histogram (${s.hist_bins} bins, full range):`, '', 'render-log');
-            for (let i = 0; i < hist.length; i++) {
-                const bar = maxCount > 0 ? '#'.repeat(Math.round(hist[i] / maxCount * barWidth)) : '';
-                const idx = String(i).padStart(2, '0');
-                const cnt = String(hist[i]).padStart(6, ' ');
-                log(`    ${idx} ${cnt} |${bar}`, '', 'render-log');
+        // 10-bin final color table
+        const bins = s.final_bin_counts || [];
+        const cuts = s.cuts_score || [];
+        if (bins.length === 10) {
+            const maxBin = Math.max(...bins);
+            const barW = 24;
+            lines.push(`  final color bins (10, actual solve-score bins):`);
+            for (let b = 0; b < 10; b++) {
+                const lo = b === 0 ? s.clip_lo : cuts[b - 1];
+                const hi = b === 9 ? s.clip_hi : cuts[b];
+                const bracket = b === 9 ? ']' : ')';
+                const cnt = String(bins[b]).padStart(6);
+                const frac = s.clip_inrange_count > 0 ? ((bins[b] / s.clip_inrange_count) * 100).toFixed(1) : '0.0';
+                const bar = maxBin > 0 ? '#'.repeat(Math.round(bins[b] / maxBin * barW)) : '';
+                lines.push(`    b${b}  [${fmt(lo)} .. ${fmt(hi)}${bracket} ${cnt}  ${frac.padStart(5)}%  |${bar}`);
             }
+        }
+
+        // Outlier/saturation
+        if (s.min_score_count !== undefined) {
+            lines.push(`  extremes: min_count=${s.min_score_count}  max_count=${s.max_score_count}  clip_lo_count=${s.clip_lo_count}  clip_hi_count=${s.clip_hi_count}`);
+        }
+        lines.push(`  lores timings: download=${s.dl_ms}ms  compute=${s.compute_ms}ms`);
+
+        // Append as a <pre> block for alignment
+        const logEl = document.getElementById('render-log');
+        if (logEl) {
+            const pre = document.createElement('pre');
+            pre.style.margin = '4px 0';
+            pre.style.fontSize = '11px';
+            pre.style.lineHeight = '1.4';
+            pre.style.whiteSpace = 'pre-wrap';
+            pre.textContent = lines.join('\n');
+            logEl.prepend(pre);
         }
 
         statusEl.textContent = 'Ready';

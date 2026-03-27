@@ -318,20 +318,73 @@ int main(int argc, char **argv) {
             else inrangeCount++;
         }
 
-        /* Histogram over full range */
-        long *hist = calloc(histBins, sizeof(long));
-        if (!hist) { fprintf(stderr, "Out of memory for histogram\n"); free(scores); free(buf); return 1; }
-        double hRange = (fullRange > 1e-12) ? fullRange : 1.0;
+        /* ---- 100-bin intermediate histogram over clipped range (mirrors real pipeline) ---- */
+        int intBins = 100;
+        long *intHist = calloc(intBins, sizeof(long));
+        if (!intHist) { fprintf(stderr, "Out of memory\n"); free(scores); free(buf); return 1; }
         for (long s = 0; s < nSolves; s++) {
-            double u = (scores[s] - minScore) / hRange;
-            if (u < 0) u = 0;
-            if (u > 1) u = 1;
-            int h = (int)(u * histBins);
-            if (h >= histBins) h = histBins - 1;
-            hist[h]++;
+            if (scores[s] < clipLo || scores[s] > clipHi) continue;
+            double u = (scores[s] - clipLo) / clipRange;
+            if (u < 0) u = 0; if (u > 1) u = 1;
+            int h = (int)(u * intBins);
+            if (h >= intBins) h = intBins - 1;
+            intHist[h]++;
         }
 
-        /* Emit JSON */
+        /* ---- 9 equal-density cuts from 100-bin histogram (mirrors merge logic) ---- */
+        int finalBins = 10;
+        double cutsNorm[9];
+        long totalInRange = inrangeCount;
+        for (int k = 0; k < 9; k++) {
+            long target = totalInRange * (k + 1) / finalBins;
+            long cum = 0;
+            double cut = 1.0;
+            for (int i = 0; i < intBins; i++) {
+                long cumBefore = cum;
+                cum += intHist[i];
+                if (cum >= target) {
+                    double frac = intHist[i] > 0 ? (double)(target - cumBefore) / intHist[i] : 1.0;
+                    cut = (i + frac) / intBins;
+                    break;
+                }
+            }
+            if (cut < 0) cut = 0; if (cut > 1) cut = 1;
+            if (k > 0 && cut < cutsNorm[k - 1]) cut = cutsNorm[k - 1];
+            cutsNorm[k] = cut;
+        }
+        free(intHist);
+
+        /* Score-space cuts */
+        double cutsScore[9];
+        for (int k = 0; k < 9; k++)
+            cutsScore[k] = clipLo + cutsNorm[k] * clipRange;
+
+        /* ---- Final 10-bin counts (in-range solves only) ---- */
+        long finalBinCounts[10] = {0};
+        for (long s = 0; s < nSolves; s++) {
+            if (scores[s] < clipLo || scores[s] > clipHi) continue;
+            double u = (scores[s] - clipLo) / clipRange;
+            if (u < 0) u = 0; if (u > 1) u = 1;
+            int bin = 0;
+            for (int k = 0; k < 9; k++) {
+                if (u > cutsNorm[k]) bin = k + 1;
+            }
+            finalBinCounts[bin]++;
+        }
+
+        /* ---- Outlier/saturation counts ---- */
+        long minScoreCount = 0, maxScoreCount = 0, clipLoCount = 0, clipHiCount = 0;
+        long nUnique = 0;
+        double lastUnique = scores[0] - 1;
+        for (long s = 0; s < nSolves; s++) {
+            if (scores[s] == minScore) minScoreCount++;
+            if (scores[s] == maxScore) maxScoreCount++;
+            if (scores[s] == clipLo) clipLoCount++;
+            if (scores[s] == clipHi) clipHiCount++;
+            if (scores[s] != lastUnique) { nUnique++; lastUnique = scores[s]; }
+        }
+
+        /* ---- Emit JSON ---- */
         printf("{\"mode\":\"summary\",\"metric\":\"%s\",\"n_solves\":%ld,\"degree\":%d,",
                metricName, nSolves, degree);
         printf("\"min_score\":%.15g,\"max_score\":%.15g,", minScore, maxScore);
@@ -349,14 +402,20 @@ int main(int argc, char **argv) {
             printf("\"clip_fallback_reason\":\"%s\",", fallbackReason);
         else
             printf("\"clip_fallback_reason\":null,");
-        printf("\"hist_bins\":%d,\"hist_full\":[", histBins);
-        for (int i = 0; i < histBins; i++) {
-            if (i > 0) printf(",");
-            printf("%ld", hist[i]);
-        }
-        printf("]}\n");
+        printf("\"intermediate_hist_bins\":100,\"final_bins\":10,");
+        printf("\"cuts_norm\":[");
+        for (int k = 0; k < 9; k++) { if (k) printf(","); printf("%.6f", cutsNorm[k]); }
+        printf("],\"cuts_score\":[");
+        for (int k = 0; k < 9; k++) { if (k) printf(","); printf("%.15g", cutsScore[k]); }
+        printf("],\"final_bin_counts\":[");
+        for (int k = 0; k < 10; k++) { if (k) printf(","); printf("%ld", finalBinCounts[k]); }
+        printf("],\"final_bin_fracs\":[");
+        for (int k = 0; k < 10; k++) { if (k) printf(","); printf("%.6f", totalInRange > 0 ? (double)finalBinCounts[k] / totalInRange : 0); }
+        printf("],");
+        printf("\"min_score_count\":%ld,\"max_score_count\":%ld,", minScoreCount, maxScoreCount);
+        printf("\"clip_lo_count\":%ld,\"clip_hi_count\":%ld,", clipLoCount, clipHiCount);
+        printf("\"n_unique_scores\":%ld}\n", nUnique);
 
-        free(hist);
         free(scores);
 
     } else {

@@ -525,7 +525,7 @@ def run_summary(bin_path, degree, metric="proximity", quantile_lo="0.001", quant
 
 
 def test_summary_all_fields():
-    """Summary returns all required fields."""
+    """Summary returns all required fields including final 10-bin data."""
     path = "/tmp/sp_test_summary.bin"
     solves = []
     for i in range(200):
@@ -544,8 +544,22 @@ def test_summary_all_fields():
                   "clip_below_count", "clip_inrange_count", "clip_above_count",
                   "clip_below_frac", "clip_inrange_frac", "clip_above_frac",
                   "clip_fallback", "clip_fallback_reason",
-                  "hist_bins", "hist_full"]:
+                  "intermediate_hist_bins", "final_bins",
+                  "cuts_norm", "cuts_score", "final_bin_counts", "final_bin_fracs",
+                  "min_score_count", "max_score_count", "clip_lo_count", "clip_hi_count",
+                  "n_unique_scores"]:
         assert field in result, f"missing field: {field}"
+    assert result["intermediate_hist_bins"] == 100
+    assert result["final_bins"] == 10
+    assert len(result["cuts_norm"]) == 9
+    assert len(result["cuts_score"]) == 9
+    assert len(result["final_bin_counts"]) == 10
+    assert len(result["final_bin_fracs"]) == 10
+    # final bin counts must sum to clip_inrange_count
+    assert sum(result["final_bin_counts"]) == result["clip_inrange_count"], \
+        f"bin sum {sum(result['final_bin_counts'])} != inrange {result['clip_inrange_count']}"
+    # No hist_full field (removed)
+    assert "hist_full" not in result, "hist_full should be removed from summary"
     os.remove(path)
 
 
@@ -562,15 +576,15 @@ def test_summary_quantiles_monotone():
     os.remove(path)
 
 
-def test_summary_hist_sum_equals_n():
-    """Histogram bin sum equals n_solves."""
-    path = "/tmp/sp_test_summary_hsum.bin"
-    solves = [[(0.0, 0.0), (d, 0.0)] for d in [0.1 * i for i in range(50)]]
+def test_summary_final_bins_sum_to_inrange():
+    """Final 10-bin counts sum to clip_inrange_count (not n_solves)."""
+    path = "/tmp/sp_test_summary_bsum.bin"
+    solves = [[(0.0, 0.0), (0.001 + i * 0.01, 0.0)] for i in range(200)]
     write_bin(path, solves, 2)
-    r, _ = run_summary(path, 2)
+    r, _ = run_summary(path, 2, quantile_lo="0.05", quantile_hi="0.95")
     assert r is not None
-    assert sum(r["hist_full"]) == r["n_solves"]
-    assert r["hist_bins"] == 32
+    assert len(r["final_bin_counts"]) == 10
+    assert sum(r["final_bin_counts"]) == r["clip_inrange_count"]
     os.remove(path)
 
 
@@ -744,7 +758,7 @@ if __name__ == "__main__":
         # Summary mode
         ("summary all fields", test_summary_all_fields),
         ("summary quantiles monotone", test_summary_quantiles_monotone),
-        ("summary hist sum", test_summary_hist_sum_equals_n),
+        ("summary final bins sum to inrange", test_summary_final_bins_sum_to_inrange),
         ("summary occupancy sum", test_summary_occupancy_sum),
         ("summary fallback small", test_summary_fallback_on_small_sample),
         # Quantile tests

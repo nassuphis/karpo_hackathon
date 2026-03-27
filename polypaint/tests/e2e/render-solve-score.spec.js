@@ -323,7 +323,13 @@ test.describe('Solve Score UI', () => {
             clip_below_count: 5, clip_inrange_count: 90, clip_above_count: 5,
             clip_below_frac: 0.05, clip_inrange_frac: 0.9, clip_above_frac: 0.05,
             clip_fallback: false, clip_fallback_reason: null,
-            hist_bins: 32, hist_full: Array(32).fill(3),
+            intermediate_hist_bins: 100, final_bins: 10,
+            cuts_norm: [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9],
+            cuts_score: [-0.3,-0.1,0.1,0.3,0.5,0.7,0.9,1.1,1.3],
+            final_bin_counts: [9,9,9,9,9,9,9,9,9,9],
+            final_bin_fracs: [0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1],
+            min_score_count: 1, max_score_count: 1, clip_lo_count: 0, clip_hi_count: 0,
+            n_unique_scores: 90,
             dl_ms: 10, compute_ms: 5,
           };
         }
@@ -346,11 +352,16 @@ test.describe('Solve Score UI', () => {
     expect(payload.lores_bin_key).toBe('renders/test_hist/lores.bin');
     expect(payload.degree).toBe(5);
 
-    // Check log output contains histogram lines
+    // Check log output contains 10-bin table
     const logText = await page.locator('#render-log').textContent();
     expect(logText).toContain('Solve histogram');
-    expect(logText).toContain('median=');
+    expect(logText).toContain('final color bins (10');
+    expect(logText).toContain('b0');
+    expect(logText).toContain('b9');
     expect(logText).toContain('clip');
+    // Must NOT contain the old 32-bin full-range header
+    expect(logText).not.toContain('32 bins');
+    expect(logText).not.toContain('full range');
   });
 
   test('Palette button is visible', async ({ page }) => {

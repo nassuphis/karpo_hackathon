@@ -1339,6 +1339,7 @@ async function runSolveScoreHistogramDebug() {
 
     if (!jobId) { log('Histogram: no results dir', 'err', 'render-log'); return; }
     if (renderColorMode !== 'solve_score') { log('Histogram: select Solve score mode first', 'err', 'render-log'); return; }
+    if (_activeRenderRun) { log('Histogram: render in progress, wait for completion', 'err', 'render-log'); return; }
 
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Histogram...'; }

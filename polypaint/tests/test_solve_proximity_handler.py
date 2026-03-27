@@ -332,6 +332,44 @@ def test_merge_rejects_stripe_quantile_mismatch():
         assert "quantile" in str(e).lower(), f"wrong error: {e}"
 
 
+# ================================================================
+# Summary phase tests
+# ================================================================
+
+def test_summary_validates_metric():
+    """Summary rejects invalid metric."""
+    import handler_solve_proximity as hsp
+    try:
+        hsp.handle_summary({"degree": 5, "metric": "bogus",
+                            "lores_bin_key": "x", "solve_score_quantile": 0.001})
+        assert False, "should have raised"
+    except RuntimeError as e:
+        assert "Invalid metric" in str(e)
+
+
+def test_summary_validates_quantile():
+    """Summary rejects out-of-range quantile."""
+    import handler_solve_proximity as hsp
+    try:
+        hsp.handle_summary({"degree": 5, "metric": "proximity",
+                            "lores_bin_key": "x", "solve_score_quantile": 0.5})
+        assert False, "should have raised"
+    except RuntimeError as e:
+        assert "0.001" in str(e) or "0.05" in str(e)
+
+
+def test_summary_does_not_report_status():
+    """Summary must not call report_status."""
+    import handler_solve_proximity as hsp
+    source = open(hsp.__file__).read()
+    # Find handle_summary function body
+    idx = source.index("def handle_summary")
+    body = source[idx:]
+    # It should not contain report_status
+    assert "report_status(" not in body.split("def ")[0] if "def " in body[20:] else body, \
+        "handle_summary must not call report_status"
+
+
 if __name__ == "__main__":
     tests = [
         ("uniform histogram", test_merge_uniform_histogram),
@@ -349,6 +387,9 @@ if __name__ == "__main__":
         ("artifact stores clip_quantile", test_merge_artifact_stores_clip_quantile),
         ("rejects clip quantile mismatch", test_merge_rejects_clip_quantile_mismatch),
         ("rejects stripe quantile mismatch", test_merge_rejects_stripe_quantile_mismatch),
+        ("summary validates metric", test_summary_validates_metric),
+        ("summary validates quantile", test_summary_validates_quantile),
+        ("summary does not report_status", test_summary_does_not_report_status),
     ]
 
     print("solve_proximity handler tests (metric-aware)")

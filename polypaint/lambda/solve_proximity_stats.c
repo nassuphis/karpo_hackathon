@@ -4,9 +4,10 @@
  * Supports multiple metrics via --metric (default: proximity).
  * Metrics: proximity, crowding, spread, anisotropy, area.
  *
- * Two modes:
- *   --mode=clip   Compute score array, sort, emit clip bounds (quantiles).
- *   --mode=hist   Compute per-solve scores, emit 100-bin histogram using given clip bounds.
+ * Three modes:
+ *   --mode=clip      Compute score array, sort, emit clip bounds (quantiles).
+ *   --mode=hist      Compute per-solve scores, emit 100-bin histogram using given clip bounds.
+ *   --mode=summary   Compute full debug summary: quantiles, stats, clip, occupancy, 32-bin histogram.
  *
  * Usage:
  *   solve_proximity_stats input.bin --mode=clip --degree=D [--metric=proximity] [--quantile_lo=0.001] [--quantile_hi=0.999] [--root_xforms=file.json]
@@ -83,8 +84,8 @@ static int cmp_double(const void *a, const void *b) {
 
 int main(int argc, char **argv) {
     if (argc < 3) {
-        fprintf(stderr, "Usage: solve_proximity_stats input.bin --mode=clip|hist --degree=D "
-                "[--metric=proximity|crowding|spread|anisotropy|area] [options]\n");
+        fprintf(stderr, "Usage: solve_proximity_stats input.bin --mode=clip|hist|summary --degree=D "
+                "[--metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity] [options]\n");
         return 1;
     }
 
@@ -100,7 +101,7 @@ int main(int argc, char **argv) {
 
     enum SolveMetric metric;
     if (!parse_solve_metric(metricStr, &metric)) {
-        fprintf(stderr, "Invalid metric: %s (use proximity|crowding|spread|anisotropy|area)\n", metricStr);
+        fprintf(stderr, "Invalid metric: %s (use proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity)\n", metricStr);
         return 1;
     }
 

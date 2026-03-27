@@ -228,6 +228,7 @@ const renderEls = {
     'render-shim': { value: '5.0' },
     'render-solve-score-quantile': { value: '0.1' },
     'render-solve-score-quantile-val': {},
+    'btn-solve-histogram': {},
     'render-status': {},
     'render-preview': {},
     'render-info': {},
@@ -1315,7 +1316,100 @@ async function testPipeline(name, call) {
         vm.runInContext('_activeRenderRun = null;', ctx);
     }
 
-    // Step 13: Render refresh — tested in Playwright (VM cannot override let-scoped lambdaPost/fetch)
+    // Step 13: Solve histogram debug button
+    console.log('');
+    console.log('--- Solve histogram debug ---');
+
+    // 13a: button exists
+    {
+        const btn = ctx._elements['btn-solve-histogram'];
+        if (!btn) { console.error('FATAL: btn-solve-histogram not found'); process.exit(1); }
+        console.log('  13a histogram button exists: OK');
+    }
+
+    // 13b: refuses when not in solve_score mode
+    {
+        vm.runInContext("renderColorMode = 'rainbow'; _activeRenderRun = null;", ctx);
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_job' };
+        // Capture log output by wrapping log
+        vm.runInContext(`
+            var _histLogMsg = '';
+            var _origLog = log;
+            log = function(msg, cls, target) { _histLogMsg += msg + ' '; _origLog(msg, cls, target); };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await runSolveScoreHistogramDebug(); })()', ctx); } catch(e) {}
+        const msg = vm.runInContext('_histLogMsg', ctx);
+        if (!msg.includes('Solve score mode')) { console.error('FATAL: should reject non-solve mode: ' + msg); process.exit(1); }
+        // Restore log
+        vm.runInContext('log = _origLog;', ctx);
+        console.log('  13b refuses in non-solve mode: OK');
+    }
+
+    // 13c: refuses when render is active
+    {
+        vm.runInContext("renderColorMode = 'solve_score'; _activeRenderRun = {job_id:'j'};", ctx);
+        vm.runInContext(`
+            _histLogMsg = '';
+            var _origLog2 = log;
+            log = function(msg, cls, target) { _histLogMsg += msg + ' '; _origLog2(msg, cls, target); };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await runSolveScoreHistogramDebug(); })()', ctx); } catch(e) {}
+        const msg = vm.runInContext('_histLogMsg', ctx);
+        if (!msg.includes('render in progress')) { console.error('FATAL: should refuse during active render: ' + msg); process.exit(1); }
+        vm.runInContext('log = _origLog2;', ctx);
+        console.log('  13c refuses during active render: OK');
+        vm.runInContext('_activeRenderRun = null;', ctx);
+    }
+
+    // 13d: sends correct payload and does not dispatch orchestrator
+    {
+        vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'crowding'; _activeRenderRun = null;", ctx);
+        ctx._elements['render-solve-score-quantile'].value = '2.0';
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_hist_job' };
+        vm.runInContext(`
+            var _histTarget = null;
+            var _histBody = null;
+            var _histDispatchCalled = false;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch') { _histDispatchCalled = true; return {}; }
+                if (name === 'solve_proximity') {
+                    _histTarget = name;
+                    _histBody = body;
+                    return {
+                        mode: 'summary', metric: 'crowding', n_solves: 50, degree: 5,
+                        min_score: -1, max_score: 2, mean_score: 0.5, stddev_score: 0.3,
+                        q05: -0.5, q10: -0.3, q25: 0.1, q50: 0.5, q75: 0.9, q90: 1.2, q95: 1.5,
+                        clip_quantile: 0.02, clip_lo: -0.5, clip_hi: 1.5, full_range: 3, clip_range: 2,
+                        clip_below_count: 2, clip_inrange_count: 46, clip_above_count: 2,
+                        clip_below_frac: 0.04, clip_inrange_frac: 0.92, clip_above_frac: 0.04,
+                        clip_fallback: false, clip_fallback_reason: null,
+                        hist_bins: 32, hist_full: Array(32).fill(1),
+                        dl_ms: 5, compute_ms: 3,
+                    };
+                }
+                if (name === 'storage' && path === '/detail') {
+                    return { calc: { degree: 5, lores: { bin_key: 'renders/test_hist_job/lores.bin' } } };
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await runSolveScoreHistogramDebug(); })()', ctx); } catch(e) {}
+        const target = vm.runInContext('_histTarget', ctx);
+        const body = vm.runInContext('_histBody', ctx);
+        const dispatchCalled = vm.runInContext('_histDispatchCalled', ctx);
+        if (target !== 'solve_proximity') { console.error('FATAL: should call solve_proximity, got ' + target); process.exit(1); }
+        if (body.phase !== 'summary') { console.error('FATAL: phase should be summary'); process.exit(1); }
+        if (body.metric !== 'crowding') { console.error('FATAL: metric should be crowding'); process.exit(1); }
+        if (Math.abs(body.solve_score_quantile - 0.02) > 0.001) { console.error('FATAL: q should be 0.02'); process.exit(1); }
+        if (body.degree !== 5) { console.error('FATAL: degree should be 5'); process.exit(1); }
+        if (dispatchCalled) { console.error('FATAL: histogram must not call dispatch'); process.exit(1); }
+        // Verify _activeRenderRun was not set
+        const runSet = vm.runInContext('_activeRenderRun !== null', ctx);
+        if (runSet) { console.error('FATAL: histogram must not set _activeRenderRun'); process.exit(1); }
+        console.log('  13d correct payload, no dispatch, no activeRun: OK');
+    }
+
+    // Step 14: Render refresh — tested in Playwright (VM cannot override let-scoped lambdaPost/fetch)
     // See tests/e2e/render-refresh.spec.js for real browser coverage.
 
     console.log('=== Frontend JS Execution Test PASSED ===');

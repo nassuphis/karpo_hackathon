@@ -824,12 +824,19 @@ function setColorMode(mode) {
         d.classList.toggle('active', d.dataset.mode === mode);
         if (d.nextElementSibling) d.nextElementSibling.style.color = d.dataset.mode === mode ? '#aaa' : '#888';
     });
-    // Enable/disable solve-score-only buttons
-    const isSolve = mode === 'solve_score';
+    _updateSolveScoreButtons();
+}
+
+let _lastCalcHasLores = false;  // set by renderArtifactPanel when calc is loaded
+
+function _updateSolveScoreButtons() {
+    const isSolve = renderColorMode === 'solve_score';
+    const hasJob = !!(document.getElementById('render-results-dir')?.value?.trim());
+    const enabled = isSolve && hasJob && _lastCalcHasLores;
     const palBtn = document.getElementById('btn-palette-debug');
     const histBtn = document.getElementById('btn-solve-histogram');
-    if (palBtn) { palBtn.disabled = !isSolve; palBtn.style.opacity = isSolve ? '' : '0.4'; }
-    if (histBtn) { histBtn.disabled = !isSolve; histBtn.style.opacity = isSolve ? '' : '0.4'; }
+    if (palBtn) { palBtn.disabled = !enabled; palBtn.style.opacity = enabled ? '' : '0.4'; }
+    if (histBtn) { histBtn.disabled = !enabled; histBtn.style.opacity = enabled ? '' : '0.4'; }
 }
 
 function setMatch(mode) {
@@ -877,6 +884,7 @@ function buildPaletteCircles(containerId, mode, getCurrentPalette) {
 }
 buildPaletteCircles('palette-circles-root-proximity', 'proximity', () => renderRootProximityPalette);
 buildPaletteCircles('palette-circles-solve-score', 'solve_score', () => renderSolveScorePalette);
+_updateSolveScoreButtons();  // initial disabled state
 
 /* ---- Render ---- */
 /* ---- Chip-based transform chains ---- */
@@ -1803,6 +1811,10 @@ function renderArtifactPanel(jobId, summary) {
     const btnStyle = 'padding:4px 10px; font-size:11px; margin-right:4px';
     const rowStyle = 'display:flex; align-items:center; gap:6px; margin-bottom:6px; flex-wrap:wrap';
     const dimStyle = 'font-size:11px; color:#888; min-width:60px';
+
+    // Update solve-score button state based on calc availability
+    _lastCalcHasLores = !!(calc.exists && calc.degree);
+    _updateSolveScoreButtons();
 
     let html = '';
 

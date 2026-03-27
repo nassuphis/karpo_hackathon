@@ -301,10 +301,12 @@ test.describe('Solve Score UI', () => {
     // Activate solve_score mode
     const solveCircle = page.locator('#palette-circles-solve-score .pal-circle').first();
     await solveCircle.click();
-    // Set quantile
+    // Set quantile and enable buttons
     await page.evaluate(() => {
       document.getElementById('render-solve-score-quantile').value = '3.0';
       document.getElementById('render-results-dir').value = 'test_hist';
+      _lastCalcHasLores = true;
+      _updateSolveScoreButtons();
     });
 
     // Intercept lambdaPost calls
@@ -356,5 +358,67 @@ test.describe('Solve Score UI', () => {
     const btn = page.locator('#btn-palette-debug');
     await expect(btn).toBeVisible();
     expect(await btn.textContent()).toBe('Palette');
+  });
+
+  test('Palette button is disabled outside solve_score mode', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    // Default mode is not solve_score
+    const btn = page.locator('#btn-palette-debug');
+    const disabled = await btn.getAttribute('disabled');
+    // Should be disabled (attribute present)
+    expect(disabled).not.toBeNull();
+  });
+
+  test('artifact panel shows Palette JPEG row with Download and DeepZoom', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    // Mock refreshRenderArtifacts with palette_jpeg present
+    await page.evaluate(() => {
+      renderArtifactPanel('test_job', {
+        artifacts: {
+          palette_jpeg: { exists: true, key: 'renders/test_job/image_palette.jpeg', url: 'https://example.com/pal.jpeg', size: 50000, width: 1000, height: 1000 },
+          preview_palette_png: { exists: false },
+          color_jpeg: { exists: false }, color_png: { exists: false },
+          bilevel_tif: { exists: false }, bilevel_preview_png: { exists: false },
+          bilevel_compat_tif: { exists: false }, bilevel_png: { exists: false },
+          coeff_tif: { exists: false }, coeff_preview_png: { exists: false },
+          preview_color_png: { exists: false }, preview_bilevel_png: { exists: false },
+        },
+        calc: { exists: true, N: 1000, degree: 5 },
+        deepzoom_latest: { exists: false },
+      });
+    });
+    // Palette JPEG row should exist
+    const row = page.locator('strong:text("Palette JPEG")');
+    await expect(row).toBeVisible();
+    // Download and DeepZoom buttons should be in that row's parent
+    const rowDiv = row.locator('..');
+    const download = rowDiv.locator('button:text("Download")');
+    const deepzoom = rowDiv.locator('button:text("DeepZoom")');
+    await expect(download).toBeVisible();
+    await expect(deepzoom).toBeVisible();
+  });
+
+  test('preview section shows Palette toggle when artifact exists', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      renderArtifactPanel('test_job', {
+        artifacts: {
+          palette_jpeg: { exists: true, key: 'renders/test_job/image_palette.jpeg', url: 'https://example.com/pal.jpeg', size: 50000, width: 1000, height: 1000 },
+          preview_palette_png: { exists: false },
+          color_jpeg: { exists: false }, color_png: { exists: false },
+          bilevel_tif: { exists: false }, bilevel_preview_png: { exists: false },
+          bilevel_compat_tif: { exists: false }, bilevel_png: { exists: false },
+          coeff_tif: { exists: false }, coeff_preview_png: { exists: false },
+          preview_color_png: { exists: false }, preview_bilevel_png: { exists: false },
+        },
+        calc: { exists: true, N: 1000, degree: 5 },
+        deepzoom_latest: { exists: false },
+      });
+    });
+    const palBtn = page.locator('#prev-btn-palette');
+    await expect(palBtn).toBeVisible();
+    // Should not be disabled since palette_jpeg exists (can generate preview)
+    const disabled = await palBtn.getAttribute('disabled');
+    expect(disabled).toBeNull();
   });
 });

@@ -824,6 +824,12 @@ function setColorMode(mode) {
         d.classList.toggle('active', d.dataset.mode === mode);
         if (d.nextElementSibling) d.nextElementSibling.style.color = d.dataset.mode === mode ? '#aaa' : '#888';
     });
+    // Enable/disable solve-score-only buttons
+    const isSolve = mode === 'solve_score';
+    const palBtn = document.getElementById('btn-palette-debug');
+    const histBtn = document.getElementById('btn-solve-histogram');
+    if (palBtn) { palBtn.disabled = !isSolve; palBtn.style.opacity = isSolve ? '' : '0.4'; }
+    if (histBtn) { histBtn.disabled = !isSolve; histBtn.style.opacity = isSolve ? '' : '0.4'; }
 }
 
 function setMatch(mode) {

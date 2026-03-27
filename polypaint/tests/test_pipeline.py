@@ -371,6 +371,42 @@ class TestStorageCleanRender(unittest.TestCase):
         self.assertIn("renders/j/solve_scores/proximity_clip.json", deleted_keys)
 
 
+    @patch("handler_storage.s3")
+    def test_clean_render_deletes_palette_artifacts(self, mock_s3):
+        """Clean-render for color pipeline deletes image_palette.jpeg and preview_palette.png."""
+        from handler_storage import handle_clean_render
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"Contents": []}]
+        mock_s3.delete_objects.return_value = {"Deleted": []}
+        event = {"body": json.dumps({"job_id": "j", "pipeline": "color"})}
+        handle_clean_render(event)
+        call_args = mock_s3.delete_objects.call_args
+        deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
+        self.assertIn("renders/j/image_palette.jpeg", deleted_keys)
+        self.assertIn("renders/j/preview_palette.png", deleted_keys)
+
+
+class TestRenderSummaryPalette(unittest.TestCase):
+
+    @patch("handler_storage.s3")
+    def test_render_summary_includes_palette_jpeg(self, mock_s3):
+        """render-summary HEAD-checks palette_jpeg and preview_palette_png."""
+        from handler_storage import handle_render_summary
+        mock_s3.head_object.side_effect = Exception("NoSuchKey")
+        mock_s3.get_object.side_effect = Exception("NoSuchKey")
+        mock_s3.generate_presigned_url.return_value = "https://fake"
+        event = {"body": json.dumps({"job_id": "j"})}
+        result = handle_render_summary(event)
+        body = json.loads(result["body"])
+        artifacts = body["artifacts"]
+        self.assertIn("palette_jpeg", artifacts)
+        self.assertIn("preview_palette_png", artifacts)
+        # Both should show exists=False since all HEAD calls raise
+        self.assertFalse(artifacts["palette_jpeg"]["exists"])
+        self.assertFalse(artifacts["preview_palette_png"]["exists"])
+
+
 class TestStoragePresign(unittest.TestCase):
 
     @patch("handler_storage.s3")

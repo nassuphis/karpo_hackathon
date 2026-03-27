@@ -2002,13 +2002,17 @@ async function loadDeepZoomInventory() {
 
         // Render inventory table
         let html = '<table style="width:100%; border-collapse:collapse" id="dz-inv-table">';
-        html += '<tr style="border-bottom:1px solid #333; position:sticky; top:0; background:#1a1a2e"><th style="text-align:left;padding:4px">Job</th><th>Size</th><th>Created</th><th>Tiles</th></tr>';
+        html += '<tr style="border-bottom:1px solid #333; position:sticky; top:0; background:#1a1a2e"><th style="text-align:left;padding:4px">Job</th><th>Size</th><th>Created</th><th>Tiles</th><th>Share</th></tr>';
         sorted.forEach((ex, i) => {
+            const shareCell = ex.share_url
+                ? `<a href="${ex.share_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" style="color:#4a9eff;text-decoration:none">Open</a>`
+                : '<span style="color:#555">?</span>';
             html += `<tr class="dz-inv-row" data-idx="${i}" style="border-bottom:1px solid #222; cursor:pointer" onclick="_dzSelect(${i})" tabindex="-1">`;
             html += `<td style="padding:4px; font-family:monospace; font-size:11px">${ex.job_id}</td>`;
             html += `<td style="padding:4px; text-align:center">${ex.width}×${ex.height}</td>`;
             html += `<td style="padding:4px; font-size:11px">${(ex.created_at || '').replace('T', ' ').slice(0, 19)}</td>`;
             html += `<td style="padding:4px; text-align:center">${ex.tiles_uploaded || ''}</td>`;
+            html += `<td style="padding:4px; text-align:center">${shareCell}</td>`;
             html += `</tr>`;
         });
         html += '</table>';

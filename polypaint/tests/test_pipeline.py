@@ -1586,6 +1586,7 @@ class TestRenderSummary(unittest.TestCase):
             "source_key": "renders/j/image.jpeg",
             "dzi_key": "deepzoom/j/dz_123/image.dzi",
             "dzi_url": "https://bucket.s3.amazonaws.com/deepzoom/j/dz_123/image.dzi",
+            "share_url": "https://bucket.s3.amazonaws.com/deepzoom/j/dz_123/viewer.html",
             "tile_prefix": "deepzoom/j/dz_123/image_files",
             "width": 8192, "height": 8192,
             "tiles_uploaded": 400,
@@ -1607,6 +1608,7 @@ class TestRenderSummary(unittest.TestCase):
         self.assertEqual(dz["created_at"], "2026-03-26T10:00:00Z")
         self.assertEqual(dz["source_key"], "renders/j/image.jpeg")
         self.assertEqual(dz["dzi_url"], "https://bucket.s3.amazonaws.com/deepzoom/j/dz_123/image.dzi")
+        self.assertEqual(dz["share_url"], "https://bucket.s3.amazonaws.com/deepzoom/j/dz_123/viewer.html")
         self.assertEqual(dz["width"], 8192)
         self.assertEqual(dz["height"], 8192)
         self.assertEqual(dz["tiles_uploaded"], 400)
@@ -1654,6 +1656,18 @@ class TestDeepZoomExportPointerWrite(unittest.TestCase):
         with open(os.path.join(tiles_dir, "0", "0_0.png"), "wb") as f:
             f.write(b"fake tile")
 
+        # Allow real open for template file, mock for everything else
+        import builtins
+        real_open = builtins.open
+        fake_file = MagicMock(read=lambda: b"fake", write=lambda x: None)
+        fake_cm = MagicMock(__enter__=MagicMock(return_value=fake_file),
+                            __exit__=MagicMock(return_value=False))
+        def selective_open(*args, **kwargs):
+            path = args[0] if args else kwargs.get("file", "")
+            if isinstance(path, str) and path.endswith("_template.html"):
+                return real_open(*args, **kwargs)
+            return fake_cm
+
         # Patch paths to use our temp dir
         with patch.object(os, 'makedirs', side_effect=lambda *a, **kw: None), \
              patch.object(os, 'remove', side_effect=lambda *a: None), \
@@ -1661,9 +1675,7 @@ class TestDeepZoomExportPointerWrite(unittest.TestCase):
              patch.object(os.path, 'isdir', return_value=True), \
              patch.object(os, 'walk', return_value=[(tiles_dir + "/0", [], ["0_0.png"])]), \
              patch('shutil.rmtree'), \
-             patch('builtins.open', MagicMock(return_value=MagicMock(
-                 __enter__=MagicMock(return_value=MagicMock(read=lambda: b"fake", write=lambda x: None)),
-                 __exit__=MagicMock(return_value=False)))):
+             patch('builtins.open', side_effect=selective_open):
 
             try:
                 dze.handler({"body": json.dumps({
@@ -1697,10 +1709,132 @@ class TestDeepZoomExportPointerWrite(unittest.TestCase):
         manifest = json.loads(meta_body)
         self.assertEqual(manifest["job_id"], "test_dz")
         self.assertIn("dzi_url", manifest)
+        self.assertIn("share_url", manifest)
         self.assertIn("width", manifest)
         self.assertIn("height", manifest)
 
+        # share_url must point to viewer.html, not index.html
+        self.assertIn("viewer.html", manifest["share_url"])
+        self.assertNotIn("index.html", manifest["share_url"])
+
+        # deepzoom_latest.json must also contain share_url
+        pointer_manifest = json.loads(pointer_body)
+        self.assertIn("share_url", pointer_manifest)
+        self.assertEqual(pointer_manifest["share_url"], manifest["share_url"])
+
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    @patch("handler_deepzoom_export.report_status")
+    @patch("handler_deepzoom_export.s3")
+    @patch("handler_deepzoom_export.subprocess")
+    def test_export_uploads_viewer_html(self, mock_subprocess, mock_s3, mock_report):
+        """Export handler uploads viewer.html with correct content type."""
+        import handler_deepzoom_export as dze
+
+        mock_s3.get_object.return_value = {
+            "Body": MagicMock(iter_chunks=lambda chunk_size=None: [b"fake image data"])
+        }
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({"width": 64, "height": 64})
+        mock_subprocess.run.return_value = mock_result
+
+        put_calls = []
+        def track_put(**kwargs):
+            put_calls.append(kwargs)
+        mock_s3.put_object.side_effect = track_put
+
+        # Allow real open for template file, mock for everything else
+        import builtins
+        real_open = builtins.open
+        fake_file = MagicMock(read=lambda: b"fake", write=lambda x: None)
+        fake_cm = MagicMock(__enter__=MagicMock(return_value=fake_file),
+                            __exit__=MagicMock(return_value=False))
+        def selective_open(*args, **kwargs):
+            path = args[0] if args else kwargs.get("file", "")
+            if isinstance(path, str) and path.endswith("_template.html"):
+                return real_open(*args, **kwargs)
+            return fake_cm
+
+        with patch.object(os, 'makedirs', side_effect=lambda *a, **kw: None), \
+             patch.object(os, 'remove', side_effect=lambda *a: None), \
+             patch.object(os.path, 'exists', return_value=True), \
+             patch.object(os.path, 'isdir', return_value=True), \
+             patch.object(os, 'walk', return_value=[("/tmp/dz/image_files/0", [], ["0_0.png"])]), \
+             patch('shutil.rmtree'), \
+             patch('builtins.open', side_effect=selective_open):
+
+            try:
+                dze.handler({"body": json.dumps({
+                    "job_id": "test_dz", "source_key": "renders/test_dz/image.tif",
+                    "export_id": "dz_viewer_test"
+                })}, None)
+            except Exception:
+                pass
+
+        # Find the viewer.html upload
+        viewer_puts = [c for c in put_calls if "viewer.html" in c.get("Key", "")]
+        self.assertEqual(len(viewer_puts), 1,
+            "Expected exactly one viewer.html upload, got: %s" % [c.get("Key") for c in put_calls])
+
+        # Verify content type
+        self.assertEqual(viewer_puts[0]["ContentType"], "text/html; charset=utf-8")
+
+        # Verify key path
+        self.assertEqual(viewer_puts[0]["Key"], "deepzoom/test_dz/dz_viewer_test/viewer.html")
+
+        # Verify HTML content contains expected elements
+        body = viewer_puts[0]["Body"]
+        self.assertIn("OpenSeadragon", body)
+        self.assertIn("test_dz", body)
+        self.assertIn("dz_viewer_test", body)
+        self.assertIn("image.dzi", body)
+        self.assertNotIn("{job_id}", body, "Template placeholders must be replaced")
+        self.assertNotIn("{export_id}", body, "Template placeholders must be replaced")
+        self.assertNotIn("{dzi_url}", body, "Template placeholders must be replaced")
+
+
+class TestDeepZoomViewerTemplate(unittest.TestCase):
+    """Test that the viewer template renders correctly."""
+
+    def test_template_file_exists(self):
+        """Viewer template file must exist in lambda dir."""
+        tmpl_path = os.path.join(os.path.dirname(__file__), "..", "lambda",
+                                 "deepzoom_viewer_template.html")
+        self.assertTrue(os.path.exists(tmpl_path), "Template file missing")
+
+    def test_template_renders_all_placeholders(self):
+        """All placeholders are replaced by _render_viewer."""
+        from handler_deepzoom_export import _render_viewer
+        html = _render_viewer("job_abc", "dz_123",
+                              "https://bucket.s3.us-east-1.amazonaws.com/deepzoom/job_abc/dz_123/image.dzi",
+                              "2026-03-27T12:00:00Z")
+        # No unreplaced placeholders
+        self.assertNotIn("{job_id}", html)
+        self.assertNotIn("{export_id}", html)
+        self.assertNotIn("{dzi_url}", html)
+        self.assertNotIn("{created_at}", html)
+        # Contains actual values
+        self.assertIn("job_abc", html)
+        self.assertIn("dz_123", html)
+        self.assertIn("image.dzi", html)
+        self.assertIn("2026-03-27T12:00:00Z", html)
+
+    def test_template_is_standalone(self):
+        """Viewer HTML must not reference index.html or app APIs."""
+        from handler_deepzoom_export import _render_viewer
+        html = _render_viewer("j", "e", "https://x/image.dzi", "2026-01-01")
+        self.assertNotIn("index.html", html)
+        self.assertNotIn("lambdaPost", html)
+        self.assertNotIn("localStorage", html)
+        self.assertIn("openseadragon", html.lower())
+
+    def test_template_uses_absolute_dzi_url(self):
+        """tileSources must use the full absolute DZI URL."""
+        from handler_deepzoom_export import _render_viewer
+        dzi = "https://mybucket.s3.us-east-1.amazonaws.com/deepzoom/j/e/image.dzi"
+        html = _render_viewer("j", "e", dzi, "2026-01-01")
+        self.assertIn(f"tileSources: '{dzi}'", html)
 
 
 if __name__ == "__main__":

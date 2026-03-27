@@ -587,7 +587,7 @@ echo "  RndPrev: $(du -h /tmp/polypaint-render-preview.zip | cut -f1)  (vipsthum
 DZ_EXPORT_DIR=/tmp/polypaint-deepzoom-export
 rm -rf "$DZ_EXPORT_DIR"
 mkdir -p "$DZ_EXPORT_DIR"
-cp lambda/handler_deepzoom_export.py lambda/shared.py "$DZ_EXPORT_DIR/"
+cp lambda/handler_deepzoom_export.py lambda/shared.py lambda/deepzoom_viewer_template.html "$DZ_EXPORT_DIR/"
 cp lambda/dz_export "$DZ_EXPORT_DIR/"
 chmod +x "$DZ_EXPORT_DIR"/dz_export
 cd "$DZ_EXPORT_DIR" && zip -r9 /tmp/polypaint-deepzoom-export.zip . -q && cd "$SCRIPT_DIR"

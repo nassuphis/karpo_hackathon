@@ -684,6 +684,7 @@ def handle_render_summary(event):
             "source_key": dz_data.get("source_key", ""),
             "dzi_key": dzi_key,
             "dzi_url": dzi_url,
+            "share_url": dz_data.get("share_url", ""),
             "tile_prefix": dz_data.get("tile_prefix", ""),
             "width": dz_data.get("width"),
             "height": dz_data.get("height"),

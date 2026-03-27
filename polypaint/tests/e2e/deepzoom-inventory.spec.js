@@ -4,8 +4,8 @@ const { test, expect } = require('@playwright/test');
 // Stub API responses for the DeepZoom inventory
 const MOCK_EXPORTS = [
   { job_id: 'job_old', width: 4096, height: 4096, created_at: '2026-03-20T10:00:00', tiles_uploaded: 100, dzi_url: 'https://dz/job_old.dzi' },
-  { job_id: 'job_mid', width: 8192, height: 8192, created_at: '2026-03-22T12:00:00', tiles_uploaded: 400, dzi_url: 'https://dz/job_mid.dzi' },
-  { job_id: 'job_new', width: 16384, height: 16384, created_at: '2026-03-25T14:00:00', tiles_uploaded: 1600, dzi_url: 'https://dz/job_new.dzi' },
+  { job_id: 'job_mid', width: 8192, height: 8192, created_at: '2026-03-22T12:00:00', tiles_uploaded: 400, dzi_url: 'https://dz/job_mid.dzi', share_url: 'https://dz/job_mid/viewer.html' },
+  { job_id: 'job_new', width: 16384, height: 16384, created_at: '2026-03-25T14:00:00', tiles_uploaded: 1600, dzi_url: 'https://dz/job_new.dzi', share_url: 'https://dz/job_new/viewer.html' },
 ];
 
 test.beforeEach(async ({ page }) => {
@@ -205,6 +205,58 @@ test.describe('DeepZoom Inventory', () => {
     const firstText = await page.locator('.dz-inv-row').first().textContent();
     expect(firstText).toContain('16384×16384');
     expect(firstText).toContain('1600');
+  });
+
+  test('inventory header includes Share column', async ({ page }) => {
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    const headerText = await page.locator('#dz-inv-table tr').first().textContent();
+    expect(headerText).toContain('Share');
+  });
+
+  test('rows with share_url render an Open link', async ({ page }) => {
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    // job_new (first row, newest) has share_url
+    const firstRow = page.locator('.dz-inv-row').first();
+    const link = firstRow.locator('a');
+    await expect(link).toHaveText('Open');
+    const href = await link.getAttribute('href');
+    expect(href).toContain('viewer.html');
+    expect(href).toContain('job_new');
+    // Security: must have rel="noopener noreferrer"
+    const rel = await link.getAttribute('rel');
+    expect(rel).toContain('noopener');
+  });
+
+  test('rows without share_url show question mark', async ({ page }) => {
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    // job_old (last row) has no share_url
+    const lastRow = page.locator('.dz-inv-row').last();
+    const lastText = await lastRow.textContent();
+    expect(lastText).toContain('?');
+    // Should NOT have an Open link
+    const links = await lastRow.locator('a').count();
+    expect(links).toBe(0);
+  });
+
+  test('clicking share link does not change row selection', async ({ page }) => {
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    // Select first row (auto-selected)
+    expect(await page.evaluate(() => window._dzSelectedIdx)).toBe(0);
+    // Click the share link in first row — should not change selection
+    // (link has event.stopPropagation)
+    const link = page.locator('.dz-inv-row').first().locator('a');
+    // Intercept navigation so we don't actually leave the page
+    await page.evaluate(() => {
+      document.querySelectorAll('.dz-inv-row a').forEach(a => {
+        a.addEventListener('click', e => e.preventDefault(), true);
+      });
+    });
+    await link.click();
+    expect(await page.evaluate(() => window._dzSelectedIdx)).toBe(0);
   });
 
   test('dropdown has functions from catalog', async ({ page }) => {

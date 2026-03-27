@@ -18,6 +18,17 @@ from shared import BUCKET, parse_body, ok_response, report_status, imgpipe_env
 
 s3 = boto3.client("s3")
 DZ_EXPORT = os.path.join(os.path.dirname(__file__), "dz_export")
+VIEWER_TEMPLATE = os.path.join(os.path.dirname(__file__), "deepzoom_viewer_template.html")
+
+
+def _render_viewer(job_id, export_id, dzi_url, created_at):
+    """Render standalone viewer HTML from template."""
+    with open(VIEWER_TEMPLATE) as f:
+        tmpl = f.read()
+    return tmpl.replace("{job_id}", job_id) \
+               .replace("{export_id}", export_id) \
+               .replace("{dzi_url}", dzi_url) \
+               .replace("{created_at}", created_at)
 
 
 def handler(event, context):
@@ -94,16 +105,31 @@ def handler(event, context):
         uploaded = sum(results)
         upload_ms = int((time.time() - t2) * 1000)
 
-        # Write meta.json
+        # Build manifest and viewer before writing anything
         region = os.environ.get("AWS_REGION", "us-east-1")
         dzi_url = f"https://{BUCKET}.s3.{region}.amazonaws.com/{s3_prefix}/image.dzi"
+        share_url = f"https://{BUCKET}.s3.{region}.amazonaws.com/{s3_prefix}/viewer.html"
+        created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+        # Upload viewer.html first — meta.json advertises share_url,
+        # so the viewer must exist before meta is written.
+        viewer_html = _render_viewer(job_id, export_id, dzi_url, created_at)
+        s3.put_object(
+            Bucket=BUCKET,
+            Key=f"{s3_prefix}/viewer.html",
+            Body=viewer_html,
+            ContentType="text/html; charset=utf-8"
+        )
+
+        # Write meta.json (references share_url which now exists)
         manifest = {
             "job_id": job_id,
             "export_id": export_id,
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "created_at": created_at,
             "source_key": source_key,
             "dzi_key": f"{s3_prefix}/image.dzi",
             "dzi_url": dzi_url,
+            "share_url": share_url,
             "tile_prefix": f"{s3_prefix}/image_files",
             "width": meta["width"],
             "height": meta["height"],
@@ -132,6 +158,7 @@ def handler(event, context):
         return ok_response({
             "export_id": export_id,
             "dzi_url": dzi_url,
+            "share_url": share_url,
             "tiles_uploaded": uploaded,
             "dl_ms": dl_ms,
             "gen_ms": gen_ms,

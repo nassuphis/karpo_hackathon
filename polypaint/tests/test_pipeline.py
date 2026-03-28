@@ -182,13 +182,10 @@ class TestStorageList(unittest.TestCase):
         self.assertEqual(body["results"][0]["function"], "?")
         self.assertEqual(body["results"][0]["total_size"], 0)
 
-    @patch("handler_storage._key_exists")
     @patch("handler_storage.s3")
-    def test_list_has_image_checks_head(self, mock_s3, mock_exists):
-        """Verify has_preview/has_image use HEAD requests."""
+    def test_list_returns_only_table_fields(self, mock_s3):
+        """Verify /list returns lean table fields, no preview/image checks."""
         from handler_storage import handle_list
-        # preview.jpg exists, image.jpeg exists
-        mock_exists.side_effect = lambda k: "preview" in k or "image.jpeg" in k
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [{
@@ -196,17 +193,57 @@ class TestStorageList(unittest.TestCase):
         }]
         mock_s3.get_object.return_value = {
             "Body": MagicMock(read=MagicMock(return_value=json.dumps({
-                "function": "giga_1", "degree": 24, "n1": 100, "n2": 100,
+                "function": "giga_1", "degree": 24, "n1": 100,
                 "n_stripes": 1,
             }).encode()))
         }
-        mock_s3.generate_presigned_url.return_value = "https://signed"
 
         result = handle_list({"body": "{}"})
         body = json.loads(result["body"])
-        self.assertTrue(body["results"][0]["has_preview"])
-        self.assertTrue(body["results"][0]["has_image"])
-        self.assertEqual(body["results"][0]["preview_url"], "https://signed")
+        r = body["results"][0]
+        self.assertEqual(r["function"], "giga_1")
+        self.assertEqual(r["degree"], 24)
+        self.assertEqual(r["N"], 100)
+        # Must NOT contain preview/image fields (moved to /detail)
+        self.assertNotIn("has_preview", r)
+        self.assertNotIn("has_image", r)
+        self.assertNotIn("preview_url", r)
+        self.assertNotIn("pipeline", r)
+
+    @patch("handler_storage._key_exists")
+    @patch("handler_storage.s3")
+    def test_detail_returns_preview_and_pipeline(self, mock_s3, mock_exists):
+        """Verify /detail returns preview info and pipeline metadata."""
+        from handler_storage import handle_detail
+        mock_exists.side_effect = lambda k: "preview.png" in k
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"KeyCount": 5}]
+        mock_s3.generate_presigned_url.return_value = "https://signed"
+
+        calc_data = json.dumps({
+            "function": "giga_1", "degree": 24, "times": 3,
+            "pipeline": {"param_transforms": [["rotate", "90"]], "cfpv": [1, 2]},
+        }).encode()
+        view_data = json.dumps({"q_re": [-1, 1], "q_im": [-1, 1]}).encode()
+
+        def mock_get(**kwargs):
+            key = kwargs["Key"]
+            if "calc.json" in key:
+                return {"Body": MagicMock(read=lambda: calc_data)}
+            if "view.json" in key:
+                return {"Body": MagicMock(read=lambda: view_data)}
+            raise Exception("NoSuchKey")
+        mock_s3.get_object.side_effect = mock_get
+
+        result = handle_detail({"body": json.dumps({"job_id": "j"})})
+        body = json.loads(result["body"])
+        self.assertTrue(body["has_preview"])
+        self.assertEqual(body["preview_url"], "https://signed")
+        self.assertEqual(body["times"], 3)
+        self.assertEqual(body["param_transforms"], [["rotate", "90"]])
+        self.assertIn("pipeline", body)
+        self.assertEqual(body["q_re"], [-1, 1])
 
 
 class TestStorageCheckKeys(unittest.TestCase):
@@ -1613,6 +1650,101 @@ class TestRenderSummary(unittest.TestCase):
         self.assertEqual(dz["height"], 8192)
         self.assertEqual(dz["tiles_uploaded"], 400)
         mock_s3.get_paginator.assert_not_called()
+
+
+class TestListDeepZoom(unittest.TestCase):
+    """Test the /list-deepzoom server-side inventory endpoint."""
+
+    @patch("handler_storage.s3")
+    def test_returns_exports_sorted_newest_first(self, mock_s3):
+        from handler_storage import handle_list_deepzoom
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        # Level 1: one job prefix
+        # Level 2: two export prefixes under that job
+        call_count = [0]
+        def paginate_side_effect(**kwargs):
+            call_count[0] += 1
+            prefix = kwargs.get("Prefix", "")
+            if prefix == "deepzoom/":
+                return [{"CommonPrefixes": [{"Prefix": "deepzoom/job_a/"}]}]
+            elif prefix == "deepzoom/job_a/":
+                return [{"CommonPrefixes": [
+                    {"Prefix": "deepzoom/job_a/dz_old/"},
+                    {"Prefix": "deepzoom/job_a/dz_new/"},
+                ]}]
+            return [{}]
+        mock_paginator.paginate.side_effect = paginate_side_effect
+
+        meta_old = json.dumps({"job_id": "job_a", "export_id": "dz_old",
+                               "created_at": "2026-03-20T10:00:00Z"})
+        meta_new = json.dumps({"job_id": "job_a", "export_id": "dz_new",
+                               "created_at": "2026-03-25T10:00:00Z"})
+
+        def mock_get(**kwargs):
+            key = kwargs["Key"]
+            if "dz_old" in key:
+                return {"Body": MagicMock(read=lambda: meta_old.encode())}
+            if "dz_new" in key:
+                return {"Body": MagicMock(read=lambda: meta_new.encode())}
+            raise Exception("NoSuchKey")
+        mock_s3.get_object.side_effect = mock_get
+
+        result = handle_list_deepzoom({"body": "{}"})
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["count"], 2)
+        # Newest first
+        self.assertEqual(body["exports"][0]["export_id"], "dz_new")
+        self.assertEqual(body["exports"][1]["export_id"], "dz_old")
+
+    @patch("handler_storage.s3")
+    def test_returns_empty_when_no_exports(self, mock_s3):
+        from handler_storage import handle_list_deepzoom
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{}]
+
+        result = handle_list_deepzoom({"body": "{}"})
+        body = json.loads(result["body"])
+        self.assertEqual(body["count"], 0)
+        self.assertEqual(body["exports"], [])
+
+    @patch("handler_storage.s3")
+    def test_skips_exports_with_missing_meta(self, mock_s3):
+        from handler_storage import handle_list_deepzoom
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate_side_effect(**kwargs):
+            prefix = kwargs.get("Prefix", "")
+            if prefix == "deepzoom/":
+                return [{"CommonPrefixes": [{"Prefix": "deepzoom/job_a/"}]}]
+            elif prefix == "deepzoom/job_a/":
+                return [{"CommonPrefixes": [
+                    {"Prefix": "deepzoom/job_a/dz_good/"},
+                    {"Prefix": "deepzoom/job_a/dz_broken/"},
+                ]}]
+            return [{}]
+        mock_paginator.paginate.side_effect = paginate_side_effect
+
+        meta_good = json.dumps({"job_id": "job_a", "export_id": "dz_good",
+                                "created_at": "2026-03-25T10:00:00Z"})
+
+        def mock_get(**kwargs):
+            if "dz_good" in kwargs["Key"]:
+                return {"Body": MagicMock(read=lambda: meta_good.encode())}
+            raise Exception("NoSuchKey")
+        mock_s3.get_object.side_effect = mock_get
+
+        result = handle_list_deepzoom({"body": "{}"})
+        body = json.loads(result["body"])
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["exports"][0]["export_id"], "dz_good")
 
 
 class TestDeepZoomExportPointerWrite(unittest.TestCase):

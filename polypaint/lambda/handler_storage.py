@@ -51,6 +51,8 @@ def handler(event, context):
         return handle_delete_task(event)
     elif path.endswith("/delete-prefix"):
         return handle_delete_prefix(event)
+    elif path.endswith("/list-deepzoom"):
+        return handle_list_deepzoom(event)
     return {
         "statusCode": 400,
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
@@ -78,7 +80,7 @@ def handle_list(event):
             if job_id:
                 job_ids.append(job_id)
 
-    # Read calc.json for each job (parallelized)
+    # Read calc.json for each job (parallelized) — table fields only
     def read_calc(job_id):
         entry = {"job_id": job_id}
         try:
@@ -88,42 +90,16 @@ def handle_list(event):
             entry["function"] = calc.get("function", "?")
             entry["degree"] = calc.get("degree", 0)
             entry["N"] = calc.get("N", calc.get("n1", 0))
-            entry["n1"] = calc.get("n1", entry["N"])  # backward compat
+            entry["n1"] = calc.get("n1", entry["N"])
             entry["n_stripes"] = calc.get("n_stripes", 0)
-            entry["times"] = calc.get("times", 1)
-            # Pipeline info
-            pipeline = calc.get("pipeline", {})
-            entry["param_transforms"] = pipeline.get("param_transforms", [])
-            entry["param_transforms_display"] = pipeline.get("param_transforms_display", [])
-            entry["coeff_transforms"] = pipeline.get("coeff_transforms", [])
-            entry["pipeline"] = pipeline
-            # Compute total bin size and root count from chunk/stripe metadata
             stripes = calc.get("chunks", calc.get("stripes", []))
             entry["total_size"] = sum(s.get("bin_size", 0) for s in stripes)
             entry["total_size"] += calc.get("total_coeffs_size", 0)
-            # total_roots: stored directly, or derive from stripe bin sizes (8 bytes per root)
             entry["total_roots"] = calc.get("total_roots",
                 sum(s.get("bin_size", 0) for s in stripes) // 8)
         except Exception:
             entry["function"] = "?"
             entry["total_size"] = 0
-
-        # Check for preview/image with lightweight HEAD requests
-        # Check .png (new) then .jpg (legacy) for preview
-        preview_key = None
-        if _key_exists(f"renders/{job_id}/preview.png"):
-            preview_key = f"renders/{job_id}/preview.png"
-        elif _key_exists(f"renders/{job_id}/preview.jpg"):
-            preview_key = f"renders/{job_id}/preview.jpg"
-        entry["has_preview"] = preview_key is not None
-        if preview_key:
-            entry["preview_url"] = s3.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": BUCKET, "Key": preview_key},
-                ExpiresIn=PRESIGN_EXPIRY)
-
-        entry["has_image"] = (_key_exists(f"renders/{job_id}/image.jpeg")
-                              or _key_exists(f"renders/{job_id}/image.png"))
 
         return entry
 
@@ -564,13 +540,34 @@ def handle_detail(event):
     except Exception:
         pass
 
-    # Read calc.json for full compute metadata
+    # Read calc.json for full compute metadata + pipeline info
     try:
         cobj = s3.get_object(Bucket=BUCKET,
                              Key=f"renders/{job_id}/calc.json")
-        result["calc"] = json.loads(cobj["Body"].read())
+        calc = json.loads(cobj["Body"].read())
+        result["calc"] = calc
+        # Extract pipeline info for the info panel
+        pipeline = calc.get("pipeline", {})
+        result["times"] = calc.get("times", 1)
+        result["param_transforms"] = pipeline.get("param_transforms", [])
+        result["param_transforms_display"] = pipeline.get("param_transforms_display", [])
+        result["coeff_transforms"] = pipeline.get("coeff_transforms", [])
+        result["pipeline"] = pipeline
     except Exception:
         pass
+
+    # Check for preview (presign if found)
+    preview_key = None
+    if _key_exists(f"renders/{job_id}/preview.png"):
+        preview_key = f"renders/{job_id}/preview.png"
+    elif _key_exists(f"renders/{job_id}/preview.jpg"):
+        preview_key = f"renders/{job_id}/preview.jpg"
+    result["has_preview"] = preview_key is not None
+    if preview_key:
+        result["preview_url"] = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": BUCKET, "Key": preview_key},
+            ExpiresIn=PRESIGN_EXPIRY)
 
     return ok_response(result)
 
@@ -752,3 +749,45 @@ def handle_delete_prefix(event):
         total_deleted += len(resp.get("Deleted", []))
 
     return ok_response({"prefix": prefix, "deleted": total_deleted})
+
+
+def handle_list_deepzoom(event):
+    """List all DeepZoom exports server-side in one call.
+    Two-level prefix scan + parallel meta.json reads.
+    Returns: {exports: [{job_id, export_id, ...}, ...]}
+    """
+    import concurrent.futures
+
+    # Level 1: job prefixes under deepzoom/
+    job_prefixes = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix="deepzoom/",
+                                   Delimiter="/"):
+        job_prefixes.extend(p["Prefix"] for p in page.get("CommonPrefixes", []))
+
+    # Level 2: export prefixes under each job (parallelized)
+    def list_exports(job_prefix):
+        prefixes = []
+        for page in paginator.paginate(Bucket=BUCKET, Prefix=job_prefix,
+                                       Delimiter="/"):
+            prefixes.extend(p["Prefix"] for p in page.get("CommonPrefixes", []))
+        return prefixes
+
+    export_prefixes = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+        for batch in pool.map(list_exports, job_prefixes):
+            export_prefixes.extend(batch)
+
+    # Level 3: read meta.json for each export (parallelized)
+    def read_meta(prefix):
+        try:
+            obj = s3.get_object(Bucket=BUCKET, Key=prefix + "meta.json")
+            return json.loads(obj["Body"].read())
+        except Exception:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+        exports = [m for m in pool.map(read_meta, export_prefixes) if m]
+
+    exports.sort(key=lambda e: e.get("created_at", ""), reverse=True)
+    return ok_response({"exports": exports, "count": len(exports)})

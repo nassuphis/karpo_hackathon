@@ -59,22 +59,8 @@ test.beforeEach(async ({ page }) => {
     // Override lambdaPost to handle storage calls locally
     const origLambdaPost = window.lambdaPost;
     window.lambdaPost = async function (name, body, path) {
-      if (name === 'storage' && path === '/list-prefix') {
-        if (body.prefix === 'deepzoom/' && body.delimiter) {
-          return { prefixes: ['deepzoom/job_old/export_1/', 'deepzoom/job_mid/export_1/', 'deepzoom/job_new/export_1/'] };
-        }
-        return { prefixes: [body.prefix] };
-      }
-      if (name === 'storage' && path === '/head-keys') {
-        return { exists: body.keys || [], meta: {} };
-      }
-      if (name === 'storage' && path === '/presign') {
-        const key = body.key || '';
-        let meta = mockExports[0];
-        if (key.includes('job_mid')) meta = mockExports[1];
-        if (key.includes('job_new')) meta = mockExports[2];
-        const dataUrl = 'data:application/json;base64,' + btoa(JSON.stringify(meta));
-        return { url: dataUrl };
+      if (name === 'storage' && path === '/list-deepzoom') {
+        return { exports: mockExports, count: mockExports.length };
       }
       // Fall through for anything else
       return {};

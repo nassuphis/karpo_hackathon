@@ -498,10 +498,9 @@ function renderResultsTable() {
 
         // Short ID: strip "compute_" prefix
         const shortId = r.job_id.replace(/^compute_/, '');
-        const indicators = (r.has_preview ? '\u25cf' : '\u25cb') + (r.has_image ? '\u2713' : '');
 
         tr.innerHTML =
-            `<td style="color:#e0e0e0">${shortId} <span style="color:#555;font-size:9px">${indicators}</span></td>` +
+            `<td style="color:#e0e0e0">${shortId}</td>` +
             `<td style="color:#4ecca3">${r.function || '?'}</td>` +
             `<td style="text-align:right">${r.degree || ''}</td>` +
             `<td style="text-align:right">${r.N || r.n1 || ''}</td>` +
@@ -535,61 +534,81 @@ function selectResult(jobId) {
     document.getElementById('render-results-dir').value = jobId;
     document.getElementById('results-dir').value = jobId;
 
-    // Show cached preview if available
     const r = _resultsCache.find(r => r.job_id === jobId);
     const previewEl = document.getElementById('results-preview');
     const infoEl = document.getElementById('results-info');
 
-    if (r && r.has_preview && r.preview_url) {
-        previewEl.innerHTML = `<img src="${r.preview_url}" style="max-width:100%; max-height:100%; image-rendering:pixelated">`;
+    // Show defaults while /detail loads
+    previewEl.innerHTML = '<span style="color:#444; font-size:11px">Loading...</span>';
+    document.getElementById('res-cfun').textContent = r ? (r.function || '?') : '?';
+    document.getElementById('res-degree').textContent = r ? (r.degree || '-') : '-';
+    document.getElementById('res-stripes').textContent = r ? (r.n_chunks || r.n_stripes || '-') : '-';
+    document.getElementById('res-nroots').textContent = r && r.total_roots ? r.total_roots.toLocaleString() : '-';
+    document.getElementById('res-pform').textContent = '-';
+    document.getElementById('res-cfpv').textContent = '-';
+    document.getElementById('res-cform').textContent = '-';
+    document.getElementById('res-times').textContent = '-';
+    document.getElementById('res-prev-total').textContent = '-';
+    document.getElementById('res-prev-good').textContent = '-';
+    document.getElementById('res-ll').textContent = '-';
+    document.getElementById('res-ur').textContent = '-';
+    infoEl.textContent = 'loading...';
+
+    // Use cached detail if available, otherwise fetch
+    if (r && r._detail) {
+        _applyDetail(r, r._detail, previewEl, infoEl, jobId);
+    } else {
+        lambdaPost('storage', { job_id: jobId }, '/detail').then(detail => {
+            if (_selectedJobId !== jobId) return;
+            if (r) r._detail = detail;
+            _applyDetail(r, detail, previewEl, infoEl, jobId);
+        }).catch(e => {
+            if (_selectedJobId === jobId) {
+                infoEl.textContent = `detail error: ${e.message}`;
+                previewEl.innerHTML = '<span style="color:#444; font-size:11px">No preview</span>';
+            }
+        });
+    }
+}
+
+function _applyDetail(r, detail, previewEl, infoEl, jobId) {
+    if (_selectedJobId !== jobId) return;
+
+    // Preview
+    if (detail.has_preview && detail.preview_url) {
+        previewEl.innerHTML = `<img src="${detail.preview_url}" style="max-width:100%; max-height:100%; image-rendering:pixelated">`;
     } else {
         previewEl.innerHTML = '<span style="color:#444; font-size:11px">No preview</span>';
     }
 
-    if (r) {
-        // Pipeline info
-        const pt = r.param_transforms_display || r.param_transforms || [];
-        const ct = r.coeff_transforms || [];
-        document.getElementById('res-pform').textContent = pt.length
-            ? pt.map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(', ')
-            : 'none';
-        document.getElementById('res-cfun').textContent = r.function || '?';
-        const resCfpv = (r.pipeline && r.pipeline.cfpv_display) ? r.pipeline.cfpv_display
-            : (r.pipeline && r.pipeline.cfpv && r.pipeline.cfpv.length) ? r.pipeline.cfpv.join(', ')
-            : '-';
-        document.getElementById('res-cfpv').textContent = resCfpv;
-        document.getElementById('res-cform').textContent = ct.length ? ct.join(', ') : 'none';
-        document.getElementById('res-degree').textContent = r.degree || '-';
-        document.getElementById('res-stripes').textContent = r.n_chunks || r.n_stripes || '-';
-        document.getElementById('res-times').textContent = r.times || '-';
-        document.getElementById('res-nroots').textContent = r.total_roots
-            ? r.total_roots.toLocaleString() : '-';
-        document.getElementById('res-prev-total').textContent = '-';
-        document.getElementById('res-prev-good').textContent = '-';
+    // Pipeline info
+    const pt = detail.param_transforms_display || detail.param_transforms || [];
+    const ct = detail.coeff_transforms || [];
+    document.getElementById('res-pform').textContent = pt.length
+        ? pt.map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(', ')
+        : 'none';
+    const pipeline = detail.pipeline || {};
+    const resCfpv = pipeline.cfpv_display ? pipeline.cfpv_display
+        : (pipeline.cfpv && pipeline.cfpv.length) ? pipeline.cfpv.join(', ') : '-';
+    document.getElementById('res-cfpv').textContent = resCfpv;
+    document.getElementById('res-cform').textContent = ct.length ? ct.join(', ') : 'none';
+    document.getElementById('res-times').textContent = detail.times || '-';
 
-        // Show cached viewport/file_count or defaults
-        document.getElementById('res-ll').textContent = r.q_re && r.q_im
-            ? `${r.q_re[0].toFixed(4)}, ${r.q_im[0].toFixed(4)}` : '-';
-        document.getElementById('res-ur').textContent = r.q_re && r.q_im
-            ? `${r.q_re[1].toFixed(4)}, ${r.q_im[1].toFixed(4)}` : '-';
-        if (r.file_count != null) {
-            infoEl.textContent = `${r.file_count} files`;
-        } else {
-            // Fetch detail (file_count + viewport) on demand — only if not cached
-            infoEl.textContent = 'loading...';
-            lambdaPost('storage', { job_id: jobId }, '/detail').then(detail => {
-                if (_selectedJobId !== jobId) return; // stale
-                r.file_count = detail.file_count;
-                if (detail.q_re) { r.q_re = detail.q_re; r.q_im = detail.q_im; }
-                infoEl.textContent = `${r.file_count} files`;
-                document.getElementById('res-ll').textContent = r.q_re && r.q_im
-                    ? `${r.q_re[0].toFixed(4)}, ${r.q_im[0].toFixed(4)}` : '-';
-                document.getElementById('res-ur').textContent = r.q_re && r.q_im
-                    ? `${r.q_re[1].toFixed(4)}, ${r.q_im[1].toFixed(4)}` : '-';
-            }).catch(e => {
-                if (_selectedJobId === jobId) infoEl.textContent = `detail error: ${e.message}`;
-            });
-        }
+    // Viewport
+    if (detail.q_re && detail.q_im) {
+        document.getElementById('res-ll').textContent = `${detail.q_re[0].toFixed(4)}, ${detail.q_im[0].toFixed(4)}`;
+        document.getElementById('res-ur').textContent = `${detail.q_re[1].toFixed(4)}, ${detail.q_im[1].toFixed(4)}`;
+    }
+
+    // File count
+    if (detail.file_count != null) {
+        infoEl.textContent = `${detail.file_count} files`;
+    }
+
+    // Cache into results entry
+    if (r) {
+        r.file_count = detail.file_count;
+        if (detail.q_re) { r.q_re = detail.q_re; r.q_im = detail.q_im; }
     }
 }
 
@@ -1952,41 +1971,12 @@ async function loadDeepZoomInventory() {
     container.innerHTML = 'Loading...';
 
     try {
-        // Two-level listing: first get job-level prefixes (fast, uses Delimiter),
-        // then list each job's exports. Avoids scanning 42K+ tile objects.
-        const jobsResp = await lambdaPost('storage',
-            { prefix: 'deepzoom/', delimiter: '/' }, '/list-prefix');
-        const jobPrefixes = jobsResp.prefixes || [];
-        // For each job, list export-level prefixes, then check for meta.json
-        const metaKeys = [];
-        await Promise.all(jobPrefixes.map(async (jobPrefix) => {
-            const exportsResp = await lambdaPost('storage',
-                { prefix: jobPrefix, delimiter: '/' }, '/list-prefix');
-            for (const exportPrefix of (exportsResp.prefixes || [])) {
-                metaKeys.push(exportPrefix + 'meta.json');
-            }
-        }));
-        // Verify which meta.json actually exist (HEAD check)
-        const headResp = await lambdaPost('storage', { keys: metaKeys }, '/head-keys');
-        const validMetaKeys = headResp.exists || [];
-
-        if (validMetaKeys.length === 0) {
-            container.innerHTML = '<div style="color:#666">No DeepZoom exports yet. Generate one from the Render tab.</div>';
-            return;
-        }
-
-        // Load all meta.json in parallel
-        const metaPromises = validMetaKeys.map(async (key) => {
-            try {
-                const presign = await lambdaPost('storage', { key }, '/presign');
-                const resp = await fetch(presign.url);
-                return resp.ok ? await resp.json() : null;
-            } catch (e) { return null; }
-        });
-        const exports = (await Promise.all(metaPromises)).filter(Boolean);
+        // Single server-side call: lists all exports and reads their meta.json
+        const data = await lambdaPost('storage', {}, '/list-deepzoom');
+        const exports = data.exports || [];
 
         if (exports.length === 0) {
-            container.innerHTML = '<div style="color:#666">Could not load export metadata.</div>';
+            container.innerHTML = '<div style="color:#666">No DeepZoom exports yet. Generate one from the Render tab.</div>';
             return;
         }
 

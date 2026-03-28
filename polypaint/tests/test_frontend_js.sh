@@ -590,36 +590,20 @@ async function testPipeline(name, call) {
     console.log('');
     console.log('--- DeepZoom inventory ---');
 
-    // Stub lambdaPost for inventory loading
+    // Stub lambdaPost for inventory loading (single /list-deepzoom call)
     vm.runInContext(`
         var _dzListCalls = 0;
         lambdaPost = async function lambdaPost(name, body, path) {
-            if (name === 'storage' && path === '/list-prefix' && body.delimiter) {
+            if (name === 'storage' && path === '/list-deepzoom') {
                 _dzListCalls++;
-                if (body.prefix === 'deepzoom/') {
-                    return { prefixes: ['deepzoom/job_a/', 'deepzoom/job_b/'] };
-                }
-                // Per-job export prefixes
-                return { prefixes: [body.prefix + 'export_1/'] };
-            }
-            if (name === 'storage' && path === '/head-keys') {
-                return { exists: body.keys || [], meta: {} };
-            }
-            if (name === 'storage' && path === '/presign') {
-                return { url: 'https://fake/' + body.key };
+                return { exports: [
+                    { job_id: 'job_b', width: 8192, height: 8192, created_at: '2026-03-25T12:00:00', tiles_uploaded: 400, dzi_url: 'https://dz/job_b.dzi' },
+                    { job_id: 'job_a', width: 4096, height: 4096, created_at: '2026-03-25T10:00:00', tiles_uploaded: 100, dzi_url: 'https://dz/job_a.dzi' },
+                ], count: 2 };
             }
             return {};
         };
     `, ctx);
-
-    // Mock fetch for meta.json loading
-    ctx.fetch = async (url) => ({
-        ok: true,
-        json: async () => {
-            if (url.includes('job_a')) return { job_id: 'job_a', width: 4096, height: 4096, created_at: '2026-03-25T10:00:00', tiles_uploaded: 100, dzi_url: 'https://dz/job_a.dzi' };
-            return { job_id: 'job_b', width: 8192, height: 8192, created_at: '2026-03-25T12:00:00', tiles_uploaded: 400, dzi_url: 'https://dz/job_b.dzi' };
-        }
-    });
 
     // Test: loadDeepZoomInventory populates the inventory
     try {

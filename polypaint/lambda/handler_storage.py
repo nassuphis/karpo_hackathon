@@ -49,6 +49,8 @@ def handler(event, context):
         return handle_render_summary(event)
     elif path.endswith("/delete-task"):
         return handle_delete_task(event)
+    elif path.endswith("/delete-prefix"):
+        return handle_delete_prefix(event)
     return {
         "statusCode": 400,
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
@@ -716,3 +718,37 @@ def handle_delete_task(event):
         Key={"job_id": {"S": job_id}, "task_id": {"S": task_id}},
     )
     return ok_response({"deleted": f"{job_id}/{task_id}"})
+
+
+def handle_delete_prefix(event):
+    """Delete all S3 objects under a prefix.
+    Input: {prefix}
+    Prefix must start with 'deepzoom/' (safety guard).
+    """
+    params = parse_body(event)
+    prefix = params["prefix"]
+    if not prefix.startswith("deepzoom/"):
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
+            "body": json.dumps({"error": "delete-prefix only allowed under deepzoom/"}),
+        }
+
+    objects = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+        objects.extend(page.get("Contents", []))
+
+    if not objects:
+        return ok_response({"prefix": prefix, "deleted": 0})
+
+    total_deleted = 0
+    for i in range(0, len(objects), 1000):
+        batch = objects[i:i + 1000]
+        resp = s3.delete_objects(
+            Bucket=BUCKET,
+            Delete={"Objects": [{"Key": obj["Key"]} for obj in batch]},
+        )
+        total_deleted += len(resp.get("Deleted", []))
+
+    return ok_response({"prefix": prefix, "deleted": total_deleted})

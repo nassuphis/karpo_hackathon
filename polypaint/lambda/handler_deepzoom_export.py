@@ -21,13 +21,12 @@ DZ_EXPORT = os.path.join(os.path.dirname(__file__), "dz_export")
 VIEWER_TEMPLATE = os.path.join(os.path.dirname(__file__), "deepzoom_viewer_template.html")
 
 
-def _render_viewer(job_id, export_id, dzi_url, created_at):
+def _render_viewer(job_id, export_id, created_at):
     """Render standalone viewer HTML from template."""
     with open(VIEWER_TEMPLATE) as f:
         tmpl = f.read()
     return tmpl.replace("{job_id}", job_id) \
                .replace("{export_id}", export_id) \
-               .replace("{dzi_url}", dzi_url) \
                .replace("{created_at}", created_at)
 
 
@@ -113,7 +112,7 @@ def handler(event, context):
 
         # Upload viewer.html first — meta.json advertises share_url,
         # so the viewer must exist before meta is written.
-        viewer_html = _render_viewer(job_id, export_id, dzi_url, created_at)
+        viewer_html = _render_viewer(job_id, export_id, created_at)
         s3.put_object(
             Bucket=BUCKET,
             Key=f"{s3_prefix}/viewer.html",

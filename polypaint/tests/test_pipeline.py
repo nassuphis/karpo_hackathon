@@ -1788,10 +1788,10 @@ class TestDeepZoomExportPointerWrite(unittest.TestCase):
         self.assertIn("OpenSeadragon", body)
         self.assertIn("test_dz", body)
         self.assertIn("dz_viewer_test", body)
-        self.assertIn("image.dzi", body)
+        # OSD fetches the real DZI descriptor via relative path
+        self.assertIn("tileSources: 'image.dzi'", body)
         self.assertNotIn("{job_id}", body, "Template placeholders must be replaced")
         self.assertNotIn("{export_id}", body, "Template placeholders must be replaced")
-        self.assertNotIn("{dzi_url}", body, "Template placeholders must be replaced")
 
 
 class TestDeepZoomViewerTemplate(unittest.TestCase):
@@ -1806,35 +1806,32 @@ class TestDeepZoomViewerTemplate(unittest.TestCase):
     def test_template_renders_all_placeholders(self):
         """All placeholders are replaced by _render_viewer."""
         from handler_deepzoom_export import _render_viewer
-        html = _render_viewer("job_abc", "dz_123",
-                              "https://bucket.s3.us-east-1.amazonaws.com/deepzoom/job_abc/dz_123/image.dzi",
-                              "2026-03-27T12:00:00Z")
+        html = _render_viewer("job_abc", "dz_123", "2026-03-27T12:00:00Z")
         # No unreplaced placeholders
         self.assertNotIn("{job_id}", html)
         self.assertNotIn("{export_id}", html)
-        self.assertNotIn("{dzi_url}", html)
         self.assertNotIn("{created_at}", html)
         # Contains actual values
         self.assertIn("job_abc", html)
         self.assertIn("dz_123", html)
-        self.assertIn("image.dzi", html)
         self.assertIn("2026-03-27T12:00:00Z", html)
 
     def test_template_is_standalone(self):
         """Viewer HTML must not reference index.html or app APIs."""
         from handler_deepzoom_export import _render_viewer
-        html = _render_viewer("j", "e", "https://x/image.dzi", "2026-01-01")
+        html = _render_viewer("j", "e", "2026-01-01")
         self.assertNotIn("index.html", html)
         self.assertNotIn("lambdaPost", html)
         self.assertNotIn("localStorage", html)
         self.assertIn("openseadragon", html.lower())
 
-    def test_template_uses_absolute_dzi_url(self):
-        """tileSources must use the full absolute DZI URL."""
+    def test_template_uses_relative_dzi_tilesources(self):
+        """tileSources must be 'image.dzi' — OSD fetches the real descriptor."""
         from handler_deepzoom_export import _render_viewer
-        dzi = "https://mybucket.s3.us-east-1.amazonaws.com/deepzoom/j/e/image.dzi"
-        html = _render_viewer("j", "e", dzi, "2026-01-01")
-        self.assertIn(f"tileSources: '{dzi}'", html)
+        html = _render_viewer("j", "e", "2026-01-01")
+        self.assertIn("tileSources: 'image.dzi'", html)
+        # No absolute S3 URLs anywhere in the page
+        self.assertNotIn("s3.us-east-1.amazonaws.com", html)
 
 
 if __name__ == "__main__":

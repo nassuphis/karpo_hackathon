@@ -120,6 +120,75 @@ static void poly_29_hand(double x1r, double x1i, double x2r, double x2i,
     }
 }
 
+/* ---- poly_giga_62_hand_c ----
+ * Python:
+ *   cf = np.zeros(25, dtype=complex)
+ *   cf[0:5] = np.array([abs(t1 + t2)**(i+1) for i in range(5)])
+ *   cf[5:10] = ((t1+2j*t2)**3).real * np.log(np.abs(np.conj(t1*t2)))
+ *   cf[10:15] = ((t1-t2)**2).imag / np.angle(t1*t2)
+ *   cf[15:20] = np.abs(cf[5:10])**0.5 + np.angle(cf[0:5])
+ *   cf[20:25] = np.array([abs(t1 * t2)**(i+1) for i in range(5)])
+ *   return cf.astype(np.complex128)
+ *
+ * Notes:
+ *   - cf[5:10] and cf[10:15] are scalar-to-slice broadcasts in Python.
+ *   - cf[0:5] and cf[20:25] come from list comprehensions in slice assignments.
+ *   - np.angle(cf[0:5]) is always 0 here because cf[0:5] are nonnegative reals.
+ */
+static void poly_giga_62_hand_c(double x1r, double x1i, double x2r, double x2i,
+                                const double *cfpv, int n_cfpv,
+                                double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    for (int i = 0; i < 25; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double sumr = x1r + x2r;
+    double sumi = x1i + x2i;
+    double abs_sum = c_abs(sumr, sumi);
+    for (int i = 0; i < 5; i++) {
+        cRe[i] = pow(abs_sum, (double)(i + 1));
+    }
+
+    /* z = t1 + 2j*t2 = (x1r - 2*x2i) + i(x1i + 2*x2r) */
+    double zr = x1r - 2.0 * x2i;
+    double zi = x1i + 2.0 * x2r;
+    double z2r, z2i, z3r, z3i;
+    c_mul(zr, zi, zr, zi, &z2r, &z2i);
+    c_mul(z2r, z2i, zr, zi, &z3r, &z3i);
+
+    double prodr, prodi;
+    c_mul(x1r, x1i, x2r, x2i, &prodr, &prodi);
+    double abs_prod = c_abs(prodr, prodi);
+    double log_abs_prod = log(abs_prod);
+    double broadcast_5_10 = z3r * log_abs_prod;
+    for (int i = 5; i < 10; i++) {
+        cRe[i] = broadcast_5_10;
+    }
+
+    double diffr = x1r - x2r;
+    double diffi = x1i - x2i;
+    double diff2r, diff2i;
+    c_mul(diffr, diffi, diffr, diffi, &diff2r, &diff2i);
+    double denom = c_arg(prodr, prodi);
+    double broadcast_10_15 = diff2i / denom;
+    for (int i = 10; i < 15; i++) {
+        cRe[i] = broadcast_10_15;
+    }
+
+    double broadcast_15_20 = sqrt(fabs(broadcast_5_10));
+    for (int i = 15; i < 20; i++) {
+        cRe[i] = broadcast_15_20;
+    }
+
+    for (int i = 0; i < 5; i++) {
+        cRe[20 + i] = pow(abs_prod, (double)(i + 1));
+    }
+
+    for (int i = 0; i < 25; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
 /* ---- poly_33_hand ----
  * Python:
  *   f = lambda z, n: z**n - 1

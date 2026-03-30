@@ -68,6 +68,7 @@ BINARY_TMP=10240      # /tmp size for Lambdas that process raw images (max 10GB)
 TIMEOUT=900
 BUCKET="polypaint"
 JOBS_TABLE="polypaint-jobs"
+LAYER_PUBLISH_PREFIX="deploy/layers"
 LIBVIPS_LAYER_NAME="polypaint-libvips"
 LAPACK_LAYER_NAME="polypaint-lapack"
 # These get set dynamically by build_and_publish_layers
@@ -144,11 +145,32 @@ echo "  JS syntax OK"
 echo ""
 echo "Building and publishing Lambda layers..."
 
+aws_retry() {
+    local attempt rc delay
+    delay=2
+    for attempt in 1 2 3; do
+        if "$@"; then
+            return 0
+        fi
+        rc=$?
+        if [ "$attempt" -lt 3 ]; then
+            echo "  aws call failed (attempt ${attempt}/3), retrying in ${delay}s..."
+            sleep "$delay"
+            delay=$((delay * 2))
+        fi
+    done
+    return "$rc"
+}
+
 build_and_publish_layer() {
     local LAYER_NAME="$1" BUILD_SCRIPT="$2" ZIP_NAME="$3" BUILD_DIR="$4" ARN_FILE="$5"
     local ZIP_PATH="$BUILD_DIR/$ZIP_NAME"
     local HASH_FILE="$BUILD_DIR/.build_hash"
+    local PUBLISHED_HASH_FILE="$BUILD_DIR/.published_zip_hash"
+    local PUBLISHED_ARN_FILE="$BUILD_DIR/.published_layer_arn"
     local SCRIPT_HASH
+    local ZIP_HASH
+    local S3_KEY
     SCRIPT_HASH=$(shasum "$BUILD_SCRIPT" | cut -d' ' -f1)
 
     # Skip rebuild if zip exists and build script hasn't changed
@@ -168,16 +190,36 @@ build_and_publish_layer() {
         echo "$SCRIPT_HASH" > "$HASH_FILE"
     fi
 
-    echo "  $LAYER_NAME: publishing layer version..."
-    aws lambda publish-layer-version \
-        --layer-name "$LAYER_NAME" \
-        --zip-file "fileb://$ZIP_PATH" \
-        --compatible-runtimes python3.12 python3.13 \
-        --compatible-architectures arm64 \
-        --region "$REGION" \
-        --query 'LayerVersionArn' --output text > "$ARN_FILE"
-    if [ $? -ne 0 ] || [ ! -s "$ARN_FILE" ]; then
-        echo "FATAL: failed to publish $LAYER_NAME layer"
+    ZIP_HASH=$(shasum "$ZIP_PATH" | cut -d' ' -f1)
+    if [ -f "$PUBLISHED_HASH_FILE" ] && [ -f "$PUBLISHED_ARN_FILE" ] && \
+       [ "$(cat "$PUBLISHED_HASH_FILE")" = "$ZIP_HASH" ] && [ -s "$PUBLISHED_ARN_FILE" ]; then
+        echo "  $LAYER_NAME: zip unchanged (reusing published layer version)"
+        cp "$PUBLISHED_ARN_FILE" "$ARN_FILE"
+    else
+        S3_KEY="${LAYER_PUBLISH_PREFIX}/${LAYER_NAME}/${ZIP_HASH}/${ZIP_NAME}"
+        echo "  $LAYER_NAME: uploading layer zip to s3://$BUCKET/$S3_KEY"
+        if ! aws_retry aws s3 cp "$ZIP_PATH" "s3://$BUCKET/$S3_KEY" --region "$REGION" >/dev/null; then
+            echo "FATAL: failed to upload $LAYER_NAME layer zip to S3"
+            exit 1
+        fi
+
+        echo "  $LAYER_NAME: publishing layer version from S3..."
+        if ! aws_retry aws lambda publish-layer-version \
+            --layer-name "$LAYER_NAME" \
+            --content "S3Bucket=$BUCKET,S3Key=$S3_KEY" \
+            --compatible-runtimes python3.12 python3.13 \
+            --compatible-architectures arm64 \
+            --region "$REGION" \
+            --query 'LayerVersionArn' --output text > "$ARN_FILE"; then
+            echo "FATAL: failed to publish $LAYER_NAME layer"
+            exit 1
+        fi
+        echo "$ZIP_HASH" > "$PUBLISHED_HASH_FILE"
+        cp "$ARN_FILE" "$PUBLISHED_ARN_FILE"
+    fi
+
+    if [ ! -s "$ARN_FILE" ]; then
+        echo "FATAL: missing ARN for $LAYER_NAME layer"
         exit 1
     fi
     echo "  $LAYER_NAME: $(cat "$ARN_FILE")"

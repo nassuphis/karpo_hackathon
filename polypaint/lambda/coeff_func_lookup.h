@@ -76,6 +76,7 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_59") == 0) return poly_giga_59_c;
     if (strcmp(name, "giga_60") == 0) return poly_giga_60_c;
     if (strcmp(name, "giga_61") == 0) return poly_giga_61_c;
+    if (strcmp(name, "giga_62") == 0) return poly_giga_62_hand_c;
     if (strcmp(name, "giga_63") == 0) return poly_giga_63_c;
     if (strcmp(name, "giga_64") == 0) return poly_giga_64_c;
     if (strcmp(name, "giga_65") == 0) return poly_giga_65_c;
@@ -1167,6 +1168,7 @@ static const CoeffFuncSpec _coeffFuncSpecs[] = {
     {"giga_59", poly_giga_59_c, 0, NULL},
     {"giga_60", poly_giga_60_c, 0, NULL},
     {"giga_61", poly_giga_61_c, 0, NULL},
+    {"giga_62", poly_giga_62_hand_c, 0, NULL},
     {"giga_63", poly_giga_63_c, 0, NULL},
     {"giga_64", poly_giga_64_c, 0, NULL},
     {"giga_65", poly_giga_65_c, 0, NULL},
@@ -2191,7 +2193,7 @@ static const CoeffFuncSpec _coeffFuncSpecs[] = {
     {"poly_rnd_path6", poly_rnd_path6_c, 0, NULL},
     {"poly_rnd_path7", poly_rnd_path7_c, 0, NULL},
 };
-static const int _nCoeffFuncSpecs = 1087;
+static const int _nCoeffFuncSpecs = 1088;
 
 static const CoeffFuncSpec *lookupCoeffFuncSpec(const char *name) {
     for (int i = 0; i < _nCoeffFuncSpecs; i++) {

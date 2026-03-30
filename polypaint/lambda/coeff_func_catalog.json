@@ -402,6 +402,12 @@
     "kind": "transpiled"
   },
   {
+    "name": "giga_62",
+    "c_symbol": "poly_giga_62_hand_c",
+    "source": "poly_hand.h",
+    "kind": "hand"
+  },
+  {
     "name": "giga_63",
     "c_symbol": "poly_giga_63_c",
     "source": "giga.py",

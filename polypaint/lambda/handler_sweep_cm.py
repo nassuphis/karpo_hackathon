@@ -60,8 +60,9 @@ def handle_solve_cm(params):
             input=json.dumps(spec),
             capture_output=True, text=True, timeout=840
         )
+        print(f"sweep_cm rc={result.returncode} stdout={repr(result.stdout[:200])} stderr={repr(result.stderr[:500])}")
         if result.returncode != 0:
-            raise RuntimeError(f"solve_cm failed: {result.stderr.strip()}")
+            raise RuntimeError(f"solve_cm failed (rc={result.returncode}): {result.stderr.strip()}")
 
         compute_meta = json.loads(result.stdout)
         compute_us = int((time.time() - t0) * 1e6)

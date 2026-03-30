@@ -41,10 +41,12 @@ const _mkEl = () => {
     classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } },
     addEventListener() {}, removeEventListener() {},
     getBoundingClientRect() { return {top:0,left:0,width:100,height:100}; },
+    getContext() { return { fillRect(){}, clearRect(){}, drawImage(){}, fillText(){}, set fillStyle(v){}, set font(v){}, set textAlign(v){}, set textBaseline(v){}, imageSmoothingEnabled: false }; },
     querySelectorAll() { return []; },
     querySelector() { return null; },
     focus() {}, blur() {},
     checked: false,
+    width: 512, height: 512,
     set onchange(v) {},
     set onclick(v) {},
     set oninput(v) {},
@@ -84,7 +86,10 @@ const ctx = {
     AudioContext: class { constructor() {} },
     OfflineAudioContext: class { constructor() {} },
     Worker: class { constructor() {} postMessage() {} terminate() {} addEventListener() {} },
-    Image: class { set src(v) {} },
+    Image: class {
+        constructor() { this.onload = null; this.onerror = null; this.width = 512; this.height = 512; this.naturalWidth = 512; this.naturalHeight = 512; }
+        set src(v) { this._src = v; if (this.onload) this.onload(); }
+    },
     fetch: async () => ({ ok: true, json: async () => ({}) }),
     alert() {},
     confirm() { return true; },
@@ -236,6 +241,19 @@ const renderEls = {
     'render-preview': {},
     'render-info': {},
     'render-log': {},
+    'palette-results-dir': { value: '' },
+    'palette-solve-score': { value: 'proximity' },
+    'palette-solve-score-quantile': { value: '0.1' },
+    'palette-solve-score-quantile-val': {},
+    'palette-status': {},
+    'palette-info': {},
+    'palette-log': {},
+    'palette-inventory': {},
+    'palette-canvas': {},
+    'palette-rt-chips': {},
+    'palette-circles-palette-tab': {},
+    'btn-palette-create': {},
+    'btn-palette-delete': {},
     'btn-raster-all': {},
     'btn-bilevel-all': {},
     'btn-coeff-bilevel-all': {},
@@ -1422,7 +1440,143 @@ async function testPipeline(name, call) {
         console.log('  14c correct payload, no dispatch: OK');
     }
 
-    // Step 15: Render refresh — tested in Playwright (VM cannot override let-scoped lambdaPost/fetch)
+    // Step 15: Palette tab inventory + creation
+    console.log('');
+    console.log('--- Palette tab ---');
+
+    // 15a: inventory loads from single /list-palettes call and auto-selects newest
+    {
+        ctx._elements['palette-results-dir'].value = 'pal_job';
+        vm.runInContext(`
+            var _palInvCalls = 0;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/list-palettes') {
+                    _palInvCalls++;
+                    return {
+                        count: 2,
+                        palettes: [
+                            { palette_id: 'pal_new', created_at: '2026-03-30T10:00:00Z', display_name: 'crowding q=5.0% reef',
+                              metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05, root_transforms: [],
+                              clip_lo: -0.1, clip_hi: 0.2, image_url: 'https://example.com/new.jpeg', preview_url: 'https://example.com/new.png' },
+                            { palette_id: 'pal_old', created_at: '2026-03-29T10:00:00Z', display_name: 'proximity q=0.1% inferno',
+                              metric: 'proximity', palette: 'inferno', solve_score_quantile: 0.001, root_transforms: [],
+                              clip_lo: -1, clip_hi: 1, image_url: 'https://example.com/old.jpeg', preview_url: 'https://example.com/old.png' }
+                        ]
+                    };
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await loadPaletteInventory(); })()', ctx); } catch(e) {}
+        const invCount = vm.runInContext('_paletteInventory.length', ctx);
+        const selIdx = vm.runInContext('_paletteSelectedIdx', ctx);
+        const selId = vm.runInContext('_paletteInventory[0].palette_id', ctx);
+        if (invCount !== 2) { console.error('FATAL: palette inventory should have 2 entries, got ' + invCount); process.exit(1); }
+        if (selIdx !== 0) { console.error('FATAL: palette inventory should auto-select first row, got ' + selIdx); process.exit(1); }
+        if (selId !== 'pal_new') { console.error('FATAL: newest palette should be first, got ' + selId); process.exit(1); }
+        console.log('  15a palette inventory load + auto-select: OK');
+    }
+
+    // 15a2: selected palette actions include download before delete
+    {
+        const dlBtn = ctx._elements['btn-palette-download'];
+        const delBtn = ctx._elements['btn-palette-delete'];
+        if (!dlBtn) { console.error('FATAL: palette tab missing Download button'); process.exit(1); }
+        if (!delBtn) { console.error('FATAL: palette tab missing Delete button'); process.exit(1); }
+        vm.runInContext(`
+            var _palDownloadArgs = null;
+            downloadPresignedFile = async function(url, filename, key) {
+                _palDownloadArgs = { url, filename, key };
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await downloadSelectedPalette(); })()', ctx); } catch(e) {}
+        const args = vm.runInContext('_palDownloadArgs', ctx);
+        if (!args) { console.error('FATAL: selected palette download should call downloadPresignedFile'); process.exit(1); }
+        if (args.url !== 'https://example.com/new.jpeg') { console.error('FATAL: palette download should use selected image_url'); process.exit(1); }
+        if (!args.filename || !args.filename.includes('pal_new')) { console.error('FATAL: palette download filename should include palette_id'); process.exit(1); }
+        console.log('  15a2 selected palette download action: OK');
+    }
+
+    // 15b: palette creation dispatches orchestrator and sets active palette run
+    {
+        ctx._elements['palette-results-dir'].value = 'pal_job';
+        ctx._elements['palette-solve-score-quantile'].value = '1.0';
+        vm.runInContext(`
+            paletteTabMetric = 'area';
+            paletteTabPalette = 'turbo';
+            _paletteRtChain = [{ name: 'rotate_roots', params: ['0.25'] }];
+            var _paTarget = null, _paBody = null, _paObserverStarted = false;
+            startActivePaletteObserver = function() { _paObserverStarted = true; };
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch') {
+                    _paTarget = name;
+                    _paBody = body;
+                    return { fired: 1, total: 1 };
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await runPaletteArtifact(); })()', ctx); } catch(e) {}
+        const target = vm.runInContext('_paTarget', ctx);
+        const body = vm.runInContext('_paBody', ctx);
+        const observerStarted = vm.runInContext('_paObserverStarted', ctx);
+        const activePaletteRun = vm.runInContext('_activePaletteRun', ctx);
+        if (target !== 'dispatch') { console.error('FATAL: palette artifact should call dispatch, got ' + target); process.exit(1); }
+        if (body.target !== 'palette_orchestrator') { console.error('FATAL: palette artifact should dispatch palette_orchestrator'); process.exit(1); }
+        if (!body.jobs || body.jobs.length !== 1) { console.error('FATAL: palette artifact should dispatch exactly one job'); process.exit(1); }
+        const job = body.jobs[0];
+        if (job.params.metric !== 'area') { console.error('FATAL: palette artifact metric should be area'); process.exit(1); }
+        if (job.params.palette !== 'turbo') { console.error('FATAL: palette artifact palette should be turbo'); process.exit(1); }
+        if (!job.params.root_transforms || job.params.root_transforms.length !== 1) { console.error('FATAL: palette artifact should send root transforms'); process.exit(1); }
+        if (!activePaletteRun || activePaletteRun.job_id !== 'pal_job') { console.error('FATAL: palette artifact should set _activePaletteRun'); process.exit(1); }
+        if (!observerStarted) { console.error('FATAL: palette artifact should start observer'); process.exit(1); }
+        console.log('  15b async dispatch + active palette run: OK');
+    }
+
+    // 15c: palette observer refreshes inventory and selects finished palette
+    {
+        ctx._elements['palette-results-dir'].value = 'pal_job';
+        vm.runInContext(`
+            _activePaletteRun = { job_id: 'pal_job', run_id: 'run_pal', task_id: 'palette_run_run_pal', started_at_ms: Date.now() };
+            var _paCheckCalls = 0;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/check-status') {
+                    _paCheckCalls++;
+                    if (body.task_prefix === 'palette_run_run_pal') {
+                        return {
+                            done: 1, expected: 1, complete: true, errors: 0,
+                            results: [{ phase: 'done', phase_label: 'Done', palette_id: 'pal_done', image_key: 'renders/pal_job/palettes/pal_done/image.jpeg' }]
+                        };
+                    }
+                    return { done: 0, expected: 0, complete: false, errors: 0 };
+                }
+                if (name === 'storage' && path === '/list-palettes') {
+                    return {
+                        count: 1,
+                        palettes: [
+                            { palette_id: 'pal_done', created_at: '2026-03-30T10:00:00Z', display_name: 'area q=1.0% turbo',
+                              metric: 'area', palette: 'turbo', solve_score_quantile: 0.01,
+                              root_transforms: [['rotate_roots', '0.25']],
+                              clip_lo: -1, clip_hi: 1,
+                              image_url: 'https://example.com/pal.jpeg', preview_url: 'https://example.com/pal.png' }
+                        ]
+                    };
+                }
+                return {};
+            };
+            stopActivePaletteObserver = function() {};
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await _pollActivePaletteRun(); })()', ctx); } catch(e) {}
+        const selId = vm.runInContext('_paletteInventory[0] && _paletteInventory[0].palette_id', ctx);
+        const selIdx = vm.runInContext('_paletteSelectedIdx', ctx);
+        const activeCleared = vm.runInContext('_activePaletteRun === null', ctx);
+        if (selId !== 'pal_done') { console.error('FATAL: palette observer should refresh inventory with completed palette'); process.exit(1); }
+        if (selIdx !== 0) { console.error('FATAL: palette observer should auto-select completed palette'); process.exit(1); }
+        if (!activeCleared) { console.error('FATAL: palette observer should clear active run on completion'); process.exit(1); }
+        console.log('  15c observer completion refresh + auto-select: OK');
+    }
+
+    // Step 16: Render refresh — tested in Playwright (VM cannot override let-scoped lambdaPost/fetch)
     // See tests/e2e/render-refresh.spec.js for real browser coverage.
 
     console.log('=== Frontend JS Execution Test PASSED ===');

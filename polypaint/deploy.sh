@@ -62,6 +62,15 @@ RENDER_PLAN_MEMORY=512
 RENDER_STATUS_NAME="polypaint-render-status"
 RENDER_STATUS_MEMORY=256
 RENDER_STATE_MACHINE_NAME="polypaint-render-workflow"
+PALETTE_ORCHESTRATOR_NAME="polypaint-palette-orchestrator"
+PALETTE_ORCHESTRATOR_MEMORY=512
+PALETTE_PLAN_NAME="polypaint-palette-render-plan"
+PALETTE_PLAN_MEMORY=512
+PALETTE_CHUNK_NAME="polypaint-palette-chunk"
+PALETTE_CHUNK_MEMORY=1769
+PALETTE_FINALIZE_NAME="polypaint-palette-finalize"
+PALETTE_FINALIZE_MEMORY=4096
+PALETTE_STATE_MACHINE_NAME="polypaint-palette-workflow"
 PALETTE_DEBUG_NAME="polypaint-palette-debug"
 PALETTE_DEBUG_MEMORY=1769
 BINARY_TMP=10240      # /tmp size for Lambdas that process raw images (max 10GB)
@@ -300,6 +309,10 @@ echo "  solve_proximity_stats (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/solve_proximity_stats lambda/solve_proximity_stats.c -lm
 echo "  solve_palette_debug (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/solve_palette_debug lambda/solve_palette_debug.c -lm
+echo "  solve_palette_chunk (static, ARM64)..."
+aarch64-linux-musl-gcc -O3 -static -o lambda/solve_palette_chunk lambda/solve_palette_chunk.c -lm
+echo "  palette_bins_render (static, ARM64)..."
+aarch64-linux-musl-gcc -O3 -static -o lambda/palette_bins_render lambda/palette_bins_render.c -lm
 
 # param_gen removed — param debug now uses sweep in param_dump mode
 
@@ -655,6 +668,42 @@ chmod +x "$PD_DIR"/solve_palette_debug "$PD_DIR"/raw2jpeg
 cd "$PD_DIR" && zip -r9 /tmp/polypaint-palette-debug.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalDbg:  $(du -h /tmp/polypaint-palette-debug.zip | cut -f1)  (palette debug)"
 
+# Palette Orchestrator: handler_palette_orchestrator.py + shared.py
+PAL_ORCH_DIR=/tmp/polypaint-palette-orchestrator
+rm -rf "$PAL_ORCH_DIR"
+mkdir -p "$PAL_ORCH_DIR"
+cp lambda/handler_palette_orchestrator.py lambda/shared.py "$PAL_ORCH_DIR/"
+cd "$PAL_ORCH_DIR" && zip -r9 /tmp/polypaint-palette-orchestrator.zip . -q && cd "$SCRIPT_DIR"
+echo "  PalOrch: $(du -h /tmp/polypaint-palette-orchestrator.zip | cut -f1)  (starter only)"
+
+# Palette Render Plan: handler_palette_render_plan.py + shared.py
+PAL_PLAN_DIR=/tmp/polypaint-palette-render-plan
+rm -rf "$PAL_PLAN_DIR"
+mkdir -p "$PAL_PLAN_DIR"
+cp lambda/handler_palette_render_plan.py lambda/shared.py "$PAL_PLAN_DIR/"
+cd "$PAL_PLAN_DIR" && zip -r9 /tmp/polypaint-palette-render-plan.zip . -q && cd "$SCRIPT_DIR"
+echo "  PalPlan: $(du -h /tmp/polypaint-palette-render-plan.zip | cut -f1)  (plan builder)"
+
+# Palette Chunk: handler_palette_chunk.py + shared.py + solve_palette_chunk
+PAL_CHUNK_DIR=/tmp/polypaint-palette-chunk
+rm -rf "$PAL_CHUNK_DIR"
+mkdir -p "$PAL_CHUNK_DIR"
+cp lambda/handler_palette_chunk.py lambda/shared.py "$PAL_CHUNK_DIR/"
+cp lambda/solve_palette_chunk "$PAL_CHUNK_DIR/"
+chmod +x "$PAL_CHUNK_DIR"/solve_palette_chunk
+cd "$PAL_CHUNK_DIR" && zip -r9 /tmp/polypaint-palette-chunk.zip . -q && cd "$SCRIPT_DIR"
+echo "  PalChnk: $(du -h /tmp/polypaint-palette-chunk.zip | cut -f1)  (chunk scorer)"
+
+# Palette Finalize: handler_palette_finalize.py + shared.py + palette_bins_render + raw2jpeg (needs libvips layer)
+PAL_FINAL_DIR=/tmp/polypaint-palette-finalize
+rm -rf "$PAL_FINAL_DIR"
+mkdir -p "$PAL_FINAL_DIR"
+cp lambda/handler_palette_finalize.py lambda/shared.py "$PAL_FINAL_DIR/"
+cp lambda/palette_bins_render lambda/raw2jpeg "$PAL_FINAL_DIR/"
+chmod +x "$PAL_FINAL_DIR"/palette_bins_render "$PAL_FINAL_DIR"/raw2jpeg
+cd "$PAL_FINAL_DIR" && zip -r9 /tmp/polypaint-palette-finalize.zip . -q && cd "$SCRIPT_DIR"
+echo "  PalFin:  $(du -h /tmp/polypaint-palette-finalize.zip | cut -f1)  (finalize + libvips layer)"
+
 # Render Orchestrator (starter): handler_render_orchestrator.py + shared.py
 ORCH_DIR=/tmp/polypaint-render-orchestrator
 rm -rf "$ORCH_DIR"
@@ -862,6 +911,8 @@ setup_api_gateway() {
     ensure_route "POST /encode-upload" "$ENCODE_INT"
     ensure_route "POST /viewport" "$VIEWPORT_INT"
     ensure_route "POST /list" "$STORAGE_INT"
+    ensure_route "POST /list-palettes" "$STORAGE_INT"
+    ensure_route "POST /delete-palette" "$STORAGE_INT"
     ensure_route "POST /delete" "$STORAGE_INT"
     ensure_route "POST /save-metadata" "$STORAGE_INT"
     ensure_route "POST /cleanup" "$STORAGE_INT"
@@ -1014,7 +1065,7 @@ if [ "$ACTION" = "create" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     create_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -1054,6 +1105,15 @@ if [ "$ACTION" = "create" ]; then
 
     create_lambda "$PALETTE_DEBUG_NAME" "handler_palette_debug.handler" "/tmp/polypaint-palette-debug.zip" \
         "$PALETTE_DEBUG_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    create_lambda "$PALETTE_PLAN_NAME" "handler_palette_render_plan.handler" "/tmp/polypaint-palette-render-plan.zip" \
+        "$PALETTE_PLAN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
+
+    create_lambda "$PALETTE_CHUNK_NAME" "handler_palette_chunk.handler" "/tmp/polypaint-palette-chunk.zip" \
+        "$PALETTE_CHUNK_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+
+    create_lambda "$PALETTE_FINALIZE_NAME" "handler_palette_finalize.handler" "/tmp/polypaint-palette-finalize.zip" \
+        "$PALETTE_FINALIZE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     # Render plan + status Lambdas
     create_lambda "$RENDER_PLAN_NAME" "handler_render_plan.handler" "/tmp/polypaint-render-plan.zip" \
@@ -1135,9 +1195,39 @@ if [ "$ACTION" = "create" ]; then
 
     RENDER_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}"
 
+    PALETTE_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_PLAN_NAME}"
+    PALETTE_CHUNK_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_CHUNK_NAME}"
+    PALETTE_FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_FINALIZE_NAME}"
+    sed -e "s|\${PlanFunctionArn}|${PALETTE_PLAN_ARN}|g" \
+        -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
+        -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
+        -e "s|\${PaletteChunkFunctionArn}|${PALETTE_CHUNK_ARN}|g" \
+        -e "s|\${PaletteFinalizeFunctionArn}|${PALETTE_FINALIZE_ARN}|g" \
+        stepfunctions/palette_workflow.asl.json.template > /tmp/palette_workflow.asl.json
+
+    PALETTE_SM_ARN=$(aws stepfunctions create-state-machine \
+        --name "$PALETTE_STATE_MACHINE_NAME" \
+        --definition "file:///tmp/palette_workflow.asl.json" \
+        --role-arn "$SFN_ROLE_ARN" \
+        --type STANDARD \
+        --region "$REGION" \
+        --query 'stateMachineArn' --output text 2>/dev/null || \
+        aws stepfunctions update-state-machine \
+            --state-machine-arn "arn:aws:states:${REGION}:${ACCT}:stateMachine:${PALETTE_STATE_MACHINE_NAME}" \
+            --definition "file:///tmp/palette_workflow.asl.json" \
+            --role-arn "$SFN_ROLE_ARN" \
+            --region "$REGION" \
+            --query 'updateDate' --output text)
+    echo "  State machine: $PALETTE_STATE_MACHINE_NAME ($PALETTE_SM_ARN)"
+
+    PALETTE_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${PALETTE_STATE_MACHINE_NAME}"
+
     # Starter Lambda — now only needs state machine ARN, not all worker names
     create_lambda "$RENDER_ORCHESTRATOR_NAME" "handler_render_orchestrator.handler" "/tmp/polypaint-render-orchestrator.zip" \
         "$RENDER_ORCHESTRATOR_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RENDER_STATE_MACHINE_ARN=$RENDER_SM_ARN"
+
+    create_lambda "$PALETTE_ORCHESTRATOR_NAME" "handler_palette_orchestrator.handler" "/tmp/polypaint-palette-orchestrator.zip" \
+        "$PALETTE_ORCHESTRATOR_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,PALETTE_STATE_MACHINE_ARN=$PALETTE_SM_ARN"
 
     # Add states:StartExecution permission to Lambda role
     aws iam put-role-policy --role-name "$ROLE_NAME" \
@@ -1147,7 +1237,7 @@ if [ "$ACTION" = "create" ]; then
             \"Statement\": [{
                 \"Effect\": \"Allow\",
                 \"Action\": \"states:StartExecution\",
-                \"Resource\": \"${RENDER_SM_ARN}\"
+                \"Resource\": [\"${RENDER_SM_ARN}\", \"${PALETTE_SM_ARN}\"]
             }]
         }"
 
@@ -1156,7 +1246,7 @@ if [ "$ACTION" = "create" ]; then
 
     # Async invoke config: no retries for most Lambdas (prevents retry storms),
     # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
-    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$SOLVE_PROXIMITY_NAME"; do
+    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \
@@ -1171,6 +1261,11 @@ if [ "$ACTION" = "create" ]; then
     # Orchestrator: no retries (self-reinvokes), long event age
     aws lambda put-function-event-invoke-config \
         --function-name "$RENDER_ORCHESTRATOR_NAME" \
+        --maximum-retry-attempts 0 \
+        --maximum-event-age-in-seconds 3600 \
+        --region "$REGION" >/dev/null 2>&1
+    aws lambda put-function-event-invoke-config \
+        --function-name "$PALETTE_ORCHESTRATOR_NAME" \
         --maximum-retry-attempts 0 \
         --maximum-event-age-in-seconds 3600 \
         --region "$REGION" >/dev/null 2>&1
@@ -1225,7 +1320,7 @@ elif [ "$ACTION" = "update" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     update_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -1266,6 +1361,15 @@ elif [ "$ACTION" = "update" ]; then
     update_lambda "$PALETTE_DEBUG_NAME" "handler_palette_debug.handler" "/tmp/polypaint-palette-debug.zip" \
         "$PALETTE_DEBUG_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
+    update_lambda "$PALETTE_PLAN_NAME" "handler_palette_render_plan.handler" "/tmp/polypaint-palette-render-plan.zip" \
+        "$PALETTE_PLAN_MEMORY" "" "BUCKET=$BUCKET"
+
+    update_lambda "$PALETTE_CHUNK_NAME" "handler_palette_chunk.handler" "/tmp/polypaint-palette-chunk.zip" \
+        "$PALETTE_CHUNK_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+
+    update_lambda "$PALETTE_FINALIZE_NAME" "handler_palette_finalize.handler" "/tmp/polypaint-palette-finalize.zip" \
+        "$PALETTE_FINALIZE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
     update_lambda "$RENDER_PLAN_NAME" "handler_render_plan.handler" "/tmp/polypaint-render-plan.zip" \
         "$RENDER_PLAN_MEMORY" "" "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME"
 
@@ -1285,6 +1389,10 @@ elif [ "$ACTION" = "update" ]; then
     BILEVEL_STITCH_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_STITCH_NAME}"
     SOLVE_PROXIMITY_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
     RENDER_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}"
+    PALETTE_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_PLAN_NAME}"
+    PALETTE_CHUNK_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_CHUNK_NAME}"
+    PALETTE_FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_FINALIZE_NAME}"
+    PALETTE_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${PALETTE_STATE_MACHINE_NAME}"
 
     SFN_ROLE_NAME="polypaint-sfn-execution-role"
     SFN_ROLE_ARN=$(aws iam get-role --role-name "$SFN_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || echo "")
@@ -1302,6 +1410,13 @@ elif [ "$ACTION" = "update" ]; then
         -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
         -e "s|\${PreviewFunctionArn}|${PREVIEW_ARN}|g" \
         stepfunctions/render_workflow.asl.json.template > /tmp/render_workflow.asl.json
+
+    sed -e "s|\${PlanFunctionArn}|${PALETTE_PLAN_ARN}|g" \
+        -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
+        -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
+        -e "s|\${PaletteChunkFunctionArn}|${PALETTE_CHUNK_ARN}|g" \
+        -e "s|\${PaletteFinalizeFunctionArn}|${PALETTE_FINALIZE_ARN}|g" \
+        stepfunctions/palette_workflow.asl.json.template > /tmp/palette_workflow.asl.json
 
     SFN_TRUST='{
         "Version": "2012-10-17",
@@ -1348,9 +1463,27 @@ elif [ "$ACTION" = "update" ]; then
     }
     echo "  State machine: $RENDER_STATE_MACHINE_NAME"
 
+    aws stepfunctions update-state-machine \
+        --state-machine-arn "$PALETTE_SM_ARN" \
+        --definition "$(cat /tmp/palette_workflow.asl.json)" \
+        --role-arn "$SFN_ROLE_ARN" \
+        --region "$REGION" >/dev/null 2>&1 || {
+        echo "  Palette state machine doesn't exist, creating..."
+        aws stepfunctions create-state-machine \
+            --name "$PALETTE_STATE_MACHINE_NAME" \
+            --definition "$(cat /tmp/palette_workflow.asl.json)" \
+            --role-arn "$SFN_ROLE_ARN" \
+            --type STANDARD \
+            --region "$REGION" \
+            --query 'stateMachineArn' --output text
+    }
+    echo "  State machine: $PALETTE_STATE_MACHINE_NAME"
+
     # Starter Lambda — uses state machine ARN, not worker names
     update_lambda "$RENDER_ORCHESTRATOR_NAME" "handler_render_orchestrator.handler" "/tmp/polypaint-render-orchestrator.zip" \
         "$RENDER_ORCHESTRATOR_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RENDER_STATE_MACHINE_ARN=$RENDER_SM_ARN"
+    update_lambda "$PALETTE_ORCHESTRATOR_NAME" "handler_palette_orchestrator.handler" "/tmp/polypaint-palette-orchestrator.zip" \
+        "$PALETTE_ORCHESTRATOR_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,PALETTE_STATE_MACHINE_ARN=$PALETTE_SM_ARN"
 
     # Ensure states:StartExecution permission
     aws iam put-role-policy --role-name "$ROLE_NAME" \
@@ -1360,7 +1493,7 @@ elif [ "$ACTION" = "update" ]; then
             \"Statement\": [{
                 \"Effect\": \"Allow\",
                 \"Action\": \"states:StartExecution\",
-                \"Resource\": \"${RENDER_SM_ARN}\"
+                \"Resource\": [\"${RENDER_SM_ARN}\", \"${PALETTE_SM_ARN}\"]
             }]
         }" 2>/dev/null || true
 
@@ -1369,7 +1502,7 @@ elif [ "$ACTION" = "update" ]; then
 
     # Async invoke config: no retries for most Lambdas (prevents retry storms),
     # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
-    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$SOLVE_PROXIMITY_NAME"; do
+    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \
@@ -1383,6 +1516,11 @@ elif [ "$ACTION" = "update" ]; then
         --region "$REGION" >/dev/null 2>&1
     aws lambda put-function-event-invoke-config \
         --function-name "$RENDER_ORCHESTRATOR_NAME" \
+        --maximum-retry-attempts 0 \
+        --maximum-event-age-in-seconds 3600 \
+        --region "$REGION" >/dev/null 2>&1
+    aws lambda put-function-event-invoke-config \
+        --function-name "$PALETTE_ORCHESTRATOR_NAME" \
         --maximum-retry-attempts 0 \
         --maximum-event-age-in-seconds 3600 \
         --region "$REGION" >/dev/null 2>&1

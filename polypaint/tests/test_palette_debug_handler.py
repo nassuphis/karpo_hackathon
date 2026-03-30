@@ -186,6 +186,53 @@ class TestPaletteDebugHandler(unittest.TestCase):
         upload_calls = mock_s3.upload_fileobj.call_args_list
         self.assertTrue(len(upload_calls) > 0, "upload_fileobj not called")
 
+    @patch("handler_palette_debug.s3")
+    @patch("handler_palette_debug.subprocess")
+    def test_persistent_mode_writes_palette_variant_family(self, mock_sub, mock_s3):
+        """Persistent mode writes immutable palette artifact family + meta.json."""
+        from handler_palette_debug import handler
+
+        mock_body = MagicMock()
+        mock_body.iter_chunks.return_value = [b'\x00' * 100]
+        mock_s3.get_object.return_value = {"Body": mock_body}
+        mock_s3.generate_presigned_url.side_effect = [
+            "https://example.com/image.jpeg",
+            "https://example.com/preview.png",
+        ]
+
+        meta_json = json.dumps({
+            "mode": "palette_debug", "metric": "crowding", "palette": "reef",
+            "n_samples_used": 100, "degree": 5, "lores_n": 10, "full_n": 100,
+            "times": 1, "using_pass": 0, "clip_lo": -1, "clip_hi": 1,
+            "clip_range": 2, "clip_fallback": False, "clip_fallback_reason": None,
+            "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+        })
+        mock_sub.run.side_effect = [
+            MagicMock(returncode=0, stdout=meta_json, stderr=''),
+            MagicMock(returncode=0, stdout='', stderr=''),  # raw2jpeg
+            MagicMock(returncode=0, stdout='', stderr=''),  # vipsthumbnail preview
+        ]
+
+        with patch("os.path.getsize", return_value=4096), \
+             patch("builtins.open", mock_open(read_data=b'\xff\xd8' * 50)):
+            result = handler(_make_event(metric="crowding", palette="reef", persistent=True), None)
+
+        body = json.loads(result["body"])
+        self.assertTrue(body["persistent"])
+        self.assertIn("/palettes/", body["image_key"])
+        self.assertIn("/palettes/", body["preview_key"])
+        self.assertIn("/palettes/", body["score_key"])
+        self.assertIn("/palettes/", body["palette_bins_key"])
+
+        upload_keys = [c[0][2] for c in mock_s3.upload_fileobj.call_args_list]
+        self.assertEqual(len(upload_keys), 4)
+        self.assertTrue(any(k.endswith("/image.jpeg") for k in upload_keys))
+        self.assertTrue(any(k.endswith("/preview.png") for k in upload_keys))
+        self.assertTrue(any("/score_crowding.bin" in k for k in upload_keys))
+        self.assertTrue(any(k.endswith("/palette_bins.bin") for k in upload_keys))
+        self.assertTrue(mock_s3.put_object.called, "meta.json should be written in persistent mode")
+        self.assertFalse(mock_s3.delete_object.called, "persistent mode should not delete root-level preview cache")
+
     def test_handler_does_not_report_status(self):
         """Handler must not call report_status."""
         import handler_palette_debug as mod

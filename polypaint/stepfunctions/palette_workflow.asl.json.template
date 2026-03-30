@@ -1,0 +1,377 @@
+{
+  "Comment": "PolyPaint palette workflow — exact full-resolution pass-0 palette artifacts. Wrapped in Parallel to catch States.Runtime from parameter resolution errors.",
+  "StartAt": "WorkflowWrapper",
+  "States": {
+
+    "WorkflowWrapper": {
+      "Type": "Parallel",
+      "Branches": [{
+        "StartAt": "BuildPlanPhase",
+        "States": {
+
+          "BuildPlanPhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "mode.$": "$.mode",
+                "phase": "plan",
+                "phase_label": "Clean + plan"
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "BuildPlan"
+          },
+
+          "BuildPlan": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${PlanFunctionArn}",
+              "Payload.$": "$"
+            },
+            "ResultSelector": {
+              "plan.$": "$.Payload.body"
+            },
+            "ResultPath": "$.plan_raw",
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ParsePlan"
+          },
+
+          "ParsePlan": {
+            "Type": "Pass",
+            "Parameters": {
+              "job_id.$": "$.job_id",
+              "run_id.$": "$.run_id",
+              "task_id.$": "$.task_id",
+              "mode.$": "$.mode",
+              "params.$": "$.params",
+              "plan.$": "States.StringToJson($.plan_raw.plan)"
+            },
+            "Next": "SolveScoreClipPhase"
+          },
+
+          "SolveScoreClipPhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "mode.$": "$.mode",
+                "phase": "solve_score_clip",
+                "phase_label": "Solve score: clip",
+                "expected": 1
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "SolveScoreClipTask"
+          },
+
+          "SolveScoreClipTask": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${SolveProximityFunctionArn}",
+              "Payload": {
+                "phase": "clip",
+                "job_id.$": "$.job_id",
+                "degree.$": "$.plan.calc.degree",
+                "metric.$": "$.plan.solve_score.metric",
+                "solve_score_quantile.$": "$.plan.solve_score.quantile",
+                "lores_bin_key.$": "$.plan.calc.lores_bin_key",
+                "root_transforms.$": "$.plan.params.root_transforms",
+                "out_key.$": "$.plan.solve_score.clip_key",
+                "task_id.$": "States.Format('palette_{}_solve_score_clip', $.run_id)"
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "SolveScoreHistPhase"
+          },
+
+          "SolveScoreHistPhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "mode.$": "$.mode",
+                "phase": "solve_score_hist",
+                "phase_label": "Solve score: hist",
+                "expected.$": "$.plan.calc.n_chunks",
+                "subtask_prefix.$": "States.Format('palette_{}_solve_score_hist_', $.run_id)"
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "SolveScoreHistMap"
+          },
+
+          "SolveScoreHistMap": {
+            "Type": "Map",
+            "ItemsPath": "$.plan.chunk_items",
+            "MaxConcurrency": 10,
+            "ItemSelector": {
+              "phase": "hist",
+              "job_id.$": "$.job_id",
+              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
+              "metric.$": "$.plan.solve_score.metric",
+              "solve_score_quantile.$": "$.plan.solve_score.quantile",
+              "bin_key.$": "$$.Map.Item.Value.bin_key",
+              "degree.$": "$.plan.calc.degree",
+              "clip_key.$": "$.plan.solve_score.clip_key",
+              "hist_bins": 100,
+              "root_transforms.$": "$.plan.params.root_transforms",
+              "out_key.$": "States.Format('{}chunk_{}_hist.json', $.plan.solve_score.hist_prefix, $$.Map.Item.Value.chunk_idx)",
+              "task_id.$": "States.Format('palette_{}_solve_score_hist_{}', $.run_id, $$.Map.Item.Value.chunk_idx)"
+            },
+            "ItemProcessor": {
+              "ProcessorConfig": {"Mode": "INLINE"},
+              "StartAt": "SolveHistWorker",
+              "States": {
+                "SolveHistWorker": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": { "FunctionName": "${SolveProximityFunctionArn}", "Payload.$": "$" },
+                  "ResultPath": null,
+                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+                  "End": true
+                }
+              }
+            },
+            "ResultPath": null,
+            "Next": "SolveScoreMergePhase"
+          },
+
+          "SolveScoreMergePhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "mode.$": "$.mode",
+                "phase": "solve_score_merge",
+                "phase_label": "Solve score: merge",
+                "expected": 1
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "SolveScoreMergeTask"
+          },
+
+          "SolveScoreMergeTask": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${SolveProximityFunctionArn}",
+              "Payload": {
+                "phase": "merge",
+                "job_id.$": "$.job_id",
+                "n_chunks.$": "$.plan.calc.n_chunks",
+                "metric.$": "$.plan.solve_score.metric",
+                "solve_score_quantile.$": "$.plan.solve_score.quantile",
+                "hist_prefix.$": "$.plan.solve_score.hist_prefix",
+                "clip_key.$": "$.plan.solve_score.clip_key",
+                "out_key.$": "$.plan.solve_score.bins_key",
+                "task_id.$": "States.Format('palette_{}_solve_score_merge', $.run_id)"
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "PaletteChunkPhase"
+          },
+
+          "PaletteChunkPhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "mode.$": "$.mode",
+                "phase": "palette_chunk",
+                "phase_label": "Palette: chunk",
+                "expected.$": "$.plan.calc.n_palette_chunks",
+                "subtask_prefix.$": "States.Format('palette_{}_chunk_', $.run_id)"
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "PaletteChunkMap"
+          },
+
+          "PaletteChunkMap": {
+            "Type": "Map",
+            "ItemsPath": "$.plan.palette_items",
+            "MaxConcurrency": 10,
+            "ItemSelector": {
+              "job_id.$": "$.job_id",
+              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
+              "bin_key.$": "$$.Map.Item.Value.bin_key",
+              "step_start.$": "$$.Map.Item.Value.step_start",
+              "step_count.$": "$$.Map.Item.Value.step_count",
+              "degree.$": "$.plan.calc.degree",
+              "metric.$": "$.plan.solve_score.metric",
+              "solve_score_quantile.$": "$.plan.solve_score.quantile",
+              "root_transforms.$": "$.plan.params.root_transforms",
+              "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
+              "score_key.$": "States.Format('{}score_chunk_{}.bin', $.plan.outputs.chunks_prefix, $$.Map.Item.Value.chunk_idx)",
+              "palette_bins_key.$": "States.Format('{}palette_bins_chunk_{}.bin', $.plan.outputs.chunks_prefix, $$.Map.Item.Value.chunk_idx)",
+              "meta_key.$": "States.Format('{}meta_chunk_{}.json', $.plan.outputs.chunks_prefix, $$.Map.Item.Value.chunk_idx)",
+              "task_id.$": "States.Format('palette_{}_chunk_{}', $.run_id, $$.Map.Item.Value.chunk_idx)"
+            },
+            "ItemProcessor": {
+              "ProcessorConfig": {"Mode": "INLINE"},
+              "StartAt": "PaletteChunkWorker",
+              "States": {
+                "PaletteChunkWorker": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": { "FunctionName": "${PaletteChunkFunctionArn}", "Payload.$": "$" },
+                  "ResultPath": null,
+                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+                  "End": true
+                }
+              }
+            },
+            "ResultPath": null,
+            "Next": "PaletteFinalizePhase"
+          },
+
+          "PaletteFinalizePhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "mode.$": "$.mode",
+                "phase": "palette_finalize",
+                "phase_label": "Palette: finalize",
+                "expected": 1
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "PaletteFinalizeTask"
+          },
+
+          "PaletteFinalizeTask": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${PaletteFinalizeFunctionArn}",
+              "Payload": {
+                "job_id.$": "$.job_id",
+                "task_id.$": "States.Format('palette_{}_finalize', $.run_id)",
+                "palette_id.$": "$.plan.palette_id",
+                "N.$": "$.plan.calc.N",
+                "times.$": "$.plan.calc.times",
+                "degree.$": "$.plan.calc.degree",
+                "metric.$": "$.plan.solve_score.metric",
+                "palette.$": "$.plan.params.palette",
+                "solve_score_quantile.$": "$.plan.solve_score.quantile",
+                "root_transforms.$": "$.plan.params.root_transforms",
+                "image_key.$": "$.plan.outputs.image_key",
+                "preview_key.$": "$.plan.outputs.preview_key",
+                "score_key.$": "$.plan.outputs.score_key",
+                "palette_bins_key.$": "$.plan.outputs.palette_bins_key",
+                "meta_key.$": "$.plan.outputs.meta_key",
+                "chunks_prefix.$": "$.plan.outputs.chunks_prefix",
+                "solve_score_prefix.$": "$.plan.solve_score.hist_prefix",
+                "solve_score_clip_key.$": "$.plan.solve_score.clip_key",
+                "solve_score_bins_key.$": "$.plan.solve_score.bins_key"
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ReportDone"
+          },
+
+          "ReportDone": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "done",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "mode.$": "$.mode",
+                "palette_id.$": "$.plan.palette_id",
+                "image_key.$": "$.plan.outputs.image_key"
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "InnerSucceed"
+          },
+
+          "InnerSucceed": { "Type": "Succeed" }
+        }
+      }],
+      "ResultPath": null,
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error_info",
+        "Next": "ReportError"
+      }],
+      "Next": "Succeed"
+    },
+
+    "Succeed": { "Type": "Succeed" },
+
+    "ReportError": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${StatusFunctionArn}",
+        "Payload": {
+          "action": "error",
+          "job_id.$": "$.job_id",
+          "task_id.$": "$.task_id",
+          "run_id.$": "$.run_id",
+          "mode.$": "$.mode",
+          "Error.$": "$.error_info.Error",
+          "Cause.$": "$.error_info.Cause"
+        }
+      },
+      "ResultPath": null,
+      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+      "Next": "Fail"
+    },
+
+    "Fail": {
+      "Type": "Fail",
+      "Error": "PaletteFailed",
+      "Cause": "See DDB run row for details"
+    }
+  }
+}

@@ -3,6 +3,8 @@ Storage Lambda handler — S3 metadata operations + DynamoDB status tracking.
 
 Routes:
   POST /list           — list all computed jobs with metadata
+  POST /list-palettes  — list saved palette variants for one job
+  POST /delete-palette — delete one saved palette variant
   POST /delete         — delete all S3 objects for a job
   POST /save-metadata  — save calc.json to S3
   POST /cleanup        — delete a list of S3 keys
@@ -25,6 +27,10 @@ def handler(event, context):
     path = event.get("rawPath", event.get("path", "/"))
     if path.endswith("/list"):
         return handle_list(event)
+    elif path.endswith("/list-palettes"):
+        return handle_list_palettes(event)
+    elif path.endswith("/delete-palette"):
+        return handle_delete_palette(event)
     elif path.endswith("/delete"):
         return handle_delete(event)
     elif path.endswith("/save-metadata"):
@@ -114,6 +120,80 @@ def handle_list(event):
         "count": len(results),
         "list_us": int((time.time() - t0) * 1e6),
     })
+
+
+def handle_list_palettes(event):
+    """List immutable palette artifacts for a single job.
+    Returns newest-first entries from renders/{job_id}/palettes/*/meta.json.
+    """
+    import concurrent.futures
+
+    params = parse_body(event)
+    job_id = params["job_id"]
+    base_prefix = f"renders/{job_id}/palettes/"
+
+    palette_prefixes = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=base_prefix, Delimiter="/"):
+        palette_prefixes.extend(p["Prefix"] for p in page.get("CommonPrefixes", []))
+
+    def read_meta(prefix):
+        try:
+            obj = s3.get_object(Bucket=BUCKET, Key=prefix + "meta.json")
+            meta = json.loads(obj["Body"].read())
+            metric = meta.get("metric", "proximity")
+            image_key = meta.get("image_key", prefix + "image.jpeg")
+            preview_key = meta.get("preview_key", prefix + "preview.png")
+            score_key = meta.get("score_key", prefix + f"score_{metric}.bin")
+            palette_bins_key = meta.get("palette_bins_key", prefix + "palette_bins.bin")
+            meta["image_key"] = image_key
+            meta["preview_key"] = preview_key
+            meta["score_key"] = score_key
+            meta["palette_bins_key"] = palette_bins_key
+            meta["image_url"] = s3.generate_presigned_url(
+                "get_object", Params={"Bucket": BUCKET, "Key": image_key},
+                ExpiresIn=PRESIGN_EXPIRY,
+            )
+            meta["preview_url"] = s3.generate_presigned_url(
+                "get_object", Params={"Bucket": BUCKET, "Key": preview_key},
+                ExpiresIn=PRESIGN_EXPIRY,
+            )
+            return meta
+        except Exception:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(palette_prefixes), 20) or 1) as pool:
+        palettes = [m for m in pool.map(read_meta, palette_prefixes) if m]
+
+    palettes.sort(key=lambda p: p.get("created_at", ""), reverse=True)
+    return ok_response({"job_id": job_id, "palettes": palettes, "count": len(palettes)})
+
+
+def handle_delete_palette(event):
+    """Delete one immutable palette variant under renders/{job_id}/palettes/{palette_id}/."""
+    params = parse_body(event)
+    job_id = params["job_id"]
+    palette_id = params["palette_id"]
+    prefix = f"renders/{job_id}/palettes/{palette_id}/"
+
+    objects = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+        objects.extend(page.get("Contents", []))
+
+    if not objects:
+        return ok_response({"job_id": job_id, "palette_id": palette_id, "deleted": 0})
+
+    total_deleted = 0
+    for i in range(0, len(objects), 1000):
+        batch = objects[i:i + 1000]
+        resp = s3.delete_objects(
+            Bucket=BUCKET,
+            Delete={"Objects": [{"Key": obj["Key"]} for obj in batch]},
+        )
+        total_deleted += len(resp.get("Deleted", []))
+
+    return ok_response({"job_id": job_id, "palette_id": palette_id, "deleted": total_deleted})
 
 
 def _key_exists(key):

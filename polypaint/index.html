@@ -144,6 +144,7 @@ button {
     <div class="tab-bar">
         <div class="tab-btn active" onclick="switchTab('compute')">Compute</div>
         <div class="tab-btn" onclick="switchTab('results')">Results</div>
+        <div class="tab-btn" onclick="switchTab('palette')">Palette</div>
         <div class="tab-btn" onclick="switchTab('render')">Render</div>
         <div class="tab-btn" onclick="switchTab('deepzoom')">DeepZoom</div>
     </div>
@@ -422,6 +423,65 @@ button {
             <div id="render-info" style="font-size:12px; color:#888; margin-top:4px"></div>
             <div id="render-log" style="margin-top:8px; font-family:monospace; font-size:11px"></div>
         </div>
+        <!-- Palette tab -->
+        <div id="tab-palette" class="tab-content">
+            <div class="anim-row" style="gap:8px; align-items:center">
+                <label>Results Dir:</label>
+                <input type="text" id="palette-results-dir" placeholder="compute_xxxxxxxx" style="flex:1; font-family:monospace; font-size:12px">
+                <button class="btn-secondary" onclick="loadPaletteInventory()" style="padding:4px 12px">Refresh</button>
+            </div>
+            <div class="color-box">
+                <div class="color-title">Solve Score Palette</div>
+                <div class="color-row">
+                    <span style="color:#888; min-width:45px; text-transform:uppercase; letter-spacing:0.06em">Metric</span>
+                    <select id="palette-solve-score" onchange="setPaletteMetric(this.value)" style="font-size:10px; width:120px">
+                        <option value="proximity">Proximity</option>
+                        <option value="crowding">Crowding</option>
+                        <option value="spread">Spread</option>
+                        <option value="anisotropy">Anisotropy</option>
+                        <option value="area">Area</option>
+                        <option value="clusteriness">Clusteriness</option>
+                        <option value="shelliness">Shelliness</option>
+                        <option value="outlierness">Outlierness</option>
+                        <option value="nn_variation">NN variation</option>
+                        <option value="real_axis_proximity">Real-axis proximity</option>
+                    </select>
+                    <div id="palette-circles-palette-tab" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:8px"></div>
+                </div>
+                <div class="color-row" style="padding-left:0">
+                    <label style="color:#888; font-size:10px; min-width:70px">Score clip q:</label>
+                    <span id="palette-solve-score-quantile-val" style="font-size:10px; display:inline-block; width:2.5em; text-align:right">0.1</span><span style="font-size:10px">%</span>
+                    <input type="range" id="palette-solve-score-quantile" min="0.1" max="5.0" step="0.1" value="0.1" style="width:120px; margin-left:4px"
+                        oninput="document.getElementById('palette-solve-score-quantile-val').textContent=parseFloat(this.value).toFixed(1)">
+                    <button id="btn-palette-create" onclick="runPaletteArtifact()" style="font-size:10px; margin-left:8px; padding:1px 8px">Palette</button>
+                </div>
+            </div>
+            <div class="anim-row" style="flex-wrap:wrap; margin-top:8px">
+                <label style="min-width:90px">Root transforms:</label>
+                <div id="palette-rt-chips" class="chip-container"></div>
+                <select id="palette-rt-add" onchange="addChip('palette-rt',this.value);this.value='';" style="width:120px; font-size:12px">
+                    <option value="">+ add...</option>
+                    <option value="rotate_roots">rotate_roots</option>
+                    <option value="pull_unit_circle">pull_unit_circle</option>
+                    <option value="roots_toline">roots_toline (Cayley)</option>
+                    <option value="pull_towards_center">pull_towards_center</option>
+                </select>
+            </div>
+            <div class="status" id="palette-status"></div>
+            <div id="palette-viewer" style="margin-top:8px">
+                <canvas id="palette-canvas" width="512" height="512" style="max-width:100%; background:#000; border:1px solid #333; image-rendering:pixelated; display:block"></canvas>
+            </div>
+            <div id="palette-info" style="font-size:12px; color:#888; margin-top:4px"></div>
+            <div style="margin-top:8px; margin-bottom:4px; display:flex; align-items:center; justify-content:space-between; gap:8px">
+                <div style="font-size:11px; color:#666">Click row to view. Arrow keys to navigate.</div>
+                <div style="display:flex; align-items:center; gap:8px">
+                    <button class="btn-secondary" id="btn-palette-download" onclick="downloadSelectedPalette()" style="padding:4px 12px; margin:0" disabled>Download</button>
+                    <button class="btn-secondary" id="btn-palette-delete" onclick="deleteSelectedPalette()" style="padding:4px 12px; margin:0" disabled>Delete</button>
+                </div>
+            </div>
+            <div id="palette-inventory" style="font-size:12px; color:#ccc; max-height:220px; overflow-y:auto; border:1px solid #333; border-radius:4px"></div>
+            <div id="palette-log" style="margin-top:8px; font-family:monospace; font-size:11px"></div>
+        </div>
         <!-- DeepZoom tab -->
         <div id="tab-deepzoom" class="tab-content">
             <div id="deepzoom-viewer" style="width:100%; height:500px; background:#000; border:1px solid #333; display:none"></div>
@@ -455,6 +515,7 @@ function switchTab(name) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === name));
     document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
     if (name === 'results') loadResults();
+    if (name === 'palette') loadPaletteInventory();
     if (name === 'deepzoom') loadDeepZoomInventory();
 }
 
@@ -527,6 +588,7 @@ function selectResult(jobId) {
 
     // Populate render-results-dir for easy render access
     document.getElementById('render-results-dir').value = jobId;
+    document.getElementById('palette-results-dir').value = jobId;
     document.getElementById('results-dir').value = jobId;
 
     const r = _resultsCache.find(r => r.job_id === jobId);
@@ -621,6 +683,19 @@ document.addEventListener('keydown', (e) => {
         next = idx > 0 ? idx - 1 : 0;
     }
     selectResult(_resultsCache[next].job_id);
+});
+
+document.addEventListener('keydown', (e) => {
+    if (!document.getElementById('tab-palette').classList.contains('active')) return;
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (!_paletteInventory.length) return;
+    e.preventDefault();
+
+    const idx = _paletteSelectedIdx;
+    let next;
+    if (e.key === 'ArrowDown') next = idx < _paletteInventory.length - 1 ? idx + 1 : idx;
+    else next = idx > 0 ? idx - 1 : 0;
+    _paletteSelect(next);
 });
 
 async function previewResult() {
@@ -815,6 +890,8 @@ let renderMatchMode = 'none';
 let renderRootProximityPalette = 'inferno';
 let renderSolveScorePalette = 'inferno';
 let renderSolveMetric = 'proximity';
+let paletteTabPalette = 'inferno';
+let paletteTabMetric = 'proximity';
 
 const PALETTE_DEFS = [
     { name: 'inferno',  stops: ['#000004','#420a68','#932667','#dd513a','#fca50a','#fcffa4'] },
@@ -862,7 +939,11 @@ function setMatch(mode) {
 function setPaletteForMode(mode, name) {
     if (mode === 'proximity') renderRootProximityPalette = name;
     else if (mode === 'solve_score') renderSolveScorePalette = name;
-    const containerId = mode === 'proximity' ? 'palette-circles-root-proximity' : 'palette-circles-solve-score';
+    else if (mode === 'palette_tab') paletteTabPalette = name;
+    const containerId =
+        mode === 'proximity' ? 'palette-circles-root-proximity' :
+        mode === 'solve_score' ? 'palette-circles-solve-score' :
+        'palette-circles-palette-tab';
     const container = document.getElementById(containerId);
     if (container) {
         container.querySelectorAll('.pal-circle').forEach(c => c.classList.toggle('active', c.dataset.palette === name));
@@ -884,6 +965,14 @@ function setSolveMetric(name) {
     }
 }
 
+function setPaletteMetric(name) {
+    const valid = ['proximity', 'crowding', 'spread', 'anisotropy', 'area',
+                   'clusteriness', 'shelliness', 'outlierness', 'nn_variation', 'real_axis_proximity'];
+    if (valid.includes(name)) {
+        paletteTabMetric = name;
+    }
+}
+
 function buildPaletteCircles(containerId, mode, getCurrentPalette) {
     const container = document.getElementById(containerId);
     if (!container) return;
@@ -893,13 +982,18 @@ function buildPaletteCircles(containerId, mode, getCurrentPalette) {
         el.dataset.palette = p.name;
         el.title = p.name;
         el.style.background = `linear-gradient(to top, ${p.stops.map((s, i) => s + ' ' + Math.round(i/(p.stops.length-1)*100) + '%').join(', ')})`;
-        el.onclick = () => { setPaletteForMode(mode, p.name); setColorMode(mode); };
+        el.onclick = () => {
+            setPaletteForMode(mode, p.name);
+            if (mode === 'proximity' || mode === 'solve_score') setColorMode(mode);
+        };
         container.appendChild(el);
     });
 }
 buildPaletteCircles('palette-circles-root-proximity', 'proximity', () => renderRootProximityPalette);
 buildPaletteCircles('palette-circles-solve-score', 'solve_score', () => renderSolveScorePalette);
+buildPaletteCircles('palette-circles-palette-tab', 'palette_tab', () => paletteTabPalette);
 _updateSolveScoreButtons();  // initial disabled state
+_clearPaletteCanvas('No palette selected');
 
 /* ---- Render ---- */
 /* ---- Chip-based transform chains ---- */
@@ -962,6 +1056,7 @@ let _ptChain = [];  // parameter transform chain (array of {name, params: [str,.
 let _ctChain = [];  // coefficient transform chain (array of strings)
 let _cfpv = [];     // coefficient function parameter vector (array of doubles)
 let _rtChain = [];  // root transform chain (array of {name, params: [str,...]})
+let _paletteRtChain = [];  // palette-tab root transform chain
 
 function _getCatalogEntry(name) {
     const cat = window._coeffFuncCatalog || [];
@@ -1072,8 +1167,8 @@ function updateCfpvRow() {
 
 function addChip(which, name) {
     if (!name) return;
-    const chain = which === 'pt' ? _ptChain : which === 'rt' ? _rtChain : _ctChain;
-    if (which === 'pt' || which === 'rt') {
+    const chain = which === 'pt' ? _ptChain : which === 'rt' ? _rtChain : which === 'palette-rt' ? _paletteRtChain : _ctChain;
+    if (which === 'pt' || which === 'rt' || which === 'palette-rt') {
         const catalog = which === 'pt' ? _ptCatalog : _rtCatalog;
         const spec = catalog[name] || {};
         const p = spec.params || [];
@@ -1085,7 +1180,7 @@ function addChip(which, name) {
 }
 
 function removeChip(which, idx) {
-    const chain = which === 'pt' ? _ptChain : which === 'rt' ? _rtChain : _ctChain;
+    const chain = which === 'pt' ? _ptChain : which === 'rt' ? _rtChain : which === 'palette-rt' ? _paletteRtChain : _ctChain;
     chain.splice(idx, 1);
     _renderChips(which);
 }
@@ -1123,7 +1218,7 @@ function _serializeParamTransforms() {
 }
 
 function updateChipParam(chipIdx, paramIdx, value, which) {
-    const chain = which === 'rt' ? _rtChain : _ptChain;
+    const chain = which === 'pt' ? _ptChain : which === 'rt' ? _rtChain : _paletteRtChain;
     if (chipIdx >= 0 && chipIdx < chain.length) {
         const catalog = which === 'pt' ? _ptCatalog : _rtCatalog;
         const spec = catalog[chain[chipIdx].name] || {};
@@ -1140,10 +1235,10 @@ function updateChipParam(chipIdx, paramIdx, value, which) {
 }
 
 function _renderChips(which) {
-    const chain = which === 'pt' ? _ptChain : which === 'rt' ? _rtChain : _ctChain;
+    const chain = which === 'pt' ? _ptChain : which === 'rt' ? _rtChain : which === 'palette-rt' ? _paletteRtChain : _ctChain;
     const el = document.getElementById(which + '-chips');
     if (!el) return;
-    if (which === 'pt' || which === 'rt') {
+    if (which === 'pt' || which === 'rt' || which === 'palette-rt') {
         const catalog = which === 'pt' ? _ptCatalog : _rtCatalog;
         el.innerHTML = chain.map((item, i) => {
             const spec = catalog[item.name] || {};
@@ -1162,6 +1257,7 @@ function _renderChips(which) {
         ).join('');
     }
 }
+_renderChips('palette-rt');
 
 function loadRenderPreset(name) {
     if (name === 'fast') {
@@ -1211,6 +1307,382 @@ function _renderCommonParams() {
         rootTransforms: _rtChain.map(item =>
             item.params && item.params.length ? [item.name, ...item.params] : [item.name]),
     };
+}
+
+function _paletteRootTransforms() {
+    return _paletteRtChain.map(item =>
+        item.params && item.params.length ? [item.name, ...item.params] : [item.name]);
+}
+
+let _paletteInventory = [];
+let _paletteSelectedIdx = -1;
+let _activePaletteRun = null;
+let _paletteObserverTimer = null;
+let _lastPaletteLoggedPhase = null;
+let _lastPaletteWarnState = null;
+const PALETTE_NO_ROW_STALE_MS = 120000;
+const PALETTE_WARN_STALE_MS = 300000;
+const PALETTE_HARD_STALE_MS = 900000;
+
+function _clearPaletteCanvas(msg) {
+    const canvas = document.getElementById('palette-canvas');
+    if (!canvas || !canvas.getContext) return;
+    const ctx = canvas.getContext('2d');
+    canvas.width = 512;
+    canvas.height = 512;
+    if (!ctx) return;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#666';
+    ctx.font = '14px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(msg || 'No palette selected', canvas.width / 2, canvas.height / 2);
+}
+
+function _drawPaletteCanvas(url) {
+    const canvas = document.getElementById('palette-canvas');
+    if (!canvas || !canvas.getContext || !url) { _clearPaletteCanvas('No palette image'); return; }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const img = new Image();
+    img.onload = function() {
+        const w = img.naturalWidth || img.width || 512;
+        const h = img.naturalHeight || img.height || 512;
+        canvas.width = w;
+        canvas.height = h;
+        ctx.imageSmoothingEnabled = false;
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+    };
+    img.onerror = function() {
+        _clearPaletteCanvas('Failed to load palette image');
+    };
+    img.src = url;
+}
+
+async function loadPaletteInventory(opts) {
+    const options = opts || {};
+    const jobId = document.getElementById('palette-results-dir').value.trim();
+    const container = document.getElementById('palette-inventory');
+    const infoEl = document.getElementById('palette-info');
+    const statusEl = document.getElementById('palette-status');
+    const dlBtn = document.getElementById('btn-palette-download');
+    const delBtn = document.getElementById('btn-palette-delete');
+    if (!container) return;
+    if (!jobId) {
+        container.innerHTML = '<div style="color:#666; padding:8px">No results dir selected.</div>';
+        infoEl.textContent = '';
+        if (dlBtn) dlBtn.disabled = true;
+        if (delBtn) delBtn.disabled = true;
+        _paletteInventory = [];
+        _paletteSelectedIdx = -1;
+        _clearPaletteCanvas('No palette selected');
+        return;
+    }
+
+    container.innerHTML = 'Loading...';
+    statusEl.textContent = 'Loading...';
+    statusEl.className = 'status';
+    try {
+        const data = await lambdaPost('storage', { job_id: jobId }, '/list-palettes');
+        _paletteInventory = data.palettes || [];
+        _paletteSelectedIdx = -1;
+        if (!_paletteInventory.length) {
+            container.innerHTML = '<div style="color:#666; padding:8px">No saved palettes yet.</div>';
+            infoEl.textContent = '';
+            statusEl.textContent = 'Ready';
+            statusEl.className = 'status ok';
+            if (dlBtn) dlBtn.disabled = true;
+            if (delBtn) delBtn.disabled = true;
+            _clearPaletteCanvas('No palette selected');
+            return;
+        }
+
+        let html = '<table style="width:100%; border-collapse:collapse" id="palette-inv-table">';
+        html += '<tr style="border-bottom:1px solid #333; position:sticky; top:0; background:#1a1a2e"><th style="text-align:left;padding:4px">Created</th><th>Metric</th><th>q</th><th>Palette</th><th>RT</th></tr>';
+        _paletteInventory.forEach((pal, i) => {
+            const rtCount = (pal.root_transforms || []).length;
+            html += `<tr class="palette-inv-row" data-idx="${i}" style="border-bottom:1px solid #222; cursor:pointer" onclick="_paletteSelect(${i})" tabindex="-1">`;
+            html += `<td style="padding:4px; font-size:11px">${(pal.created_at || '').replace('T', ' ').slice(0, 19)}</td>`;
+            html += `<td style="padding:4px; text-align:center">${pal.metric || ''}</td>`;
+            html += `<td style="padding:4px; text-align:center">${pal.solve_score_quantile != null ? (pal.solve_score_quantile * 100).toFixed(1) + '%' : ''}</td>`;
+            html += `<td style="padding:4px; text-align:center">${pal.palette || ''}</td>`;
+            html += `<td style="padding:4px; text-align:center">${rtCount}</td>`;
+            html += '</tr>';
+        });
+        html += '</table>';
+        container.innerHTML = html;
+
+        let selectIdx = 0;
+        if (options.selectPaletteId) {
+            const matchIdx = _paletteInventory.findIndex(p => p.palette_id === options.selectPaletteId);
+            if (matchIdx >= 0) selectIdx = matchIdx;
+        }
+        _paletteSelect(selectIdx);
+        statusEl.textContent = 'Ready';
+        statusEl.className = 'status ok';
+    } catch (e) {
+        container.innerHTML = `<div style="color:#e94560; padding:8px">Error: ${e.message}</div>`;
+        infoEl.textContent = '';
+        statusEl.textContent = 'Refresh failed: ' + e.message;
+        statusEl.className = 'status error';
+        if (dlBtn) dlBtn.disabled = true;
+        if (delBtn) delBtn.disabled = true;
+        _paletteInventory = [];
+        _paletteSelectedIdx = -1;
+        _clearPaletteCanvas('No palette selected');
+    }
+}
+
+function _paletteSelect(idx) {
+    if (idx < 0 || idx >= _paletteInventory.length) return;
+    _paletteSelectedIdx = idx;
+    document.querySelectorAll('.palette-inv-row').forEach((r, i) => {
+        r.style.background = i === idx ? '#2a2a4e' : '';
+    });
+    const row = document.querySelector(`.palette-inv-row[data-idx="${idx}"]`);
+    if (row) row.scrollIntoView({ block: 'nearest' });
+
+    const pal = _paletteInventory[idx];
+    const infoEl = document.getElementById('palette-info');
+    const rtSummary = (pal.root_transforms || []).map(x => Array.isArray(x) ? (x[0] + (x.length > 1 ? '(' + x.slice(1).join(',') + ')' : '')) : x).join(', ');
+    const clipLo = pal.clip_lo != null && pal.clip_lo.toFixed ? pal.clip_lo.toFixed(3) : pal.clip_lo;
+    const clipHi = pal.clip_hi != null && pal.clip_hi.toFixed ? pal.clip_hi.toFixed(3) : pal.clip_hi;
+    infoEl.textContent = `${pal.display_name || pal.palette_id || ''} | clip ${clipLo} .. ${clipHi} | RT ${rtSummary || 'none'}`;
+    _drawPaletteCanvas(pal.image_url || pal.preview_url || '');
+    const dlBtn = document.getElementById('btn-palette-download');
+    const delBtn = document.getElementById('btn-palette-delete');
+    if (dlBtn) dlBtn.disabled = false;
+    if (delBtn) delBtn.disabled = false;
+}
+
+async function downloadSelectedPalette() {
+    const jobId = document.getElementById('palette-results-dir').value.trim();
+    const idx = _paletteSelectedIdx;
+    if (!jobId || idx < 0 || idx >= _paletteInventory.length) return;
+    const pal = _paletteInventory[idx];
+    const filename = `${jobId}_${pal.palette_id || 'palette'}.jpeg`;
+    await downloadPresignedFile(pal.image_url || pal.preview_url || '', filename, pal.image_key);
+}
+
+async function deleteSelectedPalette() {
+    const jobId = document.getElementById('palette-results-dir').value.trim();
+    const idx = _paletteSelectedIdx;
+    if (!jobId || idx < 0 || idx >= _paletteInventory.length) return;
+    const pal = _paletteInventory[idx];
+    if (!confirm(`Delete palette ${pal.display_name || pal.palette_id}?`)) return;
+    const btn = document.getElementById('btn-palette-delete');
+    const orig = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Deleting...'; }
+    try {
+        await lambdaPost('storage', { job_id: jobId, palette_id: pal.palette_id }, '/delete-palette');
+        log(`Palette deleted: ${pal.palette_id}`, 'ok', 'palette-log');
+        await loadPaletteInventory();
+    } catch (e) {
+        log(`Palette delete failed: ${e.message}`, 'err', 'palette-log');
+    } finally {
+        if (btn) { btn.textContent = orig; }
+    }
+}
+
+async function runPaletteArtifact() {
+    const btn = document.getElementById('btn-palette-create');
+    const statusEl = document.getElementById('palette-status');
+    const jobId = document.getElementById('palette-results-dir').value.trim();
+    if (!jobId) { log('Palette: no results dir', 'err', 'palette-log'); return; }
+    if (_activePaletteRun || _loadActivePaletteRun()) {
+        log('Palette: run already in progress, wait for completion', 'err', 'palette-log');
+        return;
+    }
+
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Palette...'; }
+        statusEl.textContent = 'Dispatching orchestrator...';
+        statusEl.className = 'status';
+        log('Palette artifact: starting...', '', 'palette-log');
+
+        const q = parseFloat(document.getElementById('palette-solve-score-quantile').value) / 100;
+        const runId = _generateRunId();
+        const taskId = 'palette_run_' + runId;
+        const orchPayload = {
+            job_id: jobId,
+            run_id: runId,
+            task_id: taskId,
+            params: {
+                metric: paletteTabMetric,
+                palette: paletteTabPalette,
+                solve_score_quantile: q,
+                root_transforms: _paletteRootTransforms(),
+            },
+        };
+        const dispResult = await lambdaPost('dispatch', {
+            target: 'palette_orchestrator',
+            jobs: [orchPayload],
+            expected_keys: [],
+        });
+        if ((dispResult.fired || 0) !== 1) throw new Error('Palette orchestrator dispatch failed');
+
+        _saveActivePaletteRun({
+            job_id: jobId,
+            run_id: runId,
+            task_id: taskId,
+            started_at_ms: Date.now(),
+        });
+        log('  orchestrator dispatched: ' + runId, 'ok', 'palette-log');
+        startActivePaletteObserver();
+    } catch (e) {
+        log('Palette artifact failed: ' + e.message, 'err', 'palette-log');
+        statusEl.textContent = 'Palette failed';
+        statusEl.className = 'status error';
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Palette'; }
+    }
+}
+
+function _saveActivePaletteRun(record) {
+    _activePaletteRun = record;
+    try { localStorage.setItem('polypaint_active_palette_run', JSON.stringify(record)); } catch(e) {}
+}
+
+function _clearActivePaletteRun() {
+    _activePaletteRun = null;
+    _lastPaletteLoggedPhase = null;
+    _lastPaletteWarnState = null;
+    try { localStorage.removeItem('polypaint_active_palette_run'); } catch(e) {}
+}
+
+function _loadActivePaletteRun() {
+    try {
+        const s = localStorage.getItem('polypaint_active_palette_run');
+        if (s) return JSON.parse(s);
+    } catch(e) {}
+    return null;
+}
+
+function startActivePaletteObserver() {
+    stopActivePaletteObserver();
+    _paletteObserverTimer = setInterval(_pollActivePaletteRun, 3000);
+    _pollActivePaletteRun();
+}
+
+function stopActivePaletteObserver() {
+    if (_paletteObserverTimer) {
+        clearInterval(_paletteObserverTimer);
+        _paletteObserverTimer = null;
+    }
+}
+
+function resumeActivePaletteObserver() {
+    const run = _loadActivePaletteRun();
+    if (!run) return;
+    _activePaletteRun = run;
+    startActivePaletteObserver();
+}
+
+async function _pollActivePaletteRun() {
+    const run = _activePaletteRun || _loadActivePaletteRun();
+    if (!run) { stopActivePaletteObserver(); return; }
+    const statusEl = document.getElementById('palette-status');
+
+    try {
+        const check = await lambdaPost('storage', {
+            job_id: run.job_id, task_prefix: run.task_id, expected: 1,
+        }, '/check-status');
+
+        if (check.errors > 0) {
+            const msg = check.error_details?.[0]?.error_msg || 'unknown error';
+            statusEl.textContent = 'Palette error: ' + msg;
+            statusEl.className = 'status error';
+            log('Palette failed: ' + msg, 'err', 'palette-log');
+            _clearActivePaletteRun();
+            stopActivePaletteObserver();
+            return;
+        }
+
+        const rd = check.results?.[0] || {};
+        if (!rd.phase && !rd.phase_label) {
+            const ageMs = Date.now() - (run.started_at_ms || 0);
+            if (ageMs > PALETTE_NO_ROW_STALE_MS) {
+                statusEl.textContent = 'Ready';
+                statusEl.className = 'status';
+                _clearActivePaletteRun();
+                stopActivePaletteObserver();
+                return;
+            }
+        }
+
+        const phase = rd.phase_label || rd.phase || 'working';
+
+        if (check.complete || rd.phase === 'done') {
+            document.getElementById('palette-results-dir').value = run.job_id;
+            await loadPaletteInventory({ selectPaletteId: rd.palette_id });
+            statusEl.textContent = 'Palette complete';
+            statusEl.className = 'status ok';
+            log('Palette complete: ' + (rd.palette_id || rd.image_key || run.run_id), 'ok', 'palette-log');
+            _clearActivePaletteRun();
+            stopActivePaletteObserver();
+            return;
+        }
+
+        let done = 0, expected = 0, workerFreshMs = null;
+        if (rd.subtask_prefix && rd.expected) {
+            try {
+                const subcheck = await lambdaPost('storage', {
+                    job_id: run.job_id, task_prefix: rd.subtask_prefix, expected: rd.expected,
+                }, '/check-status');
+                done = subcheck.done || 0;
+                expected = subcheck.expected || rd.expected || 0;
+                if (subcheck.latest_update_ms) workerFreshMs = Date.now() - subcheck.latest_update_ms;
+            } catch(e) {
+                expected = rd.expected || 0;
+            }
+        }
+
+        let freshMs = workerFreshMs;
+        if (freshMs === null && check.latest_update_ms) {
+            freshMs = Date.now() - check.latest_update_ms;
+        }
+
+        let statusMsg = phase;
+        if (expected > 0) statusMsg += ' ' + done + '/' + expected;
+        if (freshMs !== null && freshMs > 10000) {
+            statusMsg += ' · last update ' + _fmtAge(freshMs) + ' ago';
+        }
+
+        if (freshMs !== null && freshMs > PALETTE_HARD_STALE_MS) {
+            statusEl.textContent = 'Palette stalled (no worker update for 15+ min)';
+            statusEl.className = 'status error';
+            if (_lastPaletteWarnState !== 'hard') {
+                _lastPaletteWarnState = 'hard';
+                log('Palette stalled — no worker update for 15+ min', 'err', 'palette-log');
+            }
+        } else if (freshMs !== null && freshMs > PALETTE_WARN_STALE_MS) {
+            statusEl.textContent = statusMsg + ' · no worker update for 5+ min';
+            statusEl.className = 'status';
+            if (_lastPaletteWarnState !== 'warn') {
+                _lastPaletteWarnState = 'warn';
+                log('Warning: palette workers idle for 5+ min', '', 'palette-log');
+            }
+        } else {
+            statusEl.textContent = statusMsg;
+            statusEl.className = 'status';
+            if (_lastPaletteWarnState) {
+                log('Palette workers active again', 'ok', 'palette-log');
+                _lastPaletteWarnState = null;
+            }
+        }
+
+        const phaseKey = (rd.phase || '') + '_' + done;
+        if (phaseKey !== _lastPaletteLoggedPhase) {
+            _lastPaletteLoggedPhase = phaseKey;
+            let logMsg = phase;
+            if (expected > 0) logMsg += ' ' + done + '/' + expected;
+            log(logMsg, '', 'palette-log');
+        }
+    } catch (e) {
+        // keep polling
+    }
 }
 
 
@@ -1675,20 +2147,28 @@ async function _pollActiveRenderRun() {
 document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'visible') {
         resumeActiveRenderObserver();
+        resumeActivePaletteObserver();
     } else {
         stopActiveRenderObserver();
+        stopActivePaletteObserver();
     }
 });
 window.addEventListener('focus', function() {
     resumeActiveRenderObserver();
+    resumeActivePaletteObserver();
 });
 
-// Restore active run on page load
+// Restore active runs on page load
 (function() {
-    const run = _loadActiveRun();
-    if (run) {
-        _activeRenderRun = run;
+    const renderRun = _loadActiveRun();
+    if (renderRun) {
+        _activeRenderRun = renderRun;
         startActiveRenderObserver();
+    }
+    const paletteRun = _loadActivePaletteRun();
+    if (paletteRun) {
+        _activePaletteRun = paletteRun;
+        startActivePaletteObserver();
     }
 })();
 

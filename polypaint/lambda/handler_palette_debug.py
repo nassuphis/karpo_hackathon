@@ -4,6 +4,7 @@ Palette debug Lambda — generates a solve-score palette JPEG from lores data.
 Synchronous, produces one S3 artifact: renders/{job_id}/image_palette.jpeg.
 No DDB writes. No render orchestrator. No active render run.
 """
+import hashlib
 import json
 import os
 import subprocess
@@ -19,6 +20,17 @@ RAW2JPEG = os.path.join(os.path.dirname(__file__), "raw2jpeg")
 PRESIGN_EXPIRY = 3600
 
 
+def _utc_now_iso():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _palette_variant_id(metric, palette, q, root_transforms):
+    q_label = f"{q * 100:.1f}".replace(".", "p")
+    rt_json = json.dumps(root_transforms or [], separators=(",", ":"))
+    rt_hash = hashlib.sha1(rt_json.encode("utf-8")).hexdigest()[:8]
+    return f"pal_{int(time.time() * 1000)}_{metric}_{palette}_q{q_label}_rt{rt_hash}"
+
+
 def handler(event, context):
     params = parse_body(event)
     job_id = params["job_id"]
@@ -31,6 +43,7 @@ def handler(event, context):
     palette = params.get("palette", "inferno")
     solve_score_quantile = params.get("solve_score_quantile", 0.001)
     root_transforms = params.get("root_transforms", [])
+    persistent = bool(params.get("persistent", False))
 
     try:
         q = float(solve_score_quantile)
@@ -43,6 +56,8 @@ def handler(event, context):
     tmp_raw = "/tmp/palette_out.raw"
     tmp_jpeg = "/tmp/palette_out.jpeg"
     tmp_xforms = "/tmp/palette_xforms.json"
+    tmp_scores = "/tmp/palette_scores.bin"
+    tmp_bins = "/tmp/palette_bins.bin"
 
     try:
         # Download lores bin
@@ -67,6 +82,9 @@ def handler(event, context):
             f"--quantile_lo={quantile_lo}",
             f"--quantile_hi={quantile_hi}",
         ]
+        if persistent:
+            cmd.append(f"--scores_out={tmp_scores}")
+            cmd.append(f"--palette_bins_out={tmp_bins}")
         if root_transforms:
             with open(tmp_xforms, "w") as xf:
                 json.dump(root_transforms, xf)
@@ -91,15 +109,29 @@ def handler(event, context):
         if enc_result.returncode != 0:
             raise RuntimeError(f"raw2jpeg failed: {enc_result.stderr.strip()}")
 
-        # Upload to S3
-        # Delete stale cached preview so browser regenerates from new source
-        preview_key = f"renders/{job_id}/preview_palette.png"
-        try:
-            s3.delete_object(Bucket=BUCKET, Key=preview_key)
-        except Exception:
-            pass
+        created_at = _utc_now_iso()
+        if persistent:
+            palette_id = _palette_variant_id(metric, palette, q, root_transforms)
+            prefix = f"renders/{job_id}/palettes/{palette_id}/"
+            out_key = prefix + "image.jpeg"
+            preview_key = prefix + "preview.png"
+            score_key = prefix + f"score_{metric}.bin"
+            palette_bins_key = prefix + "palette_bins.bin"
+            meta_key = prefix + "meta.json"
+        else:
+            palette_id = None
+            prefix = None
+            score_key = None
+            palette_bins_key = None
+            meta_key = None
+            # Delete stale cached preview so browser regenerates from new source
+            preview_key = f"renders/{job_id}/preview_palette.png"
+            try:
+                s3.delete_object(Bucket=BUCKET, Key=preview_key)
+            except Exception:
+                pass
+            out_key = f"renders/{job_id}/image_palette.jpeg"
 
-        out_key = f"renders/{job_id}/image_palette.jpeg"
         file_size = os.path.getsize(tmp_jpeg)
         s3_metadata = {
             "width": str(full_n),
@@ -144,7 +176,56 @@ def handler(event, context):
             ExpiresIn=PRESIGN_EXPIRY,
         )
 
-        return ok_response({
+        if persistent:
+            with open(tmp_scores, "rb") as sfh:
+                s3.upload_fileobj(
+                    sfh, BUCKET, score_key,
+                    ExtraArgs={"ContentType": "application/octet-stream"},
+                )
+            with open(tmp_bins, "rb") as bfh:
+                s3.upload_fileobj(
+                    bfh, BUCKET, palette_bins_key,
+                    ExtraArgs={"ContentType": "application/octet-stream"},
+                )
+            preview_url = s3.generate_presigned_url(
+                "get_object", Params={"Bucket": BUCKET, "Key": preview_key},
+                ExpiresIn=PRESIGN_EXPIRY,
+            )
+            meta_body = {
+                "job_id": job_id,
+                "palette_id": palette_id,
+                "created_at": created_at,
+                "display_name": f"{metric} q={(q*100):.1f}% {palette} {created_at}",
+                "metric": metric,
+                "palette": palette,
+                "solve_score_quantile": q,
+                "root_transforms": root_transforms or [],
+                "degree": degree,
+                "N": full_n,
+                "lores_N": lores_n,
+                "times": times,
+                "using_pass": 0,
+                "clip_lo": meta.get("clip_lo"),
+                "clip_hi": meta.get("clip_hi"),
+                "cuts_norm": meta.get("cuts_norm", []),
+                "clip_fallback": meta.get("clip_fallback", False),
+                "clip_fallback_reason": meta.get("clip_fallback_reason"),
+                "file_size": file_size,
+                "image_key": out_key,
+                "preview_key": preview_key,
+                "score_key": score_key,
+                "palette_bins_key": palette_bins_key,
+            }
+            s3.put_object(
+                Bucket=BUCKET,
+                Key=meta_key,
+                Body=json.dumps(meta_body),
+                ContentType="application/json",
+            )
+        else:
+            preview_url = None
+
+        body = {
             "job_id": job_id,
             "out_key": out_key,
             "image_url": image_url,
@@ -167,10 +248,24 @@ def handler(event, context):
             "encode_ms": encode_ms,
             "file_size": file_size,
             "using_pass": 0,
-        })
+        }
+        if persistent:
+            body.update({
+                "persistent": True,
+                "palette_id": palette_id,
+                "created_at": created_at,
+                "display_name": f"{metric} q={(q*100):.1f}% {palette} {created_at}",
+                "image_key": out_key,
+                "preview_key": preview_key,
+                "preview_url": preview_url,
+                "score_key": score_key,
+                "palette_bins_key": palette_bins_key,
+                "meta_key": meta_key,
+            })
+        return ok_response(body)
 
     finally:
-        for p in [tmp_bin, tmp_raw, tmp_jpeg, tmp_xforms]:
+        for p in [tmp_bin, tmp_raw, tmp_jpeg, tmp_xforms, tmp_scores, tmp_bins]:
             try:
                 os.remove(p)
             except OSError:

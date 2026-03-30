@@ -1747,6 +1747,76 @@ class TestListDeepZoom(unittest.TestCase):
         self.assertEqual(body["exports"][0]["export_id"], "dz_good")
 
 
+class TestPaletteInventory(unittest.TestCase):
+    """Test palette inventory list/delete endpoints."""
+
+    @patch("handler_storage.s3")
+    def test_list_palettes_returns_newest_first(self, mock_s3):
+        from handler_storage import handle_list_palettes
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{
+            "CommonPrefixes": [
+                {"Prefix": "renders/job_a/palettes/pal_old/"},
+                {"Prefix": "renders/job_a/palettes/pal_new/"},
+            ]
+        }]
+
+        meta_old = json.dumps({
+            "job_id": "job_a", "palette_id": "pal_old", "created_at": "2026-03-20T10:00:00Z",
+            "metric": "proximity", "image_key": "renders/job_a/palettes/pal_old/image.jpeg",
+            "preview_key": "renders/job_a/palettes/pal_old/preview.png",
+        })
+        meta_new = json.dumps({
+            "job_id": "job_a", "palette_id": "pal_new", "created_at": "2026-03-25T10:00:00Z",
+            "metric": "crowding", "image_key": "renders/job_a/palettes/pal_new/image.jpeg",
+            "preview_key": "renders/job_a/palettes/pal_new/preview.png",
+        })
+
+        def mock_get(**kwargs):
+            key = kwargs["Key"]
+            if "pal_old" in key:
+                return {"Body": MagicMock(read=lambda: meta_old.encode())}
+            if "pal_new" in key:
+                return {"Body": MagicMock(read=lambda: meta_new.encode())}
+            raise Exception("NoSuchKey")
+
+        mock_s3.get_object.side_effect = mock_get
+        mock_s3.generate_presigned_url.side_effect = lambda op, Params=None, ExpiresIn=None: "https://example.com/" + Params["Key"]
+
+        result = handle_list_palettes({"body": json.dumps({"job_id": "job_a"})})
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["count"], 2)
+        self.assertEqual(body["palettes"][0]["palette_id"], "pal_new")
+        self.assertEqual(body["palettes"][1]["palette_id"], "pal_old")
+        self.assertIn("image_url", body["palettes"][0])
+        self.assertIn("preview_url", body["palettes"][0])
+
+    @patch("handler_storage.s3")
+    def test_delete_palette_deletes_prefix(self, mock_s3):
+        from handler_storage import handle_delete_palette
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{
+            "Contents": [
+                {"Key": "renders/job_a/palettes/pal_1/meta.json"},
+                {"Key": "renders/job_a/palettes/pal_1/image.jpeg"},
+                {"Key": "renders/job_a/palettes/pal_1/preview.png"},
+            ]
+        }]
+        mock_s3.delete_objects.return_value = {"Deleted": [{}, {}, {}]}
+
+        result = handle_delete_palette({"body": json.dumps({"job_id": "job_a", "palette_id": "pal_1"})})
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["deleted"], 3)
+        delete_batch = mock_s3.delete_objects.call_args[1]["Delete"]["Objects"]
+        self.assertEqual(delete_batch[0]["Key"], "renders/job_a/palettes/pal_1/meta.json")
+
+
 class TestDeepZoomExportPointerWrite(unittest.TestCase):
     """Test that handler_deepzoom_export writes both meta.json and deepzoom_latest.json."""
 

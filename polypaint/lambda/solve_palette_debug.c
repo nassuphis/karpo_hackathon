@@ -10,6 +10,7 @@
  *     --degree=D --lores_n=L --full_n=N --times=T \
  *     --metric=proximity --palette=inferno \
  *     --quantile_lo=Q --quantile_hi=1-Q \
+ *     [--scores_out=file.bin] [--palette_bins_out=file.bin] \
  *     [--root_xforms=file.json]
  *
  * Output: JSON metadata to stdout. Raw RGB (12-byte header + pixels) to output.raw.
@@ -61,7 +62,9 @@ int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "Usage: solve_palette_debug input.bin output.raw --degree=D "
                 "--lores_n=L --full_n=N --times=T --metric=... --palette=... "
-                "--quantile_lo=Q --quantile_hi=1-Q [--root_xforms=file.json]\n");
+                "--quantile_lo=Q --quantile_hi=1-Q "
+                "[--scores_out=file.bin] [--palette_bins_out=file.bin] "
+                "[--root_xforms=file.json]\n");
         return 1;
     }
 
@@ -75,6 +78,8 @@ int main(int argc, char **argv) {
     double quantileHi = getArgDouble(argc, argv, "--quantile_hi", 0.999);
     const char *metricStr = getArgStr(argc, argv, "--metric", "proximity");
     const char *palName = getArgStr(argc, argv, "--palette", "inferno");
+    const char *scoresOut = getArgStr(argc, argv, "--scores_out", NULL);
+    const char *binsOut = getArgStr(argc, argv, "--palette_bins_out", NULL);
 
     if (degree < 2 || degree > MAXDEG) { fprintf(stderr, "Invalid degree: %d\n", degree); return 1; }
     if (loresN < 1) { fprintf(stderr, "Invalid lores_n: %d\n", loresN); return 1; }
@@ -222,6 +227,17 @@ int main(int argc, char **argv) {
 
     /* ---- Build loresN x loresN RGB grid with serpentine deshuffle ---- */
     unsigned char *srcRGB = calloc(perPass * 3, 1);
+    float *scoreGrid = scoresOut ? malloc(perPass * sizeof(float)) : NULL;
+    unsigned char *binGrid = binsOut ? malloc(perPass) : NULL;
+    if ((scoresOut && !scoreGrid) || (binsOut && !binGrid)) {
+        fprintf(stderr, "Out of memory for palette sidecars\n");
+        free(srcRGB);
+        free(scores);
+        free(sorted);
+        free(scoreGrid);
+        free(binGrid);
+        return 1;
+    }
 
     for (long s = 0; s < perPass; s++) {
         /* Bin assignment */
@@ -240,10 +256,43 @@ int main(int argc, char **argv) {
         int j = (int)(s % loresN);
         int i2 = (i1 % 2 == 0) ? j : (loresN - 1 - j);
 
-        long dstIdx = ((long)i1 * loresN + i2) * 3;
+        long gridIdx = (long)i1 * loresN + i2;
+        long dstIdx = gridIdx * 3;
         srcRGB[dstIdx] = r;
         srcRGB[dstIdx + 1] = g;
         srcRGB[dstIdx + 2] = b;
+        if (scoreGrid) scoreGrid[gridIdx] = (float)scores[s];
+        if (binGrid) binGrid[gridIdx] = (unsigned char)bin;
+    }
+
+    if (scoreGrid) {
+        FILE *sf = fopen(scoresOut, "wb");
+        if (!sf) {
+            fprintf(stderr, "Cannot open scores output %s\n", scoresOut);
+            free(scoreGrid);
+            free(binGrid);
+            free(scores);
+            free(sorted);
+            free(srcRGB);
+            return 1;
+        }
+        fwrite(scoreGrid, sizeof(float), perPass, sf);
+        fclose(sf);
+        free(scoreGrid);
+    }
+    if (binGrid) {
+        FILE *bf = fopen(binsOut, "wb");
+        if (!bf) {
+            fprintf(stderr, "Cannot open palette bins output %s\n", binsOut);
+            free(binGrid);
+            free(scores);
+            free(sorted);
+            free(srcRGB);
+            return 1;
+        }
+        fwrite(binGrid, 1, perPass, bf);
+        fclose(bf);
+        free(binGrid);
     }
     free(scores);
     free(sorted);

@@ -38,28 +38,41 @@ def write_lores_bin(path, solves, degree):
 
 
 def run_palette(bin_path, degree, lores_n, full_n, times=1, metric="proximity",
-                palette="inferno", quantile_lo="0.001", quantile_hi="0.999"):
-    """Run palette debug binary via Docker, return (meta_json, raw_bytes_or_None, stderr)."""
+                palette="inferno", quantile_lo="0.001", quantile_hi="0.999",
+                with_sidecars=False):
+    """Run palette debug binary via Docker, return (meta_json, raw_bytes_or_None, stderr, scores_bytes, bins_bytes)."""
     import shutil
     host_bin = os.path.join(LAMBDA_DIR, "_test_pal_input.bin")
     host_out = os.path.join(LAMBDA_DIR, "_test_pal_out.raw")
+    host_scores = os.path.join(LAMBDA_DIR, "_test_pal_scores.bin")
+    host_bins = os.path.join(LAMBDA_DIR, "_test_pal_bins.bin")
     shutil.copy(bin_path, host_bin)
     try:
         args = (f"/src/solve_palette_debug /src/_test_pal_input.bin /src/_test_pal_out.raw "
                 f"--degree={degree} --lores_n={lores_n} --full_n={full_n} --times={times} "
                 f"--metric={metric} --palette={palette} "
                 f"--quantile_lo={quantile_lo} --quantile_hi={quantile_hi}")
+        if with_sidecars:
+            args += " --scores_out=/src/_test_pal_scores.bin --palette_bins_out=/src/_test_pal_bins.bin"
         r = _docker_run(args)
         if r.returncode != 0:
-            return None, None, r.stderr
+            return None, None, r.stderr, None, None
         meta = json.loads(r.stdout)
         raw_data = None
+        scores_data = None
+        bins_data = None
         if os.path.exists(host_out):
             with open(host_out, "rb") as f:
                 raw_data = f.read()
-        return meta, raw_data, None
+        if os.path.exists(host_scores):
+            with open(host_scores, "rb") as f:
+                scores_data = f.read()
+        if os.path.exists(host_bins):
+            with open(host_bins, "rb") as f:
+                bins_data = f.read()
+        return meta, raw_data, None, scores_data, bins_data
     finally:
-        for p in [host_bin, host_out]:
+        for p in [host_bin, host_out, host_scores, host_bins]:
             try:
                 os.remove(p)
             except OSError:
@@ -80,7 +93,7 @@ def test_basic_output():
     lores_n = 3
     solves = [[(i * 0.1, 0.0), (i * 0.1 + 1, 0.0)] for i in range(lores_n * lores_n)]
     write_lores_bin(path, solves, degree)
-    meta, raw_data, err = run_palette(path, degree, lores_n, full_n=6, times=1)
+    meta, raw_data, err, _, _ = run_palette(path, degree, lores_n, full_n=6, times=1)
     assert meta is not None, f"failed: {err}"
     assert meta["mode"] == "palette_debug"
     assert meta["n_samples_used"] == 9
@@ -103,7 +116,7 @@ def test_times2_uses_pass0():
     # Pass 1: 4 solves with roots far away (should be ignored)
     pass1 = [[(100.0, 0.0), (200.0, 0.0)] for _ in range(4)]
     write_lores_bin(path, pass0 + pass1, degree)
-    meta, raw_data, err = run_palette(path, degree, lores_n, full_n=4, times=2)
+    meta, raw_data, err, _, _ = run_palette(path, degree, lores_n, full_n=4, times=2)
     assert meta is not None, f"failed: {err}"
     assert meta["n_samples_used"] == 4
     assert meta["times"] == 2
@@ -119,8 +132,8 @@ def test_palette_affects_output():
     solves = [[(0.0, 0.0), (1.0, 0.0)], [(0.0, 0.0), (0.01, 0.0)],
               [(0.0, 0.0), (0.5, 0.0)], [(0.0, 0.0), (2.0, 0.0)]]
     write_lores_bin(path, solves, degree)
-    _, raw_inf, _ = run_palette(path, degree, lores_n, full_n=2, palette="inferno")
-    _, raw_vir, _ = run_palette(path, degree, lores_n, full_n=2, palette="viridis")
+    _, raw_inf, _, _, _ = run_palette(path, degree, lores_n, full_n=2, palette="inferno")
+    _, raw_vir, _, _, _ = run_palette(path, degree, lores_n, full_n=2, palette="viridis")
     assert raw_inf is not None and raw_vir is not None
     # RGB bytes should differ between palettes
     assert raw_inf[12:] != raw_vir[12:], "inferno and viridis should produce different colors"
@@ -135,8 +148,8 @@ def test_quantile_changes_clip():
     solves = [[(0.001 + i * 0.01, 0.0), (0.001 + i * 0.01 + 1, 0.0)]
               for i in range(lores_n * lores_n)]
     write_lores_bin(path, solves, degree)
-    m1, _, _ = run_palette(path, degree, lores_n, full_n=15, quantile_lo="0.001", quantile_hi="0.999")
-    m2, _, _ = run_palette(path, degree, lores_n, full_n=15, quantile_lo="0.05", quantile_hi="0.95")
+    m1, _, _, _, _ = run_palette(path, degree, lores_n, full_n=15, quantile_lo="0.001", quantile_hi="0.999")
+    m2, _, _, _, _ = run_palette(path, degree, lores_n, full_n=15, quantile_lo="0.05", quantile_hi="0.95")
     assert m1 is not None and m2 is not None
     r1 = m1["clip_hi"] - m1["clip_lo"]
     r2 = m2["clip_hi"] - m2["clip_lo"]
@@ -151,7 +164,7 @@ def test_fallback_on_small_sample():
     lores_n = 3  # 9 solves
     solves = [[(i * 0.5, 0.0), (i * 0.5 + 1, 0.0)] for i in range(9)]
     write_lores_bin(path, solves, degree)
-    meta, _, _ = run_palette(path, degree, lores_n, full_n=3)
+    meta, _, _, _, _ = run_palette(path, degree, lores_n, full_n=3)
     assert meta is not None
     assert meta["clip_fallback"] is True
     assert meta["clip_fallback_reason"] in ("small_sample", "zero_full_range_expanded"), \
@@ -166,7 +179,7 @@ def test_invalid_palette_rejected():
     lores_n = 2
     solves = [[(0.0, 0.0), (1.0, 0.0)] for _ in range(4)]
     write_lores_bin(path, solves, degree)
-    meta, _, err = run_palette(path, degree, lores_n, full_n=2, palette="nonexistent")
+    meta, _, err, _, _ = run_palette(path, degree, lores_n, full_n=2, palette="nonexistent")
     assert meta is None, f"invalid palette should fail, got: {meta}"
     os.remove(path)
 
@@ -176,9 +189,24 @@ def test_solve_count_mismatch():
     path = "/tmp/pal_test_mismatch.bin"
     degree = 2
     write_lores_bin(path, [[(0.0, 0.0), (1.0, 0.0)]] * 4, degree)
-    meta, _, err = run_palette(path, degree, lores_n=3, full_n=3, times=1)
+    meta, _, err, _, _ = run_palette(path, degree, lores_n=3, full_n=3, times=1)
     # 4 solves but expected 3*3=9 → mismatch
     assert meta is None, "solve count mismatch should fail"
+    os.remove(path)
+
+
+def test_writes_score_and_palette_bin_sidecars():
+    """Optional sidecar outputs are written in lores grid order."""
+    path = "/tmp/pal_test_sidecars.bin"
+    degree = 2
+    lores_n = 2
+    solves = [[(0.0, 0.0), (1.0, 0.0)], [(0.0, 0.0), (0.2, 0.0)],
+              [(0.0, 0.0), (0.5, 0.0)], [(0.0, 0.0), (2.0, 0.0)]]
+    write_lores_bin(path, solves, degree)
+    meta, raw_data, err, scores_data, bins_data = run_palette(path, degree, lores_n, full_n=2, with_sidecars=True)
+    assert meta is not None, f"failed: {err}"
+    assert scores_data is not None and len(scores_data) == lores_n * lores_n * 4
+    assert bins_data is not None and len(bins_data) == lores_n * lores_n
     os.remove(path)
 
 
@@ -201,6 +229,7 @@ if __name__ == "__main__":
         ("fallback on small sample", test_fallback_on_small_sample),
         ("invalid palette rejected", test_invalid_palette_rejected),
         ("solve count mismatch", test_solve_count_mismatch),
+        ("writes sidecars", test_writes_score_and_palette_bin_sidecars),
     ]
 
     passed = 0

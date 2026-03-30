@@ -43,7 +43,7 @@ def handler(event, context):
     viewport = _compute_viewport(job_id, rp)
 
     # Extract calc fields
-    n_stripes = calc.get("n_stripes", calc.get("n_chunks", 10))
+    n_chunks = calc.get("n_chunks", calc.get("n_stripes", 10))
     degree = calc.get("degree", 1)
 
     # Grid computation
@@ -56,8 +56,8 @@ def handler(event, context):
     # Precompute tile keys for encode
     tile_keys = [f"renders/{job_id}/tile_{t:04d}.raw" for t in range(n_tiles)]
 
-    # Compact stripe items
-    stripe_items = [{"stripe_idx": s} for s in range(n_stripes)]
+    # Compact chunk items
+    chunk_items = [{"chunk_idx": c} for c in range(n_chunks)]
 
     # Compact tile items (precompute tile_w/tile_h to avoid ASL arithmetic)
     tile_items = []
@@ -136,7 +136,7 @@ def handler(event, context):
         "viewport": viewport,
         "calc": {
             "degree": degree,
-            "n_stripes": n_stripes,
+            "n_chunks": n_chunks,
             "lores_bin_key": calc.get("lores", {}).get("bin_key", ""),
             "coeffs_keys": calc.get("coeffs_keys", []),
             "n_coeffs": calc.get("n_coeffs", degree + 1),
@@ -149,7 +149,7 @@ def handler(event, context):
             "n_tiles": n_tiles,
             "tile_keys": tile_keys,
         },
-        "stripe_items": stripe_items,
+        "chunk_items": chunk_items,
         "tile_items": tile_items,
         "solve_score": solve_score,
         "outputs": outputs,

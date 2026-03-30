@@ -161,7 +161,9 @@ def handle_clip(params):
 def handle_hist(params):
     job_id = params["job_id"]
     task_id = params["task_id"]
-    stripe_idx = params["stripe_idx"]
+    chunk_idx = params.get("chunk_idx", params.get("stripe_idx"))
+    if chunk_idx is None:
+        raise RuntimeError("hist requires chunk_idx")
     metric = params.get("metric", "proximity")
     _validate_metric(metric)
     solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
@@ -171,7 +173,7 @@ def handle_hist(params):
     hist_bins = params.get("hist_bins", 100)
     root_transforms = params.get("root_transforms")
     out_key = params["out_key"]
-    progress = {"phase": "hist", "metric": metric, "stripe_idx": stripe_idx}
+    progress = {"phase": "hist", "metric": metric, "chunk_idx": chunk_idx}
 
     try:
         _cleanup_tmp()
@@ -212,7 +214,7 @@ def handle_hist(params):
             "job_id": job_id,
             "metric": metric,
             "clip_quantile": solve_score_quantile,
-            "stripe_idx": stripe_idx,
+            "chunk_idx": chunk_idx,
             "hist_bins": hist_bins,
             "clip_lo": clip_data["clip_lo"],
             "clip_hi": clip_data["clip_hi"],
@@ -242,11 +244,13 @@ def handle_merge(params):
     metric = params.get("metric", "proximity")
     _validate_metric(metric)
     solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
-    n_stripes = params["n_stripes"]
+    n_chunks = params.get("n_chunks", params.get("n_stripes"))
+    if n_chunks is None:
+        raise RuntimeError("merge requires n_chunks")
     hist_prefix = params["hist_prefix"]
     clip_key = params["clip_key"]
     out_key = params["out_key"]
-    progress = {"phase": "merge", "metric": metric, "n_stripes": n_stripes}
+    progress = {"phase": "merge", "metric": metric, "n_chunks": n_chunks}
 
     try:
         _cleanup_tmp()
@@ -263,21 +267,27 @@ def handle_merge(params):
 
         total_hist = [0] * hist_bins
         total_solves = 0
-        for s in range(n_stripes):
-            key = f"{hist_prefix}stripe_{s}_hist.json"
+        for c in range(n_chunks):
+            key = f"{hist_prefix}chunk_{c}_hist.json"
             try:
-                obj = s3.get_object(Bucket=BUCKET, Key=key)
+                try:
+                    obj = s3.get_object(Bucket=BUCKET, Key=key)
+                except s3.exceptions.NoSuchKey:
+                    # Backward compatibility for old stripe-named hist artifacts
+                    legacy_key = f"{hist_prefix}stripe_{c}_hist.json"
+                    obj = s3.get_object(Bucket=BUCKET, Key=legacy_key)
+                    key = legacy_key
                 data = json.loads(obj["Body"].read())
                 # Validate metric match
                 if data.get("family") == "solve_score" and data.get("metric") != metric:
-                    raise RuntimeError(f"Stripe {s} metric mismatch: expected {metric}, got {data.get('metric')}")
+                    raise RuntimeError(f"Chunk {c} metric mismatch: expected {metric}, got {data.get('metric')}")
                 if data.get("family") == "solve_score" and data.get("clip_quantile") != solve_score_quantile:
-                    raise RuntimeError(f"Stripe {s} quantile mismatch: expected {solve_score_quantile}, got {data.get('clip_quantile')}")
-                stripe_hist = data["hist"]
-                if len(stripe_hist) != hist_bins:
-                    raise RuntimeError(f"Stripe {s} histogram has {len(stripe_hist)} bins, expected {hist_bins}")
+                    raise RuntimeError(f"Chunk {c} quantile mismatch: expected {solve_score_quantile}, got {data.get('clip_quantile')}")
+                chunk_hist = data["hist"]
+                if len(chunk_hist) != hist_bins:
+                    raise RuntimeError(f"Chunk {c} histogram has {len(chunk_hist)} bins, expected {hist_bins}")
                 for i in range(hist_bins):
-                    total_hist[i] += stripe_hist[i]
+                    total_hist[i] += chunk_hist[i]
                 total_solves += data["n_solves"]
             except s3.exceptions.NoSuchKey:
                 raise RuntimeError(f"Missing histogram: {key}")

@@ -91,12 +91,12 @@ def handle_list(event):
             entry["degree"] = calc.get("degree", 0)
             entry["N"] = calc.get("N", calc.get("n1", 0))
             entry["n1"] = calc.get("n1", entry["N"])
-            entry["n_stripes"] = calc.get("n_stripes", 0)
-            stripes = calc.get("chunks", calc.get("stripes", []))
-            entry["total_size"] = sum(s.get("bin_size", 0) for s in stripes)
+            entry["n_chunks"] = calc.get("n_chunks", calc.get("n_stripes", 0))
+            chunks = calc.get("chunks", calc.get("stripes", []))
+            entry["total_size"] = sum(s.get("bin_size", 0) for s in chunks)
             entry["total_size"] += calc.get("total_coeffs_size", 0)
             entry["total_roots"] = calc.get("total_roots",
-                sum(s.get("bin_size", 0) for s in stripes) // 8)
+                sum(s.get("bin_size", 0) for s in chunks) // 8)
         except Exception:
             entry["function"] = "?"
             entry["total_size"] = 0

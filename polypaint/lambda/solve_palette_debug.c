@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Invalid metric: %s\n", metricStr);
         return 1;
     }
-    const RGB *pal = findPalette(palName);
+    const PaletteDef *pal = findPalette(palName);
     /* Validate palette name — reject unknown instead of silent fallback */
     {
         int found = 0;

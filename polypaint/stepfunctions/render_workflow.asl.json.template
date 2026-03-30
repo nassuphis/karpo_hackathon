@@ -131,7 +131,7 @@
                 "mode.$": "$.mode",
                 "phase": "solve_score_hist",
                 "phase_label": "Solve score: hist",
-                "expected.$": "$.plan.calc.n_stripes",
+                "expected.$": "$.plan.calc.n_chunks",
                 "subtask_prefix.$": "States.Format('render_{}_solve_score_hist_', $.run_id)"
               }
             },
@@ -142,21 +142,21 @@
 
           "ColorSolveScoreHistMap": {
             "Type": "Map",
-            "ItemsPath": "$.plan.stripe_items",
+            "ItemsPath": "$.plan.chunk_items",
             "MaxConcurrency": 10,
             "ItemSelector": {
               "phase": "hist",
               "job_id.$": "$.job_id",
-              "stripe_idx.$": "$$.Map.Item.Value.stripe_idx",
+              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
               "metric.$": "$.plan.solve_score.metric",
               "solve_score_quantile.$": "$.plan.solve_score.quantile",
-              "bin_key.$": "States.Format('renders/{}/stripe_{}.bin', $.job_id, $$.Map.Item.Value.stripe_idx)",
+              "bin_key.$": "States.Format('renders/{}/chunk_{}.bin', $.job_id, $$.Map.Item.Value.chunk_idx)",
               "degree.$": "$.plan.calc.degree",
               "clip_key.$": "$.plan.solve_score.clip_key",
               "hist_bins": 100,
               "root_transforms.$": "$.plan.params.root_transforms",
-              "out_key.$": "States.Format('{}stripe_{}_hist.json', $.plan.solve_score.hist_prefix, $$.Map.Item.Value.stripe_idx)",
-              "task_id.$": "States.Format('render_{}_solve_score_hist_{}', $.run_id, $$.Map.Item.Value.stripe_idx)"
+              "out_key.$": "States.Format('{}chunk_{}_hist.json', $.plan.solve_score.hist_prefix, $$.Map.Item.Value.chunk_idx)",
+              "task_id.$": "States.Format('render_{}_solve_score_hist_{}', $.run_id, $$.Map.Item.Value.chunk_idx)"
             },
             "ItemProcessor": {
               "ProcessorConfig": {"Mode": "INLINE"},
@@ -205,7 +205,7 @@
               "Payload": {
                 "phase": "merge",
                 "job_id.$": "$.job_id",
-                "n_stripes.$": "$.plan.calc.n_stripes",
+                "n_chunks.$": "$.plan.calc.n_chunks",
                 "metric.$": "$.plan.solve_score.metric",
                 "solve_score_quantile.$": "$.plan.solve_score.quantile",
                 "hist_prefix.$": "$.plan.solve_score.hist_prefix",
@@ -232,7 +232,7 @@
                 "mode.$": "$.mode",
                 "phase": "raster",
                 "phase_label": "Raster",
-                "expected.$": "$.plan.calc.n_stripes",
+                "expected.$": "$.plan.calc.n_chunks",
                 "subtask_prefix.$": "States.Format('render_{}_raster_', $.run_id)"
               }
             },
@@ -243,13 +243,13 @@
 
           "ColorRasterMap": {
             "Type": "Map",
-            "ItemsPath": "$.plan.stripe_items",
+            "ItemsPath": "$.plan.chunk_items",
             "MaxConcurrency": 10,
             "ItemSelector": {
               "job_id.$": "$.job_id",
-              "stripe_idx.$": "$$.Map.Item.Value.stripe_idx",
-              "task_id.$": "States.Format('render_{}_raster_{}', $.run_id, $$.Map.Item.Value.stripe_idx)",
-              "bin_key.$": "States.Format('renders/{}/stripe_{}.bin', $.job_id, $$.Map.Item.Value.stripe_idx)",
+              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
+              "task_id.$": "States.Format('render_{}_raster_{}', $.run_id, $$.Map.Item.Value.chunk_idx)",
+              "bin_key.$": "States.Format('renders/{}/chunk_{}.bin', $.job_id, $$.Map.Item.Value.chunk_idx)",
               "width.$": "$.plan.grid.pix",
               "height.$": "$.plan.grid.pix",
               "tile_size.$": "$.plan.grid.tile_size",
@@ -319,7 +319,7 @@
               "task_id.$": "States.Format('render_{}_tile_{}', $.run_id, $$.Map.Item.Value.tile_idx)",
               "tile_row.$": "$$.Map.Item.Value.tile_row",
               "tile_col.$": "$$.Map.Item.Value.tile_col",
-              "n_stripes.$": "$.plan.calc.n_stripes",
+              "n_chunks.$": "$.plan.calc.n_chunks",
               "tile_w.$": "$$.Map.Item.Value.tile_w",
               "tile_h.$": "$$.Map.Item.Value.tile_h",
               "n_tile_cols.$": "$.plan.grid.n_tile_cols",
@@ -423,7 +423,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "bilevel_raster", "phase_label": "BiLevel raster", "expected.$": "$.plan.calc.n_stripes", "subtask_prefix.$": "States.Format('render_{}_bilevel_raster_', $.run_id)" }
+              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "bilevel_raster", "phase_label": "BiLevel raster", "expected.$": "$.plan.calc.n_chunks", "subtask_prefix.$": "States.Format('render_{}_bilevel_raster_', $.run_id)" }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -432,13 +432,13 @@
 
           "BilevelRasterMap": {
             "Type": "Map",
-            "ItemsPath": "$.plan.stripe_items",
+            "ItemsPath": "$.plan.chunk_items",
             "MaxConcurrency": 10,
             "ItemSelector": {
               "phase": "raster", "job_id.$": "$.job_id",
-              "stripe_idx.$": "$$.Map.Item.Value.stripe_idx",
-              "task_id.$": "States.Format('render_{}_bilevel_raster_{}', $.run_id, $$.Map.Item.Value.stripe_idx)",
-              "bin_key.$": "States.Format('renders/{}/stripe_{}.bin', $.job_id, $$.Map.Item.Value.stripe_idx)",
+              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
+              "task_id.$": "States.Format('render_{}_bilevel_raster_{}', $.run_id, $$.Map.Item.Value.chunk_idx)",
+              "bin_key.$": "States.Format('renders/{}/chunk_{}.bin', $.job_id, $$.Map.Item.Value.chunk_idx)",
               "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix",
               "tile_size.$": "$.plan.grid.tile_size", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows",
               "center_re.$": "$.plan.viewport.center_re", "center_im.$": "$.plan.viewport.center_im", "scale.$": "$.plan.viewport.scale",
@@ -471,7 +471,7 @@
               "task_id.$": "States.Format('render_{}_bilevel_merge_{}', $.run_id, $$.Map.Item.Value.tile_idx)",
               "tile_row.$": "$$.Map.Item.Value.tile_row", "tile_col.$": "$$.Map.Item.Value.tile_col",
               "tile_w.$": "$$.Map.Item.Value.tile_w", "tile_h.$": "$$.Map.Item.Value.tile_h",
-              "n_stripes.$": "$.plan.calc.n_stripes", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows",
+              "n_chunks.$": "$.plan.calc.n_chunks", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows",
               "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix", "tile_size.$": "$.plan.grid.tile_size"
             },
             "ItemProcessor": { "ProcessorConfig": {"Mode": "INLINE"}, "StartAt": "BilevelMergeWorker", "States": { "BilevelMergeWorker": { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${BilevelFunctionArn}", "Payload.$": "$" }, "ResultPath": null, "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}], "End": true } } },
@@ -536,7 +536,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "coeff_raster", "phase_label": "Coeffs raster", "expected.$": "$.plan.calc.n_stripes", "subtask_prefix.$": "States.Format('render_{}_coeff_bilevel_raster_', $.run_id)" }
+              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "coeff_raster", "phase_label": "Coeffs raster", "expected.$": "$.plan.calc.n_chunks", "subtask_prefix.$": "States.Format('render_{}_coeff_bilevel_raster_', $.run_id)" }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -545,13 +545,13 @@
 
           "CoeffRasterMap": {
             "Type": "Map",
-            "ItemsPath": "$.plan.stripe_items",
+            "ItemsPath": "$.plan.chunk_items",
             "MaxConcurrency": 10,
             "ItemSelector": {
               "phase": "coeff_raster", "job_id.$": "$.job_id",
-              "stripe_idx.$": "$$.Map.Item.Value.stripe_idx",
-              "task_id.$": "States.Format('render_{}_coeff_bilevel_raster_{}', $.run_id, $$.Map.Item.Value.stripe_idx)",
-              "coeffs_key.$": "States.ArrayGetItem($.plan.calc.coeffs_keys, $$.Map.Item.Index)",
+              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
+              "task_id.$": "States.Format('render_{}_coeff_bilevel_raster_{}', $.run_id, $$.Map.Item.Value.chunk_idx)",
+              "coeffs_key.$": "States.ArrayGetItem($.plan.calc.coeffs_keys, $$.Map.Item.Value.chunk_idx)",
               "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix",
               "tile_size.$": "$.plan.grid.tile_size", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows",
               "center_re.$": "$.plan.viewport.center_re", "center_im.$": "$.plan.viewport.center_im", "scale.$": "$.plan.viewport.scale",
@@ -584,7 +584,7 @@
               "task_id.$": "States.Format('render_{}_coeff_bilevel_merge_{}', $.run_id, $$.Map.Item.Value.tile_idx)",
               "tile_row.$": "$$.Map.Item.Value.tile_row", "tile_col.$": "$$.Map.Item.Value.tile_col",
               "tile_w.$": "$$.Map.Item.Value.tile_w", "tile_h.$": "$$.Map.Item.Value.tile_h",
-              "n_stripes.$": "$.plan.calc.n_stripes", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows",
+              "n_chunks.$": "$.plan.calc.n_chunks", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows",
               "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix", "tile_size.$": "$.plan.grid.tile_size",
               "bits_prefix": "coeff_bits", "tile_prefix": "coeff", "task_prefix": "coeff_bilevel_merge"
             },

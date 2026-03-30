@@ -414,7 +414,7 @@ int main(int argc, char **argv) {
         matchMode = MATCH_GREEDY;
     }
 
-    const RGB *proxPal = findPalette(palName);
+    const PaletteDef *proxPal = findPalette(palName);
 
     if (W < 1 || W > 65536 || H < 1 || H > 65536) {
         fprintf(stderr, "Invalid dimensions: %dx%d\n", W, H);

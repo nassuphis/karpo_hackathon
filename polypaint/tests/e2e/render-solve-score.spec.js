@@ -366,6 +366,17 @@ test.describe('Solve Score UI', () => {
 
   test('Palette button is visible', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
+    // Button lives inside artifact panel — render it first
+    await page.evaluate(() => {
+      renderArtifactPanel('test_job', {
+        artifacts: { palette_jpeg: { exists: false }, color_jpeg: { exists: false }, color_png: { exists: false },
+          bilevel_tif: { exists: false }, bilevel_preview_png: { exists: false }, bilevel_compat_tif: { exists: false },
+          bilevel_png: { exists: false }, coeff_tif: { exists: false }, coeff_preview_png: { exists: false },
+          preview_color_png: { exists: false }, preview_bilevel_png: { exists: false },
+          preview_palette_png: { exists: false }, preview_coeffs_png: { exists: false } },
+        calc: { exists: false }, deepzoom_latest: { exists: false },
+      });
+    });
     const btn = page.locator('#btn-palette-debug');
     await expect(btn).toBeVisible();
     expect(await btn.textContent()).toBe('Palette');
@@ -373,6 +384,17 @@ test.describe('Solve Score UI', () => {
 
   test('Palette button is disabled outside solve_score mode', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
+    // Button lives inside artifact panel — render it first
+    await page.evaluate(() => {
+      renderArtifactPanel('test_job', {
+        artifacts: { palette_jpeg: { exists: false }, color_jpeg: { exists: false }, color_png: { exists: false },
+          bilevel_tif: { exists: false }, bilevel_preview_png: { exists: false }, bilevel_compat_tif: { exists: false },
+          bilevel_png: { exists: false }, coeff_tif: { exists: false }, coeff_preview_png: { exists: false },
+          preview_color_png: { exists: false }, preview_bilevel_png: { exists: false },
+          preview_palette_png: { exists: false }, preview_coeffs_png: { exists: false } },
+        calc: { exists: false }, deepzoom_latest: { exists: false },
+      });
+    });
     // Default mode is not solve_score
     const btn = page.locator('#btn-palette-debug');
     const disabled = await btn.getAttribute('disabled');
@@ -398,10 +420,10 @@ test.describe('Solve Score UI', () => {
         deepzoom_latest: { exists: false },
       });
     });
-    // Palette JPEG row should exist
-    const row = page.locator('strong:text("Palette")');
+    // Palette row button should exist
+    const row = page.locator('#btn-palette-debug');
     await expect(row).toBeVisible();
-    // Download and DeepZoom buttons should be in that row's parent
+    // Download and DeepZoom buttons should be in that row's parent div
     const rowDiv = row.locator('..');
     const download = rowDiv.locator('button:text("Download")');
     const deepzoom = rowDiv.locator('button:text("DeepZoom")');
@@ -508,8 +530,8 @@ test.describe('Solve Score UI', () => {
       });
     });
     // All 4 rows must exist with "None" for absent
-    for (const label of ['Render', 'BiLevel', 'Coeffs', 'Palette']) {
-      const row = page.locator('strong:text("' + label + '")');
+    for (const label of ['Color', 'BiLevel', 'Coeffs', 'Palette']) {
+      const row = page.locator('#render-preview button:text("' + label + '")');
       await expect(row).toBeVisible();
     }
     // Check "None" appears

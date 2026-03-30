@@ -162,35 +162,42 @@ class TestHeadKeys(unittest.TestCase):
     def _make_event(self, body):
         return {"body": json.dumps(body)}
 
-    @patch("handler_storage._key_exists")
-    def test_all_exist(self, mock_exists):
+    @patch("handler_storage._head_artifact_keys")
+    def test_all_exist(self, mock_head):
         from handler_storage import handle_head_keys
-        mock_exists.return_value = True
         keys = [
             "renders/j/image_bilevel.tif",
             "renders/j/image_bilevel_preview.png",
         ]
+        mock_head.return_value = {
+            k: {"exists": True, "key": k, "size": 1, "type": "image/tiff",
+                "width": None, "height": None, "url": None}
+            for k in keys
+        }
         event = self._make_event({"keys": keys})
         result = handle_head_keys(event)
         body = json.loads(result["body"])
         self.assertEqual(set(body["exists"]), set(keys))
 
-    @patch("handler_storage._key_exists")
-    def test_none_exist(self, mock_exists):
+    @patch("handler_storage._head_artifact_keys")
+    def test_none_exist(self, mock_head):
         from handler_storage import handle_head_keys
-        mock_exists.return_value = False
         keys = ["renders/j/image_bilevel.tif", "renders/j/image.jpeg"]
+        mock_head.return_value = {
+            k: {"exists": False, "key": k, "size": 0, "type": "",
+                "width": None, "height": None, "url": None}
+            for k in keys
+        }
         event = self._make_event({"keys": keys})
         result = handle_head_keys(event)
         body = json.loads(result["body"])
         self.assertEqual(body["exists"], [])
 
-    @patch("handler_storage._key_exists")
-    def test_mixed_existence(self, mock_exists):
+    @patch("handler_storage._head_artifact_keys")
+    def test_mixed_existence(self, mock_head):
         """Only existing keys returned — matches artifact discovery use case."""
         from handler_storage import handle_head_keys
         existing = {"renders/j/image_bilevel.tif", "renders/j/image_bilevel_preview.png"}
-        mock_exists.side_effect = lambda k: k in existing
         keys = [
             "renders/j/image_bilevel.tif",
             "renders/j/image_bilevel_preview.png",
@@ -201,6 +208,12 @@ class TestHeadKeys(unittest.TestCase):
             "renders/j/image.jpeg",
             "renders/j/image.png",
         ]
+        mock_head.return_value = {
+            k: {"exists": k in existing, "key": k, "size": 1 if k in existing else 0,
+                "type": "image/tiff" if k in existing else "",
+                "width": None, "height": None, "url": None}
+            for k in keys
+        }
         event = self._make_event({"keys": keys})
         result = handle_head_keys(event)
         body = json.loads(result["body"])
@@ -208,33 +221,41 @@ class TestHeadKeys(unittest.TestCase):
         # Non-existing keys are NOT in the result
         self.assertNotIn("renders/j/image.jpeg", body["exists"])
 
-    @patch("handler_storage._key_exists")
-    def test_empty_keys_list(self, mock_exists):
+    @patch("handler_storage._head_artifact_keys")
+    def test_empty_keys_list(self, mock_head):
         from handler_storage import handle_head_keys
         event = self._make_event({"keys": []})
         result = handle_head_keys(event)
         body = json.loads(result["body"])
         self.assertEqual(body["exists"], [])
-        mock_exists.assert_not_called()
+        mock_head.assert_not_called()
 
-    @patch("handler_storage._key_exists")
-    def test_single_key(self, mock_exists):
+    @patch("handler_storage._head_artifact_keys")
+    def test_single_key(self, mock_head):
         from handler_storage import handle_head_keys
-        mock_exists.return_value = True
-        event = self._make_event({"keys": ["renders/j/calc.json"]})
+        key = "renders/j/calc.json"
+        mock_head.return_value = {
+            key: {"exists": True, "key": key, "size": 123, "type": "application/json",
+                  "width": None, "height": None, "url": None}
+        }
+        event = self._make_event({"keys": [key]})
         result = handle_head_keys(event)
         body = json.loads(result["body"])
-        self.assertEqual(body["exists"], ["renders/j/calc.json"])
+        self.assertEqual(body["exists"], [key])
 
-    @patch("handler_storage._key_exists")
-    def test_uses_parallel_head_requests(self, mock_exists):
-        """Verify _key_exists is called once per key (parallel via ThreadPoolExecutor)."""
+    @patch("handler_storage._head_artifact_keys")
+    def test_delegates_keys_to_head_artifact_helper(self, mock_head):
+        """handle_head_keys delegates the batch lookup to _head_artifact_keys."""
         from handler_storage import handle_head_keys
-        mock_exists.return_value = False
         keys = [f"renders/j/key_{i}.tif" for i in range(8)]
+        mock_head.return_value = {
+            k: {"exists": False, "key": k, "size": 0, "type": "",
+                "width": None, "height": None, "url": None}
+            for k in keys
+        }
         event = self._make_event({"keys": keys})
         handle_head_keys(event)
-        self.assertEqual(mock_exists.call_count, 8)
+        mock_head.assert_called_once_with(keys, presign=False)
 
 
 # ── Test: dispatch bilevel target ─────────────────────────────────────────

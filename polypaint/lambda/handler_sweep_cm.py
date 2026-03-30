@@ -25,7 +25,7 @@ def handler(event, context):
 def handle_solve_cm(params):
     """Solve roots from coefficient file using companion matrix eigenvalues."""
     job_id = params["job_id"]
-    stripe_idx = params.get("chunk_idx", params.get("stripe_idx"))
+    chunk_idx = params.get("chunk_idx", params.get("stripe_idx"))
     coeffs_key = params["coeffs_key"]
     n_coeffs = params["n_coeffs"]
     n_steps = params.get("n_steps")
@@ -34,7 +34,7 @@ def handle_solve_cm(params):
         i1_start = params.get("row_start", params.get("i1_start"))
         i1_end = params.get("row_end", params.get("i1_end"))
         n_steps = (i1_end - i1_start) * n2
-    task_id = f"sweep_{stripe_idx}"
+    task_id = f"sweep_{chunk_idx}"
 
     try:
         report_status(job_id, task_id, "started")
@@ -66,7 +66,7 @@ def handle_solve_cm(params):
         compute_meta = json.loads(result.stdout)
         compute_us = int((time.time() - t0) * 1e6)
 
-        s3_key = params.get("s3_key", f"renders/{job_id}/stripe_{stripe_idx}.bin")
+        s3_key = params.get("s3_key", f"renders/{job_id}/chunk_{chunk_idx}.bin")
         bin_size = os.path.getsize(bin_path)
         with open(bin_path, "rb") as f:
             s3.upload_fileobj(f, BUCKET, s3_key)
@@ -78,8 +78,8 @@ def handle_solve_cm(params):
                 pass
 
         result_data = {
-            "stripe_idx": stripe_idx,
-            "chunk_idx": stripe_idx,
+            "chunk_idx": chunk_idx,
+            "stripe_idx": chunk_idx,
             "s3_key": s3_key,
             "bin_size": bin_size,
             "compute_us": compute_us,

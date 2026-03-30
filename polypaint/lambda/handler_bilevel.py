@@ -1,7 +1,7 @@
 """
-Bilevel Lambda handler — raster and merge phases for stripe-first bilevel rendering.
+Bilevel Lambda handler — raster and merge phases for chunk-first bilevel rendering.
 
-  phase=raster: one stripe → per-tile bitset files (.bits)
+  phase=raster: one chunk → per-tile bitset files (.bits)
   phase=merge:  per-tile bitsets → tile TIFF (1-bit CCITT G4, via libvips)
 
 Stitch phase is handled by a separate Lambda (handler_bilevel_stitch.py)
@@ -38,16 +38,18 @@ def handler(event, context):
 
 
 def handle_raster(params):
-    """One stripe → per-tile bitset files. One Lambda per stripe."""
+    """One chunk → per-tile bitset files. One Lambda per chunk."""
     job_id = params["job_id"]
-    stripe_idx = params["stripe_idx"]
-    task_id = params.get("task_id", f"bilevel_raster_{stripe_idx}")
+    chunk_idx = params.get("chunk_idx", params.get("stripe_idx"))
+    if chunk_idx is None:
+        raise RuntimeError("bilevel raster requires chunk_idx")
+    task_id = params.get("task_id", f"bilevel_raster_{chunk_idx}")
 
     try:
         report_status(job_id, task_id, "started")
 
-        # Download one stripe .bin
-        bin_key = f"renders/{job_id}/stripe_{stripe_idx}.bin"
+        # Download one chunk .bin
+        bin_key = f"renders/{job_id}/chunk_{chunk_idx}.bin"
         bin_path = "/tmp/stripe.bin"
         t0 = time.time()
         obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
@@ -99,7 +101,7 @@ def handle_raster(params):
         for t in range(n_tiles):
             bits_path = f"/tmp/bits_t{t:04d}.bits"
             if os.path.exists(bits_path) and os.path.getsize(bits_path) > 0:
-                s3_key = f"renders/{job_id}/bits_s{stripe_idx:04d}_t{t:04d}.bits"
+                s3_key = f"renders/{job_id}/bits_chunk_{chunk_idx:04d}_t{t:04d}.bits"
                 with open(bits_path, "rb") as fh:
                     s3.upload_fileobj(fh, BUCKET, s3_key)
                 os.remove(bits_path)
@@ -109,7 +111,8 @@ def handle_raster(params):
 
         report_status(job_id, task_id, "done")
         return ok_response({
-            "stripe_idx": stripe_idx,
+            "chunk_idx": chunk_idx,
+            "stripe_idx": chunk_idx,
             "tiles_with_hits": uploaded,
             "roots_plotted": meta["roots_plotted"],
             "roots_clipped": meta["roots_clipped"],
@@ -128,16 +131,18 @@ def handle_raster(params):
 
 
 def handle_coeff_raster(params):
-    """One coeff stripe → per-tile bitset files. One Lambda per stripe."""
+    """One coeff chunk → per-tile bitset files. One Lambda per chunk."""
     job_id = params["job_id"]
-    stripe_idx = params["stripe_idx"]
-    task_id = params.get("task_id", f"coeff_bilevel_raster_{stripe_idx}")
+    chunk_idx = params.get("chunk_idx", params.get("stripe_idx"))
+    if chunk_idx is None:
+        raise RuntimeError("coeff bilevel raster requires chunk_idx")
+    task_id = params.get("task_id", f"coeff_bilevel_raster_{chunk_idx}")
 
     try:
         report_status(job_id, task_id, "started")
 
-        # Download one coeff stripe .bin
-        bin_key = params.get("coeffs_key", f"renders/{job_id}/coeffs_{stripe_idx:04d}.bin")
+        # Download one coeff chunk .bin
+        bin_key = params.get("coeffs_key", f"renders/{job_id}/coeffs_{chunk_idx:04d}.bin")
         bin_path = "/tmp/coeffs.bin"
         t0 = time.time()
         obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
@@ -181,7 +186,7 @@ def handle_coeff_raster(params):
         for t in range(n_tiles):
             bits_path = f"/tmp/coeff_bits_t{t:04d}.bits"
             if os.path.exists(bits_path) and os.path.getsize(bits_path) > 0:
-                s3_key = f"renders/{job_id}/coeff_bits_s{stripe_idx:04d}_t{t:04d}.bits"
+                s3_key = f"renders/{job_id}/coeff_bits_chunk_{chunk_idx:04d}_t{t:04d}.bits"
                 with open(bits_path, "rb") as fh:
                     s3.upload_fileobj(fh, BUCKET, s3_key)
                 os.remove(bits_path)
@@ -191,7 +196,8 @@ def handle_coeff_raster(params):
 
         report_status(job_id, task_id, "done")
         return ok_response({
-            "stripe_idx": stripe_idx,
+            "chunk_idx": chunk_idx,
+            "stripe_idx": chunk_idx,
             "tiles_with_hits": uploaded,
             "roots_plotted": meta["roots_plotted"],
             "roots_clipped": meta["roots_clipped"],
@@ -210,13 +216,15 @@ def handle_coeff_raster(params):
 
 
 def handle_merge(params):
-    """OR per-stripe bitsets for one tile → tile TIFF. One Lambda per tile."""
+    """OR per-chunk bitsets for one tile → tile TIFF. One Lambda per tile."""
     job_id = params["job_id"]
     tile_idx = params["tile_idx"]
     tile_w = params["tile_w"]
     tile_h = params["tile_h"]
-    n_stripes = params["n_stripes"]
-    # Support coeff vs root naming: coeff_bits_s... vs bits_s...
+    n_chunks = params.get("n_chunks", params.get("n_stripes"))
+    if n_chunks is None:
+        raise RuntimeError("bilevel merge requires n_chunks")
+    # Support coeff vs root naming: coeff_bits_chunk_... vs bits_chunk_...
     bits_prefix = params.get("bits_prefix", "bits")
     tile_prefix = params.get("tile_prefix", "bilevel")
     task_prefix = params.get("task_prefix", "bilevel_merge")
@@ -225,19 +233,26 @@ def handle_merge(params):
     try:
         report_status(job_id, task_id, "started")
 
-        # Download stripe .bits files for this tile
+        # Download chunk .bits files for this tile
         bits_paths = []
-        for s in range(n_stripes):
-            bits_key = f"renders/{job_id}/{bits_prefix}_s{s:04d}_t{tile_idx:04d}.bits"
-            local_path = f"/tmp/bits_s{s}.bits"
+        for c in range(n_chunks):
+            bits_key = f"renders/{job_id}/{bits_prefix}_chunk_{c:04d}_t{tile_idx:04d}.bits"
+            local_path = f"/tmp/bits_chunk_{c}.bits"
             try:
-                obj = s3.get_object(Bucket=BUCKET, Key=bits_key)
+                try:
+                    obj = s3.get_object(Bucket=BUCKET, Key=bits_key)
+                except ClientError as e:
+                    if e.response['Error']['Code'] != 'NoSuchKey':
+                        raise
+                    legacy_bits_key = f"renders/{job_id}/{bits_prefix}_s{c:04d}_t{tile_idx:04d}.bits"
+                    obj = s3.get_object(Bucket=BUCKET, Key=legacy_bits_key)
+                    bits_key = legacy_bits_key
                 with open(local_path, "wb") as f:
                     f.write(obj["Body"].read())
                 bits_paths.append(local_path)
             except ClientError as e:
                 if e.response['Error']['Code'] == 'NoSuchKey':
-                    continue  # No hits from this stripe for this tile
+                    continue  # No hits from this chunk for this tile
                 raise
         report_status(job_id, task_id, "bits_downloaded")
 

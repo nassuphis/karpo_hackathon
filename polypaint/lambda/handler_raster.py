@@ -21,12 +21,14 @@ ROOTS2PIX = os.path.join(os.path.dirname(__file__), "roots2pix")
 def handler(event, context):
     params = parse_body(event)
     job_id = params["job_id"]
-    stripe_idx = params["stripe_idx"]
+    chunk_idx = params.get("chunk_idx", params.get("stripe_idx"))
+    if chunk_idx is None:
+        raise RuntimeError("raster requires chunk_idx")
     bin_key = params["bin_key"]
     n_tile_cols = params["n_tile_cols"]
     n_tile_rows = params["n_tile_rows"]
     n_tiles = n_tile_cols * n_tile_rows
-    task_id = params.get("task_id", f"raster_{stripe_idx}")
+    task_id = params.get("task_id", f"raster_{chunk_idx}")
 
     try:
         report_status(job_id, task_id, "started")
@@ -113,7 +115,7 @@ def handler(event, context):
         for t in range(n_tiles):
             pix_path = f"/tmp/pix_t{t:04d}.pix"
             if os.path.exists(pix_path) and os.path.getsize(pix_path) > 0:
-                s3_key = f"renders/{job_id}/pix_{stripe_idx:04d}_t{t:04d}.pix"
+                s3_key = f"renders/{job_id}/pix_chunk_{chunk_idx:04d}_t{t:04d}.pix"
                 with open(pix_path, "rb") as fh:
                     s3.upload_fileobj(fh, BUCKET, s3_key)
                 os.remove(pix_path)
@@ -121,7 +123,8 @@ def handler(event, context):
 
         report_status(job_id, task_id, "done")
         return ok_response({
-            "stripe_idx": stripe_idx,
+            "chunk_idx": chunk_idx,
+            "stripe_idx": chunk_idx,
             "tiles_uploaded": uploaded,
             "raster_us": raster_us,
             "roots_plotted": raster_meta["roots_plotted"],

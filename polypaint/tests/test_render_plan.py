@@ -44,7 +44,7 @@ class TestRenderPlan(unittest.TestCase):
     @patch("handler_render_plan._storage_call")
     def test_color_plan_square_viewport(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail({
-            "degree": 5, "n_stripes": 3, "n_chunks": 3,
+            "degree": 5, "n_chunks": 3,
         })
         from handler_render_plan import handler
         result = handler(_make_event(), None)
@@ -55,15 +55,15 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["viewport"]["center_im"] == 0
         assert plan["viewport"]["scale"] == 1024 / (2 * 2.0)  # pix/(2*extent)
         assert plan["calc"]["degree"] == 5
-        assert plan["calc"]["n_stripes"] == 3
-        assert len(plan["stripe_items"]) == 3
-        assert plan["stripe_items"][0] == {"stripe_idx": 0}
+        assert plan["calc"]["n_chunks"] == 3
+        assert len(plan["chunk_items"]) == 3
+        assert plan["chunk_items"][0] == {"chunk_idx": 0}
 
     @patch("handler_render_plan._invoke_sync")
     @patch("handler_render_plan._storage_call")
     def test_color_plan_auto_viewport(self, mock_storage, mock_invoke):
         mock_storage.side_effect = _mock_storage_detail({
-            "degree": 5, "n_stripes": 2, "n_chunks": 2,
+            "degree": 5, "n_chunks": 2,
         })
         mock_invoke.return_value = {
             "center_re": 0.5, "center_im": -0.3, "scale_ref": 128,
@@ -79,7 +79,7 @@ class TestRenderPlan(unittest.TestCase):
     @patch("handler_render_plan._storage_call")
     def test_tile_plan_shape(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail({
-            "degree": 5, "n_stripes": 2, "n_chunks": 2,
+            "degree": 5, "n_chunks": 2,
         })
         from handler_render_plan import handler
         result = handler(_make_event(pix=1024, tile_size=512), None)
@@ -99,7 +99,7 @@ class TestRenderPlan(unittest.TestCase):
     @patch("handler_render_plan._storage_call")
     def test_solve_score_plan(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail({
-            "degree": 5, "n_stripes": 2, "n_chunks": 2,
+            "degree": 5, "n_chunks": 2,
             "lores": {"bin_key": "renders/j/lores.bin"},
         })
         from handler_render_plan import handler
@@ -118,7 +118,7 @@ class TestRenderPlan(unittest.TestCase):
     @patch("handler_render_plan._storage_call")
     def test_coeff_bilevel_uses_coeffs_keys(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail({
-            "degree": 5, "n_stripes": 2, "n_chunks": 2,
+            "degree": 5, "n_chunks": 2,
             "coeffs_keys": ["renders/j/c0.bin", "renders/j/c1.bin"],
             "n_coeffs": 99,
         })
@@ -131,7 +131,7 @@ class TestRenderPlan(unittest.TestCase):
     @patch("handler_render_plan._storage_call")
     def test_plan_compactness_check(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail({
-            "degree": 5, "n_stripes": 2, "n_chunks": 2,
+            "degree": 5, "n_chunks": 2,
         })
         from handler_render_plan import handler
         result = handler(_make_event(), None)

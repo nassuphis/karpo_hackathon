@@ -50,7 +50,7 @@ def _invoke_one(function_name, job):
     # Event invocations return 202 on success. Anything else is a problem.
     if status != 202:
         job_id = job.get("job_id", "?")
-        task_hint = job.get("tile_idx", job.get("stripe_idx", job.get("task_id", "?")))
+        task_hint = job.get("tile_idx", job.get("chunk_idx", job.get("stripe_idx", job.get("task_id", "?"))))
         logger.warning(f"invoke {function_name} returned {status} for job_id={job_id} task={task_hint}")
     return status
 

@@ -68,8 +68,8 @@ test.describe('Render Refresh', () => {
     await page.evaluate(async () => { await refreshRenderArtifacts('test_refresh'); });
 
     const panel = page.locator('#render-preview');
-    await expect(panel.locator('strong:text("Render")')).toBeVisible();
-    await expect(panel.locator('strong:text("BiLevel")')).toBeVisible();
+    await expect(panel.locator('button:text("Color")')).toBeVisible();
+    await expect(panel.locator('button:text("BiLevel")')).toBeVisible();
     await expect(panel.locator(':text("Open Viewer")')).toBeVisible();
   });
 

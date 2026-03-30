@@ -27,13 +27,15 @@ def handler(event, context):
     params = parse_body(event)
     job_id = params["job_id"]
     tile_idx = params["tile_idx"]
-    n_stripes = params["n_stripes"]
+    n_chunks = params.get("n_chunks", params.get("n_stripes"))
+    if n_chunks is None:
+        raise RuntimeError("finalize requires n_chunks")
     tile_w = params["tile_w"]
     tile_h = params["tile_h"]
     task_id = params.get("task_id", f"tile_{tile_idx}")
 
     t0 = time.time()
-    logger.info(f"[{task_id}] START tile_idx={tile_idx} n_stripes={n_stripes} tile={tile_w}x{tile_h}")
+    logger.info(f"[{task_id}] START tile_idx={tile_idx} n_chunks={n_chunks} tile={tile_w}x{tile_h}")
 
     try:
         report_status(job_id, task_id, "started")
@@ -47,14 +49,21 @@ def handler(event, context):
             stdin=subprocess.PIPE,
             stderr=subprocess.PIPE)
 
-        # Stream .pix files from all stripes into pixassemble's stdin
+        # Stream .pix files from all chunks into pixassemble's stdin
         piped = 0
         pix_bytes = 0
         missing = 0
-        for s in range(n_stripes):
-            key = f"renders/{job_id}/pix_{s:04d}_t{tile_idx:04d}.pix"
+        for c in range(n_chunks):
+            key = f"renders/{job_id}/pix_chunk_{c:04d}_t{tile_idx:04d}.pix"
             try:
-                obj = s3.get_object(Bucket=BUCKET, Key=key)
+                try:
+                    obj = s3.get_object(Bucket=BUCKET, Key=key)
+                except ClientError as e:
+                    if e.response["Error"]["Code"] != "NoSuchKey":
+                        raise
+                    legacy_key = f"renders/{job_id}/pix_{c:04d}_t{tile_idx:04d}.pix"
+                    obj = s3.get_object(Bucket=BUCKET, Key=legacy_key)
+                    key = legacy_key
                 for chunk in obj["Body"].iter_chunks(1024 * 1024):
                     proc.stdin.write(chunk)
                     pix_bytes += len(chunk)
@@ -64,13 +73,13 @@ def handler(event, context):
                     missing += 1
                 else:
                     raise
-            # Report progress every 10 stripes (or every 100 for large counts)
-            interval = 10 if n_stripes <= 100 else 100
-            if (s + 1) % interval == 0:
-                report_status(job_id, task_id, f"reading_{s+1}/{n_stripes}_{piped}pix_{pix_bytes}B")
+            # Report progress every 10 chunks (or every 100 for large counts)
+            interval = 10 if n_chunks <= 100 else 100
+            if (c + 1) % interval == 0:
+                report_status(job_id, task_id, f"reading_{c+1}/{n_chunks}_{piped}pix_{pix_bytes}B")
 
         t_read = time.time() - t0
-        logger.info(f"[{task_id}] READ {piped}/{n_stripes} pix files ({pix_bytes} bytes, {missing} missing) in {t_read:.1f}s")
+        logger.info(f"[{task_id}] READ {piped}/{n_chunks} pix files ({pix_bytes} bytes, {missing} missing) in {t_read:.1f}s")
 
         proc.stdin.close()
         rc = proc.wait(timeout=120)

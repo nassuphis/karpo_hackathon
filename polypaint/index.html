@@ -416,12 +416,7 @@ button {
                     <option value="pull_towards_center">pull_towards_center</option>
                 </select>
             </div>
-            <div style="margin-top:8px; display:flex; gap:6px; align-items:center">
-                <button class="btn-primary" id="btn-raster-all" onclick="runRasterPipeline()">Color</button>
-                <button class="btn-primary" id="btn-bilevel" onclick="runBilevelPipeline()" style="background:#444">BiLevel</button>
-                <button class="btn-primary" id="btn-coeffs" onclick="runCoeffBilevelPipeline()" style="background:#446">Coeffs</button>
-                <button class="btn-primary" id="btn-palette-debug" onclick="runPaletteDebug()" style="background:#545">Palette</button>
-            </div>
+            <!-- Pipeline buttons are in the artifact rows below -->
             <div class="status" id="render-status"></div>
             <div id="render-preview" style="max-width:600px; margin-top:8px"></div>
             <div id="render-info" style="font-size:12px; color:#888; margin-top:4px"></div>
@@ -648,11 +643,10 @@ async function previewResult() {
 
         const totalMs = (performance.now() - t0).toFixed(0);
 
-        // Update cache
+        // Update cache — clear stale _detail so next select refetches
         const r = _resultsCache.find(r => r.job_id === _selectedJobId);
         if (r) {
-            r.has_preview = true;
-            r.preview_url = result.image_url;
+            delete r._detail;
             if (result.q_re) { r.q_re = result.q_re; r.q_im = result.q_im; }
         }
 
@@ -836,6 +830,7 @@ const PALETTE_DEFS = [
     { name: 'gilded',   stops: ['#ffd700','#c89b14','#64142d','#2d0a19','#9119b4','#dc64ff'] },
     { name: 'reef',     stops: ['#00ffdc','#008c8c','#0a2340','#0c1223','#a04b0f','#ffc832'] },
     { name: 'abyss',    stops: ['#beff32','#6e9e1c','#1e2616','#0a0f14','#371c64','#d26eff'] },
+    { name: 'rainbow_d3', stops: ['#6e40aa','#bd3caf','#ff5473','#ff853d','#d7c33b','#80f558','#24e794','#1ccbbb','#3a9ee0','#5b5bcf','#6e40aa'] },
 ];
 
 function setColorMode(mode) {
@@ -1313,7 +1308,7 @@ async function _launchRenderOrchestrator(mode) {
 
 async function runRasterPipeline() {
     const btn = document.getElementById('btn-raster-all');
-    btn.disabled = true;
+    if (btn) btn.disabled = true;
     try {
         await _launchRenderOrchestrator('color');
     } catch (e) {
@@ -1321,7 +1316,7 @@ async function runRasterPipeline() {
         document.getElementById('render-status').className = 'status error';
         log('Render failed: ' + e.message, 'err', 'render-log');
     } finally {
-        btn.disabled = false;
+        if (btn) btn.disabled = false;
     }
 }
 
@@ -1776,16 +1771,15 @@ function renderArtifactPanel(jobId, summary) {
     const rowStyle = 'display:flex; align-items:center; gap:6px; margin-bottom:6px; flex-wrap:wrap';
     const dimStyle = 'font-size:11px; color:#888; min-width:60px';
 
-    // Update solve-score button state based on calc availability
+    // Track calc availability (buttons updated after innerHTML is set)
     _lastCalcHasLores = !!(calc.exists && calc.degree);
-    _updateSolveScoreButtons();
 
     let html = '';
 
-    // Helper: build one artifact row (always present, shows None if absent)
-    const _artRow = (label, art, dlName, extraBtns) => {
+    // Helper: build one artifact row with pipeline button as label
+    const _artRow = (label, btnId, onclick, art, dlName, extraBtns) => {
         let row = '<div style="' + rowStyle + '">';
-        row += '<strong style="min-width:80px; font-size:12px">' + label + '</strong>';
+        row += '<button class="btn-primary" id="' + btnId + '" onclick="' + onclick + '" style="min-width:80px; font-size:11px; padding:3px 8px">' + label + '</button>';
         if (art && art.exists) {
             row += '<span style="' + dimStyle + '">' + infoOf(art) + '</span>';
             row += '<button class="btn-primary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + art.url + '\',\'' + dlName + '\',\'' + art.key + '\')">Download</button>';
@@ -1802,7 +1796,7 @@ function renderArtifactPanel(jobId, summary) {
     const colorArt = (a.color_jpeg && a.color_jpeg.exists) ? a.color_jpeg
         : (a.color_png && a.color_png.exists) ? a.color_png : null;
     const colorExt = colorArt ? (colorArt.key.endsWith('.png') ? '.png' : '.jpeg') : '.jpeg';
-    html += _artRow('Render', colorArt, jobId + '_color' + colorExt, '');
+    html += _artRow('Color', 'btn-raster-all', 'runRasterPipeline()', colorArt, jobId + '_color' + colorExt, '');
 
     let bilevelExtra = '';
     if (a.bilevel_tif && a.bilevel_tif.exists) {
@@ -1817,9 +1811,9 @@ function renderArtifactPanel(jobId, summary) {
             bilevelExtra += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runPngExport(\'' + jobId + '\',\'' + a.bilevel_tif.key + '\',\'' + pix + '\')" id="btn-png-export">PNG</button>';
         }
     }
-    html += _artRow('BiLevel', a.bilevel_tif, jobId + '_bilevel.tif', bilevelExtra);
-    html += _artRow('Coeffs', a.coeff_tif, jobId + '_coeffs_bilevel.tif', '');
-    html += _artRow('Palette', a.palette_jpeg, jobId + '_palette.jpeg', '');
+    html += _artRow('BiLevel', 'btn-bilevel', 'runBilevelPipeline()', a.bilevel_tif, jobId + '_bilevel.tif', bilevelExtra);
+    html += _artRow('Coeffs', 'btn-coeffs', 'runCoeffBilevelPipeline()', a.coeff_tif, jobId + '_coeffs_bilevel.tif', '');
+    html += _artRow('Palette', 'btn-palette-debug', 'runPaletteDebug()', a.palette_jpeg, jobId + '_palette.jpeg', '');
 
     // --- DeepZoom viewer (optional, not a fixed row) ---
     if (dz.exists) {
@@ -1855,6 +1849,9 @@ function renderArtifactPanel(jobId, summary) {
     html += '<div id="preview-container" style="border:1px solid #555; border-top:none; padding:8px; min-height:60px; background:#222"><div style="color:#666; font-size:12px">Select a preview tab</div></div>';
 
     preview.innerHTML = html;
+
+    // Update solve-score button state (must be after innerHTML so buttons exist)
+    _updateSolveScoreButtons();
 
     // Store preview URLs (no sources — tabs are passive, no generation on click)
     window._previewUrls = { color: colorPreviewUrl, bilevel: bilevelPreviewUrl, coeffs: coeffPreviewUrl, palette: palettePreviewUrl };
@@ -2517,7 +2514,6 @@ async function runCalculateWithSolver(solverMode) {
             },
             function: funcName,
             N: n,
-            n_stripes: actualChunks,  // backward compat for old readers
             solver: solverMode,
             n_chunks: actualChunks,
             n_steps: nSteps,

@@ -1,5 +1,5 @@
 /*
- * palette_lut.h — shared 16-step palette definitions and interpolation.
+ * palette_lut.h — shared palette definitions and interpolation.
  *
  * Used by roots2pix.c (render rasterization) and solve_palette_debug.c (debug image).
  * Single source of truth for all palette tables.
@@ -11,6 +11,7 @@
 #include <string.h>
 
 typedef struct { unsigned char r, g, b; } RGB;
+typedef struct { const char *name; const RGB *colors; int n_colors; } PaletteDef;
 
 static const RGB PAL_INFERNO[16] = {
     {0,0,4}, {16,11,53}, {43,15,95}, {72,12,119},
@@ -103,37 +104,50 @@ static const RGB PAL_ABYSS[16] = {
     {85,50,145}, {120,65,195}, {165,85,240}, {210,110,255}
 };
 
-typedef struct { const char *name; const RGB *colors; } PalEntry;
-static const PalEntry PALETTES[] = {
-    {"inferno", PAL_INFERNO}, {"viridis", PAL_VIRIDIS},
-    {"magma",   PAL_MAGMA},   {"plasma",  PAL_PLASMA},
-    {"turbo",   PAL_TURBO},   {"cividis", PAL_CIVIDIS},
-    {"warm",    PAL_WARM},    {"cool",    PAL_COOL},
-    {"bwred",   PAL_BWRED},   {"neon_v",  PAL_NEON_V},
-    {"gilded",  PAL_GILDED},  {"reef",    PAL_REEF},
-    {"abyss",   PAL_ABYSS},
-    {NULL, NULL}
+/* Sampled from d3.interpolateRainbow at 32 evenly spaced t values. */
+static const RGB PAL_RAINBOW_D3[32] = {
+    {110,64,170}, {135,62,177}, {162,61,179}, {189,60,175},
+    {213,62,166}, {235,66,152}, {252,74,134}, {255,84,115},
+    {255,98,94},  {255,114,76}, {255,133,60}, {249,154,50},
+    {233,175,46}, {215,196,50}, {197,215,61}, {182,232,79},
+    {160,242,88}, {128,245,88}, {98,247,95},  {72,245,109},
+    {51,240,127}, {36,231,148}, {27,219,169}, {25,204,189},
+    {29,186,206}, {37,167,218}, {49,147,224}, {63,127,225},
+    {78,109,219}, {91,91,207},  {102,76,190}, {110,64,170}
 };
 
-static const RGB *findPalette(const char *name) {
-    if (!name) return PAL_INFERNO;
+static const PaletteDef PALETTES[] = {
+    {"inferno", PAL_INFERNO, 16}, {"viridis", PAL_VIRIDIS, 16},
+    {"magma",   PAL_MAGMA, 16},   {"plasma",  PAL_PLASMA, 16},
+    {"turbo",   PAL_TURBO, 16},   {"cividis", PAL_CIVIDIS, 16},
+    {"warm",    PAL_WARM, 16},    {"cool",    PAL_COOL, 16},
+    {"bwred",   PAL_BWRED, 16},   {"neon_v",  PAL_NEON_V, 16},
+    {"gilded",  PAL_GILDED, 16},  {"reef",    PAL_REEF, 16},
+    {"abyss",   PAL_ABYSS, 16},   {"rainbow_d3", PAL_RAINBOW_D3, 32},
+    {NULL, NULL, 0}
+};
+
+static const PaletteDef *findPalette(const char *name) {
+    if (!name) return &PALETTES[0];
     for (int i = 0; PALETTES[i].name; i++)
         if (strcmp(PALETTES[i].name, name) == 0)
-            return PALETTES[i].colors;
-    return PAL_INFERNO;
+            return &PALETTES[i];
+    return &PALETTES[0];
 }
 
-static void paletteRGB(const RGB *pal, double t,
+static void paletteRGB(const PaletteDef *pal, double t,
                        unsigned char *r, unsigned char *g, unsigned char *b) {
-    if (t <= 0) { *r = pal[0].r; *g = pal[0].g; *b = pal[0].b; return; }
-    if (t >= 1) { *r = pal[15].r; *g = pal[15].g; *b = pal[15].b; return; }
-    double idx = t * 15.0;
+    const RGB *colors = pal ? pal->colors : PAL_INFERNO;
+    int n = (pal && pal->n_colors > 1) ? pal->n_colors : 16;
+    if (t <= 0) { *r = colors[0].r; *g = colors[0].g; *b = colors[0].b; return; }
+    if (t >= 1) { *r = colors[n - 1].r; *g = colors[n - 1].g; *b = colors[n - 1].b; return; }
+    double idx = t * (double)(n - 1);
     int lo = (int)idx;
     double f = idx - lo;
     int hi = lo + 1;
-    *r = (unsigned char)(pal[lo].r * (1-f) + pal[hi].r * f + 0.5);
-    *g = (unsigned char)(pal[lo].g * (1-f) + pal[hi].g * f + 0.5);
-    *b = (unsigned char)(pal[lo].b * (1-f) + pal[hi].b * f + 0.5);
+    *r = (unsigned char)(colors[lo].r * (1-f) + colors[hi].r * f + 0.5);
+    *g = (unsigned char)(colors[lo].g * (1-f) + colors[hi].g * f + 0.5);
+    *b = (unsigned char)(colors[lo].b * (1-f) + colors[hi].b * f + 0.5);
 }
 
 #endif /* PALETTE_LUT_H */

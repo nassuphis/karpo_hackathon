@@ -379,8 +379,9 @@ def handle_summary(params):
         t1 = time.time()
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         compute_ms = int((time.time() - t1) * 1000)
+        print(f"solve_prox_summary rc={result.returncode} stdout={repr(result.stdout[:300])} stderr={repr(result.stderr[:500])}")
         if result.returncode != 0:
-            raise RuntimeError(f"solve_proximity_stats summary failed: {result.stderr.strip()}")
+            raise RuntimeError(f"solve_proximity_stats summary failed (rc={result.returncode}): {result.stderr.strip()}")
 
         summary = json.loads(result.stdout)
         summary["dl_ms"] = dl_ms

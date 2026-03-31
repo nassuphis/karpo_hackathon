@@ -656,19 +656,20 @@ function _applyDetail(r, detail, previewEl, infoEl, jobId) {
     const solver = calc.solver || detail.solver || '';
     document.getElementById('res-solver').textContent = solver === 'companion_matrix' ? 'CM' : solver === 'aberth' ? 'AE' : solver || '-';
 
-    // Viewport — prefer cached values from preview (fresher than view.json)
-    const qRe = (r && r.q_re) || detail.q_re;
-    const qIm = (r && r.q_im) || detail.q_im;
+    // Preview stats from server or session cache
+    const ps = detail.preview_stats || {};
+
+    // Viewport — prefer session cache > preview_stats > view.json
+    const qRe = (r && r.q_re) || ps.q_re || detail.q_re;
+    const qIm = (r && r.q_im) || ps.q_im || detail.q_im;
     if (qRe && qIm) {
         document.getElementById('res-ll').textContent = `${qRe[0].toFixed(4)}, ${qIm[0].toFixed(4)}`;
         document.getElementById('res-ur').textContent = `${qRe[1].toFixed(4)}, ${qIm[1].toFixed(4)}`;
     }
-
-    // Restore preview stats if previously computed
-    if (r && r._prevTotal != null) {
-        document.getElementById('res-prev-total').textContent = r._prevTotal.toLocaleString();
-        document.getElementById('res-prev-good').textContent = r._prevGood.toLocaleString();
-    }
+    const prevTotal = (r && r._prevTotal != null) ? r._prevTotal : (ps.n_roots_total || null);
+    const prevGood = (r && r._prevGood != null) ? r._prevGood : (ps.n_roots || null);
+    if (prevTotal != null) document.getElementById('res-prev-total').textContent = prevTotal.toLocaleString();
+    if (prevGood != null) document.getElementById('res-prev-good').textContent = prevGood.toLocaleString();
 
     // File count
     if (detail.file_count != null) {

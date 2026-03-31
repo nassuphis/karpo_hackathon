@@ -226,6 +226,11 @@ class TestStorageList(unittest.TestCase):
             "pipeline": {"param_transforms": [["rotate", "90"]], "cfpv": [1, 2]},
         }).encode()
         view_data = json.dumps({"q_re": [-1, 1], "q_im": [-1, 1]}).encode()
+        preview_stats_data = json.dumps({
+            "n_roots": 5000, "n_roots_total": 7500,
+            "q_re": [-0.5, 0.5], "q_im": [-0.5, 0.5],
+            "created_at": "2026-03-31T10:00:00Z",
+        }).encode()
 
         def mock_get(**kwargs):
             key = kwargs["Key"]
@@ -233,6 +238,8 @@ class TestStorageList(unittest.TestCase):
                 return {"Body": MagicMock(read=lambda: calc_data)}
             if "view.json" in key:
                 return {"Body": MagicMock(read=lambda: view_data)}
+            if "preview_stats.json" in key:
+                return {"Body": MagicMock(read=lambda: preview_stats_data)}
             raise Exception("NoSuchKey")
         mock_s3.get_object.side_effect = mock_get
 
@@ -244,6 +251,30 @@ class TestStorageList(unittest.TestCase):
         self.assertEqual(body["param_transforms"], [["rotate", "90"]])
         self.assertIn("pipeline", body)
         self.assertEqual(body["q_re"], [-1, 1])
+        # preview_stats loaded from S3
+        self.assertIn("preview_stats", body)
+        self.assertEqual(body["preview_stats"]["n_roots"], 5000)
+        self.assertEqual(body["preview_stats"]["n_roots_total"], 7500)
+        self.assertEqual(body["preview_stats"]["q_re"], [-0.5, 0.5])
+
+    @patch("handler_storage._key_exists")
+    @patch("handler_storage.s3")
+    def test_detail_without_preview_stats(self, mock_s3, mock_exists):
+        """Verify /detail works when preview_stats.json is absent."""
+        from handler_storage import handle_detail
+        mock_exists.return_value = False
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"KeyCount": 1}]
+
+        def mock_get(**kwargs):
+            raise Exception("NoSuchKey")
+        mock_s3.get_object.side_effect = mock_get
+
+        result = handle_detail({"body": json.dumps({"job_id": "j"})})
+        body = json.loads(result["body"])
+        self.assertFalse(body["has_preview"])
+        self.assertNotIn("preview_stats", body)
 
 
 class TestStorageCheckKeys(unittest.TestCase):
@@ -1400,14 +1431,24 @@ class TestPreviewHandler(unittest.TestCase):
         self.assertGreater(body["png_size"], 0)
         self.assertGreater(body["n_roots"], 0)
 
-        # Verify PNG uploaded to S3
-        mock_s3.put_object.assert_called_once()
-        call_kwargs = mock_s3.put_object.call_args[1]
-        self.assertEqual(call_kwargs["Key"], "renders/test/preview.png")
-        self.assertEqual(call_kwargs["ContentType"], "image/png")
-        # Verify it's valid PNG (starts with PNG magic bytes)
-        png_data = call_kwargs["Body"]
-        self.assertTrue(png_data[:4] == b'\x89PNG')
+        # Verify PNG + preview_stats.json uploaded to S3
+        self.assertEqual(mock_s3.put_object.call_count, 2)
+        put_calls = {c[1]["Key"]: c[1] for c in mock_s3.put_object.call_args_list}
+        # PNG
+        self.assertIn("renders/test/preview.png", put_calls)
+        png_call = put_calls["renders/test/preview.png"]
+        self.assertEqual(png_call["ContentType"], "image/png")
+        self.assertTrue(png_call["Body"][:4] == b'\x89PNG')
+        # Preview stats
+        self.assertIn("renders/test/preview_stats.json", put_calls)
+        stats_call = put_calls["renders/test/preview_stats.json"]
+        self.assertEqual(stats_call["ContentType"], "application/json")
+        stats = json.loads(stats_call["Body"])
+        self.assertIn("n_roots", stats)
+        self.assertIn("n_roots_total", stats)
+        self.assertIn("q_re", stats)
+        self.assertIn("q_im", stats)
+        self.assertIn("created_at", stats)
 
     @patch("handler_preview.s3")
     def test_preview_custom_size(self, mock_s3):

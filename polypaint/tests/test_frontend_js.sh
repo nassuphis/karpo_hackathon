@@ -1576,8 +1576,100 @@ async function testPipeline(name, call) {
         console.log('  15c observer completion refresh + auto-select: OK');
     }
 
-    // Step 16: Render refresh — tested in Playwright (VM cannot override let-scoped lambdaPost/fetch)
-    // See tests/e2e/render-refresh.spec.js for real browser coverage.
+    // Step 16: _applyDetail with preview_stats (regression: ps TDZ bug)
+    console.log('');
+    console.log('--- _applyDetail preview_stats ---');
+    {
+        // Set up mock DOM elements
+        const detailFields = ['res-cfun','res-degree','res-stripes','res-nroots','res-pform',
+            'res-cfpv','res-cform','res-times','res-solver','res-prev-total','res-prev-good',
+            'res-ll','res-ur'];
+        for (const id of detailFields) {
+            if (!ctx._elements[id]) ctx._elements[id] = { textContent: '-', style: {} };
+        }
+
+        // Mock detail response with preview_stats
+        const detail = {
+            has_preview: true,
+            preview_url: 'https://fake/preview.png',
+            param_transforms_display: [['unit_circle']],
+            coeff_transforms: ['rev'],
+            times: 2,
+            calc: { solver: 'companion_matrix' },
+            q_re: [-1, 1],
+            q_im: [-1, 1],
+            file_count: 42,
+            preview_stats: {
+                n_roots: 5000,
+                n_roots_total: 7500,
+                q_re: [-0.5, 0.5],
+                q_im: [-0.5, 0.5],
+            },
+        };
+
+        try {
+            vm.runInContext(`
+                _selectedJobId = 'test_ps';
+                var previewEl = document.getElementById('results-preview');
+                var infoEl = document.getElementById('results-info');
+                _applyDetail(null, ${JSON.stringify(detail)}, previewEl, infoEl, 'test_ps');
+            `, ctx);
+
+            // Verify preview stats populated from server
+            const prevTotal = ctx._elements['res-prev-total'].textContent;
+            const prevGood = ctx._elements['res-prev-good'].textContent;
+            if (!prevTotal.includes('7,500') && !prevTotal.includes('7500')) {
+                console.error('FATAL: prev total should be 7500, got: ' + prevTotal);
+                process.exit(1);
+            }
+            if (!prevGood.includes('5,000') && !prevGood.includes('5000')) {
+                console.error('FATAL: prev good should be 5000, got: ' + prevGood);
+                process.exit(1);
+            }
+
+            // Verify viewport from preview_stats (not detail.q_re)
+            const ll = ctx._elements['res-ll'].textContent;
+            if (!ll.includes('-0.5000')) {
+                console.error('FATAL: LL should use preview_stats q_re (-0.5), got: ' + ll);
+                process.exit(1);
+            }
+
+            // Verify solver
+            const solver = ctx._elements['res-solver'].textContent;
+            if (solver !== 'CM') {
+                console.error('FATAL: solver should be CM, got: ' + solver);
+                process.exit(1);
+            }
+
+            console.log('  16a _applyDetail with preview_stats: OK (prev total, prev good, LL, solver)');
+        } catch (e) {
+            console.error('FATAL: _applyDetail preview_stats: ' + e.message);
+            process.exit(1);
+        }
+
+        // Test without preview_stats (should not crash)
+        try {
+            vm.runInContext(`
+                _selectedJobId = 'test_no_ps';
+                var previewEl2 = document.getElementById('results-preview');
+                var infoEl2 = document.getElementById('results-info');
+                _applyDetail(null, {
+                    has_preview: false,
+                    param_transforms_display: [],
+                    coeff_transforms: [],
+                    times: 1,
+                    calc: {},
+                    q_re: [-2, 2],
+                    q_im: [-2, 2],
+                    file_count: 10,
+                }, previewEl2, infoEl2, 'test_no_ps');
+            `, ctx);
+            console.log('  16b _applyDetail without preview_stats: OK (no crash)');
+        } catch (e) {
+            console.error('FATAL: _applyDetail without preview_stats crashed: ' + e.message);
+            process.exit(1);
+        }
+    }
 
     console.log('=== Frontend JS Execution Test PASSED ===');
 })().catch(e => { console.error('FATAL: ' + e.message); process.exit(1); });

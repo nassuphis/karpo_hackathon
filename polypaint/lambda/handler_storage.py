@@ -649,6 +649,15 @@ def handle_detail(event):
             Params={"Bucket": BUCKET, "Key": preview_key},
             ExpiresIn=PRESIGN_EXPIRY)
 
+    # Load preview stats only if preview exists (avoid stale stats)
+    if preview_key:
+        try:
+            ps_obj = s3.get_object(Bucket=BUCKET,
+                                   Key=f"renders/{job_id}/preview_stats.json")
+            result["preview_stats"] = json.loads(ps_obj["Body"].read())
+        except Exception:
+            pass
+
     return ok_response(result)
 
 

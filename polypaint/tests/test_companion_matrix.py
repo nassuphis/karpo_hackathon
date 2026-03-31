@@ -280,6 +280,131 @@ def test_linear():
     assert abs(roots[0] - 3) < 1e-6
 
 
+# ── Test 10: Inf coefficient overflow ───────────────────────────────────
+
+def test_inf_coefficients():
+    """Polynomials with inf coefficients should not crash — roots zeroed, skipped counted."""
+    n_coeffs = 4  # degree 3
+    # Build a coefficient file with inf values manually
+    with tempfile.TemporaryDirectory() as td:
+        cf_path = os.path.join(td, "cf.bin")
+        out_path = os.path.join(td, "roots.bin")
+        with open(cf_path, "wb") as f:
+            # Poly 1: normal cubic (roots 1,2,3)
+            for c in [1, 0, -6, 0, 11, 0, -6, 0]:
+                f.write(struct.pack("<f", c))
+            # Poly 2: leading coeff is inf
+            f.write(struct.pack("<f", float('inf')))
+            f.write(struct.pack("<f", 0.0))
+            for _ in range(3):
+                f.write(struct.pack("<ff", 1.0, 0.0))
+            # Poly 3: normal cubic again
+            for c in [1, 0, -6, 0, 11, 0, -6, 0]:
+                f.write(struct.pack("<f", c))
+
+        spec = json.dumps({
+            "mode": "solve_cm", "coeffs_file": cf_path,
+            "n_coeffs": n_coeffs,
+        })
+        r = subprocess.run(
+            [SWEEP_CM, out_path], input=spec,
+            capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, f"sweep_cm crashed: rc={r.returncode} stderr={r.stderr[:200]}"
+        assert r.stdout.strip().startswith("{"), f"No JSON output: {r.stdout[:200]!r}"
+        meta = json.loads(r.stdout)
+        assert meta["n_t"] == 3
+        assert meta["skipped_overflow"] >= 1, f"Expected skipped_overflow >= 1, got {meta}"
+
+        # Output file should still have 3 polys × 3 roots × 2 floats × 4 bytes
+        expected_size = 3 * 3 * 2 * 4
+        actual_size = os.path.getsize(out_path)
+        assert actual_size == expected_size, f"Size: {actual_size} != {expected_size}"
+
+        # The overflowed poly should have zero roots
+        all_roots = read_roots(out_path, 3)
+        assert len(all_roots) == 3
+        # Poly 2 (index 1) should be all zeros
+        for r in all_roots[1]:
+            assert r == 0j, f"Overflowed poly root should be 0, got {r}"
+        # Poly 1 and 3 should have valid roots
+        assert max_residual([1+0j, -6+0j, 11+0j, -6+0j], all_roots[0]) < 1e-5
+        assert max_residual([1+0j, -6+0j, 11+0j, -6+0j], all_roots[2]) < 1e-5
+
+
+# ── Test 11: Near-overflow large coefficients ──────────────────────────
+
+def test_near_overflow_coefficients():
+    """Coefficients near float32 max (~3.4e38) that produce inf after normalization."""
+    n_coeffs = 4
+    with tempfile.TemporaryDirectory() as td:
+        cf_path = os.path.join(td, "cf.bin")
+        out_path = os.path.join(td, "roots.bin")
+        with open(cf_path, "wb") as f:
+            # Leading coeff tiny, other coeffs huge → normalized coeffs overflow
+            # lead=1e-30, others=3e38 → ratio = 3e68, overflows double? No, double is fine.
+            # lead=1e-30, others=inf → normalized = inf
+            f.write(struct.pack("<ff", 1e-30, 0.0))  # tiny leading coeff
+            f.write(struct.pack("<ff", float('inf'), 0.0))  # inf second coeff
+            f.write(struct.pack("<ff", 1.0, 0.0))
+            f.write(struct.pack("<ff", 1.0, 0.0))
+
+        spec = json.dumps({
+            "mode": "solve_cm", "coeffs_file": cf_path,
+            "n_coeffs": n_coeffs,
+        })
+        r = subprocess.run(
+            [SWEEP_CM, out_path], input=spec,
+            capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, f"sweep_cm crashed: {r.stderr[:200]}"
+        meta = json.loads(r.stdout)
+        assert meta["skipped_overflow"] >= 1
+        # Roots should be finite (zeros for skipped poly)
+        all_roots = read_roots(out_path, 3)
+        for r in all_roots[0]:
+            assert math.isfinite(r.real) and math.isfinite(r.imag), f"Non-finite root: {r}"
+
+
+# ── Test 12: Mixed normal and overflow in batch ────────────────────────
+
+def test_mixed_batch_overflow():
+    """A batch with some normal and some overflowed polys completes fully."""
+    n_coeffs = 3  # degree 2
+    normal_cf = [1+0j, -3+0j, 2+0j]  # roots 1, 2
+    polys = []
+    for i in range(10):
+        if i % 3 == 1:
+            # Overflow poly
+            polys.append([complex(float('inf'), 0), 1+0j, 1+0j])
+        else:
+            polys.append(normal_cf)
+
+    with tempfile.TemporaryDirectory() as td:
+        cf_path = os.path.join(td, "cf.bin")
+        out_path = os.path.join(td, "roots.bin")
+        write_coeff_file(cf_path, polys, n_coeffs)
+        spec = json.dumps({
+            "mode": "solve_cm", "coeffs_file": cf_path,
+            "n_coeffs": n_coeffs,
+        })
+        r = subprocess.run(
+            [SWEEP_CM, out_path], input=spec,
+            capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0
+        meta = json.loads(r.stdout)
+        assert meta["n_t"] == 10
+        # 4 overflow polys (indices 1,4,7 — wait, i%3==1: 1,4,7 = 3 polys)
+        assert meta["skipped_overflow"] >= 3
+
+        # All 10 polys should have output
+        all_roots = read_roots(out_path, 2)
+        assert len(all_roots) == 10
+
+        # Normal polys should solve correctly
+        for i in range(10):
+            if i % 3 != 1:
+                assert max_residual(normal_cf, all_roots[i]) < 1e-5, f"poly {i} bad residual"
+
+
 if __name__ == "__main__":
     test_exact_cubic()
     test_exact_quartic()
@@ -289,5 +414,8 @@ if __name__ == "__main__":
     test_complex_quadratic()
     test_output_size()
     test_linear()
+    test_inf_coefficients()
+    test_near_overflow_coefficients()
+    test_mixed_batch_overflow()
     test_ae_vs_cm_comparison()
     print("\nAll companion matrix tests passed.")

@@ -27,6 +27,7 @@ def handler(event, context):
     n_tile_rows = params["n_tile_rows"]
     n_tiles = n_tile_cols * n_tile_rows
     out_key = params["out_key"]
+    preview_key = params.get("preview_key")
     tile_prefix = params.get("tile_prefix", "bilevel")
     task_id = params.get("task_id", "bilevel_stitch")
 
@@ -83,14 +84,19 @@ def handler(event, context):
             except OSError:
                 pass
 
-        # Upload final TIFF with dimensions in S3 metadata
+        # Upload final TIFF with dimensions plus caller-supplied artifact metadata
+        extra_meta = {}
+        for k, v in (params.get("metadata") or {}).items():
+            if v is None:
+                continue
+            extra_meta[str(k)] = str(v)
         with open(out_path, "rb") as f:
             s3.put_object(Bucket=BUCKET, Key=out_key, Body=f, ContentType="image/tiff",
-                          Metadata={"width": str(full_w), "height": str(full_h)})
+                          Metadata={"width": str(full_w), "height": str(full_h), **extra_meta})
         os.remove(out_path)
 
         # Upload preview PNG
-        preview_key = out_key.replace('.tif', '_preview.png')
+        preview_key = preview_key or out_key.replace('.tif', '_preview.png')
         preview_url = ""
         if os.path.exists(preview_path):
             with open(preview_path, "rb") as f:

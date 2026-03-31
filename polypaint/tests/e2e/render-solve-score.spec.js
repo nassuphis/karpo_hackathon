@@ -364,240 +364,80 @@ test.describe('Solve Score UI', () => {
     expect(logText).not.toContain('full range');
   });
 
-  test('Palette button is visible', async ({ page }) => {
+  test('render panel shows family tabs and selected-artifact actions', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    // Button lives inside artifact panel — render it first
     await page.evaluate(() => {
       renderArtifactPanel('test_job', {
-        artifacts: { palette_jpeg: { exists: false }, color_jpeg: { exists: false }, color_png: { exists: false },
-          bilevel_tif: { exists: false }, bilevel_preview_png: { exists: false }, bilevel_compat_tif: { exists: false },
-          bilevel_png: { exists: false }, coeff_tif: { exists: false }, coeff_preview_png: { exists: false },
-          preview_color_png: { exists: false }, preview_bilevel_png: { exists: false },
-          preview_palette_png: { exists: false }, preview_coeffs_png: { exists: false } },
-        calc: { exists: false }, deepzoom_latest: { exists: false },
-      });
-    });
-    const btn = page.locator('#btn-palette-debug');
-    await expect(btn).toBeVisible();
-    expect(await btn.textContent()).toBe('Palette');
-  });
-
-  test('Palette button is disabled outside solve_score mode', async ({ page }) => {
-    await page.click('.tab-btn:text("Render")');
-    // Button lives inside artifact panel — render it first
-    await page.evaluate(() => {
-      renderArtifactPanel('test_job', {
-        artifacts: { palette_jpeg: { exists: false }, color_jpeg: { exists: false }, color_png: { exists: false },
-          bilevel_tif: { exists: false }, bilevel_preview_png: { exists: false }, bilevel_compat_tif: { exists: false },
-          bilevel_png: { exists: false }, coeff_tif: { exists: false }, coeff_preview_png: { exists: false },
-          preview_color_png: { exists: false }, preview_bilevel_png: { exists: false },
-          preview_palette_png: { exists: false }, preview_coeffs_png: { exists: false } },
-        calc: { exists: false }, deepzoom_latest: { exists: false },
-      });
-    });
-    // Default mode is not solve_score
-    const btn = page.locator('#btn-palette-debug');
-    const disabled = await btn.getAttribute('disabled');
-    // Should be disabled (attribute present)
-    expect(disabled).not.toBeNull();
-  });
-
-  test('artifact panel shows Palette JPEG row with Download and DeepZoom', async ({ page }) => {
-    await page.click('.tab-btn:text("Render")');
-    // Mock refreshRenderArtifacts with palette_jpeg present
-    await page.evaluate(() => {
-      renderArtifactPanel('test_job', {
-        artifacts: {
-          palette_jpeg: { exists: true, key: 'renders/test_job/image_palette.jpeg', url: 'https://example.com/pal.jpeg', size: 50000, width: 1000, height: 1000 },
-          preview_palette_png: { exists: false },
-          color_jpeg: { exists: false }, color_png: { exists: false },
-          bilevel_tif: { exists: false }, bilevel_preview_png: { exists: false },
-          bilevel_compat_tif: { exists: false }, bilevel_png: { exists: false },
-          coeff_tif: { exists: false }, coeff_preview_png: { exists: false },
-          preview_color_png: { exists: false }, preview_bilevel_png: { exists: false },
+        families: {
+          color: [{ artifact_id: 'color_1', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/test_job/color/color_1/image.jpeg', image_url: 'https://example.com/c.jpeg', preview_url: 'https://example.com/c.png', viewer_url: 'https://example.com/c.png', file_size: 50000, width: 1000, height: 1000, color_mode: 'rainbow', format: 'jpeg' }],
+          bilevel: [{ artifact_id: 'bilevel_1', created_at: '2026-03-30T11:00:00Z', image_key: 'renders/test_job/bilevel/bilevel_1/image.tif', image_url: 'https://example.com/b.tif', preview_url: 'https://example.com/b.png', viewer_url: 'https://example.com/b.png', file_size: 60000, width: 1000, height: 1000, format: 'tif' }],
+          coeffs: [{ artifact_id: 'coeffs_1', created_at: '2026-03-30T11:30:00Z', image_key: 'renders/test_job/coeffs/coeffs_1/image.tif', image_url: 'https://example.com/co.tif', preview_url: 'https://example.com/co.png', viewer_url: 'https://example.com/co.png', file_size: 70000, width: 1000, height: 1000, format: 'tif' }],
+          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05 }],
         },
         calc: { exists: true, N: 1000, degree: 5 },
+        artifacts: {},
         deepzoom_latest: { exists: false },
       });
     });
-    // Palette row button should exist
-    const row = page.locator('#btn-palette-debug');
-    await expect(row).toBeVisible();
-    // Download and DeepZoom buttons should be in that row's parent div
-    const rowDiv = row.locator('..');
-    const download = rowDiv.locator('button:text("Download")');
-    const deepzoom = rowDiv.locator('button:text("DeepZoom")');
-    await expect(download).toBeVisible();
-    await expect(deepzoom).toBeVisible();
-  });
 
-  test('all four preview modes show when all artifacts exist', async ({ page }) => {
-    await page.click('.tab-btn:text("Render")');
-    await page.evaluate(() => {
-      renderArtifactPanel('test_job', {
-        artifacts: {
-          color_jpeg: { exists: true, key: 'renders/test_job/image.jpeg', url: 'https://example.com/c.jpeg', size: 50000, width: 1000, height: 1000 },
-          color_png: { exists: false },
-          bilevel_tif: { exists: true, key: 'renders/test_job/image_bilevel.tif', url: 'https://example.com/b.tif', size: 60000, width: 1000, height: 1000 },
-          bilevel_preview_png: { exists: false },
-          bilevel_compat_tif: { exists: false },
-          bilevel_png: { exists: false },
-          coeff_tif: { exists: true, key: 'renders/test_job/image_coeffs_bilevel.tif', url: 'https://example.com/co.tif', size: 70000, width: 1000, height: 1000 },
-          coeff_preview_png: { exists: false },
-          preview_color_png: { exists: false },
-          preview_bilevel_png: { exists: false },
-          palette_jpeg: { exists: true, key: 'renders/test_job/image_palette.jpeg', url: 'https://example.com/p.jpeg', size: 40000, width: 1000, height: 1000 },
-          preview_palette_png: { exists: false },
-        },
-        calc: { exists: true, N: 1000, degree: 5 },
-        deepzoom_latest: { exists: false },
-      });
-    });
-    // All four preview tabs should be present
-    for (const id of ['preview-tab-color', 'preview-tab-bilevel', 'preview-tab-coeffs', 'preview-tab-palette']) {
-      const tab = page.locator('#' + id);
-      await expect(tab).toBeVisible();
+    const panel = page.locator('#render-preview');
+    for (const label of ['Color', 'BiLevel', 'Coeffs', 'Palette']) {
+      await expect(panel.locator('button:text("' + label + '")')).toBeVisible();
     }
+    await expect(panel.locator('#btn-render-generate')).toBeVisible();
+    await expect(panel.locator('#btn-render-download')).toBeVisible();
+    await expect(panel.locator('#btn-render-delete')).toBeVisible();
+    await expect(panel.locator('#btn-render-deepzoom')).toBeVisible();
+    await expect(panel.locator('text=color_1')).toBeVisible();
   });
 
-  test('preview section shows Palette toggle when artifact exists', async ({ page }) => {
+  test('palette family generate is disabled outside solve_score mode', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      renderColorMode = 'rainbow';
+      _renderActiveFamily = 'palette';
+      renderArtifactPanel('test_job', {
+        families: { color: [], bilevel: [], coeffs: [], palette: [] },
+        calc: { exists: true, N: 1000, degree: 5 },
+        artifacts: {},
+        deepzoom_latest: { exists: false },
+      });
+    });
+    const btn = page.locator('#btn-render-generate');
+    await expect(btn).toBeDisabled();
+  });
+
+  test('switching family updates the selected catalog and viewer', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(() => {
       renderArtifactPanel('test_job', {
-        artifacts: {
-          palette_jpeg: { exists: true, key: 'renders/test_job/image_palette.jpeg', url: 'https://example.com/pal.jpeg', size: 50000, width: 1000, height: 1000 },
-          preview_palette_png: { exists: false },
-          color_jpeg: { exists: false }, color_png: { exists: false },
-          bilevel_tif: { exists: false }, bilevel_preview_png: { exists: false },
-          bilevel_compat_tif: { exists: false }, bilevel_png: { exists: false },
-          coeff_tif: { exists: false }, coeff_preview_png: { exists: false },
-          preview_color_png: { exists: false }, preview_bilevel_png: { exists: false },
+        families: {
+          color: [{ artifact_id: 'color_1', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/test_job/color/color_1/image.jpeg', image_url: 'https://example.com/c.jpeg', preview_url: 'https://example.com/c.png', viewer_url: 'https://example.com/c.png', file_size: 50000, width: 1000, height: 1000, color_mode: 'rainbow', format: 'jpeg' }],
+          bilevel: [],
+          coeffs: [],
+          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05 }],
         },
         calc: { exists: true, N: 1000, degree: 5 },
+        artifacts: {},
         deepzoom_latest: { exists: false },
       });
     });
-    const palTab = page.locator('#preview-tab-palette');
-    await expect(palTab).toBeVisible();
+
+    await page.click('#render-preview button:text("Palette")');
+    await expect(page.locator('#render-preview').getByText('pal_1')).toBeVisible();
+    await expect(page.locator('#render-preview img[src="https://example.com/p.png"]')).toBeVisible();
   });
 
-  test('preview tab click does not trigger network calls', async ({ page }) => {
+  test('empty family shows no saved artifacts message', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    // Set up artifacts with preview URLs
-    await page.evaluate(() => {
-      renderArtifactPanel('test_job', {
-        artifacts: {
-          color_jpeg: { exists: true, key: 'k', url: 'u', size: 1, width: 1, height: 1 },
-          color_png: { exists: false }, bilevel_tif: { exists: false },
-          bilevel_preview_png: { exists: false }, bilevel_compat_tif: { exists: false },
-          bilevel_png: { exists: false }, coeff_tif: { exists: false },
-          coeff_preview_png: { exists: false }, preview_color_png: { exists: true, url: 'https://cached/c.png' },
-          preview_bilevel_png: { exists: false }, palette_jpeg: { exists: false },
-          preview_palette_png: { exists: false }, preview_coeffs_png: { exists: false },
-        },
-        calc: { exists: true, N: 100, degree: 5 },
-        deepzoom_latest: { exists: false },
-      });
-      // Track any network calls from _showPreview
-      window._previewNetCalls = 0;
-      const origFetch = window.fetch;
-      window.fetch = function() { window._previewNetCalls++; return origFetch.apply(this, arguments); };
-    });
-    // Click each tab
-    for (const mode of ['color', 'bilevel', 'coeffs', 'palette']) {
-      await page.click('#preview-tab-' + mode);
-    }
-    const calls = await page.evaluate(() => window._previewNetCalls);
-    expect(calls).toBe(0);
-  });
-
-  test('4 fixed artifact rows always present', async ({ page }) => {
-    await page.click('.tab-btn:text("Render")');
-    // All artifacts absent
     await page.evaluate(() => {
       renderArtifactPanel('empty_job', {
-        artifacts: {
-          color_jpeg: { exists: false }, color_png: { exists: false },
-          bilevel_tif: { exists: false }, bilevel_preview_png: { exists: false },
-          bilevel_compat_tif: { exists: false }, bilevel_png: { exists: false },
-          coeff_tif: { exists: false }, coeff_preview_png: { exists: false },
-          preview_color_png: { exists: false }, preview_bilevel_png: { exists: false },
-          palette_jpeg: { exists: false }, preview_palette_png: { exists: false },
-          preview_coeffs_png: { exists: false },
-        },
+        families: { color: [], bilevel: [], coeffs: [], palette: [] },
         calc: { exists: false },
+        artifacts: {},
         deepzoom_latest: { exists: false },
       });
     });
-    // All 4 rows must exist with "None" for absent
-    for (const label of ['Color', 'BiLevel', 'Coeffs', 'Palette']) {
-      const row = page.locator('#render-preview button:text("' + label + '")');
-      await expect(row).toBeVisible();
-    }
-    // Check "None" appears
-    const panelText = await page.locator('#render-preview').textContent();
-    const noneCount = (panelText.match(/None/g) || []).length;
-    expect(noneCount).toBe(4);
-  });
-
-  test('PNG button shows action label when absent, download arrow when present', async ({ page }) => {
-    await page.click('.tab-btn:text("Render")');
-    // BiLevel TIF exists but PNG does not
-    await page.evaluate(() => {
-      renderArtifactPanel('test_job', {
-        artifacts: {
-          bilevel_tif: { exists: true, key: 'renders/test_job/image_bilevel.tif', url: 'https://fake/tif', size: 1000 },
-          bilevel_png: { exists: false },
-          bilevel_compat_tif: { exists: false },
-          bilevel_preview_png: { exists: false },
-          color_jpeg: { exists: false }, color_png: { exists: false },
-          coeff_tif: { exists: false }, coeff_preview_png: { exists: false },
-          preview_color_png: { exists: false }, preview_bilevel_png: { exists: false },
-          palette_jpeg: { exists: false }, preview_palette_png: { exists: false },
-          preview_coeffs_png: { exists: false },
-        },
-        calc: { exists: true, N: 1000, degree: 5 },
-        deepzoom_latest: { exists: false },
-      });
-    });
-    // PNG button should say "PNG" (action, no arrow)
-    const pngBtn = page.locator('#btn-png-export');
-    await expect(pngBtn).toBeVisible();
-    expect(await pngBtn.textContent()).toBe('PNG');
-    // Compat button should say "Compat" (action, no arrow)
-    const compatBtn = page.locator('#btn-tiff-compat');
-    await expect(compatBtn).toBeVisible();
-    expect(await compatBtn.textContent()).toBe('Compat');
-  });
-
-  test('PNG button shows download arrow when artifact exists', async ({ page }) => {
-    await page.click('.tab-btn:text("Render")');
-    // BiLevel TIF + PNG + Compat all exist
-    await page.evaluate(() => {
-      renderArtifactPanel('test_job', {
-        artifacts: {
-          bilevel_tif: { exists: true, key: 'renders/test_job/image_bilevel.tif', url: 'https://fake/tif', size: 1000 },
-          bilevel_png: { exists: true, key: 'renders/test_job/image_bilevel.png', url: 'https://fake/png', size: 500 },
-          bilevel_compat_tif: { exists: true, key: 'renders/test_job/image_bilevel_compat.tif', url: 'https://fake/compat', size: 800 },
-          bilevel_preview_png: { exists: false },
-          color_jpeg: { exists: false }, color_png: { exists: false },
-          coeff_tif: { exists: false }, coeff_preview_png: { exists: false },
-          preview_color_png: { exists: false }, preview_bilevel_png: { exists: false },
-          palette_jpeg: { exists: false }, preview_palette_png: { exists: false },
-          preview_coeffs_png: { exists: false },
-        },
-        calc: { exists: true, N: 1000, degree: 5 },
-        deepzoom_latest: { exists: false },
-      });
-    });
-    const panel = page.locator('#render-preview');
-    // Should show download buttons with arrow, not action buttons
-    const pngDl = panel.locator('button:text("PNG ⤓")');
-    await expect(pngDl).toBeVisible();
-    const compatDl = panel.locator('button:text("Compat ⤓")');
-    await expect(compatDl).toBeVisible();
-    // Action buttons should NOT exist
-    expect(await panel.locator('#btn-png-export').count()).toBe(0);
-    expect(await panel.locator('#btn-tiff-compat').count()).toBe(0);
+    await expect(page.locator('#render-preview')).toContainText('No saved artifacts yet.');
   });
 });

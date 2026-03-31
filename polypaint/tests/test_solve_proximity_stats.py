@@ -611,6 +611,53 @@ def test_summary_fallback_on_small_sample():
     os.remove(path)
 
 
+def test_summary_anisotropy_near_singular_covariance_is_finite():
+    """Near-rank-1 covariance should not produce NaN anisotropy summary stats."""
+    path = "/tmp/sp_test_summary_aniso_finite.bin"
+    solves = []
+    degree = 35
+    for _ in range(200):
+        solve = []
+        for k in range(degree):
+            x = (k - 17) * 1e5
+            y = x + ((-1) ** k) * 1e-4
+            solve.append((x, y))
+        solves.append(solve)
+    write_bin(path, solves, degree)
+    r, _ = run_summary(path, degree, metric="anisotropy")
+    assert r is not None
+    for field in ["min_score", "max_score", "mean_score", "stddev_score",
+                  "q05", "q10", "q25", "q50", "q75", "q90", "q95",
+                  "clip_lo", "clip_hi", "full_range", "clip_range"]:
+        assert math.isfinite(r[field]), f"{field} should be finite, got {r[field]!r}"
+    os.remove(path)
+
+
+def test_summary_anisotropy_nonfinite_roots_is_finite():
+    """Non-finite roots in the input must not poison anisotropy summary JSON."""
+    path = "/tmp/sp_test_summary_aniso_inf.bin"
+    degree = 35
+    solves = []
+    for s in range(200):
+        solve = []
+        for k in range(degree):
+            if s == 0 and k == 0:
+                solve.append((float("inf"), 0.0))
+            else:
+                x = (k - 17) * 1.0
+                y = x * 0.5
+                solve.append((x, y))
+        solves.append(solve)
+    write_bin(path, solves, degree)
+    r, _ = run_summary(path, degree, metric="anisotropy")
+    assert r is not None
+    for field in ["min_score", "max_score", "mean_score", "stddev_score",
+                  "q05", "q10", "q25", "q50", "q75", "q90", "q95",
+                  "clip_lo", "clip_hi", "full_range", "clip_range"]:
+        assert math.isfinite(r[field]), f"{field} should be finite, got {r[field]!r}"
+    os.remove(path)
+
+
 # ================================================================
 # 13. Clip quantile narrows range
 # ================================================================
@@ -761,6 +808,8 @@ if __name__ == "__main__":
         ("summary final bins sum to inrange", test_summary_final_bins_sum_to_inrange),
         ("summary occupancy sum", test_summary_occupancy_sum),
         ("summary fallback small", test_summary_fallback_on_small_sample),
+        ("summary anisotropy finite near singular covariance", test_summary_anisotropy_near_singular_covariance_is_finite),
+        ("summary anisotropy finite with non-finite roots", test_summary_anisotropy_nonfinite_roots_is_finite),
         # Quantile tests
         ("clip quantile narrows range", test_clip_quantile_narrows_range),
         # Error handling

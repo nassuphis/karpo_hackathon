@@ -2,21 +2,67 @@
 const { test, expect } = require('@playwright/test');
 
 const SUMMARY_RESPONSE = {
-  job_id: 'test_refresh', schema_version: 1,
+  job_id: 'test_refresh',
+  schema_version: 2,
   calc: { exists: true, N: 5000, n1: 5000, degree: 70 },
-  artifacts: {
-    color_jpeg: { exists: true, key: 'renders/test_refresh/image.jpeg', url: 'https://fake/jpeg', size: 12345, type: 'image/jpeg', width: 4096, height: 4096 },
-    color_png: { exists: false, key: 'x', url: null, size: 0, type: '', width: null, height: null },
-    bilevel_tif: { exists: true, key: 'renders/test_refresh/image_bilevel.tif', url: 'https://fake/tif', size: 99999, type: 'image/tiff', width: 4096, height: 4096 },
-    bilevel_preview_png: { exists: false, key: 'x', url: null, size: 0, type: '', width: null, height: null },
-    bilevel_compat_tif: { exists: false, key: 'x', url: null, size: 0, type: '', width: null, height: null },
-    bilevel_png: { exists: false, key: 'x', url: null, size: 0, type: '', width: null, height: null },
-    coeff_tif: { exists: false, key: 'x', url: null, size: 0, type: '', width: null, height: null },
-    coeff_preview_png: { exists: false, key: 'x', url: null, size: 0, type: '', width: null, height: null },
-    preview_color_png: { exists: true, key: 'renders/test_refresh/preview_color.png', url: 'https://fake/prev', size: 500, type: 'image/png', width: null, height: null },
-    preview_bilevel_png: { exists: false, key: 'x', url: null, size: 0, type: '', width: null, height: null },
+  families: {
+    color: [
+      {
+        family: 'color',
+        artifact_id: 'color_run_1',
+        created_at: '2026-03-30T10:00:00Z',
+        image_key: 'renders/test_refresh/color/color_run_1/image.jpeg',
+        image_url: 'https://fake/jpeg',
+        preview_key: 'renders/test_refresh/color/color_run_1/preview.png',
+        preview_url: 'https://fake/color-preview',
+        viewer_url: 'https://fake/color-preview',
+        file_size: 12345,
+        width: 4096,
+        height: 4096,
+        color_mode: 'rainbow',
+        format: 'jpeg',
+      },
+    ],
+    bilevel: [
+      {
+        family: 'bilevel',
+        artifact_id: 'bilevel_run_1',
+        created_at: '2026-03-30T11:00:00Z',
+        image_key: 'renders/test_refresh/bilevel/bilevel_run_1/image.tif',
+        image_url: 'https://fake/tif',
+        preview_key: 'renders/test_refresh/bilevel/bilevel_run_1/preview.png',
+        preview_url: 'https://fake/bilevel-preview',
+        viewer_url: 'https://fake/bilevel-preview',
+        file_size: 99999,
+        width: 4096,
+        height: 4096,
+        format: 'tif',
+      },
+    ],
+    coeffs: [],
+    palette: [
+      {
+        family: 'palette',
+        artifact_id: 'pal_1',
+        palette_id: 'pal_1',
+        created_at: '2026-03-30T12:00:00Z',
+        image_key: 'renders/test_refresh/palettes/pal_1/image.jpeg',
+        image_url: 'https://fake/palette',
+        preview_key: 'renders/test_refresh/palettes/pal_1/preview.png',
+        preview_url: 'https://fake/palette-preview',
+        viewer_url: 'https://fake/palette-preview',
+        file_size: 40000,
+        width: 4096,
+        height: 4096,
+        metric: 'crowding',
+        palette: 'reef',
+        solve_score_quantile: 0.05,
+        format: 'jpeg',
+      },
+    ],
   },
-  deepzoom_latest: { exists: true, dzi_url: 'https://dz/test.dzi', export_id: 'dz1', created_at: '2026-03-26', width: 4096, height: 4096, tiles_uploaded: 100 },
+  artifacts: {},
+  deepzoom_latest: { exists: false },
 };
 
 test.beforeEach(async ({ page }) => {
@@ -32,10 +78,8 @@ test.beforeEach(async ({ page }) => {
 test.describe('Render Refresh', () => {
 
   test('refresh uses exactly one /render-summary call, no forbidden calls', async ({ page }) => {
-    // Stub lambdaPost inside the real browser scope
     await page.evaluate((resp) => {
       window._refreshLog = [];
-      const orig = window.lambdaPost;
       window.lambdaPost = async function(name, body, path) {
         window._refreshLog.push({name, path});
         if (name === 'storage' && path === '/render-summary') return resp;
@@ -56,7 +100,7 @@ test.describe('Render Refresh', () => {
     expect(forbidden.length).toBe(0);
   });
 
-  test('panel shows Color JPEG, BiLevel TIFF, and DeepZoom rows', async ({ page }) => {
+  test('panel shows family tabs, selected artifact actions, and selected viewer', async ({ page }) => {
     await page.evaluate((resp) => {
       window.lambdaPost = async function(name, body, path) {
         if (name === 'storage' && path === '/render-summary') return resp;
@@ -70,10 +114,17 @@ test.describe('Render Refresh', () => {
     const panel = page.locator('#render-preview');
     await expect(panel.locator('button:text("Color")')).toBeVisible();
     await expect(panel.locator('button:text("BiLevel")')).toBeVisible();
-    await expect(panel.locator(':text("Open Viewer")')).toBeVisible();
+    await expect(panel.locator('button:text("Coeffs")')).toBeVisible();
+    await expect(panel.locator('button:text("Palette")')).toBeVisible();
+    await expect(panel.locator('#btn-render-generate')).toBeVisible();
+    await expect(panel.locator('#btn-render-download')).toBeVisible();
+    await expect(panel.locator('#btn-render-delete')).toBeVisible();
+    await expect(panel.locator('#btn-render-deepzoom')).toBeVisible();
+    await expect(panel.locator('text=color_run_1')).toBeVisible();
+    await expect(panel.locator('img[src="https://fake/color-preview"]')).toBeVisible();
   });
 
-  test('panel shows info line with N and degree', async ({ page }) => {
+  test('switching family updates the catalog', async ({ page }) => {
     await page.evaluate((resp) => {
       window.lambdaPost = async function(name, body, path) {
         if (name === 'storage' && path === '/render-summary') return resp;
@@ -83,21 +134,20 @@ test.describe('Render Refresh', () => {
 
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(async () => { await refreshRenderArtifacts('test_refresh'); });
+    await page.click('#render-preview button:text("Palette")');
 
-    const text = await page.locator('#render-info').textContent();
-    expect(text).toContain('N=5000');
-    expect(text).toContain('degree 70');
+    const panel = page.locator('#render-preview');
+    await expect(panel.locator('text=pal_1')).toBeVisible();
+    await expect(panel.locator('img[src="https://fake/palette-preview"]')).toBeVisible();
   });
 
   test('missing calc does not break panel', async ({ page }) => {
     const emptyResp = {
-      job_id: 'test_nocal', schema_version: 1,
+      job_id: 'test_nocal',
+      schema_version: 2,
       calc: { exists: false, N: null, n1: null, degree: null },
-      artifacts: Object.fromEntries(
-        ['color_jpeg','color_png','bilevel_tif','bilevel_preview_png','bilevel_compat_tif',
-         'bilevel_png','coeff_tif','coeff_preview_png','preview_color_png','preview_bilevel_png'
-        ].map(k => [k, { exists: false, key: 'x', url: null, size: 0, type: '', width: null, height: null }])
-      ),
+      families: { color: [], bilevel: [], coeffs: [], palette: [] },
+      artifacts: {},
       deepzoom_latest: { exists: false },
     };
     await page.evaluate((resp) => {
@@ -112,21 +162,6 @@ test.describe('Render Refresh', () => {
 
     const status = await page.locator('#render-status').textContent();
     expect(status).not.toContain('error');
-  });
-
-  test('no DeepZoom button when deepzoom_latest.exists is false', async ({ page }) => {
-    const noDzResp = { ...SUMMARY_RESPONSE, deepzoom_latest: { exists: false } };
-    await page.evaluate((resp) => {
-      window.lambdaPost = async function(name, body, path) {
-        if (name === 'storage' && path === '/render-summary') return resp;
-        return {};
-      };
-    }, noDzResp);
-
-    await page.click('.tab-btn:text("Render")');
-    await page.evaluate(async () => { await refreshRenderArtifacts('test_refresh'); });
-
-    const panel = page.locator('#render-preview');
-    await expect(panel.locator(':text("Open Viewer")')).toHaveCount(0);
+    await expect(page.locator('#render-preview')).toContainText('No saved artifacts yet.');
   });
 });

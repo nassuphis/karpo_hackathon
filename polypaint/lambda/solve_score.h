@@ -88,6 +88,15 @@ static int _ss_dbl_cmp(const void *a, const void *b) {
     return (da > db) - (da < db);
 }
 
+static int roots_all_finite(const float *roots, int degree) {
+    for (int i = 0; i < degree; i++) {
+        if (!isfinite((double)roots[i * 2]) || !isfinite((double)roots[i * 2 + 1])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 /* Exact median: sort + middle element(s). Modifies values[] in-place. */
 static double median_inplace(double *values, int n) {
     if (n <= 0) return 0.0;
@@ -163,6 +172,7 @@ static void compute_nearest_neighbor_scores(const float *roots, int degree, doub
  */
 static double compute_solve_metric_score(const float *roots, int degree, enum SolveMetric metric) {
     if (degree < 2) return 0.0;
+    if (!roots_all_finite(roots, degree)) return 0.0;
 
     /* ── proximity: -0.5*log10(min d2) ── */
     if (metric == SOLVE_METRIC_PROXIMITY) {
@@ -293,8 +303,14 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
     double lambda_max = 0.5 * (trace + disc);
     double lambda_min = 0.5 * (trace - disc);
 
+    /* Covariance eigenvalues are mathematically non-negative.
+     * Clamp tiny negative values caused by floating-point roundoff
+     * before using them in log-domain metrics such as anisotropy. */
+    if (lambda_max < 0.0) lambda_max = 0.0;
+    if (lambda_min < 0.0) lambda_min = 0.0;
+
     if (metric == SOLVE_METRIC_ANISOTROPY) {
-        return log10((lambda_max + SOLVE_SCORE_EPS2) / (lambda_min + SOLVE_SCORE_EPS2));
+        return log10(lambda_max + SOLVE_SCORE_EPS2) - log10(lambda_min + SOLVE_SCORE_EPS2);
     }
 
     if (metric == SOLVE_METRIC_AREA) {

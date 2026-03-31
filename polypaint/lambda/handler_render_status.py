@@ -91,6 +91,10 @@ def _write_done(params, job_id, task_id):
     }
     if "image_key" in params:
         result_data["image_key"] = params["image_key"]
+    if "artifact_id" in params:
+        result_data["artifact_id"] = params["artifact_id"]
+    if "family" in params:
+        result_data["family"] = params["family"]
     if "palette_id" in params:
         result_data["palette_id"] = params["palette_id"]
     _put_row(job_id, task_id, "done", result_data)

@@ -10,6 +10,7 @@ Called once per render execution as the BuildPlan step.
 import json
 import math
 import os
+from datetime import datetime, timezone
 
 import boto3
 
@@ -118,14 +119,56 @@ def handler(event, context):
         "bins_key": f"renders/{job_id}/solve_scores/{solve_metric}_bins.json",
     }
 
-    # Output keys
+    # Immutable artifact outputs
+    artifact_family = "coeffs" if mode == "coeff_bilevel" else mode
+    artifact_id = f"{artifact_family}_{run_id}"
+    artifact_prefix = f"renders/{job_id}/{artifact_family}/{artifact_id}/"
+    created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    artifact_meta = {
+        "artifact_id": artifact_id,
+        "family": artifact_family,
+        "created_at": created_at,
+        "degree": str(degree),
+        "pix": str(pix),
+        "tile_size": str(tile_size),
+        "rotation": str(rp.get("rotation", 0.0)),
+        "root_transforms": json.dumps(rp.get("root_transforms", [])),
+    }
+
     fmt = rp.get("fmt", "jpeg")
     ext = "png" if fmt == "png" else "jpeg"
     outputs = {
-        "image_key": f"renders/{job_id}/image.{ext}",
-        "bilevel_key": f"renders/{job_id}/image_bilevel.tif",
-        "coeff_bilevel_key": f"renders/{job_id}/image_coeffs_bilevel.tif",
+        "family": artifact_family,
+        "artifact_id": artifact_id,
+        "artifact_prefix": artifact_prefix,
+        "created_at": created_at,
+        "image_key": artifact_prefix + (f"image.{ext}" if mode == "color" else "image.tif"),
+        "preview_key": artifact_prefix + "preview.png",
+        "bilevel_key": artifact_prefix + "image.tif",
+        "coeff_bilevel_key": artifact_prefix + "image.tif",
+        "metadata": artifact_meta,
     }
+    if mode == "color":
+        outputs["metadata"].update({
+            "format": ext,
+            "color_mode": rp.get("color_mode", "rainbow"),
+            "match_mode": rp.get("match_mode", "none"),
+            "palette": rp.get("palette", "inferno"),
+            "constant_color": rp.get("constant_color", "ffffff"),
+            "solve_metric": solve_metric if solve_score_enabled else "",
+            "solve_score_quantile": str(solve_score_quantile if solve_score_enabled else ""),
+        })
+    elif mode == "bilevel":
+        outputs["metadata"].update({
+            "format": "tif",
+            "mode": "bilevel",
+        })
+    elif mode == "coeff_bilevel":
+        outputs["metadata"].update({
+            "format": "tif",
+            "mode": "coeffs",
+        })
 
     plan = {
         "job_id": job_id,

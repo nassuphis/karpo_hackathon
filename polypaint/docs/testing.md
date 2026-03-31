@@ -38,10 +38,10 @@ All tests live in `polypaint/tests/`.
 | `test_palette_chunk_handler.py` | Palette chunk worker Lambda | Python mocks only |
 | `test_palette_finalize_handler.py` | Palette finalize Lambda | Python mocks only |
 | `test_giga62_hand.py` | giga_62 hand-written function accuracy | `sweep_test` compiled |
-| `test_frontend_js.sh` | Frontend JS execution: UI logic, dispatch, inventory, preview tabs, palette tab | Node.js (vm module) |
+| `test_frontend_js.sh` | Frontend JS execution: UI logic, dispatch, Render family catalogs, Palette workflow UI, DeepZoom inventory | Node.js (vm module) |
 | `e2e/deepzoom-inventory.spec.js` | DeepZoom inventory: load, sort, select, arrow keys, share links | Playwright browser |
 | `e2e/render-refresh.spec.js` | Render tab refresh: summary call, artifact panel, info line | Playwright browser |
-| `e2e/render-solve-score.spec.js` | Solve score UI: metrics, quantile, dispatch payloads, preview tabs, artifact rows | Playwright browser |
+| `e2e/render-solve-score.spec.js` | Solve score UI: metrics, quantile, dispatch payloads, family catalogs, palette family behavior | Playwright browser |
 
 ## Running Tests
 
@@ -223,7 +223,7 @@ Tests the chunked coefficient pipeline (param_gen → coeffgen_chunked):
 Tests for the dispatch resilience fixes (28 tests, pure mocks, no binaries):
 
 - **TestCheckStatusReturnIds** — `return_ids` flag: default off, explicit true/false, 449/500 gap detection with 51 missing tasks, paginated queries
-- **TestHeadKeys** — `/head-keys` endpoint: all exist, none exist, mixed existence (artifact discovery use case), empty list, single key, parallel HEAD execution
+- **TestHeadKeys** — `/head-keys` endpoint: all exist, none exist, mixed existence, empty list, single key, parallel HEAD execution
 - **TestDispatchBilevelTarget** — dispatch handler fires bilevel/stitch targets, non-202 status tracked, 200-job parallel batch
 - **TestStorageRouting** — `/head-keys` route wired to handler, unknown route returns 400
 - **TestMissingTaskDetection** — set-diff logic replicated from JS: no missing, all missing, contiguous 51-task gap (the real failure), scattered gaps, merge prefix, coeff prefix
@@ -273,15 +273,15 @@ Tests the Step Functions ASL template (JSON parsing only):
 
 Frontend JS execution tests (Node.js vm module, no browser):
 
-- Catalog loading, dropdown population, CFPV rows, pipeline dispatch, wave dispatch, preview tabs, DeepZoom inventory, solve histogram, palette debug, palette tab
+- Catalog loading, dropdown population, CFPV rows, pipeline dispatch, wave dispatch, Render family catalogs, DeepZoom inventory, solve histogram, palette workflow, Palette tab
 
 ### e2e/ Playwright tests
 
 Browser-based end-to-end tests:
 
 - **deepzoom-inventory.spec.js** — inventory load/sort, row selection, arrow keys, share links, question mark for old exports
-- **render-refresh.spec.js** — single render-summary call, artifact panel, info line
-- **render-solve-score.spec.js** — metric selection, quantile dispatch, palette button state, 4 artifact rows, preview tabs
+- **render-refresh.spec.js** — single render-summary call, family tabs, selected-artifact actions, info line
+- **render-solve-score.spec.js** — metric selection, quantile dispatch, solve-score controls, palette family behavior
 
 ### test_tiff_compat.py
 

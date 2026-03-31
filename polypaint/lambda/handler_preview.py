@@ -101,6 +101,19 @@ def handler(event, context):
     s3.put_object(Bucket=BUCKET, Key=preview_key,
                   Body=png_data, ContentType="image/png")
 
+    # Persist preview stats for later retrieval
+    preview_stats = {
+        "n_roots": vp["n_roots"],
+        "n_roots_total": n_roots_total,
+        "q_re": vp["q_re"],
+        "q_im": vp["q_im"],
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    s3.put_object(Bucket=BUCKET,
+                  Key=f"renders/{job_id}/preview_stats.json",
+                  Body=json.dumps(preview_stats),
+                  ContentType="application/json")
+
     # Generate presigned URL
     image_url = s3.generate_presigned_url(
         "get_object",

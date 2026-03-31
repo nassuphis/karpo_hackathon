@@ -236,7 +236,10 @@ const renderEls = {
     'render-solve-score-quantile': { value: '0.1' },
     'render-solve-score-quantile-val': {},
     'btn-solve-histogram': {},
-    'btn-palette-debug': {},
+    'btn-render-generate': {},
+    'btn-render-download': {},
+    'btn-render-delete': {},
+    'btn-render-deepzoom': {},
     'render-status': {},
     'render-preview': {},
     'render-info': {},
@@ -254,9 +257,6 @@ const renderEls = {
     'palette-circles-palette-tab': {},
     'btn-palette-create': {},
     'btn-palette-delete': {},
-    'btn-raster-all': {},
-    'btn-bilevel-all': {},
-    'btn-coeff-bilevel-all': {},
 };
 for (const [id, overrides] of Object.entries(renderEls)) {
     ctx._elements[id] = { ...ctx._mkEl(), ...overrides };
@@ -548,60 +548,52 @@ async function testPipeline(name, call) {
         }
     }
 
-    // Step 9: On-demand preview generation tests
+    // Step 9: Render family catalog UI
     console.log('');
-    console.log('--- Preview tabs (passive viewers) ---');
+    console.log('--- Render family catalogs ---');
 
     {
-        // _showPreview is now synchronous and never dispatches Lambdas
-        vm.runInContext(`
-            lambdaPost = async function lambdaPost() {
-                throw new Error('_showPreview must not call lambdaPost');
-            };
-        `, ctx);
+        const summary = {
+            calc: { exists: true, N: 1000, degree: 5 },
+            families: {
+                color: [
+                    { artifact_id: 'color_a', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/j/color/color_a/image.jpeg', image_url: 'https://img/color.jpeg', preview_url: 'https://img/color.png', viewer_url: 'https://img/color.png', width: 1000, height: 1000, file_size: 50000, color_mode: 'rainbow', format: 'jpeg' }
+                ],
+                bilevel: [
+                    { artifact_id: 'bil_a', created_at: '2026-03-30T11:00:00Z', image_key: 'renders/j/bilevel/bil_a/image.tif', image_url: 'https://img/bil.tif', preview_url: 'https://img/bil.png', viewer_url: 'https://img/bil.png', width: 1000, height: 1000, file_size: 60000, format: 'tif' }
+                ],
+                coeffs: [],
+                palette: [
+                    { artifact_id: 'pal_a', palette_id: 'pal_a', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/j/palettes/pal_a/image.jpeg', image_url: 'https://img/pal.jpeg', preview_url: 'https://img/pal.png', viewer_url: 'https://img/pal.png', width: 1000, height: 1000, file_size: 70000, metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05 }
+                ],
+            },
+        };
+        vm.runInContext(`_renderActiveFamily = 'color'; _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };`, ctx);
+        vm.runInContext(`renderArtifactPanel('j', ${JSON.stringify(summary)})`, ctx);
 
-        // Set up preview URLs for all 4 families
-        vm.runInContext(`
-            window._previewUrls = {
-                color: 'https://cached/color.png',
-                bilevel: 'https://cached/bilevel.png',
-                coeffs: null,
-                palette: 'https://cached/palette.png',
-            };
-        `, ctx);
-        ctx._elements['preview-container'] = ctx._mkEl();
-        for (const m of ['color', 'bilevel', 'coeffs', 'palette']) {
-            ctx._elements['preview-tab-' + m] = ctx._mkEl();
-        }
+        const panelHtml = ctx._elements['render-preview'].innerHTML;
+        if (!panelHtml.includes('Color <span style="color:#777">(1)</span>')) { console.error('FATAL: color family tab missing'); process.exit(1); }
+        if (!panelHtml.includes('BiLevel <span style="color:#777">(1)</span>')) { console.error('FATAL: bilevel family tab missing'); process.exit(1); }
+        if (!panelHtml.includes('Palette <span style="color:#777">(1)</span>')) { console.error('FATAL: palette family tab missing'); process.exit(1); }
+        const colorSel = vm.runInContext('_renderSelectedArtifact.color', ctx);
+        if (colorSel !== 0) { console.error('FATAL: color family should auto-select first artifact'); process.exit(1); }
+        if (!panelHtml.includes('color_a')) { console.error('FATAL: color artifact row missing'); process.exit(1); }
+        if (!panelHtml.includes('https://img/color.png')) { console.error('FATAL: selected color viewer should use viewer_url'); process.exit(1); }
+        console.log('  color family auto-select + viewer: OK');
 
-        // Test: cached preview shows image (no Lambda call)
-        vm.runInContext('_showPreview("color")', ctx);
-        const colorHtml = ctx._elements['preview-container'].innerHTML;
-        if (!colorHtml.includes('cached/color.png')) { console.error('FATAL: color tab should show cached URL'); process.exit(1); }
-        console.log('  cached color preview: OK');
+        vm.runInContext(`_renderSelectFamily('palette')`, ctx);
+        const palHtml = ctx._elements['render-preview'].innerHTML;
+        if (!palHtml.includes('pal_a')) { console.error('FATAL: palette family should show palette artifact row'); process.exit(1); }
+        console.log('  family switch updates catalog: OK');
 
-        // Test: tab click never calls lambdaPost (even for missing preview)
-        try {
-            vm.runInContext('_showPreview("coeffs")', ctx);
-            const coeffsHtml = ctx._elements['preview-container'].innerHTML;
-            if (!coeffsHtml.includes('No preview')) { console.error('FATAL: missing preview should show No preview: ' + coeffsHtml.slice(0, 60)); process.exit(1); }
-            console.log('  missing coeffs preview shows empty state, no Lambda: OK');
-        } catch (e) {
-            console.error('FATAL: _showPreview called lambdaPost: ' + e.message);
-            process.exit(1);
-        }
-
-        // Test: switching tabs updates panel
-        vm.runInContext('_showPreview("palette")', ctx);
-        const palHtml = ctx._elements['preview-container'].innerHTML;
-        if (!palHtml.includes('cached/palette.png')) { console.error('FATAL: palette tab should show cached URL'); process.exit(1); }
-        console.log('  tab switching shows correct preview: OK');
-
-        // Test: all 4 families coexist (no shared slot)
-        vm.runInContext('_showPreview("bilevel")', ctx);
-        const bilHtml = ctx._elements['preview-container'].innerHTML;
-        if (!bilHtml.includes('cached/bilevel.png')) { console.error('FATAL: bilevel tab should show cached URL'); process.exit(1); }
-        console.log('  all 4 preview families independent: OK');
+        vm.runInContext(`_renderSelectFamily('coeffs')`, ctx);
+        const coeffHtml = ctx._elements['render-preview'].innerHTML;
+        if (!coeffHtml.includes('No saved artifacts yet.')) { console.error('FATAL: empty family should show empty state'); process.exit(1); }
+        const dlDisabled = !!ctx._elements['btn-render-download'].disabled;
+        const delDisabled = !!ctx._elements['btn-render-delete'].disabled;
+        const dzDisabled = !!ctx._elements['btn-render-deepzoom'].disabled;
+        if (!(dlDisabled && delDisabled && dzDisabled)) { console.error('FATAL: empty family should disable actions'); process.exit(1); }
+        console.log('  empty family disables actions: OK');
     }
 
     // Step 10: DeepZoom inventory UI tests
@@ -1369,75 +1361,56 @@ async function testPipeline(name, call) {
         console.log('  13e log shows 10-bin table, no 32-bin, has extremes: OK');
     }
 
-    // Step 14: Palette debug button
+    // Step 14: Render palette family generation
     console.log('');
-    console.log('--- Palette debug ---');
+    console.log('--- Render palette family ---');
 
-    // 14a: button exists
+    // 14a: generate rejects non-solve mode
     {
-        const btn = ctx._elements['btn-palette-debug'];
-        if (!btn) { console.error('FATAL: btn-palette-debug not found'); process.exit(1); }
-        console.log('  14a palette button exists: OK');
-    }
-
-    // 14b: refuses in non-solve mode
-    {
-        vm.runInContext("renderColorMode = 'rainbow'; _activeRenderRun = null;", ctx);
+        vm.runInContext("_renderActiveFamily = 'palette'; renderColorMode = 'rainbow'; _activeRenderRun = null;", ctx);
         ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_pal_job' };
         vm.runInContext("var _palLogMsg = ''; var _palOrigLog = log; log = function(m,c,t){ _palLogMsg += m + ' '; _palOrigLog(m,c,t); };", ctx);
-        try { await vm.runInContext('(async()=>{ await runPaletteDebug(); })()', ctx); } catch(e) {}
+        try { await vm.runInContext('(async()=>{ await runRenderPaletteArtifact(); })()', ctx); } catch(e) {}
         const msg = vm.runInContext('_palLogMsg', ctx);
         if (!msg.includes('Solve score mode')) { console.error('FATAL: palette should reject non-solve mode: ' + msg); process.exit(1); }
         vm.runInContext('log = _palOrigLog;', ctx);
-        console.log('  14b refuses in non-solve mode: OK');
+        console.log('  14a refuses in non-solve mode: OK');
     }
 
-    // 14c: sends correct payload
+    // 14b: dispatches palette orchestrator and uses render solve-score settings
     {
-        vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'area'; _activeRenderRun = null;", ctx);
+        vm.runInContext("_renderActiveFamily = 'palette'; renderColorMode = 'solve_score'; renderSolveMetric = 'area'; _activeRenderRun = null;", ctx);
         vm.runInContext("renderSolveScorePalette = 'turbo';", ctx);
         ctx._elements['render-solve-score-quantile'].value = '1.0';
         ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'pal_test' };
         vm.runInContext(`
-            var _palTarget = null; var _palBody = null; var _palDispatch = false;
+            var _palTarget = null; var _palBody = null; var _palObserverStarted = false;
+            startActivePaletteObserver = function() { _palObserverStarted = true; };
             lambdaPost = async function lambdaPost(name, body, path) {
-                if (name === 'dispatch') { _palDispatch = true; return {}; }
-                if (name === 'palette-debug') {
+                if (name === 'dispatch') {
                     _palTarget = name;
                     _palBody = body;
-                    return {
-                        job_id: 'pal_test', out_key: 'renders/pal_test/image_palette.jpeg',
-                        image_url: 'https://example.com/pal.jpeg',
-                        width: 100, height: 100, metric: 'area', palette: 'turbo',
-                        solve_score_quantile: 0.01, lores_N: 10, N: 100, times: 1,
-                        n_samples_used: 100, clip_lo: -1, clip_hi: 1, cuts_norm: [],
-                        clip_fallback: false, clip_fallback_reason: null,
-                        dl_ms: 5, compute_ms: 3, encode_ms: 2, file_size: 1024, using_pass: 0,
-                    };
-                }
-                if (name === 'storage' && path === '/detail') {
-                    return { calc: { degree: 5, N: 100, times: 1, lores: { N: 10, bin_key: 'renders/pal_test/lores.bin' } } };
-                }
-                if (name === 'storage' && path === '/render-summary') {
-                    return { artifacts: {}, calc: { exists: true, N: 100 } };
+                    return { fired: 1, total: 1 };
                 }
                 return {};
             };
-            refreshRenderArtifacts = async function() {};
         `, ctx);
-        try { await vm.runInContext('(async()=>{ await runPaletteDebug(); })()', ctx); } catch(e) {}
+        try { await vm.runInContext('(async()=>{ await runRenderPaletteArtifact(); })()', ctx); } catch(e) {}
         const target = vm.runInContext('_palTarget', ctx);
         const body = vm.runInContext('_palBody', ctx);
-        const dispatched = vm.runInContext('_palDispatch', ctx);
-        if (target !== 'palette-debug') { console.error('FATAL: should call palette-debug, got ' + target); process.exit(1); }
-        if (body.metric !== 'area') { console.error('FATAL: metric should be area'); process.exit(1); }
-        if (body.palette !== 'turbo') { console.error('FATAL: palette should be turbo'); process.exit(1); }
-        if (body.N !== 100) { console.error('FATAL: N should be 100'); process.exit(1); }
-        if (body.lores_N !== 10) { console.error('FATAL: lores_N should be 10'); process.exit(1); }
-        if (dispatched) { console.error('FATAL: palette must not call dispatch'); process.exit(1); }
+        const observerStarted = vm.runInContext('_palObserverStarted', ctx);
+        if (target !== 'dispatch') { console.error('FATAL: render palette should dispatch orchestrator, got ' + target); process.exit(1); }
+        if (body.target !== 'palette_orchestrator') { console.error('FATAL: should dispatch palette_orchestrator'); process.exit(1); }
+        const job = body.jobs[0];
+        if (job.params.metric !== 'area') { console.error('FATAL: metric should be area'); process.exit(1); }
+        if (job.params.palette !== 'turbo') { console.error('FATAL: palette should be turbo'); process.exit(1); }
+        if (Math.abs(job.params.solve_score_quantile - 0.01) > 0.001) { console.error('FATAL: q should be 0.01'); process.exit(1); }
+        if (!observerStarted) { console.error('FATAL: render palette should start palette observer'); process.exit(1); }
+        const palRun = vm.runInContext('_activePaletteRun', ctx);
+        if (!palRun || palRun.job_id !== 'pal_test') { console.error('FATAL: render palette should set _activePaletteRun'); process.exit(1); }
         const runSet = vm.runInContext('_activeRenderRun !== null', ctx);
         if (runSet) { console.error('FATAL: palette must not set _activeRenderRun'); process.exit(1); }
-        console.log('  14c correct payload, no dispatch: OK');
+        console.log('  14b dispatches palette orchestrator from render settings: OK');
     }
 
     // Step 15: Palette tab inventory + creation
@@ -1502,6 +1475,8 @@ async function testPipeline(name, call) {
         ctx._elements['palette-results-dir'].value = 'pal_job';
         ctx._elements['palette-solve-score-quantile'].value = '1.0';
         vm.runInContext(`
+            _activePaletteRun = null;
+            try { localStorage.removeItem('polypaint_active_palette_run'); } catch(e) {}
             paletteTabMetric = 'area';
             paletteTabPalette = 'turbo';
             _paletteRtChain = [{ name: 'rotate_roots', params: ['0.25'] }];

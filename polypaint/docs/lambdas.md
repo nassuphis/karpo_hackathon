@@ -273,10 +273,16 @@ S3 and DynamoDB management. Routes:
 | `/delete` | Delete all data for a job |
 | `/save-metadata` | Save calc.json |
 | `/cleanup` | Delete specific S3 keys |
-| `/clean-render` | Delete render artifacts (.raw/.pix/.jpeg/.tif/.bits), preserve .bin |
+| `/clean-render` | Delete family-scoped render intermediates, preserve immutable family artifacts |
 | `/check-keys` | Poll S3 for expected file count (legacy) |
 | `/check-status` | Poll DynamoDB task status (with optional `return_ids`) |
 | `/detail` | Get job file count + viewport bounds |
+| `/render-summary` | Get Render family inventories, calc summary, latest DeepZoom pointer |
+| `/list-palettes` | List saved palette variants for one job |
+| `/delete-palette` | Delete one saved palette variant |
+| `/delete-render-artifact` | Delete one immutable Color/BiLevel/Coeffs artifact variant |
+| `/list-deepzoom` | List DeepZoom exports server-side |
+| `/delete-prefix` | Delete all S3 objects under a safe prefix (currently used for DeepZoom cleanup) |
 | `/presign` | Generate presigned download URL |
 | `/list-prefix` | List S3 keys under a prefix with optional suffix filter |
 | `/head-keys` | Batch HEAD check: which of N specific S3 keys exist |
@@ -287,11 +293,25 @@ When `return_ids: true` is passed, the response includes a `found_ids` array lis
 
 Added to solve the 449/500 raster stall — see [Dispatch Resilience](#dispatch-resilience).
 
+### /render-summary
+
+Current Render refresh route.
+
+Returns:
+
+- `schema_version`
+- `calc`
+- `families`
+- `deepzoom_latest`
+
+The Render tab now uses this one route instead of browser-side discovery fanout.
+
 ### /head-keys
 
-Takes `{keys: ["renders/j/image_bilevel.tif", ...]}`, returns `{exists: ["renders/j/image_bilevel.tif"]}` — only keys that exist. Uses parallel HEAD requests (ThreadPoolExecutor, up to 20 workers).
+Still available as a general storage helper.
 
-Added because the previous artifact discovery used `/list-prefix` with `max_keys: 500`, which gets swamped by `stripe_*.bin` and `coeffs_*.bin` files on large jobs — the S3 listing is prefix-ordered, so the first 500 keys are all compute artifacts and the actual render outputs (`image_bilevel.tif`, `image_bilevel_preview.png`) never appear. The artifact panel showed nothing even after a successful render.
+It no longer drives the Render refresh path.
+That responsibility moved to `/render-summary`.
 
 ---
 
@@ -327,9 +347,9 @@ Single Lambda function handling two phases, routed by `phase` parameter:
 
 ### phase=raster
 
-One Lambda per stripe. Downloads stripe `.bin`, runs `bilevel_raster` to project roots to per-tile packed bitsets, uploads non-empty `.bits` files to S3.
+One Lambda per chunk. Downloads chunk `.bin`, runs `bilevel_raster` to project roots to per-tile packed bitsets, uploads non-empty `.bits` files to S3.
 
-Cleans stale `/tmp/*.bits` files before each run (warm container reuse fix — previous invocation's leftover files would be uploaded as current stripe's data).
+Cleans stale `/tmp/*.bits` files before each run (warm container reuse fix — previous invocation's leftover files would be uploaded as current chunk's data).
 
 ### phase=coeff_raster
 
@@ -557,27 +577,51 @@ Stitch is a single Lambda (not fan-out), so it doesn't need wave dispatch.
 
 ## Artifact Discovery
 
-### The problem: render succeeds but panel is empty
+### Current model
 
-After a successful bilevel render, the artifact panel showed no preview image and no download buttons. The render log showed success with timing.
+Artifact discovery for the Render tab is now centered on:
 
-### Root cause
+- `POST /render-summary`
 
-`discoverArtifacts()` used `/list-prefix` with `max_keys: 500` to enumerate all objects under `renders/{jobId}/`. For a large job with 500 stripes and 500 coefficient files, the first 500 S3 keys (alphabetically ordered) are all `coeffs_0000.bin`, `coeffs_0001.bin`, ..., `stripe_0.bin`, `stripe_1.bin`, etc. The actual render outputs (`image_bilevel.tif`, `image_bilevel_preview.png`) never appear in the listing.
+The frontend no longer builds the panel by probing individual artifact keys.
 
-The code then filtered the presign list against this incomplete set:
-```javascript
-const existing = keysToCheck.filter(k => existingKeys.has(k));
-```
-Result: empty. No presigns generated. No buttons rendered.
+### Current shape
 
-### Fix
+`/render-summary` returns:
 
-Replaced `/list-prefix` with `/head-keys`. The frontend sends the 8 exact artifact keys it cares about, and the backend does parallel HEAD requests to check existence. O(8) HEAD requests instead of O(500+) listing, and always finds the render outputs regardless of how many compute artifacts exist.
+- `schema_version`
+- `calc`
+- `families`
+- `deepzoom_latest`
 
-### Second bug: status wipe
+`families` contains immutable artifact inventories for:
 
-`refreshRenderArtifacts()` set `render-status` text to `''` on success, wiping the timing summary that `runBilevelPipeline()` had just written. Fixed by saving/restoring the prior status text.
+- `color`
+- `bilevel`
+- `coeffs`
+- `palette`
+
+Legacy top-level render outputs are surfaced as synthetic `legacy_*` entries so old artifacts remain visible and deletable.
+
+### Why this replaced the older approach
+
+The older browser-side discovery flows:
+
+- did too much network fanout
+- depended on exact key probing and earlier on prefix listing
+- did not fit the immutable family-catalog UI
+
+The current model moves discovery to the storage Lambda and gives the browser a single summary response.
+
+### Related UI behavior
+
+`refreshRenderArtifacts()` now rebuilds:
+
+- family tabs
+- family catalogs
+- selected-artifact viewer
+
+from `render-summary`, and preserves selection where possible.
 
 ---
 

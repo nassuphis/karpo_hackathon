@@ -307,7 +307,7 @@ class TestStorageCleanRender(unittest.TestCase):
 
     @patch("handler_storage.s3")
     def test_clean_render_deletes_intermediates_only(self, mock_s3):
-        """Clean-render deletes pix/raw/tile intermediates, preserves final images."""
+        """Clean-render deletes only intermediates for color runs."""
         from handler_storage import handle_clean_render
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
@@ -331,12 +331,14 @@ class TestStorageCleanRender(unittest.TestCase):
         deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
         self.assertIn("renders/j/pix_0000_t0000.pix", deleted_keys)
         self.assertIn("renders/j/tile_0000.raw", deleted_keys)
-        self.assertIn("renders/j/preview_color.png", deleted_keys)
-
+        self.assertIn("renders/j/solve_proximity_clip.json", deleted_keys)
+        self.assertIn("renders/j/solve_proximity_bins.json", deleted_keys)
+        self.assertNotIn("renders/j/preview_color.png", deleted_keys)
+        self.assertNotIn("renders/j/image.jpeg", deleted_keys)
 
     @patch("handler_storage.s3")
-    def test_clean_render_color_deletes_only_color_preview(self, mock_s3):
-        """Color pipeline deletes preview_color.png but not preview_bilevel.png."""
+    def test_clean_render_color_preserves_final_outputs(self, mock_s3):
+        """Color pipeline no longer deletes previews or prior final artifacts."""
         from handler_storage import handle_clean_render
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
@@ -346,12 +348,14 @@ class TestStorageCleanRender(unittest.TestCase):
         handle_clean_render(event)
         call_args = mock_s3.delete_objects.call_args
         deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
-        self.assertIn("renders/j/preview_color.png", deleted_keys)
+        self.assertNotIn("renders/j/preview_color.png", deleted_keys)
+        self.assertNotIn("renders/j/image.jpeg", deleted_keys)
+        self.assertNotIn("renders/j/image.png", deleted_keys)
         self.assertNotIn("renders/j/preview_bilevel.png", deleted_keys)
 
     @patch("handler_storage.s3")
-    def test_clean_render_bilevel_deletes_only_bilevel_preview(self, mock_s3):
-        """Bilevel pipeline deletes preview_bilevel.png but not preview_color.png."""
+    def test_clean_render_bilevel_with_no_intermediates_is_noop(self, mock_s3):
+        """Bilevel pipeline leaves finals alone and can no-op when no intermediates exist."""
         from handler_storage import handle_clean_render
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
@@ -359,10 +363,7 @@ class TestStorageCleanRender(unittest.TestCase):
         mock_s3.delete_objects.return_value = {"Deleted": []}
         event = {"body": json.dumps({"job_id": "j", "pipeline": "bilevel"})}
         handle_clean_render(event)
-        call_args = mock_s3.delete_objects.call_args
-        deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
-        self.assertIn("renders/j/preview_bilevel.png", deleted_keys)
-        self.assertNotIn("renders/j/preview_color.png", deleted_keys)
+        mock_s3.delete_objects.assert_not_called()
 
     @patch("handler_storage.s3")
     def test_clean_render_default_pipeline_is_color(self, mock_s3):
@@ -376,12 +377,12 @@ class TestStorageCleanRender(unittest.TestCase):
         handle_clean_render(event)
         call_args = mock_s3.delete_objects.call_args
         deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
-        self.assertIn("renders/j/preview_color.png", deleted_keys)
+        self.assertIn("renders/j/solve_proximity_clip.json", deleted_keys)
         self.assertNotIn("renders/j/preview_bilevel.png", deleted_keys)
 
     @patch("handler_storage.s3")
-    def test_color_cleanup_deletes_stale_format_siblings(self, mock_s3):
-        """Color cleanup deletes both image.jpeg and image.png (stale sibling cleanup)."""
+    def test_color_cleanup_preserves_stale_format_siblings(self, mock_s3):
+        """Color cleanup preserves prior finals because artifacts are immutable."""
         from handler_storage import handle_clean_render
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
@@ -391,8 +392,8 @@ class TestStorageCleanRender(unittest.TestCase):
         handle_clean_render(event)
         call_args = mock_s3.delete_objects.call_args
         deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
-        self.assertIn("renders/j/image.jpeg", deleted_keys)
-        self.assertIn("renders/j/image.png", deleted_keys)
+        self.assertNotIn("renders/j/image.jpeg", deleted_keys)
+        self.assertNotIn("renders/j/image.png", deleted_keys)
         # Cross-family finals must NOT be deleted
         self.assertNotIn("renders/j/image_bilevel.tif", deleted_keys)
         self.assertNotIn("renders/j/image_coeffs_bilevel.tif", deleted_keys)
@@ -470,7 +471,7 @@ class TestStorageCleanRender(unittest.TestCase):
 
     @patch("handler_storage.s3")
     def test_bilevel_cleanup_preserves_other_families(self, mock_s3):
-        """Bilevel cleanup must NOT delete color/palette/coeff artifacts."""
+        """Bilevel cleanup no longer deletes final artifacts from any family."""
         from handler_storage import handle_clean_render
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
@@ -478,24 +479,11 @@ class TestStorageCleanRender(unittest.TestCase):
         mock_s3.delete_objects.return_value = {"Deleted": []}
         event = {"body": json.dumps({"job_id": "j", "pipeline": "bilevel"})}
         handle_clean_render(event)
-        call_args = mock_s3.delete_objects.call_args
-        deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
-        # Bilevel family: own preview + stale siblings
-        self.assertIn("renders/j/preview_bilevel.png", deleted_keys)
-        self.assertIn("renders/j/image_bilevel_compat.tif", deleted_keys)
-        self.assertIn("renders/j/image_bilevel.png", deleted_keys)
-        # Must NOT touch other families
-        self.assertNotIn("renders/j/preview_color.png", deleted_keys)
-        self.assertNotIn("renders/j/preview_coeffs.png", deleted_keys)
-        self.assertNotIn("renders/j/preview_palette.png", deleted_keys)
-        self.assertNotIn("renders/j/image_palette.jpeg", deleted_keys)
-        self.assertNotIn("renders/j/image.jpeg", deleted_keys)
-        # Must NOT touch color/coeff intermediates
-        self.assertNotIn("renders/j/solve_proximity_clip.json", deleted_keys)
+        mock_s3.delete_objects.assert_not_called()
 
     @patch("handler_storage.s3")
     def test_coeff_cleanup_preserves_other_families(self, mock_s3):
-        """Coeff cleanup must NOT delete color/bilevel/palette artifacts."""
+        """Coeff cleanup no longer deletes final artifacts from any family."""
         from handler_storage import handle_clean_render
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
@@ -503,20 +491,7 @@ class TestStorageCleanRender(unittest.TestCase):
         mock_s3.delete_objects.return_value = {"Deleted": []}
         event = {"body": json.dumps({"job_id": "j", "pipeline": "coeff_bilevel"})}
         handle_clean_render(event)
-        call_args = mock_s3.delete_objects.call_args
-        deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
-        # Coeff family: own preview + stale legacy preview
-        self.assertIn("renders/j/preview_coeffs.png", deleted_keys)
-        self.assertIn("renders/j/image_coeffs_bilevel_preview.png", deleted_keys)
-        # Must NOT touch other families
-        self.assertNotIn("renders/j/preview_color.png", deleted_keys)
-        self.assertNotIn("renders/j/preview_bilevel.png", deleted_keys)
-        self.assertNotIn("renders/j/preview_palette.png", deleted_keys)
-        self.assertNotIn("renders/j/image_palette.jpeg", deleted_keys)
-        self.assertNotIn("renders/j/image.jpeg", deleted_keys)
-        self.assertNotIn("renders/j/image_bilevel.tif", deleted_keys)
-        # Must NOT touch color/bilevel intermediates
-        self.assertNotIn("renders/j/solve_proximity_clip.json", deleted_keys)
+        mock_s3.delete_objects.assert_not_called()
 
 
 class TestRenderSummaryPalette(unittest.TestCase):
@@ -1512,35 +1487,45 @@ class TestRenderSummary(unittest.TestCase):
         return {"body": json.dumps(body), "rawPath": "/render-summary"}
 
     @patch("handler_storage.s3")
-    def test_render_summary_heads_exact_keys_only(self, mock_s3):
-        """render-summary uses HEAD for exactly 13 artifact keys, never paginator."""
+    def test_render_summary_returns_empty_family_catalogs_when_no_artifacts(self, mock_s3):
+        """render-summary returns empty family catalogs when nothing exists."""
         from handler_storage import handle_render_summary
         mock_s3.head_object.side_effect = Exception("NoSuchKey")
         mock_s3.get_object.side_effect = Exception("NoSuchKey")
         mock_s3.generate_presigned_url.return_value = "https://fake"
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"CommonPrefixes": []}]
 
         result = handle_render_summary(self._make_event({"job_id": "j"}))
         body = json.loads(result["body"])
 
-        # Must never use paginator
-        mock_s3.get_paginator.assert_not_called()
-
-        # HEAD should be called for exactly 10 keys
-        head_keys = [c.kwargs.get("Key") or c.args[1] if len(c.args) > 1 else c.kwargs.get("Key")
-                     for c in mock_s3.head_object.call_args_list]
-        self.assertEqual(len(head_keys), 13, f"expected 13 HEAD calls, got {len(head_keys)}")
+        self.assertEqual(body["schema_version"], 2)
+        self.assertEqual(body["families"], {"color": [], "bilevel": [], "coeffs": [], "palette": []})
+        self.assertGreaterEqual(mock_s3.get_paginator.call_count, 4)
 
     @patch("handler_storage.s3")
     def test_render_summary_returns_existing_artifact_urls(self, mock_s3):
-        """Existing artifacts get presigned URLs, sizes, dimensions."""
+        """Existing immutable artifacts are returned in the family catalogs."""
         from handler_storage import handle_render_summary
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate_side_effect(**kwargs):
+            prefix = kwargs.get("Prefix", "")
+            if prefix == "renders/j/color/":
+                return [{"CommonPrefixes": [{"Prefix": "renders/j/color/color_run_1/"}]}]
+            return [{"CommonPrefixes": []}]
+
+        mock_paginator.paginate.side_effect = paginate_side_effect
 
         def mock_head(**kwargs):
             key = kwargs["Key"]
-            if "image.jpeg" in key:
+            if key == "renders/j/color/color_run_1/image.jpeg":
                 return {"ContentLength": 1234, "ContentType": "image/jpeg",
-                        "Metadata": {"width": "4096", "height": "4096"}}
-            if "preview_color" in key:
+                        "Metadata": {"width": "4096", "height": "4096", "artifact_id": "color_run_1", "created_at": "2026-03-31T10:00:00Z", "family": "color", "color_mode": "rainbow", "format": "jpeg", "root_transforms": "[]"}}
+            if key == "renders/j/color/color_run_1/preview.png":
                 return {"ContentLength": 500, "ContentType": "image/png", "Metadata": {}}
             raise Exception("NoSuchKey")
 
@@ -1551,21 +1536,21 @@ class TestRenderSummary(unittest.TestCase):
         result = handle_render_summary(self._make_event({"job_id": "j"}))
         body = json.loads(result["body"])
 
-        cj = body["artifacts"]["color_jpeg"]
-        self.assertTrue(cj["exists"])
-        self.assertEqual(cj["size"], 1234)
+        cj = body["families"]["color"][0]
+        self.assertEqual(cj["artifact_id"], "color_run_1")
+        self.assertEqual(cj["file_size"], 1234)
         self.assertEqual(cj["width"], 4096)
-        self.assertIsNotNone(cj["url"])
-
-        pc = body["artifacts"]["preview_color_png"]
-        self.assertTrue(pc["exists"])
+        self.assertEqual(cj["viewer_url"], "https://signed")
 
     @patch("handler_storage.s3")
     def test_render_summary_missing_artifacts_are_false(self, mock_s3):
-        """Missing artifacts return exists=false."""
+        """Legacy top-level artifacts are still returned as exists=false when missing."""
         from handler_storage import handle_render_summary
         mock_s3.head_object.side_effect = Exception("NoSuchKey")
         mock_s3.get_object.side_effect = Exception("NoSuchKey")
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"CommonPrefixes": []}]
 
         result = handle_render_summary(self._make_event({"job_id": "j"}))
         body = json.loads(result["body"])
@@ -1579,6 +1564,9 @@ class TestRenderSummary(unittest.TestCase):
         """calc.json is read server-side, not presigned for browser."""
         from handler_storage import handle_render_summary
         mock_s3.head_object.side_effect = Exception("NoSuchKey")
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"CommonPrefixes": []}]
 
         calc_json = json.dumps({"N": 5000, "n1": 5000, "degree": 70}).encode()
         def mock_get(**kwargs):
@@ -1600,6 +1588,9 @@ class TestRenderSummary(unittest.TestCase):
         """DeepZoom info comes from renders/{job}/deepzoom_latest.json, no listing."""
         from handler_storage import handle_render_summary
         mock_s3.head_object.side_effect = Exception("NoSuchKey")
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"CommonPrefixes": []}]
 
         dz_json = json.dumps({
             "dzi_url": "https://dz/image.dzi",
@@ -1620,7 +1611,6 @@ class TestRenderSummary(unittest.TestCase):
 
         self.assertTrue(body["deepzoom_latest"]["exists"])
         self.assertEqual(body["deepzoom_latest"]["dzi_url"], "https://dz/image.dzi")
-        mock_s3.get_paginator.assert_not_called()
 
     @patch("handler_storage.s3")
     def test_render_summary_missing_deepzoom_pointer_not_error(self, mock_s3):
@@ -1628,6 +1618,9 @@ class TestRenderSummary(unittest.TestCase):
         from handler_storage import handle_render_summary
         mock_s3.head_object.side_effect = Exception("NoSuchKey")
         mock_s3.get_object.side_effect = Exception("NoSuchKey")
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"CommonPrefixes": []}]
 
         result = handle_render_summary(self._make_event({"job_id": "j"}))
         body = json.loads(result["body"])
@@ -1639,6 +1632,9 @@ class TestRenderSummary(unittest.TestCase):
         """Bad JSON in deepzoom_latest.json → exists=false, no crash."""
         from handler_storage import handle_render_summary
         mock_s3.head_object.side_effect = Exception("NoSuchKey")
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"CommonPrefixes": []}]
 
         def mock_get(**kwargs):
             key = kwargs["Key"]
@@ -1657,6 +1653,9 @@ class TestRenderSummary(unittest.TestCase):
         """deepzoom_latest.json read returns all expected fields."""
         from handler_storage import handle_render_summary
         mock_s3.head_object.side_effect = Exception("NoSuchKey")
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"CommonPrefixes": []}]
 
         dz_manifest = {
             "job_id": "j", "export_id": "dz_123",
@@ -1690,7 +1689,6 @@ class TestRenderSummary(unittest.TestCase):
         self.assertEqual(dz["width"], 8192)
         self.assertEqual(dz["height"], 8192)
         self.assertEqual(dz["tiles_uploaded"], 400)
-        mock_s3.get_paginator.assert_not_called()
 
 
 class TestListDeepZoom(unittest.TestCase):
@@ -1856,6 +1854,46 @@ class TestPaletteInventory(unittest.TestCase):
         self.assertEqual(body["deleted"], 3)
         delete_batch = mock_s3.delete_objects.call_args[1]["Delete"]["Objects"]
         self.assertEqual(delete_batch[0]["Key"], "renders/job_a/palettes/pal_1/meta.json")
+
+
+class TestRenderArtifactInventory(unittest.TestCase):
+
+    @patch("handler_storage.s3")
+    def test_delete_render_artifact_deletes_family_prefix(self, mock_s3):
+        from handler_storage import handle_delete_render_artifact
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{
+            "Contents": [
+                {"Key": "renders/job_a/color/color_run_1/image.jpeg"},
+                {"Key": "renders/job_a/color/color_run_1/preview.png"},
+            ]
+        }]
+        mock_s3.delete_objects.return_value = {"Deleted": [{}, {}]}
+
+        result = handle_delete_render_artifact({
+            "body": json.dumps({"job_id": "job_a", "family": "color", "artifact_id": "color_run_1"})
+        })
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["deleted"], 2)
+        delete_batch = mock_s3.delete_objects.call_args[1]["Delete"]["Objects"]
+        self.assertEqual(delete_batch[0]["Key"], "renders/job_a/color/color_run_1/image.jpeg")
+
+    @patch("handler_storage.s3")
+    def test_delete_render_artifact_legacy_palette_deletes_top_level_keys(self, mock_s3):
+        from handler_storage import handle_delete_render_artifact
+
+        result = handle_delete_render_artifact({
+            "body": json.dumps({"job_id": "job_a", "family": "palette", "artifact_id": "legacy_palette"})
+        })
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["deleted"], 2)
+        deleted = [c.kwargs["Key"] for c in mock_s3.delete_object.call_args_list]
+        self.assertIn("renders/job_a/image_palette.jpeg", deleted)
+        self.assertIn("renders/job_a/preview_palette.png", deleted)
 
 
 class TestDeepZoomExportPointerWrite(unittest.TestCase):

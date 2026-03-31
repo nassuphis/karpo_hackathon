@@ -5,6 +5,7 @@ Routes:
   POST /list           — list all computed jobs with metadata
   POST /list-palettes  — list saved palette variants for one job
   POST /delete-palette — delete one saved palette variant
+  POST /delete-render-artifact — delete one immutable render artifact variant
   POST /delete         — delete all S3 objects for a job
   POST /save-metadata  — save calc.json to S3
   POST /cleanup        — delete a list of S3 keys
@@ -31,6 +32,8 @@ def handler(event, context):
         return handle_list_palettes(event)
     elif path.endswith("/delete-palette"):
         return handle_delete_palette(event)
+    elif path.endswith("/delete-render-artifact"):
+        return handle_delete_render_artifact(event)
     elif path.endswith("/delete"):
         return handle_delete(event)
     elif path.endswith("/save-metadata"):
@@ -126,45 +129,9 @@ def handle_list_palettes(event):
     """List immutable palette artifacts for a single job.
     Returns newest-first entries from renders/{job_id}/palettes/*/meta.json.
     """
-    import concurrent.futures
-
     params = parse_body(event)
     job_id = params["job_id"]
-    base_prefix = f"renders/{job_id}/palettes/"
-
-    palette_prefixes = []
-    paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=BUCKET, Prefix=base_prefix, Delimiter="/"):
-        palette_prefixes.extend(p["Prefix"] for p in page.get("CommonPrefixes", []))
-
-    def read_meta(prefix):
-        try:
-            obj = s3.get_object(Bucket=BUCKET, Key=prefix + "meta.json")
-            meta = json.loads(obj["Body"].read())
-            metric = meta.get("metric", "proximity")
-            image_key = meta.get("image_key", prefix + "image.jpeg")
-            preview_key = meta.get("preview_key", prefix + "preview.png")
-            score_key = meta.get("score_key", prefix + f"score_{metric}.bin")
-            palette_bins_key = meta.get("palette_bins_key", prefix + "palette_bins.bin")
-            meta["image_key"] = image_key
-            meta["preview_key"] = preview_key
-            meta["score_key"] = score_key
-            meta["palette_bins_key"] = palette_bins_key
-            meta["image_url"] = s3.generate_presigned_url(
-                "get_object", Params={"Bucket": BUCKET, "Key": image_key},
-                ExpiresIn=PRESIGN_EXPIRY,
-            )
-            meta["preview_url"] = s3.generate_presigned_url(
-                "get_object", Params={"Bucket": BUCKET, "Key": preview_key},
-                ExpiresIn=PRESIGN_EXPIRY,
-            )
-            return meta
-        except Exception:
-            return None
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(palette_prefixes), 20) or 1) as pool:
-        palettes = [m for m in pool.map(read_meta, palette_prefixes) if m]
-
+    palettes = _list_saved_palettes(job_id)
     palettes.sort(key=lambda p: p.get("created_at", ""), reverse=True)
     return ok_response({"job_id": job_id, "palettes": palettes, "count": len(palettes)})
 
@@ -194,6 +161,239 @@ def handle_delete_palette(event):
         total_deleted += len(resp.get("Deleted", []))
 
     return ok_response({"job_id": job_id, "palette_id": palette_id, "deleted": total_deleted})
+
+
+RENDER_FAMILY_DIRS = {
+    "color": "color",
+    "bilevel": "bilevel",
+    "coeffs": "coeffs",
+}
+
+RENDER_FAMILY_SHAPES = {
+    "color": {
+        "image_candidates": ["image.jpeg", "image.png"],
+        "preview_candidates": ["preview.png"],
+        "legacy_image_candidates": ["image.jpeg", "image.png"],
+        "legacy_preview_candidates": ["preview_color.png"],
+    },
+    "bilevel": {
+        "image_candidates": ["image.tif"],
+        "preview_candidates": ["preview.png"],
+        "legacy_image_candidates": ["image_bilevel.tif"],
+        "legacy_preview_candidates": ["preview_bilevel.png", "image_bilevel_preview.png"],
+    },
+    "coeffs": {
+        "image_candidates": ["image.tif"],
+        "preview_candidates": ["preview.png"],
+        "legacy_image_candidates": ["image_coeffs_bilevel.tif"],
+        "legacy_preview_candidates": ["preview_coeffs.png", "image_coeffs_bilevel_preview.png"],
+    },
+    "palette": {
+        "legacy_image_candidates": ["image_palette.jpeg"],
+        "legacy_preview_candidates": ["preview_palette.png"],
+    },
+}
+
+
+def _parse_root_transforms(raw):
+    if not raw:
+        return []
+    try:
+        return json.loads(raw)
+    except Exception:
+        return []
+
+
+def _list_saved_palettes(job_id):
+    import concurrent.futures
+
+    base_prefix = f"renders/{job_id}/palettes/"
+    palette_prefixes = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=base_prefix, Delimiter="/"):
+        palette_prefixes.extend(p["Prefix"] for p in page.get("CommonPrefixes", []))
+
+    def read_meta(prefix):
+        try:
+            obj = s3.get_object(Bucket=BUCKET, Key=prefix + "meta.json")
+            meta = json.loads(obj["Body"].read())
+            metric = meta.get("metric", "proximity")
+            image_key = meta.get("image_key", prefix + "image.jpeg")
+            preview_key = meta.get("preview_key", prefix + "preview.png")
+            score_key = meta.get("score_key", prefix + f"score_{metric}.bin")
+            palette_bins_key = meta.get("palette_bins_key", prefix + "palette_bins.bin")
+            meta["family"] = "palette"
+            meta["artifact_id"] = meta.get("palette_id")
+            meta["image_key"] = image_key
+            meta["preview_key"] = preview_key
+            meta["score_key"] = score_key
+            meta["palette_bins_key"] = palette_bins_key
+            meta["image_url"] = s3.generate_presigned_url(
+                "get_object", Params={"Bucket": BUCKET, "Key": image_key},
+                ExpiresIn=PRESIGN_EXPIRY,
+            )
+            meta["preview_url"] = s3.generate_presigned_url(
+                "get_object", Params={"Bucket": BUCKET, "Key": preview_key},
+                ExpiresIn=PRESIGN_EXPIRY,
+            )
+            meta["viewer_url"] = meta["preview_url"] or meta["image_url"]
+            meta["file_size"] = meta.get("file_size", 0)
+            meta["size"] = meta.get("file_size", 0)
+            meta["format"] = "jpeg"
+            return meta
+        except Exception:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(palette_prefixes), 20) or 1) as pool:
+        return [m for m in pool.map(read_meta, palette_prefixes) if m]
+
+
+def _first_existing(head_results, keys):
+    for key in keys:
+        info = head_results.get(key)
+        if info and info.get("exists"):
+            return info
+    return None
+
+
+def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, fallback_meta=None, legacy=False):
+    meta = {}
+    if image_info:
+        meta.update(image_info.get("user_meta", {}) or {})
+    if fallback_meta:
+        meta.update(fallback_meta)
+
+    image_key = image_info["key"]
+    image_url = image_info.get("url")
+    preview_key = preview_info["key"] if preview_info and preview_info.get("exists") else None
+    preview_url = preview_info.get("url") if preview_info and preview_info.get("exists") else None
+    created_at = meta.get("created_at") or image_info.get("modified_at")
+    entry = {
+        "family": family,
+        "artifact_id": meta.get("artifact_id", artifact_id),
+        "created_at": created_at,
+        "image_key": image_key,
+        "image_url": image_url,
+        "preview_key": preview_key,
+        "preview_url": preview_url,
+        "viewer_url": preview_url or image_url,
+        "width": image_info.get("width"),
+        "height": image_info.get("height"),
+        "file_size": image_info.get("size", 0),
+        "size": image_info.get("size", 0),
+        "content_type": image_info.get("type", ""),
+        "format": meta.get("format") or image_key.rsplit(".", 1)[-1].lower(),
+        "root_transforms": _parse_root_transforms(meta.get("root_transforms")),
+        "rotation": meta.get("rotation"),
+        "degree": meta.get("degree"),
+        "pix": meta.get("pix"),
+        "legacy": legacy,
+    }
+
+    if family == "color":
+        entry["color_mode"] = meta.get("color_mode", "")
+        entry["match_mode"] = meta.get("match_mode", "")
+        entry["palette"] = meta.get("palette", "")
+        entry["solve_metric"] = meta.get("solve_metric", "")
+        q = meta.get("solve_score_quantile", "")
+        entry["solve_score_quantile"] = float(q) if q not in ("", None) else None
+    return entry
+
+
+def _list_render_family_variants(job_id, family):
+    import concurrent.futures
+
+    shape = RENDER_FAMILY_SHAPES[family]
+    base_prefix = f"renders/{job_id}/{RENDER_FAMILY_DIRS[family]}/"
+    artifact_prefixes = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=base_prefix, Delimiter="/"):
+        artifact_prefixes.extend(p["Prefix"] for p in page.get("CommonPrefixes", []))
+
+    def read_prefix(prefix):
+        artifact_id = prefix.rstrip("/").split("/")[-1]
+        keys = [prefix + k for k in shape["image_candidates"] + shape["preview_candidates"]]
+        head_results = _head_artifact_keys(keys, presign=True)
+        image_info = _first_existing(head_results, [prefix + k for k in shape["image_candidates"]])
+        if not image_info:
+            return None
+        preview_info = _first_existing(head_results, [prefix + k for k in shape["preview_candidates"]])
+        return _render_artifact_entry(family, artifact_id, image_info, preview_info)
+
+    variants = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(artifact_prefixes), 20) or 1) as pool:
+        variants.extend(v for v in pool.map(read_prefix, artifact_prefixes) if v)
+
+    return variants
+
+
+def _legacy_render_variant(job_id, family):
+    shape = RENDER_FAMILY_SHAPES[family]
+    prefix = f"renders/{job_id}/"
+    keys = [prefix + k for k in shape["legacy_image_candidates"] + shape["legacy_preview_candidates"]]
+    head_results = _head_artifact_keys(keys, presign=True)
+    image_info = _first_existing(head_results, [prefix + k for k in shape["legacy_image_candidates"]])
+    if not image_info:
+        return None
+    preview_info = _first_existing(head_results, [prefix + k for k in shape["legacy_preview_candidates"]])
+    return _render_artifact_entry(family, f"legacy_{family}", image_info, preview_info, legacy=True)
+
+
+def _delete_prefix_objects(prefix):
+    objects = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+        objects.extend(page.get("Contents", []))
+
+    if not objects:
+        return 0
+
+    total_deleted = 0
+    for i in range(0, len(objects), 1000):
+        batch = objects[i:i + 1000]
+        resp = s3.delete_objects(
+            Bucket=BUCKET,
+            Delete={"Objects": [{"Key": obj["Key"]} for obj in batch]},
+        )
+        total_deleted += len(resp.get("Deleted", []))
+    return total_deleted
+
+
+def handle_delete_render_artifact(event):
+    params = parse_body(event)
+    job_id = params["job_id"]
+    family = params["family"]
+    artifact_id = params["artifact_id"]
+
+    if family == "palette":
+        if artifact_id == "legacy_palette":
+            keys = [f"renders/{job_id}/image_palette.jpeg", f"renders/{job_id}/preview_palette.png"]
+            deleted = 0
+            for key in keys:
+                try:
+                    s3.delete_object(Bucket=BUCKET, Key=key)
+                    deleted += 1
+                except Exception:
+                    pass
+            return ok_response({"job_id": job_id, "family": family, "artifact_id": artifact_id, "deleted": deleted})
+        return handle_delete_palette({"body": json.dumps({"job_id": job_id, "palette_id": artifact_id})})
+
+    if artifact_id == f"legacy_{family}":
+        deleted = 0
+        for suffix in RENDER_FAMILY_SHAPES[family]["legacy_image_candidates"] + RENDER_FAMILY_SHAPES[family]["legacy_preview_candidates"]:
+            try:
+                s3.delete_object(Bucket=BUCKET, Key=f"renders/{job_id}/{suffix}")
+                deleted += 1
+            except Exception:
+                pass
+        return ok_response({"job_id": job_id, "family": family, "artifact_id": artifact_id, "deleted": deleted})
+
+    family_dir = RENDER_FAMILY_DIRS.get(family)
+    if not family_dir:
+        raise RuntimeError(f"Unknown render family: {family}")
+    prefix = f"renders/{job_id}/{family_dir}/{artifact_id}/"
+    deleted = _delete_prefix_objects(prefix)
+    return ok_response({"job_id": job_id, "family": family, "artifact_id": artifact_id, "deleted": deleted})
 
 
 def _key_exists(key):
@@ -419,25 +619,25 @@ ARTIFACT_FAMILIES = {
     "color": {
         "intermediate_prefixes": ["pix_", "raw_", "tile_", "solve_proximity/", "solve_scores/"],
         "intermediate_keys": ["solve_proximity_clip.json", "solve_proximity_bins.json"],
-        "preview": ["preview_color.png"],
-        "same_family_stale": ["image.jpeg", "image.png"],  # format switch: delete both, new one overwrites
+        "preview": [],
+        "same_family_stale": [],
     },
     "bilevel": {
         "intermediate_prefixes": ["bilevel_t"],
         "intermediate_keys": [],
-        "preview": ["preview_bilevel.png"],
-        "same_family_stale": ["image_bilevel_compat.tif", "image_bilevel.png", "image_bilevel_preview.png"],
+        "preview": [],
+        "same_family_stale": [],
     },
     "coeff_bilevel": {
         "intermediate_prefixes": ["coeff_t"],
         "intermediate_keys": [],
-        "preview": ["preview_coeffs.png"],
-        "same_family_stale": ["image_coeffs_bilevel_preview.png"],
+        "preview": [],
+        "same_family_stale": [],
     },
     "palette": {
         "intermediate_prefixes": [],
         "intermediate_keys": [],
-        "preview": ["preview_palette.png"],
+        "preview": [],
         "same_family_stale": [],
     },
 }
@@ -662,7 +862,7 @@ def handle_detail(event):
 
 
 def _head_artifact_keys(keys, presign=True):
-    """HEAD-check a list of S3 keys in parallel. Returns {key: {size, type, width?, height?, url?}}."""
+    """HEAD-check a list of S3 keys in parallel."""
     import concurrent.futures
     if not keys:
         return {}
@@ -678,8 +878,11 @@ def _head_artifact_keys(keys, presign=True):
                 "width": None,
                 "height": None,
                 "url": None,
+                "modified_at": resp.get("LastModified").strftime("%Y-%m-%dT%H:%M:%SZ") if resp.get("LastModified") else None,
+                "user_meta": {},
             }
             user_meta = resp.get("Metadata", {})
+            info["user_meta"] = user_meta
             if "width" in user_meta and "height" in user_meta:
                 info["width"] = int(user_meta["width"])
                 info["height"] = int(user_meta["height"])
@@ -690,7 +893,7 @@ def _head_artifact_keys(keys, presign=True):
                     ExpiresIn=3600)
             return key, info
         except Exception:
-            return key, {"exists": False, "key": key, "size": 0, "type": "", "width": None, "height": None, "url": None}
+            return key, {"exists": False, "key": key, "size": 0, "type": "", "width": None, "height": None, "url": None, "modified_at": None, "user_meta": {}}
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(keys), 20)) as pool:
         results = dict(pool.map(check, keys))
@@ -713,13 +916,14 @@ def handle_head_keys(event):
 
 
 def handle_render_summary(event):
-    """Single-call Render refresh: HEAD artifacts, read calc.json, read deepzoom pointer.
-    No pagination, no list-prefix, no DeepZoom scan."""
+    """Single-call Render refresh.
+    Returns immutable per-family artifact catalogs plus legacy top-level artifacts
+    for compatibility with older jobs."""
     params = parse_body(event)
     job_id = params["job_id"]
     prefix = f"renders/{job_id}/"
 
-    # 1. HEAD-check the exact 10 artifact keys
+    # Legacy top-level artifacts kept for compatibility with older jobs.
     artifact_map = {
         "color_jpeg": prefix + "image.jpeg",
         "color_png": prefix + "image.png",
@@ -740,7 +944,7 @@ def handle_render_summary(event):
     for logical_name, s3_key in artifact_map.items():
         artifacts[logical_name] = head_results.get(s3_key, {
             "exists": False, "key": s3_key, "size": 0, "type": "",
-            "width": None, "height": None, "url": None
+            "width": None, "height": None, "url": None, "modified_at": None, "user_meta": {}
         })
 
     # 2. Read calc.json server-side
@@ -781,11 +985,25 @@ def handle_render_summary(event):
     except Exception:
         pass
 
+    families = {
+        "color": _list_render_family_variants(job_id, "color"),
+        "bilevel": _list_render_family_variants(job_id, "bilevel"),
+        "coeffs": _list_render_family_variants(job_id, "coeffs"),
+        "palette": _list_saved_palettes(job_id),
+    }
+
+    for family in ("color", "bilevel", "coeffs", "palette"):
+        legacy = _legacy_render_variant(job_id, family)
+        if legacy:
+            families[family].append(legacy)
+        families[family].sort(key=lambda a: a.get("created_at", ""), reverse=True)
+
     return ok_response({
         "job_id": job_id,
-        "schema_version": 1,
+        "schema_version": 2,
         "calc": calc,
         "artifacts": artifacts,
+        "families": families,
         "deepzoom_latest": deepzoom_latest,
     })
 

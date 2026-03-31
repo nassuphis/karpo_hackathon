@@ -913,6 +913,7 @@ setup_api_gateway() {
     ensure_route "POST /list" "$STORAGE_INT"
     ensure_route "POST /list-palettes" "$STORAGE_INT"
     ensure_route "POST /delete-palette" "$STORAGE_INT"
+    ensure_route "POST /delete-render-artifact" "$STORAGE_INT"
     ensure_route "POST /delete" "$STORAGE_INT"
     ensure_route "POST /save-metadata" "$STORAGE_INT"
     ensure_route "POST /cleanup" "$STORAGE_INT"

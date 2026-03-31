@@ -375,6 +375,7 @@
                 "out_key.$": "$.plan.outputs.image_key",
                 "format.$": "$.plan.params.fmt",
                 "quality.$": "$.plan.params.quality",
+                "metadata.$": "$.plan.outputs.metadata",
                 "width.$": "$.plan.grid.pix",
                 "height.$": "$.plan.grid.pix",
                 "tile_grid": {
@@ -397,7 +398,7 @@
               "Payload": {
                 "job_id.$": "$.job_id",
                 "source_key.$": "$.plan.outputs.image_key",
-                "preview_key.$": "States.Format('renders/{}/preview_color.png', $.job_id)",
+                "preview_key.$": "$.plan.outputs.preview_key",
                 "task_id.$": "States.Format('render_{}_preview_color', $.run_id)"
               }
             },
@@ -411,7 +412,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "image_key.$": "$.plan.outputs.image_key" }
+              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.image_key" }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -495,7 +496,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${BilevelStitchFunctionArn}",
-              "Payload": { "job_id.$": "$.job_id", "task_id.$": "States.Format('render_{}_bilevel_stitch', $.run_id)", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows", "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix", "tile_size.$": "$.plan.grid.tile_size", "out_key.$": "$.plan.outputs.bilevel_key" }
+              "Payload": { "job_id.$": "$.job_id", "task_id.$": "States.Format('render_{}_bilevel_stitch', $.run_id)", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows", "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix", "tile_size.$": "$.plan.grid.tile_size", "out_key.$": "$.plan.outputs.bilevel_key", "preview_key.$": "$.plan.outputs.preview_key", "metadata.$": "$.plan.outputs.metadata" }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -510,7 +511,7 @@
               "Payload": {
                 "job_id.$": "$.job_id",
                 "source_key.$": "$.plan.outputs.bilevel_key",
-                "preview_key.$": "States.Format('renders/{}/preview_bilevel.png', $.job_id)",
+                "preview_key.$": "$.plan.outputs.preview_key",
                 "task_id.$": "States.Format('render_{}_preview_bilevel', $.run_id)"
               }
             },
@@ -524,7 +525,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "image_key.$": "$.plan.outputs.bilevel_key" }
+              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.bilevel_key" }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -609,7 +610,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${BilevelStitchFunctionArn}",
-              "Payload": { "job_id.$": "$.job_id", "task_id.$": "States.Format('render_{}_coeff_bilevel_stitch', $.run_id)", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows", "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix", "tile_size.$": "$.plan.grid.tile_size", "out_key.$": "$.plan.outputs.coeff_bilevel_key", "tile_prefix": "coeff" }
+              "Payload": { "job_id.$": "$.job_id", "task_id.$": "States.Format('render_{}_coeff_bilevel_stitch', $.run_id)", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows", "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix", "tile_size.$": "$.plan.grid.tile_size", "out_key.$": "$.plan.outputs.coeff_bilevel_key", "preview_key.$": "$.plan.outputs.preview_key", "metadata.$": "$.plan.outputs.metadata", "tile_prefix": "coeff" }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -624,7 +625,7 @@
               "Payload": {
                 "job_id.$": "$.job_id",
                 "source_key.$": "$.plan.outputs.coeff_bilevel_key",
-                "preview_key.$": "States.Format('renders/{}/preview_coeffs.png', $.job_id)",
+                "preview_key.$": "$.plan.outputs.preview_key",
                 "task_id.$": "States.Format('render_{}_preview_coeffs', $.run_id)"
               }
             },
@@ -638,7 +639,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "image_key.$": "$.plan.outputs.coeff_bilevel_key" }
+              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.coeff_bilevel_key" }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],

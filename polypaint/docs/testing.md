@@ -25,6 +25,23 @@ All tests live in `polypaint/tests/`.
 | `test_tiff_compat.py` | tiff_compat: tiled→strip TIFF conversion | `tiff_compat_local` (needs libvips+libtiff) |
 | `test_png_export.py` | png_export: TIFF→1-bit PNG conversion | `png_export_local` (needs libvips) |
 | `test_dispatch_resilience.py` | Dispatch resilience: return_ids, head-keys, wave dispatch, missing-task detection | Python mocks only |
+| `test_companion_matrix.py` | sweep_cm binary: exact roots, degenerate cases, overflow handling, AE vs CM comparison | Docker ARM64 + LAPACK |
+| `test_solve_proximity_stats.py` | solve_proximity_stats binary: 10 metrics, summary mode, quantile clipping | Docker ARM64 |
+| `test_solve_palette_debug.py` | solve_palette_debug binary: serpentine, expansion, palette selection, quantile | Docker ARM64 |
+| `test_palette_debug_handler.py` | Palette debug Lambda handler: validation, S3 upload, stale preview deletion | Python mocks only |
+| `test_render_workflow_definition.py` | Step Functions ASL template: required states, Map concurrency, retry policies | JSON parsing only |
+| `test_render_orchestrator.py` | Render orchestrator starter Lambda: validation, DDB write, SFN StartExecution | Python mocks only |
+| `test_render_plan.py` | Render plan Lambda: viewport, tile/chunk computation, output keys, size limit | Python mocks only |
+| `test_render_status.py` | Render status Lambda: phase reporting, error extraction, updated_at_ms | Python mocks only |
+| `test_palette_workflow_definition.py` | Palette workflow ASL template: required states, structure | JSON parsing only |
+| `test_palette_render_plan.py` | Palette render plan Lambda | Python mocks only |
+| `test_palette_chunk_handler.py` | Palette chunk worker Lambda | Python mocks only |
+| `test_palette_finalize_handler.py` | Palette finalize Lambda | Python mocks only |
+| `test_giga62_hand.py` | giga_62 hand-written function accuracy | `sweep_test` compiled |
+| `test_frontend_js.sh` | Frontend JS execution: UI logic, dispatch, inventory, preview tabs, palette tab | Node.js (vm module) |
+| `e2e/deepzoom-inventory.spec.js` | DeepZoom inventory: load, sort, select, arrow keys, share links | Playwright browser |
+| `e2e/render-refresh.spec.js` | Render tab refresh: summary call, artifact panel, info line | Playwright browser |
+| `e2e/render-solve-score.spec.js` | Solve score UI: metrics, quantile, dispatch payloads, preview tabs, artifact rows | Playwright browser |
 
 ## Running Tests
 
@@ -52,6 +69,37 @@ uv run python tests/test_param_dump.py
 uv run python tests/test_bilevel_raster.py
 uv run python tests/test_bilevel_stitch.py
 ```
+
+### Docker ARM64 tests (binary tests that need LAPACK or ARM64 runtime)
+
+These tests exercise ARM64 binaries that can't run natively on macOS. Run them in Docker:
+
+```bash
+# Recompile sweep_cm with latest C source + run all companion matrix tests
+docker run --rm --platform linux/arm64 \
+    -v "$(pwd):/work" \
+    -v "$(pwd)/lambda/layer-build-lapack:/opt" \
+    public.ecr.aws/amazonlinux/amazonlinux:2023 \
+    bash -c '
+        set -euo pipefail
+        dnf install -y gcc python3 python3-pip 2>&1 | tail -1
+        pip3 install --root-user-action=ignore pytest 2>&1 | tail -1
+        export LD_LIBRARY_PATH=/opt/lib
+        gcc -O3 -o /work/lambda/sweep_cm /work/lambda/sweep_cm.c \
+            -L/opt/lib -llapack -lopenblas -lm -Wl,-rpath,/opt/lib
+        cd /work && python3 -m pytest tests/test_companion_matrix.py -v
+    '
+```
+
+Tests that require Docker ARM64:
+
+| File | Binary | Layer needed |
+|------|--------|-------------|
+| `test_companion_matrix.py` | `sweep_cm` | LAPACK (`layer-build-lapack`) |
+| `test_solve_proximity_stats.py` | `solve_proximity_stats` | None (static) |
+| `test_solve_palette_debug.py` | `solve_palette_debug` | None (static) |
+
+These tests skip automatically on non-ARM hosts with a message pointing to Docker.
 
 ### Visual comparison tests (slow, ~5 min per batch)
 
@@ -181,6 +229,60 @@ Tests for the dispatch resilience fixes (28 tests, pure mocks, no binaries):
 - **TestMissingTaskDetection** — set-diff logic replicated from JS: no missing, all missing, contiguous 51-task gap (the real failure), scattered gaps, merge prefix, coeff prefix
 - **TestWaveDispatchLogic** — wave dispatch simulation: small batch (single wave), large batch (multiple waves), throttled (MAX_INFLIGHT respected), exact inflight, full inter-wave completion
 
+### test_companion_matrix.py
+
+Tests the `sweep_cm` companion-matrix solver binary (Docker ARM64 + LAPACK):
+
+- **test_exact_cubic/quartic** — known roots verified by residual
+- **test_repeated_root** — (x-1)² handled correctly
+- **test_leading_zero** — leading zero coefficients trimmed
+- **test_all_zero** — all-zero polynomial produces finite output
+- **test_complex_quadratic** — x²+1 gives ±i
+- **test_output_size** — file size matches n_steps × degree × 8 bytes
+- **test_linear** — degree-1 fast path
+- **test_ae_vs_cm_comparison** — both solvers agree on same input
+- **test_inf_coefficients** — inf leading coeff: skipped, zero roots, valid JSON with skipped_overflow
+- **test_near_overflow_coefficients** — normalized coeff overflow caught before LAPACK
+- **test_mixed_batch_overflow** — batch with normal + overflowed polys: all produce output, normal ones solve correctly
+
+### test_solve_proximity_stats.py
+
+Tests the `solve_proximity_stats` binary (Docker ARM64):
+
+- 10 solve-score metrics, summary mode, quantile clipping, palette validation
+
+### test_solve_palette_debug.py
+
+Tests the `solve_palette_debug` binary (Docker ARM64):
+
+- Serpentine placement, nearest-neighbor expansion, palette selection, quantile clipping
+
+### test_palette_debug_handler.py
+
+Tests the palette debug Lambda handler (Python mocks):
+
+- Payload validation, quantile range, S3 upload key, stale preview deletion, no report_status
+
+### test_render_workflow_definition.py
+
+Tests the Step Functions ASL template (JSON parsing only):
+
+- Required states exist, Map concurrency, retry policies, preview tasks, Parallel wrapper catch
+
+### test_frontend_js.sh
+
+Frontend JS execution tests (Node.js vm module, no browser):
+
+- Catalog loading, dropdown population, CFPV rows, pipeline dispatch, wave dispatch, preview tabs, DeepZoom inventory, solve histogram, palette debug, palette tab
+
+### e2e/ Playwright tests
+
+Browser-based end-to-end tests:
+
+- **deepzoom-inventory.spec.js** — inventory load/sort, row selection, arrow keys, share links, question mark for old exports
+- **render-refresh.spec.js** — single render-summary call, artifact panel, info line
+- **render-solve-score.spec.js** — metric selection, quantile dispatch, palette button state, 4 artifact rows, preview tabs
+
 ### test_tiff_compat.py
 
 Tests tiff_compat binary (needs libvips+libtiff):
@@ -207,6 +309,14 @@ Tests png_export binary (needs libvips):
 | Lambda handlers (Python) | test_pipeline + test_dispatch_resilience + test_chunking |
 | Chunking / param_gen / coeffgen_chunked | test_chunking |
 | Dispatch / storage / check-status | test_dispatch_resilience |
+| sweep_cm.c | test_companion_matrix (Docker ARM64) |
+| solve_proximity_stats.c | test_solve_proximity_stats (Docker ARM64) |
+| solve_palette_debug.c | test_solve_palette_debug (Docker ARM64) |
+| Palette handlers | test_palette_debug_handler + test_palette_chunk_handler + test_palette_finalize_handler |
+| Step Functions ASL | test_render_workflow_definition + test_palette_workflow_definition |
+| Render orchestrator/plan/status | test_render_orchestrator + test_render_plan + test_render_status |
 | tiff_compat.c | test_tiff_compat |
 | png_export.c | test_png_export |
-| Before any deploy | Fast suite (all non-visual tests) |
+| Frontend JS logic | test_frontend_js.sh |
+| Frontend UI (browser) | e2e/*.spec.js (Playwright) |
+| Before any deploy | Fast suite + Docker ARM64 tests + frontend JS + e2e |

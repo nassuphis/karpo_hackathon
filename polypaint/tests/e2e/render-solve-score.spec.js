@@ -539,4 +539,65 @@ test.describe('Solve Score UI', () => {
     const noneCount = (panelText.match(/None/g) || []).length;
     expect(noneCount).toBe(4);
   });
+
+  test('PNG button shows action label when absent, download arrow when present', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    // BiLevel TIF exists but PNG does not
+    await page.evaluate(() => {
+      renderArtifactPanel('test_job', {
+        artifacts: {
+          bilevel_tif: { exists: true, key: 'renders/test_job/image_bilevel.tif', url: 'https://fake/tif', size: 1000 },
+          bilevel_png: { exists: false },
+          bilevel_compat_tif: { exists: false },
+          bilevel_preview_png: { exists: false },
+          color_jpeg: { exists: false }, color_png: { exists: false },
+          coeff_tif: { exists: false }, coeff_preview_png: { exists: false },
+          preview_color_png: { exists: false }, preview_bilevel_png: { exists: false },
+          palette_jpeg: { exists: false }, preview_palette_png: { exists: false },
+          preview_coeffs_png: { exists: false },
+        },
+        calc: { exists: true, N: 1000, degree: 5 },
+        deepzoom_latest: { exists: false },
+      });
+    });
+    // PNG button should say "PNG" (action, no arrow)
+    const pngBtn = page.locator('#btn-png-export');
+    await expect(pngBtn).toBeVisible();
+    expect(await pngBtn.textContent()).toBe('PNG');
+    // Compat button should say "Compat" (action, no arrow)
+    const compatBtn = page.locator('#btn-tiff-compat');
+    await expect(compatBtn).toBeVisible();
+    expect(await compatBtn.textContent()).toBe('Compat');
+  });
+
+  test('PNG button shows download arrow when artifact exists', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    // BiLevel TIF + PNG + Compat all exist
+    await page.evaluate(() => {
+      renderArtifactPanel('test_job', {
+        artifacts: {
+          bilevel_tif: { exists: true, key: 'renders/test_job/image_bilevel.tif', url: 'https://fake/tif', size: 1000 },
+          bilevel_png: { exists: true, key: 'renders/test_job/image_bilevel.png', url: 'https://fake/png', size: 500 },
+          bilevel_compat_tif: { exists: true, key: 'renders/test_job/image_bilevel_compat.tif', url: 'https://fake/compat', size: 800 },
+          bilevel_preview_png: { exists: false },
+          color_jpeg: { exists: false }, color_png: { exists: false },
+          coeff_tif: { exists: false }, coeff_preview_png: { exists: false },
+          preview_color_png: { exists: false }, preview_bilevel_png: { exists: false },
+          palette_jpeg: { exists: false }, preview_palette_png: { exists: false },
+          preview_coeffs_png: { exists: false },
+        },
+        calc: { exists: true, N: 1000, degree: 5 },
+        deepzoom_latest: { exists: false },
+      });
+    });
+    const panel = page.locator('#render-preview');
+    // Should show download buttons with arrow, not action buttons
+    const pngDl = panel.locator('button:text("PNG ⤓")');
+    await expect(pngDl).toBeVisible();
+    const compatDl = panel.locator('button:text("Compat ⤓")');
+    await expect(compatDl).toBeVisible();
+    // Action buttons should NOT exist
+    expect(await panel.locator('#btn-png-export').count()).toBe(0);
+    expect(await panel.locator('#btn-tiff-compat').count()).toBe(0);
+  });
 });

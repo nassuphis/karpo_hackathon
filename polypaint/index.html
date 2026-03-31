@@ -250,6 +250,7 @@ button {
                         <div><span style="color:#555">chunks:</span> <span id="res-stripes">-</span></div>
                         <div><span style="color:#555">times:</span> <span id="res-times">-</span></div>
                         <div><span style="color:#555">roots:</span> <span id="res-nroots">-</span></div>
+                        <div><span style="color:#555">solver:</span> <span id="res-solver">-</span></div>
                     </div>
                     <div style="font-size:10px; margin-bottom:4px; display:flex; gap:6px">
                         <div style="flex:1">
@@ -605,6 +606,7 @@ function selectResult(jobId) {
     document.getElementById('res-cfpv').textContent = '-';
     document.getElementById('res-cform').textContent = '-';
     document.getElementById('res-times').textContent = '-';
+    document.getElementById('res-solver').textContent = '-';
     document.getElementById('res-prev-total').textContent = '-';
     document.getElementById('res-prev-good').textContent = '-';
     document.getElementById('res-ll').textContent = '-';
@@ -650,11 +652,22 @@ function _applyDetail(r, detail, previewEl, infoEl, jobId) {
     document.getElementById('res-cfpv').textContent = resCfpv;
     document.getElementById('res-cform').textContent = ct.length ? ct.join(', ') : 'none';
     document.getElementById('res-times').textContent = detail.times || '-';
+    const calc = detail.calc || {};
+    const solver = calc.solver || detail.solver || '';
+    document.getElementById('res-solver').textContent = solver === 'companion_matrix' ? 'CM' : solver === 'aberth' ? 'AE' : solver || '-';
 
-    // Viewport
-    if (detail.q_re && detail.q_im) {
-        document.getElementById('res-ll').textContent = `${detail.q_re[0].toFixed(4)}, ${detail.q_im[0].toFixed(4)}`;
-        document.getElementById('res-ur').textContent = `${detail.q_re[1].toFixed(4)}, ${detail.q_im[1].toFixed(4)}`;
+    // Viewport — prefer cached values from preview (fresher than view.json)
+    const qRe = (r && r.q_re) || detail.q_re;
+    const qIm = (r && r.q_im) || detail.q_im;
+    if (qRe && qIm) {
+        document.getElementById('res-ll').textContent = `${qRe[0].toFixed(4)}, ${qIm[0].toFixed(4)}`;
+        document.getElementById('res-ur').textContent = `${qRe[1].toFixed(4)}, ${qIm[1].toFixed(4)}`;
+    }
+
+    // Restore preview stats if previously computed
+    if (r && r._prevTotal != null) {
+        document.getElementById('res-prev-total').textContent = r._prevTotal.toLocaleString();
+        document.getElementById('res-prev-good').textContent = r._prevGood.toLocaleString();
     }
 
     // File count
@@ -723,6 +736,8 @@ async function previewResult() {
         if (r) {
             delete r._detail;
             if (result.q_re) { r.q_re = result.q_re; r.q_im = result.q_im; }
+            r._prevTotal = result.n_roots_total || 0;
+            r._prevGood = result.n_roots || 0;
         }
 
         // Show preview
@@ -2281,12 +2296,12 @@ function renderArtifactPanel(jobId, summary) {
     let bilevelExtra = '';
     if (a.bilevel_tif && a.bilevel_tif.exists) {
         if (a.bilevel_compat_tif && a.bilevel_compat_tif.exists) {
-            bilevelExtra += '<button class="btn-secondary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.bilevel_compat_tif.url + '\',\'' + jobId + '_bilevel_compat.tif\',\'' + a.bilevel_compat_tif.key + '\')">Compat</button>';
+            bilevelExtra += '<button class="btn-secondary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.bilevel_compat_tif.url + '\',\'' + jobId + '_bilevel_compat.tif\',\'' + a.bilevel_compat_tif.key + '\')">Compat \u2913</button>';
         } else {
             bilevelExtra += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runTiffCompat(\'' + jobId + '\',\'' + a.bilevel_tif.key + '\',\'' + pix + '\')" id="btn-tiff-compat">Compat</button>';
         }
         if (a.bilevel_png && a.bilevel_png.exists) {
-            bilevelExtra += '<button class="btn-secondary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.bilevel_png.url + '\',\'' + jobId + '_bilevel.png\',\'' + a.bilevel_png.key + '\')">PNG</button>';
+            bilevelExtra += '<button class="btn-secondary" style="' + btnStyle + '" onclick="downloadPresignedFile(\'' + a.bilevel_png.url + '\',\'' + jobId + '_bilevel.png\',\'' + a.bilevel_png.key + '\')">PNG \u2913</button>';
         } else {
             bilevelExtra += '<button class="btn-secondary" style="' + btnStyle + '" onclick="runPngExport(\'' + jobId + '\',\'' + a.bilevel_tif.key + '\',\'' + pix + '\')" id="btn-png-export">PNG</button>';
         }
@@ -2769,7 +2784,8 @@ async function runCalculateWithSolver(solverMode) {
     btn.disabled = true;
     document.getElementById('compute-status').textContent = `Computing ${pipelineStr} N=${n}...`;
     document.getElementById('compute-status').className = 'status';
-    log(`Compute: ${pipelineStr} N=${n}, chunks=${nChunks}${times > 1 ? ', times=' + times : ''}...`);
+    const solverTag = solverMode === 'companion_matrix' ? 'CM' : 'AE';
+    log(`Compute-${solverTag}: ${pipelineStr} N=${n}, chunks=${nChunks}${times > 1 ? ', times=' + times : ''}...`);
     const fmtMs = (ms) => (ms/1000).toFixed(1) + 's';
 
     try {
@@ -2979,7 +2995,14 @@ async function runCalculateWithSolver(solverMode) {
             }
         }
         const computeWallMs = performance.now() - tCompute;
-        log(`  solve: ${fmtMs(computeWallMs)} wall (${actualChunks} chunks)`, 'ok');
+        const totalSkipped = chunkResults.reduce((s, r) => s + (r.skipped_overflow || 0), 0);
+        const totalPolys = chunkResults.reduce((s, r) => s + (r.n_t || 0), 0);
+        let solveMsg = `  solve: ${fmtMs(computeWallMs)} wall (${actualChunks} chunks)`;
+        if (totalSkipped > 0) {
+            const pct = (totalSkipped / totalPolys * 100).toFixed(1);
+            solveMsg += ` \u26a0 ${totalSkipped}/${totalPolys} polynomials skipped (coefficient overflow, ${pct}%)`;
+        }
+        log(solveMsg, totalSkipped > 0 ? '' : 'ok');
 
         // Phase 4: save calc.json metadata via storage Lambda
         const calcMeta = {

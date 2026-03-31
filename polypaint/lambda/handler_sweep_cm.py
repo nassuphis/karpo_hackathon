@@ -92,6 +92,7 @@ def handle_solve_cm(params):
             "n_t": compute_meta["n_t"],
             "degree": compute_meta["degree"],
             "avg_iterations": compute_meta.get("avg_iterations", 0),
+            "skipped_overflow": compute_meta.get("skipped_overflow", 0),
         }
         report_status(job_id, task_id, "done", result_data=result_data)
         return ok_response({**result_data, "n_procs": 1})

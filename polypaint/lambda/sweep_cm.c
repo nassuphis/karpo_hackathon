@@ -127,6 +127,11 @@ static int solve_companion(const double *cfRe, const double *cfIm, int nCoeffs,
     char jobvl = 'N', jobvr = 'N';
     int ldvl = 1, ldvr = 1;
 
+    /* Diagnostic: log state before first LAPACK call */
+    double leadMag = cabs(lead);
+    fprintf(stderr, "DIAG zgeev pre: first=%d degree=%d n=%d lda=%d leadMag=%.6e nCoeffs=%d\n",
+            first, degree, n, n, leadMag, nCoeffs);
+
     /* Workspace query */
     zgeev_(&jobvl, &jobvr, &n, A, &n, W, NULL, &ldvl, NULL, &ldvr,
            &wkopt, &lwork, rwork, &info);

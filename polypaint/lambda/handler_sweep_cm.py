@@ -67,6 +67,9 @@ def handle_solve_cm(params):
             raise RuntimeError(f"solve_cm produced non-JSON stdout: {result.stdout[:200]!r} stderr: {result.stderr[:200]!r}")
 
         compute_meta = json.loads(result.stdout)
+        skipped = compute_meta.get("skipped_overflow", 0)
+        if skipped > 0:
+            print(f"sweep_cm chunk={chunk_idx}: {skipped}/{compute_meta['n_t']} polynomials skipped (coefficient overflow)")
         compute_us = int((time.time() - t0) * 1e6)
 
         s3_key = params.get("s3_key", f"renders/{job_id}/chunk_{chunk_idx}.bin")

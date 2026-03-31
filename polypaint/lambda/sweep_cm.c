@@ -109,10 +109,22 @@ static int solve_companion(const double *cfRe, const double *cfIm, int nCoeffs,
 
     /* Normalize to monic: divide by leading coefficient */
     double _Complex lead = cfRe[first] + I * cfIm[first];
+    if (!isfinite(cabs(lead))) {
+        /* Overflow: coefficient magnitude exceeds double range — skip this polynomial */
+        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
+        free(A);
+        return -(nCoeffs - 1);  /* negative = skipped due to overflow */
+    }
     for (int j = 0; j < n; j++) {
         /* First row: -b[j]/lead where b[j] = cf[first+1+j] */
         double _Complex bj = cfRe[first + 1 + j] + I * cfIm[first + 1 + j];
         A[j * n + 0] = -bj / lead;  /* A[0][j] in column-major = A[j*n + 0] */
+        if (!isfinite(creal(A[j * n + 0])) || !isfinite(cimag(A[j * n + 0]))) {
+            /* Overflow in normalized coefficient — skip */
+            for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
+            free(A);
+            return -(nCoeffs - 1);
+        }
     }
     /* Sub-diagonal of 1s */
     for (int k = 1; k < n; k++) {
@@ -126,11 +138,6 @@ static int solve_companion(const double *cfRe, const double *cfIm, int nCoeffs,
     double _Complex wkopt;
     char jobvl = 'N', jobvr = 'N';
     int ldvl = 1, ldvr = 1;
-
-    /* Diagnostic: log state before first LAPACK call */
-    double leadMag = cabs(lead);
-    fprintf(stderr, "DIAG zgeev pre: first=%d degree=%d n=%d lda=%d leadMag=%.6e nCoeffs=%d\n",
-            first, degree, n, n, leadMag, nCoeffs);
 
     /* Workspace query */
     zgeev_(&jobvl, &jobvr, &n, A, &n, W, NULL, &ldvl, NULL, &ldvr,
@@ -208,6 +215,7 @@ int main(int argc, char **argv) {
     double *cfIm = malloc(nCoeffs * sizeof(double));
 
     long totalSteps = 0;
+    long skippedOverflow = 0;
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
@@ -220,7 +228,8 @@ int main(int argc, char **argv) {
             cfIm[k] = (double)coeffBuf[k * 2 + 1];
         }
 
-        solve_companion(cfRe, cfIm, nCoeffs, rootRe, rootIm);
+        int rc = solve_companion(cfRe, cfIm, nCoeffs, rootRe, rootIm);
+        if (rc < 0) skippedOverflow++;
 
         /* Write interleaved float32 re/im pairs */
         for (int k = 0; k < degree; k++) {
@@ -242,8 +251,12 @@ int main(int argc, char **argv) {
     free(cfIm);
     free(buf);
 
-    printf("{\"mode\":\"solve_cm\",\"n_t\":%ld,\"degree\":%d,\"avg_iterations\":0,\"compute_us\":%ld}\n",
-           totalSteps, degree, elapsed_us);
+    if (skippedOverflow > 0)
+        fprintf(stderr, "WARNING: %ld/%ld polynomials skipped (coefficient overflow)\n",
+                skippedOverflow, totalSteps);
+
+    printf("{\"mode\":\"solve_cm\",\"n_t\":%ld,\"degree\":%d,\"avg_iterations\":0,\"compute_us\":%ld,\"skipped_overflow\":%ld}\n",
+           totalSteps, degree, elapsed_us, skippedOverflow);
 
     return 0;
 }

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 import boto3
 
+from palette_names import VALID_PALETTE_NAMES
 from shared import BUCKET, parse_body, ok_response
 
 s3 = boto3.client("s3")
@@ -100,6 +101,9 @@ def handler(event, context):
 
     solve_metric = rp.get("solve_metric", "proximity")
     solve_score_quantile = rp.get("solve_score_quantile", 0.001)
+    palette = rp.get("palette", "inferno")
+    if palette not in VALID_PALETTE_NAMES:
+        raise RuntimeError(f"Invalid palette: {palette}")
 
     solve_score_enabled = color_mode == "solve_score"
     if solve_score_enabled:
@@ -154,7 +158,7 @@ def handler(event, context):
             "format": ext,
             "color_mode": rp.get("color_mode", "rainbow"),
             "match_mode": rp.get("match_mode", "none"),
-            "palette": rp.get("palette", "inferno"),
+            "palette": palette,
             "constant_color": rp.get("constant_color", "ffffff"),
             "solve_metric": solve_metric if solve_score_enabled else "",
             "solve_score_quantile": str(solve_score_quantile if solve_score_enabled else ""),

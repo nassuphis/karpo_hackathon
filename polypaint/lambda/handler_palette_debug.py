@@ -12,6 +12,7 @@ import time
 
 import boto3
 
+from palette_names import VALID_PALETTE_NAMES
 from shared import BUCKET, parse_body, ok_response, imgpipe_env
 
 s3 = boto3.client("s3")
@@ -51,6 +52,8 @@ def handler(event, context):
             raise ValueError()
     except (TypeError, ValueError):
         raise RuntimeError(f"solve_score_quantile must be in [0.001, 0.05], got {solve_score_quantile}")
+    if palette not in VALID_PALETTE_NAMES:
+        raise RuntimeError(f"Invalid palette: {palette}")
 
     tmp_bin = "/tmp/palette_lores.bin"
     tmp_raw = "/tmp/palette_out.raw"

@@ -32,6 +32,58 @@ test.describe('Solve Score UI', () => {
     expect(solveCount).toBeGreaterThanOrEqual(5);
   });
 
+  test('TRI swatch exists in root proximity and solve score rows', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await expect(page.locator('#palette-circles-root-proximity .pal-circle-tri')).toBeVisible();
+    await expect(page.locator('#palette-circles-solve-score .pal-circle-tri')).toBeVisible();
+  });
+
+  test('left-click TRI opens popup and selecting a row activates tri palette', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const tri = page.locator('#palette-circles-solve-score .pal-circle-tri');
+    await tri.click();
+    await expect(page.locator('#tri-popup-overlay')).toBeVisible();
+    await expect(page.locator('#tri-popup-title')).toContainText('Solve score');
+    await page.locator('#tri-popup-filter').fill('rg');
+    const firstRow = page.locator('#tri-popup-body .tri-popup-row').first();
+    await expect(firstRow).toBeVisible();
+    await firstRow.click();
+    const palette = await page.evaluate(() => renderSolveScorePalette);
+    const remembered = await page.evaluate(() => renderSolveScoreTriName);
+    expect(palette).toBe('tri_redgold');
+    expect(remembered).toBe('redgold');
+    await expect(page.locator('#tri-popup-overlay')).not.toBeVisible();
+    await expect(tri).toHaveAttribute('title', /redgold/);
+  });
+
+  test('right-click TRI activates remembered palette without opening popup', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      renderRootProximityTriName = 'redgold';
+      renderRootProximityPalette = 'inferno';
+      buildPaletteCircles('palette-circles-root-proximity', 'proximity', () => renderRootProximityPalette);
+    });
+    const tri = page.locator('#palette-circles-root-proximity .pal-circle-tri');
+    await tri.click({ button: 'right' });
+    const palette = await page.evaluate(() => renderRootProximityPalette);
+    expect(palette).toBe('tri_redgold');
+    await expect(page.locator('#tri-popup-overlay')).not.toBeVisible();
+  });
+
+  test('switching built-in palette does not erase remembered TRI selection', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const tri = page.locator('#palette-circles-solve-score .pal-circle-tri');
+    await tri.click();
+    await page.locator('#tri-popup-filter').fill('rg');
+    await page.locator('#tri-popup-body .tri-popup-row').first().click();
+    await page.locator('#palette-circles-solve-score .pal-circle').first().click();
+    const remembered = await page.evaluate(() => renderSolveScoreTriName);
+    const activePalette = await page.evaluate(() => renderSolveScorePalette);
+    expect(remembered).toBe('redgold');
+    expect(activePalette).not.toBe('tri_redgold');
+    await expect(tri).toHaveAttribute('title', /redgold/);
+  });
+
   test('clicking root-proximity palette activates proximity color mode', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     const rootCircles = page.locator('#palette-circles-root-proximity .pal-circle');

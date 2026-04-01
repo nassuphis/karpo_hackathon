@@ -14,7 +14,7 @@
  *            --tile_size=4096 --n_tile_cols=13 --n_tile_rows=13
  *            [--color=rainbow|proximity|constant]
  *            [--match=none|greedy|hungarian]
- *            [--palette=inferno|viridis|magma|plasma|turbo|cividis|warm|cool]
+ *            [--palette=<name>]
  *            [--constant_color=RRGGBB]
  *
  * Output: {outPrefix}_t0000.pix ... {outPrefix}_t{nTiles-1}.pix
@@ -323,7 +323,7 @@ int main(int argc, char **argv) {
                 "--width=W --height=H --center_re=X --center_im=Y --scale=S "
                 "--degree=D --tile_size=T --n_tile_cols=C --n_tile_rows=R "
                 "[--color=rainbow|proximity|solve_score|solve_proximity|constant] "
-                "[--match=none|greedy|hungarian] [--palette=inferno|...] "
+                "[--match=none|greedy|hungarian] [--palette=<name>] "
                 "[--constant_color=RRGGBB] "
                 "[--solve_metric=proximity|crowding|spread|anisotropy|area] "
                 "[--solve_score_clip_lo=X --solve_score_clip_hi=Y --solve_score_cuts=c1,...,c9] "

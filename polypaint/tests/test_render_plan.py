@@ -116,6 +116,28 @@ class TestRenderPlan(unittest.TestCase):
         assert "crowding" in plan["solve_score"]["bins_key"]
 
     @patch("handler_render_plan._storage_call")
+    def test_tri_palette_id_accepted_and_preserved(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(color_mode="solve_score", palette="tri_redgold"), None)
+        plan = json.loads(result["body"])
+        assert plan["outputs"]["metadata"]["palette"] == "tri_redgold"
+
+    @patch("handler_render_plan._storage_call")
+    def test_invalid_palette_rejected(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_make_event(color_mode="solve_score", palette="tri_not_real"), None)
+        self.assertIn("Invalid palette", str(ctx.exception))
+
+    @patch("handler_render_plan._storage_call")
     def test_coeff_bilevel_uses_coeffs_keys(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail({
             "degree": 5, "n_chunks": 2,

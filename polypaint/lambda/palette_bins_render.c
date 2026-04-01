@@ -2,7 +2,7 @@
  * palette_bins_render — render an RGB raw image from a full-resolution palette bin grid.
  *
  * Usage:
- *   palette_bins_render bins.bin output.raw --n=N --palette=inferno
+ *   palette_bins_render bins.bin output.raw --n=N --palette=<name>
  *
  * bins.bin format:
  *   - exactly N*N bytes

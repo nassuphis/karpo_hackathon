@@ -25,6 +25,7 @@ All tests live in `polypaint/tests/`.
 | `test_tiff_compat.py` | tiff_compat: tiled→strip TIFF conversion | `tiff_compat_local` (needs libvips+libtiff) |
 | `test_png_export.py` | png_export: TIFF→1-bit PNG conversion | `png_export_local` (needs libvips) |
 | `test_dispatch_resilience.py` | Dispatch resilience: return_ids, head-keys, wave dispatch, missing-task detection | Python mocks only |
+| `test_tri_palette_generation.py` | TRI palette generator + generated catalog consistency | Python only |
 | `test_companion_matrix.py` | sweep_cm binary: exact roots, degenerate cases, overflow handling, AE vs CM comparison | Docker ARM64 + LAPACK |
 | `test_solve_proximity_stats.py` | solve_proximity_stats binary: 10 metrics, summary mode, quantile clipping | Docker ARM64 |
 | `test_solve_palette_debug.py` | solve_palette_debug binary: serpentine, expansion, palette selection, quantile | Docker ARM64 |
@@ -38,10 +39,10 @@ All tests live in `polypaint/tests/`.
 | `test_palette_chunk_handler.py` | Palette chunk worker Lambda | Python mocks only |
 | `test_palette_finalize_handler.py` | Palette finalize Lambda | Python mocks only |
 | `test_giga62_hand.py` | giga_62 hand-written function accuracy | `sweep_test` compiled |
-| `test_frontend_js.sh` | Frontend JS execution: UI logic, dispatch, Render family catalogs, Palette workflow UI, DeepZoom inventory | Node.js (vm module) |
+| `test_frontend_js.sh` | Frontend JS execution: UI logic, TRI palette popup/swatches, dispatch, Render family catalogs, Palette workflow UI, DeepZoom inventory | Node.js (vm module) |
 | `e2e/deepzoom-inventory.spec.js` | DeepZoom inventory: load, sort, select, arrow keys, share links | Playwright browser |
 | `e2e/render-refresh.spec.js` | Render tab refresh: summary call, artifact panel, info line | Playwright browser |
-| `e2e/render-solve-score.spec.js` | Solve score UI: metrics, quantile, dispatch payloads, family catalogs, palette family behavior | Playwright browser |
+| `e2e/render-solve-score.spec.js` | Solve score UI: metrics, quantile, TRI palette behavior, dispatch payloads, family catalogs, palette family behavior | Playwright browser |
 
 ## Running Tests
 
@@ -118,7 +119,7 @@ Tests the compiled `sweep` binary end-to-end via subprocess:
 - **TestCoeffgenSmoke** — metadata and file size for basic coeffgen, times=3 produces 3x data
 - **TestSolveSmoke** — solver reads coefficients, correct output size, times multiplier
 - **TestGridSmoke** — grid mode produces correct n_t and output size
-- **TestDitherUniqueness** — pass 0 vs pass 1 differ, different stripes differ
+- **TestDitherUniqueness** — pass 0 vs pass 1 differ, different chunks differ
 
 ### test_poly_accuracy.py
 
@@ -229,6 +230,16 @@ Tests for the dispatch resilience fixes (28 tests, pure mocks, no binaries):
 - **TestMissingTaskDetection** — set-diff logic replicated from JS: no missing, all missing, contiguous 51-task gap (the real failure), scattered gaps, merge prefix, coeff prefix
 - **TestWaveDispatchLogic** — wave dispatch simulation: small batch (single wave), large batch (multiple waves), throttled (MAX_INFLIGHT respected), exact inflight, full inter-wave completion
 
+### test_tri_palette_generation.py
+
+Tests the generated TRI palette catalogs and interpolation output:
+
+- alias collapse / canonical name selection
+- 15-stop midpoint behavior
+- unknown color-name rejection
+- JS/Python generated catalogs stay in sync
+- generated gradient CSS includes all 15 stops
+
 ### test_companion_matrix.py
 
 Tests the `sweep_cm` companion-matrix solver binary (Docker ARM64 + LAPACK):
@@ -273,7 +284,7 @@ Tests the Step Functions ASL template (JSON parsing only):
 
 Frontend JS execution tests (Node.js vm module, no browser):
 
-- Catalog loading, dropdown population, CFPV rows, pipeline dispatch, wave dispatch, Render family catalogs, DeepZoom inventory, solve histogram, palette workflow, Palette tab
+- Catalog loading, TRI swatches/popup/filtering, dropdown population, CFPV rows, pipeline dispatch, wave dispatch, Render family catalogs, DeepZoom inventory, solve histogram, palette workflow, Palette tab
 
 ### e2e/ Playwright tests
 
@@ -281,7 +292,7 @@ Browser-based end-to-end tests:
 
 - **deepzoom-inventory.spec.js** — inventory load/sort, row selection, arrow keys, share links, question mark for old exports
 - **render-refresh.spec.js** — single render-summary call, family tabs, selected-artifact actions, info line
-- **render-solve-score.spec.js** — metric selection, quantile dispatch, solve-score controls, palette family behavior
+- **render-solve-score.spec.js** — metric selection, quantile dispatch, TRI palette popup/right-click behavior, solve-score controls, palette family behavior
 
 ### test_tiff_compat.py
 
@@ -308,6 +319,7 @@ Tests png_export binary (needs libvips):
 | bilevel_merge.c | test_bilevel_stitch |
 | Lambda handlers (Python) | test_pipeline + test_dispatch_resilience + test_chunking |
 | Chunking / param_gen / coeffgen_chunked | test_chunking |
+| TRI palette generator / catalogs | test_tri_palette_generation |
 | Dispatch / storage / check-status | test_dispatch_resilience |
 | sweep_cm.c | test_companion_matrix (Docker ARM64) |
 | solve_proximity_stats.c | test_solve_proximity_stats (Docker ARM64) |

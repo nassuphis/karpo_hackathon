@@ -1,5 +1,7 @@
 **Float64 Plan**
 
+Status: historical numeric-design note. Some examples and field names still reference older stripe-era metadata such as `stripe_keys`.
+
 `Solve64` is feasible, but it should not be implemented as a hand-maintained second solver.
 
 The current solver math is already mostly `double` in [lambda/sweep_cli.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/sweep_cli.c) and [lambda/solver_cli.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solver_cli.c). The main precision loss happens at the serialized boundaries:

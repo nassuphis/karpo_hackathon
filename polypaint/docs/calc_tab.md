@@ -19,7 +19,7 @@ Dropdown `#ct-add` with 8 options: `rev`, `conj`, `normalize`, `deriv`, `scale10
 | Control | Range | Default | Description |
 |---------|-------|---------|-------------|
 | N | 10-5000 | 500 | Grid dimension (N x N parameter points) |
-| Stripes | 10-500 | 10 | Parallel subdivisions of the grid |
+| Chunks | 10-500 | 10 | Parallel subdivisions of the parameter stream |
 | Times | 1-100 | 1 | Coefficient repetitions (for dithered passes) |
 
 ### Quick Presets
@@ -34,23 +34,24 @@ Green button, calls `runCalculate()`. Disabled during computation.
 
 ### Phase 1: Hires Coeffgen
 
-Fan-out `nStripes` parallel Lambda invocations (max 50 concurrent via `asyncPool`).
+Fan-out `nChunks` parallel Lambda invocations (max 50 concurrent via `asyncPool`).
 
-Each stripe processes rows `[i1_start, i1_end)` of the N x N grid:
-```
-stripe s: i1_start = s * rowsPerStripe
-           i1_end = (s+1) * rowsPerStripe  (last stripe gets remainder)
-```
+The current pipeline is chunk-based, not row-stripe-based:
+
+- `param_gen` writes the full `params.bin`
+- the browser computes contiguous `(step_start, step_count)` ranges
+- each coeffgen chunk processes one contiguous slice of the parameter stream
 
 Each Lambda receives:
-- `job_id`, `stripe_idx`, `function`, `n1`, `n2`, `i1_start`, `i1_end`
+- `job_id`, `chunk_idx`, `params_key`, `step_start`, `step_count`
+- `function`
 - `param_transforms` (from chip chain), `coeff_transforms`, `times`
 
 Returns: `{degree, n_coeffs, coeffs_key, coeffs_size}`
 
-Output: `renders/{job_id}/coeffs_{stripe:04d}.bin`
+Output: `renders/{job_id}/coeffs_{chunk:04d}.bin`
 
-Status: "Generating coefficients 3/50..."
+Status: "Generating coefficients 3/50 chunks..."
 
 ### Phase 1b: Lores Coeffgen
 
@@ -70,18 +71,18 @@ Output: `renders/{job_id}/lores.bin`
 
 ### Phase 3: Hires Solve
 
-Fan-out `nStripes` parallel solve Lambdas (max 50 concurrent).
+Fan-out `nChunks` parallel solve Lambdas (max 50 concurrent).
 
 Each reads its coefficient file from Phase 1:
+```text
+chunk c reads: renders/{job_id}/coeffs_{c:04d}.bin
 ```
-stripe s reads: renders/{job_id}/coeffs_{s:04d}.bin
-```
 
-Returns: `{stripe_idx, s3_key, bin_size, compute_us, n_t, avg_iterations}`
+Returns: `{chunk_idx, s3_key, bin_size, compute_us, n_t, avg_iterations}`
 
-Output: `renders/{job_id}/stripe_{s}.bin`
+Output: `renders/{job_id}/chunk_{c}.bin`
 
-Status: "Solving 15/50 stripes..."
+Status: "Solving 15/50 chunks..."
 
 ### Phase 4: Save Metadata
 
@@ -106,10 +107,10 @@ Example: `compute_mmvtc0zf`
 
 **Log** (`#compute-log`): Scrollable timestamped log (max 500 entries), shows:
 ```
-[11:02:20] Compute: [unit_circle] poly_33 [rev] N=500, stripes=50...
-[11:02:26]   coeffgen: 5.8s, degree=70, size=2.84GB (50 stripes)
+[11:02:20] Compute: [unit_circle] poly_33 [rev] N=500, chunks=50...
+[11:02:26]   coeffgen: 5.8s, degree=70, size=2.84GB (50 chunks)
 [11:02:32]   lores solve: 0.4s
-[11:05:40]   solve: 198s (sum) / 45s wall (50 stripes)
+[11:05:40]   solve: 198s (sum) / 45s wall (50 chunks)
 [11:05:40] Compute compute_mmvtc0zf: deg70 N=500, avg_iters=13.0
 ```
 

@@ -1,5 +1,7 @@
 **DeepZoom Plan**
 
+Status: historical design note. DeepZoom export, inventory, and standalone `viewer.html` links are already implemented. This document still describes the pre-family-catalog Render UI and should be read as background only. For current behavior, see [render_refactor.md](/Users/nicknassuphis/karpo_hackathon/polypaint/render_refactor.md), [deepzoom_share_links.md](/Users/nicknassuphis/karpo_hackathon/polypaint/deepzoom_share_links.md), and [docs/s3results.md](/Users/nicknassuphis/karpo_hackathon/polypaint/docs/s3results.md).
+
 This note describes how to add DeepZoom export and viewing for rendered images using OpenSeadragon.
 
 The feature should be treated as a derived post-render artifact, not as part of the core render pipeline.

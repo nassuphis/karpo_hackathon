@@ -127,7 +127,7 @@ ensure_bucket_website() {
 verify_frontend_assets() {
     local SITE_URL="http://${BUCKET}.s3-website-${REGION}.amazonaws.com"
     echo "Verifying deployed frontend assets..."
-    for asset in index.html coeff_func_catalog_js.js; do
+    for asset in index.html coeff_func_catalog_js.js tri_palette_catalog_js.js; do
         local STATUS
         STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/${asset}")
         if [ "$STATUS" != "200" ]; then
@@ -137,6 +137,10 @@ verify_frontend_assets() {
         echo "  ${asset}: HTTP ${STATUS} OK"
     done
 }
+
+# --- Generate tri-palette assets ---
+echo "Generating tri-palette assets..."
+python3 "$SCRIPT_DIR/scripts/generate_tri_palettes.py" || { echo "FATAL: tri-palette generation failed"; exit 1; }
 
 # --- JS syntax check ---
 echo "Checking index.html JS syntax..."
@@ -662,7 +666,8 @@ echo "  SolvPrx: $(du -h /tmp/polypaint-solve-proximity.zip | cut -f1)  (solve_p
 PD_DIR=/tmp/polypaint-palette-debug
 rm -rf "$PD_DIR"
 mkdir -p "$PD_DIR"
-cp lambda/handler_palette_debug.py lambda/shared.py "$PD_DIR/"
+cp lambda/handler_palette_debug.py lambda/shared.py \
+   lambda/palette_names.py lambda/tri_palette_names_generated.py "$PD_DIR/"
 cp lambda/solve_palette_debug lambda/raw2jpeg "$PD_DIR/"
 chmod +x "$PD_DIR"/solve_palette_debug "$PD_DIR"/raw2jpeg
 cd "$PD_DIR" && zip -r9 /tmp/polypaint-palette-debug.zip . -q && cd "$SCRIPT_DIR"
@@ -680,7 +685,8 @@ echo "  PalOrch: $(du -h /tmp/polypaint-palette-orchestrator.zip | cut -f1)  (st
 PAL_PLAN_DIR=/tmp/polypaint-palette-render-plan
 rm -rf "$PAL_PLAN_DIR"
 mkdir -p "$PAL_PLAN_DIR"
-cp lambda/handler_palette_render_plan.py lambda/shared.py "$PAL_PLAN_DIR/"
+cp lambda/handler_palette_render_plan.py lambda/shared.py \
+   lambda/palette_names.py lambda/tri_palette_names_generated.py "$PAL_PLAN_DIR/"
 cd "$PAL_PLAN_DIR" && zip -r9 /tmp/polypaint-palette-render-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalPlan: $(du -h /tmp/polypaint-palette-render-plan.zip | cut -f1)  (plan builder)"
 
@@ -716,7 +722,8 @@ echo "  RndOrch: $(du -h /tmp/polypaint-render-orchestrator.zip | cut -f1)  (sta
 PLAN_DIR=/tmp/polypaint-render-plan
 rm -rf "$PLAN_DIR"
 mkdir -p "$PLAN_DIR"
-cp lambda/handler_render_plan.py lambda/shared.py "$PLAN_DIR/"
+cp lambda/handler_render_plan.py lambda/shared.py \
+   lambda/palette_names.py lambda/tri_palette_names_generated.py "$PLAN_DIR/"
 cd "$PLAN_DIR" && zip -r9 /tmp/polypaint-render-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  RndPlan: $(du -h /tmp/polypaint-render-plan.zip | cut -f1)  (plan builder)"
 
@@ -1285,6 +1292,8 @@ if [ "$ACTION" = "create" ]; then
         --content-type "text/html" --region "$REGION"
     aws s3 cp "$SCRIPT_DIR/coeff_func_catalog_js.js" "s3://$BUCKET/coeff_func_catalog_js.js" \
         --content-type "application/javascript" --region "$REGION"
+    aws s3 cp "$SCRIPT_DIR/tri_palette_catalog_js.js" "s3://$BUCKET/tri_palette_catalog_js.js" \
+        --content-type "application/javascript" --region "$REGION"
     verify_frontend_assets
 
     echo ""
@@ -1579,6 +1588,9 @@ elif [ "$ACTION" = "update" ]; then
         --content-type "text/html" --region "$REGION"
     echo "Uploading coeff_func_catalog_js.js to S3..."
     aws s3 cp "$SCRIPT_DIR/coeff_func_catalog_js.js" "s3://$BUCKET/coeff_func_catalog_js.js" \
+        --content-type "application/javascript" --region "$REGION"
+    echo "Uploading tri_palette_catalog_js.js to S3..."
+    aws s3 cp "$SCRIPT_DIR/tri_palette_catalog_js.js" "s3://$BUCKET/tri_palette_catalog_js.js" \
         --content-type "application/javascript" --region "$REGION"
     verify_frontend_assets
 

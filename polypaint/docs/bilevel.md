@@ -1,6 +1,6 @@
 # Bilevel Render Lambda
 
-Dedicated Lambda for rendering polynomial root images as 1-bit black/white TIFFs. Stripe-first architecture: each stripe is processed once, each root is projected once.
+Dedicated Lambda for rendering polynomial root images as 1-bit black/white TIFFs. Chunk-first architecture: each chunk is processed once, each root is projected once.
 
 ## Output format
 
@@ -10,28 +10,28 @@ PNG uses zlib internally (even through libvips), which has size limits and is ve
 
 ## Architecture
 
-Three-phase stripe-first pipeline:
+Three-phase chunk-first pipeline:
 
 ```
-Phase 1 — Raster (one Lambda per stripe):
-  Download stripe .bin → project roots → write per-tile .bits files to S3
+Phase 1 — Raster (one Lambda per chunk):
+  Download chunk .bin → project roots → write per-tile .bits files to S3
 
 Phase 2 — Merge (one Lambda per tile):
-  Download stripe .bits files for tile → OR bitsets → write 1-bit tile TIFF
+  Download chunk .bits files for tile → OR bitsets → write 1-bit tile TIFF
 
 Phase 3 — Stitch (single Lambda):
   Download tile TIFFs → vips_arrayjoin → write final 1-bit TIFF
 ```
 
-### Why stripe-first
+### Why chunk-first
 
-The alternative (tile-first: one Lambda per tile, each downloads all stripes) was implemented first and rejected. Problems:
+The alternative (tile-first: one Lambda per tile, each downloads all chunks) was implemented first and rejected. Problems:
 
-1. **Duplicated work**: every stripe downloaded N_tiles times, every root projected N_tiles times
-2. **Duplicated IO**: with 10 stripes and 169 tiles, that's 1690 S3 downloads instead of 10
+1. **Duplicated work**: every chunk downloaded N_tiles times, every root projected N_tiles times
+2. **Duplicated IO**: with 10 chunks and 169 tiles, that's 1690 S3 downloads instead of 10
 3. **Slow**: each tile Lambda spent most of its time downloading stripes
 
-Stripe-first processes each stripe once, projects each root once, then fans out per-tile bitsets (tiny: 2 MB each) for the merge phase. The merge phase is trivial (bitwise OR).
+Chunk-first processes each chunk once, projects each root once, then fans out per-tile bitsets (tiny: 2 MB each) for the merge phase. The merge phase is trivial (bitwise OR).
 
 ### Why not PNG
 
@@ -40,12 +40,12 @@ The stitch phase on a 50K×50K image timed out at 600s using `vips_pngsave` with
 ## Data flow
 
 ```
-stripe_0.bin ──→ bits_s0000_t0000.bits  bits_s0000_t0001.bits  ...
-stripe_1.bin ──→ bits_s0001_t0000.bits  bits_s0001_t0001.bits  ...
+chunk_0.bin ──→ bits_chunk_0000_t0000.bits  bits_chunk_0000_t0001.bits  ...
+chunk_1.bin ──→ bits_chunk_0001_t0000.bits  bits_chunk_0001_t0001.bits  ...
   ...
 
 For each tile:
-  bits_s0000_tN.bits + bits_s0001_tN.bits + ... ──OR──→ bilevel_tN.tif
+  bits_chunk_0000_tN.bits + bits_chunk_0001_tN.bits + ... ──OR──→ bilevel_tN.tif
 
 bilevel_t0000.tif + bilevel_t0001.tif + ... ──stitch──→ image_bilevel.tif
 ```
@@ -54,7 +54,7 @@ bilevel_t0000.tif + bilevel_t0001.tif + ... ──stitch──→ image_bilevel.
 
 | File | Purpose |
 |------|---------|
-| `bilevel_raster.c` | Static binary: one stripe → per-tile .bits files. No libvips. |
+| `bilevel_raster.c` | Static binary: one chunk → per-tile .bits files. No libvips. |
 | `bilevel_merge.c` | Dynamic binary (libvips): merge .bits → tile TIFF, or stitch tile TIFFs → final TIFF. |
 | `handler_bilevel.py` | Lambda handler: routes phase=raster/merge/stitch to appropriate binary. |
 
@@ -95,8 +95,8 @@ Build: Docker ARM64 with libvips (same as raw2jpeg).
 
 ## Memory budget
 
-### Raster Lambda (per stripe)
-- One stripe .bin in memory: 20–200 MB
+### Raster Lambda (per chunk)
+- One chunk .bin in memory: 20–200 MB
 - Per-tile bitsets: `nTiles × ceil(tileW × tileH / 8)` — 169 × 2 MB = 338 MB for 50K
 - **Total: ~500 MB** — fits in 1769 MB
 
@@ -134,13 +134,13 @@ The stitch phase is a separate Lambda because libvips is multithreaded and benef
 
 `runBilevelPipeline()` dispatches three phases sequentially, using `_bilevelDispatchAndPoll()` for the fan-out phases:
 
-1. **Raster**: wave-dispatch `nStripes` bilevel Lambdas (`phase: "raster"`, MAX_INFLIGHT=200)
+1. **Raster**: wave-dispatch `nChunks` bilevel Lambdas (`phase: "raster"`, MAX_INFLIGHT=200)
 2. Poll `bilevel_raster_*` tasks; after 45s stall, query `return_ids`, re-dispatch missing (max 2 rounds)
 3. **Merge**: wave-dispatch `nTiles` bilevel Lambdas (`phase: "merge"`, MAX_INFLIGHT=200)
 4. Poll `bilevel_merge_*` tasks with same stall/re-dispatch logic
 5. **Stitch**: dispatch 1 bilevel-stitch Lambda
 6. Poll `bilevel_stitch` task until complete
-7. Discover artifacts via `/head-keys`, display preview + download buttons
+7. Refresh the Render family catalog via `/render-summary` and display the selected artifact in the family viewer
 
 See [lambdas.md — Dispatch Resilience](lambdas.md#dispatch-resilience) for why wave dispatch and re-dispatch were added.
 
@@ -148,14 +148,14 @@ See [lambdas.md — Dispatch Resilience](lambdas.md#dispatch-resilience) for why
 
 | Image size | Raster bitsets (total) | Merge input/tile | Old RGB pipeline |
 |-----------|----------------------|-----------------|-----------------|
-| 4096×4096 | 2 MB | 20 MB (10 stripes) | 48 MB/tile |
+| 4096×4096 | 2 MB | 20 MB (10 chunks) | 48 MB/tile |
 | 50K×50K | ~338 MB | 20 MB/tile | ~7 GB stitched raw |
 | 100K×100K | ~1.2 GB | 20 MB/tile | ~28 GB (impossible) |
 
 ## Known limits
 
 - **MAX_TILES=4096**: the raster binary supports up to a 64×64 tile grid. At 4096px tiles that's 262K×262K max. At 2048px tiles it's 131K×131K. Sufficient for the 100K target.
-- **Whole-stripe malloc**: the raster binary loads the full stripe .bin into memory. This is the correct tradeoff for stripe-first (one stripe per Lambda), but memory is bounded by solver stripe sizing.
+- **Whole-chunk malloc**: the raster binary loads the full chunk .bin into memory. This is the correct tradeoff for chunk-first (one chunk per Lambda), but memory is bounded by solver chunk sizing.
 - **No merge/stitch local tests**: `bilevel_merge` requires libvips from the Lambda Docker build. Only `bilevel_raster` is tested locally.
 
 ## Tests

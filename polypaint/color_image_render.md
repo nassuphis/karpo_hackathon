@@ -1,5 +1,7 @@
 # Color Image Render Notes
 
+Status: historical optimization note. The recommendations are still directionally useful, but the document uses older stripe-era naming. Read `stripe` as `chunk` when comparing to the current implementation.
+
 This document summarizes practical suggestions for improving the **color** rendering path, based on the current pipeline in:
 
 - [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html)

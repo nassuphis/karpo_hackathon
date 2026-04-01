@@ -58,7 +58,7 @@ They let the user:
 
 That means the canonical solved root files remain unchanged:
 
-- `stripe_XXXX.bin` stays canonical
+- `chunk_XXXX.bin` stays canonical
 
 The transform layer only changes what gets projected into tiles during a particular render request.
 
@@ -74,7 +74,7 @@ It is not:
 So there should be no:
 
 - `root_transforms` inside `calc.json`
-- transformed `stripe_XXXX.bin` files
+- transformed `chunk_XXXX.bin` files
 - transform-specific saved root copies
 
 At most, root transforms may appear in transient render request payloads and optional render logs.

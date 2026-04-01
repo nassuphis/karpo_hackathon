@@ -1,6 +1,7 @@
 # Lambda Handlers
 
-15 Lambdas, each with a Python handler and optional C binary.
+This file focuses on the current compute, render, storage, export, and workflow-entry Lambdas.
+The exact deployed inventory changes over time; [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh) is the source of truth for the full current set.
 
 ## polypaint-coeffgen
 
@@ -60,12 +61,12 @@ See [coefficients.md](coefficients.md) for details on the coefficient pipeline.
 Solves polynomial roots from a pre-computed coefficient file (one chunk). The solver reads coefficient records sequentially until EOF.
 
 **Input:**
-- `job_id`, `stripe_idx` — job and chunk identification
+- `job_id`, `chunk_idx` — job and chunk identification
 - `coeffs_key` — S3 key for coefficient file (required)
 - `n_coeffs` — coefficient count
 - `n_steps` — number of parameter steps in this chunk (preferred), or legacy `N`/`row_start`/`row_end`
 
-**Status reporting:** Reports progress to DynamoDB via `report_status()` with task_id `sweep_{stripe_idx}`. Status progression: `started` -> `done` (or `error`). On success, `result_data` includes sweep metadata (`bin_size`, `compute_us`, `n_t`, `avg_iterations`).
+**Status reporting:** Reports progress to DynamoDB via `report_status()` with task_id `sweep_{chunk_idx}`. Status progression: `started` -> `done` (or `error`). For compatibility, result payloads still include both `chunk_idx` and `stripe_idx` aliases. On success, `result_data` includes sweep metadata (`bin_size`, `compute_us`, `n_t`, `avg_iterations`).
 
 **Output:** `s3_key`, `bin_size`, `n_t`, `degree`, `avg_iterations`, `n_procs`
 
@@ -109,10 +110,10 @@ Computes viewport bounds (center, scale) from lores root data.
 **Route:** POST /raster (dispatched async)
 **Memory:** 1769 MB (1 vCPU)
 
-Converts one stripe of root data into tile-bucketed sparse pixel files.
+Converts one chunk of root data into tile-bucketed sparse pixel files.
 
 **Input:**
-- `job_id`, `stripe_idx`, `bin_key` — root data location
+- `job_id`, `chunk_idx`, `bin_key` — root data location
 - `width`, `height` — full canvas size
 - `tile_size`, `n_tile_cols`, `n_tile_rows` — tile grid
 - `center_re`, `center_im`, `scale` — viewport
@@ -140,7 +141,7 @@ Converts one stripe of root data into tile-bucketed sparse pixel files.
 | Mode | Algorithm |
 |------|-----------|
 | rainbow | Fixed HSL gradient per root index |
-| proximity | Root-level nearest-neighbor distance → palette interpolation (stripe-normalized, 2-pass) |
+| proximity | Root-level nearest-neighbor distance → palette interpolation (chunk-local, 2-pass inside `roots2pix`) |
 | solve_score | Solve-level metric → equal-density binned (global histogram, 3-phase prepass). 10 metrics available |
 | constant | Single hex color for all roots |
 
@@ -149,13 +150,13 @@ Converts one stripe of root data into tile-bucketed sparse pixel files.
 When `color=solve_score`, a 3-phase prepass runs before raster. The metric is selected via `--solve_metric` (default: proximity).
 
 1. **clip** — read lores roots, compute per-solve metric scores, emit quantile clip bounds
-2. **hist** — per-stripe 100-bin histogram of scores within clip range
+2. **hist** — per-chunk 100-bin histogram of scores within clip range
 3. **merge** — sum histograms, derive 10 equal-density bin cut points
 
 Lambda: `polypaint-solve-proximity` (handler: `handler_solve_proximity.py`)
 Binary: `solve_proximity_stats` (clip + hist modes, `--metric=` flag)
 Shared header: `solve_score.h` (metric implementations used by both binaries)
-Artifacts: `solve_scores/{metric}_clip.json`, `solve_scores/{metric}/stripe_*_hist.json`, `solve_scores/{metric}_bins.json`
+Artifacts: `solve_scores/{metric}_clip.json`, `solve_scores/{metric}/chunk_*_hist.json`, `solve_scores/{metric}_bins.json`
 
 **Metrics:**
 
@@ -191,15 +192,15 @@ Legacy `color=solve_proximity` is accepted and coerced to `solve_score` with `me
 **Route:** POST /finalize (dispatched async)
 **Memory:** 1769 MB (1 vCPU)
 
-Assembles all stripe `.pix` files for one tile into a single `.raw` tile image.
+Assembles all chunk `.pix` files for one tile into a single `.raw` tile image.
 
 **Input:**
 - `job_id`, `tile_idx` — which tile
-- `n_stripes` — number of raster stripes
+- `n_chunks` — number of raster chunks
 - `tile_w`, `tile_h` — tile dimensions
 
 **Process:**
-1. For each stripe, downloads `pix_{stripe:04d}_t{tile:04d}.pix` from S3
+1. For each chunk, downloads `pix_chunk_{chunk:04d}_t{tile:04d}.pix` from S3
 2. Pipes all `.pix` data to `pixassemble` via stdin
 3. `pixassemble` reads 8-byte entries, builds RGB buffer (last-wins overwrite)
 4. Writes `.raw` file: 12-byte header (W, H, bands=3) + RGB pixel data
@@ -357,7 +358,7 @@ Same as raster but for coefficient bilevel rendering. Uses `coeffs_bilevel_raste
 
 ### phase=merge
 
-One Lambda per tile. Downloads all stripe `.bits` files for one tile, runs `bilevel_merge merge` to OR bitsets into a single tile TIFF (1-bit CCITT G4). Supports configurable `bits_prefix` and `tile_prefix` for coeff vs root naming.
+One Lambda per tile. Downloads all chunk `.bits` files for one tile, runs `bilevel_merge merge` to OR bitsets into a single tile TIFF (1-bit CCITT G4). Supports configurable `bits_prefix` and `tile_prefix` for coeff vs root naming.
 
 See [bilevel.md](bilevel.md) for architecture details.
 
@@ -383,7 +384,7 @@ Separate Lambda from bilevel raster/merge for independent memory sizing. libvips
 
 ### Why separate from polypaint-bilevel
 
-The stitch phase needs more memory than raster/merge because libvips opens all tile TIFFs concurrently and uses multiple threads for encoding. Raster/merge are embarrassingly parallel (one Lambda per stripe/tile) and only need 1 vCPU. Making stitch a separate Lambda avoids over-provisioning the 500+ raster/merge invocations at 6144 MB each.
+The stitch phase needs more memory than raster/merge because libvips opens all tile TIFFs concurrently and uses multiple threads for encoding. Raster/merge are embarrassingly parallel (one Lambda per chunk/tile) and only need 1 vCPU. Making stitch a separate Lambda avoids over-provisioning the 500+ raster/merge invocations at 6144 MB each.
 
 ---
 
@@ -472,7 +473,7 @@ Uses the same transform code path as the real coeffgen pipeline — no Python re
 
 ### The problem: 449/500 raster stall
 
-A bilevel render of 500 stripes dispatched all 500 async Lambda invocations successfully (all returned HTTP 202). But only 449 ever executed. The remaining 51 never wrote any DynamoDB status — not even "started". The render stalled for 10 minutes then timed out.
+A bilevel render of 500 chunks dispatched all 500 async Lambda invocations successfully (all returned HTTP 202). But only 449 ever executed. The remaining 51 never wrote any DynamoDB status — not even "started". The render stalled for 10 minutes then timed out.
 
 ### Root cause
 
@@ -731,22 +732,10 @@ Single script handles everything: JS syntax check, binary compilation (static + 
 
 The bilevel Lambda is the only one with retries enabled because it's the only one dispatched at fan-out scale (up to 500 concurrent). The others are either single invocations or have different failure modes where retry would be harmful.
 
-### Lambda count: 15
+### Inventory note
 
-| Lambda | Handler | Binary | Memory | Layer |
-|--------|---------|--------|--------|-------|
-| polypaint-sweep | handler_sweep.py | sweep | 10240 MB | — |
-| polypaint-coeffgen | handler_coeffgen.py | sweep | 1769 MB | — |
-| polypaint-raster | handler_raster.py | roots2pix | 1769 MB | — |
-| polypaint-finalize | handler_finalize.py | pixassemble | 1769 MB | — |
-| polypaint-encode | handler_encode.py | raw2jpeg | 1769 MB | libvips |
-| polypaint-viewport | handler_viewport.py | — | 512 MB | — |
-| polypaint-storage | handler_storage.py | — | 512 MB | — |
-| polypaint-dispatch | handler_dispatch.py | — | 1769 MB | — |
-| polypaint-preview | handler_preview.py | — | 1024 MB | — |
-| polypaint-bilevel | handler_bilevel.py | bilevel_raster + bilevel_merge | 1769 MB | libvips |
-| polypaint-bilevel-stitch | handler_bilevel_stitch.py | bilevel_merge | 6144 MB | libvips |
-| polypaint-param-debug | handler_param_debug.py | sweep + bilevel_merge | 1769 MB | libvips |
-| polypaint-tiff-compat | handler_tiff_compat.py | tiff_compat | 4096 MB | libvips |
-| polypaint-png-export | handler_png_export.py | png_export | 4096 MB | libvips |
-| polypaint-deepzoom-export | handler_deepzoom_export.py | dz_export | 4096 MB | libvips |
+This document is not a frozen count of every deployed Lambda.
+Recent workflow work added dedicated starter/status/plan helpers for Render and Palette.
+For the exact current inventory, names, memory settings, and attached layers, use:
+
+- [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh)

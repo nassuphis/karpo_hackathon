@@ -20,8 +20,8 @@ The output should be a bilevel TIFF, same as the existing bilevel root pipeline.
 
 The current bilevel root pipeline is:
 
-1. solve roots into `stripe_XXXX.bin`
-2. raster each stripe into per-tile `.bits`
+1. solve roots into `chunk_XXXX.bin`
+2. raster each chunk into per-tile `.bits`
 3. merge per tile
 4. stitch final TIFF
 
@@ -31,7 +31,7 @@ So the coefficient pipeline can be:
 
 1. coeffgen writes `coeffs_XXXX.bin` and `lores_coeffs.bin`
 2. compute viewport from `lores_coeffs.bin`
-3. raster each coeff stripe into per-tile `.bits`
+3. raster each coeff chunk into per-tile `.bits`
 4. reuse existing bilevel merge
 5. reuse existing bilevel stitch
 
@@ -92,22 +92,22 @@ The only difference is record width:
 - roots use `degree`
 - coeffs use `n_coeffs`
 
-### Phase 1: Raster Coeff Stripes
+### Phase 1: Raster Coeff Chunks
 
 Add a new coeff bilevel raster phase:
 
-- one Lambda per coeff stripe
-- reads `coeffs_{stripe_idx:04d}.bin`
+- one Lambda per coeff chunk
+- reads `coeffs_{chunk_idx:04d}.bin`
 - projects all coefficient values into pixels
 - emits per-tile `.bits`
 
 Output shape should match the current bilevel merge contract:
 
-- `renders/{job_id}/coeff_bits_s{stripe}_t{tile}.bits`
+- `renders/{job_id}/coeff_bits_chunk_{chunk}_t{tile}.bits`
 
 or reuse the same naming convention if the mode is fully isolated per job:
 
-- `renders/{job_id}/bits_s{stripe}_t{tile}.bits`
+- `renders/{job_id}/bits_chunk_{chunk}_t{tile}.bits`
 
 The raster algorithm is the same as the current bilevel root raster:
 
@@ -215,7 +215,7 @@ The `Coeffs` mode should:
 
 1. clean old coeff-render artifacts
 2. compute viewport from `lores_coeffs.bin`
-3. dispatch coeff raster stripes
+3. dispatch coeff raster chunks
 4. poll coeff raster tasks
 5. dispatch existing bilevel merge tiles
 6. poll merge tasks
@@ -251,7 +251,7 @@ Keep coeff render artifacts separate from root render artifacts.
 
 Suggested keys:
 
-- `renders/{job_id}/coeff_bits_s{stripe}_t{tile}.bits`
+- `renders/{job_id}/coeff_bits_chunk_{chunk}_t{tile}.bits`
 - `renders/{job_id}/coeff_t{tile}.tif`
 - `renders/{job_id}/image_coeffs_bilevel.tif`
 - `renders/{job_id}/coeffs_preview.png`
@@ -267,7 +267,7 @@ Use distinct DynamoDB task prefixes so polling is unambiguous.
 
 Suggested:
 
-- `coeff_bilevel_raster_{stripe}`
+- `coeff_bilevel_raster_{chunk}`
 - `coeff_bilevel_merge_{tile}`
 - `coeff_bilevel_stitch`
 
@@ -275,7 +275,7 @@ Even if merge/stitch code is shared, separate task ids make the frontend simpler
 
 ## Memory / Performance Expectations
 
-This path should be cheaper than root bilevel rendering for the same stripe count because it removes solve entirely.
+This path should be cheaper than root bilevel rendering for the same chunk count because it removes solve entirely.
 
 The main costs are:
 
@@ -286,7 +286,7 @@ The main costs are:
 
 The coeff raster memory profile should be similar to the current bilevel raster:
 
-- one coeff stripe input
+- one coeff chunk input
 - one set of tile bitsets
 
 The main variable is point count:

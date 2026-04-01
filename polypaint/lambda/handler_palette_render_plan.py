@@ -10,6 +10,7 @@ import time
 
 import boto3
 
+from palette_names import VALID_PALETTE_NAMES
 from shared import BUCKET, parse_body, ok_response
 
 s3 = boto3.client("s3")
@@ -19,12 +20,6 @@ VALID_METRICS = {
     "proximity", "crowding", "spread", "anisotropy", "area",
     "clusteriness", "shelliness", "outlierness", "nn_variation", "real_axis_proximity",
 }
-VALID_PALETTES = {
-    "inferno", "viridis", "magma", "plasma", "turbo", "cividis",
-    "warm", "cool", "bwred", "neon_v", "gilded", "reef", "abyss", "rainbow_d3",
-}
-
-
 def _palette_variant_id(metric, palette, q, root_transforms):
     q_label = f"{q * 100:.1f}".replace(".", "p")
     rt_json = json.dumps(root_transforms or [], separators=(",", ":"))
@@ -48,7 +43,7 @@ def handler(event, context):
         raise RuntimeError(f"solve_score_quantile must be numeric, got {pp.get('solve_score_quantile')!r}")
     if metric not in VALID_METRICS:
         raise RuntimeError(f"Invalid metric: {metric}")
-    if palette not in VALID_PALETTES:
+    if palette not in VALID_PALETTE_NAMES:
         raise RuntimeError(f"Invalid palette: {palette}")
     if not (0.001 <= q <= 0.05):
         raise RuntimeError(f"solve_score_quantile must be in [0.001, 0.05], got {q}")

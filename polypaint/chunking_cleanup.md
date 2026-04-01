@@ -1,5 +1,7 @@
 # Chunking Cleanup
 
+Status: historical cleanup plan. The active compute and render paths are now chunk-based, but this document preserves the earlier rename plan and compatibility concerns.
+
 ## Purpose
 
 After the chunking refactor, some code is:

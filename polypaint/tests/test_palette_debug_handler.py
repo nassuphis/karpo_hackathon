@@ -110,6 +110,37 @@ class TestPaletteDebugHandler(unittest.TestCase):
 
     @patch("handler_palette_debug.s3")
     @patch("handler_palette_debug.subprocess")
+    def test_accepts_tri_palette_name(self, mock_sub, mock_s3):
+        from handler_palette_debug import handler
+
+        mock_body = MagicMock()
+        mock_body.iter_chunks.return_value = [b'\x00' * 100]
+        mock_s3.get_object.return_value = {"Body": mock_body}
+        mock_s3.generate_presigned_url.return_value = "https://example.com/pal.jpeg"
+
+        meta_json = json.dumps({
+            "mode": "palette_debug", "metric": "proximity", "palette": "tri_redgold",
+            "n_samples_used": 100, "degree": 5, "lores_n": 10, "full_n": 100,
+            "times": 1, "using_pass": 0, "clip_lo": -1, "clip_hi": 1,
+            "clip_range": 2, "clip_fallback": False, "clip_fallback_reason": None,
+            "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+        })
+        mock_sub.run.side_effect = [
+            MagicMock(returncode=0, stdout=meta_json, stderr=''),
+            MagicMock(returncode=0, stdout='', stderr=''),
+            MagicMock(returncode=0, stdout='', stderr=''),
+        ]
+
+        with patch("os.path.getsize", return_value=2048), \
+             patch("builtins.open", mock_open(read_data=b'\x00' * 100)):
+            result = handler(_make_event(palette="tri_redgold"), None)
+
+        binary_call = mock_sub.run.call_args_list[0]
+        cmd = binary_call[0][0]
+        self.assertIn("--palette=tri_redgold", " ".join(cmd))
+
+    @patch("handler_palette_debug.s3")
+    @patch("handler_palette_debug.subprocess")
     def test_uploads_image_palette_jpeg(self, mock_sub, mock_s3):
         """Handler uploads to renders/{job_id}/image_palette.jpeg."""
         from handler_palette_debug import handler

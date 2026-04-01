@@ -11,9 +11,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HTML="$ROOT/index.html"
 CATALOG_JS="$ROOT/coeff_func_catalog_js.js"
+TRI_CATALOG_JS="$ROOT/tri_palette_catalog_js.js"
 
 if [ ! -f "$HTML" ]; then echo "FATAL: $HTML not found"; exit 1; fi
 if [ ! -f "$CATALOG_JS" ]; then echo "FATAL: $CATALOG_JS not found"; exit 1; fi
+if [ ! -f "$TRI_CATALOG_JS" ]; then echo "FATAL: $TRI_CATALOG_JS not found"; exit 1; fi
 
 echo "=== Frontend JS Execution Test ==="
 
@@ -47,9 +49,10 @@ const _mkEl = () => {
     focus() {}, blur() {},
     checked: false,
     width: 512, height: 512,
-    set onchange(v) {},
-    set onclick(v) {},
-    set oninput(v) {},
+    onchange: null,
+    onclick: null,
+    oninput: null,
+    oncontextmenu: null,
     };
     return el;
 };
@@ -129,8 +132,14 @@ vm.runInContext(catalogCode, ctx, { filename: 'coeff_func_catalog_js.js' });
 const catLen = (ctx._coeffFuncCatalog || []).length;
 console.log('  catalog loaded: ' + catLen + ' functions');
 
+// Step 1b: Load tri-palette catalog JS
+const triCatalogCode = fs.readFileSync(process.argv[3], 'utf8');
+vm.runInContext(triCatalogCode, ctx, { filename: 'tri_palette_catalog_js.js' });
+const triCatLen = (ctx._triPaletteCatalog || []).length;
+console.log('  tri catalog loaded: ' + triCatLen + ' palettes');
+
 // Step 2: Load app JS (strip auto-init populateDropdown call)
-let appCode = fs.readFileSync(process.argv[3], 'utf8');
+let appCode = fs.readFileSync(process.argv[4], 'utf8');
 appCode = appCode.replace(/^populateDropdown\(\);$/m, '// populateDropdown() — deferred to test');
 try {
     vm.runInContext(appCode, ctx, { filename: 'index-inline.js' });
@@ -261,6 +270,7 @@ const renderEls = {
 for (const [id, overrides] of Object.entries(renderEls)) {
     ctx._elements[id] = { ...ctx._mkEl(), ...overrides };
 }
+vm.runInContext('_renderAllPaletteRows()', ctx);
 
 // Seed required global state
 vm.runInContext(`
@@ -761,7 +771,7 @@ async function testPipeline(name, call) {
             document.addEventListener = function(evt, fn) { if (evt === 'keydown') _dzKeyHandler = fn; };
         `, ctx);
         // Re-eval just the arrow key handler to capture it
-        const appCode = fs.readFileSync(process.argv[3], 'utf8');
+        const appCode = fs.readFileSync(process.argv[4], 'utf8');
         const handlerMatch = appCode.match(/\/\/ Arrow key navigation[\s\S]*?(?=\nfunction viewDeepZoom)/);
         if (handlerMatch) {
             vm.runInContext(handlerMatch[0], ctx);
@@ -802,9 +812,100 @@ async function testPipeline(name, call) {
         const ssContainer = ctx._elements['palette-circles-solve-score'];
         const rpCount = rpContainer ? rpContainer.children.length : 0;
         const ssCount = ssContainer ? ssContainer.children.length : 0;
-        if (rpCount < 5) { console.error('FATAL: root-proximity palette has ' + rpCount + ' circles'); process.exit(1); }
-        if (ssCount < 5) { console.error('FATAL: solve-score palette has ' + ssCount + ' circles'); process.exit(1); }
+        if (rpCount < 6) { console.error('FATAL: root-proximity palette has ' + rpCount + ' swatches'); process.exit(1); }
+        if (ssCount < 6) { console.error('FATAL: solve-score palette has ' + ssCount + ' swatches'); process.exit(1); }
         console.log('  two palette containers: OK (root=' + rpCount + ', solve=' + ssCount + ')');
+    }
+
+    // 11a2: TRI swatches exist in all three palette rows
+    {
+        ctx._elements['palette-circles-palette-tab'] = ctx._mkEl();
+        vm.runInContext("_renderPaletteRow('palette_tab')", ctx);
+        const ids = ['palette-circles-root-proximity', 'palette-circles-solve-score', 'palette-circles-palette-tab'];
+        ids.forEach((id) => {
+            const container = ctx._elements[id];
+            const tri = container.children.find(ch => String(ch.className || '').includes('pal-circle-tri'));
+            if (!tri) {
+                console.error('FATAL: missing TRI swatch in ' + id);
+                process.exit(1);
+            }
+            if (tri.textContent !== 'TRI') {
+                console.error('FATAL: TRI swatch text mismatch in ' + id + ': ' + tri.textContent);
+                process.exit(1);
+            }
+        });
+        console.log('  TRI swatches: OK (all 3 rows)');
+    }
+
+    // 11a3: TRI popup opens and row selection updates remembered palette + active id
+    {
+        const solveContainer = ctx._elements['palette-circles-solve-score'];
+        const tri = solveContainer.children.find(ch => String(ch.className || '').includes('pal-circle-tri'));
+        tri.onclick({ altKey: false });
+        const overlay = ctx._elements['tri-popup-overlay'];
+        const title = ctx._elements['tri-popup-title'].textContent || '';
+        const rows = ctx._elements['tri-popup-body'].children;
+        if (overlay.style.display !== 'flex') { console.error('FATAL: TRI popup should be visible'); process.exit(1); }
+        if (!title.includes('Solve score')) { console.error('FATAL: TRI popup title should mention Solve score, got ' + title); process.exit(1); }
+        if (!rows.length) { console.error('FATAL: TRI popup should render rows'); process.exit(1); }
+        const second = rows[1] || rows[0];
+        second.onclick();
+        const selectedPalette = vm.runInContext('renderSolveScorePalette', ctx);
+        const remembered = vm.runInContext('renderSolveScoreTriName', ctx);
+        if (!String(selectedPalette).startsWith('tri_')) { console.error('FATAL: TRI selection should activate tri palette, got ' + selectedPalette); process.exit(1); }
+        if (!remembered) { console.error('FATAL: TRI selection should remember tri name'); process.exit(1); }
+        console.log('  TRI popup selection: OK (' + remembered + ')');
+    }
+
+    // 11a4: right-click selects remembered TRI without reopening popup
+    {
+        vm.runInContext("renderRootProximityTriName = 'redgold'; renderRootProximityPalette = 'inferno';", ctx);
+        vm.runInContext("_closeTriPalettePopup()", ctx);
+        const rootContainer = ctx._elements['palette-circles-root-proximity'];
+        const tri = rootContainer.children.find(ch => String(ch.className || '').includes('pal-circle-tri'));
+        tri.oncontextmenu({ preventDefault() {} });
+        const selected = vm.runInContext('renderRootProximityPalette', ctx);
+        const popupOpen = vm.runInContext('_triPopupState.open', ctx);
+        if (selected !== 'tri_redgold') { console.error('FATAL: right-click TRI should activate tri_redgold, got ' + selected); process.exit(1); }
+        if (popupOpen) { console.error('FATAL: right-click TRI should not keep popup open'); process.exit(1); }
+        console.log('  TRI right-click direct select: OK');
+    }
+
+    // 11a5: independent remembered TRI names survive per mode
+    {
+        vm.runInContext("_setTriPaletteForMode('proximity', 'redgold', false)", ctx);
+        vm.runInContext("_setTriPaletteForMode('solve_score', 'greencopper', false)", ctx);
+        vm.runInContext("_setTriPaletteForMode('palette_tab', 'retro_maroon_cream', false)", ctx);
+        const rp = vm.runInContext('renderRootProximityTriName', ctx);
+        const sp = vm.runInContext('renderSolveScoreTriName', ctx);
+        const pp = vm.runInContext('paletteTabTriName', ctx);
+        if (rp !== 'redgold' || sp !== 'greencopper' || pp !== 'retro_maroon_cream') {
+            console.error('FATAL: independent TRI memory broken: ' + JSON.stringify({ rp, sp, pp }));
+            process.exit(1);
+        }
+        console.log('  TRI remembered names independent: OK');
+    }
+
+    // 11a6: filter matches aliases and graceful degradation does not break built-ins
+    {
+        vm.runInContext("_openTriPalettePopup('solve_score')", ctx);
+        vm.runInContext("_applyTriPopupFilter('rg')", ctx);
+        const rows = ctx._elements['tri-popup-body'].children;
+        if (!rows.length) { console.error('FATAL: TRI filter should leave at least one row for alias rg'); process.exit(1); }
+        const firstName = rows[0].children[0].children[0].children[0].textContent;
+        if (firstName !== 'redgold') { console.error('FATAL: TRI alias filter should match redgold, got ' + firstName); process.exit(1); }
+        const savedTri = ctx._triPaletteCatalog;
+        ctx._triPaletteCatalog = null;
+        vm.runInContext("buildPaletteCircles('palette-circles-root-proximity', 'proximity', () => renderRootProximityPalette)", ctx);
+        const rootContainer = ctx._elements['palette-circles-root-proximity'];
+        const tri = rootContainer.children.find(ch => String(ch.className || '').includes('pal-circle-tri'));
+        if (!String(tri.className).includes('disabled')) { console.error('FATAL: TRI should be disabled when catalog missing'); process.exit(1); }
+        rootContainer.children[0].onclick();
+        const palette = vm.runInContext('renderRootProximityPalette', ctx);
+        if (!palette) { console.error('FATAL: built-in palette selection should still work when TRI catalog missing'); process.exit(1); }
+        ctx._triPaletteCatalog = savedTri;
+        vm.runInContext("_renderAllPaletteRows()", ctx);
+        console.log('  TRI filter + graceful degradation: OK');
     }
 
     // 11b: setPaletteForMode independence
@@ -1650,7 +1751,7 @@ async function testPipeline(name, call) {
 })().catch(e => { console.error('FATAL: ' + e.message); process.exit(1); });
 HARNESS_EOF
 
-node /tmp/_fe_test_harness.cjs "$CATALOG_JS" /tmp/_fe_test_app.js 2>&1
+node /tmp/_fe_test_harness.cjs "$CATALOG_JS" "$TRI_CATALOG_JS" /tmp/_fe_test_app.js 2>&1
 EXIT=$?
 rm -f /tmp/_fe_test_app.js /tmp/_fe_test_harness.cjs
 exit $EXIT

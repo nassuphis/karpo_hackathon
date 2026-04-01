@@ -1,5 +1,7 @@
 # Replacing `n1` / `n2` With `N`
 
+Status: historical migration note. Current compute metadata is already centered on `N` plus chunk-based planning; examples here may still show older `stripe_idx`/`n_stripes` payloads.
+
 This document updates the earlier refactor note against the current codebase.
 
 The core problem has not changed:

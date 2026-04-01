@@ -116,6 +116,8 @@ static const RGB PAL_RAINBOW_D3[32] = {
     {78,109,219}, {91,91,207},  {102,76,190}, {110,64,170}
 };
 
+#include "tri_palette_lut.generated.h"
+
 static const PaletteDef PALETTES[] = {
     {"inferno", PAL_INFERNO, 16}, {"viridis", PAL_VIRIDIS, 16},
     {"magma",   PAL_MAGMA, 16},   {"plasma",  PAL_PLASMA, 16},
@@ -124,6 +126,7 @@ static const PaletteDef PALETTES[] = {
     {"bwred",   PAL_BWRED, 16},   {"neon_v",  PAL_NEON_V, 16},
     {"gilded",  PAL_GILDED, 16},  {"reef",    PAL_REEF, 16},
     {"abyss",   PAL_ABYSS, 16},   {"rainbow_d3", PAL_RAINBOW_D3, 32},
+    TRI_PALETTE_ENTRIES
     {NULL, NULL, 0}
 };
 

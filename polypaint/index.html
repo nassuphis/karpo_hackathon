@@ -87,6 +87,82 @@ button {
     transition: border-color 0.12s;
 }
 .pal-circle.active { border-color: #fff; }
+.pal-circle-tri {
+    width: auto; min-width: 40px; height: 22px; border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 0 10px; color: #fff; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase; user-select: none;
+    text-shadow: 0 1px 1px rgba(0,0,0,0.7);
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25);
+}
+.pal-circle-tri.disabled {
+    cursor: not-allowed; opacity: 0.45;
+}
+
+.tri-popup-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    display: none; align-items: center; justify-content: center; z-index: 1000;
+}
+.tri-popup {
+    width: min(760px, calc(100vw - 32px)); max-height: min(80vh, 720px);
+    background: #16213e; border: 1px solid #0f3460; border-radius: 10px;
+    box-shadow: 0 16px 40px rgba(0,0,0,0.4);
+    display: flex; flex-direction: column; overflow: hidden;
+}
+.tri-popup-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.tri-popup-title {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #e94560;
+}
+.tri-popup-close {
+    background: #0f3460; color: #ddd; border: none; border-radius: 6px;
+    padding: 6px 10px; margin: 0; cursor: pointer; font-size: 11px;
+}
+.tri-popup-filter-wrap {
+    padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.tri-popup-filter-wrap input {
+    width: 100%; font-size: 12px; padding: 7px 10px;
+}
+.tri-popup-table-wrap {
+    overflow: auto; padding: 0 14px 14px;
+}
+.tri-popup-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+}
+.tri-popup-table thead th {
+    position: sticky; top: 0; background: #16213e; z-index: 1;
+    text-align: left; color: #777; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 8px 8px; border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.tri-popup-row {
+    cursor: pointer;
+}
+.tri-popup-row td {
+    padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: middle;
+}
+.tri-popup-row.active,
+.tri-popup-row.highlight {
+    background: rgba(233,69,96,0.12);
+}
+.tri-popup-row:hover {
+    background: rgba(255,255,255,0.05);
+}
+.tri-popup-name {
+    display: flex; flex-direction: column; gap: 2px;
+}
+.tri-popup-aliases {
+    font-size: 10px; color: #777;
+}
+.tri-popup-strip {
+    width: 100%; min-width: 260px; height: 18px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.15);
+}
+.tri-popup-empty td {
+    color: #777; text-align: center; padding: 16px 8px;
+}
 
 .color-box {
     margin-top: 8px; padding: 8px; background: #1a1a2e; border-radius: 4px;
@@ -495,8 +571,29 @@ button {
     </div>
 </div>
 
+<div id="tri-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="tri-popup-title">
+        <div class="tri-popup-head">
+            <div id="tri-popup-title" class="tri-popup-title">Select TRI palette</div>
+            <button id="tri-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div class="tri-popup-filter-wrap">
+            <input id="tri-popup-filter" type="text" placeholder="Filter by name or alias">
+        </div>
+        <div class="tri-popup-table-wrap">
+            <table class="tri-popup-table">
+                <thead>
+                    <tr><th>Name</th><th>Palette</th></tr>
+                </thead>
+                <tbody id="tri-popup-body"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js"></script>
 <script src="coeff_func_catalog_js.js"></script>
+<script src="tri_palette_catalog_js.js"></script>
 <script>
 /* ---- Logging ---- */
 function log(msg, cls='', target='compute-log') {
@@ -921,9 +1018,13 @@ let renderSolveScorePalette = 'inferno';
 let renderSolveMetric = 'proximity';
 let paletteTabPalette = 'inferno';
 let paletteTabMetric = 'proximity';
+let renderRootProximityTriName = 'redgold';
+let renderSolveScoreTriName = 'redgold';
+let paletteTabTriName = 'redgold';
 let _renderActiveFamily = 'color';
 let _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [] };
 let _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
+let _triPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 
 const PALETTE_DEFS = [
     { name: 'inferno',  stops: ['#000004','#420a68','#932667','#dd513a','#fca50a','#fcffa4'] },
@@ -941,6 +1042,128 @@ const PALETTE_DEFS = [
     { name: 'abyss',    stops: ['#beff32','#6e9e1c','#1e2616','#0a0f14','#371c64','#d26eff'] },
     { name: 'rainbow_d3', stops: ['#6e40aa','#bd3caf','#ff5473','#ff853d','#d7c33b','#80f558','#24e794','#1ccbbb','#3a9ee0','#5b5bcf','#6e40aa'] },
 ];
+
+function _paletteContainerId(mode) {
+    return mode === 'proximity' ? 'palette-circles-root-proximity'
+        : mode === 'solve_score' ? 'palette-circles-solve-score'
+        : 'palette-circles-palette-tab';
+}
+
+function _triCatalog() {
+    return Array.isArray(window._triPaletteCatalog) ? window._triPaletteCatalog : [];
+}
+
+function _triCatalogAvailable() {
+    return _triCatalog().length > 0;
+}
+
+function _triPaletteEntryByName(name) {
+    return _triCatalog().find(entry => entry.name === name) || null;
+}
+
+function _defaultTriPaletteName() {
+    const cat = _triCatalog();
+    return cat.length ? cat[0].name : 'redgold';
+}
+
+function _triPaletteForMode(mode) {
+    if (mode === 'proximity') return renderRootProximityTriName;
+    if (mode === 'solve_score') return renderSolveScoreTriName;
+    return paletteTabTriName;
+}
+
+function _setRememberedTriPalette(mode, triName) {
+    if (mode === 'proximity') renderRootProximityTriName = triName;
+    else if (mode === 'solve_score') renderSolveScoreTriName = triName;
+    else paletteTabTriName = triName;
+}
+
+function _currentPaletteForMode(mode) {
+    if (mode === 'proximity') return renderRootProximityPalette;
+    if (mode === 'solve_score') return renderSolveScorePalette;
+    return paletteTabPalette;
+}
+
+function _syncTriDefaults() {
+    const fallback = _defaultTriPaletteName();
+    ['proximity', 'solve_score', 'palette_tab'].forEach(mode => {
+        const name = _triPaletteForMode(mode);
+        if (!_triPaletteEntryByName(name)) _setRememberedTriPalette(mode, fallback);
+    });
+}
+
+function _triSwatchTitle(mode) {
+    if (!_triCatalogAvailable()) return 'TRI catalog unavailable';
+    const entry = _triPaletteEntryByName(_triPaletteForMode(mode));
+    if (!entry) return 'TRI unavailable';
+    let title = 'TRI: ' + entry.name;
+    if (entry.aliases && entry.aliases.length) title += ' (aliases: ' + entry.aliases.join(', ') + ')';
+    return title;
+}
+
+function _visibleTriPaletteCatalog() {
+    const filter = (_triPopupState.filter || '').trim().toLowerCase();
+    const cat = _triCatalog();
+    if (!filter) return cat;
+    return cat.filter(entry => (entry.search_text || '').includes(filter));
+}
+
+function _popupModeLabel(mode) {
+    return mode === 'proximity' ? 'Root proximity'
+        : mode === 'solve_score' ? 'Solve score'
+        : 'Palette tab';
+}
+
+function _renderPaletteRow(mode) {
+    const container = document.getElementById(_paletteContainerId(mode));
+    if (!container) return;
+    const currentPalette = _currentPaletteForMode(mode);
+    const children = [];
+    PALETTE_DEFS.forEach(p => {
+        const el = document.createElement('div');
+        el.className = 'pal-circle' + (p.name === currentPalette ? ' active' : '');
+        el.dataset.palette = p.name;
+        el.title = p.name;
+        el.style.background = `linear-gradient(to top, ${p.stops.map((s, i) => s + ' ' + Math.round(i/(p.stops.length-1)*100) + '%').join(', ')})`;
+        el.onclick = () => {
+            setPaletteForMode(mode, p.name);
+            if (mode === 'proximity' || mode === 'solve_score') setColorMode(mode);
+        };
+        children.push(el);
+    });
+
+    const tri = document.createElement('div');
+    const triEntry = _triPaletteEntryByName(_triPaletteForMode(mode));
+    const triActive = typeof currentPalette === 'string' && currentPalette.startsWith('tri_');
+    tri.className = 'pal-circle pal-circle-tri' + (triActive ? ' active' : '') + (_triCatalogAvailable() ? '' : ' disabled');
+    tri.textContent = 'TRI';
+    tri.title = _triSwatchTitle(mode);
+    tri.style.background = triEntry ? triEntry.gradient_css : '#555';
+    tri.onclick = (ev) => {
+        if (!_triCatalogAvailable()) return;
+        if (ev && ev.altKey) {
+            _setTriPaletteForMode(mode, _triPaletteForMode(mode), true);
+            return;
+        }
+        _openTriPalettePopup(mode);
+    };
+    tri.oncontextmenu = (ev) => {
+        if (ev && typeof ev.preventDefault === 'function') ev.preventDefault();
+        if (_triCatalogAvailable()) _setTriPaletteForMode(mode, _triPaletteForMode(mode), true);
+        return false;
+    };
+    children.push(tri);
+
+    container.replaceChildren();
+    children.forEach(child => container.appendChild(child));
+}
+
+function _renderAllPaletteRows() {
+    _syncTriDefaults();
+    _renderPaletteRow('proximity');
+    _renderPaletteRow('solve_score');
+    _renderPaletteRow('palette_tab');
+}
 
 function setColorMode(mode) {
     renderColorMode = mode;
@@ -972,14 +1195,11 @@ function setPaletteForMode(mode, name) {
     if (mode === 'proximity') renderRootProximityPalette = name;
     else if (mode === 'solve_score') renderSolveScorePalette = name;
     else if (mode === 'palette_tab') paletteTabPalette = name;
-    const containerId =
-        mode === 'proximity' ? 'palette-circles-root-proximity' :
-        mode === 'solve_score' ? 'palette-circles-solve-score' :
-        'palette-circles-palette-tab';
-    const container = document.getElementById(containerId);
-    if (container) {
-        container.querySelectorAll('.pal-circle').forEach(c => c.classList.toggle('active', c.dataset.palette === name));
+    if (typeof name === 'string' && name.startsWith('tri_')) {
+        const triName = name.slice(4);
+        if (_triPaletteEntryByName(triName)) _setRememberedTriPalette(mode, triName);
     }
+    _renderPaletteRow(mode);
 }
 
 function _activeRenderPalette() {
@@ -1005,25 +1225,167 @@ function setPaletteMetric(name) {
     }
 }
 
-function buildPaletteCircles(containerId, mode, getCurrentPalette) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-    PALETTE_DEFS.forEach(p => {
-        const el = document.createElement('div');
-        el.className = 'pal-circle' + (p.name === getCurrentPalette() ? ' active' : '');
-        el.dataset.palette = p.name;
-        el.title = p.name;
-        el.style.background = `linear-gradient(to top, ${p.stops.map((s, i) => s + ' ' + Math.round(i/(p.stops.length-1)*100) + '%').join(', ')})`;
-        el.onclick = () => {
-            setPaletteForMode(mode, p.name);
-            if (mode === 'proximity' || mode === 'solve_score') setColorMode(mode);
+function _setTriPaletteForMode(mode, triName, activate = true) {
+    if (!_triCatalogAvailable()) return;
+    const entry = _triPaletteEntryByName(triName) || _triCatalog()[0];
+    if (!entry) return;
+    _setRememberedTriPalette(mode, entry.name);
+    if (activate) setPaletteForMode(mode, entry.palette_id);
+    else _renderPaletteRow(mode);
+    if (activate && (mode === 'proximity' || mode === 'solve_score')) setColorMode(mode);
+}
+
+function _closeTriPalettePopup() {
+    _triPopupState.open = false;
+    const overlay = document.getElementById('tri-popup-overlay');
+    const filter = document.getElementById('tri-popup-filter');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+    if (filter) filter.value = '';
+}
+
+function _renderTriPalettePopup() {
+    const overlay = document.getElementById('tri-popup-overlay');
+    const titleEl = document.getElementById('tri-popup-title');
+    const bodyEl = document.getElementById('tri-popup-body');
+    const filterEl = document.getElementById('tri-popup-filter');
+    if (!overlay || !titleEl || !bodyEl || !filterEl) return;
+    if (!_triPopupState.open || !_triCatalogAvailable()) {
+        _closeTriPalettePopup();
+        return;
+    }
+
+    const visible = _visibleTriPaletteCatalog();
+    const highlightIdx = visible.length ? Math.max(0, Math.min(_triPopupState.highlightIdx || 0, visible.length - 1)) : 0;
+    _triPopupState.highlightIdx = highlightIdx;
+
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    titleEl.textContent = 'Select TRI palette for ' + _popupModeLabel(_triPopupState.mode);
+    filterEl.value = _triPopupState.filter || '';
+    bodyEl.replaceChildren();
+
+    if (!visible.length) {
+        const row = document.createElement('tr');
+        row.className = 'tri-popup-empty';
+        const cell = document.createElement('td');
+        cell.colSpan = 2;
+        cell.textContent = 'No tri palettes match this filter.';
+        row.appendChild(cell);
+        bodyEl.appendChild(row);
+        return;
+    }
+
+    visible.forEach((entry, idx) => {
+        const row = document.createElement('tr');
+        const activeName = _triPaletteForMode(_triPopupState.mode);
+        const cls = ['tri-popup-row'];
+        if (entry.name === activeName) cls.push('active');
+        if (idx === highlightIdx) cls.push('highlight');
+        row.className = cls.join(' ');
+        row.onclick = () => {
+            _setTriPaletteForMode(_triPopupState.mode, entry.name, true);
+            _closeTriPalettePopup();
         };
-        container.appendChild(el);
+
+        const nameCell = document.createElement('td');
+        const nameWrap = document.createElement('div');
+        nameWrap.className = 'tri-popup-name';
+        const nameMain = document.createElement('div');
+        nameMain.textContent = entry.name;
+        nameWrap.appendChild(nameMain);
+        if (entry.aliases && entry.aliases.length) {
+            const aliases = document.createElement('div');
+            aliases.className = 'tri-popup-aliases';
+            aliases.textContent = 'aliases: ' + entry.aliases.join(', ');
+            nameWrap.appendChild(aliases);
+        }
+        nameCell.appendChild(nameWrap);
+
+        const stripCell = document.createElement('td');
+        const strip = document.createElement('div');
+        strip.className = 'tri-popup-strip';
+        strip.style.background = entry.gradient_css;
+        strip.title = entry.name;
+        stripCell.appendChild(strip);
+
+        row.appendChild(nameCell);
+        row.appendChild(stripCell);
+        bodyEl.appendChild(row);
     });
+}
+
+function _openTriPalettePopup(mode) {
+    if (!_triCatalogAvailable()) return;
+    _syncTriDefaults();
+    const visible = _triCatalog();
+    const activeName = _triPaletteForMode(mode);
+    const activeIdx = Math.max(0, visible.findIndex(entry => entry.name === activeName));
+    _triPopupState = { open: true, mode, filter: '', highlightIdx: activeIdx >= 0 ? activeIdx : 0 };
+    _renderTriPalettePopup();
+    const filter = document.getElementById('tri-popup-filter');
+    if (filter && typeof filter.focus === 'function') filter.focus();
+}
+
+function _applyTriPopupFilter(text) {
+    _triPopupState.filter = String(text || '');
+    _triPopupState.highlightIdx = 0;
+    _renderTriPalettePopup();
+}
+
+function _initTriPalettePopup() {
+    const overlay = document.getElementById('tri-popup-overlay');
+    const closeBtn = document.getElementById('tri-popup-close');
+    const filterEl = document.getElementById('tri-popup-filter');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closeTriPalettePopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closeTriPalettePopup);
+    if (filterEl) filterEl.addEventListener('input', (ev) => _applyTriPopupFilter(ev.target.value));
+    document.addEventListener('keydown', (ev) => {
+        if (!_triPopupState.open) return;
+        const visible = _visibleTriPaletteCatalog();
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closeTriPalettePopup();
+            return;
+        }
+        if (!visible.length) return;
+        if (ev.key === 'ArrowDown') {
+            ev.preventDefault();
+            _triPopupState.highlightIdx = Math.min((_triPopupState.highlightIdx || 0) + 1, visible.length - 1);
+            _renderTriPalettePopup();
+            return;
+        }
+        if (ev.key === 'ArrowUp') {
+            ev.preventDefault();
+            _triPopupState.highlightIdx = Math.max((_triPopupState.highlightIdx || 0) - 1, 0);
+            _renderTriPalettePopup();
+            return;
+        }
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            const entry = visible[Math.max(0, Math.min(_triPopupState.highlightIdx || 0, visible.length - 1))];
+            if (entry) {
+                _setTriPaletteForMode(_triPopupState.mode, entry.name, true);
+                _closeTriPalettePopup();
+            }
+        }
+    });
+}
+
+function buildPaletteCircles(containerId, mode, getCurrentPalette) {
+    _syncTriDefaults();
+    _renderPaletteRow(mode);
 }
 buildPaletteCircles('palette-circles-root-proximity', 'proximity', () => renderRootProximityPalette);
 buildPaletteCircles('palette-circles-solve-score', 'solve_score', () => renderSolveScorePalette);
 buildPaletteCircles('palette-circles-palette-tab', 'palette_tab', () => paletteTabPalette);
+_initTriPalettePopup();
 _updateSolveScoreButtons();  // initial disabled state
 _clearPaletteCanvas('No palette selected');
 

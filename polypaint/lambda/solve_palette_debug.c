@@ -8,7 +8,7 @@
  * Usage:
  *   solve_palette_debug input.bin output.raw \
  *     --degree=D --lores_n=L --full_n=N --times=T \
- *     --metric=proximity --palette=inferno \
+ *     --metric=proximity --palette=<name> \
  *     --quantile_lo=Q --quantile_hi=1-Q \
  *     [--scores_out=file.bin] [--palette_bins_out=file.bin] \
  *     [--root_xforms=file.json]

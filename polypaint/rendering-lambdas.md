@@ -1,5 +1,7 @@
 # Code Review: Rendering Lambdas
 
+Status: historical review snapshot. Some findings still reference pre-refactor route usage and older render artifact behavior. Use [docs/lambdas.md](/Users/nicknassuphis/karpo_hackathon/polypaint/docs/lambdas.md) for the current handler/reference view.
+
 ## Findings
 
 1. High: `handler_dispatch` reports rejected async invokes as "fired", so the render pipeline can wait forever on jobs AWS already refused.

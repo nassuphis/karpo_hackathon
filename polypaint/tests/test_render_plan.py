@@ -105,15 +105,20 @@ class TestRenderPlan(unittest.TestCase):
         from handler_render_plan import handler
         result = handler(_make_event(
             color_mode="solve_score", solve_metric="crowding",
-            solve_score_quantile=0.01
+            solve_score_quantile=0.01, solve_score_omega=4
         ), None)
         plan = json.loads(result["body"])
 
         assert plan["solve_score"]["enabled"] is True
         assert plan["solve_score"]["metric"] == "crowding"
         assert plan["solve_score"]["quantile"] == 0.01
+        assert plan["solve_score"]["omega"] == 4.0
         assert "crowding" in plan["solve_score"]["clip_key"]
         assert "crowding" in plan["solve_score"]["bins_key"]
+        assert plan["outputs"]["metadata"]["view_mode"] == "square"
+        assert plan["outputs"]["metadata"]["square_extent"] == "2.0"
+        assert plan["outputs"]["metadata"]["rotation"] == "0"
+        assert plan["outputs"]["metadata"]["solve_score_omega"] == "4.0"
 
     @patch("handler_render_plan._storage_call")
     def test_tri_palette_id_accepted_and_preserved(self, mock_storage):
@@ -125,6 +130,17 @@ class TestRenderPlan(unittest.TestCase):
         result = handler(_make_event(color_mode="solve_score", palette="tri_redgold"), None)
         plan = json.loads(result["body"])
         assert plan["outputs"]["metadata"]["palette"] == "tri_redgold"
+
+    @patch("handler_render_plan._storage_call")
+    def test_long_palette_id_accepted_and_preserved(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(color_mode="solve_score", palette="long_marvel_spiderman_long"), None)
+        plan = json.loads(result["body"])
+        assert plan["outputs"]["metadata"]["palette"] == "long_marvel_spiderman_long"
 
     @patch("handler_render_plan._storage_call")
     def test_invalid_palette_rejected(self, mock_storage):

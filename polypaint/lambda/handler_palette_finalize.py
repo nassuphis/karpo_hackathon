@@ -63,6 +63,7 @@ def handler(event, context):
     metric = params["metric"]
     palette = params["palette"]
     q = params["solve_score_quantile"]
+    omega = float(params.get("solve_score_omega", 1.0))
     root_transforms = params.get("root_transforms", [])
     image_key = params["image_key"]
     preview_key = params["preview_key"]
@@ -134,6 +135,8 @@ def handler(event, context):
         bins_meta = json.loads(bins_obj["Body"].read())
         clip_obj = s3.get_object(Bucket=BUCKET, Key=solve_score_clip_key)
         clip_meta = json.loads(clip_obj["Body"].read())
+        if float(bins_meta.get("omega", 1.0)) != omega:
+            raise RuntimeError(f"Solve-score bins omega mismatch: expected {omega}, got {bins_meta.get('omega')}")
         assemble_ms = int((time.time() - t0) * 1000)
         report_status(job_id, task_id, "assembled", result_data={**progress, "assemble_ms": assemble_ms})
 
@@ -171,6 +174,7 @@ def handler(event, context):
             "metric": metric,
             "palette": palette,
             "solve_score_quantile": str(q),
+            "solve_score_omega": str(omega),
             "full_n": str(full_n),
             "times": str(times),
             "using_pass": "0",
@@ -191,10 +195,11 @@ def handler(event, context):
             "job_id": job_id,
             "palette_id": palette_id,
             "created_at": created_at,
-            "display_name": f"{metric} q={(float(q) * 100):.1f}% {palette} {created_at}",
+            "display_name": f"{metric} q={(float(q) * 100):.1f}% w={omega:g} {palette} {created_at}",
             "metric": metric,
             "palette": palette,
             "solve_score_quantile": float(q),
+            "solve_score_omega": omega,
             "root_transforms": root_transforms or [],
             "degree": degree,
             "N": full_n,

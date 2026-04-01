@@ -10,7 +10,12 @@ try:
 except ImportError:  # pragma: no cover - generator should create this before packaging
     TRI_PALETTE_NAMES = set()
 
-VALID_PALETTE_NAMES = BUILTIN_PALETTE_NAMES | set(TRI_PALETTE_NAMES)
+try:
+    from long_palette_names_generated import LONG_PALETTE_NAMES  # type: ignore
+except ImportError:  # pragma: no cover - generator should create this before packaging
+    LONG_PALETTE_NAMES = set()
+
+VALID_PALETTE_NAMES = BUILTIN_PALETTE_NAMES | set(TRI_PALETTE_NAMES) | set(LONG_PALETTE_NAMES)
 
 
 def is_valid_palette_name(name):

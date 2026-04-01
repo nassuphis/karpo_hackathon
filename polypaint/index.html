@@ -87,7 +87,8 @@ button {
     transition: border-color 0.12s;
 }
 .pal-circle.active { border-color: #fff; }
-.pal-circle-tri {
+.pal-circle-tri,
+.pal-circle-builtin {
     width: auto; min-width: 40px; height: 22px; border-radius: 999px;
     display: inline-flex; align-items: center; justify-content: center;
     padding: 0 10px; color: #fff; font-size: 10px; font-weight: 700;
@@ -97,6 +98,12 @@ button {
 }
 .pal-circle-tri.disabled {
     cursor: not-allowed; opacity: 0.45;
+}
+.pal-circle-builtin {
+    min-width: 42px;
+}
+.pal-circle-long {
+    min-width: 50px;
 }
 
 .tri-popup-overlay {
@@ -340,13 +347,15 @@ button {
                                    style="width:100%" oninput="document.getElementById('res-s-val').textContent=this.value">
                         </div>
                     </div>
-                    <div style="display:flex; gap:6px; margin-bottom:8px">
+                    <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; margin-bottom:8px">
+                        <button class="btn-secondary" id="btn-populate-result" onclick="populateSelectedResult()" disabled
+                                style="margin:0; padding:4px 8px; font-size:11px; width:100%">Populate</button>
                         <button class="btn-primary" id="btn-preview" onclick="previewResult()" disabled
-                                style="margin:0; padding:4px 12px; font-size:12px">Preview</button>
+                                style="margin:0; padding:4px 8px; font-size:11px; width:100%">Preview</button>
                         <button class="btn-primary" id="btn-render-result" onclick="renderResult()" disabled
-                                style="margin:0; padding:4px 12px; font-size:12px; background:#2a6">Render</button>
+                                style="margin:0; padding:4px 8px; font-size:11px; width:100%; background:#2a6">Render</button>
                         <button class="btn-secondary" id="btn-delete" onclick="deleteResult()" disabled
-                                style="margin:0; padding:4px 12px; font-size:12px; background:#6b2030">Delete</button>
+                                style="margin:0; padding:4px 8px; font-size:11px; width:100%; background:#6b2030">Delete</button>
                     </div>
                     <div id="results-preview" style="flex:1; display:flex; align-items:center; justify-content:center;
                          border:1px solid #0f3460; border-radius:4px; background:#1a1a2e; overflow:hidden">
@@ -455,6 +464,10 @@ button {
                         <option value="real_axis_proximity">Real-axis proximity</option>
                     </select>
                     <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:6px"></div>
+                    <label style="color:#888; font-size:10px; margin-left:8px; min-width:42px">Omega:</label>
+                    <span id="render-solve-score-omega-val" style="font-size:10px; display:inline-block; width:1.5em; text-align:right">1</span>
+                    <input type="range" id="render-solve-score-omega" min="1" max="10" step="1" value="1" style="width:92px; margin-left:4px"
+                        oninput="document.getElementById('render-solve-score-omega-val').textContent=parseInt(this.value, 10)">
                 </div>
                 <div class="color-row" style="padding-left:18px">
                     <label style="color:#888; font-size:10px; min-width:70px">Score clip q:</label>
@@ -523,6 +536,10 @@ button {
                         <option value="real_axis_proximity">Real-axis proximity</option>
                     </select>
                     <div id="palette-circles-palette-tab" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:8px"></div>
+                    <label style="color:#888; font-size:10px; margin-left:8px; min-width:42px">Omega:</label>
+                    <span id="palette-solve-score-omega-val" style="font-size:10px; display:inline-block; width:1.5em; text-align:right">1</span>
+                    <input type="range" id="palette-solve-score-omega" min="1" max="10" step="1" value="1" style="width:92px; margin-left:4px"
+                        oninput="document.getElementById('palette-solve-score-omega-val').textContent=parseInt(this.value, 10)">
                 </div>
                 <div class="color-row" style="padding-left:0">
                     <label style="color:#888; font-size:10px; min-width:70px">Score clip q:</label>
@@ -563,9 +580,12 @@ button {
             <div id="deepzoom-viewer" style="width:100%; height:500px; background:#000; border:1px solid #333; display:none"></div>
             <div style="margin-top:8px; margin-bottom:4px; display:flex; align-items:center; gap:8px">
                 <button class="btn-secondary" onclick="loadDeepZoomInventory()" style="padding:4px 12px; font-size:12px">Refresh</button>
-                <button class="btn-secondary" onclick="_dzDeleteSelected()" style="padding:4px 12px; font-size:12px">Delete</button>
+                <button class="btn-secondary" id="btn-dz-goto-result" onclick="_dzGotoSelectedResult()" style="padding:4px 12px; font-size:12px" disabled>Goto Result</button>
+                <button class="btn-secondary" id="btn-dz-populate" onclick="_dzPopulateSelectedResult()" style="padding:4px 12px; font-size:12px" disabled>Populate</button>
+                <button class="btn-secondary" id="btn-dz-delete" onclick="_dzDeleteSelected()" style="padding:4px 12px; font-size:12px" disabled>Delete</button>
                 <span style="font-size:11px; color:#666">Click row to view. Arrow keys to navigate.</span>
             </div>
+            <div id="deepzoom-status" class="status" style="margin-bottom:6px"></div>
             <div id="deepzoom-inventory" style="font-size:12px; color:#ccc; max-height:200px; overflow-y:auto; border:1px solid #333; border-radius:4px"></div>
         </div>
     </div>
@@ -590,10 +610,49 @@ button {
         </div>
     </div>
 </div>
+<div id="builtin-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="builtin-popup-title">
+        <div class="tri-popup-head">
+            <div id="builtin-popup-title" class="tri-popup-title">Select palette</div>
+            <button id="builtin-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div class="tri-popup-filter-wrap">
+            <input id="builtin-popup-filter" type="text" placeholder="Filter by name">
+        </div>
+        <div class="tri-popup-table-wrap">
+            <table class="tri-popup-table">
+                <thead>
+                    <tr><th style="width:34%">Name</th><th>Preview</th></tr>
+                </thead>
+                <tbody id="builtin-popup-body"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<div id="long-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="long-popup-title">
+        <div class="tri-popup-head">
+            <div id="long-popup-title" class="tri-popup-title">Select LONG palette</div>
+            <button id="long-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div class="tri-popup-filter-wrap">
+            <input id="long-popup-filter" type="text" placeholder="Filter by name or alias">
+        </div>
+        <div class="tri-popup-table-wrap">
+            <table class="tri-popup-table">
+                <thead>
+                    <tr><th>Name</th><th>Palette</th></tr>
+                </thead>
+                <tbody id="long-popup-body"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js"></script>
 <script src="coeff_func_catalog_js.js"></script>
 <script src="tri_palette_catalog_js.js"></script>
+<script src="long_palette_catalog_js.js"></script>
 <script>
 /* ---- Logging ---- */
 function log(msg, cls='', target='compute-log') {
@@ -639,6 +698,25 @@ async function loadResults() {
     }
 }
 
+async function _getResultDetail(jobId) {
+    const r = _resultsCache.find(x => x.job_id === jobId) || null;
+    let detail = r && r._detail;
+    if (!detail) {
+        detail = await lambdaPost('storage', { job_id: jobId }, '/detail');
+        if (r) r._detail = detail;
+    }
+    return detail || {};
+}
+
+async function _ensureResultsSelection(jobId) {
+    if (!jobId) throw new Error('No result selected');
+    const hasJob = _resultsCache.some(r => r.job_id === jobId);
+    if (!hasJob) await loadResults();
+    const found = _resultsCache.some(r => r.job_id === jobId);
+    if (!found) throw new Error(`Result ${jobId} not found`);
+    selectResult(jobId);
+}
+
 function renderResultsTable() {
     const tbody = document.getElementById('results-tbody');
     tbody.innerHTML = '';
@@ -679,6 +757,7 @@ function selectResult(jobId) {
     document.getElementById('results-scroll').focus();
 
     // Enable buttons
+    document.getElementById('btn-populate-result').disabled = false;
     document.getElementById('btn-preview').disabled = false;
     document.getElementById('btn-render-result').disabled = false;
     document.getElementById('btn-delete').disabled = false;
@@ -893,6 +972,7 @@ async function deleteResult() {
             '<span style="color:#444; font-size:11px">No preview</span>';
         document.getElementById('results-info').textContent = 'Deleted';
         document.getElementById('results-count').textContent = `${_resultsCache.length} results`;
+        document.getElementById('btn-populate-result').disabled = true;
         document.getElementById('btn-preview').disabled = true;
         document.getElementById('btn-render-result').disabled = true;
         document.getElementById('btn-delete').disabled = true;
@@ -908,6 +988,81 @@ function renderResult() {
     if (!_selectedJobId) return;
     document.getElementById('render-results-dir').value = _selectedJobId;
     switchTab('render');
+}
+
+function _setChainFromSaved(which, values) {
+    const normalized = Array.isArray(values) ? values : [];
+    if (which === 'ct') {
+        _ctChain = normalized.map(item => Array.isArray(item) ? String(item[0]) : String(item));
+    } else {
+        const chain = normalized.map(item => {
+            if (!Array.isArray(item) || !item.length) return null;
+            return { name: String(item[0]), params: item.slice(1).map(v => String(v)) };
+        }).filter(Boolean);
+        if (which === 'pt') _ptChain = chain;
+        else if (which === 'rt') _rtChain = chain;
+        else if (which === 'palette-rt') _paletteRtChain = chain;
+    }
+    _renderChips(which);
+}
+
+function _populateComputeFromDetail(jobId, detail) {
+    const calc = detail.calc || {};
+    const pipeline = detail.pipeline || calc.pipeline || {};
+
+    const nVal = calc.N || calc.n1;
+    if (nVal != null) document.getElementById('render-n').value = String(nVal);
+    const chunksVal = calc.n_chunks || calc.n_stripes;
+    if (chunksVal != null) document.getElementById('render-stripes').value = String(chunksVal);
+    document.getElementById('render-times').value = String(detail.times || calc.times || 1);
+
+    const functionName = pipeline.function || calc.function || '';
+    if (functionName) {
+        document.getElementById('render-function').value = functionName;
+        updateCfpvRow();
+    }
+
+    const ptDisplay = pipeline.param_transforms_display || detail.param_transforms_display || pipeline.param_transforms || detail.param_transforms || [];
+    _setChainFromSaved('pt', ptDisplay);
+    _setChainFromSaved('ct', pipeline.coeff_transforms || detail.coeff_transforms || []);
+
+    const savedCfpv = Array.isArray(pipeline.cfpv) ? pipeline.cfpv : [];
+    if (savedCfpv.length) {
+        for (let i = 0; i < savedCfpv.length; i++) {
+            const inp = document.getElementById('cfpv-p' + i);
+            if (inp) inp.value = String(savedCfpv[i]);
+        }
+        parseCfpv();
+    } else {
+        _cfpv = [];
+    }
+
+    document.getElementById('results-dir').value = jobId;
+    const solver = calc.solver || detail.solver || '';
+    const solverLabel = solver === 'companion_matrix' ? 'Calculate-CM' : 'Calculate';
+    const statusEl = document.getElementById('compute-status');
+    statusEl.textContent = `Populated from ${jobId}. Re-run with ${solverLabel}.`;
+    statusEl.className = 'status ok';
+    log(`Populate: restored compute settings from ${jobId}${solver ? ' (' + solver + ')' : ''}`, 'ok', 'compute-log');
+    switchTab('compute');
+}
+
+async function populateSelectedResult() {
+    if (!_selectedJobId) return;
+    const jobId = _selectedJobId;
+    const infoEl = document.getElementById('results-info');
+    const btn = document.getElementById('btn-populate-result');
+    const orig = btn ? btn.textContent : 'Populate';
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+    try {
+        infoEl.textContent = 'Loading details...';
+        const detail = await _getResultDetail(jobId);
+        _populateComputeFromDetail(jobId, detail || {});
+    } catch (e) {
+        infoEl.textContent = 'Populate error: ' + e.message;
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
 }
 
 /* ---- Lambda config ---- */
@@ -1018,13 +1173,26 @@ let renderSolveScorePalette = 'inferno';
 let renderSolveMetric = 'proximity';
 let paletteTabPalette = 'inferno';
 let paletteTabMetric = 'proximity';
+let renderRootProximityBuiltinPalette = 'inferno';
+let renderSolveScoreBuiltinPalette = 'inferno';
+let paletteTabBuiltinPalette = 'inferno';
 let renderRootProximityTriName = 'redgold';
 let renderSolveScoreTriName = 'redgold';
 let paletteTabTriName = 'redgold';
+let renderRootProximityLongName = '';
+let renderSolveScoreLongName = '';
+let paletteTabLongName = '';
 let _renderActiveFamily = 'color';
 let _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [] };
 let _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
+let _renderCatalogScrollTop = { color: 0, bilevel: 0, coeffs: 0, palette: 0 };
 let _triPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
+let _builtinPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
+let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
+
+function _stopsToGradient(stops) {
+    return `linear-gradient(to top, ${stops.map((s, i) => s + ' ' + Math.round(i/(stops.length-1)*100) + '%').join(', ')})`;
+}
 
 const PALETTE_DEFS = [
     { name: 'inferno',  stops: ['#000004','#420a68','#932667','#dd513a','#fca50a','#fcffa4'] },
@@ -1043,6 +1211,13 @@ const PALETTE_DEFS = [
     { name: 'rainbow_d3', stops: ['#6e40aa','#bd3caf','#ff5473','#ff853d','#d7c33b','#80f558','#24e794','#1ccbbb','#3a9ee0','#5b5bcf','#6e40aa'] },
 ];
 
+const BUILTIN_PALETTE_ENTRIES = PALETTE_DEFS.map(def => ({
+    ...def,
+    palette_id: def.name,
+    gradient_css: _stopsToGradient(def.stops),
+    search_text: def.name.toLowerCase(),
+}));
+
 function _paletteContainerId(mode) {
     return mode === 'proximity' ? 'palette-circles-root-proximity'
         : mode === 'solve_score' ? 'palette-circles-solve-score'
@@ -1053,17 +1228,66 @@ function _triCatalog() {
     return Array.isArray(window._triPaletteCatalog) ? window._triPaletteCatalog : [];
 }
 
+function _longCatalog() {
+    return Array.isArray(window._longPaletteCatalog) ? window._longPaletteCatalog : [];
+}
+
+function _modeUsesBuiltinPopup(mode) {
+    return mode === 'proximity' || mode === 'solve_score';
+}
+
+function _builtinPaletteEntryByName(name) {
+    return BUILTIN_PALETTE_ENTRIES.find(entry => entry.name === name) || null;
+}
+
+function _defaultBuiltinPaletteName() {
+    return BUILTIN_PALETTE_ENTRIES.length ? BUILTIN_PALETTE_ENTRIES[0].name : 'inferno';
+}
+
+function _builtinPaletteForMode(mode) {
+    if (mode === 'proximity') return renderRootProximityBuiltinPalette;
+    if (mode === 'solve_score') return renderSolveScoreBuiltinPalette;
+    return paletteTabBuiltinPalette;
+}
+
+function _setRememberedBuiltinPalette(mode, paletteName) {
+    if (mode === 'proximity') renderRootProximityBuiltinPalette = paletteName;
+    else if (mode === 'solve_score') renderSolveScoreBuiltinPalette = paletteName;
+    else paletteTabBuiltinPalette = paletteName;
+}
+
+function _syncBuiltinDefaults() {
+    const fallback = _defaultBuiltinPaletteName();
+    ['proximity', 'solve_score', 'palette_tab'].forEach(mode => {
+        const entry = _builtinPaletteEntryByName(_builtinPaletteForMode(mode));
+        if (!entry) _setRememberedBuiltinPalette(mode, fallback);
+    });
+}
+
 function _triCatalogAvailable() {
     return _triCatalog().length > 0;
+}
+
+function _longCatalogAvailable() {
+    return _longCatalog().length > 0;
 }
 
 function _triPaletteEntryByName(name) {
     return _triCatalog().find(entry => entry.name === name) || null;
 }
 
+function _longPaletteEntryByName(name) {
+    return _longCatalog().find(entry => entry.name === name) || null;
+}
+
 function _defaultTriPaletteName() {
     const cat = _triCatalog();
     return cat.length ? cat[0].name : 'redgold';
+}
+
+function _defaultLongPaletteName() {
+    const cat = _longCatalog();
+    return cat.length ? cat[0].name : '';
 }
 
 function _triPaletteForMode(mode) {
@@ -1072,10 +1296,22 @@ function _triPaletteForMode(mode) {
     return paletteTabTriName;
 }
 
+function _longPaletteForMode(mode) {
+    if (mode === 'proximity') return renderRootProximityLongName;
+    if (mode === 'solve_score') return renderSolveScoreLongName;
+    return paletteTabLongName;
+}
+
 function _setRememberedTriPalette(mode, triName) {
     if (mode === 'proximity') renderRootProximityTriName = triName;
     else if (mode === 'solve_score') renderSolveScoreTriName = triName;
     else paletteTabTriName = triName;
+}
+
+function _setRememberedLongPalette(mode, longName) {
+    if (mode === 'proximity') renderRootProximityLongName = longName;
+    else if (mode === 'solve_score') renderSolveScoreLongName = longName;
+    else paletteTabLongName = longName;
 }
 
 function _currentPaletteForMode(mode) {
@@ -1092,6 +1328,14 @@ function _syncTriDefaults() {
     });
 }
 
+function _syncLongDefaults() {
+    const fallback = _defaultLongPaletteName();
+    ['proximity', 'solve_score', 'palette_tab'].forEach(mode => {
+        const name = _longPaletteForMode(mode);
+        if (!_longPaletteEntryByName(name)) _setRememberedLongPalette(mode, fallback);
+    });
+}
+
 function _triSwatchTitle(mode) {
     if (!_triCatalogAvailable()) return 'TRI catalog unavailable';
     const entry = _triPaletteEntryByName(_triPaletteForMode(mode));
@@ -1101,11 +1345,38 @@ function _triSwatchTitle(mode) {
     return title;
 }
 
+function _longSwatchTitle(mode) {
+    if (!_longCatalogAvailable()) return 'LONG catalog unavailable';
+    const entry = _longPaletteEntryByName(_longPaletteForMode(mode));
+    if (!entry) return 'LONG unavailable';
+    let title = 'LONG: ' + entry.name;
+    if (entry.aliases && entry.aliases.length) title += ' (aliases: ' + entry.aliases.join(', ') + ')';
+    return title;
+}
+
 function _visibleTriPaletteCatalog() {
     const filter = (_triPopupState.filter || '').trim().toLowerCase();
     const cat = _triCatalog();
     if (!filter) return cat;
     return cat.filter(entry => (entry.search_text || '').includes(filter));
+}
+
+function _visibleLongPaletteCatalog() {
+    const filter = (_longPopupState.filter || '').trim().toLowerCase();
+    const cat = _longCatalog();
+    if (!filter) return cat;
+    return cat.filter(entry => (entry.search_text || '').includes(filter));
+}
+
+function _builtinSwatchTitle(mode) {
+    const entry = _builtinPaletteEntryByName(_builtinPaletteForMode(mode));
+    return entry ? ('Palette: ' + entry.name) : 'Palette unavailable';
+}
+
+function _visibleBuiltinPaletteCatalog() {
+    const filter = (_builtinPopupState.filter || '').trim().toLowerCase();
+    if (!filter) return BUILTIN_PALETTE_ENTRIES;
+    return BUILTIN_PALETTE_ENTRIES.filter(entry => entry.search_text.includes(filter));
 }
 
 function _popupModeLabel(mode) {
@@ -1119,18 +1390,31 @@ function _renderPaletteRow(mode) {
     if (!container) return;
     const currentPalette = _currentPaletteForMode(mode);
     const children = [];
-    PALETTE_DEFS.forEach(p => {
-        const el = document.createElement('div');
-        el.className = 'pal-circle' + (p.name === currentPalette ? ' active' : '');
-        el.dataset.palette = p.name;
-        el.title = p.name;
-        el.style.background = `linear-gradient(to top, ${p.stops.map((s, i) => s + ' ' + Math.round(i/(p.stops.length-1)*100) + '%').join(', ')})`;
-        el.onclick = () => {
-            setPaletteForMode(mode, p.name);
-            if (mode === 'proximity' || mode === 'solve_score') setColorMode(mode);
-        };
-        children.push(el);
-    });
+    if (_modeUsesBuiltinPopup(mode)) {
+        const builtinEntry = _builtinPaletteEntryByName(_builtinPaletteForMode(mode)) || BUILTIN_PALETTE_ENTRIES[0];
+        const builtinActive = typeof currentPalette === 'string' && !currentPalette.startsWith('tri_');
+        const builtin = document.createElement('div');
+        builtin.className = 'pal-circle pal-circle-builtin' + (builtinActive ? ' active' : '');
+        builtin.dataset.palettePopup = 'builtin';
+        builtin.textContent = 'PAL';
+        builtin.title = _builtinSwatchTitle(mode);
+        builtin.style.background = builtinEntry ? builtinEntry.gradient_css : '#555';
+        builtin.onclick = () => _openBuiltinPalettePopup(mode);
+        children.push(builtin);
+    } else {
+        PALETTE_DEFS.forEach(p => {
+            const el = document.createElement('div');
+            el.className = 'pal-circle' + (p.name === currentPalette ? ' active' : '');
+            el.dataset.palette = p.name;
+            el.title = p.name;
+            el.style.background = _stopsToGradient(p.stops);
+            el.onclick = () => {
+                setPaletteForMode(mode, p.name);
+                if (mode === 'proximity' || mode === 'solve_score') setColorMode(mode);
+            };
+            children.push(el);
+        });
+    }
 
     const tri = document.createElement('div');
     const triEntry = _triPaletteEntryByName(_triPaletteForMode(mode));
@@ -1154,12 +1438,28 @@ function _renderPaletteRow(mode) {
     };
     children.push(tri);
 
+    const longEntry = _longPaletteEntryByName(_longPaletteForMode(mode));
+    const longActive = typeof currentPalette === 'string' && currentPalette.startsWith('long_');
+    const longSwatch = document.createElement('div');
+    longSwatch.className = 'pal-circle pal-circle-builtin pal-circle-long' + (longActive ? ' active' : '') + (_longCatalogAvailable() ? '' : ' disabled');
+    longSwatch.dataset.palettePopup = 'long';
+    longSwatch.textContent = 'LONG';
+    longSwatch.title = _longSwatchTitle(mode);
+    longSwatch.style.background = longEntry ? longEntry.gradient_css : '#555';
+    longSwatch.onclick = () => {
+        if (!_longCatalogAvailable()) return;
+        _openLongPalettePopup(mode);
+    };
+    children.push(longSwatch);
+
     container.replaceChildren();
     children.forEach(child => container.appendChild(child));
 }
 
 function _renderAllPaletteRows() {
+    _syncBuiltinDefaults();
     _syncTriDefaults();
+    _syncLongDefaults();
     _renderPaletteRow('proximity');
     _renderPaletteRow('solve_score');
     _renderPaletteRow('palette_tab');
@@ -1195,9 +1495,14 @@ function setPaletteForMode(mode, name) {
     if (mode === 'proximity') renderRootProximityPalette = name;
     else if (mode === 'solve_score') renderSolveScorePalette = name;
     else if (mode === 'palette_tab') paletteTabPalette = name;
-    if (typeof name === 'string' && name.startsWith('tri_')) {
+    const builtinEntry = _builtinPaletteEntryByName(name);
+    if (builtinEntry) _setRememberedBuiltinPalette(mode, builtinEntry.name);
+    else if (typeof name === 'string' && name.startsWith('tri_')) {
         const triName = name.slice(4);
         if (_triPaletteEntryByName(triName)) _setRememberedTriPalette(mode, triName);
+    } else if (typeof name === 'string' && name.startsWith('long_')) {
+        const longName = name.slice(5);
+        if (_longPaletteEntryByName(longName)) _setRememberedLongPalette(mode, longName);
     }
     _renderPaletteRow(mode);
 }
@@ -1233,6 +1538,47 @@ function _setTriPaletteForMode(mode, triName, activate = true) {
     if (activate) setPaletteForMode(mode, entry.palette_id);
     else _renderPaletteRow(mode);
     if (activate && (mode === 'proximity' || mode === 'solve_score')) setColorMode(mode);
+}
+
+function _setBuiltinPaletteForMode(mode, paletteName, activate = true) {
+    const entry = _builtinPaletteEntryByName(paletteName) || BUILTIN_PALETTE_ENTRIES[0];
+    if (!entry) return;
+    _setRememberedBuiltinPalette(mode, entry.name);
+    if (activate) setPaletteForMode(mode, entry.palette_id);
+    else _renderPaletteRow(mode);
+    if (activate && (mode === 'proximity' || mode === 'solve_score')) setColorMode(mode);
+}
+
+function _setLongPaletteForMode(mode, longName, activate = true) {
+    if (!_longCatalogAvailable()) return;
+    const entry = _longPaletteEntryByName(longName) || _longCatalog()[0];
+    if (!entry) return;
+    _setRememberedLongPalette(mode, entry.name);
+    if (activate) setPaletteForMode(mode, entry.palette_id);
+    else _renderPaletteRow(mode);
+    if (activate && (mode === 'proximity' || mode === 'solve_score')) setColorMode(mode);
+}
+
+function _closeBuiltinPalettePopup() {
+    _builtinPopupState.open = false;
+    const overlay = document.getElementById('builtin-popup-overlay');
+    const filter = document.getElementById('builtin-popup-filter');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+    if (filter) filter.value = '';
+}
+
+function _closeLongPalettePopup() {
+    _longPopupState.open = false;
+    const overlay = document.getElementById('long-popup-overlay');
+    const filter = document.getElementById('long-popup-filter');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+    if (filter) filter.value = '';
 }
 
 function _closeTriPalettePopup() {
@@ -1319,6 +1665,8 @@ function _renderTriPalettePopup() {
 
 function _openTriPalettePopup(mode) {
     if (!_triCatalogAvailable()) return;
+    _closeBuiltinPalettePopup();
+    _closeLongPalettePopup();
     _syncTriDefaults();
     const visible = _triCatalog();
     const activeName = _triPaletteForMode(mode);
@@ -1333,6 +1681,181 @@ function _applyTriPopupFilter(text) {
     _triPopupState.filter = String(text || '');
     _triPopupState.highlightIdx = 0;
     _renderTriPalettePopup();
+}
+
+function _renderLongPalettePopup() {
+    const overlay = document.getElementById('long-popup-overlay');
+    const titleEl = document.getElementById('long-popup-title');
+    const bodyEl = document.getElementById('long-popup-body');
+    const filterEl = document.getElementById('long-popup-filter');
+    if (!overlay || !titleEl || !bodyEl || !filterEl) return;
+    if (!_longPopupState.open || !_longCatalogAvailable()) {
+        _closeLongPalettePopup();
+        return;
+    }
+
+    const visible = _visibleLongPaletteCatalog();
+    const highlightIdx = visible.length ? Math.max(0, Math.min(_longPopupState.highlightIdx || 0, visible.length - 1)) : 0;
+    _longPopupState.highlightIdx = highlightIdx;
+
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    titleEl.textContent = 'Select LONG palette for ' + _popupModeLabel(_longPopupState.mode);
+    filterEl.value = _longPopupState.filter || '';
+    bodyEl.replaceChildren();
+
+    if (!visible.length) {
+        const row = document.createElement('tr');
+        row.className = 'tri-popup-empty';
+        const cell = document.createElement('td');
+        cell.colSpan = 2;
+        cell.textContent = 'No long palettes match this filter.';
+        row.appendChild(cell);
+        bodyEl.appendChild(row);
+        return;
+    }
+
+    visible.forEach((entry, idx) => {
+        const row = document.createElement('tr');
+        const activeName = _longPaletteForMode(_longPopupState.mode);
+        const cls = ['tri-popup-row'];
+        if (entry.name === activeName) cls.push('active');
+        if (idx === highlightIdx) cls.push('highlight');
+        row.className = cls.join(' ');
+        row.onclick = () => {
+            _setLongPaletteForMode(_longPopupState.mode, entry.name, true);
+            _closeLongPalettePopup();
+        };
+
+        const nameCell = document.createElement('td');
+        const nameWrap = document.createElement('div');
+        nameWrap.className = 'tri-popup-name';
+        const nameMain = document.createElement('div');
+        nameMain.textContent = entry.name;
+        nameWrap.appendChild(nameMain);
+        if (entry.aliases && entry.aliases.length) {
+            const aliases = document.createElement('div');
+            aliases.className = 'tri-popup-aliases';
+            aliases.textContent = 'aliases: ' + entry.aliases.join(', ');
+            nameWrap.appendChild(aliases);
+        }
+        nameCell.appendChild(nameWrap);
+
+        const stripCell = document.createElement('td');
+        const strip = document.createElement('div');
+        strip.className = 'tri-popup-strip';
+        strip.style.background = entry.gradient_css;
+        strip.title = entry.name;
+        stripCell.appendChild(strip);
+
+        row.appendChild(nameCell);
+        row.appendChild(stripCell);
+        bodyEl.appendChild(row);
+    });
+}
+
+function _openLongPalettePopup(mode) {
+    if (!_longCatalogAvailable()) return;
+    _closeBuiltinPalettePopup();
+    _closeTriPalettePopup();
+    _syncLongDefaults();
+    const visible = _longCatalog();
+    const activeName = _longPaletteForMode(mode);
+    const activeIdx = Math.max(0, visible.findIndex(entry => entry.name === activeName));
+    _longPopupState = { open: true, mode, filter: '', highlightIdx: activeIdx >= 0 ? activeIdx : 0 };
+    _renderLongPalettePopup();
+    const filter = document.getElementById('long-popup-filter');
+    if (filter && typeof filter.focus === 'function') filter.focus();
+}
+
+function _applyLongPopupFilter(text) {
+    _longPopupState.filter = String(text || '');
+    _longPopupState.highlightIdx = 0;
+    _renderLongPalettePopup();
+}
+
+function _renderBuiltinPalettePopup() {
+    const overlay = document.getElementById('builtin-popup-overlay');
+    const titleEl = document.getElementById('builtin-popup-title');
+    const bodyEl = document.getElementById('builtin-popup-body');
+    const filterEl = document.getElementById('builtin-popup-filter');
+    if (!overlay || !titleEl || !bodyEl || !filterEl) return;
+    if (!_builtinPopupState.open) {
+        _closeBuiltinPalettePopup();
+        return;
+    }
+
+    const visible = _visibleBuiltinPaletteCatalog();
+    const highlightIdx = visible.length ? Math.max(0, Math.min(_builtinPopupState.highlightIdx || 0, visible.length - 1)) : 0;
+    _builtinPopupState.highlightIdx = highlightIdx;
+
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    titleEl.textContent = 'Select palette for ' + _popupModeLabel(_builtinPopupState.mode);
+    filterEl.value = _builtinPopupState.filter || '';
+    bodyEl.replaceChildren();
+
+    if (!visible.length) {
+        const row = document.createElement('tr');
+        row.className = 'tri-popup-empty';
+        const cell = document.createElement('td');
+        cell.colSpan = 2;
+        cell.textContent = 'No built-in palettes match this filter.';
+        row.appendChild(cell);
+        bodyEl.appendChild(row);
+        return;
+    }
+
+    visible.forEach((entry, idx) => {
+        const row = document.createElement('tr');
+        const activeName = _builtinPaletteForMode(_builtinPopupState.mode);
+        const cls = ['tri-popup-row'];
+        if (entry.name === activeName) cls.push('active');
+        if (idx === highlightIdx) cls.push('highlight');
+        row.className = cls.join(' ');
+        row.onclick = () => {
+            _setBuiltinPaletteForMode(_builtinPopupState.mode, entry.name, true);
+            _closeBuiltinPalettePopup();
+        };
+
+        const nameCell = document.createElement('td');
+        const nameWrap = document.createElement('div');
+        nameWrap.className = 'tri-popup-name';
+        const nameMain = document.createElement('div');
+        nameMain.textContent = entry.name;
+        nameWrap.appendChild(nameMain);
+        nameCell.appendChild(nameWrap);
+
+        const stripCell = document.createElement('td');
+        const strip = document.createElement('div');
+        strip.className = 'tri-popup-strip';
+        strip.style.background = entry.gradient_css;
+        strip.title = entry.name;
+        stripCell.appendChild(strip);
+
+        row.appendChild(nameCell);
+        row.appendChild(stripCell);
+        bodyEl.appendChild(row);
+    });
+}
+
+function _openBuiltinPalettePopup(mode) {
+    _closeTriPalettePopup();
+    _closeLongPalettePopup();
+    _syncBuiltinDefaults();
+    const visible = BUILTIN_PALETTE_ENTRIES;
+    const activeName = _builtinPaletteForMode(mode);
+    const activeIdx = Math.max(0, visible.findIndex(entry => entry.name === activeName));
+    _builtinPopupState = { open: true, mode, filter: '', highlightIdx: activeIdx >= 0 ? activeIdx : 0 };
+    _renderBuiltinPalettePopup();
+    const filter = document.getElementById('builtin-popup-filter');
+    if (filter && typeof filter.focus === 'function') filter.focus();
+}
+
+function _applyBuiltinPopupFilter(text) {
+    _builtinPopupState.filter = String(text || '');
+    _builtinPopupState.highlightIdx = 0;
+    _renderBuiltinPalettePopup();
 }
 
 function _initTriPalettePopup() {
@@ -1378,6 +1901,92 @@ function _initTriPalettePopup() {
     });
 }
 
+function _initBuiltinPalettePopup() {
+    const overlay = document.getElementById('builtin-popup-overlay');
+    const closeBtn = document.getElementById('builtin-popup-close');
+    const filterEl = document.getElementById('builtin-popup-filter');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closeBuiltinPalettePopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closeBuiltinPalettePopup);
+    if (filterEl) filterEl.addEventListener('input', (ev) => _applyBuiltinPopupFilter(ev.target.value));
+    document.addEventListener('keydown', (ev) => {
+        if (!_builtinPopupState.open) return;
+        const visible = _visibleBuiltinPaletteCatalog();
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closeBuiltinPalettePopup();
+            return;
+        }
+        if (!visible.length) return;
+        if (ev.key === 'ArrowDown') {
+            ev.preventDefault();
+            _builtinPopupState.highlightIdx = Math.min((_builtinPopupState.highlightIdx || 0) + 1, visible.length - 1);
+            _renderBuiltinPalettePopup();
+            return;
+        }
+        if (ev.key === 'ArrowUp') {
+            ev.preventDefault();
+            _builtinPopupState.highlightIdx = Math.max((_builtinPopupState.highlightIdx || 0) - 1, 0);
+            _renderBuiltinPalettePopup();
+            return;
+        }
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            const entry = visible[Math.max(0, Math.min(_builtinPopupState.highlightIdx || 0, visible.length - 1))];
+            if (entry) {
+                _setBuiltinPaletteForMode(_builtinPopupState.mode, entry.name, true);
+                _closeBuiltinPalettePopup();
+            }
+        }
+    });
+}
+
+function _initLongPalettePopup() {
+    const overlay = document.getElementById('long-popup-overlay');
+    const closeBtn = document.getElementById('long-popup-close');
+    const filterEl = document.getElementById('long-popup-filter');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closeLongPalettePopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closeLongPalettePopup);
+    if (filterEl) filterEl.addEventListener('input', (ev) => _applyLongPopupFilter(ev.target.value));
+    document.addEventListener('keydown', (ev) => {
+        if (!_longPopupState.open) return;
+        const visible = _visibleLongPaletteCatalog();
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closeLongPalettePopup();
+            return;
+        }
+        if (!visible.length) return;
+        if (ev.key === 'ArrowDown') {
+            ev.preventDefault();
+            _longPopupState.highlightIdx = Math.min((_longPopupState.highlightIdx || 0) + 1, visible.length - 1);
+            _renderLongPalettePopup();
+            return;
+        }
+        if (ev.key === 'ArrowUp') {
+            ev.preventDefault();
+            _longPopupState.highlightIdx = Math.max((_longPopupState.highlightIdx || 0) - 1, 0);
+            _renderLongPalettePopup();
+            return;
+        }
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            const entry = visible[Math.max(0, Math.min(_longPopupState.highlightIdx || 0, visible.length - 1))];
+            if (entry) {
+                _setLongPaletteForMode(_longPopupState.mode, entry.name, true);
+                _closeLongPalettePopup();
+            }
+        }
+    });
+}
+
 function buildPaletteCircles(containerId, mode, getCurrentPalette) {
     _syncTriDefaults();
     _renderPaletteRow(mode);
@@ -1386,6 +1995,8 @@ buildPaletteCircles('palette-circles-root-proximity', 'proximity', () => renderR
 buildPaletteCircles('palette-circles-solve-score', 'solve_score', () => renderSolveScorePalette);
 buildPaletteCircles('palette-circles-palette-tab', 'palette_tab', () => paletteTabPalette);
 _initTriPalettePopup();
+_initBuiltinPalettePopup();
+_initLongPalettePopup();
 _updateSolveScoreButtons();  // initial disabled state
 _clearPaletteCanvas('No palette selected');
 
@@ -1692,6 +2303,7 @@ function _renderCommonParams() {
         squareExtent: parseFloat(document.getElementById('render-square-extent').value) || 2.0,
         constantColor: document.getElementById('render-constant-color').value.replace('#', ''),
         solveScoreQuantile: parseFloat(document.getElementById('render-solve-score-quantile').value) / 100,
+        solveScoreOmega: parseFloat(document.getElementById('render-solve-score-omega').value) || 1,
         tileSize: parseInt(document.getElementById('sparse-tile-size').value),
         rotation: (() => {
             const turns = parseFloat(document.getElementById('render-rotation').value) || 0;
@@ -1897,6 +2509,7 @@ async function runPaletteArtifact() {
         log('Palette artifact: starting...', '', 'palette-log');
 
         const q = parseFloat(document.getElementById('palette-solve-score-quantile').value) / 100;
+        const omega = parseFloat(document.getElementById('palette-solve-score-omega').value) || 1;
         const runId = _generateRunId();
         const taskId = 'palette_run_' + runId;
         const orchPayload = {
@@ -1907,6 +2520,7 @@ async function runPaletteArtifact() {
                 metric: paletteTabMetric,
                 palette: paletteTabPalette,
                 solve_score_quantile: q,
+                solve_score_omega: omega,
                 root_transforms: _paletteRootTransforms(),
             },
         };
@@ -2158,6 +2772,7 @@ async function _launchRenderOrchestrator(mode) {
             color_mode: renderColorMode,
             solve_metric: renderColorMode === 'solve_score' ? renderSolveMetric : undefined,
             solve_score_quantile: renderColorMode === 'solve_score' ? p.solveScoreQuantile : undefined,
+            solve_score_omega: renderColorMode === 'solve_score' ? p.solveScoreOmega : undefined,
             match_mode: renderMatchMode,
             palette: _activeRenderPalette() || 'inferno',
             root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
@@ -2272,6 +2887,7 @@ async function runSolveScoreHistogramDebug() {
             degree: degree,
             metric: renderSolveMetric,
             solve_score_quantile: q,
+            solve_score_omega: p.solveScoreOmega,
             lores_bin_key: loresKey,
             root_transforms: p.rootTransforms || [],
         };
@@ -2285,7 +2901,8 @@ async function runSolveScoreHistogramDebug() {
 
         // Build the full log block as a <pre> for fixed-width alignment
         const lines = [];
-        lines.push(`Solve histogram: metric=${s.metric}, q=${(q*100).toFixed(1)}%, n=${s.n_solves}, degree=${s.degree}`);
+        const omegaUsed = Number.isFinite(Number(s.omega)) ? Number(s.omega) : p.solveScoreOmega;
+        lines.push(`Solve histogram: metric=${s.metric}, q=${(q*100).toFixed(1)}%, w=${omegaUsed.toFixed(0)}, n=${s.n_solves}, degree=${s.degree}`);
         lines.push(`  lores-only debug; mirrors actual 10 solve-score color bins`);
         lines.push(`  min=${fmt(s.min_score)}  p05=${fmt(s.q05)}  p10=${fmt(s.q10)}  p25=${fmt(s.q25)}  p50=${fmt(s.q50)}  p75=${fmt(s.q75)}  p90=${fmt(s.q90)}  p95=${fmt(s.q95)}  max=${fmt(s.max_score)}`);
         lines.push(`  mean=${fmt(s.mean_score)}  std=${fmt(s.stddev_score)}`);
@@ -2371,6 +2988,7 @@ async function runRenderPaletteArtifact() {
                 metric: renderSolveMetric,
                 palette: _activeRenderPalette() || 'inferno',
                 solve_score_quantile: q,
+                solve_score_omega: p.solveScoreOmega,
                 root_transforms: p.rootTransforms || [],
             },
         };
@@ -2586,6 +3204,7 @@ window.addEventListener('focus', function() {
 async function refreshRenderArtifacts(jobIdOverride, options = {}) {
     const jobId = jobIdOverride || document.getElementById('render-results-dir').value.trim();
     if (!jobId) return;
+    _captureRenderCatalogScroll(_renderActiveFamily);
     const statusEl = document.getElementById('render-status');
     const prevStatus = statusEl.textContent;
     const prevClass = statusEl.className;
@@ -2599,7 +3218,10 @@ async function refreshRenderArtifacts(jobIdOverride, options = {}) {
             const matchIdx = inv.findIndex(a => a.artifact_id === options.selectArtifactId || a.palette_id === options.selectArtifactId);
             if (matchIdx >= 0) _renderSelectedArtifact[_renderActiveFamily] = matchIdx;
         }
-        renderArtifactPanel(jobId, summary);
+        renderArtifactPanel(jobId, summary, {
+            preserveScroll: true,
+            ensureSelected: !!options.selectArtifactId,
+        });
         if (!_activeRenderRun) {
             statusEl.textContent = 'Ready';
             statusEl.className = 'status ok';
@@ -2638,8 +3260,9 @@ function _renderArtifactSummary(art) {
     if (art.family === 'color') {
         if (art.color_mode === 'solve_score') {
             const q = art.solve_score_quantile != null ? ` q=${(art.solve_score_quantile * 100).toFixed(1)}%` : '';
+            const omega = art.solve_score_omega != null ? ` w=${Number(art.solve_score_omega).toFixed(0)}` : '';
             const pal = art.palette ? ` ${art.palette}` : '';
-            return `solve:${art.solve_metric || ''}${q}${pal}`.trim();
+            return `solve:${art.solve_metric || ''}${q}${omega}${pal}`.trim();
         }
         if (art.color_mode === 'proximity') {
             return `prox ${art.palette || ''}`.trim();
@@ -2648,7 +3271,8 @@ function _renderArtifactSummary(art) {
     }
     if (art.family === 'palette') {
         const q = art.solve_score_quantile != null ? `q=${(art.solve_score_quantile * 100).toFixed(1)}%` : '';
-        return [art.metric, q, art.palette].filter(Boolean).join(' ');
+        const omega = art.solve_score_omega != null ? `w=${Number(art.solve_score_omega).toFixed(0)}` : '';
+        return [art.metric, q, omega, art.palette].filter(Boolean).join(' ');
     }
     if (art.legacy) return 'legacy';
     return art.format || '';
@@ -2660,33 +3284,214 @@ function _renderArtifactFilename(jobId, art) {
     return `${jobId}_${art.artifact_id || art.family}.${ext}`;
 }
 
+function _setRenderSliderValue(inputId, labelId, value, decimals) {
+    const input = document.getElementById(inputId);
+    const label = document.getElementById(labelId);
+    if (!input) return;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    input.value = String(n);
+    if (label) label.textContent = n.toFixed(decimals);
+}
+
+function _setRenderRotationFromRadians(rad) {
+    const slider = document.getElementById('render-rotation');
+    const dirSel = document.getElementById('render-rotation-dir');
+    const label = document.getElementById('render-rotation-val');
+    const n = Number(rad);
+    if (!slider || !dirSel || !label || !Number.isFinite(n)) return;
+    const turns = Math.min(1, Math.max(0, Math.abs(n) / (2 * Math.PI)));
+    slider.value = String(turns);
+    dirSel.value = n < 0 ? 'cw' : 'ccw';
+    label.textContent = turns.toFixed(2);
+}
+
+function _setRenderRootTransforms(transforms) {
+    if (!Array.isArray(transforms)) return;
+    _rtChain = transforms.map(item => {
+        if (!Array.isArray(item) || !item.length) return null;
+        return { name: item[0], params: item.slice(1).map(v => String(v)) };
+    }).filter(Boolean);
+    _renderChips('rt');
+}
+
+function populateSelectedRenderArtifact() {
+    const art = _renderSelectedArtifactEntry();
+    if (!art) return;
+
+    const warnings = [];
+
+    if (_renderActiveFamily === 'palette') {
+        setColorMode('solve_score');
+        if (art.metric) {
+            const metricEl = document.getElementById('render-solve-score');
+            if (metricEl) metricEl.value = art.metric;
+            setSolveMetric(art.metric);
+        } else {
+            warnings.push('solve-score metric');
+        }
+        if (Number.isFinite(art.solve_score_quantile)) {
+            _setRenderSliderValue('render-solve-score-quantile', 'render-solve-score-quantile-val', art.solve_score_quantile * 100, 1);
+        } else {
+            warnings.push('solve-score q');
+        }
+        if (Number.isFinite(art.solve_score_omega)) {
+            _setRenderSliderValue('render-solve-score-omega', 'render-solve-score-omega-val', art.solve_score_omega, 0);
+        } else {
+            warnings.push('solve-score omega');
+        }
+        if (art.palette) setPaletteForMode('solve_score', art.palette);
+        else warnings.push('palette');
+        if (Array.isArray(art.root_transforms)) {
+            _setRenderRootTransforms(art.root_transforms);
+        }
+        _renderSelectFamily('color');
+        const msg = warnings.length
+            ? `Populate complete (missing saved ${warnings.join(', ')})`
+            : `Populate complete: ${art.artifact_id || art.palette_id || 'selected palette artifact'}`;
+        const statusEl = document.getElementById('render-status');
+        if (statusEl) {
+            statusEl.textContent = msg;
+            statusEl.className = warnings.length ? 'status' : 'status ok';
+        }
+        log(msg, warnings.length ? '' : 'ok', 'render-log');
+        return;
+    }
+
+    if (_renderActiveFamily !== 'color') return;
+
+    if (art.view_mode === 'square') {
+        selectViewMode('square');
+        if (Number.isFinite(art.square_extent)) {
+            const extentEl = document.getElementById('render-square-extent');
+            if (extentEl) extentEl.value = String(art.square_extent);
+        } else {
+            warnings.push('square extent');
+        }
+    } else {
+        selectViewMode('auto');
+        if (Number.isFinite(art.quantile)) _setRenderSliderValue('render-quantile', 'render-quantile-val', art.quantile * 100, 1);
+        else warnings.push('auto quantile');
+        if (Number.isFinite(art.shim)) _setRenderSliderValue('render-shim', 'render-shim-val', art.shim * 100, 1);
+        else warnings.push('auto shim');
+    }
+
+    if (Number.isFinite(art.rotation)) _setRenderRotationFromRadians(art.rotation);
+    else warnings.push('rotation');
+
+    if (Array.isArray(art.root_transforms) && art.root_transforms.length) {
+        _setRenderRootTransforms(art.root_transforms);
+    }
+
+    if (art.match_mode) setMatch(art.match_mode);
+
+    if (art.color_mode === 'solve_score') {
+        setColorMode('solve_score');
+        if (art.solve_metric) {
+            const metricEl = document.getElementById('render-solve-score');
+            if (metricEl) metricEl.value = art.solve_metric;
+            setSolveMetric(art.solve_metric);
+        }
+        if (Number.isFinite(art.solve_score_quantile)) {
+            _setRenderSliderValue('render-solve-score-quantile', 'render-solve-score-quantile-val', art.solve_score_quantile * 100, 1);
+        } else {
+            warnings.push('solve-score q');
+        }
+        if (Number.isFinite(art.solve_score_omega)) {
+            _setRenderSliderValue('render-solve-score-omega', 'render-solve-score-omega-val', art.solve_score_omega, 0);
+        } else {
+            warnings.push('solve-score omega');
+        }
+        if (art.palette) setPaletteForMode('solve_score', art.palette);
+    } else if (art.color_mode === 'proximity') {
+        setColorMode('proximity');
+        if (art.palette) setPaletteForMode('proximity', art.palette);
+    } else if (art.color_mode === 'constant') {
+        setColorMode('constant');
+        if (art.constant_color) {
+            const hex = '#' + String(art.constant_color).replace(/^#/, '');
+            const colorEl = document.getElementById('render-constant-color');
+            const swatchEl = document.getElementById('constant-color-swatch');
+            if (colorEl) colorEl.value = hex;
+            if (swatchEl) swatchEl.style.background = hex;
+        }
+    } else {
+        setColorMode('rainbow');
+    }
+
+    const msg = warnings.length
+        ? `Populate complete (missing saved ${warnings.join(', ')})`
+        : `Populate complete: ${art.artifact_id || 'selected color artifact'}`;
+    const statusEl = document.getElementById('render-status');
+    if (statusEl) {
+        statusEl.textContent = msg;
+        statusEl.className = warnings.length ? 'status' : 'status ok';
+    }
+    log(msg, warnings.length ? '' : 'ok', 'render-log');
+}
+
 function _updateRenderActionButtons() {
     const art = _renderSelectedArtifactEntry();
     const hasSelection = !!art;
     const dlBtn = document.getElementById('btn-render-download');
     const delBtn = document.getElementById('btn-render-delete');
     const dzBtn = document.getElementById('btn-render-deepzoom');
+    const popBtn = document.getElementById('btn-render-populate');
     if (dlBtn) dlBtn.disabled = !hasSelection;
     if (delBtn) delBtn.disabled = !hasSelection;
     if (dzBtn) dzBtn.disabled = !hasSelection;
+    if (popBtn) popBtn.disabled = !(hasSelection && (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette'));
+}
+
+function _captureRenderCatalogScroll(family) {
+    const fam = family || _renderActiveFamily;
+    const catalog = document.getElementById('render-artifact-catalog');
+    if (!catalog || fam == null) return;
+    const top = Number(catalog.scrollTop);
+    if (Number.isFinite(top)) _renderCatalogScrollTop[fam] = top;
+}
+
+function _renderRowElementId(family, idx) {
+    return `render-art-row-${family}-${idx}`;
+}
+
+function _restoreRenderCatalogScroll(options = {}) {
+    const family = options.family || _renderActiveFamily;
+    const catalog = document.getElementById('render-artifact-catalog');
+    if (!catalog) return;
+    const top = Number(_renderCatalogScrollTop[family]);
+    if (Number.isFinite(top)) catalog.scrollTop = top;
+    catalog.onscroll = () => {
+        const nextTop = Number(catalog.scrollTop);
+        if (Number.isFinite(nextTop)) _renderCatalogScrollTop[family] = nextTop;
+    };
+    if (!options.ensureSelected) return;
+    const idx = _renderSelectedArtifact[family];
+    if (idx == null || idx < 0) return;
+    const row = document.getElementById(_renderRowElementId(family, idx));
+    if (row && typeof row.scrollIntoView === 'function') {
+        row.scrollIntoView({ block: 'nearest' });
+    }
 }
 
 function _renderSelectFamily(family) {
+    _captureRenderCatalogScroll(_renderActiveFamily);
     _renderActiveFamily = family;
     const activeJobId = document.getElementById('render-results-dir').value.trim();
     const inv = _renderArtifacts[family] || [];
     if (inv.length && (_renderSelectedArtifact[family] == null || _renderSelectedArtifact[family] < 0 || _renderSelectedArtifact[family] >= inv.length)) {
         _renderSelectedArtifact[family] = 0;
     }
-    renderArtifactPanel(activeJobId, window._lastRenderSummary || { families: _renderArtifacts, calc: {} });
+    renderArtifactPanel(activeJobId, window._lastRenderSummary || { families: _renderArtifacts, calc: {} }, { preserveScroll: true, ensureSelected: true });
 }
 
 function _renderSelectArtifact(family, idx) {
     const inv = _renderArtifacts[family] || [];
     if (idx < 0 || idx >= inv.length) return;
+    _captureRenderCatalogScroll(family);
     _renderSelectedArtifact[family] = idx;
     if (_renderActiveFamily !== family) _renderActiveFamily = family;
-    renderArtifactPanel(document.getElementById('render-results-dir').value.trim(), window._lastRenderSummary || { families: _renderArtifacts, calc: {} });
+    renderArtifactPanel(document.getElementById('render-results-dir').value.trim(), window._lastRenderSummary || { families: _renderArtifacts, calc: {} }, { preserveScroll: true, ensureSelected: true });
 }
 
 async function downloadSelectedRenderArtifact() {
@@ -2744,11 +3549,12 @@ async function generateSelectedRenderArtifact() {
     await runRasterPipeline();
 }
 
-function renderArtifactPanel(jobId, summary) {
+function renderArtifactPanel(jobId, summary, options = {}) {
     const preview = document.getElementById('render-preview');
     const info = document.getElementById('render-info');
     const families = summary.families || {};
     const calc = summary.calc || {};
+    const panelViewportPx = 360;
     window._lastRenderSummary = summary;
 
     _renderArtifacts = {
@@ -2777,9 +3583,9 @@ function renderArtifactPanel(jobId, summary) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Uses current Color mode settings above.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Uses current Color mode settings above. Populate restores the selected color artifact settings into the form.</span>';
     } else if (_renderActiveFamily === 'palette') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Uses current Solve score metric, palette, q, and root transforms.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. Populate copies the selected palette into Color settings and switches to Color.</span>';
     }
 
     let catalogHtml = '';
@@ -2791,7 +3597,7 @@ function renderArtifactPanel(jobId, summary) {
             const isSel = i === activeIdx;
             const dims = art.width && art.height ? `${art.width}x${art.height}` : '';
             const created = (art.created_at || '').replace('T', ' ').slice(0, 19);
-            catalogHtml += `<tr class="render-art-row" data-family="${_renderActiveFamily}" data-idx="${i}" onclick="_renderSelectArtifact('${_renderActiveFamily}', ${i})" style="border-bottom:1px solid #222; cursor:pointer; background:${isSel ? '#2a2a4e' : ''}">`;
+            catalogHtml += `<tr id="${_renderRowElementId(_renderActiveFamily, i)}" class="render-art-row" data-family="${_renderActiveFamily}" data-idx="${i}" onclick="_renderSelectArtifact('${_renderActiveFamily}', ${i})" style="border-bottom:1px solid #222; cursor:pointer; background:${isSel ? '#2a2a4e' : ''}">`;
             catalogHtml += `<td style="padding:4px; font-size:11px">${created}</td>`;
             catalogHtml += `<td style="padding:4px; font-family:monospace">${art.artifact_id || ''}${art.legacy ? ' (legacy)' : ''}</td>`;
             catalogHtml += `<td style="padding:4px; text-align:center">${dims}</td>`;
@@ -2802,9 +3608,9 @@ function renderArtifactPanel(jobId, summary) {
         catalogHtml += '</table>';
     }
 
-    let viewerHtml = '<div style="color:#666; font-size:12px; padding:12px 0">No artifact selected</div>';
+    let viewerHtml = '<div style="color:#444; font-size:12px; padding:12px 0; text-align:center">No artifact selected</div>';
     if (activeArt && activeArt.viewer_url) {
-        viewerHtml = `<img src="${activeArt.viewer_url}" style="max-width:100%; max-height:560px; background:#000; display:block; margin:0 auto">`;
+        viewerHtml = `<img src="${activeArt.viewer_url}" style="max-width:100%; max-height:100%; background:#000; display:block; margin:0 auto">`;
     }
 
     preview.innerHTML = `
@@ -2813,6 +3619,7 @@ function renderArtifactPanel(jobId, summary) {
             <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px">
                 <div style="display:flex; align-items:center; gap:8px">
                     <button class="btn-primary" id="btn-render-generate" onclick="generateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px">Generate</button>
+                    ${(_renderActiveFamily === 'color' || _renderActiveFamily === 'palette') ? '<button class="btn-secondary" id="btn-render-populate" onclick="populateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Populate</button>' : ''}
                     <button class="btn-secondary" id="btn-render-download" onclick="downloadSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Download</button>
                     <button class="btn-secondary" id="btn-render-delete" onclick="deleteSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Delete</button>
                     <button class="btn-secondary" id="btn-render-deepzoom" onclick="deepZoomSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>DeepZoom</button>
@@ -2821,14 +3628,20 @@ function renderArtifactPanel(jobId, summary) {
             </div>
             <div style="font-size:11px; color:#666; margin-bottom:8px">${controlsExtra}</div>
             <div style="display:grid; grid-template-columns:minmax(340px, 44%) 1fr; gap:12px; align-items:start">
-                <div id="render-artifact-catalog" style="max-height:360px; overflow-y:auto; border:1px solid #333; border-radius:4px">${catalogHtml}</div>
-                <div style="border:1px solid #333; border-radius:4px; background:#111; min-height:220px; padding:8px; display:flex; align-items:center; justify-content:center">${viewerHtml}</div>
+                <div id="render-artifact-catalog" style="height:${panelViewportPx}px; max-height:${panelViewportPx}px; overflow-y:auto; border:1px solid #333; border-radius:4px">${catalogHtml}</div>
+                <div id="render-artifact-viewer" style="height:${panelViewportPx}px; max-height:${panelViewportPx}px; border:1px solid #333; border-radius:4px; background:#000; padding:8px; display:flex; align-items:center; justify-content:center; overflow:hidden">${viewerHtml}</div>
             </div>
         </div>
     `;
 
     _updateSolveScoreButtons();
     _updateRenderActionButtons();
+    if (options.preserveScroll) {
+        _restoreRenderCatalogScroll({ family: _renderActiveFamily, ensureSelected: !!options.ensureSelected });
+    } else {
+        _renderCatalogScrollTop[_renderActiveFamily] = 0;
+        _restoreRenderCatalogScroll({ family: _renderActiveFamily, ensureSelected: false });
+    }
 
     // Info line
     const parts = ['Job: ' + jobId];
@@ -2935,6 +3748,12 @@ async function openDeepZoomViewer(dziUrl) {
 
 async function loadDeepZoomInventory() {
     const container = document.getElementById('deepzoom-inventory');
+    const statusEl = document.getElementById('deepzoom-status');
+    _dzSetButtonsEnabled(false);
+    if (statusEl) {
+        statusEl.textContent = 'Loading...';
+        statusEl.className = 'status';
+    }
     container.innerHTML = 'Loading...';
 
     try {
@@ -2943,38 +3762,84 @@ async function loadDeepZoomInventory() {
         const exports = data.exports || [];
 
         if (exports.length === 0) {
+            window._dzInventory = [];
+            window._dzSelectedIdx = -1;
+            _dzClearViewer();
             container.innerHTML = '<div style="color:#666">No DeepZoom exports yet. Generate one from the Render tab.</div>';
+            if (statusEl) {
+                statusEl.textContent = 'Ready';
+                statusEl.className = 'status';
+            }
             return;
         }
 
         // Sort newest first, store for keyboard navigation
         const sorted = exports.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
         window._dzInventory = sorted;
-        window._dzSelectedIdx = -1;
-
-        // Render inventory table
-        let html = '<table style="width:100%; border-collapse:collapse" id="dz-inv-table">';
-        html += '<tr style="border-bottom:1px solid #333; position:sticky; top:0; background:#1a1a2e"><th style="text-align:left;padding:4px">Job</th><th>Size</th><th>Created</th><th>Tiles</th><th>Share</th></tr>';
-        sorted.forEach((ex, i) => {
-            const shareCell = ex.share_url
-                ? `<a href="${ex.share_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" style="color:#4a9eff;text-decoration:none">Open</a>`
-                : '<span style="color:#555">?</span>';
-            html += `<tr class="dz-inv-row" data-idx="${i}" style="border-bottom:1px solid #222; cursor:pointer" onclick="_dzSelect(${i})" tabindex="-1">`;
-            html += `<td style="padding:4px; font-family:monospace; font-size:11px">${ex.job_id}</td>`;
-            html += `<td style="padding:4px; text-align:center">${ex.width}×${ex.height}</td>`;
-            html += `<td style="padding:4px; font-size:11px">${(ex.created_at || '').replace('T', ' ').slice(0, 19)}</td>`;
-            html += `<td style="padding:4px; text-align:center">${ex.tiles_uploaded || ''}</td>`;
-            html += `<td style="padding:4px; text-align:center">${shareCell}</td>`;
-            html += `</tr>`;
-        });
-        html += '</table>';
-        container.innerHTML = html;
-
-        // Auto-select first and view it
-        if (sorted.length > 0) _dzSelect(0);
+        _dzRenderInventory(0);
+        if (statusEl) {
+            statusEl.textContent = 'Ready';
+            statusEl.className = 'status ok';
+        }
     } catch (e) {
+        window._dzInventory = [];
+        window._dzSelectedIdx = -1;
+        _dzClearViewer();
+        if (statusEl) {
+            statusEl.textContent = 'Refresh failed: ' + e.message;
+            statusEl.className = 'status error';
+        }
         container.innerHTML = `<div style="color:#e94560">Error: ${e.message}</div>`;
     }
+}
+
+function _dzSetButtonsEnabled(enabled) {
+    const gotoBtn = document.getElementById('btn-dz-goto-result');
+    const populateBtn = document.getElementById('btn-dz-populate');
+    const deleteBtn = document.getElementById('btn-dz-delete');
+    if (gotoBtn) gotoBtn.disabled = !enabled;
+    if (populateBtn) populateBtn.disabled = !enabled;
+    if (deleteBtn) deleteBtn.disabled = !enabled;
+}
+
+function _dzClearViewer() {
+    const viewerEl = document.getElementById('deepzoom-viewer');
+    if (_osdViewer) {
+        _osdViewer.destroy();
+        _osdViewer = null;
+    }
+    if (viewerEl) viewerEl.style.display = 'none';
+}
+
+function _dzRenderInventory(selectIdx = 0) {
+    const container = document.getElementById('deepzoom-inventory');
+    const inv = window._dzInventory || [];
+    if (!container) return;
+    if (!inv.length) {
+        window._dzSelectedIdx = -1;
+        _dzSetButtonsEnabled(false);
+        _dzClearViewer();
+        container.innerHTML = '<div style="color:#666">No DeepZoom exports yet. Generate one from the Render tab.</div>';
+        return;
+    }
+
+    let html = '<table style="width:100%; border-collapse:collapse" id="dz-inv-table">';
+    html += '<tr style="border-bottom:1px solid #333; position:sticky; top:0; background:#1a1a2e"><th style="text-align:left;padding:4px">Job</th><th>Size</th><th>Created</th><th>Tiles</th><th>Share</th></tr>';
+    inv.forEach((ex, i) => {
+        const shareCell = ex.share_url
+            ? `<a href="${ex.share_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" style="color:#4a9eff;text-decoration:none">Open</a>`
+            : '<span style="color:#555">?</span>';
+        html += `<tr class="dz-inv-row" data-idx="${i}" style="border-bottom:1px solid #222; cursor:pointer" onclick="_dzSelect(${i})" tabindex="-1">`;
+        html += `<td style="padding:4px; font-family:monospace; font-size:11px">${ex.job_id}</td>`;
+        html += `<td style="padding:4px; text-align:center">${ex.width}×${ex.height}</td>`;
+        html += `<td style="padding:4px; font-size:11px">${(ex.created_at || '').replace('T', ' ').slice(0, 19)}</td>`;
+        html += `<td style="padding:4px; text-align:center">${ex.tiles_uploaded || ''}</td>`;
+        html += `<td style="padding:4px; text-align:center">${shareCell}</td>`;
+        html += `</tr>`;
+    });
+    html += '</table>';
+    container.innerHTML = html;
+    _dzSelect(Math.max(0, Math.min(selectIdx, inv.length - 1)));
 }
 
 function _dzSelect(idx) {
@@ -2988,8 +3853,43 @@ function _dzSelect(idx) {
     // Scroll selected row into view
     const row = document.querySelector(`.dz-inv-row[data-idx="${idx}"]`);
     if (row) row.scrollIntoView({ block: 'nearest' });
+    _dzSetButtonsEnabled(true);
     // View it
     viewDeepZoom(inv[idx].dzi_url);
+}
+
+async function _dzGotoSelectedResult() {
+    const inv = window._dzInventory || [];
+    const idx = window._dzSelectedIdx ?? -1;
+    if (idx < 0 || idx >= inv.length) return;
+    const ex = inv[idx];
+    await _ensureResultsSelection(ex.job_id);
+    switchTab('results');
+}
+
+async function _dzPopulateSelectedResult() {
+    const inv = window._dzInventory || [];
+    const idx = window._dzSelectedIdx ?? -1;
+    if (idx < 0 || idx >= inv.length) return;
+    const ex = inv[idx];
+    const btn = document.getElementById('btn-dz-populate');
+    const orig = btn ? btn.textContent : 'Populate';
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = '...'; }
+        const detail = await _getResultDetail(ex.job_id);
+        _populateComputeFromDetail(ex.job_id, detail || {});
+    } catch (e) {
+        log(`DeepZoom populate failed: ${e.message}`, 'err', 'compute-log');
+        const statusEl = document.getElementById('compute-status');
+        if (statusEl) {
+            statusEl.textContent = 'Populate error: ' + e.message;
+            statusEl.className = 'status error';
+        }
+    } finally {
+        if (btn) { btn.textContent = orig; }
+        const currentIdx = window._dzSelectedIdx ?? -1;
+        if (btn) btn.disabled = !(currentIdx >= 0 && currentIdx < inv.length);
+    }
 }
 
 async function _dzDeleteSelected() {
@@ -2997,9 +3897,17 @@ async function _dzDeleteSelected() {
     const idx = window._dzSelectedIdx ?? -1;
     if (idx < 0 || idx >= inv.length) return;
     const ex = inv[idx];
+    const btn = document.getElementById('btn-dz-delete');
+    const statusEl = document.getElementById('deepzoom-status');
+    const orig = btn ? btn.textContent : 'Delete';
     if (!confirm(`Delete DeepZoom export ${ex.export_id} for ${ex.job_id}?`)) return;
     const prefix = `deepzoom/${ex.job_id}/${ex.export_id}/`;
     try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Deleting...'; }
+        if (statusEl) {
+            statusEl.textContent = `Deleting ${ex.export_id}...`;
+            statusEl.className = 'status';
+        }
         const resp = await lambdaPost('storage', { prefix }, '/delete-prefix');
         console.log(`Deleted ${resp.deleted} objects from ${prefix}`);
         // Also delete deepzoom_latest.json if it points to this export
@@ -3013,9 +3921,27 @@ async function _dzDeleteSelected() {
                 }
             }
         } catch (e) { /* pointer may not exist */ }
-        loadDeepZoomInventory();
+        const nextInventory = inv.filter((_, i) => i !== idx);
+        window._dzInventory = nextInventory;
+        const nextIdx = nextInventory.length ? Math.min(idx, nextInventory.length - 1) : -1;
+        _dzRenderInventory(nextIdx);
+        if (statusEl) {
+            statusEl.textContent = `Deleted ${ex.export_id}`;
+            statusEl.className = 'status ok';
+        }
     } catch (e) {
+        if (statusEl) {
+            statusEl.textContent = 'Delete failed: ' + e.message;
+            statusEl.className = 'status error';
+        }
         alert('Delete failed: ' + e.message);
+    } finally {
+        if (btn) {
+            btn.textContent = orig;
+            const currentInv = window._dzInventory || [];
+            const currentIdx = window._dzSelectedIdx ?? -1;
+            btn.disabled = !(currentIdx >= 0 && currentIdx < currentInv.length);
+        }
     }
 }
 

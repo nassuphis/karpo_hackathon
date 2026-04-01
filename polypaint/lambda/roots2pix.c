@@ -326,7 +326,7 @@ int main(int argc, char **argv) {
                 "[--match=none|greedy|hungarian] [--palette=<name>] "
                 "[--constant_color=RRGGBB] "
                 "[--solve_metric=proximity|crowding|spread|anisotropy|area] "
-                "[--solve_score_clip_lo=X --solve_score_clip_hi=Y --solve_score_cuts=c1,...,c9] "
+                "[--solve_score_clip_lo=X --solve_score_clip_hi=Y --solve_score_cuts=c1,...,c9] [--solve_score_omega=W] "
                 "[--solve_prox_clip_lo=X --solve_prox_clip_hi=Y --solve_prox_cuts=c1,...,c9]\n");
         return 1;
     }
@@ -384,6 +384,7 @@ int main(int argc, char **argv) {
                                getArgDouble(argc, argv, "--solve_prox_clip_lo", 0));
     double solveScoreClipHi = getArgDouble(argc, argv, "--solve_score_clip_hi",
                                getArgDouble(argc, argv, "--solve_prox_clip_hi", 0));
+    double solveScoreOmega = getArgDouble(argc, argv, "--solve_score_omega", 1.0);
     double solveScoreCuts[9] = {0};
     int nSolveScoreCuts = 0;
     {
@@ -618,6 +619,7 @@ int main(int argc, char **argv) {
             double score = compute_solve_metric_score(step, degree, solveMetric);
             double u = (score - solveScoreClipLo) / ssRange;
             if (u < 0) u = 0; if (u > 1) u = 1;
+            u = apply_solve_score_omega(u, solveScoreOmega);
 
             int bin = 9;
             for (int c = 0; c < nSolveScoreCuts; c++) {
@@ -794,8 +796,8 @@ int main(int argc, char **argv) {
     if (colorMode == COLOR_PROXIMITY)
         printf(",\"palette\":\"%s\"", palName);
     else if (colorMode == COLOR_SOLVE_SCORE || colorMode == COLOR_SOLVE_PROXIMITY)
-        printf(",\"palette\":\"%s\",\"solve_score\":true,\"solve_metric\":\"%s\"",
-               palName, solve_metric_name(solveMetric));
+        printf(",\"palette\":\"%s\",\"solve_score\":true,\"solve_metric\":\"%s\",\"solve_score_omega\":%.15g",
+               palName, solve_metric_name(solveMetric), solveScoreOmega);
     else if (colorMode == COLOR_CONSTANT)
         printf(",\"constant_color\":\"%s\"", constColorStr);
     printf("}\n");

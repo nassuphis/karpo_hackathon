@@ -26,6 +26,16 @@ STORAGE_FUNCTION = os.environ.get("STORAGE_FUNCTION", "polypaint-storage")
 MAX_PLAN_BYTES = 200 * 1024  # 200 KB — fail fast before hitting 256 KB SFN limit
 
 
+def _validate_omega(value):
+    try:
+        omega = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"solve_score_omega must be numeric, got {value!r}")
+    if not (1.0 <= omega <= 10.0):
+        raise RuntimeError(f"solve_score_omega must be in [1, 10], got {omega}")
+    return omega
+
+
 def handler(event, context):
     params = parse_body(event)
     job_id = params["job_id"]
@@ -86,6 +96,7 @@ def handler(event, context):
         "color_mode": "rainbow",
         "solve_metric": "proximity",
         "solve_score_quantile": 0.001,
+        "solve_score_omega": 1.0,
     }
     for key, default in _PARAM_DEFAULTS.items():
         if key not in rp:
@@ -101,6 +112,7 @@ def handler(event, context):
 
     solve_metric = rp.get("solve_metric", "proximity")
     solve_score_quantile = rp.get("solve_score_quantile", 0.001)
+    solve_score_omega = rp.get("solve_score_omega", 1.0)
     palette = rp.get("palette", "inferno")
     if palette not in VALID_PALETTE_NAMES:
         raise RuntimeError(f"Invalid palette: {palette}")
@@ -113,11 +125,16 @@ def handler(event, context):
             raise RuntimeError(f"solve_score_quantile must be numeric, got {solve_score_quantile!r}")
         if not (0.001 <= solve_score_quantile <= 0.05):
             raise RuntimeError(f"solve_score_quantile must be in [0.001, 0.05], got {solve_score_quantile}")
+        solve_score_omega = _validate_omega(solve_score_omega)
+    else:
+        solve_score_omega = _validate_omega(solve_score_omega)
+    rp["solve_score_omega"] = solve_score_omega
 
     solve_score = {
         "enabled": solve_score_enabled,
         "metric": solve_metric,
         "quantile": solve_score_quantile,
+        "omega": solve_score_omega,
         "clip_key": f"renders/{job_id}/solve_scores/{solve_metric}_clip.json",
         "hist_prefix": f"renders/{job_id}/solve_scores/{solve_metric}/",
         "bins_key": f"renders/{job_id}/solve_scores/{solve_metric}_bins.json",
@@ -136,6 +153,10 @@ def handler(event, context):
         "degree": str(degree),
         "pix": str(pix),
         "tile_size": str(tile_size),
+        "view_mode": str(rp.get("view_mode", "auto")),
+        "quantile": str(rp.get("quantile", 0.0)),
+        "shim": str(rp.get("shim", 0.05)),
+        "square_extent": str(rp.get("square_extent", 2.0)),
         "rotation": str(rp.get("rotation", 0.0)),
         "root_transforms": json.dumps(rp.get("root_transforms", [])),
     }
@@ -162,6 +183,7 @@ def handler(event, context):
             "constant_color": rp.get("constant_color", "ffffff"),
             "solve_metric": solve_metric if solve_score_enabled else "",
             "solve_score_quantile": str(solve_score_quantile if solve_score_enabled else ""),
+            "solve_score_omega": str(solve_score_omega if solve_score_enabled else ""),
         })
     elif mode == "bilevel":
         outputs["metadata"].update({

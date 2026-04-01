@@ -20,11 +20,22 @@ VALID_METRICS = {
     "proximity", "crowding", "spread", "anisotropy", "area",
     "clusteriness", "shelliness", "outlierness", "nn_variation", "real_axis_proximity",
 }
-def _palette_variant_id(metric, palette, q, root_transforms):
+def _validate_omega(value):
+    try:
+        omega = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"solve_score_omega must be numeric, got {value!r}")
+    if not (1.0 <= omega <= 10.0):
+        raise RuntimeError(f"solve_score_omega must be in [1, 10], got {omega}")
+    return omega
+
+
+def _palette_variant_id(metric, palette, q, omega, root_transforms):
     q_label = f"{q * 100:.1f}".replace(".", "p")
+    omega_label = f"{omega:.0f}" if float(omega).is_integer() else str(omega).replace(".", "p")
     rt_json = json.dumps(root_transforms or [], separators=(",", ":"))
     rt_hash = hashlib.sha1(rt_json.encode("utf-8")).hexdigest()[:8]
-    return f"pal_{int(time.time() * 1000)}_{metric}_{palette}_q{q_label}_rt{rt_hash}"
+    return f"pal_{int(time.time() * 1000)}_{metric}_{palette}_q{q_label}_w{omega_label}_rt{rt_hash}"
 
 
 def handler(event, context):
@@ -47,6 +58,7 @@ def handler(event, context):
         raise RuntimeError(f"Invalid palette: {palette}")
     if not (0.001 <= q <= 0.05):
         raise RuntimeError(f"solve_score_quantile must be in [0.001, 0.05], got {q}")
+    omega = _validate_omega(pp.get("solve_score_omega", 1.0))
 
     calc = _load_calc(job_id)
     degree = calc.get("degree")
@@ -100,7 +112,7 @@ def handler(event, context):
     if step_start < pass0_steps:
         raise RuntimeError(f"Full solve metadata too small: only {step_start} solves, expected at least {pass0_steps}")
 
-    palette_id = _palette_variant_id(metric, palette, q, root_transforms)
+    palette_id = _palette_variant_id(metric, palette, q, omega, root_transforms)
     prefix = f"renders/{job_id}/palettes/{palette_id}/"
     solve_prefix = prefix + "solve_score/"
     chunks_prefix = prefix + "chunks/"
@@ -114,6 +126,7 @@ def handler(event, context):
             "metric": metric,
             "palette": palette,
             "solve_score_quantile": q,
+            "solve_score_omega": omega,
             "root_transforms": root_transforms,
         },
         "palette_id": palette_id,
@@ -132,6 +145,7 @@ def handler(event, context):
         "solve_score": {
             "metric": metric,
             "quantile": q,
+            "omega": omega,
             "clip_key": prefix + f"solve_score/{metric}_clip.json",
             "hist_prefix": solve_prefix,
             "bins_key": prefix + f"solve_score/{metric}_bins.json",

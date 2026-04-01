@@ -12,10 +12,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HTML="$ROOT/index.html"
 CATALOG_JS="$ROOT/coeff_func_catalog_js.js"
 TRI_CATALOG_JS="$ROOT/tri_palette_catalog_js.js"
+LONG_CATALOG_JS="$ROOT/long_palette_catalog_js.js"
 
 if [ ! -f "$HTML" ]; then echo "FATAL: $HTML not found"; exit 1; fi
 if [ ! -f "$CATALOG_JS" ]; then echo "FATAL: $CATALOG_JS not found"; exit 1; fi
 if [ ! -f "$TRI_CATALOG_JS" ]; then echo "FATAL: $TRI_CATALOG_JS not found"; exit 1; fi
+if [ ! -f "$LONG_CATALOG_JS" ]; then echo "FATAL: $LONG_CATALOG_JS not found"; exit 1; fi
 
 echo "=== Frontend JS Execution Test ==="
 
@@ -31,6 +33,7 @@ const _elements = {};
 const _mkEl = () => {
     const el = {
     value: '', textContent: '', style: {}, id: '', dataset: {},
+    scrollTop: 0,
     appendChild(child) { el.children.push(child); },
     removeChild() {}, setAttribute() {}, insertBefore() {},
     prepend(child) { if (child && child.textContent) el.textContent = child.textContent + '\n' + (el.textContent || ''); },
@@ -47,12 +50,14 @@ const _mkEl = () => {
     querySelectorAll() { return []; },
     querySelector() { return null; },
     focus() {}, blur() {},
+    scrollIntoView(arg) { el._scrollIntoViewCalls = (el._scrollIntoViewCalls || 0) + 1; el._lastScrollIntoViewArg = arg; },
     checked: false,
     width: 512, height: 512,
     onchange: null,
     onclick: null,
     oninput: null,
     oncontextmenu: null,
+    onscroll: null,
     };
     return el;
 };
@@ -138,8 +143,14 @@ vm.runInContext(triCatalogCode, ctx, { filename: 'tri_palette_catalog_js.js' });
 const triCatLen = (ctx._triPaletteCatalog || []).length;
 console.log('  tri catalog loaded: ' + triCatLen + ' palettes');
 
+// Step 1c: Load long-palette catalog JS
+const longCatalogCode = fs.readFileSync(process.argv[4], 'utf8');
+vm.runInContext(longCatalogCode, ctx, { filename: 'long_palette_catalog_js.js' });
+const longCatLen = (ctx._longPaletteCatalog || []).length;
+console.log('  long catalog loaded: ' + longCatLen + ' palettes');
+
 // Step 2: Load app JS (strip auto-init populateDropdown call)
-let appCode = fs.readFileSync(process.argv[4], 'utf8');
+let appCode = fs.readFileSync(process.argv[5], 'utf8');
 appCode = appCode.replace(/^populateDropdown\(\);$/m, '// populateDropdown() — deferred to test');
 try {
     vm.runInContext(appCode, ctx, { filename: 'index-inline.js' });
@@ -244,7 +255,10 @@ const renderEls = {
     'render-shim': { value: '5.0' },
     'render-solve-score-quantile': { value: '0.1' },
     'render-solve-score-quantile-val': {},
+    'render-solve-score-omega': { value: '1' },
+    'render-solve-score-omega-val': {},
     'btn-solve-histogram': {},
+    'btn-populate-result': {},
     'btn-render-generate': {},
     'btn-render-download': {},
     'btn-render-delete': {},
@@ -257,6 +271,8 @@ const renderEls = {
     'palette-solve-score': { value: 'proximity' },
     'palette-solve-score-quantile': { value: '0.1' },
     'palette-solve-score-quantile-val': {},
+    'palette-solve-score-omega': { value: '1' },
+    'palette-solve-score-omega-val': {},
     'palette-status': {},
     'palette-info': {},
     'palette-log': {},
@@ -589,12 +605,37 @@ async function testPipeline(name, call) {
         if (colorSel !== 0) { console.error('FATAL: color family should auto-select first artifact'); process.exit(1); }
         if (!panelHtml.includes('color_a')) { console.error('FATAL: color artifact row missing'); process.exit(1); }
         if (!panelHtml.includes('https://img/color.png')) { console.error('FATAL: selected color viewer should use viewer_url'); process.exit(1); }
+        if (!panelHtml.includes('id="render-artifact-viewer"')) { console.error('FATAL: render artifact viewer container missing'); process.exit(1); }
+        if (!panelHtml.includes('height:360px') || !panelHtml.includes('background:#000')) { console.error('FATAL: render artifact panel should keep fixed black viewport height'); process.exit(1); }
         console.log('  color family auto-select + viewer: OK');
 
         vm.runInContext(`_renderSelectFamily('palette')`, ctx);
         const palHtml = ctx._elements['render-preview'].innerHTML;
         if (!palHtml.includes('pal_a')) { console.error('FATAL: palette family should show palette artifact row'); process.exit(1); }
         console.log('  family switch updates catalog: OK');
+
+        vm.runInContext(`
+            renderArtifactPanel('j', {
+                calc: { exists: true, N: 1000, degree: 5 },
+                families: {
+                    color: [
+                        { artifact_id: 'color_0', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/j/color/color_0/image.jpeg', image_url: 'https://img/color0.jpeg', preview_url: 'https://img/color0.png', viewer_url: 'https://img/color0.png', width: 1000, height: 1000, file_size: 50000, color_mode: 'rainbow', format: 'jpeg' },
+                        { artifact_id: 'color_1', created_at: '2026-03-30T10:01:00Z', image_key: 'renders/j/color/color_1/image.jpeg', image_url: 'https://img/color1.jpeg', preview_url: 'https://img/color1.png', viewer_url: 'https://img/color1.png', width: 1000, height: 1000, file_size: 51000, color_mode: 'rainbow', format: 'jpeg' },
+                        { artifact_id: 'color_2', created_at: '2026-03-30T10:02:00Z', image_key: 'renders/j/color/color_2/image.jpeg', image_url: 'https://img/color2.jpeg', preview_url: 'https://img/color2.png', viewer_url: 'https://img/color2.png', width: 1000, height: 1000, file_size: 52000, color_mode: 'rainbow', format: 'jpeg' }
+                    ],
+                    bilevel: [],
+                    coeffs: [],
+                    palette: [],
+                },
+            });
+        `, ctx);
+        ctx._elements['render-artifact-catalog'].scrollTop = 240;
+        vm.runInContext(`_renderSelectArtifact('color', 2)`, ctx);
+        const preservedTop = ctx._elements['render-artifact-catalog'].scrollTop;
+        const selectedRow = ctx._elements['render-art-row-color-2'];
+        if (preservedTop !== 240) { console.error('FATAL: selecting render artifact should preserve catalog scroll, got ' + preservedTop); process.exit(1); }
+        if (!selectedRow || !selectedRow._scrollIntoViewCalls) { console.error('FATAL: selected render row should be scrolled into view when needed'); process.exit(1); }
+        console.log('  artifact selection preserves scroll + ensures visible row: OK');
 
         vm.runInContext(`_renderSelectFamily('coeffs')`, ctx);
         const coeffHtml = ctx._elements['render-preview'].innerHTML;
@@ -604,6 +645,182 @@ async function testPipeline(name, call) {
         const dzDisabled = !!ctx._elements['btn-render-deepzoom'].disabled;
         if (!(dlDisabled && delDisabled && dzDisabled)) { console.error('FATAL: empty family should disable actions'); process.exit(1); }
         console.log('  empty family disables actions: OK');
+    }
+
+    {
+        const summary = {
+            calc: { exists: true, N: 1000, degree: 5 },
+            families: {
+                color: [
+                    {
+                        artifact_id: 'color_populate',
+                        created_at: '2026-03-30T10:00:00Z',
+                        image_key: 'renders/j/color/color_populate/image.jpeg',
+                        image_url: 'https://img/pop.jpeg',
+                        preview_url: 'https://img/pop.png',
+                        viewer_url: 'https://img/pop.png',
+                        width: 1000,
+                        height: 1000,
+                        file_size: 51000,
+                        color_mode: 'solve_score',
+                        solve_metric: 'anisotropy',
+                        solve_score_quantile: 0.025,
+                        solve_score_omega: 7,
+                        match_mode: 'hungarian',
+                        palette: 'tri_redgold',
+                        view_mode: 'auto',
+                        quantile: 0.4,
+                        shim: 0.12,
+                        rotation: -Math.PI / 2,
+                        root_transforms: [['rotate_roots', '0.25'], ['roots_toline']],
+                    }
+                ],
+                bilevel: [],
+                coeffs: [],
+                palette: [],
+            },
+        };
+        vm.runInContext(`
+            _renderActiveFamily = 'color';
+            _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
+            renderColorMode = 'rainbow';
+            renderSolveMetric = 'proximity';
+            renderSolveScorePalette = 'inferno';
+            renderMatchMode = 'none';
+            _rtChain = [];
+            document.getElementById('render-quantile').value = '0';
+            document.getElementById('render-quantile-val').textContent = '0.0';
+            document.getElementById('render-shim').value = '5';
+            document.getElementById('render-shim-val').textContent = '5.0';
+            document.getElementById('render-solve-score').value = 'proximity';
+            document.getElementById('render-solve-score-quantile').value = '0.1';
+            document.getElementById('render-solve-score-quantile-val').textContent = '0.1';
+            document.getElementById('render-solve-score-omega').value = '1';
+            document.getElementById('render-solve-score-omega-val').textContent = '1';
+            document.getElementById('render-rotation').value = '0';
+            document.getElementById('render-rotation-val').textContent = '0.00';
+            document.getElementById('render-rotation-dir').value = 'ccw';
+            renderArtifactPanel('j', ${JSON.stringify(summary)});
+            populateSelectedRenderArtifact();
+        `, ctx);
+        const mode = vm.runInContext('renderColorMode', ctx);
+        const metric = vm.runInContext('renderSolveMetric', ctx);
+        const palette = vm.runInContext('renderSolveScorePalette', ctx);
+        const match = vm.runInContext('renderMatchMode', ctx);
+        const q = vm.runInContext("document.getElementById('render-quantile').value", ctx);
+        const shim = vm.runInContext("document.getElementById('render-shim').value", ctx);
+        const sq = vm.runInContext("document.getElementById('render-solve-score-quantile').value", ctx);
+        const so = vm.runInContext("document.getElementById('render-solve-score-omega').value", ctx);
+        const rot = vm.runInContext("document.getElementById('render-rotation').value", ctx);
+        const rotDir = vm.runInContext("document.getElementById('render-rotation-dir').value", ctx);
+        const rt = vm.runInContext('JSON.stringify(_rtChain)', ctx);
+        if (mode !== 'solve_score') { console.error('FATAL: populate should set solve_score mode, got ' + mode); process.exit(1); }
+        if (metric !== 'anisotropy') { console.error('FATAL: populate should set anisotropy metric, got ' + metric); process.exit(1); }
+        if (palette !== 'tri_redgold') { console.error('FATAL: populate should set palette tri_redgold, got ' + palette); process.exit(1); }
+        if (match !== 'hungarian') { console.error('FATAL: populate should set hungarian match, got ' + match); process.exit(1); }
+        if (q !== '40') { console.error('FATAL: populate should set quantile to 40, got ' + q); process.exit(1); }
+        if (shim !== '12') { console.error('FATAL: populate should set shim to 12, got ' + shim); process.exit(1); }
+        if (sq !== '2.5') { console.error('FATAL: populate should set solve-score q to 2.5, got ' + sq); process.exit(1); }
+        if (so !== '7') { console.error('FATAL: populate should set solve-score omega to 7, got ' + so); process.exit(1); }
+        if (rot !== '0.25') { console.error('FATAL: populate should set rotation turns to 0.25, got ' + rot); process.exit(1); }
+        if (rotDir !== 'cw') { console.error('FATAL: populate should set rotation dir cw, got ' + rotDir); process.exit(1); }
+        if (!rt.includes('rotate_roots') || !rt.includes('roots_toline')) { console.error('FATAL: populate should restore root transforms, got ' + rt); process.exit(1); }
+        vm.runInContext(`
+            renderColorMode = 'rainbow';
+            renderSolveMetric = 'proximity';
+            renderSolveScorePalette = 'inferno';
+            renderMatchMode = 'none';
+            _rtChain = [];
+            document.getElementById('render-quantile').value = '0';
+            document.getElementById('render-quantile-val').textContent = '0.0';
+            document.getElementById('render-shim').value = '5';
+            document.getElementById('render-shim-val').textContent = '5.0';
+            document.getElementById('render-solve-score').value = 'proximity';
+            document.getElementById('render-solve-score-quantile').value = '0.1';
+            document.getElementById('render-solve-score-quantile-val').textContent = '0.1';
+            document.getElementById('render-solve-score-omega').value = '1';
+            document.getElementById('render-solve-score-omega-val').textContent = '1';
+            document.getElementById('render-rotation').value = '0';
+            document.getElementById('render-rotation-val').textContent = '0.00';
+            document.getElementById('render-rotation-dir').value = 'ccw';
+            _renderChips('rt');
+        `, ctx);
+        console.log('  color populate restores selected artifact settings: OK');
+    }
+
+    {
+        const summary = {
+            calc: { exists: true, N: 1000, degree: 5 },
+            families: {
+                color: [
+                    { artifact_id: 'color_existing', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/j/color/color_existing/image.jpeg', image_url: 'https://img/color_existing.jpeg', preview_url: 'https://img/color_existing.png', viewer_url: 'https://img/color_existing.png', width: 1000, height: 1000, file_size: 50000, color_mode: 'rainbow', format: 'jpeg' }
+                ],
+                bilevel: [],
+                coeffs: [],
+                palette: [
+                    {
+                        artifact_id: 'pal_fill',
+                        palette_id: 'pal_fill',
+                        created_at: '2026-03-30T12:00:00Z',
+                        image_key: 'renders/j/palettes/pal_fill/image.jpeg',
+                        image_url: 'https://img/pal_fill.jpeg',
+                        preview_url: 'https://img/pal_fill.png',
+                        viewer_url: 'https://img/pal_fill.png',
+                        width: 1000,
+                        height: 1000,
+                        file_size: 70000,
+                        metric: 'crowding',
+                        palette: 'reef',
+                        solve_score_quantile: 0.05,
+                        solve_score_omega: 4,
+                        root_transforms: [['rotate_roots', '0.125']],
+                    }
+                ],
+            },
+        };
+        vm.runInContext(`
+            _renderActiveFamily = 'palette';
+            _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
+            renderColorMode = 'rainbow';
+            renderSolveMetric = 'proximity';
+            renderSolveScorePalette = 'inferno';
+            _rtChain = [];
+            document.getElementById('render-solve-score').value = 'proximity';
+            document.getElementById('render-solve-score-quantile').value = '0.1';
+            document.getElementById('render-solve-score-quantile-val').textContent = '0.1';
+            document.getElementById('render-solve-score-omega').value = '1';
+            document.getElementById('render-solve-score-omega-val').textContent = '1';
+            renderArtifactPanel('j', ${JSON.stringify(summary)});
+            populateSelectedRenderArtifact();
+        `, ctx);
+        const family = vm.runInContext('_renderActiveFamily', ctx);
+        const mode = vm.runInContext('renderColorMode', ctx);
+        const metric = vm.runInContext('renderSolveMetric', ctx);
+        const palette = vm.runInContext('renderSolveScorePalette', ctx);
+        const sq = vm.runInContext("document.getElementById('render-solve-score-quantile').value", ctx);
+        const so = vm.runInContext("document.getElementById('render-solve-score-omega').value", ctx);
+        const rt = vm.runInContext('JSON.stringify(_rtChain)', ctx);
+        if (family !== 'color') { console.error('FATAL: palette populate should switch active family to color, got ' + family); process.exit(1); }
+        if (mode !== 'solve_score') { console.error('FATAL: palette populate should set solve_score mode, got ' + mode); process.exit(1); }
+        if (metric !== 'crowding') { console.error('FATAL: palette populate should set crowding metric, got ' + metric); process.exit(1); }
+        if (palette !== 'reef') { console.error('FATAL: palette populate should set reef palette, got ' + palette); process.exit(1); }
+        if (sq !== '5') { console.error('FATAL: palette populate should set solve-score q to 5, got ' + sq); process.exit(1); }
+        if (so !== '4') { console.error('FATAL: palette populate should set solve-score omega to 4, got ' + so); process.exit(1); }
+        if (!rt.includes('rotate_roots') || !rt.includes('0.125')) { console.error('FATAL: palette populate should restore root transforms, got ' + rt); process.exit(1); }
+        vm.runInContext(`
+            _renderActiveFamily = 'color';
+            renderColorMode = 'rainbow';
+            renderSolveMetric = 'proximity';
+            renderSolveScorePalette = 'inferno';
+            _rtChain = [];
+            document.getElementById('render-solve-score').value = 'proximity';
+            document.getElementById('render-solve-score-quantile').value = '0.1';
+            document.getElementById('render-solve-score-quantile-val').textContent = '0.1';
+            document.getElementById('render-solve-score-omega').value = '1';
+            document.getElementById('render-solve-score-omega-val').textContent = '1';
+            _renderChips('rt');
+        `, ctx);
+        console.log('  palette populate restores solve-score settings and switches to color: OK');
     }
 
     // Step 10: DeepZoom inventory UI tests
@@ -771,7 +988,7 @@ async function testPipeline(name, call) {
             document.addEventListener = function(evt, fn) { if (evt === 'keydown') _dzKeyHandler = fn; };
         `, ctx);
         // Re-eval just the arrow key handler to capture it
-        const appCode = fs.readFileSync(process.argv[4], 'utf8');
+        const appCode = fs.readFileSync(process.argv[5], 'utf8');
         const handlerMatch = appCode.match(/\/\/ Arrow key navigation[\s\S]*?(?=\nfunction viewDeepZoom)/);
         if (handlerMatch) {
             vm.runInContext(handlerMatch[0], ctx);
@@ -802,29 +1019,244 @@ async function testPipeline(name, call) {
         }
     }
 
+    // Test: DeepZoom selected-row actions bridge to Results and Compute
+    {
+        ctx._elements['btn-dz-goto-result'] = { ...ctx._mkEl(), disabled: true, textContent: 'Goto Result' };
+        ctx._elements['btn-dz-populate'] = { ...ctx._mkEl(), disabled: true, textContent: 'Populate' };
+        ctx._elements['btn-dz-delete'] = { ...ctx._mkEl(), disabled: true, textContent: 'Delete' };
+        ctx._elements['btn-populate-result'] = { ...ctx._mkEl(), disabled: true, textContent: 'Populate' };
+        ctx._elements['btn-preview'] = { ...ctx._mkEl(), disabled: true, textContent: 'Preview' };
+        ctx._elements['btn-render-result'] = { ...ctx._mkEl(), disabled: true, textContent: 'Render' };
+        ctx._elements['btn-delete'] = { ...ctx._mkEl(), disabled: true, textContent: 'Delete' };
+        ctx._elements['results-scroll'] = ctx._elements['results-scroll'] || ctx._mkEl();
+        ctx._elements['results-preview'] = ctx._elements['results-preview'] || ctx._mkEl();
+        ctx._elements['results-info'] = { ...ctx._mkEl(), textContent: '' };
+        ctx._elements['compute-status'] = { ...ctx._mkEl(), textContent: '' };
+        ctx._elements['compute-log'] = ctx._mkEl();
+        ctx._elements['results-dir'] = { ...ctx._mkEl(), value: '' };
+        ctx._elements['render-results-dir'] = ctx._elements['render-results-dir'] || { ...ctx._mkEl(), value: '' };
+        ctx._elements['palette-results-dir'] = ctx._elements['palette-results-dir'] || { ...ctx._mkEl(), value: '' };
+        ctx._elements['render-n'] = { ...ctx._mkEl(), value: '500' };
+        ctx._elements['render-times'] = { ...ctx._mkEl(), value: '1' };
+        ctx._elements['render-stripes'] = { ...ctx._mkEl(), value: '10' };
+        ctx._elements['render-function'] = ctx._elements['render-function'] || { ...ctx._mkEl(), value: 'g1' };
+        ctx._elements['pt-chips'] = ctx._elements['pt-chips'] || ctx._mkEl();
+        ctx._elements['ct-chips'] = ctx._elements['ct-chips'] || ctx._mkEl();
+        ctx._elements['cfpv-row'] = ctx._elements['cfpv-row'] || ctx._mkEl();
+        ctx._elements['cfpv-inputs'] = ctx._elements['cfpv-inputs'] || ctx._mkEl();
+
+        vm.runInContext(`
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/list-deepzoom') {
+                    return { exports: [
+                        { job_id: 'job_b', width: 8192, height: 8192, created_at: '2026-03-25T12:00:00', tiles_uploaded: 400, dzi_url: 'https://dz/job_b.dzi' },
+                        { job_id: 'job_a', width: 4096, height: 4096, created_at: '2026-03-25T10:00:00', tiles_uploaded: 100, dzi_url: 'https://dz/job_a.dzi' },
+                    ], count: 2 };
+                }
+                if (name === 'storage' && path === '/list') {
+                    return {
+                        count: 2,
+                        list_us: 1000,
+                        results: [
+                            { job_id: 'job_a', function: 'creative9', degree: 7, N: 1200, n_chunks: 24, total_size: 1000 },
+                            { job_id: 'job_b', function: 'g1', degree: 4, N: 800, n_chunks: 12, total_size: 500 },
+                        ]
+                    };
+                }
+                if (name === 'storage' && path === '/detail') {
+                    if (body.job_id === 'job_a') {
+                        return {
+                            times: 3,
+                            param_transforms_display: [['unit_circle'], ['rtheta', '2']],
+                            coeff_transforms: ['rev', 'conj'],
+                            pipeline: {
+                                function: 'creative9',
+                                param_transforms_display: [['unit_circle'], ['rtheta', '2']],
+                                coeff_transforms: ['rev', 'conj'],
+                                cfpv: [88]
+                            },
+                            calc: {
+                                N: 1200,
+                                n_chunks: 24,
+                                solver: 'companion_matrix'
+                            }
+                        };
+                    }
+                    return {
+                        times: 1,
+                        pipeline: { function: 'g1' },
+                        calc: { N: 800, n_chunks: 12, solver: 'aberth' }
+                    };
+                }
+                return {};
+            };
+            _resultsCache = [{
+                job_id: 'job_a',
+                function: 'creative9',
+                degree: 7,
+                N: 1200,
+                n_chunks: 24,
+                _detail: {
+                    times: 3,
+                    param_transforms_display: [['unit_circle'], ['rtheta', '2']],
+                    coeff_transforms: ['rev', 'conj'],
+                    pipeline: {
+                        function: 'creative9',
+                        param_transforms_display: [['unit_circle'], ['rtheta', '2']],
+                        coeff_transforms: ['rev', 'conj'],
+                        cfpv: [88]
+                    },
+                    calc: {
+                        N: 1200,
+                        n_chunks: 24,
+                        solver: 'companion_matrix'
+                    }
+                }
+            }, {
+                job_id: 'job_b',
+                function: 'g1',
+                degree: 4,
+                N: 800,
+                n_chunks: 12,
+                _detail: {
+                    times: 1,
+                    pipeline: { function: 'g1' },
+                    calc: { N: 800, n_chunks: 12, solver: 'aberth' }
+                }
+            }];
+            _selectedJobId = null;
+            _dzSelect(1);
+        `, ctx);
+
+        const dzGotoDisabled = ctx._elements['btn-dz-goto-result'].disabled;
+        const dzPopulateDisabled = ctx._elements['btn-dz-populate'].disabled;
+        const dzDeleteDisabled = ctx._elements['btn-dz-delete'].disabled;
+        if (dzGotoDisabled || dzPopulateDisabled || dzDeleteDisabled) {
+            console.error('FATAL: deepzoom action buttons should enable after selection');
+            process.exit(1);
+        }
+
+        try {
+            await vm.runInContext('(async()=>{ await _dzGotoSelectedResult(); })()', ctx);
+            const selectedJob = vm.runInContext('_selectedJobId', ctx);
+            const renderDirVal = ctx._elements['render-results-dir'].value;
+            const paletteDirVal = ctx._elements['palette-results-dir'].value;
+            const resultsDirVal = ctx._elements['results-dir'].value;
+            if (selectedJob !== 'job_a') { console.error('FATAL: deepzoom goto should select job_a, got ' + selectedJob); process.exit(1); }
+            if (renderDirVal !== 'job_a' || paletteDirVal !== 'job_a' || resultsDirVal !== 'job_a') {
+                console.error('FATAL: deepzoom goto should populate result dirs with job_a');
+                process.exit(1);
+            }
+            console.log('  deepzoom goto result selects matching result: OK');
+        } catch (e) {
+            console.error('FATAL: deepzoom goto result: ' + e.message);
+            process.exit(1);
+        }
+
+        try {
+            await vm.runInContext('(async()=>{ await _dzPopulateSelectedResult(); })()', ctx);
+            const nVal = ctx._elements['render-n'].value;
+            const timesVal = ctx._elements['render-times'].value;
+            const chunksVal = ctx._elements['render-stripes'].value;
+            const funcVal = ctx._elements['render-function'].value;
+            const status = ctx._elements['compute-status'].textContent;
+            if (nVal !== '1200') { console.error('FATAL: deepzoom populate should set N=1200, got ' + nVal); process.exit(1); }
+            if (timesVal !== '3') { console.error('FATAL: deepzoom populate should set times=3, got ' + timesVal); process.exit(1); }
+            if (chunksVal !== '24') { console.error('FATAL: deepzoom populate should set chunks=24, got ' + chunksVal); process.exit(1); }
+            if (funcVal !== 'creative9') { console.error('FATAL: deepzoom populate should set function creative9, got ' + funcVal); process.exit(1); }
+            if (!status.includes('Populated from job_a')) { console.error('FATAL: deepzoom populate should update compute status, got ' + status); process.exit(1); }
+            console.log('  deepzoom populate restores compute settings: OK');
+        } catch (e) {
+            console.error('FATAL: deepzoom populate: ' + e.message);
+            process.exit(1);
+        }
+    }
+
+    // Test: DeepZoom delete removes only selected row and keeps nearby selection
+    {
+        ctx._elements['btn-dz-delete'] = { ...ctx._mkEl(), disabled: false, textContent: 'Delete' };
+        ctx._elements['deepzoom-status'] = { ...ctx._mkEl(), textContent: '' };
+        vm.runInContext(`
+            var _dzDeletedPrefix = null;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/delete-prefix') {
+                    _dzDeletedPrefix = body.prefix;
+                    return { deleted: 5 };
+                }
+                if (name === 'storage' && path === '/presign') {
+                    return { url: 'https://ptr/deepzoom_latest.json' };
+                }
+                if (name === 'storage' && path === '/cleanup') {
+                    return { deleted: 1 };
+                }
+                return {};
+            };
+            fetch = async function(url) {
+                return { ok: true, json: async function() { return { export_id: 'dz_mid' }; } };
+            };
+            window._dzInventory = [
+                { job_id: 'job_top', export_id: 'dz_top', width: 4000, height: 4000, created_at: '2026-03-25T12:00:00', tiles_uploaded: 100, dzi_url: 'https://dz/job_top.dzi' },
+                { job_id: 'job_mid', export_id: 'dz_mid', width: 3000, height: 3000, created_at: '2026-03-25T11:00:00', tiles_uploaded: 80, dzi_url: 'https://dz/job_mid.dzi' },
+                { job_id: 'job_low', export_id: 'dz_low', width: 2000, height: 2000, created_at: '2026-03-25T10:00:00', tiles_uploaded: 60, dzi_url: 'https://dz/job_low.dzi' },
+            ];
+            _dzRenderInventory(1);
+        `, ctx);
+        try {
+            await vm.runInContext('(async()=>{ await _dzDeleteSelected(); })()', ctx);
+            const deletedPrefix = vm.runInContext('_dzDeletedPrefix', ctx);
+            const invLen = vm.runInContext('window._dzInventory.length', ctx);
+            const selectedIdx = vm.runInContext('window._dzSelectedIdx', ctx);
+            const selectedJob = vm.runInContext('window._dzInventory[window._dzSelectedIdx].job_id', ctx);
+            const status = ctx._elements['deepzoom-status'].textContent;
+            const html = ctx._elements['deepzoom-inventory'].innerHTML || '';
+            if (deletedPrefix !== 'deepzoom/job_mid/dz_mid/') { console.error('FATAL: deepzoom delete should target selected export prefix, got ' + deletedPrefix); process.exit(1); }
+            if (invLen !== 2) { console.error('FATAL: deepzoom delete should remove one row, got len=' + invLen); process.exit(1); }
+            if (selectedIdx !== 1) { console.error('FATAL: deepzoom delete should keep selection at neighbor idx=1, got ' + selectedIdx); process.exit(1); }
+            if (selectedJob !== 'job_low') { console.error('FATAL: deepzoom delete should select row below deleted one, got ' + selectedJob); process.exit(1); }
+            if (html.includes('job_mid')) { console.error('FATAL: deleted deepzoom row should disappear immediately'); process.exit(1); }
+            if (!status.includes('Deleted dz_mid')) { console.error('FATAL: deepzoom delete should show success status, got ' + status); process.exit(1); }
+            console.log('  deepzoom delete removes row in place and keeps adjacent selection: OK');
+        } catch (e) {
+            console.error('FATAL: deepzoom delete UX: ' + e.message);
+            process.exit(1);
+        }
+    }
+
     // Step 11: Solve score UI + orchestration tests
     console.log('');
     console.log('--- Solve score ---');
 
-    // 11a: both palette containers exist
+    // 11a: render palette containers collapse built-ins into popup buttons
     {
         const rpContainer = ctx._elements['palette-circles-root-proximity'];
         const ssContainer = ctx._elements['palette-circles-solve-score'];
         const rpCount = rpContainer ? rpContainer.children.length : 0;
         const ssCount = ssContainer ? ssContainer.children.length : 0;
-        if (rpCount < 6) { console.error('FATAL: root-proximity palette has ' + rpCount + ' swatches'); process.exit(1); }
-        if (ssCount < 6) { console.error('FATAL: solve-score palette has ' + ssCount + ' swatches'); process.exit(1); }
-        console.log('  two palette containers: OK (root=' + rpCount + ', solve=' + ssCount + ')');
+        if (rpCount !== 3) { console.error('FATAL: root-proximity palette row should collapse to 3 swatches, got ' + rpCount); process.exit(1); }
+        if (ssCount !== 3) { console.error('FATAL: solve-score palette row should collapse to 3 swatches, got ' + ssCount); process.exit(1); }
+        console.log('  render palette rows collapsed: OK (root=' + rpCount + ', solve=' + ssCount + ')');
     }
 
-    // 11a2: TRI swatches exist in all three palette rows
+    // 11a2: built-in popup swatches exist in render rows; TRI and LONG exist in all rows
     {
         ctx._elements['palette-circles-palette-tab'] = ctx._mkEl();
         vm.runInContext("_renderPaletteRow('palette_tab')", ctx);
-        const ids = ['palette-circles-root-proximity', 'palette-circles-solve-score', 'palette-circles-palette-tab'];
-        ids.forEach((id) => {
+        ['palette-circles-root-proximity', 'palette-circles-solve-score'].forEach((id) => {
+            const container = ctx._elements[id];
+            const builtin = container.children.find(ch => ch.dataset && ch.dataset.palettePopup === 'builtin');
+            if (!builtin) {
+                console.error('FATAL: missing built-in popup swatch in ' + id);
+                process.exit(1);
+            }
+            if (builtin.textContent !== 'PAL') {
+                console.error('FATAL: built-in popup swatch text mismatch in ' + id + ': ' + builtin.textContent);
+                process.exit(1);
+            }
+        });
+        ['palette-circles-root-proximity', 'palette-circles-solve-score', 'palette-circles-palette-tab'].forEach((id) => {
             const container = ctx._elements[id];
             const tri = container.children.find(ch => String(ch.className || '').includes('pal-circle-tri'));
+            const longSwatch = container.children.find(ch => String(ch.className || '').includes('pal-circle-long'));
             if (!tri) {
                 console.error('FATAL: missing TRI swatch in ' + id);
                 process.exit(1);
@@ -833,11 +1265,58 @@ async function testPipeline(name, call) {
                 console.error('FATAL: TRI swatch text mismatch in ' + id + ': ' + tri.textContent);
                 process.exit(1);
             }
+            if (!longSwatch) {
+                console.error('FATAL: missing LONG swatch in ' + id);
+                process.exit(1);
+            }
+            if (longSwatch.textContent !== 'LONG') {
+                console.error('FATAL: LONG swatch text mismatch in ' + id + ': ' + longSwatch.textContent);
+                process.exit(1);
+            }
         });
-        console.log('  TRI swatches: OK (all 3 rows)');
+        console.log('  built-in + TRI + LONG swatches: OK');
     }
 
-    // 11a3: TRI popup opens and row selection updates remembered palette + active id
+    // 11a3: built-in popup opens and row selection updates remembered palette + active id
+    {
+        const solveContainer = ctx._elements['palette-circles-solve-score'];
+        const builtin = solveContainer.children.find(ch => ch.dataset && ch.dataset.palettePopup === 'builtin');
+        builtin.onclick();
+        const overlay = ctx._elements['builtin-popup-overlay'];
+        const title = ctx._elements['builtin-popup-title'].textContent || '';
+        const rows = ctx._elements['builtin-popup-body'].children;
+        if (overlay.style.display !== 'flex') { console.error('FATAL: built-in popup should be visible'); process.exit(1); }
+        if (!title.includes('Solve score')) { console.error('FATAL: built-in popup title should mention Solve score, got ' + title); process.exit(1); }
+        if (!rows.length) { console.error('FATAL: built-in popup should render rows'); process.exit(1); }
+        const second = rows[1] || rows[0];
+        second.onclick();
+        const selectedPalette = vm.runInContext('renderSolveScorePalette', ctx);
+        const remembered = vm.runInContext('renderSolveScoreBuiltinPalette', ctx);
+        if (selectedPalette !== remembered) { console.error('FATAL: built-in popup should activate remembered palette, got ' + JSON.stringify({ selectedPalette, remembered })); process.exit(1); }
+        console.log('  built-in popup selection: OK (' + remembered + ')');
+    }
+
+    // 11a4: LONG popup opens and row selection updates remembered palette + active id
+    {
+        const solveContainer = ctx._elements['palette-circles-solve-score'];
+        const longSwatch = solveContainer.children.find(ch => String(ch.className || '').includes('pal-circle-long'));
+        longSwatch.onclick();
+        const overlay = ctx._elements['long-popup-overlay'];
+        const title = ctx._elements['long-popup-title'].textContent || '';
+        const rows = ctx._elements['long-popup-body'].children;
+        if (overlay.style.display !== 'flex') { console.error('FATAL: LONG popup should be visible'); process.exit(1); }
+        if (!title.includes('Solve score')) { console.error('FATAL: LONG popup title should mention Solve score, got ' + title); process.exit(1); }
+        if (!rows.length) { console.error('FATAL: LONG popup should render rows'); process.exit(1); }
+        const second = rows[1] || rows[0];
+        second.onclick();
+        const selectedPalette = vm.runInContext('renderSolveScorePalette', ctx);
+        const remembered = vm.runInContext('renderSolveScoreLongName', ctx);
+        if (!String(selectedPalette).startsWith('long_')) { console.error('FATAL: LONG selection should activate long palette, got ' + selectedPalette); process.exit(1); }
+        if (!remembered) { console.error('FATAL: LONG selection should remember long name'); process.exit(1); }
+        console.log('  LONG popup selection: OK (' + remembered + ')');
+    }
+
+    // 11a5: TRI popup opens and row selection updates remembered palette + active id
     {
         const solveContainer = ctx._elements['palette-circles-solve-score'];
         const tri = solveContainer.children.find(ch => String(ch.className || '').includes('pal-circle-tri'));
@@ -857,7 +1336,7 @@ async function testPipeline(name, call) {
         console.log('  TRI popup selection: OK (' + remembered + ')');
     }
 
-    // 11a4: right-click selects remembered TRI without reopening popup
+    // 11a6: right-click selects remembered TRI without reopening popup
     {
         vm.runInContext("renderRootProximityTriName = 'redgold'; renderRootProximityPalette = 'inferno';", ctx);
         vm.runInContext("_closeTriPalettePopup()", ctx);
@@ -871,22 +1350,28 @@ async function testPipeline(name, call) {
         console.log('  TRI right-click direct select: OK');
     }
 
-    // 11a5: independent remembered TRI names survive per mode
+    // 11a7: independent remembered TRI/LONG names survive per mode
     {
         vm.runInContext("_setTriPaletteForMode('proximity', 'redgold', false)", ctx);
         vm.runInContext("_setTriPaletteForMode('solve_score', 'greencopper', false)", ctx);
         vm.runInContext("_setTriPaletteForMode('palette_tab', 'retro_maroon_cream', false)", ctx);
+        vm.runInContext("_setLongPaletteForMode('proximity', 'bauhaus_blue_yellow_13', false)", ctx);
+        vm.runInContext("_setLongPaletteForMode('solve_score', 'metal_chrome_13', false)", ctx);
+        vm.runInContext("_setLongPaletteForMode('palette_tab', 'marvel_spiderman_long', false)", ctx);
         const rp = vm.runInContext('renderRootProximityTriName', ctx);
         const sp = vm.runInContext('renderSolveScoreTriName', ctx);
         const pp = vm.runInContext('paletteTabTriName', ctx);
-        if (rp !== 'redgold' || sp !== 'greencopper' || pp !== 'retro_maroon_cream') {
-            console.error('FATAL: independent TRI memory broken: ' + JSON.stringify({ rp, sp, pp }));
+        const lrp = vm.runInContext('renderRootProximityLongName', ctx);
+        const lsp = vm.runInContext('renderSolveScoreLongName', ctx);
+        const lpp = vm.runInContext('paletteTabLongName', ctx);
+        if (rp !== 'redgold' || sp !== 'greencopper' || pp !== 'retro_maroon_cream' || lrp !== 'bauhaus_blue_yellow_13' || lsp !== 'metal_chrome_13' || lpp !== 'marvel_spiderman_long') {
+            console.error('FATAL: independent TRI/LONG memory broken: ' + JSON.stringify({ rp, sp, pp, lrp, lsp, lpp }));
             process.exit(1);
         }
-        console.log('  TRI remembered names independent: OK');
+        console.log('  TRI/LONG remembered names independent: OK');
     }
 
-    // 11a6: filter matches aliases and graceful degradation does not break built-ins
+    // 11a8: filter matches aliases and graceful degradation does not break built-ins/LONG
     {
         vm.runInContext("_openTriPalettePopup('solve_score')", ctx);
         vm.runInContext("_applyTriPopupFilter('rg')", ctx);
@@ -895,17 +1380,25 @@ async function testPipeline(name, call) {
         const firstName = rows[0].children[0].children[0].children[0].textContent;
         if (firstName !== 'redgold') { console.error('FATAL: TRI alias filter should match redgold, got ' + firstName); process.exit(1); }
         const savedTri = ctx._triPaletteCatalog;
+        const savedLong = ctx._longPaletteCatalog;
         ctx._triPaletteCatalog = null;
+        ctx._longPaletteCatalog = null;
         vm.runInContext("buildPaletteCircles('palette-circles-root-proximity', 'proximity', () => renderRootProximityPalette)", ctx);
         const rootContainer = ctx._elements['palette-circles-root-proximity'];
         const tri = rootContainer.children.find(ch => String(ch.className || '').includes('pal-circle-tri'));
+        const longSwatch = rootContainer.children.find(ch => String(ch.className || '').includes('pal-circle-long'));
         if (!String(tri.className).includes('disabled')) { console.error('FATAL: TRI should be disabled when catalog missing'); process.exit(1); }
+        if (!String(longSwatch.className).includes('disabled')) { console.error('FATAL: LONG should be disabled when catalog missing'); process.exit(1); }
         rootContainer.children[0].onclick();
+        const builtinRows = ctx._elements['builtin-popup-body'].children;
+        if (!builtinRows.length) { console.error('FATAL: built-in popup should still work when TRI catalog missing'); process.exit(1); }
+        builtinRows[0].onclick();
         const palette = vm.runInContext('renderRootProximityPalette', ctx);
-        if (!palette) { console.error('FATAL: built-in palette selection should still work when TRI catalog missing'); process.exit(1); }
+        if (!palette || String(palette).startsWith('tri_')) { console.error('FATAL: built-in palette selection should still work when TRI catalog missing'); process.exit(1); }
         ctx._triPaletteCatalog = savedTri;
+        ctx._longPaletteCatalog = savedLong;
         vm.runInContext("_renderAllPaletteRows()", ctx);
-        console.log('  TRI filter + graceful degradation: OK');
+        console.log('  TRI/LONG filter + graceful degradation: OK');
     }
 
     // 11b: setPaletteForMode independence
@@ -1040,6 +1533,15 @@ async function testPipeline(name, call) {
         console.log('  solve-score quantile slider: OK (default=0.1)');
     }
 
+    {
+        const slider = ctx._elements['render-solve-score-omega'];
+        if (!slider) { console.error('FATAL: render-solve-score-omega not found'); process.exit(1); }
+        if (slider.value !== '1') { console.error('FATAL: omega default should be 1, got ' + slider.value); process.exit(1); }
+        const valSpan = ctx._elements['render-solve-score-omega-val'];
+        if (!valSpan) { console.error('FATAL: render-solve-score-omega-val not found'); process.exit(1); }
+        console.log('  solve-score omega slider: OK (default=1)');
+    }
+
     // 11i: solveScoreQuantile in _renderCommonParams
     {
         // Set slider to 2.0 (= q=0.02)
@@ -1049,14 +1551,22 @@ async function testPipeline(name, call) {
             console.error('FATAL: solveScoreQuantile should be 0.02, got ' + cp.solveScoreQuantile);
             process.exit(1);
         }
+        ctx._elements['render-solve-score-omega'].value = '7';
+        const cpOmega = vm.runInContext('_renderCommonParams()', ctx);
+        if (Math.abs(cpOmega.solveScoreOmega - 7) > 0.001) {
+            console.error('FATAL: solveScoreOmega should be 7, got ' + cpOmega.solveScoreOmega);
+            process.exit(1);
+        }
         console.log('  solveScoreQuantile in commonParams: OK (0.02)');
         ctx._elements['render-solve-score-quantile'].value = '0.1';
+        ctx._elements['render-solve-score-omega'].value = '1';
     }
 
     // 11j: solve_score_quantile in orchestrator payload only when solve_score mode
     {
         vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'proximity';", ctx);
         ctx._elements['render-solve-score-quantile'].value = '3.0';
+        ctx._elements['render-solve-score-omega'].value = '6';
         vm.runInContext(`
             var _qOrchPayload = null;
             lambdaPost = async function lambdaPost(name, body, path) {
@@ -1085,6 +1595,10 @@ async function testPipeline(name, call) {
             console.error('FATAL: solve_score_quantile should be 0.03, got ' + qp.params.solve_score_quantile);
             process.exit(1);
         }
+        if (Math.abs(qp.params.solve_score_omega - 6) > 0.001) {
+            console.error('FATAL: solve_score_omega should be 6, got ' + qp.params.solve_score_omega);
+            process.exit(1);
+        }
         console.log('  solve_score_quantile in payload: OK (0.03)');
         // Now test rainbow mode — should NOT have solve_score_quantile
         vm.runInContext("renderColorMode = 'rainbow';", ctx);
@@ -1098,6 +1612,7 @@ async function testPipeline(name, call) {
         console.log('  solve_score_quantile absent in rainbow: OK');
         vm.runInContext("renderColorMode = 'rainbow';", ctx);
         ctx._elements['render-solve-score-quantile'].value = '0.1';
+        ctx._elements['render-solve-score-omega'].value = '1';
     }
 
     // 11k: viewport quantile and solve-score quantile are independent
@@ -1415,6 +1930,7 @@ async function testPipeline(name, call) {
                         mode: 'summary', metric: 'crowding', n_solves: 50, degree: 5,
                         min_score: -1, max_score: 2, mean_score: 0.5, stddev_score: 0.3,
                         q05: -0.5, q10: -0.3, q25: 0.1, q50: 0.5, q75: 0.9, q90: 1.2, q95: 1.5,
+                        omega: 8,
                         clip_quantile: 0.02, clip_lo: -0.5, clip_hi: 1.5, full_range: 3, clip_range: 2,
                         clip_below_count: 2, clip_inrange_count: 46, clip_above_count: 2,
                         clip_below_frac: 0.04, clip_inrange_frac: 0.92, clip_above_frac: 0.04,
@@ -1443,6 +1959,7 @@ async function testPipeline(name, call) {
         if (body.phase !== 'summary') { console.error('FATAL: phase should be summary'); process.exit(1); }
         if (body.metric !== 'crowding') { console.error('FATAL: metric should be crowding'); process.exit(1); }
         if (Math.abs(body.solve_score_quantile - 0.02) > 0.001) { console.error('FATAL: q should be 0.02'); process.exit(1); }
+        if (Math.abs(body.solve_score_omega - 1) > 0.001) { console.error('FATAL: omega should be 1 by default'); process.exit(1); }
         if (body.degree !== 5) { console.error('FATAL: degree should be 5'); process.exit(1); }
         if (dispatchCalled) { console.error('FATAL: histogram must not call dispatch'); process.exit(1); }
         // Verify _activeRenderRun was not set
@@ -1454,6 +1971,7 @@ async function testPipeline(name, call) {
         if (!logText.includes('final color bins (10')) { console.error('FATAL: log should show final color bins (10)'); process.exit(1); }
         if (!logText.includes('b0')) { console.error('FATAL: log should show b0 row'); process.exit(1); }
         if (!logText.includes('b9')) { console.error('FATAL: log should show b9 row'); process.exit(1); }
+        if (!logText.includes('w=8')) { console.error('FATAL: log should show omega'); process.exit(1); }
         if (logText.includes('32 bins')) { console.error('FATAL: log must not show 32 bins'); process.exit(1); }
         if (logText.includes('full range')) { console.error('FATAL: log must not show full range'); process.exit(1); }
         if (!logText.includes('extremes:')) { console.error('FATAL: log should show outlier extremes'); process.exit(1); }
@@ -1483,6 +2001,7 @@ async function testPipeline(name, call) {
         vm.runInContext("_renderActiveFamily = 'palette'; renderColorMode = 'solve_score'; renderSolveMetric = 'area'; _activeRenderRun = null;", ctx);
         vm.runInContext("renderSolveScorePalette = 'turbo';", ctx);
         ctx._elements['render-solve-score-quantile'].value = '1.0';
+        ctx._elements['render-solve-score-omega'].value = '9';
         ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'pal_test' };
         vm.runInContext(`
             var _palTarget = null; var _palBody = null; var _palObserverStarted = false;
@@ -1506,6 +2025,7 @@ async function testPipeline(name, call) {
         if (job.params.metric !== 'area') { console.error('FATAL: metric should be area'); process.exit(1); }
         if (job.params.palette !== 'turbo') { console.error('FATAL: palette should be turbo'); process.exit(1); }
         if (Math.abs(job.params.solve_score_quantile - 0.01) > 0.001) { console.error('FATAL: q should be 0.01'); process.exit(1); }
+        if (Math.abs(job.params.solve_score_omega - 9) > 0.001) { console.error('FATAL: omega should be 9'); process.exit(1); }
         if (!observerStarted) { console.error('FATAL: render palette should start palette observer'); process.exit(1); }
         const palRun = vm.runInContext('_activePaletteRun', ctx);
         if (!palRun || palRun.job_id !== 'pal_test') { console.error('FATAL: render palette should set _activePaletteRun'); process.exit(1); }
@@ -1530,10 +2050,10 @@ async function testPipeline(name, call) {
                         count: 2,
                         palettes: [
                             { palette_id: 'pal_new', created_at: '2026-03-30T10:00:00Z', display_name: 'crowding q=5.0% reef',
-                              metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05, root_transforms: [],
+                              metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05, solve_score_omega: 4, root_transforms: [],
                               clip_lo: -0.1, clip_hi: 0.2, image_url: 'https://example.com/new.jpeg', preview_url: 'https://example.com/new.png' },
                             { palette_id: 'pal_old', created_at: '2026-03-29T10:00:00Z', display_name: 'proximity q=0.1% inferno',
-                              metric: 'proximity', palette: 'inferno', solve_score_quantile: 0.001, root_transforms: [],
+                              metric: 'proximity', palette: 'inferno', solve_score_quantile: 0.001, solve_score_omega: 1, root_transforms: [],
                               clip_lo: -1, clip_hi: 1, image_url: 'https://example.com/old.jpeg', preview_url: 'https://example.com/old.png' }
                         ]
                     };
@@ -1575,6 +2095,7 @@ async function testPipeline(name, call) {
     {
         ctx._elements['palette-results-dir'].value = 'pal_job';
         ctx._elements['palette-solve-score-quantile'].value = '1.0';
+        ctx._elements['palette-solve-score-omega'].value = '3';
         vm.runInContext(`
             _activePaletteRun = null;
             try { localStorage.removeItem('polypaint_active_palette_run'); } catch(e) {}
@@ -1603,6 +2124,7 @@ async function testPipeline(name, call) {
         const job = body.jobs[0];
         if (job.params.metric !== 'area') { console.error('FATAL: palette artifact metric should be area'); process.exit(1); }
         if (job.params.palette !== 'turbo') { console.error('FATAL: palette artifact palette should be turbo'); process.exit(1); }
+        if (Math.abs(job.params.solve_score_omega - 3) > 0.001) { console.error('FATAL: palette artifact omega should be 3'); process.exit(1); }
         if (!job.params.root_transforms || job.params.root_transforms.length !== 1) { console.error('FATAL: palette artifact should send root transforms'); process.exit(1); }
         if (!activePaletteRun || activePaletteRun.job_id !== 'pal_job') { console.error('FATAL: palette artifact should set _activePaletteRun'); process.exit(1); }
         if (!observerStarted) { console.error('FATAL: palette artifact should start observer'); process.exit(1); }
@@ -1747,11 +2269,81 @@ async function testPipeline(name, call) {
         }
     }
 
+    console.log('');
+    console.log('--- Results populate ---');
+    {
+        ctx._elements['btn-populate-result'] = { ...ctx._mkEl(), disabled: false, textContent: 'Populate' };
+        ctx._elements['btn-preview'] = { ...ctx._mkEl(), disabled: true, textContent: 'Preview' };
+        ctx._elements['btn-render-result'] = { ...ctx._mkEl(), disabled: true, textContent: 'Render' };
+        ctx._elements['btn-delete'] = { ...ctx._mkEl(), disabled: true, textContent: 'Delete' };
+        ctx._elements['compute-status'] = { ...ctx._mkEl(), textContent: '' };
+        ctx._elements['compute-log'] = ctx._mkEl();
+        ctx._elements['results-info'] = { ...ctx._mkEl(), textContent: '' };
+        ctx._elements['results-dir'] = { ...ctx._mkEl(), value: '' };
+        ctx._elements['render-n'] = { ...ctx._mkEl(), value: '500' };
+        ctx._elements['render-times'] = { ...ctx._mkEl(), value: '1' };
+        ctx._elements['render-stripes'] = { ...ctx._mkEl(), value: '10' };
+        ctx._elements['render-function'] = ctx._elements['render-function'] || { ...ctx._mkEl(), value: 'g1' };
+        ctx._elements['pt-chips'] = ctx._elements['pt-chips'] || ctx._mkEl();
+        ctx._elements['ct-chips'] = ctx._elements['ct-chips'] || ctx._mkEl();
+        ctx._elements['cfpv-row'] = ctx._elements['cfpv-row'] || ctx._mkEl();
+        ctx._elements['cfpv-inputs'] = ctx._elements['cfpv-inputs'] || ctx._mkEl();
+
+        try {
+            vm.runInContext(`
+                _selectedJobId = 'job_pop';
+                _resultsCache = [{
+                    job_id: 'job_pop',
+                    _detail: {
+                        times: 3,
+                        param_transforms_display: [['unit_circle'], ['rtheta', '2']],
+                        coeff_transforms: ['rev', 'conj'],
+                        pipeline: {
+                            function: 'creative9',
+                            param_transforms_display: [['unit_circle'], ['rtheta', '2']],
+                            coeff_transforms: ['rev', 'conj'],
+                            cfpv: [88]
+                        },
+                        calc: {
+                            N: 1200,
+                            n_chunks: 24,
+                            solver: 'companion_matrix'
+                        }
+                    }
+                }];
+            `, ctx);
+            await vm.runInContext('(async()=>{ await populateSelectedResult(); })()', ctx);
+
+            const nVal = ctx._elements['render-n'].value;
+            const timesVal = ctx._elements['render-times'].value;
+            const chunksVal = ctx._elements['render-stripes'].value;
+            const funcVal = ctx._elements['render-function'].value;
+            const resultsDirVal = ctx._elements['results-dir'].value;
+            const cfpv0 = ctx._elements['cfpv-p0'] ? ctx._elements['cfpv-p0'].value : null;
+            const ptChain = vm.runInContext('JSON.stringify(_ptChain)', ctx);
+            const ctChain = vm.runInContext('JSON.stringify(_ctChain)', ctx);
+            const status = ctx._elements['compute-status'].textContent;
+            if (nVal !== '1200') { console.error('FATAL: populate result should set N=1200, got ' + nVal); process.exit(1); }
+            if (timesVal !== '3') { console.error('FATAL: populate result should set times=3, got ' + timesVal); process.exit(1); }
+            if (chunksVal !== '24') { console.error('FATAL: populate result should set chunks=24, got ' + chunksVal); process.exit(1); }
+            if (funcVal !== 'creative9') { console.error('FATAL: populate result should set function creative9, got ' + funcVal); process.exit(1); }
+            if (resultsDirVal !== 'job_pop') { console.error('FATAL: populate result should set results-dir job_pop, got ' + resultsDirVal); process.exit(1); }
+            if (cfpv0 !== '88') { console.error('FATAL: populate result should restore cfpv 88, got ' + cfpv0); process.exit(1); }
+            if (!ptChain.includes('unit_circle') || !ptChain.includes('rtheta')) { console.error('FATAL: populate result should restore param transforms, got ' + ptChain); process.exit(1); }
+            if (!ctChain.includes('rev') || !ctChain.includes('conj')) { console.error('FATAL: populate result should restore coeff transforms, got ' + ctChain); process.exit(1); }
+            if (!status.includes('Calculate-CM')) { console.error('FATAL: populate result should mention Calculate-CM, got ' + status); process.exit(1); }
+            console.log('  results populate restores compute settings: OK');
+        } catch (e) {
+            console.error('FATAL: results populate: ' + e.message);
+            process.exit(1);
+        }
+    }
+
     console.log('=== Frontend JS Execution Test PASSED ===');
 })().catch(e => { console.error('FATAL: ' + e.message); process.exit(1); });
 HARNESS_EOF
 
-node /tmp/_fe_test_harness.cjs "$CATALOG_JS" "$TRI_CATALOG_JS" /tmp/_fe_test_app.js 2>&1
+node /tmp/_fe_test_harness.cjs "$CATALOG_JS" "$TRI_CATALOG_JS" "$LONG_CATALOG_JS" /tmp/_fe_test_app.js 2>&1
 EXIT=$?
 rm -f /tmp/_fe_test_app.js /tmp/_fe_test_harness.cjs
 exit $EXIT

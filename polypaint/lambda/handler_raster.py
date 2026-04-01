@@ -91,12 +91,17 @@ def handler(event, context):
                 raise RuntimeError("Bins artifact missing clip_quantile")
             if ss_data["clip_quantile"] != req_q:
                 raise RuntimeError(f"Bins quantile mismatch: expected {req_q}, got {ss_data['clip_quantile']}")
+            req_omega = float(params.get("solve_score_omega", 1.0))
+            bins_omega = float(ss_data.get("omega", 1.0))
+            if bins_omega != req_omega:
+                raise RuntimeError(f"Bins omega mismatch: expected {req_omega}, got {bins_omega}")
             ss_metric = ss_data.get("metric", params.get("solve_metric", "proximity"))
             cmd.append(f"--color=solve_score")
             cmd.append(f"--solve_metric={ss_metric}")
             cmd.append(f"--solve_score_clip_lo={ss_data['clip_lo']}")
             cmd.append(f"--solve_score_clip_hi={ss_data['clip_hi']}")
             cmd.append(f"--solve_score_cuts={','.join(str(c) for c in ss_data['cuts_norm'])}")
+            cmd.append(f"--solve_score_omega={bins_omega}")
             # Override the color arg already in cmd (was set to "solve_proximity" or "solve_score")
             cmd = [a for a in cmd if not a.startswith("--color=") or a == f"--color=solve_score"]
 

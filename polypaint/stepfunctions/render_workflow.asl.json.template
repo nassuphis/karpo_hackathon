@@ -107,6 +107,7 @@
                 "degree.$": "$.plan.calc.degree",
                 "metric.$": "$.plan.solve_score.metric",
                 "solve_score_quantile.$": "$.plan.solve_score.quantile",
+                "solve_score_omega.$": "$.plan.solve_score.omega",
                 "lores_bin_key.$": "$.plan.calc.lores_bin_key",
                 "root_transforms.$": "$.plan.params.root_transforms",
                 "out_key.$": "$.plan.solve_score.clip_key",
@@ -150,6 +151,7 @@
               "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
               "metric.$": "$.plan.solve_score.metric",
               "solve_score_quantile.$": "$.plan.solve_score.quantile",
+              "solve_score_omega.$": "$.plan.solve_score.omega",
               "bin_key.$": "States.Format('renders/{}/chunk_{}.bin', $.job_id, $$.Map.Item.Value.chunk_idx)",
               "degree.$": "$.plan.calc.degree",
               "clip_key.$": "$.plan.solve_score.clip_key",
@@ -208,6 +210,7 @@
                 "n_chunks.$": "$.plan.calc.n_chunks",
                 "metric.$": "$.plan.solve_score.metric",
                 "solve_score_quantile.$": "$.plan.solve_score.quantile",
+                "solve_score_omega.$": "$.plan.solve_score.omega",
                 "hist_prefix.$": "$.plan.solve_score.hist_prefix",
                 "clip_key.$": "$.plan.solve_score.clip_key",
                 "out_key.$": "$.plan.solve_score.bins_key",
@@ -267,7 +270,8 @@
               "root_transforms.$": "$.plan.params.root_transforms",
               "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
               "solve_metric.$": "$.plan.solve_score.metric",
-              "solve_score_quantile.$": "$.plan.solve_score.quantile"
+              "solve_score_quantile.$": "$.plan.solve_score.quantile",
+              "solve_score_omega.$": "$.plan.solve_score.omega"
             },
             "ItemProcessor": {
               "ProcessorConfig": {"Mode": "INLINE"},

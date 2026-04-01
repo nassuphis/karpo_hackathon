@@ -28,6 +28,10 @@
 
 /* ── Constants ────────────────────────────────────────────────────────── */
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #define SOLVE_SCORE_EPS2 1e-300
 #define SOLVE_SCORE_EPS  1e-150
 
@@ -95,6 +99,16 @@ static int roots_all_finite(const float *roots, int degree) {
         }
     }
     return 1;
+}
+
+static double apply_solve_score_omega(double u, double omega) {
+    if (!isfinite(u)) return 0.0;
+    if (u < 0.0) u = 0.0;
+    if (u > 1.0) u = 1.0;
+    if (!isfinite(omega)) omega = 1.0;
+    if (omega < 1.0) omega = 1.0;
+    if (omega > 10.0) omega = 10.0;
+    return 0.5 * (cos(omega * 2.0 * M_PI * u) + 1.0);
 }
 
 /* Exact median: sort + middle element(s). Modifies values[] in-place. */

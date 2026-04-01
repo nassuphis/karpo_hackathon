@@ -36,7 +36,7 @@ def _make_mock_s3(clip_data, hist_responses):
     return mock_s3
 
 
-def _run_merge(n_stripes, clip_data, hist_responses, metric="proximity", solve_score_quantile=0.001):
+def _run_merge(n_stripes, clip_data, hist_responses, metric="proximity", solve_score_quantile=0.001, solve_score_omega=1.0):
     """Run merge phase with mocked S3."""
     import handler_solve_proximity as hsp
     mock_s3 = _make_mock_s3(clip_data, hist_responses)
@@ -49,6 +49,7 @@ def _run_merge(n_stripes, clip_data, hist_responses, metric="proximity", solve_s
             "task_id": "merge_test",
             "metric": metric,
             "solve_score_quantile": solve_score_quantile,
+            "solve_score_omega": solve_score_omega,
             "n_stripes": n_stripes,
             "hist_prefix": "renders/test/solve_scores/",
             "clip_key": "renders/test/solve_scores/clip.json",
@@ -71,6 +72,7 @@ def _uniform_hist_data(prefix, n_stripes, metric="proximity", clip_quantile=0.00
     clip_data = {
         "family": "solve_score", "metric": metric,
         "clip_quantile": clip_quantile,
+        "omega": 1.0,
         "clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": [],
     }
     hist_responses = {}
@@ -78,6 +80,7 @@ def _uniform_hist_data(prefix, n_stripes, metric="proximity", clip_quantile=0.00
         hist_responses[f"{prefix}stripe_{s}_hist.json"] = {
             "family": "solve_score", "metric": metric,
             "clip_quantile": clip_quantile,
+            "omega": 1.0,
             "hist": [20] * 100, "n_solves": 2000,
         }
     return clip_data, hist_responses
@@ -101,6 +104,7 @@ def test_merge_skewed_histogram():
     clip_data = {
         "family": "solve_score", "metric": "proximity",
         "clip_quantile": 0.001,
+        "omega": 1.0,
         "clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": [],
     }
     hist = [900] * 10 + [11] * 90
@@ -108,6 +112,7 @@ def test_merge_skewed_histogram():
         "renders/test/solve_scores/stripe_0_hist.json": {
             "family": "solve_score", "metric": "proximity",
             "clip_quantile": 0.001,
+            "omega": 1.0,
             "hist": hist, "n_solves": 9990,
         }
     }
@@ -124,6 +129,7 @@ def test_merge_single_bin_histogram():
     clip_data = {
         "family": "solve_score", "metric": "proximity",
         "clip_quantile": 0.001,
+        "omega": 1.0,
         "clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": [],
     }
     hist = [0] * 100
@@ -132,6 +138,7 @@ def test_merge_single_bin_histogram():
         "renders/test/solve_scores/stripe_0_hist.json": {
             "family": "solve_score", "metric": "proximity",
             "clip_quantile": 0.001,
+            "omega": 1.0,
             "hist": hist, "n_solves": 10000,
         }
     }
@@ -147,12 +154,14 @@ def test_merge_error_missing_stripe():
     clip_data = {
         "family": "solve_score", "metric": "proximity",
         "clip_quantile": 0.001,
+        "omega": 1.0,
         "clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": [],
     }
     hist_responses = {
         "renders/test/solve_scores/stripe_0_hist.json": {
             "family": "solve_score", "metric": "proximity",
             "clip_quantile": 0.001,
+            "omega": 1.0,
             "hist": [10] * 100, "n_solves": 1000,
         }
     }
@@ -182,12 +191,14 @@ def test_merge_rejects_clip_wrong_metric():
     clip_data = {
         "family": "solve_score", "metric": "crowding",
         "clip_quantile": 0.001,
+        "omega": 1.0,
         "clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": [],
     }
     hist_responses = {
         "renders/test/solve_scores/stripe_0_hist.json": {
             "family": "solve_score", "metric": "proximity",
             "clip_quantile": 0.001,
+            "omega": 1.0,
             "hist": [10] * 100, "n_solves": 1000,
         }
     }
@@ -203,12 +214,14 @@ def test_merge_rejects_stripe_wrong_metric():
     clip_data = {
         "family": "solve_score", "metric": "spread",
         "clip_quantile": 0.001,
+        "omega": 1.0,
         "clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": [],
     }
     hist_responses = {
         "renders/test/solve_scores/stripe_0_hist.json": {
             "family": "solve_score", "metric": "crowding",
             "clip_quantile": 0.001,
+            "omega": 1.0,
             "hist": [10] * 100, "n_solves": 1000,
         }
     }
@@ -217,6 +230,27 @@ def test_merge_rejects_stripe_wrong_metric():
         assert False, "should have raised on stripe metric mismatch"
     except RuntimeError as e:
         assert "mismatch" in str(e).lower(), f"wrong error: {e}"
+
+
+def test_merge_preserves_requested_omega():
+    clip_data, hist_responses = _uniform_hist_data(
+        "renders/test/solve_scores/", 1, metric="anisotropy")
+    clip_data["omega"] = 6.0
+    hist_responses["renders/test/solve_scores/stripe_0_hist.json"]["omega"] = 6.0
+    _, artifact = _run_merge(1, clip_data, hist_responses, metric="anisotropy", solve_score_omega=6.0)
+    assert artifact["omega"] == 6.0
+
+
+def test_merge_rejects_hist_wrong_omega():
+    clip_data, hist_responses = _uniform_hist_data(
+        "renders/test/solve_scores/", 1, metric="proximity")
+    clip_data["omega"] = 4.0
+    hist_responses["renders/test/solve_scores/stripe_0_hist.json"]["omega"] = 5.0
+    try:
+        _run_merge(1, clip_data, hist_responses, metric="proximity", solve_score_omega=4.0)
+        assert False, "should have raised on omega mismatch"
+    except RuntimeError as e:
+        assert "omega mismatch" in str(e).lower(), f"wrong error: {e}"
 
 
 def test_merge_artifact_has_solve_score_family():

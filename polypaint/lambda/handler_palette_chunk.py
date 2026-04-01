@@ -38,6 +38,7 @@ def handler(event, context):
     degree = params["degree"]
     metric = params["metric"]
     q = params["solve_score_quantile"]
+    omega = float(params.get("solve_score_omega", 1.0))
     bins_key = params["solve_score_bins_key"]
     step_start = int(params["step_start"])
     step_count = int(params["step_count"])
@@ -68,6 +69,8 @@ def handler(event, context):
             raise RuntimeError(f"Bins metric mismatch: expected {metric}, got {bins_data.get('metric')}")
         if bins_data.get("clip_quantile") != q:
             raise RuntimeError(f"Bins quantile mismatch: expected {q}, got {bins_data.get('clip_quantile')}")
+        if float(bins_data.get("omega", 1.0)) != omega:
+            raise RuntimeError(f"Bins omega mismatch: expected {omega}, got {bins_data.get('omega')}")
         cuts = bins_data.get("cuts_norm", [])
         if len(cuts) != 9:
             raise RuntimeError(f"Bins artifact must contain 9 cuts, got {len(cuts)}")
@@ -82,6 +85,7 @@ def handler(event, context):
             f"--clip_lo={bins_data['clip_lo']}",
             f"--clip_hi={bins_data['clip_hi']}",
             f"--cuts={','.join(str(c) for c in cuts)}",
+            f"--omega={omega}",
             f"--step_count={step_count}",
             f"--scores_out={_TMP_SCORES}",
             f"--bins_out={_TMP_BINS}",
@@ -115,6 +119,7 @@ def handler(event, context):
             "step_start": step_start,
             "step_count": step_count,
             "metric": metric,
+            "omega": omega,
             "clip_lo": bins_data["clip_lo"],
             "clip_hi": bins_data["clip_hi"],
             "cuts_norm": cuts,

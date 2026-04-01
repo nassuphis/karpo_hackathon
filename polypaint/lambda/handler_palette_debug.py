@@ -25,11 +25,22 @@ def _utc_now_iso():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def _palette_variant_id(metric, palette, q, root_transforms):
+def _validate_omega(value):
+    try:
+        omega = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"solve_score_omega must be numeric, got {value!r}")
+    if not (1.0 <= omega <= 10.0):
+        raise RuntimeError(f"solve_score_omega must be in [1, 10], got {omega}")
+    return omega
+
+
+def _palette_variant_id(metric, palette, q, omega, root_transforms):
     q_label = f"{q * 100:.1f}".replace(".", "p")
+    omega_label = f"{omega:.0f}" if float(omega).is_integer() else str(omega).replace(".", "p")
     rt_json = json.dumps(root_transforms or [], separators=(",", ":"))
     rt_hash = hashlib.sha1(rt_json.encode("utf-8")).hexdigest()[:8]
-    return f"pal_{int(time.time() * 1000)}_{metric}_{palette}_q{q_label}_rt{rt_hash}"
+    return f"pal_{int(time.time() * 1000)}_{metric}_{palette}_q{q_label}_w{omega_label}_rt{rt_hash}"
 
 
 def handler(event, context):
@@ -43,6 +54,7 @@ def handler(event, context):
     metric = params.get("metric", "proximity")
     palette = params.get("palette", "inferno")
     solve_score_quantile = params.get("solve_score_quantile", 0.001)
+    solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
     root_transforms = params.get("root_transforms", [])
     persistent = bool(params.get("persistent", False))
 
@@ -84,6 +96,7 @@ def handler(event, context):
             f"--palette={palette}",
             f"--quantile_lo={quantile_lo}",
             f"--quantile_hi={quantile_hi}",
+            f"--omega={solve_score_omega}",
         ]
         if persistent:
             cmd.append(f"--scores_out={tmp_scores}")
@@ -114,7 +127,7 @@ def handler(event, context):
 
         created_at = _utc_now_iso()
         if persistent:
-            palette_id = _palette_variant_id(metric, palette, q, root_transforms)
+            palette_id = _palette_variant_id(metric, palette, q, solve_score_omega, root_transforms)
             prefix = f"renders/{job_id}/palettes/{palette_id}/"
             out_key = prefix + "image.jpeg"
             preview_key = prefix + "preview.png"
@@ -142,6 +155,7 @@ def handler(event, context):
             "metric": metric,
             "palette": palette,
             "solve_score_quantile": str(q),
+            "solve_score_omega": str(solve_score_omega),
             "lores_n": str(lores_n),
             "full_n": str(full_n),
             "times": str(times),
@@ -198,10 +212,11 @@ def handler(event, context):
                 "job_id": job_id,
                 "palette_id": palette_id,
                 "created_at": created_at,
-                "display_name": f"{metric} q={(q*100):.1f}% {palette} {created_at}",
+                "display_name": f"{metric} q={(q*100):.1f}% w={solve_score_omega:g} {palette} {created_at}",
                 "metric": metric,
                 "palette": palette,
                 "solve_score_quantile": q,
+                "solve_score_omega": solve_score_omega,
                 "root_transforms": root_transforms or [],
                 "degree": degree,
                 "N": full_n,
@@ -237,6 +252,7 @@ def handler(event, context):
             "metric": metric,
             "palette": palette,
             "solve_score_quantile": q,
+            "solve_score_omega": solve_score_omega,
             "lores_N": lores_n,
             "N": full_n,
             "times": times,
@@ -257,7 +273,7 @@ def handler(event, context):
                 "persistent": True,
                 "palette_id": palette_id,
                 "created_at": created_at,
-                "display_name": f"{metric} q={(q*100):.1f}% {palette} {created_at}",
+                "display_name": f"{metric} q={(q*100):.1f}% w={solve_score_omega:g} {palette} {created_at}",
                 "image_key": out_key,
                 "preview_key": preview_key,
                 "preview_url": preview_url,

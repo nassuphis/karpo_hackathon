@@ -21,6 +21,7 @@ def _event(**params):
             "metric": "crowding",
             "palette": "reef",
             "solve_score_quantile": 0.01,
+            "solve_score_omega": 3,
             "root_transforms": [["rotate_roots", "0.25"]],
         },
     }
@@ -53,6 +54,8 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(plan["calc"]["n_chunks"], 3)
         self.assertEqual(plan["calc"]["n_palette_chunks"], 3)
         self.assertEqual(plan["calc"]["pass0_steps"], 16)
+        self.assertEqual(plan["solve_score"]["omega"], 3.0)
+        self.assertEqual(plan["params"]["solve_score_omega"], 3.0)
         self.assertEqual(
             plan["chunk_items"],
             [
@@ -70,6 +73,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
             ],
         )
         self.assertTrue(plan["palette_id"].startswith("pal_"))
+        self.assertIn("_w3_", plan["palette_id"])
         self.assertIn("/palettes/", plan["outputs"]["image_key"])
 
     @patch("handler_palette_render_plan.s3")
@@ -129,6 +133,23 @@ class TestPaletteRenderPlan(unittest.TestCase):
         result = handler(_event(params={"metric": "proximity", "palette": "tri_redgold", "solve_score_quantile": 0.01, "root_transforms": []}), None)
         plan = json.loads(result["body"])
         self.assertEqual(plan["params"]["palette"], "tri_redgold")
+
+    @patch("handler_palette_render_plan.s3")
+    def test_long_palette_accepted(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        calc = {
+            "degree": 5,
+            "N": 4,
+            "times": 1,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+            "chunks": [{"idx": 0, "bin_key": "renders/j/chunk_0.bin", "n_t": 16}],
+        }
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(calc).encode())}
+
+        result = handler(_event(params={"metric": "proximity", "palette": "long_marvel_spiderman_long", "solve_score_quantile": 0.01, "root_transforms": []}), None)
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["params"]["palette"], "long_marvel_spiderman_long")
 
 
 if __name__ == "__main__":

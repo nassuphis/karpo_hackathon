@@ -12,7 +12,7 @@
  *
  * Usage:
  *   solve_proximity_stats input.bin --mode=clip --degree=D [--metric=proximity] [--quantile_lo=0.001] [--quantile_hi=0.999] [--root_xforms=file.json]
- *   solve_proximity_stats input.bin --mode=hist --degree=D [--metric=proximity] --clip_lo=X --clip_hi=Y --hist_bins=100 [--root_xforms=file.json]
+ *   solve_proximity_stats input.bin --mode=hist --degree=D [--metric=proximity] --clip_lo=X --clip_hi=Y --hist_bins=100 [--omega=1] [--root_xforms=file.json]
  *
  * Output: JSON to stdout.
  *
@@ -94,6 +94,7 @@ int main(int argc, char **argv) {
     const char *mode = getArgStr(argc, argv, "--mode", "");
     int degree = getArgInt(argc, argv, "--degree", 0);
     const char *metricStr = getArgStr(argc, argv, "--metric", "proximity");
+    double omega = getArgDouble(argc, argv, "--omega", 1.0);
 
     if (degree < 2 || degree > MAXDEG) {
         fprintf(stderr, "Invalid degree: %d (must be 2-%d)\n", degree, MAXDEG);
@@ -188,9 +189,9 @@ int main(int argc, char **argv) {
         }
 
         printf("{\"mode\":\"clip\",\"metric\":\"%s\",\"n_solves\":%ld,\"degree\":%d,"
-               "\"clip_lo\":%.15g,\"clip_hi\":%.15g,"
+               "\"omega\":%.15g,\"clip_lo\":%.15g,\"clip_hi\":%.15g,"
                "\"min_score\":%.15g,\"max_score\":%.15g}\n",
-               metricName, nSolves, degree, clipLo, clipHi,
+               metricName, nSolves, degree, omega, clipLo, clipHi,
                scores[0], scores[nSolves - 1]);
 
         free(scores);
@@ -224,14 +225,15 @@ int main(int argc, char **argv) {
             double u = (score - clipLo) / range;
             if (u < 0) u = 0;
             if (u > 1) u = 1;
+            u = apply_solve_score_omega(u, omega);
             int h = (int)(u * histBins);
             if (h >= histBins) h = histBins - 1;
             hist[h]++;
         }
 
         printf("{\"mode\":\"hist\",\"metric\":\"%s\",\"n_solves\":%ld,\"degree\":%d,"
-               "\"hist_bins\":%d,\"clip_lo\":%.15g,\"clip_hi\":%.15g,"
-               "\"hist\":[", metricName, nSolves, degree, histBins, clipLo, clipHi);
+               "\"hist_bins\":%d,\"omega\":%.15g,\"clip_lo\":%.15g,\"clip_hi\":%.15g,"
+               "\"hist\":[", metricName, nSolves, degree, histBins, omega, clipLo, clipHi);
         for (int i = 0; i < histBins; i++) {
             if (i > 0) printf(",");
             printf("%ld", hist[i]);
@@ -326,6 +328,7 @@ int main(int argc, char **argv) {
             if (scores[s] < clipLo || scores[s] > clipHi) continue;
             double u = (scores[s] - clipLo) / clipRange;
             if (u < 0) u = 0; if (u > 1) u = 1;
+            u = apply_solve_score_omega(u, omega);
             int h = (int)(u * intBins);
             if (h >= intBins) h = intBins - 1;
             intHist[h]++;
@@ -365,6 +368,7 @@ int main(int argc, char **argv) {
             if (scores[s] < clipLo || scores[s] > clipHi) continue;
             double u = (scores[s] - clipLo) / clipRange;
             if (u < 0) u = 0; if (u > 1) u = 1;
+            u = apply_solve_score_omega(u, omega);
             int bin = 0;
             for (int k = 0; k < 9; k++) {
                 if (u > cutsNorm[k]) bin = k + 1;
@@ -391,7 +395,7 @@ int main(int argc, char **argv) {
         printf("\"mean_score\":%.15g,\"stddev_score\":%.15g,", meanScore, stddevScore);
         printf("\"q05\":%.15g,\"q10\":%.15g,\"q25\":%.15g,\"q50\":%.15g,", q05, q10, q25, q50);
         printf("\"q75\":%.15g,\"q90\":%.15g,\"q95\":%.15g,", q75, q90, q95);
-        printf("\"clip_quantile\":%.15g,\"clip_lo\":%.15g,\"clip_hi\":%.15g,", quantileLo, clipLo, clipHi);
+        printf("\"omega\":%.15g,\"clip_quantile\":%.15g,\"clip_lo\":%.15g,\"clip_hi\":%.15g,", omega, quantileLo, clipLo, clipHi);
         printf("\"full_range\":%.15g,\"clip_range\":%.15g,", fullRange, clipRange);
         printf("\"clip_below_count\":%ld,\"clip_inrange_count\":%ld,\"clip_above_count\":%ld,",
                belowCount, inrangeCount, aboveCount);

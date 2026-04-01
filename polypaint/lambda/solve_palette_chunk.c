@@ -4,7 +4,7 @@
  * Usage:
  *   solve_palette_chunk input.bin \
  *     --degree=D --metric=proximity \
- *     --clip_lo=X --clip_hi=Y --cuts=c1,...,c9 \
+ *     --clip_lo=X --clip_hi=Y --cuts=c1,...,c9 --omega=1 \
  *     --step_count=S \
  *     --scores_out=file.bin --bins_out=file.bin \
  *     [--root_xforms=file.json]
@@ -81,6 +81,7 @@ int main(int argc, char **argv) {
     const char *metricStr = getArgStr(argc, argv, "--metric", "proximity");
     double clipLo = getArgDouble(argc, argv, "--clip_lo", 0.0);
     double clipHi = getArgDouble(argc, argv, "--clip_hi", 0.0);
+    double omega = getArgDouble(argc, argv, "--omega", 1.0);
     int stepCount = getArgInt(argc, argv, "--step_count", -1);
     const char *cutsStr = getArgStr(argc, argv, "--cuts", NULL);
     const char *scoresOut = getArgStr(argc, argv, "--scores_out", NULL);
@@ -204,6 +205,7 @@ int main(int argc, char **argv) {
         double u = (score - clipLo) / range;
         if (u < 0) u = 0;
         if (u > 1) u = 1;
+        u = apply_solve_score_omega(u, omega);
 
         uint8_t bin = 9;
         for (int c = 0; c < 9; c++) {
@@ -223,7 +225,7 @@ int main(int argc, char **argv) {
     free(buf);
 
     printf("{\"mode\":\"palette_chunk\",\"metric\":\"%s\",\"n_samples\":%d,"
-           "\"clip_lo\":%.15g,\"clip_hi\":%.15g,\"min_score\":%.15g,\"max_score\":%.15g}\n",
-           solve_metric_name(metric), stepCount, clipLo, clipHi, minScore, maxScore);
+           "\"omega\":%.15g,\"clip_lo\":%.15g,\"clip_hi\":%.15g,\"min_score\":%.15g,\"max_score\":%.15g}\n",
+           solve_metric_name(metric), stepCount, omega, clipLo, clipHi, minScore, maxScore);
     return 0;
 }

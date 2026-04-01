@@ -82,6 +82,16 @@ def _validate_quantile(q):
     return q
 
 
+def _validate_omega(value):
+    try:
+        omega = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"solve_score_omega must be numeric, got {value!r}")
+    if not (1.0 <= omega <= 10.0):
+        raise RuntimeError(f"solve_score_omega must be in [1, 10], got {omega}")
+    return omega
+
+
 def handle_clip(params):
     job_id = params["job_id"]
     task_id = params["task_id"]
@@ -89,10 +99,11 @@ def handle_clip(params):
     metric = params.get("metric", "proximity")
     _validate_metric(metric)
     solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
+    solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
     lores_bin_key = params["lores_bin_key"]
     root_transforms = params.get("root_transforms")
     out_key = params["out_key"]
-    progress = {"phase": "clip", "metric": metric, "source_key": lores_bin_key}
+    progress = {"phase": "clip", "metric": metric, "source_key": lores_bin_key, "omega": solve_score_omega}
 
     try:
         _cleanup_tmp()
@@ -109,7 +120,8 @@ def handle_clip(params):
         quantile_lo = solve_score_quantile
         quantile_hi = 1.0 - solve_score_quantile
         cmd = [BINARY, _TMP_INPUT, "--mode=clip", f"--degree={degree}",
-               f"--metric={metric}", f"--quantile_lo={quantile_lo}", f"--quantile_hi={quantile_hi}"]
+               f"--metric={metric}", f"--quantile_lo={quantile_lo}", f"--quantile_hi={quantile_hi}",
+               f"--omega={solve_score_omega}"]
         xf_path = _write_xforms(root_transforms)
         if xf_path:
             cmd.append(f"--root_xforms={xf_path}")
@@ -134,6 +146,7 @@ def handle_clip(params):
             "job_id": job_id,
             "metric": metric,
             "clip_quantile": solve_score_quantile,
+            "omega": solve_score_omega,
             "clip_lo": clip_data["clip_lo"],
             "clip_hi": clip_data["clip_hi"],
             "n_solves": clip_data["n_solves"],
@@ -167,13 +180,14 @@ def handle_hist(params):
     metric = params.get("metric", "proximity")
     _validate_metric(metric)
     solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
+    solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
     bin_key = params["bin_key"]
     degree = params["degree"]
     clip_key = params["clip_key"]
     hist_bins = params.get("hist_bins", 100)
     root_transforms = params.get("root_transforms")
     out_key = params["out_key"]
-    progress = {"phase": "hist", "metric": metric, "chunk_idx": chunk_idx}
+    progress = {"phase": "hist", "metric": metric, "chunk_idx": chunk_idx, "omega": solve_score_omega}
 
     try:
         _cleanup_tmp()
@@ -193,7 +207,7 @@ def handle_hist(params):
         cmd = [BINARY, _TMP_INPUT, "--mode=hist", f"--degree={degree}",
                f"--metric={metric}",
                f"--clip_lo={clip_data['clip_lo']}", f"--clip_hi={clip_data['clip_hi']}",
-               f"--hist_bins={hist_bins}"]
+               f"--hist_bins={hist_bins}", f"--omega={solve_score_omega}"]
         xf_path = _write_xforms(root_transforms)
         if xf_path:
             cmd.append(f"--root_xforms={xf_path}")
@@ -214,6 +228,7 @@ def handle_hist(params):
             "job_id": job_id,
             "metric": metric,
             "clip_quantile": solve_score_quantile,
+            "omega": solve_score_omega,
             "chunk_idx": chunk_idx,
             "hist_bins": hist_bins,
             "clip_lo": clip_data["clip_lo"],
@@ -244,13 +259,14 @@ def handle_merge(params):
     metric = params.get("metric", "proximity")
     _validate_metric(metric)
     solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
+    solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
     n_chunks = params.get("n_chunks", params.get("n_stripes"))
     if n_chunks is None:
         raise RuntimeError("merge requires n_chunks")
     hist_prefix = params["hist_prefix"]
     clip_key = params["clip_key"]
     out_key = params["out_key"]
-    progress = {"phase": "merge", "metric": metric, "n_chunks": n_chunks}
+    progress = {"phase": "merge", "metric": metric, "n_chunks": n_chunks, "omega": solve_score_omega}
 
     try:
         _cleanup_tmp()
@@ -263,6 +279,8 @@ def handle_merge(params):
             raise RuntimeError(f"Clip metric mismatch: expected {metric}, got {clip_data.get('metric')}")
         if clip_data.get("family") == "solve_score" and clip_data.get("clip_quantile") != solve_score_quantile:
             raise RuntimeError(f"Clip quantile mismatch: expected {solve_score_quantile}, got {clip_data.get('clip_quantile')}")
+        if clip_data.get("family") == "solve_score" and float(clip_data.get("omega", 1.0)) != solve_score_omega:
+            raise RuntimeError(f"Clip omega mismatch: expected {solve_score_omega}, got {clip_data.get('omega')}")
         hist_bins = 100
 
         total_hist = [0] * hist_bins
@@ -283,6 +301,8 @@ def handle_merge(params):
                     raise RuntimeError(f"Chunk {c} metric mismatch: expected {metric}, got {data.get('metric')}")
                 if data.get("family") == "solve_score" and data.get("clip_quantile") != solve_score_quantile:
                     raise RuntimeError(f"Chunk {c} quantile mismatch: expected {solve_score_quantile}, got {data.get('clip_quantile')}")
+                if data.get("family") == "solve_score" and float(data.get("omega", 1.0)) != solve_score_omega:
+                    raise RuntimeError(f"Chunk {c} omega mismatch: expected {solve_score_omega}, got {data.get('omega')}")
                 chunk_hist = data["hist"]
                 if len(chunk_hist) != hist_bins:
                     raise RuntimeError(f"Chunk {c} histogram has {len(chunk_hist)} bins, expected {hist_bins}")
@@ -325,6 +345,7 @@ def handle_merge(params):
             "job_id": job_id,
             "metric": metric,
             "clip_quantile": solve_score_quantile,
+            "omega": solve_score_omega,
             "hist_bins": hist_bins,
             "final_bins": final_bins,
             "clip_lo": clip_data["clip_lo"],
@@ -357,6 +378,7 @@ def handle_summary(params):
     metric = params.get("metric", "proximity")
     _validate_metric(metric)
     solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
+    solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
     lores_bin_key = params["lores_bin_key"]
     root_transforms = params.get("root_transforms")
 
@@ -371,7 +393,8 @@ def handle_summary(params):
         quantile_hi = 1.0 - solve_score_quantile
         cmd = [BINARY, _TMP_INPUT, "--mode=summary", f"--degree={degree}",
                f"--metric={metric}",
-               f"--quantile_lo={quantile_lo}", f"--quantile_hi={quantile_hi}"]
+               f"--quantile_lo={quantile_lo}", f"--quantile_hi={quantile_hi}",
+               f"--omega={solve_score_omega}"]
         xf_path = _write_xforms(root_transforms)
         if xf_path:
             cmd.append(f"--root_xforms={xf_path}")

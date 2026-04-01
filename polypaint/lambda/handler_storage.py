@@ -256,6 +256,15 @@ def _first_existing(head_results, keys):
     return None
 
 
+def _parse_float(value):
+    if value in ("", None):
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
 def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, fallback_meta=None, legacy=False):
     meta = {}
     if image_info:
@@ -284,7 +293,7 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         "content_type": image_info.get("type", ""),
         "format": meta.get("format") or image_key.rsplit(".", 1)[-1].lower(),
         "root_transforms": _parse_root_transforms(meta.get("root_transforms")),
-        "rotation": meta.get("rotation"),
+        "rotation": _parse_float(meta.get("rotation")),
         "degree": meta.get("degree"),
         "pix": meta.get("pix"),
         "legacy": legacy,
@@ -294,9 +303,16 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["color_mode"] = meta.get("color_mode", "")
         entry["match_mode"] = meta.get("match_mode", "")
         entry["palette"] = meta.get("palette", "")
+        entry["view_mode"] = meta.get("view_mode", "")
+        entry["quantile"] = _parse_float(meta.get("quantile"))
+        entry["shim"] = _parse_float(meta.get("shim"))
+        entry["square_extent"] = _parse_float(meta.get("square_extent"))
+        entry["constant_color"] = meta.get("constant_color", "")
         entry["solve_metric"] = meta.get("solve_metric", "")
         q = meta.get("solve_score_quantile", "")
         entry["solve_score_quantile"] = float(q) if q not in ("", None) else None
+        omega = meta.get("solve_score_omega", "")
+        entry["solve_score_omega"] = float(omega) if omega not in ("", None) else None
     return entry
 
 

@@ -1524,7 +1524,7 @@ class TestRenderSummary(unittest.TestCase):
             key = kwargs["Key"]
             if key == "renders/j/color/color_run_1/image.jpeg":
                 return {"ContentLength": 1234, "ContentType": "image/jpeg",
-                        "Metadata": {"width": "4096", "height": "4096", "artifact_id": "color_run_1", "created_at": "2026-03-31T10:00:00Z", "family": "color", "color_mode": "rainbow", "format": "jpeg", "root_transforms": "[]"}}
+                        "Metadata": {"width": "4096", "height": "4096", "artifact_id": "color_run_1", "created_at": "2026-03-31T10:00:00Z", "family": "color", "color_mode": "rainbow", "format": "jpeg", "root_transforms": "[]", "view_mode": "auto", "quantile": "0.01", "shim": "0.07", "rotation": "-1.57079632679", "match_mode": "greedy"}}
             if key == "renders/j/color/color_run_1/preview.png":
                 return {"ContentLength": 500, "ContentType": "image/png", "Metadata": {}}
             raise Exception("NoSuchKey")
@@ -1541,6 +1541,46 @@ class TestRenderSummary(unittest.TestCase):
         self.assertEqual(cj["file_size"], 1234)
         self.assertEqual(cj["width"], 4096)
         self.assertEqual(cj["viewer_url"], "https://signed")
+        self.assertEqual(cj["view_mode"], "auto")
+        self.assertAlmostEqual(cj["quantile"], 0.01)
+        self.assertAlmostEqual(cj["shim"], 0.07)
+        self.assertAlmostEqual(cj["rotation"], -1.57079632679)
+        self.assertEqual(cj["match_mode"], "greedy")
+
+    @patch("handler_storage.s3")
+    def test_render_summary_parses_solve_score_omega(self, mock_s3):
+        from handler_storage import handle_render_summary
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate_side_effect(**kwargs):
+            prefix = kwargs.get("Prefix", "")
+            if prefix == "renders/j/color/":
+                return [{"CommonPrefixes": [{"Prefix": "renders/j/color/color_run_ss/"}]}]
+            return [{"CommonPrefixes": []}]
+
+        mock_paginator.paginate.side_effect = paginate_side_effect
+
+        def mock_head(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/color/color_run_ss/image.jpeg":
+                return {"ContentLength": 1234, "ContentType": "image/jpeg",
+                        "Metadata": {"width": "4096", "height": "4096", "artifact_id": "color_run_ss", "created_at": "2026-03-31T10:00:00Z", "family": "color", "color_mode": "solve_score", "format": "jpeg", "root_transforms": "[]", "view_mode": "auto", "quantile": "0.01", "shim": "0.07", "rotation": "0", "match_mode": "greedy", "solve_metric": "anisotropy", "solve_score_quantile": "0.02", "solve_score_omega": "6"}}
+            if key == "renders/j/color/color_run_ss/preview.png":
+                return {"ContentLength": 500, "ContentType": "image/png", "Metadata": {}}
+            raise Exception("NoSuchKey")
+
+        mock_s3.head_object.side_effect = mock_head
+        mock_s3.get_object.side_effect = Exception("NoSuchKey")
+        mock_s3.generate_presigned_url.return_value = "https://signed"
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+        cj = body["families"]["color"][0]
+        self.assertEqual(cj["solve_metric"], "anisotropy")
+        self.assertAlmostEqual(cj["solve_score_quantile"], 0.02)
+        self.assertAlmostEqual(cj["solve_score_omega"], 6.0)
 
     @patch("handler_storage.s3")
     def test_render_summary_missing_artifacts_are_false(self, mock_s3):

@@ -1,6 +1,35 @@
 // @ts-check
 const { test, expect } = require('@playwright/test');
 
+function renderPaletteContainer(mode) {
+  if (mode === 'proximity') return '#palette-circles-root-proximity';
+  if (mode === 'solve_score') return '#palette-circles-solve-score';
+  return '#palette-circles-palette-tab';
+}
+
+async function openBuiltinPalettePopup(page, mode) {
+  const swatch = page.locator(`${renderPaletteContainer(mode)} [data-palette-popup="builtin"]`);
+  await swatch.click();
+  await expect(page.locator('#builtin-popup-overlay')).toBeVisible();
+  return swatch;
+}
+
+async function chooseBuiltinPalette(page, mode, name) {
+  await openBuiltinPalettePopup(page, mode);
+  const row = page.locator('#builtin-popup-body .tri-popup-row').filter({ hasText: name }).first();
+  await expect(row).toBeVisible();
+  await row.click();
+}
+
+async function chooseLongPalette(page, mode, name) {
+  const swatch = page.locator(`${renderPaletteContainer(mode)} .pal-circle-long`);
+  await swatch.click();
+  await expect(page.locator('#long-popup-overlay')).toBeVisible();
+  const row = page.locator('#long-popup-body .tri-popup-row').filter({ hasText: name }).first();
+  await expect(row).toBeVisible();
+  await row.click();
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('http://localhost:8765/index.html');
   await page.waitForLoadState('domcontentloaded');
@@ -22,20 +51,40 @@ test.describe('Solve Score UI', () => {
     await expect(solveLabel).toBeVisible();
   });
 
-  test('both rows have independent palette circles', async ({ page }) => {
+  test('render rows collapse built-ins into popup selectors', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     const rootCircles = page.locator('#palette-circles-root-proximity .pal-circle');
     const solveCircles = page.locator('#palette-circles-solve-score .pal-circle');
     const rootCount = await rootCircles.count();
     const solveCount = await solveCircles.count();
-    expect(rootCount).toBeGreaterThanOrEqual(5);
-    expect(solveCount).toBeGreaterThanOrEqual(5);
+    expect(rootCount).toBe(3);
+    expect(solveCount).toBe(3);
   });
 
-  test('TRI swatch exists in root proximity and solve score rows', async ({ page }) => {
+  test('render rows show built-in, TRI, and LONG swatches', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
+    await expect(page.locator('#palette-circles-root-proximity [data-palette-popup="builtin"]')).toBeVisible();
+    await expect(page.locator('#palette-circles-solve-score [data-palette-popup="builtin"]')).toBeVisible();
     await expect(page.locator('#palette-circles-root-proximity .pal-circle-tri')).toBeVisible();
     await expect(page.locator('#palette-circles-solve-score .pal-circle-tri')).toBeVisible();
+    await expect(page.locator('#palette-circles-root-proximity .pal-circle-long')).toBeVisible();
+    await expect(page.locator('#palette-circles-solve-score .pal-circle-long')).toBeVisible();
+  });
+
+  test('left-click built-in swatch opens popup and selecting a row activates palette', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const builtin = await openBuiltinPalettePopup(page, 'solve_score');
+    await expect(page.locator('#builtin-popup-title')).toContainText('Solve score');
+    await page.locator('#builtin-popup-filter').fill('viri');
+    const row = page.locator('#builtin-popup-body .tri-popup-row').filter({ hasText: 'viridis' }).first();
+    await expect(row).toBeVisible();
+    await row.click();
+    const palette = await page.evaluate(() => renderSolveScorePalette);
+    const remembered = await page.evaluate(() => renderSolveScoreBuiltinPalette);
+    expect(palette).toBe('viridis');
+    expect(remembered).toBe('viridis');
+    await expect(page.locator('#builtin-popup-overlay')).not.toBeVisible();
+    await expect(builtin).toHaveAttribute('title', /viridis/);
   });
 
   test('left-click TRI opens popup and selecting a row activates tri palette', async ({ page }) => {
@@ -54,6 +103,24 @@ test.describe('Solve Score UI', () => {
     expect(remembered).toBe('redgold');
     await expect(page.locator('#tri-popup-overlay')).not.toBeVisible();
     await expect(tri).toHaveAttribute('title', /redgold/);
+  });
+
+  test('left-click LONG opens popup and selecting a row activates long palette', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const longSwatch = page.locator('#palette-circles-solve-score .pal-circle-long');
+    await longSwatch.click();
+    await expect(page.locator('#long-popup-overlay')).toBeVisible();
+    await expect(page.locator('#long-popup-title')).toContainText('Solve score');
+    await page.locator('#long-popup-filter').fill('spider');
+    const firstRow = page.locator('#long-popup-body .tri-popup-row').first();
+    await expect(firstRow).toBeVisible();
+    await firstRow.click();
+    const palette = await page.evaluate(() => renderSolveScorePalette);
+    const remembered = await page.evaluate(() => renderSolveScoreLongName);
+    expect(palette).toBe('long_marvel_spiderman_long');
+    expect(remembered).toBe('marvel_spiderman_long');
+    await expect(page.locator('#long-popup-overlay')).not.toBeVisible();
+    await expect(longSwatch).toHaveAttribute('title', /marvel_spiderman_long/);
   });
 
   test('right-click TRI activates remembered palette without opening popup', async ({ page }) => {
@@ -76,7 +143,7 @@ test.describe('Solve Score UI', () => {
     await tri.click();
     await page.locator('#tri-popup-filter').fill('rg');
     await page.locator('#tri-popup-body .tri-popup-row').first().click();
-    await page.locator('#palette-circles-solve-score .pal-circle').first().click();
+    await chooseBuiltinPalette(page, 'solve_score', 'viridis');
     const remembered = await page.evaluate(() => renderSolveScoreTriName);
     const activePalette = await page.evaluate(() => renderSolveScorePalette);
     expect(remembered).toBe('redgold');
@@ -84,10 +151,20 @@ test.describe('Solve Score UI', () => {
     await expect(tri).toHaveAttribute('title', /redgold/);
   });
 
+  test('switching built-in palette does not erase remembered LONG selection', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await chooseLongPalette(page, 'solve_score', 'marvel_spiderman_long');
+    await chooseBuiltinPalette(page, 'solve_score', 'viridis');
+    const remembered = await page.evaluate(() => renderSolveScoreLongName);
+    const activePalette = await page.evaluate(() => renderSolveScorePalette);
+    expect(remembered).toBe('marvel_spiderman_long');
+    expect(activePalette).not.toBe('long_marvel_spiderman_long');
+    await expect(page.locator('#palette-circles-solve-score .pal-circle-long')).toHaveAttribute('title', /marvel_spiderman_long/);
+  });
+
   test('clicking root-proximity palette activates proximity color mode', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    const rootCircles = page.locator('#palette-circles-root-proximity .pal-circle');
-    await rootCircles.nth(1).click();
+    await chooseBuiltinPalette(page, 'proximity', 'viridis');
     const mode = await page.evaluate(() => renderColorMode);
     expect(mode).toBe('proximity');
   });
@@ -105,8 +182,7 @@ test.describe('Solve Score UI', () => {
 
   test('clicking solve-score palette activates solve_score mode', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    const solveCircles = page.locator('#palette-circles-solve-score .pal-circle');
-    await solveCircles.first().click();
+    await chooseBuiltinPalette(page, 'solve_score', 'inferno');
     const mode = await page.evaluate(() => renderColorMode);
     expect(mode).toBe('solve_score');
     const dot = page.locator('.color-dot[data-mode="solve_score"]');
@@ -116,8 +192,7 @@ test.describe('Solve Score UI', () => {
   test('selecting dropdown value updates renderSolveMetric', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     // Activate solve_score mode first
-    const solveCircles = page.locator('#palette-circles-solve-score .pal-circle');
-    await solveCircles.first().click();
+    await page.locator('.color-dot[data-mode="solve_score"]').click();
 
     const dropdown = page.locator('#render-solve-score');
     await dropdown.selectOption('crowding');
@@ -131,8 +206,7 @@ test.describe('Solve Score UI', () => {
 
   test('render dispatch payload contains selected solve_metric', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    const solveCircle = page.locator('#palette-circles-solve-score .pal-circle').first();
-    await solveCircle.click();
+    await page.locator('.color-dot[data-mode="solve_score"]').click();
 
     // Select a specific metric
     await page.locator('#render-solve-score').selectOption('spread');
@@ -171,13 +245,11 @@ test.describe('Solve Score UI', () => {
     await page.click('.tab-btn:text("Render")');
 
     // Click a solve-score palette first
-    const solveCircles = page.locator('#palette-circles-solve-score .pal-circle');
-    await solveCircles.nth(2).click();
+    await chooseBuiltinPalette(page, 'solve_score', 'plasma');
     const solveActive = await page.locator('#palette-circles-solve-score .pal-circle.active').getAttribute('title');
 
     // Click a root-proximity palette
-    const rootCircles = page.locator('#palette-circles-root-proximity .pal-circle');
-    await rootCircles.nth(1).click();
+    await chooseBuiltinPalette(page, 'proximity', 'viridis');
 
     // Solve-score active should be unchanged
     const solveActiveAfter = await page.locator('#palette-circles-solve-score .pal-circle.active').getAttribute('title');
@@ -188,13 +260,11 @@ test.describe('Solve Score UI', () => {
     await page.click('.tab-btn:text("Render")');
 
     // Click a root-proximity palette first
-    const rootCircles = page.locator('#palette-circles-root-proximity .pal-circle');
-    await rootCircles.nth(1).click();
+    await chooseBuiltinPalette(page, 'proximity', 'viridis');
     const rootActive = await page.locator('#palette-circles-root-proximity .pal-circle.active').getAttribute('title');
 
     // Click a solve-score palette
-    const solveCircles = page.locator('#palette-circles-solve-score .pal-circle');
-    await solveCircles.nth(3).click();
+    await chooseBuiltinPalette(page, 'solve_score', 'plasma');
 
     // Root-proximity active should be unchanged
     const rootActiveAfter = await page.locator('#palette-circles-root-proximity .pal-circle.active').getAttribute('title');
@@ -203,8 +273,7 @@ test.describe('Solve Score UI', () => {
 
   test('clusteriness dispatch sends correct solve_metric', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    const solveCircle = page.locator('#palette-circles-solve-score .pal-circle').first();
-    await solveCircle.click();
+    await page.locator('.color-dot[data-mode="solve_score"]').click();
     await page.locator('#render-solve-score').selectOption('clusteriness');
 
     await page.evaluate(() => {
@@ -259,8 +328,7 @@ test.describe('Solve Score UI', () => {
 
   test('dispatch payload includes solve_score_quantile', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    const solveCircle = page.locator('#palette-circles-solve-score .pal-circle').first();
-    await solveCircle.click();
+    await page.locator('.color-dot[data-mode="solve_score"]').click();
     await page.evaluate(() => {
       document.getElementById('render-solve-score-quantile').value = '2.0';
     });
@@ -308,8 +376,7 @@ test.describe('Solve Score UI', () => {
 
   test('real_axis_proximity dispatch sends correct solve_metric', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    const solveCircle = page.locator('#palette-circles-solve-score .pal-circle').first();
-    await solveCircle.click();
+    await page.locator('.color-dot[data-mode="solve_score"]').click();
     await page.locator('#render-solve-score').selectOption('real_axis_proximity');
 
     await page.evaluate(() => {
@@ -351,8 +418,7 @@ test.describe('Solve Score UI', () => {
   test('Histogram button calls solve_proximity with summary phase', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     // Activate solve_score mode
-    const solveCircle = page.locator('#palette-circles-solve-score .pal-circle').first();
-    await solveCircle.click();
+    await page.locator('.color-dot[data-mode="solve_score"]').click();
     // Set quantile and enable buttons
     await page.evaluate(() => {
       document.getElementById('render-solve-score-quantile').value = '3.0';
@@ -437,6 +503,7 @@ test.describe('Solve Score UI', () => {
       await expect(panel.locator('button:text("' + label + '")')).toBeVisible();
     }
     await expect(panel.locator('#btn-render-generate')).toBeVisible();
+    await expect(panel.locator('#btn-render-populate')).toBeVisible();
     await expect(panel.locator('#btn-render-download')).toBeVisible();
     await expect(panel.locator('#btn-render-delete')).toBeVisible();
     await expect(panel.locator('#btn-render-deepzoom')).toBeVisible();
@@ -478,6 +545,49 @@ test.describe('Solve Score UI', () => {
     await page.click('#render-preview button:text("Palette")');
     await expect(page.locator('#render-preview').getByText('pal_1')).toBeVisible();
     await expect(page.locator('#render-preview img[src="https://example.com/p.png"]')).toBeVisible();
+  });
+
+  test('palette family populate restores solve-score settings and switches to color', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      renderColorMode = 'rainbow';
+      renderSolveMetric = 'proximity';
+      renderSolveScorePalette = 'inferno';
+      _rtChain = [];
+      document.getElementById('render-solve-score').value = 'proximity';
+      document.getElementById('render-solve-score-quantile').value = '0.1';
+      document.getElementById('render-solve-score-quantile-val').textContent = '0.1';
+      _renderActiveFamily = 'palette';
+      renderArtifactPanel('test_job', {
+        families: {
+          color: [{ artifact_id: 'color_1', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/test_job/color/color_1/image.jpeg', image_url: 'https://example.com/c.jpeg', preview_url: 'https://example.com/c.png', viewer_url: 'https://example.com/c.png', file_size: 50000, width: 1000, height: 1000, color_mode: 'rainbow', format: 'jpeg' }],
+          bilevel: [],
+          coeffs: [],
+          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05, root_transforms: [['rotate_roots', '0.125']] }],
+        },
+        calc: { exists: true, N: 1000, degree: 5 },
+        artifacts: {},
+        deepzoom_latest: { exists: false },
+      });
+    });
+
+    await page.click('#btn-render-populate');
+
+    await expect(page.locator('#render-preview')).toContainText('color_1');
+    const state = await page.evaluate(() => ({
+      family: _renderActiveFamily,
+      mode: renderColorMode,
+      metric: renderSolveMetric,
+      palette: renderSolveScorePalette,
+      q: document.getElementById('render-solve-score-quantile').value,
+      rt: JSON.stringify(_rtChain),
+    }));
+    expect(state.family).toBe('color');
+    expect(state.mode).toBe('solve_score');
+    expect(state.metric).toBe('crowding');
+    expect(state.palette).toBe('reef');
+    expect(state.q).toBe('5');
+    expect(state.rt).toContain('rotate_roots');
   });
 
   test('empty family shows no saved artifacts message', async ({ page }) => {

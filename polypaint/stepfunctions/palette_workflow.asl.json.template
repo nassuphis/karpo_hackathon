@@ -1,5 +1,5 @@
 {
-  "Comment": "PolyPaint palette workflow — exact full-resolution pass-0 palette artifacts. Wrapped in Parallel to catch States.Runtime from parameter resolution errors.",
+  "Comment": "PolyPaint palette workflow — reusable full-resolution palette artifacts with pass-0 image assembly. Wrapped in Parallel to catch States.Runtime from parameter resolution errors.",
   "StartAt": "WorkflowWrapper",
   "States": {
 
@@ -217,7 +217,7 @@
                 "mode.$": "$.mode",
                 "phase": "palette_chunk",
                 "phase_label": "Palette: chunk",
-                "expected.$": "$.plan.calc.n_palette_chunks",
+                "expected.$": "$.plan.calc.n_chunks",
                 "subtask_prefix.$": "States.Format('palette_{}_chunk_', $.run_id)"
               }
             },
@@ -228,7 +228,7 @@
 
           "PaletteChunkMap": {
             "Type": "Map",
-            "ItemsPath": "$.plan.palette_items",
+            "ItemsPath": "$.plan.chunk_items",
             "MaxConcurrency": 10,
             "ItemSelector": {
               "job_id.$": "$.job_id",
@@ -242,9 +242,9 @@
               "solve_score_omega.$": "$.plan.solve_score.omega",
               "root_transforms.$": "$.plan.params.root_transforms",
               "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
-              "score_key.$": "States.Format('{}score_chunk_{}.bin', $.plan.outputs.chunks_prefix, $$.Map.Item.Value.chunk_idx)",
-              "palette_bins_key.$": "States.Format('{}palette_bins_chunk_{}.bin', $.plan.outputs.chunks_prefix, $$.Map.Item.Value.chunk_idx)",
-              "meta_key.$": "States.Format('{}meta_chunk_{}.json', $.plan.outputs.chunks_prefix, $$.Map.Item.Value.chunk_idx)",
+              "score_key.$": "States.Format('{}{}.bin', $.plan.outputs.chunk_scores_prefix, $$.Map.Item.Value.chunk_idx)",
+              "palette_bins_key.$": "States.Format('{}{}.bin', $.plan.outputs.chunk_bins_prefix, $$.Map.Item.Value.chunk_idx)",
+              "meta_key.$": "States.Format('{}{}.json', $.plan.outputs.chunk_meta_prefix, $$.Map.Item.Value.chunk_idx)",
               "task_id.$": "States.Format('palette_{}_chunk_{}', $.run_id, $$.Map.Item.Value.chunk_idx)"
             },
             "ItemProcessor": {
@@ -305,8 +305,6 @@
                 "root_transforms.$": "$.plan.params.root_transforms",
                 "image_key.$": "$.plan.outputs.image_key",
                 "preview_key.$": "$.plan.outputs.preview_key",
-                "score_key.$": "$.plan.outputs.score_key",
-                "palette_bins_key.$": "$.plan.outputs.palette_bins_key",
                 "meta_key.$": "$.plan.outputs.meta_key",
                 "chunks_prefix.$": "$.plan.outputs.chunks_prefix",
                 "solve_score_prefix.$": "$.plan.solve_score.hist_prefix",

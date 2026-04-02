@@ -1,7 +1,8 @@
 """
 Tests for the palette render plan Lambda.
 
-Validates exact chunk metadata, pass-0 truncation, and compact output shape.
+Validates exact chunk metadata reconstruction and the new durable all-pass
+chunk-local output contract used for palette reuse.
 """
 import json
 import os
@@ -32,7 +33,7 @@ def _event(**params):
 class TestPaletteRenderPlan(unittest.TestCase):
 
     @patch("handler_palette_render_plan.s3")
-    def test_plan_reconstructs_step_starts_and_pass0_truncation(self, mock_s3):
+    def test_plan_reconstructs_full_chunk_spans_and_output_prefixes(self, mock_s3):
         from handler_palette_render_plan import handler
 
         calc = {
@@ -43,7 +44,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
             "chunks": [
                 {"idx": 2, "bin_key": "renders/j/chunk_2.bin", "n_t": 10},
                 {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "n_t": 5},
-                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "n_t": 8},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "n_t": 17},
             ],
         }
         mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(calc).encode())}
@@ -52,7 +53,6 @@ class TestPaletteRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
 
         self.assertEqual(plan["calc"]["n_chunks"], 3)
-        self.assertEqual(plan["calc"]["n_palette_chunks"], 3)
         self.assertEqual(plan["calc"]["pass0_steps"], 16)
         self.assertEqual(plan["solve_score"]["omega"], 3.0)
         self.assertEqual(plan["params"]["solve_score_omega"], 3.0)
@@ -60,21 +60,17 @@ class TestPaletteRenderPlan(unittest.TestCase):
             plan["chunk_items"],
             [
                 {"chunk_idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_start": 0, "step_count": 5},
-                {"chunk_idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_start": 5, "step_count": 8},
-                {"chunk_idx": 2, "bin_key": "renders/j/chunk_2.bin", "step_start": 13, "step_count": 10},
+                {"chunk_idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_start": 5, "step_count": 17},
+                {"chunk_idx": 2, "bin_key": "renders/j/chunk_2.bin", "step_start": 22, "step_count": 10},
             ],
         )
-        self.assertEqual(
-            plan["palette_items"],
-            [
-                {"chunk_idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_start": 0, "step_count": 5},
-                {"chunk_idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_start": 5, "step_count": 8},
-                {"chunk_idx": 2, "bin_key": "renders/j/chunk_2.bin", "step_start": 13, "step_count": 3},
-            ],
-        )
+        self.assertNotIn("palette_items", plan)
         self.assertTrue(plan["palette_id"].startswith("pal_"))
-        self.assertIn("_w3_", plan["palette_id"])
-        self.assertIn("/palettes/", plan["outputs"]["image_key"])
+        self.assertEqual(plan["outputs"]["chunk_scores_prefix"], f"renders/j/palettes/{plan['palette_id']}/chunks/score_chunk_")
+        self.assertEqual(plan["outputs"]["chunk_bins_prefix"], f"renders/j/palettes/{plan['palette_id']}/chunks/palette_bins_chunk_")
+        self.assertEqual(plan["outputs"]["chunk_meta_prefix"], f"renders/j/palettes/{plan['palette_id']}/chunks/meta_chunk_")
+        self.assertNotIn("score_key", plan["outputs"])
+        self.assertNotIn("palette_bins_key", plan["outputs"])
 
     @patch("handler_palette_render_plan.s3")
     def test_plan_derives_step_count_from_bin_size(self, mock_s3):
@@ -98,7 +94,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
 
         self.assertEqual(plan["chunk_items"][0]["step_count"], step_count)
-        self.assertEqual(plan["palette_items"][0]["step_count"], 9)
+        self.assertEqual(plan["calc"]["n_chunks"], 1)
 
     @patch("handler_palette_render_plan.s3")
     def test_invalid_palette_rejected(self, mock_s3):

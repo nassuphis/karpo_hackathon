@@ -1,8 +1,9 @@
 """
-Palette render plan Lambda — computes the workflow plan for exact full-resolution palette artifacts.
+Palette render plan Lambda — computes the workflow plan for reusable full-resolution
+palette artifacts.
 
-Loads calc metadata, validates palette-tab params, derives exact pass-0 chunk spans,
-and produces compact chunk arrays and output keys for Step Functions.
+The palette image/preview still uses pass 0 only, but the durable numeric payload is
+all-pass chunk-local bin/score data so saved palettes can later drive Color renders.
 """
 import hashlib
 import json
@@ -76,7 +77,6 @@ def handler(event, context):
     pass0_steps = full_n * full_n
     record_bytes = degree * 2 * 4
     chunk_items = []
-    palette_items = []
     step_start = 0
     for raw in chunks:
         idx = raw.get("idx", raw.get("chunk_idx", raw.get("stripe_idx")))
@@ -98,15 +98,6 @@ def handler(event, context):
             "step_count": step_count,
         }
         chunk_items.append(item)
-
-        pass0_count = max(0, min(step_count, pass0_steps - step_start))
-        if pass0_count > 0:
-            palette_items.append({
-                "chunk_idx": int(idx),
-                "bin_key": bin_key,
-                "step_start": step_start,
-                "step_count": pass0_count,
-            })
         step_start += step_count
 
     if step_start < pass0_steps:
@@ -116,6 +107,9 @@ def handler(event, context):
     prefix = f"renders/{job_id}/palettes/{palette_id}/"
     solve_prefix = prefix + "solve_score/"
     chunks_prefix = prefix + "chunks/"
+    chunk_scores_prefix = chunks_prefix + "score_chunk_"
+    chunk_bins_prefix = chunks_prefix + "palette_bins_chunk_"
+    chunk_meta_prefix = chunks_prefix + "meta_chunk_"
 
     plan = {
         "job_id": job_id,
@@ -136,12 +130,10 @@ def handler(event, context):
             "N": full_n,
             "times": times,
             "n_chunks": len(chunk_items),
-            "n_palette_chunks": len(palette_items),
             "pass0_steps": pass0_steps,
             "lores_bin_key": lores_bin_key,
         },
         "chunk_items": chunk_items,
-        "palette_items": palette_items,
         "solve_score": {
             "metric": metric,
             "quantile": q,
@@ -153,10 +145,11 @@ def handler(event, context):
         "outputs": {
             "image_key": prefix + "image.jpeg",
             "preview_key": prefix + "preview.png",
-            "score_key": prefix + f"score_{metric}.bin",
-            "palette_bins_key": prefix + "palette_bins.bin",
             "meta_key": prefix + "meta.json",
             "chunks_prefix": chunks_prefix,
+            "chunk_scores_prefix": chunk_scores_prefix,
+            "chunk_bins_prefix": chunk_bins_prefix,
+            "chunk_meta_prefix": chunk_meta_prefix,
         },
     }
 

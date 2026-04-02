@@ -12,10 +12,11 @@
  *   roots2pix stripe.bin /tmp/pix --width=W --height=H
  *            --center_re=X --center_im=Y --scale=S --degree=D
  *            --tile_size=4096 --n_tile_cols=13 --n_tile_rows=13
- *            [--color=rainbow|proximity|constant]
+ *            [--color=rainbow|proximity|solve_score|saved_palette|constant]
  *            [--match=none|greedy|hungarian]
  *            [--palette=<name>]
  *            [--constant_color=RRGGBB]
+ *            [--solve_bins_file=palette_bins_chunk.bin]
  *
  * Output: {outPrefix}_t0000.pix ... {outPrefix}_t{nTiles-1}.pix
  *
@@ -314,7 +315,7 @@ static inline void emit_pixel(int tile_id, uint32_t pix_idx, uint32_t rgb) {
 
 /* ---- Main ---- */
 
-enum ColorMode { COLOR_RAINBOW = 0, COLOR_PROXIMITY = 1, COLOR_CONSTANT = 2, COLOR_SOLVE_PROXIMITY = 3, COLOR_SOLVE_SCORE = 4 };
+enum ColorMode { COLOR_RAINBOW = 0, COLOR_PROXIMITY = 1, COLOR_CONSTANT = 2, COLOR_SOLVE_PROXIMITY = 3, COLOR_SOLVE_SCORE = 4, COLOR_SAVED_PALETTE = 5 };
 enum MatchMode { MATCH_NONE = 0, MATCH_GREEDY = 1, MATCH_HUNGARIAN = 2 };
 
 int main(int argc, char **argv) {
@@ -322,11 +323,12 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Usage: roots2pix stripe.bin /tmp/pix "
                 "--width=W --height=H --center_re=X --center_im=Y --scale=S "
                 "--degree=D --tile_size=T --n_tile_cols=C --n_tile_rows=R "
-                "[--color=rainbow|proximity|solve_score|solve_proximity|constant] "
+                "[--color=rainbow|proximity|solve_score|solve_proximity|saved_palette|constant] "
                 "[--match=none|greedy|hungarian] [--palette=<name>] "
                 "[--constant_color=RRGGBB] "
                 "[--solve_metric=proximity|crowding|spread|anisotropy|area] "
                 "[--solve_score_clip_lo=X --solve_score_clip_hi=Y --solve_score_cuts=c1,...,c9] [--solve_score_omega=W] "
+                "[--solve_bins_file=file.bin] "
                 "[--solve_prox_clip_lo=X --solve_prox_clip_hi=Y --solve_prox_cuts=c1,...,c9]\n");
         return 1;
     }
@@ -346,6 +348,7 @@ int main(int argc, char **argv) {
     const char *colorStr = getArgStr(argc, argv, "--color", "rainbow");
     const char *matchStr = getArgStr(argc, argv, "--match", "none");
     const char *palName = getArgStr(argc, argv, "--palette", "inferno");
+    const char *solveBinsPath = getArgStr(argc, argv, "--solve_bins_file", NULL);
     const char *constColorStr = getArgStr(argc, argv, "--constant_color", "ffffff");
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
 
@@ -364,6 +367,7 @@ int main(int argc, char **argv) {
     if (strcmp(colorStr, "proximity") == 0) colorMode = COLOR_PROXIMITY;
     else if (strcmp(colorStr, "solve_score") == 0) colorMode = COLOR_SOLVE_SCORE;
     else if (strcmp(colorStr, "solve_proximity") == 0) colorMode = COLOR_SOLVE_SCORE;  /* legacy alias */
+    else if (strcmp(colorStr, "saved_palette") == 0) colorMode = COLOR_SAVED_PALETTE;
     else if (strcmp(colorStr, "constant") == 0) colorMode = COLOR_CONSTANT;
 
     unsigned int constHex = 0xffffff;
@@ -478,6 +482,45 @@ int main(int argc, char **argv) {
     if (!roots) { fprintf(stderr, "Cannot allocate %ld bytes\n", fileSize); fclose(fin); return 1; }
     fread(roots, 1, fileSize, fin);
     fclose(fin);
+
+    uint8_t *solveBins = NULL;
+    if (colorMode == COLOR_SAVED_PALETTE) {
+        if (!solveBinsPath) {
+            fprintf(stderr, "saved_palette requires --solve_bins_file\n");
+            free(roots);
+            return 1;
+        }
+        FILE *fb = fopen(solveBinsPath, "rb");
+        if (!fb) {
+            fprintf(stderr, "Cannot open %s\n", solveBinsPath);
+            free(roots);
+            return 1;
+        }
+        fseek(fb, 0, SEEK_END);
+        long binSize = ftell(fb);
+        fseek(fb, 0, SEEK_SET);
+        if (binSize != nPoints) {
+            fprintf(stderr, "saved_palette bins size mismatch: got %ld expected %ld\n", binSize, nPoints);
+            fclose(fb);
+            free(roots);
+            return 1;
+        }
+        solveBins = malloc((size_t)nPoints);
+        if (!solveBins) {
+            fprintf(stderr, "Cannot allocate %ld bytes for solve bins\n", nPoints);
+            fclose(fb);
+            free(roots);
+            return 1;
+        }
+        if ((long)fread(solveBins, 1, (size_t)nPoints, fb) != nPoints) {
+            fprintf(stderr, "Short read from %s\n", solveBinsPath);
+            fclose(fb);
+            free(solveBins);
+            free(roots);
+            return 1;
+        }
+        fclose(fb);
+    }
 
     /* Build rainbow palette */
     unsigned char rbPalR[MAXDEG], rbPalG[MAXDEG], rbPalB[MAXDEG];
@@ -654,6 +697,50 @@ int main(int argc, char **argv) {
                 }
             }
         }
+    } else if (colorMode == COLOR_SAVED_PALETTE) {
+        unsigned char ssPalR[10], ssPalG[10], ssPalB[10];
+        for (int b = 0; b < 10; b++) {
+            paletteRGB(proxPal, (b + 0.5) / 10.0, &ssPalR[b], &ssPalG[b], &ssPalB[b]);
+        }
+
+        for (long p = 0; p < nPoints; p++) {
+            uint8_t bin = solveBins[p];
+            if (bin > 9) {
+                fprintf(stderr, "saved_palette bin out of range at solve %ld: %u\n", p, (unsigned)bin);
+                free(solveBins);
+                free(roots);
+                return 1;
+            }
+            float *step = roots + p * stride;
+            uint32_t rgb = ((uint32_t)ssPalR[bin] << 16) | ((uint32_t)ssPalG[bin] << 8) | ssPalB[bin];
+
+            for (int r = 0; r < degree; r++) {
+                double re = step[r*2], im = step[r*2+1];
+                double dx = re - centerRe, dy = im - centerIm;
+                double rx = dx * cosA - dy * sinA, ry = dx * sinA + dy * cosA;
+                int px = (int)(halfW + rx * scale);
+                int py = (int)(halfH - ry * scale);
+                if (px >= 0 && px < W && py >= 0 && py < H) {
+                    int tile_col = px / tileSize;
+                    int tile_row = py / tileSize;
+                    int tile_id = tile_row * nTileCols + tile_col;
+                    uint32_t local_x = px - tile_col * tileSize;
+                    uint32_t local_y = py - tile_row * tileSize;
+                    uint32_t pix_idx = local_y * (uint32_t)tileW[tile_id] + local_x;
+                    uint32_t byte_idx = pix_idx >> 3;
+                    uint8_t bit_mask = 1u << (pix_idx & 7);
+                    if (tileBits[tile_id][byte_idx] & bit_mask) {
+                        rootsDeduped++;
+                        continue;
+                    }
+                    tileBits[tile_id][byte_idx] |= bit_mask;
+                    emit_pixel(tile_id, pix_idx, rgb);
+                    rootsPlotted++;
+                } else {
+                    rootsClipped++;
+                }
+            }
+        }
     } else if (colorMode == COLOR_CONSTANT) {
         uint32_t constRGB = ((uint32_t)constR << 16) | ((uint32_t)constG << 8) | constB;
 
@@ -773,6 +860,7 @@ int main(int argc, char **argv) {
     }
 
     free(roots);
+    free(solveBins);
 
     /* Remove empty tile files */
     for (int t = 0; t < nTiles; t++) {
@@ -798,6 +886,8 @@ int main(int argc, char **argv) {
     else if (colorMode == COLOR_SOLVE_SCORE || colorMode == COLOR_SOLVE_PROXIMITY)
         printf(",\"palette\":\"%s\",\"solve_score\":true,\"solve_metric\":\"%s\",\"solve_score_omega\":%.15g",
                palName, solve_metric_name(solveMetric), solveScoreOmega);
+    else if (colorMode == COLOR_SAVED_PALETTE)
+        printf(",\"palette\":\"%s\",\"saved_palette\":true", palName);
     else if (colorMode == COLOR_CONSTANT)
         printf(",\"constant_color\":\"%s\"", constColorStr);
     printf("}\n");

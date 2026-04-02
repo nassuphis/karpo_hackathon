@@ -272,19 +272,27 @@ const renderEls = {
     'autolevel-popup-title': {},
     'autolevel-popup-summary': {},
     'autolevel-popup-close': {},
+    'autolevel-popup-revert': {},
     'autolevel-popup-cancel': {},
     'autolevel-popup-run': {},
     'autolevel-bins': { value: '256' },
+    'autolevel-enable-levels': { checked: true },
     'autolevel-clip-low': { value: '0' },
     'autolevel-clip-high': { value: '1' },
+    'autolevel-enable-peak-limit': { checked: false },
     'autolevel-peak-factor': { value: '0' },
+    'autolevel-enable-gamma': { checked: false },
     'autolevel-gamma': { value: '1' },
-    'autolevel-auto-gamma': { value: 'none' },
+    'autolevel-enable-auto-gamma': { checked: false },
+    'autolevel-auto-gamma': { value: 'median' },
     'autolevel-target': { value: '0.5' },
+    'autolevel-enable-sigmoid': { checked: false },
     'autolevel-sigmoid-strength': { value: '0' },
     'autolevel-sigmoid-mid': { value: '0.5' },
+    'autolevel-enable-vibrance': { checked: false },
     'autolevel-vibrance': { value: '0' },
-    'autolevel-pooled-rgb': { value: '0' },
+    'autolevel-enable-pooled-rgb': { checked: true },
+    'autolevel-pooled-rgb': { value: '0.1' },
     'autolevel-quality': { value: '90' },
     'autolevel-jpeg-subsample': { value: 'on' },
     'autolevel-background-readout': { value: '#000000' },
@@ -876,6 +884,170 @@ async function testPipeline(name, call) {
 
     {
         const summary = {
+            calc: { exists: true, N: 4000, degree: 8 },
+            families: {
+                color: [],
+                bilevel: [],
+                coeffs: [],
+                palette: [
+                    {
+                        artifact_id: 'pal_src',
+                        palette_id: 'pal_src',
+                        display_name: 'crowding q=5.0% w=4 reef',
+                        created_at: '2026-04-02T10:00:00Z',
+                        image_key: 'renders/j/palettes/pal_src/image.jpeg',
+                        image_url: 'https://img/pal_src.jpeg',
+                        preview_url: 'https://img/pal_src.png',
+                        viewer_url: 'https://img/pal_src.png',
+                        width: 4000,
+                        height: 4000,
+                        file_size: 90000,
+                        metric: 'crowding',
+                        palette: 'reef',
+                        solve_score_quantile: 0.05,
+                        solve_score_omega: 4,
+                        render_reusable: true,
+                        data_layout: 'chunk_all_pass_v1',
+                        chunk_bins_prefix: 'renders/j/palettes/pal_src/chunks/palette_bins_chunk_',
+                    }
+                ],
+            },
+        };
+        vm.runInContext(`
+            _renderActiveFamily = 'palette';
+            _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
+            _repaletteDispatch = null;
+            startActiveRenderObserver = function() { _repaletteObserverStarted = true; };
+            _repaletteObserverStarted = false;
+            lambdaPost = async function(name, body, path) {
+                if (name === 'dispatch' && body.target === 'repalette') {
+                    _repaletteDispatch = body;
+                    return { fired: 1, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: 1, complete: true, status_counts: { done: 1 }, results: [{ phase: 'done', phase_label: 'Done', family: 'palette', palette_id: 'pal_new' }] };
+                }
+                return { ok: true };
+            };
+            renderArtifactPanel('j', ${JSON.stringify(summary)});
+        `, ctx);
+        const panelHtml = ctx._elements['render-preview'].innerHTML || '';
+        if (!panelHtml.includes('RePalette')) { console.error('FATAL: palette artifact panel should show RePalette button'); process.exit(1); }
+        vm.runInContext('openRepalettePopup()', ctx);
+        const popupDisplay = vm.runInContext("document.getElementById('repalette-popup-overlay').style.display", ctx);
+        const popupSummary = vm.runInContext("document.getElementById('repalette-popup-summary').textContent", ctx);
+        if (popupDisplay !== 'flex') { console.error('FATAL: repalette popup should open'); process.exit(1); }
+        if (!String(popupSummary).includes('Reusable all-pass data will be copied')) { console.error('FATAL: repalette popup should describe reusable copy path, got ' + popupSummary); process.exit(1); }
+        vm.runInContext("setPaletteForMode('repalette', 'tri_redgold')", ctx);
+        await vm.runInContext('runRepaletteSelectedArtifact()', ctx);
+        const dispatch = vm.runInContext('_repaletteDispatch', ctx);
+        const runMode = vm.runInContext('_activeRenderRun && _activeRenderRun.mode', ctx);
+        if (!dispatch || dispatch.target !== 'repalette') { console.error('FATAL: repalette should dispatch repalette target'); process.exit(1); }
+        if (dispatch.jobs[0].source_palette_id !== 'pal_src') { console.error('FATAL: repalette should send source palette id, got ' + dispatch.jobs[0].source_palette_id); process.exit(1); }
+        if (dispatch.jobs[0].new_palette !== 'tri_redgold') { console.error('FATAL: repalette should send chosen palette, got ' + dispatch.jobs[0].new_palette); process.exit(1); }
+        if (runMode !== 'repalette') { console.error('FATAL: repalette should save active run mode, got ' + runMode); process.exit(1); }
+        console.log('  repalette popup dispatches palette reuse run: OK');
+    }
+
+    {
+        const summary = {
+            calc: { exists: true, N: 4000, degree: 8 },
+            families: {
+                color: [
+                    {
+                        artifact_id: 'color_src',
+                        created_at: '2026-04-02T08:00:00Z',
+                        image_key: 'renders/j/color/color_src/image.jpeg',
+                        image_url: 'https://img/color_src.jpeg',
+                        preview_url: 'https://img/color_src.png',
+                        viewer_url: 'https://img/color_src.png',
+                        width: 4000,
+                        height: 4000,
+                        pix: 4000,
+                        format: 'jpeg',
+                        quality: 90,
+                        file_size: 10000,
+                        color_mode: 'rainbow',
+                    }
+                ],
+                bilevel: [],
+                coeffs: [],
+                palette: [
+                    {
+                        artifact_id: 'pal_legacy',
+                        palette_id: 'pal_legacy',
+                        display_name: 'legacy palette',
+                        created_at: '2026-04-02T09:00:00Z',
+                        image_key: 'renders/j/palettes/pal_legacy/image.jpeg',
+                        image_url: 'https://img/pal_legacy.jpeg',
+                        preview_url: 'https://img/pal_legacy.png',
+                        viewer_url: 'https://img/pal_legacy.png',
+                        width: 4000,
+                        height: 4000,
+                        metric: 'proximity',
+                        palette: 'inferno',
+                        render_reusable: false,
+                        palette_bins_key: 'renders/j/palettes/pal_legacy/palette_bins.bin',
+                    },
+                    {
+                        artifact_id: 'pal_reuse',
+                        palette_id: 'pal_reuse',
+                        display_name: 'anisotropy q=2.0% w=3 magma',
+                        created_at: '2026-04-02T10:00:00Z',
+                        image_key: 'renders/j/palettes/pal_reuse/image.jpeg',
+                        image_url: 'https://img/pal_reuse.jpeg',
+                        preview_url: 'https://img/pal_reuse.png',
+                        viewer_url: 'https://img/pal_reuse.png',
+                        width: 4000,
+                        height: 4000,
+                        metric: 'anisotropy',
+                        palette: 'magma',
+                        solve_score_quantile: 0.02,
+                        solve_score_omega: 3,
+                        render_reusable: true,
+                        data_layout: 'chunk_all_pass_v1',
+                        chunk_bins_prefix: 'renders/j/palettes/pal_reuse/chunks/palette_bins_chunk_',
+                    }
+                ],
+            },
+        };
+        vm.runInContext(`
+            _renderActiveFamily = 'color';
+            _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
+            _clearActiveRun();
+            _gfpDispatch = null;
+            lambdaPost = async function(name, body, path) {
+                if (name === 'dispatch' && body.target === 'render_orchestrator') {
+                    _gfpDispatch = body;
+                    return { fired: 1, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: 1, complete: true, results: [{ phase: 'done' }] };
+                }
+                return { ok: true };
+            };
+            renderArtifactPanel('j', ${JSON.stringify(summary)});
+        `, ctx);
+        const panelHtml = ctx._elements['render-preview'].innerHTML || '';
+        if (!panelHtml.includes('GenerateFromPalette')) { console.error('FATAL: color artifact panel should show GenerateFromPalette button'); process.exit(1); }
+        vm.runInContext('openGenerateFromPalettePopup()', ctx);
+        const popupDisplay = vm.runInContext("document.getElementById('generate-from-palette-popup-overlay').style.display", ctx);
+        const bodyRows = ctx._elements['generate-from-palette-popup-body'].children || [];
+        const summaryText = vm.runInContext("document.getElementById('generate-from-palette-popup-summary').textContent", ctx);
+        if (popupDisplay !== 'flex') { console.error('FATAL: GenerateFromPalette popup should open'); process.exit(1); }
+        if (bodyRows.length !== 1) { console.error('FATAL: GenerateFromPalette should show only reusable palettes, got ' + bodyRows.length); process.exit(1); }
+        if (!String(summaryText).includes('anisotropy q=2.0% w=3 magma')) { console.error('FATAL: GenerateFromPalette summary should describe reusable selection, got ' + summaryText); process.exit(1); }
+        await vm.runInContext('runGenerateFromPaletteSelected()', ctx);
+        const dispatch = vm.runInContext('_gfpDispatch', ctx);
+        if (!dispatch || dispatch.target !== 'render_orchestrator') { console.error('FATAL: GenerateFromPalette should dispatch render orchestrator'); process.exit(1); }
+        const params = dispatch.jobs[0].params || {};
+        if (params.color_mode !== 'saved_palette') { console.error('FATAL: GenerateFromPalette should set color_mode=saved_palette, got ' + params.color_mode); process.exit(1); }
+        if (params.saved_palette_id !== 'pal_reuse') { console.error('FATAL: GenerateFromPalette should send chosen palette id, got ' + params.saved_palette_id); process.exit(1); }
+        console.log('  GenerateFromPalette popup dispatches saved-palette render: OK');
+    }
+
+    {
+        const summary = {
             calc: { exists: true, N: 3000, degree: 7 },
             families: {
                 color: [
@@ -910,6 +1082,7 @@ async function testPipeline(name, call) {
         vm.runInContext(`
             _renderActiveFamily = 'color';
             _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
+            _clearActiveRun();
             _autolevelDispatch = null;
             startActiveRenderObserver = function() { _autolevelObserverStarted = true; };
             _autolevelObserverStarted = false;
@@ -934,6 +1107,8 @@ async function testPipeline(name, call) {
         const popupBackground = vm.runInContext("document.getElementById('autolevel-background-readout').value", ctx);
         const popupThreshold = vm.runInContext("document.getElementById('autolevel-background-threshold').value", ctx);
         const popupExclude = vm.runInContext("document.getElementById('autolevel-exclude-background').checked", ctx);
+        const popupPooledToggle = vm.runInContext("document.getElementById('autolevel-enable-pooled-rgb').checked", ctx);
+        const popupPooledQ = vm.runInContext("document.getElementById('autolevel-pooled-rgb').value", ctx);
         if (overlayDisplay !== 'flex') { console.error('FATAL: autolevel popup should open'); process.exit(1); }
         if (!String(popupSummary).includes('color_src')) { console.error('FATAL: autolevel popup should describe selected artifact, got ' + popupSummary); process.exit(1); }
         if (!String(popupSummary).includes('bg=#101214')) { console.error('FATAL: autolevel popup should describe background, got ' + popupSummary); process.exit(1); }
@@ -942,6 +1117,7 @@ async function testPipeline(name, call) {
         if (popupBackground !== '#101214') { console.error('FATAL: autolevel popup should show background readout, got ' + popupBackground); process.exit(1); }
         if (popupThreshold !== '7') { console.error('FATAL: autolevel popup should seed threshold from artifact, got ' + popupThreshold); process.exit(1); }
         if (!popupExclude) { console.error('FATAL: autolevel popup should default background exclusion on'); process.exit(1); }
+        if (!popupPooledToggle || popupPooledQ !== '0.1') { console.error('FATAL: autolevel popup should default final pooled stretch to on with q=0.1, got toggle=' + popupPooledToggle + ' q=' + popupPooledQ); process.exit(1); }
         vm.runInContext(`
             document.getElementById('autolevel-exclude-background').checked = false;
             _syncAutolevelBackgroundControls();
@@ -956,11 +1132,30 @@ async function testPipeline(name, call) {
         if (thresholdEnabled) { console.error('FATAL: autolevel threshold should re-enable when background exclusion is on'); process.exit(1); }
         vm.runInContext(`
             document.getElementById('autolevel-quality').value = '84';
+            document.getElementById('autolevel-enable-gamma').checked = true;
+            document.getElementById('autolevel-gamma').value = '1.2';
+            document.getElementById('autolevel-enable-auto-gamma').checked = true;
             document.getElementById('autolevel-auto-gamma').value = 'median';
             document.getElementById('autolevel-background-threshold').value = '11';
             document.getElementById('autolevel-exclude-background').checked = false;
             document.getElementById('autolevel-jpeg-optimize').checked = true;
             document.getElementById('autolevel-jpeg-interlace').checked = true;
+            _syncAutolevelStageControls();
+        `, ctx);
+        vm.runInContext('_revertAutolevelPopupDefaults()', ctx);
+        const revertedQuality = vm.runInContext("document.getElementById('autolevel-quality').value", ctx);
+        const revertedPooled = vm.runInContext("document.getElementById('autolevel-pooled-rgb').value", ctx);
+        const revertedGammaToggle = vm.runInContext("document.getElementById('autolevel-enable-gamma').checked", ctx);
+        if (revertedQuality !== '81' || revertedPooled !== '0.1' || revertedGammaToggle) { console.error('FATAL: autolevel revert should restore artifact defaults, got quality=' + revertedQuality + ' pooled=' + revertedPooled + ' gammaToggle=' + revertedGammaToggle); process.exit(1); }
+        vm.runInContext(`
+            document.getElementById('autolevel-quality').value = '84';
+            document.getElementById('autolevel-enable-auto-gamma').checked = true;
+            document.getElementById('autolevel-auto-gamma').value = 'median';
+            document.getElementById('autolevel-background-threshold').value = '11';
+            document.getElementById('autolevel-exclude-background').checked = false;
+            document.getElementById('autolevel-jpeg-optimize').checked = true;
+            document.getElementById('autolevel-jpeg-interlace').checked = true;
+            _syncAutolevelStageControls();
         `, ctx);
         await vm.runInContext('runAutolevelSelectedRenderArtifact()', ctx);
         const dispatch = vm.runInContext('_autolevelDispatch', ctx);
@@ -971,7 +1166,9 @@ async function testPipeline(name, call) {
         if (!dispatch.jobs || dispatch.jobs.length !== 1) { console.error('FATAL: autolevels dispatch should send one job'); process.exit(1); }
         if (dispatch.jobs[0].source_artifact_id !== 'color_src') { console.error('FATAL: autolevels should target selected color artifact, got ' + dispatch.jobs[0].source_artifact_id); process.exit(1); }
         if (dispatch.jobs[0].autolevels_params.quality !== 84) { console.error('FATAL: autolevels should send edited quality, got ' + dispatch.jobs[0].autolevels_params.quality); process.exit(1); }
+        if (dispatch.jobs[0].autolevels_params.enable_pooled_rgb !== true || dispatch.jobs[0].autolevels_params.pooled_rgb !== 0.1) { console.error('FATAL: autolevels should keep final pooled stretch default on with q=0.1'); process.exit(1); }
         if (dispatch.jobs[0].autolevels_params.auto_gamma !== 'median') { console.error('FATAL: autolevels should send edited auto_gamma'); process.exit(1); }
+        if (dispatch.jobs[0].autolevels_params.enable_auto_gamma !== true) { console.error('FATAL: autolevels should send auto-gamma stage toggle'); process.exit(1); }
         if (dispatch.jobs[0].autolevels_params.background_threshold !== 11) { console.error('FATAL: autolevels should send edited background threshold, got ' + dispatch.jobs[0].autolevels_params.background_threshold); process.exit(1); }
         if (dispatch.jobs[0].autolevels_params.exclude_background !== false) { console.error('FATAL: autolevels should send edited exclude_background'); process.exit(1); }
         if (!dispatch.jobs[0].autolevels_params.jpeg_optimize_coding || !dispatch.jobs[0].autolevels_params.jpeg_interlace) { console.error('FATAL: autolevels should send checkbox params'); process.exit(1); }

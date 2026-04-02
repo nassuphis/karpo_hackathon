@@ -35,6 +35,7 @@ def handler(event, context):
 
         # Download .bin from S3
         bin_path = "/tmp/stripe.bin"
+        saved_bins_path = "/tmp/palette_bins_chunk.bin"
         obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
         with open(bin_path, "wb") as f:
             f.write(obj["Body"].read())
@@ -75,8 +76,18 @@ def handler(event, context):
         # Solve-score bins: download JSON, parse, pass as CLI args
         color = params.get("color", "rainbow")
         ss_bins_key = params.get("solve_score_bins_key") or params.get("solve_proximity_bins_key")
+        saved_palette_bins_key = params.get("saved_palette_bins_key")
         if color in ("solve_score", "solve_proximity") and not ss_bins_key:
             raise RuntimeError(f"{color} color mode requires solve_score_bins_key")
+        if color == "saved_palette":
+            if not saved_palette_bins_key:
+                raise RuntimeError("saved_palette color mode requires saved_palette_bins_key")
+            bins_obj = s3.get_object(Bucket=BUCKET, Key=saved_palette_bins_key)
+            with open(saved_bins_path, "wb") as bf:
+                bf.write(bins_obj["Body"].read())
+            cmd = [a for a in cmd if not a.startswith("--color=")]
+            cmd.append("--color=saved_palette")
+            cmd.append(f"--solve_bins_file={saved_bins_path}")
         if ss_bins_key and color in ("solve_score", "solve_proximity"):
             ss_obj = s3.get_object(Bucket=BUCKET, Key=ss_bins_key)
             ss_data = json.loads(ss_obj["Body"].read())
@@ -112,6 +123,8 @@ def handler(event, context):
         raster_us = int((time.time() - t1) * 1e6)
 
         os.remove(bin_path)
+        if os.path.exists(saved_bins_path):
+            os.remove(saved_bins_path)
 
         report_status(job_id, task_id, "rasterized")
 
@@ -139,3 +152,9 @@ def handler(event, context):
     except Exception as e:
         report_status(job_id, task_id, "error", str(e))
         raise
+    finally:
+        for tmp_path in ("/tmp/stripe.bin", "/tmp/palette_bins_chunk.bin", "/tmp/root_xforms.json"):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass

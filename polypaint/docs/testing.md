@@ -284,7 +284,7 @@ Tests the Step Functions ASL template (JSON parsing only):
 
 Frontend JS execution tests (Node.js vm module, no browser):
 
-- Catalog loading, TRI swatches/popup/filtering, dropdown population, CFPV rows, pipeline dispatch, wave dispatch, Render family catalogs, DeepZoom inventory, solve histogram, palette workflow, Palette tab
+- Catalog loading, TRI/LONG/built-in palette popups, dropdown population, CFPV rows, pipeline dispatch, wave dispatch, Render family catalogs, DeepZoom inventory, solve histogram, palette workflow, Palette tab, Autolevels popup dispatch/defaults/revert/logging
 
 ### e2e/ Playwright tests
 
@@ -308,6 +308,23 @@ Tests png_export binary (needs libvips):
 - Converts bilevel TIFF to 1-bit PNG
 - Verifies output dimensions
 
+### test_autolevels_handler.py
+
+Tests the autolevel post-process Lambda handler (Python mocks):
+
+- parameter sanitization and stage-toggle defaults
+- background metadata fallback and threshold clamping
+- derived artifact upload metadata
+- autolevel debug payload emission
+
+### test_autolevels_render_native.py
+
+Tests the native autolevel renderer (libvips):
+
+- background exclusion on/off behavior
+- per-channel threshold effect
+- all-background fallback
+
 ## When to Run What
 
 | What changed | Tests to run |
@@ -324,6 +341,7 @@ Tests png_export binary (needs libvips):
 | sweep_cm.c | test_companion_matrix (Docker ARM64) |
 | solve_proximity_stats.c | test_solve_proximity_stats (Docker ARM64) |
 | solve_palette_debug.c | test_solve_palette_debug (Docker ARM64) |
+| autolevels_render.c / handler_autolevels.py | test_autolevels_handler + test_autolevels_render_native + test_frontend_js.sh |
 | Palette handlers | test_palette_debug_handler + test_palette_chunk_handler + test_palette_finalize_handler |
 | Step Functions ASL | test_render_workflow_definition + test_palette_workflow_definition |
 | Render orchestrator/plan/status | test_render_orchestrator + test_render_plan + test_render_status |

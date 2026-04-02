@@ -269,6 +269,7 @@
               "constant_color.$": "$.plan.params.constant_color",
               "root_transforms.$": "$.plan.params.root_transforms",
               "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
+              "saved_palette_bins_key.$": "States.Format('{}{}.bin', $.plan.saved_palette.chunk_bins_prefix, $$.Map.Item.Value.chunk_idx)",
               "solve_metric.$": "$.plan.solve_score.metric",
               "solve_score_quantile.$": "$.plan.solve_score.quantile",
               "solve_score_omega.$": "$.plan.solve_score.omega"

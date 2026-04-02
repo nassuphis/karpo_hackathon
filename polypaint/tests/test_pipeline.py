@@ -93,6 +93,16 @@ class TestDispatchHandler(unittest.TestCase):
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 1)
 
+    @patch("handler_dispatch.lambda_client")
+    def test_dispatch_repalette_target(self, mock_client):
+        from handler_dispatch import handler
+        mock_client.invoke.return_value = {"StatusCode": 202}
+        jobs = [{"job_id": "j", "task_id": "repalette_1", "source_palette_id": "pal_src", "new_palette": "tri_redgold"}]
+        event = self._make_event({"target": "repalette", "jobs": jobs})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["fired"], 1)
+
 
 # ── Test: handler_storage.py (list, check_keys, check_status, clean_render) ──
 

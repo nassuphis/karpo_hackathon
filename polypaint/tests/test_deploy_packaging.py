@@ -134,6 +134,13 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("handler_autolevels.py", packaged)
         self.assertIn("autolevels_render", packaged["handler_autolevels.py"])
 
+        self.assertIn("handler_repalette.py", packaged)
+        self.assertIn("palette_names.py", packaged["handler_repalette.py"])
+        self.assertIn("tri_palette_names_generated.py", packaged["handler_repalette.py"])
+        self.assertIn("long_palette_names_generated.py", packaged["handler_repalette.py"])
+        self.assertIn("palette_bins_render", packaged["handler_repalette.py"])
+        self.assertIn("raw2jpeg", packaged["handler_repalette.py"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -44,6 +44,7 @@
 
 typedef struct {
     int bins;
+    int enable_levels;
     double clip_low;
     double clip_high;
     double peak_factor;
@@ -457,6 +458,7 @@ int main(int argc, char **argv) {
         vips_shutdown();
         return 1;
     }
+    cfg.enable_levels = parse_int_arg(argc, argv, "--enable-levels", 1) != 0;
     cfg.clip_low = parse_double_arg(argc, argv, "--clip-low", 0.0);
     cfg.clip_high = parse_double_arg(argc, argv, "--clip-high", 1.0);
     cfg.peak_factor = parse_double_arg(argc, argv, "--peak-factor", 0.0);
@@ -577,7 +579,14 @@ int main(int argc, char **argv) {
     hist_nonzero_extent(hist[2], 256, &dbg.b_min_bin, &dbg.b_max_bin);
     hist_to_pooled_pdf(hist, 256, pooled);
     peak_limit_pdf(pooled, 256, cfg.peak_factor);
-    compute_endpoints(pooled, 256, cfg.clip_low, cfg.clip_high, &dbg);
+    if (cfg.enable_levels) {
+        compute_endpoints(pooled, 256, cfg.clip_low, cfg.clip_high, &dbg);
+    } else {
+        dbg.black_bin = 0;
+        dbg.white_bin = 255;
+        dbg.black = 0.0;
+        dbg.white = 1.0;
+    }
     maybe_compute_auto_gamma(pooled, 256, &cfg, &dbg);
     build_curve_lut(lut, &cfg, &dbg);
     apply_curve_lut(in_buf, out_buf, pixels, bands, lut);

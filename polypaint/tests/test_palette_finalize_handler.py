@@ -1,14 +1,15 @@
 """
 Tests for handler_palette_finalize.py.
 
-Validates exact serpentine deshuffle assembly and failure on incomplete coverage.
+Validates pass-0 image assembly from all-pass chunk-local bins and confirms new
+reusable palette artifacts keep chunk-local numeric data instead of uploading
+monolithic sidecars.
 """
 import json
 import os
 import sys
 import tempfile
 import unittest
-from array import array
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
@@ -20,18 +21,20 @@ def _event(**overrides):
         "task_id": "palette_run_finalize",
         "palette_id": "pal_1",
         "N": 4,
-        "times": 1,
+        "times": 2,
         "degree": 5,
         "metric": "crowding",
         "palette": "reef",
         "solve_score_quantile": 0.01,
+        "solve_score_omega": 3.0,
         "root_transforms": [["rotate_roots", "0.25"]],
         "image_key": "renders/j/palettes/pal_1/image.jpeg",
         "preview_key": "renders/j/palettes/pal_1/preview.png",
-        "score_key": "renders/j/palettes/pal_1/score_crowding.bin",
-        "palette_bins_key": "renders/j/palettes/pal_1/palette_bins.bin",
         "meta_key": "renders/j/palettes/pal_1/meta.json",
         "chunks_prefix": "renders/j/palettes/pal_1/chunks/",
+        "chunk_scores_prefix": "renders/j/palettes/pal_1/chunks/score_chunk_",
+        "chunk_bins_prefix": "renders/j/palettes/pal_1/chunks/palette_bins_chunk_",
+        "chunk_meta_prefix": "renders/j/palettes/pal_1/chunks/meta_chunk_",
         "solve_score_prefix": "renders/j/palettes/pal_1/solve_score/",
         "solve_score_clip_key": "renders/j/palettes/pal_1/solve_score/crowding_clip.json",
         "solve_score_bins_key": "renders/j/palettes/pal_1/solve_score/crowding_bins.json",
@@ -47,25 +50,22 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
     @patch("handler_palette_finalize._list_keys")
     @patch("handler_palette_finalize.s3")
     @patch("handler_palette_finalize.subprocess.run")
-    def test_finalize_assembles_full_grids_and_uploads_artifacts(
+    def test_finalize_assembles_pass0_image_and_preserves_chunk_local_data(
         self, mock_run, mock_s3, mock_list_keys, mock_delete_keys, mock_report
     ):
         import handler_palette_finalize as mod
 
         with tempfile.TemporaryDirectory() as td, \
-             patch.object(mod, "_TMP_SCORES", os.path.join(td, "scores_full.bin")), \
              patch.object(mod, "_TMP_BINS", os.path.join(td, "bins_full.bin")), \
              patch.object(mod, "_TMP_RAW", os.path.join(td, "palette.raw")), \
              patch.object(mod, "_TMP_JPEG", os.path.join(td, "palette.jpeg")), \
              patch.object(mod, "_TMP_PREVIEW", os.path.join(td, "palette_preview.png")):
 
-            chunk_keys = [
+            chunk_meta_prefix = "renders/j/palettes/pal_1/chunks/meta_chunk_"
+            solve_prefix = "renders/j/palettes/pal_1/solve_score/"
+            chunk_meta_keys = [
                 "renders/j/palettes/pal_1/chunks/meta_chunk_0.json",
-                "renders/j/palettes/pal_1/chunks/score_chunk_0.bin",
-                "renders/j/palettes/pal_1/chunks/palette_bins_chunk_0.bin",
                 "renders/j/palettes/pal_1/chunks/meta_chunk_1.json",
-                "renders/j/palettes/pal_1/chunks/score_chunk_1.bin",
-                "renders/j/palettes/pal_1/chunks/palette_bins_chunk_1.bin",
             ]
             solve_keys = [
                 "renders/j/palettes/pal_1/solve_score/chunk_0_hist.json",
@@ -73,18 +73,13 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             ]
 
             def list_keys(prefix):
-                if prefix == "renders/j/palettes/pal_1/chunks/":
-                    return list(chunk_keys)
-                if prefix == "renders/j/palettes/pal_1/solve_score/":
+                if prefix == chunk_meta_prefix:
+                    return list(chunk_meta_keys)
+                if prefix == solve_prefix:
                     return list(solve_keys)
                 return []
 
             mock_list_keys.side_effect = list_keys
-
-            scores0 = array("f", [0.5, 1.5, 2.5, 3.5, 4.5, 5.5])
-            bins0 = bytes([0, 1, 2, 3, 4, 5])
-            scores1 = array("f", [6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5])
-            bins1 = bytes([6, 7, 8, 9, 0, 1, 2, 3, 4, 5])
 
             meta0 = {
                 "chunk_idx": 0,
@@ -96,14 +91,18 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             meta1 = {
                 "chunk_idx": 1,
                 "step_start": 6,
-                "step_count": 10,
+                "step_count": 14,
                 "score_key": "renders/j/palettes/pal_1/chunks/score_chunk_1.bin",
                 "palette_bins_key": "renders/j/palettes/pal_1/chunks/palette_bins_chunk_1.bin",
             }
+            bins0 = bytes([0, 1, 2, 3, 4, 5])
+            # first 10 values complete pass0 (g=6..15), remaining 4 belong to pass1 and must be ignored for image assembly
+            bins1 = bytes([6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 8, 8, 8, 8])
             bins_meta = {
                 "clip_lo": -1.0,
                 "clip_hi": 2.0,
                 "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                "omega": 3.0,
             }
             clip_meta = {"clip_fallback": False, "clip_fallback_reason": None}
 
@@ -112,8 +111,6 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
                 mapping = {
                     "renders/j/palettes/pal_1/chunks/meta_chunk_0.json": json.dumps(meta0).encode(),
                     "renders/j/palettes/pal_1/chunks/meta_chunk_1.json": json.dumps(meta1).encode(),
-                    "renders/j/palettes/pal_1/chunks/score_chunk_0.bin": scores0.tobytes(),
-                    "renders/j/palettes/pal_1/chunks/score_chunk_1.bin": scores1.tobytes(),
                     "renders/j/palettes/pal_1/chunks/palette_bins_chunk_0.bin": bins0,
                     "renders/j/palettes/pal_1/chunks/palette_bins_chunk_1.bin": bins1,
                     "renders/j/palettes/pal_1/solve_score/crowding_bins.json": json.dumps(bins_meta).encode(),
@@ -155,36 +152,33 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             result = mod.handler(_event(), None)
             body = json.loads(result["body"])
 
-            self.assertEqual(body["palette_bins_key"], "renders/j/palettes/pal_1/palette_bins.bin")
-            self.assertEqual(body["score_key"], "renders/j/palettes/pal_1/score_crowding.bin")
+            self.assertEqual(body["palette_id"], "pal_1")
+            self.assertEqual(body["image_key"], "renders/j/palettes/pal_1/image.jpeg")
             self.assertIn("renders/j/palettes/pal_1/image.jpeg", uploads)
             self.assertIn("renders/j/palettes/pal_1/preview.png", uploads)
-            self.assertIn("renders/j/palettes/pal_1/score_crowding.bin", uploads)
-            self.assertIn("renders/j/palettes/pal_1/palette_bins.bin", uploads)
-
-            final_scores = array("f")
-            final_scores.frombytes(uploads["renders/j/palettes/pal_1/score_crowding.bin"])
-            self.assertEqual(
-                list(final_scores),
-                [0.5, 1.5, 2.5, 3.5, 7.5, 6.5, 5.5, 4.5, 8.5, 9.5, 10.5, 11.5, 15.5, 14.5, 13.5, 12.5],
-            )
-            self.assertEqual(
-                list(uploads["renders/j/palettes/pal_1/palette_bins.bin"]),
-                [0, 1, 2, 3, 7, 6, 5, 4, 8, 9, 0, 1, 5, 4, 3, 2],
-            )
+            self.assertNotIn("renders/j/palettes/pal_1/score_crowding.bin", uploads)
+            self.assertNotIn("renders/j/palettes/pal_1/palette_bins.bin", uploads)
 
             meta_call = mock_s3.put_object.call_args.kwargs
             meta = json.loads(meta_call["Body"])
             self.assertEqual(meta["palette_id"], "pal_1")
             self.assertEqual(meta["using_pass"], 0)
-            self.assertEqual(meta["clip_lo"], -1.0)
-            self.assertEqual(meta["clip_hi"], 2.0)
-            self.assertEqual(len(meta["cuts_norm"]), 9)
-            self.assertEqual(meta["image_key"], "renders/j/palettes/pal_1/image.jpeg")
+            self.assertEqual(meta["image_pass"], 0)
+            self.assertEqual(meta["data_layout"], "chunk_all_pass_v1")
+            self.assertTrue(meta["render_reusable"])
+            self.assertEqual(meta["base_grid_solves"], 16)
+            self.assertEqual(meta["total_solves"], 20)
+            self.assertEqual(meta["chunk_scores_prefix"], "renders/j/palettes/pal_1/chunks/score_chunk_")
+            self.assertEqual(meta["chunk_bins_prefix"], "renders/j/palettes/pal_1/chunks/palette_bins_chunk_")
+            self.assertEqual(meta["chunk_meta_prefix"], "renders/j/palettes/pal_1/chunks/meta_chunk_")
+            self.assertNotIn("score_key", meta)
+            self.assertNotIn("palette_bins_key", meta)
 
             deleted_batches = [c.args[0] for c in mock_delete_keys.call_args_list]
-            self.assertTrue(any("renders/j/palettes/pal_1/chunks/meta_chunk_0.json" in batch for batch in deleted_batches))
-            self.assertTrue(any("renders/j/palettes/pal_1/solve_score/crowding_bins.json" in batch for batch in deleted_batches))
+            flat_deleted = [key for batch in deleted_batches for key in batch]
+            self.assertIn("renders/j/palettes/pal_1/solve_score/crowding_bins.json", flat_deleted)
+            self.assertIn("renders/j/palettes/pal_1/solve_score/chunk_0_hist.json", flat_deleted)
+            self.assertNotIn("renders/j/palettes/pal_1/chunks/meta_chunk_0.json", flat_deleted)
 
             statuses = [c.args[2] for c in mock_report.call_args_list]
             self.assertEqual(statuses, ["started", "assembled", "done"])
@@ -200,32 +194,28 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
         import handler_palette_finalize as mod
 
         with tempfile.TemporaryDirectory() as td, \
-             patch.object(mod, "_TMP_SCORES", os.path.join(td, "scores_full.bin")), \
              patch.object(mod, "_TMP_BINS", os.path.join(td, "bins_full.bin")), \
              patch.object(mod, "_TMP_RAW", os.path.join(td, "palette.raw")), \
              patch.object(mod, "_TMP_JPEG", os.path.join(td, "palette.jpeg")), \
              patch.object(mod, "_TMP_PREVIEW", os.path.join(td, "palette_preview.png")):
 
             mock_list_keys.side_effect = lambda prefix: (
-                ["renders/j/palettes/pal_1/chunks/meta_chunk_0.json"] if prefix.endswith("/chunks/")
+                ["renders/j/palettes/pal_1/chunks/meta_chunk_0.json"]
+                if prefix.endswith("meta_chunk_")
                 else []
             )
             meta0 = {
                 "chunk_idx": 0,
                 "step_start": 0,
                 "step_count": 8,
-                "score_key": "renders/j/palettes/pal_1/chunks/score_chunk_0.bin",
                 "palette_bins_key": "renders/j/palettes/pal_1/chunks/palette_bins_chunk_0.bin",
             }
-            scores0 = array("f", [float(i) for i in range(8)])
-            bins0 = bytes(range(8))
 
             def get_object(**kwargs):
                 key = kwargs["Key"]
                 mapping = {
                     "renders/j/palettes/pal_1/chunks/meta_chunk_0.json": json.dumps(meta0).encode(),
-                    "renders/j/palettes/pal_1/chunks/score_chunk_0.bin": scores0.tobytes(),
-                    "renders/j/palettes/pal_1/chunks/palette_bins_chunk_0.bin": bins0,
+                    "renders/j/palettes/pal_1/chunks/palette_bins_chunk_0.bin": bytes(range(8)),
                 }
                 if key not in mapping:
                     raise AssertionError(f"unexpected get_object key: {key}")
@@ -234,7 +224,7 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             mock_s3.get_object.side_effect = get_object
 
             with self.assertRaises(RuntimeError) as ctx:
-                mod.handler(_event(), None)
+                mod.handler(_event(times=1), None)
 
             self.assertIn("filled 8 samples, expected 16", str(ctx.exception))
             mock_run.assert_not_called()

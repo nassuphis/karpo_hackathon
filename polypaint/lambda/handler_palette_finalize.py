@@ -1,11 +1,11 @@
 """
-Palette finalize Lambda — assemble exact full-resolution palette artifacts from chunk-local outputs.
+Palette finalize Lambda — assemble pass-0 palette images while preserving durable
+all-pass chunk-local palette data for later reuse.
 """
 import json
 import os
 import subprocess
 import time
-from array import array
 
 import boto3
 
@@ -16,7 +16,6 @@ PALETTE_RENDER = os.path.join(os.path.dirname(__file__), "palette_bins_render")
 RAW2JPEG = os.path.join(os.path.dirname(__file__), "raw2jpeg")
 PRESIGN_EXPIRY = 3600
 
-_TMP_SCORES = "/tmp/palette_scores_full.bin"
 _TMP_BINS = "/tmp/palette_bins_full.bin"
 _TMP_RAW = "/tmp/palette_image.raw"
 _TMP_JPEG = "/tmp/palette_image.jpeg"
@@ -24,7 +23,7 @@ _TMP_PREVIEW = "/tmp/palette_preview.png"
 
 
 def _cleanup_tmp():
-    for p in (_TMP_SCORES, _TMP_BINS, _TMP_RAW, _TMP_JPEG, _TMP_PREVIEW):
+    for p in (_TMP_BINS, _TMP_RAW, _TMP_JPEG, _TMP_PREVIEW):
         try:
             os.remove(p)
         except OSError:
@@ -67,13 +66,14 @@ def handler(event, context):
     root_transforms = params.get("root_transforms", [])
     image_key = params["image_key"]
     preview_key = params["preview_key"]
-    score_key = params["score_key"]
-    palette_bins_key = params["palette_bins_key"]
     meta_key = params["meta_key"]
     chunks_prefix = params["chunks_prefix"]
     solve_score_prefix = params["solve_score_prefix"]
     solve_score_clip_key = params["solve_score_clip_key"]
     solve_score_bins_key = params["solve_score_bins_key"]
+    chunk_scores_prefix = params.get("chunk_scores_prefix", chunks_prefix + "score_chunk_")
+    chunk_bins_prefix = params.get("chunk_bins_prefix", chunks_prefix + "palette_bins_chunk_")
+    chunk_meta_prefix = params.get("chunk_meta_prefix", chunks_prefix + "meta_chunk_")
 
     progress = {"phase": "palette_finalize", "palette_id": palette_id}
     try:
@@ -81,7 +81,7 @@ def handler(event, context):
         report_status(job_id, task_id, "started", result_data=progress)
 
         t0 = time.time()
-        meta_keys = [k for k in _list_keys(chunks_prefix) if k.endswith(".json")]
+        meta_keys = [k for k in _list_keys(chunk_meta_prefix) if k.endswith(".json")]
         if not meta_keys:
             raise RuntimeError(f"No chunk metadata found under {chunks_prefix}")
 
@@ -92,42 +92,33 @@ def handler(event, context):
         chunk_meta.sort(key=lambda m: (m.get("step_start", 0), m.get("chunk_idx", 0)))
 
         pass0_steps = full_n * full_n
-        scores = array("f", [0.0]) * pass0_steps
         bins = bytearray(pass0_steps)
 
         filled = 0
         for meta in chunk_meta:
             step_start = int(meta["step_start"])
             step_count = int(meta["step_count"])
-            score_obj = s3.get_object(Bucket=BUCKET, Key=meta["score_key"])
-            score_bytes = score_obj["Body"].read()
             bin_obj = s3.get_object(Bucket=BUCKET, Key=meta["palette_bins_key"])
             bin_bytes = bin_obj["Body"].read()
-
-            chunk_scores = array("f")
-            chunk_scores.frombytes(score_bytes)
-            if len(chunk_scores) != step_count:
-                raise RuntimeError(f"Chunk {meta.get('chunk_idx')} score length {len(chunk_scores)} != {step_count}")
             if len(bin_bytes) != step_count:
                 raise RuntimeError(f"Chunk {meta.get('chunk_idx')} bin length {len(bin_bytes)} != {step_count}")
 
             for off in range(step_count):
                 g = step_start + off
-                if g < 0 or g >= pass0_steps:
-                    raise RuntimeError(f"Chunk {meta.get('chunk_idx')} writes out of pass-0 bounds at {g}")
+                if g < 0:
+                    raise RuntimeError(f"Chunk {meta.get('chunk_idx')} writes negative solve index at {g}")
+                if g >= pass0_steps:
+                    continue
                 row = g // full_n
                 j = g % full_n
                 col = j if (row % 2 == 0) else (full_n - 1 - j)
                 idx = row * full_n + col
-                scores[idx] = chunk_scores[off]
                 bins[idx] = bin_bytes[off]
                 filled += 1
 
         if filled != pass0_steps:
             raise RuntimeError(f"Palette finalize filled {filled} samples, expected {pass0_steps}")
 
-        with open(_TMP_SCORES, "wb") as sf:
-            scores.tofile(sf)
         with open(_TMP_BINS, "wb") as bf:
             bf.write(bins)
 
@@ -185,10 +176,6 @@ def handler(event, context):
             s3.upload_fileobj(fh, BUCKET, image_key, ExtraArgs={"ContentType": "image/jpeg", "Metadata": metadata})
         with open(_TMP_PREVIEW, "rb") as pf:
             s3.upload_fileobj(pf, BUCKET, preview_key, ExtraArgs={"ContentType": "image/png"})
-        with open(_TMP_SCORES, "rb") as sf:
-            s3.upload_fileobj(sf, BUCKET, score_key, ExtraArgs={"ContentType": "application/octet-stream"})
-        with open(_TMP_BINS, "rb") as bf:
-            s3.upload_fileobj(bf, BUCKET, palette_bins_key, ExtraArgs={"ContentType": "application/octet-stream"})
 
         created_at = _utc_now_iso()
         meta_body = {
@@ -205,6 +192,12 @@ def handler(event, context):
             "N": full_n,
             "times": times,
             "using_pass": 0,
+            "image_pass": 0,
+            "base_grid_solves": pass0_steps,
+            "total_solves": sum(int(m.get("step_count", 0)) for m in chunk_meta),
+            "pass_count": times,
+            "data_layout": "chunk_all_pass_v1",
+            "render_reusable": True,
             "clip_lo": bins_meta.get("clip_lo"),
             "clip_hi": bins_meta.get("clip_hi"),
             "cuts_norm": bins_meta.get("cuts_norm", []),
@@ -213,21 +206,19 @@ def handler(event, context):
             "file_size": file_size,
             "image_key": image_key,
             "preview_key": preview_key,
-            "score_key": score_key,
-            "palette_bins_key": palette_bins_key,
+            "chunk_scores_prefix": chunk_scores_prefix,
+            "chunk_bins_prefix": chunk_bins_prefix,
+            "chunk_meta_prefix": chunk_meta_prefix,
         }
         s3.put_object(Bucket=BUCKET, Key=meta_key, Body=json.dumps(meta_body), ContentType="application/json")
 
-        # Cleanup only this workflow's temporary artifacts after success.
-        _delete_keys(_list_keys(chunks_prefix))
+        # Cleanup only this workflow's temporary solve-score scratch after success.
         _delete_keys(_list_keys(solve_score_prefix) + [solve_score_clip_key, solve_score_bins_key])
 
         result_data = {
             "palette_id": palette_id,
             "image_key": image_key,
             "preview_key": preview_key,
-            "score_key": score_key,
-            "palette_bins_key": palette_bins_key,
             "file_size": file_size,
             "assemble_ms": assemble_ms,
             "render_ms": render_ms,

@@ -155,6 +155,69 @@ class TestRenderPlan(unittest.TestCase):
             handler(_make_event(color_mode="solve_score", palette="tri_not_real"), None)
         self.assertIn("Invalid palette", str(ctx.exception))
 
+    @patch("handler_render_plan.s3")
+    @patch("handler_render_plan._storage_call")
+    def test_saved_palette_mode_uses_source_palette_contract(self, mock_storage, mock_s3):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2, "N": 1024, "times": 3,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        source_meta = {
+            "job_id": "j",
+            "palette_id": "pal_src",
+            "display_name": "crowding q=1.0% w=3 reef",
+            "metric": "crowding",
+            "palette": "reef",
+            "solve_score_quantile": 0.01,
+            "solve_score_omega": 3.0,
+            "root_transforms": [["rotate_roots", "0.25"]],
+            "degree": 5,
+            "N": 1024,
+            "times": 3,
+            "render_reusable": True,
+            "data_layout": "chunk_all_pass_v1",
+            "chunk_bins_prefix": "renders/j/palettes/pal_src/chunks/palette_bins_chunk_",
+        }
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(source_meta).encode())}
+        from handler_render_plan import handler
+        result = handler(_make_event(color_mode="saved_palette", saved_palette_id="pal_src", palette="inferno"), None)
+        plan = json.loads(result["body"])
+        assert plan["solve_score"]["enabled"] is False
+        assert plan["saved_palette"]["enabled"] is True
+        assert plan["saved_palette"]["palette_id"] == "pal_src"
+        assert plan["saved_palette"]["chunk_bins_prefix"] == "renders/j/palettes/pal_src/chunks/palette_bins_chunk_"
+        assert plan["outputs"]["metadata"]["color_mode"] == "saved_palette"
+        assert plan["outputs"]["metadata"]["palette"] == "reef"
+        assert plan["outputs"]["metadata"]["palette_source_id"] == "pal_src"
+        assert plan["outputs"]["metadata"]["solve_metric"] == "crowding"
+        assert plan["outputs"]["metadata"]["solve_score_quantile"] == "0.01"
+        assert plan["outputs"]["metadata"]["solve_score_omega"] == "3.0"
+        assert plan["params"]["root_transforms"] == [["rotate_roots", "0.25"]]
+
+    @patch("handler_render_plan.s3")
+    @patch("handler_render_plan._storage_call")
+    def test_saved_palette_mode_rejects_non_reusable_palette(self, mock_storage, mock_s3):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2, "N": 1024, "times": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        source_meta = {
+            "job_id": "j",
+            "palette_id": "pal_legacy",
+            "metric": "crowding",
+            "palette": "reef",
+            "degree": 5,
+            "N": 1024,
+            "times": 2,
+            "render_reusable": False,
+            "data_layout": "legacy_pass0_v1",
+        }
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(source_meta).encode())}
+        from handler_render_plan import handler
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_make_event(color_mode="saved_palette", saved_palette_id="pal_legacy"), None)
+        self.assertIn("not render-reusable", str(ctx.exception))
+
     @patch("handler_render_plan._storage_call")
     def test_coeff_bilevel_uses_coeffs_keys(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail({

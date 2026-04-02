@@ -170,62 +170,89 @@ button {
 .tri-popup-empty td {
     color: #777; text-align: center; padding: 16px 8px;
 }
-.autolevel-popup-grid {
-    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px 14px; padding: 12px 14px;
+.autolevel-pipeline {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 6px 14px 12px;
 }
-.autolevel-field {
-    display: flex; align-items: center; gap: 8px;
+.autolevel-stage {
+    padding: 10px 0 12px;
+    border-top: 1px solid rgba(255,255,255,0.08);
 }
-.autolevel-field label {
-    min-width: 110px; color: #888; font-size: 11px;
+.autolevel-stage:first-child {
+    border-top: 0;
+    padding-top: 4px;
 }
-.autolevel-field input,
-.autolevel-field select {
-    flex: 1 1 auto; min-width: 0;
-    font-size: 12px; padding: 6px 8px;
-    background: #0f172d; color: #ddd; border: 1px solid #2b3f66; border-radius: 4px;
+.autolevel-stage-head {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+    margin-bottom: 8px;
 }
-.autolevel-field.checkbox {
-    grid-column: span 2;
+.autolevel-stage-toggle {
+    min-width: 0; display: inline-flex; align-items: center; gap: 8px;
+    color: #eee; font-size: 12px; font-weight: 600; cursor: pointer;
 }
-.autolevel-field.checkbox label {
-    min-width: 0; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+.autolevel-stage-toggle input {
+    width: auto; margin: 0;
 }
-.autolevel-field.checkbox input {
-    flex: 0 0 auto; width: auto; margin: 0;
-}
-.autolevel-inline-row {
-    grid-column: span 2;
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    padding-top: 2px;
-}
-.autolevel-inline-row .inline-label {
+.autolevel-stage-note {
     color: #888; font-size: 11px;
 }
-.autolevel-inline-row input[type="text"] {
-    width: 130px;
+.autolevel-stage-body {
+    display: flex; flex-direction: column; gap: 8px;
 }
-.autolevel-inline-row input[type="number"] {
-    width: 72px;
+.autolevel-stage-row {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
 }
-.autolevel-inline-row .autolevel-inline-check {
+.autolevel-stage-text {
+    color: #9aa3b2; font-size: 11px; min-width: 210px;
+}
+.autolevel-inline-fields {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+}
+.autolevel-inline-fields .inline-label {
+    color: #888; font-size: 11px;
+}
+.autolevel-inline-fields input,
+.autolevel-inline-fields select {
+    min-width: 0;
+    font-size: 12px; padding: 5px 7px;
+    background: #0f172d; color: #ddd; border: 1px solid #2b3f66; border-radius: 4px;
+}
+.autolevel-inline-fields input[type="number"] {
+    width: 82px;
+}
+.autolevel-inline-fields input[type="text"] {
+    width: 112px;
+}
+.autolevel-inline-fields select {
+    width: auto;
+}
+.autolevel-inline-check {
     min-width: 0; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
     color: #ddd; font-size: 12px;
 }
-.autolevel-inline-row .autolevel-inline-check input {
+.autolevel-inline-check input {
     width: auto; margin: 0;
 }
+.autolevel-stage-body.disabled {
+    opacity: 0.5;
+}
 .autolevel-popup-summary {
+    flex: 0 0 auto;
     padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.08);
     font-size: 11px; color: #888;
 }
 .autolevel-popup-help {
+    flex: 0 0 auto;
     padding: 0 14px 12px; font-size: 11px; color: #777;
 }
 .autolevel-popup-actions {
-    display: flex; justify-content: flex-end; gap: 8px;
-    padding: 0 14px 14px;
+    flex: 0 0 auto;
+    display: flex; justify-content: space-between; gap: 8px;
+    padding: 10px 14px 14px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    background: #16213e;
 }
 
 .color-box {
@@ -712,34 +739,206 @@ button {
             <button id="autolevel-popup-close" type="button" class="tri-popup-close">Close</button>
         </div>
         <div id="autolevel-popup-summary" class="autolevel-popup-summary"></div>
-        <div class="autolevel-popup-grid">
-            <div class="autolevel-field"><label for="autolevel-bins">Bins</label><input id="autolevel-bins" type="number" min="256" max="256" step="1" value="256" disabled></div>
-            <div class="autolevel-field"><label for="autolevel-quality">Quality</label><input id="autolevel-quality" type="number" min="1" max="100" step="1" value="90"></div>
-            <div class="autolevel-field"><label for="autolevel-clip-low">Clip low %</label><input id="autolevel-clip-low" type="number" min="0" max="100" step="0.01" value="0"></div>
-            <div class="autolevel-field"><label for="autolevel-clip-high">Clip high %</label><input id="autolevel-clip-high" type="number" min="0" max="100" step="0.01" value="1"></div>
-            <div class="autolevel-field"><label for="autolevel-peak-factor">Peak factor</label><input id="autolevel-peak-factor" type="number" min="0" max="10" step="0.01" value="0"></div>
-            <div class="autolevel-field"><label for="autolevel-gamma">Gamma</label><input id="autolevel-gamma" type="number" min="0.1" max="4" step="0.01" value="1"></div>
-            <div class="autolevel-field"><label for="autolevel-auto-gamma">Auto gamma</label><select id="autolevel-auto-gamma"><option value="none">none</option><option value="median">median</option></select></div>
-            <div class="autolevel-field"><label for="autolevel-target">Target</label><input id="autolevel-target" type="number" min="0" max="1" step="0.01" value="0.5"></div>
-            <div class="autolevel-field"><label for="autolevel-sigmoid-strength">Sigmoid strength</label><input id="autolevel-sigmoid-strength" type="number" min="0" max="20" step="0.01" value="0"></div>
-            <div class="autolevel-field"><label for="autolevel-sigmoid-mid">Sigmoid midpoint</label><input id="autolevel-sigmoid-mid" type="number" min="0" max="1" step="0.01" value="0.5"></div>
-            <div class="autolevel-field"><label for="autolevel-vibrance">Vibrance</label><input id="autolevel-vibrance" type="number" min="-2" max="2" step="0.01" value="0"></div>
-            <div class="autolevel-field"><label for="autolevel-pooled-rgb">Final pooled RGB q</label><input id="autolevel-pooled-rgb" type="number" min="0" max="49" step="0.01" value="0"></div>
-            <div class="autolevel-field"><label for="autolevel-jpeg-subsample">JPEG subsample</label><select id="autolevel-jpeg-subsample"><option value="on">on</option><option value="auto">auto</option><option value="off">off</option></select></div>
-            <div class="autolevel-inline-row">
-                <label class="autolevel-inline-check"><input id="autolevel-exclude-background" type="checkbox" checked> Exclude background</label>
-                <span class="inline-label">Background</span>
-                <input id="autolevel-background-readout" type="text" value="#000000" disabled>
-                <span class="inline-label">Tolerance / channel</span>
-                <input id="autolevel-background-threshold" type="number" min="0" max="255" step="1" value="4">
+        <div class="autolevel-pipeline">
+            <div class="autolevel-stage">
+                <div class="autolevel-stage-head">
+                    <label class="autolevel-stage-toggle"><input id="autolevel-enable-levels" type="checkbox" checked> <span>1. Pooled levels</span></label>
+                    <div class="autolevel-stage-note">Build per-channel histograms, pool them, and choose black/white cut points.</div>
+                </div>
+                <div id="autolevel-stage-levels" class="autolevel-stage-body">
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">Histogram bins and clip percentiles.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Bins</span>
+                            <input id="autolevel-bins" type="number" min="256" max="256" step="1" value="256" disabled>
+                            <span class="inline-label">Clip low %</span>
+                            <input id="autolevel-clip-low" type="number" min="0" max="100" step="0.01" value="0">
+                            <span class="inline-label">Clip high %</span>
+                            <input id="autolevel-clip-high" type="number" min="0" max="100" step="0.01" value="1">
+                        </div>
+                    </div>
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">Ignore background-colored pixels in histogram passes.</div>
+                        <div class="autolevel-inline-fields">
+                            <label class="autolevel-inline-check"><input id="autolevel-exclude-background" type="checkbox" checked> Exclude background</label>
+                            <span class="inline-label">Background</span>
+                            <input id="autolevel-background-readout" type="text" value="#000000" disabled>
+                            <span class="inline-label">Tolerance / channel</span>
+                            <input id="autolevel-background-threshold" type="number" min="0" max="255" step="1" value="4">
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="autolevel-field checkbox"><label><input id="autolevel-jpeg-optimize" type="checkbox"> Optimize JPEG coding</label></div>
-            <div class="autolevel-field checkbox"><label><input id="autolevel-jpeg-interlace" type="checkbox"> Progressive JPEG</label></div>
+            <div class="autolevel-stage">
+                <div class="autolevel-stage-head">
+                    <label class="autolevel-stage-toggle"><input id="autolevel-enable-peak-limit" type="checkbox"> <span>2. Peak limit</span></label>
+                    <div class="autolevel-stage-note">Flatten histogram spikes before computing pooled levels.</div>
+                </div>
+                <div id="autolevel-stage-peak" class="autolevel-stage-body">
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">How hard to suppress dominant peaks.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Peak factor</span>
+                            <input id="autolevel-peak-factor" type="number" min="0" max="10" step="0.01" value="0">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="autolevel-stage">
+                <div class="autolevel-stage-head">
+                    <label class="autolevel-stage-toggle"><input id="autolevel-enable-gamma" type="checkbox"> <span>3. Manual gamma</span></label>
+                    <div class="autolevel-stage-note">Apply a power curve after the initial levels stretch.</div>
+                </div>
+                <div id="autolevel-stage-gamma" class="autolevel-stage-body">
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">Values below 1 brighten midtones, above 1 darken them.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Gamma</span>
+                            <input id="autolevel-gamma" type="number" min="0.1" max="4" step="0.01" value="1">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="autolevel-stage">
+                <div class="autolevel-stage-head">
+                    <label class="autolevel-stage-toggle"><input id="autolevel-enable-auto-gamma" type="checkbox"> <span>4. Auto gamma</span></label>
+                    <div class="autolevel-stage-note">Choose gamma from the pooled histogram median to hit a target brightness.</div>
+                </div>
+                <div id="autolevel-stage-auto-gamma" class="autolevel-stage-body">
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">Current mode uses the pooled median as the match point.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Mode</span>
+                            <select id="autolevel-auto-gamma"><option value="median">median</option></select>
+                            <span class="inline-label">Target</span>
+                            <input id="autolevel-target" type="number" min="0" max="1" step="0.01" value="0.5">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="autolevel-stage">
+                <div class="autolevel-stage-head">
+                    <label class="autolevel-stage-toggle"><input id="autolevel-enable-sigmoid" type="checkbox"> <span>5. Sigmoid</span></label>
+                    <div class="autolevel-stage-note">Add an S-curve after gamma to increase local contrast.</div>
+                </div>
+                <div id="autolevel-stage-sigmoid" class="autolevel-stage-body">
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">Strength controls steepness, midpoint shifts the center.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Strength</span>
+                            <input id="autolevel-sigmoid-strength" type="number" min="0" max="20" step="0.01" value="0">
+                            <span class="inline-label">Mid</span>
+                            <input id="autolevel-sigmoid-mid" type="number" min="0" max="1" step="0.01" value="0.5">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="autolevel-stage">
+                <div class="autolevel-stage-head">
+                    <label class="autolevel-stage-toggle"><input id="autolevel-enable-vibrance" type="checkbox"> <span>6. Vibrance</span></label>
+                    <div class="autolevel-stage-note">Boost low-saturation regions more than already vivid ones.</div>
+                </div>
+                <div id="autolevel-stage-vibrance" class="autolevel-stage-body">
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">Small positive values are usually enough.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Amount</span>
+                            <input id="autolevel-vibrance" type="number" min="-2" max="2" step="0.01" value="0">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="autolevel-stage">
+                <div class="autolevel-stage-head">
+                    <label class="autolevel-stage-toggle"><input id="autolevel-enable-pooled-rgb" type="checkbox" checked> <span>7. Final pooled stretch</span></label>
+                    <div class="autolevel-stage-note">Re-histogram the processed RGB image and do one last pooled stretch.</div>
+                </div>
+                <div id="autolevel-stage-pooled" class="autolevel-stage-body">
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">Quantile per tail for the final pooled RGB stretch.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">q %</span>
+                            <input id="autolevel-pooled-rgb" type="number" min="0" max="49" step="0.01" value="0.1">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="autolevel-stage">
+                <div class="autolevel-stage-head">
+                    <div class="autolevel-stage-toggle"><span>8. Output</span></div>
+                    <div class="autolevel-stage-note">Encoding settings for the derived image.</div>
+                </div>
+                <div class="autolevel-stage-body">
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">JPEG quality and subsampling.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Quality</span>
+                            <input id="autolevel-quality" type="number" min="1" max="100" step="1" value="90">
+                            <span class="inline-label">Subsample</span>
+                            <select id="autolevel-jpeg-subsample"><option value="on">on</option><option value="auto">auto</option><option value="off">off</option></select>
+                            <label class="autolevel-inline-check"><input id="autolevel-jpeg-optimize" type="checkbox"> Optimize</label>
+                            <label class="autolevel-inline-check"><input id="autolevel-jpeg-interlace" type="checkbox"> Progressive</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
-        <div class="autolevel-popup-help">Creates a new immutable Color artifact derived from the selected image. Press Esc or click outside to cancel.</div>
+        <div class="autolevel-popup-help">Runs top-to-bottom as shown here. Press Esc or click outside to cancel. Generate creates a new immutable Color artifact derived from the selected image.</div>
         <div class="autolevel-popup-actions">
-            <button id="autolevel-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Cancel</button>
-            <button id="autolevel-popup-run" type="button" class="btn-primary" style="padding:6px 12px">AutoLevel</button>
+            <button id="autolevel-popup-revert" type="button" class="btn-secondary" style="padding:6px 12px">Revert</button>
+            <div style="display:flex; gap:8px">
+                <button id="autolevel-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+                <button id="autolevel-popup-run" type="button" class="btn-primary" style="padding:6px 12px">AutoLevel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="repalette-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="repalette-popup-title">
+        <div class="tri-popup-head">
+            <div id="repalette-popup-title" class="tri-popup-title">RePalette</div>
+            <button id="repalette-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div id="repalette-popup-summary" class="autolevel-popup-summary"></div>
+        <div style="margin:10px 0 12px 0">
+            <div id="palette-circles-repalette" style="display:flex; flex-wrap:wrap; gap:8px"></div>
+        </div>
+        <div class="autolevel-popup-help">Reuse the selected palette artifact’s saved bin assignment and only change the palette-to-RGB mapping.</div>
+        <div class="autolevel-popup-actions">
+            <div></div>
+            <div style="display:flex; gap:8px">
+                <button id="repalette-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+                <button id="repalette-popup-run" type="button" class="btn-primary" style="padding:6px 12px">Execute</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="generate-from-palette-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="generate-from-palette-popup-title">
+        <div class="tri-popup-head">
+            <div id="generate-from-palette-popup-title" class="tri-popup-title">GenerateFromPalette</div>
+            <button id="generate-from-palette-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div class="tri-popup-filter-wrap">
+            <input id="generate-from-palette-popup-filter" type="text" placeholder="Filter by metric, palette, or name">
+        </div>
+        <div class="tri-popup-table-wrap">
+            <table class="tri-popup-table">
+                <thead>
+                    <tr><th>Created</th><th>Metric</th><th>q</th><th>w</th><th>Name</th><th>Palette</th></tr>
+                </thead>
+                <tbody id="generate-from-palette-popup-body"></tbody>
+            </table>
+        </div>
+        <div id="generate-from-palette-popup-summary" class="autolevel-popup-summary"></div>
+        <div class="autolevel-popup-actions">
+            <div></div>
+            <div style="display:flex; gap:8px">
+                <button id="generate-from-palette-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+                <button id="generate-from-palette-popup-run" type="button" class="btn-primary" style="padding:6px 12px">Execute</button>
+            </div>
         </div>
     </div>
 </div>
@@ -1277,6 +1476,10 @@ let paletteTabTriName = 'redgold';
 let renderRootProximityLongName = '';
 let renderSolveScoreLongName = '';
 let paletteTabLongName = '';
+let repalettePalette = 'inferno';
+let repaletteBuiltinPalette = 'inferno';
+let repaletteTriName = 'redgold';
+let repaletteLongName = '';
 let _renderActiveFamily = 'color';
 let _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [] };
 let _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
@@ -1285,6 +1488,8 @@ let _triPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _builtinPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
+let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
+let _generateFromPalettePopupState = { open: false, filter: '', highlightIdx: 0 };
 
 function _stopsToGradient(stops) {
     return `linear-gradient(to right, ${stops.map((s, i) => s + ' ' + Math.round(i/(stops.length-1)*100) + '%').join(', ')})`;
@@ -1317,6 +1522,7 @@ const BUILTIN_PALETTE_ENTRIES = PALETTE_DEFS.map(def => ({
 function _paletteContainerId(mode) {
     return mode === 'proximity' ? 'palette-circles-root-proximity'
         : mode === 'solve_score' ? 'palette-circles-solve-score'
+        : mode === 'repalette' ? 'palette-circles-repalette'
         : 'palette-circles-palette-tab';
 }
 
@@ -1343,18 +1549,20 @@ function _defaultBuiltinPaletteName() {
 function _builtinPaletteForMode(mode) {
     if (mode === 'proximity') return renderRootProximityBuiltinPalette;
     if (mode === 'solve_score') return renderSolveScoreBuiltinPalette;
+    if (mode === 'repalette') return repaletteBuiltinPalette;
     return paletteTabBuiltinPalette;
 }
 
 function _setRememberedBuiltinPalette(mode, paletteName) {
     if (mode === 'proximity') renderRootProximityBuiltinPalette = paletteName;
     else if (mode === 'solve_score') renderSolveScoreBuiltinPalette = paletteName;
+    else if (mode === 'repalette') repaletteBuiltinPalette = paletteName;
     else paletteTabBuiltinPalette = paletteName;
 }
 
 function _syncBuiltinDefaults() {
     const fallback = _defaultBuiltinPaletteName();
-    ['proximity', 'solve_score', 'palette_tab'].forEach(mode => {
+    ['proximity', 'solve_score', 'palette_tab', 'repalette'].forEach(mode => {
         const entry = _builtinPaletteEntryByName(_builtinPaletteForMode(mode));
         if (!entry) _setRememberedBuiltinPalette(mode, fallback);
     });
@@ -1389,36 +1597,41 @@ function _defaultLongPaletteName() {
 function _triPaletteForMode(mode) {
     if (mode === 'proximity') return renderRootProximityTriName;
     if (mode === 'solve_score') return renderSolveScoreTriName;
+    if (mode === 'repalette') return repaletteTriName;
     return paletteTabTriName;
 }
 
 function _longPaletteForMode(mode) {
     if (mode === 'proximity') return renderRootProximityLongName;
     if (mode === 'solve_score') return renderSolveScoreLongName;
+    if (mode === 'repalette') return repaletteLongName;
     return paletteTabLongName;
 }
 
 function _setRememberedTriPalette(mode, triName) {
     if (mode === 'proximity') renderRootProximityTriName = triName;
     else if (mode === 'solve_score') renderSolveScoreTriName = triName;
+    else if (mode === 'repalette') repaletteTriName = triName;
     else paletteTabTriName = triName;
 }
 
 function _setRememberedLongPalette(mode, longName) {
     if (mode === 'proximity') renderRootProximityLongName = longName;
     else if (mode === 'solve_score') renderSolveScoreLongName = longName;
+    else if (mode === 'repalette') repaletteLongName = longName;
     else paletteTabLongName = longName;
 }
 
 function _currentPaletteForMode(mode) {
     if (mode === 'proximity') return renderRootProximityPalette;
     if (mode === 'solve_score') return renderSolveScorePalette;
+    if (mode === 'repalette') return repalettePalette;
     return paletteTabPalette;
 }
 
 function _syncTriDefaults() {
     const fallback = _defaultTriPaletteName();
-    ['proximity', 'solve_score', 'palette_tab'].forEach(mode => {
+    ['proximity', 'solve_score', 'palette_tab', 'repalette'].forEach(mode => {
         const name = _triPaletteForMode(mode);
         if (!_triPaletteEntryByName(name)) _setRememberedTriPalette(mode, fallback);
     });
@@ -1426,7 +1639,7 @@ function _syncTriDefaults() {
 
 function _syncLongDefaults() {
     const fallback = _defaultLongPaletteName();
-    ['proximity', 'solve_score', 'palette_tab'].forEach(mode => {
+    ['proximity', 'solve_score', 'palette_tab', 'repalette'].forEach(mode => {
         const name = _longPaletteForMode(mode);
         if (!_longPaletteEntryByName(name)) _setRememberedLongPalette(mode, fallback);
     });
@@ -1475,9 +1688,24 @@ function _visibleBuiltinPaletteCatalog() {
     return BUILTIN_PALETTE_ENTRIES.filter(entry => entry.search_text.includes(filter));
 }
 
+function _palettePreviewCss(name) {
+    const builtin = _builtinPaletteEntryByName(name);
+    if (builtin) return builtin.gradient_css;
+    if (typeof name === 'string' && name.startsWith('tri_')) {
+        const tri = _triPaletteEntryByName(name.slice(4));
+        if (tri) return tri.gradient_css;
+    }
+    if (typeof name === 'string' && name.startsWith('long_')) {
+        const longEntry = _longPaletteEntryByName(name.slice(5));
+        if (longEntry) return longEntry.gradient_css;
+    }
+    return '#555';
+}
+
 function _popupModeLabel(mode) {
     return mode === 'proximity' ? 'Root proximity'
         : mode === 'solve_score' ? 'Solve score'
+        : mode === 'repalette' ? 'RePalette'
         : 'Palette tab';
 }
 
@@ -1590,6 +1818,7 @@ function setMatch(mode) {
 function setPaletteForMode(mode, name) {
     if (mode === 'proximity') renderRootProximityPalette = name;
     else if (mode === 'solve_score') renderSolveScorePalette = name;
+    else if (mode === 'repalette') repalettePalette = name;
     else if (mode === 'palette_tab') paletteTabPalette = name;
     const builtinEntry = _builtinPaletteEntryByName(name);
     if (builtinEntry) _setRememberedBuiltinPalette(mode, builtinEntry.name);
@@ -2083,19 +2312,334 @@ function _initLongPalettePopup() {
     });
 }
 
+function _canRepaletteArtifact(art) {
+    if (!art || !art.palette_id) return false;
+    return !!(art.palette_bins_key || art.chunk_bins_prefix);
+}
+
+function _reusablePaletteArtifacts() {
+    return (_renderArtifacts.palette || []).filter(art =>
+        !!(art && art.palette_id && art.render_reusable && art.data_layout === 'chunk_all_pass_v1' && art.chunk_bins_prefix)
+    );
+}
+
+function _closeRepalettePopup() {
+    _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
+    const overlay = document.getElementById('repalette-popup-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+}
+
+function _renderRepalettePopup() {
+    const overlay = document.getElementById('repalette-popup-overlay');
+    const summaryEl = document.getElementById('repalette-popup-summary');
+    const runBtn = document.getElementById('repalette-popup-run');
+    const art = _renderSelectedArtifactEntry();
+    if (!overlay || !summaryEl || !_repalettePopupState.open || !art || !_canRepaletteArtifact(art)) {
+        _closeRepalettePopup();
+        return;
+    }
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    _renderPaletteRow('repalette');
+    const sourceName = art.display_name || art.artifact_id || art.palette_id;
+    const reuseMsg = art.render_reusable ? 'Reusable all-pass data will be copied.' : 'Legacy pass-0 data will be copied.';
+    summaryEl.textContent = `Source: ${sourceName} • current palette: ${art.palette || '?'} • ${reuseMsg}`;
+    if (runBtn) runBtn.disabled = !_currentPaletteForMode('repalette');
+}
+
+function openRepalettePopup() {
+    const art = _renderSelectedArtifactEntry();
+    if (!_canRepaletteArtifact(art)) return;
+    _syncBuiltinDefaults();
+    _syncTriDefaults();
+    _syncLongDefaults();
+    if (art.palette) setPaletteForMode('repalette', art.palette);
+    _repalettePopupState = {
+        open: true,
+        sourcePaletteId: art.palette_id || art.artifact_id || '',
+        sourceDisplayName: art.display_name || art.artifact_id || art.palette_id || '',
+    };
+    _renderRepalettePopup();
+}
+
+async function runRepaletteSelectedArtifact() {
+    const art = _renderSelectedArtifactEntry();
+    const jobId = document.getElementById('render-results-dir').value.trim();
+    if (!jobId || !_canRepaletteArtifact(art) || _activeRenderRun) return;
+    const btn = document.getElementById('repalette-popup-run');
+    const orig = btn ? btn.textContent : 'Execute';
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Executing...'; }
+        const runId = _generateRunId();
+        const taskId = 'repalette_' + runId;
+        const paletteName = _currentPaletteForMode('repalette') || art.palette || 'inferno';
+        log(`RePalette: dispatching ${art.palette_id} -> ${paletteName}...`, '', 'render-log');
+        const dispResult = await lambdaPost('dispatch', {
+            target: 'repalette',
+            jobs: [{
+                job_id: jobId,
+                task_id: taskId,
+                source_palette_id: art.palette_id,
+                new_palette: paletteName,
+            }],
+            expected_keys: [],
+        });
+        if ((dispResult.fired || 0) !== 1) throw new Error('RePalette dispatch failed');
+        _saveActiveRun({
+            job_id: jobId,
+            mode: 'repalette',
+            run_id: runId,
+            task_id: taskId,
+            started_at_ms: Date.now(),
+        });
+        document.getElementById('render-status').textContent = 'RePalette queued...';
+        document.getElementById('render-status').className = 'status';
+        _closeRepalettePopup();
+        startActiveRenderObserver();
+    } catch (e) {
+        log('RePalette failed: ' + e.message, 'err', 'render-log');
+        const statusEl = document.getElementById('render-status');
+        if (statusEl) {
+            statusEl.textContent = 'RePalette error: ' + e.message;
+            statusEl.className = 'status error';
+        }
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+}
+
+function _visibleGenerateFromPaletteCatalog() {
+    const filter = (_generateFromPalettePopupState.filter || '').trim().toLowerCase();
+    const items = _reusablePaletteArtifacts();
+    if (!filter) return items;
+    return items.filter(art => {
+        const text = [
+            art.display_name || '',
+            art.metric || '',
+            art.palette || '',
+            art.palette_id || '',
+        ].join(' ').toLowerCase();
+        return text.includes(filter);
+    });
+}
+
+function _closeGenerateFromPalettePopup() {
+    _generateFromPalettePopupState = { open: false, filter: '', highlightIdx: 0 };
+    const overlay = document.getElementById('generate-from-palette-popup-overlay');
+    const filter = document.getElementById('generate-from-palette-popup-filter');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+    if (filter) filter.value = '';
+}
+
+function _renderGenerateFromPalettePopup() {
+    const overlay = document.getElementById('generate-from-palette-popup-overlay');
+    const bodyEl = document.getElementById('generate-from-palette-popup-body');
+    const filterEl = document.getElementById('generate-from-palette-popup-filter');
+    const summaryEl = document.getElementById('generate-from-palette-popup-summary');
+    const runBtn = document.getElementById('generate-from-palette-popup-run');
+    if (!overlay || !bodyEl || !filterEl || !summaryEl) return;
+    if (!_generateFromPalettePopupState.open) {
+        _closeGenerateFromPalettePopup();
+        return;
+    }
+
+    const visible = _visibleGenerateFromPaletteCatalog();
+    const highlightIdx = visible.length ? Math.max(0, Math.min(_generateFromPalettePopupState.highlightIdx || 0, visible.length - 1)) : 0;
+    _generateFromPalettePopupState.highlightIdx = highlightIdx;
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    filterEl.value = _generateFromPalettePopupState.filter || '';
+    bodyEl.replaceChildren();
+
+    if (!visible.length) {
+        const row = document.createElement('tr');
+        row.className = 'tri-popup-empty';
+        const cell = document.createElement('td');
+        cell.colSpan = 6;
+        cell.textContent = 'No reusable palette artifacts match this filter.';
+        row.appendChild(cell);
+        bodyEl.appendChild(row);
+        summaryEl.textContent = 'Select a reusable saved palette artifact to drive a new Color render.';
+        if (runBtn) runBtn.disabled = true;
+        return;
+    }
+
+    visible.forEach((art, idx) => {
+        const row = document.createElement('tr');
+        const cls = ['tri-popup-row'];
+        if (idx === highlightIdx) cls.push('highlight');
+        row.className = cls.join(' ');
+        row.onclick = () => {
+            _generateFromPalettePopupState.highlightIdx = idx;
+            _renderGenerateFromPalettePopup();
+        };
+
+        const createdCell = document.createElement('td');
+        createdCell.textContent = (art.created_at || '').replace('T', ' ').slice(0, 19);
+        const metricCell = document.createElement('td');
+        metricCell.textContent = art.metric || '';
+        const qCell = document.createElement('td');
+        qCell.textContent = Number.isFinite(art.solve_score_quantile) ? (art.solve_score_quantile * 100).toFixed(1) + '%' : '';
+        const omegaCell = document.createElement('td');
+        omegaCell.textContent = Number.isFinite(art.solve_score_omega) ? String(Number(art.solve_score_omega)) : '';
+        const nameCell = document.createElement('td');
+        nameCell.textContent = art.display_name || art.palette_id || '';
+        const paletteCell = document.createElement('td');
+        const strip = document.createElement('div');
+        strip.className = 'tri-popup-strip';
+        strip.style.background = _palettePreviewCss(art.palette);
+        strip.title = art.palette || '';
+        paletteCell.appendChild(strip);
+
+        row.appendChild(createdCell);
+        row.appendChild(metricCell);
+        row.appendChild(qCell);
+        row.appendChild(omegaCell);
+        row.appendChild(nameCell);
+        row.appendChild(paletteCell);
+        bodyEl.appendChild(row);
+    });
+
+    const selected = visible[highlightIdx];
+    summaryEl.textContent = selected
+        ? `Selected: ${selected.display_name || selected.palette_id} • palette=${selected.palette || '?'} • metric=${selected.metric || '?'}`
+        : 'Select a reusable saved palette artifact to drive a new Color render.';
+    if (runBtn) runBtn.disabled = !selected;
+}
+
+function openGenerateFromPalettePopup() {
+    const reusable = _reusablePaletteArtifacts();
+    if (!reusable.length) return;
+    _generateFromPalettePopupState = { open: true, filter: '', highlightIdx: 0 };
+    _renderGenerateFromPalettePopup();
+    const filter = document.getElementById('generate-from-palette-popup-filter');
+    if (filter && typeof filter.focus === 'function') filter.focus();
+}
+
+function _applyGenerateFromPaletteFilter(text) {
+    _generateFromPalettePopupState.filter = String(text || '');
+    _generateFromPalettePopupState.highlightIdx = 0;
+    _renderGenerateFromPalettePopup();
+}
+
+async function runGenerateFromPaletteSelected() {
+    if (_activeRenderRun) return;
+    const visible = _visibleGenerateFromPaletteCatalog();
+    if (!visible.length) return;
+    const idx = Math.max(0, Math.min(_generateFromPalettePopupState.highlightIdx || 0, visible.length - 1));
+    const art = visible[idx];
+    const btn = document.getElementById('generate-from-palette-popup-run');
+    const orig = btn ? btn.textContent : 'Execute';
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Executing...'; }
+        _closeGenerateFromPalettePopup();
+        await _launchRenderOrchestrator('color', {
+            color_mode: 'saved_palette',
+            saved_palette_id: art.palette_id,
+        });
+    } catch (e) {
+        const statusEl = document.getElementById('render-status');
+        if (statusEl) {
+            statusEl.textContent = 'GenerateFromPalette error: ' + e.message;
+            statusEl.className = 'status error';
+        }
+        log('GenerateFromPalette failed: ' + e.message, 'err', 'render-log');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+}
+
+function _initRepalettePopup() {
+    const overlay = document.getElementById('repalette-popup-overlay');
+    const closeBtn = document.getElementById('repalette-popup-close');
+    const cancelBtn = document.getElementById('repalette-popup-cancel');
+    const runBtn = document.getElementById('repalette-popup-run');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closeRepalettePopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closeRepalettePopup);
+    if (cancelBtn) cancelBtn.addEventListener('click', _closeRepalettePopup);
+    if (runBtn) runBtn.addEventListener('click', runRepaletteSelectedArtifact);
+    document.addEventListener('keydown', (ev) => {
+        if (!_repalettePopupState.open) return;
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closeRepalettePopup();
+        }
+    });
+}
+
+function _initGenerateFromPalettePopup() {
+    const overlay = document.getElementById('generate-from-palette-popup-overlay');
+    const closeBtn = document.getElementById('generate-from-palette-popup-close');
+    const cancelBtn = document.getElementById('generate-from-palette-popup-cancel');
+    const runBtn = document.getElementById('generate-from-palette-popup-run');
+    const filterEl = document.getElementById('generate-from-palette-popup-filter');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closeGenerateFromPalettePopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closeGenerateFromPalettePopup);
+    if (cancelBtn) cancelBtn.addEventListener('click', _closeGenerateFromPalettePopup);
+    if (runBtn) runBtn.addEventListener('click', runGenerateFromPaletteSelected);
+    if (filterEl) filterEl.addEventListener('input', (ev) => _applyGenerateFromPaletteFilter(ev.target.value));
+    document.addEventListener('keydown', (ev) => {
+        if (!_generateFromPalettePopupState.open) return;
+        const visible = _visibleGenerateFromPaletteCatalog();
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closeGenerateFromPalettePopup();
+            return;
+        }
+        if (!visible.length) return;
+        if (ev.key === 'ArrowDown') {
+            ev.preventDefault();
+            _generateFromPalettePopupState.highlightIdx = Math.min((_generateFromPalettePopupState.highlightIdx || 0) + 1, visible.length - 1);
+            _renderGenerateFromPalettePopup();
+            return;
+        }
+        if (ev.key === 'ArrowUp') {
+            ev.preventDefault();
+            _generateFromPalettePopupState.highlightIdx = Math.max((_generateFromPalettePopupState.highlightIdx || 0) - 1, 0);
+            _renderGenerateFromPalettePopup();
+            return;
+        }
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            runGenerateFromPaletteSelected();
+        }
+    });
+}
+
 function _defaultAutolevelParams() {
     return {
         bins: 256,
+        enable_levels: true,
         clip_low: 0.0,
         clip_high: 1.0,
+        enable_peak_limit: false,
         peak_factor: 0.0,
+        enable_gamma: false,
         gamma: 1.0,
-        auto_gamma: 'none',
+        enable_auto_gamma: false,
+        auto_gamma: 'median',
         target: 0.5,
+        enable_sigmoid: false,
         sigmoid_strength: 0.0,
         sigmoid_mid: 0.5,
+        enable_vibrance: false,
         vibrance: 0.0,
-        pooled_rgb: 0.0,
+        enable_pooled_rgb: true,
+        pooled_rgb: 0.1,
         quality: 90,
         jpeg_subsample_mode: 'on',
         jpeg_optimize_coding: false,
@@ -2113,20 +2657,53 @@ function _autolevelBackgroundInfo(art) {
     return { color: hex, threshold, label: `${hex} (tol ${threshold})` };
 }
 
-function _autolevelParamsForArtifact(art) {
+function _autolevelBaseParamsForArtifact(art) {
     const params = _defaultAutolevelParams();
-    if (art && art.autolevels_params && typeof art.autolevels_params === 'object') {
-        Object.assign(params, art.autolevels_params);
-    }
     const quality = Number(art && art.quality);
     if (Number.isFinite(quality) && quality > 0) params.quality = Math.round(quality);
     const bgInfo = _autolevelBackgroundInfo(art);
-    const rawThreshold = params.background_threshold;
+    params.background_threshold = bgInfo.threshold;
+    return params;
+}
+
+function _autolevelNormalizeStageFlags(params) {
+    const out = { ...(params || {}) };
+    const rawAutoGamma = String(out.auto_gamma || 'none').trim().toLowerCase();
+    out.enable_levels = out.enable_levels !== false;
+    out.enable_peak_limit = out.enable_peak_limit != null ? !!out.enable_peak_limit : Math.abs(Number(out.peak_factor || 0)) > 1e-12;
+    out.enable_auto_gamma = out.enable_auto_gamma != null ? !!out.enable_auto_gamma : rawAutoGamma !== 'none';
+    out.auto_gamma = rawAutoGamma === 'median' ? 'median' : 'median';
+    out.enable_gamma = out.enable_gamma != null ? !!out.enable_gamma : (!out.enable_auto_gamma && Math.abs(Number((out.gamma == null ? 1.0 : out.gamma)) - 1.0) > 1e-12);
+    out.enable_sigmoid = out.enable_sigmoid != null ? !!out.enable_sigmoid : Math.abs(Number(out.sigmoid_strength || 0)) > 1e-12;
+    out.enable_vibrance = out.enable_vibrance != null ? !!out.enable_vibrance : Math.abs(Number(out.vibrance || 0)) > 1e-12;
+    out.enable_pooled_rgb = out.enable_pooled_rgb != null ? !!out.enable_pooled_rgb : Number(out.pooled_rgb || 0) > 0;
+    return out;
+}
+
+function _autolevelParamsForArtifact(art) {
+    const params = _autolevelBaseParamsForArtifact(art);
+    if (art && art.autolevels_params && typeof art.autolevels_params === 'object') {
+        Object.assign(params, art.autolevels_params);
+    }
+    const normalized = _autolevelNormalizeStageFlags(params);
+    const bgInfo = _autolevelBackgroundInfo(art);
+    const rawThreshold = normalized.background_threshold;
     const threshold = Number(rawThreshold);
-    params.background_threshold = (rawThreshold === null || rawThreshold === '' || rawThreshold === undefined || !Number.isFinite(threshold))
+    normalized.background_threshold = (rawThreshold === null || rawThreshold === '' || rawThreshold === undefined || !Number.isFinite(threshold))
         ? bgInfo.threshold
         : Math.max(0, Math.round(threshold));
-    return params;
+    return normalized;
+}
+
+function _autolevelPopupSourceArtifact() {
+    const families = (window._lastRenderSummary && window._lastRenderSummary.families) || {};
+    const colorInv = families.color || [];
+    const targetId = (_autolevelPopupState && _autolevelPopupState.sourceArtifactId) || '';
+    if (targetId) {
+        const hit = colorInv.find((art) => art && art.artifact_id === targetId);
+        if (hit) return hit;
+    }
+    return _renderSelectedArtifactEntry();
 }
 
 function _syncAutolevelBackgroundControls() {
@@ -2137,7 +2714,44 @@ function _syncAutolevelBackgroundControls() {
     if (readoutEl) readoutEl.disabled = true;
 }
 
+function _setAutolevelStageDisabled(bodyId, disabled) {
+    const body = document.getElementById(bodyId);
+    if (body) body.classList.toggle('disabled', !!disabled);
+}
+
+function _syncAutolevelStageControls() {
+    const readChk = (id) => !!(document.getElementById(id) && document.getElementById(id).checked);
+    const setDisabled = (ids, disabled) => ids.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !!disabled;
+    });
+    const levelsOn = readChk('autolevel-enable-levels');
+    const peakOn = readChk('autolevel-enable-peak-limit');
+    const autoGammaOn = readChk('autolevel-enable-auto-gamma');
+    const gammaToggleOn = readChk('autolevel-enable-gamma');
+    const gammaInputOn = gammaToggleOn && !autoGammaOn;
+    const sigmoidOn = readChk('autolevel-enable-sigmoid');
+    const vibranceOn = readChk('autolevel-enable-vibrance');
+    const pooledOn = readChk('autolevel-enable-pooled-rgb');
+    setDisabled(['autolevel-clip-low', 'autolevel-clip-high'], !levelsOn);
+    setDisabled(['autolevel-peak-factor'], !peakOn);
+    setDisabled(['autolevel-gamma'], !gammaInputOn);
+    setDisabled(['autolevel-auto-gamma', 'autolevel-target'], !autoGammaOn);
+    setDisabled(['autolevel-sigmoid-strength', 'autolevel-sigmoid-mid'], !sigmoidOn);
+    setDisabled(['autolevel-vibrance'], !vibranceOn);
+    setDisabled(['autolevel-pooled-rgb'], !pooledOn);
+    _setAutolevelStageDisabled('autolevel-stage-levels', !levelsOn);
+    _setAutolevelStageDisabled('autolevel-stage-peak', !peakOn);
+    _setAutolevelStageDisabled('autolevel-stage-gamma', !gammaInputOn);
+    _setAutolevelStageDisabled('autolevel-stage-auto-gamma', !autoGammaOn);
+    _setAutolevelStageDisabled('autolevel-stage-sigmoid', !sigmoidOn);
+    _setAutolevelStageDisabled('autolevel-stage-vibrance', !vibranceOn);
+    _setAutolevelStageDisabled('autolevel-stage-pooled', !pooledOn);
+    _syncAutolevelBackgroundControls();
+}
+
 function _writeAutolevelPopupParams(art, params) {
+    params = _autolevelNormalizeStageFlags(params || {});
     const fmt = (art && (art.format || (art.image_key || '').split('.').pop())) || 'jpeg';
     const dims = art && art.width && art.height ? `${art.width}x${art.height}` : '';
     const bgInfo = _autolevelBackgroundInfo(art);
@@ -2161,15 +2775,22 @@ function _writeAutolevelPopupParams(art, params) {
         if (el) el.checked = !!value;
     };
     setValue('autolevel-bins', params.bins);
+    setChecked('autolevel-enable-levels', params.enable_levels !== false);
     setValue('autolevel-clip-low', params.clip_low);
     setValue('autolevel-clip-high', params.clip_high);
+    setChecked('autolevel-enable-peak-limit', params.enable_peak_limit);
     setValue('autolevel-peak-factor', params.peak_factor);
+    setChecked('autolevel-enable-gamma', params.enable_gamma);
     setValue('autolevel-gamma', params.gamma);
-    setValue('autolevel-auto-gamma', params.auto_gamma || 'none');
+    setChecked('autolevel-enable-auto-gamma', params.enable_auto_gamma);
+    setValue('autolevel-auto-gamma', params.auto_gamma || 'median');
     setValue('autolevel-target', params.target);
+    setChecked('autolevel-enable-sigmoid', params.enable_sigmoid);
     setValue('autolevel-sigmoid-strength', params.sigmoid_strength);
     setValue('autolevel-sigmoid-mid', params.sigmoid_mid);
+    setChecked('autolevel-enable-vibrance', params.enable_vibrance);
     setValue('autolevel-vibrance', params.vibrance);
+    setChecked('autolevel-enable-pooled-rgb', params.enable_pooled_rgb !== false);
     setValue('autolevel-pooled-rgb', params.pooled_rgb);
     setValue('autolevel-quality', params.quality);
     setValue('autolevel-jpeg-subsample', params.jpeg_subsample_mode || 'on');
@@ -2178,7 +2799,7 @@ function _writeAutolevelPopupParams(art, params) {
     setChecked('autolevel-exclude-background', params.exclude_background !== false);
     setChecked('autolevel-jpeg-optimize', params.jpeg_optimize_coding);
     setChecked('autolevel-jpeg-interlace', params.jpeg_interlace);
-    _syncAutolevelBackgroundControls();
+    _syncAutolevelStageControls();
 }
 
 function _readAutolevelPopupParams() {
@@ -2197,16 +2818,23 @@ function _readAutolevelPopupParams() {
     };
     return {
         bins: 256,
+        enable_levels: readChk('autolevel-enable-levels'),
         clip_low: readNum('autolevel-clip-low', 0.0),
         clip_high: readNum('autolevel-clip-high', 1.0),
+        enable_peak_limit: readChk('autolevel-enable-peak-limit'),
         peak_factor: readNum('autolevel-peak-factor', 0.0),
+        enable_gamma: readChk('autolevel-enable-gamma'),
         gamma: readNum('autolevel-gamma', 1.0),
-        auto_gamma: readSel('autolevel-auto-gamma', 'none'),
+        enable_auto_gamma: readChk('autolevel-enable-auto-gamma'),
+        auto_gamma: readSel('autolevel-auto-gamma', 'median'),
         target: readNum('autolevel-target', 0.5),
+        enable_sigmoid: readChk('autolevel-enable-sigmoid'),
         sigmoid_strength: readNum('autolevel-sigmoid-strength', 0.0),
         sigmoid_mid: readNum('autolevel-sigmoid-mid', 0.5),
+        enable_vibrance: readChk('autolevel-enable-vibrance'),
         vibrance: readNum('autolevel-vibrance', 0.0),
-        pooled_rgb: readNum('autolevel-pooled-rgb', 0.0),
+        enable_pooled_rgb: readChk('autolevel-enable-pooled-rgb'),
+        pooled_rgb: readNum('autolevel-pooled-rgb', 0.1),
         quality: Math.round(readNum('autolevel-quality', 90)),
         jpeg_subsample_mode: readSel('autolevel-jpeg-subsample', 'on'),
         exclude_background: readChk('autolevel-exclude-background'),
@@ -2223,6 +2851,12 @@ function _closeAutolevelPopup() {
         overlay.style.display = 'none';
         overlay.setAttribute('aria-hidden', 'true');
     }
+}
+
+function _revertAutolevelPopupDefaults() {
+    const art = _autolevelPopupSourceArtifact();
+    if (!art) return;
+    _writeAutolevelPopupParams(art, _autolevelBaseParamsForArtifact(art));
 }
 
 function openAutolevelPopup() {
@@ -2307,6 +2941,7 @@ function _initAutolevelPopup() {
     const closeBtn = document.getElementById('autolevel-popup-close');
     const cancelBtn = document.getElementById('autolevel-popup-cancel');
     const runBtn = document.getElementById('autolevel-popup-run');
+    const revertBtn = document.getElementById('autolevel-popup-revert');
     if (overlay) {
         overlay.addEventListener('click', (ev) => {
             if (ev.target === overlay) _closeAutolevelPopup();
@@ -2315,8 +2950,15 @@ function _initAutolevelPopup() {
     if (closeBtn) closeBtn.addEventListener('click', _closeAutolevelPopup);
     if (cancelBtn) cancelBtn.addEventListener('click', _closeAutolevelPopup);
     if (runBtn) runBtn.addEventListener('click', runAutolevelSelectedRenderArtifact);
+    if (revertBtn) revertBtn.addEventListener('click', _revertAutolevelPopupDefaults);
     const excludeBg = document.getElementById('autolevel-exclude-background');
     if (excludeBg) excludeBg.addEventListener('change', _syncAutolevelBackgroundControls);
+    ['autolevel-enable-levels', 'autolevel-enable-peak-limit', 'autolevel-enable-gamma', 'autolevel-enable-auto-gamma',
+     'autolevel-enable-sigmoid', 'autolevel-enable-vibrance', 'autolevel-enable-pooled-rgb']
+        .forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('change', _syncAutolevelStageControls);
+        });
     document.addEventListener('keydown', (ev) => {
         if (!_autolevelPopupState.open) return;
         if (ev.key === 'Escape') {
@@ -2337,6 +2979,8 @@ _initTriPalettePopup();
 _initBuiltinPalettePopup();
 _initLongPalettePopup();
 _initAutolevelPopup();
+_initRepalettePopup();
+_initGenerateFromPalettePopup();
 _updateSolveScoreButtons();  // initial disabled state
 _clearPaletteCanvas('No palette selected');
 
@@ -3089,10 +3733,11 @@ function _loadActiveRun() {
     return null;
 }
 
-async function _launchRenderOrchestrator(mode) {
+async function _launchRenderOrchestrator(mode, paramsPatch = null) {
     const p = _renderCommonParams();
     const runId = _generateRunId();
     const taskId = 'render_run_' + mode + '_' + runId;
+    const effectiveColorMode = paramsPatch && paramsPatch.color_mode ? paramsPatch.color_mode : renderColorMode;
 
     const orchPayload = {
         job_id: p.jobId,
@@ -3109,15 +3754,16 @@ async function _launchRenderOrchestrator(mode) {
             tile_size: p.tileSize,
             rotation: p.rotation,
             constant_color: p.constantColor,
-            color_mode: renderColorMode,
-            solve_metric: renderColorMode === 'solve_score' ? renderSolveMetric : undefined,
-            solve_score_quantile: renderColorMode === 'solve_score' ? p.solveScoreQuantile : undefined,
-            solve_score_omega: renderColorMode === 'solve_score' ? p.solveScoreOmega : undefined,
+            color_mode: effectiveColorMode,
+            solve_metric: effectiveColorMode === 'solve_score' ? renderSolveMetric : undefined,
+            solve_score_quantile: effectiveColorMode === 'solve_score' ? p.solveScoreQuantile : undefined,
+            solve_score_omega: effectiveColorMode === 'solve_score' ? p.solveScoreOmega : undefined,
             match_mode: renderMatchMode,
             palette: _activeRenderPalette() || 'inferno',
             root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
         },
     };
+    if (paramsPatch && typeof paramsPatch === 'object') Object.assign(orchPayload.params, paramsPatch);
 
     log('Render: dispatching ' + mode + ' orchestrator (' + runId + ')...', '', 'render-log');
     document.getElementById('render-status').textContent = 'Dispatching orchestrator...';
@@ -3633,6 +4279,16 @@ function _renderArtifactSummary(art) {
             const omega = art.solve_score_omega != null ? ` w=${Number(art.solve_score_omega).toFixed(0)}` : '';
             const pal = art.palette ? ` ${art.palette}` : '';
             base = `solve:${art.solve_metric || ''}${q}${omega}${pal}`.trim();
+        } else if (art.color_mode === 'saved_palette') {
+            const metric = art.palette_source_metric || art.solve_metric || '';
+            const q = art.palette_source_quantile != null
+                ? ` q=${(art.palette_source_quantile * 100).toFixed(1)}%`
+                : (art.solve_score_quantile != null ? ` q=${(art.solve_score_quantile * 100).toFixed(1)}%` : '');
+            const omega = art.palette_source_omega != null
+                ? ` w=${Number(art.palette_source_omega).toFixed(0)}`
+                : (art.solve_score_omega != null ? ` w=${Number(art.solve_score_omega).toFixed(0)}` : '');
+            const pal = art.palette ? ` ${art.palette}` : '';
+            base = `saved:${metric}${q}${omega}${pal}`.trim();
         } else if (art.color_mode === 'proximity') {
             base = `prox ${art.palette || ''}`.trim();
         } else if (art.color_mode) {
@@ -3646,7 +4302,8 @@ function _renderArtifactSummary(art) {
     if (art.family === 'palette') {
         const q = art.solve_score_quantile != null ? `q=${(art.solve_score_quantile * 100).toFixed(1)}%` : '';
         const omega = art.solve_score_omega != null ? `w=${Number(art.solve_score_omega).toFixed(0)}` : '';
-        return [art.metric, q, omega, art.palette].filter(Boolean).join(' ');
+        const derived = art.derivation_kind === 'repalette' ? 'repalette' : '';
+        return [art.metric, q, omega, art.palette, derived].filter(Boolean).join(' ');
     }
     if (art.legacy) return 'legacy';
     return art.format || '';
@@ -3806,6 +4463,30 @@ function populateSelectedRenderArtifact() {
             warnings.push('solve-score omega');
         }
         if (art.palette) setPaletteForMode('solve_score', art.palette);
+    } else if (art.color_mode === 'saved_palette') {
+        setColorMode('solve_score');
+        const metric = art.palette_source_metric || art.solve_metric;
+        if (metric) {
+            const metricEl = document.getElementById('render-solve-score');
+            if (metricEl) metricEl.value = metric;
+            setSolveMetric(metric);
+        } else {
+            warnings.push('saved-palette metric');
+        }
+        const srcQ = Number.isFinite(art.palette_source_quantile) ? art.palette_source_quantile : art.solve_score_quantile;
+        const srcOmega = Number.isFinite(art.palette_source_omega) ? art.palette_source_omega : art.solve_score_omega;
+        if (Number.isFinite(srcQ)) {
+            _setRenderSliderValue('render-solve-score-quantile', 'render-solve-score-quantile-val', srcQ * 100, 1);
+        } else {
+            warnings.push('saved-palette q');
+        }
+        if (Number.isFinite(srcOmega)) {
+            _setRenderSliderValue('render-solve-score-omega', 'render-solve-score-omega-val', srcOmega, 0);
+        } else {
+            warnings.push('saved-palette omega');
+        }
+        if (art.palette) setPaletteForMode('solve_score', art.palette);
+        else warnings.push('saved-palette palette');
     } else if (art.color_mode === 'proximity') {
         setColorMode('proximity');
         if (art.palette) setPaletteForMode('proximity', art.palette);
@@ -3841,11 +4522,16 @@ function _updateRenderActionButtons() {
     const dzBtn = document.getElementById('btn-render-deepzoom');
     const popBtn = document.getElementById('btn-render-populate');
     const autoBtn = document.getElementById('btn-render-autolevels');
+    const repalBtn = document.getElementById('btn-render-repalette');
+    const fromPalBtn = document.getElementById('btn-render-generate-from-palette');
+    const reusablePalettes = _reusablePaletteArtifacts();
     if (dlBtn) dlBtn.disabled = !hasSelection;
     if (delBtn) delBtn.disabled = !hasSelection;
     if (dzBtn) dzBtn.disabled = !hasSelection;
     if (popBtn) popBtn.disabled = !(hasSelection && (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette'));
     if (autoBtn) autoBtn.disabled = !(hasSelection && _renderActiveFamily === 'color' && art && art.image_key) || !!_activeRenderRun;
+    if (repalBtn) repalBtn.disabled = !(_renderActiveFamily === 'palette' && hasSelection && _canRepaletteArtifact(art)) || !!_activeRenderRun;
+    if (fromPalBtn) fromPalBtn.disabled = !(_renderActiveFamily === 'color' && reusablePalettes.length > 0) || !!_activeRenderRun;
 }
 
 function _captureRenderCatalogScroll(family) {
@@ -3988,9 +4674,9 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Uses current Color mode settings above. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Color settings. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
     } else if (_renderActiveFamily === 'palette') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. Populate copies the selected palette into Color settings and switches to Color.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color.</span>';
     }
 
     let catalogHtml = '';
@@ -4023,6 +4709,8 @@ function renderArtifactPanel(jobId, summary, options = {}) {
             <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px">
                 <div style="display:flex; align-items:center; gap:8px">
                     <button class="btn-primary" id="btn-render-generate" onclick="generateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px">Generate</button>
+                    ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-generate-from-palette" onclick="openGenerateFromPalettePopup()" style="padding:4px 12px; font-size:11px" disabled>GenerateFromPalette</button>' : ''}
+                    ${_renderActiveFamily === 'palette' ? '<button class="btn-secondary" id="btn-render-repalette" onclick="openRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>' : ''}
                     ${(_renderActiveFamily === 'color' || _renderActiveFamily === 'palette') ? '<button class="btn-secondary" id="btn-render-populate" onclick="populateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Populate</button>' : ''}
                     ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-autolevels" onclick="openAutolevelPopup()" style="padding:4px 12px; font-size:11px" disabled>Autolevels</button>' : ''}
                     <button class="btn-secondary" id="btn-render-download" onclick="downloadSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Download</button>

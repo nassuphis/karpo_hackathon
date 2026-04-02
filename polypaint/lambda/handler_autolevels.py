@@ -57,18 +57,26 @@ def _parse_background_threshold(value):
 
 
 def _sanitize_params(params):
+    provided = dict(params or {})
     defaults = {
         "bins": 256,
+        "enable_levels": True,
         "clip_low": 0.0,
         "clip_high": 1.0,
+        "enable_peak_limit": False,
         "peak_factor": 0.0,
+        "enable_gamma": False,
         "gamma": 1.0,
-        "auto_gamma": "none",
+        "enable_auto_gamma": False,
+        "auto_gamma": "median",
         "target": 0.5,
+        "enable_sigmoid": False,
         "sigmoid_strength": 0.0,
         "sigmoid_mid": 0.5,
+        "enable_vibrance": False,
         "vibrance": 0.0,
-        "pooled_rgb": 0.0,
+        "enable_pooled_rgb": True,
+        "pooled_rgb": 0.1,
         "quality": 90,
         "jpeg_subsample_mode": "on",
         "jpeg_optimize_coding": False,
@@ -77,15 +85,24 @@ def _sanitize_params(params):
         "background_threshold": None,
     }
     out = dict(defaults)
-    out.update(params or {})
+    out.update(provided)
     out["bins"] = int(out["bins"])
     for key in ("clip_low", "clip_high", "peak_factor", "gamma", "target",
                 "sigmoid_strength", "sigmoid_mid", "vibrance", "pooled_rgb"):
         out[key] = float(out[key])
     out["quality"] = int(out["quality"])
-    out["auto_gamma"] = str(out.get("auto_gamma", "none") or "none").strip().lower()
+    out["auto_gamma"] = str(out.get("auto_gamma", "median") or "median").strip().lower()
     if out["auto_gamma"] not in ("none", "median"):
         raise RuntimeError(f"auto_gamma must be none or median, got {out['auto_gamma']!r}")
+    out["enable_levels"] = bool(provided.get("enable_levels", out["enable_levels"]))
+    out["enable_peak_limit"] = bool(provided.get("enable_peak_limit", abs(out["peak_factor"]) > 1e-12))
+    out["enable_auto_gamma"] = bool(provided.get("enable_auto_gamma", out["auto_gamma"] != "none"))
+    out["enable_gamma"] = bool(provided.get("enable_gamma", (not out["enable_auto_gamma"]) and abs(out["gamma"] - 1.0) > 1e-12))
+    out["enable_sigmoid"] = bool(provided.get("enable_sigmoid", abs(out["sigmoid_strength"]) > 1e-12))
+    out["enable_vibrance"] = bool(provided.get("enable_vibrance", abs(out["vibrance"]) > 1e-12))
+    out["enable_pooled_rgb"] = bool(provided.get("enable_pooled_rgb", out["pooled_rgb"] > 0.0))
+    if out["auto_gamma"] == "none":
+        out["enable_auto_gamma"] = False
     out["jpeg_subsample_mode"] = str(out.get("jpeg_subsample_mode", "on") or "on").strip().lower()
     if out["jpeg_subsample_mode"] not in ("auto", "on", "off"):
         raise RuntimeError(f"jpeg_subsample_mode must be auto/on/off, got {out['jpeg_subsample_mode']!r}")
@@ -98,6 +115,17 @@ def _sanitize_params(params):
         raise RuntimeError("autolevels currently supports bins=256 only")
     if out["quality"] < 1 or out["quality"] > 100:
         raise RuntimeError(f"quality must be in [1,100], got {out['quality']}")
+    return out
+
+
+def _effective_params(params):
+    out = dict(params)
+    out["peak_factor"] = out["peak_factor"] if out.get("enable_peak_limit") else 0.0
+    out["gamma"] = out["gamma"] if out.get("enable_gamma") else 1.0
+    out["auto_gamma"] = out["auto_gamma"] if out.get("enable_auto_gamma") else "none"
+    out["sigmoid_strength"] = out["sigmoid_strength"] if out.get("enable_sigmoid") else 0.0
+    out["vibrance"] = out["vibrance"] if out.get("enable_vibrance") else 0.0
+    out["pooled_rgb"] = out["pooled_rgb"] if out.get("enable_pooled_rgb") else 0.0
     return out
 
 
@@ -138,6 +166,7 @@ def handler(event, context):
     source_artifact_id = params["source_artifact_id"]
     source_image_key = params["source_image_key"]
     autolevel_params = _sanitize_params(params.get("autolevels_params") or {})
+    effective_params = _effective_params(autolevel_params)
 
     src_ext = source_image_key.rsplit(".", 1)[-1].lower()
     out_ext = "png" if src_ext == "png" else "jpeg"
@@ -177,26 +206,27 @@ def handler(event, context):
             AUTOLEVELS,
             in_path,
             out_path,
-            f"--bins={autolevel_params['bins']}",
-            f"--clip-low={autolevel_params['clip_low']}",
-            f"--clip-high={autolevel_params['clip_high']}",
-            f"--peak-factor={autolevel_params['peak_factor']}",
-            f"--gamma={autolevel_params['gamma']}",
-            f"--auto-gamma={autolevel_params['auto_gamma']}",
-            f"--target={autolevel_params['target']}",
-            f"--sigmoid-strength={autolevel_params['sigmoid_strength']}",
-            f"--sigmoid-mid={autolevel_params['sigmoid_mid']}",
-            f"--vibrance={autolevel_params['vibrance']}",
-            f"--pooled-rgb={autolevel_params['pooled_rgb']}",
-            f"--quality={autolevel_params['quality']}",
-            f"--jpeg-subsample={autolevel_params['jpeg_subsample_mode']}",
+            f"--bins={effective_params['bins']}",
+            f"--enable-levels={1 if autolevel_params['enable_levels'] else 0}",
+            f"--clip-low={effective_params['clip_low']}",
+            f"--clip-high={effective_params['clip_high']}",
+            f"--peak-factor={effective_params['peak_factor']}",
+            f"--gamma={effective_params['gamma']}",
+            f"--auto-gamma={effective_params['auto_gamma']}",
+            f"--target={effective_params['target']}",
+            f"--sigmoid-strength={effective_params['sigmoid_strength']}",
+            f"--sigmoid-mid={effective_params['sigmoid_mid']}",
+            f"--vibrance={effective_params['vibrance']}",
+            f"--pooled-rgb={effective_params['pooled_rgb']}",
+            f"--quality={effective_params['quality']}",
+            f"--jpeg-subsample={effective_params['jpeg_subsample_mode']}",
             f"--background-color={background_color}",
             f"--background-threshold={background_threshold}",
             f"--exclude-background={1 if autolevel_params['exclude_background'] else 0}",
         ]
-        if autolevel_params["jpeg_optimize_coding"]:
+        if effective_params["jpeg_optimize_coding"]:
             cmd.append("--jpeg-optimize-coding")
-        if autolevel_params["jpeg_interlace"]:
+        if effective_params["jpeg_interlace"]:
             cmd.append("--jpeg-interlace")
 
         _phase(job_id, task_id, "processing", "process", "Autolevel", artifact_id=artifact_id, family="color")

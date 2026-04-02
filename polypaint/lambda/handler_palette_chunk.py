@@ -1,7 +1,8 @@
 """
-Palette chunk Lambda — compute exact pass-0 solve-score scores/bins for one full-solve chunk.
+Palette chunk Lambda — compute exact solve-score scores/bins for one full-solve chunk.
 
-This is the chunk worker used by the asynchronous Palette workflow.
+The durable outputs are all-pass chunk-local numeric data. Pass-0-only reduction
+now happens later during palette image assembly.
 """
 import json
 import os

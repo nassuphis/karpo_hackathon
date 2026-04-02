@@ -132,7 +132,7 @@ def handle_list_palettes(event):
     params = parse_body(event)
     job_id = params["job_id"]
     palettes = _list_saved_palettes(job_id)
-    palettes.sort(key=lambda p: p.get("created_at", ""), reverse=True)
+    palettes = _order_palette_variants(palettes)
     return ok_response({"job_id": job_id, "palettes": palettes, "count": len(palettes)})
 
 
@@ -220,14 +220,27 @@ def _list_saved_palettes(job_id):
             metric = meta.get("metric", "proximity")
             image_key = meta.get("image_key", prefix + "image.jpeg")
             preview_key = meta.get("preview_key", prefix + "preview.png")
-            score_key = meta.get("score_key", prefix + f"score_{metric}.bin")
-            palette_bins_key = meta.get("palette_bins_key", prefix + "palette_bins.bin")
+            score_key = meta.get("score_key")
+            palette_bins_key = meta.get("palette_bins_key")
+            chunk_scores_prefix = meta.get("chunk_scores_prefix", prefix + "chunks/score_chunk_")
+            chunk_bins_prefix = meta.get("chunk_bins_prefix", prefix + "chunks/palette_bins_chunk_")
+            chunk_meta_prefix = meta.get("chunk_meta_prefix", prefix + "chunks/meta_chunk_")
+            render_reusable = bool(meta.get("render_reusable"))
+            data_layout = meta.get("data_layout", "")
             meta["family"] = "palette"
             meta["artifact_id"] = meta.get("palette_id")
             meta["image_key"] = image_key
             meta["preview_key"] = preview_key
-            meta["score_key"] = score_key
-            meta["palette_bins_key"] = palette_bins_key
+            if score_key:
+                meta["score_key"] = score_key
+            if palette_bins_key:
+                meta["palette_bins_key"] = palette_bins_key
+            meta["chunk_scores_prefix"] = chunk_scores_prefix
+            meta["chunk_bins_prefix"] = chunk_bins_prefix
+            meta["chunk_meta_prefix"] = chunk_meta_prefix
+            meta["render_reusable"] = render_reusable
+            meta["data_layout"] = data_layout
+            meta["derived_from_palette_id"] = meta.get("derived_from_palette_id", "")
             meta["image_url"] = s3.generate_presigned_url(
                 "get_object", Params={"Bucket": BUCKET, "Key": image_key},
                 ExpiresIn=PRESIGN_EXPIRY,
@@ -325,6 +338,13 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["solve_score_quantile"] = float(q) if q not in ("", None) else None
         omega = meta.get("solve_score_omega", "")
         entry["solve_score_omega"] = float(omega) if omega not in ("", None) else None
+        entry["palette_source_id"] = meta.get("palette_source_id", "")
+        entry["palette_source_display_name"] = meta.get("palette_source_display_name", "")
+        entry["palette_source_metric"] = meta.get("palette_source_metric", "")
+        src_q = meta.get("palette_source_quantile", "")
+        entry["palette_source_quantile"] = float(src_q) if src_q not in ("", None) else None
+        src_omega = meta.get("palette_source_omega", "")
+        entry["palette_source_omega"] = float(src_omega) if src_omega not in ("", None) else None
         entry["derived_from_artifact_id"] = meta.get("derived_from_artifact_id", "")
         entry["postprocess_kind"] = meta.get("postprocess_kind", "")
         entry["postprocess_profile"] = meta.get("postprocess_profile", "")
@@ -357,6 +377,42 @@ def _order_color_variants(variants):
 
     def append_with_children(art):
         aid = art.get("artifact_id")
+        if aid in seen:
+            return
+        for child in children.get(aid, []):
+            append_with_children(child)
+        ordered.append(art)
+        if aid:
+            seen.add(aid)
+
+    for art in top:
+        append_with_children(art)
+    for art in variants:
+        append_with_children(art)
+    return ordered
+
+
+def _order_palette_variants(variants):
+    by_id = {v.get("palette_id") or v.get("artifact_id"): v for v in variants if v.get("palette_id") or v.get("artifact_id")}
+    children = {}
+    top = []
+    for art in variants:
+        aid = art.get("palette_id") or art.get("artifact_id")
+        parent_id = art.get("derived_from_palette_id") or ""
+        if parent_id and parent_id in by_id and parent_id != aid:
+            children.setdefault(parent_id, []).append(art)
+        else:
+            top.append(art)
+
+    for art_list in children.values():
+        _sort_variants_by_created_desc(art_list)
+    _sort_variants_by_created_desc(top)
+
+    ordered = []
+    seen = set()
+
+    def append_with_children(art):
+        aid = art.get("palette_id") or art.get("artifact_id")
         if aid in seen:
             return
         for child in children.get(aid, []):
@@ -1070,6 +1126,8 @@ def handle_render_summary(event):
             families[family].append(legacy)
         if family == "color":
             families[family] = _order_color_variants(families[family])
+        elif family == "palette":
+            families[family] = _order_palette_variants(families[family])
         else:
             families[family].sort(key=lambda a: a.get("created_at", ""), reverse=True)
 

@@ -38,6 +38,17 @@ def _validate_omega(value):
     return omega
 
 
+def _load_palette_meta(job_id, palette_id):
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=f"renders/{job_id}/palettes/{palette_id}/meta.json")
+    except Exception as e:
+        raise RuntimeError(f"Saved palette not found: {palette_id}") from e
+    meta = json.loads(obj["Body"].read())
+    if meta.get("job_id") and meta.get("job_id") != job_id:
+        raise RuntimeError(f"Saved palette {palette_id} belongs to {meta.get('job_id')}, not {job_id}")
+    return meta
+
+
 def handler(event, context):
     params = parse_body(event)
     job_id = params["job_id"]
@@ -92,6 +103,7 @@ def handler(event, context):
         "rotation": 0,
         "constant_color": "ffffff",
         "palette": "inferno",
+        "saved_palette_id": "",
         "match_mode": "none",
         "quality": 90,
         "fmt": "jpeg",
@@ -116,7 +128,63 @@ def handler(event, context):
     solve_score_quantile = rp.get("solve_score_quantile", 0.001)
     solve_score_omega = rp.get("solve_score_omega", 1.0)
     palette = rp.get("palette", "inferno")
-    if palette not in VALID_PALETTE_NAMES:
+    saved_palette = {
+        "enabled": False,
+        "palette_id": "",
+        "display_name": "",
+        "palette": "",
+        "metric": "",
+        "quantile": None,
+        "omega": 1.0,
+        "chunk_bins_prefix": "",
+        "data_layout": "",
+    }
+
+    if color_mode == "saved_palette":
+        saved_palette_id = str(rp.get("saved_palette_id", "")).strip()
+        if not saved_palette_id:
+            raise RuntimeError("saved_palette color mode requires saved_palette_id")
+        source_meta = _load_palette_meta(job_id, saved_palette_id)
+        if not source_meta.get("render_reusable"):
+            raise RuntimeError(
+                "Selected palette artifact is not render-reusable. Regenerate the palette to make it reusable."
+            )
+        if source_meta.get("data_layout") != "chunk_all_pass_v1":
+            raise RuntimeError(
+                f"Saved palette {saved_palette_id} has unsupported data layout: {source_meta.get('data_layout')!r}"
+            )
+        src_n = int(source_meta.get("N", 0) or 0)
+        src_degree = int(source_meta.get("degree", 0) or 0)
+        src_times = int(source_meta.get("times", 0) or 0)
+        calc_n = int(calc.get("N", calc.get("n1", 0)) or 0)
+        calc_times = int(calc.get("times", 1) or 1)
+        if src_n and calc_n and src_n != calc_n:
+            raise RuntimeError(f"Saved palette N mismatch: palette={src_n}, calc={calc_n}")
+        if src_degree and degree and src_degree != degree:
+            raise RuntimeError(f"Saved palette degree mismatch: palette={src_degree}, calc={degree}")
+        if src_times and calc_times and src_times != calc_times:
+            raise RuntimeError(f"Saved palette times mismatch: palette={src_times}, calc={calc_times}")
+
+        palette = source_meta.get("palette", palette)
+        if palette not in VALID_PALETTE_NAMES:
+            raise RuntimeError(f"Invalid palette in saved palette artifact: {palette}")
+        solve_metric = source_meta.get("metric", solve_metric)
+        solve_score_quantile = float(source_meta.get("solve_score_quantile", solve_score_quantile))
+        solve_score_omega = _validate_omega(source_meta.get("solve_score_omega", solve_score_omega))
+        rp["palette"] = palette
+        rp["root_transforms"] = list(source_meta.get("root_transforms") or [])
+        saved_palette = {
+            "enabled": True,
+            "palette_id": saved_palette_id,
+            "display_name": source_meta.get("display_name", ""),
+            "palette": palette,
+            "metric": solve_metric,
+            "quantile": solve_score_quantile,
+            "omega": solve_score_omega,
+            "chunk_bins_prefix": source_meta.get("chunk_bins_prefix", f"renders/{job_id}/palettes/{saved_palette_id}/chunks/palette_bins_chunk_"),
+            "data_layout": source_meta.get("data_layout", ""),
+        }
+    elif palette not in VALID_PALETTE_NAMES:
         raise RuntimeError(f"Invalid palette: {palette}")
 
     solve_score_enabled = color_mode == "solve_score"
@@ -190,6 +258,17 @@ def handler(event, context):
             "background_color": DEFAULT_BACKGROUND_COLOR,
             "background_threshold": str(DEFAULT_BACKGROUND_THRESHOLD),
         })
+        if color_mode == "saved_palette":
+            outputs["metadata"].update({
+                "solve_metric": str(solve_metric),
+                "solve_score_quantile": str(solve_score_quantile),
+                "solve_score_omega": str(solve_score_omega),
+                "palette_source_id": saved_palette["palette_id"],
+                "palette_source_display_name": saved_palette["display_name"],
+                "palette_source_metric": str(saved_palette["metric"]),
+                "palette_source_quantile": str(saved_palette["quantile"]),
+                "palette_source_omega": str(saved_palette["omega"]),
+            })
     elif mode == "bilevel":
         outputs["metadata"].update({
             "format": "tif",
@@ -226,6 +305,7 @@ def handler(event, context):
         "chunk_items": chunk_items,
         "tile_items": tile_items,
         "solve_score": solve_score,
+        "saved_palette": saved_palette,
         "outputs": outputs,
     }
 

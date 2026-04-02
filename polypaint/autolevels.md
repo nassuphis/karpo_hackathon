@@ -39,6 +39,28 @@ In the Color-family action row:
 
 `Autolevels` opens a popup seeded with default parameters derived from the Preview-like pipeline described in [autolevels.py](/Users/nicknassuphis/karpo_hackathon/polypaint/autolevels.py).
 
+The popup is organized in the same order as the processing pipeline:
+
+1. pooled levels
+2. peak limit
+3. manual gamma
+4. auto gamma
+5. sigmoid
+6. vibrance
+7. final pooled stretch
+8. output
+
+Each stage has:
+
+- a short one-line explanation
+- the relevant controls grouped on the same line where possible
+- an on/off toggle
+
+The popup also includes:
+
+- `Revert` to restore defaults for the selected source artifact
+- background readout and per-channel background tolerance for the histogram stages
+
 Nothing is created until the user explicitly clicks `AutoLevel` inside that popup.
 
 If the user presses `Esc` or clicks outside the popup:
@@ -141,19 +163,28 @@ For v1, ship one fixed preset named:
 
 - `preview_default_v1`
 
-Use the current defaults from `AutoLevelsRGBConfig`:
+Use these UI defaults:
 
 - `bins=256`
+- `enable_levels=True`
 - `clip_low=0.0`
 - `clip_high=1.0`
+- `enable_peak_limit=False`
 - `peak_factor=0.0`
+- `enable_gamma=False`
 - `gamma=1.0`
-- `auto_gamma="none"`
+- `enable_auto_gamma=False`
+- `auto_gamma="median"`
 - `target=0.5`
+- `enable_sigmoid=False`
 - `sigmoid_strength=0.0`
 - `sigmoid_mid=0.5`
+- `enable_vibrance=False`
 - `vibrance=0.0`
-- `pooled_rgb=None`
+- `enable_pooled_rgb=True`
+- `pooled_rgb=0.1`
+- `exclude_background=True`
+- `background_threshold=4` if source metadata is missing
 - `jpeg_subsample_mode="on"`
 - `jpeg_optimize_coding=False`
 - `jpeg_interlace=False`
@@ -398,29 +429,43 @@ Reuse the existing overlay/dialog pattern already used by the TRI / PAL / LONG p
 Popup contents should include:
 
 - the selected source artifact id
-- a compact parameter form with the autolevel defaults prefilled
+- pipeline-ordered sections with stage toggles and brief explanations
+- source background readout and per-channel tolerance
+- `Revert` button
 - `AutoLevel` button
 - `Cancel` button
 
 ### Popup Parameters
 
-For v1, expose the full parameter set already documented above:
+Expose the full parameter set, grouped by stage:
 
-- `bins`
-- `clip_low`
-- `clip_high`
-- `peak_factor`
-- `gamma`
-- `auto_gamma`
-- `target`
-- `sigmoid_strength`
-- `sigmoid_mid`
-- `vibrance`
-- `pooled_rgb`
-- `quality`
-- `jpeg_subsample_mode`
-- `jpeg_optimize_coding`
-- `jpeg_interlace`
+- `Pooled levels`
+  - `bins`
+  - `clip_low`
+  - `clip_high`
+  - `exclude_background`
+  - `background_threshold`
+- `Peak limit`
+  - `peak_factor`
+- `Manual gamma`
+  - `gamma`
+- `Auto gamma`
+  - `auto_gamma`
+  - `target`
+- `Sigmoid`
+  - `sigmoid_strength`
+  - `sigmoid_mid`
+- `Vibrance`
+  - `vibrance`
+- `Final pooled stretch`
+  - `pooled_rgb`
+- `Output`
+  - `quality`
+  - `jpeg_subsample_mode`
+  - `jpeg_optimize_coding`
+  - `jpeg_interlace`
+
+Each stage toggle is saved in `autolevels_params` so a derived artifact can later repopulate the popup exactly.
 
 ### Click Behavior
 

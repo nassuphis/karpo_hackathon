@@ -1964,3 +1964,54 @@ static void poly_125_hand(double x1r, double x1i, double x2r, double x2i,
         if (m > 1e10) { double s = 1e10 / m; cRe[i] *= s; cIm[i] *= s; }
     }
 }
+
+/* ---- poly_645_hand ----
+ * Python:
+ *   degree = 8
+ *   real_seq = linspace(t1.real, t2.real, 9)
+ *   im_seq   = linspace(t1.imag, t2.imag, 9)
+ *   for j in 1..9:
+ *       mag_component = log(|t1| + j) * sin(j*pi/4) + cos(j*pi/3) * |t2|
+ *       angle_component = angle(t1) * j + angle(t2) * (degree + 1 - j)  # unused
+ *       intricate_part = exp(1j * (sin(real_seq[j-1]) + cos(im_seq[j-1])))
+ *       cf[j-1] = mag_component * intricate_part * conj(t2) + prod(1..j) * sin(j)
+ */
+static void poly_645_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 9;
+    for (int i = 0; i < 9; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    const double abs1 = c_abs(x1r, x1i);
+    const double abs2 = c_abs(x2r, x2i);
+    double fact = 1.0;
+
+    for (int j = 1; j <= 9; j++) {
+        const double mag_component =
+            log(abs1 + (double)j) * sin((double)j * M_PI / 4.0) +
+            cos((double)j * M_PI / 3.0) * abs2;
+
+        /* Sample along the straight line in real/imag space. */
+        const double real_sample = x1r + (x2r - x1r) * (double)(j - 1) / 8.0;
+        const double imag_sample = x1i + (x2i - x1i) * (double)(j - 1) / 8.0;
+        const double theta = sin(real_sample) + cos(imag_sample);
+
+        double phase_r, phase_i;
+        c_exp2(0.0, theta, &phase_r, &phase_i);
+
+        double scaled_r, scaled_i;
+        c_mul(mag_component, 0.0, phase_r, phase_i, &scaled_r, &scaled_i);
+
+        double conj_mul_r, conj_mul_i;
+        c_mul(scaled_r, scaled_i, x2r, -x2i, &conj_mul_r, &conj_mul_i);
+
+        fact *= (double)j;
+        cRe[j - 1] = conj_mul_r + fact * sin((double)j);
+        cIm[j - 1] = conj_mul_i;
+    }
+
+    for (int i = 0; i < 9; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}

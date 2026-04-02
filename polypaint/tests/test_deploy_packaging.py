@@ -131,6 +131,9 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("handler_raster.py", packaged)
         self.assertIn("roots2pix", packaged["handler_raster.py"])
 
+        self.assertIn("handler_autolevels.py", packaged)
+        self.assertIn("autolevels_render", packaged["handler_autolevels.py"])
+
 
 if __name__ == "__main__":
     unittest.main()

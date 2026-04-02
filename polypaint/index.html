@@ -170,6 +170,63 @@ button {
 .tri-popup-empty td {
     color: #777; text-align: center; padding: 16px 8px;
 }
+.autolevel-popup-grid {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 14px; padding: 12px 14px;
+}
+.autolevel-field {
+    display: flex; align-items: center; gap: 8px;
+}
+.autolevel-field label {
+    min-width: 110px; color: #888; font-size: 11px;
+}
+.autolevel-field input,
+.autolevel-field select {
+    flex: 1 1 auto; min-width: 0;
+    font-size: 12px; padding: 6px 8px;
+    background: #0f172d; color: #ddd; border: 1px solid #2b3f66; border-radius: 4px;
+}
+.autolevel-field.checkbox {
+    grid-column: span 2;
+}
+.autolevel-field.checkbox label {
+    min-width: 0; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+}
+.autolevel-field.checkbox input {
+    flex: 0 0 auto; width: auto; margin: 0;
+}
+.autolevel-inline-row {
+    grid-column: span 2;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding-top: 2px;
+}
+.autolevel-inline-row .inline-label {
+    color: #888; font-size: 11px;
+}
+.autolevel-inline-row input[type="text"] {
+    width: 130px;
+}
+.autolevel-inline-row input[type="number"] {
+    width: 72px;
+}
+.autolevel-inline-row .autolevel-inline-check {
+    min-width: 0; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    color: #ddd; font-size: 12px;
+}
+.autolevel-inline-row .autolevel-inline-check input {
+    width: auto; margin: 0;
+}
+.autolevel-popup-summary {
+    padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.08);
+    font-size: 11px; color: #888;
+}
+.autolevel-popup-help {
+    padding: 0 14px 12px; font-size: 11px; color: #777;
+}
+.autolevel-popup-actions {
+    display: flex; justify-content: flex-end; gap: 8px;
+    padding: 0 14px 14px;
+}
 
 .color-box {
     margin-top: 8px; padding: 8px; background: #1a1a2e; border-radius: 4px;
@@ -645,6 +702,44 @@ button {
                 </thead>
                 <tbody id="long-popup-body"></tbody>
             </table>
+        </div>
+    </div>
+</div>
+<div id="autolevel-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="autolevel-popup-title">
+        <div class="tri-popup-head">
+            <div id="autolevel-popup-title" class="tri-popup-title">Autolevels</div>
+            <button id="autolevel-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div id="autolevel-popup-summary" class="autolevel-popup-summary"></div>
+        <div class="autolevel-popup-grid">
+            <div class="autolevel-field"><label for="autolevel-bins">Bins</label><input id="autolevel-bins" type="number" min="256" max="256" step="1" value="256" disabled></div>
+            <div class="autolevel-field"><label for="autolevel-quality">Quality</label><input id="autolevel-quality" type="number" min="1" max="100" step="1" value="90"></div>
+            <div class="autolevel-field"><label for="autolevel-clip-low">Clip low %</label><input id="autolevel-clip-low" type="number" min="0" max="100" step="0.01" value="0"></div>
+            <div class="autolevel-field"><label for="autolevel-clip-high">Clip high %</label><input id="autolevel-clip-high" type="number" min="0" max="100" step="0.01" value="1"></div>
+            <div class="autolevel-field"><label for="autolevel-peak-factor">Peak factor</label><input id="autolevel-peak-factor" type="number" min="0" max="10" step="0.01" value="0"></div>
+            <div class="autolevel-field"><label for="autolevel-gamma">Gamma</label><input id="autolevel-gamma" type="number" min="0.1" max="4" step="0.01" value="1"></div>
+            <div class="autolevel-field"><label for="autolevel-auto-gamma">Auto gamma</label><select id="autolevel-auto-gamma"><option value="none">none</option><option value="median">median</option></select></div>
+            <div class="autolevel-field"><label for="autolevel-target">Target</label><input id="autolevel-target" type="number" min="0" max="1" step="0.01" value="0.5"></div>
+            <div class="autolevel-field"><label for="autolevel-sigmoid-strength">Sigmoid strength</label><input id="autolevel-sigmoid-strength" type="number" min="0" max="20" step="0.01" value="0"></div>
+            <div class="autolevel-field"><label for="autolevel-sigmoid-mid">Sigmoid midpoint</label><input id="autolevel-sigmoid-mid" type="number" min="0" max="1" step="0.01" value="0.5"></div>
+            <div class="autolevel-field"><label for="autolevel-vibrance">Vibrance</label><input id="autolevel-vibrance" type="number" min="-2" max="2" step="0.01" value="0"></div>
+            <div class="autolevel-field"><label for="autolevel-pooled-rgb">Final pooled RGB q</label><input id="autolevel-pooled-rgb" type="number" min="0" max="49" step="0.01" value="0"></div>
+            <div class="autolevel-field"><label for="autolevel-jpeg-subsample">JPEG subsample</label><select id="autolevel-jpeg-subsample"><option value="on">on</option><option value="auto">auto</option><option value="off">off</option></select></div>
+            <div class="autolevel-inline-row">
+                <label class="autolevel-inline-check"><input id="autolevel-exclude-background" type="checkbox" checked> Exclude background</label>
+                <span class="inline-label">Background</span>
+                <input id="autolevel-background-readout" type="text" value="#000000" disabled>
+                <span class="inline-label">Tolerance / channel</span>
+                <input id="autolevel-background-threshold" type="number" min="0" max="255" step="1" value="4">
+            </div>
+            <div class="autolevel-field checkbox"><label><input id="autolevel-jpeg-optimize" type="checkbox"> Optimize JPEG coding</label></div>
+            <div class="autolevel-field checkbox"><label><input id="autolevel-jpeg-interlace" type="checkbox"> Progressive JPEG</label></div>
+        </div>
+        <div class="autolevel-popup-help">Creates a new immutable Color artifact derived from the selected image. Press Esc or click outside to cancel.</div>
+        <div class="autolevel-popup-actions">
+            <button id="autolevel-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Cancel</button>
+            <button id="autolevel-popup-run" type="button" class="btn-primary" style="padding:6px 12px">AutoLevel</button>
         </div>
     </div>
 </div>
@@ -1189,9 +1284,10 @@ let _renderCatalogScrollTop = { color: 0, bilevel: 0, coeffs: 0, palette: 0 };
 let _triPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _builtinPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
+let _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
 
 function _stopsToGradient(stops) {
-    return `linear-gradient(to top, ${stops.map((s, i) => s + ' ' + Math.round(i/(stops.length-1)*100) + '%').join(', ')})`;
+    return `linear-gradient(to right, ${stops.map((s, i) => s + ' ' + Math.round(i/(stops.length-1)*100) + '%').join(', ')})`;
 }
 
 const PALETTE_DEFS = [
@@ -1392,7 +1488,7 @@ function _renderPaletteRow(mode) {
     const children = [];
     if (_modeUsesBuiltinPopup(mode)) {
         const builtinEntry = _builtinPaletteEntryByName(_builtinPaletteForMode(mode)) || BUILTIN_PALETTE_ENTRIES[0];
-        const builtinActive = typeof currentPalette === 'string' && !currentPalette.startsWith('tri_');
+        const builtinActive = !!_builtinPaletteEntryByName(currentPalette);
         const builtin = document.createElement('div');
         builtin.className = 'pal-circle pal-circle-builtin' + (builtinActive ? ' active' : '');
         builtin.dataset.palettePopup = 'builtin';
@@ -1987,6 +2083,249 @@ function _initLongPalettePopup() {
     });
 }
 
+function _defaultAutolevelParams() {
+    return {
+        bins: 256,
+        clip_low: 0.0,
+        clip_high: 1.0,
+        peak_factor: 0.0,
+        gamma: 1.0,
+        auto_gamma: 'none',
+        target: 0.5,
+        sigmoid_strength: 0.0,
+        sigmoid_mid: 0.5,
+        vibrance: 0.0,
+        pooled_rgb: 0.0,
+        quality: 90,
+        jpeg_subsample_mode: 'on',
+        jpeg_optimize_coding: false,
+        jpeg_interlace: false,
+        exclude_background: true,
+        background_threshold: null,
+    };
+}
+
+function _autolevelBackgroundInfo(art) {
+    const bg = String((art && art.background_color) || '000000').trim() || '000000';
+    const hex = bg.startsWith('#') ? bg.toLowerCase() : ('#' + bg.toLowerCase());
+    const thresholdNum = Number(art && art.background_threshold);
+    const threshold = Number.isFinite(thresholdNum) ? Math.max(0, Math.round(thresholdNum)) : 4;
+    return { color: hex, threshold, label: `${hex} (tol ${threshold})` };
+}
+
+function _autolevelParamsForArtifact(art) {
+    const params = _defaultAutolevelParams();
+    if (art && art.autolevels_params && typeof art.autolevels_params === 'object') {
+        Object.assign(params, art.autolevels_params);
+    }
+    const quality = Number(art && art.quality);
+    if (Number.isFinite(quality) && quality > 0) params.quality = Math.round(quality);
+    const bgInfo = _autolevelBackgroundInfo(art);
+    const rawThreshold = params.background_threshold;
+    const threshold = Number(rawThreshold);
+    params.background_threshold = (rawThreshold === null || rawThreshold === '' || rawThreshold === undefined || !Number.isFinite(threshold))
+        ? bgInfo.threshold
+        : Math.max(0, Math.round(threshold));
+    return params;
+}
+
+function _syncAutolevelBackgroundControls() {
+    const enabled = !!(document.getElementById('autolevel-exclude-background') && document.getElementById('autolevel-exclude-background').checked);
+    const thresholdEl = document.getElementById('autolevel-background-threshold');
+    const readoutEl = document.getElementById('autolevel-background-readout');
+    if (thresholdEl) thresholdEl.disabled = !enabled;
+    if (readoutEl) readoutEl.disabled = true;
+}
+
+function _writeAutolevelPopupParams(art, params) {
+    const fmt = (art && (art.format || (art.image_key || '').split('.').pop())) || 'jpeg';
+    const dims = art && art.width && art.height ? `${art.width}x${art.height}` : '';
+    const bgInfo = _autolevelBackgroundInfo(art);
+    const summaryEl = document.getElementById('autolevel-popup-summary');
+    if (summaryEl) {
+        const parts = [
+            art && art.artifact_id ? art.artifact_id : 'selected artifact',
+            fmt ? `format=${fmt}` : '',
+            dims ? `dims=${dims}` : '',
+            `bg=${bgInfo.color}`,
+            `tol/ch=${Number(params.background_threshold)}`,
+        ].filter(Boolean);
+        summaryEl.textContent = parts.join(' · ');
+    }
+    const setValue = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.value = String(value);
+    };
+    const setChecked = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.checked = !!value;
+    };
+    setValue('autolevel-bins', params.bins);
+    setValue('autolevel-clip-low', params.clip_low);
+    setValue('autolevel-clip-high', params.clip_high);
+    setValue('autolevel-peak-factor', params.peak_factor);
+    setValue('autolevel-gamma', params.gamma);
+    setValue('autolevel-auto-gamma', params.auto_gamma || 'none');
+    setValue('autolevel-target', params.target);
+    setValue('autolevel-sigmoid-strength', params.sigmoid_strength);
+    setValue('autolevel-sigmoid-mid', params.sigmoid_mid);
+    setValue('autolevel-vibrance', params.vibrance);
+    setValue('autolevel-pooled-rgb', params.pooled_rgb);
+    setValue('autolevel-quality', params.quality);
+    setValue('autolevel-jpeg-subsample', params.jpeg_subsample_mode || 'on');
+    setValue('autolevel-background-readout', bgInfo.color);
+    setValue('autolevel-background-threshold', params.background_threshold);
+    setChecked('autolevel-exclude-background', params.exclude_background !== false);
+    setChecked('autolevel-jpeg-optimize', params.jpeg_optimize_coding);
+    setChecked('autolevel-jpeg-interlace', params.jpeg_interlace);
+    _syncAutolevelBackgroundControls();
+}
+
+function _readAutolevelPopupParams() {
+    const readNum = (id, fallback) => {
+        const el = document.getElementById(id);
+        const value = Number(el && el.value);
+        return Number.isFinite(value) ? value : fallback;
+    };
+    const readSel = (id, fallback) => {
+        const el = document.getElementById(id);
+        return (el && el.value) ? String(el.value) : fallback;
+    };
+    const readChk = (id) => {
+        const el = document.getElementById(id);
+        return !!(el && el.checked);
+    };
+    return {
+        bins: 256,
+        clip_low: readNum('autolevel-clip-low', 0.0),
+        clip_high: readNum('autolevel-clip-high', 1.0),
+        peak_factor: readNum('autolevel-peak-factor', 0.0),
+        gamma: readNum('autolevel-gamma', 1.0),
+        auto_gamma: readSel('autolevel-auto-gamma', 'none'),
+        target: readNum('autolevel-target', 0.5),
+        sigmoid_strength: readNum('autolevel-sigmoid-strength', 0.0),
+        sigmoid_mid: readNum('autolevel-sigmoid-mid', 0.5),
+        vibrance: readNum('autolevel-vibrance', 0.0),
+        pooled_rgb: readNum('autolevel-pooled-rgb', 0.0),
+        quality: Math.round(readNum('autolevel-quality', 90)),
+        jpeg_subsample_mode: readSel('autolevel-jpeg-subsample', 'on'),
+        exclude_background: readChk('autolevel-exclude-background'),
+        background_threshold: Math.max(0, Math.round(readNum('autolevel-background-threshold', 4))),
+        jpeg_optimize_coding: readChk('autolevel-jpeg-optimize'),
+        jpeg_interlace: readChk('autolevel-jpeg-interlace'),
+    };
+}
+
+function _closeAutolevelPopup() {
+    _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
+    const overlay = document.getElementById('autolevel-popup-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+}
+
+function openAutolevelPopup() {
+    if (_renderActiveFamily !== 'color') return;
+    const art = _renderSelectedArtifactEntry();
+    if (!art || !art.image_key) return;
+    _autolevelPopupState = {
+        open: true,
+        sourceArtifactId: art.artifact_id || '',
+        sourceImageKey: art.image_key || '',
+    };
+    _writeAutolevelPopupParams(art, _autolevelParamsForArtifact(art));
+    const overlay = document.getElementById('autolevel-popup-overlay');
+    if (overlay) {
+        overlay.style.display = 'flex';
+        overlay.setAttribute('aria-hidden', 'false');
+    }
+    const qualityEl = document.getElementById('autolevel-quality');
+    if (qualityEl && typeof qualityEl.focus === 'function') qualityEl.focus();
+}
+
+async function runAutolevelSelectedRenderArtifact() {
+    const art = _renderSelectedArtifactEntry();
+    const jobId = document.getElementById('render-results-dir').value.trim();
+    const statusEl = document.getElementById('render-status');
+    const btn = document.getElementById('autolevel-popup-run');
+
+    if (_renderActiveFamily !== 'color') return;
+    if (!jobId || !art || !art.image_key) return;
+    if (_activeRenderRun) {
+        log('Autolevels: render in progress, wait for completion', 'err', 'render-log');
+        return;
+    }
+
+    const origText = btn ? btn.textContent : 'AutoLevel';
+    if (btn) { btn.disabled = true; btn.textContent = 'Dispatching...'; }
+    try {
+        const params = _readAutolevelPopupParams();
+        const runId = _generateRunId();
+        const taskId = 'autolevels_' + runId;
+        const artifactId = 'autolevels_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+
+        statusEl.textContent = 'Dispatching autolevels...';
+        statusEl.className = 'status';
+        log('Autolevels: dispatching for ' + (art.artifact_id || 'selected color artifact') + '...', '', 'render-log');
+
+        const dispResult = await lambdaPost('dispatch', {
+            target: 'autolevels',
+            jobs: [{
+                job_id: jobId,
+                task_id: taskId,
+                artifact_id: artifactId,
+                source_artifact_id: _autolevelPopupState.sourceArtifactId || art.artifact_id || '',
+                source_image_key: _autolevelPopupState.sourceImageKey || art.image_key,
+                autolevels_params: params,
+            }],
+            expected_keys: [],
+        });
+        if ((dispResult.fired || 0) !== 1) throw new Error('Autolevel dispatch failed');
+
+        _saveActiveRun({
+            job_id: jobId,
+            mode: 'autolevels',
+            run_id: runId,
+            task_id: taskId,
+            started_at_ms: Date.now(),
+        });
+        _closeAutolevelPopup();
+        log('  autolevels dispatched: ' + artifactId, 'ok', 'render-log');
+        startActiveRenderObserver();
+    } catch (e) {
+        statusEl.textContent = 'Autolevels failed: ' + e.message;
+        statusEl.className = 'status error';
+        log('Autolevels failed: ' + e.message, 'err', 'render-log');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
+    }
+}
+
+function _initAutolevelPopup() {
+    const overlay = document.getElementById('autolevel-popup-overlay');
+    const closeBtn = document.getElementById('autolevel-popup-close');
+    const cancelBtn = document.getElementById('autolevel-popup-cancel');
+    const runBtn = document.getElementById('autolevel-popup-run');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closeAutolevelPopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closeAutolevelPopup);
+    if (cancelBtn) cancelBtn.addEventListener('click', _closeAutolevelPopup);
+    if (runBtn) runBtn.addEventListener('click', runAutolevelSelectedRenderArtifact);
+    const excludeBg = document.getElementById('autolevel-exclude-background');
+    if (excludeBg) excludeBg.addEventListener('change', _syncAutolevelBackgroundControls);
+    document.addEventListener('keydown', (ev) => {
+        if (!_autolevelPopupState.open) return;
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closeAutolevelPopup();
+        }
+    });
+}
+
 function buildPaletteCircles(containerId, mode, getCurrentPalette) {
     _syncTriDefaults();
     _renderPaletteRow(mode);
@@ -1997,6 +2336,7 @@ buildPaletteCircles('palette-circles-palette-tab', 'palette_tab', () => paletteT
 _initTriPalettePopup();
 _initBuiltinPalettePopup();
 _initLongPalettePopup();
+_initAutolevelPopup();
 _updateSolveScoreButtons();  // initial disabled state
 _clearPaletteCanvas('No palette selected');
 
@@ -3048,6 +3388,33 @@ function _fmtAge(ms) {
     return Math.round(ms / 60000) + 'm';
 }
 
+function _fmtAutolevelDebugLine(rd) {
+    const dbg = rd && rd.autolevel_debug;
+    if (!dbg || typeof dbg !== 'object') return '';
+    const parts = [];
+    const ex = dbg.exclude_background ? 'on' : 'off';
+    if (dbg.background_color) {
+        parts.push(`bg=${dbg.background_color}`);
+    }
+    if (dbg.background_threshold != null) {
+        parts.push(`tol/ch=${dbg.background_threshold}`);
+    }
+    parts.push(`exclude=${ex}`);
+    if (dbg.r_min_bin != null && dbg.r_max_bin != null) parts.push(`R[${dbg.r_min_bin}..${dbg.r_max_bin}]`);
+    if (dbg.g_min_bin != null && dbg.g_max_bin != null) parts.push(`G[${dbg.g_min_bin}..${dbg.g_max_bin}]`);
+    if (dbg.b_min_bin != null && dbg.b_max_bin != null) parts.push(`B[${dbg.b_min_bin}..${dbg.b_max_bin}]`);
+    if (dbg.black_bin != null && dbg.white_bin != null) parts.push(`pooled[${dbg.black_bin}..${dbg.white_bin}]`);
+    if (dbg.black != null && dbg.white != null) parts.push(`levels=${Number(dbg.black).toFixed(3)}..${Number(dbg.white).toFixed(3)}`);
+    if (dbg.gamma != null) parts.push(`gamma=${Number(dbg.gamma).toFixed(3)}`);
+    if (dbg.final_stretch && dbg.final_lo_bin != null && dbg.final_hi_bin != null) {
+        parts.push(`final[${dbg.final_lo_bin}..${dbg.final_hi_bin}]`);
+    }
+    if (dbg.included_pixels != null || dbg.excluded_pixels != null) {
+        parts.push(`px in=${dbg.included_pixels || 0} out=${dbg.excluded_pixels || 0}`);
+    }
+    return parts.join(' · ');
+}
+
 async function _pollActiveRenderRun() {
     const run = _activeRenderRun || _loadActiveRun();
     if (!run) { stopActiveRenderObserver(); return; }
@@ -3090,6 +3457,8 @@ async function _pollActiveRenderRun() {
             statusEl.textContent = 'Render complete';
             statusEl.className = 'status ok';
             log('Render complete: ' + (rd.artifact_id || rd.image_key || run.mode), 'ok', 'render-log');
+            const autoDbg = _fmtAutolevelDebugLine(rd);
+            if (autoDbg) log('  autolevels: ' + autoDbg, '', 'render-log');
             _clearActiveRun();
             stopActiveRenderObserver();
             await refreshRenderArtifacts(run.job_id, {
@@ -3257,17 +3626,22 @@ function _renderSelectedArtifactEntry() {
 
 function _renderArtifactSummary(art) {
     if (!art) return '';
+    let base = '';
     if (art.family === 'color') {
         if (art.color_mode === 'solve_score') {
             const q = art.solve_score_quantile != null ? ` q=${(art.solve_score_quantile * 100).toFixed(1)}%` : '';
             const omega = art.solve_score_omega != null ? ` w=${Number(art.solve_score_omega).toFixed(0)}` : '';
             const pal = art.palette ? ` ${art.palette}` : '';
-            return `solve:${art.solve_metric || ''}${q}${omega}${pal}`.trim();
+            base = `solve:${art.solve_metric || ''}${q}${omega}${pal}`.trim();
+        } else if (art.color_mode === 'proximity') {
+            base = `prox ${art.palette || ''}`.trim();
+        } else if (art.color_mode) {
+            base = art.color_mode;
         }
-        if (art.color_mode === 'proximity') {
-            return `prox ${art.palette || ''}`.trim();
+        if (art.postprocess_kind === 'autolevels') {
+            return [base, 'autolevels'].filter(Boolean).join(' · ');
         }
-        if (art.color_mode) return art.color_mode;
+        return base;
     }
     if (art.family === 'palette') {
         const q = art.solve_score_quantile != null ? `q=${(art.solve_score_quantile * 100).toFixed(1)}%` : '';
@@ -3320,6 +3694,32 @@ function populateSelectedRenderArtifact() {
     if (!art) return;
 
     const warnings = [];
+    const pixEl = document.getElementById('render-pix');
+    const formatEl = document.getElementById('render-format');
+    const qualityEl = document.getElementById('render-quality');
+
+    const restoreRenderOutputFields = (entry) => {
+        const pixValue = Number(entry && entry.pix);
+        if (pixEl) {
+            if (Number.isFinite(pixValue) && pixValue > 0) {
+                pixEl.value = String(Math.round(pixValue));
+            } else {
+                const widthValue = Number(entry && entry.width);
+                if (Number.isFinite(widthValue) && widthValue > 0) pixEl.value = String(Math.round(widthValue));
+                else warnings.push('pix');
+            }
+        }
+        if (formatEl) {
+            if (entry && entry.format) formatEl.value = String(entry.format);
+            else warnings.push('format');
+        }
+        if (qualityEl) {
+            const qualityValue = Number(entry && entry.quality);
+            if (Number.isFinite(qualityValue) && qualityValue > 0) {
+                qualityEl.value = String(Math.round(qualityValue));
+            }
+        }
+    };
 
     if (_renderActiveFamily === 'palette') {
         setColorMode('solve_score');
@@ -3345,6 +3745,7 @@ function populateSelectedRenderArtifact() {
         if (Array.isArray(art.root_transforms)) {
             _setRenderRootTransforms(art.root_transforms);
         }
+        restoreRenderOutputFields(art);
         _renderSelectFamily('color');
         const msg = warnings.length
             ? `Populate complete (missing saved ${warnings.join(', ')})`
@@ -3378,6 +3779,8 @@ function populateSelectedRenderArtifact() {
 
     if (Number.isFinite(art.rotation)) _setRenderRotationFromRadians(art.rotation);
     else warnings.push('rotation');
+
+    restoreRenderOutputFields(art);
 
     if (Array.isArray(art.root_transforms) && art.root_transforms.length) {
         _setRenderRootTransforms(art.root_transforms);
@@ -3437,10 +3840,12 @@ function _updateRenderActionButtons() {
     const delBtn = document.getElementById('btn-render-delete');
     const dzBtn = document.getElementById('btn-render-deepzoom');
     const popBtn = document.getElementById('btn-render-populate');
+    const autoBtn = document.getElementById('btn-render-autolevels');
     if (dlBtn) dlBtn.disabled = !hasSelection;
     if (delBtn) delBtn.disabled = !hasSelection;
     if (dzBtn) dzBtn.disabled = !hasSelection;
     if (popBtn) popBtn.disabled = !(hasSelection && (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette'));
+    if (autoBtn) autoBtn.disabled = !(hasSelection && _renderActiveFamily === 'color' && art && art.image_key) || !!_activeRenderRun;
 }
 
 function _captureRenderCatalogScroll(family) {
@@ -3583,7 +3988,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Uses current Color mode settings above. Populate restores the selected color artifact settings into the form.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Uses current Color mode settings above. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. Populate copies the selected palette into Color settings and switches to Color.</span>';
     }
@@ -3592,14 +3997,13 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     if (!activeFamilyInv.length) {
         catalogHtml = '<div style="color:#666; padding:8px">No saved artifacts yet.</div>';
     } else {
-        catalogHtml = '<table style="width:100%; border-collapse:collapse"><tr style="border-bottom:1px solid #333; position:sticky; top:0; background:#1a1a2e"><th style="text-align:left;padding:4px">Created</th><th style="text-align:left">Artifact</th><th>Dims</th><th>Size</th><th style="text-align:left">Summary</th></tr>';
+        catalogHtml = '<table style="width:100%; border-collapse:collapse"><tr style="border-bottom:1px solid #333; position:sticky; top:0; background:#1a1a2e"><th style="text-align:left;padding:4px">Created</th><th>Dims</th><th>Size</th><th style="text-align:left">Summary</th></tr>';
         activeFamilyInv.forEach((art, i) => {
             const isSel = i === activeIdx;
             const dims = art.width && art.height ? `${art.width}x${art.height}` : '';
             const created = (art.created_at || '').replace('T', ' ').slice(0, 19);
             catalogHtml += `<tr id="${_renderRowElementId(_renderActiveFamily, i)}" class="render-art-row" data-family="${_renderActiveFamily}" data-idx="${i}" onclick="_renderSelectArtifact('${_renderActiveFamily}', ${i})" style="border-bottom:1px solid #222; cursor:pointer; background:${isSel ? '#2a2a4e' : ''}">`;
             catalogHtml += `<td style="padding:4px; font-size:11px">${created}</td>`;
-            catalogHtml += `<td style="padding:4px; font-family:monospace">${art.artifact_id || ''}${art.legacy ? ' (legacy)' : ''}</td>`;
             catalogHtml += `<td style="padding:4px; text-align:center">${dims}</td>`;
             catalogHtml += `<td style="padding:4px; text-align:center">${_fmtSize(art.file_size || art.size || 0)}</td>`;
             catalogHtml += `<td style="padding:4px">${_renderArtifactSummary(art)}</td>`;
@@ -3620,6 +4024,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
                 <div style="display:flex; align-items:center; gap:8px">
                     <button class="btn-primary" id="btn-render-generate" onclick="generateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px">Generate</button>
                     ${(_renderActiveFamily === 'color' || _renderActiveFamily === 'palette') ? '<button class="btn-secondary" id="btn-render-populate" onclick="populateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Populate</button>' : ''}
+                    ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-autolevels" onclick="openAutolevelPopup()" style="padding:4px 12px; font-size:11px" disabled>Autolevels</button>' : ''}
                     <button class="btn-secondary" id="btn-render-download" onclick="downloadSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Download</button>
                     <button class="btn-secondary" id="btn-render-delete" onclick="deleteSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Delete</button>
                     <button class="btn-secondary" id="btn-render-deepzoom" onclick="deepZoomSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>DeepZoom</button>

@@ -260,6 +260,7 @@ const renderEls = {
     'btn-solve-histogram': {},
     'btn-populate-result': {},
     'btn-render-generate': {},
+    'btn-render-autolevels': {},
     'btn-render-download': {},
     'btn-render-delete': {},
     'btn-render-deepzoom': {},
@@ -267,6 +268,30 @@ const renderEls = {
     'render-preview': {},
     'render-info': {},
     'render-log': {},
+    'autolevel-popup-overlay': {},
+    'autolevel-popup-title': {},
+    'autolevel-popup-summary': {},
+    'autolevel-popup-close': {},
+    'autolevel-popup-cancel': {},
+    'autolevel-popup-run': {},
+    'autolevel-bins': { value: '256' },
+    'autolevel-clip-low': { value: '0' },
+    'autolevel-clip-high': { value: '1' },
+    'autolevel-peak-factor': { value: '0' },
+    'autolevel-gamma': { value: '1' },
+    'autolevel-auto-gamma': { value: 'none' },
+    'autolevel-target': { value: '0.5' },
+    'autolevel-sigmoid-strength': { value: '0' },
+    'autolevel-sigmoid-mid': { value: '0.5' },
+    'autolevel-vibrance': { value: '0' },
+    'autolevel-pooled-rgb': { value: '0' },
+    'autolevel-quality': { value: '90' },
+    'autolevel-jpeg-subsample': { value: 'on' },
+    'autolevel-background-readout': { value: '#000000' },
+    'autolevel-background-threshold': { value: '4' },
+    'autolevel-exclude-background': { checked: true },
+    'autolevel-jpeg-optimize': { checked: false },
+    'autolevel-jpeg-interlace': { checked: false },
     'palette-results-dir': { value: '' },
     'palette-solve-score': { value: 'proximity' },
     'palette-solve-score-quantile': { value: '0.1' },
@@ -308,6 +333,7 @@ vm.runInContext(`
         if (name === 'storage' && path === '/clean-render') return { deleted: 0 };
         if (name === 'viewport') return { q_re: [-2, 2], q_im: [-2, 2], scale: 256, pix: 1024, n_roots: 1000 };
         if (name === 'dispatch' && body.target === 'render_orchestrator') return { fired: 1, errors: [] };
+        if (name === 'dispatch' && body.target === 'autolevels') return { fired: 1, errors: [] };
         if (name === 'dispatch' && body.target === 'finalize') return { fired: body.jobs.length, errors: [] };
         if (name === 'dispatch' && body.target === 'bilevel_stitch') return { fired: 1, errors: [] };
         if (name === 'dispatch' && body.target === 'bilevel') return { fired: body.jobs.length, errors: [] };
@@ -603,7 +629,7 @@ async function testPipeline(name, call) {
         if (!panelHtml.includes('Palette <span style="color:#777">(1)</span>')) { console.error('FATAL: palette family tab missing'); process.exit(1); }
         const colorSel = vm.runInContext('_renderSelectedArtifact.color', ctx);
         if (colorSel !== 0) { console.error('FATAL: color family should auto-select first artifact'); process.exit(1); }
-        if (!panelHtml.includes('color_a')) { console.error('FATAL: color artifact row missing'); process.exit(1); }
+        if (!panelHtml.includes('2026-03-30 10:00:00')) { console.error('FATAL: color artifact row created timestamp missing'); process.exit(1); }
         if (!panelHtml.includes('https://img/color.png')) { console.error('FATAL: selected color viewer should use viewer_url'); process.exit(1); }
         if (!panelHtml.includes('id="render-artifact-viewer"')) { console.error('FATAL: render artifact viewer container missing'); process.exit(1); }
         if (!panelHtml.includes('height:360px') || !panelHtml.includes('background:#000')) { console.error('FATAL: render artifact panel should keep fixed black viewport height'); process.exit(1); }
@@ -611,7 +637,7 @@ async function testPipeline(name, call) {
 
         vm.runInContext(`_renderSelectFamily('palette')`, ctx);
         const palHtml = ctx._elements['render-preview'].innerHTML;
-        if (!palHtml.includes('pal_a')) { console.error('FATAL: palette family should show palette artifact row'); process.exit(1); }
+        if (!palHtml.includes('https://img/pal.png')) { console.error('FATAL: palette family should show selected palette viewer'); process.exit(1); }
         console.log('  family switch updates catalog: OK');
 
         vm.runInContext(`
@@ -662,6 +688,9 @@ async function testPipeline(name, call) {
                         width: 1000,
                         height: 1000,
                         file_size: 51000,
+                        pix: 3000,
+                        format: 'png',
+                        quality: 82,
                         color_mode: 'solve_score',
                         solve_metric: 'anisotropy',
                         solve_score_quantile: 0.025,
@@ -700,6 +729,9 @@ async function testPipeline(name, call) {
             document.getElementById('render-rotation').value = '0';
             document.getElementById('render-rotation-val').textContent = '0.00';
             document.getElementById('render-rotation-dir').value = 'ccw';
+            document.getElementById('render-pix').value = '1024';
+            document.getElementById('render-format').value = 'jpeg';
+            document.getElementById('render-quality').value = '90';
             renderArtifactPanel('j', ${JSON.stringify(summary)});
             populateSelectedRenderArtifact();
         `, ctx);
@@ -713,6 +745,9 @@ async function testPipeline(name, call) {
         const so = vm.runInContext("document.getElementById('render-solve-score-omega').value", ctx);
         const rot = vm.runInContext("document.getElementById('render-rotation').value", ctx);
         const rotDir = vm.runInContext("document.getElementById('render-rotation-dir').value", ctx);
+        const pix = vm.runInContext("document.getElementById('render-pix').value", ctx);
+        const fmt = vm.runInContext("document.getElementById('render-format').value", ctx);
+        const quality = vm.runInContext("document.getElementById('render-quality').value", ctx);
         const rt = vm.runInContext('JSON.stringify(_rtChain)', ctx);
         if (mode !== 'solve_score') { console.error('FATAL: populate should set solve_score mode, got ' + mode); process.exit(1); }
         if (metric !== 'anisotropy') { console.error('FATAL: populate should set anisotropy metric, got ' + metric); process.exit(1); }
@@ -724,6 +759,9 @@ async function testPipeline(name, call) {
         if (so !== '7') { console.error('FATAL: populate should set solve-score omega to 7, got ' + so); process.exit(1); }
         if (rot !== '0.25') { console.error('FATAL: populate should set rotation turns to 0.25, got ' + rot); process.exit(1); }
         if (rotDir !== 'cw') { console.error('FATAL: populate should set rotation dir cw, got ' + rotDir); process.exit(1); }
+        if (pix !== '3000') { console.error('FATAL: populate should set pix to 3000, got ' + pix); process.exit(1); }
+        if (fmt !== 'png') { console.error('FATAL: populate should set format to png, got ' + fmt); process.exit(1); }
+        if (quality !== '82') { console.error('FATAL: populate should set quality to 82, got ' + quality); process.exit(1); }
         if (!rt.includes('rotate_roots') || !rt.includes('roots_toline')) { console.error('FATAL: populate should restore root transforms, got ' + rt); process.exit(1); }
         vm.runInContext(`
             renderColorMode = 'rainbow';
@@ -743,6 +781,9 @@ async function testPipeline(name, call) {
             document.getElementById('render-rotation').value = '0';
             document.getElementById('render-rotation-val').textContent = '0.00';
             document.getElementById('render-rotation-dir').value = 'ccw';
+            document.getElementById('render-pix').value = '1024';
+            document.getElementById('render-format').value = 'jpeg';
+            document.getElementById('render-quality').value = '90';
             _renderChips('rt');
         `, ctx);
         console.log('  color populate restores selected artifact settings: OK');
@@ -768,6 +809,8 @@ async function testPipeline(name, call) {
                         viewer_url: 'https://img/pal_fill.png',
                         width: 1000,
                         height: 1000,
+                        pix: 4000,
+                        format: 'jpeg',
                         file_size: 70000,
                         metric: 'crowding',
                         palette: 'reef',
@@ -790,6 +833,8 @@ async function testPipeline(name, call) {
             document.getElementById('render-solve-score-quantile-val').textContent = '0.1';
             document.getElementById('render-solve-score-omega').value = '1';
             document.getElementById('render-solve-score-omega-val').textContent = '1';
+            document.getElementById('render-pix').value = '1024';
+            document.getElementById('render-format').value = 'png';
             renderArtifactPanel('j', ${JSON.stringify(summary)});
             populateSelectedRenderArtifact();
         `, ctx);
@@ -799,6 +844,8 @@ async function testPipeline(name, call) {
         const palette = vm.runInContext('renderSolveScorePalette', ctx);
         const sq = vm.runInContext("document.getElementById('render-solve-score-quantile').value", ctx);
         const so = vm.runInContext("document.getElementById('render-solve-score-omega').value", ctx);
+        const pix = vm.runInContext("document.getElementById('render-pix').value", ctx);
+        const fmt = vm.runInContext("document.getElementById('render-format').value", ctx);
         const rt = vm.runInContext('JSON.stringify(_rtChain)', ctx);
         if (family !== 'color') { console.error('FATAL: palette populate should switch active family to color, got ' + family); process.exit(1); }
         if (mode !== 'solve_score') { console.error('FATAL: palette populate should set solve_score mode, got ' + mode); process.exit(1); }
@@ -806,6 +853,8 @@ async function testPipeline(name, call) {
         if (palette !== 'reef') { console.error('FATAL: palette populate should set reef palette, got ' + palette); process.exit(1); }
         if (sq !== '5') { console.error('FATAL: palette populate should set solve-score q to 5, got ' + sq); process.exit(1); }
         if (so !== '4') { console.error('FATAL: palette populate should set solve-score omega to 4, got ' + so); process.exit(1); }
+        if (pix !== '4000') { console.error('FATAL: palette populate should set pix to 4000, got ' + pix); process.exit(1); }
+        if (fmt !== 'jpeg') { console.error('FATAL: palette populate should set format to jpeg, got ' + fmt); process.exit(1); }
         if (!rt.includes('rotate_roots') || !rt.includes('0.125')) { console.error('FATAL: palette populate should restore root transforms, got ' + rt); process.exit(1); }
         vm.runInContext(`
             _renderActiveFamily = 'color';
@@ -818,9 +867,166 @@ async function testPipeline(name, call) {
             document.getElementById('render-solve-score-quantile-val').textContent = '0.1';
             document.getElementById('render-solve-score-omega').value = '1';
             document.getElementById('render-solve-score-omega-val').textContent = '1';
+            document.getElementById('render-pix').value = '1024';
+            document.getElementById('render-format').value = 'png';
             _renderChips('rt');
         `, ctx);
         console.log('  palette populate restores solve-score settings and switches to color: OK');
+    }
+
+    {
+        const summary = {
+            calc: { exists: true, N: 3000, degree: 7 },
+            families: {
+                color: [
+                    {
+                        artifact_id: 'color_src',
+                        created_at: '2026-04-02T10:00:00Z',
+                        image_key: 'renders/j/color/color_src/image.jpeg',
+                        image_url: 'https://img/color_src.jpeg',
+                        preview_url: 'https://img/color_src.png',
+                        viewer_url: 'https://img/color_src.png',
+                        width: 3000,
+                        height: 2000,
+                        pix: 3000,
+                        format: 'jpeg',
+                        quality: 81,
+                        file_size: 64000,
+                        color_mode: 'solve_score',
+                        solve_metric: 'anisotropy',
+                        solve_score_quantile: 0.02,
+                        solve_score_omega: 6,
+                        palette: 'tri_redgold',
+                        background_color: '101214',
+                        background_threshold: 7,
+                        root_transforms: [['rotate_roots', '0.125']],
+                    }
+                ],
+                bilevel: [],
+                coeffs: [],
+                palette: [],
+            },
+        };
+        vm.runInContext(`
+            _renderActiveFamily = 'color';
+            _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
+            _autolevelDispatch = null;
+            startActiveRenderObserver = function() { _autolevelObserverStarted = true; };
+            _autolevelObserverStarted = false;
+            lambdaPost = async function(name, body, path) {
+                if (name === 'dispatch' && body.target === 'autolevels') {
+                    _autolevelDispatch = body;
+                    return { fired: 1, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: 1, complete: true, status_counts: { done: 1 }, results: [{ phase: 'done', phase_label: 'Done', family: 'color', artifact_id: 'autolevels_done' }] };
+                }
+                return { ok: true };
+            };
+            renderArtifactPanel('j', ${JSON.stringify(summary)});
+        `, ctx);
+        const panelHtml = ctx._elements['render-preview'].innerHTML || '';
+        if (!panelHtml.includes('Autolevels')) { console.error('FATAL: color artifact panel should show Autolevels button'); process.exit(1); }
+        vm.runInContext('openAutolevelPopup()', ctx);
+        const overlayDisplay = vm.runInContext("document.getElementById('autolevel-popup-overlay').style.display", ctx);
+        const popupSummary = vm.runInContext("document.getElementById('autolevel-popup-summary').textContent", ctx);
+        const popupQuality = vm.runInContext("document.getElementById('autolevel-quality').value", ctx);
+        const popupBackground = vm.runInContext("document.getElementById('autolevel-background-readout').value", ctx);
+        const popupThreshold = vm.runInContext("document.getElementById('autolevel-background-threshold').value", ctx);
+        const popupExclude = vm.runInContext("document.getElementById('autolevel-exclude-background').checked", ctx);
+        if (overlayDisplay !== 'flex') { console.error('FATAL: autolevel popup should open'); process.exit(1); }
+        if (!String(popupSummary).includes('color_src')) { console.error('FATAL: autolevel popup should describe selected artifact, got ' + popupSummary); process.exit(1); }
+        if (!String(popupSummary).includes('bg=#101214')) { console.error('FATAL: autolevel popup should describe background, got ' + popupSummary); process.exit(1); }
+        if (!String(popupSummary).includes('tol/ch=7')) { console.error('FATAL: autolevel popup should describe per-channel tolerance, got ' + popupSummary); process.exit(1); }
+        if (popupQuality !== '81') { console.error('FATAL: autolevel popup should seed quality from artifact, got ' + popupQuality); process.exit(1); }
+        if (popupBackground !== '#101214') { console.error('FATAL: autolevel popup should show background readout, got ' + popupBackground); process.exit(1); }
+        if (popupThreshold !== '7') { console.error('FATAL: autolevel popup should seed threshold from artifact, got ' + popupThreshold); process.exit(1); }
+        if (!popupExclude) { console.error('FATAL: autolevel popup should default background exclusion on'); process.exit(1); }
+        vm.runInContext(`
+            document.getElementById('autolevel-exclude-background').checked = false;
+            _syncAutolevelBackgroundControls();
+        `, ctx);
+        const thresholdDisabled = vm.runInContext("document.getElementById('autolevel-background-threshold').disabled", ctx);
+        if (!thresholdDisabled) { console.error('FATAL: autolevel threshold should disable when background exclusion is off'); process.exit(1); }
+        vm.runInContext(`
+            document.getElementById('autolevel-exclude-background').checked = true;
+            _syncAutolevelBackgroundControls();
+        `, ctx);
+        const thresholdEnabled = vm.runInContext("document.getElementById('autolevel-background-threshold').disabled", ctx);
+        if (thresholdEnabled) { console.error('FATAL: autolevel threshold should re-enable when background exclusion is on'); process.exit(1); }
+        vm.runInContext(`
+            document.getElementById('autolevel-quality').value = '84';
+            document.getElementById('autolevel-auto-gamma').value = 'median';
+            document.getElementById('autolevel-background-threshold').value = '11';
+            document.getElementById('autolevel-exclude-background').checked = false;
+            document.getElementById('autolevel-jpeg-optimize').checked = true;
+            document.getElementById('autolevel-jpeg-interlace').checked = true;
+        `, ctx);
+        await vm.runInContext('runAutolevelSelectedRenderArtifact()', ctx);
+        const dispatch = vm.runInContext('_autolevelDispatch', ctx);
+        const popupClosed = vm.runInContext("document.getElementById('autolevel-popup-overlay').style.display", ctx);
+        const observerStarted = vm.runInContext('_autolevelObserverStarted', ctx);
+        const runMode = vm.runInContext('_activeRenderRun && _activeRenderRun.mode', ctx);
+        if (!dispatch || dispatch.target !== 'autolevels') { console.error('FATAL: autolevels should dispatch via dispatch Lambda'); process.exit(1); }
+        if (!dispatch.jobs || dispatch.jobs.length !== 1) { console.error('FATAL: autolevels dispatch should send one job'); process.exit(1); }
+        if (dispatch.jobs[0].source_artifact_id !== 'color_src') { console.error('FATAL: autolevels should target selected color artifact, got ' + dispatch.jobs[0].source_artifact_id); process.exit(1); }
+        if (dispatch.jobs[0].autolevels_params.quality !== 84) { console.error('FATAL: autolevels should send edited quality, got ' + dispatch.jobs[0].autolevels_params.quality); process.exit(1); }
+        if (dispatch.jobs[0].autolevels_params.auto_gamma !== 'median') { console.error('FATAL: autolevels should send edited auto_gamma'); process.exit(1); }
+        if (dispatch.jobs[0].autolevels_params.background_threshold !== 11) { console.error('FATAL: autolevels should send edited background threshold, got ' + dispatch.jobs[0].autolevels_params.background_threshold); process.exit(1); }
+        if (dispatch.jobs[0].autolevels_params.exclude_background !== false) { console.error('FATAL: autolevels should send edited exclude_background'); process.exit(1); }
+        if (!dispatch.jobs[0].autolevels_params.jpeg_optimize_coding || !dispatch.jobs[0].autolevels_params.jpeg_interlace) { console.error('FATAL: autolevels should send checkbox params'); process.exit(1); }
+        if (popupClosed !== 'none') { console.error('FATAL: autolevel popup should close after dispatch'); process.exit(1); }
+        if (!observerStarted) { console.error('FATAL: autolevel dispatch should start render observer'); process.exit(1); }
+        if (runMode !== 'autolevels') { console.error('FATAL: autolevel dispatch should save active render run mode, got ' + runMode); process.exit(1); }
+        vm.runInContext(`
+            _autolevelDispatch = null;
+            openAutolevelPopup();
+            _closeAutolevelPopup();
+        `, ctx);
+        const canceledDispatch = vm.runInContext('_autolevelDispatch', ctx);
+        if (canceledDispatch !== null) { console.error('FATAL: closing autolevel popup should not dispatch'); process.exit(1); }
+        console.log('  autolevel popup dispatches derived color artifact run: OK');
+    }
+
+    {
+        const summary = {
+            calc: { exists: true, N: 2000, degree: 5 },
+            families: {
+                color: [
+                    {
+                        artifact_id: 'color_old',
+                        created_at: '2026-04-02T08:00:00Z',
+                        image_key: 'renders/j/color/color_old/image.jpeg',
+                        image_url: 'https://img/color_old.jpeg',
+                        preview_url: 'https://img/color_old.png',
+                        viewer_url: 'https://img/color_old.png',
+                        width: 2000,
+                        height: 2000,
+                        pix: 2000,
+                        format: 'jpeg',
+                        quality: 90,
+                        file_size: 32000,
+                        color_mode: 'rainbow',
+                        root_transforms: [],
+                    }
+                ],
+                bilevel: [],
+                coeffs: [],
+                palette: [],
+            },
+        };
+        vm.runInContext(`
+            _renderActiveFamily = 'color';
+            _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
+            renderArtifactPanel('j', ${JSON.stringify(summary)});
+            openAutolevelPopup();
+        `, ctx);
+        const fallbackBackground = vm.runInContext("document.getElementById('autolevel-background-readout').value", ctx);
+        const fallbackThreshold = vm.runInContext("document.getElementById('autolevel-background-threshold').value", ctx);
+        if (fallbackBackground !== '#000000') { console.error('FATAL: autolevel popup should default background readout to black for old artifacts, got ' + fallbackBackground); process.exit(1); }
+        if (fallbackThreshold !== '4') { console.error('FATAL: autolevel popup should default threshold to 4 for old artifacts, got ' + fallbackThreshold); process.exit(1); }
+        vm.runInContext('_closeAutolevelPopup()', ctx);
+        console.log('  autolevel popup fallback background defaults: OK');
     }
 
     // Step 10: DeepZoom inventory UI tests
@@ -1313,6 +1519,13 @@ async function testPipeline(name, call) {
         const remembered = vm.runInContext('renderSolveScoreLongName', ctx);
         if (!String(selectedPalette).startsWith('long_')) { console.error('FATAL: LONG selection should activate long palette, got ' + selectedPalette); process.exit(1); }
         if (!remembered) { console.error('FATAL: LONG selection should remember long name'); process.exit(1); }
+        const refreshedContainer = ctx._elements['palette-circles-solve-score'];
+        const activeSwatches = refreshedContainer.children.filter(ch => String(ch.className || '').includes(' active'));
+        const activeLong = refreshedContainer.children.find(ch => String(ch.className || '').includes('pal-circle-long'));
+        const activeBuiltin = refreshedContainer.children.find(ch => String(ch.className || '').includes('pal-circle-builtin') && !String(ch.className || '').includes('pal-circle-long'));
+        if (!activeLong || !String(activeLong.className).includes(' active')) { console.error('FATAL: LONG swatch should be active after long selection'); process.exit(1); }
+        if (activeBuiltin && String(activeBuiltin.className).includes(' active')) { console.error('FATAL: built-in PAL swatch should not stay active when LONG is selected'); process.exit(1); }
+        if (activeSwatches.length !== 1) { console.error('FATAL: exactly one swatch should be active after LONG selection, got ' + activeSwatches.length); process.exit(1); }
         console.log('  LONG popup selection: OK (' + remembered + ')');
     }
 
@@ -1860,6 +2073,55 @@ async function testPipeline(name, call) {
         const runStillActive = vm.runInContext('_activeRenderRun !== null', ctx);
         if (!runStillActive) { console.error('FATAL: hard stall should NOT clear active run'); process.exit(1); }
         console.log('  12j stale workers 15+ min => hard stall, run kept: OK');
+        vm.runInContext('_activeRenderRun = null;', ctx);
+    }
+
+    // 12k: autolevel completion logs debug extents
+    {
+        ctx._elements['render-log'] = ctx._mkEl();
+        vm.runInContext("_activeRenderRun = {job_id:'j', mode:'autolevels', run_id:'r_auto_dbg', task_id:'autolevels_r_auto_dbg', started_at_ms: Date.now() - 1000};", ctx);
+        vm.runInContext(`
+            refreshRenderArtifacts = async function() {};
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/check-status' && body.task_prefix === 'autolevels_r_auto_dbg') {
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: true,
+                        results: [{
+                            phase: 'done',
+                            phase_label: 'Done',
+                            family: 'color',
+                            artifact_id: 'autolevels_dbg',
+                            postprocess_kind: 'autolevels',
+                            autolevel_debug: {
+                                background_color: '000000',
+                                background_threshold: 11,
+                                exclude_background: true,
+                                r_min_bin: 16, r_max_bin: 210,
+                                g_min_bin: 18, g_max_bin: 220,
+                                b_min_bin: 20, b_max_bin: 240,
+                                black_bin: 12, white_bin: 220,
+                                black: 0.047,
+                                white: 0.863,
+                                gamma: 1.1,
+                                final_stretch: true,
+                                final_lo_bin: 4, final_hi_bin: 250,
+                                included_pixels: 1000,
+                                excluded_pixels: 2000
+                            }
+                        }]
+                    };
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await _pollActiveRenderRun(); })()', ctx); } catch(e) {}
+        const logText = ctx._elements['render-log'].textContent || '';
+        if (!logText.includes('autolevels:')) { console.error('FATAL: autolevel completion should log debug line'); process.exit(1); }
+        if (!logText.includes('R[16..210]') || !logText.includes('G[18..220]') || !logText.includes('B[20..240]')) { console.error('FATAL: autolevel debug log should include RGB extents, got ' + logText); process.exit(1); }
+        if (!logText.includes('pooled[12..220]') || !logText.includes('tol/ch=11') || !logText.includes('levels=0.047..0.863')) { console.error('FATAL: autolevel debug log should include pooled extents, tolerance, and levels, got ' + logText); process.exit(1); }
+        console.log('  12k autolevel completion logs debug extents: OK');
         vm.runInContext('_activeRenderRun = null;', ctx);
     }
 

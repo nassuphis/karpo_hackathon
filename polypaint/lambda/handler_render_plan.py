@@ -24,6 +24,8 @@ VIEWPORT_FUNCTION = os.environ.get("VIEWPORT_FUNCTION", "polypaint-viewport")
 STORAGE_FUNCTION = os.environ.get("STORAGE_FUNCTION", "polypaint-storage")
 
 MAX_PLAN_BYTES = 200 * 1024  # 200 KB — fail fast before hitting 256 KB SFN limit
+DEFAULT_BACKGROUND_COLOR = "000000"
+DEFAULT_BACKGROUND_THRESHOLD = 4
 
 
 def _validate_omega(value):
@@ -177,6 +179,7 @@ def handler(event, context):
     if mode == "color":
         outputs["metadata"].update({
             "format": ext,
+            "quality": str(rp.get("quality", 90)),
             "color_mode": rp.get("color_mode", "rainbow"),
             "match_mode": rp.get("match_mode", "none"),
             "palette": palette,
@@ -184,6 +187,8 @@ def handler(event, context):
             "solve_metric": solve_metric if solve_score_enabled else "",
             "solve_score_quantile": str(solve_score_quantile if solve_score_enabled else ""),
             "solve_score_omega": str(solve_score_omega if solve_score_enabled else ""),
+            "background_color": DEFAULT_BACKGROUND_COLOR,
+            "background_threshold": str(DEFAULT_BACKGROUND_THRESHOLD),
         })
     elif mode == "bilevel":
         outputs["metadata"].update({

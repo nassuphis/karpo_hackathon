@@ -265,6 +265,15 @@ def _parse_float(value):
         return None
 
 
+def _parse_json(value):
+    if value in ("", None):
+        return None
+    try:
+        return json.loads(value)
+    except Exception:
+        return None
+
+
 def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, fallback_meta=None, legacy=False):
     meta = {}
     if image_info:
@@ -296,6 +305,7 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         "rotation": _parse_float(meta.get("rotation")),
         "degree": meta.get("degree"),
         "pix": meta.get("pix"),
+        "quality": _parse_float(meta.get("quality")),
         "legacy": legacy,
     }
 
@@ -308,12 +318,58 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["shim"] = _parse_float(meta.get("shim"))
         entry["square_extent"] = _parse_float(meta.get("square_extent"))
         entry["constant_color"] = meta.get("constant_color", "")
+        entry["background_color"] = meta.get("background_color", "")
+        entry["background_threshold"] = _parse_float(meta.get("background_threshold"))
         entry["solve_metric"] = meta.get("solve_metric", "")
         q = meta.get("solve_score_quantile", "")
         entry["solve_score_quantile"] = float(q) if q not in ("", None) else None
         omega = meta.get("solve_score_omega", "")
         entry["solve_score_omega"] = float(omega) if omega not in ("", None) else None
+        entry["derived_from_artifact_id"] = meta.get("derived_from_artifact_id", "")
+        entry["postprocess_kind"] = meta.get("postprocess_kind", "")
+        entry["postprocess_profile"] = meta.get("postprocess_profile", "")
+        entry["autolevels_params"] = _parse_json(meta.get("autolevels_params"))
     return entry
+
+
+def _sort_variants_by_created_desc(items):
+    items.sort(key=lambda a: a.get("created_at", ""), reverse=True)
+    return items
+
+
+def _order_color_variants(variants):
+    by_id = {v.get("artifact_id"): v for v in variants if v.get("artifact_id")}
+    children = {}
+    top = []
+    for art in variants:
+        parent_id = art.get("derived_from_artifact_id") or ""
+        if parent_id and parent_id in by_id and parent_id != art.get("artifact_id"):
+            children.setdefault(parent_id, []).append(art)
+        else:
+            top.append(art)
+
+    for art_list in children.values():
+        _sort_variants_by_created_desc(art_list)
+    _sort_variants_by_created_desc(top)
+
+    ordered = []
+    seen = set()
+
+    def append_with_children(art):
+        aid = art.get("artifact_id")
+        if aid in seen:
+            return
+        for child in children.get(aid, []):
+            append_with_children(child)
+        ordered.append(art)
+        if aid:
+            seen.add(aid)
+
+    for art in top:
+        append_with_children(art)
+    for art in variants:
+        append_with_children(art)
+    return ordered
 
 
 def _list_render_family_variants(job_id, family):
@@ -1012,7 +1068,10 @@ def handle_render_summary(event):
         legacy = _legacy_render_variant(job_id, family)
         if legacy:
             families[family].append(legacy)
-        families[family].sort(key=lambda a: a.get("created_at", ""), reverse=True)
+        if family == "color":
+            families[family] = _order_color_variants(families[family])
+        else:
+            families[family].sort(key=lambda a: a.get("created_at", ""), reverse=True)
 
     return ok_response({
         "job_id": job_id,

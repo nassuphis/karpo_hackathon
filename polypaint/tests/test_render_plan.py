@@ -119,6 +119,8 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["outputs"]["metadata"]["square_extent"] == "2.0"
         assert plan["outputs"]["metadata"]["rotation"] == "0"
         assert plan["outputs"]["metadata"]["solve_score_omega"] == "4.0"
+        assert plan["outputs"]["metadata"]["background_color"] == "000000"
+        assert plan["outputs"]["metadata"]["background_threshold"] == "4"
 
     @patch("handler_render_plan._storage_call")
     def test_tri_palette_id_accepted_and_preserved(self, mock_storage):

@@ -1524,7 +1524,7 @@ class TestRenderSummary(unittest.TestCase):
             key = kwargs["Key"]
             if key == "renders/j/color/color_run_1/image.jpeg":
                 return {"ContentLength": 1234, "ContentType": "image/jpeg",
-                        "Metadata": {"width": "4096", "height": "4096", "artifact_id": "color_run_1", "created_at": "2026-03-31T10:00:00Z", "family": "color", "color_mode": "rainbow", "format": "jpeg", "root_transforms": "[]", "view_mode": "auto", "quantile": "0.01", "shim": "0.07", "rotation": "-1.57079632679", "match_mode": "greedy"}}
+                        "Metadata": {"width": "4096", "height": "4096", "artifact_id": "color_run_1", "created_at": "2026-03-31T10:00:00Z", "family": "color", "color_mode": "rainbow", "format": "jpeg", "root_transforms": "[]", "view_mode": "auto", "quantile": "0.01", "shim": "0.07", "rotation": "-1.57079632679", "match_mode": "greedy", "background_color": "000000", "background_threshold": "4"}}
             if key == "renders/j/color/color_run_1/preview.png":
                 return {"ContentLength": 500, "ContentType": "image/png", "Metadata": {}}
             raise Exception("NoSuchKey")
@@ -1546,6 +1546,8 @@ class TestRenderSummary(unittest.TestCase):
         self.assertAlmostEqual(cj["shim"], 0.07)
         self.assertAlmostEqual(cj["rotation"], -1.57079632679)
         self.assertEqual(cj["match_mode"], "greedy")
+        self.assertEqual(cj["background_color"], "000000")
+        self.assertAlmostEqual(cj["background_threshold"], 4.0)
 
     @patch("handler_storage.s3")
     def test_render_summary_parses_solve_score_omega(self, mock_s3):
@@ -1581,6 +1583,131 @@ class TestRenderSummary(unittest.TestCase):
         self.assertEqual(cj["solve_metric"], "anisotropy")
         self.assertAlmostEqual(cj["solve_score_quantile"], 0.02)
         self.assertAlmostEqual(cj["solve_score_omega"], 6.0)
+
+    @patch("handler_storage.s3")
+    def test_render_summary_orders_autolevel_children_above_parent(self, mock_s3):
+        from handler_storage import handle_render_summary
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate_side_effect(**kwargs):
+            prefix = kwargs.get("Prefix", "")
+            if prefix == "renders/j/color/":
+                return [{
+                    "CommonPrefixes": [
+                        {"Prefix": "renders/j/color/color_base/"},
+                        {"Prefix": "renders/j/color/autolevels_child/"},
+                        {"Prefix": "renders/j/color/color_newer/"},
+                    ]
+                }]
+            return [{"CommonPrefixes": []}]
+
+        mock_paginator.paginate.side_effect = paginate_side_effect
+
+        meta_by_key = {
+            "renders/j/color/color_base/image.jpeg": {
+                "ContentLength": 1100,
+                "ContentType": "image/jpeg",
+                "Metadata": {
+                    "artifact_id": "color_base",
+                    "created_at": "2026-04-02T10:00:00Z",
+                    "family": "color",
+                    "format": "jpeg",
+                    "color_mode": "solve_score",
+                    "solve_metric": "anisotropy",
+                    "solve_score_quantile": "0.02",
+                    "solve_score_omega": "6",
+                    "palette": "tri_redgold",
+                    "root_transforms": "[]",
+                    "view_mode": "auto",
+                    "quantile": "0.01",
+                    "shim": "0.05",
+                    "rotation": "0",
+                    "pix": "3000",
+                    "quality": "77",
+                    "width": "3000",
+                    "height": "3000",
+                },
+            },
+            "renders/j/color/color_base/preview.png": {"ContentLength": 100, "ContentType": "image/png", "Metadata": {}},
+            "renders/j/color/autolevels_child/image.jpeg": {
+                "ContentLength": 1200,
+                "ContentType": "image/jpeg",
+                "Metadata": {
+                    "artifact_id": "autolevels_child",
+                    "created_at": "2026-04-02T10:05:00Z",
+                    "family": "color",
+                    "format": "jpeg",
+                    "color_mode": "solve_score",
+                    "solve_metric": "anisotropy",
+                    "solve_score_quantile": "0.02",
+                    "solve_score_omega": "6",
+                    "palette": "tri_redgold",
+                    "root_transforms": "[]",
+                    "view_mode": "auto",
+                    "quantile": "0.01",
+                    "shim": "0.05",
+                    "rotation": "0",
+                    "pix": "3000",
+                    "quality": "83",
+                    "width": "3000",
+                    "height": "3000",
+                    "derived_from_artifact_id": "color_base",
+                    "postprocess_kind": "autolevels",
+                    "postprocess_profile": "preview_default_v1",
+                    "background_color": "000000",
+                    "background_threshold": "4",
+                    "autolevels_params": "{\"quality\":83,\"gamma\":1.1}",
+                },
+            },
+            "renders/j/color/autolevels_child/preview.png": {"ContentLength": 100, "ContentType": "image/png", "Metadata": {}},
+            "renders/j/color/color_newer/image.jpeg": {
+                "ContentLength": 1300,
+                "ContentType": "image/jpeg",
+                "Metadata": {
+                    "artifact_id": "color_newer",
+                    "created_at": "2026-04-02T11:00:00Z",
+                    "family": "color",
+                    "format": "jpeg",
+                    "color_mode": "rainbow",
+                    "root_transforms": "[]",
+                    "view_mode": "auto",
+                    "quantile": "0.01",
+                    "shim": "0.05",
+                    "rotation": "0",
+                    "pix": "3000",
+                    "quality": "90",
+                    "width": "3000",
+                    "height": "3000",
+                },
+            },
+            "renders/j/color/color_newer/preview.png": {"ContentLength": 100, "ContentType": "image/png", "Metadata": {}},
+        }
+
+        def mock_head(**kwargs):
+            key = kwargs["Key"]
+            if key in meta_by_key:
+                return meta_by_key[key]
+            raise Exception("NoSuchKey")
+
+        mock_s3.head_object.side_effect = mock_head
+        mock_s3.get_object.side_effect = Exception("NoSuchKey")
+        mock_s3.generate_presigned_url.return_value = "https://signed"
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+        arts = body["families"]["color"]
+
+        self.assertEqual([a["artifact_id"] for a in arts[:3]], ["color_newer", "autolevels_child", "color_base"])
+        child = arts[1]
+        self.assertEqual(child["derived_from_artifact_id"], "color_base")
+        self.assertEqual(child["postprocess_kind"], "autolevels")
+        self.assertEqual(child["postprocess_profile"], "preview_default_v1")
+        self.assertEqual(child["background_color"], "000000")
+        self.assertAlmostEqual(child["background_threshold"], 4.0)
+        self.assertEqual(child["autolevels_params"]["quality"], 83)
+        self.assertAlmostEqual(child["quality"], 83.0)
 
     @patch("handler_storage.s3")
     def test_render_summary_missing_artifacts_are_false(self, mock_s3):

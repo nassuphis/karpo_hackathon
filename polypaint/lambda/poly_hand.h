@@ -2015,3 +2015,74 @@ static void poly_645_hand(double x1r, double x1i, double x2r, double x2i,
         if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
     }
 }
+
+static void poly_795_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    for (int i = 0; i < 25; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double x1x2r, x1x2i;
+    c_mul(x1r, x1i, x2r, x2i, &x1x2r, &x1x2i);
+    const double denom = 1.0 + c_abs(x1x2r, x1x2i);
+
+    for (int i = 0; i < 25; i++) {
+        const double base_r = (double)(i * i) + x1r;
+        const double base_i = x1i;
+
+        double exp_r, exp_i;
+        c_exp2((double)i * x2r, (double)i * x2i, &exp_r, &exp_i);
+
+        double num_r, num_i;
+        c_mul(base_r, base_i, exp_r, exp_i, &num_r, &num_i);
+        cRe[i] = num_r / denom;
+        cIm[i] = num_i / denom;
+    }
+
+    for (int i = 4; i < 15; i++) {
+        cRe[i] = cRe[i] * cos(cIm[i]);
+        cIm[i] = 0.0;
+    }
+
+    double phase_r, phase_i;
+    c_exp2(0.0, c_arg(x1r + x2r, x1i + x2i), &phase_r, &phase_i);
+    for (int i = 16; i < 25; i++) {
+        const double mag = c_abs(cRe[i], cIm[i]);
+        c_mul(mag, 0.0, phase_r, phase_i, &cRe[i], &cIm[i]);
+    }
+
+    double jt2r, jt2i;
+    c_mul(0.0, 1.0, x2r, x2i, &jt2r, &jt2i);
+    const double zr = x1r + jt2r;
+    const double zi = x1i + jt2i;
+    const double czr = zr;
+    const double czi = -zi;
+
+    double z2r, z2i, z3r, z3i;
+    c_mul(zr, zi, zr, zi, &z2r, &z2i);
+    c_mul(z2r, z2i, zr, zi, &z3r, &z3i);
+
+    double cz2r, cz2i, cz3r, cz3i;
+    c_mul(czr, czi, czr, czi, &cz2r, &cz2i);
+    c_mul(cz2r, cz2i, czr, czi, &cz3r, &cz3i);
+
+    cRe[2] = z3r - cz3r;
+    cIm[2] = z3i - cz3i;
+
+    const double abs1 = c_abs(x1r, x1i);
+    const double abs2 = c_abs(x2r, x2i);
+    const double shared_mag = abs1 * abs1 * abs1 + abs2 * abs2 * abs2;
+    double shared_r, shared_i;
+    c_exp2(0.0, c_arg(x2r - x1r, x2i - x1i), &phase_r, &phase_i);
+    c_mul(shared_mag, 0.0, phase_r, phase_i, &shared_r, &shared_i);
+    cRe[6] = shared_r;  cIm[6] = shared_i;
+    cRe[22] = shared_r; cIm[22] = shared_i;
+
+    cRe[18] = (abs2 > 1.0) ? log(abs2) : 0.0;
+    cIm[18] = 0.0;
+
+    for (int i = 0; i < 25; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}

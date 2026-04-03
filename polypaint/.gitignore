@@ -54,3 +54,15 @@ images/*.png
 .DS_Store
 node_modules
 lambda/solve_proximity_stats_test
+
+# Playwright test artifacts
+test-results/
+**/error-context.md
+**/.last-run.json
+
+# npm
+package-lock.json
+
+# Transpiler duplicates (poly_generated_funcs.h is the tracked version)
+lambda/poly_generated_100.c
+lambda/poly_generated_1000.c

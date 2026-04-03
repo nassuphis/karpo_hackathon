@@ -46,6 +46,8 @@ def handler(event, context):
         import glob
         for stale in glob.glob("/tmp/pix_t*.pix"):
             os.remove(stale)
+        for stale in glob.glob("/tmp/pixbin_t*.pbx"):
+            os.remove(stale)
 
         # Run roots2pix — writes tile-bucketed .pix files to /tmp/pix_t*.pix
         t1 = time.time()
@@ -72,6 +74,9 @@ def handler(event, context):
             with open(rt_path, "w") as rtf:
                 rtf.write(json.dumps(rt_chain))
             cmd.append(f"--root_xforms={rt_path}")
+        emit_pixel_bins = bool(params.get("emit_pixel_bins"))
+        if emit_pixel_bins:
+            cmd.append("--pixel_bin_prefix=/tmp/pixbin")
 
         # Solve-score bins: download JSON, parse, pass as CLI args
         color = params.get("color", "rainbow")
@@ -130,6 +135,7 @@ def handler(event, context):
 
         # Upload .pix files — stream from file, do NOT f.read() into memory
         uploaded = 0
+        uploaded_pixel_bins = 0
         for t in range(n_tiles):
             pix_path = f"/tmp/pix_t{t:04d}.pix"
             if os.path.exists(pix_path) and os.path.getsize(pix_path) > 0:
@@ -138,12 +144,21 @@ def handler(event, context):
                     s3.upload_fileobj(fh, BUCKET, s3_key)
                 os.remove(pix_path)
                 uploaded += 1
+            pbx_path = f"/tmp/pixbin_t{t:04d}.pbx"
+            if emit_pixel_bins and os.path.exists(pbx_path):
+                if os.path.getsize(pbx_path) > 0:
+                    pbx_key = f"renders/{job_id}/pixbin_chunk_{chunk_idx:04d}_t{t:04d}.pbx"
+                    with open(pbx_path, "rb") as fh:
+                        s3.upload_fileobj(fh, BUCKET, pbx_key)
+                    uploaded_pixel_bins += 1
+                os.remove(pbx_path)
 
         report_status(job_id, task_id, "done")
         return ok_response({
             "chunk_idx": chunk_idx,
             "stripe_idx": chunk_idx,
             "tiles_uploaded": uploaded,
+            "pixel_bin_tiles_uploaded": uploaded_pixel_bins,
             "raster_us": raster_us,
             "roots_plotted": raster_meta["roots_plotted"],
             "roots_clipped": raster_meta["roots_clipped"],

@@ -38,7 +38,10 @@ All tests live in `polypaint/tests/`.
 | `test_palette_render_plan.py` | Palette render plan Lambda | Python mocks only |
 | `test_palette_chunk_handler.py` | Palette chunk worker Lambda | Python mocks only |
 | `test_palette_finalize_handler.py` | Palette finalize Lambda | Python mocks only |
+| `test_coeff_catalog_consistency.py` | Hand-written coeff-function overrides stay wired through source catalog, generated lookup, and generated JS catalog | Python only |
 | `test_giga62_hand.py` | giga_62 hand-written function accuracy | `sweep_test` compiled |
+| `test_poly645_hand.py` | `poly_645` hand-written coeff function matches Python reference and stays off the broken transpiled path | `sweep_test` compiled |
+| `test_poly795_hand.py` | `poly_795` hand-written coeff function matches Python reference, including slice rewrites and both `np.where` branches | `sweep_test` compiled |
 | `test_frontend_js.sh` | Frontend JS execution: UI logic, TRI palette popup/swatches, dispatch, Render family catalogs, Palette workflow UI, DeepZoom inventory | Node.js (vm module) |
 | `e2e/deepzoom-inventory.spec.js` | DeepZoom inventory: load, sort, select, arrow keys, share links | Playwright browser |
 | `e2e/render-refresh.spec.js` | Render tab refresh: summary call, artifact panel, info line | Playwright browser |
@@ -69,7 +72,40 @@ uv run python tests/test_dither.py
 uv run python tests/test_param_dump.py
 uv run python tests/test_bilevel_raster.py
 uv run python tests/test_bilevel_stitch.py
+uv run python -m pytest tests/test_coeff_catalog_consistency.py tests/test_poly645_hand.py tests/test_poly795_hand.py -q
 ```
+
+### Hand override workflow
+
+When replacing a broken transpiled coeff function with a hand implementation in `poly_hand.h`, all of these must be updated together:
+
+1. Add or update the hand function in `lambda/poly_hand.h`.
+2. Change the source catalog entry in `lambda/coeff_func_catalog.json`:
+   - `c_symbol` must point at `<name>_hand`
+   - `kind` must be `"hand"`
+   - `source` must be `"poly_hand.h"`
+3. Update `lambda/coeff_func_metrics.json` if the frontend agreement badge should change.
+4. Regenerate the derived artifacts:
+   ```bash
+   cd polypaint/lambda
+   python3 gen_catalog.py
+   ```
+   This rewrites:
+   - `lambda/coeff_func_lookup.h`
+   - `coeff_func_catalog_js.js`
+5. Rebuild binaries that compile against `coeff_func_lookup.h`:
+   ```bash
+   cc -O3 -o sweep_test sweep_cli.c -lm
+   ```
+   And for deploy, `deploy.sh update` will rebuild the shipped `sweep` binary.
+6. Add or update a parity regression for the specific function if the transpiled implementation was wrong.
+7. Run the loose-end checks after regenerating:
+   ```bash
+   cd polypaint
+   uv run python -m pytest tests/test_coeff_catalog_consistency.py tests/test_poly645_hand.py tests/test_poly795_hand.py -q
+   ```
+
+Do not stop after editing `poly_hand.h`. If the catalog or generated lookup is left stale, the runtime and UI will still use and label the function as transpiled.
 
 ### Docker ARM64 tests (binary tests that need LAPACK or ARM64 runtime)
 
@@ -205,8 +241,12 @@ Before running `deploy.sh update`:
    ```bash
    uv run python -m pytest tests/test_sweep_smoke.py tests/test_poly_accuracy.py tests/test_pipeline.py tests/test_bilevel_raster.py tests/test_bilevel_stitch.py tests/test_dither.py tests/test_param_dump.py -v
    ```
-3. **Cross-compile:** `aarch64-linux-musl-gcc -O3 -static -o sweep sweep_cli.c -lm`
-4. **JS syntax check:** `deploy.sh` does this automatically
+3. **If you changed coeff-function wiring or hand overrides, run the catalog consistency slice:**
+   ```bash
+   uv run python -m pytest tests/test_coeff_catalog_consistency.py tests/test_poly645_hand.py -q
+   ```
+4. **Cross-compile:** `aarch64-linux-musl-gcc -O3 -static -o sweep sweep_cli.c -lm`
+5. **JS syntax check:** `deploy.sh` does this automatically
 
 ### test_chunking.py
 

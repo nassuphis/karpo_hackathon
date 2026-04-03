@@ -6712,11 +6712,11 @@ window._coeffFuncCatalog = [
   },
   {
     "name": "poly_645",
-    "kind": "transpiled",
-    "source": "poly700.py",
-    "degree": 35,
+    "kind": "hand",
+    "source": "poly_hand.h",
+    "degree": 8,
     "params": [],
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   {
     "name": "poly_646",
@@ -7966,11 +7966,11 @@ window._coeffFuncCatalog = [
   },
   {
     "name": "poly_795",
-    "kind": "transpiled",
-    "source": "poly800.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 23
+    "agreement_pct": 100
   },
   {
     "name": "poly_796",

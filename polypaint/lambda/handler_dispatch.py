@@ -35,6 +35,7 @@ FUNCTIONS = {
     "palette_orchestrator": os.environ.get("PALETTE_ORCHESTRATOR_FUNCTION", "polypaint-palette-orchestrator"),
     "autolevels": os.environ.get("AUTOLEVELS_FUNCTION", "polypaint-autolevels"),
     "repalette": os.environ.get("REPALETTE_FUNCTION", "polypaint-repalette"),
+    "color_repalette": os.environ.get("COLOR_REPALETTE_FUNCTION", "polypaint-color-repalette"),
 }
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_WORKERS = int(os.environ.get("DISPATCH_THREADS", "50"))

@@ -169,6 +169,64 @@ test.describe('Solve Score UI', () => {
     expect(mode).toBe('proximity');
   });
 
+  test('repalette popup uses PAL/TRI/LONG buttons and nested selectors stay accessible', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      _renderActiveFamily = 'palette';
+      _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
+      renderArtifactPanel('j', {
+        calc: { exists: true, N: 4000, degree: 8 },
+        families: {
+          color: [],
+          bilevel: [],
+          coeffs: [],
+          palette: [{
+            artifact_id: 'pal_src',
+            palette_id: 'pal_src',
+            display_name: 'crowding q=5.0% w=4 reef',
+            created_at: '2026-04-02T10:00:00Z',
+            image_key: 'renders/j/palettes/pal_src/image.jpeg',
+            image_url: 'https://img/pal_src.jpeg',
+            preview_url: 'https://img/pal_src.png',
+            viewer_url: 'https://img/pal_src.png',
+            width: 4000,
+            height: 4000,
+            file_size: 90000,
+            metric: 'crowding',
+            palette: 'reef',
+            solve_score_quantile: 0.05,
+            solve_score_omega: 4,
+            render_reusable: true,
+            data_layout: 'chunk_all_pass_v1',
+            chunk_bins_prefix: 'renders/j/palettes/pal_src/chunks/palette_bins_chunk_',
+          }],
+        },
+      });
+    });
+    await page.locator('#btn-render-repalette').click();
+    await expect(page.locator('#repalette-popup-overlay')).toBeVisible();
+    const swatches = page.locator('#palette-circles-repalette .pal-circle');
+    await expect(swatches).toHaveCount(3);
+    await expect(swatches.nth(0)).toContainText('PAL');
+    await expect(swatches.nth(1)).toContainText('TRI');
+    await expect(swatches.nth(2)).toContainText('LONG');
+
+    await page.locator('#palette-circles-repalette [data-palette-popup="builtin"]').click();
+    await expect(page.locator('#builtin-popup-overlay')).toBeVisible();
+    await expect(page.locator('#builtin-popup-title')).toContainText('RePalette');
+    await page.locator('#builtin-popup-close').click();
+
+    await page.locator('#palette-circles-repalette .pal-circle-tri').click();
+    await expect(page.locator('#tri-popup-overlay')).toBeVisible();
+    await expect(page.locator('#tri-popup-title')).toContainText('RePalette');
+    await page.locator('#tri-popup-close').click();
+
+    await page.locator('#palette-circles-repalette .pal-circle-long').click();
+    await expect(page.locator('#long-popup-overlay')).toBeVisible();
+    await expect(page.locator('#long-popup-title')).toContainText('RePalette');
+    await page.locator('#long-popup-close').click();
+  });
+
   test('Solve score dropdown has exact 5 metric options', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     const dropdown = page.locator('#render-solve-score');

@@ -268,6 +268,7 @@
               "palette.$": "$.plan.params.palette",
               "constant_color.$": "$.plan.params.constant_color",
               "root_transforms.$": "$.plan.params.root_transforms",
+              "emit_pixel_bins.$": "$.plan.outputs.repalette_capable",
               "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
               "saved_palette_bins_key.$": "States.Format('{}{}.bin', $.plan.saved_palette.chunk_bins_prefix, $$.Map.Item.Value.chunk_idx)",
               "solve_metric.$": "$.plan.solve_score.metric",
@@ -328,7 +329,9 @@
               "tile_w.$": "$$.Map.Item.Value.tile_w",
               "tile_h.$": "$$.Map.Item.Value.tile_h",
               "n_tile_cols.$": "$.plan.grid.n_tile_cols",
-              "n_tile_rows.$": "$.plan.grid.n_tile_rows"
+              "n_tile_rows.$": "$.plan.grid.n_tile_rows",
+              "emit_pixel_bins.$": "$.plan.outputs.repalette_capable",
+              "pixel_bins_out_key.$": "States.ArrayGetItem($.plan.grid.pixel_bin_tile_keys, $$.Map.Item.Value.tile_idx)"
             },
             "ItemProcessor": {
               "ProcessorConfig": {"Mode": "INLINE"},

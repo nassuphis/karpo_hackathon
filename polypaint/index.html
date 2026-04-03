@@ -110,6 +110,11 @@ button {
     position: fixed; inset: 0; background: rgba(0,0,0,0.6);
     display: none; align-items: center; justify-content: center; z-index: 1000;
 }
+#tri-popup-overlay,
+#builtin-popup-overlay,
+#long-popup-overlay {
+    z-index: 1200;
+}
 .tri-popup {
     width: min(760px, calc(100vw - 32px)); max-height: min(80vh, 720px);
     background: #16213e; border: 1px solid #0f3460; border-radius: 10px;
@@ -162,6 +167,26 @@ button {
 }
 .tri-popup-aliases {
     font-size: 10px; color: #777;
+}
+.function-picker-btn {
+    min-width: min(560px, calc(100vw - 200px));
+    max-width: 100%;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.function-picker-meta {
+    font-size: 11px;
+    color: #888;
+    min-width: 0;
+}
+.function-popup-summary {
+    padding: 10px 14px;
+    color: #9fb3c8;
+    font-size: 11px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 .tri-popup-strip {
     width: 100%; min-width: 260px; height: 18px; border-radius: 999px;
@@ -338,7 +363,9 @@ button {
             </div>
             <div class="anim-row">
                 <label style="min-width:90px">Function:</label>
-                <select id="render-function" onchange="updateCfpvRow()"></select>
+                <select id="render-function" onchange="updateCfpvRow()" style="display:none"></select>
+                <button id="render-function-picker" type="button" class="btn-secondary function-picker-btn" onclick="openFunctionPopup()">Choose coefficient function...</button>
+                <span id="render-function-picker-meta" class="function-picker-meta"></span>
             </div>
             <div class="anim-row" id="cfpv-row" style="display:none">
                 <label style="min-width:90px">Func params:</label>
@@ -732,6 +759,33 @@ button {
         </div>
     </div>
 </div>
+<div id="function-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="function-popup-title">
+        <div class="tri-popup-head">
+            <div id="function-popup-title" class="tri-popup-title">Select Coefficient Function</div>
+            <button id="function-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div class="tri-popup-filter-wrap">
+            <input id="function-popup-filter" type="text" placeholder="Filter by name, kind, source, or degree">
+        </div>
+        <div class="tri-popup-table-wrap">
+            <table class="tri-popup-table">
+                <thead>
+                    <tr><th style="width:44%">Name</th><th style="width:12%">Degree</th><th style="width:14%">Kind</th><th style="width:14%">Agree</th><th>Params</th></tr>
+                </thead>
+                <tbody id="function-popup-body"></tbody>
+            </table>
+        </div>
+        <div id="function-popup-summary" class="function-popup-summary"></div>
+        <div class="autolevel-popup-actions">
+            <div></div>
+            <div style="display:flex; gap:8px">
+                <button id="function-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+                <button id="function-popup-choose" type="button" class="btn-primary" style="padding:6px 12px">Choose</button>
+            </div>
+        </div>
+    </div>
+</div>
 <div id="autolevel-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
     <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="autolevel-popup-title">
         <div class="tri-popup-head">
@@ -915,6 +969,27 @@ button {
     </div>
 </div>
 
+<div id="color-repalette-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="color-repalette-popup-title">
+        <div class="tri-popup-head">
+            <div id="color-repalette-popup-title" class="tri-popup-title">Color RePalette</div>
+            <button id="color-repalette-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div id="color-repalette-popup-summary" class="autolevel-popup-summary"></div>
+        <div style="margin:10px 0 12px 0">
+            <div id="palette-circles-color-repalette" style="display:flex; flex-wrap:wrap; gap:8px"></div>
+        </div>
+        <div class="autolevel-popup-help">Reuses the selected Color artifact’s saved winner-per-pixel bins and only changes the palette-to-RGB mapping.</div>
+        <div class="autolevel-popup-actions">
+            <div></div>
+            <div style="display:flex; gap:8px">
+                <button id="color-repalette-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+                <button id="color-repalette-popup-run" type="button" class="btn-primary" style="padding:6px 12px">Execute</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div id="generate-from-palette-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
     <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="generate-from-palette-popup-title">
         <div class="tri-popup-head">
@@ -933,6 +1008,10 @@ button {
             </table>
         </div>
         <div id="generate-from-palette-popup-summary" class="autolevel-popup-summary"></div>
+        <div style="margin:10px 14px 12px 14px">
+            <div id="palette-circles-generate-from-palette" style="display:flex; flex-wrap:wrap; gap:8px"></div>
+        </div>
+        <div class="autolevel-popup-help">Reuses the selected palette artifact’s saved bin assignment and lets you choose a different output colorvector.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -1312,8 +1391,7 @@ function _populateComputeFromDetail(jobId, detail) {
 
     const functionName = pipeline.function || calc.function || '';
     if (functionName) {
-        document.getElementById('render-function').value = functionName;
-        updateCfpvRow();
+        _setRenderFunction(functionName);
     }
 
     const ptDisplay = pipeline.param_transforms_display || detail.param_transforms_display || pipeline.param_transforms || detail.param_transforms || [];
@@ -1480,6 +1558,14 @@ let repalettePalette = 'inferno';
 let repaletteBuiltinPalette = 'inferno';
 let repaletteTriName = 'redgold';
 let repaletteLongName = '';
+let colorRepalettePalette = 'inferno';
+let colorRepaletteBuiltinPalette = 'inferno';
+let colorRepaletteTriName = 'redgold';
+let colorRepaletteLongName = '';
+let generateFromPalettePalette = 'inferno';
+let generateFromPaletteBuiltinPalette = 'inferno';
+let generateFromPaletteTriName = 'redgold';
+let generateFromPaletteLongName = '';
 let _renderActiveFamily = 'color';
 let _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [] };
 let _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
@@ -1489,7 +1575,9 @@ let _builtinPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 
 let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
 let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
-let _generateFromPalettePopupState = { open: false, filter: '', highlightIdx: 0 };
+let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '' };
+let _generateFromPalettePopupState = { open: false, filter: '', highlightIdx: 0, sourcePaletteId: '' };
+let _functionPopupState = { open: false, filter: '', highlightIdx: 0 };
 
 function _stopsToGradient(stops) {
     return `linear-gradient(to right, ${stops.map((s, i) => s + ' ' + Math.round(i/(stops.length-1)*100) + '%').join(', ')})`;
@@ -1523,6 +1611,8 @@ function _paletteContainerId(mode) {
     return mode === 'proximity' ? 'palette-circles-root-proximity'
         : mode === 'solve_score' ? 'palette-circles-solve-score'
         : mode === 'repalette' ? 'palette-circles-repalette'
+        : mode === 'color_repalette' ? 'palette-circles-color-repalette'
+        : mode === 'generate_from_palette' ? 'palette-circles-generate-from-palette'
         : 'palette-circles-palette-tab';
 }
 
@@ -1535,7 +1625,7 @@ function _longCatalog() {
 }
 
 function _modeUsesBuiltinPopup(mode) {
-    return mode === 'proximity' || mode === 'solve_score';
+    return mode === 'proximity' || mode === 'solve_score' || mode === 'repalette' || mode === 'color_repalette' || mode === 'generate_from_palette';
 }
 
 function _builtinPaletteEntryByName(name) {
@@ -1550,6 +1640,8 @@ function _builtinPaletteForMode(mode) {
     if (mode === 'proximity') return renderRootProximityBuiltinPalette;
     if (mode === 'solve_score') return renderSolveScoreBuiltinPalette;
     if (mode === 'repalette') return repaletteBuiltinPalette;
+    if (mode === 'color_repalette') return colorRepaletteBuiltinPalette;
+    if (mode === 'generate_from_palette') return generateFromPaletteBuiltinPalette;
     return paletteTabBuiltinPalette;
 }
 
@@ -1557,12 +1649,14 @@ function _setRememberedBuiltinPalette(mode, paletteName) {
     if (mode === 'proximity') renderRootProximityBuiltinPalette = paletteName;
     else if (mode === 'solve_score') renderSolveScoreBuiltinPalette = paletteName;
     else if (mode === 'repalette') repaletteBuiltinPalette = paletteName;
+    else if (mode === 'color_repalette') colorRepaletteBuiltinPalette = paletteName;
+    else if (mode === 'generate_from_palette') generateFromPaletteBuiltinPalette = paletteName;
     else paletteTabBuiltinPalette = paletteName;
 }
 
 function _syncBuiltinDefaults() {
     const fallback = _defaultBuiltinPaletteName();
-    ['proximity', 'solve_score', 'palette_tab', 'repalette'].forEach(mode => {
+    ['proximity', 'solve_score', 'palette_tab', 'repalette', 'color_repalette', 'generate_from_palette'].forEach(mode => {
         const entry = _builtinPaletteEntryByName(_builtinPaletteForMode(mode));
         if (!entry) _setRememberedBuiltinPalette(mode, fallback);
     });
@@ -1598,6 +1692,8 @@ function _triPaletteForMode(mode) {
     if (mode === 'proximity') return renderRootProximityTriName;
     if (mode === 'solve_score') return renderSolveScoreTriName;
     if (mode === 'repalette') return repaletteTriName;
+    if (mode === 'color_repalette') return colorRepaletteTriName;
+    if (mode === 'generate_from_palette') return generateFromPaletteTriName;
     return paletteTabTriName;
 }
 
@@ -1605,6 +1701,8 @@ function _longPaletteForMode(mode) {
     if (mode === 'proximity') return renderRootProximityLongName;
     if (mode === 'solve_score') return renderSolveScoreLongName;
     if (mode === 'repalette') return repaletteLongName;
+    if (mode === 'color_repalette') return colorRepaletteLongName;
+    if (mode === 'generate_from_palette') return generateFromPaletteLongName;
     return paletteTabLongName;
 }
 
@@ -1612,6 +1710,8 @@ function _setRememberedTriPalette(mode, triName) {
     if (mode === 'proximity') renderRootProximityTriName = triName;
     else if (mode === 'solve_score') renderSolveScoreTriName = triName;
     else if (mode === 'repalette') repaletteTriName = triName;
+    else if (mode === 'color_repalette') colorRepaletteTriName = triName;
+    else if (mode === 'generate_from_palette') generateFromPaletteTriName = triName;
     else paletteTabTriName = triName;
 }
 
@@ -1619,6 +1719,8 @@ function _setRememberedLongPalette(mode, longName) {
     if (mode === 'proximity') renderRootProximityLongName = longName;
     else if (mode === 'solve_score') renderSolveScoreLongName = longName;
     else if (mode === 'repalette') repaletteLongName = longName;
+    else if (mode === 'color_repalette') colorRepaletteLongName = longName;
+    else if (mode === 'generate_from_palette') generateFromPaletteLongName = longName;
     else paletteTabLongName = longName;
 }
 
@@ -1626,12 +1728,14 @@ function _currentPaletteForMode(mode) {
     if (mode === 'proximity') return renderRootProximityPalette;
     if (mode === 'solve_score') return renderSolveScorePalette;
     if (mode === 'repalette') return repalettePalette;
+    if (mode === 'color_repalette') return colorRepalettePalette;
+    if (mode === 'generate_from_palette') return generateFromPalettePalette;
     return paletteTabPalette;
 }
 
 function _syncTriDefaults() {
     const fallback = _defaultTriPaletteName();
-    ['proximity', 'solve_score', 'palette_tab', 'repalette'].forEach(mode => {
+    ['proximity', 'solve_score', 'palette_tab', 'repalette', 'color_repalette', 'generate_from_palette'].forEach(mode => {
         const name = _triPaletteForMode(mode);
         if (!_triPaletteEntryByName(name)) _setRememberedTriPalette(mode, fallback);
     });
@@ -1639,7 +1743,7 @@ function _syncTriDefaults() {
 
 function _syncLongDefaults() {
     const fallback = _defaultLongPaletteName();
-    ['proximity', 'solve_score', 'palette_tab', 'repalette'].forEach(mode => {
+    ['proximity', 'solve_score', 'palette_tab', 'repalette', 'color_repalette', 'generate_from_palette'].forEach(mode => {
         const name = _longPaletteForMode(mode);
         if (!_longPaletteEntryByName(name)) _setRememberedLongPalette(mode, fallback);
     });
@@ -1706,6 +1810,8 @@ function _popupModeLabel(mode) {
     return mode === 'proximity' ? 'Root proximity'
         : mode === 'solve_score' ? 'Solve score'
         : mode === 'repalette' ? 'RePalette'
+        : mode === 'color_repalette' ? 'Color RePalette'
+        : mode === 'generate_from_palette' ? 'GenerateFromPalette'
         : 'Palette tab';
 }
 
@@ -1819,6 +1925,8 @@ function setPaletteForMode(mode, name) {
     if (mode === 'proximity') renderRootProximityPalette = name;
     else if (mode === 'solve_score') renderSolveScorePalette = name;
     else if (mode === 'repalette') repalettePalette = name;
+    else if (mode === 'color_repalette') colorRepalettePalette = name;
+    else if (mode === 'generate_from_palette') generateFromPalettePalette = name;
     else if (mode === 'palette_tab') paletteTabPalette = name;
     const builtinEntry = _builtinPaletteEntryByName(name);
     if (builtinEntry) _setRememberedBuiltinPalette(mode, builtinEntry.name);
@@ -1830,6 +1938,9 @@ function setPaletteForMode(mode, name) {
         if (_longPaletteEntryByName(longName)) _setRememberedLongPalette(mode, longName);
     }
     _renderPaletteRow(mode);
+    if (mode === 'repalette' && _repalettePopupState.open) _renderRepalettePopup();
+    if (mode === 'color_repalette' && _colorRepalettePopupState.open) _renderColorRepalettePopup();
+    if (mode === 'generate_from_palette' && _generateFromPalettePopupState.open) _renderGenerateFromPalettePopup();
 }
 
 function _activeRenderPalette() {
@@ -2317,6 +2428,13 @@ function _canRepaletteArtifact(art) {
     return !!(art.palette_bins_key || art.chunk_bins_prefix);
 }
 
+function _canColorRepaletteArtifact(art) {
+    if (!art || art.family !== 'color') return false;
+    if (art.postprocess_kind) return false;
+    if (!(art.color_mode === 'solve_score' || art.color_mode === 'saved_palette')) return false;
+    return !!(art.repalette_capable && art.pixel_bins_prefix);
+}
+
 function _reusablePaletteArtifacts() {
     return (_renderArtifacts.palette || []).filter(art =>
         !!(art && art.palette_id && art.render_reusable && art.data_layout === 'chunk_all_pass_v1' && art.chunk_bins_prefix)
@@ -2324,6 +2442,9 @@ function _reusablePaletteArtifacts() {
 }
 
 function _closeRepalettePopup() {
+    _closeBuiltinPalettePopup();
+    _closeTriPalettePopup();
+    _closeLongPalettePopup();
     _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
     const overlay = document.getElementById('repalette-popup-overlay');
     if (overlay) {
@@ -2411,6 +2532,101 @@ async function runRepaletteSelectedArtifact() {
     }
 }
 
+function _closeColorRepalettePopup() {
+    _closeBuiltinPalettePopup();
+    _closeTriPalettePopup();
+    _closeLongPalettePopup();
+    _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '' };
+    const overlay = document.getElementById('color-repalette-popup-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+}
+
+function _renderColorRepalettePopup() {
+    const overlay = document.getElementById('color-repalette-popup-overlay');
+    const summaryEl = document.getElementById('color-repalette-popup-summary');
+    const runBtn = document.getElementById('color-repalette-popup-run');
+    const art = _renderSelectedArtifactEntry();
+    if (!overlay || !summaryEl || !_colorRepalettePopupState.open || !art || !_canColorRepaletteArtifact(art)) {
+        _closeColorRepalettePopup();
+        return;
+    }
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    _renderPaletteRow('color_repalette');
+    const sourceName = art.artifact_id || 'selected color artifact';
+    const outputPalette = _currentPaletteForMode('color_repalette') || art.palette || '?';
+    const modeLabel = art.color_mode === 'saved_palette' ? 'saved-palette winner bins' : 'solve-score winner bins';
+    summaryEl.textContent = `Source: ${sourceName} • current palette=${art.palette || '?'} • ${modeLabel} reused • output colorvector=${outputPalette}`;
+    if (runBtn) runBtn.disabled = !_currentPaletteForMode('color_repalette');
+}
+
+function openColorRepalettePopup() {
+    const art = _renderSelectedArtifactEntry();
+    if (!_canColorRepaletteArtifact(art)) return;
+    _syncBuiltinDefaults();
+    _syncTriDefaults();
+    _syncLongDefaults();
+    if (art.palette) setPaletteForMode('color_repalette', art.palette);
+    _colorRepalettePopupState = {
+        open: true,
+        sourceArtifactId: art.artifact_id || '',
+        sourceDisplayName: art.artifact_id || '',
+    };
+    _renderColorRepalettePopup();
+}
+
+async function runColorRepaletteSelectedArtifact() {
+    const art = _renderSelectedArtifactEntry();
+    const jobId = document.getElementById('render-results-dir').value.trim();
+    if (!jobId || !_canColorRepaletteArtifact(art) || _activeRenderRun) return;
+    const btn = document.getElementById('color-repalette-popup-run');
+    const orig = btn ? btn.textContent : 'Execute';
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Executing...'; }
+        const runId = _generateRunId();
+        const taskId = 'color_repalette_' + runId;
+        const artifactId = 'color_repalette_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        const paletteName = _currentPaletteForMode('color_repalette') || art.palette || 'inferno';
+        log(`Color RePalette: dispatching ${art.artifact_id} -> ${paletteName}...`, '', 'render-log');
+        const dispResult = await lambdaPost('dispatch', {
+            target: 'color_repalette',
+            jobs: [{
+                job_id: jobId,
+                task_id: taskId,
+                artifact_id: artifactId,
+                source_artifact_id: art.artifact_id,
+                source_image_key: art.image_key,
+                new_palette: paletteName,
+            }],
+            expected_keys: [],
+        });
+        if ((dispResult.fired || 0) !== 1) throw new Error('Color RePalette dispatch failed');
+        _saveActiveRun({
+            job_id: jobId,
+            mode: 'color_repalette',
+            run_id: runId,
+            task_id: taskId,
+            started_at_ms: Date.now(),
+        });
+        document.getElementById('render-status').textContent = 'Color RePalette queued...';
+        document.getElementById('render-status').className = 'status';
+        _closeColorRepalettePopup();
+        startActiveRenderObserver();
+    } catch (e) {
+        log('Color RePalette failed: ' + e.message, 'err', 'render-log');
+        const statusEl = document.getElementById('render-status');
+        if (statusEl) {
+            statusEl.textContent = 'Color RePalette error: ' + e.message;
+            statusEl.className = 'status error';
+        }
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+}
+
 function _visibleGenerateFromPaletteCatalog() {
     const filter = (_generateFromPalettePopupState.filter || '').trim().toLowerCase();
     const items = _reusablePaletteArtifacts();
@@ -2427,7 +2643,10 @@ function _visibleGenerateFromPaletteCatalog() {
 }
 
 function _closeGenerateFromPalettePopup() {
-    _generateFromPalettePopupState = { open: false, filter: '', highlightIdx: 0 };
+    _closeBuiltinPalettePopup();
+    _closeTriPalettePopup();
+    _closeLongPalettePopup();
+    _generateFromPalettePopupState = { open: false, filter: '', highlightIdx: 0, sourcePaletteId: '' };
     const overlay = document.getElementById('generate-from-palette-popup-overlay');
     const filter = document.getElementById('generate-from-palette-popup-filter');
     if (overlay) {
@@ -2443,6 +2662,7 @@ function _renderGenerateFromPalettePopup() {
     const filterEl = document.getElementById('generate-from-palette-popup-filter');
     const summaryEl = document.getElementById('generate-from-palette-popup-summary');
     const runBtn = document.getElementById('generate-from-palette-popup-run');
+    const paletteRowEl = document.getElementById('palette-circles-generate-from-palette');
     if (!overlay || !bodyEl || !filterEl || !summaryEl) return;
     if (!_generateFromPalettePopupState.open) {
         _closeGenerateFromPalettePopup();
@@ -2458,6 +2678,7 @@ function _renderGenerateFromPalettePopup() {
     bodyEl.replaceChildren();
 
     if (!visible.length) {
+        if (paletteRowEl) paletteRowEl.replaceChildren();
         const row = document.createElement('tr');
         row.className = 'tri-popup-empty';
         const cell = document.createElement('td');
@@ -2507,8 +2728,17 @@ function _renderGenerateFromPalettePopup() {
     });
 
     const selected = visible[highlightIdx];
+    if (selected && _generateFromPalettePopupState.sourcePaletteId !== (selected.palette_id || '')) {
+        _generateFromPalettePopupState.sourcePaletteId = selected.palette_id || '';
+        _syncBuiltinDefaults();
+        _syncTriDefaults();
+        _syncLongDefaults();
+        if (selected.palette) setPaletteForMode('generate_from_palette', selected.palette);
+    }
+    _renderPaletteRow('generate_from_palette');
+    const outputPalette = _currentPaletteForMode('generate_from_palette') || (selected && selected.palette) || '';
     summaryEl.textContent = selected
-        ? `Selected: ${selected.display_name || selected.palette_id} • palette=${selected.palette || '?'} • metric=${selected.metric || '?'}`
+        ? `Bins: ${selected.display_name || selected.palette_id} • source palette=${selected.palette || '?'} • metric=${selected.metric || '?'} • output colorvector=${outputPalette || '?'}`
         : 'Select a reusable saved palette artifact to drive a new Color render.';
     if (runBtn) runBtn.disabled = !selected;
 }
@@ -2516,7 +2746,10 @@ function _renderGenerateFromPalettePopup() {
 function openGenerateFromPalettePopup() {
     const reusable = _reusablePaletteArtifacts();
     if (!reusable.length) return;
-    _generateFromPalettePopupState = { open: true, filter: '', highlightIdx: 0 };
+    _syncBuiltinDefaults();
+    _syncTriDefaults();
+    _syncLongDefaults();
+    _generateFromPalettePopupState = { open: true, filter: '', highlightIdx: 0, sourcePaletteId: '' };
     _renderGenerateFromPalettePopup();
     const filter = document.getElementById('generate-from-palette-popup-filter');
     if (filter && typeof filter.focus === 'function') filter.focus();
@@ -2538,10 +2771,12 @@ async function runGenerateFromPaletteSelected() {
     const orig = btn ? btn.textContent : 'Execute';
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Executing...'; }
+        const paletteName = _currentPaletteForMode('generate_from_palette') || art.palette || 'inferno';
         _closeGenerateFromPalettePopup();
         await _launchRenderOrchestrator('color', {
             color_mode: 'saved_palette',
             saved_palette_id: art.palette_id,
+            palette: paletteName,
         });
     } catch (e) {
         const statusEl = document.getElementById('render-status');
@@ -2573,6 +2808,28 @@ function _initRepalettePopup() {
         if (ev.key === 'Escape') {
             ev.preventDefault();
             _closeRepalettePopup();
+        }
+    });
+}
+
+function _initColorRepalettePopup() {
+    const overlay = document.getElementById('color-repalette-popup-overlay');
+    const closeBtn = document.getElementById('color-repalette-popup-close');
+    const cancelBtn = document.getElementById('color-repalette-popup-cancel');
+    const runBtn = document.getElementById('color-repalette-popup-run');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closeColorRepalettePopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closeColorRepalettePopup);
+    if (cancelBtn) cancelBtn.addEventListener('click', _closeColorRepalettePopup);
+    if (runBtn) runBtn.addEventListener('click', runColorRepaletteSelectedArtifact);
+    document.addEventListener('keydown', (ev) => {
+        if (!_colorRepalettePopupState.open) return;
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closeColorRepalettePopup();
         }
     });
 }
@@ -2616,6 +2873,170 @@ function _initGenerateFromPalettePopup() {
         if (ev.key === 'Enter') {
             ev.preventDefault();
             runGenerateFromPaletteSelected();
+        }
+    });
+}
+
+function _closeFunctionPopup() {
+    _functionPopupState = { open: false, filter: '', highlightIdx: 0 };
+    const overlay = document.getElementById('function-popup-overlay');
+    const filter = document.getElementById('function-popup-filter');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+    if (filter) filter.value = '';
+}
+
+function _renderFunctionPopup() {
+    const overlay = document.getElementById('function-popup-overlay');
+    const bodyEl = document.getElementById('function-popup-body');
+    const filterEl = document.getElementById('function-popup-filter');
+    const summaryEl = document.getElementById('function-popup-summary');
+    const chooseBtn = document.getElementById('function-popup-choose');
+    if (!overlay || !bodyEl || !filterEl || !summaryEl || !chooseBtn) return;
+    if (!_functionPopupState.open) {
+        _closeFunctionPopup();
+        return;
+    }
+    const visible = _visibleFunctionCatalog();
+    const highlightIdx = visible.length ? Math.max(0, Math.min(_functionPopupState.highlightIdx || 0, visible.length - 1)) : 0;
+    _functionPopupState.highlightIdx = highlightIdx;
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    filterEl.value = _functionPopupState.filter || '';
+    bodyEl.replaceChildren();
+
+    if (!visible.length) {
+        const row = document.createElement('tr');
+        row.className = 'tri-popup-empty';
+        const cell = document.createElement('td');
+        cell.colSpan = 5;
+        cell.textContent = 'No coefficient functions match this filter.';
+        row.appendChild(cell);
+        bodyEl.appendChild(row);
+        summaryEl.textContent = 'Select a coefficient function, then press Choose to use it in Compute.';
+        chooseBtn.disabled = true;
+        return;
+    }
+
+    visible.forEach((entry, idx) => {
+        const row = document.createElement('tr');
+        row.className = 'tri-popup-row' + (idx === highlightIdx ? ' highlight' : '');
+        row.onclick = () => {
+            _functionPopupState.highlightIdx = idx;
+            _renderFunctionPopup();
+        };
+        row.ondblclick = () => {
+            _functionPopupState.highlightIdx = idx;
+            chooseFunctionPopupSelection();
+        };
+
+        const nameCell = document.createElement('td');
+        const nameWrap = document.createElement('div');
+        nameWrap.className = 'tri-popup-name';
+        const nameMain = document.createElement('div');
+        nameMain.textContent = entry.name;
+        const nameMeta = document.createElement('div');
+        nameMeta.className = 'tri-popup-aliases';
+        nameMeta.textContent = entry.source || '';
+        nameWrap.appendChild(nameMain);
+        nameWrap.appendChild(nameMeta);
+        nameCell.appendChild(nameWrap);
+
+        const degreeCell = document.createElement('td');
+        degreeCell.textContent = entry.probe_failed ? '?' : String(entry.degree);
+
+        const kindCell = document.createElement('td');
+        kindCell.textContent = entry.kind || '';
+
+        const agreeCell = document.createElement('td');
+        agreeCell.textContent = entry.stubbed ? 'stub' : (entry.agreement_pct != null ? `${entry.agreement_pct}%` : '');
+
+        const paramsCell = document.createElement('td');
+        paramsCell.textContent = entry.params && entry.params.length ? `${entry.params.length}` : '';
+
+        row.appendChild(nameCell);
+        row.appendChild(degreeCell);
+        row.appendChild(kindCell);
+        row.appendChild(agreeCell);
+        row.appendChild(paramsCell);
+        bodyEl.appendChild(row);
+    });
+
+    const selected = visible[highlightIdx];
+    summaryEl.textContent = selected
+        ? `Selected: ${selected.name} • ${_coeffFuncMeta(selected)}`
+        : 'Select a coefficient function, then press Choose to use it in Compute.';
+    chooseBtn.disabled = !selected;
+}
+
+function openFunctionPopup() {
+    const cat = window._coeffFuncCatalog || [];
+    if (!cat.length) return;
+    const current = document.getElementById('render-function')?.value || '';
+    const currentIdx = cat.findIndex(entry => entry.name === current);
+    _functionPopupState = { open: true, filter: '', highlightIdx: currentIdx >= 0 ? currentIdx : 0 };
+    _renderFunctionPopup();
+    const filter = document.getElementById('function-popup-filter');
+    if (filter && typeof filter.focus === 'function') filter.focus();
+}
+
+function _applyFunctionFilter(text) {
+    _functionPopupState.filter = String(text || '');
+    _functionPopupState.highlightIdx = 0;
+    _renderFunctionPopup();
+}
+
+function chooseFunctionPopupSelection() {
+    const visible = _visibleFunctionCatalog();
+    if (!visible.length) return;
+    const idx = Math.max(0, Math.min(_functionPopupState.highlightIdx || 0, visible.length - 1));
+    const entry = visible[idx];
+    if (!entry) return;
+    _setRenderFunction(entry.name);
+    _closeFunctionPopup();
+}
+
+function _initFunctionPopup() {
+    const overlay = document.getElementById('function-popup-overlay');
+    const closeBtn = document.getElementById('function-popup-close');
+    const cancelBtn = document.getElementById('function-popup-cancel');
+    const chooseBtn = document.getElementById('function-popup-choose');
+    const filterEl = document.getElementById('function-popup-filter');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closeFunctionPopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closeFunctionPopup);
+    if (cancelBtn) cancelBtn.addEventListener('click', _closeFunctionPopup);
+    if (chooseBtn) chooseBtn.addEventListener('click', chooseFunctionPopupSelection);
+    if (filterEl) filterEl.addEventListener('input', (ev) => _applyFunctionFilter(ev.target.value));
+    document.addEventListener('keydown', (ev) => {
+        if (!_functionPopupState.open) return;
+        const visible = _visibleFunctionCatalog();
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closeFunctionPopup();
+            return;
+        }
+        if (!visible.length) return;
+        if (ev.key === 'ArrowDown') {
+            ev.preventDefault();
+            _functionPopupState.highlightIdx = Math.min((_functionPopupState.highlightIdx || 0) + 1, visible.length - 1);
+            _renderFunctionPopup();
+            return;
+        }
+        if (ev.key === 'ArrowUp') {
+            ev.preventDefault();
+            _functionPopupState.highlightIdx = Math.max((_functionPopupState.highlightIdx || 0) - 1, 0);
+            _renderFunctionPopup();
+            return;
+        }
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            chooseFunctionPopupSelection();
         }
     });
 }
@@ -2978,8 +3399,10 @@ buildPaletteCircles('palette-circles-palette-tab', 'palette_tab', () => paletteT
 _initTriPalettePopup();
 _initBuiltinPalettePopup();
 _initLongPalettePopup();
+_initFunctionPopup();
 _initAutolevelPopup();
 _initRepalettePopup();
+_initColorRepalettePopup();
 _initGenerateFromPalettePopup();
 _updateSolveScoreButtons();  // initial disabled state
 _clearPaletteCanvas('No palette selected');
@@ -3052,8 +3475,76 @@ function _getCatalogEntry(name) {
     return cat.find(e => e.name === name) || null;
 }
 
+function _coeffFuncLabel(entry) {
+    if (!entry) return '';
+    let label = entry.name;
+    if (entry.stubbed) label += ' [stub]';
+    else if (entry.agreement_pct !== undefined) label += ` [${entry.agreement_pct}%]`;
+    label += entry.probe_failed ? ' (degree ?)' : ` (degree ${entry.degree})`;
+    label += ` (${entry.kind})`;
+    if (entry.params && entry.params.length) label += ' *';
+    return label;
+}
+
+function _coeffFuncMeta(entry) {
+    if (!entry) return '';
+    const parts = [];
+    if (!entry.probe_failed && entry.degree != null) parts.push(`degree ${entry.degree}`);
+    if (entry.kind) parts.push(entry.kind);
+    if (entry.agreement_pct !== undefined) parts.push(`${entry.agreement_pct}%`);
+    if (entry.params && entry.params.length) parts.push(entry.params.length + ' param' + (entry.params.length === 1 ? '' : 's'));
+    return parts.join(' • ');
+}
+
+function _syncRenderFunctionPicker() {
+    const btn = document.getElementById('render-function-picker');
+    const meta = document.getElementById('render-function-picker-meta');
+    const sel = document.getElementById('render-function');
+    const entry = _getCatalogEntry(sel && sel.value ? sel.value : '');
+    if (btn) {
+        btn.textContent = entry ? entry.name : 'Choose coefficient function...';
+        btn.title = entry ? _coeffFuncLabel(entry) : 'Choose coefficient function';
+        btn.disabled = !(window._coeffFuncCatalog || []).length;
+    }
+    if (meta) meta.textContent = entry ? _coeffFuncMeta(entry) : '';
+}
+
+function _setRenderFunction(name) {
+    const sel = document.getElementById('render-function');
+    if (!sel) return false;
+    const entry = _getCatalogEntry(name);
+    if (!entry) {
+        _syncRenderFunctionPicker();
+        updateCfpvRow();
+        return false;
+    }
+    sel.value = name;
+    _syncRenderFunctionPicker();
+    updateCfpvRow();
+    return true;
+}
+
+function _visibleFunctionCatalog() {
+    const filter = (_functionPopupState.filter || '').trim().toLowerCase();
+    const cat = window._coeffFuncCatalog || [];
+    if (!filter) return cat;
+    return cat.filter(entry => {
+        const text = [
+            entry.name || '',
+            entry.kind || '',
+            entry.source || '',
+            entry.degree != null ? String(entry.degree) : '',
+            entry.agreement_pct != null ? String(entry.agreement_pct) : '',
+            entry.params && entry.params.length ? 'params' : '',
+        ].join(' ').toLowerCase();
+        return text.includes(filter);
+    });
+}
+
 function populateDropdown() {
     const sel = document.getElementById('render-function');
+    const pickerBtn = document.getElementById('render-function-picker');
+    const current = sel && sel.value ? sel.value : '';
     sel.innerHTML = '';
     const cat = window._coeffFuncCatalog || [];
     if (!cat.length) {
@@ -3062,32 +3553,24 @@ function populateDropdown() {
         opt.textContent = 'ERROR: catalog failed to load';
         opt.style.color = 'red';
         sel.appendChild(opt);
+        if (pickerBtn) {
+            pickerBtn.textContent = 'ERROR: catalog failed to load';
+            pickerBtn.disabled = true;
+        }
+        const meta = document.getElementById('render-function-picker-meta');
+        if (meta) meta.textContent = '';
         console.error('coeff_func_catalog_js.js did not load — dropdown is empty');
         return;
     }
     for (const e of cat) {
         const opt = document.createElement('option');
         opt.value = e.name;
-        let label = e.name;
-        // Stubbed / agreement
-        if (e.stubbed) {
-            label += ' [stub]';
-        } else if (e.agreement_pct !== undefined) {
-            label += ` [${e.agreement_pct}%]`;
-        }
-        // Degree
-        if (e.probe_failed) {
-            label += ' (degree ?)';
-        } else {
-            label += ` (degree ${e.degree})`;
-        }
-        // Impl kind
-        label += ` (${e.kind})`;
-        // Parametric indicator
-        if (e.params && e.params.length) label += ' *';
-        opt.textContent = label;
+        opt.textContent = _coeffFuncLabel(e);
         sel.appendChild(opt);
     }
+    if (current && _getCatalogEntry(current)) sel.value = current;
+    else if (!sel.value && cat[0]) sel.value = cat[0].name;
+    _syncRenderFunctionPicker();
     updateCfpvRow();
 }
 
@@ -3120,6 +3603,7 @@ function parseCfpv() {
 function updateCfpvRow() {
     const funcName = document.getElementById('render-function').value;
     const entry = _getCatalogEntry(funcName);
+    _syncRenderFunctionPicker();
     const row = document.getElementById('cfpv-row');
     const container = document.getElementById('cfpv-inputs');
     const params = (entry && entry.params) || [];
@@ -4061,6 +4545,49 @@ function _fmtAutolevelDebugLine(rd) {
     return parts.join(' · ');
 }
 
+function _renderRunCompleteLabel(run) {
+    if (!run) return 'Render complete';
+    if (run.mode === 'repalette') return 'RePalette complete';
+    if (run.mode === 'color_repalette') return 'Color RePalette complete';
+    return 'Render complete';
+}
+
+function _renderRunCompleteLog(run, rd) {
+    const target = rd.artifact_id || rd.palette_id || rd.image_key || run.mode;
+    if (run && run.mode === 'repalette') return 'RePalette complete: ' + target;
+    if (run && run.mode === 'color_repalette') return 'Color RePalette complete: ' + target;
+    return 'Render complete: ' + target;
+}
+
+async function _handleRenderRunCompletion(run, rd) {
+    const statusEl = document.getElementById('render-status');
+    const label = _renderRunCompleteLabel(run);
+    if (statusEl) {
+        statusEl.textContent = label;
+        statusEl.className = 'status ok';
+    }
+    log(_renderRunCompleteLog(run, rd), 'ok', 'render-log');
+    const autoDbg = _fmtAutolevelDebugLine(rd);
+    if (autoDbg) log('  autolevels: ' + autoDbg, '', 'render-log');
+
+    _clearActiveRun();
+    stopActiveRenderObserver();
+
+    const family = rd.family || (run.mode === 'coeff_bilevel' ? 'coeffs' : (run.mode === 'repalette' ? 'palette' : (run.mode === 'color_repalette' ? 'color' : run.mode)));
+    const artifactId = rd.artifact_id || rd.palette_id || null;
+
+    if (family === 'palette') {
+        const paletteJobEl = document.getElementById('palette-results-dir');
+        if (paletteJobEl) paletteJobEl.value = run.job_id;
+        await loadPaletteInventory({ selectPaletteId: rd.palette_id || rd.artifact_id || null });
+    }
+
+    await refreshRenderArtifacts(run.job_id, {
+        selectFamily: family,
+        selectArtifactId: artifactId,
+    });
+}
+
 async function _pollActiveRenderRun() {
     const run = _activeRenderRun || _loadActiveRun();
     if (!run) { stopActiveRenderObserver(); return; }
@@ -4100,17 +4627,7 @@ async function _pollActiveRenderRun() {
 
         // Terminal done
         if (check.complete || rd.phase === 'done') {
-            statusEl.textContent = 'Render complete';
-            statusEl.className = 'status ok';
-            log('Render complete: ' + (rd.artifact_id || rd.image_key || run.mode), 'ok', 'render-log');
-            const autoDbg = _fmtAutolevelDebugLine(rd);
-            if (autoDbg) log('  autolevels: ' + autoDbg, '', 'render-log');
-            _clearActiveRun();
-            stopActiveRenderObserver();
-            await refreshRenderArtifacts(run.job_id, {
-                selectFamily: rd.family || (run.mode === 'coeff_bilevel' ? 'coeffs' : run.mode),
-                selectArtifactId: rd.artifact_id || null,
-            });
+            await _handleRenderRunCompletion(run, rd);
             return;
         }
 
@@ -4172,7 +4689,7 @@ async function _pollActiveRenderRun() {
         }
 
         // Log phase transitions once
-        const phaseKey = (rd.phase || '') + '_' + done;
+        const phaseKey = String(phase) + '_' + done;
         if (phaseKey !== _lastLoggedPhase) {
             _lastLoggedPhase = phaseKey;
             let logMsg = phase;
@@ -4296,6 +4813,9 @@ function _renderArtifactSummary(art) {
         }
         if (art.postprocess_kind === 'autolevels') {
             return [base, 'autolevels'].filter(Boolean).join(' · ');
+        }
+        if (art.derivation_kind === 'color_repalette') {
+            return [base, 'repalette'].filter(Boolean).join(' · ');
         }
         return base;
     }
@@ -4523,6 +5043,7 @@ function _updateRenderActionButtons() {
     const popBtn = document.getElementById('btn-render-populate');
     const autoBtn = document.getElementById('btn-render-autolevels');
     const repalBtn = document.getElementById('btn-render-repalette');
+    const colorRepalBtn = document.getElementById('btn-render-color-repalette');
     const fromPalBtn = document.getElementById('btn-render-generate-from-palette');
     const reusablePalettes = _reusablePaletteArtifacts();
     if (dlBtn) dlBtn.disabled = !hasSelection;
@@ -4531,6 +5052,7 @@ function _updateRenderActionButtons() {
     if (popBtn) popBtn.disabled = !(hasSelection && (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette'));
     if (autoBtn) autoBtn.disabled = !(hasSelection && _renderActiveFamily === 'color' && art && art.image_key) || !!_activeRenderRun;
     if (repalBtn) repalBtn.disabled = !(_renderActiveFamily === 'palette' && hasSelection && _canRepaletteArtifact(art)) || !!_activeRenderRun;
+    if (colorRepalBtn) colorRepalBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && _canColorRepaletteArtifact(art)) || !!_activeRenderRun;
     if (fromPalBtn) fromPalBtn.disabled = !(_renderActiveFamily === 'color' && reusablePalettes.length > 0) || !!_activeRenderRun;
 }
 
@@ -4674,7 +5196,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Color settings. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Color settings. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color.</span>';
     }
@@ -4710,6 +5232,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
                 <div style="display:flex; align-items:center; gap:8px">
                     <button class="btn-primary" id="btn-render-generate" onclick="generateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px">Generate</button>
                     ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-generate-from-palette" onclick="openGenerateFromPalettePopup()" style="padding:4px 12px; font-size:11px" disabled>GenerateFromPalette</button>' : ''}
+                    ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-color-repalette" onclick="openColorRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>' : ''}
                     ${_renderActiveFamily === 'palette' ? '<button class="btn-secondary" id="btn-render-repalette" onclick="openRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>' : ''}
                     ${(_renderActiveFamily === 'color' || _renderActiveFamily === 'palette') ? '<button class="btn-secondary" id="btn-render-populate" onclick="populateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Populate</button>' : ''}
                     ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-autolevels" onclick="openAutolevelPopup()" style="padding:4px 12px; font-size:11px" disabled>Autolevels</button>' : ''}

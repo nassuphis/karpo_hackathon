@@ -21,6 +21,7 @@ logger.setLevel(logging.INFO)
 
 s3 = boto3.client("s3")
 PIXASSEMBLE = os.path.join(os.path.dirname(__file__), "pixassemble")
+PIXBINASSEMBLE = os.path.join(os.path.dirname(__file__), "pixbinassemble")
 
 
 def handler(event, context):
@@ -33,6 +34,8 @@ def handler(event, context):
     tile_w = params["tile_w"]
     tile_h = params["tile_h"]
     task_id = params.get("task_id", f"tile_{tile_idx}")
+    emit_pixel_bins = bool(params.get("emit_pixel_bins")) and bool(params.get("pixel_bins_out_key"))
+    pixel_bins_out_key = params.get("pixel_bins_out_key")
 
     t0 = time.time()
     logger.info(f"[{task_id}] START tile_idx={tile_idx} n_chunks={n_chunks} tile={tile_w}x{tile_h}")
@@ -41,6 +44,7 @@ def handler(event, context):
         report_status(job_id, task_id, "started")
 
         raw_path = "/tmp/tile.raw"
+        pixel_bins_path = "/tmp/tile.pixel_bins.bin"
         proc = subprocess.Popen(
             [PIXASSEMBLE,
              f"--tile_w={tile_w}",
@@ -99,6 +103,47 @@ def handler(event, context):
         with open(raw_path, "rb") as fh:
             s3.upload_fileobj(fh, BUCKET, raw_key)
 
+        pixel_bins_size = None
+        if emit_pixel_bins:
+            bin_proc = subprocess.Popen(
+                [PIXBINASSEMBLE,
+                 f"--tile_w={tile_w}",
+                 f"--tile_h={tile_h}",
+                 "--empty=255",
+                 f"--output={pixel_bins_path}"],
+                stdin=subprocess.PIPE,
+                stderr=subprocess.PIPE)
+
+            piped_bins = 0
+            bin_bytes = 0
+            for c in range(n_chunks):
+                key = f"renders/{job_id}/pixbin_chunk_{c:04d}_t{tile_idx:04d}.pbx"
+                try:
+                    obj = s3.get_object(Bucket=BUCKET, Key=key)
+                except ClientError as e:
+                    if e.response["Error"]["Code"] == "NoSuchKey":
+                        continue
+                    raise
+                for chunk in obj["Body"].iter_chunks(1024 * 1024):
+                    bin_proc.stdin.write(chunk)
+                    bin_bytes += len(chunk)
+                piped_bins += 1
+
+            bin_proc.stdin.close()
+            rc = bin_proc.wait(timeout=120)
+            stderr_out = bin_proc.stderr.read().decode("utf-8", errors="replace")
+            if stderr_out:
+                logger.info(f"[{task_id}] pixbinassemble stderr: {stderr_out[:500]}")
+            if rc != 0:
+                raise RuntimeError(f"pixbinassemble failed (rc={rc}), stderr: {stderr_out[:500]}")
+            pixel_bins_size = os.path.getsize(pixel_bins_path)
+            with open(pixel_bins_path, "rb") as fh:
+                s3.upload_fileobj(fh, BUCKET, pixel_bins_out_key)
+            logger.info(
+                f"[{task_id}] PIXBINS {pixel_bins_out_key} ({pixel_bins_size} bytes, {piped_bins} chunk files, {bin_bytes} bytes in)"
+            )
+            os.remove(pixel_bins_path)
+
         t_upload = time.time() - t0
         logger.info(f"[{task_id}] UPLOADED {raw_key} ({raw_size} bytes) in {t_upload:.1f}s total")
         os.remove(raw_path)
@@ -110,9 +155,17 @@ def handler(event, context):
             "raw_key": raw_key,
             "raw_size": raw_size,
             "pix_files": piped,
+            "pixel_bins_key": pixel_bins_out_key if emit_pixel_bins else "",
+            "pixel_bins_size": pixel_bins_size,
         })
 
     except Exception as e:
         logger.error(f"[{task_id}] FAILED after {time.time() - t0:.1f}s: {type(e).__name__}: {e}")
         report_status(job_id, task_id, "error", str(e))
         raise
+    finally:
+        for tmp_path in ("/tmp/tile.raw", "/tmp/tile.pixel_bins.bin"):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass

@@ -57,6 +57,8 @@ AUTOLEVELS_NAME="polypaint-autolevels"
 AUTOLEVELS_MEMORY=4096  # libvips autolevel post-process on saved color renders
 REPALETTE_NAME="polypaint-repalette"
 REPALETTE_MEMORY=4096  # libvips palette recolor on saved palette artifacts
+COLOR_REPALETTE_NAME="polypaint-color-repalette"
+COLOR_REPALETTE_MEMORY=1769  # fast tile recolor from persisted pixel bins
 SOLVE_PROXIMITY_NAME="polypaint-solve-proximity"
 SOLVE_PROXIMITY_MEMORY=1769  # 1 vCPU, solve_proximity_stats binary
 RENDER_ORCHESTRATOR_NAME="polypaint-render-orchestrator"
@@ -308,6 +310,9 @@ aarch64-linux-musl-gcc -O3 -static -o lambda/roots2pix lambda/roots2pix.c -lm
 echo "  pixassemble (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/pixassemble lambda/pixassemble.c -lm
 
+echo "  pixbinassemble (static, ARM64)..."
+aarch64-linux-musl-gcc -O3 -static -o lambda/pixbinassemble lambda/pixbinassemble.c -lm
+
 echo "  bilevel_raster (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/bilevel_raster lambda/bilevel_raster.c -lm
 
@@ -322,6 +327,9 @@ echo "  solve_palette_chunk (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/solve_palette_chunk lambda/solve_palette_chunk.c -lm
 echo "  palette_bins_render (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/palette_bins_render lambda/palette_bins_render.c -lm
+
+echo "  pixel_bins_render (static, ARM64)..."
+aarch64-linux-musl-gcc -O3 -static -o lambda/pixel_bins_render lambda/pixel_bins_render.c -lm
 
 # param_gen removed — param debug now uses sweep in param_dump mode
 
@@ -577,15 +585,15 @@ chmod +x "$RASTER_DIR"/roots2pix
 cd "$RASTER_DIR" && zip -r9 /tmp/polypaint-raster.zip . -q && cd "$SCRIPT_DIR"
 echo "  Raster:   $(du -h /tmp/polypaint-raster.zip | cut -f1)  (roots2pix)"
 
-# Finalize: handler_finalize.py + shared.py + pixassemble
+# Finalize: handler_finalize.py + shared.py + pixassemble + pixbinassemble
 FINALIZE_DIR=/tmp/polypaint-finalize
 rm -rf "$FINALIZE_DIR"
 mkdir -p "$FINALIZE_DIR"
 cp lambda/handler_finalize.py lambda/shared.py "$FINALIZE_DIR/"
-cp lambda/pixassemble "$FINALIZE_DIR/"
-chmod +x "$FINALIZE_DIR"/pixassemble
+cp lambda/pixassemble lambda/pixbinassemble "$FINALIZE_DIR/"
+chmod +x "$FINALIZE_DIR"/pixassemble "$FINALIZE_DIR"/pixbinassemble
 cd "$FINALIZE_DIR" && zip -r9 /tmp/polypaint-finalize.zip . -q && cd "$SCRIPT_DIR"
-echo "  Finalize: $(du -h /tmp/polypaint-finalize.zip | cut -f1)  (pixassemble)"
+echo "  Finalize: $(du -h /tmp/polypaint-finalize.zip | cut -f1)  (pixassemble + pixbinassemble)"
 
 # Preview: handler_preview.py + shared.py (pure Python, PNG via zlib)
 PREVIEW_DIR=/tmp/polypaint-preview
@@ -673,6 +681,17 @@ cp lambda/palette_bins_render lambda/raw2jpeg "$REPALETTE_DIR/"
 chmod +x "$REPALETTE_DIR"/palette_bins_render "$REPALETTE_DIR"/raw2jpeg
 cd "$REPALETTE_DIR" && zip -r9 /tmp/polypaint-repalette.zip . -q && cd "$SCRIPT_DIR"
 echo "  RePal:   $(du -h /tmp/polypaint-repalette.zip | cut -f1)  (repalette + libvips layer)"
+
+# Color RePalette: handler_color_repalette.py + shared.py + palette helpers + pixel_bins_render
+COLOR_REPALETTE_DIR=/tmp/polypaint-color-repalette
+rm -rf "$COLOR_REPALETTE_DIR"
+mkdir -p "$COLOR_REPALETTE_DIR"
+cp lambda/handler_color_repalette.py lambda/shared.py \
+   lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$COLOR_REPALETTE_DIR/"
+cp lambda/pixel_bins_render "$COLOR_REPALETTE_DIR/"
+chmod +x "$COLOR_REPALETTE_DIR"/pixel_bins_render
+cd "$COLOR_REPALETTE_DIR" && zip -r9 /tmp/polypaint-color-repalette.zip . -q && cd "$SCRIPT_DIR"
+echo "  ClrRePal: $(du -h /tmp/polypaint-color-repalette.zip | cut -f1)  (pixel_bins_render)"
 
 # DeepZoom Export: handler_deepzoom_export.py + shared.py + dz_export (needs libvips layer)
 DZ_EXPORT_DIR=/tmp/polypaint-deepzoom-export
@@ -1105,7 +1124,7 @@ if [ "$ACTION" = "create" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     create_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -1145,6 +1164,9 @@ if [ "$ACTION" = "create" ]; then
 
     create_lambda "$REPALETTE_NAME" "handler_repalette.handler" "/tmp/polypaint-repalette.zip" \
         "$REPALETTE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    create_lambda "$COLOR_REPALETTE_NAME" "handler_color_repalette.handler" "/tmp/polypaint-color-repalette.zip" \
+        "$COLOR_REPALETTE_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME" "$BINARY_TMP"
 
     create_lambda "$SOLVE_PROXIMITY_NAME" "handler_solve_proximity.handler" "/tmp/polypaint-solve-proximity.zip" \
         "$SOLVE_PROXIMITY_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
@@ -1370,7 +1392,7 @@ elif [ "$ACTION" = "update" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     update_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -1410,6 +1432,9 @@ elif [ "$ACTION" = "update" ]; then
 
     update_lambda "$REPALETTE_NAME" "handler_repalette.handler" "/tmp/polypaint-repalette.zip" \
         "$REPALETTE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    update_lambda "$COLOR_REPALETTE_NAME" "handler_color_repalette.handler" "/tmp/polypaint-color-repalette.zip" \
+        "$COLOR_REPALETTE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME" "$BINARY_TMP"
 
     update_lambda "$SOLVE_PROXIMITY_NAME" "handler_solve_proximity.handler" "/tmp/polypaint-solve-proximity.zip" \
         "$SOLVE_PROXIMITY_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"

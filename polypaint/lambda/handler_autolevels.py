@@ -261,6 +261,11 @@ def handler(event, context):
             "autolevels_params": json.dumps(autolevel_params, separators=(",", ":")),
             "background_color": background_color,
             "background_threshold": str(background_threshold),
+            "repalette_capable": "false",
+            "pixel_bins_prefix": "",
+            "pixel_bins_empty": "",
+            "pixel_bins_layout": "",
+            "derivation_kind": "",
         })
         if "width" not in img_meta and meta.get("width") is not None:
             img_meta["width"] = str(meta["width"])

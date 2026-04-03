@@ -5161,9 +5161,9 @@
   },
   {
     "name": "poly_645",
-    "c_symbol": "poly_645_c",
-    "source": "poly700.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_645_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_646",
@@ -6109,9 +6109,9 @@
   },
   {
     "name": "poly_795",
-    "c_symbol": "poly_795_c",
-    "source": "poly800.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_795_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_796",

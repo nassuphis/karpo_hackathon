@@ -75,6 +75,12 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["viewport"]["center_im"] == -0.3
         expected_scale = 128 * 1024 / 4096
         assert abs(plan["viewport"]["scale"] - expected_scale) < 0.01
+        mock_invoke.assert_called_once()
+        fn_name, payload = mock_invoke.call_args.args
+        assert fn_name == "polypaint-viewport"
+        assert payload["job_id"] == "j"
+        assert payload["quantile"] == 0.0
+        assert payload["shim"] == 0.05
 
     @patch("handler_render_plan._storage_call")
     def test_tile_plan_shape(self, mock_storage):
@@ -115,12 +121,17 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["solve_score"]["omega"] == 4.0
         assert "crowding" in plan["solve_score"]["clip_key"]
         assert "crowding" in plan["solve_score"]["bins_key"]
+        assert plan["outputs"]["repalette_capable"] is True
         assert plan["outputs"]["metadata"]["view_mode"] == "square"
         assert plan["outputs"]["metadata"]["square_extent"] == "2.0"
         assert plan["outputs"]["metadata"]["rotation"] == "0"
         assert plan["outputs"]["metadata"]["solve_score_omega"] == "4.0"
         assert plan["outputs"]["metadata"]["background_color"] == "000000"
         assert plan["outputs"]["metadata"]["background_threshold"] == "4"
+        assert plan["outputs"]["metadata"]["repalette_capable"] == "true"
+        assert plan["outputs"]["metadata"]["pixel_bins_prefix"] == "renders/j/color/color_run_t/pixel_bins/tile_"
+        assert plan["outputs"]["metadata"]["pixel_bins_layout"] == "tile_u8_v1"
+        assert plan["grid"]["pixel_bin_tile_keys"][0] == "renders/j/color/color_run_t/pixel_bins/tile_0000.bin"
 
     @patch("handler_render_plan._storage_call")
     def test_tri_palette_id_accepted_and_preserved(self, mock_storage):
@@ -186,12 +197,17 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["saved_palette"]["enabled"] is True
         assert plan["saved_palette"]["palette_id"] == "pal_src"
         assert plan["saved_palette"]["chunk_bins_prefix"] == "renders/j/palettes/pal_src/chunks/palette_bins_chunk_"
+        assert plan["outputs"]["repalette_capable"] is True
         assert plan["outputs"]["metadata"]["color_mode"] == "saved_palette"
-        assert plan["outputs"]["metadata"]["palette"] == "reef"
+        assert plan["outputs"]["metadata"]["palette"] == "inferno"
         assert plan["outputs"]["metadata"]["palette_source_id"] == "pal_src"
+        assert plan["outputs"]["metadata"]["palette_source_palette"] == "reef"
         assert plan["outputs"]["metadata"]["solve_metric"] == "crowding"
         assert plan["outputs"]["metadata"]["solve_score_quantile"] == "0.01"
         assert plan["outputs"]["metadata"]["solve_score_omega"] == "3.0"
+        assert plan["outputs"]["metadata"]["repalette_capable"] == "true"
+        assert plan["outputs"]["metadata"]["pixel_bins_prefix"] == "renders/j/color/color_run_t/pixel_bins/tile_"
+        assert plan["params"]["palette"] == "inferno"
         assert plan["params"]["root_transforms"] == [["rotate_roots", "0.25"]]
 
     @patch("handler_render_plan.s3")

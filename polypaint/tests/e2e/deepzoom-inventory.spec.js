@@ -245,9 +245,17 @@ test.describe('DeepZoom Inventory', () => {
     expect(await page.evaluate(() => window._dzSelectedIdx)).toBe(0);
   });
 
-  test('dropdown has functions from catalog', async ({ page }) => {
-    // Verify the catalog loaded and dropdown populated
-    const optCount = await page.locator('#render-function option').count();
-    expect(optCount).toBeGreaterThan(100);
+  test('function popup has functions from catalog', async ({ page }) => {
+    await page.click('.tab-btn:text("Compute")');
+    await page.click('#render-function-picker');
+    await expect(page.locator('#function-popup-overlay')).toBeVisible();
+    await expect(page.locator('#function-popup-body .tri-popup-row').first()).toBeVisible();
+    const rowCount = await page.locator('#function-popup-body .tri-popup-row').count();
+    expect(rowCount).toBeGreaterThan(100);
+    await page.fill('#function-popup-filter', 'poly_795');
+    await expect(page.locator('#function-popup-body .tri-popup-row')).toHaveCount(1);
+    await page.click('#function-popup-choose');
+    await expect(page.locator('#function-popup-overlay')).toBeHidden();
+    await expect(page.locator('#render-function-picker')).toContainText('poly_795');
   });
 });

@@ -103,6 +103,16 @@ class TestDispatchHandler(unittest.TestCase):
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 1)
 
+    @patch("handler_dispatch.lambda_client")
+    def test_dispatch_color_repalette_target(self, mock_client):
+        from handler_dispatch import handler
+        mock_client.invoke.return_value = {"StatusCode": 202}
+        jobs = [{"job_id": "j", "task_id": "color_repalette_1", "artifact_id": "color_new", "source_artifact_id": "color_src", "source_image_key": "renders/j/color/color_src/image.jpeg", "new_palette": "tri_redgold"}]
+        event = self._make_event({"target": "color_repalette", "jobs": jobs})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["fired"], 1)
+
 
 # ── Test: handler_storage.py (list, check_keys, check_status, clean_render) ──
 
@@ -1593,6 +1603,71 @@ class TestRenderSummary(unittest.TestCase):
         self.assertEqual(cj["solve_metric"], "anisotropy")
         self.assertAlmostEqual(cj["solve_score_quantile"], 0.02)
         self.assertAlmostEqual(cj["solve_score_omega"], 6.0)
+
+    @patch("handler_storage.s3")
+    def test_render_summary_exposes_color_repalette_metadata(self, mock_s3):
+        from handler_storage import handle_render_summary
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate_side_effect(**kwargs):
+            prefix = kwargs.get("Prefix", "")
+            if prefix == "renders/j/color/":
+                return [{"CommonPrefixes": [{"Prefix": "renders/j/color/color_repal/"}]}]
+            return [{"CommonPrefixes": []}]
+
+        mock_paginator.paginate.side_effect = paginate_side_effect
+
+        def mock_head(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/color/color_repal/image.jpeg":
+                return {
+                    "ContentLength": 1234,
+                    "ContentType": "image/jpeg",
+                    "Metadata": {
+                        "width": "4096",
+                        "height": "4096",
+                        "artifact_id": "color_repal",
+                        "created_at": "2026-04-03T10:00:00Z",
+                        "family": "color",
+                        "color_mode": "solve_score",
+                        "format": "jpeg",
+                        "root_transforms": "[]",
+                        "view_mode": "auto",
+                        "quantile": "0.01",
+                        "shim": "0.07",
+                        "rotation": "0",
+                        "match_mode": "greedy",
+                        "solve_metric": "crowding",
+                        "solve_score_quantile": "0.02",
+                        "solve_score_omega": "4",
+                        "palette": "tri_redgold",
+                        "repalette_capable": "true",
+                        "pixel_bins_prefix": "renders/j/color/color_repal/pixel_bins/tile_",
+                        "pixel_bins_empty": "255",
+                        "pixel_bins_layout": "tile_u8_v1",
+                        "derived_from_artifact_id": "color_src",
+                        "derivation_kind": "color_repalette",
+                    },
+                }
+            if key == "renders/j/color/color_repal/preview.png":
+                return {"ContentLength": 500, "ContentType": "image/png", "Metadata": {}}
+            raise Exception("NoSuchKey")
+
+        mock_s3.head_object.side_effect = mock_head
+        mock_s3.get_object.side_effect = Exception("NoSuchKey")
+        mock_s3.generate_presigned_url.return_value = "https://signed"
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+        cj = body["families"]["color"][0]
+        self.assertTrue(cj["repalette_capable"])
+        self.assertEqual(cj["pixel_bins_prefix"], "renders/j/color/color_repal/pixel_bins/tile_")
+        self.assertEqual(cj["pixel_bins_empty"], 255)
+        self.assertEqual(cj["pixel_bins_layout"], "tile_u8_v1")
+        self.assertEqual(cj["derived_from_artifact_id"], "color_src")
+        self.assertEqual(cj["derivation_kind"], "color_repalette")
 
     @patch("handler_storage.s3")
     def test_render_summary_orders_autolevel_children_above_parent(self, mock_s3):

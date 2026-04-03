@@ -298,6 +298,9 @@ static FILE *tileFiles[MAX_TILES];
 static uint32_t *tileBuf[MAX_TILES];
 static int tileBufPos[MAX_TILES];
 static int tileW[MAX_TILES];  /* actual width of each tile (edge tiles may be smaller) */
+static FILE *tileBinFiles[MAX_TILES];
+static uint32_t *tileBinBuf[MAX_TILES];
+static int tileBinBufPos[MAX_TILES];
 
 static void flush_tile(int t) {
     if (tileBufPos[t] > 0) {
@@ -311,6 +314,21 @@ static inline void emit_pixel(int tile_id, uint32_t pix_idx, uint32_t rgb) {
     tileBuf[tile_id][tileBufPos[tile_id]++] = rgb;
     if (tileBufPos[tile_id] >= BUF_ENTRIES)
         flush_tile(tile_id);
+}
+
+static void flush_pixel_bins(int t) {
+    if (tileBinFiles[t] && tileBinBufPos[t] > 0) {
+        fwrite(tileBinBuf[t], 4, tileBinBufPos[t], tileBinFiles[t]);
+        tileBinBufPos[t] = 0;
+    }
+}
+
+static inline void emit_pixel_bin(int tile_id, uint32_t pix_idx, uint8_t bin) {
+    if (!tileBinFiles[tile_id]) return;
+    tileBinBuf[tile_id][tileBinBufPos[tile_id]++] = pix_idx;
+    tileBinBuf[tile_id][tileBinBufPos[tile_id]++] = (uint32_t)bin;
+    if (tileBinBufPos[tile_id] >= BUF_ENTRIES)
+        flush_pixel_bins(tile_id);
 }
 
 /* ---- Main ---- */
@@ -329,6 +347,7 @@ int main(int argc, char **argv) {
                 "[--solve_metric=proximity|crowding|spread|anisotropy|area] "
                 "[--solve_score_clip_lo=X --solve_score_clip_hi=Y --solve_score_cuts=c1,...,c9] [--solve_score_omega=W] "
                 "[--solve_bins_file=file.bin] "
+                "[--pixel_bin_prefix=/tmp/pixbin] "
                 "[--solve_prox_clip_lo=X --solve_prox_clip_hi=Y --solve_prox_cuts=c1,...,c9]\n");
         return 1;
     }
@@ -349,6 +368,7 @@ int main(int argc, char **argv) {
     const char *matchStr = getArgStr(argc, argv, "--match", "none");
     const char *palName = getArgStr(argc, argv, "--palette", "inferno");
     const char *solveBinsPath = getArgStr(argc, argv, "--solve_bins_file", NULL);
+    const char *pixelBinPrefix = getArgStr(argc, argv, "--pixel_bin_prefix", NULL);
     const char *constColorStr = getArgStr(argc, argv, "--constant_color", "ffffff");
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
 
@@ -450,6 +470,9 @@ int main(int argc, char **argv) {
         }
     }
 
+    int emitPixelBins = pixelBinPrefix &&
+        (colorMode == COLOR_SOLVE_SCORE || colorMode == COLOR_SAVED_PALETTE);
+
     /* Open tile output files and allocate buffers */
     char pathBuf[512];
     for (int t = 0; t < nTiles; t++) {
@@ -465,6 +488,22 @@ int main(int argc, char **argv) {
             return 1;
         }
         tileBufPos[t] = 0;
+        tileBinFiles[t] = NULL;
+        tileBinBuf[t] = NULL;
+        tileBinBufPos[t] = 0;
+        if (emitPixelBins) {
+            snprintf(pathBuf, sizeof(pathBuf), "%s_t%04d.pbx", pixelBinPrefix, t);
+            tileBinFiles[t] = fopen(pathBuf, "wb");
+            if (!tileBinFiles[t]) {
+                fprintf(stderr, "Cannot create %s\n", pathBuf);
+                return 1;
+            }
+            tileBinBuf[t] = malloc(BUF_ENTRIES * sizeof(uint32_t));
+            if (!tileBinBuf[t]) {
+                fprintf(stderr, "Cannot allocate pixel-bin buffer %d\n", t);
+                return 1;
+            }
+        }
     }
 
     /* Read binary root data */
@@ -691,6 +730,7 @@ int main(int argc, char **argv) {
                     }
                     tileBits[tile_id][byte_idx] |= bit_mask;
                     emit_pixel(tile_id, pix_idx, rgb);
+                    emit_pixel_bin(tile_id, pix_idx, (uint8_t)bin);
                     rootsPlotted++;
                 } else {
                     rootsClipped++;
@@ -735,6 +775,7 @@ int main(int argc, char **argv) {
                     }
                     tileBits[tile_id][byte_idx] |= bit_mask;
                     emit_pixel(tile_id, pix_idx, rgb);
+                    emit_pixel_bin(tile_id, pix_idx, bin);
                     rootsPlotted++;
                 } else {
                     rootsClipped++;
@@ -857,6 +898,11 @@ int main(int argc, char **argv) {
         totalEntries += pos / 8;
         fclose(tileFiles[t]);
         free(tileBuf[t]);
+        if (tileBinFiles[t]) {
+            flush_pixel_bins(t);
+            fclose(tileBinFiles[t]);
+        }
+        free(tileBinBuf[t]);
     }
 
     free(roots);
@@ -872,6 +918,16 @@ int main(int argc, char **argv) {
             long sz = ftell(check);
             fclose(check);
             if (sz == 0) remove(pathBuf);
+        }
+        if (emitPixelBins) {
+            snprintf(pathBuf, sizeof(pathBuf), "%s_t%04d.pbx", pixelBinPrefix, t);
+            check = fopen(pathBuf, "rb");
+            if (check) {
+                fseek(check, 0, SEEK_END);
+                long sz = ftell(check);
+                fclose(check);
+                if (sz == 0) remove(pathBuf);
+            }
         }
     }
 

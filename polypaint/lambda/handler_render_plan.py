@@ -165,9 +165,11 @@ def handler(event, context):
         if src_times and calc_times and src_times != calc_times:
             raise RuntimeError(f"Saved palette times mismatch: palette={src_times}, calc={calc_times}")
 
-        palette = source_meta.get("palette", palette)
+        requested_palette = str(rp.get("palette", "") or "").strip()
+        source_palette = str(source_meta.get("palette", "") or "").strip()
+        palette = requested_palette or source_palette or palette
         if palette not in VALID_PALETTE_NAMES:
-            raise RuntimeError(f"Invalid palette in saved palette artifact: {palette}")
+            raise RuntimeError(f"Invalid palette: {palette}")
         solve_metric = source_meta.get("metric", solve_metric)
         solve_score_quantile = float(source_meta.get("solve_score_quantile", solve_score_quantile))
         solve_score_omega = _validate_omega(source_meta.get("solve_score_omega", solve_score_omega))
@@ -177,7 +179,7 @@ def handler(event, context):
             "enabled": True,
             "palette_id": saved_palette_id,
             "display_name": source_meta.get("display_name", ""),
-            "palette": palette,
+            "palette": source_palette,
             "metric": solve_metric,
             "quantile": solve_score_quantile,
             "omega": solve_score_omega,
@@ -209,6 +211,8 @@ def handler(event, context):
         "hist_prefix": f"renders/{job_id}/solve_scores/{solve_metric}/",
         "bins_key": f"renders/{job_id}/solve_scores/{solve_metric}_bins.json",
     }
+
+    color_repalette_capable = mode == "color" and color_mode in ("solve_score", "saved_palette")
 
     # Immutable artifact outputs
     artifact_family = "coeffs" if mode == "coeff_bilevel" else mode
@@ -243,6 +247,7 @@ def handler(event, context):
         "bilevel_key": artifact_prefix + "image.tif",
         "coeff_bilevel_key": artifact_prefix + "image.tif",
         "metadata": artifact_meta,
+        "repalette_capable": color_repalette_capable if mode == "color" else False,
     }
     if mode == "color":
         outputs["metadata"].update({
@@ -257,6 +262,10 @@ def handler(event, context):
             "solve_score_omega": str(solve_score_omega if solve_score_enabled else ""),
             "background_color": DEFAULT_BACKGROUND_COLOR,
             "background_threshold": str(DEFAULT_BACKGROUND_THRESHOLD),
+            "repalette_capable": "true" if color_repalette_capable else "false",
+            "pixel_bins_prefix": artifact_prefix + "pixel_bins/tile_" if color_repalette_capable else "",
+            "pixel_bins_empty": "255" if color_repalette_capable else "",
+            "pixel_bins_layout": "tile_u8_v1" if color_repalette_capable else "",
         })
         if color_mode == "saved_palette":
             outputs["metadata"].update({
@@ -265,6 +274,7 @@ def handler(event, context):
                 "solve_score_omega": str(solve_score_omega),
                 "palette_source_id": saved_palette["palette_id"],
                 "palette_source_display_name": saved_palette["display_name"],
+                "palette_source_palette": str(saved_palette["palette"]),
                 "palette_source_metric": str(saved_palette["metric"]),
                 "palette_source_quantile": str(saved_palette["quantile"]),
                 "palette_source_omega": str(saved_palette["omega"]),
@@ -301,6 +311,9 @@ def handler(event, context):
             "n_tile_rows": n_tile_rows,
             "n_tiles": n_tiles,
             "tile_keys": tile_keys,
+            "pixel_bin_tile_keys": [
+                artifact_prefix + f"pixel_bins/tile_{t:04d}.bin" for t in range(n_tiles)
+            ] if color_repalette_capable else ["" for _ in range(n_tiles)],
         },
         "chunk_items": chunk_items,
         "tile_items": tile_items,

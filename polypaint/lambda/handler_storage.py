@@ -323,6 +323,7 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
     }
 
     if family == "color":
+        repalette_capable = str(meta.get("repalette_capable", "")).strip().lower() == "true"
         entry["color_mode"] = meta.get("color_mode", "")
         entry["match_mode"] = meta.get("match_mode", "")
         entry["palette"] = meta.get("palette", "")
@@ -340,15 +341,22 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["solve_score_omega"] = float(omega) if omega not in ("", None) else None
         entry["palette_source_id"] = meta.get("palette_source_id", "")
         entry["palette_source_display_name"] = meta.get("palette_source_display_name", "")
+        entry["palette_source_palette"] = meta.get("palette_source_palette", "")
         entry["palette_source_metric"] = meta.get("palette_source_metric", "")
         src_q = meta.get("palette_source_quantile", "")
         entry["palette_source_quantile"] = float(src_q) if src_q not in ("", None) else None
         src_omega = meta.get("palette_source_omega", "")
         entry["palette_source_omega"] = float(src_omega) if src_omega not in ("", None) else None
         entry["derived_from_artifact_id"] = meta.get("derived_from_artifact_id", "")
+        entry["derivation_kind"] = meta.get("derivation_kind", "")
         entry["postprocess_kind"] = meta.get("postprocess_kind", "")
         entry["postprocess_profile"] = meta.get("postprocess_profile", "")
         entry["autolevels_params"] = _parse_json(meta.get("autolevels_params"))
+        entry["repalette_capable"] = repalette_capable
+        entry["pixel_bins_prefix"] = meta.get("pixel_bins_prefix", "")
+        pbe = meta.get("pixel_bins_empty", "")
+        entry["pixel_bins_empty"] = int(pbe) if pbe not in ("", None) else None
+        entry["pixel_bins_layout"] = meta.get("pixel_bins_layout", "")
     return entry
 
 
@@ -745,7 +753,7 @@ def handle_check_status(event):
 # Canonical ownership mapping: each family owns its own intermediates, previews, and stale siblings
 ARTIFACT_FAMILIES = {
     "color": {
-        "intermediate_prefixes": ["pix_", "raw_", "tile_", "solve_proximity/", "solve_scores/"],
+        "intermediate_prefixes": ["pix_", "pixbin_chunk_", "raw_", "tile_", "solve_proximity/", "solve_scores/"],
         "intermediate_keys": ["solve_proximity_clip.json", "solve_proximity_bins.json"],
         "preview": [],
         "same_family_stale": [],

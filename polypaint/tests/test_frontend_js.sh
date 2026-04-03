@@ -170,6 +170,8 @@ globalThis.__exports = {
     removeChip: typeof removeChip === 'function' ? removeChip : null,
     log: typeof log === 'function' ? log : null,
     _getCatalogEntry: typeof _getCatalogEntry === 'function' ? _getCatalogEntry : null,
+    openFunctionPopup: typeof openFunctionPopup === 'function' ? openFunctionPopup : null,
+    chooseFunctionPopupSelection: typeof chooseFunctionPopupSelection === 'function' ? chooseFunctionPopupSelection : null,
 };
 `;
 vm.runInContext(exportCode, ctx);
@@ -210,6 +212,36 @@ if (emptyOpts !== 1) {
 console.log('  populateDropdown(empty): shows error option');
 // Restore by re-populating
 vm.runInContext('populateDropdown()', ctx);
+
+// Step 4c: Function picker popup should filter and choose from catalog
+try {
+    vm.runInContext("document.getElementById('render-function').value = 'giga_1'; openFunctionPopup();", ctx);
+    const popupRows0 = (ctx._elements['function-popup-body']?.children || []).length;
+    if (popupRows0 < 100) {
+        console.error('FATAL: function popup should render many rows, got ' + popupRows0);
+        process.exit(1);
+    }
+    vm.runInContext("_applyFunctionFilter('poly_795')", ctx);
+    const popupRows1 = (ctx._elements['function-popup-body']?.children || []).length;
+    if (popupRows1 !== 1) {
+        console.error('FATAL: function popup filter poly_795 should narrow to 1 row, got ' + popupRows1);
+        process.exit(1);
+    }
+    vm.runInContext('chooseFunctionPopupSelection()', ctx);
+    if (ctx._elements['render-function'].value !== 'poly_795') {
+        console.error('FATAL: function popup choose should set render-function to poly_795, got ' + ctx._elements['render-function'].value);
+        process.exit(1);
+    }
+    const pickerText = ctx._elements['render-function-picker']?.textContent || '';
+    if (pickerText !== 'poly_795') {
+        console.error('FATAL: function picker button should show poly_795, got ' + pickerText);
+        process.exit(1);
+    }
+    console.log('  function popup filter/choose: OK');
+} catch (e) {
+    console.error('FATAL: function popup flow crashed: ' + e.message);
+    process.exit(1);
+}
 
 // Step 5: Test updateCfpvRow for parametric function
 ctx._elements['render-function'] = { ...ctx._mkEl(), value: 'creative9' };
@@ -938,6 +970,22 @@ async function testPipeline(name, call) {
         const popupSummary = vm.runInContext("document.getElementById('repalette-popup-summary').textContent", ctx);
         if (popupDisplay !== 'flex') { console.error('FATAL: repalette popup should open'); process.exit(1); }
         if (!String(popupSummary).includes('Reusable all-pass data will be copied')) { console.error('FATAL: repalette popup should describe reusable copy path, got ' + popupSummary); process.exit(1); }
+        const repaletteChildren = ctx._elements['palette-circles-repalette'].children || [];
+        if (repaletteChildren.length !== 3) { console.error('FATAL: repalette palette row should collapse to PAL/TRI/LONG buttons, got ' + repaletteChildren.length); process.exit(1); }
+        if ((repaletteChildren[0].textContent || '') !== 'PAL') { console.error('FATAL: repalette first swatch should be PAL button, got ' + (repaletteChildren[0].textContent || '')); process.exit(1); }
+        vm.runInContext(`_openBuiltinPalettePopup('repalette')`, ctx);
+        if (ctx._elements['builtin-popup-overlay'].style.display !== 'flex') { console.error('FATAL: repalette built-in popup should open on top'); process.exit(1); }
+        const builtinTitle = ctx._elements['builtin-popup-title'].textContent || '';
+        if (!builtinTitle.includes('RePalette')) { console.error('FATAL: repalette built-in popup title should mention RePalette, got ' + builtinTitle); process.exit(1); }
+        vm.runInContext(`_closeBuiltinPalettePopup(); _openTriPalettePopup('repalette')`, ctx);
+        if (ctx._elements['tri-popup-overlay'].style.display !== 'flex') { console.error('FATAL: repalette TRI popup should open on top'); process.exit(1); }
+        const triTitle = ctx._elements['tri-popup-title'].textContent || '';
+        if (!triTitle.includes('RePalette')) { console.error('FATAL: repalette TRI popup title should mention RePalette, got ' + triTitle); process.exit(1); }
+        vm.runInContext(`_closeTriPalettePopup(); _openLongPalettePopup('repalette')`, ctx);
+        if (ctx._elements['long-popup-overlay'].style.display !== 'flex') { console.error('FATAL: repalette LONG popup should open on top'); process.exit(1); }
+        const longTitle = ctx._elements['long-popup-title'].textContent || '';
+        if (!longTitle.includes('RePalette')) { console.error('FATAL: repalette LONG popup title should mention RePalette, got ' + longTitle); process.exit(1); }
+        vm.runInContext(`_closeLongPalettePopup()`, ctx);
         vm.runInContext("setPaletteForMode('repalette', 'tri_redgold')", ctx);
         await vm.runInContext('runRepaletteSelectedArtifact()', ctx);
         const dispatch = vm.runInContext('_repaletteDispatch', ctx);
@@ -947,6 +995,59 @@ async function testPipeline(name, call) {
         if (dispatch.jobs[0].new_palette !== 'tri_redgold') { console.error('FATAL: repalette should send chosen palette, got ' + dispatch.jobs[0].new_palette); process.exit(1); }
         if (runMode !== 'repalette') { console.error('FATAL: repalette should save active run mode, got ' + runMode); process.exit(1); }
         console.log('  repalette popup dispatches palette reuse run: OK');
+    }
+
+    {
+        vm.runInContext(`
+            _saveActiveRun({ job_id: 'j', mode: 'repalette', run_id: 'run_repal', task_id: 'repalette_run', started_at_ms: Date.now() });
+            _repaletteLoadOpts = null;
+            _repaletteRefreshOpts = null;
+            _repaletteLogText = '';
+            _repaletteOrigLog = log;
+            _repaletteOrigLoadPaletteInventory = loadPaletteInventory;
+            _repaletteOrigRefreshRenderArtifacts = refreshRenderArtifacts;
+            loadPaletteInventory = async function(opts) { _repaletteLoadOpts = opts; };
+            refreshRenderArtifacts = async function(jobId, opts) { _repaletteRefreshOpts = { jobId, opts }; };
+            log = function(msg, cls, target) {
+                if (target === 'render-log' && String(msg).includes('RePalette complete')) _repaletteLogText = msg;
+            };
+            lambdaPost = async function(name, body, path) {
+                if (name === 'storage' && path === '/check-status') {
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: true,
+                        status_counts: { done: 1 },
+                        results: [{
+                            phase: 'done',
+                            phase_label: 'Done',
+                            family: 'palette',
+                            artifact_id: 'pal_new',
+                            palette_id: 'pal_new',
+                        }]
+                    };
+                }
+                return { ok: true };
+            };
+        `, ctx);
+        await vm.runInContext('(async()=>{ await _pollActiveRenderRun(); })()', ctx);
+        const loadOpts = vm.runInContext('_repaletteLoadOpts', ctx);
+        const refreshOpts = vm.runInContext('_repaletteRefreshOpts', ctx);
+        const statusText = vm.runInContext("document.getElementById('render-status').textContent", ctx);
+        const logText = vm.runInContext('_repaletteLogText', ctx);
+        if (!loadOpts || loadOpts.selectPaletteId !== 'pal_new') { console.error('FATAL: repalette completion should refresh palette inventory with new palette selection'); process.exit(1); }
+        if (!refreshOpts || refreshOpts.jobId !== 'j' || !refreshOpts.opts || refreshOpts.opts.selectFamily !== 'palette' || refreshOpts.opts.selectArtifactId !== 'pal_new') {
+            console.error('FATAL: repalette completion should refresh render artifacts into palette family, got ' + JSON.stringify(refreshOpts));
+            process.exit(1);
+        }
+        if (statusText !== 'RePalette complete') { console.error('FATAL: repalette completion status should be specific, got ' + statusText); process.exit(1); }
+        if (!String(logText).includes('RePalette complete: pal_new')) { console.error('FATAL: repalette completion should log explicit completion, got ' + logText); process.exit(1); }
+        vm.runInContext(`
+            log = _repaletteOrigLog;
+            loadPaletteInventory = _repaletteOrigLoadPaletteInventory;
+            refreshRenderArtifacts = _repaletteOrigRefreshRenderArtifacts;
+        `, ctx);
+        console.log('  repalette completion refreshes palette inventory + render family: OK');
     }
 
     {
@@ -1034,16 +1135,147 @@ async function testPipeline(name, call) {
         const popupDisplay = vm.runInContext("document.getElementById('generate-from-palette-popup-overlay').style.display", ctx);
         const bodyRows = ctx._elements['generate-from-palette-popup-body'].children || [];
         const summaryText = vm.runInContext("document.getElementById('generate-from-palette-popup-summary').textContent", ctx);
+        const paletteRow = ctx._elements['palette-circles-generate-from-palette'].children || [];
         if (popupDisplay !== 'flex') { console.error('FATAL: GenerateFromPalette popup should open'); process.exit(1); }
         if (bodyRows.length !== 1) { console.error('FATAL: GenerateFromPalette should show only reusable palettes, got ' + bodyRows.length); process.exit(1); }
-        if (!String(summaryText).includes('anisotropy q=2.0% w=3 magma')) { console.error('FATAL: GenerateFromPalette summary should describe reusable selection, got ' + summaryText); process.exit(1); }
+        if (paletteRow.length !== 3) { console.error('FATAL: GenerateFromPalette palette row should collapse to PAL/TRI/LONG buttons, got ' + paletteRow.length); process.exit(1); }
+        if ((paletteRow[0].textContent || '') !== 'PAL') { console.error('FATAL: GenerateFromPalette first swatch should be PAL button, got ' + (paletteRow[0].textContent || '')); process.exit(1); }
+        if (!(String(paletteRow[0].className || '').includes('active'))) { console.error('FATAL: GenerateFromPalette should seed PAL as active from source palette magma'); process.exit(1); }
+        if (!String(summaryText).includes('source palette=magma')) { console.error('FATAL: GenerateFromPalette summary should show source palette, got ' + summaryText); process.exit(1); }
+        if (!String(summaryText).includes('output colorvector=magma')) { console.error('FATAL: GenerateFromPalette summary should seed output colorvector from source palette, got ' + summaryText); process.exit(1); }
+        vm.runInContext(`_openTriPalettePopup('generate_from_palette')`, ctx);
+        if (ctx._elements['tri-popup-overlay'].style.display !== 'flex') { console.error('FATAL: GenerateFromPalette TRI popup should open on top'); process.exit(1); }
+        const triTitle = vm.runInContext("document.getElementById('tri-popup-title').textContent", ctx);
+        if (!triTitle.includes('GenerateFromPalette')) { console.error('FATAL: GenerateFromPalette TRI popup title should mention GenerateFromPalette, got ' + triTitle); process.exit(1); }
+        vm.runInContext(`_closeTriPalettePopup(); setPaletteForMode('generate_from_palette', 'tri_redgold')`, ctx);
         await vm.runInContext('runGenerateFromPaletteSelected()', ctx);
         const dispatch = vm.runInContext('_gfpDispatch', ctx);
         if (!dispatch || dispatch.target !== 'render_orchestrator') { console.error('FATAL: GenerateFromPalette should dispatch render orchestrator'); process.exit(1); }
         const params = dispatch.jobs[0].params || {};
         if (params.color_mode !== 'saved_palette') { console.error('FATAL: GenerateFromPalette should set color_mode=saved_palette, got ' + params.color_mode); process.exit(1); }
         if (params.saved_palette_id !== 'pal_reuse') { console.error('FATAL: GenerateFromPalette should send chosen palette id, got ' + params.saved_palette_id); process.exit(1); }
+        if (params.palette !== 'tri_redgold') { console.error('FATAL: GenerateFromPalette should send chosen output palette, got ' + params.palette); process.exit(1); }
         console.log('  GenerateFromPalette popup dispatches saved-palette render: OK');
+    }
+
+    {
+        const summary = {
+            calc: { exists: true, N: 3000, degree: 7 },
+            families: {
+                color: [
+                    {
+                        artifact_id: 'color_src',
+                        created_at: '2026-04-02T10:00:00Z',
+                        image_key: 'renders/j/color/color_src/image.jpeg',
+                        image_url: 'https://img/color_src.jpeg',
+                        preview_url: 'https://img/color_src.png',
+                        viewer_url: 'https://img/color_src.png',
+                        width: 3000,
+                        height: 3000,
+                        pix: 3000,
+                        tile_size: 2048,
+                        format: 'jpeg',
+                        quality: 90,
+                        file_size: 64000,
+                        family: 'color',
+                        color_mode: 'solve_score',
+                        solve_metric: 'anisotropy',
+                        solve_score_quantile: 0.02,
+                        solve_score_omega: 6,
+                        palette: 'magma',
+                        repalette_capable: true,
+                        pixel_bins_prefix: 'renders/j/color/color_src/pixel_bins/tile_',
+                    }
+                ],
+                bilevel: [],
+                coeffs: [],
+                palette: [],
+            },
+        };
+        vm.runInContext(`
+            _renderActiveFamily = 'color';
+            _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
+            _clearActiveRun();
+            _colorRepaletteDispatch = null;
+            lambdaPost = async function(name, body, path) {
+                if (name === 'dispatch' && body.target === 'color_repalette') {
+                    _colorRepaletteDispatch = body;
+                    return { fired: 1, errors: [] };
+                }
+                return { ok: true };
+            };
+            renderArtifactPanel('j', ${JSON.stringify(summary)});
+        `, ctx);
+        const panelHtml = ctx._elements['render-preview'].innerHTML || '';
+        if (!panelHtml.includes('btn-render-color-repalette')) { console.error('FATAL: color artifact panel should show Color RePalette button'); process.exit(1); }
+        vm.runInContext('openColorRepalettePopup()', ctx);
+        const popupDisplay = vm.runInContext("document.getElementById('color-repalette-popup-overlay').style.display", ctx);
+        const popupSummary = vm.runInContext("document.getElementById('color-repalette-popup-summary').textContent", ctx);
+        const paletteRow = ctx._elements['palette-circles-color-repalette'].children || [];
+        if (popupDisplay !== 'flex') { console.error('FATAL: Color RePalette popup should open'); process.exit(1); }
+        if (paletteRow.length !== 3) { console.error('FATAL: Color RePalette palette row should collapse to PAL/TRI/LONG buttons, got ' + paletteRow.length); process.exit(1); }
+        if ((paletteRow[0].textContent || '') !== 'PAL') { console.error('FATAL: Color RePalette first swatch should be PAL button, got ' + (paletteRow[0].textContent || '')); process.exit(1); }
+        if (!String(popupSummary).includes('current palette=magma')) { console.error('FATAL: Color RePalette summary should show source palette, got ' + popupSummary); process.exit(1); }
+        if (!String(popupSummary).includes('output colorvector=magma')) { console.error('FATAL: Color RePalette summary should seed output colorvector, got ' + popupSummary); process.exit(1); }
+        vm.runInContext(`_openTriPalettePopup('color_repalette')`, ctx);
+        if (ctx._elements['tri-popup-overlay'].style.display !== 'flex') { console.error('FATAL: Color RePalette TRI popup should open on top'); process.exit(1); }
+        const triTitle = vm.runInContext("document.getElementById('tri-popup-title').textContent", ctx);
+        if (!triTitle.includes('Color RePalette')) { console.error('FATAL: Color RePalette TRI popup title should mention Color RePalette, got ' + triTitle); process.exit(1); }
+        vm.runInContext(`_closeTriPalettePopup(); setPaletteForMode('color_repalette', 'tri_redgold')`, ctx);
+        await vm.runInContext('runColorRepaletteSelectedArtifact()', ctx);
+        const dispatch = vm.runInContext('_colorRepaletteDispatch', ctx);
+        const runMode = vm.runInContext('_activeRenderRun && _activeRenderRun.mode', ctx);
+        if (!dispatch || dispatch.target !== 'color_repalette') { console.error('FATAL: Color RePalette should dispatch color_repalette target'); process.exit(1); }
+        if (dispatch.jobs[0].source_artifact_id !== 'color_src') { console.error('FATAL: Color RePalette should send source artifact id, got ' + dispatch.jobs[0].source_artifact_id); process.exit(1); }
+        if (dispatch.jobs[0].new_palette !== 'tri_redgold') { console.error('FATAL: Color RePalette should send chosen palette, got ' + dispatch.jobs[0].new_palette); process.exit(1); }
+        if (runMode !== 'color_repalette') { console.error('FATAL: Color RePalette should save active run mode, got ' + runMode); process.exit(1); }
+        console.log('  Color RePalette popup dispatches fast color reuse run: OK');
+    }
+
+    {
+        vm.runInContext(`
+            _saveActiveRun({ job_id: 'j', mode: 'color_repalette', run_id: 'run_color_repal', task_id: 'color_repalette_run', started_at_ms: Date.now() });
+            _colorRepaletteRefreshOpts = null;
+            _colorRepaletteLogText = '';
+            _colorRepaletteOrigLog = log;
+            _colorRepaletteOrigRefreshRenderArtifacts = refreshRenderArtifacts;
+            refreshRenderArtifacts = async function(jobId, opts) { _colorRepaletteRefreshOpts = { jobId, opts }; };
+            log = function(msg, cls, target) {
+                if (target === 'render-log' && String(msg).includes('Color RePalette complete')) _colorRepaletteLogText = msg;
+            };
+            lambdaPost = async function(name, body, path) {
+                if (name === 'storage' && path === '/check-status') {
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: true,
+                        status_counts: { done: 1 },
+                        results: [{
+                            phase: 'done',
+                            phase_label: 'Done',
+                            family: 'color',
+                            artifact_id: 'color_new',
+                        }]
+                    };
+                }
+                return { ok: true };
+            };
+        `, ctx);
+        await vm.runInContext('(async()=>{ await _pollActiveRenderRun(); })()', ctx);
+        const refreshOpts = vm.runInContext('_colorRepaletteRefreshOpts', ctx);
+        const statusText = vm.runInContext("document.getElementById('render-status').textContent", ctx);
+        const logText = vm.runInContext('_colorRepaletteLogText', ctx);
+        if (!refreshOpts || refreshOpts.jobId !== 'j' || !refreshOpts.opts || refreshOpts.opts.selectFamily !== 'color' || refreshOpts.opts.selectArtifactId !== 'color_new') {
+            console.error('FATAL: Color RePalette completion should refresh color artifacts with new selection, got ' + JSON.stringify(refreshOpts));
+            process.exit(1);
+        }
+        if (statusText !== 'Color RePalette complete') { console.error('FATAL: Color RePalette completion status should be specific, got ' + statusText); process.exit(1); }
+        if (!String(logText).includes('Color RePalette complete: color_new')) { console.error('FATAL: Color RePalette completion should log explicit completion, got ' + logText); process.exit(1); }
+        vm.runInContext(`
+            log = _colorRepaletteOrigLog;
+            refreshRenderArtifacts = _colorRepaletteOrigRefreshRenderArtifacts;
+        `, ctx);
+        console.log('  Color RePalette completion refreshes color inventory: OK');
     }
 
     {

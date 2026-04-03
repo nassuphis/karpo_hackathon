@@ -141,6 +141,15 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("palette_bins_render", packaged["handler_repalette.py"])
         self.assertIn("raw2jpeg", packaged["handler_repalette.py"])
 
+        self.assertIn("handler_finalize.py", packaged)
+        self.assertIn("pixbinassemble", packaged["handler_finalize.py"])
+
+        self.assertIn("handler_color_repalette.py", packaged)
+        self.assertIn("palette_names.py", packaged["handler_color_repalette.py"])
+        self.assertIn("tri_palette_names_generated.py", packaged["handler_color_repalette.py"])
+        self.assertIn("long_palette_names_generated.py", packaged["handler_color_repalette.py"])
+        self.assertIn("pixel_bins_render", packaged["handler_color_repalette.py"])
+
 
 if __name__ == "__main__":
     unittest.main()

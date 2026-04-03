@@ -21,6 +21,23 @@ def _load_js_catalog_entries():
 
 class TestCoeffCatalogConsistency(unittest.TestCase):
 
+    NEW_LOW_AGREEMENT_HAND_FIXES = [
+        "poly_111",
+        "poly_112",
+        "poly_504",
+        "poly_741",
+        "poly_742",
+        "poly_760",
+        "poly_762",
+        "poly_765",
+        "poly_776",
+        "poly_780",
+        "poly_792",
+        "poly_799",
+        "poly_802",
+        "poly_812",
+    ]
+
     def test_poly_hand_overrides_are_reflected_in_catalog_and_lookup(self):
         poly_hand_text = (LAMBDA_DIR / "poly_hand.h").read_text()
         catalog = json.loads((LAMBDA_DIR / "coeff_func_catalog.json").read_text())
@@ -71,6 +88,11 @@ class TestCoeffCatalogConsistency(unittest.TestCase):
     def test_poly_795_metric_overlay_tracks_hand_override(self):
         metrics = json.loads((LAMBDA_DIR / "coeff_func_metrics.json").read_text())
         self.assertEqual(metrics["poly_795"]["agreement_pct"], 100)
+
+    def test_new_low_agreement_hand_fix_metrics_report_full_agreement(self):
+        metrics = json.loads((LAMBDA_DIR / "coeff_func_metrics.json").read_text())
+        for name in self.NEW_LOW_AGREEMENT_HAND_FIXES:
+            self.assertEqual(metrics[name]["agreement_pct"], 100, name)
 
 
 if __name__ == "__main__":

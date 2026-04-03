@@ -468,8 +468,8 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "poly_107") == 0) return poly_107_c;
     if (strcmp(name, "poly_108") == 0) return poly_108_c;
     if (strcmp(name, "poly_109") == 0) return poly_109_c;
-    if (strcmp(name, "poly_111") == 0) return poly_111_c;
-    if (strcmp(name, "poly_112") == 0) return poly_112_c;
+    if (strcmp(name, "poly_111") == 0) return poly_111_hand;
+    if (strcmp(name, "poly_112") == 0) return poly_112_hand;
     if (strcmp(name, "poly_113") == 0) return poly_113_c;
     if (strcmp(name, "poly_114") == 0) return poly_114_c;
     if (strcmp(name, "poly_115") == 0) return poly_115_c;
@@ -728,7 +728,7 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "poly_501") == 0) return poly_501_c;
     if (strcmp(name, "poly_502") == 0) return poly_502_c;
     if (strcmp(name, "poly_503") == 0) return poly_503_c;
-    if (strcmp(name, "poly_504") == 0) return poly_504_c;
+    if (strcmp(name, "poly_504") == 0) return poly_504_hand;
     if (strcmp(name, "poly_505") == 0) return poly_505_c;
     if (strcmp(name, "poly_506") == 0) return poly_506_c;
     if (strcmp(name, "poly_507") == 0) return poly_507_c;
@@ -972,8 +972,8 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "poly_738") == 0) return poly_738_c;
     if (strcmp(name, "poly_739") == 0) return poly_739_c;
     if (strcmp(name, "poly_740") == 0) return poly_740_c;
-    if (strcmp(name, "poly_741") == 0) return poly_741_c;
-    if (strcmp(name, "poly_742") == 0) return poly_742_c;
+    if (strcmp(name, "poly_741") == 0) return poly_741_hand;
+    if (strcmp(name, "poly_742") == 0) return poly_742_hand;
     if (strcmp(name, "poly_743") == 0) return poly_743_c;
     if (strcmp(name, "poly_744") == 0) return poly_744_c;
     if (strcmp(name, "poly_745") == 0) return poly_745_c;
@@ -991,12 +991,12 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "poly_757") == 0) return poly_757_c;
     if (strcmp(name, "poly_758") == 0) return poly_758_c;
     if (strcmp(name, "poly_759") == 0) return poly_759_c;
-    if (strcmp(name, "poly_760") == 0) return poly_760_c;
+    if (strcmp(name, "poly_760") == 0) return poly_760_hand;
     if (strcmp(name, "poly_761") == 0) return poly_761_c;
-    if (strcmp(name, "poly_762") == 0) return poly_762_c;
+    if (strcmp(name, "poly_762") == 0) return poly_762_hand;
     if (strcmp(name, "poly_763") == 0) return poly_763_c;
     if (strcmp(name, "poly_764") == 0) return poly_764_c;
-    if (strcmp(name, "poly_765") == 0) return poly_765_c;
+    if (strcmp(name, "poly_765") == 0) return poly_765_hand;
     if (strcmp(name, "poly_766") == 0) return poly_766_c;
     if (strcmp(name, "poly_767") == 0) return poly_767_c;
     if (strcmp(name, "poly_768") == 0) return poly_768_c;
@@ -1007,11 +1007,11 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "poly_773") == 0) return poly_773_c;
     if (strcmp(name, "poly_774") == 0) return poly_774_c;
     if (strcmp(name, "poly_775") == 0) return poly_775_c;
-    if (strcmp(name, "poly_776") == 0) return poly_776_c;
+    if (strcmp(name, "poly_776") == 0) return poly_776_hand;
     if (strcmp(name, "poly_777") == 0) return poly_777_c;
     if (strcmp(name, "poly_778") == 0) return poly_778_c;
     if (strcmp(name, "poly_779") == 0) return poly_779_c;
-    if (strcmp(name, "poly_780") == 0) return poly_780_c;
+    if (strcmp(name, "poly_780") == 0) return poly_780_hand;
     if (strcmp(name, "poly_781") == 0) return poly_781_c;
     if (strcmp(name, "poly_781_v1") == 0) return poly_781_v1_c;
     if (strcmp(name, "poly_782") == 0) return poly_782_c;
@@ -1024,17 +1024,17 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "poly_789") == 0) return poly_789_c;
     if (strcmp(name, "poly_790") == 0) return poly_790_c;
     if (strcmp(name, "poly_791") == 0) return poly_791_c;
-    if (strcmp(name, "poly_792") == 0) return poly_792_c;
+    if (strcmp(name, "poly_792") == 0) return poly_792_hand;
     if (strcmp(name, "poly_793") == 0) return poly_793_c;
     if (strcmp(name, "poly_794") == 0) return poly_794_c;
     if (strcmp(name, "poly_795") == 0) return poly_795_hand;
     if (strcmp(name, "poly_796") == 0) return poly_796_c;
     if (strcmp(name, "poly_797") == 0) return poly_797_c;
     if (strcmp(name, "poly_798") == 0) return poly_798_c;
-    if (strcmp(name, "poly_799") == 0) return poly_799_c;
+    if (strcmp(name, "poly_799") == 0) return poly_799_hand;
     if (strcmp(name, "poly_800") == 0) return poly_800_c;
     if (strcmp(name, "poly_801") == 0) return poly_801_c;
-    if (strcmp(name, "poly_802") == 0) return poly_802_c;
+    if (strcmp(name, "poly_802") == 0) return poly_802_hand;
     if (strcmp(name, "poly_803") == 0) return poly_803_c;
     if (strcmp(name, "poly_804") == 0) return poly_804_c;
     if (strcmp(name, "poly_805") == 0) return poly_805_c;
@@ -1044,7 +1044,7 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "poly_809") == 0) return poly_809_c;
     if (strcmp(name, "poly_810") == 0) return poly_810_c;
     if (strcmp(name, "poly_811") == 0) return poly_811_c;
-    if (strcmp(name, "poly_812") == 0) return poly_812_c;
+    if (strcmp(name, "poly_812") == 0) return poly_812_hand;
     if (strcmp(name, "poly_813") == 0) return poly_813_c;
     if (strcmp(name, "poly_814") == 0) return poly_814_c;
     if (strcmp(name, "poly_815") == 0) return poly_815_c;
@@ -1560,8 +1560,8 @@ static const CoeffFuncSpec _coeffFuncSpecs[] = {
     {"poly_107", poly_107_c, 0, NULL},
     {"poly_108", poly_108_c, 0, NULL},
     {"poly_109", poly_109_c, 0, NULL},
-    {"poly_111", poly_111_c, 0, NULL},
-    {"poly_112", poly_112_c, 0, NULL},
+    {"poly_111", poly_111_hand, 0, NULL},
+    {"poly_112", poly_112_hand, 0, NULL},
     {"poly_113", poly_113_c, 0, NULL},
     {"poly_114", poly_114_c, 0, NULL},
     {"poly_115", poly_115_c, 0, NULL},
@@ -1820,7 +1820,7 @@ static const CoeffFuncSpec _coeffFuncSpecs[] = {
     {"poly_501", poly_501_c, 0, NULL},
     {"poly_502", poly_502_c, 0, NULL},
     {"poly_503", poly_503_c, 0, NULL},
-    {"poly_504", poly_504_c, 0, NULL},
+    {"poly_504", poly_504_hand, 0, NULL},
     {"poly_505", poly_505_c, 0, NULL},
     {"poly_506", poly_506_c, 0, NULL},
     {"poly_507", poly_507_c, 0, NULL},
@@ -2064,8 +2064,8 @@ static const CoeffFuncSpec _coeffFuncSpecs[] = {
     {"poly_738", poly_738_c, 0, NULL},
     {"poly_739", poly_739_c, 0, NULL},
     {"poly_740", poly_740_c, 0, NULL},
-    {"poly_741", poly_741_c, 0, NULL},
-    {"poly_742", poly_742_c, 0, NULL},
+    {"poly_741", poly_741_hand, 0, NULL},
+    {"poly_742", poly_742_hand, 0, NULL},
     {"poly_743", poly_743_c, 0, NULL},
     {"poly_744", poly_744_c, 0, NULL},
     {"poly_745", poly_745_c, 0, NULL},
@@ -2083,12 +2083,12 @@ static const CoeffFuncSpec _coeffFuncSpecs[] = {
     {"poly_757", poly_757_c, 0, NULL},
     {"poly_758", poly_758_c, 0, NULL},
     {"poly_759", poly_759_c, 0, NULL},
-    {"poly_760", poly_760_c, 0, NULL},
+    {"poly_760", poly_760_hand, 0, NULL},
     {"poly_761", poly_761_c, 0, NULL},
-    {"poly_762", poly_762_c, 0, NULL},
+    {"poly_762", poly_762_hand, 0, NULL},
     {"poly_763", poly_763_c, 0, NULL},
     {"poly_764", poly_764_c, 0, NULL},
-    {"poly_765", poly_765_c, 0, NULL},
+    {"poly_765", poly_765_hand, 0, NULL},
     {"poly_766", poly_766_c, 0, NULL},
     {"poly_767", poly_767_c, 0, NULL},
     {"poly_768", poly_768_c, 0, NULL},
@@ -2099,11 +2099,11 @@ static const CoeffFuncSpec _coeffFuncSpecs[] = {
     {"poly_773", poly_773_c, 0, NULL},
     {"poly_774", poly_774_c, 0, NULL},
     {"poly_775", poly_775_c, 0, NULL},
-    {"poly_776", poly_776_c, 0, NULL},
+    {"poly_776", poly_776_hand, 0, NULL},
     {"poly_777", poly_777_c, 0, NULL},
     {"poly_778", poly_778_c, 0, NULL},
     {"poly_779", poly_779_c, 0, NULL},
-    {"poly_780", poly_780_c, 0, NULL},
+    {"poly_780", poly_780_hand, 0, NULL},
     {"poly_781", poly_781_c, 0, NULL},
     {"poly_781_v1", poly_781_v1_c, 0, NULL},
     {"poly_782", poly_782_c, 0, NULL},
@@ -2116,17 +2116,17 @@ static const CoeffFuncSpec _coeffFuncSpecs[] = {
     {"poly_789", poly_789_c, 0, NULL},
     {"poly_790", poly_790_c, 0, NULL},
     {"poly_791", poly_791_c, 0, NULL},
-    {"poly_792", poly_792_c, 0, NULL},
+    {"poly_792", poly_792_hand, 0, NULL},
     {"poly_793", poly_793_c, 0, NULL},
     {"poly_794", poly_794_c, 0, NULL},
     {"poly_795", poly_795_hand, 0, NULL},
     {"poly_796", poly_796_c, 0, NULL},
     {"poly_797", poly_797_c, 0, NULL},
     {"poly_798", poly_798_c, 0, NULL},
-    {"poly_799", poly_799_c, 0, NULL},
+    {"poly_799", poly_799_hand, 0, NULL},
     {"poly_800", poly_800_c, 0, NULL},
     {"poly_801", poly_801_c, 0, NULL},
-    {"poly_802", poly_802_c, 0, NULL},
+    {"poly_802", poly_802_hand, 0, NULL},
     {"poly_803", poly_803_c, 0, NULL},
     {"poly_804", poly_804_c, 0, NULL},
     {"poly_805", poly_805_c, 0, NULL},
@@ -2136,7 +2136,7 @@ static const CoeffFuncSpec _coeffFuncSpecs[] = {
     {"poly_809", poly_809_c, 0, NULL},
     {"poly_810", poly_810_c, 0, NULL},
     {"poly_811", poly_811_c, 0, NULL},
-    {"poly_812", poly_812_c, 0, NULL},
+    {"poly_812", poly_812_hand, 0, NULL},
     {"poly_813", poly_813_c, 0, NULL},
     {"poly_814", poly_814_c, 0, NULL},
     {"poly_815", poly_815_c, 0, NULL},

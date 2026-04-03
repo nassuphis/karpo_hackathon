@@ -715,7 +715,7 @@ def poly_742(t1, t2):
         n = 10
         cf = np.zeros(n, dtype=complex)
         for k in range(1, n+1):
-            cf[k-1] = ((t1 +1j*t2)**k / np.math.factorial(k)) * np.exp(1j * np.sin(k*t2.real))
+            cf[k-1] = ((t1 +1j*t2)**k / math.factorial(k)) * np.exp(1j * np.sin(k*t2.real))
         cf[0] = t1**3 -1j*t1**2 + t2**2 -1j*t2
         cf[4] = t2.real * t1.imag -1j*t2**3
         cf[9] = t1.real**2 * t2.real**2 * np.exp(1j * (t1.real + t2.real))
@@ -1005,7 +1005,7 @@ def poly_760(t1, t2):
         else:
             vv = np.sum(np.linalg.inv(mm))
         cf[2] = 1000 * vv
-        cf[3] = np.sum(np.fft.fft(np.array([t1, t2]), inverse=True))
+        cf[3] = np.sum(np.fft.ifft(np.array([t1, t2])))
         cf[4] = 10 * np.exp(1j * np.arctan2(np.imag(t1), np.real(t1))) * np.sqrt(np.real(t1) ** 2 + np.imag(t1) ** 2)
         cf[5] = 1000 * np.median([np.real(t1), np.imag(t1), np.real(t2), np.imag(t2)]) ** 2 + 500 * np.median([np.real(t1), np.imag(t1), np.real(t2), np.imag(t2)]) ** 3
         cf[6] = np.real(t2) + 1j * 2 * np.sqrt(np.abs(np.imag(t2)))
@@ -1651,4 +1651,3 @@ def poly_800(t1, t2):
     cf[21:24] = np.abs(cf[14] + t1 * t2) ** np.arange(1, 4)
     cf[24] = np.abs(cf[23]) + np.log(np.abs(t1 + t2 + 0.5j))
     return cf.astype(np.complex128)
-

@@ -70,7 +70,7 @@ def poly_504(t1, t2):
             magnitude = np.log(np.abs(rec_seq[j-1] + imc_seq[j-1]) +1) * (np.abs(t1)**j + np.abs(t2)**(n -j))
             angle = np.angle(t1)*np.sin(j) + np.angle(t2)*np.cos(j/2)
             cf[j-1] = magnitude * (np.cos(angle) +1j * np.sin(angle))
-        for k in range(1, np.floor(n/2)+1):
+        for k in range(1, int(np.floor(n/2)) + 1):
             if k <=n:
                 cf[k-1] += np.prod(rec_seq[:k]) * np.conj(t2)**k
                 cf[n -k] += np.sum(imc_seq[:k]) * np.sin(np.abs(t1)*k) * np.cos(np.abs(t2)/(k +1))
@@ -1617,4 +1617,3 @@ def poly_600(t1, t2):
         return cf.astype(np.complex128)
     except:
         return np.zeros(71, dtype=complex)
-

@@ -187,7 +187,7 @@ def poly_812(t1, t2):
     try:
         cf = np.zeros(25, dtype=complex)
         cf[0] = t1 * t2
-        for k in range(1, 26):
+        for k in range(1, 25):
             cf[k] = (cf[k - 1] ** 2 + np.real(t1) + np.imag(1j * t2)) / (1 + np.abs(cf[k - 1]))
             if np.abs(cf[k]) > 1e6 or np.isnan(cf[k]) or np.isinf(cf[k]):
                 cf[k] = cf[k - 1]
@@ -3237,4 +3237,3 @@ def poly_rnd_path7(t1,t2) -> np.ndarray:
     imag_part = (1.0 - (t2) ) * cf_start.imag + (t2) * cf_end.imag
     coeffs  = (real_part + 1j * imag_part)
     return coeffs.astype(complex)
-

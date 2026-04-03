@@ -2755,15 +2755,15 @@
   },
   {
     "name": "poly_111",
-    "c_symbol": "poly_111_c",
-    "source": "poly200.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_111_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_112",
-    "c_symbol": "poly_112_c",
-    "source": "poly200.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_112_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_113",
@@ -4315,9 +4315,9 @@
   },
   {
     "name": "poly_504",
-    "c_symbol": "poly_504_c",
-    "source": "poly600.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_504_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_505",
@@ -5779,15 +5779,15 @@
   },
   {
     "name": "poly_741",
-    "c_symbol": "poly_741_c",
-    "source": "poly800.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_741_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_742",
-    "c_symbol": "poly_742_c",
-    "source": "poly800.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_742_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_743",
@@ -5893,9 +5893,9 @@
   },
   {
     "name": "poly_760",
-    "c_symbol": "poly_760_c",
-    "source": "poly800.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_760_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_761",
@@ -5905,9 +5905,9 @@
   },
   {
     "name": "poly_762",
-    "c_symbol": "poly_762_c",
-    "source": "poly800.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_762_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_763",
@@ -5923,9 +5923,9 @@
   },
   {
     "name": "poly_765",
-    "c_symbol": "poly_765_c",
-    "source": "poly800.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_765_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_766",
@@ -5989,9 +5989,9 @@
   },
   {
     "name": "poly_776",
-    "c_symbol": "poly_776_c",
-    "source": "poly800.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_776_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_777",
@@ -6013,9 +6013,9 @@
   },
   {
     "name": "poly_780",
-    "c_symbol": "poly_780_c",
-    "source": "poly800.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_780_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_781",
@@ -6091,9 +6091,9 @@
   },
   {
     "name": "poly_792",
-    "c_symbol": "poly_792_c",
-    "source": "poly800.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_792_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_793",
@@ -6133,9 +6133,9 @@
   },
   {
     "name": "poly_799",
-    "c_symbol": "poly_799_c",
-    "source": "poly800.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_799_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_800",
@@ -6151,9 +6151,9 @@
   },
   {
     "name": "poly_802",
-    "c_symbol": "poly_802_c",
-    "source": "poly900.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_802_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_803",
@@ -6211,9 +6211,9 @@
   },
   {
     "name": "poly_812",
-    "c_symbol": "poly_812_c",
-    "source": "poly900.py",
-    "kind": "transpiled"
+    "c_symbol": "poly_812_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
   },
   {
     "name": "poly_813",

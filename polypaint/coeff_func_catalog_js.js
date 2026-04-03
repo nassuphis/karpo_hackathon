@@ -3524,19 +3524,19 @@ window._coeffFuncCatalog = [
   },
   {
     "name": "poly_111",
-    "kind": "transpiled",
-    "source": "poly200.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 3
+    "agreement_pct": 100
   },
   {
     "name": "poly_112",
-    "kind": "transpiled",
-    "source": "poly200.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 6
+    "agreement_pct": 100
   },
   {
     "name": "poly_113",
@@ -5584,11 +5584,11 @@ window._coeffFuncCatalog = [
   },
   {
     "name": "poly_504",
-    "kind": "transpiled",
-    "source": "poly600.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 35,
     "params": [],
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   {
     "name": "poly_505",
@@ -7529,19 +7529,19 @@ window._coeffFuncCatalog = [
   },
   {
     "name": "poly_741",
-    "kind": "transpiled",
-    "source": "poly800.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 35,
     "params": [],
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   {
     "name": "poly_742",
-    "kind": "transpiled",
-    "source": "poly800.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 35,
     "params": [],
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   {
     "name": "poly_743",
@@ -7680,11 +7680,11 @@ window._coeffFuncCatalog = [
   },
   {
     "name": "poly_760",
-    "kind": "transpiled",
-    "source": "poly800.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 10,
     "params": [],
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   {
     "name": "poly_761",
@@ -7696,11 +7696,11 @@ window._coeffFuncCatalog = [
   },
   {
     "name": "poly_762",
-    "kind": "transpiled",
-    "source": "poly800.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 35,
     "params": [],
-    "agreement_pct": 2
+    "agreement_pct": 100
   },
   {
     "name": "poly_763",
@@ -7720,11 +7720,11 @@ window._coeffFuncCatalog = [
   },
   {
     "name": "poly_765",
-    "kind": "transpiled",
-    "source": "poly800.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 10,
     "params": [],
-    "agreement_pct": 9
+    "agreement_pct": 100
   },
   {
     "name": "poly_766",
@@ -7807,11 +7807,11 @@ window._coeffFuncCatalog = [
   },
   {
     "name": "poly_776",
-    "kind": "transpiled",
-    "source": "poly800.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 35,
     "params": [],
-    "agreement_pct": 10
+    "agreement_pct": 100
   },
   {
     "name": "poly_777",
@@ -7839,11 +7839,11 @@ window._coeffFuncCatalog = [
   },
   {
     "name": "poly_780",
-    "kind": "transpiled",
-    "source": "poly800.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 23
+    "agreement_pct": 100
   },
   {
     "name": "poly_781",
@@ -7942,11 +7942,11 @@ window._coeffFuncCatalog = [
   },
   {
     "name": "poly_792",
-    "kind": "transpiled",
-    "source": "poly800.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 2
+    "agreement_pct": 100
   },
   {
     "name": "poly_793",
@@ -7998,11 +7998,11 @@ window._coeffFuncCatalog = [
   },
   {
     "name": "poly_799",
-    "kind": "transpiled",
-    "source": "poly800.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   {
     "name": "poly_800",
@@ -8022,11 +8022,11 @@ window._coeffFuncCatalog = [
   },
   {
     "name": "poly_802",
-    "kind": "transpiled",
-    "source": "poly900.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   {
     "name": "poly_803",
@@ -8101,11 +8101,11 @@ window._coeffFuncCatalog = [
   },
   {
     "name": "poly_812",
-    "kind": "transpiled",
-    "source": "poly900.py",
+    "kind": "hand",
+    "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   {
     "name": "poly_813",

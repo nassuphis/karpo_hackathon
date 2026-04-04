@@ -227,7 +227,6 @@ timing/
 *.joboptions
 
 # Book generation
-make_book.py
 test_book*.json
 whitewall.pdf
 polypaint_book_*.pdf

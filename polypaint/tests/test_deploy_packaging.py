@@ -157,6 +157,15 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('create_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip"', DEPLOY_TEXT)
         self.assertIn('update_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip"', DEPLOY_TEXT)
 
+    def test_pdf_layer_build_script_overrides_lambda_entrypoint(self):
+        build_script = (LAMBDA_DIR / "build-pdf-python-layer.sh").read_text()
+        self.assertIn("--entrypoint /bin/bash", build_script)
+        self.assertIn("public.ecr.aws/lambda/python:3.12", build_script)
+        self.assertIn("-lc '", build_script)
+        self.assertIn("zipfile.ZipFile", build_script)
+        self.assertNotIn("find /out/python", build_script)
+        self.assertNotIn("zip -r9", build_script)
+
 
 if __name__ == "__main__":
     unittest.main()

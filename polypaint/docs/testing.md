@@ -43,6 +43,7 @@ All tests live in `polypaint/tests/`.
 | `test_poly645_hand.py` | `poly_645` hand-written coeff function matches Python reference and stays off the broken transpiled path | `sweep_test` compiled |
 | `test_poly795_hand.py` | `poly_795` hand-written coeff function matches Python reference, including slice rewrites and both `np.where` branches | `sweep_test` compiled |
 | `test_low_agreement_hand.py` | Batch parity coverage for the repaired low-agreement coeff funcs promoted from transpiled to hand; the current authoritative function list lives in `CASES` inside the test file | `sweep_test` compiled, numpy |
+| `test_deploy_packaging.py` | Lambda zip contents, local sidecar packaging, executable chmod coverage, and deploy-script regressions such as the PDF layer builder entrypoint/tooling contract | Python only |
 | `test_pdf_artifact_handler.py` | PDF artifact Lambda: Color source validation, metadata-derived spread composition, PDF upload contract | Python mocks only |
 | `test_frontend_js.sh` | Frontend JS execution: UI logic, TRI palette popup/swatches, dispatch, Render family catalogs, Palette workflow UI, DeepZoom inventory | Node.js (vm module) |
 | `e2e/deepzoom-inventory.spec.js` | DeepZoom inventory: load, sort, select, arrow keys, share links | Playwright browser |
@@ -74,8 +75,31 @@ uv run python tests/test_dither.py
 uv run python tests/test_param_dump.py
 uv run python tests/test_bilevel_raster.py
 uv run python tests/test_bilevel_stitch.py
+uv run python -m pytest tests/test_deploy_packaging.py tests/test_pdf_artifact_handler.py -q
 uv run python -m pytest tests/test_coeff_catalog_consistency.py tests/test_poly645_hand.py tests/test_poly795_hand.py tests/test_low_agreement_hand.py -q
 ```
+
+### Deploy-time layer/build checks
+
+When adding or changing any Lambda layer or deploy-time build script, do not stop at unit tests. Run both:
+
+```bash
+uv run python -m pytest tests/test_deploy_packaging.py -q
+```
+
+and the real build command for the affected layer. For the PDF layer:
+
+```bash
+bash lambda/build-pdf-python-layer.sh
+```
+
+The packaging test is permanent and checks the specific PDF-layer regression points:
+
+- the Lambda Python base image entrypoint is overridden with `--entrypoint /bin/bash`
+- the build script uses Python zipping/cleanup instead of assuming `find` or `zip` exist in the Lambda base image
+- the PDF artifact Lambda is wired into `deploy.sh`
+
+If the real layer build is not run after changing the script, the deploy path is not considered verified.
 
 ### Hand override workflow
 
@@ -215,6 +239,21 @@ Unit tests with mocked AWS services (no real S3/DynamoDB/Lambda calls):
 - **TestSolveFromCoeffs** — solve routing, full file download
 - **TestPreviewHandler** — preview generation, PNG validity
 - **TestPdfArtifactHandler** — PDF spread derivation from saved Color artifacts
+
+### test_deploy_packaging.py
+
+Deploy-time contract coverage:
+
+- packaged handlers include all local Python/module sidecars they import
+- packaged local binaries have matching `chmod +x` in `deploy.sh`
+- known regression paths stay covered:
+  - palette-name generated modules
+  - `solve_proximity_stats`
+  - `roots2pix`
+  - `autolevels_render`
+  - `pixbinassemble`
+  - `pixel_bins_render`
+  - PDF artifact packaging and the PDF layer build-script contract
 
 ### test_bilevel_raster.py
 

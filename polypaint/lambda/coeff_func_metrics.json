@@ -2,24 +2,6 @@
   "g1": {
     "agreement_pct": 100
   },
-  "g2": {
-    "agreement_pct": 100
-  },
-  "g3": {
-    "agreement_pct": 100
-  },
-  "g4": {
-    "agreement_pct": 100
-  },
-  "g5": {
-    "agreement_pct": 100
-  },
-  "g6": {
-    "agreement_pct": 100
-  },
-  "g9": {
-    "agreement_pct": 100
-  },
   "g10": {
     "agreement_pct": 98
   },
@@ -46,6 +28,9 @@
   },
   "g19": {
     "agreement_pct": 64
+  },
+  "g2": {
+    "agreement_pct": 100
   },
   "g20": {
     "agreement_pct": 64
@@ -74,6 +59,9 @@
   "g29": {
     "agreement_pct": 100
   },
+  "g3": {
+    "agreement_pct": 100
+  },
   "g30": {
     "agreement_pct": 100
   },
@@ -93,6 +81,9 @@
     "agreement_pct": 100
   },
   "g39": {
+    "agreement_pct": 100
+  },
+  "g4": {
     "agreement_pct": 100
   },
   "g40": {
@@ -116,6 +107,9 @@
   "g46": {
     "agreement_pct": 100
   },
+  "g5": {
+    "agreement_pct": 100
+  },
   "g53": {
     "agreement_pct": 100
   },
@@ -130,6 +124,9 @@
   },
   "g57": {
     "agreement_pct": 96
+  },
+  "g6": {
+    "agreement_pct": 100
   },
   "g60": {
     "agreement_pct": 100
@@ -188,6 +185,9 @@
   "g89": {
     "agreement_pct": 100
   },
+  "g9": {
+    "agreement_pct": 100
+  },
   "g93": {
     "agreement_pct": 95
   },
@@ -203,308 +203,17 @@
   "poly_1": {
     "agreement_pct": 100
   },
-  "poly_2": {
-    "agreement_pct": 79
-  },
-  "poly_3": {
-    "agreement_pct": 41
-  },
-  "poly_4": {
-    "agreement_pct": 100
-  },
-  "poly_5": {
-    "agreement_pct": 41
-  },
-  "poly_6": {
-    "agreement_pct": 65
-  },
-  "poly_7": {
-    "agreement_pct": 71
-  },
-  "poly_8": {
-    "agreement_pct": 97
-  },
-  "poly_9": {
-    "agreement_pct": 96
-  },
   "poly_10": {
-    "agreement_pct": 100
-  },
-  "poly_11": {
-    "agreement_pct": 100
-  },
-  "poly_12": {
-    "agreement_pct": 98
-  },
-  "poly_13": {
-    "agreement_pct": 0
-  },
-  "poly_14": {
-    "agreement_pct": 0
-  },
-  "poly_15": {
-    "agreement_pct": 0
-  },
-  "poly_16": {
-    "agreement_pct": 91
-  },
-  "poly_17": {
-    "agreement_pct": 99
-  },
-  "poly_18": {
-    "agreement_pct": 8
-  },
-  "poly_19": {
-    "agreement_pct": 0
-  },
-  "poly_20": {
-    "agreement_pct": 40
-  },
-  "poly_21": {
-    "agreement_pct": 0
-  },
-  "poly_22": {
-    "agreement_pct": 0
-  },
-  "poly_23": {
-    "agreement_pct": 100
-  },
-  "poly_24": {
-    "agreement_pct": 72
-  },
-  "poly_25": {
-    "agreement_pct": 0
-  },
-  "poly_26": {
-    "agreement_pct": 0
-  },
-  "poly_27": {
-    "agreement_pct": 47
-  },
-  "poly_28": {
-    "agreement_pct": 96
-  },
-  "poly_29": {
-    "agreement_pct": 99
-  },
-  "poly_30": {
-    "agreement_pct": 81
-  },
-  "poly_31": {
-    "agreement_pct": 0
-  },
-  "poly_32": {
-    "agreement_pct": 81
-  },
-  "poly_33": {
-    "agreement_pct": 70
-  },
-  "poly_34": {
-    "agreement_pct": 45
-  },
-  "poly_35": {
-    "agreement_pct": 100
-  },
-  "poly_36": {
-    "agreement_pct": 100
-  },
-  "poly_37": {
-    "agreement_pct": 88
-  },
-  "poly_38": {
-    "agreement_pct": 66
-  },
-  "poly_39": {
-    "agreement_pct": 30
-  },
-  "poly_40": {
-    "agreement_pct": 87
-  },
-  "poly_41": {
-    "agreement_pct": 99
-  },
-  "poly_42": {
-    "agreement_pct": 93
-  },
-  "poly_43": {
-    "agreement_pct": 77
-  },
-  "poly_44": {
-    "agreement_pct": 11
-  },
-  "poly_45": {
-    "agreement_pct": 100
-  },
-  "poly_46": {
-    "agreement_pct": 0
-  },
-  "poly_47": {
-    "agreement_pct": 65
-  },
-  "poly_48": {
-    "agreement_pct": 60
-  },
-  "poly_49": {
-    "agreement_pct": 100
-  },
-  "poly_50": {
-    "agreement_pct": 100
-  },
-  "poly_51": {
-    "agreement_pct": 4
-  },
-  "poly_52": {
-    "agreement_pct": 100
-  },
-  "poly_53": {
-    "agreement_pct": 100
-  },
-  "poly_54": {
-    "agreement_pct": 48
-  },
-  "poly_55": {
-    "agreement_pct": 56
-  },
-  "poly_56": {
-    "agreement_pct": 2
-  },
-  "poly_57": {
-    "agreement_pct": 100
-  },
-  "poly_58": {
-    "agreement_pct": 0
-  },
-  "poly_59": {
-    "agreement_pct": 21
-  },
-  "poly_60": {
-    "agreement_pct": 73
-  },
-  "poly_61": {
-    "agreement_pct": 22
-  },
-  "poly_62": {
-    "agreement_pct": 0
-  },
-  "poly_63": {
-    "agreement_pct": 0
-  },
-  "poly_64": {
-    "agreement_pct": 49
-  },
-  "poly_65": {
-    "agreement_pct": 72
-  },
-  "poly_66": {
-    "agreement_pct": 1
-  },
-  "poly_67": {
-    "agreement_pct": 96
-  },
-  "poly_68": {
-    "agreement_pct": 21
-  },
-  "poly_69": {
-    "agreement_pct": 21
-  },
-  "poly_70": {
-    "agreement_pct": 100
-  },
-  "poly_71": {
-    "agreement_pct": 100
-  },
-  "poly_72": {
-    "agreement_pct": 100
-  },
-  "poly_73": {
-    "agreement_pct": 19
-  },
-  "poly_74": {
-    "agreement_pct": 100
-  },
-  "poly_75": {
-    "agreement_pct": 0
-  },
-  "poly_76": {
-    "agreement_pct": 98
-  },
-  "poly_77": {
-    "agreement_pct": 95
-  },
-  "poly_78": {
-    "agreement_pct": 88
-  },
-  "poly_79": {
-    "agreement_pct": 9
-  },
-  "poly_80": {
-    "agreement_pct": 8
-  },
-  "poly_81": {
-    "agreement_pct": 0
-  },
-  "poly_82": {
-    "agreement_pct": 57
-  },
-  "poly_83": {
-    "agreement_pct": 98
-  },
-  "poly_84": {
-    "agreement_pct": 100
-  },
-  "poly_85": {
-    "agreement_pct": 73
-  },
-  "poly_86": {
-    "agreement_pct": 0
-  },
-  "poly_87": {
-    "agreement_pct": 20
-  },
-  "poly_88": {
-    "agreement_pct": 100
-  },
-  "poly_89": {
-    "agreement_pct": 78
-  },
-  "poly_90": {
-    "agreement_pct": 88
-  },
-  "poly_91": {
-    "agreement_pct": 100
-  },
-  "poly_92": {
-    "agreement_pct": 62
-  },
-  "poly_93": {
-    "agreement_pct": 55
-  },
-  "poly_94": {
-    "agreement_pct": 100
-  },
-  "poly_95": {
-    "agreement_pct": 57
-  },
-  "poly_96": {
-    "agreement_pct": 0
-  },
-  "poly_97": {
-    "agreement_pct": 36
-  },
-  "poly_98": {
-    "agreement_pct": 99
-  },
-  "poly_99": {
     "agreement_pct": 100
   },
   "poly_100": {
     "agreement_pct": 97
   },
   "poly_101": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_102": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_103": {
     "agreement_pct": 0
@@ -516,19 +225,22 @@
     "agreement_pct": 100
   },
   "poly_106": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_107": {
     "agreement_pct": 32
   },
   "poly_108": {
-    "agreement_pct": 45
+    "agreement_pct": 100
   },
   "poly_109": {
     "agreement_pct": 100
   },
+  "poly_11": {
+    "agreement_pct": 100
+  },
   "poly_110": {
-    "agreement_pct": 16
+    "agreement_pct": 100
   },
   "poly_111": {
     "agreement_pct": 100
@@ -537,16 +249,16 @@
     "agreement_pct": 100
   },
   "poly_113": {
-    "agreement_pct": 6
+    "agreement_pct": 100
   },
   "poly_114": {
-    "agreement_pct": 49
+    "agreement_pct": 100
   },
   "poly_115": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_116": {
-    "agreement_pct": 63
+    "agreement_pct": 100
   },
   "poly_117": {
     "agreement_pct": 93
@@ -554,11 +266,14 @@
   "poly_118": {
     "agreement_pct": 92
   },
+  "poly_12": {
+    "agreement_pct": 98
+  },
   "poly_120": {
     "agreement_pct": 0
   },
   "poly_121": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_123": {
     "agreement_pct": 100
@@ -580,6 +295,9 @@
   },
   "poly_129": {
     "agreement_pct": 79
+  },
+  "poly_13": {
+    "agreement_pct": 100
   },
   "poly_130": {
     "agreement_pct": 100
@@ -611,6 +329,9 @@
   "poly_139": {
     "agreement_pct": 100
   },
+  "poly_14": {
+    "agreement_pct": 100
+  },
   "poly_140": {
     "agreement_pct": 100
   },
@@ -639,7 +360,10 @@
     "agreement_pct": 100
   },
   "poly_149": {
-    "agreement_pct": 0
+    "agreement_pct": 100
+  },
+  "poly_15": {
+    "agreement_pct": 100
   },
   "poly_150": {
     "agreement_pct": 100
@@ -671,6 +395,9 @@
   "poly_159": {
     "agreement_pct": 70
   },
+  "poly_16": {
+    "agreement_pct": 91
+  },
   "poly_160": {
     "agreement_pct": 100
   },
@@ -700,6 +427,9 @@
   },
   "poly_169": {
     "agreement_pct": 100
+  },
+  "poly_17": {
+    "agreement_pct": 99
   },
   "poly_170": {
     "agreement_pct": 100
@@ -731,6 +461,9 @@
   "poly_179": {
     "agreement_pct": 96
   },
+  "poly_18": {
+    "agreement_pct": 100
+  },
   "poly_180": {
     "agreement_pct": 100
   },
@@ -741,7 +474,7 @@
     "agreement_pct": 100
   },
   "poly_183": {
-    "agreement_pct": 96
+    "agreement_pct": 100
   },
   "poly_184": {
     "agreement_pct": 28
@@ -759,6 +492,9 @@
     "agreement_pct": 79
   },
   "poly_189": {
+    "agreement_pct": 100
+  },
+  "poly_19": {
     "agreement_pct": 100
   },
   "poly_190": {
@@ -791,6 +527,12 @@
   "poly_199": {
     "agreement_pct": 100
   },
+  "poly_2": {
+    "agreement_pct": 79
+  },
+  "poly_20": {
+    "agreement_pct": 40
+  },
   "poly_200": {
     "agreement_pct": 91
   },
@@ -821,6 +563,9 @@
   "poly_209": {
     "agreement_pct": 100
   },
+  "poly_21": {
+    "agreement_pct": 0
+  },
   "poly_210": {
     "agreement_pct": 100
   },
@@ -849,6 +594,9 @@
     "agreement_pct": 100
   },
   "poly_219": {
+    "agreement_pct": 100
+  },
+  "poly_22": {
     "agreement_pct": 100
   },
   "poly_220": {
@@ -881,6 +629,9 @@
   "poly_229": {
     "agreement_pct": 91
   },
+  "poly_23": {
+    "agreement_pct": 100
+  },
   "poly_230": {
     "agreement_pct": 100
   },
@@ -911,6 +662,9 @@
   "poly_239": {
     "agreement_pct": 100
   },
+  "poly_24": {
+    "agreement_pct": 72
+  },
   "poly_240": {
     "agreement_pct": 94
   },
@@ -939,6 +693,9 @@
     "agreement_pct": 100
   },
   "poly_249": {
+    "agreement_pct": 100
+  },
+  "poly_25": {
     "agreement_pct": 100
   },
   "poly_250": {
@@ -971,6 +728,9 @@
   "poly_259": {
     "agreement_pct": 98
   },
+  "poly_26": {
+    "agreement_pct": 100
+  },
   "poly_260": {
     "agreement_pct": 100
   },
@@ -1000,6 +760,9 @@
   },
   "poly_269": {
     "agreement_pct": 99
+  },
+  "poly_27": {
+    "agreement_pct": 47
   },
   "poly_270": {
     "agreement_pct": 45
@@ -1031,6 +794,9 @@
   "poly_279": {
     "agreement_pct": 100
   },
+  "poly_28": {
+    "agreement_pct": 96
+  },
   "poly_280": {
     "agreement_pct": 88
   },
@@ -1060,6 +826,9 @@
   },
   "poly_289": {
     "agreement_pct": 100
+  },
+  "poly_29": {
+    "agreement_pct": 99
   },
   "poly_290": {
     "agreement_pct": 100
@@ -1091,6 +860,12 @@
   "poly_299": {
     "agreement_pct": 100
   },
+  "poly_3": {
+    "agreement_pct": 41
+  },
+  "poly_30": {
+    "agreement_pct": 81
+  },
   "poly_300": {
     "agreement_pct": 100
   },
@@ -1110,12 +885,15 @@
     "agreement_pct": 81
   },
   "poly_307": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_308": {
     "agreement_pct": 100
   },
   "poly_309": {
+    "agreement_pct": 100
+  },
+  "poly_31": {
     "agreement_pct": 100
   },
   "poly_310": {
@@ -1131,22 +909,25 @@
     "agreement_pct": 100
   },
   "poly_314": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_315": {
     "agreement_pct": 100
   },
   "poly_316": {
-    "agreement_pct": 2
+    "agreement_pct": 100
   },
   "poly_317": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_318": {
     "agreement_pct": 100
   },
   "poly_319": {
     "agreement_pct": 100
+  },
+  "poly_32": {
+    "agreement_pct": 81
   },
   "poly_320": {
     "agreement_pct": 100
@@ -1161,7 +942,7 @@
     "agreement_pct": 100
   },
   "poly_324": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_326": {
     "agreement_pct": 100
@@ -1175,6 +956,9 @@
   "poly_329": {
     "agreement_pct": 100
   },
+  "poly_33": {
+    "agreement_pct": 70
+  },
   "poly_330": {
     "agreement_pct": 100
   },
@@ -1182,13 +966,13 @@
     "agreement_pct": 100
   },
   "poly_333": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_334": {
     "agreement_pct": 100
   },
   "poly_335": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_336": {
     "agreement_pct": 100
@@ -1198,6 +982,9 @@
   },
   "poly_338": {
     "agreement_pct": 100
+  },
+  "poly_34": {
+    "agreement_pct": 45
   },
   "poly_340": {
     "agreement_pct": 100
@@ -1215,12 +1002,15 @@
     "agreement_pct": 100
   },
   "poly_345": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_346": {
     "agreement_pct": 100
   },
   "poly_348": {
+    "agreement_pct": 100
+  },
+  "poly_35": {
     "agreement_pct": 100
   },
   "poly_350": {
@@ -1253,6 +1043,9 @@
   "poly_359": {
     "agreement_pct": 43
   },
+  "poly_36": {
+    "agreement_pct": 100
+  },
   "poly_360": {
     "agreement_pct": 62
   },
@@ -1279,6 +1072,9 @@
   },
   "poly_369": {
     "agreement_pct": 100
+  },
+  "poly_37": {
+    "agreement_pct": 88
   },
   "poly_371": {
     "agreement_pct": 100
@@ -1307,6 +1103,9 @@
   "poly_379": {
     "agreement_pct": 100
   },
+  "poly_38": {
+    "agreement_pct": 66
+  },
   "poly_380": {
     "agreement_pct": 100
   },
@@ -1317,7 +1116,7 @@
     "agreement_pct": 44
   },
   "poly_383": {
-    "agreement_pct": 23
+    "agreement_pct": 100
   },
   "poly_384": {
     "agreement_pct": 41
@@ -1335,6 +1134,9 @@
     "agreement_pct": 100
   },
   "poly_389": {
+    "agreement_pct": 100
+  },
+  "poly_39": {
     "agreement_pct": 100
   },
   "poly_392": {
@@ -1360,6 +1162,12 @@
   },
   "poly_399": {
     "agreement_pct": 100
+  },
+  "poly_4": {
+    "agreement_pct": 100
+  },
+  "poly_40": {
+    "agreement_pct": 87
   },
   "poly_400": {
     "agreement_pct": 100
@@ -1388,6 +1196,9 @@
   "poly_409": {
     "agreement_pct": 100
   },
+  "poly_41": {
+    "agreement_pct": 99
+  },
   "poly_410": {
     "agreement_pct": 100
   },
@@ -1398,7 +1209,7 @@
     "agreement_pct": 100
   },
   "poly_413": {
-    "agreement_pct": 29
+    "agreement_pct": 100
   },
   "poly_414": {
     "agreement_pct": 100
@@ -1417,6 +1228,9 @@
   },
   "poly_419": {
     "agreement_pct": 100
+  },
+  "poly_42": {
+    "agreement_pct": 93
   },
   "poly_420": {
     "agreement_pct": 100
@@ -1444,6 +1258,9 @@
   },
   "poly_429": {
     "agreement_pct": 100
+  },
+  "poly_43": {
+    "agreement_pct": 77
   },
   "poly_430": {
     "agreement_pct": 100
@@ -1475,6 +1292,9 @@
   "poly_439": {
     "agreement_pct": 100
   },
+  "poly_44": {
+    "agreement_pct": 11
+  },
   "poly_440": {
     "agreement_pct": 100
   },
@@ -1493,8 +1313,11 @@
   "poly_448": {
     "agreement_pct": 100
   },
+  "poly_45": {
+    "agreement_pct": 100
+  },
   "poly_450": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_451": {
     "agreement_pct": 100
@@ -1520,6 +1343,9 @@
   "poly_459": {
     "agreement_pct": 100
   },
+  "poly_46": {
+    "agreement_pct": 0
+  },
   "poly_460": {
     "agreement_pct": 100
   },
@@ -1542,13 +1368,16 @@
     "agreement_pct": 100
   },
   "poly_467": {
-    "agreement_pct": 2
+    "agreement_pct": 100
   },
   "poly_468": {
     "agreement_pct": 100
   },
   "poly_469": {
     "agreement_pct": 99
+  },
+  "poly_47": {
+    "agreement_pct": 65
   },
   "poly_470": {
     "agreement_pct": 100
@@ -1566,7 +1395,7 @@
     "agreement_pct": 100
   },
   "poly_475": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_476": {
     "agreement_pct": 100
@@ -1575,10 +1404,13 @@
     "agreement_pct": 60
   },
   "poly_478": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_479": {
     "agreement_pct": 100
+  },
+  "poly_48": {
+    "agreement_pct": 60
   },
   "poly_480": {
     "agreement_pct": 100
@@ -1587,7 +1419,7 @@
     "agreement_pct": 50
   },
   "poly_482": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_483": {
     "agreement_pct": 100
@@ -1610,11 +1442,14 @@
   "poly_489": {
     "agreement_pct": 60
   },
+  "poly_49": {
+    "agreement_pct": 100
+  },
   "poly_490": {
     "agreement_pct": 100
   },
   "poly_491": {
-    "agreement_pct": 16
+    "agreement_pct": 100
   },
   "poly_492": {
     "agreement_pct": 100
@@ -1638,6 +1473,12 @@
     "agreement_pct": 100
   },
   "poly_499": {
+    "agreement_pct": 100
+  },
+  "poly_5": {
+    "agreement_pct": 41
+  },
+  "poly_50": {
     "agreement_pct": 100
   },
   "poly_500": {
@@ -1670,6 +1511,9 @@
   "poly_509": {
     "agreement_pct": 100
   },
+  "poly_51": {
+    "agreement_pct": 100
+  },
   "poly_510": {
     "agreement_pct": 100
   },
@@ -1680,7 +1524,7 @@
     "agreement_pct": 100
   },
   "poly_513": {
-    "agreement_pct": 2
+    "agreement_pct": 100
   },
   "poly_514": {
     "agreement_pct": 100
@@ -1699,6 +1543,9 @@
   },
   "poly_519": {
     "agreement_pct": 96
+  },
+  "poly_52": {
+    "agreement_pct": 100
   },
   "poly_520": {
     "agreement_pct": 100
@@ -1730,6 +1577,9 @@
   "poly_529": {
     "agreement_pct": 99
   },
+  "poly_53": {
+    "agreement_pct": 100
+  },
   "poly_530": {
     "agreement_pct": 33
   },
@@ -1746,7 +1596,7 @@
     "agreement_pct": 100
   },
   "poly_535": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_536": {
     "agreement_pct": 100
@@ -1759,6 +1609,9 @@
   },
   "poly_539": {
     "agreement_pct": 100
+  },
+  "poly_54": {
+    "agreement_pct": 48
   },
   "poly_540": {
     "agreement_pct": 100
@@ -1776,7 +1629,7 @@
     "agreement_pct": 100
   },
   "poly_545": {
-    "agreement_pct": 45
+    "agreement_pct": 100
   },
   "poly_546": {
     "agreement_pct": 100
@@ -1790,11 +1643,14 @@
   "poly_549": {
     "agreement_pct": 100
   },
+  "poly_55": {
+    "agreement_pct": 56
+  },
   "poly_550": {
     "agreement_pct": 34
   },
   "poly_551": {
-    "agreement_pct": 29
+    "agreement_pct": 100
   },
   "poly_552": {
     "agreement_pct": 100
@@ -1809,7 +1665,7 @@
     "agreement_pct": 100
   },
   "poly_556": {
-    "agreement_pct": 66
+    "agreement_pct": 100
   },
   "poly_557": {
     "agreement_pct": 97
@@ -1820,6 +1676,9 @@
   "poly_559": {
     "agreement_pct": 100
   },
+  "poly_56": {
+    "agreement_pct": 100
+  },
   "poly_560": {
     "agreement_pct": 100
   },
@@ -1827,7 +1686,7 @@
     "agreement_pct": 100
   },
   "poly_562": {
-    "agreement_pct": 3
+    "agreement_pct": 100
   },
   "poly_563": {
     "agreement_pct": 100
@@ -1839,7 +1698,7 @@
     "agreement_pct": 100
   },
   "poly_566": {
-    "agreement_pct": 6
+    "agreement_pct": 100
   },
   "poly_567": {
     "agreement_pct": 40
@@ -1850,8 +1709,11 @@
   "poly_569": {
     "agreement_pct": 100
   },
+  "poly_57": {
+    "agreement_pct": 100
+  },
   "poly_570": {
-    "agreement_pct": 14
+    "agreement_pct": 100
   },
   "poly_571": {
     "agreement_pct": 100
@@ -1879,6 +1741,9 @@
   },
   "poly_579": {
     "agreement_pct": 100
+  },
+  "poly_58": {
+    "agreement_pct": 0
   },
   "poly_580": {
     "agreement_pct": 100
@@ -1910,6 +1775,9 @@
   "poly_589": {
     "agreement_pct": 100
   },
+  "poly_59": {
+    "agreement_pct": 100
+  },
   "poly_590": {
     "agreement_pct": 100
   },
@@ -1929,7 +1797,7 @@
     "agreement_pct": 100
   },
   "poly_596": {
-    "agreement_pct": 47
+    "agreement_pct": 100
   },
   "poly_597": {
     "agreement_pct": 46
@@ -1939,6 +1807,12 @@
   },
   "poly_599": {
     "agreement_pct": 100
+  },
+  "poly_6": {
+    "agreement_pct": 65
+  },
+  "poly_60": {
+    "agreement_pct": 73
   },
   "poly_600": {
     "agreement_pct": 100
@@ -1953,7 +1827,7 @@
     "agreement_pct": 100
   },
   "poly_604": {
-    "agreement_pct": 1
+    "agreement_pct": 100
   },
   "poly_605": {
     "agreement_pct": 100
@@ -1969,6 +1843,9 @@
   },
   "poly_609": {
     "agreement_pct": 100
+  },
+  "poly_61": {
+    "agreement_pct": 22
   },
   "poly_610": {
     "agreement_pct": 100
@@ -2000,6 +1877,9 @@
   "poly_619": {
     "agreement_pct": 100
   },
+  "poly_62": {
+    "agreement_pct": 0
+  },
   "poly_620": {
     "agreement_pct": 100
   },
@@ -2028,6 +1908,9 @@
     "agreement_pct": 100
   },
   "poly_629": {
+    "agreement_pct": 100
+  },
+  "poly_63": {
     "agreement_pct": 100
   },
   "poly_630": {
@@ -2060,6 +1943,9 @@
   "poly_639": {
     "agreement_pct": 100
   },
+  "poly_64": {
+    "agreement_pct": 49
+  },
   "poly_640": {
     "agreement_pct": 100
   },
@@ -2089,6 +1975,9 @@
   },
   "poly_649": {
     "agreement_pct": 100
+  },
+  "poly_65": {
+    "agreement_pct": 72
   },
   "poly_650": {
     "agreement_pct": 100
@@ -2120,6 +2009,9 @@
   "poly_659": {
     "agreement_pct": 100
   },
+  "poly_66": {
+    "agreement_pct": 100
+  },
   "poly_660": {
     "agreement_pct": 100
   },
@@ -2142,13 +2034,16 @@
     "agreement_pct": 100
   },
   "poly_667": {
-    "agreement_pct": 18
+    "agreement_pct": 100
   },
   "poly_668": {
     "agreement_pct": 100
   },
   "poly_669": {
     "agreement_pct": 100
+  },
+  "poly_67": {
+    "agreement_pct": 96
   },
   "poly_670": {
     "agreement_pct": 100
@@ -2178,6 +2073,9 @@
     "agreement_pct": 100
   },
   "poly_679": {
+    "agreement_pct": 100
+  },
+  "poly_68": {
     "agreement_pct": 100
   },
   "poly_680": {
@@ -2210,11 +2108,14 @@
   "poly_689": {
     "agreement_pct": 100
   },
+  "poly_69": {
+    "agreement_pct": 100
+  },
   "poly_690": {
     "agreement_pct": 100
   },
   "poly_691": {
-    "agreement_pct": 19
+    "agreement_pct": 100
   },
   "poly_692": {
     "agreement_pct": 100
@@ -2223,7 +2124,7 @@
     "agreement_pct": 100
   },
   "poly_694": {
-    "agreement_pct": 9
+    "agreement_pct": 100
   },
   "poly_695": {
     "agreement_pct": 100
@@ -2235,9 +2136,15 @@
     "agreement_pct": 100
   },
   "poly_698": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_699": {
+    "agreement_pct": 100
+  },
+  "poly_7": {
+    "agreement_pct": 71
+  },
+  "poly_70": {
     "agreement_pct": 100
   },
   "poly_700": {
@@ -2270,6 +2177,9 @@
   "poly_709": {
     "agreement_pct": 100
   },
+  "poly_71": {
+    "agreement_pct": 100
+  },
   "poly_710": {
     "agreement_pct": 39
   },
@@ -2300,6 +2210,9 @@
   "poly_719": {
     "agreement_pct": 100
   },
+  "poly_72": {
+    "agreement_pct": 100
+  },
   "poly_720": {
     "agreement_pct": 100
   },
@@ -2322,13 +2235,16 @@
     "agreement_pct": 100
   },
   "poly_727": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_728": {
     "agreement_pct": 100
   },
   "poly_729": {
     "agreement_pct": 100
+  },
+  "poly_73": {
+    "agreement_pct": 19
   },
   "poly_730": {
     "agreement_pct": 100
@@ -2340,7 +2256,7 @@
     "agreement_pct": 100
   },
   "poly_733": {
-    "agreement_pct": 15
+    "agreement_pct": 100
   },
   "poly_734": {
     "agreement_pct": 100
@@ -2360,8 +2276,11 @@
   "poly_739": {
     "agreement_pct": 98
   },
+  "poly_74": {
+    "agreement_pct": 100
+  },
   "poly_740": {
-    "agreement_pct": 13
+    "agreement_pct": 100
   },
   "poly_741": {
     "agreement_pct": 100
@@ -2376,10 +2295,10 @@
     "agreement_pct": 100
   },
   "poly_745": {
-    "agreement_pct": 5
+    "agreement_pct": 100
   },
   "poly_746": {
-    "agreement_pct": 18
+    "agreement_pct": 100
   },
   "poly_747": {
     "agreement_pct": 100
@@ -2388,13 +2307,16 @@
     "agreement_pct": 100
   },
   "poly_749": {
-    "agreement_pct": 52
+    "agreement_pct": 100
+  },
+  "poly_75": {
+    "agreement_pct": 100
   },
   "poly_750": {
     "agreement_pct": 35
   },
   "poly_751": {
-    "agreement_pct": 6
+    "agreement_pct": 100
   },
   "poly_752": {
     "agreement_pct": 100
@@ -2405,6 +2327,9 @@
   "poly_754": {
     "agreement_pct": 100
   },
+  "poly_755": {
+    "agreement_pct": 100
+  },
   "poly_756": {
     "agreement_pct": 100
   },
@@ -2412,10 +2337,13 @@
     "agreement_pct": 100
   },
   "poly_758": {
-    "agreement_pct": 86
+    "agreement_pct": 100
   },
   "poly_759": {
-    "agreement_pct": 20
+    "agreement_pct": 100
+  },
+  "poly_76": {
+    "agreement_pct": 98
   },
   "poly_760": {
     "agreement_pct": 100
@@ -2436,7 +2364,7 @@
     "agreement_pct": 100
   },
   "poly_766": {
-    "agreement_pct": 18
+    "agreement_pct": 100
   },
   "poly_767": {
     "agreement_pct": 99
@@ -2445,7 +2373,10 @@
     "agreement_pct": 100
   },
   "poly_769": {
-    "agreement_pct": 26
+    "agreement_pct": 100
+  },
+  "poly_77": {
+    "agreement_pct": 95
   },
   "poly_770": {
     "agreement_pct": 99
@@ -2454,10 +2385,10 @@
     "agreement_pct": 100
   },
   "poly_773": {
-    "agreement_pct": 24
+    "agreement_pct": 100
   },
   "poly_774": {
-    "agreement_pct": 6
+    "agreement_pct": 100
   },
   "poly_775": {
     "agreement_pct": 100
@@ -2466,13 +2397,16 @@
     "agreement_pct": 100
   },
   "poly_777": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_778": {
     "agreement_pct": 99
   },
   "poly_779": {
     "agreement_pct": 0
+  },
+  "poly_78": {
+    "agreement_pct": 88
   },
   "poly_780": {
     "agreement_pct": 100
@@ -2481,7 +2415,7 @@
     "agreement_pct": 100
   },
   "poly_782": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_783": {
     "agreement_pct": 99
@@ -2490,19 +2424,22 @@
     "agreement_pct": 97
   },
   "poly_785": {
-    "agreement_pct": 25
+    "agreement_pct": 100
   },
   "poly_786": {
     "agreement_pct": 99
   },
   "poly_787": {
-    "agreement_pct": 33
+    "agreement_pct": 100
   },
   "poly_788": {
-    "agreement_pct": 17
+    "agreement_pct": 100
   },
   "poly_789": {
-    "agreement_pct": 0
+    "agreement_pct": 100
+  },
+  "poly_79": {
+    "agreement_pct": 100
   },
   "poly_790": {
     "agreement_pct": 40
@@ -2514,10 +2451,10 @@
     "agreement_pct": 100
   },
   "poly_793": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_794": {
-    "agreement_pct": 31
+    "agreement_pct": 100
   },
   "poly_795": {
     "agreement_pct": 100
@@ -2529,13 +2466,19 @@
     "agreement_pct": 40
   },
   "poly_798": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_799": {
     "agreement_pct": 100
   },
+  "poly_8": {
+    "agreement_pct": 97
+  },
+  "poly_80": {
+    "agreement_pct": 100
+  },
   "poly_800": {
-    "agreement_pct": 3
+    "agreement_pct": 100
   },
   "poly_801": {
     "agreement_pct": 99
@@ -2544,13 +2487,16 @@
     "agreement_pct": 100
   },
   "poly_803": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_804": {
     "agreement_pct": 100
   },
   "poly_805": {
     "agreement_pct": 32
+  },
+  "poly_806": {
+    "agreement_pct": 100
   },
   "poly_807": {
     "agreement_pct": 100
@@ -2559,22 +2505,25 @@
     "agreement_pct": 99
   },
   "poly_809": {
-    "agreement_pct": 96
+    "agreement_pct": 100
+  },
+  "poly_81": {
+    "agreement_pct": 0
   },
   "poly_810": {
-    "agreement_pct": 25
+    "agreement_pct": 100
   },
   "poly_811": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_812": {
     "agreement_pct": 100
   },
   "poly_813": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_814": {
-    "agreement_pct": 0
+    "agreement_pct": 100
   },
   "poly_815": {
     "agreement_pct": 100
@@ -2586,15 +2535,72 @@
     "agreement_pct": 100
   },
   "poly_818": {
-    "agreement_pct": 98
+    "agreement_pct": 100
   },
   "poly_819": {
     "agreement_pct": 100
+  },
+  "poly_82": {
+    "agreement_pct": 57
   },
   "poly_820": {
     "agreement_pct": 100
   },
   "poly_821": {
+    "agreement_pct": 100
+  },
+  "poly_83": {
+    "agreement_pct": 98
+  },
+  "poly_84": {
+    "agreement_pct": 100
+  },
+  "poly_85": {
+    "agreement_pct": 73
+  },
+  "poly_86": {
+    "agreement_pct": 100
+  },
+  "poly_87": {
+    "agreement_pct": 100
+  },
+  "poly_88": {
+    "agreement_pct": 100
+  },
+  "poly_89": {
+    "agreement_pct": 78
+  },
+  "poly_9": {
+    "agreement_pct": 96
+  },
+  "poly_90": {
+    "agreement_pct": 88
+  },
+  "poly_91": {
+    "agreement_pct": 100
+  },
+  "poly_92": {
+    "agreement_pct": 62
+  },
+  "poly_93": {
+    "agreement_pct": 55
+  },
+  "poly_94": {
+    "agreement_pct": 100
+  },
+  "poly_95": {
+    "agreement_pct": 57
+  },
+  "poly_96": {
+    "agreement_pct": 0
+  },
+  "poly_97": {
+    "agreement_pct": 36
+  },
+  "poly_98": {
+    "agreement_pct": 99
+  },
+  "poly_99": {
     "agreement_pct": 100
   }
 }

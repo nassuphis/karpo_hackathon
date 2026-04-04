@@ -2097,6 +2097,17 @@ async function testPipeline(name, call) {
         console.log('  setSolveMetric v2: OK (clusteriness, real_axis_proximity)');
     }
 
+    // 11e2b: setSolveMetric / setPaletteMetric with new v3 metrics
+    {
+        vm.runInContext("setSolveMetric('centroid_dist')", ctx);
+        const m1 = vm.runInContext('renderSolveMetric', ctx);
+        if (m1 !== 'centroid_dist') { console.error('FATAL: metric should be centroid_dist, got ' + m1); process.exit(1); }
+        vm.runInContext("setPaletteMetric('dist_unit_circle')", ctx);
+        const m2 = vm.runInContext('paletteTabMetric', ctx);
+        if (m2 !== 'dist_unit_circle') { console.error('FATAL: palette metric should be dist_unit_circle, got ' + m2); process.exit(1); }
+        console.log('  setSolveMetric v3: OK (centroid_dist, dist_unit_circle)');
+    }
+
     // 11e3: orchestrator dispatch with new metric carries it unchanged
     {
         vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'nn_variation';", ctx);
@@ -2125,6 +2136,37 @@ async function testPipeline(name, call) {
             process.exit(1);
         }
         console.log('  orchestrator dispatch v2: OK (solve_metric=nn_variation)');
+        vm.runInContext("renderColorMode = 'rainbow';", ctx);
+    }
+
+    // 11e4: orchestrator dispatch with v3 metric carries it unchanged
+    {
+        vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'asymmetry_re';", ctx);
+        vm.runInContext(`
+            var _v3OrchPayload = null;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch' && body.target === 'render_orchestrator') {
+                    _v3OrchPayload = body.jobs[0];
+                    return { fired: 1, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: 1, complete: true, results: [{ phase: 'done' }] };
+                }
+                return {};
+            };
+            refreshRenderArtifacts = async function() {};
+        `, ctx);
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_v3' };
+        ctx._elements['render-status'].textContent = '';
+        ctx._elements['btn-raster-all'] = ctx._mkEl();
+        vm.runInContext("_viewMode = 'square'; _rtChain = [];", ctx);
+        try { await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx); } catch(e) {}
+        const v3Payload = vm.runInContext('_v3OrchPayload', ctx);
+        if (!v3Payload || v3Payload.params.solve_metric !== 'asymmetry_re') {
+            console.error('FATAL: asymmetry_re dispatch failed: ' + JSON.stringify(v3Payload && v3Payload.params));
+            process.exit(1);
+        }
+        console.log('  orchestrator dispatch v3: OK (solve_metric=asymmetry_re)');
         vm.runInContext("renderColorMode = 'rainbow';", ctx);
     }
 

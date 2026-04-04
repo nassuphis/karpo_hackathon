@@ -20,6 +20,7 @@ MAX_PLAN_BYTES = 200 * 1024  # fail fast before 256KB Step Functions limit
 VALID_METRICS = {
     "proximity", "crowding", "spread", "anisotropy", "area",
     "clusteriness", "shelliness", "outlierness", "nn_variation", "real_axis_proximity",
+    "centroid_re", "centroid_im", "centroid_dist", "dist_unit_circle", "asymmetry_re",
 }
 def _validate_omega(value):
     try:

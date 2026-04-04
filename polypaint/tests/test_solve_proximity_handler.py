@@ -310,6 +310,15 @@ def test_merge_new_metric_artifact_family():
     assert artifact["metric"] == "nn_variation"
 
 
+def test_merge_new_metric_centroid_dist():
+    """Merge works for a v3 metric (centroid_dist)."""
+    clip_data, hist_responses = _uniform_hist_data(
+        "renders/test/solve_scores/", 2, metric="centroid_dist")
+    _, artifact = _run_merge(2, clip_data, hist_responses, metric="centroid_dist")
+    assert artifact["family"] == "solve_score"
+    assert artifact["metric"] == "centroid_dist"
+
+
 # ================================================================
 # Quantile tests (spec 7.3)
 # ================================================================

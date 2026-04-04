@@ -55,7 +55,7 @@ def poly_803(t1, t2):
         cf[2] = np.real(t1 * t2)
         cf[3] = np.imag(t1 * t2)
         cf[4] = np.angle(t1 + t2)
-        for k in range(5, 26):
+        for k in range(5, 25):
             cf[k] = cf[k - 1] + np.cos(k * t1) + np.sin(k * np.abs(t2)) * 1j
         return cf.astype(np.complex128)
     except Exception:
@@ -177,7 +177,7 @@ def poly_811(t1, t2):
         cf = np.zeros(25, dtype=complex)
         cf[0] = t1 * t2
         cf[1] = (t1 + t2) * np.conj(t1 - t2)
-        for k in range(2, 26):
+        for k in range(2, 25):
             cf[k] = np.abs(t1) * np.abs(t2) * np.sin(np.angle(t1 + 1j * t2) ** k) + np.log(np.abs(t1 ** k / (1 + t2)))
         return cf.astype(np.complex128)
     except Exception:
@@ -199,7 +199,7 @@ def poly_813(t1, t2):
     try:
         cf = np.zeros(25, dtype=complex)
         cf[0] = t1 * t2
-        for k in range(1, 26):
+        for k in range(1, 25):
             v = (np.sin(k * cf[k - 1]) + np.cos(k * cf[k - 1])) * np.real(t1 + t2)
             if np.abs(v) != 0:
                 cf[k] = np.log(np.abs(v)) + np.conj(t1 * t2)
@@ -215,7 +215,7 @@ def poly_814(t1, t2):
         cf = np.zeros(25, dtype=complex)
         cf[0] = np.angle(t1) * t2
         cf[1] = t1 * t2
-        for i in range(2, 26):
+        for i in range(2, 25):
             v = cf[i - 1] + cf[i - 2] + np.conj(t1 * t2)
             if np.abs(v) != 0:
                 cf[i] = np.log(np.abs(v))

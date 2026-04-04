@@ -14,6 +14,10 @@
  *
  * Forward declaration: poly_42_c from poly_generated_funcs.h (used by serendipity wrapper)
  */
+#include <complex.h>
+#include <stdint.h>
+#undef I
+
 static void poly_42_c(double x1r, double x1i, double x2r, double x2i,
                       const double *cfpv, int n_cfpv,
                       double *cRe, double *cIm, int *nCoeffs);
@@ -117,6 +121,2081 @@ static void poly_29_hand(double x1r, double x1i, double x2r, double x2i,
     /* NaN guard */
     for (int i = 0; i < 71; i++) {
         if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static double poly_hand_prod_range_inclusive(int start, int end) {
+    double prod = 1.0;
+    if (start <= end) {
+        for (int k = start; k <= end; k++) prod *= (double)k;
+    } else {
+        for (int k = start; k >= end; k--) prod *= (double)k;
+    }
+    return prod;
+}
+
+static double poly_hand_prod_1_to_n(int n) {
+    double prod = 1.0;
+    for (int k = 1; k <= n; k++) prod *= (double)k;
+    return prod;
+}
+
+static double poly_hand_np_int64_prod_1_to_n(int n) {
+    union {
+        uint64_t u;
+        int64_t s;
+    } bits;
+    bits.u = 1u;
+    for (int k = 1; k <= n; k++) {
+        bits.u *= (uint64_t)(int64_t)k;
+    }
+    return (double)bits.s;
+}
+
+static double complex poly_hand_cpow_uint(double complex z, int exponent) {
+    if (exponent <= 0) return 1.0;
+    double complex out = 1.0;
+    for (int i = 0; i < exponent; i++) out *= z;
+    return out;
+}
+
+static void poly_hand_zero(double *cRe, double *cIm, int n) {
+    for (int i = 0; i < n; i++) { cRe[i] = 0.0; cIm[i] = 0.0; }
+}
+
+static void poly_hand_from_polar(double magnitude, double angle, double *out_r, double *out_i) {
+    *out_r = magnitude * cos(angle);
+    *out_i = magnitude * sin(angle);
+}
+
+static inline double complex poly_hand_z(double r, double i) {
+    return CMPLX(r, i);
+}
+
+static inline void poly_hand_store_z(double complex z, double *cRe, double *cIm, int idx) {
+    cRe[idx] = creal(z);
+    cIm[idx] = cimag(z);
+}
+
+static void poly_hand_pow_int(double zr, double zi, int exp, double *out_r, double *out_i) {
+    double rr = 1.0, ri = 0.0;
+    if (exp == 0) {
+        *out_r = 1.0;
+        *out_i = 0.0;
+        return;
+    }
+    for (int i = 0; i < exp; i++) {
+        double nr, ni;
+        c_mul(rr, ri, zr, zi, &nr, &ni);
+        rr = nr;
+        ri = ni;
+    }
+    *out_r = rr;
+    *out_i = ri;
+}
+
+static void poly_hand_pow_signed_int(double zr, double zi, int exp, double *out_r, double *out_i) {
+    if (exp >= 0) {
+        poly_hand_pow_int(zr, zi, exp, out_r, out_i);
+        return;
+    }
+    double pr, pi;
+    poly_hand_pow_int(zr, zi, -exp, &pr, &pi);
+    c_div(1.0, 0.0, pr, pi, out_r, out_i);
+}
+
+static void poly_hand_pow_complex(double ar, double ai, double br, double bi, double *out_r, double *out_i) {
+    double lr, li;
+    c_log(ar, ai, &lr, &li);
+    double exp_r, exp_i;
+    c_mul(br, bi, lr, li, &exp_r, &exp_i);
+    c_exp2(exp_r, exp_i, out_r, out_i);
+}
+
+static void poly_13_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    static const double fib[] = {
+        1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584, 4181
+    };
+    *nCoeffs = 51;
+    poly_hand_zero(cRe, cIm, 51);
+
+    const double arg1 = c_arg(x1r, x1i);
+    const double arg2 = c_arg(x2r, x2i);
+    const double cos2 = cos(arg2);
+    const double sin2 = sin(arg2);
+    const double sin1 = sin(arg1);
+    for (int n = 0; n < 19; n++) {
+        const double scale_a = fib[n] * cos2;
+        const double scale_b = fib[n] * sin2;
+        cRe[n] = scale_a * x1r;
+        cIm[n] = scale_a * x1i;
+        cRe[n + 19] = scale_b * x1r;
+        cIm[n + 19] = scale_b * x1i;
+        if (n + 38 < 51) {
+            const double scale_c = fib[n] * sin1;
+            cRe[n + 38] = scale_c * x2r;
+            cIm[n + 38] = scale_c * x2i;
+        }
+    }
+    double prod_r, prod_i;
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    cRe[19] = c_abs(prod_r, prod_i);
+    cIm[19] = 0.0;
+    cRe[49] = log(c_abs(prod_r, prod_i) + 1.0);
+    cIm[49] = 0.0;
+    cRe[50] = x1r + x2i;
+    cIm[50] = 0.0;
+}
+
+static void poly_14_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 51;
+    poly_hand_zero(cRe, cIm, 51);
+
+    const double log1 = log(c_abs(x1r, x1i) + 1.0);
+    const double log2 = log(c_abs(x2r, x2i) + 1.0);
+    double base1r = x1r, base1i = x1i;
+    double tmp_r = x2r * log1, tmp_i = x2i * log1;
+    base1r += tmp_r; base1i += tmp_i;
+    double base2r = x2r, base2i = x2i;
+    tmp_r = x1r * log2; tmp_i = x1i * log2;
+    base2r += tmp_r; base2i += tmp_i;
+
+    cRe[0] = x1r + 3.0 * x2r;
+    cIm[0] = x1i + 3.0 * x2i;
+    for (int k = 1; k <= 50; k++) {
+        const double triangle = (double)(k * (k + 1)) / 2.0;
+        double p1r, p1i, p2r, p2i;
+        poly_hand_pow_int(base1r, base1i, k, &p1r, &p1i);
+        poly_hand_pow_int(base2r, base2i, k, &p2r, &p2i);
+        cRe[k] = triangle * (p1r + p2r);
+        cIm[k] = triangle * (p1i + p2i);
+    }
+    cRe[42] = c_abs(x1r, x1i);
+    cIm[42] = 0.0;
+    cRe[20] = c_abs(x2r, x2i);
+    cIm[20] = 0.0;
+    double prod_r, prod_i;
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    cRe[31] = c_abs(prod_r, prod_i) - prod_i;
+    cIm[31] = 0.0;
+    cRe[27] = 2.0 * ((x1r - x2r) + (x1i - x2i));
+    cIm[27] = 0.0;
+}
+
+static void poly_15_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    static const double primes[] = {
+        2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73,
+        79, 83, 89, 97, 101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157, 163,
+        167, 173, 179, 181, 191, 193, 197, 199, 211, 223, 227, 229, 233, 239, 241
+    };
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+
+    const int n_primes = (int)(sizeof(primes) / sizeof(primes[0]));
+    const double denom_base = 1.0 + c_abs(x1r, x1i);
+    double sum_r = 0.0, sum_i = 0.0;
+    for (int i = 0; i < 71; i++) {
+        double p_r, p_i;
+        poly_hand_pow_int(x2r, x2i, i, &p_r, &p_i);
+        const double rotated_r = -p_i;
+        const double rotated_i = p_r;
+        const double denom = pow(denom_base, (double)i);
+        cRe[i] = (primes[i % n_primes] * x1r + rotated_r) / denom;
+        cIm[i] = (primes[i % n_primes] * x1i + rotated_i) / denom;
+        if (i < 70) {
+            sum_r += cRe[i];
+            sum_i += cIm[i];
+        }
+    }
+    cRe[70] = sum_r;
+    cIm[70] = sum_i;
+}
+
+static void poly_19_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[71] = {0};
+
+    cf[0] = creal(t1) + cimag(t2);
+    cf[1] = carg(t1);
+    cf[2] = cabs(t2);
+    cf[3] = csin(t1) + ccos(t2);
+    for (int i = 0; i < 6; i++) cf[4 + i] = 1.0 + 0.2 * (double)(i + 1);
+    cf[10] = log(cabs(t1) + 1.0) + log(cabs(t2) + 1.0);
+    for (int i = 11; i < 72; i++) {
+        cf[i - 1] = cf[i - 2] * csin((double)i * cf[i - 3] + cabs(cf[i - 4])) + cf[i - 5];
+    }
+    for (int i = 0; i < 71; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_22_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    static const double primes[] = {
+        2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97
+    };
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+
+    double t1sq_r, t1sq_i, t2sq_r, t2sq_i;
+    c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+    const double scalar = x1r * x1r - t1sq_i + x2r * x2r - t2sq_i;
+    const double factor = cos(c_arg(x1r + x2r, x1i + x2i)) + sin(c_abs(x1r, x1i) * c_abs(x2r, x2i));
+    double sum = 0.0;
+    for (int i = 0; i < 25; i++) {
+        cRe[i] = primes[i] * scalar;
+        cRe[25 + i] = cRe[i] * factor;
+        sum += cRe[i] + cRe[25 + i];
+    }
+    cRe[50] = sum;
+}
+
+static void poly_25_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+
+    if (c_abs(x2r, x2i) == 0.0) return;
+
+    double prod_r, prod_i, div_r, div_i;
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    c_div(x1r, x1i, x2r, x2i, &div_r, &div_i);
+    cRe[0] = prod_r + div_i;
+    for (int k = 1; k < 71; k++) {
+        double s_r, s_i, c_r, c_i;
+        c_sin(x1r + (double)k, x1i, &s_r, &s_i);
+        c_cos(x2r + (double)k, x2i, &c_r, &c_i);
+        cRe[k] = pow(c_abs(x1r, x1i), (double)k) + pow(c_arg(x2r, x2i), (double)k) + s_r + c_r - log(pow(c_abs(prod_r, prod_i), (double)k) + 1.0);
+        cIm[k] = s_i + c_i;
+    }
+    double tmp_r, tmp_i;
+    c_mul(cRe[0], cIm[0], cRe[34], cIm[34], &tmp_r, &tmp_i);
+    cRe[35] = tmp_r + prod_i;
+    cIm[35] = 0.0;
+    cRe[45] = 0.5 * (x1r + cRe[44] + x2r);
+    cIm[45] = 0.5 * (x1i - cIm[44] + x2i);
+    cRe[50] = cRe[0] + cRe[34] + cRe[44] + x1r + x2i;
+    cIm[50] = cIm[0] + cIm[34] + cIm[44];
+}
+
+static void poly_26_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[71] = {0};
+
+    cf[0] = t1 + t2;
+    cf[1] = t1 * t2;
+    for (int k = 3; k < 72; k++) {
+        double complex v = csin((double)k * cf[k - 2]) + ccos((double)k * cf[k - 3]);
+        cf[k - 1] = v / cabs(v);
+    }
+    cf[14] = cabs(t1 - t2) * carg(t1 + t2);
+    cf[29] = log(cabs(t1 * creal(t2) + 1.0)) - log(cabs(t2 * cimag(t1) + 1.0));
+    cf[49] = cabs(t1) * cabs(t2) * cabs(t1 - t2);
+    double complex sum1 = 0.0, sum2 = 0.0;
+    for (int i = 15; i < 29; i++) sum1 += cf[i];
+    for (int i = 30; i < 44; i++) sum2 += cf[i];
+    cf[50] = sum1 * sum2 + t1 * t1;
+    for (int i = 0; i < 71; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_31_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+
+    cRe[0] = x1r + x2r;
+    cIm[0] = x1i + x2i;
+    const double denom_base = c_abs(x1r, x1i) * c_abs(x2r, x2i);
+    for (int i = 1; i < 36; i++) {
+        double c_r, c_i, s_r, s_i;
+        c_cos((double)i * x1r, (double)i * x1i, &c_r, &c_i);
+        c_sin((double)i * x2r, (double)i * x2i, &s_r, &s_i);
+        const double denom = pow(denom_base, (double)i);
+        cRe[i] = (c_r + s_r) / denom;
+        cIm[i] = (c_i + s_i) / denom;
+    }
+    for (int i = 36; i < 71; i++) {
+        double p1r, p1i, p2r, p2i, c_r, c_i, s_r, s_i;
+        poly_hand_pow_int(x1r, x1i, i, &p1r, &p1i);
+        poly_hand_pow_int(x2r, x2i, i, &p2r, &p2i);
+        c_cos(p1r, p1i, &c_r, &c_i);
+        c_sin(p2r, p2i, &s_r, &s_i);
+        const double scale = log(pow(c_abs(x1r, x1i), (double)i) + 1.0) * log(pow(c_abs(x2r, x2i), (double)i) + 1.0);
+        cRe[i] = scale * (c_r + s_r);
+        cIm[i] = scale * (c_i + s_i);
+    }
+}
+
+static void poly_56_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+
+    const double ar = x1r - x2i;
+    const double ai = x1i + x2r;
+    const double br = x2r - x1i;
+    const double bi = x2i + x1r;
+    for (int k = 1; k < 72; k++) {
+        double p1r, p1i, p2r, p2i;
+        poly_hand_pow_int(ar, ai, k, &p1r, &p1i);
+        poly_hand_pow_int(br, bi, 71 - k, &p2r, &p2i);
+        cRe[k - 1] = 0.5 * (p1r + p2r);
+        cIm[k - 1] = 0.5 * (p1i + p2i);
+    }
+    const double angle = c_arg(ar, ai);
+    const double scale_mid = 1.0 + sin(angle);
+    const double scale_head = 1.0 + cos(angle);
+    const double scale_tail = c_abs(ar, ai);
+    for (int i = 3; i < 68; i++) { cRe[i] *= scale_mid; cIm[i] *= scale_mid; }
+    for (int i = 0; i < 3; i++) { cRe[i] *= scale_head; cIm[i] *= scale_head; }
+    for (int i = 68; i < 71; i++) { cRe[i] *= scale_tail; cIm[i] *= scale_tail; }
+    const double log_mid = log(fabs(ai) + 1.0);
+    cRe[34] *= log_mid;
+    cIm[34] *= log_mid;
+}
+
+static void poly_63_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[71] = {0};
+
+    for (int j = 1; j < 72; j++) {
+        cf[j - 1] = csin(cpow(t1, (double)j)) * ccos(cpow(t2, (double)(71 - j))) *
+                    cabs(t1 * cpow(t2, (double)j)) * log(cabs(t1 * t2 + 1.0));
+    }
+    for (int i = 0; i < 30; i++) cf[i] += cf[30 + i];
+
+    double complex tmp39[39];
+    for (int i = 0; i < 39; i++) tmp39[i] = cf[i];
+    for (int i = 0; i < 39; i++) cf[32 + i] -= tmp39[i];
+
+    double complex tmp50[50];
+    for (int i = 0; i < 50; i++) tmp50[i] = cf[i];
+    for (int i = 0; i < 50; i++) cf[10 + i] += (x1r * x2i) * tmp50[i];
+
+    double complex tmp40[40];
+    for (int i = 0; i < 40; i++) tmp40[i] = cf[1 + i];
+    for (int i = 0; i < 40; i++) cf[30 + i] -= (x1i * x2r) * tmp40[i];
+
+    double angle_a = carg(cpow(t1, t2));
+    double complex tmp20[20];
+    for (int i = 0; i < 20; i++) tmp20[i] = cf[30 + i];
+    for (int i = 0; i < 20; i++) cf[20 + i] += angle_a * tmp20[i];
+
+    double angle_b = carg(cpow(t2, t1));
+    double complex tmp31[31];
+    for (int i = 0; i < 31; i++) tmp31[i] = cf[i];
+    for (int i = 0; i < 31; i++) cf[40 + i] -= angle_b * tmp31[i];
+
+    for (int i = 0; i < 71; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_66_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+
+    const double scale1 = x1r * log(c_abs(x2r, x2i) + 1.0);
+    const double scale2 = x2i * log(c_abs(x1r, x1i) + 1.0);
+    const double scale3 = c_abs(x1r, x1i) * c_abs(x2r, x2i) * log(c_abs(x1r + x2r, x1i + x2i) + 1.0);
+    for (int i = 0; i < 25; i++) cRe[i] = scale1 * (double)((i + 1) * (i + 1));
+    for (int i = 0; i < 25; i++) cRe[25 + i] = scale2 * (double)((i + 1) * (i + 1) * (i + 1));
+    for (int i = 0; i < 20; i++) cRe[50 + i] = scale3 * (double)(i + 1);
+    double sum = 0.0;
+    for (int i = 0; i < 70; i++) sum += cRe[i];
+    cRe[70] = sum * c_arg(x1r + x2r, x1i + x2i);
+}
+
+static void poly_75_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[71] = {0};
+
+    cf[0] = 100.0 * cpow(t1, 3.0) + 110.0 * cpow(t1, 2.0) + 120.0 * t2 - 130.0;
+    cf[1] = 200.0 * cpow(t2, 3.0) - 210.0 * cpow(t2, 2.0) + 220.0 * t2 - 230.0;
+    cf[4] = pow(cabs(t1), 4.0);
+    cf[9] = pow(carg(t2), 6.0);
+    cf[14] = log(cabs(t1 + poly_hand_z(-cimag(t2), creal(t2)))) + 1.0;
+    cf[19] = creal(poly_hand_z(0.0, 1.0) * cf[4] * t1 * t2);
+    cf[39] = creal(poly_hand_z(0.0, 1.0) * cf[4] * t1 * t2);
+    cf[29] = cimag(cf[1] * conj(cf[0]));
+    cf[59] = cimag(cf[1] * conj(cf[0]));
+    cf[34] = csin(cf[1]) + ccos(cf[0]);
+    cf[2] = pow(cabs(cf[9]), 2.0);
+    cf[3] = cf[1] * cf[2];
+    cf[8] = cf[19] + cf[39] + cf[59];
+    double abs_diff = cabs(t1 - t2);
+    for (int i = 15; i < 71; i++) cf[i] = (double)i * abs_diff;
+    cf[70] = cf[0] * cf[1] * cf[2] * cf[3];
+    for (int i = 0; i < 71; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_79_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+
+    const double abs1 = c_abs(x1r, x1i);
+    const double abs2 = c_abs(x2r, x2i);
+    for (int i = 0; i < 35; i++) {
+        const double scale = (double)(i + 1) * pow(abs1, (double)(i + 1));
+        cRe[i] = scale * (x1r + x2r);
+        cIm[i] = scale * (x1i + x2i);
+    }
+    for (int i = 0; i < 35; i++) {
+        const int p = 35 - i;
+        const double scale = (double)p * pow(abs2, (double)p);
+        cRe[35 + i] = scale * (x1r - x2r);
+        cIm[35 + i] = scale * (x1i - x2i);
+    }
+    double prod_r, prod_i;
+    c_mul(x1r, x1i, x2r, -x2i, &prod_r, &prod_i);
+    cRe[70] = abs1 * abs2 + prod_i;
+}
+
+static void poly_80_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+
+    double p1r, p1i, p2r, p2i;
+    poly_hand_pow_int(x1r, x1i, 70, &p1r, &p1i);
+    poly_hand_pow_int(x2r, x2i, 70, &p2r, &p2i);
+    cRe[0] = p1r + p2r;
+    cIm[0] = p1i + p2i;
+    double prod_r, prod_i;
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    for (int i = 1; i < 70; i++) {
+        double arg_r = prod_r * (double)i;
+        double arg_i = prod_i * (double)i;
+        double s_r, s_i;
+        c_sin(arg_r, arg_i, &s_r, &s_i);
+        c_mul(s_r, s_i, s_r, s_i, &cRe[i], &cIm[i]);
+    }
+    const double scale_t2 = pow(log(c_abs(x2r, x2i) + 1.0), 2.0);
+    for (int i = 13; i < 28; i++) { cRe[i] *= scale_t2; cIm[i] *= scale_t2; }
+    const double scale_t1 = log(c_abs(x1r, x1i) + 1.0);
+    for (int i = 30; i < 46; i++) { cRe[i] *= scale_t1; cIm[i] *= scale_t1; }
+    const double bump = c_abs(x1r, x1i) * c_abs(x2r, x2i);
+    for (int i = 2; i < 5; i++) cRe[i * 15] += (double)i * bump;
+    cRe[70] = x1r * x1r * x1r - x2i * x2i;
+}
+
+static void poly_86_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[71] = {0};
+
+    for (int k = 1; k < 72; k++) {
+        cf[k - 1] = cpow(ccos((double)k * t1), (double)k) + poly_hand_z(0.0, 1.0) * cpow(csin((double)k * t2), (double)k);
+    }
+    for (int i = 1; i < 71; i += 2) cf[i] = 1.0 / cf[i];
+    for (int i = 2; i < 71; i += 3) cf[i] = 1.0 / (cf[i] * cf[i]);
+    for (int r = 5; r < 66; r += 5) cf[r - 1] = cpow(t1 * t2, (double)r);
+    cf[70] = pow(cabs(t1), 2.0) + 2.0 * creal(t1) * cimag(t2) + 3.0 * pow(cabs(t2), 2.0);
+    for (int i = 0; i < 71; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_102_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[71] = {0};
+
+    cf[0] = 1000.0 * cpow(t1 + t2, 2.0);
+    for (int k = 1; k < 20; k++) cf[k] = (double)(k + 1) * cf[k - 1] + csin((double)(k + 1) * t1) + ccos((double)(k + 1) * t2);
+    for (int k = 20; k < 40; k++) cf[k] = (double)(k + 1) * cf[k - 1] - csin((double)(k + 1) * t1) - ccos((double)(k + 1) * t2);
+    for (int k = 40; k < 60; k++) cf[k] = (double)(k + 1) * cf[k - 1] + csin((double)(k + 1) * t1 * t2) + ccos((double)(k + 1) * t1 * t2);
+    for (int k = 60; k < 70; k++) cf[k] = (double)(k + 1) * cf[k - 1] - csin((double)(k + 1) * t1 * t2) - ccos((double)(k + 1) * t1 * t2);
+    cf[70] = cabs(cf[69]) + carg(t1) - carg(t2) + creal(t1 * t2) - cimag(conj(t1) * t2);
+    for (int i = 0; i < 71; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_110_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    static const double primes[] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59};
+    const int n_primes = (int)(sizeof(primes) / sizeof(primes[0]));
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+
+    for (int k = 1; k < 36; k++) {
+        cRe[k - 1] = x1r * primes[k % n_primes] + x2i * (double)(k * k);
+        cRe[70 - k] = x2r * primes[(70 - k) % n_primes] - x1i * (double)(k * k);
+    }
+    cRe[35] = 440.0 * cos(c_arg(x1r, x1i));
+    cIm[35] = 440.0 * sin(c_arg(x2r, x2i));
+}
+
+static void poly_113_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+
+    const double zr = x1r - x2i;
+    const double zi = x1i + x2r;
+    const double absz = c_abs(zr, zi);
+    const double angz = c_arg(zr, zi);
+    for (int k = 1; k < 36; k++) {
+        cRe[k - 1] = cos(M_PI * (double)k / 35.0) * (((k % 2) == 0) ? 1.0 : -1.0) * pow(absz, (double)k);
+        cRe[70 - k] = sin(M_PI * (double)(35 - k) / 35.0) * (((k % 2) == 0) ? -1.0 : 1.0) * pow(angz, (double)(35 - k));
+    }
+    cRe[35] = exp(absz);
+}
+
+static void poly_114_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    static const double fib13[] = {89, -233, 144, 377, 610, -987, 1597, -2584, 4181, -6765, 10946, -17711, 28657};
+    static const double tail_re[] = {0.0, 2.0, -6.0, -5.5};
+    static const double tail_im[] = {3.0, -8.0, 11.0, 0.0};
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+
+    double t1sq_r, t1sq_i, t2cu_r, t2cu_i, conjprod_r, conjprod_i;
+    c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    poly_hand_pow_int(x2r, x2i, 3, &t2cu_r, &t2cu_i);
+    c_mul(x1r, x1i, x2r, -x2i, &conjprod_r, &conjprod_i);
+    cRe[0] = t1sq_r + t2cu_r - conjprod_i;
+    cIm[0] = 0.0;
+    const double scalar = x1r + x2i;
+    cRe[1] = -827.0 * scalar;
+    cRe[2] = 221.0 * scalar;
+    cRe[3] = 653.0 * scalar;
+    double shifted_r = x1r + 2.0 * x2i;
+    double shifted_i = x1i - 2.0 * x2r;
+    cRe[4] = pow(c_abs(shifted_r, shifted_i), 5.0);
+    for (int j = 6; j < 29; j++) {
+        cRe[j - 1] = cos((double)j * c_arg(x1r + x2r, x1i + x2i)) * sin((double)j * c_abs(t1sq_r + x2r, t1sq_i + x2i)) + (double)j;
+    }
+    const double diff_abs = c_abs(x1r - x2r, x1i - x2i);
+    for (int i = 0; i < 13; i++) cRe[28 + i] = fib13[i] * diff_abs;
+    for (int k = 42; k < 62; k++) {
+        double scaled_r, scaled_i;
+        c_mul((double)k, 0.0, x1r, x1i, &scaled_r, &scaled_i);
+        c_mul(scaled_r, scaled_i, x2r, -x2i, &scaled_r, &scaled_i);
+        cRe[k - 1] = log(c_abs(scaled_r + 71.0, scaled_i));
+    }
+    double delta_r, delta_i;
+    poly_hand_pow_int(x1r, x1i, 3, &delta_r, &delta_i);
+    double t2_3r, t2_3i;
+    poly_hand_pow_int(x2r, x2i, 3, &t2_3r, &t2_3i);
+    delta_r -= t2_3r;
+    delta_i -= t2_3i;
+    for (int i = 0; i < 4; i++) {
+        double sr, si;
+        c_mul(tail_re[i], tail_im[i], delta_r, delta_i, &sr, &si);
+        cRe[62 + i] = sr;
+        cIm[62 + i] = si;
+    }
+    for (int i = 66; i < 71; i++) cRe[i] = exp(-(double)i);
+    double e1r, e1i, e2r, e2i;
+    c_exp2(x1r, x1i, &e1r, &e1i);
+    c_exp2(x2r, x2i, &e2r, &e2i);
+    cRe[70] = e1r - e2r;
+    cIm[70] = e1i - e2i;
+}
+
+static void poly_115_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[71] = {0};
+    double complex kappa = (1.0 + cpow(t1, 2.0)) * cpow(1.0 - t2, 2.0) * carg(t1) * carg(t2);
+    double complex offset = poly_hand_z(creal(t1) - cimag(t2), cimag(t1) + creal(t2));
+
+    cf[0] = kappa - cpow(t1, 3.0) + cpow(t2, 2.0);
+    cf[1] = -2.0 * offset + t1 * t2 + cabs(t1 + t2);
+    cf[2] = (3.0 + 2.0 * kappa) * (t1 - t2);
+    cf[3] = 0.5 * (offset - poly_hand_z(0.0, 1.0) * kappa);
+    for (int i = 0; i < 6; i++) cf[4 + i] = cabs(t1) / (double)(i + 1);
+    for (int i = 0; i < 10; i++) cf[10 + i] = -cpow(t2, 2.0) * (double)(i + 1);
+    for (int k = 21; k < 31; k++) cf[k - 1] = (cpow(t1, (double)k) - cpow(t2, (double)(k - 1))) / ((double)k * (double)k);
+    for (int i = 0; i < 21; i++) cf[30 + i] = creal(offset) * (double)(21 + i) + 0.1 * cimag(offset) * (double)(i + 1);
+    for (int k = 51; k < 61; k++) cf[k - 1] = pow(cimag(t1 * t2), 2.0) / ((double)k * (double)k);
+    cf[61] = cabs(offset) + 0.1 * cpow(t2, 2.0) - 0.1 * cpow(t1, 2.0);
+    cf[62] = 0.01 * (cpow(t1, 3.0) - 2.0 * cpow(t2, 3.0));
+    cf[63] = 0.001 * (offset * conj(t2));
+    for (int i = 64; i < 70; i++) cf[i] = (((double)(i + 1) * creal(offset)) + ((double)(i + 1) * pow(cimag(offset), 2.0))) / 2.0;
+    cf[70] = -t1 + 2.0 * poly_hand_z(-cimag(t2), creal(t2));
+    for (int i = 0; i < 71; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_307_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[35] = {0};
+    for (int j = 1; j <= 35; j++) {
+        double phase = sin((double)j * M_PI / 4.0) + cos((double)j * M_PI / 3.0) + carg(t1) * (double)j / 10.0;
+        double magnitude = log(cabs(t1) + (double)j) * (1.0 + sin((double)j * M_PI / 6.0)) +
+                           pow(poly_hand_np_int64_prod_1_to_n(j), 0.5) * cos((double)j * M_PI / 8.0);
+        cf[j - 1] = magnitude * cexp(poly_hand_z(0.0, phase)) + conj(t2) * (double)(j % 5);
+    }
+    for (int i = 0; i < 35; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_314_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+
+    for (int j = 1; j <= 35; j++) {
+        const double r = fmod((double)(j * j) + x1r * x2i, 7.0) + 1.0;
+        const double angle = c_arg(x1r, x1i) * sin((double)j * M_PI / r) + c_arg(x2r, x2i) * cos((double)j * M_PI / (r + 1.0));
+        const double magnitude = pow(c_abs(x1r, x1i), 0.5 * (double)j) + pow(c_abs(x2r, x2i), 0.3 * (double)(35 - j + 1));
+        poly_hand_from_polar(magnitude, angle, &cRe[j - 1], &cIm[j - 1]);
+        cRe[j - 1] += x1r * sin((double)j) - x2r * cos((double)j);
+        cIm[j - 1] += -x1i * sin((double)j) + x2i * cos((double)j);
+        const double scale = log(c_abs(cRe[j - 1], cIm[j - 1]) + 1.0);
+        const double extra = poly_hand_prod_1_to_n((j % 5) + 1) + ((double)j + r);
+        double nr, ni;
+        c_mul(cRe[j - 1], cIm[j - 1], scale, 0.0, &nr, &ni);
+        cRe[j - 1] = nr + extra;
+        cIm[j - 1] = ni;
+    }
+}
+
+static void poly_317_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[35] = {0};
+    for (int j = 1; j <= 35; j++) {
+        double mag_part = log(cabs(t1) + (double)j) * sin((double)j) + cos((double)(j * j));
+        double angle_part = carg(t1) * cos((double)j) + carg(t2) * sin((double)j);
+        cf[j - 1] = mag_part * cexp(poly_hand_z(0.0, angle_part)) + conj(t1) * (poly_hand_np_int64_prod_1_to_n(j) / (double)(j + 1));
+    }
+    for (int k = 1; k <= 35; k++) cf[k - 1] *= poly_hand_z(1.0 + 0.05 * cos((double)k), 0.03 * sin((double)k));
+    for (int i = 0; i < 35; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_324_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+
+    double complex cf[35] = {0};
+    for (int j = 0; j < 35; j++) {
+        double r = x1r + (x2r - x1r) * (double)j / 34.0;
+        double d = x1i + (x2i - x1i) * (double)j / 34.0;
+        double complex z = poly_hand_z(r, d);
+        double mag = log(fabs(r * r) + 1.0) * (1.0 + sin(2.0 * M_PI * r * (double)j)) * creal(1.0 + ccos(poly_hand_z(0.0, M_PI * (double)j)));
+        double ang = carg(z) + sin((double)j) * log(cabs(poly_hand_z(r, 1.0))) - cos((double)j) * carg(poly_hand_z(r, -1.0));
+        cf[j] = mag * poly_hand_z(cos(ang), sin(ang));
+    }
+    for (int i = 0; i < 35; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_333_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+
+    const double log_abs1 = log(c_abs(x1r, x1i) + 1.0);
+    const double abs2 = c_abs(x2r, x2i);
+    const double angle_prod = c_arg(x1r, x1i) * c_arg(x2r, x2i);
+    for (int j = 0; j < 35; j++) {
+        const double denom = (double)(j + 1);
+        const double angle = sin((double)j * x1i) + cos((double)j * x2r) + angle_prod / denom;
+        const double magnitude = log_abs1 * pow((double)j, 1.5) + exp(-(double)j / (abs2 + 1.0)) * sqrt((double)j);
+        double a_r, a_i, b_r, b_i;
+        poly_hand_from_polar(magnitude, angle, &a_r, &a_i);
+        poly_hand_from_polar(magnitude, angle / denom, &b_r, &b_i);
+        cRe[j] = a_r + b_r;
+        cIm[j] = a_i + b_i;
+    }
+}
+
+static void poly_345_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[35] = {0};
+    for (int j = 0; j < 35; j++) {
+        double rec = x1r + (x2r - x1r) * (double)j / 34.0;
+        double mag_part = log(fabs(rec) + 1.0) * poly_hand_np_int64_prod_1_to_n(j) / (double)(j + 2);
+        double angle_part = carg(t1) * sin((double)j) + carg(t2) * cos((double)j / 3.0);
+        cf[j] = mag_part * poly_hand_z(cos(angle_part), sin(angle_part));
+        cf[j] += conj(cf[j]) * sin((double)j * M_PI / 4.0);
+    }
+    for (int i = 0; i < 35; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_450_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[35] = {0};
+    double ang1 = carg(t1);
+    double ang2 = carg(t2);
+    double abs_sum = cabs(t1) + cabs(t2);
+    for (int j = 1; j <= 35; j++) {
+        double angle_part = sin((double)j * ang1 + cos((double)j * ang2));
+        double mag_part = log(abs_sum + (double)j) * (1.0 + 0.1 * (double)j);
+        double phase_shift = ang1 * cos((double)j / 35.0 * M_PI) - ang2 * sin((double)j / 35.0 * M_PI);
+        cf[j - 1] = mag_part * poly_hand_z(cos(angle_part + phase_shift), sin(angle_part - phase_shift));
+    }
+    for (int k = 1; k <= 5; k++) {
+        int idx = 35 - k;
+        cf[idx] = cf[idx] * cpow(conj(t1), (double)((k % 3) + 1)) + cpow(conj(t2), (double)(k % 4));
+    }
+    double cumulative = 1.0;
+    for (int r = 1; r <= 35; r++) {
+        cumulative *= abs_sum + (double)r;
+        cf[r - 1] += cumulative / (double)(r + 1);
+    }
+    for (int i = 0; i < 35; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_478_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[35] = {0};
+    for (int j = 1; j <= 35; j++) {
+        double mag_part1 = log(cabs(t1) + (double)j);
+        double mag_part2 = sin((double)j * x1r) * cos((double)j / (x1i + 1.0));
+        double magnitude = mag_part1 * mag_part2 + pow(poly_hand_np_int64_prod_1_to_n(j), 0.5);
+        double angle = carg(t1) * sin((double)j) + carg(t2) * cos((double)j) + sin((double)j * x1r) - cos((double)j * x2i);
+        cf[j - 1] = magnitude * cexp(poly_hand_z(0.0, angle)) + conj(t1) * sin((double)j) - conj(t2) * cos((double)j);
+    }
+    for (int i = 0; i < 35; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_777_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    poly_hand_zero(cRe, cIm, 25);
+
+    cRe[1] = x1r + x2r;
+    cIm[1] = x1i + x2i;
+    for (int k = 2; k < 25; k++) {
+        const double sum_r = cRe[k - 1] + x2r;
+        const double sum_i = cIm[k - 1] + x2i;
+        double phase_r, phase_i;
+        poly_hand_from_polar(c_abs((double)k * cRe[k - 1] + x1r, (double)k * cIm[k - 1] + x1i), c_arg(sum_r, sum_i), &phase_r, &phase_i);
+        cRe[k] = phase_r;
+        cIm[k] = phase_i;
+    }
+    cRe[9] = x1r + x2i;
+    cIm[9] = 0.0;
+    cRe[14] = 0.0;
+    cIm[14] = x1r + x2i;
+    double prod_r, prod_i;
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    cRe[19] = prod_r;
+    cIm[19] = prod_r;
+    cRe[24] = pow(c_abs(x1r, x1i), 2.0) + pow(c_abs(x2r, x2i), 2.0);
+    cIm[24] = 0.0;
+}
+
+static void poly_782_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    poly_hand_zero(cRe, cIm, 25);
+
+    cRe[0] = x1r + x2r;
+    cIm[0] = x1i + x2i;
+    double prod_r, prod_i;
+    c_mul(x1r, x1i, x2r, -x2i, &prod_r, &prod_i);
+    poly_hand_from_polar(1.0, c_arg(prod_r, prod_i), &cRe[1], &cIm[1]);
+    cRe[2] = c_abs(x1r, x1i) * c_abs(x2r, x2i);
+    for (int k = 3; k < 25; k++) {
+        double phase_r, phase_i, nr, ni;
+        poly_hand_from_polar(1.0, c_arg(cRe[k - 2], cIm[k - 2]), &phase_r, &phase_i);
+        c_mul(cRe[k - 1], cIm[k - 1], phase_r, phase_i, &nr, &ni);
+        if (ni == 0.0) nr += 1e-10;
+        const double log_term = log(c_abs(nr, ni)) / 2.0;
+        cRe[k] = log_term - ni;
+        cIm[k] = nr;
+    }
+}
+
+static void poly_667_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 9;
+    for (int i = 0; i < 9; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    const int degree = 8;
+    const double abs_t1 = c_abs(x1r, x1i);
+    const double ang_t2 = c_arg(x2r, x2i);
+    double conj_prod_r, conj_prod_i;
+    c_mul(x1r, -x1i, x2r, -x2i, &conj_prod_r, &conj_prod_i);
+    const double conj_ang = c_arg(conj_prod_r, conj_prod_i);
+
+    for (int j = 1; j <= degree; j++) {
+        double mag_sum = 0.0;
+        double angle_sum = 0.0;
+        for (int k = 1; k <= j; k++) {
+            mag_sum += log(abs_t1 + (double)k) * sin((double)k * ang_t2 + (double)j);
+            angle_sum += cos((double)k * M_PI / (double)(j + 1));
+        }
+        const double magnitude = mag_sum * (1.0 + (double)j);
+        const double angle = angle_sum + conj_ang * (double)(j * j);
+        double phase_r, phase_i;
+        c_exp2(0.0, angle, &phase_r, &phase_i);
+        cRe[j] = magnitude * phase_r;
+        cIm[j] = magnitude * phase_i;
+    }
+
+    double abs_sum = 0.0;
+    for (int i = 0; i < degree; i++) abs_sum += c_abs(cRe[i], cIm[i]);
+    cRe[degree] = conj_prod_r + abs_sum;
+    cIm[degree] = conj_prod_i;
+
+    for (int i = 0; i < 9; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_746_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 11;
+    for (int i = 0; i < 11; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    const double seq_start = -1.0 + 2.0 * x1r;
+    const double seq_end = 1.0 - 2.0 * x2i;
+    const double seq_step = (seq_end - seq_start) / 10.0;
+    const double log_scale = log(1.0 + c_abs(x2r, x2i));
+    const double weight = log_scale * log_scale;
+    double prefix_sum = 0.0;
+    for (int i = 0; i < 11; i++) {
+        prefix_sum += seq_start + seq_step * (double)i;
+        double exp_r, exp_i;
+        c_exp2(-(double)(i + 1) * x1i, (double)(i + 1) * x1r, &exp_r, &exp_i);
+        cRe[i] = exp_r + prefix_sum * weight;
+        cIm[i] = exp_i;
+    }
+
+    double tmp_r, tmp_i;
+    c_mul(cRe[0], cIm[0], cRe[1], cIm[1], &tmp_r, &tmp_i);
+    c_mul(tmp_r, tmp_i, x1r, x1i, &tmp_r, &tmp_i);
+    double sqrt_r, sqrt_i;
+    c_powr(tmp_r, tmp_i, 0.5, &sqrt_r, &sqrt_i);
+    cRe[10] += sqrt_r;
+    cIm[10] += sqrt_i;
+
+    c_mul(cRe[9], cIm[9], cRe[10], cIm[10], &tmp_r, &tmp_i);
+    c_mul(tmp_r, tmp_i, x2r, x2i, &tmp_r, &tmp_i);
+    c_powr(tmp_r, tmp_i, 0.5, &sqrt_r, &sqrt_i);
+    cRe[0] -= sqrt_r;
+    cIm[0] -= sqrt_i;
+
+    double sum_r = 0.0, sum_i = 0.0;
+    for (int i = 0; i < 11; i++) {
+        sum_r += cRe[i];
+        sum_i += cIm[i];
+    }
+    cRe[5] = sum_r / 11.0;
+    cIm[5] = sum_i / 11.0;
+
+    double div_r, div_i;
+    c_div(cRe[7], cIm[7], cRe[5], cIm[5], &div_r, &div_i);
+    c_mul(cRe[2], cIm[2], div_r, div_i, &cRe[2], &cIm[2]);
+
+    c_mul(cRe[7], cIm[7], cRe[7], cIm[7], &tmp_r, &tmp_i);
+    cRe[7] = tmp_r - cRe[4] + cRe[8];
+    cIm[7] = tmp_i - cIm[4] + cIm[8];
+
+    for (int i = 0; i < 11; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_759_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 11;
+    for (int i = 0; i < 11; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double exp_r, exp_i, trig_r, trig_i, tmp_r, tmp_i;
+    c_exp2(x1r, x1i, &exp_r, &exp_i);
+    c_cos(x2r, x2i, &trig_r, &trig_i);
+    c_mul(exp_r, exp_i, trig_r, trig_i, &cRe[0], &cIm[0]);
+
+    c_exp2(-x1i, x1r, &exp_r, &exp_i);
+    cRe[1] = -exp_r;
+    cIm[1] = -exp_i;
+
+    cRe[2] = log(c_abs(x2r, x2i));
+
+    c_div(x1r + x2r, x1i + x2i, 0.0, 1.0, &cRe[3], &cIm[3]);
+
+    double t1sq_r, t1sq_i, t2sq_r, t2sq_i;
+    c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    c_mul(t1sq_r, t1sq_i, x1r, x1i, &tmp_r, &tmp_i);
+    c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+    c_mul(t2sq_r, t2sq_i, x2r, x2i, &t2sq_r, &t2sq_i);
+    cRe[4] = tmp_r - t2sq_r;
+    cIm[4] = tmp_i - t2sq_i;
+
+    c_exp2(x2r, x2i, &exp_r, &exp_i);
+    c_sin(x1r, x1i, &trig_r, &trig_i);
+    c_mul(-2.0 * exp_r, -2.0 * exp_i, trig_r, trig_i, &cRe[5], &cIm[5]);
+
+    cRe[6] = sqrt(c_abs(x1r - x2r, x1i - x2i));
+
+    double sum_r = x1r + x2r, sum_i = x1i + x2i;
+    c_mul(sum_r, sum_i, sum_r, sum_i, &tmp_r, &tmp_i);
+    c_exp2(-tmp_i, tmp_r, &cRe[7], &cIm[7]);
+
+    c_mul(x1r, x1i, x2r, x2i, &tmp_r, &tmp_i);
+    cRe[8] = log1p(c_abs(tmp_r, tmp_i));
+
+    c_div(x1r - x2r, x1i - x2i, 0.0, 1.0, &cRe[9], &cIm[9]);
+
+    c_exp2(tmp_r, tmp_i, &exp_r, &exp_i);
+    c_div(exp_r, exp_i, x1r, x1i, &cRe[10], &cIm[10]);
+
+    for (int i = 0; i < 11; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_766_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 11;
+    for (int i = 0; i < 11; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    c_exp2(0.0, c_abs(x1r, x1i), &cRe[0], &cIm[0]);
+    cRe[0] *= 100.0;
+    cIm[0] *= 100.0;
+
+    cRe[1] = 10.0 * (x1r * x1r - x2i * x2i);
+    cIm[2] = (x2r + x1i) * (x1r - x2i);
+
+    double sum_r = x1r + x2r, sum_i = x1i + x2i;
+    double diff_r = x1r - x2r, diff_i = x1i - x2i;
+    double sq_r, sq_i, tmp_r, tmp_i;
+    c_mul(sum_r, sum_i, sum_r, sum_i, &sq_r, &sq_i);
+    c_mul(diff_r, diff_i, diff_r, diff_i, &tmp_r, &tmp_i);
+    cRe[3] = sq_r - tmp_r;
+    cIm[3] = sq_i - tmp_i;
+
+    c_mul(x1r, x1i, x2r, x2i, &tmp_r, &tmp_i);
+    const double denom = 1.0 + c_abs(tmp_r, tmp_i);
+    cRe[4] = 100.0 * sum_r / denom;
+    cIm[4] = 100.0 * sum_i / denom;
+
+    double t1pow_r = x1r, t1pow_i = x1i;
+    double t2pow_r = x2r, t2pow_i = x2i;
+    for (int k = 1; k <= 5; k++) {
+        cRe[5] += t1pow_r * t2pow_i;
+        c_mul(t1pow_r, t1pow_i, x1r, x1i, &t1pow_r, &t1pow_i);
+        c_mul(t2pow_r, t2pow_i, x2r, x2i, &t2pow_r, &t2pow_i);
+    }
+
+    double t1sq_r, t1sq_i, t2sq_r, t2sq_i;
+    c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+    cRe[6] = sqrt(c_abs(t1sq_r - t2sq_r, t1sq_i - t2sq_i));
+
+    c_mul(x1r, x1i, x2r, x2i, &tmp_r, &tmp_i);
+    const double diff_abs = 1.0 + c_abs(x1r - x2r, x1i - x2i);
+    cRe[7] = tmp_r / diff_abs;
+    cIm[7] = tmp_i / diff_abs;
+
+    const int a0 = (int)floor(x1r);
+    const int a1 = (int)floor(x2i);
+    const int b0 = (int)floor(x2r);
+    const int b1 = (int)floor(x1i);
+    cRe[8] = poly_hand_prod_range_inclusive(a0, a1);
+    cIm[8] = poly_hand_prod_range_inclusive(b0, b1);
+
+    c_exp2(0.0, x1r - x2i, &cRe[9], &cIm[9]);
+    c_exp2(0.0, x1i - x2r, &cRe[10], &cIm[10]);
+
+    for (int i = 0; i < 11; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_769_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 10;
+    for (int i = 0; i < 10; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double sin_r, sin_i, cos_r, cos_i;
+    c_sin(x1r, x1i, &sin_r, &sin_i);
+    double sin_sq_r, sin_sq_i;
+    c_mul(sin_r, sin_i, sin_r, sin_i, &sin_sq_r, &sin_sq_i);
+    c_mul(sin_sq_r, sin_sq_i, sin_r, sin_i, &sin_r, &sin_i);
+    c_cos(x2r, x2i, &cos_r, &cos_i);
+    c_mul(cos_r, cos_i, cos_r, cos_i, &cos_r, &cos_i);
+    c_mul(100.0 * sin_r, 100.0 * sin_i, cos_r, cos_i, &cRe[0], &cIm[0]);
+
+    double sum_r = x1r + x2r, sum_i = x1i + x2i;
+    double diff_r = x1r - x2r, diff_i = x1i - x2i;
+    double exp_r, exp_i, sq_r, sq_i, tmp_r, tmp_i;
+    c_exp2(-sum_i, sum_r, &exp_r, &exp_i);
+    c_mul(diff_r, diff_i, diff_r, diff_i, &sq_r, &sq_i);
+    cRe[1] = 100.0 * exp_r - 10.0 * sq_r;
+    cIm[1] = 100.0 * exp_i - 10.0 * sq_i;
+
+    double prod_r, prod_i;
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    c_mul(prod_r, prod_i, diff_r, diff_i, &cRe[2], &cIm[2]);
+    const double denom = c_abs(x1r, x1i) + c_abs(x2r, x2i) + 1.0;
+    cRe[2] /= denom;
+    cIm[2] /= denom;
+
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    double t1sq_r, t1sq_i, t2sq_r, t2sq_i;
+    c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+    c_exp2(-(t1sq_i - t2sq_i), t1sq_r - t2sq_r, &exp_r, &exp_i);
+    c_mul(prod_r, prod_i, exp_r, exp_i, &tmp_r, &tmp_i);
+    double z_r = tmp_r, z_i = tmp_i;
+    c_mul(z_r, z_i, z_r, z_i, &tmp_r, &tmp_i);
+    c_mul(tmp_r, tmp_i, z_r, z_i, &cRe[4], &cIm[4]);
+
+    c_sin(prod_r, prod_i, &sin_r, &sin_i);
+    cRe[6] = sqrt(c_abs(x1r, x1i)) - sqrt(c_abs(x2r, x2i)) - sin_i;
+    cIm[6] = sin_r;
+
+    c_exp2(0.0, c_abs(sum_r, sum_i), &exp_r, &exp_i);
+    cRe[7] = 50.0 * c_abs(diff_r, diff_i) * exp_r;
+    cIm[7] = 50.0 * c_abs(diff_r, diff_i) * exp_i;
+
+    if (x1i > 0.0) {
+        cRe[8] = x1r - c_abs(x2r, x2i);
+        cIm[8] = x1i;
+    } else {
+        cRe[8] = x2r - c_abs(x1r, x1i);
+        cIm[8] = x2i;
+    }
+
+    c_mul(0.0, 1.0, prod_r, prod_i, &tmp_r, &tmp_i);
+    c_powc(tmp_r, tmp_i, 0.1 * prod_r, 0.1 * prod_i, &cRe[9], &cIm[9]);
+
+    for (int i = 0; i < 10; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_773_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 11;
+    for (int i = 0; i < 11; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double sin_r, sin_i, cos_r, cos_i;
+    c_sin(x1r, x1i, &sin_r, &sin_i);
+    c_cos(x2r, x2i, &cos_r, &cos_i);
+    cRe[0] = sin_r - cos_i;
+    cIm[0] = sin_i + cos_r;
+
+    cRe[1] = x2r + x1i;
+    cIm[1] = x2i - x1r;
+
+    double diff_r = x1r - x2r, diff_i = x1i - x2i;
+    double exp_r, exp_i;
+    c_exp2(-diff_i, diff_r, &exp_r, &exp_i);
+    const double log_term = log(1.0 + c_abs(x1r, x1i) + c_abs(x2r, x2i));
+    cRe[2] = exp_r + log_term;
+    cIm[2] = exp_i;
+
+    double prod_r, prod_i, prod_sq_r, prod_sq_i, diff_sq_r, diff_sq_i;
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    c_mul(prod_r, prod_i, prod_r, prod_i, &prod_sq_r, &prod_sq_i);
+    c_mul(diff_r, diff_i, diff_r, diff_i, &diff_sq_r, &diff_sq_i);
+    cRe[3] = prod_sq_r + diff_sq_i;
+    cIm[3] = prod_sq_i - diff_sq_r;
+
+    c_sin(x2r, x2i, &sin_r, &sin_i);
+    c_cos(x1r, x1i, &cos_r, &cos_i);
+    cRe[4] = -100.0 * sin_i + 100.0 * cos_r;
+    cIm[4] = 100.0 * sin_r + 100.0 * cos_i;
+
+    double sum_r = x1r + x2r, sum_i = x1i + x2i;
+    double sum_sq_r, sum_sq_i, sum_cu_r, sum_cu_i;
+    c_mul(sum_r, sum_i, sum_r, sum_i, &sum_sq_r, &sum_sq_i);
+    c_mul(sum_sq_r, sum_sq_i, sum_r, sum_i, &sum_cu_r, &sum_cu_i);
+    c_mul(diff_sq_r, diff_sq_i, diff_r, diff_i, &diff_sq_r, &diff_sq_i);
+    cRe[5] = sum_cu_r + diff_sq_i;
+    cIm[5] = sum_cu_i - diff_sq_r;
+
+    c_exp2(-prod_i, prod_r, &cRe[6], &cIm[6]);
+
+    cRe[7] = log1p(c_abs(prod_r, prod_i)) - diff_i;
+    cIm[7] = diff_r;
+
+    double t1sq_r, t1sq_i, t2sq_r, t2sq_i;
+    c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+    cRe[8] = t1sq_r + t2sq_r;
+    cIm[8] = t1sq_i + t2sq_i;
+
+    const double base_r = x1r - x2i;
+    const double base_i = x1i + x2r;
+    c_mul(base_r, base_i, base_r, base_i, &sum_sq_r, &sum_sq_i);
+    c_mul(sum_sq_r, sum_sq_i, base_r, base_i, &cRe[9], &cIm[9]);
+
+    c_exp2(0.0, 550.0, &exp_r, &exp_i);
+    c_mul(exp_r, exp_i, prod_r, prod_i, &cRe[10], &cIm[10]);
+
+    for (int i = 0; i < 11; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_785_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    for (int i = 0; i < 25; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    cRe[0] = 1.0;
+    c_mul(x1r, x1i, x1r, x1i, &cRe[1], &cIm[1]);
+    c_mul(x2r, x2i, x2r, x2i, &cRe[2], &cIm[2]);
+    double prod_r, prod_i;
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    c_mul(prod_r, prod_i, prod_r, prod_i, &cRe[3], &cIm[3]);
+    cRe[4] = c_abs(x1r + x2r, x1i + x2i);
+    cRe[4] *= cRe[4];
+
+    for (int k = 5; k < 25; k++) {
+        cRe[k] = 3.0 * cRe[k - 1] + 2.0 * cRe[k - 5] + 5.0 * (double)(k + 1);
+        cIm[k] = 3.0 * cIm[k - 1] + 2.0 * cIm[k - 5];
+    }
+
+    for (int i = 0; i < 6; i++) {
+        cRe[9 + i] = cRe[i];
+        cIm[9 + i] = -cIm[i];
+    }
+    for (int i = 0; i < 6; i++) {
+        double phase_r, phase_i;
+        c_exp2(0.0, c_arg(cRe[i], cIm[i]), &phase_r, &phase_i);
+        cRe[19 + i] = phase_r;
+        cIm[19 + i] = phase_i;
+    }
+
+    for (int i = 0; i < 25; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_788_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    for (int i = 0; i < 25; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    const double base_r = x1r - x2i;
+    const double base_i = x1i + x2r;
+    cRe[0] = base_r;
+    cIm[0] = base_i;
+    cRe[1] = 2.0 * base_r * base_r;
+    cRe[2] = 3.0 * base_i * base_i * base_i;
+
+    const double ang_sum = c_arg(x1r, x1i) + c_arg(x2r, x2i);
+    for (int k = 3; k < 15; k++) {
+        double a_r, a_i, b_r, b_i, sum_r, sum_i;
+        c_powr(cRe[k - 1], cIm[k - 1], (double)(k + 1), &a_r, &a_i);
+        c_powr(cRe[k - 2], cIm[k - 2], (double)k, &b_r, &b_i);
+        sum_r = a_r + b_r;
+        sum_i = a_i + b_i;
+        cRe[k] = c_abs(sum_r, sum_i) / ((double)k * (double)k + 1.0) + ang_sum;
+    }
+
+    for (int i = 0; i < 5; i++) {
+        cRe[15 + i] = cRe[10 + i] + cRe[i];
+        cIm[15 + i] = cIm[10 + i] + cIm[i];
+    }
+
+    cRe[20] = c_abs(x1r, x1i) * c_abs(x1r, x1i) - c_abs(x2r, x2i) * c_abs(x2r, x2i);
+    cRe[21] = ang_sum;
+    double t1sq_r, t1sq_i, t2sq_r, t2sq_i;
+    c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    c_mul(t1sq_r, t1sq_i, x1r, x1i, &t1sq_r, &t1sq_i);
+    c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+    c_mul(t2sq_r, t2sq_i, x2r, x2i, &t2sq_r, &t2sq_i);
+    cRe[22] = t1sq_r - t2sq_r;
+    double prod_r, prod_i, diff_r = x1r - x2r, diff_i = x1i - x2i;
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    c_mul(prod_r, prod_i, diff_r, diff_i, &prod_r, &prod_i);
+    cRe[23] = prod_i;
+    cRe[24] = sqrt(c_abs(prod_r, prod_i));
+
+    for (int i = 0; i < 25; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_794_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    for (int i = 0; i < 25; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    const double abs_t1 = c_abs(x1r, x1i);
+    const double ang_t2 = c_arg(x2r, x2i);
+    const double conj_t2_r = x2r;
+    const double conj_t2_i = -x2i;
+    for (int k = 0; k < 25; k++) {
+        double term_r = pow(abs_t1, (double)k) + pow(ang_t2, (double)k);
+        double term_i = 0.0;
+        switch (k % 4) {
+            case 0: term_r += x1r; term_i += x1i; break;
+            case 1: term_r -= x1i; term_i += x1r; break;
+            case 2: term_r -= x1r; term_i -= x1i; break;
+            default: term_r += x1i; term_i -= x1r; break;
+        }
+        double pow_r, pow_i;
+        c_powr(conj_t2_r, conj_t2_i, 0.5 * (double)(k + 1), &pow_r, &pow_i);
+        cRe[k] = term_r + pow_r;
+        cIm[k] = term_i + pow_i;
+    }
+
+    double prod_r, prod_i;
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    cRe[9] += log(c_abs(prod_r, prod_i));
+    if (isfinite(cRe[9]) && isfinite(cIm[9])) {
+        const double denom = c_abs(x1r + x2r, x1i + x2i + 1.0);
+        cRe[9] /= denom;
+        cIm[9] /= denom;
+    }
+
+    const double mix_r = x1r - x2i;
+    const double mix_i = x1i + x2r;
+    double mix_sq_r, mix_sq_i;
+    c_mul(mix_r, mix_i, mix_r, mix_i, &mix_sq_r, &mix_sq_i);
+    cRe[19] += mix_sq_r;
+    cIm[19] += mix_sq_i;
+    if (isfinite(cRe[19]) && isfinite(cIm[19])) {
+        const double denom2 = c_abs(x1r + x2r, x1i + x2i + 1.0);
+        cRe[19] /= denom2 * denom2;
+        cIm[19] /= denom2 * denom2;
+    }
+
+    double a_r, a_i, b_r, b_i, d_r, d_i;
+    c_mul(cRe[4], cIm[4], cRe[4], cIm[4], &a_r, &a_i);
+    c_mul(cRe[5], cIm[5], cRe[5], cIm[5], &b_r, &b_i);
+    c_mul(cRe[6], cIm[6], cRe[6], cIm[6], &d_r, &d_i);
+    c_powr(a_r + b_r + d_r, a_i + b_i + d_i, 0.5, &cRe[24], &cIm[24]);
+
+    for (int i = 0; i < 25; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_810_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    for (int i = 0; i < 25; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    const double base_even_r = x1r + x2r;
+    const double base_even_i = x1i - x2i;
+    for (int i = 0; i < 25; i++) {
+        if (i == 0) {
+            cRe[i] = 1.0;
+            continue;
+        }
+        if (i % 2 == 1) {
+            const double scale = 1.0 / ((double)(i + 1) * (double)(i + 1));
+            const double base_r = ((double)i * x1r + 3.0 * (double)i * x2r) * scale;
+            const double base_i = ((double)i * x1i + 3.0 * (double)i * x2i) * scale;
+            c_powr(base_r, base_i, (double)i, &cRe[i], &cIm[i]);
+        } else {
+            c_powr(base_even_r, base_even_i, (double)i, &cRe[i], &cIm[i]);
+        }
+    }
+
+    for (int i = 0; i < 25; i++) {
+        if (cRe[i] == INFINITY && cIm[i] == 0.0) {
+            cRe[i] = 1e10;
+            cIm[i] = 0.0;
+        } else if (cRe[i] == -INFINITY && cIm[i] == 0.0) {
+            cRe[i] = -1e10;
+            cIm[i] = 0.0;
+        } else if (isnan(cRe[i]) || isnan(cIm[i])) {
+            cRe[i] = 0.0;
+            cIm[i] = 0.0;
+        }
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_108_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double t1sq_r, t1sq_i, t2sq_r, t2sq_i;
+    c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+    cRe[0] = x1r + x2r;
+    cIm[0] = x1i + x2i;
+    cRe[1] = -(t1sq_r + x2r);
+    cIm[1] = -(t1sq_i + x2i);
+    cRe[2] = t1sq_r - t2sq_r;
+    cIm[2] = t1sq_i - t2sq_i - 1.0;
+
+    cRe[3] = 1.0 - x1r; cIm[3] = -x1i;
+    cRe[4] = -1.0 + x2r; cIm[4] = x2i;
+    cRe[5] = 2.0 - x1r; cIm[5] = -x1i;
+    cRe[6] = -2.0 + x2r; cIm[6] = x2i;
+    cRe[7] = 3.0 - x1r; cIm[7] = -x1i;
+    cRe[8] = -3.0 + x2r; cIm[8] = x2i;
+    cRe[9] = 4.0 - x1r; cIm[9] = -x1i;
+
+    cRe[10] = 15.0 * (x1r + x2i);
+    cRe[11] = -17.0 * c_arg(x1r, x1i) * c_arg(x2r, x2i);
+    cRe[14] = 30.0 * c_abs(x1r, x1i) * c_abs(x2r, x2i);
+
+    double t1cu_r, t1cu_i, t2cu_r, t2cu_i;
+    c_mul(t1sq_r, t1sq_i, x1r, x1i, &t1cu_r, &t1cu_i);
+    c_mul(t2sq_r, t2sq_i, x2r, x2i, &t2cu_r, &t2cu_i);
+    cRe[16] = -(t1cu_r + t2cu_r);
+    cIm[16] = -(t1cu_i + t2cu_i);
+
+    cRe[18] = -t1sq_i + t2sq_i;
+    cIm[18] = t1sq_r - t2sq_r;
+    cRe[19] = 5.0 - x1i;
+    cIm[19] = x1r;
+
+    cRe[24] = 50.0 * c_abs(x1r - x2r, x1i - x2i);
+    cRe[29] = -40.0 * x1r + 35.0 * x2i;
+    cRe[34] = 18.0 * (x1r - x2i);
+
+    double t1_4r, t1_4i, t2_4r, t2_4i;
+    c_mul(t1sq_r, t1sq_i, t1sq_r, t1sq_i, &t1_4r, &t1_4i);
+    c_mul(t2sq_r, t2sq_i, t2sq_r, t2sq_i, &t2_4r, &t2_4i);
+    cRe[39] = -t1_4r + t2_4r - 3.0;
+    cIm[39] = -t1_4i + t2_4i;
+    cRe[44] = 3.0 * c_arg(x1r, x1i) + 4.0 * c_arg(x2r, x2i);
+    cRe[49] = -55.0 * fabs(c_abs(x1r, x1i) - c_abs(x2r, x2i));
+    cRe[54] = 33.0 * pow(c_abs(x1r, x1i), 3.0) + pow(c_abs(x2r, x2i), 2.0);
+
+    double t1_5r, t1_5i, t2_5r, t2_5i;
+    c_mul(t1_4r, t1_4i, x1r, x1i, &t1_5r, &t1_5i);
+    c_mul(t2_4r, t2_4i, x2r, x2i, &t2_5r, &t2_5i);
+    cRe[59] = t1_5r + t2_5r - 29.0;
+    cIm[59] = t1_5i + t2_5i;
+    cRe[64] = -22.0 * t1sq_r + 22.0 * t2sq_i;
+    cRe[69] = 15.0 * x1i + 120.0 * x2r;
+
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_116_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    const double primes[15] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47};
+    double p1r[71], p1i[71], p2r[71], p2i[71];
+    p1r[0] = 1.0; p1i[0] = 0.0;
+    p2r[0] = 1.0; p2i[0] = 0.0;
+    for (int i = 1; i <= 70; i++) {
+        c_mul(p1r[i - 1], p1i[i - 1], x1r, x1i, &p1r[i], &p1i[i]);
+        c_mul(p2r[i - 1], p2i[i - 1], x2r, x2i, &p2r[i], &p2i[i]);
+    }
+
+    for (int k = 1; k <= 35; k++) {
+        const double s1 = (k % 2) ? -1.0 : 1.0;
+        const double a = primes[k % 15] * s1 / (double)(k + 1);
+        cRe[k - 1] = a * (p1r[k] + p2r[k]);
+        cIm[k - 1] = a * (p1i[k] + p2i[k]);
+
+        const int m = 71 - k;
+        const double s2 = (m % 2) ? -1.0 : 1.0;
+        const double b = primes[(k + 11) % 15] * s2 / (double)(m + 1);
+        cRe[70 - k] = b * (p1r[m] - p2r[m]);
+        cIm[70 - k] = b * (p1i[m] - p2i[m]);
+    }
+
+    cRe[35] = 28.0 * c_abs(x1r + x2r, x1i + x2i) / (1.0 + c_abs(x1r, x1i));
+    cRe[70] = 1.0;
+    cIm[70] = 1.0;
+
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_183_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double p1r[7], p1i[7], p2r[6], p2i[6];
+    p1r[0] = 1.0; p1i[0] = 0.0;
+    p2r[0] = 1.0; p2i[0] = 0.0;
+    for (int i = 1; i <= 6; i++) c_mul(p1r[i - 1], p1i[i - 1], x1r, x1i, &p1r[i], &p1i[i]);
+    for (int i = 1; i <= 5; i++) c_mul(p2r[i - 1], p2i[i - 1], x2r, x2i, &p2r[i], &p2i[i]);
+
+    cRe[0] = p1r[6] + 2.0 * p2r[5];
+    cIm[0] = p1i[6] + 2.0 * p2i[5];
+    cRe[1] = 3.0 * p1r[5] - p2r[4];
+    cIm[1] = 3.0 * p1i[5] - p2i[4];
+    cRe[2] = 4.0 * p1r[4] + 2.0 * p2r[3];
+    cIm[2] = 4.0 * p1i[4] + 2.0 * p2i[3];
+    cRe[3] = 5.0 * p1r[3] - 3.0 * p2r[2];
+    cIm[3] = 5.0 * p1i[3] - 3.0 * p2i[2];
+    cRe[4] = 6.0 * p1r[2] + 4.0 * x2r;
+    cIm[4] = 6.0 * p1i[2] + 4.0 * x2i;
+    cRe[5] = 7.0 * x1r - 5.0;
+    cIm[5] = 7.0 * x1i;
+
+    const double a_r = x1r + 1.0;
+    const double a_i = x1i;
+    const double b_r = x2r - 1.0;
+    const double b_i = x2i;
+    double pa_r = 1.0, pa_i = 0.0, pb_r = 1.0, pb_i = 0.0;
+    for (int j = 1; j <= 35; j++) {
+        c_mul(pa_r, pa_i, a_r, a_i, &pa_r, &pa_i);
+        c_mul(pb_r, pb_i, b_r, b_i, &pb_r, &pb_i);
+        if (j >= 6) {
+            const double sign = (j % 2) ? -1.0 : 1.0;
+            cRe[j] = sign * pa_r + pb_r;
+            cIm[j] = sign * pa_i + pb_i;
+        }
+    }
+
+    for (int j = 36; j <= 70; j++) {
+        double s_r, s_i, c_r, c_i;
+        c_sin((double)j * x1r, (double)j * x1i, &s_r, &s_i);
+        c_cos((double)j * x2r, (double)j * x2i, &c_r, &c_i);
+        cRe[j] = (double)(j - 35) * s_r - (double)(j - 34) * c_r;
+        cIm[j] = (double)(j - 35) * s_i - (double)(j - 34) * c_i;
+    }
+
+    double t1sq_r, t1sq_i, t2sq_r, t2sq_i, prod_r, prod_i;
+    c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    cRe[70] = t1sq_r + t2sq_r + prod_r;
+    cIm[70] = t1sq_i + t2sq_i + prod_i;
+
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_545_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double rec[35], imc[35];
+    for (int i = 0; i < 35; i++) {
+        rec[i] = x1r + (x2r - x1r) * (double)i / 34.0;
+        imc[i] = x1i + (x2i - x1i) * (double)i / 34.0;
+    }
+    const double log_abs1 = log(c_abs(x1r, x1i) + 1.0);
+    const double ang1 = c_arg(x1r, x1i);
+    const double ang2 = c_arg(x2r, x2i);
+    const double diff_abs = c_abs(x1r - x2r, x1i - x2i);
+    const double log_sum = log(c_abs(x1r + x2r, x1i + x2i) + 1.0);
+    const double conj1_r = x1r, conj1_i = -x1i;
+    for (int j = 1; j <= 35; j++) {
+        const double rv = rec[j - 1];
+        const double iv = imc[j - 1];
+        const double mag = (rv * rv * rv + iv * iv) * log_abs1
+                         + sin((double)j * M_PI / 4.0) * cos((double)j * M_PI / 3.0);
+        const double ang = ang1 + ang2 * (double)j + sin((double)j * x1r * x2i);
+        double phase_r, phase_i, pow_r, pow_i;
+        c_exp2(0.0, ang, &phase_r, &phase_i);
+        if ((j % 5) == 0) {
+            pow_r = 1.0;
+            pow_i = 0.0;
+        } else {
+            c_powr(conj1_r, conj1_i, (double)(j % 5), &pow_r, &pow_i);
+        }
+        const double cs = cos((double)j * iv);
+        cRe[j - 1] = mag * phase_r + pow_r * cs;
+        cIm[j - 1] = mag * phase_i + pow_i * cs;
+    }
+    for (int k = 1; k <= 35; k++) {
+        double prod = 1.0;
+        for (int i = 0; i < k; i++) prod *= (rec[i] + imc[i]);
+        const double bump = prod * sin((double)k * ang2);
+        cRe[k - 1] += bump;
+    }
+    for (int r = 1; r <= 35; r++) {
+        const double scale = 1.0 + diff_abs / (double)(r + 1);
+        cRe[r - 1] = cRe[r - 1] * scale + log_sum * cos((double)r * ang1);
+        cIm[r - 1] = cIm[r - 1] * scale;
+        if (!isfinite(cRe[r - 1]) || !isfinite(cIm[r - 1])) { cRe[r - 1] = 0; cIm[r - 1] = 0; }
+    }
+}
+
+static void poly_556_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    for (int i = 0; i < 35; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double rec[35], imc[35];
+    for (int i = 0; i < 35; i++) {
+        rec[i] = x1r + (x2r - x1r) * (double)i / 34.0;
+        imc[i] = x1i + (x2i - x1i) * (double)i / 34.0;
+    }
+    const double ang_sum = c_arg(x1r + x2r, x1i + x2i);
+    for (int j = 1; j <= 35; j++) {
+        double prod = 1.0;
+        for (int i = 0; i < j; i++) prod *= (rec[i] + imc[i]);
+        const double angle = sin((double)j * rec[j - 1]) + cos((double)j * imc[j - 1]) + ang_sum;
+        const double magnitude = log(fabs(rec[j - 1] * rec[j - 1] + imc[j - 1] * imc[j - 1]) + 1.0)
+                               * (pow((double)j, 1.5) + prod);
+        cRe[j - 1] = magnitude * cos(angle);
+        cIm[j - 1] = magnitude * sin(angle);
+        if (!isfinite(cRe[j - 1]) || !isfinite(cIm[j - 1])) { cRe[j - 1] = 0; cIm[j - 1] = 0; }
+    }
+}
+
+static void poly_596_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 26;
+    for (int i = 0; i < 26; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    const double abs1 = c_abs(x1r, x1i);
+    const double ang1 = c_arg(x1r, x1i);
+    const double ang2 = c_arg(x2r, x2i);
+    for (int j = 1; j <= 25; j++) {
+        const int k = (j * 3 + 7) % 10;
+        const double r = x1r * sin((double)j) + x2i * cos((double)k);
+        const double mag = log(abs1 + (double)(j * j)) * sin((double)k * M_PI / 4.0) + cos(r);
+        const double angle = ang1 * cos((double)j) + sin((double)k * ang2);
+        double conjp_r, conjp_i, phase_r, phase_i;
+        if (k == 0) {
+            conjp_r = 1.0;
+            conjp_i = 0.0;
+        } else {
+            c_powr(x2r, -x2i, (double)k, &conjp_r, &conjp_i);
+        }
+        c_exp2(0.0, angle, &phase_r, &phase_i);
+        cRe[j - 1] = mag * phase_r + conjp_r;
+        cIm[j - 1] = mag * phase_i + conjp_i;
+    }
+    double sum = 0.0;
+    for (int i = 0; i < 25; i++) sum += c_abs(cRe[i], cIm[i]) * cos((double)(i + 1) * M_PI / 6.0);
+    cRe[25] = sum + c_abs(x1r, x1i) * c_abs(x2r, x2i);
+
+    for (int i = 0; i < 26; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_749_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 10;
+    for (int i = 0; i < 10; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double sum_r = x1r + x2r, sum_i = x1i + x2i;
+    double diff_r = x1r - x2r, diff_i = x1i - x2i;
+    c_exp2(-sum_i, sum_r, &cRe[0], &cIm[0]);
+
+    double s1_r, s1_i, c2_r, c2_i, c1_r, c1_i, s2_r, s2_i;
+    c_sin(x1r, x1i, &s1_r, &s1_i);
+    c_cos(x2r, x2i, &c2_r, &c2_i);
+    c_cos(x1r, x1i, &c1_r, &c1_i);
+    c_sin(x2r, x2i, &s2_r, &s2_i);
+    double a_r, a_i, b_r, b_i;
+    c_mul(s1_r, s1_i, c2_r, c2_i, &a_r, &a_i);
+    c_mul(c1_r, c1_i, s2_r, s2_i, &b_r, &b_i);
+    cRe[1] = a_r - b_r;
+    cIm[1] = a_i - b_i;
+
+    c_sin(sum_r, sum_i, &s1_r, &s1_i);
+    for (int j = 2; j < 9; j++) {
+        const double scale = exp((double)(j + 1) / 3.0);
+        c_exp2(diff_i / (double)(j + 1), -diff_r / (double)(j + 1), &c2_r, &c2_i);
+        c_mul(scale * s1_r, scale * s1_i, c2_r, c2_i, &cRe[j], &cIm[j]);
+    }
+
+    double t1sq_r, t1sq_i, t2sq_r, t2sq_i, sumsq_r, sumsq_i;
+    c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+    sumsq_r = t1sq_r + t2sq_r;
+    sumsq_i = t1sq_i + t2sq_i;
+    c_powr(sumsq_r, sumsq_i, 0.5, &cRe[9], &cIm[9]);
+    cRe[9] -= log(c_abs(x1r, x1i) + c_abs(x2r, x2i)) / log(10.0);
+
+    for (int i = 0; i < 10; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_758_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 10;
+    for (int i = 0; i < 10; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double t1sq_r, t1sq_i, t2sq_r, t2sq_i, sum_r, sum_i;
+    c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+    sum_r = t1sq_r + t2sq_r;
+    sum_i = t1sq_i + t2sq_i;
+    double phase_r, phase_i;
+    c_exp2(0.0, c_arg(x1r + x2r, x1i + x2i), &phase_r, &phase_i);
+    c_mul(sum_r, sum_i, phase_r, phase_i, &cRe[0], &cIm[0]);
+
+    double t1cu_r, t1cu_i, diff_r = x1r - x2r, diff_i = x1i - x2i;
+    c_mul(t1sq_r, t1sq_i, x1r, x1i, &t1cu_r, &t1cu_i);
+    const double scale = cos(c_arg(diff_r, diff_i));
+    const double diff2_r = t1cu_r - t2sq_r;
+    const double diff2_i = t1cu_i - t2sq_i;
+    cRe[1] = -100.0 * scale * diff2_i;
+    cIm[1] = 100.0 * scale * diff2_r;
+
+    cRe[2] = diff_r * diff_r + (x1i + x2i) * (x1i + x2i) - 100.0;
+    const double gain = 42.0 * (log1p(c_abs(x1r, x1i)) + log1p(c_abs(x2r, x2i)));
+    c_exp2(0.0, M_PI / 4.0, &phase_r, &phase_i);
+    cRe[3] = gain * phase_r;
+    cIm[3] = gain * phase_i;
+
+    const double root = sqrt(c_abs(x1r, x1i) + c_abs(x2r, x2i));
+    c_mul(x1r, x1i, x2r, x2i, &sum_r, &sum_i);
+    c_exp2(0.0, c_arg(sum_r, sum_i) - M_PI / 3.0, &phase_r, &phase_i);
+    cRe[4] = root * phase_r;
+    cIm[4] = root * phase_i;
+
+    cRe[5] = sinh(0.1 * (x1r + x2r)) + cosh(0.1 * (x1i - x2i));
+    cRe[6] = 1.0 / (1.0 + exp(-c_abs(x1r, x1i)));
+    cIm[6] = 1.0 / (1.0 + exp(-c_abs(x2r, x2i)));
+    cIm[7] = atan(1.0 / c_abs(x1r + x2r, x1i + x2i));
+    cRe[8] = -t1cu_i - 2.0 * x2r - 200.0;
+    cIm[8] = t1cu_r - 2.0 * x2i;
+
+    c_mul(x1r, x1i, x2r, x2i, &sum_r, &sum_i);
+    c_exp2(-sum_i, sum_r, &phase_r, &phase_i);
+    c_div(phase_r, phase_i, 1.0 + x1r + x2r, x1i + x2i, &cRe[9], &cIm[9]);
+
+    for (int i = 0; i < 10; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
+    }
+}
+
+static void poly_787_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    for (int i = 0; i < 25; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    double prod_r, prod_i;
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    cRe[0] = x1r + x2r;
+    cIm[0] = prod_i;
+    const double diff_r = x1r - x2r;
+    const double diff_i = x1i - x2i;
+    for (int i = 1; i < 24; i++) {
+        double pow_r, pow_i;
+        c_powc(cRe[i - 1], cIm[i - 1], diff_r, diff_i, &pow_r, &pow_i);
+        cRe[i] = c_abs(pow_r, pow_i);
+        cIm[i] = c_arg(cRe[i - 1], cIm[i - 1]);
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) {
+            cRe[i] = 0.0;
+            cIm[i] = 1.0;
+        }
+    }
+    double cf0sq_r, cf0sq_i, cf0cu_r, cf0cu_i, cf23sq_r, cf23sq_i;
+    c_mul(cRe[0], cIm[0], cRe[0], cIm[0], &cf0sq_r, &cf0sq_i);
+    c_mul(cf0sq_r, cf0sq_i, cRe[0], cIm[0], &cf0cu_r, &cf0cu_i);
+    c_mul(cRe[23], cIm[23], cRe[23], cIm[23], &cf23sq_r, &cf23sq_i);
+    cRe[24] = cf0cu_r + cf23sq_r + cRe[22] - cRe[21] + cRe[20];
+    cIm[24] = cf0cu_i + cf23sq_i + cIm[22] - cIm[21] - cIm[20];
+}
+
+static void poly_809_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    for (int i = 0; i < 25; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    cRe[0] = x1r + x2r;
+    cIm[0] = x1i + x2i;
+    const double denom = c_abs(1.0 + x1r, x1i);
+    const double term_r = (denom == 0.0) ? INFINITY : x2r / denom;
+    const double term_i = (denom == 0.0) ? INFINITY : -x2i / denom;
+    for (int k = 1; k < 25; k++) {
+        cRe[k] = cos((double)k * c_arg(cRe[k - 1], cIm[k - 1])) + sin((double)k * c_abs(x1r, x1i)) + term_r;
+        cIm[k] = term_i;
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) {
+            cRe[k] = cRe[k - 1];
+            cIm[k] = cIm[k - 1];
+        }
+    }
+
+    double a_r, a_i, b_r, b_i, m_r, m_i;
+    c_mul(cRe[0], cIm[0], cRe[0], cIm[0], &a_r, &a_i);
+    c_mul(a_r, a_i, cRe[0], cIm[0], &a_r, &a_i);
+    c_mul(cRe[1], cIm[1], cRe[1], cIm[1], &b_r, &b_i);
+    c_mul(cRe[0], cIm[0], cRe[1], cIm[1], &m_r, &m_i);
+    cRe[9] = a_r + b_r - m_r;
+    cIm[9] = a_i + b_i - m_i;
+    if (!isfinite(cRe[9]) || !isfinite(cIm[9])) { cRe[9] = cRe[8]; cIm[9] = cIm[8]; }
+
+    c_mul(x1r, x1i, x1r, x1i, &a_r, &a_i);
+    c_mul(x2r, x2i, x2r, x2i, &b_r, &b_i);
+    cRe[14] = log(c_abs(cRe[13], cIm[13])) - a_r + b_r;
+    cIm[14] = -a_i + b_i;
+    if (!isfinite(cRe[14]) || !isfinite(cIm[14])) { cRe[14] = cRe[13]; cIm[14] = cIm[13]; }
+
+    double sum_r = x1r + x2r, sum_i = x1i + x2i;
+    c_mul(sum_r, sum_i, sum_r, sum_i, &a_r, &a_i);
+    c_mul(cRe[0], cIm[0], a_r, a_i, &a_r, &a_i);
+    const double den2 = 1.0 + c_abs(x1r * x2r - x1i * x2i, x1r * x2i + x1i * x2r);
+    cRe[19] = a_r - cRe[2] / den2;
+    cIm[19] = a_i - cIm[2] / den2;
+    if (!isfinite(cRe[19]) || !isfinite(cIm[19])) { cRe[19] = cRe[18]; cIm[19] = cIm[18]; }
+
+    c_mul(sum_r, sum_i, sum_r, sum_i, &a_r, &a_i);
+    c_mul(a_r, a_i, sum_r, sum_i, &a_r, &a_i);
+    cRe[24] = a_r - cRe[23];
+    cIm[24] = a_i - cIm[23];
+    if (!isfinite(cRe[24]) || !isfinite(cIm[24])) { cRe[24] = cRe[23]; cIm[24] = cIm[23]; }
+}
+
+static void poly_818_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    for (int i = 0; i < 25; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    const double a0_r = x1r - x2i;
+    const double a0_i = x1i + x2r;
+    const double b0_r = x2r - x1i;
+    const double b0_i = x2i + x1r;
+    const double ang_a = c_arg(a0_r, a0_i);
+    const double ang_b = c_arg(b0_r, b0_i);
+    for (int k = 1; k <= 25; k++) {
+        const double shift = 0.5 + (double)k / 25.0;
+        const double amp_r = c_abs(a0_r + shift, a0_i);
+        const double amp_i = c_abs(b0_r + shift, b0_i);
+        const double p1 = pow(ang_a, (double)(k - 1));
+        const double p2 = pow(ang_b, (double)(k - 1));
+        cRe[k - 1] = amp_r * cos(p1);
+        cIm[k - 1] = amp_i * sin(p2);
+        if (!isfinite(cRe[k - 1]) || !isfinite(cIm[k - 1])) {
+            cRe[k - 1] = 0.0;
+            cIm[k - 1] = 0.0;
+        }
+    }
+}
+
+static void poly_101_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0.0; cIm[i] = 0.0; }
+
+    for (int i = 0; i < 10; i++) cRe[i] = 1000.0 * (double)(i + 1);
+    for (int i = 10; i < 71; i++) cRe[i] = 1.0;
+
+    const double abs1 = c_abs(x1r, x1i);
+    const double abs2 = c_abs(x2r, x2i);
+    const double ang1 = c_arg(x1r, x1i);
+    const double ang2 = c_arg(x2r, x2i);
+    cRe[14] = -pow(abs1, 3.0);
+    cRe[29] = -pow(abs2, 4.0);
+    cRe[44] = pow(abs1, 5.0);
+    cRe[59] = pow(abs2, 6.0);
+    cRe[19] = abs1 * abs1 * sin(ang1);
+    cRe[39] = pow(abs2, 3.0) * cos(ang2);
+    cRe[24] = log(abs1 + 1.0) * abs1;
+    cRe[49] = log(abs2 + 1.0) * abs2;
+
+    for (int j = 1; j < 35; j++) {
+        const int even_idx = 2 * j;
+        const int odd_idx = even_idx + 1;
+        const double even_base = cRe[even_idx];
+        const double odd_base = cRe[odd_idx];
+        double s1r, s1i, c1r, c1i, s2r, s2i, c2r, c2i;
+        c_sin((double)j * x1r, (double)j * x1i, &s1r, &s1i);
+        c_cos((double)j * x1r, (double)j * x1i, &c1r, &c1i);
+        c_sin((double)j * x2r, (double)j * x2i, &s2r, &s2i);
+        c_cos((double)j * x2r, (double)j * x2i, &c2r, &c2i);
+        cRe[even_idx] = even_base * (s1r + c2r) + odd_base * (c1r + s2r);
+        cIm[even_idx] = even_base * (s1i + c2i) + odd_base * (c1i + s2i);
+    }
+
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0.0; cIm[i] = 0.0; }
+    }
+}
+
+static void poly_106_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0.0; cIm[i] = 0.0; }
+
+    double t1sq_r, t1sq_i, t1cu_r, t1cu_i, t2sq_r, t2sq_i;
+    c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    c_mul(t1sq_r, t1sq_i, x1r, x1i, &t1cu_r, &t1cu_i);
+    c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+    double sum_r = t1cu_r + t2sq_r;
+    double sum_i = t1cu_i + t2sq_i;
+    double base_r, base_i;
+    c_mul(sum_r, sum_i, sum_r, sum_i, &base_r, &base_i);
+    const double diff_abs = c_abs(x1r - x2r, x1i - x2i);
+    double prod_r, prod_i, sin_r, sin_i;
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    c_sin(prod_r, prod_i, &sin_r, &sin_i);
+    base_r += diff_abs + sin_r;
+    base_i += sin_i;
+
+    const double abs_sum = c_abs(x1r + x2r, x1i + x2i);
+    for (int k = 1; k <= 71; k++) {
+        const double scale = pow(abs_sum, 1.0 / (double)k);
+        cRe[k - 1] = base_r * scale;
+        cIm[k - 1] = base_i * scale;
+    }
+
+    const double scales[10] = {100.0, 90.0, 80.0, 70.0, 60.0, 50.0, 40.0, 30.0, 20.0, 10.0};
+    for (int i = 0; i < 10; i++) {
+        cRe[i] *= scales[i];
+        cIm[i] *= scales[i];
+    }
+    cRe[11] *= 5.0; cIm[11] *= 5.0;
+    cRe[23] *= 4.0; cIm[23] *= 4.0;
+    cRe[35] *= 3.0; cIm[35] *= 3.0;
+    cRe[47] *= 2.0; cIm[47] *= 2.0;
+
+    for (int k = 15; k < 71; k++) {
+        const double factor = -log((double)k);
+        cRe[k] *= factor;
+        cIm[k] *= factor;
+    }
+
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0.0; cIm[i] = 0.0; }
+    }
+}
+
+static void poly_121_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0.0; cIm[i] = 0.0; }
+
+    const double theta = 2.0 * M_PI / 7.0;
+    const double wr = cos(theta);
+    const double wi = sin(theta);
+    double div_r, div_i;
+    c_div(x2r, x2i, wr, wi, &div_r, &div_i);
+    double p1r = 1.0, p1i = 0.0, p2r = 1.0, p2i = 0.0;
+    for (int k = 1; k <= 7; k++) {
+        double nr, ni;
+        c_mul(p1r, p1i, x1r, x1i, &nr, &ni);
+        p1r = nr; p1i = ni;
+        c_mul(p2r, p2i, div_r, div_i, &nr, &ni);
+        p2r = nr; p2i = ni;
+        const double wkr = cos(theta * (double)k);
+        cRe[k - 1] = (p1r - p2r) * wkr;
+        cIm[k - 1] = (p1i - p2i) * wkr;
+    }
+
+    double t1sq_r, t1sq_i, t2sq_r, t2sq_i, prod_r, prod_i;
+    c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+    c_mul(x1r, x1i, x2r, x2i, &prod_r, &prod_i);
+    cRe[7] = -(t1sq_r + t2sq_r) + prod_r + prod_i;
+    cIm[7] = -(t1sq_i + t2sq_i);
+
+    const double z = c_arg(x1r, x1i) + c_arg(x2r, x2i);
+    for (int k = 9; k < 36; k++) {
+        cRe[k - 1] = cos((double)k * z);
+        cIm[k - 1] = sin((double)k * z);
+    }
+
+    const double abs1 = c_abs(x1r, x1i);
+    double base_r = abs1 * x2r + x2i * x1r;
+    double base_i = abs1 * x2i + x2i * x1i;
+    double sq_r, sq_i;
+    c_mul(base_r, base_i, base_r, base_i, &sq_r, &sq_i);
+    for (int k = 36; k < 71; k++) {
+        cRe[k - 1] = sq_r / (double)(k + 1);
+        cIm[k - 1] = sq_i / (double)(k + 1);
+    }
+
+    cRe[70] = abs1 - c_abs(x2r, x2i) + log(c_abs(x1r + x2r + 1.0, x1i + x2i) + 1.0);
+
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0.0; cIm[i] = 0.0; }
+    }
+}
+
+static void poly_149_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    for (int i = 0; i < 71; i++) { cRe[i] = 0.0; cIm[i] = 0.0; }
+
+    double t1sq_r, t1sq_i, t1cu_r, t1cu_i, t1_4r, t1_4i, t2sq_r, t2sq_i, t2cu_r, t2cu_i;
+    c_mul(x1r, x1i, x1r, x1i, &t1sq_r, &t1sq_i);
+    c_mul(t1sq_r, t1sq_i, x1r, x1i, &t1cu_r, &t1cu_i);
+    c_mul(t1cu_r, t1cu_i, x1r, x1i, &t1_4r, &t1_4i);
+    c_mul(x2r, x2i, x2r, x2i, &t2sq_r, &t2sq_i);
+    c_mul(t2sq_r, t2sq_i, x2r, x2i, &t2cu_r, &t2cu_i);
+    cRe[0] = t1_4r + 2.0 * t2cu_r;
+    cIm[0] = t1_4i + 2.0 * t2cu_i;
+    cRe[1] = -t1cu_r + 3.0 * t2sq_r;
+    cIm[1] = -t1cu_i + 3.0 * t2sq_i;
+    cRe[2] = t1sq_r - 4.0 * x2r;
+    cIm[2] = t1sq_i - 4.0 * x2i;
+    cRe[3] = -x1r + 5.0 * t2sq_r;
+    cIm[3] = -x1i + 5.0 * t2sq_i;
+    double mix_r, mix_i;
+    c_mul(t1sq_r, t1sq_i, x2r, x2i, &mix_r, &mix_i);
+    cRe[4] = t2cu_r - 6.0 * mix_r;
+    cIm[4] = t2cu_i - 6.0 * mix_i;
+
+    for (int j = 6; j < 36; j++) {
+        const double sign = (j % 2 == 0) ? 1.0 : -1.0;
+        cRe[j - 1] = (pow(x1r, (double)j) - pow(x2i, (double)j)) * sign / (double)j;
+    }
+    for (int j = 36; j < 71; j++) {
+        double s1r, s1i, c2r, c2i;
+        c_sin((double)j * x1r, (double)j * x1i, &s1r, &s1i);
+        c_cos((double)j * x2r, (double)j * x2i, &c2r, &c2i);
+        cRe[j - 1] = (s1r + c2r) / (double)(j + 1);
+        cIm[j - 1] = (s1i + c2i) / (double)(j + 1);
+    }
+    const double scalar = x1r + x2i;
+    cRe[70] = scalar * (x1r - x2r);
+    cIm[70] = scalar * (x1i - x2i);
+
+    for (int i = 0; i < 71; i++) {
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0.0; cIm[i] = 0.0; }
     }
 }
 
@@ -2845,4 +4924,842 @@ static void poly_112_hand(double x1r, double x1i, double x2r, double x2i,
     for (int i = 0; i < 71; i++) {
         if (!isfinite(cRe[i]) || !isfinite(cIm[i])) { cRe[i] = 0; cIm[i] = 0; }
     }
+}
+
+static void poly_316_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[35] = {0};
+    for (int j = 1; j <= 35; j++) {
+        int k = j + 3;
+        double r = x1r * sin((double)j * M_PI / 8.0) + x2r * cos((double)j * M_PI / 5.0);
+        double im = x1i * cos((double)j * M_PI / 7.0) - x2i * sin((double)j * M_PI / 9.0);
+        double prod = 1.0;
+        for (int q = 1; q <= j; q++) prod *= (double)q;
+        double mag = log(fabs(r * im) + 1.0) * (1.0 + sin((double)k * M_PI / 4.0)) * prod / 35.0;
+        double ang = carg(t1) * cos((double)k * M_PI / 6.0) + carg(t2) * sin((double)k * M_PI / 10.0);
+        cf[j - 1] = mag * poly_hand_z(cos(ang), sin(ang));
+        double denom = 0.0;
+        for (int i = 0; i < 35; i++) denom += cabs(cf[i]);
+        for (int i = 0; i < 35; i++) {
+            if (denom == 0.0 || !isfinite(denom)) {
+                cf[i] = poly_hand_z(NAN, NAN);
+            } else {
+                cf[i] /= denom;
+            }
+        }
+    }
+    for (int i = 0; i < 35; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_335_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[35] = {0};
+    for (int j = 0; j < 35; j++) {
+        double angle_part = sin((double)j * M_PI / 7.0) * cos((double)j * M_PI / 5.0) + carg(t1) * carg(t2);
+        double magnitude_part = log(cabs(t1) + 1.0) * ((double)j * (double)j) / (1.0 + (double)j) + pow(cabs(t2), 1.0 + sin((double)j));
+        double phase_arg = angle_part + x1i * x2r / (double)(j + 1);
+        double complex phase_shift = poly_hand_z(cos(phase_arg), sin(phase_arg));
+        cf[j] = magnitude_part * phase_shift + conj(t1) * conj(t2) / (double)(j + 1);
+    }
+    for (int k = 0; k < 35; k++) {
+        if (k % 5 == 0) cf[k] *= (1.0 + 0.5 * cos((double)k * M_PI / 3.0));
+        else if (k % 3 == 0) cf[k] *= (1.0 + 0.3 * sin((double)k * M_PI / 4.0));
+        else cf[k] *= (1.0 + 0.2 * log((double)k + 1.0));
+    }
+    double prod_abs = 1.0;
+    double sum_re = 0.0, sum_im = 0.0;
+    for (int i = 0; i < 35; i++) {
+        prod_abs *= cabs(cf[i]);
+        sum_re += creal(cf[i]);
+        sum_im += cimag(cf[i]);
+    }
+    double scale = pow(prod_abs, 1.0 / 35.0);
+    double complex offset = poly_hand_z(sum_re, sum_im);
+    for (int i = 0; i < 35; i++) cf[i] = cf[i] * scale + offset;
+    for (int i = 0; i < 35; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_383_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[35] = {0};
+    for (int j = 1; j <= 35; j++) {
+        double prod = poly_hand_np_int64_prod_1_to_n(j);
+        double mag_part = log(cabs(t1) + (double)j) * sin((double)j * x2r) + prod / (double)(j + 1);
+        double angle_part = carg(t1) * cos((double)j * x2i) + sin((double)j) * carg(t2);
+        cf[j - 1] = mag_part * poly_hand_z(cos(angle_part), sin(angle_part))
+                  + poly_hand_cpow_uint(conj(t1), j)
+                  - poly_hand_cpow_uint(conj(t2), 35 - j);
+    }
+    for (int i = 0; i < 35; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_413_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[35] = {0};
+    double log_abs_t2 = log(cabs(t2) + 1.0);
+    for (int j = 1; j <= 35; j++) {
+        double angle = carg(t1) * sin((double)j) + carg(t2) * cos((double)j / 3.0);
+        double magnitude = pow(cabs(t1), (double)j) * pow(log_abs_t2, (double)(35 - j)) * (double)((j % 5) + 1);
+        cf[j - 1] = magnitude * poly_hand_z(cos(angle), sin(angle));
+    }
+    for (int k = 1; k <= 17; k++) {
+        double r = (double)(k * k) + sqrt((double)k);
+        double complex ph = poly_hand_z(cos(r), sin(r));
+        cf[k - 1] *= ph;
+        cf[35 - k] *= conj(ph);
+    }
+    for (int r = 1; r <= 35; r++) cf[r - 1] += 0.1 * (double)r * poly_hand_z(cos(-(double)r / 35.0), sin(-(double)r / 35.0));
+    for (int i = 0; i < 35; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_467_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[35] = {0};
+    double ang2 = carg(t2);
+    for (int j = 1; j <= 35; j++) {
+        double mag_sum = 0.0;
+        for (int k = 1; k <= j; k++) mag_sum += log(cabs(t1) + (double)k) * sin((double)k * ang2);
+        for (int r = 1; r <= 35 - j; r++) mag_sum += log(cabs(t2) + (double)r) * cos((double)r * ang2);
+        double mag = log(mag_sum + 1.0);
+        double angle = mag_sum / (double)(j + 1) + mag_sum / (double)(35 - j + 1);
+        cf[j - 1] = mag * poly_hand_z(cos(angle), sin(angle));
+    }
+    for (int j = 1; j <= 35; j++) cf[j - 1] = cf[j - 1] * (1.0 + 0.05 * (double)(j * j)) + conj(cf[j - 1]) * 0.02;
+    for (int i = 0; i < 35; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_475_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 40;
+    poly_hand_zero(cRe, cIm, 40);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[40] = {0};
+    for (int j = 1; j <= 40; j++) {
+        double prod = poly_hand_np_int64_prod_1_to_n(j);
+        double mag = pow(x1r, (double)j) + log(cabs(t2) + (double)j) + pow(prod, 1.0 / 3.0);
+        double angle = carg(t1) * sin((double)j * M_PI / 6.0) + carg(t2) * cos((double)j * M_PI / 4.0);
+        cf[j - 1] = mag * cexp(poly_hand_z(0.0, angle)) + conj(t1) * sin((double)j / 2.0) - conj(t2) * cos((double)j / 3.0);
+    }
+    for (int i = 0; i < 40; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_482_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[35] = {0};
+    for (int j = 1; j <= 35; j++) {
+        double mag_part1 = log(cabs(t1) + (double)j);
+        double mag_part2 = sin((double)j * x2r) * cos((double)j / (x1i + 1.0));
+        double prod = poly_hand_np_int64_prod_1_to_n(j);
+        double magnitude = mag_part1 * mag_part2 + sqrt(prod);
+        double angle = carg(t1) * sin((double)j) + carg(t2) * cos((double)j) + sin((double)j * x1r) - cos((double)j * x2i);
+        cf[j - 1] = magnitude * cexp(poly_hand_z(0.0, angle)) + conj(t1) * sin((double)j) - conj(t2) * cos((double)j);
+    }
+    for (int i = 0; i < 35; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_491_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[35] = {0};
+    for (int j = 1; j <= 35; j++) {
+        double prod = 1.0;
+        for (int q = 1; q <= (j % 5) + 1; q++) prod *= (double)q;
+        double magnitude = log(cabs(t1) + cabs(t2) + (double)j) * (pow((double)j, 1.5) + prod);
+        double angle = carg(t1) * cos((double)j * M_PI / 35.0) + carg(t2) * sin((double)j * M_PI / 35.0);
+        cf[j - 1] = magnitude * poly_hand_z(cos(angle), sin(angle));
+    }
+    for (int i = 0; i < 35; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_513_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double real_seq[35], imag_seq[35];
+    for (int i = 0; i < 35; i++) {
+        real_seq[i] = x1r + (x2r - x1r) * (double)i / 34.0;
+        imag_seq[i] = x1i + (x2i - x1i) * (double)i / 34.0;
+    }
+    double complex cf[35] = {0};
+    for (int j = 1; j <= 35; j++) {
+        double prod = 1.0;
+        for (int q = 1; q <= (j % 5) + 1; q++) prod *= (double)q;
+        double magnitude = log(cabs(t1 + (double)j) + 1.0) * sin((double)j * M_PI / 7.0) + cos((double)j * M_PI / 5.0) * prod;
+        double angle = carg(t2) + sin((double)j * M_PI / 3.0) * cos((double)j * M_PI / 4.0) + tan((double)j * M_PI / 6.0);
+        cf[j - 1] = magnitude * poly_hand_z(cos(angle), sin(angle));
+    }
+    for (int k = 1; k <= 17; k++) {
+        int idx = k * 2;
+        if (idx <= 35) cf[idx - 1] *= cexp(poly_hand_z(0.0, real_seq[k - 1] / (fabs(imag_seq[k - 1]) + 1.0)));
+    }
+    for (int r = 1; r <= 3; r++) cf[r - 1] = cf[r - 1] * cf[r - 1] / (1.0 + cabs(cf[r - 1]));
+    for (int i = 0; i < 35; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_535_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+    double rec[35], imc[35];
+    for (int i = 0; i < 35; i++) {
+        rec[i] = x1r + (x2r - x1r) * (double)i / 34.0;
+        imc[i] = x1i + (x2i - x1i) * (double)i / 34.0;
+    }
+    for (int j = 1; j <= 35; j++) {
+        double complex z = poly_hand_z(rec[j - 1], imc[j - 1]);
+        double mag = log(cabs(z) + 1.0) * sin((double)j * M_PI / 5.0) + cos((double)j * M_PI / ((double)j + 2.0));
+        double ang = carg(z) + sin((double)j / 35.0 * M_PI * 4.0) - cos((double)j / 35.0 * M_PI * 3.0);
+        cRe[j - 1] = mag * cos(ang);
+        cIm[j - 1] = mag * sin(ang);
+    }
+}
+
+static void poly_551_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 40;
+    poly_hand_zero(cRe, cIm, 40);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[40] = {0};
+    double prod_base = x1r * x2i;
+    for (int j = 1; j <= 40; j++) {
+        double mag_part1 = log(cabs(t1) + 1.0) * sin((double)j * M_PI / 40.0);
+        double mag_part2 = log(cabs(t2) + 1.0) * cos((double)j * M_PI / 20.0);
+        double mag_variation = mag_part1 + mag_part2 + pow(prod_base, 1.0 / (double)j);
+        double angle_variation = carg(t1) * sin((double)j / 2.0) + carg(t2) * cos((double)j / 3.0) + sin((double)j) * cos((double)j);
+        double complex complex_component = poly_hand_z(cos(angle_variation), sin(angle_variation));
+        cf[j - 1] = mag_variation * complex_component + conj(t1) * sin((double)j) + conj(t2) * cos((double)j);
+    }
+    for (int i = 0; i < 40; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_562_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+    for (int j = 1; j <= 35; j++) {
+        double rec = x1r + (x2r - x1r) * (double)j / 35.0;
+        double imc = x1i + (x2i - x1i) * (double)j / 35.0;
+        double prod = 1.0;
+        for (int q = 1; q <= (j % 5) + 1; q++) prod *= (double)q;
+        double mag = log(fabs(rec) + 1.0) * ((double)(j * j) + sqrt(35.0 - (double)j + 1.0)) * sin((double)j) + prod;
+        double angle = sin(rec * M_PI / 7.0) + cos(imc * M_PI / 5.0) + c_arg(x1r, x1i) - c_arg(x2r, x2i);
+        cRe[j - 1] = mag * cos(angle);
+        cIm[j - 1] = mag * sin(angle);
+    }
+}
+
+static void poly_566_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    poly_hand_zero(cRe, cIm, 25);
+    for (int j = 1; j <= 25; j++) {
+        double prod = 1.0;
+        for (int q = 1; q <= (j % 5) + 1; q++) prod *= (double)q;
+        double magnitude = log(c_abs(x1r, x1i) + (double)j) * (prod + sqrt((double)j));
+        double angle = sin((double)j * c_arg(x1r, x1i)) + cos(c_arg(x2r, x2i) / ((double)j + 1.0));
+        cRe[j - 1] = magnitude * cos(angle);
+        cIm[j - 1] = magnitude * sin(angle);
+        cRe[j - 1] += (x1i - x2i) * pow(sin((double)j), 2.0);
+    }
+}
+
+static void poly_570_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 26;
+    poly_hand_zero(cRe, cIm, 26);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    for (int j = 1; j <= 26; j++) {
+        double sum_mag = 0.0;
+        double sum_ang = 0.0;
+        for (int k = 1; k <= j; k++) {
+            double complex term = t1 * (double)k + t2 / (double)k;
+            sum_mag += log(cabs(term) + 1.0);
+            double complex angle_term = t1 * sin((double)k * x2r) + t2 * cos((double)k * x1i);
+            sum_ang += carg(angle_term);
+        }
+        cRe[j - 1] = sum_mag * cos(sum_ang);
+        cIm[j - 1] = sum_mag * sin(sum_ang);
+    }
+}
+
+static void poly_604_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    poly_hand_zero(cRe, cIm, 25);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double rec[25], imc[25];
+    for (int i = 0; i < 25; i++) {
+        rec[i] = x1r + (x2r - x1r) * (double)i / 24.0;
+        imc[i] = x1i + (x2i - x1i) * (double)i / 24.0;
+    }
+    double complex cf[25] = {0};
+    for (int j = 1; j <= 25; j++) {
+        double magnitude = log(fabs(rec[j - 1]) + 1.0) * pow(cabs(t1), (double)((j % 5) + 1)) + pow(cabs(t2), (double)(((25 - j) % 7) + 1));
+        double angle = sin(rec[j - 1] * M_PI * (double)j) + cos(imc[j - 1] * M_PI / ((double)j + 1.0)) + carg(t1) * log((double)j + 2.0) - carg(t2) * sqrt((double)j);
+        cf[j - 1] = magnitude * cexp(poly_hand_z(0.0, angle));
+    }
+    double prod_rec = 1.0, sum_rec = 0.0, sum_imc = 0.0;
+    for (int i = 0; i < 25; i++) {
+        prod_rec *= rec[i];
+        sum_rec += rec[i];
+        sum_imc += imc[i];
+    }
+    double scalar = prod_rec / (sum_imc + 1.0);
+    for (int i = 0; i < 25; i++) cf[i] = cf[i] * scalar + sum_rec * conj(t1) - sum_imc * conj(t2);
+    for (int i = 0; i < 25; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_727_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 9;
+    poly_hand_zero(cRe, cIm, 9);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    for (int k = 1; k <= 9; k++) {
+        double mag = log(cabs(t1) + cabs(t2) + (double)k) * (double)(k * k);
+        double angle = carg(t1) * sin((double)k) + carg(t2) * cos((double)k);
+        cRe[k - 1] = mag * cos(angle);
+        cIm[k - 1] = mag * sin(angle);
+    }
+}
+
+static void poly_751_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 11;
+    poly_hand_zero(cRe, cIm, 11);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    for (int i = 0; i < 11; i++) {
+        double angle = 2.0 * M_PI * (double)i / 10.0;
+        cRe[i] = 10.0 * cos(angle);
+        cIm[i] = 10.0 * sin(angle);
+    }
+    cRe[0] = cabs(t1 + t2); cIm[0] = 0.0;
+    poly_hand_store_z(csin(t1) * cpow(ccos(t2), 2.0), cRe, cIm, 5);
+    cRe[7] = -log(cabs(t1) + 1.0);
+    cIm[7] = log(cabs(t2) + 1.0);
+    poly_hand_store_z((t1 * t1) / (t2 + poly_hand_z(0.0, 1.0)), cRe, cIm, 9);
+    poly_hand_store_z(csqrt(t1 * t2), cRe, cIm, 10);
+}
+
+static void poly_18_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double arg = carg(t1 * t2 * poly_hand_z(0.0, 1.0));
+    double mod = cabs((t1 + poly_hand_z(0.0, 1.0)) * (t2 + poly_hand_z(0.0, 1.0)));
+    for (int i = 1; i <= 71; i++) {
+        double complex cyclotomic = 0.0;
+        for (int k = 1; k <= i; k++) {
+            double theta = 2.0 * M_PI * (double)k / (double)i;
+            cyclotomic += t1 - cexp(poly_hand_z(0.0, theta));
+        }
+        poly_hand_store_z(mod * cyclotomic * arg, cRe, cIm, i - 1);
+    }
+    cRe[70] = log(cabs(t1 * t2)) + 1.0;
+    cIm[70] = 0.0;
+}
+
+static void poly_39_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    poly_hand_store_z(t1, cRe, cIm, 0);
+    poly_hand_store_z(t2, cRe, cIm, 1);
+    double ang_abs = fabs(carg(t1 + t2));
+    for (int k = 3; k <= 71; k++) {
+        double complex prev1 = poly_hand_z(cRe[k - 2], cIm[k - 2]);
+        double complex prev2 = poly_hand_z(cRe[k - 3], cIm[k - 3]);
+        double complex value = csin((double)k * t1)
+                             + ccos((double)k * t2)
+                             + log((double)k + 1.0) * cabs(prev1) * cabs(prev2) * ang_abs;
+        poly_hand_store_z(value, cRe, cIm, k - 1);
+    }
+}
+
+static void poly_59_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    for (int i = 1; i <= 71; i++) {
+        double complex value = cpow(t1 / (double)(i + 1), (double)i)
+                             + (t2 / (double)(i + 1)) * poly_hand_z(0.0, 2.0);
+        poly_hand_store_z(value, cRe, cIm, i - 1);
+    }
+    for (int idx = 1; idx <= 19; idx += 2) {
+        double complex z = poly_hand_z(cRe[idx], cIm[idx]) * (t1 + 2.0 * t2);
+        poly_hand_store_z(z, cRe, cIm, idx);
+    }
+    for (int idx = 2; idx <= 29; idx += 3) {
+        double complex z = poly_hand_z(cRe[idx], cIm[idx]) * (t1 - 2.0 * t2);
+        poly_hand_store_z(z, cRe, cIm, idx);
+    }
+    for (int idx = 4; idx < 36; idx++) {
+        double complex z = poly_hand_z(cRe[idx], cIm[idx]) + 2.0 * t1;
+        poly_hand_store_z(z, cRe, cIm, idx);
+    }
+    for (int idx = 36; idx < 67; idx++) {
+        double complex z = poly_hand_z(cRe[idx], cIm[idx]) - 2.0 * t2;
+        poly_hand_store_z(z, cRe, cIm, idx);
+    }
+    double complex add = poly_hand_z(cRe[4], cIm[4]);
+    for (int idx = 67; idx < 71; idx++) {
+        double complex z = log(cabs(poly_hand_z(cRe[idx], cIm[idx]))) + add;
+        poly_hand_store_z(z, cRe, cIm, idx);
+    }
+}
+
+static void poly_68_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double abs1 = cabs(t1);
+    for (int i = 1; i <= 5; i++) {
+        cRe[i - 1] = pow(abs1, (double)i);
+        cIm[i - 1] = 0.0;
+    }
+    for (int i = 6; i <= 70; i++) {
+        poly_hand_store_z(((double)i * t1 + 2.0 * (double)i * t2) / (double)(i + 1), cRe, cIm, i);
+    }
+    double complex base = clog(cabs(t1 + t2) + 1.0);
+    for (int m = 0; m < 10; m++) {
+        double angle = M_PI / 10.0 * (double)(m + 1);
+        double complex z = poly_hand_z(cRe[20 + m], cIm[20 + m]) + base * cexp(poly_hand_z(0.0, angle));
+        poly_hand_store_z(z, cRe, cIm, 20 + m);
+    }
+    for (int m = 0; m < 10; m++) {
+        double complex z = poly_hand_z(cRe[50 + m], cIm[50 + m]) + poly_hand_z(0.0, 1.0) * (poly_hand_z(cRe[m], cIm[m]) / (double)(m + 11));
+        poly_hand_store_z(z, cRe, cIm, 50 + m);
+    }
+    for (int m = 0; m < 10; m++) {
+        double complex z = poly_hand_z(cRe[60 + m], cIm[60 + m]) - csin(poly_hand_z(cRe[m], cIm[m]));
+        poly_hand_store_z(z, cRe, cIm, 60 + m);
+    }
+    double complex cos_sum = ccos(t1 + t2);
+    for (int m = 0; m < 10; m++) {
+        double complex z = poly_hand_z(cRe[30 + m], cIm[30 + m]) + poly_hand_cpow_uint(cos_sum, m + 1);
+        poly_hand_store_z(z, cRe, cIm, 30 + m);
+    }
+    cRe[70] = cabs(t1) * cabs(t2) * carg(t1) * carg(t2) * sin(cabs(t1 + t2));
+    cIm[70] = 0.0;
+}
+
+static void poly_69_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double log_term = log(cabs(t1 * t2) + 1.0);
+    for (int i = 1; i <= 71; i++) {
+        int j = 71 - i;
+        double denom = cabs(t2 + (double)i);
+        double scalar = ((x1r + x1i * (double)j) / denom) * sin(carg(t1 + (double)i * t2))
+                      + log_term * cos(2.0 * M_PI * (double)i / 71.0);
+        cRe[i - 1] = scalar;
+        cIm[i - 1] = 0.0;
+    }
+    double fill = x1r * x1r - x1i * x2i;
+    for (int i = 0; i < 71; i++) {
+        if (cRe[i] == 0.0 && cIm[i] == 0.0) cRe[i] = fill;
+    }
+}
+
+static void poly_87_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 71;
+    poly_hand_zero(cRe, cIm, 71);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double prod_re = creal(t1 * t2);
+    double prod_im = cimag(t1 * t2);
+    for (int k = 1; k < 36; k++) {
+        double complex left = cpow(t1 + poly_hand_z(-x2i, x2r), (double)k)
+                            + log(cabs(t1 + (double)k * t2) + 1.0) * prod_re;
+        double complex right = (double)k * cpow(t1 + poly_hand_z(x2i, -x2r), (double)k)
+                             - log(cabs(t2 - (double)k * t1) + 1.0) * prod_im;
+        poly_hand_store_z(left, cRe, cIm, k - 1);
+        poly_hand_store_z(right, cRe, cIm, 70 - k);
+    }
+    cRe[35] = 100.0 * cabs(t1) * cabs(t2);
+    cIm[35] = 0.0;
+    cRe[36] = 200.0 * carg(t1) * carg(t2);
+    cIm[36] = 0.0;
+    double complex tail[34];
+    for (int i = 0; i < 34; i++) tail[i] = poly_hand_z(cRe[i], cIm[i]) - poly_hand_z(cRe[37 + i], cIm[37 + i]);
+    for (int i = 0; i < 34; i++) poly_hand_store_z(tail[i], cRe, cIm, 37 + i);
+}
+
+static void poly_691_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 9;
+    poly_hand_zero(cRe, cIm, 9);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    for (int j = 1; j <= 9; j++) {
+        double r_part = x1r * pow((double)j, sin((double)j)) + x2r / (double)(j + 1);
+        double im_part = x1i * cos((double)j) + x2i * sin((double)j / 2.0);
+        double mag = log(cabs(t1) + (double)j) * fabs(sin((double)j)) + log(cabs(t2) + 1.0);
+        double angle = carg(t1) * (double)j + carg(t2) * cos((double)j / 3.0);
+        double complex coeff = poly_hand_z(r_part, im_part) * cexp(poly_hand_z(0.0, angle)) * mag;
+        poly_hand_store_z(coeff + conj(t1) * sin((double)j) + cos((double)j) * sin((double)j / 2.0), cRe, cIm, j - 1);
+    }
+}
+
+static void poly_694_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 9;
+    poly_hand_zero(cRe, cIm, 9);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    for (int j = 1; j <= 9; j++) {
+        double mag_part1 = log(cabs(t1) + 1.0) * sin((double)j * M_PI / 5.0);
+        double mag_part2 = cos((double)j * x1r) * pow(cabs(t2), 0.5);
+        double mag_part3 = (j % 2 == 0) ? (x1r + x2i) : (x1r + x2r);
+        double magnitude = mag_part1 + mag_part2 + mag_part3;
+        double angle_part1 = pow(carg(t1), (double)j);
+        double angle_part2 = x2r * (double)j;
+        double angle_part3 = (j % 3 == 0) ? sin((double)j * carg(t1)) : cos((double)j * carg(t2));
+        double angle = angle_part1 + angle_part2 + angle_part3;
+        double complex base = magnitude * poly_hand_z(cos(angle), sin(angle));
+        double sum_part = 0.0;
+        for (int k = 1; k <= j; k++) sum_part += pow(x1r, (double)k);
+        for (int k = 1; k <= (j % 2) + 1; k++) sum_part += pow(x2i, (double)k);
+        poly_hand_store_z(base + sum_part * conj(t1 + t2), cRe, cIm, j - 1);
+    }
+    for (int k = 1; k <= 9; k++) {
+        double complex z = poly_hand_z(cRe[k - 1], cIm[k - 1]) * (sin((double)k * x1r) + cos((double)k * x2i)) * cabs(t1 - t2);
+        poly_hand_store_z(z, cRe, cIm, k - 1);
+    }
+}
+
+static void poly_698_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 9;
+    poly_hand_zero(cRe, cIm, 9);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    for (int j = 1; j <= 9; j++) {
+        double mag_part = log(pow(cabs(t1), (double)j) + pow(cabs(t2), (double)(9 - j)) + 1.0);
+        double angle_part = sin((double)j * carg(t1)) + cos((double)j * carg(t2));
+        cRe[j - 1] = mag_part * cos(angle_part);
+        cIm[j - 1] = mag_part * sin(angle_part);
+    }
+}
+
+static void poly_733_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 9;
+    poly_hand_zero(cRe, cIm, 9);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    for (int k = 1; k <= 9; k++) {
+        double complex tmp = 0.0;
+        for (int j = 1; j <= k; j++) {
+            tmp += (pow(x1r, (double)j) / (double)(j + 1)) * cexp(poly_hand_z(0.0, sin((double)j * x2r)));
+        }
+        for (int r = 1; r <= (k % 3) + 1; r++) {
+            tmp += (pow(x2i, (double)r) / (double)(r + 2)) * cexp(poly_hand_z(0.0, cos((double)r * x1i)));
+        }
+        poly_hand_store_z(tmp, cRe, cIm, k - 1);
+    }
+}
+
+static void poly_745_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 10;
+    poly_hand_zero(cRe, cIm, 10);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[10] = {0};
+    cf[9] = x1r * x2i;
+    cf[4] = x1i * x2r;
+    cf[0] = cexp(poly_hand_z(0.0, 1.0) * (t1 + t2));
+    double m = cabs(t1 + t2);
+    cf[2] = 1.0 / (m + 1.0);
+    double polar_coordinates = hypot(x1r, x1i) * hypot(x2r, x2i);
+    cf[6] = cexp(poly_hand_z(0.0, polar_coordinates));
+    cf[8] = 285.0 * x1r;
+    cf[1] = cpow(t2, 10.0) - cpow(cf[9], 10.0);
+    cf[3] = carg(t1) * cf[1];
+    cf[5] = cf[2] + cf[6] * cf[8];
+    cf[7] = conj(cf[3]) * cf[5];
+    for (int i = 0; i < 10; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_755_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 11;
+    poly_hand_zero(cRe, cIm, 11);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    poly_hand_store_z(cpow(t1 * conj(t2), 3.0) + t1 - t2, cRe, cIm, 0);
+    poly_hand_store_z(t2 + poly_hand_z(-x1i, x1r), cRe, cIm, 10);
+    double snd0 = sin(2.0 * M_PI * x1r);
+    double snd1 = sin(2.0 * M_PI * x2i);
+    double csi0 = cos(2.0 * M_PI * x1i);
+    double csi1 = cos(2.0 * M_PI * x2r);
+    for (int i = 0; i < 9; i++) {
+        double w = (double)i / 8.0;
+        double snd = snd0 + (snd1 - snd0) * w;
+        double csi = csi0 + (csi1 - csi0) * w;
+        double complex stat = t1 * (csi * csi) + t2 * (snd * snd)
+                            + poly_hand_z(0.0, 1.0) * (t1 * (snd * snd) + t2 * (csi * csi));
+        poly_hand_store_z(stat, cRe, cIm, i + 1);
+    }
+}
+
+static void poly_774_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 11;
+    poly_hand_zero(cRe, cIm, 11);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex cf[11] = {0};
+    double complex complex_sum = t1 + t2;
+    double complex complex_product = t1 * t2;
+    double complex complex_diff = t1 - t2;
+    cf[0] = cexp(poly_hand_z(0.0, carg(complex_sum))) * cabs(complex_sum);
+    cf[1] = creal(complex_product) + poly_hand_z(0.0, cimag(complex_diff));
+    cf[2] = cabs(complex_product);
+    cf[3] = cf[0] + cf[1] + cf[2];
+    cf[4] = cf[0] * cf[2] - cf[1] * cf[3];
+    cf[5] = 10.0 + csin(cf[4]) + csin(cf[3]) + ccos(cf[2]) + ccos(cf[1]) + csin(cf[0]);
+    cf[6] = poly_hand_z(0.0, 2.0) * cf[0] + cf[1] / cf[5];
+    cf[7] = cf[1] * cf[2] * cf[3] + cf[0];
+    cf[8] = 2.0 * cf[7] - cf[4] * cf[6];
+    cf[9] = 1.0;
+    for (int i = 0; i < 9; i++) cf[9] *= cf[i];
+    cf[10] = (cf[0] + cf[2] - cf[4] + cf[6] - cf[8]) / (cf[1] - cf[3] + cf[5] - cf[7] + cf[9]);
+    for (int i = 0; i < 11; i++) poly_hand_store_z(cf[i], cRe, cIm, i);
+}
+
+static void poly_789_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    poly_hand_zero(cRe, cIm, 25);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    for (int i = 0; i < 5; i++) cRe[i] = x1r * (double)(i + 1) - x2i * (double)(i + 1);
+    cRe[5] = cabs(t1) * cabs(t2);
+    for (int i = 0; i < 5; i++) cRe[6 + i] = carg(t1 + t2) * (double)(i + 6);
+    poly_hand_store_z(conj(t1) + conj(t2), cRe, cIm, 12);
+    double real_t1_plus_it2 = creal(t1 + poly_hand_z(-x2i, x2r));
+    for (int i = 0; i < 5; i++) cRe[13 + i] = real_t1_plus_it2 * (double)(i + 1);
+    cRe[18] = carg(t1) * carg(t2);
+    double imag_t1_minus_it2 = cimag(t1 - poly_hand_z(-x2i, x2r));
+    for (int i = 0; i < 5; i++) cRe[19 + i] = imag_t1_minus_it2 * (double)(i + 1);
+    poly_hand_store_z(conj(t1 * t2) + cabs(poly_hand_z(cRe[12], cIm[12])) + carg(poly_hand_z(cRe[18], cIm[18])), cRe, cIm, 24);
+}
+
+static void poly_800_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    poly_hand_zero(cRe, cIm, 25);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    poly_hand_store_z(t1 * t2, cRe, cIm, 0);
+    double angle_it2 = carg(poly_hand_z(-x2i, x2r));
+    for (int i = 0; i < 9; i++) {
+        cRe[1 + i] = cabs(t1) * pow(angle_it2, (double)(i + 1));
+        cIm[1 + i] = 0.0;
+    }
+    cRe[14] = x1r * x2i + x2r * x1i;
+    cIm[14] = 0.0;
+    for (int i = 0; i < 5; i++) {
+        cRe[15 + i] = pow(cabs(t1 - t2 + poly_hand_z(0.0, 1.0)), (double)(i + 1));
+        cIm[15 + i] = 0.0;
+    }
+    cRe[20] = x1i * x2r + x1r * x2i;
+    cIm[20] = 0.0;
+    double base = cabs(poly_hand_z(cRe[14], cIm[14]) + t1 * t2);
+    for (int i = 0; i < 3; i++) {
+        cRe[21 + i] = pow(base, (double)(i + 1));
+        cIm[21 + i] = 0.0;
+    }
+    cRe[24] = fabs(cRe[23]) + log(cabs(t1 + t2 + poly_hand_z(0.0, 0.5)));
+    cIm[24] = 0.0;
+}
+
+static void poly_806_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    poly_hand_zero(cRe, cIm, 25);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double complex c0 = cexp(poly_hand_z(0.0, 2.0 * M_PI / 3.0));
+    double complex c1 = cexp(poly_hand_z(0.0, -2.0 * M_PI / 3.0));
+    for (int k = 0; k < 25; k++) {
+        double complex z = csin((double)k * t1) * c0 + ccos((double)k * t2) * c1;
+        double denom = (cimag(z) == 0.0) ? creal(z) : cimag(z);
+        poly_hand_store_z(z / denom, cRe, cIm, k);
+    }
+    poly_hand_store_z(t1 * t1 + t2 * t2, cRe, cIm, 7);
+    cRe[24] = cabs(t1 + t2);
+    cIm[24] = 0.0;
+}
+
+static void poly_811_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    poly_hand_zero(cRe, cIm, 25);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    poly_hand_store_z(t1 * t2, cRe, cIm, 0);
+    poly_hand_store_z((t1 + t2) * conj(t1 - t2), cRe, cIm, 1);
+    double arg = carg(t1 + poly_hand_z(-x2i, x2r));
+    for (int k = 2; k < 25; k++) {
+        double complex z = cabs(t1) * cabs(t2) * sin(pow(arg, (double)k))
+                         + log(cabs(cpow(t1, (double)k) / (1.0 + t2)));
+        poly_hand_store_z(z, cRe, cIm, k);
+    }
+}
+
+static void poly_813_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    poly_hand_zero(cRe, cIm, 25);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    poly_hand_store_z(t1 * t2, cRe, cIm, 0);
+    for (int k = 1; k < 25; k++) {
+        double complex prev = poly_hand_z(cRe[k - 1], cIm[k - 1]);
+        double complex v = (csin((double)k * prev) + ccos((double)k * prev)) * creal(t1 + t2);
+        if (cabs(v) != 0.0) poly_hand_store_z(log(cabs(v)) + conj(t1 * t2), cRe, cIm, k);
+        else poly_hand_store_z(0.0, cRe, cIm, k);
+    }
+    double complex sum = 0.0;
+    for (int i = 0; i < 24; i++) sum += poly_hand_z(cRe[i], cIm[i]);
+    poly_hand_store_z(sum + cabs(t1 - t2), cRe, cIm, 24);
+}
+
+static void poly_814_hand(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 25;
+    poly_hand_zero(cRe, cIm, 25);
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    poly_hand_store_z(carg(t1) * t2, cRe, cIm, 0);
+    poly_hand_store_z(t1 * t2, cRe, cIm, 1);
+    for (int i = 2; i < 25; i++) {
+        double complex v = poly_hand_z(cRe[i - 1], cIm[i - 1]) + poly_hand_z(cRe[i - 2], cIm[i - 2]) + conj(t1 * t2);
+        if (cabs(v) != 0.0) poly_hand_store_z(log(cabs(v)), cRe, cIm, i);
+        else poly_hand_store_z(0.0, cRe, cIm, i);
+    }
+    double complex sum = 0.0;
+    for (int i = 0; i < 24; i++) sum += poly_hand_z(cRe[i], cIm[i]);
+    poly_hand_store_z(cabs(t1 - t2) + sum, cRe, cIm, 24);
 }

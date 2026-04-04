@@ -574,7 +574,7 @@ def poly_534(t1, t2):
 
 def poly_535(t1, t2):
     try:
-        n = ps.poly.get("n") or 35
+        n = 35
         cf = np.zeros(n, dtype=complex)
         rec = np.linspace(t1.real, t2.real, num=n)
         imc = np.linspace(t1.imag, t2.imag, num=n)
@@ -584,7 +584,7 @@ def poly_535(t1, t2):
             cf[j - 1] = mag * (np.cos(ang) + np.sin(ang) * 1j)
         return cf.astype(np.complex128)
     except:
-        return np.zeros(71, dtype=complex)
+        return np.zeros(35, dtype=complex)
 
 def poly_536(t1, t2):
     try:

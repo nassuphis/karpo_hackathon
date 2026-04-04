@@ -2,52 +2,37 @@
 
 ## Goal
 
-Reduce the misleading low-agreement coeff-function backlog by repeatedly applying the same loop:
+Clear the misleading low-agreement coeff-function backlog by repeating the same loop:
 
-1. pick a low-agreement transpiled function,
-2. prove the mismatch with a parity test,
-3. determine whether the bug is in the transpiler output or in the Python source,
-4. fix the source if the reference is broken,
-5. add a hand override in `lambda/poly_hand.h`,
-6. route the catalog/runtime/UI to the hand override,
-7. rerun parity and catalog consistency checks,
-8. move to the next function.
-
-This document describes that process and records the first completed batch.
+1. pick a low-agreement transpiled function
+2. prove the mismatch with a parity test
+3. determine whether the bug is in the generated C or in the Python reference
+4. fix the Python reference first if it is obviously broken
+5. add a hand override in `lambda/poly_hand.h`
+6. route the catalog, runtime, and UI to the hand override
+7. regenerate lookup/catalog artifacts
+8. rerun parity and consistency tests
 
 ## Current State
 
-Completed in this pass:
+The low-agreement `poly_*` backlog is now cleared:
 
-- promoted these functions from `transpiled` to `hand`:
-  - `poly_111`
-  - `poly_112`
-  - `poly_504`
-  - `poly_741`
-  - `poly_742`
-  - `poly_760`
-  - `poly_762`
-  - `poly_765`
-  - `poly_776`
-  - `poly_780`
-  - `poly_792`
-  - `poly_799`
-  - `poly_802`
-  - `poly_812`
-- fixed obvious Python-reference bugs before doing the hand ports:
-  - [lambda/poly600.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly600.py)
-  - [lambda/poly800.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly800.py)
-  - [lambda/poly900.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly900.py)
-- added batch parity coverage:
-  - [tests/test_low_agreement_hand.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_low_agreement_hand.py)
-- extended loose-end checks:
-  - [tests/test_coeff_catalog_consistency.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_coeff_catalog_consistency.py)
+- there are `0` `transpiled` `poly_*` functions with `agreement_pct <= 30` in [lambda/coeff_func_catalog.json](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/coeff_func_catalog.json)
+- the repaired set is covered by [tests/test_low_agreement_hand.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_low_agreement_hand.py)
+- source catalog, generated lookup, and generated browser catalog wiring are guarded by [tests/test_coeff_catalog_consistency.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_coeff_catalog_consistency.py)
 
-After this pass there are still `83` remaining `transpiled` functions with `agreement_pct <= 30`.
+Important parity caveats encoded in the suite:
+
+- transformed `poly_26` is treated as a chaotic unit-circle recurrence
+- `poly_39`, `poly_86`, `poly_102`, `poly_324`, and `poly_450` use a float32-overflow-tail contract
+- transformed `poly_809`, `poly_811`, and `poly_818` compute the Python reference from exact transform doubles rather than `param_dump` float32 serialization
+- `poly900.py` imports in the parity harness use lightweight `polylayout` stubs so the references can be imported without the full runtime environment
+
+Generated C still contains `WARNING: unhandled ...` comments in places, but those warnings are no longer the same thing as the low-agreement backlog. The remaining warnings now belong to functions that are either already hand-routed or that currently pass parity as transpiled and therefore were not promoted blindly.
 
 ## Files Involved
 
-Source of truth and runtime wiring:
+Source of truth and routing:
 
 - [lambda/poly_hand.h](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly_hand.h)
 - [lambda/coeff_func_catalog.json](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/coeff_func_catalog.json)
@@ -57,83 +42,57 @@ Source of truth and runtime wiring:
 - [coeff_func_catalog_js.js](/Users/nicknassuphis/karpo_hackathon/polypaint/coeff_func_catalog_js.js)
 - [lambda/sweep_cli.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/sweep_cli.c)
 
-Reference Python sources touched in this pass:
+Reference Python files that were corrected during the repair pass:
 
+- [lambda/poly100.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly100.py)
 - [lambda/poly200.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly200.py)
+- [lambda/poly400.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly400.py)
+- [lambda/poly500.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly500.py)
 - [lambda/poly600.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly600.py)
+- [lambda/poly700.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly700.py)
 - [lambda/poly800.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly800.py)
 - [lambda/poly900.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly900.py)
 
-Test/process docs:
+Tests and process docs:
 
 - [tests/test_low_agreement_hand.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_low_agreement_hand.py)
 - [tests/test_coeff_catalog_consistency.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_coeff_catalog_consistency.py)
+- [tests/test_poly645_hand.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_poly645_hand.py)
+- [tests/test_poly795_hand.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_poly795_hand.py)
 - [docs/testing.md](/Users/nicknassuphis/karpo_hackathon/polypaint/docs/testing.md)
 
 ## Repeatable Workflow
 
-### 1. Prioritize the next batch
+### 1. Prioritize carefully
 
-Do not sort purely by the badge.
+Do not sort only by badge value.
 
 Use this order:
 
-1. `transpiled` functions with generated-C `WARNING: unhandled ...`
-2. within that set, lowest agreement first
-3. only after that, low-agreement functions without explicit transpiler warnings
-
-Useful inventory command:
-
-```bash
-python3 - <<'PY'
-import json, re
-from pathlib import Path
-metrics = json.loads(Path('lambda/coeff_func_metrics.json').read_text())
-catalog = json.loads(Path('lambda/coeff_func_catalog.json').read_text())
-by = {e['name']: e for e in catalog}
-rows = []
-for path in sorted(Path('lambda').glob('poly_generated_*.c')):
-    text = path.read_text()
-    for m in re.finditer(r'static void (poly_\d+)_c\b', text):
-        name = m.group(1)
-        start = m.start()
-        end = text.find('static void ', start + 1)
-        chunk = text[start:end if end != -1 else None]
-        if 'WARNING: unhandled' in chunk and by.get(name, {}).get('kind') == 'transpiled':
-            rows.append((metrics.get(name, {}).get('agreement_pct', -1), name, path.name))
-rows.sort()
-for row in rows:
-    print(row)
-PY
-```
+1. transpiled functions whose generated C contains explicit `WARNING: unhandled ...`
+2. within that set, the lowest agreement first
+3. only then the unwarned low-agreement functions
 
 ### 2. Verify the Python reference first
 
-Some low-agreement functions are low because the Python source is itself broken.
-
-In this pass the following were fixed before doing the hand C port:
-
-- `poly_504`
-- `poly_742`
-- `poly_760`
-- `poly_812`
+Some low-agreement functions are low because the Python source is broken.
 
 Rule:
 
-- if the Python source trivially exception-falls because of an obvious typo or API misuse, fix the Python reference first
-- if the Python source is semantically unclear, stop and record it as blocked rather than inventing behavior
+- if the Python source trivially exception-falls because of an obvious typo, off-by-one, or invalid NumPy call, fix the Python reference first
+- if the Python source semantics are unclear, stop and record it as blocked instead of inventing behavior
 
 ### 3. Add the hand override
 
-Implement the fixed behavior in [lambda/poly_hand.h](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly_hand.h).
+Implement the intended behavior in [lambda/poly_hand.h](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly_hand.h).
 
 Requirements:
 
-- exact coeff count must match the Python reference
-- use existing complex helpers from `sweep_cli.c`
-- zero out non-finite outputs at the end if the Python reference does the same by exception fallback or explicit guards
+- coeff count must match the Python reference
+- use the shared complex helpers already present in the hand file
+- match Python fallback behavior where the source intentionally collapses invalid output to zeros or prior values
 
-### 4. Route the runtime and UI
+### 4. Route runtime and UI together
 
 Update [lambda/coeff_func_catalog.json](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/coeff_func_catalog.json):
 
@@ -157,27 +116,30 @@ This rewrites:
 - [lambda/coeff_func_lookup.h](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/coeff_func_lookup.h)
 - [coeff_func_catalog_js.js](/Users/nicknassuphis/karpo_hackathon/polypaint/coeff_func_catalog_js.js)
 
-### 5. Rebuild the binary that actually uses the new lookup
+### 5. Rebuild the binary that uses the lookup
 
 ```bash
 cc -O3 -o lambda/sweep_test lambda/sweep_cli.c -lm
 ```
 
-If this step is skipped, parity tests can accidentally run against stale routing.
+If this step is skipped, parity tests can silently run against stale routing.
 
 ### 6. Add parity coverage
 
-Add the new function to [tests/test_low_agreement_hand.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_low_agreement_hand.py).
+Add the repaired function to [tests/test_low_agreement_hand.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_low_agreement_hand.py).
 
-Current test design:
+Current harness behavior:
 
-- uses `param_dump` to derive exact `t1`, `t2`
-- uses `coeffgen` on `sweep_test`
-- compares against the Python source function
-- uses lightweight module stubs so poly source files can be imported without their full runtime dependencies
-- uses manual local references only when importing the whole source file is too side-effect-heavy
+- uses `param_dump` and `coeffgen` from the rebuilt `sweep_test`
+- imports Python references with lightweight module stubs
+- supports manual local references for especially side-effect-heavy source files
+- supports exact-transform reference cases for highly sensitive formulas
+- supports float32-overflow-tail assertions for numerically explosive formulas
+- supports specialized contracts for chaotic normalized recurrences
 
-### 7. Run the minimum green set
+### 7. Run the close-out suite
+
+Minimum repair suite:
 
 ```bash
 ../.venv/bin/python -m pytest -q \
@@ -185,7 +147,7 @@ Current test design:
   tests/test_coeff_catalog_consistency.py
 ```
 
-If the batch touches previously hand-routed functions too, also run:
+If previously hand-routed functions or consistency guards were touched, also run:
 
 ```bash
 ../.venv/bin/python -m pytest -q \
@@ -193,67 +155,17 @@ If the batch touches previously hand-routed functions too, also run:
   tests/test_poly795_hand.py
 ```
 
-## Completed Batch Details
+## Final Verification
 
-### Python reference fixes made first
+The final green suite for this repair pass is:
 
-- [lambda/poly600.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly600.py)
-  - `poly_504`: fixed integer loop bound
-- [lambda/poly800.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly800.py)
-  - `poly_742`: `math.factorial(...)`
-  - `poly_760`: `np.fft.ifft(...)`
-- [lambda/poly900.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly900.py)
-  - `poly_812`: corrected recurrence loop bound
+```bash
+cc -O3 -o lambda/sweep_test lambda/sweep_cli.c -lm
+../.venv/bin/python -m pytest -q \
+  tests/test_poly645_hand.py \
+  tests/test_poly795_hand.py \
+  tests/test_low_agreement_hand.py \
+  tests/test_coeff_catalog_consistency.py
+```
 
-### New hand overrides added
-
-Added to [lambda/poly_hand.h](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/poly_hand.h):
-
-- `poly_111_hand`
-- `poly_112_hand`
-- `poly_504_hand`
-- `poly_741_hand`
-- `poly_742_hand`
-- `poly_760_hand`
-- `poly_762_hand`
-- `poly_765_hand`
-- `poly_776_hand`
-- `poly_780_hand`
-- `poly_792_hand`
-- `poly_799_hand`
-- `poly_802_hand`
-- `poly_812_hand`
-
-## Remaining High-Priority Backlog
-
-Still `transpiled` with `agreement_pct <= 30` and explicit generated-C warnings:
-
-- `poly_746`
-- `poly_759`
-- `poly_766`
-- `poly_769`
-- `poly_773`
-- `poly_785`
-- `poly_788`
-- `poly_810`
-- `poly_667`
-- `poly_794`
-
-Recommended next pass:
-
-1. `poly_746`
-2. `poly_759`
-3. `poly_766`
-4. `poly_788`
-5. `poly_667`
-6. `poly_773`
-7. `poly_785`
-8. `poly_810`
-9. `poly_769`
-10. `poly_794`
-
-## Non-goals
-
-This pass does not claim that every low-agreement transpiled function is fixed.
-
-It does establish the repair loop and completes the first high-confidence tranche so subsequent passes can continue without inventing new process each time.
+Expected result: all tests green, with no remaining `transpiled` `poly_*` functions at `agreement_pct <= 30`.

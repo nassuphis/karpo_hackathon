@@ -573,6 +573,11 @@ button {
                         <option value="outlierness">Outlierness</option>
                         <option value="nn_variation">NN variation</option>
                         <option value="real_axis_proximity">Real-axis proximity</option>
+                        <option value="centroid_re">Centroid Re</option>
+                        <option value="centroid_im">Centroid Im</option>
+                        <option value="centroid_dist">Centroid Dist</option>
+                        <option value="dist_unit_circle">Dist unit circle</option>
+                        <option value="asymmetry_re">Asymmetry Re</option>
                     </select>
                     <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:6px"></div>
                     <label style="color:#888; font-size:10px; margin-left:8px; min-width:42px">Omega:</label>
@@ -645,6 +650,11 @@ button {
                         <option value="outlierness">Outlierness</option>
                         <option value="nn_variation">NN variation</option>
                         <option value="real_axis_proximity">Real-axis proximity</option>
+                        <option value="centroid_re">Centroid Re</option>
+                        <option value="centroid_im">Centroid Im</option>
+                        <option value="centroid_dist">Centroid Dist</option>
+                        <option value="dist_unit_circle">Dist unit circle</option>
+                        <option value="asymmetry_re">Asymmetry Re</option>
                     </select>
                     <div id="palette-circles-palette-tab" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:8px"></div>
                     <label style="color:#888; font-size:10px; margin-left:8px; min-width:42px">Omega:</label>
@@ -1951,7 +1961,8 @@ function _activeRenderPalette() {
 
 function setSolveMetric(name) {
     const valid = ['proximity', 'crowding', 'spread', 'anisotropy', 'area',
-                   'clusteriness', 'shelliness', 'outlierness', 'nn_variation', 'real_axis_proximity'];
+                   'clusteriness', 'shelliness', 'outlierness', 'nn_variation', 'real_axis_proximity',
+                   'centroid_re', 'centroid_im', 'centroid_dist', 'dist_unit_circle', 'asymmetry_re'];
     if (valid.includes(name)) {
         renderSolveMetric = name;
         setColorMode('solve_score');
@@ -1960,7 +1971,8 @@ function setSolveMetric(name) {
 
 function setPaletteMetric(name) {
     const valid = ['proximity', 'crowding', 'spread', 'anisotropy', 'area',
-                   'clusteriness', 'shelliness', 'outlierness', 'nn_variation', 'real_axis_proximity'];
+                   'clusteriness', 'shelliness', 'outlierness', 'nn_variation', 'real_axis_proximity',
+                   'centroid_re', 'centroid_im', 'centroid_dist', 'dist_unit_circle', 'asymmetry_re'];
     if (valid.includes(name)) {
         paletteTabMetric = name;
     }

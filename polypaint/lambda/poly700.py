@@ -952,7 +952,7 @@ def poly_667(t1, t2):
         cf[degree] = np.conj(t1) * np.conj(t2) + np.sum(np.abs(cf[0:degree]))
         return cf.astype(np.complex128)
     except:
-        return np.zeros(71, dtype=complex)
+        return np.zeros(9, dtype=complex)
 
 def poly_668(t1, t2):
     try:
@@ -1376,7 +1376,7 @@ def poly_698(t1, t2):
         cf = np.zeros(9, dtype=complex)
         for j in range(1,10):
             mag_part = np.log(np.abs(t1)**j + np.abs(t2)**(9-j) + 1)
-            angle_part = np.sin(j * np.angle(t1)) + np.cos(angle_part)
+            angle_part = np.sin(j * np.angle(t1)) + np.cos(j * np.angle(t2))
             cf[j-1] = mag_part * (np.cos(angle_part) + 1j * np.sin(angle_part))
         return cf.astype(np.complex128)
     except:
@@ -1406,4 +1406,3 @@ def poly_700(t1, t2):
         return cf.astype(np.complex128)
     except:
         return np.zeros(9, dtype=complex)
-

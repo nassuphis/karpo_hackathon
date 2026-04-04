@@ -3,7 +3,8 @@
  *
  * Supports multiple metrics via --metric (default: proximity).
  * Metrics: proximity, crowding, spread, anisotropy, area,
- *          clusteriness, shelliness, outlierness, nn_variation, real_axis_proximity.
+ *          clusteriness, shelliness, outlierness, nn_variation, real_axis_proximity,
+ *          centroid_re, centroid_im, centroid_dist, dist_unit_circle, asymmetry_re.
  *
  * Three modes:
  *   --mode=clip      Compute score array, sort, emit clip bounds (quantiles).
@@ -86,7 +87,7 @@ static int cmp_double(const void *a, const void *b) {
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "Usage: solve_proximity_stats input.bin --mode=clip|hist|summary --degree=D "
-                "[--metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity] [options]\n");
+                "[--metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re] [options]\n");
         return 1;
     }
 
@@ -96,14 +97,14 @@ int main(int argc, char **argv) {
     const char *metricStr = getArgStr(argc, argv, "--metric", "proximity");
     double omega = getArgDouble(argc, argv, "--omega", 1.0);
 
-    if (degree < 2 || degree > MAXDEG) {
-        fprintf(stderr, "Invalid degree: %d (must be 2-%d)\n", degree, MAXDEG);
+    if (degree < 1 || degree > MAXDEG) {
+        fprintf(stderr, "Invalid degree: %d (must be 1-%d)\n", degree, MAXDEG);
         return 1;
     }
 
     enum SolveMetric metric;
     if (!parse_solve_metric(metricStr, &metric)) {
-        fprintf(stderr, "Invalid metric: %s (use proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity)\n", metricStr);
+        fprintf(stderr, "Invalid metric: %s (use proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re)\n", metricStr);
         return 1;
     }
 

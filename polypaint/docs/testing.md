@@ -42,7 +42,7 @@ All tests live in `polypaint/tests/`.
 | `test_giga62_hand.py` | giga_62 hand-written function accuracy | `sweep_test` compiled |
 | `test_poly645_hand.py` | `poly_645` hand-written coeff function matches Python reference and stays off the broken transpiled path | `sweep_test` compiled |
 | `test_poly795_hand.py` | `poly_795` hand-written coeff function matches Python reference, including slice rewrites and both `np.where` branches | `sweep_test` compiled |
-| `test_low_agreement_hand.py` | Batch parity coverage for low-agreement coeff funcs promoted from transpiled to hand (`poly_111`, `poly_112`, `poly_504`, `poly_741`, `poly_742`, `poly_760`, `poly_762`, `poly_765`, `poly_776`, `poly_780`, `poly_792`, `poly_799`, `poly_802`, `poly_812`) | `sweep_test` compiled, numpy |
+| `test_low_agreement_hand.py` | Batch parity coverage for the repaired low-agreement coeff funcs promoted from transpiled to hand; the current authoritative function list lives in `CASES` inside the test file | `sweep_test` compiled, numpy |
 | `test_frontend_js.sh` | Frontend JS execution: UI logic, TRI palette popup/swatches, dispatch, Render family catalogs, Palette workflow UI, DeepZoom inventory | Node.js (vm module) |
 | `e2e/deepzoom-inventory.spec.js` | DeepZoom inventory: load, sort, select, arrow keys, share links | Playwright browser |
 | `e2e/render-refresh.spec.js` | Render tab refresh: summary call, artifact panel, info line | Playwright browser |
@@ -101,6 +101,9 @@ When replacing a broken transpiled coeff function with a hand implementation in 
    And for deploy, `deploy.sh update` will rebuild the shipped `sweep` binary.
 6. Add or update a parity regression for the specific function if the transpiled implementation was wrong.
    Prefer adding the new function to `tests/test_low_agreement_hand.py` once there are multiple low-agreement fixes in flight, so the backlog stays in one place.
+   If the coeff function is highly sensitive to tiny parameter drift, compute the Python reference from the exact transform doubles instead of `param_dump`'s float32 serialization.
+   For numerically explosive functions that serialize through float32, compare the stable finite prefix and then assert the tail only diverges where float32 overflow becomes unavoidable.
+   For chaotic unit-magnitude recurrences like transformed `poly_26`, compare the stable prefix plus any direct overwrite slots, then assert the later normalized-recursion slots still lie on the unit circle.
 7. Run the loose-end checks after regenerating:
    ```bash
    cd polypaint
@@ -116,7 +119,12 @@ When cleaning up the low-agreement backlog, use this order instead of sorting by
 1. Prioritize transpiled functions whose generated C contains explicit `WARNING: unhandled ...` markers.
 2. Check whether the Python source itself is broken before blaming the transpiler.
    Examples from the current backlog:
+   - `poly_667`: fixed fallback coeff-count bug (`except -> zeros(9)`)
    - `poly_504`: fixed source bug (`range(... np.floor(...) ...)`)
+   - `poly_101`: fixed off-by-one recurrence bound (`range(1, 35)`)
+   - `poly_106`: fixed off-by-one tail rewrite (`range(15, 71)`)
+   - `poly_121`: fixed invalid `np.sum(t1**2, t2**2)` to scalar addition
+   - `poly_149`: fixed invalid `np.sum(np.real(t1), np.imag(t2))` to scalar addition
    - `poly_742`: fixed source bug (`np.math.factorial` -> `math.factorial`)
    - `poly_760`: fixed source bug (`np.fft.ifft(...)` instead of invalid `fft(..., inverse=True)`)
    - `poly_812`: fixed source bug (loop bound off by one)
@@ -129,6 +137,14 @@ When cleaning up the low-agreement backlog, use this order instead of sorting by
    ../.venv/bin/python -m pytest -q tests/test_low_agreement_hand.py tests/test_coeff_catalog_consistency.py
    ```
    This avoids local `uv` cache-permission issues if they occur.
+8. If a promoted function only disagrees after values exceed float32 range, keep the hand route and encode that as an explicit overflow-tail contract in `tests/test_low_agreement_hand.py` instead of weakening the whole suite.
+
+Current state after the completed repair pass:
+
+- there are `0` remaining `transpiled` `poly_*` functions with `agreement_pct <= 30`
+- transformed `poly_809`, `poly_811`, and `poly_818` use exact transform doubles in the parity harness
+- `poly_39`, `poly_86`, `poly_102`, `poly_324`, and `poly_450` use float32-overflow-tail contracts
+- `poly900.py` parity imports rely on lightweight `polylayout` stubs in the test harness
 
 ### Docker ARM64 tests (binary tests that need LAPACK or ARM64 runtime)
 

@@ -21,7 +21,7 @@ def poly_101(t1, t2):
         cf[39] = np.abs(t2)**3 * np.cos(np.angle(t2))
         cf[24] = np.log(np.abs(t1) + 1) * np.abs(t1)
         cf[49] = np.log(np.abs(t2) + 1) * np.abs(t2)
-        for j in range(1, 36):
+        for j in range(1, 35):
             cf[2*j] = cf[2*j] * (np.sin(j * t1) + np.cos(j * t2)) + cf[2*j + 1] * (np.cos(j * t1) + np.sin(j * t2))
         return cf.astype(np.complex128)
     except:
@@ -115,7 +115,7 @@ def poly_106(t1, t2):
         cf[47] *= 2
         cf[59] *= 1
         
-        for k in range(15, 72):
+        for k in range(15, 71):
             cf[k] = -cf[k] * np.log(np.abs(k))
         
         return cf.astype(np.complex128)
@@ -355,7 +355,7 @@ def poly_115(t1, t2):
         for k in range(21, 31):
             cf[k - 1] = (t1**k - t2**(k - 1)) / (k**2)
         
-        cf[30:51] = np.real(offset) * (np.arange(21, 41)) + 0.1 * np.imag(offset) * (np.arange(1, 21))
+        cf[30:51] = np.real(offset) * (np.arange(21, 42)) + 0.1 * np.imag(offset) * (np.arange(1, 22))
         
         for k in range(51, 61):
             cf[k - 1] = np.imag(t1 * t2)**2 / (k**2)
@@ -365,7 +365,6 @@ def poly_115(t1, t2):
         cf[63] = 0.001 * (offset * np.conj(t2))
         cf[64:70] = ((np.arange(64, 70) + 1) * np.real(offset) + (np.arange(64, 70) + 1) * np.imag(offset)**2) / 2
         cf[70] = -t1 + 2j * t2
-        cf[71] = (1 + (t1**3 * np.conj(t2))) / 3
         
         return cf.astype(np.complex128) 
     except:
@@ -458,7 +457,7 @@ def poly_121(t1, t2):
         w = np.exp(2 * np.pi * 1j / 7)
         for k in range(1, 8):
             cf[k - 1] = (t1**k - (t2 / w)**k) * np.real(w**k)
-        cf[7] = -np.sum(t1**2, t2**2) + np.real(t1 * t2) + np.imag(t1 * t2)
+        cf[7] = -(t1**2 + t2**2) + np.real(t1 * t2) + np.imag(t1 * t2)
         for k in range(9, 36):
             z = np.angle(t1) + np.angle(t2)
             cf[k - 1] = np.cos(k * z) + 1j * np.sin(k * z)
@@ -1323,7 +1322,7 @@ def poly_149(t1, t2):
             cf[j-1] = (np.real(t1)**j - np.imag(t2)**j) * (-1)**j / j
         for j in range(36, 71):
             cf[j-1] = (np.sin(j * t1) + np.cos(j * t2)) / (j + 1)
-        cf[70] = np.sum(np.real(t1), np.imag(t2)) * (t1 - t2)
+        cf[70] = (np.real(t1) + np.imag(t2)) * (t1 - t2)
         return cf.astype(np.complex128)
     except:
         return np.zeros(0, dtype=complex)

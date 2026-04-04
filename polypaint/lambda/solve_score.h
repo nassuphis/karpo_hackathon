@@ -17,6 +17,13 @@
  *   outlierness        — max radius / median radius
  *   nn_variation        — stddev of NN scores
  *   real_axis_proximity — median |im| closeness to real axis
+ *
+ * Metrics (v3):
+ *   centroid_re      — real part of root centroid
+ *   centroid_im      — imaginary part of root centroid
+ *   centroid_dist    — distance of centroid from origin
+ *   dist_unit_circle — mean distance of roots from the unit circle
+ *   asymmetry_re     — left/right imbalance across the imaginary axis
  */
 
 #ifndef SOLVE_SCORE_H
@@ -48,6 +55,11 @@ enum SolveMetric {
     SOLVE_METRIC_OUTLIERNESS = 7,
     SOLVE_METRIC_NN_VARIATION = 8,
     SOLVE_METRIC_REAL_AXIS_PROXIMITY = 9,
+    SOLVE_METRIC_CENTROID_RE = 10,
+    SOLVE_METRIC_CENTROID_IM = 11,
+    SOLVE_METRIC_CENTROID_DIST = 12,
+    SOLVE_METRIC_DIST_UNIT_CIRCLE = 13,
+    SOLVE_METRIC_ASYMMETRY_RE = 14,
 };
 
 /* ── Parser ───────────────────────────────────────────────────────────── */
@@ -64,6 +76,11 @@ static int parse_solve_metric(const char *s, enum SolveMetric *out) {
     if (strcmp(s, "outlierness") == 0)          { *out = SOLVE_METRIC_OUTLIERNESS; return 1; }
     if (strcmp(s, "nn_variation") == 0)         { *out = SOLVE_METRIC_NN_VARIATION; return 1; }
     if (strcmp(s, "real_axis_proximity") == 0)  { *out = SOLVE_METRIC_REAL_AXIS_PROXIMITY; return 1; }
+    if (strcmp(s, "centroid_re") == 0)          { *out = SOLVE_METRIC_CENTROID_RE; return 1; }
+    if (strcmp(s, "centroid_im") == 0)          { *out = SOLVE_METRIC_CENTROID_IM; return 1; }
+    if (strcmp(s, "centroid_dist") == 0)        { *out = SOLVE_METRIC_CENTROID_DIST; return 1; }
+    if (strcmp(s, "dist_unit_circle") == 0)     { *out = SOLVE_METRIC_DIST_UNIT_CIRCLE; return 1; }
+    if (strcmp(s, "asymmetry_re") == 0)         { *out = SOLVE_METRIC_ASYMMETRY_RE; return 1; }
     return 0;
 }
 
@@ -81,6 +98,11 @@ static const char *solve_metric_name(enum SolveMetric m) {
         case SOLVE_METRIC_OUTLIERNESS:          return "outlierness";
         case SOLVE_METRIC_NN_VARIATION:         return "nn_variation";
         case SOLVE_METRIC_REAL_AXIS_PROXIMITY:  return "real_axis_proximity";
+        case SOLVE_METRIC_CENTROID_RE:          return "centroid_re";
+        case SOLVE_METRIC_CENTROID_IM:          return "centroid_im";
+        case SOLVE_METRIC_CENTROID_DIST:        return "centroid_dist";
+        case SOLVE_METRIC_DIST_UNIT_CIRCLE:     return "dist_unit_circle";
+        case SOLVE_METRIC_ASYMMETRY_RE:         return "asymmetry_re";
     }
     return "unknown";
 }
@@ -185,11 +207,12 @@ static void compute_nearest_neighbor_scores(const float *roots, int degree, doub
  * Returns: scalar score (larger = more extreme in the metric's direction).
  */
 static double compute_solve_metric_score(const float *roots, int degree, enum SolveMetric metric) {
-    if (degree < 2) return 0.0;
+    if (degree <= 0) return 0.0;
     if (!roots_all_finite(roots, degree)) return 0.0;
 
     /* ── proximity: -0.5*log10(min d2) ── */
     if (metric == SOLVE_METRIC_PROXIMITY) {
+        if (degree < 2) return 0.0;
         double d2_min = 1e300;
         for (int i = 0; i < degree; i++) {
             double ri_re = roots[i * 2], ri_im = roots[i * 2 + 1];
@@ -205,6 +228,7 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
 
     /* ── crowding: mean(-0.5*log10(d2)) over all i<j ── */
     if (metric == SOLVE_METRIC_CROWDING) {
+        if (degree < 2) return 0.0;
         int M = degree * (degree - 1) / 2;
         double sum = 0.0;
         for (int i = 0; i < degree; i++) {
@@ -221,6 +245,7 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
 
     /* ── NN-based metrics: clusteriness, nn_variation ── */
     if (metric == SOLVE_METRIC_CLUSTERINESS || metric == SOLVE_METRIC_NN_VARIATION) {
+        if (degree < 2) return 0.0;
         double s1[1024];
         double *s1_buf = degree <= 1024 ? s1 : (double *)malloc(degree * sizeof(double));
         compute_nearest_neighbor_scores(roots, degree, s1_buf);
@@ -260,8 +285,40 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
     double mean_re, mean_im;
     compute_centroid(roots, degree, &mean_re, &mean_im);
 
+    if (metric == SOLVE_METRIC_CENTROID_RE) {
+        return mean_re;
+    }
+
+    if (metric == SOLVE_METRIC_CENTROID_IM) {
+        return mean_im;
+    }
+
+    if (metric == SOLVE_METRIC_CENTROID_DIST) {
+        return log10(hypot(mean_re, mean_im) + SOLVE_SCORE_EPS);
+    }
+
+    if (metric == SOLVE_METRIC_DIST_UNIT_CIRCLE) {
+        double sum = 0.0;
+        for (int i = 0; i < degree; i++) {
+            double re = roots[i * 2];
+            double im = roots[i * 2 + 1];
+            sum += fabs(hypot(re, im) - 1.0);
+        }
+        return log10(sum / degree + SOLVE_SCORE_EPS);
+    }
+
+    if (metric == SOLVE_METRIC_ASYMMETRY_RE) {
+        double mean_abs_re = 0.0;
+        for (int i = 0; i < degree; i++) {
+            mean_abs_re += fabs((double)roots[i * 2]);
+        }
+        mean_abs_re /= degree;
+        return fabs(mean_re) / (mean_abs_re + SOLVE_SCORE_EPS);
+    }
+
     /* ── spread: 0.5*log10(RMS_radius^2) ── */
     if (metric == SOLVE_METRIC_SPREAD) {
+        if (degree < 2) return 0.0;
         double r2_sum = 0;
         for (int i = 0; i < degree; i++) {
             double dx = roots[i * 2] - mean_re;
@@ -274,6 +331,7 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
 
     /* ── Radii-based metrics: shelliness, outlierness ── */
     if (metric == SOLVE_METRIC_SHELLINESS || metric == SOLVE_METRIC_OUTLIERNESS) {
+        if (degree < 2) return 0.0;
         double rho[1024];
         double *rho_buf = degree <= 1024 ? rho : (double *)malloc(degree * sizeof(double));
         compute_radii_from_centroid(roots, degree, mean_re, mean_im, rho_buf);
@@ -298,6 +356,7 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
     }
 
     /* ── Covariance-based metrics: anisotropy, area ── */
+    if (degree < 2) return 0.0;
     double Sxx = 0, Syy = 0, Sxy = 0;
     for (int i = 0; i < degree; i++) {
         double dx = roots[i * 2] - mean_re;

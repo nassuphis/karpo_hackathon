@@ -1,245 +1,377 @@
 # New Solve-Score Metrics
 
-Status: proposed.
+Status: revised implementation spec.
 
 ## Motivation
 
-The current 10 solve-score metrics are all **shape descriptors**: they measure internal geometry of the root cloud (nearest-neighbor distances, spread, anisotropy, etc.) but are invariant to where the cloud sits in the complex plane.
+The current solve-score set in [solve_score.h](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_score.h) is dominated by internal-shape descriptors:
 
-This works well when different parameter pairs produce root clouds with different internal structure. But for polynomials where the root cloud maintains a consistent shape while shifting or rotating across the parameter space, every solve gets the same score and the image becomes a single flat color.
+- pairwise spacing
+- nearest-neighbor structure
+- covariance shape
+- radial spread around the centroid
 
-Example: `compute_mnj3exwe` (degree 70) — the preview shows clear spatial structure (28K of 252K roots in viewport), but all 10 metrics produce degenerate histograms with 98%+ of solves in one bin. The roots clearly go to different places for different parameter pairs, but the cloud shape is constant.
+That works when different parameter pairs change the internal geometry of the root cloud.
 
-**What's needed**: metrics that are sensitive to the *position* of the root cloud, not just its internal geometry. These would produce color variation whenever roots move, even if the cloud shape doesn't change.
+It fails when the cloud keeps roughly the same shape but moves through the complex plane. In that case:
 
-## Proposed Metrics
+- the plotted roots clearly move
+- the current metrics stay almost constant
+- the histogram collapses into one or two bins
+- the render becomes flat color
 
-### Category 1: Half-plane fractions
+Example: `compute_mnj3exwe` (degree 70). The root image has obvious spatial structure, but shape-only metrics produce degenerate solve-score histograms.
 
-Measure what fraction of roots falls in a specific half or quadrant of the complex plane. These are maximally position-sensitive and produce smooth gradients as the root cloud drifts across a boundary.
+What is missing is a set of **position-sensitive** solve metrics.
 
-#### `frac_upper`
+## Design Constraints
 
-Fraction of roots with positive imaginary part.
+These metrics must fit the existing pipeline:
 
-```
-score = count(im[i] > 0) / degree
-```
+- score is computed per solve in [solve_score.h](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_score.h)
+- clip/hist/summary are handled by [solve_proximity_stats.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_proximity_stats.c)
+- raster and palette chunking then normalize to `u`, apply `omega`, and bin into 10 colors
+- metrics must remain viewport-invariant
+- metrics should be `O(degree)` per solve
 
-Range: [0, 1]. Score = 0.5 when the cloud is centered on the real axis.
+Important consequence:
 
-#### `frac_right`
+- metrics should be **linear scalar values**
+- circular quantities are risky because the clip/hist pipeline is not circular-aware
 
-Fraction of roots with positive real part.
+Because of that, `centroid_angle` is not recommended for the first implementation batch.
 
-```
-score = count(re[i] > 0) / degree
-```
+## Recommended First Batch
 
-Range: [0, 1]. Score = 0.5 when the cloud is centered on the imaginary axis.
+Implement these 5 first:
 
-#### `frac_quadrant_ul`
+1. `centroid_re`
+2. `centroid_im`
+3. `centroid_dist`
+4. `dist_unit_circle`
+5. `asymmetry_re`
 
-Fraction of roots in the upper-left quadrant (re < 0, im > 0).
+Why this batch:
 
-```
-score = count(re[i] < 0 && im[i] > 0) / degree
-```
+- it directly fixes the “rigid cloud moves but shape stays constant” problem
+- it avoids circular seam issues
+- it avoids stepwise quantization as the first experiment
+- all 5 are cheap and easy to reason about
 
-Range: [0, 1]. Sensitive to diagonal drift.
+## Deferred Metrics
 
-#### `frac_quadrant_lr`
+These are still reasonable, but should not be first:
 
-Fraction of roots in the lower-right quadrant (re > 0, im < 0).
+- `frac_upper`
+- `frac_right`
+- `frac_quadrant_ul`
+- `frac_quadrant_lr`
+- `centroid_angle`
+- `dist_real_axis`
+- `dist_imag_axis`
+- `dist_origin`
+- `dist_triangle`
+- `dist_square`
+- `asymmetry_im`
 
-```
-score = count(re[i] > 0 && im[i] < 0) / degree
-```
+Reasons for deferral:
 
-Complementary to `frac_quadrant_ul` — together they detect diagonal asymmetry.
+- `frac_*` metrics are piecewise-constant at the root level and can quantize visibly for low-degree solves
+- `centroid_angle` is circular and will create seam artifacts in the current linear clip/hist pipeline
+- `dist_triangle` and `dist_square` are fine ideas, but they are more code for less immediate value than the first batch
 
-### Category 2: Centroid position
+## Metric Definitions
 
-Measure where the center of mass of the root cloud is. These directly track bulk position.
+### 1. `centroid_re`
 
-#### `centroid_re`
+Real part of the root-cloud centroid.
 
-Real part of the root cloud centroid.
-
-```
+```text
 score = mean(re[i])
 ```
 
-Range: unbounded, but in practice bounded by the coefficient magnitudes. Apply log-scale or normalize against viewport.
+Properties:
 
-#### `centroid_im`
+- signed
+- position-sensitive
+- odd under left-right reflection
+- no log transform
 
-Imaginary part of the root cloud centroid.
+This is the cleanest detector for horizontal drift.
 
-```
+### 2. `centroid_im`
+
+Imaginary part of the root-cloud centroid.
+
+```text
 score = mean(im[i])
 ```
 
-Same properties as `centroid_re` but on the imaginary axis.
+Properties:
 
-#### `centroid_dist`
+- signed
+- position-sensitive
+- odd under top-bottom reflection
+- no log transform
+
+This is the cleanest detector for vertical drift.
+
+### 3. `centroid_dist`
 
 Distance of the centroid from the origin.
 
-```
+```text
 score = sqrt(mean(re)^2 + mean(im)^2)
 ```
 
-Range: [0, ∞). Rotationally symmetric — detects how far the cloud is from the origin regardless of direction.
+Properties:
 
-#### `centroid_angle`
+- nonnegative
+- rotation-invariant
+- useful when the cloud moves on circular or radial trajectories
 
-Angle of the centroid from the origin.
+Transform:
 
+```text
+score = log10(centroid_dist + SOLVE_SCORE_EPS)
 ```
-score = atan2(mean(im), mean(re)) / (2π)
-```
 
-Range: [0, 1) after normalization. Creates angular color bands radiating from the origin. Pairs naturally with `centroid_dist` for polar decomposition.
-
-### Category 3: Distance from geometric shapes
-
-Measure how close the root cloud is to a fixed geometric reference. These produce interesting visual patterns because the "distance to shape" varies smoothly and creates contour-like color bands.
-
-#### `dist_unit_circle`
+### 4. `dist_unit_circle`
 
 Mean distance of roots from the unit circle.
 
-```
-score = mean(| |z_i| - 1 |)
-```
-
-Range: [0, ∞). Score = 0 when all roots sit exactly on the unit circle. Many classical polynomials have roots near the unit circle, so this highlights deviations.
-
-Use log scale: `score = log10(mean(| |z_i| - 1 |) + EPS)`
-
-#### `dist_real_axis`
-
-Mean distance of roots from the real axis.
-
-```
-score = mean(|im[i]|)
+```text
+score = mean(abs(abs(z_i) - 1))
 ```
 
-Range: [0, ∞). Score = 0 when all roots are real. Highlights how "complex" the root cloud is.
+Properties:
 
-Use log scale: `score = log10(mean(|im_i|) + EPS)`
+- nonnegative
+- highlights deviation from classical unit-circle structure
+- still position-sensitive in many practical cases because rigid translations change `|z|`
 
-Note: the existing `real_axis_proximity` metric uses the *median* of `|im|`, not the mean, and applies a different log transform. This mean-based variant may have better spread for certain distributions.
+Transform:
 
-#### `dist_imag_axis`
-
-Mean distance of roots from the imaginary axis.
-
-```
-score = mean(|re[i]|)
+```text
+score = log10(mean(abs(abs(z_i) - 1)) + SOLVE_SCORE_EPS)
 ```
 
-Symmetric counterpart to `dist_real_axis`.
+### 5. `asymmetry_re`
 
-#### `dist_origin`
+Left-right imbalance of the cloud.
 
-Mean distance of roots from the origin.
-
-```
-score = mean(|z_i|)
+```text
+score = abs(mean(re[i])) / (mean(abs(re[i])) + SOLVE_SCORE_EPS)
 ```
 
-Range: [0, ∞). Measures the overall scale of the root cloud. Different from `spread` (which measures variance of radii from the centroid, not from the origin).
+Properties:
 
-Use log scale: `score = log10(mean(|z_i|) + EPS)`
+- bounded near `[0, 1]`
+- zero for clouds symmetric about the imaginary axis
+- high when most roots sit on one side
 
-#### `dist_triangle`
+No log transform.
 
-Mean distance of roots from the boundary of an equilateral triangle inscribed in the unit circle (vertices at the cube roots of unity).
+## Explicitly Rejected For First Pass
 
-```
-For each root z_i:
-  d_i = min distance from z_i to the three triangle edges
-score = mean(d_i)
-```
+### `centroid_angle`
 
-This creates hexagonal-symmetry color patterns. The triangle geometry interacts with the natural symmetries of many polynomial root clouds.
+Do not add this in the first pass.
 
-Use log scale for better spread.
+Reason:
 
-#### `dist_square`
+- `atan2` is circular
+- the current clip/hist pipeline treats metrics as linear scalars
+- values near `-pi` and `+pi` are close geometrically but far numerically
+- this will create seam artifacts and unstable clip ranges
 
-Mean distance of roots from the boundary of the unit square [-1,1] × [-1,1].
+If added later, it should be paired with circular-aware handling, not dropped into the current scalar pipeline unchanged.
 
-```
-For each root z_i:
-  d_i = min(|re - 1|, |re + 1|, |im - 1|, |im + 1|) if inside
-      = distance to nearest edge if outside
-score = mean(d_i)
-```
+### Viewport normalization
 
-Creates rectilinear color contours. Interesting for polynomials with roots that spread out differently along real vs imaginary axes.
+Do not normalize centroid metrics against the viewport.
 
-### Category 4: Asymmetry measures
+Reason:
 
-Measure how asymmetric the root distribution is along specific axes. These detect rotational or reflective structure.
+- solve scores are explicitly intended to be viewport-invariant
+- viewport-based normalization would violate that contract
 
-#### `asymmetry_re`
+## Degree Handling
 
-Imbalance of the root cloud across the imaginary axis.
+The current score function begins with:
 
-```
-score = |mean(re[i])| / (mean(|re[i]|) + EPS)
+```c
+if (degree < 2) return 0.0;
 ```
 
-Range: [0, 1]. Score = 0 for a root cloud perfectly symmetric about the imaginary axis. Score → 1 when all roots are on one side.
+in [solve_score.h](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_score.h).
 
-#### `asymmetry_im`
+That is acceptable for pairwise and covariance metrics, but it is unnecessarily restrictive for centroid-based metrics.
 
-Imbalance across the real axis.
+Implementation requirement:
 
-```
-score = |mean(im[i])| / (mean(|im[i]|) + EPS)
-```
+- change the early-return logic to be metric-specific
 
-Same logic, orthogonal axis.
+Recommended rule:
 
-## Implementation Notes
+- pairwise / NN / covariance metrics may still require `degree >= 2`
+- centroid and asymmetry metrics should work for `degree >= 1`
+- if `degree <= 0`, still return `0.0`
 
-### Computation cost
+## Exact Implementation Plan
 
-All proposed metrics are O(degree) per solve — same as or cheaper than the existing metrics (which include O(degree²) nearest-neighbor computation). The shape-distance metrics require a few extra operations per root but nothing expensive.
+### 1. `lambda/solve_score.h`
 
-### Log scale convention
+Add enum values:
 
-For unbounded metrics (centroid_dist, dist_* family), apply `log10(score + EPS)` to match the existing convention. The EPS value should be `SOLVE_SCORE_EPS` (currently 1e-150) for consistency.
+- `SOLVE_METRIC_CENTROID_RE`
+- `SOLVE_METRIC_CENTROID_IM`
+- `SOLVE_METRIC_CENTROID_DIST`
+- `SOLVE_METRIC_DIST_UNIT_CIRCLE`
+- `SOLVE_METRIC_ASYMMETRY_RE`
 
-For fraction metrics (frac_* family), the raw [0,1] range is already bounded and may not need log transformation. However, if the distribution is still concentrated (e.g. fraction is always near 0.5), a logit transform `log10(f / (1-f) + EPS)` could spread the middle.
+Add parser support in `parse_solve_metric(...)`:
 
-### Where to add
+- `"centroid_re"`
+- `"centroid_im"`
+- `"centroid_dist"`
+- `"dist_unit_circle"`
+- `"asymmetry_re"`
 
-- `lambda/solve_score.h` — add new metric enum values and computation in `compute_solve_metric_score()`
-- `lambda/solve_proximity_stats.c` — add metric name validation
-- `lambda/handler_solve_proximity.py` — add to `VALID_METRICS`
-- `lambda/handler_render_plan.py` — no change needed (metrics are strings, validation is in solve_proximity)
-- `index.html` — add to the solve-score metric dropdown
+Add serializer support in `solve_metric_name(...)`.
 
-### Recommended first batch
+Refactor `compute_solve_metric_score(...)`:
 
-Start with these 5 — they cover position, shape-distance, and asymmetry with minimal code:
+- replace the blanket `if (degree < 2) return 0.0;`
+- allow centroid/asymmetry metrics for `degree >= 1`
+- keep the non-finite root guard exactly as-is
 
-1. `frac_upper` — simplest possible, guaranteed to vary for any non-symmetric polynomial
-2. `centroid_dist` — direct position tracking
-3. `centroid_angle` — angular decomposition, creates radial color patterns
-4. `dist_unit_circle` — classical reference shape
-5. `asymmetry_re` — symmetry-breaking detector
+Add the new metric branches after centroid computation:
 
-These 5 add ~50 lines to `solve_score.h` and would immediately fix the flat-color problem for polynomials like `compute_mnj3exwe`.
+- `centroid_re`: return `mean_re`
+- `centroid_im`: return `mean_im`
+- `centroid_dist`: return `log10(hypot(mean_re, mean_im) + SOLVE_SCORE_EPS)`
+- `dist_unit_circle`: compute mean `fabs(hypot(re, im) - 1.0)` and return `log10(mean + SOLVE_SCORE_EPS)`
+- `asymmetry_re`: compute `abs(mean_re) / (mean(abs(re)) + SOLVE_SCORE_EPS)`
+
+Use `hypot(...)` instead of manual `sqrt(x*x + y*y)` where appropriate.
+
+### 2. `lambda/solve_proximity_stats.c`
+
+Update:
+
+- file header metric list
+- usage string
+- invalid-metric error string
+
+No behavioral change beyond accepting the new names, because all actual score math is delegated to [solve_score.h](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_score.h).
+
+### 3. `lambda/handler_solve_proximity.py`
+
+Extend `VALID_METRICS` with:
+
+- `centroid_re`
+- `centroid_im`
+- `centroid_dist`
+- `dist_unit_circle`
+- `asymmetry_re`
+
+### 4. `lambda/handler_palette_render_plan.py`
+
+Also extend `VALID_METRICS` there.
+
+This file is easy to miss, but it independently validates palette metric names.
+
+### 5. `index.html`
+
+Update both solve-score metric dropdowns:
+
+- Render tab solve-score selector
+- Palette tab metric selector
+
+Also update the JS-side allowed-metric arrays near the existing metric lists:
+
+- the arrays currently containing `clusteriness`, `shelliness`, etc.
+
+Do not stop at the HTML `<option>` tags only.
+
+## Testing Plan
+
+### 1. `tests/test_solve_proximity_stats.py`
+
+Add ranking tests for the first batch.
+
+Recommended tests:
+
+- `centroid_re`
+  - left-shifted cloud vs right-shifted cloud
+  - assert right-shifted score > left-shifted score
+
+- `centroid_im`
+  - lower cloud vs upper cloud
+  - assert upper score > lower score
+
+- `centroid_dist`
+  - cloud near origin vs translated outward
+  - assert farther cloud has larger score
+
+- `dist_unit_circle`
+  - roots exactly on the unit circle vs roots translated off it
+  - assert on-circle score is smaller than off-circle score
+
+- `asymmetry_re`
+  - symmetric cloud around imaginary axis vs one-sided cloud
+  - assert one-sided cloud has larger score
+
+Also add:
+
+- hist smoke for one of the new metrics
+- summary smoke for one signed metric (`centroid_re`) and one logged metric (`dist_unit_circle`)
+- invalid-metric rejection updated to mention the new names only if the test depends on the full error string
+
+### 2. Frontend tests
+
+Update:
+
+- [tests/test_frontend_js.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_frontend_js.sh)
+- [tests/e2e/render-solve-score.spec.js](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/e2e/render-solve-score.spec.js)
+
+Coverage needed:
+
+- selecting each new metric updates dispatch payload
+- Render solve-score selector accepts the new values
+- Palette metric selector accepts the new values
+
+### 3. Handler tests
+
+Update validation coverage in:
+
+- [tests/test_render_plan.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_render_plan.py)
+- [tests/test_palette_render_plan.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_palette_render_plan.py)
+- [tests/test_solve_proximity_handler.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_solve_proximity_handler.py)
+
+At minimum:
+
+- one new metric should pass through render-plan validation
+- one new metric should pass through palette-plan validation
+- solve-proximity merge path should accept a new metric name
+
+## Nice-to-Have Second Batch
+
+Once the first batch is working, the next additions I would do are:
+
+1. `dist_real_axis`
+2. `dist_imag_axis`
+3. `dist_origin`
+4. `asymmetry_im`
+5. one `frac_*` metric, probably `frac_upper`
+
+This keeps the second pass simple while still broadening the space meaningfully.
 
 ## Non-Goals
 
-- Metrics that require cross-solve comparison (e.g. "how different is this solve from the average solve")
-- Metrics that depend on the parameter values (x1, x2) rather than the roots
-- Viewport-dependent metrics (scores must be viewport-invariant)
-- Per-root metrics (these are per-solve aggregate scores)
+- cross-solve metrics
+- metrics that depend on parameter values rather than roots
+- viewport-dependent normalization
+- circular-metric handling in the first pass
+- per-root coloring metrics

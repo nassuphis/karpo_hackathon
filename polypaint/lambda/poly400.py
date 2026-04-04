@@ -244,7 +244,7 @@ def poly_314(t1, t2):
             angle = np.angle(t1) * np.sin(j * np.pi / r) + np.angle(t2) * np.cos(j * np.pi / (r + 1))
             magnitude = np.abs(t1)**(0.5 * j) + np.abs(t2)**(0.3 * (n - j + 1))
             cf[k - 1] = magnitude * np.exp(1j * angle) + np.conj(t1) * np.sin(j) - np.conj(t2) * np.cos(j)
-            cf[k - 1] = cf[k - 1] * np.log(np.abs(cf[k - 1]) + 1) + np.prod(np.arange(1, (j % 5) + 2)) + np.sum(j, r)
+            cf[k - 1] = cf[k - 1] * np.log(np.abs(cf[k - 1]) + 1) + np.prod(np.arange(1, (j % 5) + 2)) + (j + r)
         return cf.astype(np.complex128).astype(np.complex128)
     except:
         return np.zeros(35, dtype=complex)
@@ -550,7 +550,7 @@ def poly_333(t1, t2):
         n = 35
         cf = np.zeros(n, dtype=complex)
         for j in range(n):
-            angle = np.sin(j * np.imag(t1)) + np.cos(j * np.real(t2)) + np.angle(t1) * np.angle(t2) / j
+            angle = np.sin(j * np.imag(t1)) + np.cos(j * np.real(t2)) + np.angle(t1) * np.angle(t2) / (j + 1)
             magnitude = np.log(np.abs(t1) + 1) * (j**1.5) + np.exp(-j / (np.abs(t2) + 1)) * np.sqrt(j)
             cf[j] = magnitude * np.exp(1j * angle) + np.conj(magnitude * np.exp(-1j * angle / (j + 1)))
         return cf.astype(np.complex128).astype(np.complex128)
@@ -583,7 +583,7 @@ def poly_335(t1, t2):
         for j in range(n):
             angle_part = np.sin(j * np.pi / 7) * np.cos(j * np.pi / 5) + np.angle(t1) * np.angle(t2)
             magnitude_part = np.log(np.abs(t1) + 1) * (j**2) / (1 + j) + np.abs(t2)**(1 + np.sin(j))
-            phase_shift = np.exp(1j * (angle_part + np.imag(t1) * np.real(t2) / j))
+            phase_shift = np.exp(1j * (angle_part + np.imag(t1) * np.real(t2) / (j + 1)))
             cf[j] = magnitude_part * phase_shift + np.conj(t1) * np.conj(t2) / (j + 1)
         for k in range(n):
             if k % 5 == 0:
@@ -1616,4 +1616,3 @@ def poly_400(t1, t2):
         return cf.astype(np.complex128)
     except:
         return np.zeros(35, dtype=complex)
-

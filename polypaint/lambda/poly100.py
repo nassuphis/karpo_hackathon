@@ -193,7 +193,8 @@ def poly_13(t1, t2):
         for n in range(19):
             cf[n] = fib[n] * t1 * np.cos(np.angle(t2))
             cf[n + 19] = fib[n] * t1 * np.sin(np.angle(t2))
-            cf[n + 38] = fib[n] * t2 * np.sin(np.angle(t1))
+            if n + 38 < cf.size:
+                cf[n + 38] = fib[n] * t2 * np.sin(np.angle(t1))
         cf[19] = np.abs(t1 * t2)
         cf[49] = np.log(np.abs(t1 * t2) + 1)
         cf[50] = np.real(t1) + np.imag(t2)
@@ -207,7 +208,8 @@ def poly_14(t1, t2):
         triangleNums = np.cumsum(np.arange(1, 51))
         cf[0] = t1 + 3 * t2
         for k in range(1, 51):
-            cf[k] = triangleNums[k] * (t1 + t2 * np.log(np.abs(t1) + 1))**(k) + triangleNums[k] * (t2 + t1 * np.log(np.abs(t2) + 1))**(k)
+            triangle = triangleNums[k - 1]
+            cf[k] = triangle * (t1 + t2 * np.log(np.abs(t1) + 1))**k + triangle * (t2 + t1 * np.log(np.abs(t2) + 1))**k
         cf[42] = np.real(np.abs(t1)) + np.imag(np.abs(t2))
         cf[20] = np.real(np.abs(t2)) + np.imag(np.abs(t1))
         cf[31] = np.real(np.abs(t1 * t2)) + np.imag(np.conj(t1 * t2))
@@ -221,7 +223,7 @@ def poly_15(t1, t2):
         cf = np.zeros(71, dtype=complex)
         primes = np.array([2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193, 197, 199, 211, 223, 227, 229, 233, 239, 241])
         for i in range(71):
-            cf[i] = (primes[i] * t1 + 1j * t2**i) / (1 + np.abs(t1))**i
+            cf[i] = (primes[i % len(primes)] * t1 + 1j * t2**i) / (1 + np.abs(t1))**i
         cf[70] = np.sum(cf[0:70])
         return cf.astype(np.complex128)
     except Exception:
@@ -275,7 +277,7 @@ def poly_19(t1, t2):
         cf[1] = np.angle(t1)
         cf[2] = np.abs(t2)
         cf[3] = np.sin(t1) + np.cos(t2)
-        cf[4:10] = np.arange(1, 11) * 0.2 + 1
+        cf[4:10] = np.arange(1, 7) * 0.2 + 1
         cf[10] = np.log(np.abs(t1) + 1) + np.log(np.abs(t2) + 1)
         for i in range(11, 72):
             cf[i-1] = cf[i-2] * np.sin(i * cf[i-3] + np.abs(cf[i-4])) + cf[i-5]
@@ -353,7 +355,7 @@ def poly_25(t1, t2):
     try:
         cf = np.zeros(71, dtype=complex)
         cf[0] = np.real(t1 * t2) + np.imag(t1 / t2)
-        for k in range(1, 72):
+        for k in range(1, 71):
             cf[k] = np.abs(t1)**k + np.angle(t2)**k + np.sin(t1 + k) + np.cos(t2 + k) - np.log(np.abs(t1 * t2)**k + 1)
         cf[35] = np.real(cf[0] * cf[34]) + np.imag(t1 * t2)
         cf[45] = 0.5 * (t1 + np.conj(cf[44]) + t2)
@@ -372,7 +374,7 @@ def poly_26(t1, t2):
             cf[k-1] = v / np.abs(v)
         cf[14] = np.abs(t1 - t2) * np.angle(t1 + t2)
         cf[29] = np.log(np.abs(t1 * np.real(t2) + 1)) - np.log(np.abs(t2 * np.imag(t1) + 1))
-        cf[49] = np.prod(np.abs(t1), np.abs(t2)) * np.abs(t1 - t2)
+        cf[49] = np.abs(t1) * np.abs(t2) * np.abs(t1 - t2)
         cf[50] = np.sum(cf[15:29]) * np.sum(cf[30:44]) + t1**2
         return cf.astype(np.complex128)
     except Exception:
@@ -443,7 +445,7 @@ def poly_31(t1, t2):
         cf[0] = t1 + t2
         for i in range(1, 36):
             cf[i] = (np.cos(i * t1) + np.sin(i * t2)) / (np.abs(t1) * np.abs(t2))**i
-        for i in range(36, 72):
+        for i in range(36, 71):
             cf[i] = (np.cos(t1**i) + np.sin(t2**i)) * np.log(np.abs(t1)**i + 1) * np.log(np.abs(t2)**i + 1)
         return cf.astype(np.complex128)
     except Exception:
@@ -900,11 +902,11 @@ def poly_63(t1, t2):
         for j in range(1, 72):
             cf[j - 1] = np.sin(t1 ** j) * np.cos(t2 ** (71 - j)) * np.abs(t1 * t2 ** j) * np.log(np.abs(t1 * t2 + 1))
         cf[0:30] += cf[30:60]
-        cf[32:72] -= cf[0:40]
+        cf[32:71] -= cf[0:39]
         cf[10:60] += np.real(t1) * np.imag(t2) * cf[0:50]
         cf[30:70] -= np.imag(t1) * np.real(t2) * cf[1:41]
         cf[20:40] += np.angle(t1 ** t2) * cf[30:50]
-        cf[40:72] -= np.angle(t2 ** t1) * cf[0:32]
+        cf[40:71] -= np.angle(t2 ** t1) * cf[0:31]
         return cf.astype(np.complex128)
     except:
         return np.zeros_like(cf)
@@ -1085,7 +1087,7 @@ def poly_75(t1, t2):
         cf[[29, 59]] = np.imag(cf[1] * np.conj(cf[0]))
         cf[34] = np.sin(cf[1]) + np.cos(cf[0])
         cf[2] = np.abs(cf[9]) ** 2
-        cf[3] = np.prod(cf[[2, cf[1]]])
+        cf[3] = cf[1] * cf[2]
         cf[8] = np.sum(cf[[19, 39, 59]])
         cf[15:71] = powers[15:71] * np.abs(t1 - t2)
         cf[70] = np.prod(cf[0:4])
@@ -1493,4 +1495,3 @@ def poly_100(t1, t2):
         return cf.astype(np.complex128)
     except:
         return np.zeros_like(cf)
-

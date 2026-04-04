@@ -1,5 +1,5 @@
 """
-Tests for solve_proximity_stats binary — all 5 solve metrics.
+Tests for solve_proximity_stats binary — legacy and new solve metrics.
 
 Validates the algorithmic contract using the Docker runtime (deploy binary):
 - proximity: clip/hist reference tests (existing)
@@ -7,6 +7,8 @@ Validates the algorithmic contract using the Docker runtime (deploy binary):
 - spread: ranking test — large cloud > small cloud
 - anisotropy: ranking test — line-like > isotropic
 - area: ranking test — large 2D cloud > small 2D cloud
+- centroid_re / centroid_im / centroid_dist ranking tests
+- dist_unit_circle and asymmetry_re ranking tests
 - hist for non-proximity metric (spread)
 - invalid metric rejection
 - root-transform metric test
@@ -163,7 +165,7 @@ def test_clip_many_solves():
 
 
 def test_hist_basic():
-    """Histogram with known proximity scores and clip bounds."""
+    """Histogram with known proximity scores and default omega remapping."""
     path = "/tmp/sp_test_hist.bin"
     write_bin(path, [SOLVE_A, SOLVE_B, SOLVE_C], 2)
     result, err = run_hist(path, 2, clip_lo=0.0, clip_hi=2.0, hist_bins=10, metric="proximity")
@@ -172,9 +174,9 @@ def test_hist_basic():
     assert result["metric"] == "proximity"
     assert len(result["hist"]) == 10
     assert sum(result["hist"]) == 3
-    assert result["hist"][0] >= 1, f"bin 0 should have solve_a: {result['hist']}"
-    assert result["hist"][4] >= 1, f"bin 4 should have solve_c: {result['hist']}"
-    assert result["hist"][9] >= 1, f"bin 9 should have solve_b: {result['hist']}"
+    # With default omega=1, u=0 and u=1 both map to the top bin, while u=0.5 maps to the bottom bin.
+    assert result["hist"][0] >= 1, f"bin 0 should have solve_c after omega remap: {result['hist']}"
+    assert result["hist"][9] >= 2, f"bin 9 should have solve_a and solve_b after omega remap: {result['hist']}"
     os.remove(path)
 
 
@@ -479,6 +481,111 @@ def test_real_axis_proximity_ranking():
 
 
 # ================================================================
+# 10b. Degree-1 centroid metric
+# ================================================================
+
+def test_centroid_re_degree_one_allowed():
+    """Degree-1 solves should work for centroid metrics."""
+    single = [(2.5, 0.0)]
+    path = "/tmp/sp_test_centroid_re_deg1.bin"
+    write_bin(path, [single], 1)
+    r, err = run_clip(path, 1, metric="centroid_re")
+    assert r is not None, f"centroid_re degree-1 failed: {err}"
+    assert r["metric"] == "centroid_re"
+    assert abs(r["min_score"] - 2.5) < 1e-9
+    os.remove(path)
+
+
+# ================================================================
+# 10c. New v3 metric ranking tests
+# ================================================================
+
+def test_centroid_re_ranking():
+    """Right-shifted cloud should have higher centroid_re than left-shifted."""
+    left = [(-3.0, 0.0), (-2.0, 0.0), (-1.0, 0.0), (-2.0, 1.0)]
+    right = [(1.0, 0.0), (2.0, 0.0), (3.0, 0.0), (2.0, 1.0)]
+    path_l = "/tmp/sp_test_centroid_re_left.bin"
+    path_r = "/tmp/sp_test_centroid_re_right.bin"
+    write_bin(path_l, [left], 4)
+    write_bin(path_r, [right], 4)
+    r_l, err = run_clip(path_l, 4, metric="centroid_re")
+    assert r_l is not None, f"left centroid_re failed: {err}"
+    r_r, err = run_clip(path_r, 4, metric="centroid_re")
+    assert r_r is not None, f"right centroid_re failed: {err}"
+    assert r_r["min_score"] > r_l["min_score"]
+    for p in [path_l, path_r]:
+        os.remove(p)
+
+
+def test_centroid_im_ranking():
+    """Upper cloud should have higher centroid_im than lower cloud."""
+    lower = [(0.0, -3.0), (0.0, -2.0), (0.0, -1.0), (1.0, -2.0)]
+    upper = [(0.0, 1.0), (0.0, 2.0), (0.0, 3.0), (1.0, 2.0)]
+    path_l = "/tmp/sp_test_centroid_im_lower.bin"
+    path_u = "/tmp/sp_test_centroid_im_upper.bin"
+    write_bin(path_l, [lower], 4)
+    write_bin(path_u, [upper], 4)
+    r_l, err = run_clip(path_l, 4, metric="centroid_im")
+    assert r_l is not None, f"lower centroid_im failed: {err}"
+    r_u, err = run_clip(path_u, 4, metric="centroid_im")
+    assert r_u is not None, f"upper centroid_im failed: {err}"
+    assert r_u["min_score"] > r_l["min_score"]
+    for p in [path_l, path_u]:
+        os.remove(p)
+
+
+def test_centroid_dist_ranking():
+    """Translated cloud should have higher centroid_dist than origin-centered cloud."""
+    near = [(-0.5, 0.0), (0.5, 0.0), (0.0, 0.5), (0.0, -0.5)]
+    far = [(4.5, 0.0), (5.5, 0.0), (5.0, 0.5), (5.0, -0.5)]
+    path_n = "/tmp/sp_test_centroid_dist_near.bin"
+    path_f = "/tmp/sp_test_centroid_dist_far.bin"
+    write_bin(path_n, [near], 4)
+    write_bin(path_f, [far], 4)
+    r_n, err = run_clip(path_n, 4, metric="centroid_dist")
+    assert r_n is not None, f"near centroid_dist failed: {err}"
+    r_f, err = run_clip(path_f, 4, metric="centroid_dist")
+    assert r_f is not None, f"far centroid_dist failed: {err}"
+    assert r_f["min_score"] > r_n["min_score"]
+    for p in [path_n, path_f]:
+        os.remove(p)
+
+
+def test_dist_unit_circle_ranking():
+    """Roots on the unit circle should have smaller dist_unit_circle than translated roots."""
+    on_circle = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)]
+    off_circle = [(2.0, 0.0), (2.0, 0.0), (2.0, 0.0), (2.0, 0.0)]
+    path_on = "/tmp/sp_test_unit_circle_on.bin"
+    path_off = "/tmp/sp_test_unit_circle_off.bin"
+    write_bin(path_on, [on_circle], 4)
+    write_bin(path_off, [off_circle], 4)
+    r_on, err = run_clip(path_on, 4, metric="dist_unit_circle")
+    assert r_on is not None, f"on-circle dist_unit_circle failed: {err}"
+    r_off, err = run_clip(path_off, 4, metric="dist_unit_circle")
+    assert r_off is not None, f"off-circle dist_unit_circle failed: {err}"
+    assert r_off["min_score"] > r_on["min_score"]
+    for p in [path_on, path_off]:
+        os.remove(p)
+
+
+def test_asymmetry_re_ranking():
+    """One-sided cloud should have higher asymmetry_re than symmetric cloud."""
+    symmetric = [(-2.0, 0.0), (-1.0, 0.0), (1.0, 0.0), (2.0, 0.0)]
+    one_sided = [(1.0, 0.0), (2.0, 0.0), (3.0, 0.0), (4.0, 0.0)]
+    path_s = "/tmp/sp_test_asym_re_sym.bin"
+    path_o = "/tmp/sp_test_asym_re_one.bin"
+    write_bin(path_s, [symmetric], 4)
+    write_bin(path_o, [one_sided], 4)
+    r_s, err = run_clip(path_s, 4, metric="asymmetry_re")
+    assert r_s is not None, f"symmetric asymmetry_re failed: {err}"
+    r_o, err = run_clip(path_o, 4, metric="asymmetry_re")
+    assert r_o is not None, f"one-sided asymmetry_re failed: {err}"
+    assert r_o["min_score"] > r_s["min_score"]
+    for p in [path_s, path_o]:
+        os.remove(p)
+
+
+# ================================================================
 # 11. Hist for clusteriness
 # ================================================================
 
@@ -496,6 +603,23 @@ def test_hist_clusteriness():
     assert hist_r["metric"] == "clusteriness"
     assert hist_r["n_solves"] == 2
     assert len(hist_r["hist"]) == 10
+    assert sum(hist_r["hist"]) == 2
+    os.remove(path)
+
+
+def test_hist_centroid_dist():
+    """Histogram with centroid_dist metric — counts sum, JSON has metric."""
+    near = [(-0.5, 0.0), (0.5, 0.0), (0.0, 0.5), (0.0, -0.5)]
+    far = [(4.5, 0.0), (5.5, 0.0), (5.0, 0.5), (5.0, -0.5)]
+    path = "/tmp/sp_test_hist_centroid_dist.bin"
+    write_bin(path, [near, far], 4)
+    clip_r, err = run_clip(path, 4, metric="centroid_dist")
+    assert clip_r is not None, f"centroid_dist clip failed: {err}"
+    hist_r, err = run_hist(path, 4, clip_r["clip_lo"], clip_r["clip_hi"],
+                           hist_bins=10, metric="centroid_dist")
+    assert hist_r is not None, f"centroid_dist hist failed: {err}"
+    assert hist_r["metric"] == "centroid_dist"
+    assert hist_r["n_solves"] == 2
     assert sum(hist_r["hist"]) == 2
     os.remove(path)
 
@@ -560,6 +684,43 @@ def test_summary_all_fields():
         f"bin sum {sum(result['final_bin_counts'])} != inrange {result['clip_inrange_count']}"
     # No hist_full field (removed)
     assert "hist_full" not in result, "hist_full should be removed from summary"
+    os.remove(path)
+
+
+def test_summary_centroid_re_smoke():
+    """Summary mode works for signed centroid_re scores."""
+    path = "/tmp/sp_test_summary_centroid_re.bin"
+    solves = [
+        [(-2.0, 0.0), (-1.0, 0.0)],
+        [(1.0, 0.0), (2.0, 0.0)],
+        [(3.0, 0.0), (4.0, 0.0)],
+    ]
+    write_bin(path, solves, 2)
+    result, err = run_summary(path, 2, metric="centroid_re")
+    assert result is not None, f"centroid_re summary failed: {err}"
+    assert result["metric"] == "centroid_re"
+    assert result["n_solves"] == 3
+    assert math.isfinite(result["mean_score"])
+    assert math.isfinite(result["clip_lo"])
+    assert math.isfinite(result["clip_hi"])
+    os.remove(path)
+
+
+def test_summary_dist_unit_circle_smoke():
+    """Summary mode works for logged dist_unit_circle scores."""
+    path = "/tmp/sp_test_summary_dist_unit_circle.bin"
+    solves = [
+        [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)],
+        [(2.0, 0.0), (2.0, 0.0), (2.0, 0.0), (2.0, 0.0)],
+    ]
+    write_bin(path, solves, 4)
+    result, err = run_summary(path, 4, metric="dist_unit_circle")
+    assert result is not None, f"dist_unit_circle summary failed: {err}"
+    assert result["metric"] == "dist_unit_circle"
+    assert result["n_solves"] == 2
+    assert math.isfinite(result["mean_score"])
+    assert math.isfinite(result["clip_lo"])
+    assert math.isfinite(result["clip_hi"])
     os.remove(path)
 
 
@@ -799,11 +960,20 @@ if __name__ == "__main__":
         ("outlierness ranking", test_outlierness_ranking),
         ("nn_variation ranking", test_nn_variation_ranking),
         ("real_axis_proximity ranking", test_real_axis_proximity_ranking),
+        ("centroid_re degree 1", test_centroid_re_degree_one_allowed),
+        ("centroid_re ranking", test_centroid_re_ranking),
+        ("centroid_im ranking", test_centroid_im_ranking),
+        ("centroid_dist ranking", test_centroid_dist_ranking),
+        ("dist_unit_circle ranking", test_dist_unit_circle_ranking),
+        ("asymmetry_re ranking", test_asymmetry_re_ranking),
         # Non-proximity hist
         ("hist clusteriness metric", test_hist_clusteriness),
+        ("hist centroid_dist metric", test_hist_centroid_dist),
         ("hist spread metric", test_hist_spread),
         # Summary mode
         ("summary all fields", test_summary_all_fields),
+        ("summary centroid_re smoke", test_summary_centroid_re_smoke),
+        ("summary dist_unit_circle smoke", test_summary_dist_unit_circle_smoke),
         ("summary quantiles monotone", test_summary_quantiles_monotone),
         ("summary final bins sum to inrange", test_summary_final_bins_sum_to_inrange),
         ("summary occupancy sum", test_summary_occupancy_sum),

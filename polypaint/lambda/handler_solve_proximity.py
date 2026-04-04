@@ -1,7 +1,7 @@
 """
 Solve score Lambda — async 3-phase prepass for solve-level color modes.
 
-Supports multiple metrics: proximity, crowding, spread, anisotropy, area.
+Supports the full solve-metric set defined in solve_score.h.
 Phases: clip, hist, merge.
 
 Dispatched async via dispatch handler, reports status to DynamoDB.
@@ -19,7 +19,8 @@ s3 = boto3.client("s3")
 BINARY = os.path.join(os.path.dirname(__file__), "solve_proximity_stats")
 
 VALID_METRICS = {"proximity", "crowding", "spread", "anisotropy", "area",
-                 "clusteriness", "shelliness", "outlierness", "nn_variation", "real_axis_proximity"}
+                 "clusteriness", "shelliness", "outlierness", "nn_variation", "real_axis_proximity",
+                 "centroid_re", "centroid_im", "centroid_dist", "dist_unit_circle", "asymmetry_re"}
 
 _TMP_INPUT = "/tmp/solve_prox_input.bin"
 _TMP_XFORMS = "/tmp/solve_prox_root_xforms.json"

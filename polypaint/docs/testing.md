@@ -43,6 +43,7 @@ All tests live in `polypaint/tests/`.
 | `test_poly645_hand.py` | `poly_645` hand-written coeff function matches Python reference and stays off the broken transpiled path | `sweep_test` compiled |
 | `test_poly795_hand.py` | `poly_795` hand-written coeff function matches Python reference, including slice rewrites and both `np.where` branches | `sweep_test` compiled |
 | `test_low_agreement_hand.py` | Batch parity coverage for the repaired low-agreement coeff funcs promoted from transpiled to hand; the current authoritative function list lives in `CASES` inside the test file | `sweep_test` compiled, numpy |
+| `test_pdf_artifact_handler.py` | PDF artifact Lambda: Color source validation, metadata-derived spread composition, PDF upload contract | Python mocks only |
 | `test_frontend_js.sh` | Frontend JS execution: UI logic, TRI palette popup/swatches, dispatch, Render family catalogs, Palette workflow UI, DeepZoom inventory | Node.js (vm module) |
 | `e2e/deepzoom-inventory.spec.js` | DeepZoom inventory: load, sort, select, arrow keys, share links | Playwright browser |
 | `e2e/render-refresh.spec.js` | Render tab refresh: summary call, artifact panel, info line | Playwright browser |
@@ -206,12 +207,14 @@ Unit tests with mocked AWS services (no real S3/DynamoDB/Lambda calls):
 
 - **TestDispatchHandler** — fire-and-forget Lambda invocation, error handling
 - **TestStorageList** — job listing, calc.json parsing, missing files
+- **TestRenderSummary** — immutable render-family catalogs, including PDF family entries
 - **TestStorageCheckKeys/CleanRender/Presign** — S3 operations
 - **TestShared** — parse_body, ok_response, viewport computation
 - **TestReportStatus/CheckStatus** — DynamoDB status tracking
 - **TestCoeffgenHandler** — coeffgen subprocess, S3 upload, transforms
 - **TestSolveFromCoeffs** — solve routing, full file download
 - **TestPreviewHandler** — preview generation, PNG validity
+- **TestPdfArtifactHandler** — PDF spread derivation from saved Color artifacts
 
 ### test_bilevel_raster.py
 

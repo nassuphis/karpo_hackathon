@@ -113,6 +113,16 @@ class TestDispatchHandler(unittest.TestCase):
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 1)
 
+    @patch("handler_dispatch.lambda_client")
+    def test_dispatch_pdf_artifact_target(self, mock_client):
+        from handler_dispatch import handler
+        mock_client.invoke.return_value = {"StatusCode": 202}
+        jobs = [{"job_id": "j", "task_id": "pdf_1", "artifact_id": "pdf_new", "source_artifact_id": "color_src", "source_image_key": "renders/j/color/color_src/image.jpeg"}]
+        event = self._make_event({"target": "pdf_artifact", "jobs": jobs})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["fired"], 1)
+
 
 # ── Test: handler_storage.py (list, check_keys, check_status, clean_render) ──
 
@@ -1521,8 +1531,8 @@ class TestRenderSummary(unittest.TestCase):
         body = json.loads(result["body"])
 
         self.assertEqual(body["schema_version"], 2)
-        self.assertEqual(body["families"], {"color": [], "bilevel": [], "coeffs": [], "palette": []})
-        self.assertGreaterEqual(mock_s3.get_paginator.call_count, 4)
+        self.assertEqual(body["families"], {"color": [], "bilevel": [], "coeffs": [], "palette": [], "pdf": []})
+        self.assertGreaterEqual(mock_s3.get_paginator.call_count, 5)
 
     @patch("handler_storage.s3")
     def test_render_summary_returns_existing_artifact_urls(self, mock_s3):
@@ -1568,6 +1578,48 @@ class TestRenderSummary(unittest.TestCase):
         self.assertEqual(cj["match_mode"], "greedy")
         self.assertEqual(cj["background_color"], "000000")
         self.assertAlmostEqual(cj["background_threshold"], 4.0)
+
+    @patch("handler_storage.s3")
+    def test_render_summary_returns_pdf_family_entries(self, mock_s3):
+        from handler_storage import handle_render_summary
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate_side_effect(**kwargs):
+            prefix = kwargs.get("Prefix", "")
+            if prefix == "renders/j/pdf/":
+                return [{"CommonPrefixes": [{"Prefix": "renders/j/pdf/pdf_1/"}]}]
+            return [{"CommonPrefixes": []}]
+
+        mock_paginator.paginate.side_effect = paginate_side_effect
+
+        def mock_head(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/pdf/pdf_1/document.pdf":
+                return {"ContentLength": 3456, "ContentType": "application/pdf",
+                        "Metadata": {"artifact_id": "pdf_1", "family": "pdf", "created_at": "2026-04-04T10:00:00Z", "format": "pdf", "pdf_kind": "color_spread", "source_family": "color", "source_artifact_id": "color_src", "source_display_name": "solve:clusteriness q=5.0% w=1 inferno", "source_color_mode": "solve_score", "source_palette": "inferno", "source_solve_metric": "clusteriness", "source_solve_score_quantile": "0.05", "source_solve_score_omega": "1", "page_count": "1"}}
+            raise Exception("NoSuchKey")
+
+        mock_s3.head_object.side_effect = mock_head
+        mock_s3.get_object.side_effect = Exception("NoSuchKey")
+        mock_s3.generate_presigned_url.return_value = "https://signed"
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+
+        self.assertIn("pdf", body["families"])
+        pdfs = body["families"]["pdf"]
+        self.assertEqual(len(pdfs), 1)
+        art = pdfs[0]
+        self.assertEqual(art["artifact_id"], "pdf_1")
+        self.assertEqual(art["family"], "pdf")
+        self.assertEqual(art["format"], "pdf")
+        self.assertEqual(art["content_type"], "application/pdf")
+        self.assertEqual(art["pdf_kind"], "color_spread")
+        self.assertEqual(art["source_artifact_id"], "color_src")
+        self.assertEqual(art["source_display_name"], "solve:clusteriness q=5.0% w=1 inferno")
+        self.assertEqual(art["viewer_url"], "https://signed")
 
     @patch("handler_storage.s3")
     def test_render_summary_parses_solve_score_omega(self, mock_s3):

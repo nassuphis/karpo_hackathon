@@ -150,6 +150,13 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("long_palette_names_generated.py", packaged["handler_color_repalette.py"])
         self.assertIn("pixel_bins_render", packaged["handler_color_repalette.py"])
 
+        self.assertIn("handler_pdf_artifact.py", packaged)
+        self.assertIn("spread_pdf.py", packaged["handler_pdf_artifact.py"])
+        self.assertIn("PDF_PY_LAYER_NAME", DEPLOY_TEXT)
+        self.assertIn("build-pdf-python-layer.sh", DEPLOY_TEXT)
+        self.assertIn('create_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip"', DEPLOY_TEXT)
+        self.assertIn('update_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip"', DEPLOY_TEXT)
+
 
 if __name__ == "__main__":
     unittest.main()

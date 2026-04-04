@@ -8,12 +8,13 @@ This document describes the current Render-tab model after the immutable-artifac
 
 The Render tab is no longer a fixed four-row panel.
 
-It is now a family workspace with four tabs:
+It is now a family workspace with five tabs:
 
 1. `Color`
 2. `BiLevel`
 3. `Coeffs`
 4. `Palette`
+5. `PDF`
 
 Each family tab has:
 
@@ -23,7 +24,7 @@ Each family tab has:
 - selection-scoped actions:
   - `Download`
   - `Delete`
-  - `DeepZoom`
+  - `DeepZoom` for image families only
 
 Arrow up/down moves selection inside the active family catalog.
 
@@ -49,8 +50,10 @@ Current storage layout:
   - `renders/{job_id}/palettes/{palette_id}/score_<metric>.bin`
   - `renders/{job_id}/palettes/{palette_id}/palette_bins.bin`
   - `renders/{job_id}/palettes/{palette_id}/meta.json`
+- PDF:
+  - `renders/{job_id}/pdf/{artifact_id}/document.pdf`
 
-Color, BiLevel, and Coeffs store artifact metadata in S3 object metadata on the image object.
+Color, BiLevel, Coeffs, and PDF store artifact metadata in S3 object metadata on the main object.
 Palette stores artifact metadata in `meta.json`.
 
 ## Refresh Contract
@@ -65,12 +68,13 @@ The response shape is `schema_version: 2` and contains:
 - `families`
 - `deepzoom_latest`
 
-`families` contains four arrays:
+`families` contains five arrays:
 
 - `families.color`
 - `families.bilevel`
 - `families.coeffs`
 - `families.palette`
+- `families.pdf`
 
 For backward compatibility, `render-summary` still surfaces old top-level artifacts as synthetic legacy entries:
 
@@ -89,6 +93,7 @@ The UI shows these legacy artifacts in the same family catalogs until they are e
 - `BiLevel` starts the render workflow in bilevel mode
 - `Coeffs` starts the render workflow in coeff-bilevel mode
 - `Palette` starts the asynchronous palette workflow
+- `PDF` opens a source-picker popup; `ColorSpread` dispatches a direct PDF-derivation Lambda
 
 Generating a new artifact:
 
@@ -100,7 +105,7 @@ Generating a new artifact:
 
 Deletion is explicit and selection-scoped.
 
-- Color, BiLevel, and Coeffs use:
+- Color, BiLevel, Coeffs, and PDF use:
   - `POST /delete-render-artifact`
 - Palette uses:
   - `POST /delete-palette`
@@ -142,6 +147,16 @@ Older top-level TIFF/preview outputs are still discoverable as `legacy_coeffs`.
 
 Palette artifacts are full workflow outputs, not just debug images.
 Both the Palette tab and the Render tab `Palette` family dispatch the asynchronous palette workflow.
+
+### PDF
+
+PDF artifacts are single-file derivative documents.
+V1 supports `ColorSpread` only:
+
+- left page uses the same centered black-page text treatment as `make_book.py`
+- right page uses a selected Color artifact image
+- viewer is an embedded PDF viewer rather than an `<img>`
+- there is no DeepZoom action for PDF artifacts
 
 ## What Was Removed
 

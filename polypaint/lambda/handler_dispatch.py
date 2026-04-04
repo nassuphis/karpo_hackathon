@@ -36,6 +36,7 @@ FUNCTIONS = {
     "autolevels": os.environ.get("AUTOLEVELS_FUNCTION", "polypaint-autolevels"),
     "repalette": os.environ.get("REPALETTE_FUNCTION", "polypaint-repalette"),
     "color_repalette": os.environ.get("COLOR_REPALETTE_FUNCTION", "polypaint-color-repalette"),
+    "pdf_artifact": os.environ.get("PDF_ARTIFACT_FUNCTION", "polypaint-pdf-artifact"),
 }
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_WORKERS = int(os.environ.get("DISPATCH_THREADS", "50"))

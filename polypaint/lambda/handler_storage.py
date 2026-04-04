@@ -167,6 +167,7 @@ RENDER_FAMILY_DIRS = {
     "color": "color",
     "bilevel": "bilevel",
     "coeffs": "coeffs",
+    "pdf": "pdf",
 }
 
 RENDER_FAMILY_SHAPES = {
@@ -191,6 +192,12 @@ RENDER_FAMILY_SHAPES = {
     "palette": {
         "legacy_image_candidates": ["image_palette.jpeg"],
         "legacy_preview_candidates": ["preview_palette.png"],
+    },
+    "pdf": {
+        "image_candidates": ["document.pdf"],
+        "preview_candidates": [],
+        "legacy_image_candidates": [],
+        "legacy_preview_candidates": [],
     },
 }
 
@@ -357,6 +364,19 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         pbe = meta.get("pixel_bins_empty", "")
         entry["pixel_bins_empty"] = int(pbe) if pbe not in ("", None) else None
         entry["pixel_bins_layout"] = meta.get("pixel_bins_layout", "")
+    elif family == "pdf":
+        page_count = meta.get("page_count")
+        entry["pdf_kind"] = meta.get("pdf_kind", "")
+        entry["source_family"] = meta.get("source_family", "")
+        entry["source_artifact_id"] = meta.get("source_artifact_id", "")
+        entry["source_image_key"] = meta.get("source_image_key", "")
+        entry["source_display_name"] = meta.get("source_display_name", "")
+        entry["source_color_mode"] = meta.get("source_color_mode", "")
+        entry["source_palette"] = meta.get("source_palette", "")
+        entry["source_solve_metric"] = meta.get("source_solve_metric", "")
+        entry["source_solve_score_quantile"] = _parse_float(meta.get("source_solve_score_quantile"))
+        entry["source_solve_score_omega"] = _parse_float(meta.get("source_solve_score_omega"))
+        entry["page_count"] = int(page_count) if page_count not in ("", None) else None
     return entry
 
 
@@ -1126,9 +1146,10 @@ def handle_render_summary(event):
         "bilevel": _list_render_family_variants(job_id, "bilevel"),
         "coeffs": _list_render_family_variants(job_id, "coeffs"),
         "palette": _list_saved_palettes(job_id),
+        "pdf": _list_render_family_variants(job_id, "pdf"),
     }
 
-    for family in ("color", "bilevel", "coeffs", "palette"):
+    for family in ("color", "bilevel", "coeffs", "palette", "pdf"):
         legacy = _legacy_render_variant(job_id, family)
         if legacy:
             families[family].append(legacy)

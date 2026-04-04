@@ -1458,6 +1458,86 @@ async function testPipeline(name, call) {
         console.log('  autolevel popup fallback background defaults: OK');
     }
 
+    // Step 9b: PDF family UI + ColorSpread popup
+    {
+        const summary = {
+            calc: { exists: true, N: 500, degree: 24 },
+            families: {
+                color: [
+                    {
+                        artifact_id: 'color_src',
+                        created_at: '2026-04-04T09:00:00Z',
+                        image_key: 'renders/j/color/color_src/image.jpeg',
+                        image_url: 'https://img/color_src.jpeg',
+                        preview_url: 'https://img/color_src.png',
+                        viewer_url: 'https://img/color_src.png',
+                        content_type: 'image/jpeg',
+                        width: 5000,
+                        height: 5000,
+                        format: 'jpeg',
+                        file_size: 12345,
+                        color_mode: 'solve_score',
+                        solve_metric: 'clusteriness',
+                        solve_score_quantile: 0.05,
+                        solve_score_omega: 1,
+                        palette: 'inferno',
+                        root_transforms: [],
+                    }
+                ],
+                bilevel: [],
+                coeffs: [],
+                palette: [],
+                pdf: [
+                    {
+                        artifact_id: 'pdf_1',
+                        created_at: '2026-04-04T10:00:00Z',
+                        image_key: 'renders/j/pdf/pdf_1/document.pdf',
+                        image_url: 'https://pdf/pdf_1.pdf',
+                        viewer_url: 'https://pdf/pdf_1.pdf',
+                        content_type: 'application/pdf',
+                        format: 'pdf',
+                        file_size: 9999,
+                        pdf_kind: 'color_spread',
+                        source_artifact_id: 'color_src',
+                        source_display_name: 'solve:clusteriness q=5.0% w=1 inferno',
+                    }
+                ],
+            },
+        };
+        await vm.runInContext(`
+            window._lastDispatchBody = null;
+            _activeRenderRun = null;
+            lambdaPost = async function(name, body) {
+                if (name === 'dispatch') {
+                    window._lastDispatchBody = body;
+                    return { fired: 1 };
+                }
+                return {};
+            };
+            _renderActiveFamily = 'pdf';
+            _renderSelectedArtifact = { color: 0, bilevel: -1, coeffs: -1, palette: -1, pdf: 0 };
+            renderArtifactPanel('j', ${JSON.stringify(summary)});
+        `, ctx);
+        const panelHtml = vm.runInContext("document.getElementById('render-preview').innerHTML", ctx);
+        if (!panelHtml.includes('ColorSpread')) { console.error('FATAL: pdf artifact panel should show ColorSpread button'); process.exit(1); }
+        if (!panelHtml.includes('<iframe')) { console.error('FATAL: pdf artifact viewer should use iframe/embed branch'); process.exit(1); }
+        await vm.runInContext('openPdfColorSpreadPopup()', ctx);
+        const popupDisplay = vm.runInContext("document.getElementById('pdf-colorspread-popup-overlay').style.display", ctx);
+        const bodyRows = vm.runInContext("document.getElementById('pdf-colorspread-popup-body').children.length", ctx);
+        const summaryText = vm.runInContext("document.getElementById('pdf-colorspread-popup-summary').textContent", ctx);
+        if (popupDisplay !== 'flex') { console.error('FATAL: PDF ColorSpread popup should open'); process.exit(1); }
+        if (bodyRows !== 1) { console.error('FATAL: PDF ColorSpread popup should list 1 color artifact, got ' + bodyRows); process.exit(1); }
+        if (!String(summaryText).includes('color_src')) { console.error('FATAL: PDF ColorSpread summary should mention selected color source, got ' + summaryText); process.exit(1); }
+        await vm.runInContext('runPdfColorSpreadSelected()', ctx);
+        const dispatch = vm.runInContext('window._lastDispatchBody', ctx);
+        const runMode = vm.runInContext('_activeRenderRun && _activeRenderRun.mode', ctx);
+        if (!dispatch || dispatch.target !== 'pdf_artifact') { console.error('FATAL: PDF ColorSpread should dispatch pdf_artifact target'); process.exit(1); }
+        if (dispatch.jobs[0].source_artifact_id !== 'color_src') { console.error('FATAL: PDF ColorSpread should send source artifact id, got ' + dispatch.jobs[0].source_artifact_id); process.exit(1); }
+        if (dispatch.jobs[0].source_image_key !== 'renders/j/color/color_src/image.jpeg') { console.error('FATAL: PDF ColorSpread should send source image key, got ' + dispatch.jobs[0].source_image_key); process.exit(1); }
+        if (runMode !== 'pdf') { console.error('FATAL: PDF ColorSpread should save active run mode pdf, got ' + runMode); process.exit(1); }
+        console.log('  PDF family viewer + ColorSpread dispatch: OK');
+    }
+
     // Step 10: DeepZoom inventory UI tests
     console.log('');
     console.log('--- DeepZoom inventory ---');

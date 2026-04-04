@@ -1032,6 +1032,35 @@ button {
     </div>
 </div>
 
+<div id="pdf-colorspread-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="pdf-colorspread-popup-title">
+        <div class="tri-popup-head">
+            <div id="pdf-colorspread-popup-title" class="tri-popup-title">ColorSpread</div>
+            <button id="pdf-colorspread-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div class="tri-popup-filter-wrap">
+            <input id="pdf-colorspread-popup-filter" type="text" placeholder="Filter by created time, mode, palette, or artifact id">
+        </div>
+        <div class="tri-popup-table-wrap">
+            <table class="tri-popup-table">
+                <thead>
+                    <tr><th>Created</th><th>Dims</th><th>Summary</th></tr>
+                </thead>
+                <tbody id="pdf-colorspread-popup-body"></tbody>
+            </table>
+        </div>
+        <div id="pdf-colorspread-popup-summary" class="autolevel-popup-summary"></div>
+        <div class="autolevel-popup-help">Create a one-spread PDF using the selected Color artifact image on the right and metadata-derived text on the left.</div>
+        <div class="autolevel-popup-actions">
+            <div></div>
+            <div style="display:flex; gap:8px">
+                <button id="pdf-colorspread-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+                <button id="pdf-colorspread-popup-run" type="button" class="btn-primary" style="padding:6px 12px">Execute</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js"></script>
 <script src="coeff_func_catalog_js.js"></script>
 <script src="tri_palette_catalog_js.js"></script>
@@ -1577,9 +1606,9 @@ let generateFromPaletteBuiltinPalette = 'inferno';
 let generateFromPaletteTriName = 'redgold';
 let generateFromPaletteLongName = '';
 let _renderActiveFamily = 'color';
-let _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [] };
-let _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
-let _renderCatalogScrollTop = { color: 0, bilevel: 0, coeffs: 0, palette: 0 };
+let _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [], pdf: [] };
+let _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1 };
+let _renderCatalogScrollTop = { color: 0, bilevel: 0, coeffs: 0, palette: 0, pdf: 0 };
 let _triPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _builtinPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
@@ -1587,6 +1616,7 @@ let _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: 
 let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
 let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '' };
 let _generateFromPalettePopupState = { open: false, filter: '', highlightIdx: 0, sourcePaletteId: '' };
+let _pdfColorSpreadPopupState = { open: false, filter: '', highlightIdx: 0, sourceArtifactId: '' };
 let _functionPopupState = { open: false, filter: '', highlightIdx: 0 };
 
 function _stopsToGradient(stops) {
@@ -2453,6 +2483,12 @@ function _reusablePaletteArtifacts() {
     );
 }
 
+function _pdfColorSourceArtifacts() {
+    return (_renderArtifacts.color || []).filter(art =>
+        !!(art && art.artifact_id && art.image_key && (art.content_type || '').indexOf('image/') === 0)
+    );
+}
+
 function _closeRepalettePopup() {
     _closeBuiltinPalettePopup();
     _closeTriPalettePopup();
@@ -2802,6 +2838,172 @@ async function runGenerateFromPaletteSelected() {
     }
 }
 
+function _visiblePdfColorSpreadCatalog() {
+    const filter = (_pdfColorSpreadPopupState.filter || '').trim().toLowerCase();
+    const items = _pdfColorSourceArtifacts();
+    if (!filter) return items;
+    return items.filter(art => {
+        const text = [
+            art.artifact_id || '',
+            art.created_at || '',
+            art.color_mode || '',
+            art.palette || '',
+            _renderArtifactSummary(art) || '',
+        ].join(' ').toLowerCase();
+        return text.includes(filter);
+    });
+}
+
+function _closePdfColorSpreadPopup() {
+    _pdfColorSpreadPopupState = { open: false, filter: '', highlightIdx: 0, sourceArtifactId: '' };
+    const overlay = document.getElementById('pdf-colorspread-popup-overlay');
+    const filter = document.getElementById('pdf-colorspread-popup-filter');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+    if (filter) filter.value = '';
+}
+
+function _renderPdfColorSpreadPopup() {
+    const overlay = document.getElementById('pdf-colorspread-popup-overlay');
+    const bodyEl = document.getElementById('pdf-colorspread-popup-body');
+    const filterEl = document.getElementById('pdf-colorspread-popup-filter');
+    const summaryEl = document.getElementById('pdf-colorspread-popup-summary');
+    const runBtn = document.getElementById('pdf-colorspread-popup-run');
+    if (!overlay || !bodyEl || !filterEl || !summaryEl) return;
+    if (!_pdfColorSpreadPopupState.open) {
+        _closePdfColorSpreadPopup();
+        return;
+    }
+
+    const visible = _visiblePdfColorSpreadCatalog();
+    const highlightIdx = visible.length ? Math.max(0, Math.min(_pdfColorSpreadPopupState.highlightIdx || 0, visible.length - 1)) : 0;
+    _pdfColorSpreadPopupState.highlightIdx = highlightIdx;
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    filterEl.value = _pdfColorSpreadPopupState.filter || '';
+    bodyEl.replaceChildren();
+
+    if (!visible.length) {
+        const row = document.createElement('tr');
+        row.className = 'tri-popup-empty';
+        const cell = document.createElement('td');
+        cell.colSpan = 3;
+        cell.textContent = 'No Color artifacts match this filter.';
+        row.appendChild(cell);
+        bodyEl.appendChild(row);
+        summaryEl.textContent = 'Select a Color artifact to generate a PDF spread.';
+        if (runBtn) runBtn.disabled = true;
+        return;
+    }
+
+    visible.forEach((art, idx) => {
+        const row = document.createElement('tr');
+        const cls = ['tri-popup-row'];
+        if (idx === highlightIdx) cls.push('highlight');
+        row.className = cls.join(' ');
+        row.onclick = () => {
+            _pdfColorSpreadPopupState.highlightIdx = idx;
+            _renderPdfColorSpreadPopup();
+        };
+
+        const createdCell = document.createElement('td');
+        createdCell.textContent = (art.created_at || '').replace('T', ' ').slice(0, 19);
+        const dimsCell = document.createElement('td');
+        dimsCell.textContent = art.width && art.height ? `${art.width}x${art.height}` : '';
+        const summaryCell = document.createElement('td');
+        summaryCell.textContent = _renderArtifactSummary(art) || art.artifact_id || '';
+        row.appendChild(createdCell);
+        row.appendChild(dimsCell);
+        row.appendChild(summaryCell);
+        bodyEl.appendChild(row);
+    });
+
+    const selected = visible[highlightIdx];
+    if (selected) _pdfColorSpreadPopupState.sourceArtifactId = selected.artifact_id || '';
+    summaryEl.textContent = selected
+        ? `Source: ${selected.artifact_id || '?'} • ${_renderArtifactSummary(selected) || 'Color artifact'} • output: PDF ColorSpread`
+        : 'Select a Color artifact to generate a PDF spread.';
+    if (runBtn) runBtn.disabled = !selected;
+}
+
+function openPdfColorSpreadPopup() {
+    const items = _pdfColorSourceArtifacts();
+    if (!items.length || _activeRenderRun) return;
+    const activeColor = (_renderArtifacts.color || [])[Math.max(0, _renderSelectedArtifact.color || 0)] || null;
+    let highlightIdx = 0;
+    if (activeColor && activeColor.artifact_id) {
+        const idx = items.findIndex(art => art.artifact_id === activeColor.artifact_id);
+        if (idx >= 0) highlightIdx = idx;
+    }
+    _pdfColorSpreadPopupState = {
+        open: true,
+        filter: '',
+        highlightIdx,
+        sourceArtifactId: activeColor ? (activeColor.artifact_id || '') : '',
+    };
+    _renderPdfColorSpreadPopup();
+    const filter = document.getElementById('pdf-colorspread-popup-filter');
+    if (filter && typeof filter.focus === 'function') filter.focus();
+}
+
+function _applyPdfColorSpreadFilter(text) {
+    _pdfColorSpreadPopupState.filter = String(text || '');
+    _pdfColorSpreadPopupState.highlightIdx = 0;
+    _renderPdfColorSpreadPopup();
+}
+
+async function runPdfColorSpreadSelected() {
+    if (_activeRenderRun) return;
+    const visible = _visiblePdfColorSpreadCatalog();
+    if (!visible.length) return;
+    const idx = Math.max(0, Math.min(_pdfColorSpreadPopupState.highlightIdx || 0, visible.length - 1));
+    const art = visible[idx];
+    const jobId = document.getElementById('render-results-dir').value.trim();
+    const btn = document.getElementById('pdf-colorspread-popup-run');
+    const orig = btn ? btn.textContent : 'Execute';
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Executing...'; }
+        const runId = _generateRunId();
+        const taskId = 'pdf_' + runId;
+        const artifactId = 'pdf_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        log(`PDF ColorSpread: dispatching ${art.artifact_id} -> ${artifactId}...`, '', 'render-log');
+        const dispResult = await lambdaPost('dispatch', {
+            target: 'pdf_artifact',
+            jobs: [{
+                job_id: jobId,
+                task_id: taskId,
+                artifact_id: artifactId,
+                source_artifact_id: art.artifact_id,
+                source_image_key: art.image_key,
+            }],
+            expected_keys: [],
+        });
+        if ((dispResult.fired || 0) !== 1) throw new Error('PDF ColorSpread dispatch failed');
+        _saveActiveRun({
+            job_id: jobId,
+            mode: 'pdf',
+            run_id: runId,
+            task_id: taskId,
+            started_at_ms: Date.now(),
+        });
+        document.getElementById('render-status').textContent = 'PDF ColorSpread queued...';
+        document.getElementById('render-status').className = 'status';
+        _closePdfColorSpreadPopup();
+        startActiveRenderObserver();
+    } catch (e) {
+        const statusEl = document.getElementById('render-status');
+        if (statusEl) {
+            statusEl.textContent = 'PDF error: ' + e.message;
+            statusEl.className = 'status error';
+        }
+        log('PDF ColorSpread failed: ' + e.message, 'err', 'render-log');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+}
+
 function _initRepalettePopup() {
     const overlay = document.getElementById('repalette-popup-overlay');
     const closeBtn = document.getElementById('repalette-popup-close');
@@ -2885,6 +3087,49 @@ function _initGenerateFromPalettePopup() {
         if (ev.key === 'Enter') {
             ev.preventDefault();
             runGenerateFromPaletteSelected();
+        }
+    });
+}
+
+function _initPdfColorSpreadPopup() {
+    const overlay = document.getElementById('pdf-colorspread-popup-overlay');
+    const closeBtn = document.getElementById('pdf-colorspread-popup-close');
+    const cancelBtn = document.getElementById('pdf-colorspread-popup-cancel');
+    const runBtn = document.getElementById('pdf-colorspread-popup-run');
+    const filterEl = document.getElementById('pdf-colorspread-popup-filter');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closePdfColorSpreadPopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closePdfColorSpreadPopup);
+    if (cancelBtn) cancelBtn.addEventListener('click', _closePdfColorSpreadPopup);
+    if (runBtn) runBtn.addEventListener('click', runPdfColorSpreadSelected);
+    if (filterEl) filterEl.addEventListener('input', (ev) => _applyPdfColorSpreadFilter(ev.target.value));
+    document.addEventListener('keydown', (ev) => {
+        if (!_pdfColorSpreadPopupState.open) return;
+        const visible = _visiblePdfColorSpreadCatalog();
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closePdfColorSpreadPopup();
+            return;
+        }
+        if (!visible.length) return;
+        if (ev.key === 'ArrowDown') {
+            ev.preventDefault();
+            _pdfColorSpreadPopupState.highlightIdx = Math.min((_pdfColorSpreadPopupState.highlightIdx || 0) + 1, visible.length - 1);
+            _renderPdfColorSpreadPopup();
+            return;
+        }
+        if (ev.key === 'ArrowUp') {
+            ev.preventDefault();
+            _pdfColorSpreadPopupState.highlightIdx = Math.max((_pdfColorSpreadPopupState.highlightIdx || 0) - 1, 0);
+            _renderPdfColorSpreadPopup();
+            return;
+        }
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            runPdfColorSpreadSelected();
         }
     });
 }
@@ -3416,6 +3661,7 @@ _initAutolevelPopup();
 _initRepalettePopup();
 _initColorRepalettePopup();
 _initGenerateFromPalettePopup();
+_initPdfColorSpreadPopup();
 _updateSolveScoreButtons();  // initial disabled state
 _clearPaletteCanvas('No palette selected');
 
@@ -4561,6 +4807,7 @@ function _renderRunCompleteLabel(run) {
     if (!run) return 'Render complete';
     if (run.mode === 'repalette') return 'RePalette complete';
     if (run.mode === 'color_repalette') return 'Color RePalette complete';
+    if (run.mode === 'pdf') return 'PDF complete';
     return 'Render complete';
 }
 
@@ -4568,6 +4815,7 @@ function _renderRunCompleteLog(run, rd) {
     const target = rd.artifact_id || rd.palette_id || rd.image_key || run.mode;
     if (run && run.mode === 'repalette') return 'RePalette complete: ' + target;
     if (run && run.mode === 'color_repalette') return 'Color RePalette complete: ' + target;
+    if (run && run.mode === 'pdf') return 'PDF complete: ' + target;
     return 'Render complete: ' + target;
 }
 
@@ -4789,6 +5037,7 @@ function _renderFamilyLabel(family) {
     if (family === 'bilevel') return 'BiLevel';
     if (family === 'coeffs') return 'Coeffs';
     if (family === 'palette') return 'Palette';
+    if (family === 'pdf') return 'PDF';
     return 'Color';
 }
 
@@ -4836,6 +5085,10 @@ function _renderArtifactSummary(art) {
         const omega = art.solve_score_omega != null ? `w=${Number(art.solve_score_omega).toFixed(0)}` : '';
         const derived = art.derivation_kind === 'repalette' ? 'repalette' : '';
         return [art.metric, q, omega, art.palette, derived].filter(Boolean).join(' ');
+    }
+    if (art.family === 'pdf') {
+        const kind = art.pdf_kind === 'color_spread' ? 'ColorSpread' : (art.pdf_kind || 'pdf');
+        return [kind, art.source_display_name || art.source_artifact_id].filter(Boolean).join(' · ');
     }
     if (art.legacy) return 'legacy';
     return art.format || '';
@@ -5057,15 +5310,18 @@ function _updateRenderActionButtons() {
     const repalBtn = document.getElementById('btn-render-repalette');
     const colorRepalBtn = document.getElementById('btn-render-color-repalette');
     const fromPalBtn = document.getElementById('btn-render-generate-from-palette');
+    const pdfBtn = document.getElementById('btn-render-pdf-colorspread');
     const reusablePalettes = _reusablePaletteArtifacts();
+    const colorSources = _pdfColorSourceArtifacts();
     if (dlBtn) dlBtn.disabled = !hasSelection;
     if (delBtn) delBtn.disabled = !hasSelection;
-    if (dzBtn) dzBtn.disabled = !hasSelection;
+    if (dzBtn) dzBtn.disabled = !hasSelection || _renderActiveFamily === 'pdf';
     if (popBtn) popBtn.disabled = !(hasSelection && (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette'));
     if (autoBtn) autoBtn.disabled = !(hasSelection && _renderActiveFamily === 'color' && art && art.image_key) || !!_activeRenderRun;
     if (repalBtn) repalBtn.disabled = !(_renderActiveFamily === 'palette' && hasSelection && _canRepaletteArtifact(art)) || !!_activeRenderRun;
     if (colorRepalBtn) colorRepalBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && _canColorRepaletteArtifact(art)) || !!_activeRenderRun;
     if (fromPalBtn) fromPalBtn.disabled = !(_renderActiveFamily === 'color' && reusablePalettes.length > 0) || !!_activeRenderRun;
+    if (pdfBtn) pdfBtn.disabled = !(_renderActiveFamily === 'pdf' && colorSources.length > 0) || !!_activeRenderRun;
 }
 
 function _captureRenderCatalogScroll(family) {
@@ -5159,6 +5415,10 @@ async function deepZoomSelectedRenderArtifact() {
 }
 
 async function generateSelectedRenderArtifact() {
+    if (_renderActiveFamily === 'pdf') {
+        openPdfColorSpreadPopup();
+        return;
+    }
     if (_renderActiveFamily === 'palette') {
         await runRenderPaletteArtifact();
         return;
@@ -5187,9 +5447,10 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         bilevel: families.bilevel || [],
         coeffs: families.coeffs || [],
         palette: families.palette || [],
+        pdf: families.pdf || [],
     };
     if (!_renderArtifacts[_renderActiveFamily]) _renderActiveFamily = 'color';
-    for (const family of ['color', 'bilevel', 'coeffs', 'palette']) {
+    for (const family of ['color', 'bilevel', 'coeffs', 'palette', 'pdf']) {
         const inv = _renderArtifacts[family] || [];
         const idx = _renderSelectedArtifact[family];
         if (!inv.length) _renderSelectedArtifact[family] = -1;
@@ -5200,7 +5461,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     const activeFamilyInv = _renderArtifacts[_renderActiveFamily] || [];
     const activeIdx = _renderSelectedArtifact[_renderActiveFamily];
     const activeArt = activeIdx >= 0 ? activeFamilyInv[activeIdx] : null;
-    const familyTabs = ['color', 'bilevel', 'coeffs', 'palette'].map((family) => {
+    const familyTabs = ['color', 'bilevel', 'coeffs', 'palette', 'pdf'].map((family) => {
         const active = family === _renderActiveFamily;
         const count = (_renderArtifacts[family] || []).length;
         return `<button class="btn-secondary" data-render-family="${family}" onclick="_renderSelectFamily('${family}')" style="padding:5px 12px; font-size:11px; margin-right:4px; background:${active ? '#30475e' : '#1a1a2e'}; color:${active ? '#fff' : '#aaa'}">${_renderFamilyLabel(family)} <span style="color:#777">(${count})</span></button>`;
@@ -5211,6 +5472,8 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Color settings. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color.</span>';
+    } else if (_renderActiveFamily === 'pdf') {
+        controlsExtra = '<span style="font-size:11px; color:#666">ColorSpread creates a single spread PDF from a selected Color artifact. The left page uses metadata-derived text and the right page uses the saved Color image.</span>';
     }
 
     let catalogHtml = '';
@@ -5234,7 +5497,12 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let viewerHtml = '<div style="color:#444; font-size:12px; padding:12px 0; text-align:center">No artifact selected</div>';
     if (activeArt && activeArt.viewer_url) {
-        viewerHtml = `<img src="${activeArt.viewer_url}" style="max-width:100%; max-height:100%; background:#000; display:block; margin:0 auto">`;
+        if (activeArt.format === 'pdf' || (activeArt.content_type || '') === 'application/pdf') {
+            const pdfSrc = `${activeArt.viewer_url}#toolbar=0&navpanes=0&view=FitH`;
+            viewerHtml = `<iframe src="${pdfSrc}" style="width:100%; height:100%; border:0; background:#000"></iframe>`;
+        } else {
+            viewerHtml = `<img src="${activeArt.viewer_url}" style="max-width:100%; max-height:100%; background:#000; display:block; margin:0 auto">`;
+        }
     }
 
     preview.innerHTML = `
@@ -5242,7 +5510,9 @@ function renderArtifactPanel(jobId, summary, options = {}) {
             <div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:10px">${familyTabs}</div>
             <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px">
                 <div style="display:flex; align-items:center; gap:8px">
-                    <button class="btn-primary" id="btn-render-generate" onclick="generateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px">Generate</button>
+                    ${_renderActiveFamily === 'pdf'
+                        ? '<button class="btn-primary" id="btn-render-pdf-colorspread" onclick="openPdfColorSpreadPopup()" style="padding:4px 12px; font-size:11px">ColorSpread</button>'
+                        : '<button class="btn-primary" id="btn-render-generate" onclick="generateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px">Generate</button>'}
                     ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-generate-from-palette" onclick="openGenerateFromPalettePopup()" style="padding:4px 12px; font-size:11px" disabled>GenerateFromPalette</button>' : ''}
                     ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-color-repalette" onclick="openColorRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>' : ''}
                     ${_renderActiveFamily === 'palette' ? '<button class="btn-secondary" id="btn-render-repalette" onclick="openRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>' : ''}
@@ -5250,7 +5520,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
                     ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-autolevels" onclick="openAutolevelPopup()" style="padding:4px 12px; font-size:11px" disabled>Autolevels</button>' : ''}
                     <button class="btn-secondary" id="btn-render-download" onclick="downloadSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Download</button>
                     <button class="btn-secondary" id="btn-render-delete" onclick="deleteSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Delete</button>
-                    <button class="btn-secondary" id="btn-render-deepzoom" onclick="deepZoomSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>DeepZoom</button>
+                    ${_renderActiveFamily !== 'pdf' ? '<button class="btn-secondary" id="btn-render-deepzoom" onclick="deepZoomSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>DeepZoom</button>' : ''}
                 </div>
                 <div style="font-size:11px; color:#666">Click row to view. Arrow keys navigate within ${_renderFamilyLabel(_renderActiveFamily)}.</div>
             </div>

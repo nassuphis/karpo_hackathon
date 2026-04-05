@@ -20,6 +20,7 @@ lambda/png_export
 lambda/dz_export
 lambda/sweep_cm
 lambda/coeffs_bilevel_raster
+lambda/roots2pix_mt
 # Local-only test binaries (never deployed)
 lambda/*_local
 lambda/*_test

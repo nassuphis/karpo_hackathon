@@ -41,6 +41,7 @@
 
 #define SOLVE_SCORE_EPS2 1e-300
 #define SOLVE_SCORE_EPS  1e-150
+#define SOLVE_SCORE_FILTER_MAXDEG 1024
 
 /* ── Enum ─────────────────────────────────────────────────────────────── */
 
@@ -123,6 +124,35 @@ static int roots_all_finite(const float *roots, int degree) {
     return 1;
 }
 
+static int count_finite_roots(const float *roots, int degree) {
+    int count = 0;
+    for (int i = 0; i < degree; i++) {
+        if (isfinite((double)roots[i * 2]) && isfinite((double)roots[i * 2 + 1])) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static int solve_metric_min_roots(enum SolveMetric metric) {
+    switch (metric) {
+        case SOLVE_METRIC_CENTROID_RE:
+        case SOLVE_METRIC_CENTROID_IM:
+        case SOLVE_METRIC_CENTROID_DIST:
+        case SOLVE_METRIC_DIST_UNIT_CIRCLE:
+        case SOLVE_METRIC_ASYMMETRY_RE:
+            return 1;
+        case SOLVE_METRIC_AREA:
+            return 3;
+        default:
+            return 2;
+    }
+}
+
+static const char *solve_metric_validity_policy_name(void) {
+    return "finite_only_min_roots";
+}
+
 static double apply_solve_score_omega(double u, double omega) {
     if (!isfinite(u)) return 0.0;
     if (u < 0.0) u = 0.0;
@@ -131,6 +161,14 @@ static double apply_solve_score_omega(double u, double omega) {
     if (omega < 1.0) omega = 1.0;
     if (omega > 10.0) omega = 10.0;
     return 0.5 * (cos(omega * 2.0 * M_PI * u) + 1.0);
+}
+
+static double apply_solve_score_transfer(double u, int omegaEnabled, double omega) {
+    if (!isfinite(u)) return 0.0;
+    if (u < 0.0) u = 0.0;
+    if (u > 1.0) u = 1.0;
+    if (!omegaEnabled) return u;
+    return apply_solve_score_omega(u, omega);
 }
 
 /* Exact median: sort + middle element(s). Modifies values[] in-place. */
@@ -208,7 +246,35 @@ static void compute_nearest_neighbor_scores(const float *roots, int degree, doub
  */
 static double compute_solve_metric_score(const float *roots, int degree, enum SolveMetric metric) {
     if (degree <= 0) return 0.0;
-    if (!roots_all_finite(roots, degree)) return 0.0;
+    int minRoots = solve_metric_min_roots(metric);
+    int finiteDegree = degree;
+    const float *useRoots = roots;
+    float stackRoots[SOLVE_SCORE_FILTER_MAXDEG * 2];
+    float *ownedRoots = NULL;
+
+    if (!roots_all_finite(roots, degree)) {
+        finiteDegree = count_finite_roots(roots, degree);
+        if (finiteDegree < minRoots) return 0.0;
+        ownedRoots = (finiteDegree <= SOLVE_SCORE_FILTER_MAXDEG)
+            ? stackRoots
+            : (float *)malloc((size_t)finiteDegree * 2 * sizeof(float));
+        if (!ownedRoots) return 0.0;
+        int out = 0;
+        for (int i = 0; i < degree; i++) {
+            double re = roots[i * 2];
+            double im = roots[i * 2 + 1];
+            if (!isfinite(re) || !isfinite(im)) continue;
+            ownedRoots[out * 2] = (float)re;
+            ownedRoots[out * 2 + 1] = (float)im;
+            out++;
+        }
+        useRoots = ownedRoots;
+    } else if (degree < minRoots) {
+        return 0.0;
+    }
+
+    degree = finiteDegree;
+    roots = useRoots;
 
     /* ── proximity: -0.5*log10(min d2) ── */
     if (metric == SOLVE_METRIC_PROXIMITY) {
@@ -223,7 +289,9 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
                 if (d2 < d2_min) d2_min = d2;
             }
         }
-        return -0.5 * log10(d2_min > SOLVE_SCORE_EPS2 ? d2_min : SOLVE_SCORE_EPS2);
+        double result = -0.5 * log10(d2_min > SOLVE_SCORE_EPS2 ? d2_min : SOLVE_SCORE_EPS2);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
     }
 
     /* ── crowding: mean(-0.5*log10(d2)) over all i<j ── */
@@ -240,7 +308,9 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
                 sum += -0.5 * log10(d2 > SOLVE_SCORE_EPS2 ? d2 : SOLVE_SCORE_EPS2);
             }
         }
-        return sum / M;
+        double result = sum / M;
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
     }
 
     /* ── NN-based metrics: clusteriness, nn_variation ── */
@@ -266,6 +336,7 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
         }
 
         if (s1_buf != s1) free(s1_buf);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
         return result;
     }
 
@@ -278,6 +349,7 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
         double im_med = median_inplace(buf, degree);
         double result = -log10(im_med + SOLVE_SCORE_EPS);
         if (buf != abs_im) free(buf);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
         return result;
     }
 
@@ -286,15 +358,19 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
     compute_centroid(roots, degree, &mean_re, &mean_im);
 
     if (metric == SOLVE_METRIC_CENTROID_RE) {
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
         return mean_re;
     }
 
     if (metric == SOLVE_METRIC_CENTROID_IM) {
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
         return mean_im;
     }
 
     if (metric == SOLVE_METRIC_CENTROID_DIST) {
-        return log10(hypot(mean_re, mean_im) + SOLVE_SCORE_EPS);
+        double result = log10(hypot(mean_re, mean_im) + SOLVE_SCORE_EPS);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
     }
 
     if (metric == SOLVE_METRIC_DIST_UNIT_CIRCLE) {
@@ -304,7 +380,9 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
             double im = roots[i * 2 + 1];
             sum += fabs(hypot(re, im) - 1.0);
         }
-        return log10(sum / degree + SOLVE_SCORE_EPS);
+        double result = log10(sum / degree + SOLVE_SCORE_EPS);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
     }
 
     if (metric == SOLVE_METRIC_ASYMMETRY_RE) {
@@ -313,7 +391,9 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
             mean_abs_re += fabs((double)roots[i * 2]);
         }
         mean_abs_re /= degree;
-        return fabs(mean_re) / (mean_abs_re + SOLVE_SCORE_EPS);
+        double result = fabs(mean_re) / (mean_abs_re + SOLVE_SCORE_EPS);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
     }
 
     /* ── spread: 0.5*log10(RMS_radius^2) ── */
@@ -326,7 +406,9 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
             r2_sum += dx * dx + dy * dy;
         }
         double r2_mean = r2_sum / degree;
-        return 0.5 * log10(r2_mean > SOLVE_SCORE_EPS2 ? r2_mean : SOLVE_SCORE_EPS2);
+        double result = 0.5 * log10(r2_mean > SOLVE_SCORE_EPS2 ? r2_mean : SOLVE_SCORE_EPS2);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
     }
 
     /* ── Radii-based metrics: shelliness, outlierness ── */
@@ -352,6 +434,7 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
         }
 
         if (rho_buf != rho) free(rho_buf);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
         return result;
     }
 
@@ -383,14 +466,19 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
     if (lambda_min < 0.0) lambda_min = 0.0;
 
     if (metric == SOLVE_METRIC_ANISOTROPY) {
-        return log10(lambda_max + SOLVE_SCORE_EPS2) - log10(lambda_min + SOLVE_SCORE_EPS2);
+        double result = log10(lambda_max + SOLVE_SCORE_EPS2) - log10(lambda_min + SOLVE_SCORE_EPS2);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
     }
 
     if (metric == SOLVE_METRIC_AREA) {
         double product = lambda_max * lambda_min;
-        return 0.5 * log10(product > SOLVE_SCORE_EPS2 ? product : SOLVE_SCORE_EPS2);
+        double result = 0.5 * log10(product > SOLVE_SCORE_EPS2 ? product : SOLVE_SCORE_EPS2);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
     }
 
+    if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
     return 0.0;
 }
 

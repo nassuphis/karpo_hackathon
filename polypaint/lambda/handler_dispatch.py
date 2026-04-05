@@ -24,6 +24,7 @@ FUNCTIONS = {
     "finalize": os.environ.get("FINALIZE_FUNCTION", "polypaint-finalize"),
     "encode": os.environ.get("ENCODE_FUNCTION", "polypaint-encode"),
     "sweep": os.environ.get("SWEEP_FUNCTION", "polypaint-sweep"),
+    "sweep_mt": os.environ.get("SWEEP_MT_FUNCTION", "polypaint-sweep-mt"),
     "bilevel": os.environ.get("BILEVEL_FUNCTION", "polypaint-bilevel"),
     "bilevel_stitch": os.environ.get("BILEVEL_STITCH_FUNCTION", "polypaint-bilevel-stitch"),
     "deepzoom_export": os.environ.get("DZ_EXPORT_FUNCTION", "polypaint-deepzoom-export"),

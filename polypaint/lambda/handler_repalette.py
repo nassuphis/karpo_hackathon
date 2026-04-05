@@ -40,10 +40,27 @@ def _cleanup_tmp():
             pass
 
 
-def _variant_id(metric, palette, q, omega):
+def _parse_boolish(value, default=True):
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _omega_display(enabled, omega):
+    return f"w={omega:g}" if enabled else "w=off"
+
+
+def _variant_id(metric, palette, q, omega, omega_enabled):
     q_label = f"{float(q) * 100:.1f}".replace(".", "p")
-    omega_f = float(omega)
-    omega_label = f"{omega_f:.0f}" if omega_f.is_integer() else str(omega_f).replace(".", "p")
+    if omega_enabled:
+        omega_f = float(omega)
+        omega_label = f"{omega_f:.0f}" if omega_f.is_integer() else str(omega_f).replace(".", "p")
+    else:
+        omega_label = "off"
     return f"pal_{int(time.time() * 1000)}_{metric}_{palette}_q{q_label}_w{omega_label}"
 
 
@@ -226,18 +243,19 @@ def handler(event, context):
         metric = source_meta.get("metric", "proximity")
         q = float(source_meta.get("solve_score_quantile", 0.001))
         omega = float(source_meta.get("solve_score_omega", 1.0))
+        omega_enabled = _parse_boolish(source_meta.get("solve_score_omega_enabled", True), True)
         full_n = int(source_meta.get("N", 0) or 0)
         if full_n <= 0:
             raise RuntimeError(f"Palette artifact {source_palette_id} missing valid N")
 
         created_at = _utc_now_iso()
-        new_palette_id = _variant_id(metric, new_palette, q, omega)
+        new_palette_id = _variant_id(metric, new_palette, q, omega, omega_enabled)
         new_prefix = f"renders/{job_id}/palettes/{new_palette_id}/"
         image_key = new_prefix + "image.jpeg"
         preview_key = new_prefix + "preview.png"
         meta_key = new_prefix + "meta.json"
 
-        reusable = source_meta.get("data_layout") == "chunk_all_pass_v1" and bool(source_meta.get("render_reusable"))
+        reusable = source_meta.get("data_layout") == "chunk_all_pass_v1" and _parse_boolish(source_meta.get("render_reusable"), False)
         if reusable:
             report_status(job_id, task_id, "copying", result_data={**progress, "phase_label": "Copy numeric data"})
             copied = _copy_reusable_chunk_payload(source_meta, new_prefix, job_id=job_id, task_id=task_id, progress=progress)
@@ -308,6 +326,7 @@ def handler(event, context):
             "palette": new_palette,
             "solve_score_quantile": str(q),
             "solve_score_omega": str(omega),
+            "solve_score_omega_enabled": "true" if omega_enabled else "false",
             "full_n": str(full_n),
             "times": str(source_meta.get("times", 1)),
             "using_pass": "0",
@@ -323,11 +342,12 @@ def handler(event, context):
             "job_id": job_id,
             "palette_id": new_palette_id,
             "created_at": created_at,
-            "display_name": f"{metric} q={(q * 100):.1f}% w={omega:g} {new_palette} {created_at}",
+            "display_name": f"{metric} q={(q * 100):.1f}% {_omega_display(omega_enabled, omega)} {new_palette} {created_at}",
             "metric": metric,
             "palette": new_palette,
             "solve_score_quantile": q,
             "solve_score_omega": omega,
+            "solve_score_omega_enabled": omega_enabled,
             "root_transforms": source_meta.get("root_transforms") or [],
             "degree": source_meta.get("degree"),
             "N": full_n,

@@ -119,6 +119,7 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["solve_score"]["metric"] == "crowding"
         assert plan["solve_score"]["quantile"] == 0.01
         assert plan["solve_score"]["omega"] == 4.0
+        assert plan["solve_score"]["omega_enabled"] is True
         assert "crowding" in plan["solve_score"]["clip_key"]
         assert "crowding" in plan["solve_score"]["bins_key"]
         assert plan["outputs"]["repalette_capable"] is True
@@ -126,12 +127,51 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["outputs"]["metadata"]["square_extent"] == "2.0"
         assert plan["outputs"]["metadata"]["rotation"] == "0"
         assert plan["outputs"]["metadata"]["solve_score_omega"] == "4.0"
+        assert plan["outputs"]["metadata"]["solve_score_omega_enabled"] == "true"
         assert plan["outputs"]["metadata"]["background_color"] == "000000"
         assert plan["outputs"]["metadata"]["background_threshold"] == "4"
         assert plan["outputs"]["metadata"]["repalette_capable"] == "true"
         assert plan["outputs"]["metadata"]["pixel_bins_prefix"] == "renders/j/color/color_run_t/pixel_bins/tile_"
         assert plan["outputs"]["metadata"]["pixel_bins_layout"] == "tile_u8_v1"
         assert plan["grid"]["pixel_bin_tile_keys"][0] == "renders/j/color/color_run_t/pixel_bins/tile_0000.bin"
+        assert plan["raster"]["requested_engine"] == "single"
+        assert plan["raster"]["engine"] == "single"
+        assert plan["raster"]["requested_threads"] == 4
+        assert plan["raster"]["threads"] == 1
+        assert plan["raster"]["function_name"] == "polypaint-raster"
+        assert plan["raster"]["eligible"] is True
+        assert plan["raster"]["reason"] == "solve_score"
+
+    @patch("handler_render_plan._storage_call")
+    def test_mt_request_carries_requested_threads(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="crowding",
+            raster_engine="mt",
+            raster_mt_threads=6,
+        ), None)
+        plan = json.loads(result["body"])
+        assert plan["raster"]["requested_engine"] == "mt"
+        assert plan["raster"]["engine"] == "mt"
+        assert plan["raster"]["requested_threads"] == 6
+        assert plan["raster"]["threads"] == 6
+        assert plan["raster"]["function_name"] == "polypaint-raster-mt"
+
+    @patch("handler_render_plan._storage_call")
+    def test_invalid_mt_threads_rejected(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_make_event(color_mode="solve_score", raster_engine="mt", raster_mt_threads=0), None)
+        self.assertIn("raster_mt_threads", str(ctx.exception))
 
     @patch("handler_render_plan._storage_call")
     def test_tri_palette_id_accepted_and_preserved(self, mock_storage):
@@ -181,6 +221,7 @@ class TestRenderPlan(unittest.TestCase):
             "palette": "reef",
             "solve_score_quantile": 0.01,
             "solve_score_omega": 3.0,
+            "solve_score_omega_enabled": False,
             "root_transforms": [["rotate_roots", "0.25"]],
             "degree": 5,
             "N": 1024,
@@ -205,10 +246,30 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["outputs"]["metadata"]["solve_metric"] == "crowding"
         assert plan["outputs"]["metadata"]["solve_score_quantile"] == "0.01"
         assert plan["outputs"]["metadata"]["solve_score_omega"] == "3.0"
+        assert plan["outputs"]["metadata"]["solve_score_omega_enabled"] == "false"
+        assert plan["outputs"]["metadata"]["palette_source_omega_enabled"] == "false"
         assert plan["outputs"]["metadata"]["repalette_capable"] == "true"
         assert plan["outputs"]["metadata"]["pixel_bins_prefix"] == "renders/j/color/color_run_t/pixel_bins/tile_"
         assert plan["params"]["palette"] == "inferno"
         assert plan["params"]["root_transforms"] == [["rotate_roots", "0.25"]]
+        assert plan["raster"]["requested_engine"] == "single"
+        assert plan["raster"]["engine"] == "single"
+        assert plan["raster"]["reason"] == "saved_palette"
+
+    @patch("handler_render_plan._storage_call")
+    def test_solve_score_plan_accepts_disabled_omega(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score", solve_metric="crowding",
+            solve_score_quantile=0.01, solve_score_omega=4, solve_score_omega_enabled=False
+        ), None)
+        plan = json.loads(result["body"])
+        assert plan["solve_score"]["omega_enabled"] is False
+        assert plan["outputs"]["metadata"]["solve_score_omega_enabled"] == "false"
 
     @patch("handler_render_plan.s3")
     @patch("handler_render_plan._storage_call")
@@ -256,6 +317,99 @@ class TestRenderPlan(unittest.TestCase):
         result = handler(_make_event(), None)
         plan_json = json.loads(result["body"])
         assert len(plan_json) < 200 * 1024, "plan exceeds 200KB"
+
+    @patch("handler_render_plan._storage_call")
+    def test_constant_color_plan_routes_to_mt_raster(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({"degree": 5, "n_chunks": 2})
+        from handler_render_plan import handler
+        result = handler(_make_event(color_mode="constant"), None)
+        plan = json.loads(result["body"])
+        assert plan["raster"]["engine"] == "single"
+        assert plan["raster"]["eligible"] is True
+        assert plan["raster"]["reason"] == "constant"
+
+    @patch("handler_render_plan._storage_call")
+    def test_rainbow_match_none_routes_to_mt_raster(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({"degree": 5, "n_chunks": 2})
+        from handler_render_plan import handler
+        result = handler(_make_event(color_mode="rainbow", match_mode="none"), None)
+        plan = json.loads(result["body"])
+        assert plan["raster"]["engine"] == "single"
+        assert plan["raster"]["eligible"] is True
+        assert plan["raster"]["reason"] == "rainbow_match_none"
+
+    @patch("handler_render_plan._storage_call")
+    def test_explicit_mt_request_routes_solve_score_to_mt(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="crowding",
+            solve_score_quantile=0.01,
+            solve_score_omega=4,
+            raster_engine="mt",
+        ), None)
+        plan = json.loads(result["body"])
+        assert plan["raster"]["requested_engine"] == "mt"
+        assert plan["raster"]["engine"] == "mt"
+        assert plan["raster"]["function_name"] == "polypaint-raster-mt"
+        assert plan["raster"]["eligible"] is True
+        assert plan["raster"]["reason"] == "solve_score"
+
+    @patch("handler_render_plan._storage_call")
+    def test_explicit_mt_request_routes_constant_to_mt(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({"degree": 5, "n_chunks": 2})
+        from handler_render_plan import handler
+        result = handler(_make_event(color_mode="constant", raster_engine="mt"), None)
+        plan = json.loads(result["body"])
+        assert plan["raster"]["requested_engine"] == "mt"
+        assert plan["raster"]["engine"] == "mt"
+        assert plan["raster"]["reason"] == "constant"
+
+    @patch("handler_render_plan._storage_call")
+    def test_explicit_mt_request_routes_rainbow_match_none_to_mt(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({"degree": 5, "n_chunks": 2})
+        from handler_render_plan import handler
+        result = handler(_make_event(color_mode="rainbow", match_mode="none", raster_engine="mt"), None)
+        plan = json.loads(result["body"])
+        assert plan["raster"]["requested_engine"] == "mt"
+        assert plan["raster"]["engine"] == "mt"
+        assert plan["raster"]["reason"] == "rainbow_match_none"
+
+    @patch("handler_render_plan._storage_call")
+    def test_rainbow_greedy_stays_single_threaded(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({"degree": 5, "n_chunks": 2})
+        from handler_render_plan import handler
+        result = handler(_make_event(color_mode="rainbow", match_mode="greedy"), None)
+        plan = json.loads(result["body"])
+        assert plan["raster"]["engine"] == "single"
+        assert plan["raster"]["function_name"] == "polypaint-raster"
+        assert plan["raster"]["eligible"] is False
+        assert plan["raster"]["reason"] == "rainbow_match_greedy"
+
+    @patch("handler_render_plan._storage_call")
+    def test_explicit_mt_request_for_unsupported_mode_falls_back_to_single(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({"degree": 5, "n_chunks": 2})
+        from handler_render_plan import handler
+        result = handler(_make_event(color_mode="proximity", raster_engine="mt"), None)
+        plan = json.loads(result["body"])
+        assert plan["raster"]["requested_engine"] == "mt"
+        assert plan["raster"]["engine"] == "single"
+        assert plan["raster"]["eligible"] is False
+        assert plan["raster"]["reason"] == "mt_requested_but_proximity_single_thread_only"
+
+    @patch("handler_render_plan._storage_call")
+    def test_proximity_stays_single_threaded(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({"degree": 5, "n_chunks": 2})
+        from handler_render_plan import handler
+        result = handler(_make_event(color_mode="proximity"), None)
+        plan = json.loads(result["body"])
+        assert plan["raster"]["engine"] == "single"
+        assert plan["raster"]["eligible"] is False
+        assert plan["raster"]["reason"] == "proximity_single_thread_only"
 
     def test_plan_does_not_dispatch_or_poll(self):
         """Plan Lambda must not contain dispatch/poll/phase-transition code."""

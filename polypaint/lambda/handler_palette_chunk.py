@@ -30,6 +30,16 @@ def _cleanup():
             pass
 
 
+def _parse_boolish(value, default=True):
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 def handler(event, context):
     params = parse_body(event)
     job_id = params["job_id"]
@@ -40,6 +50,7 @@ def handler(event, context):
     metric = params["metric"]
     q = params["solve_score_quantile"]
     omega = float(params.get("solve_score_omega", 1.0))
+    omega_enabled = _parse_boolish(params.get("solve_score_omega_enabled", True), True)
     bins_key = params["solve_score_bins_key"]
     step_start = int(params["step_start"])
     step_count = int(params["step_count"])
@@ -72,6 +83,8 @@ def handler(event, context):
             raise RuntimeError(f"Bins quantile mismatch: expected {q}, got {bins_data.get('clip_quantile')}")
         if float(bins_data.get("omega", 1.0)) != omega:
             raise RuntimeError(f"Bins omega mismatch: expected {omega}, got {bins_data.get('omega')}")
+        if _parse_boolish(bins_data.get("omega_enabled", True), True) != omega_enabled:
+            raise RuntimeError(f"Bins omega_enabled mismatch: expected {omega_enabled}, got {bins_data.get('omega_enabled')}")
         cuts = bins_data.get("cuts_norm", [])
         if len(cuts) != 9:
             raise RuntimeError(f"Bins artifact must contain 9 cuts, got {len(cuts)}")
@@ -87,6 +100,7 @@ def handler(event, context):
             f"--clip_hi={bins_data['clip_hi']}",
             f"--cuts={','.join(str(c) for c in cuts)}",
             f"--omega={omega}",
+            f"--omega_enabled={1 if omega_enabled else 0}",
             f"--step_count={step_count}",
             f"--scores_out={_TMP_SCORES}",
             f"--bins_out={_TMP_BINS}",
@@ -121,6 +135,7 @@ def handler(event, context):
             "step_count": step_count,
             "metric": metric,
             "omega": omega,
+            "omega_enabled": omega_enabled,
             "clip_lo": bins_data["clip_lo"],
             "clip_hi": bins_data["clip_hi"],
             "cuts_norm": cuts,

@@ -1,0 +1,906 @@
+{
+  "poly_101": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_102": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_106": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_108": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_110": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_111": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_112": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_113": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_114": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_115": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_116": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_121": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_13": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_14": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_149": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_15": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_164": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_poly164_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_18": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_183": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_19": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_22": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_25": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_26": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_307": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_31": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_314": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_316": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_317": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_324": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_333": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_335": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_345": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_383": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_39": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_413": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_450": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_467": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_475": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_478": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_482": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_491": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_504": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_51": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_513": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_535": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_545": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_551": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_556": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_56": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_562": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_566": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_570": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_59": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_596": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_604": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_63": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_645": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_poly645_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_66": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_667": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_68": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_69": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_691": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_694": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_698": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_727": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_733": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_740": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_741": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_742": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_745": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_746": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_749": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_75": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_751": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_755": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_758": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_759": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_760": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_762": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_765": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_766": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_769": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_773": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_774": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_776": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_777": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_780": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_782": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_785": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_787": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_788": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_789": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_79": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_792": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_793": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_794": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_795": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_poly795_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_798": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_799": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_80": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_800": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_802": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_803": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_806": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_809": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_810": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_811": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_812": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_813": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_814": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_818": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_86": {
+    "agreement_pct": 100,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  },
+  "poly_87": {
+    "agreement_pct": 100,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ],
+    "parity_verified": true
+  }
+}

@@ -34,6 +34,20 @@ def _utc_now_iso():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _parse_boolish(value, default=True):
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _omega_display(enabled, omega):
+    return f"w={omega:g}" if enabled else "w=off"
+
+
 def _delete_keys(keys):
     keys = [k for k in keys if k]
     for i in range(0, len(keys), 1000):
@@ -63,6 +77,7 @@ def handler(event, context):
     palette = params["palette"]
     q = params["solve_score_quantile"]
     omega = float(params.get("solve_score_omega", 1.0))
+    omega_enabled = _parse_boolish(params.get("solve_score_omega_enabled", True), True)
     root_transforms = params.get("root_transforms", [])
     image_key = params["image_key"]
     preview_key = params["preview_key"]
@@ -128,6 +143,8 @@ def handler(event, context):
         clip_meta = json.loads(clip_obj["Body"].read())
         if float(bins_meta.get("omega", 1.0)) != omega:
             raise RuntimeError(f"Solve-score bins omega mismatch: expected {omega}, got {bins_meta.get('omega')}")
+        if _parse_boolish(bins_meta.get("omega_enabled", True), True) != omega_enabled:
+            raise RuntimeError(f"Solve-score bins omega_enabled mismatch: expected {omega_enabled}, got {bins_meta.get('omega_enabled')}")
         assemble_ms = int((time.time() - t0) * 1000)
         report_status(job_id, task_id, "assembled", result_data={**progress, "assemble_ms": assemble_ms})
 
@@ -166,6 +183,7 @@ def handler(event, context):
             "palette": palette,
             "solve_score_quantile": str(q),
             "solve_score_omega": str(omega),
+            "solve_score_omega_enabled": "true" if omega_enabled else "false",
             "full_n": str(full_n),
             "times": str(times),
             "using_pass": "0",
@@ -182,11 +200,12 @@ def handler(event, context):
             "job_id": job_id,
             "palette_id": palette_id,
             "created_at": created_at,
-            "display_name": f"{metric} q={(float(q) * 100):.1f}% w={omega:g} {palette} {created_at}",
+            "display_name": f"{metric} q={(float(q) * 100):.1f}% {_omega_display(omega_enabled, omega)} {palette} {created_at}",
             "metric": metric,
             "palette": palette,
             "solve_score_quantile": float(q),
             "solve_score_omega": omega,
+            "solve_score_omega_enabled": omega_enabled,
             "root_transforms": root_transforms or [],
             "degree": degree,
             "N": full_n,

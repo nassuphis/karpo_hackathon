@@ -232,7 +232,7 @@ def _list_saved_palettes(job_id):
             chunk_scores_prefix = meta.get("chunk_scores_prefix", prefix + "chunks/score_chunk_")
             chunk_bins_prefix = meta.get("chunk_bins_prefix", prefix + "chunks/palette_bins_chunk_")
             chunk_meta_prefix = meta.get("chunk_meta_prefix", prefix + "chunks/meta_chunk_")
-            render_reusable = bool(meta.get("render_reusable"))
+            render_reusable = _parse_bool(meta.get("render_reusable"), False)
             data_layout = meta.get("data_layout", "")
             meta["family"] = "palette"
             meta["artifact_id"] = meta.get("palette_id")
@@ -247,6 +247,7 @@ def _list_saved_palettes(job_id):
             meta["chunk_meta_prefix"] = chunk_meta_prefix
             meta["render_reusable"] = render_reusable
             meta["data_layout"] = data_layout
+            meta["solve_score_omega_enabled"] = _parse_bool(meta.get("solve_score_omega_enabled"), True)
             meta["derived_from_palette_id"] = meta.get("derived_from_palette_id", "")
             meta["image_url"] = s3.generate_presigned_url(
                 "get_object", Params={"Bucket": BUCKET, "Key": image_key},
@@ -283,6 +284,16 @@ def _parse_float(value):
         return float(value)
     except Exception:
         return None
+
+
+def _parse_bool(value, default=False):
+    if value in ("", None):
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _parse_json(value):
@@ -346,6 +357,7 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["solve_score_quantile"] = float(q) if q not in ("", None) else None
         omega = meta.get("solve_score_omega", "")
         entry["solve_score_omega"] = float(omega) if omega not in ("", None) else None
+        entry["solve_score_omega_enabled"] = _parse_bool(meta.get("solve_score_omega_enabled"), True)
         entry["palette_source_id"] = meta.get("palette_source_id", "")
         entry["palette_source_display_name"] = meta.get("palette_source_display_name", "")
         entry["palette_source_palette"] = meta.get("palette_source_palette", "")
@@ -354,6 +366,7 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["palette_source_quantile"] = float(src_q) if src_q not in ("", None) else None
         src_omega = meta.get("palette_source_omega", "")
         entry["palette_source_omega"] = float(src_omega) if src_omega not in ("", None) else None
+        entry["palette_source_omega_enabled"] = _parse_bool(meta.get("palette_source_omega_enabled"), True)
         entry["derived_from_artifact_id"] = meta.get("derived_from_artifact_id", "")
         entry["derivation_kind"] = meta.get("derivation_kind", "")
         entry["postprocess_kind"] = meta.get("postprocess_kind", "")
@@ -376,6 +389,7 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["source_solve_metric"] = meta.get("source_solve_metric", "")
         entry["source_solve_score_quantile"] = _parse_float(meta.get("source_solve_score_quantile"))
         entry["source_solve_score_omega"] = _parse_float(meta.get("source_solve_score_omega"))
+        entry["source_solve_score_omega_enabled"] = _parse_bool(meta.get("source_solve_score_omega_enabled"), True)
         entry["page_count"] = int(page_count) if page_count not in ("", None) else None
     return entry
 
@@ -779,13 +793,13 @@ ARTIFACT_FAMILIES = {
         "same_family_stale": [],
     },
     "bilevel": {
-        "intermediate_prefixes": ["bilevel_t"],
+        "intermediate_prefixes": ["bilevel_t", "bits_chunk_"],
         "intermediate_keys": [],
         "preview": [],
         "same_family_stale": [],
     },
     "coeff_bilevel": {
-        "intermediate_prefixes": ["coeff_t"],
+        "intermediate_prefixes": ["coeff_t", "coeff_bits_chunk_"],
         "intermediate_keys": [],
         "preview": [],
         "same_family_stale": [],

@@ -219,12 +219,18 @@ class TestWorkflowDefinition(unittest.TestCase):
         # Check that Map item processors invoke actual worker functions
         asl_str = json.dumps(self.asl)
         # The rendered template should contain placeholder ARNs for real workers
-        assert "placeholder-RasterFunctionArn" in asl_str
         assert "placeholder-FinalizeFunctionArn" in asl_str
         assert "placeholder-EncodeFunctionArn" in asl_str
         assert "placeholder-BilevelFunctionArn" in asl_str
         assert "placeholder-BilevelStitchFunctionArn" in asl_str
         assert "placeholder-SolveProximityFunctionArn" in asl_str
+
+    def test_color_raster_worker_uses_dynamic_function_name(self):
+        color_map = self.states["ColorRasterMap"]
+        selector = color_map["ItemSelector"]
+        self.assertEqual(selector["raster_function_name.$"], "$.plan.raster.function_name")
+        worker = color_map["ItemProcessor"]["States"]["RasterWorker"]
+        self.assertEqual(worker["Parameters"]["FunctionName.$"], "$.raster_function_name")
 
 
 if __name__ == "__main__":

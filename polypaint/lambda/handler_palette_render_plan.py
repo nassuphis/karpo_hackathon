@@ -32,9 +32,26 @@ def _validate_omega(value):
     return omega
 
 
-def _palette_variant_id(metric, palette, q, omega, root_transforms):
+def _validate_omega_enabled(value):
+    if value in (None, ""):
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    raise RuntimeError(f"solve_score_omega_enabled must be boolean-like, got {value!r}")
+
+
+def _palette_variant_id(metric, palette, q, omega, omega_enabled, root_transforms):
     q_label = f"{q * 100:.1f}".replace(".", "p")
-    omega_label = f"{omega:.0f}" if float(omega).is_integer() else str(omega).replace(".", "p")
+    omega_label = (
+        f"{omega:.0f}" if float(omega).is_integer() else str(omega).replace(".", "p")
+    ) if omega_enabled else "off"
     rt_json = json.dumps(root_transforms or [], separators=(",", ":"))
     rt_hash = hashlib.sha1(rt_json.encode("utf-8")).hexdigest()[:8]
     return f"pal_{int(time.time() * 1000)}_{metric}_{palette}_q{q_label}_w{omega_label}_rt{rt_hash}"
@@ -61,6 +78,7 @@ def handler(event, context):
     if not (0.001 <= q <= 0.05):
         raise RuntimeError(f"solve_score_quantile must be in [0.001, 0.05], got {q}")
     omega = _validate_omega(pp.get("solve_score_omega", 1.0))
+    omega_enabled = _validate_omega_enabled(pp.get("solve_score_omega_enabled", True))
 
     calc = _load_calc(job_id)
     degree = calc.get("degree")
@@ -104,7 +122,7 @@ def handler(event, context):
     if step_start < pass0_steps:
         raise RuntimeError(f"Full solve metadata too small: only {step_start} solves, expected at least {pass0_steps}")
 
-    palette_id = _palette_variant_id(metric, palette, q, omega, root_transforms)
+    palette_id = _palette_variant_id(metric, palette, q, omega, omega_enabled, root_transforms)
     prefix = f"renders/{job_id}/palettes/{palette_id}/"
     solve_prefix = prefix + "solve_score/"
     chunks_prefix = prefix + "chunks/"
@@ -122,6 +140,7 @@ def handler(event, context):
             "palette": palette,
             "solve_score_quantile": q,
             "solve_score_omega": omega,
+            "solve_score_omega_enabled": omega_enabled,
             "root_transforms": root_transforms,
         },
         "palette_id": palette_id,
@@ -139,6 +158,7 @@ def handler(event, context):
             "metric": metric,
             "quantile": q,
             "omega": omega,
+            "omega_enabled": omega_enabled,
             "clip_key": prefix + f"solve_score/{metric}_clip.json",
             "hist_prefix": solve_prefix,
             "bins_key": prefix + f"solve_score/{metric}_bins.json",

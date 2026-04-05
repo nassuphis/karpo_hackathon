@@ -82,6 +82,16 @@ static int cmp_double(const void *a, const void *b) {
     return (da > db) - (da < db);
 }
 
+static int count_finite_roots_in_solve(const float *roots, int degree) {
+    int count = 0;
+    for (int i = 0; i < degree; i++) {
+        if (isfinite((double)roots[i * 2]) && isfinite((double)roots[i * 2 + 1])) {
+            count++;
+        }
+    }
+    return count;
+}
+
 /* ---- Main ---- */
 
 int main(int argc, char **argv) {
@@ -96,6 +106,7 @@ int main(int argc, char **argv) {
     int degree = getArgInt(argc, argv, "--degree", 0);
     const char *metricStr = getArgStr(argc, argv, "--metric", "proximity");
     double omega = getArgDouble(argc, argv, "--omega", 1.0);
+    int omegaEnabled = getArgInt(argc, argv, "--omega_enabled", 1);
 
     if (degree < 1 || degree > MAXDEG) {
         fprintf(stderr, "Invalid degree: %d (must be 1-%d)\n", degree, MAXDEG);
@@ -190,9 +201,9 @@ int main(int argc, char **argv) {
         }
 
         printf("{\"mode\":\"clip\",\"metric\":\"%s\",\"n_solves\":%ld,\"degree\":%d,"
-               "\"omega\":%.15g,\"clip_lo\":%.15g,\"clip_hi\":%.15g,"
+               "\"omega\":%.15g,\"omega_enabled\":%s,\"clip_lo\":%.15g,\"clip_hi\":%.15g,"
                "\"min_score\":%.15g,\"max_score\":%.15g}\n",
-               metricName, nSolves, degree, omega, clipLo, clipHi,
+               metricName, nSolves, degree, omega, omegaEnabled ? "true" : "false", clipLo, clipHi,
                scores[0], scores[nSolves - 1]);
 
         free(scores);
@@ -226,15 +237,15 @@ int main(int argc, char **argv) {
             double u = (score - clipLo) / range;
             if (u < 0) u = 0;
             if (u > 1) u = 1;
-            u = apply_solve_score_omega(u, omega);
+            u = apply_solve_score_transfer(u, omegaEnabled, omega);
             int h = (int)(u * histBins);
             if (h >= histBins) h = histBins - 1;
             hist[h]++;
         }
 
         printf("{\"mode\":\"hist\",\"metric\":\"%s\",\"n_solves\":%ld,\"degree\":%d,"
-               "\"hist_bins\":%d,\"omega\":%.15g,\"clip_lo\":%.15g,\"clip_hi\":%.15g,"
-               "\"hist\":[", metricName, nSolves, degree, histBins, omega, clipLo, clipHi);
+               "\"hist_bins\":%d,\"omega\":%.15g,\"omega_enabled\":%s,\"clip_lo\":%.15g,\"clip_hi\":%.15g,"
+               "\"hist\":[", metricName, nSolves, degree, histBins, omega, omegaEnabled ? "true" : "false", clipLo, clipHi);
         for (int i = 0; i < histBins; i++) {
             if (i > 0) printf(",");
             printf("%ld", hist[i]);
@@ -251,8 +262,26 @@ int main(int argc, char **argv) {
         double *scores = malloc(nSolves * sizeof(double));
         if (!scores) { fprintf(stderr, "Out of memory for scores\n"); free(buf); return 1; }
 
+        long totalRootSlots = nSolves * (long)degree;
+        long finiteRootCount = 0;
+        long fullyFiniteSolveCount = 0;
+        long partialFiniteSolveCount = 0;
+        long zeroFiniteSolveCount = 0;
+        int minFiniteRootsRequired = solve_metric_min_roots(metric);
+        long usableSolveCount = 0;
+        int minFiniteRootsPerSolve = degree;
+        int maxFiniteRootsPerSolve = 0;
+
         for (long s = 0; s < nSolves; s++) {
             const float *roots = buf + s * stride;
+            int finiteRoots = count_finite_roots_in_solve(roots, degree);
+            finiteRootCount += finiteRoots;
+            if (finiteRoots == degree) fullyFiniteSolveCount++;
+            else if (finiteRoots == 0) zeroFiniteSolveCount++;
+            else partialFiniteSolveCount++;
+            if (finiteRoots >= minFiniteRootsRequired) usableSolveCount++;
+            if (finiteRoots < minFiniteRootsPerSolve) minFiniteRootsPerSolve = finiteRoots;
+            if (finiteRoots > maxFiniteRootsPerSolve) maxFiniteRootsPerSolve = finiteRoots;
             scores[s] = (nRt > 0)
                 ? score_xformed(roots, degree, metric, rtChain, nRt, wkRe, wkIm)
                 : compute_solve_metric_score(roots, degree, metric);
@@ -329,7 +358,7 @@ int main(int argc, char **argv) {
             if (scores[s] < clipLo || scores[s] > clipHi) continue;
             double u = (scores[s] - clipLo) / clipRange;
             if (u < 0) u = 0; if (u > 1) u = 1;
-            u = apply_solve_score_omega(u, omega);
+            u = apply_solve_score_transfer(u, omegaEnabled, omega);
             int h = (int)(u * intBins);
             if (h >= intBins) h = intBins - 1;
             intHist[h]++;
@@ -369,7 +398,7 @@ int main(int argc, char **argv) {
             if (scores[s] < clipLo || scores[s] > clipHi) continue;
             double u = (scores[s] - clipLo) / clipRange;
             if (u < 0) u = 0; if (u > 1) u = 1;
-            u = apply_solve_score_omega(u, omega);
+            u = apply_solve_score_transfer(u, omegaEnabled, omega);
             int bin = 0;
             for (int k = 0; k < 9; k++) {
                 if (u > cutsNorm[k]) bin = k + 1;
@@ -396,7 +425,8 @@ int main(int argc, char **argv) {
         printf("\"mean_score\":%.15g,\"stddev_score\":%.15g,", meanScore, stddevScore);
         printf("\"q05\":%.15g,\"q10\":%.15g,\"q25\":%.15g,\"q50\":%.15g,", q05, q10, q25, q50);
         printf("\"q75\":%.15g,\"q90\":%.15g,\"q95\":%.15g,", q75, q90, q95);
-        printf("\"omega\":%.15g,\"clip_quantile\":%.15g,\"clip_lo\":%.15g,\"clip_hi\":%.15g,", omega, quantileLo, clipLo, clipHi);
+        printf("\"omega\":%.15g,\"omega_enabled\":%s,\"clip_quantile\":%.15g,\"clip_lo\":%.15g,\"clip_hi\":%.15g,",
+               omega, omegaEnabled ? "true" : "false", quantileLo, clipLo, clipHi);
         printf("\"full_range\":%.15g,\"clip_range\":%.15g,", fullRange, clipRange);
         printf("\"clip_below_count\":%ld,\"clip_inrange_count\":%ld,\"clip_above_count\":%ld,",
                belowCount, inrangeCount, aboveCount);
@@ -407,6 +437,22 @@ int main(int argc, char **argv) {
             printf("\"clip_fallback_reason\":\"%s\",", fallbackReason);
         else
             printf("\"clip_fallback_reason\":null,");
+        printf("\"metric_validity_policy\":\"%s\",", solve_metric_validity_policy_name());
+        printf("\"metric_min_finite_roots\":%d,", minFiniteRootsRequired);
+        printf("\"total_root_slots\":%ld,\"finite_root_count\":%ld,", totalRootSlots, finiteRootCount);
+        printf("\"fully_finite_solve_count\":%ld,\"partial_finite_solve_count\":%ld,\"zero_finite_solve_count\":%ld,",
+               fullyFiniteSolveCount, partialFiniteSolveCount, zeroFiniteSolveCount);
+        printf("\"usable_solve_count\":%ld,", usableSolveCount);
+        printf("\"forced_zero_score_count\":%ld,", nSolves - usableSolveCount);
+        printf("\"finite_root_frac\":%.6f,", totalRootSlots > 0 ? (double)finiteRootCount / totalRootSlots : 0.0);
+        printf("\"fully_finite_solve_frac\":%.6f,\"partial_finite_solve_frac\":%.6f,\"zero_finite_solve_frac\":%.6f,\"usable_solve_frac\":%.6f,",
+               nSolves > 0 ? (double)fullyFiniteSolveCount / nSolves : 0.0,
+               nSolves > 0 ? (double)partialFiniteSolveCount / nSolves : 0.0,
+               nSolves > 0 ? (double)zeroFiniteSolveCount / nSolves : 0.0,
+               nSolves > 0 ? (double)usableSolveCount / nSolves : 0.0);
+        printf("\"mean_finite_roots_per_solve\":%.6f,\"min_finite_roots_per_solve\":%d,\"max_finite_roots_per_solve\":%d,",
+               nSolves > 0 ? (double)finiteRootCount / nSolves : 0.0,
+               minFiniteRootsPerSolve, maxFiniteRootsPerSolve);
         printf("\"intermediate_hist_bins\":100,\"final_bins\":10,");
         printf("\"cuts_norm\":[");
         for (int k = 0; k < 9; k++) { if (k) printf(","); printf("%.6f", cutsNorm[k]); }

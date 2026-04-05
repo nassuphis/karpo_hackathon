@@ -1562,7 +1562,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_2",
@@ -1936,7 +1941,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 34
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_poly164_hand.py"
+    ]
   },
   {
     "name": "poly_167",
@@ -2992,7 +3002,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 50,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_14",
@@ -3000,7 +3015,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 50,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_15",
@@ -3008,7 +3028,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_16",
@@ -3032,7 +3057,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_19",
@@ -3040,7 +3070,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_20",
@@ -3056,7 +3091,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_23",
@@ -3080,7 +3120,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_26",
@@ -3088,7 +3133,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_27",
@@ -3120,7 +3170,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_32",
@@ -3160,7 +3215,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_41",
@@ -3208,7 +3268,12 @@ window._coeffFuncCatalog = [
     "source": "poly100.py",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_52",
@@ -3232,7 +3297,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_57",
@@ -3248,7 +3318,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_60",
@@ -3264,7 +3339,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_64",
@@ -3280,7 +3360,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_67",
@@ -3296,7 +3381,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_69",
@@ -3304,7 +3394,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_71",
@@ -3320,7 +3415,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_76",
@@ -3344,7 +3444,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_80",
@@ -3352,7 +3457,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_83",
@@ -3384,7 +3494,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_87",
@@ -3392,7 +3507,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_88",
@@ -3464,7 +3584,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_102",
@@ -3472,7 +3597,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_104",
@@ -3496,7 +3626,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_107",
@@ -3512,7 +3647,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_109",
@@ -3528,7 +3668,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_112",
@@ -3536,7 +3681,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_113",
@@ -3544,7 +3694,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_114",
@@ -3552,7 +3707,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_115",
@@ -3560,7 +3720,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_116",
@@ -3568,7 +3733,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_121",
@@ -3576,7 +3746,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_123_old",
@@ -3743,7 +3918,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_151",
@@ -3935,7 +4115,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 70,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_185",
@@ -4014,7 +4199,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_308",
@@ -4070,7 +4260,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_315",
@@ -4086,7 +4281,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_317",
@@ -4094,7 +4294,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_318",
@@ -4150,7 +4355,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_325",
@@ -4220,7 +4430,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_334",
@@ -4236,7 +4451,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_336",
@@ -4315,7 +4535,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_346",
@@ -4615,7 +4840,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_384",
@@ -4852,7 +5082,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_414",
@@ -5143,7 +5378,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_451",
@@ -5278,7 +5518,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_467_old",
@@ -5349,7 +5594,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 39,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_476",
@@ -5373,7 +5623,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_479",
@@ -5405,7 +5660,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_483",
@@ -5484,7 +5744,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_492",
@@ -5588,7 +5853,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_505",
@@ -5660,7 +5930,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_514",
@@ -5836,7 +6111,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_536",
@@ -5916,7 +6196,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_546",
@@ -5964,7 +6249,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 39,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_552",
@@ -6004,7 +6294,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_557",
@@ -6052,7 +6347,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 34,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_563",
@@ -6084,7 +6384,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_567",
@@ -6116,7 +6421,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 25,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_571",
@@ -6324,7 +6634,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 25,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_597",
@@ -6388,7 +6703,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_605",
@@ -6716,7 +7036,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 8,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_poly645_hand.py"
+    ]
   },
   {
     "name": "poly_646",
@@ -6892,7 +7217,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 8,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_668",
@@ -7084,7 +7414,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 8,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_692",
@@ -7108,7 +7443,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 8,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_695",
@@ -7140,7 +7480,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 8,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_699",
@@ -7379,7 +7724,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 8,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_727_v1",
@@ -7469,7 +7819,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 8,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_734",
@@ -7525,7 +7880,12 @@ window._coeffFuncCatalog = [
     "source": "poly800.py",
     "degree": 10,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_741",
@@ -7533,7 +7893,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 9,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_742",
@@ -7541,7 +7906,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 9,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_743",
@@ -7565,7 +7935,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 9,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_746",
@@ -7573,7 +7948,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 10,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_747",
@@ -7597,7 +7977,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 9,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_750",
@@ -7613,7 +7998,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 10,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_752",
@@ -7645,7 +8035,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 10,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_756",
@@ -7669,7 +8064,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 9,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_759",
@@ -7677,7 +8077,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 10,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_760",
@@ -7685,7 +8090,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 10,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_761",
@@ -7701,7 +8111,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 9,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_763",
@@ -7725,7 +8140,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 10,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_766",
@@ -7733,7 +8153,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 10,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_767",
@@ -7757,7 +8182,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 9,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_770",
@@ -7788,7 +8218,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 10,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_774",
@@ -7796,7 +8231,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 10,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_775",
@@ -7812,7 +8252,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 9,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_777",
@@ -7820,7 +8265,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_778",
@@ -7844,7 +8294,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_781",
@@ -7867,7 +8322,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_783",
@@ -7891,7 +8351,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_786",
@@ -7907,7 +8372,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_788",
@@ -7915,7 +8385,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_789",
@@ -7923,7 +8398,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_790",
@@ -7947,7 +8427,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_793",
@@ -7955,7 +8440,12 @@ window._coeffFuncCatalog = [
     "source": "poly800.py",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_794",
@@ -7963,7 +8453,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_795",
@@ -7971,7 +8466,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_poly795_hand.py"
+    ]
   },
   {
     "name": "poly_796",
@@ -7995,7 +8495,12 @@ window._coeffFuncCatalog = [
     "source": "poly800.py",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_799",
@@ -8003,7 +8508,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_800",
@@ -8011,7 +8521,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_801",
@@ -8027,7 +8542,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_803",
@@ -8035,7 +8555,12 @@ window._coeffFuncCatalog = [
     "source": "poly900.py",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_804",
@@ -8059,7 +8584,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_807",
@@ -8083,7 +8613,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_810",
@@ -8091,7 +8626,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_811",
@@ -8099,7 +8639,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_812",
@@ -8107,7 +8652,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 1,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_813",
@@ -8115,7 +8665,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_814",
@@ -8123,7 +8678,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_815",
@@ -8155,7 +8715,12 @@ window._coeffFuncCatalog = [
     "source": "poly_hand.h",
     "degree": 24,
     "params": [],
-    "agreement_pct": 100
+    "agreement_pct": 100,
+    "parity_verified": true,
+    "parity_cases": 2,
+    "parity_test_files": [
+      "test_low_agreement_hand.py"
+    ]
   },
   {
     "name": "poly_819",

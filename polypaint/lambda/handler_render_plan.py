@@ -22,6 +22,8 @@ lambda_client = boto3.client("lambda", region_name=os.environ.get("AWS_REGION", 
 
 VIEWPORT_FUNCTION = os.environ.get("VIEWPORT_FUNCTION", "polypaint-viewport")
 STORAGE_FUNCTION = os.environ.get("STORAGE_FUNCTION", "polypaint-storage")
+RASTER_FUNCTION = os.environ.get("RASTER_FUNCTION", "polypaint-raster")
+RASTER_MT_FUNCTION = os.environ.get("RASTER_MT_FUNCTION", "polypaint-raster-mt")
 
 MAX_PLAN_BYTES = 200 * 1024  # 200 KB — fail fast before hitting 256 KB SFN limit
 DEFAULT_BACKGROUND_COLOR = "000000"
@@ -36,6 +38,40 @@ def _validate_omega(value):
     if not (1.0 <= omega <= 10.0):
         raise RuntimeError(f"solve_score_omega must be in [1, 10], got {omega}")
     return omega
+
+
+def _validate_omega_enabled(value):
+    if value in (None, ""):
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    raise RuntimeError(f"solve_score_omega_enabled must be boolean-like, got {value!r}")
+
+
+def _validate_raster_engine(value):
+    engine = str(value or "single").strip().lower()
+    if engine not in ("single", "mt"):
+        raise RuntimeError(f"raster_engine must be 'single' or 'mt', got {value!r}")
+    return engine
+
+
+def _validate_raster_mt_threads(value):
+    if value in (None, ""):
+        return 4
+    try:
+        threads = int(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"raster_mt_threads must be an integer, got {value!r}")
+    if not (1 <= threads <= 16):
+        raise RuntimeError(f"raster_mt_threads must be in [1, 16], got {threads}")
+    return threads
 
 
 def _load_palette_meta(job_id, palette_id):
@@ -108,13 +144,18 @@ def handler(event, context):
         "quality": 90,
         "fmt": "jpeg",
         "color_mode": "rainbow",
+        "raster_engine": "single",
+        "raster_mt_threads": 4,
         "solve_metric": "proximity",
         "solve_score_quantile": 0.001,
         "solve_score_omega": 1.0,
+        "solve_score_omega_enabled": True,
     }
     for key, default in _PARAM_DEFAULTS.items():
         if key not in rp:
             rp[key] = default
+    rp["raster_engine"] = _validate_raster_engine(rp.get("raster_engine", "single"))
+    rp["raster_mt_threads"] = _validate_raster_mt_threads(rp.get("raster_mt_threads", 4))
 
     # Normalize solve-score params
     color_mode = rp.get("color_mode", "rainbow")
@@ -127,6 +168,7 @@ def handler(event, context):
     solve_metric = rp.get("solve_metric", "proximity")
     solve_score_quantile = rp.get("solve_score_quantile", 0.001)
     solve_score_omega = rp.get("solve_score_omega", 1.0)
+    solve_score_omega_enabled = rp.get("solve_score_omega_enabled", True)
     palette = rp.get("palette", "inferno")
     saved_palette = {
         "enabled": False,
@@ -136,6 +178,7 @@ def handler(event, context):
         "metric": "",
         "quantile": None,
         "omega": 1.0,
+        "omega_enabled": True,
         "chunk_bins_prefix": "",
         "data_layout": "",
     }
@@ -173,6 +216,7 @@ def handler(event, context):
         solve_metric = source_meta.get("metric", solve_metric)
         solve_score_quantile = float(source_meta.get("solve_score_quantile", solve_score_quantile))
         solve_score_omega = _validate_omega(source_meta.get("solve_score_omega", solve_score_omega))
+        solve_score_omega_enabled = _validate_omega_enabled(source_meta.get("solve_score_omega_enabled", True))
         rp["palette"] = palette
         rp["root_transforms"] = list(source_meta.get("root_transforms") or [])
         saved_palette = {
@@ -183,6 +227,7 @@ def handler(event, context):
             "metric": solve_metric,
             "quantile": solve_score_quantile,
             "omega": solve_score_omega,
+            "omega_enabled": solve_score_omega_enabled,
             "chunk_bins_prefix": source_meta.get("chunk_bins_prefix", f"renders/{job_id}/palettes/{saved_palette_id}/chunks/palette_bins_chunk_"),
             "data_layout": source_meta.get("data_layout", ""),
         }
@@ -198,21 +243,56 @@ def handler(event, context):
         if not (0.001 <= solve_score_quantile <= 0.05):
             raise RuntimeError(f"solve_score_quantile must be in [0.001, 0.05], got {solve_score_quantile}")
         solve_score_omega = _validate_omega(solve_score_omega)
+        solve_score_omega_enabled = _validate_omega_enabled(solve_score_omega_enabled)
     else:
         solve_score_omega = _validate_omega(solve_score_omega)
+        solve_score_omega_enabled = _validate_omega_enabled(solve_score_omega_enabled)
     rp["solve_score_omega"] = solve_score_omega
+    rp["solve_score_omega_enabled"] = solve_score_omega_enabled
 
     solve_score = {
         "enabled": solve_score_enabled,
         "metric": solve_metric,
         "quantile": solve_score_quantile,
         "omega": solve_score_omega,
+        "omega_enabled": solve_score_omega_enabled,
         "clip_key": f"renders/{job_id}/solve_scores/{solve_metric}_clip.json",
         "hist_prefix": f"renders/{job_id}/solve_scores/{solve_metric}/",
         "bins_key": f"renders/{job_id}/solve_scores/{solve_metric}_bins.json",
     }
 
     color_repalette_capable = mode == "color" and color_mode in ("solve_score", "saved_palette")
+    requested_raster_engine = rp.get("raster_engine", "single")
+    requested_raster_threads = rp.get("raster_mt_threads", 4)
+    raster = {
+        "requested_engine": requested_raster_engine,
+        "requested_threads": requested_raster_threads,
+        "threads": 1,
+        "engine": "single",
+        "function_name": RASTER_FUNCTION,
+        "eligible": False,
+        "reason": "mode_not_color" if mode != "color" else "unsupported_color_mode",
+    }
+    if mode == "color":
+        match_mode = rp.get("match_mode", "none")
+        mt_reason = None
+        if color_mode in ("solve_score", "saved_palette", "constant"):
+            mt_reason = color_mode
+        elif color_mode == "rainbow" and match_mode == "none":
+            mt_reason = "rainbow_match_none"
+        elif color_mode == "rainbow":
+            raster["reason"] = f"rainbow_match_{match_mode}"
+        elif color_mode == "proximity":
+            raster["reason"] = "proximity_single_thread_only"
+        if mt_reason:
+            raster["eligible"] = True
+            raster["reason"] = mt_reason
+            if requested_raster_engine == "mt":
+                raster["engine"] = "mt"
+                raster["threads"] = requested_raster_threads
+                raster["function_name"] = RASTER_MT_FUNCTION
+        elif requested_raster_engine == "mt" and raster["reason"]:
+            raster["reason"] = f"mt_requested_but_{raster['reason']}"
 
     # Immutable artifact outputs
     artifact_family = "coeffs" if mode == "coeff_bilevel" else mode
@@ -260,6 +340,7 @@ def handler(event, context):
             "solve_metric": solve_metric if solve_score_enabled else "",
             "solve_score_quantile": str(solve_score_quantile if solve_score_enabled else ""),
             "solve_score_omega": str(solve_score_omega if solve_score_enabled else ""),
+            "solve_score_omega_enabled": ("true" if solve_score_omega_enabled else "false") if solve_score_enabled else "",
             "background_color": DEFAULT_BACKGROUND_COLOR,
             "background_threshold": str(DEFAULT_BACKGROUND_THRESHOLD),
             "repalette_capable": "true" if color_repalette_capable else "false",
@@ -272,12 +353,14 @@ def handler(event, context):
                 "solve_metric": str(solve_metric),
                 "solve_score_quantile": str(solve_score_quantile),
                 "solve_score_omega": str(solve_score_omega),
+                "solve_score_omega_enabled": "true" if solve_score_omega_enabled else "false",
                 "palette_source_id": saved_palette["palette_id"],
                 "palette_source_display_name": saved_palette["display_name"],
                 "palette_source_palette": str(saved_palette["palette"]),
                 "palette_source_metric": str(saved_palette["metric"]),
                 "palette_source_quantile": str(saved_palette["quantile"]),
                 "palette_source_omega": str(saved_palette["omega"]),
+                "palette_source_omega_enabled": "true" if saved_palette["omega_enabled"] else "false",
             })
     elif mode == "bilevel":
         outputs["metadata"].update({
@@ -318,6 +401,7 @@ def handler(event, context):
         "chunk_items": chunk_items,
         "tile_items": tile_items,
         "solve_score": solve_score,
+        "raster": raster,
         "saved_palette": saved_palette,
         "outputs": outputs,
     }

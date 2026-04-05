@@ -34,12 +34,29 @@ def _phase(job_id, task_id, status, phase, phase_label, **extra):
     report_status(job_id, task_id, status, result_data={"phase": phase, "phase_label": phase_label, **extra})
 
 
+def _parse_boolish(value, default=True):
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _omega_display(enabled, omega):
+    if omega in ("", None):
+        return ""
+    return f"w={omega}" if enabled else "w=off"
+
+
 def _source_display_name(meta, fallback_id):
     mode = str(meta.get("color_mode", "") or "")
     if mode == "solve_score":
         metric = str(meta.get("solve_metric", "") or "")
         q = str(meta.get("solve_score_quantile", "") or "")
         omega = str(meta.get("solve_score_omega", "") or "")
+        omega_enabled = _parse_boolish(meta.get("solve_score_omega_enabled", True), True)
         palette = str(meta.get("palette", "") or "")
         parts = [f"solve:{metric}" if metric else "solve"]
         if q:
@@ -48,7 +65,7 @@ def _source_display_name(meta, fallback_id):
             except Exception:
                 parts.append(f"q={q}")
         if omega:
-            parts.append(f"w={omega}")
+            parts.append(_omega_display(omega_enabled, omega))
         if palette:
             parts.append(palette)
         return " ".join(parts).strip()
@@ -56,6 +73,10 @@ def _source_display_name(meta, fallback_id):
         metric = str(meta.get("palette_source_metric") or meta.get("solve_metric") or "")
         q = meta.get("palette_source_quantile") or meta.get("solve_score_quantile") or ""
         omega = meta.get("palette_source_omega") or meta.get("solve_score_omega") or ""
+        omega_enabled = _parse_boolish(
+            meta.get("palette_source_omega_enabled", meta.get("solve_score_omega_enabled", True)),
+            True,
+        )
         palette = str(meta.get("palette", "") or "")
         parts = [f"saved:{metric}" if metric else "saved"]
         if q:
@@ -64,7 +85,7 @@ def _source_display_name(meta, fallback_id):
             except Exception:
                 parts.append(f"q={q}")
         if omega:
-            parts.append(f"w={omega}")
+            parts.append(_omega_display(omega_enabled, omega))
         if palette:
             parts.append(palette)
         return " ".join(parts).strip()
@@ -136,8 +157,12 @@ def _body_from(job_id, calc, src_meta, created_at):
         except Exception:
             lines.append(f"q {q}.")
     omega = src_meta.get("solve_score_omega") or src_meta.get("palette_source_omega")
+    omega_enabled = _parse_boolish(
+        src_meta.get("solve_score_omega_enabled", src_meta.get("palette_source_omega_enabled", True)),
+        True,
+    )
     if omega not in ("", None):
-        lines.append(f"Omega {omega}.")
+        lines.append(f"Omega {_omega_display(omega_enabled, omega).replace('w=', '')}.")
     lines.append(f"Transforms {_transforms_summary(src_meta.get('root_transforms'))}.")
     lines.append(f"Created {created_at}.")
     return " ".join(str(x).strip() for x in lines if str(x).strip())
@@ -207,6 +232,7 @@ def _build_spread_meta(job_id, calc, src_meta, source_artifact_id):
         metric = str(src_meta.get("solve_metric", "") or "")
         q = src_meta.get("solve_score_quantile", "")
         omega = src_meta.get("solve_score_omega", "")
+        omega_enabled = _parse_boolish(src_meta.get("solve_score_omega_enabled", True), True)
         cm_parts = [f"SOLVE SCORE: {metric}"]
         if q not in ("", None):
             try:
@@ -214,7 +240,7 @@ def _build_spread_meta(job_id, calc, src_meta, source_artifact_id):
             except Exception:
                 pass
         if omega not in ("", None):
-            cm_parts.append(f"w={omega}")
+            cm_parts.append(_omega_display(omega_enabled, omega))
         if palette:
             cm_parts.append(palette)
         color_line = " ".join(cm_parts)
@@ -316,6 +342,7 @@ def handler(event, context):
             "source_solve_metric": src_meta.get("solve_metric", ""),
             "source_solve_score_quantile": src_meta.get("solve_score_quantile", ""),
             "source_solve_score_omega": src_meta.get("solve_score_omega", ""),
+            "source_solve_score_omega_enabled": "true" if _parse_boolish(src_meta.get("solve_score_omega_enabled", True), True) else "false",
             "source_root_transforms": _stringify_meta(src_meta.get("root_transforms", "")),
             "page_count": "1",
             "width_mm": "586",

@@ -18,6 +18,16 @@ s3 = boto3.client("s3")
 ROOTS2PIX = os.path.join(os.path.dirname(__file__), "roots2pix")
 
 
+def _parse_boolish(value, default=True):
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 def handler(event, context):
     params = parse_body(event)
     job_id = params["job_id"]
@@ -32,8 +42,11 @@ def handler(event, context):
 
     try:
         report_status(job_id, task_id, "started")
+        download_us = 0
+        upload_us = 0
 
         # Download .bin from S3
+        t_dl = time.perf_counter()
         bin_path = "/tmp/stripe.bin"
         saved_bins_path = "/tmp/palette_bins_chunk.bin"
         obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
@@ -111,6 +124,10 @@ def handler(event, context):
             bins_omega = float(ss_data.get("omega", 1.0))
             if bins_omega != req_omega:
                 raise RuntimeError(f"Bins omega mismatch: expected {req_omega}, got {bins_omega}")
+            req_omega_enabled = _parse_boolish(params.get("solve_score_omega_enabled", True), True)
+            bins_omega_enabled = _parse_boolish(ss_data.get("omega_enabled", True), True)
+            if bins_omega_enabled != req_omega_enabled:
+                raise RuntimeError(f"Bins omega_enabled mismatch: expected {req_omega_enabled}, got {bins_omega_enabled}")
             ss_metric = ss_data.get("metric", params.get("solve_metric", "proximity"))
             cmd.append(f"--color=solve_score")
             cmd.append(f"--solve_metric={ss_metric}")
@@ -118,8 +135,10 @@ def handler(event, context):
             cmd.append(f"--solve_score_clip_hi={ss_data['clip_hi']}")
             cmd.append(f"--solve_score_cuts={','.join(str(c) for c in ss_data['cuts_norm'])}")
             cmd.append(f"--solve_score_omega={bins_omega}")
+            cmd.append(f"--solve_score_omega_enabled={1 if bins_omega_enabled else 0}")
             # Override the color arg already in cmd (was set to "solve_proximity" or "solve_score")
             cmd = [a for a in cmd if not a.startswith("--color=") or a == f"--color=solve_score"]
+        download_us = int((time.perf_counter() - t_dl) * 1e6)
 
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:
@@ -134,6 +153,7 @@ def handler(event, context):
         report_status(job_id, task_id, "rasterized")
 
         # Upload .pix files — stream from file, do NOT f.read() into memory
+        t_up = time.perf_counter()
         uploaded = 0
         uploaded_pixel_bins = 0
         for t in range(n_tiles):
@@ -152,8 +172,20 @@ def handler(event, context):
                         s3.upload_fileobj(fh, BUCKET, pbx_key)
                     uploaded_pixel_bins += 1
                 os.remove(pbx_path)
+        upload_us = int((time.perf_counter() - t_up) * 1e6)
 
-        report_status(job_id, task_id, "done")
+        result_data = {
+            "engine": "single",
+            "threads": 1,
+            "download_us": download_us,
+            "native_us": raster_us,
+            "upload_us": upload_us,
+            "tiles_uploaded": uploaded,
+            "pixel_bin_tiles_uploaded": uploaded_pixel_bins,
+            "roots_plotted": raster_meta["roots_plotted"],
+            "roots_clipped": raster_meta["roots_clipped"],
+        }
+        report_status(job_id, task_id, "done", result_data=result_data)
         return ok_response({
             "chunk_idx": chunk_idx,
             "stripe_idx": chunk_idx,
@@ -162,6 +194,8 @@ def handler(event, context):
             "raster_us": raster_us,
             "roots_plotted": raster_meta["roots_plotted"],
             "roots_clipped": raster_meta["roots_clipped"],
+            "engine": "single",
+            "threads": 1,
         })
 
     except Exception as e:

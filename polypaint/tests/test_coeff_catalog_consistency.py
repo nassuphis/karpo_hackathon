@@ -9,9 +9,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LAMBDA_DIR = ROOT / "lambda"
 sys.path.insert(0, str(LAMBDA_DIR))
+sys.path.insert(0, str(ROOT / "tests"))
+
+from coeff_catalog_testlib import ensure_generated_coeff_catalog
 
 
 def _load_js_catalog_entries():
+    ensure_generated_coeff_catalog()
     text = (ROOT / "coeff_func_catalog_js.js").read_text()
     marker = "window._coeffFuncCatalog = "
     start = text.index(marker) + len(marker)
@@ -20,6 +24,10 @@ def _load_js_catalog_entries():
 
 
 class TestCoeffCatalogConsistency(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        ensure_generated_coeff_catalog()
 
     NEW_LOW_AGREEMENT_HAND_FIXES = [
         "poly_13",
@@ -182,6 +190,37 @@ class TestCoeffCatalogConsistency(unittest.TestCase):
         metrics = json.loads((LAMBDA_DIR / "coeff_func_metrics.json").read_text())
         for name in self.NEW_LOW_AGREEMENT_HAND_FIXES:
             self.assertEqual(metrics[name]["agreement_pct"], 100, name)
+
+    def test_dedicated_hand_parity_tests_require_generated_parity_entries(self):
+        parity = json.loads((LAMBDA_DIR / "coeff_func_parity.json").read_text())
+        catalog = {
+            entry["name"]: entry
+            for entry in json.loads((LAMBDA_DIR / "coeff_func_catalog.json").read_text())
+        }
+        js_catalog = {
+            entry["name"]: entry
+            for entry in _load_js_catalog_entries()
+        }
+
+        parity_tested = []
+        for path in sorted((ROOT / "tests").glob("test_poly*_hand.py")):
+            stem = path.stem
+            suffix = stem[len("test_poly"):-len("_hand")]
+            name = f"poly_{suffix}"
+            parity_tested.append(name)
+
+        self.assertGreater(len(parity_tested), 0, "no dedicated hand parity tests found")
+
+        for name in parity_tested:
+            self.assertIn(name, parity, name)
+            self.assertEqual(parity[name]["agreement_pct"], 100, name)
+            self.assertTrue(parity[name]["parity_verified"], name)
+            self.assertIn(name, catalog, name)
+            self.assertEqual(catalog[name]["kind"], "hand", name)
+            self.assertEqual(catalog[name]["c_symbol"], f"{name}_hand", name)
+            self.assertIn(name, js_catalog, name)
+            self.assertEqual(js_catalog[name]["kind"], "hand", name)
+            self.assertEqual(js_catalog[name].get("agreement_pct"), 100, name)
 
 
 if __name__ == "__main__":

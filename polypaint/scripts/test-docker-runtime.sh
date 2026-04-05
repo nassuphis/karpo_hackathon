@@ -1,6 +1,6 @@
 #!/bin/bash
 # Docker runtime regression test for deploy binaries.
-# Uses deploy binaries (lambda/sweep, lambda/sweep_cm) — NOT sweep_test.
+# Uses deploy binaries (lambda/sweep, lambda/sweep_mt, lambda/sweep_cm) — NOT sweep_test.
 # Must pass before deploy. Runs inside ARM64 Docker.
 set -euo pipefail
 
@@ -11,7 +11,7 @@ LIBVIPS_BUILD="$ROOT/lambda/layer-build"
 echo "=== Docker Runtime Regression Test ==="
 
 # Verify binaries exist
-for BIN in "$ROOT/lambda/sweep" "$ROOT/lambda/sweep_cm"; do
+for BIN in "$ROOT/lambda/sweep" "$ROOT/lambda/sweep_mt" "$ROOT/lambda/sweep_cm"; do
     if [ ! -f "$BIN" ]; then
         echo "FATAL: $BIN not found. Run deploy.sh to compile."
         exit 1

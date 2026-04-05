@@ -39,9 +39,15 @@ def handler(event, context):
 
     t0 = time.time()
     logger.info(f"[{task_id}] START tile_idx={tile_idx} n_chunks={n_chunks} tile={tile_w}x{tile_h}")
+    progress = {
+        "phase": "finalize",
+        "tile_idx": tile_idx,
+        "n_chunks": n_chunks,
+        "emit_pixel_bins": emit_pixel_bins,
+    }
 
     try:
-        report_status(job_id, task_id, "started")
+        report_status(job_id, task_id, "started", result_data=progress)
 
         raw_path = "/tmp/tile.raw"
         pixel_bins_path = "/tmp/tile.pixel_bins.bin"
@@ -96,7 +102,11 @@ def handler(event, context):
         t_assemble = time.time() - t0
         raw_size = os.path.getsize(raw_path)
         logger.info(f"[{task_id}] ASSEMBLED {raw_size} bytes in {t_assemble:.1f}s")
-        report_status(job_id, task_id, "assembled")
+        progress["read_ms"] = int(t_read * 1000)
+        progress["assemble_ms"] = int((t_assemble - t_read) * 1000)
+        progress["pix_files"] = piped
+        progress["pix_bytes"] = pix_bytes
+        report_status(job_id, task_id, "assembled", result_data=progress)
 
         # Stream upload — do not f.read() the full tile into Python memory
         raw_key = f"renders/{job_id}/tile_{tile_idx:04d}.raw"
@@ -105,6 +115,7 @@ def handler(event, context):
 
         pixel_bins_size = None
         if emit_pixel_bins:
+            t_pixel_bins_start = time.time()
             bin_proc = subprocess.Popen(
                 [PIXBINASSEMBLE,
                  f"--tile_w={tile_w}",
@@ -142,13 +153,19 @@ def handler(event, context):
             logger.info(
                 f"[{task_id}] PIXBINS {pixel_bins_out_key} ({pixel_bins_size} bytes, {piped_bins} chunk files, {bin_bytes} bytes in)"
             )
+            progress["pixel_bins_ms"] = int((time.time() - t_pixel_bins_start) * 1000)
+            progress["pixel_bin_tiles"] = 1
+            progress["pixel_bin_size"] = pixel_bins_size
             os.remove(pixel_bins_path)
 
         t_upload = time.time() - t0
         logger.info(f"[{task_id}] UPLOADED {raw_key} ({raw_size} bytes) in {t_upload:.1f}s total")
         os.remove(raw_path)
 
-        report_status(job_id, task_id, "done")
+        progress["upload_ms"] = int((t_upload - t_assemble) * 1000)
+        progress["raw_key"] = raw_key
+        progress["raw_size"] = raw_size
+        report_status(job_id, task_id, "done", result_data=progress)
         logger.info(f"[{task_id}] DONE in {time.time() - t0:.1f}s (read={t_read:.1f}s assemble={t_assemble - t_read:.1f}s upload={t_upload - t_assemble:.1f}s)")
         return ok_response({
             "tile_idx": tile_idx,
@@ -161,7 +178,8 @@ def handler(event, context):
 
     except Exception as e:
         logger.error(f"[{task_id}] FAILED after {time.time() - t0:.1f}s: {type(e).__name__}: {e}")
-        report_status(job_id, task_id, "error", str(e))
+        progress["error"] = str(e)
+        report_status(job_id, task_id, "error", str(e), result_data=progress)
         raise
     finally:
         for tmp_path in ("/tmp/tile.raw", "/tmp/tile.pixel_bins.bin"):

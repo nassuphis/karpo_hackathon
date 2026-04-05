@@ -14,9 +14,10 @@ This generator produces:
 The C header is consumed at compile time. The JS is consumed at runtime.
 Both are derived from the same catalog JSON.
 
-Reads:  coeff_func_catalog.json  — source catalog
-        coeff_func_metrics.json  — overlay (agreement %)
-        sweep_test binary        — probes actual degree for JS
+Reads:  coeff_func_catalog.json   — source catalog
+        coeff_func_metrics.json   — legacy overlay (agreement %)
+        coeff_func_parity.json    — generated parity overlay
+        sweep_test binary         — probes actual degree for JS
 
 Writes: coeff_func_lookup.h      — C generated lookup + spec
         ../coeff_func_catalog_js.js — JS catalog for frontend
@@ -32,6 +33,7 @@ LAMBDA_DIR = os.path.dirname(os.path.abspath(__file__))
 SWEEP = os.environ.get("SWEEP_BIN", os.path.join(LAMBDA_DIR, "sweep_test"))
 CATALOG_PATH = os.path.join(LAMBDA_DIR, "coeff_func_catalog.json")
 METRICS_PATH = os.path.join(LAMBDA_DIR, "coeff_func_metrics.json")
+PARITY_PATH = os.path.join(LAMBDA_DIR, "coeff_func_parity.json")
 JS_OUT = os.path.join(LAMBDA_DIR, "..", "coeff_func_catalog_js.js")
 H_OUT = os.path.join(LAMBDA_DIR, "coeff_func_lookup.h")
 
@@ -66,10 +68,16 @@ def load_catalog():
 
 
 def load_metrics():
+    metrics = {}
     if os.path.exists(METRICS_PATH):
         with open(METRICS_PATH) as f:
-            return json.load(f)
-    return {}
+            metrics = json.load(f)
+    if os.path.exists(PARITY_PATH):
+        with open(PARITY_PATH) as f:
+            parity = json.load(f)
+        for name, overlay in parity.items():
+            metrics.setdefault(name, {}).update(overlay)
+    return metrics
 
 
 def generate_c_header(catalog):
@@ -146,8 +154,9 @@ def generate_js(catalog, metrics):
         }
         if degree == 0 and name in probe_failures:
             js_entry["probe_failed"] = True
-        if "agreement_pct" in met:
-            js_entry["agreement_pct"] = met["agreement_pct"]
+        for key in ("agreement_pct", "parity_verified", "parity_cases", "parity_test_files"):
+            if key in met:
+                js_entry[key] = met[key]
         if met.get("stubbed"):
             js_entry["stubbed"] = True
 
@@ -171,6 +180,10 @@ def main():
     metrics = load_metrics()
     print(f"Catalog: {len(catalog)} functions")
     print(f"Metrics: {len(metrics)} entries")
+    if os.path.exists(PARITY_PATH):
+        with open(PARITY_PATH) as f:
+            parity_count = len(json.load(f))
+        print(f"Parity overlay: {parity_count} entries")
     print(f"Sweep binary: {SWEEP}")
 
     # Generate C header

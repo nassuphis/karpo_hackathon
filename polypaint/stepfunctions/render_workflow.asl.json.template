@@ -88,7 +88,8 @@
                 "mode.$": "$.mode",
                 "phase": "solve_score_clip",
                 "phase_label": "Solve score: clip",
-                "expected": 1
+                "expected": 1,
+                "subtask_prefix.$": "States.Format('render_{}_solve_score_clip', $.run_id)"
               }
             },
             "ResultPath": null,
@@ -108,6 +109,7 @@
                 "metric.$": "$.plan.solve_score.metric",
                 "solve_score_quantile.$": "$.plan.solve_score.quantile",
                 "solve_score_omega.$": "$.plan.solve_score.omega",
+                "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
                 "lores_bin_key.$": "$.plan.calc.lores_bin_key",
                 "root_transforms.$": "$.plan.params.root_transforms",
                 "out_key.$": "$.plan.solve_score.clip_key",
@@ -152,6 +154,7 @@
               "metric.$": "$.plan.solve_score.metric",
               "solve_score_quantile.$": "$.plan.solve_score.quantile",
               "solve_score_omega.$": "$.plan.solve_score.omega",
+              "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
               "bin_key.$": "States.Format('renders/{}/chunk_{}.bin', $.job_id, $$.Map.Item.Value.chunk_idx)",
               "degree.$": "$.plan.calc.degree",
               "clip_key.$": "$.plan.solve_score.clip_key",
@@ -191,7 +194,8 @@
                 "mode.$": "$.mode",
                 "phase": "solve_score_merge",
                 "phase_label": "Solve score: merge",
-                "expected": 1
+                "expected": 1,
+                "subtask_prefix.$": "States.Format('render_{}_solve_score_merge', $.run_id)"
               }
             },
             "ResultPath": null,
@@ -211,6 +215,7 @@
                 "metric.$": "$.plan.solve_score.metric",
                 "solve_score_quantile.$": "$.plan.solve_score.quantile",
                 "solve_score_omega.$": "$.plan.solve_score.omega",
+                "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
                 "hist_prefix.$": "$.plan.solve_score.hist_prefix",
                 "clip_key.$": "$.plan.solve_score.clip_key",
                 "out_key.$": "$.plan.solve_score.bins_key",
@@ -273,7 +278,10 @@
               "saved_palette_bins_key.$": "States.Format('{}{}.bin', $.plan.saved_palette.chunk_bins_prefix, $$.Map.Item.Value.chunk_idx)",
               "solve_metric.$": "$.plan.solve_score.metric",
               "solve_score_quantile.$": "$.plan.solve_score.quantile",
-              "solve_score_omega.$": "$.plan.solve_score.omega"
+              "solve_score_omega.$": "$.plan.solve_score.omega",
+              "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
+              "raster_function_name.$": "$.plan.raster.function_name",
+              "raster_mt_threads.$": "$.plan.raster.threads"
             },
             "ItemProcessor": {
               "ProcessorConfig": {"Mode": "INLINE"},
@@ -282,7 +290,7 @@
                 "RasterWorker": {
                   "Type": "Task",
                   "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": { "FunctionName": "${RasterFunctionArn}", "Payload.$": "$" },
+                  "Parameters": { "FunctionName.$": "$.raster_function_name", "Payload.$": "$" },
                   "ResultPath": null,
                   "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
                   "End": true
@@ -364,7 +372,8 @@
                 "mode.$": "$.mode",
                 "phase": "encode",
                 "phase_label": "Encode",
-                "expected": 1
+                "expected": 1,
+                "subtask_prefix.$": "States.Format('render_{}_encode', $.run_id)"
               }
             },
             "ResultPath": null,

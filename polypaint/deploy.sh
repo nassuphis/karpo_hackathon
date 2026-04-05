@@ -2,10 +2,12 @@
 # Deploy the polypaint Lambda functions
 # Usage: ./deploy.sh [create|update]
 #
-# 8 Lambdas:
-#   polypaint-sweep        — multi-process root solver (sweep binary)
+# Core Lambdas:
+#   polypaint-sweep        — single-thread AE root solver (sweep binary)
+#   polypaint-sweep-mt     — multithreaded AE root solver (sweep_mt binary)
 #   polypaint-coeffgen     — composable coefficient generation (sweep binary, coeffgen mode)
 #   polypaint-raster       — bin→tile-bucketed .pix sparse pixel output (roots2pix binary)
+#   polypaint-raster-mt    — multithreaded color raster via parallel roots2pix workers
 #   polypaint-finalize     — assemble .pix files into .raw tile (pixassemble binary)
 #   polypaint-encode       — raw→JPEG/PNG encoding (raw2jpeg binary, needs libvips)
 #   polypaint-viewport     — compute viewport from lores.bin (pure Python)
@@ -16,11 +18,13 @@ set -euo pipefail
 export AWS_PAGER=""
 
 SWEEP_NAME="polypaint-sweep"
+SWEEP_MT_NAME="polypaint-sweep-mt"
 ENCODE_NAME="polypaint-encode"
 VIEWPORT_NAME="polypaint-viewport"
 STORAGE_NAME="polypaint-storage"
 DISPATCH_NAME="polypaint-dispatch"
 RASTER_NAME="polypaint-raster"
+RASTER_MT_NAME="polypaint-raster-mt"
 FINALIZE_NAME="polypaint-finalize"
 COEFFGEN_NAME="polypaint-coeffgen"
 PREVIEW_NAME="polypaint-preview"
@@ -30,13 +34,16 @@ REGION="us-east-1"
 API_NAME="polypaint-api"
 RUNTIME="python3.12"
 ARCH="arm64"
-SWEEP_MEMORY=10240    # 6 vCPUs for multi-process sweep
+SWEEP_MEMORY=10240    # 6 vCPUs for single-thread AE solve with large chunks
+SWEEP_MT_MEMORY=10240 # 6 vCPUs for multithreaded AE solve
 ENCODE_MEMORY=1769    # 1 vCPU + libvips for JPEG/PNG encoding
 ENCODE_EPHEMERAL=3072 # 3GB /tmp for preview generation from large images
 VIEWPORT_MEMORY=512   # pure Python
 STORAGE_MEMORY=512    # pure Python
 DISPATCH_MEMORY=1769  # 1 vCPU — 50 threads doing SSL need real CPU
 RASTER_MEMORY=1769    # 1 vCPU, roots2pix (no canvas allocation)
+RASTER_MT_MEMORY=4096 # higher CPU tier for parallel roots2pix workers
+RASTER_MT_THREADS=4   # default per-Lambda worker count for color raster MT
 FINALIZE_MEMORY=1769  # 1 vCPU, pixassemble (64 MB tile buffer for 4096²)
 COEFFGEN_MEMORY=1769  # 1 vCPU, coefficient generation (no solver, striped)
 PREVIEW_MEMORY=1024   # pure Python, PNG encoding via zlib (512 OOMs on large lores)
@@ -54,7 +61,7 @@ BILEVEL_STITCH_MEMORY=6144  # ~4 vCPUs, libvips multithreaded stitch
 RENDER_PREVIEW_NAME="polypaint-render-preview"
 RENDER_PREVIEW_MEMORY=4096  # libvips vipsthumbnail on large images
 AUTOLEVELS_NAME="polypaint-autolevels"
-AUTOLEVELS_MEMORY=4096  # libvips autolevel post-process on saved color renders
+AUTOLEVELS_MEMORY=10240  # libvips autolevel post-process on saved color renders
 REPALETTE_NAME="polypaint-repalette"
 REPALETTE_MEMORY=4096  # libvips palette recolor on saved palette artifacts
 COLOR_REPALETTE_NAME="polypaint-color-repalette"
@@ -98,6 +105,10 @@ SWEEP_CM_MEMORY=4096  # companion matrix eigensolve needs more memory
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
+TEST_PYTHON="$SCRIPT_DIR/../.venv/bin/python"
+if [ ! -x "$TEST_PYTHON" ]; then
+    TEST_PYTHON="python3"
+fi
 
 # --- S3 website bucket setup (idempotent) ---
 ensure_bucket_website() {
@@ -136,12 +147,25 @@ ensure_bucket_website() {
 # --- Deployed frontend smoke test ---
 verify_frontend_assets() {
     local SITE_URL="http://${BUCKET}.s3-website-${REGION}.amazonaws.com"
+    local TMP_DIR
+    TMP_DIR=$(mktemp -d /tmp/polypaint-frontend-verify.XXXXXX)
+    trap 'rm -rf "$TMP_DIR"' RETURN
     echo "Verifying deployed frontend assets..."
     for asset in index.html coeff_func_catalog_js.js tri_palette_catalog_js.js long_palette_catalog_js.js; do
         local STATUS
         STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/${asset}")
         if [ "$STATUS" != "200" ]; then
             echo "FATAL: ${SITE_URL}/${asset} returned HTTP ${STATUS} (expected 200)"
+            exit 1
+        fi
+        local LOCAL_HASH REMOTE_HASH
+        curl -fsS "${SITE_URL}/${asset}" -o "${TMP_DIR}/${asset}"
+        LOCAL_HASH=$(shasum "$SCRIPT_DIR/${asset}" | cut -d' ' -f1)
+        REMOTE_HASH=$(shasum "${TMP_DIR}/${asset}" | cut -d' ' -f1)
+        if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
+            echo "FATAL: deployed ${asset} does not match local file"
+            echo "  local:  ${LOCAL_HASH}"
+            echo "  remote: ${REMOTE_HASH}"
             exit 1
         fi
         echo "  ${asset}: HTTP ${STATUS} OK"
@@ -293,7 +317,11 @@ print(f'  coeff_func_lookup.h: {len(catalog)} entries')
 echo "Building sweep_test (host, for probing)..."
 cc -O2 -o lambda/sweep_test lambda/sweep_cli.c -lm
 
-# Step 3: Probe degrees and generate JS catalog
+# Step 3: Regenerate parity overlay from pytest-backed hand parity suites
+echo "Generating parity overlay from pytest..."
+"$TEST_PYTHON" lambda/gen_parity_results.py || { echo "FATAL: parity overlay generation failed"; exit 1; }
+
+# Step 4: Probe degrees and generate JS catalog
 echo "Generating JS catalog (probing degrees)..."
 (cd lambda && python3 -c "
 from gen_catalog import load_catalog, load_metrics, generate_js, JS_OUT
@@ -316,6 +344,9 @@ echo "Compiling binaries..."
 
 echo "  sweep (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/sweep lambda/sweep_cli.c -lm
+
+echo "  sweep_mt (static, ARM64)..."
+aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/sweep_mt lambda/sweep_mt.c -lm
 
 echo "  roots2pix (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/roots2pix lambda/roots2pix.c -lm
@@ -544,6 +575,16 @@ chmod +x "$SWEEP_DIR"/sweep
 cd "$SWEEP_DIR" && zip -r9 /tmp/polypaint-sweep.zip . -q && cd "$SCRIPT_DIR"
 echo "  Sweep:    $(du -h /tmp/polypaint-sweep.zip | cut -f1)  (sweep)"
 
+# Sweep-MT: handler_sweep_mt.py + shared.py + sweep_mt
+SWEEP_MT_DIR=/tmp/polypaint-sweep-mt
+rm -rf "$SWEEP_MT_DIR"
+mkdir -p "$SWEEP_MT_DIR"
+cp lambda/handler_sweep_mt.py lambda/shared.py "$SWEEP_MT_DIR/"
+cp lambda/sweep_mt "$SWEEP_MT_DIR/"
+chmod +x "$SWEEP_MT_DIR"/sweep_mt
+cd "$SWEEP_MT_DIR" && zip -r9 /tmp/polypaint-sweep-mt.zip . -q && cd "$SCRIPT_DIR"
+echo "  SweepMT:  $(du -h /tmp/polypaint-sweep-mt.zip | cut -f1)  (sweep_mt)"
+
 # Coeffgen: handler_coeffgen.py + shared.py + sweep
 COEFFGEN_DIR=/tmp/polypaint-coeffgen
 rm -rf "$COEFFGEN_DIR"
@@ -597,6 +638,16 @@ cp lambda/roots2pix "$RASTER_DIR/"
 chmod +x "$RASTER_DIR"/roots2pix
 cd "$RASTER_DIR" && zip -r9 /tmp/polypaint-raster.zip . -q && cd "$SCRIPT_DIR"
 echo "  Raster:   $(du -h /tmp/polypaint-raster.zip | cut -f1)  (roots2pix)"
+
+# Raster-MT: handler_raster_mt.py + shared.py + roots2pix
+RASTER_MT_DIR=/tmp/polypaint-raster-mt
+rm -rf "$RASTER_MT_DIR"
+mkdir -p "$RASTER_MT_DIR"
+cp lambda/handler_raster_mt.py lambda/shared.py "$RASTER_MT_DIR/"
+cp lambda/roots2pix "$RASTER_MT_DIR/"
+chmod +x "$RASTER_MT_DIR"/roots2pix
+cd "$RASTER_MT_DIR" && zip -r9 /tmp/polypaint-raster-mt.zip . -q && cd "$SCRIPT_DIR"
+echo "  RastMT:   $(du -h /tmp/polypaint-raster-mt.zip | cut -f1)  (parallel roots2pix)"
 
 # Finalize: handler_finalize.py + shared.py + pixassemble + pixbinassemble
 FINALIZE_DIR=/tmp/polypaint-finalize
@@ -934,7 +985,7 @@ setup_api_gateway() {
     }
 
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_DEBUG_NAME" "$REPALETTE_NAME"; do
+    for FNAME in "$SWEEP_NAME" "$SWEEP_MT_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$RASTER_NAME" "$FINALIZE_NAME" "$PREVIEW_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_DEBUG_NAME" "$REPALETTE_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -945,8 +996,9 @@ setup_api_gateway() {
 
     # Create integrations
     echo "  Creating integrations..."
-    local SWEEP_INT COEFFGEN_INT ENCODE_INT VIEWPORT_INT STORAGE_INT DISPATCH_INT
+    local SWEEP_INT SWEEP_MT_INT COEFFGEN_INT ENCODE_INT VIEWPORT_INT STORAGE_INT DISPATCH_INT
     SWEEP_INT=$(create_integration "$SWEEP_NAME")
+    SWEEP_MT_INT=$(create_integration "$SWEEP_MT_NAME")
     COEFFGEN_INT=$(create_integration "$COEFFGEN_NAME")
     ENCODE_INT=$(create_integration "$ENCODE_NAME")
     VIEWPORT_INT=$(create_integration "$VIEWPORT_NAME")
@@ -956,6 +1008,7 @@ setup_api_gateway() {
     # Create routes
     echo "  Setting up routes..."
     ensure_route "POST /sweep" "$SWEEP_INT"
+    ensure_route "POST /sweep-mt" "$SWEEP_MT_INT"
     ensure_route "POST /coeffgen" "$COEFFGEN_INT"
 
     local RASTER_INT FINALIZE_INT PREVIEW_INT
@@ -1017,6 +1070,7 @@ setup_api_gateway() {
 
     printf '{
   "sweep": "%s/sweep",
+  "sweep-mt": "%s/sweep-mt",
   "coeffgen": "%s/coeffgen",
   "raster": "%s/raster",
   "finalize": "%s/finalize",
@@ -1032,7 +1086,7 @@ setup_api_gateway() {
   "sweep-cm": "%s/sweep-cm",
   "solve_proximity": "%s/solve-proximity",
   "palette-debug": "%s/palette-debug"
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" --region "$REGION"
     echo "  config.json uploaded"
@@ -1129,6 +1183,9 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$SWEEP_NAME" "handler_sweep.handler" "/tmp/polypaint-sweep.zip" \
         "$SWEEP_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
 
+    create_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip" \
+        "$SWEEP_MT_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+
     create_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
         "$COEFFGEN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
@@ -1145,13 +1202,16 @@ if [ "$ACTION" = "create" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     create_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
 
     create_lambda "$RASTER_NAME" "handler_raster.handler" "/tmp/polypaint-raster.zip" \
         "$RASTER_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+
+    create_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip" \
+        "$RASTER_MT_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_MT_THREADS=$RASTER_MT_THREADS" "$BINARY_TMP"
 
     create_lambda "$FINALIZE_NAME" "handler_finalize.handler" "/tmp/polypaint-finalize.zip" \
         "$FINALIZE_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
@@ -1209,7 +1269,7 @@ if [ "$ACTION" = "create" ]; then
 
     # Render plan + status Lambdas
     create_lambda "$RENDER_PLAN_NAME" "handler_render_plan.handler" "/tmp/polypaint-render-plan.zip" \
-        "$RENDER_PLAN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME"
+        "$RENDER_PLAN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME,RASTER_FUNCTION=$RASTER_NAME,RASTER_MT_FUNCTION=$RASTER_MT_NAME"
 
     create_lambda "$RENDER_STATUS_NAME" "handler_render_status.handler" "/tmp/polypaint-render-status.zip" \
         "$RENDER_STATUS_MEMORY" "$ROLE_ARN" "" "JOBS_TABLE=$JOBS_TABLE"
@@ -1400,6 +1460,9 @@ elif [ "$ACTION" = "update" ]; then
     update_lambda "$SWEEP_NAME" "handler_sweep.handler" "/tmp/polypaint-sweep.zip" \
         "$SWEEP_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
 
+    update_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip" \
+        "$SWEEP_MT_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+
     update_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
         "$COEFFGEN_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
@@ -1416,13 +1479,16 @@ elif [ "$ACTION" = "update" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     update_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
 
     update_lambda "$RASTER_NAME" "handler_raster.handler" "/tmp/polypaint-raster.zip" \
         "$RASTER_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+
+    update_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip" \
+        "$RASTER_MT_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_MT_THREADS=$RASTER_MT_THREADS" "$BINARY_TMP"
 
     update_lambda "$FINALIZE_NAME" "handler_finalize.handler" "/tmp/polypaint-finalize.zip" \
         "$FINALIZE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
@@ -1479,7 +1545,7 @@ elif [ "$ACTION" = "update" ]; then
         "$PALETTE_FINALIZE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     update_lambda "$RENDER_PLAN_NAME" "handler_render_plan.handler" "/tmp/polypaint-render-plan.zip" \
-        "$RENDER_PLAN_MEMORY" "" "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME"
+        "$RENDER_PLAN_MEMORY" "" "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME,RASTER_FUNCTION=$RASTER_NAME,RASTER_MT_FUNCTION=$RASTER_MT_NAME"
 
     update_lambda "$RENDER_STATUS_NAME" "handler_render_status.handler" "/tmp/polypaint-render-status.zip" \
         "$RENDER_STATUS_MEMORY" "" "JOBS_TABLE=$JOBS_TABLE"

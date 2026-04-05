@@ -55,7 +55,9 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(plan["calc"]["n_chunks"], 3)
         self.assertEqual(plan["calc"]["pass0_steps"], 16)
         self.assertEqual(plan["solve_score"]["omega"], 3.0)
+        self.assertTrue(plan["solve_score"]["omega_enabled"])
         self.assertEqual(plan["params"]["solve_score_omega"], 3.0)
+        self.assertTrue(plan["params"]["solve_score_omega_enabled"])
         self.assertEqual(
             plan["chunk_items"],
             [
@@ -164,6 +166,24 @@ class TestPaletteRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
         self.assertEqual(plan["params"]["metric"], "centroid_dist")
         self.assertEqual(plan["solve_score"]["metric"], "centroid_dist")
+
+    @patch("handler_palette_render_plan.s3")
+    def test_plan_accepts_disabled_omega(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        calc = {
+            "degree": 5,
+            "N": 4,
+            "times": 1,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+            "chunks": [{"idx": 0, "bin_key": "renders/j/chunk_0.bin", "n_t": 16}],
+        }
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(calc).encode())}
+
+        result = handler(_event(params={"metric": "proximity", "palette": "inferno", "solve_score_quantile": 0.01, "solve_score_omega": 7, "solve_score_omega_enabled": False, "root_transforms": []}), None)
+        plan = json.loads(result["body"])
+        self.assertFalse(plan["solve_score"]["omega_enabled"])
+        self.assertFalse(plan["params"]["solve_score_omega_enabled"])
 
 
 if __name__ == "__main__":

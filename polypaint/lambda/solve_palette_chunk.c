@@ -82,6 +82,7 @@ int main(int argc, char **argv) {
     double clipLo = getArgDouble(argc, argv, "--clip_lo", 0.0);
     double clipHi = getArgDouble(argc, argv, "--clip_hi", 0.0);
     double omega = getArgDouble(argc, argv, "--omega", 1.0);
+    int omegaEnabled = getArgInt(argc, argv, "--omega_enabled", 1);
     int stepCount = getArgInt(argc, argv, "--step_count", -1);
     const char *cutsStr = getArgStr(argc, argv, "--cuts", NULL);
     const char *scoresOut = getArgStr(argc, argv, "--scores_out", NULL);
@@ -205,7 +206,7 @@ int main(int argc, char **argv) {
         double u = (score - clipLo) / range;
         if (u < 0) u = 0;
         if (u > 1) u = 1;
-        u = apply_solve_score_omega(u, omega);
+        u = apply_solve_score_transfer(u, omegaEnabled, omega);
 
         uint8_t bin = 9;
         for (int c = 0; c < 9; c++) {
@@ -225,7 +226,7 @@ int main(int argc, char **argv) {
     free(buf);
 
     printf("{\"mode\":\"palette_chunk\",\"metric\":\"%s\",\"n_samples\":%d,"
-           "\"omega\":%.15g,\"clip_lo\":%.15g,\"clip_hi\":%.15g,\"min_score\":%.15g,\"max_score\":%.15g}\n",
-           solve_metric_name(metric), stepCount, omega, clipLo, clipHi, minScore, maxScore);
+           "\"omega\":%.15g,\"omega_enabled\":%s,\"clip_lo\":%.15g,\"clip_hi\":%.15g,\"min_score\":%.15g,\"max_score\":%.15g}\n",
+           solve_metric_name(metric), stepCount, omega, omegaEnabled ? "true" : "false", clipLo, clipHi, minScore, maxScore);
     return 0;
 }

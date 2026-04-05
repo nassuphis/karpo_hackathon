@@ -7,7 +7,9 @@ All tests live in `polypaint/tests/`.
 | File | What it tests | Requires |
 |------|--------------|----------|
 | `test_sweep_smoke.py` | sweep binary: coeffgen, solve, grid, dither uniqueness | `sweep_test` compiled |
+| `test_ae_mt.py` | AE-MT native regression: `sweep_mt` matches single-thread AE exactly at `n_threads=1`, restores the single-thread warm-start benefit, and rejects `match_roots=true` | local `cc` toolchain |
 | `test_poly_accuracy.py` | Transpiled C poly functions match Python originals | `sweep_test` compiled, numpy |
+| `test_poly164_hand.py` | Dedicated parity regression for the `poly_164` hand override | `sweep_test` compiled, numpy |
 | `test_pipeline.py` | Lambda handlers: dispatch, storage, coeffgen, sweep (solve-only), preview | Python mocks only |
 | `test_chunking.py` | Chunked pipeline: param_gen, coeffgen_chunked, chunk planner, chunks>N | `sweep_test` compiled |
 | `test_bilevel_raster.py` | bilevel_raster: byte-exact bitset comparison vs Python | `bilevel_raster_local` + `sweep_test` |
@@ -33,6 +35,7 @@ All tests live in `polypaint/tests/`.
 | `test_render_workflow_definition.py` | Step Functions ASL template: required states, Map concurrency, retry policies | JSON parsing only |
 | `test_render_orchestrator.py` | Render orchestrator starter Lambda: validation, DDB write, SFN StartExecution | Python mocks only |
 | `test_render_plan.py` | Render plan Lambda: viewport, tile/chunk computation, output keys, size limit | Python mocks only |
+| `test_raster_mt.py` | MT raster Lambda: solve-range splitting, worker output merge, saved-palette bin slicing, perf/result_data contract | Python mocks only |
 | `test_render_status.py` | Render status Lambda: phase reporting, error extraction, updated_at_ms | Python mocks only |
 | `test_palette_workflow_definition.py` | Palette workflow ASL template: required states, structure | JSON parsing only |
 | `test_palette_render_plan.py` | Palette render plan Lambda | Python mocks only |
@@ -45,7 +48,7 @@ All tests live in `polypaint/tests/`.
 | `test_low_agreement_hand.py` | Batch parity coverage for the repaired low-agreement coeff funcs promoted from transpiled to hand; the current authoritative function list lives in `CASES` inside the test file | `sweep_test` compiled, numpy |
 | `test_deploy_packaging.py` | Lambda zip contents, local sidecar packaging, executable chmod coverage, and deploy-script regressions such as the PDF layer builder entrypoint/tooling contract | Python only |
 | `test_pdf_artifact_handler.py` | PDF artifact Lambda: Color source validation, metadata-derived spread composition, PDF upload contract | Python mocks only |
-| `test_frontend_js.sh` | Frontend JS execution: UI logic, TRI palette popup/swatches, dispatch, Render family catalogs, Palette workflow UI, DeepZoom inventory | Node.js (vm module) |
+| `test_frontend_js.sh` | Frontend JS execution: UI logic, TRI palette popup/swatches, dispatch, Render family catalogs, Palette workflow UI, DeepZoom inventory, render perf logging | Node.js (vm module) |
 | `e2e/deepzoom-inventory.spec.js` | DeepZoom inventory: load, sort, select, arrow keys, share links | Playwright browser |
 | `e2e/render-refresh.spec.js` | Render tab refresh: summary call, artifact panel, info line | Playwright browser |
 | `e2e/render-solve-score.spec.js` | Solve score UI: metrics, quantile, TRI palette behavior, dispatch payloads, family catalogs, palette family behavior | Playwright browser |
@@ -65,7 +68,7 @@ cc -O3 -o bilevel_merge_local bilevel_merge.c $(pkg-config --cflags --libs vips)
 
 ```bash
 cd polypaint
-uv run python -m pytest tests/test_sweep_smoke.py tests/test_poly_accuracy.py tests/test_pipeline.py tests/test_bilevel_raster.py tests/test_bilevel_stitch.py tests/test_dither.py tests/test_param_dump.py -v
+uv run python -m pytest tests/test_sweep_smoke.py tests/test_ae_mt.py tests/test_poly_accuracy.py tests/test_pipeline.py tests/test_bilevel_raster.py tests/test_bilevel_stitch.py tests/test_dither.py tests/test_param_dump.py -v
 ```
 
 ### Individual test files
@@ -75,7 +78,11 @@ uv run python tests/test_dither.py
 uv run python tests/test_param_dump.py
 uv run python tests/test_bilevel_raster.py
 uv run python tests/test_bilevel_stitch.py
+uv run python -m pytest tests/test_ae_mt.py -q
+uv run python -m pytest tests/test_poly164_hand.py tests/test_coeff_catalog_consistency.py -q
 uv run python -m pytest tests/test_deploy_packaging.py tests/test_pdf_artifact_handler.py -q
+uv run python lambda/gen_parity_results.py
+uv run python -m pytest tests/test_coeff_parity_results.py tests/test_coeff_catalog_consistency.py -q
 uv run python -m pytest tests/test_coeff_catalog_consistency.py tests/test_poly645_hand.py tests/test_poly795_hand.py tests/test_low_agreement_hand.py -q
 ```
 
@@ -110,7 +117,12 @@ When replacing a broken transpiled coeff function with a hand implementation in 
    - `c_symbol` must point at `<name>_hand`
    - `kind` must be `"hand"`
    - `source` must be `"poly_hand.h"`
-3. Update `lambda/coeff_func_metrics.json` if the frontend agreement badge should change.
+3. If the function has parity coverage, regenerate the parity overlay instead of hand-editing the frontend agreement badge:
+   ```bash
+   cd polypaint
+   ../.venv/bin/python lambda/gen_parity_results.py
+   ```
+   This rewrites `lambda/coeff_func_parity.json`, which is the source of truth for parity-tested agreement badges.
 4. Regenerate the derived artifacts:
    ```bash
    cd polypaint/lambda
@@ -132,10 +144,13 @@ When replacing a broken transpiled coeff function with a hand implementation in 
 7. Run the loose-end checks after regenerating:
    ```bash
    cd polypaint
-   uv run python -m pytest tests/test_coeff_catalog_consistency.py tests/test_poly645_hand.py tests/test_poly795_hand.py tests/test_low_agreement_hand.py -q
+   ../.venv/bin/python lambda/gen_parity_results.py
+   uv run python -m pytest tests/test_coeff_parity_results.py tests/test_coeff_catalog_consistency.py tests/test_poly645_hand.py tests/test_poly795_hand.py tests/test_low_agreement_hand.py -q
    ```
 
 Do not stop after editing `poly_hand.h`. If the catalog or generated lookup is left stale, the runtime and UI will still use and label the function as transpiled.
+Do not hand-edit `agreement_pct` for functions covered by parity suites; regenerate `lambda/coeff_func_parity.json` and then rebuild the JS catalog.
+The parity/catalog consistency tests will also self-regenerate `lambda/sweep_test`, `lambda/coeff_func_parity.json`, and `coeff_func_catalog_js.js` if needed, so a clean checkout can verify the path without manual pre-generation.
 
 ### Low-agreement repair workflow
 
@@ -201,6 +216,14 @@ Tests that require Docker ARM64:
 | `test_solve_palette_debug.py` | `solve_palette_debug` | None (static) |
 
 These tests skip automatically on non-ARM hosts with a message pointing to Docker.
+
+The deploy-style ARM64 smoke suite in `scripts/test-docker-runtime.sh` now covers:
+
+- `sweep`
+- `sweep_mt`
+- `sweep_cm`
+- `solve_proximity_stats`
+- `roots2pix`
 
 ### Visual comparison tests (slow, ~5 min per batch)
 
@@ -463,6 +486,7 @@ Tests the native autolevel renderer (libvips):
 | solve_proximity_stats.c | test_solve_proximity_stats (Docker ARM64) |
 | solve_palette_debug.c | test_solve_palette_debug (Docker ARM64) |
 | autolevels_render.c / handler_autolevels.py | test_autolevels_handler + test_autolevels_render_native + test_frontend_js.sh |
+| handler_raster.py / handler_raster_mt.py | test_raster_pixel_bins + test_raster_saved_palette + test_raster_mt + test_frontend_js.sh |
 | Palette handlers | test_palette_debug_handler + test_palette_chunk_handler + test_palette_finalize_handler |
 | Step Functions ASL | test_render_workflow_definition + test_palette_workflow_definition |
 | Render orchestrator/plan/status | test_render_orchestrator + test_render_plan + test_render_status |

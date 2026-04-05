@@ -130,6 +130,19 @@ class TestDeployPackaging(unittest.TestCase):
 
         self.assertIn("handler_raster.py", packaged)
         self.assertIn("roots2pix", packaged["handler_raster.py"])
+        self.assertIn("handler_raster_mt.py", packaged)
+        self.assertIn("roots2pix", packaged["handler_raster_mt.py"])
+        self.assertIn('create_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', DEPLOY_TEXT)
+        self.assertIn('update_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', DEPLOY_TEXT)
+        self.assertIn("RASTER_MT_THREADS", DEPLOY_TEXT)
+
+        self.assertIn("handler_sweep_mt.py", packaged)
+        self.assertIn("sweep_mt", packaged["handler_sweep_mt.py"])
+        self.assertIn('create_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip"', DEPLOY_TEXT)
+        self.assertIn('update_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip"', DEPLOY_TEXT)
+        self.assertIn("SWEEP_MT_FUNCTION", DEPLOY_TEXT)
+        self.assertIn('ensure_route "POST /sweep-mt" "$SWEEP_MT_INT"', DEPLOY_TEXT)
+        self.assertIn('"sweep-mt": "%s/sweep-mt"', DEPLOY_TEXT)
 
         self.assertIn("handler_autolevels.py", packaged)
         self.assertIn("autolevels_render", packaged["handler_autolevels.py"])
@@ -156,6 +169,14 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("build-pdf-python-layer.sh", DEPLOY_TEXT)
         self.assertIn('create_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip"', DEPLOY_TEXT)
         self.assertIn('update_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip"', DEPLOY_TEXT)
+        self.assertIn("lambda/gen_parity_results.py", DEPLOY_TEXT)
+
+    def test_deploy_regenerates_parity_overlay_before_js_catalog(self):
+        build_idx = DEPLOY_TEXT.index('cc -O2 -o lambda/sweep_test lambda/sweep_cli.c -lm')
+        parity_idx = DEPLOY_TEXT.index('lambda/gen_parity_results.py')
+        js_idx = DEPLOY_TEXT.index('from gen_catalog import load_catalog, load_metrics, generate_js, JS_OUT')
+        self.assertLess(build_idx, parity_idx)
+        self.assertLess(parity_idx, js_idx)
 
     def test_pdf_layer_build_script_overrides_lambda_entrypoint(self):
         build_script = (LAMBDA_DIR / "build-pdf-python-layer.sh").read_text()
@@ -165,6 +186,14 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("zipfile.ZipFile", build_script)
         self.assertNotIn("find /out/python", build_script)
         self.assertNotIn("zip -r9", build_script)
+
+    def test_deploy_verifies_uploaded_frontend_content_matches_local(self):
+        self.assertIn('verify_frontend_assets() {', DEPLOY_TEXT)
+        self.assertIn('curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/${asset}"', DEPLOY_TEXT)
+        self.assertIn('curl -fsS "${SITE_URL}/${asset}" -o "${TMP_DIR}/${asset}"', DEPLOY_TEXT)
+        self.assertIn('LOCAL_HASH=$(shasum "$SCRIPT_DIR/${asset}" | cut -d\' \' -f1)', DEPLOY_TEXT)
+        self.assertIn('REMOTE_HASH=$(shasum "${TMP_DIR}/${asset}" | cut -d\' \' -f1)', DEPLOY_TEXT)
+        self.assertIn('FATAL: deployed ${asset} does not match local file', DEPLOY_TEXT)
 
 
 if __name__ == "__main__":

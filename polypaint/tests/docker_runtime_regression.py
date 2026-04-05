@@ -3,7 +3,7 @@
 Docker runtime regression test for deploy binaries.
 
 Runs inside ARM64 Docker container with /src mounted to lambda/.
-Tests: AE/CM solvers, CFPV coeffgen, render preview (vipsthumbnail),
+Tests: AE/AE-MT/CM solvers, CFPV coeffgen, render preview (vipsthumbnail),
 solve_proximity_stats, and catalog degree verification.
 
 Invoked by scripts/test-docker-runtime.sh — not run directly.
@@ -76,7 +76,7 @@ def cleanup(*paths):
 # ── AE/CM Solver Tests ───────────────────────────────────────────────────
 
 def test_ae_cm_solvers():
-    print("--- AE/CM solver regression ---")
+    print("--- AE/AE-MT/CM solver regression ---")
 
     polys = [
         [1, -6, 11, -6],
@@ -100,6 +100,32 @@ def test_ae_cm_solvers():
     assert r.returncode == 0, "AE FAILED: " + r.stderr[:200]
     print("AE: %s" % json.loads(r.stdout))
 
+    mt_spec_single = json.dumps({
+        "mode": "solve_mt", "coeffs_file": "/tmp/test_cf.bin",
+        "n_coeffs": n_coeffs, "n2": len(polys),
+        "i1_start": 0, "i1_end": 1, "match_roots": False,
+        "n_threads": 1,
+    })
+    r = subprocess.run(["/src/sweep_mt", "/tmp/ae_mt_single_out.bin"],
+                       input=mt_spec_single, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, "AE-MT FAILED: " + r.stderr[:200]
+    mt_single_meta = json.loads(r.stdout)
+    print("AE-MT(1): %s" % mt_single_meta)
+    assert mt_single_meta["n_threads"] == 1, "AE-MT single-thread did not report n_threads=1"
+
+    mt_spec_multi = json.dumps({
+        "mode": "solve_mt", "coeffs_file": "/tmp/test_cf.bin",
+        "n_coeffs": n_coeffs, "n2": len(polys),
+        "i1_start": 0, "i1_end": 1, "match_roots": False,
+        "n_threads": 4,
+    })
+    r = subprocess.run(["/src/sweep_mt", "/tmp/ae_mt_out.bin"],
+                       input=mt_spec_multi, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, "AE-MT(4) FAILED: " + r.stderr[:200]
+    mt_meta = json.loads(r.stdout)
+    print("AE-MT(4): %s" % mt_meta)
+    assert mt_meta["n_threads"] >= 1, "AE-MT did not report n_threads"
+
     cm_spec = json.dumps({
         "mode": "solve_cm", "coeffs_file": "/tmp/test_cf.bin",
         "n_coeffs": n_coeffs, "n_steps": len(polys),
@@ -110,39 +136,90 @@ def test_ae_cm_solvers():
     print("CM: %s" % json.loads(r.stdout))
 
     ae_size = os.path.getsize("/tmp/ae_out.bin")
+    ae_mt_single_size = os.path.getsize("/tmp/ae_mt_single_out.bin")
+    ae_mt_size = os.path.getsize("/tmp/ae_mt_out.bin")
     cm_size = os.path.getsize("/tmp/cm_out.bin")
     expected = len(polys) * (n_coeffs - 1) * 2 * 4
     assert ae_size == expected, "AE size %d != %d" % (ae_size, expected)
+    assert ae_mt_single_size == expected, "AE-MT(1) size %d != %d" % (ae_mt_single_size, expected)
+    assert ae_mt_size == expected, "AE-MT size %d != %d" % (ae_mt_size, expected)
     assert cm_size == expected, "CM size %d != %d" % (cm_size, expected)
+
+    with open("/tmp/ae_out.bin", "rb") as fh:
+        ae_bytes = fh.read()
+    with open("/tmp/ae_mt_single_out.bin", "rb") as fh:
+        ae_mt_single_bytes = fh.read()
+    assert ae_bytes == ae_mt_single_bytes, "AE-MT(1) output diverges from AE for match_roots=false fixture"
 
     degree = n_coeffs - 1
     ae_roots = read_roots("/tmp/ae_out.bin", degree)
+    ae_mt_single_roots = read_roots("/tmp/ae_mt_single_out.bin", degree)
+    ae_mt_roots = read_roots("/tmp/ae_mt_out.bin", degree)
     cm_roots = read_roots("/tmp/cm_out.bin", degree)
     assert len(ae_roots) == len(polys)
+    assert len(ae_mt_single_roots) == len(polys)
+    assert len(ae_mt_roots) == len(polys)
     assert len(cm_roots) == len(polys)
 
     labels = ["cubic", "quartic", "repeated", "complex", "leading-zero", "all-zero"]
-    for i, (cf, ae_r, cm_r, label) in enumerate(zip(polys, ae_roots, cm_roots, labels)):
+    for i, (cf, ae_r, ae_mt_single_r, ae_mt_r, cm_r, label) in enumerate(zip(polys, ae_roots, ae_mt_single_roots, ae_mt_roots, cm_roots, labels)):
         ae_finite = all(math.isfinite(r.real) and math.isfinite(r.imag) for r in ae_r)
+        ae_mt_single_finite = all(math.isfinite(r.real) and math.isfinite(r.imag) for r in ae_mt_single_r)
+        ae_mt_finite = all(math.isfinite(r.real) and math.isfinite(r.imag) for r in ae_mt_r)
         cm_finite = all(math.isfinite(r.real) and math.isfinite(r.imag) for r in cm_r)
         assert ae_finite, "%s: AE has non-finite roots" % label
+        assert ae_mt_single_finite, "%s: AE-MT(1) has non-finite roots" % label
+        assert ae_mt_finite, "%s: AE-MT has non-finite roots" % label
         assert cm_finite, "%s: CM has non-finite roots" % label
 
         if label == "all-zero":
             continue
 
         active_ae = [r for r in ae_r if abs(r) > 1e-10]
+        active_ae_mt_single = [r for r in ae_mt_single_r if abs(r) > 1e-10]
+        active_ae_mt = [r for r in ae_mt_r if abs(r) > 1e-10]
         active_cm = [r for r in cm_r if abs(r) > 1e-10]
         if active_ae:
             ae_resid = max(abs(polyval(cf, r)) for r in active_ae)
             assert ae_resid < 1e-2, "%s: AE max residual %.2e" % (label, ae_resid)
+        if active_ae_mt_single:
+            ae_mt_single_resid = max(abs(polyval(cf, r)) for r in active_ae_mt_single)
+            assert ae_mt_single_resid < 1e-2, "%s: AE-MT(1) max residual %.2e" % (label, ae_mt_single_resid)
+        if active_ae_mt:
+            ae_mt_resid = max(abs(polyval(cf, r)) for r in active_ae_mt)
+            assert ae_mt_resid < 1e-2, "%s: AE-MT max residual %.2e" % (label, ae_mt_resid)
         if active_cm:
             cm_resid = max(abs(polyval(cf, r)) for r in active_cm)
             assert cm_resid < 1e-2, "%s: CM max residual %.2e" % (label, cm_resid)
 
-        print("  %s: AE OK, CM OK" % label)
+        print("  %s: AE OK, AE-MT(1) OK, AE-MT(4) OK, CM OK" % label)
 
-    print("=== AE/CM solver tests PASSED ===")
+    repeat_polys = [[1, -6, 11, -6] for _ in range(16)]
+    write_cf("/tmp/repeat_cf.bin", repeat_polys, 4)
+    r = subprocess.run(["/src/sweep", "/tmp/repeat_ae_out.bin"],
+                       input=json.dumps({
+                           "mode": "solve", "coeffs_file": "/tmp/repeat_cf.bin",
+                           "n_coeffs": 4, "n2": len(repeat_polys),
+                           "i1_start": 0, "i1_end": 1, "match_roots": False,
+                       }),
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, "repeat AE FAILED: " + r.stderr[:200]
+    repeat_ae_meta = json.loads(r.stdout)
+    r = subprocess.run(["/src/sweep_mt", "/tmp/repeat_mt_out.bin"],
+                       input=json.dumps({
+                           "mode": "solve_mt", "coeffs_file": "/tmp/repeat_cf.bin",
+                           "n_coeffs": 4, "n2": len(repeat_polys),
+                           "i1_start": 0, "i1_end": 1, "match_roots": False,
+                           "n_threads": 4,
+                       }),
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, "repeat AE-MT FAILED: " + r.stderr[:200]
+    repeat_mt_meta = json.loads(r.stdout)
+    assert repeat_ae_meta["avg_iterations"] < repeat_mt_meta["avg_iterations"], (
+        "AE warm-start chain should reduce avg_iterations relative to multi-thread cold starts at block boundaries"
+    )
+
+    print("=== AE/AE-MT/CM solver tests PASSED ===")
 
 
 # ── CFPV Coeffgen Tests ──────────────────────────────────────────────────
@@ -428,7 +505,7 @@ def test_catalog_degrees():
 
 if __name__ == "__main__":
     print("--- Binary validation ---")
-    for bin_path in ["/src/sweep", "/src/sweep_cm"]:
+    for bin_path in ["/src/sweep", "/src/sweep_mt", "/src/sweep_cm"]:
         magic = open(bin_path, "rb").read(4)
         assert magic == b"\x7fELF", "%s is not an ELF binary" % bin_path
         print("  %s: ELF OK" % bin_path)

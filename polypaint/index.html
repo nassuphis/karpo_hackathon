@@ -392,7 +392,8 @@ button {
                 </select>
             </div>
             <div style="margin-top:8px; display:flex; gap:6px; align-items:center">
-                <button class="btn-primary" id="btn-calculate" onclick="runCalculate()" style="background:#2a6">Calculate</button>
+                <button class="btn-primary" id="btn-calculate" onclick="runCalculate()" style="background:#2a6">Calculate-AE</button>
+                <button class="btn-primary" id="btn-calculate-mt" onclick="runCalculateAEMT()" style="background:#287">Calculate-AE-MT</button>
                 <button class="btn-primary" id="btn-calculate-cm" onclick="runCalculateCM()" style="background:#64a">Calculate-CM</button>
                 <button class="btn-primary" id="btn-param-debug" onclick="runParamDebug()" style="background:#446">Param</button>
                 <select id="param-debug-mode" style="width:7em; font-size:11px">
@@ -580,7 +581,10 @@ button {
                         <option value="asymmetry_re">Asymmetry Re</option>
                     </select>
                     <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:6px"></div>
-                    <label style="color:#888; font-size:10px; margin-left:8px; min-width:42px">Omega:</label>
+                    <label style="color:#888; font-size:10px; margin-left:8px; display:inline-flex; align-items:center; gap:4px">
+                        <input type="checkbox" id="render-solve-score-omega-enabled" checked onchange="_syncSolveScoreOmegaUi('render')">
+                        <span>Omega</span>
+                    </label>
                     <span id="render-solve-score-omega-val" style="font-size:10px; display:inline-block; width:1.5em; text-align:right">1</span>
                     <input type="range" id="render-solve-score-omega" min="1" max="10" step="1" value="1" style="width:92px; margin-left:4px"
                         oninput="document.getElementById('render-solve-score-omega-val').textContent=parseInt(this.value, 10)">
@@ -626,6 +630,7 @@ button {
             <div class="status" id="render-status"></div>
             <div id="render-preview" style="margin-top:8px"></div>
             <div id="render-info" style="font-size:12px; color:#888; margin-top:4px"></div>
+            <div style="margin-top:6px"><button class="btn-secondary" id="btn-render-clear" onclick="_clearRenderState()" style="padding:3px 10px; font-size:10px; color:#888">Clear</button></div>
             <div id="render-log" style="margin-top:8px; font-family:monospace; font-size:11px"></div>
         </div>
         <!-- Palette tab -->
@@ -657,7 +662,10 @@ button {
                         <option value="asymmetry_re">Asymmetry Re</option>
                     </select>
                     <div id="palette-circles-palette-tab" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:8px"></div>
-                    <label style="color:#888; font-size:10px; margin-left:8px; min-width:42px">Omega:</label>
+                    <label style="color:#888; font-size:10px; margin-left:8px; display:inline-flex; align-items:center; gap:4px">
+                        <input type="checkbox" id="palette-solve-score-omega-enabled" checked onchange="_syncSolveScoreOmegaUi('palette')">
+                        <span>Omega</span>
+                    </label>
                     <span id="palette-solve-score-omega-val" style="font-size:10px; display:inline-block; width:1.5em; text-align:right">1</span>
                     <input type="range" id="palette-solve-score-omega" min="1" max="10" step="1" value="1" style="width:92px; margin-left:4px"
                         oninput="document.getElementById('palette-solve-score-omega-val').textContent=parseInt(this.value, 10)">
@@ -1000,6 +1008,33 @@ button {
     </div>
 </div>
 
+<div id="render-mt-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="render-mt-popup-title">
+        <div class="tri-popup-head">
+            <div id="render-mt-popup-title" class="tri-popup-title">Generate-MT</div>
+            <button id="render-mt-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div id="render-mt-popup-summary" class="autolevel-popup-summary"></div>
+        <div style="padding:0 14px 8px 14px">
+            <div class="autolevel-stage-row" style="align-items:center">
+                <div class="autolevel-stage-text">Parallel roots2pix workers inside one raster Lambda.</div>
+                <div class="autolevel-inline-fields">
+                    <span class="inline-label">Threads</span>
+                    <input id="render-mt-threads" type="number" min="1" max="16" step="1" value="4">
+                </div>
+            </div>
+        </div>
+        <div class="autolevel-popup-help">Use this to compare the multithreaded raster path against normal Generate. Solve score, Constant, and Rainbow with match=none are supported.</div>
+        <div class="autolevel-popup-actions">
+            <div></div>
+            <div style="display:flex; gap:8px">
+                <button id="render-mt-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+                <button id="render-mt-popup-run" type="button" class="btn-primary" style="padding:6px 12px">Execute</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div id="generate-from-palette-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
     <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="generate-from-palette-popup-title">
         <div class="tri-popup-head">
@@ -1241,7 +1276,7 @@ function _applyDetail(r, detail, previewEl, infoEl, jobId) {
     document.getElementById('res-times').textContent = detail.times || '-';
     const calc = detail.calc || {};
     const solver = calc.solver || detail.solver || '';
-    document.getElementById('res-solver').textContent = solver === 'companion_matrix' ? 'CM' : solver === 'aberth' ? 'AE' : solver || '-';
+    document.getElementById('res-solver').textContent = _solverShortLabel(solver);
 
     // Preview stats from server or session cache
     const ps = detail.preview_stats || {};
@@ -1418,6 +1453,43 @@ function _setChainFromSaved(which, values) {
     _renderChips(which);
 }
 
+function _solverShortLabel(solver) {
+    return solver === 'companion_matrix' ? 'CM'
+        : solver === 'aberth_mt' ? 'AE-MT'
+        : solver === 'aberth' ? 'AE'
+        : solver || '-';
+}
+
+function _solverRunLabel(solver) {
+    return solver === 'companion_matrix' ? 'Calculate-CM'
+        : solver === 'aberth_mt' ? 'Calculate-AE-MT'
+        : 'Calculate-AE';
+}
+
+function _solverButtonId(solver) {
+    return solver === 'companion_matrix' ? 'btn-calculate-cm'
+        : solver === 'aberth_mt' ? 'btn-calculate-mt'
+        : 'btn-calculate';
+}
+
+function _solverTag(solver) {
+    return solver === 'companion_matrix' ? 'CM'
+        : solver === 'aberth_mt' ? 'AE-MT'
+        : 'AE';
+}
+
+function _solverLoresEndpoint(solver) {
+    return solver === 'companion_matrix' ? 'sweep-cm'
+        : solver === 'aberth_mt' ? 'sweep-mt'
+        : 'sweep';
+}
+
+function _solverDispatchTarget(solver) {
+    return solver === 'companion_matrix' ? 'sweep_cm'
+        : solver === 'aberth_mt' ? 'sweep_mt'
+        : 'sweep';
+}
+
 function _populateComputeFromDetail(jobId, detail) {
     const calc = detail.calc || {};
     const pipeline = detail.pipeline || calc.pipeline || {};
@@ -1450,7 +1522,7 @@ function _populateComputeFromDetail(jobId, detail) {
 
     document.getElementById('results-dir').value = jobId;
     const solver = calc.solver || detail.solver || '';
-    const solverLabel = solver === 'companion_matrix' ? 'Calculate-CM' : 'Calculate';
+    const solverLabel = _solverRunLabel(solver);
     const statusEl = document.getElementById('compute-status');
     statusEl.textContent = `Populated from ${jobId}. Re-run with ${solverLabel}.`;
     statusEl.className = 'status ok';
@@ -1615,6 +1687,7 @@ let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
 let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
 let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '' };
+let _renderMtPopupState = { open: false, threads: 4 };
 let _generateFromPalettePopupState = { open: false, filter: '', highlightIdx: 0, sourcePaletteId: '' };
 let _pdfColorSpreadPopupState = { open: false, filter: '', highlightIdx: 0, sourceArtifactId: '' };
 let _functionPopupState = { open: false, filter: '', highlightIdx: 0 };
@@ -1935,6 +2008,29 @@ function _renderAllPaletteRows() {
     _renderPaletteRow('palette_tab');
 }
 
+function _solveScoreOmegaEnabled(prefix) {
+    const cb = document.getElementById(`${prefix}-solve-score-omega-enabled`);
+    return cb ? !!cb.checked : true;
+}
+
+function _setSolveScoreOmegaEnabled(prefix, enabled) {
+    const cb = document.getElementById(`${prefix}-solve-score-omega-enabled`);
+    if (cb) cb.checked = !!enabled;
+    _syncSolveScoreOmegaUi(prefix);
+}
+
+function _syncSolveScoreOmegaUi(prefix) {
+    const enabled = _solveScoreOmegaEnabled(prefix);
+    const slider = document.getElementById(`${prefix}-solve-score-omega`);
+    const val = document.getElementById(`${prefix}-solve-score-omega-val`);
+    if (slider) slider.disabled = !enabled;
+    if (val) val.style.opacity = enabled ? '1' : '0.45';
+}
+
+function _omegaSummaryLabel(enabled, omega) {
+    return enabled ? `w=${Number(omega).toFixed(0)}` : 'w=off';
+}
+
 function setColorMode(mode) {
     renderColorMode = mode;
     document.querySelectorAll('.color-dot').forEach(d => {
@@ -1980,6 +2076,7 @@ function setPaletteForMode(mode, name) {
     _renderPaletteRow(mode);
     if (mode === 'repalette' && _repalettePopupState.open) _renderRepalettePopup();
     if (mode === 'color_repalette' && _colorRepalettePopupState.open) _renderColorRepalettePopup();
+    if (_renderMtPopupState.open) _renderRenderMtPopup();
     if (mode === 'generate_from_palette' && _generateFromPalettePopupState.open) _renderGenerateFromPalettePopup();
 }
 
@@ -2638,7 +2735,7 @@ async function runColorRepaletteSelectedArtifact() {
         const taskId = 'color_repalette_' + runId;
         const artifactId = 'color_repalette_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
         const paletteName = _currentPaletteForMode('color_repalette') || art.palette || 'inferno';
-        log(`Color RePalette: dispatching ${art.artifact_id} -> ${paletteName}...`, '', 'render-log');
+        log(`Color RePalette: dispatching ${art.artifact_id} -> ${paletteName}...`, 'ok', 'render-log');
         const dispResult = await lambdaPost('dispatch', {
             target: 'color_repalette',
             jobs: [{
@@ -2673,6 +2770,54 @@ async function runColorRepaletteSelectedArtifact() {
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = orig; }
     }
+}
+
+function _clampRenderMtThreads(value) {
+    let n = parseInt(value, 10);
+    if (!Number.isFinite(n)) n = 4;
+    return Math.max(1, Math.min(16, n));
+}
+
+function _closeRenderMtPopup() {
+    _renderMtPopupState = { open: false, threads: _clampRenderMtThreads(_renderMtPopupState.threads) };
+    const overlay = document.getElementById('render-mt-popup-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+}
+
+function _renderRenderMtPopup() {
+    const overlay = document.getElementById('render-mt-popup-overlay');
+    const summaryEl = document.getElementById('render-mt-popup-summary');
+    const threadsEl = document.getElementById('render-mt-threads');
+    const runBtn = document.getElementById('render-mt-popup-run');
+    if (!overlay || !summaryEl || !threadsEl) return;
+    if (!_renderMtPopupState.open) {
+        _closeRenderMtPopup();
+        return;
+    }
+    const threads = _clampRenderMtThreads(_renderMtPopupState.threads);
+    _renderMtPopupState.threads = threads;
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    threadsEl.value = String(threads);
+    const modeLabel = renderColorMode === 'rainbow'
+        ? `Rainbow (${renderMatchMode})`
+        : renderColorMode.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+    summaryEl.textContent = `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster workers=${threads}`;
+    if (runBtn) runBtn.disabled = !_renderColorMtEligible() || !!_activeRenderRun;
+}
+
+function openRenderMtPopup() {
+    if (!_renderColorMtEligible() || _activeRenderRun) return;
+    _renderMtPopupState = {
+        open: true,
+        threads: _clampRenderMtThreads(_renderMtPopupState.threads || 4),
+    };
+    _renderRenderMtPopup();
+    const threadsEl = document.getElementById('render-mt-threads');
+    if (threadsEl && typeof threadsEl.focus === 'function') threadsEl.focus();
 }
 
 function _visibleGenerateFromPaletteCatalog() {
@@ -2756,7 +2901,9 @@ function _renderGenerateFromPalettePopup() {
         const qCell = document.createElement('td');
         qCell.textContent = Number.isFinite(art.solve_score_quantile) ? (art.solve_score_quantile * 100).toFixed(1) + '%' : '';
         const omegaCell = document.createElement('td');
-        omegaCell.textContent = Number.isFinite(art.solve_score_omega) ? String(Number(art.solve_score_omega)) : '';
+        omegaCell.textContent = Number.isFinite(art.solve_score_omega)
+            ? (art.solve_score_omega_enabled === false ? 'off' : String(Number(art.solve_score_omega)))
+            : '';
         const nameCell = document.createElement('td');
         nameCell.textContent = art.display_name || art.palette_id || '';
         const paletteCell = document.createElement('td');
@@ -3044,6 +3191,58 @@ function _initColorRepalettePopup() {
         if (ev.key === 'Escape') {
             ev.preventDefault();
             _closeColorRepalettePopup();
+        }
+    });
+}
+
+function _initRenderMtPopup() {
+    const overlay = document.getElementById('render-mt-popup-overlay');
+    const closeBtn = document.getElementById('render-mt-popup-close');
+    const cancelBtn = document.getElementById('render-mt-popup-cancel');
+    const runBtn = document.getElementById('render-mt-popup-run');
+    const threadsEl = document.getElementById('render-mt-threads');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closeRenderMtPopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closeRenderMtPopup);
+    if (cancelBtn) cancelBtn.addEventListener('click', _closeRenderMtPopup);
+    if (threadsEl) {
+        threadsEl.addEventListener('input', (ev) => {
+            _renderMtPopupState.threads = _clampRenderMtThreads(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
+    if (runBtn) {
+        runBtn.addEventListener('click', async () => {
+            const btnText = runBtn.textContent;
+            try {
+                runBtn.disabled = true;
+                runBtn.textContent = 'Executing...';
+                const threads = _clampRenderMtThreads(document.getElementById('render-mt-threads').value);
+                _renderMtPopupState.threads = threads;
+                _closeRenderMtPopup();
+                await runRasterPipelineMT(threads);
+            } finally {
+                runBtn.disabled = false;
+                runBtn.textContent = btnText;
+            }
+        });
+    }
+    document.addEventListener('keydown', (ev) => {
+        if (!_renderMtPopupState.open) return;
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closeRenderMtPopup();
+            return;
+        }
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            const threads = _clampRenderMtThreads(document.getElementById('render-mt-threads').value);
+            _renderMtPopupState.threads = threads;
+            _closeRenderMtPopup();
+            runRasterPipelineMT(threads);
         }
     });
 }
@@ -3579,7 +3778,7 @@ async function runAutolevelSelectedRenderArtifact() {
 
         statusEl.textContent = 'Dispatching autolevels...';
         statusEl.className = 'status';
-        log('Autolevels: dispatching for ' + (art.artifact_id || 'selected color artifact') + '...', '', 'render-log');
+        log('Autolevels: dispatching for ' + (art.artifact_id || 'selected color artifact') + '...', 'ok', 'render-log');
 
         const dispResult = await lambdaPost('dispatch', {
             target: 'autolevels',
@@ -3660,6 +3859,7 @@ _initFunctionPopup();
 _initAutolevelPopup();
 _initRepalettePopup();
 _initColorRepalettePopup();
+_initRenderMtPopup();
 _initGenerateFromPalettePopup();
 _initPdfColorSpreadPopup();
 _updateSolveScoreButtons();  // initial disabled state
@@ -3750,6 +3950,10 @@ function _coeffFuncMeta(entry) {
     if (!entry.probe_failed && entry.degree != null) parts.push(`degree ${entry.degree}`);
     if (entry.kind) parts.push(entry.kind);
     if (entry.agreement_pct !== undefined) parts.push(`${entry.agreement_pct}%`);
+    if (entry.parity_verified) {
+        const cases = entry.parity_cases != null ? ` ${entry.parity_cases} case${entry.parity_cases === 1 ? '' : 's'}` : '';
+        parts.push(`verified${cases}`);
+    }
     if (entry.params && entry.params.length) parts.push(entry.params.length + ' param' + (entry.params.length === 1 ? '' : 's'));
     return parts.join(' • ');
 }
@@ -3793,6 +3997,8 @@ function _visibleFunctionCatalog() {
             entry.source || '',
             entry.degree != null ? String(entry.degree) : '',
             entry.agreement_pct != null ? String(entry.agreement_pct) : '',
+            entry.parity_verified ? 'verified' : '',
+            entry.parity_cases != null ? String(entry.parity_cases) : '',
             entry.params && entry.params.length ? 'params' : '',
         ].join(' ').toLowerCase();
         return text.includes(filter);
@@ -4030,6 +4236,7 @@ function _renderCommonParams() {
         constantColor: document.getElementById('render-constant-color').value.replace('#', ''),
         solveScoreQuantile: parseFloat(document.getElementById('render-solve-score-quantile').value) / 100,
         solveScoreOmega: parseFloat(document.getElementById('render-solve-score-omega').value) || 1,
+        solveScoreOmegaEnabled: _solveScoreOmegaEnabled('render'),
         tileSize: parseInt(document.getElementById('sparse-tile-size').value),
         rotation: (() => {
             const turns = parseFloat(document.getElementById('render-rotation').value) || 0;
@@ -4039,6 +4246,13 @@ function _renderCommonParams() {
         rootTransforms: _rtChain.map(item =>
             item.params && item.params.length ? [item.name, ...item.params] : [item.name]),
     };
+}
+
+function _renderColorMtEligible() {
+    if (renderColorMode === 'solve_score') return true;
+    if (renderColorMode === 'constant') return true;
+    if (renderColorMode === 'rainbow' && renderMatchMode === 'none') return true;
+    return false;
 }
 
 function _paletteRootTransforms() {
@@ -4236,6 +4450,7 @@ async function runPaletteArtifact() {
 
         const q = parseFloat(document.getElementById('palette-solve-score-quantile').value) / 100;
         const omega = parseFloat(document.getElementById('palette-solve-score-omega').value) || 1;
+        const omegaEnabled = _solveScoreOmegaEnabled('palette');
         const runId = _generateRunId();
         const taskId = 'palette_run_' + runId;
         const orchPayload = {
@@ -4247,6 +4462,7 @@ async function runPaletteArtifact() {
                 palette: paletteTabPalette,
                 solve_score_quantile: q,
                 solve_score_omega: omega,
+                solve_score_omega_enabled: omegaEnabled,
                 root_transforms: _paletteRootTransforms(),
             },
         };
@@ -4445,6 +4661,7 @@ let _activeRenderRun = null;
 let _renderObserverTimer = null;
 let _lastLoggedPhase = null;
 let _lastWarnState = null;  // null, 'warn', 'hard'
+let _renderPhaseTracker = null;
 const RENDER_NO_ROW_STALE_MS = 120000;
 const RENDER_WARN_STALE_MS = 300000;
 const RENDER_HARD_STALE_MS = 900000;
@@ -4464,7 +4681,16 @@ function _clearActiveRun() {
     _activeRenderRun = null;
     _lastLoggedPhase = null;
     _lastWarnState = null;
+    _renderPhaseTracker = null;
     try { localStorage.removeItem('polypaint_active_render_run'); } catch(e) {}
+}
+
+function _clearRenderState() {
+    _clearActiveRun();
+    stopActiveRenderObserver();
+    const statusEl = document.getElementById('render-status');
+    if (statusEl) { statusEl.textContent = 'Ready'; statusEl.className = 'status'; }
+    log('Render state cleared', '', 'render-log');
 }
 
 function _loadActiveRun() {
@@ -4500,6 +4726,7 @@ async function _launchRenderOrchestrator(mode, paramsPatch = null) {
             solve_metric: effectiveColorMode === 'solve_score' ? renderSolveMetric : undefined,
             solve_score_quantile: effectiveColorMode === 'solve_score' ? p.solveScoreQuantile : undefined,
             solve_score_omega: effectiveColorMode === 'solve_score' ? p.solveScoreOmega : undefined,
+            solve_score_omega_enabled: effectiveColorMode === 'solve_score' ? p.solveScoreOmegaEnabled : undefined,
             match_mode: renderMatchMode,
             palette: _activeRenderPalette() || 'inferno',
             root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
@@ -4507,7 +4734,7 @@ async function _launchRenderOrchestrator(mode, paramsPatch = null) {
     };
     if (paramsPatch && typeof paramsPatch === 'object') Object.assign(orchPayload.params, paramsPatch);
 
-    log('Render: dispatching ' + mode + ' orchestrator (' + runId + ')...', '', 'render-log');
+    log('Render: dispatching ' + mode + ' orchestrator (' + runId + ')...', 'ok', 'render-log');
     document.getElementById('render-status').textContent = 'Dispatching orchestrator...';
     document.getElementById('render-status').className = 'status';
 
@@ -4523,6 +4750,8 @@ async function _launchRenderOrchestrator(mode, paramsPatch = null) {
     const record = {
         job_id: p.jobId, mode, run_id: runId, task_id: taskId,
         started_at_ms: Date.now(),
+        raster_engine: orchPayload.params.raster_engine || 'single',
+        raster_mt_threads: orchPayload.params.raster_mt_threads || 1,
     };
     _saveActiveRun(record);
 
@@ -4536,11 +4765,30 @@ async function runRasterPipeline() {
     const btn = document.getElementById('btn-render-generate');
     if (btn) btn.disabled = true;
     try {
-        await _launchRenderOrchestrator('color');
+        await _launchRenderOrchestrator('color', { raster_engine: 'single' });
     } catch (e) {
         document.getElementById('render-status').textContent = 'Render error: ' + e.message;
         document.getElementById('render-status').className = 'status error';
         log('Render failed: ' + e.message, 'err', 'render-log');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function runRasterPipelineMT(threadCount = null) {
+    const btn = document.getElementById('btn-render-generate-mt');
+    if (btn) btn.disabled = true;
+    try {
+        if (!_renderColorMtEligible()) {
+            throw new Error('Generate-MT supports Solve score, Constant, and Rainbow with match=none');
+        }
+        const threads = _clampRenderMtThreads(threadCount == null ? _renderMtPopupState.threads : threadCount);
+        log(`Render-MT: dispatching with ${threads} threads...`, 'ok', 'render-log');
+        await _launchRenderOrchestrator('color', { raster_engine: 'mt', raster_mt_threads: threads });
+    } catch (e) {
+        document.getElementById('render-status').textContent = 'Render-MT error: ' + e.message;
+        document.getElementById('render-status').className = 'status error';
+        log('Render-MT failed: ' + e.message, 'err', 'render-log');
     } finally {
         if (btn) btn.disabled = false;
     }
@@ -4616,6 +4864,7 @@ async function runSolveScoreHistogramDebug() {
             metric: renderSolveMetric,
             solve_score_quantile: q,
             solve_score_omega: p.solveScoreOmega,
+            solve_score_omega_enabled: p.solveScoreOmegaEnabled,
             lores_bin_key: loresKey,
             root_transforms: p.rootTransforms || [],
         };
@@ -4630,13 +4879,24 @@ async function runSolveScoreHistogramDebug() {
         // Build the full log block as a <pre> for fixed-width alignment
         const lines = [];
         const omegaUsed = Number.isFinite(Number(s.omega)) ? Number(s.omega) : p.solveScoreOmega;
-        lines.push(`Solve histogram: metric=${s.metric}, q=${(q*100).toFixed(1)}%, w=${omegaUsed.toFixed(0)}, n=${s.n_solves}, degree=${s.degree}`);
+        const omegaEnabled = s.omega_enabled !== undefined ? !!s.omega_enabled : p.solveScoreOmegaEnabled;
+        lines.push(`Solve histogram: metric=${s.metric}, q=${(q*100).toFixed(1)}%, ${_omegaSummaryLabel(omegaEnabled, omegaUsed)}, n=${s.n_solves}, degree=${s.degree}`);
         lines.push(`  lores-only debug; mirrors actual 10 solve-score color bins`);
+        if (omegaEnabled) {
+            lines.push(`  transfer: cosine omega=${omegaUsed.toFixed(0)} (non-monotone; score-space bin ranges are only approximate)`);
+        } else {
+            lines.push(`  transfer: identity (omega off)`);
+        }
         lines.push(`  min=${fmt(s.min_score)}  p05=${fmt(s.q05)}  p10=${fmt(s.q10)}  p25=${fmt(s.q25)}  p50=${fmt(s.q50)}  p75=${fmt(s.q75)}  p90=${fmt(s.q90)}  p95=${fmt(s.q95)}  max=${fmt(s.max_score)}`);
         lines.push(`  mean=${fmt(s.mean_score)}  std=${fmt(s.stddev_score)}`);
         lines.push(`  clip[q..1-q]: lo=${fmt(s.clip_lo)}  hi=${fmt(s.clip_hi)}  width=${fmt(s.clip_range)} / full=${fmt(s.full_range)}`);
         lines.push(`  occupancy: below=${s.clip_below_count} (${pct(s.clip_below_frac)})  in=${s.clip_inrange_count} (${pct(s.clip_inrange_frac)})  above=${s.clip_above_count} (${pct(s.clip_above_frac)})`);
         lines.push(`  fallback: ${s.clip_fallback ? s.clip_fallback_reason : 'none'}`);
+        if (s.fully_finite_solve_count !== undefined) {
+            lines.push(`  finite diagnostics: full=${s.fully_finite_solve_count} (${pct(s.fully_finite_solve_frac)})  partial=${s.partial_finite_solve_count} (${pct(s.partial_finite_solve_frac)})  zero=${s.zero_finite_solve_count} (${pct(s.zero_finite_solve_frac)})`);
+            lines.push(`  finite roots: ${s.finite_root_count}/${s.total_root_slots} (${pct(s.finite_root_frac)})  per solve=${fmt(s.mean_finite_roots_per_solve)}  min=${s.min_finite_roots_per_solve}  max=${s.max_finite_roots_per_solve}`);
+            lines.push(`  scoring policy: ${s.metric_validity_policy || 'finite_only_min_roots'} (min finite roots=${s.metric_min_finite_roots ?? 0})  usable=${s.usable_solve_count} (${pct(s.usable_solve_frac)})  forced_zero=${s.forced_zero_score_count}`);
+        }
 
         // 10-bin final color table
         const bins = s.final_bin_counts || [];
@@ -4717,6 +4977,7 @@ async function runRenderPaletteArtifact() {
                 palette: _activeRenderPalette() || 'inferno',
                 solve_score_quantile: q,
                 solve_score_omega: p.solveScoreOmega,
+                solve_score_omega_enabled: p.solveScoreOmegaEnabled,
                 root_transforms: p.rootTransforms || [],
             },
         };
@@ -4803,6 +5064,195 @@ function _fmtAutolevelDebugLine(rd) {
     return parts.join(' · ');
 }
 
+function _fmtSecondsMs(ms) {
+    const n = Number(ms || 0);
+    if (!Number.isFinite(n) || n <= 0) return '0.0s';
+    return (n / 1000).toFixed(1) + 's';
+}
+
+function _fmtSecondsUs(us) {
+    const n = Number(us || 0);
+    if (!Number.isFinite(n) || n <= 0) return '0.0s';
+    return (n / 1000000).toFixed(1) + 's';
+}
+
+function _aggregateRasterPerf(results) {
+    const rows = Array.isArray(results) ? results.filter(r => r && (r.engine || r.native_us != null || r.threads != null)) : [];
+    if (!rows.length) return null;
+    return rows.reduce((acc, row) => {
+        acc.engine = acc.engine || row.engine || 'single';
+        acc.threads = Math.max(acc.threads, Number(row.threads) || 1);
+        acc.chunks += 1;
+        acc.download_us += Number(row.download_us) || 0;
+        acc.native_us += Number(row.native_us) || 0;
+        acc.upload_us += Number(row.upload_us) || 0;
+        acc.roots_plotted += Number(row.roots_plotted) || 0;
+        acc.roots_clipped += Number(row.roots_clipped) || 0;
+        acc.tiles_uploaded += Number(row.tiles_uploaded) || 0;
+        acc.pixel_bin_tiles_uploaded += Number(row.pixel_bin_tiles_uploaded) || 0;
+        return acc;
+    }, {
+        engine: '',
+        threads: 1,
+        chunks: 0,
+        download_us: 0,
+        native_us: 0,
+        upload_us: 0,
+        roots_plotted: 0,
+        roots_clipped: 0,
+        tiles_uploaded: 0,
+        pixel_bin_tiles_uploaded: 0,
+    });
+}
+
+function _aggregateSolveScorePhasePerf(results) {
+    const rows = Array.isArray(results) ? results.filter(r => r && (r.dl_ms != null || r.compute_ms != null || r.upload_ms != null)) : [];
+    if (!rows.length) return null;
+    return rows.reduce((acc, row) => {
+        acc.tasks += 1;
+        acc.dl_ms += Number(row.dl_ms) || 0;
+        acc.compute_ms += Number(row.compute_ms) || 0;
+        acc.upload_ms += Number(row.upload_ms) || 0;
+        return acc;
+    }, { tasks: 0, dl_ms: 0, compute_ms: 0, upload_ms: 0 });
+}
+
+function _aggregateFinalizePerf(results) {
+    const rows = Array.isArray(results) ? results.filter(r => r && (r.read_ms != null || r.assemble_ms != null || r.upload_ms != null)) : [];
+    if (!rows.length) return null;
+    return rows.reduce((acc, row) => {
+        acc.tasks += 1;
+        acc.read_ms += Number(row.read_ms) || 0;
+        acc.assemble_ms += Number(row.assemble_ms) || 0;
+        acc.upload_ms += Number(row.upload_ms) || 0;
+        acc.pix_files += Number(row.pix_files) || 0;
+        acc.pixel_bins_ms += Number(row.pixel_bins_ms) || 0;
+        return acc;
+    }, { tasks: 0, read_ms: 0, assemble_ms: 0, upload_ms: 0, pix_files: 0, pixel_bins_ms: 0 });
+}
+
+function _aggregateEncodePerf(results) {
+    const rows = Array.isArray(results) ? results.filter(r => r && (r.stitch_ms != null || r.encode_ms != null || r.upload_ms != null)) : [];
+    if (!rows.length) return null;
+    return rows.reduce((acc, row) => {
+        acc.tasks += 1;
+        acc.stitch_ms += Number(row.stitch_ms) || 0;
+        acc.encode_ms += Number(row.encode_ms) || 0;
+        acc.upload_ms += Number(row.upload_ms) || 0;
+        return acc;
+    }, { tasks: 0, stitch_ms: 0, encode_ms: 0, upload_ms: 0 });
+}
+
+function _renderPhaseSubtaskInfo(run, rd) {
+    if (!run || !rd) return null;
+    const phase = rd.phase || '';
+    if (rd.subtask_prefix && rd.expected) {
+        return { prefix: rd.subtask_prefix, expected: rd.expected, phase };
+    }
+    if (phase === 'solve_score_clip') {
+        return { prefix: `render_${run.run_id}_solve_score_clip`, expected: 1, phase };
+    }
+    if (phase === 'solve_score_merge') {
+        return { prefix: `render_${run.run_id}_solve_score_merge`, expected: 1, phase };
+    }
+    if (phase === 'encode') {
+        return { prefix: `render_${run.run_id}_encode`, expected: 1, phase };
+    }
+    return null;
+}
+
+function _renderPhasePerfSummary(phase, results, wallMs) {
+    if (phase === 'raster') {
+        const perf = _aggregateRasterPerf(results);
+        if (!perf) return '';
+        let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsUs(perf.download_us)} + native ${_fmtSecondsUs(perf.native_us)} + up ${_fmtSecondsUs(perf.upload_us)} · threads=${perf.threads}`;
+        return msg;
+    }
+    if (phase === 'solve_score_clip' || phase === 'solve_score_hist' || phase === 'solve_score_merge') {
+        const perf = _aggregateSolveScorePhasePerf(results);
+        if (!perf) return `wall=${_fmtSecondsMs(wallMs)}`;
+        let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsMs(perf.dl_ms)} + compute ${_fmtSecondsMs(perf.compute_ms)}`;
+        if (perf.upload_ms > 0) msg += ` + up ${_fmtSecondsMs(perf.upload_ms)}`;
+        return msg;
+    }
+    if (phase === 'finalize') {
+        const perf = _aggregateFinalizePerf(results);
+        if (!perf) return `wall=${_fmtSecondsMs(wallMs)}`;
+        let msg = `wall=${_fmtSecondsMs(wallMs)} total=read ${_fmtSecondsMs(perf.read_ms)} + assemble ${_fmtSecondsMs(perf.assemble_ms)} + up ${_fmtSecondsMs(perf.upload_ms)}`;
+        if (perf.pixel_bins_ms > 0) msg += ` + pbx ${_fmtSecondsMs(perf.pixel_bins_ms)}`;
+        return msg;
+    }
+    if (phase === 'encode') {
+        const perf = _aggregateEncodePerf(results);
+        if (!perf) return `wall=${_fmtSecondsMs(wallMs)}`;
+        return `wall=${_fmtSecondsMs(wallMs)} total=stitch ${_fmtSecondsMs(perf.stitch_ms)} + encode ${_fmtSecondsMs(perf.encode_ms)} + up ${_fmtSecondsMs(perf.upload_ms)}`;
+    }
+    return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
+}
+
+function _updateRenderPhaseTracker(run, rd) {
+    if (!run || !rd) return;
+    const phase = rd.phase || rd.phase_label || '';
+    if (!_renderPhaseTracker || _renderPhaseTracker.phase !== phase) {
+        const info = _renderPhaseSubtaskInfo(run, rd);
+        _renderPhaseTracker = {
+            phase,
+            phase_label: rd.phase_label || phase || 'working',
+            started_at_ms: Number(rd.updated_at_ms) || Date.now(),
+            prefix: info ? info.prefix : '',
+            expected: info ? info.expected : 0,
+        };
+    }
+}
+
+async function _logRenderPhaseCompletion(run, tracker) {
+    if (!run || !tracker || !tracker.prefix) return;
+    try {
+        const subcheck = await lambdaPost('storage', {
+            job_id: run.job_id,
+            task_prefix: tracker.prefix,
+            expected: tracker.expected || 1,
+        }, '/check-status');
+        const wallMs = Date.now() - (tracker.started_at_ms || Date.now());
+        const perfText = _renderPhasePerfSummary(tracker.phase, subcheck.results || [], wallMs);
+        if (perfText) log(`${tracker.phase_label} complete · ${perfText}`, '', 'render-log');
+    } catch (e) {
+        // best effort only
+    }
+}
+
+async function _logRenderRasterPerf(run) {
+    if (!run || run.mode !== 'color') return;
+    try {
+        const subcheck = await lambdaPost('storage', {
+            job_id: run.job_id,
+            task_prefix: 'render_' + run.run_id + '_raster_',
+            expected: 1000000,
+        }, '/check-status');
+        const perf = _aggregateRasterPerf(subcheck.results || []);
+        if (!perf) return;
+        const wallMs = _renderPhaseTracker && _renderPhaseTracker.phase === 'raster'
+            ? (Date.now() - _renderPhaseTracker.started_at_ms)
+            : 0;
+        const lines = [
+            `Raster performance: engine=${perf.engine || 'single'} threads=${perf.threads} chunks=${perf.chunks} wall=${_fmtSecondsMs(wallMs)}`,
+            `  Download time: ${_fmtSecondsUs(perf.download_us)}`,
+            `  Native raster time: ${_fmtSecondsUs(perf.native_us)}`,
+            `  Upload time: ${_fmtSecondsUs(perf.upload_us)}`,
+            `  Emitted root hits: ${perf.roots_plotted}`,
+            `  Clipped roots: ${perf.roots_clipped}`,
+            `  Tile files uploaded: ${perf.tiles_uploaded}`,
+        ];
+        if (perf.pixel_bin_tiles_uploaded > 0) {
+            lines.push(`  Pixel-bin files uploaded: ${perf.pixel_bin_tiles_uploaded}`);
+        }
+        const msg = lines.join('\n');
+        log(msg, '', 'render-log');
+    } catch (e) {
+        // perf logging is best-effort only
+    }
+}
+
 function _renderRunCompleteLabel(run) {
     if (!run) return 'Render complete';
     if (run.mode === 'repalette') return 'RePalette complete';
@@ -4813,10 +5263,11 @@ function _renderRunCompleteLabel(run) {
 
 function _renderRunCompleteLog(run, rd) {
     const target = rd.artifact_id || rd.palette_id || rd.image_key || run.mode;
-    if (run && run.mode === 'repalette') return 'RePalette complete: ' + target;
-    if (run && run.mode === 'color_repalette') return 'Color RePalette complete: ' + target;
-    if (run && run.mode === 'pdf') return 'PDF complete: ' + target;
-    return 'Render complete: ' + target;
+    const elapsed = run && run.started_at_ms ? ` (${_fmtMs(Date.now() - run.started_at_ms)})` : '';
+    if (run && run.mode === 'repalette') return 'RePalette complete: ' + target + elapsed;
+    if (run && run.mode === 'color_repalette') return 'Color RePalette complete: ' + target + elapsed;
+    if (run && run.mode === 'pdf') return 'PDF complete: ' + target + elapsed;
+    return 'Render complete: ' + target + elapsed;
 }
 
 async function _handleRenderRunCompletion(run, rd) {
@@ -4826,6 +5277,10 @@ async function _handleRenderRunCompletion(run, rd) {
         statusEl.textContent = label;
         statusEl.className = 'status ok';
     }
+    if (_renderPhaseTracker) {
+        await _logRenderPhaseCompletion(run, _renderPhaseTracker);
+    }
+    await _logRenderRasterPerf(run);
     log(_renderRunCompleteLog(run, rd), 'ok', 'render-log');
     const autoDbg = _fmtAutolevelDebugLine(rd);
     if (autoDbg) log('  autolevels: ' + autoDbg, '', 'render-log');
@@ -4884,6 +5339,7 @@ async function _pollActiveRenderRun() {
         }
 
         const phase = rd.phase_label || rd.phase || 'working';
+        const phaseCode = rd.phase || phase;
 
         // Terminal done
         if (check.complete || rd.phase === 'done') {
@@ -4892,7 +5348,7 @@ async function _pollActiveRenderRun() {
         }
 
         // Secondary poll for subtask counts + freshness
-        let done = 0, expected = 0, workerFreshMs = null;
+        let done = 0, expected = 0, workerFreshMs = null, subResults = [];
         if (rd.subtask_prefix && rd.expected) {
             try {
                 const subcheck = await lambdaPost('storage', {
@@ -4900,13 +5356,38 @@ async function _pollActiveRenderRun() {
                 }, '/check-status');
                 done = subcheck.done || 0;
                 expected = subcheck.expected || rd.expected || 0;
+                subResults = subcheck.results || [];
                 if (subcheck.latest_update_ms) {
                     workerFreshMs = Date.now() - subcheck.latest_update_ms;
                 }
             } catch(e) {
                 expected = rd.expected || 0;
             }
+        } else {
+            const phaseInfo = _renderPhaseSubtaskInfo(run, rd);
+            if (phaseInfo && phaseInfo.prefix) {
+                try {
+                    const subcheck = await lambdaPost('storage', {
+                        job_id: run.job_id, task_prefix: phaseInfo.prefix, expected: phaseInfo.expected || 1,
+                    }, '/check-status');
+                    done = subcheck.done || 0;
+                    expected = subcheck.expected || phaseInfo.expected || 0;
+                    subResults = subcheck.results || [];
+                    if (subcheck.latest_update_ms) {
+                        workerFreshMs = Date.now() - subcheck.latest_update_ms;
+                    }
+                } catch (e) {
+                    expected = phaseInfo.expected || 0;
+                }
+            }
         }
+
+        if (_renderPhaseTracker && _renderPhaseTracker.phase !== phaseCode) {
+            await _logRenderPhaseCompletion(run, _renderPhaseTracker);
+        }
+        _updateRenderPhaseTracker(run, rd);
+        const phaseWallMs = _renderPhaseTracker ? (Date.now() - _renderPhaseTracker.started_at_ms) : 0;
+        const phasePerfText = _renderPhasePerfSummary(phaseCode, subResults, phaseWallMs);
 
         // Determine liveness signal
         // Primary: worker freshness from secondary poll
@@ -4919,6 +5400,7 @@ async function _pollActiveRenderRun() {
         // Build status text
         let statusMsg = phase;
         if (expected > 0) statusMsg += ' ' + done + '/' + expected;
+        if (phasePerfText) statusMsg += ' · ' + phasePerfText;
         if (freshMs !== null && freshMs > 10000) {
             statusMsg += ' \u00b7 last update ' + _fmtAge(freshMs) + ' ago';
         }
@@ -4954,6 +5436,7 @@ async function _pollActiveRenderRun() {
             _lastLoggedPhase = phaseKey;
             let logMsg = phase;
             if (expected > 0) logMsg += ' ' + done + '/' + expected;
+            if (phasePerfText) logMsg += ' · ' + phasePerfText;
             log(logMsg, '', 'render-log');
         }
 
@@ -4979,6 +5462,8 @@ window.addEventListener('focus', function() {
 
 // Restore active runs on page load
 (function() {
+    _syncSolveScoreOmegaUi('render');
+    _syncSolveScoreOmegaUi('palette');
     const renderRun = _loadActiveRun();
     if (renderRun) {
         _activeRenderRun = renderRun;
@@ -5054,7 +5539,7 @@ function _renderArtifactSummary(art) {
     if (art.family === 'color') {
         if (art.color_mode === 'solve_score') {
             const q = art.solve_score_quantile != null ? ` q=${(art.solve_score_quantile * 100).toFixed(1)}%` : '';
-            const omega = art.solve_score_omega != null ? ` w=${Number(art.solve_score_omega).toFixed(0)}` : '';
+            const omega = art.solve_score_omega != null ? ` ${_omegaSummaryLabel(art.solve_score_omega_enabled !== false, art.solve_score_omega)}` : '';
             const pal = art.palette ? ` ${art.palette}` : '';
             base = `solve:${art.solve_metric || ''}${q}${omega}${pal}`.trim();
         } else if (art.color_mode === 'saved_palette') {
@@ -5063,8 +5548,8 @@ function _renderArtifactSummary(art) {
                 ? ` q=${(art.palette_source_quantile * 100).toFixed(1)}%`
                 : (art.solve_score_quantile != null ? ` q=${(art.solve_score_quantile * 100).toFixed(1)}%` : '');
             const omega = art.palette_source_omega != null
-                ? ` w=${Number(art.palette_source_omega).toFixed(0)}`
-                : (art.solve_score_omega != null ? ` w=${Number(art.solve_score_omega).toFixed(0)}` : '');
+                ? ` ${_omegaSummaryLabel(art.palette_source_omega_enabled !== false, art.palette_source_omega)}`
+                : (art.solve_score_omega != null ? ` ${_omegaSummaryLabel(art.solve_score_omega_enabled !== false, art.solve_score_omega)}` : '');
             const pal = art.palette ? ` ${art.palette}` : '';
             base = `saved:${metric}${q}${omega}${pal}`.trim();
         } else if (art.color_mode === 'proximity') {
@@ -5082,7 +5567,7 @@ function _renderArtifactSummary(art) {
     }
     if (art.family === 'palette') {
         const q = art.solve_score_quantile != null ? `q=${(art.solve_score_quantile * 100).toFixed(1)}%` : '';
-        const omega = art.solve_score_omega != null ? `w=${Number(art.solve_score_omega).toFixed(0)}` : '';
+        const omega = art.solve_score_omega != null ? _omegaSummaryLabel(art.solve_score_omega_enabled !== false, art.solve_score_omega) : '';
         const derived = art.derivation_kind === 'repalette' ? 'repalette' : '';
         return [art.metric, q, omega, art.palette, derived].filter(Boolean).join(' ');
     }
@@ -5179,6 +5664,7 @@ function populateSelectedRenderArtifact() {
         }
         if (Number.isFinite(art.solve_score_omega)) {
             _setRenderSliderValue('render-solve-score-omega', 'render-solve-score-omega-val', art.solve_score_omega, 0);
+            _setSolveScoreOmegaEnabled('render', art.solve_score_omega_enabled !== false);
         } else {
             warnings.push('solve-score omega');
         }
@@ -5244,6 +5730,7 @@ function populateSelectedRenderArtifact() {
         }
         if (Number.isFinite(art.solve_score_omega)) {
             _setRenderSliderValue('render-solve-score-omega', 'render-solve-score-omega-val', art.solve_score_omega, 0);
+            _setSolveScoreOmegaEnabled('render', art.solve_score_omega_enabled !== false);
         } else {
             warnings.push('solve-score omega');
         }
@@ -5267,6 +5754,7 @@ function populateSelectedRenderArtifact() {
         }
         if (Number.isFinite(srcOmega)) {
             _setRenderSliderValue('render-solve-score-omega', 'render-solve-score-omega-val', srcOmega, 0);
+            _setSolveScoreOmegaEnabled('render', (art.palette_source_omega_enabled !== undefined ? art.palette_source_omega_enabled : art.solve_score_omega_enabled) !== false);
         } else {
             warnings.push('saved-palette omega');
         }
@@ -5302,6 +5790,7 @@ function populateSelectedRenderArtifact() {
 function _updateRenderActionButtons() {
     const art = _renderSelectedArtifactEntry();
     const hasSelection = !!art;
+    const genMtBtn = document.getElementById('btn-render-generate-mt');
     const dlBtn = document.getElementById('btn-render-download');
     const delBtn = document.getElementById('btn-render-delete');
     const dzBtn = document.getElementById('btn-render-deepzoom');
@@ -5314,6 +5803,7 @@ function _updateRenderActionButtons() {
     const reusablePalettes = _reusablePaletteArtifacts();
     const colorSources = _pdfColorSourceArtifacts();
     if (dlBtn) dlBtn.disabled = !hasSelection;
+    if (genMtBtn) genMtBtn.disabled = !(_renderActiveFamily === 'color' && _renderColorMtEligible()) || !!_activeRenderRun;
     if (delBtn) delBtn.disabled = !hasSelection;
     if (dzBtn) dzBtn.disabled = !hasSelection || _renderActiveFamily === 'pdf';
     if (popBtn) popBtn.disabled = !(hasSelection && (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette'));
@@ -5442,14 +5932,6 @@ async function _dlMenuAction(mode) {
     const imageFilename = _renderArtifactFilename(jobId, art);
     const metaFilename = imageFilename.replace(/\.[^.]+$/, '_meta.json');
 
-    if (mode === 'image') {
-        await downloadPresignedFile(art.image_url || art.viewer_url || '', imageFilename, art.image_key);
-        return;
-    }
-
-    const metaObj = await _buildArtifactMeta(jobId, art);
-    const metaBlob = new Blob([JSON.stringify(metaObj, null, 2)], { type: 'application/json' });
-
     if (mode === 'dir') {
         if (typeof window.showDirectoryPicker !== 'function') {
             alert('Directory picker requires Chrome or Edge over HTTPS (or localhost).');
@@ -5463,6 +5945,9 @@ async function _dlMenuAction(mode) {
         }
         return;
     }
+
+    const metaObj = (mode === 'image+meta') ? await _buildArtifactMeta(jobId, art) : null;
+    const metaBlob = metaObj ? new Blob([JSON.stringify(metaObj, null, 2)], { type: 'application/json' }) : null;
 
     // Save to directory if one is set, otherwise browser download
     if (_renderSaveDirHandle) {
@@ -5572,6 +6057,11 @@ async function generateSelectedRenderArtifact() {
     await runRasterPipeline();
 }
 
+async function generateSelectedRenderArtifactMT() {
+    if (_renderActiveFamily !== 'color') return;
+    openRenderMtPopup();
+}
+
 function renderArtifactPanel(jobId, summary, options = {}) {
     const preview = document.getElementById('render-preview');
     const info = document.getElementById('render-info');
@@ -5607,7 +6097,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Color settings. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread raster path. Generate-MT opens a popup where you choose the multithreaded raster worker count for Solve score, Constant, and Rainbow with match=none so you can compare perf. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color.</span>';
     } else if (_renderActiveFamily === 'pdf') {
@@ -5651,6 +6141,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
                     ${_renderActiveFamily === 'pdf'
                         ? '<button class="btn-primary" id="btn-render-pdf-colorspread" onclick="openPdfColorSpreadPopup()" style="padding:4px 12px; font-size:11px">ColorSpread</button>'
                         : '<button class="btn-primary" id="btn-render-generate" onclick="generateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px">Generate</button>'}
+                    ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-generate-mt" onclick="generateSelectedRenderArtifactMT()" style="padding:4px 12px; font-size:11px">Generate-MT</button>' : ''}
                     ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-generate-from-palette" onclick="openGenerateFromPalettePopup()" style="padding:4px 12px; font-size:11px" disabled>GenerateFromPalette</button>' : ''}
                     ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-color-repalette" onclick="openColorRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>' : ''}
                     ${_renderActiveFamily === 'palette' ? '<button class="btn-secondary" id="btn-render-repalette" onclick="openRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>' : ''}
@@ -6183,6 +6674,7 @@ async function runParamDebug() {
 }
 
 async function runCalculate() { return runCalculateWithSolver('aberth'); }
+async function runCalculateAEMT() { return runCalculateWithSolver('aberth_mt'); }
 async function runCalculateCM() { return runCalculateWithSolver('companion_matrix'); }
 async function runCalculateWithSolver(solverMode) {
     const funcName = document.getElementById('render-function').value;
@@ -6205,7 +6697,7 @@ async function runCalculateWithSolver(solverMode) {
     const cfpvStr = cfpvDisplay ? `(${cfpvDisplay})` : '';
     const pipelineStr = `[${ptDisplay||'none'}] ${funcName}${cfpvStr} [${coeffTransforms.join(',')||'none'}]`;
 
-    const btn = document.getElementById(solverMode === 'companion_matrix' ? 'btn-calculate-cm' : 'btn-calculate');
+    const btn = document.getElementById(_solverButtonId(solverMode));
 
     // Pre-flight check: estimate total coeffgen size
     // Use MAX_COEFFS (256, from sweep_cli.c) as worst-case — actual degree comes from runtime probe
@@ -6228,7 +6720,7 @@ async function runCalculateWithSolver(solverMode) {
     btn.disabled = true;
     document.getElementById('compute-status').textContent = `Computing ${pipelineStr} N=${n}...`;
     document.getElementById('compute-status').className = 'status';
-    const solverTag = solverMode === 'companion_matrix' ? 'CM' : 'AE';
+    const solverTag = _solverTag(solverMode);
     log(`Compute-${solverTag}: ${pipelineStr} N=${n}, chunks=${nChunks}${times > 1 ? ', times=' + times : ''}...`);
     const fmtMs = (ms) => (ms/1000).toFixed(1) + 's';
 
@@ -6358,7 +6850,7 @@ async function runCalculateWithSolver(solverMode) {
         document.getElementById('compute-status').textContent = `Lores solve...`;
         const loresKey = `renders/${jobId}/lores.bin`;
         const tLores = performance.now();
-        const loresSolveLambda = solverMode === 'companion_matrix' ? 'sweep-cm' : 'sweep';
+        const loresSolveLambda = _solverLoresEndpoint(solverMode);
         const loresResult = await lambdaPost(loresSolveLambda, {
             job_id: jobId, chunk_idx: 0,
             coeffs_key: loresCoeffResult.coeffs_key,
@@ -6385,8 +6877,8 @@ async function runCalculateWithSolver(solverMode) {
         }
 
         // Dispatch all sweep jobs via dispatch Lambda (fire-and-forget)
-        const solverTarget = solverMode === 'companion_matrix' ? 'sweep_cm' : 'sweep';
-        const solverLabel = solverMode === 'companion_matrix' ? 'CM' : 'AE';
+        const solverTarget = _solverDispatchTarget(solverMode);
+        const solverLabel = _solverShortLabel(solverMode);
         const SWEEP_BATCH = 500;
         for (let i = 0; i < sweepJobs.length; i += SWEEP_BATCH) {
             const batch = sweepJobs.slice(i, i + SWEEP_BATCH);

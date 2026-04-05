@@ -77,6 +77,7 @@ int main(int argc, char **argv) {
     double quantileLo = getArgDouble(argc, argv, "--quantile_lo", 0.001);
     double quantileHi = getArgDouble(argc, argv, "--quantile_hi", 0.999);
     double omega = getArgDouble(argc, argv, "--omega", 1.0);
+    int omegaEnabled = getArgInt(argc, argv, "--omega_enabled", 1);
     const char *metricStr = getArgStr(argc, argv, "--metric", "proximity");
     const char *palName = getArgStr(argc, argv, "--palette", "inferno");
     const char *scoresOut = getArgStr(argc, argv, "--scores_out", NULL);
@@ -199,7 +200,7 @@ int main(int argc, char **argv) {
     for (long s = 0; s < perPass; s++) {
         double u = (scores[s] - clipLo) / clipRange;
         if (u < 0) u = 0; if (u > 1) u = 1;
-        u = apply_solve_score_omega(u, omega);
+        u = apply_solve_score_transfer(u, omegaEnabled, omega);
         int h = (int)(u * histBins);
         if (h >= histBins) h = histBins - 1;
         hist[h]++;
@@ -245,7 +246,7 @@ int main(int argc, char **argv) {
         /* Bin assignment */
         double u = (scores[s] - clipLo) / clipRange;
         if (u < 0) u = 0; if (u > 1) u = 1;
-        u = apply_solve_score_omega(u, omega);
+        u = apply_solve_score_transfer(u, omegaEnabled, omega);
         int bin = 0;
         for (int k = 0; k < 9; k++) {
             if (u > cutsNorm[k]) bin = k + 1;
@@ -332,8 +333,8 @@ int main(int argc, char **argv) {
     /* ---- Emit JSON metadata ---- */
     printf("{\"mode\":\"palette_debug\",\"metric\":\"%s\",\"palette\":\"%s\","
            "\"n_samples_used\":%ld,\"degree\":%d,\"lores_n\":%d,\"full_n\":%d,"
-           "\"times\":%d,\"using_pass\":0,\"omega\":%.15g,",
-           solve_metric_name(metric), palName, perPass, degree, loresN, fullN, times, omega);
+           "\"times\":%d,\"using_pass\":0,\"omega\":%.15g,\"omega_enabled\":%s,",
+           solve_metric_name(metric), palName, perPass, degree, loresN, fullN, times, omega, omegaEnabled ? "true" : "false");
     printf("\"clip_lo\":%.15g,\"clip_hi\":%.15g,\"clip_range\":%.15g,",
            clipLo, clipHi, clipRange);
     printf("\"clip_fallback\":%s,", clipFallback ? "true" : "false");

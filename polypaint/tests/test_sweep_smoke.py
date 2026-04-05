@@ -175,6 +175,34 @@ class TestSolveSmoke(unittest.TestCase):
 
         self.assertEqual(os.path.getsize(s3), os.path.getsize(s1) * 3)
 
+    def test_solve_reseeds_after_repeated_root_step(self):
+        """A repeated-root warm start must reseed before the next distinct solve."""
+        coeffs_path = "/tmp/test_solve_reseed_coeffs.bin"
+        solve_out = "/tmp/test_solve_reseed_roots.bin"
+
+        with open(coeffs_path, "wb") as fh:
+            for coeffs in ([1, -2, 1], [1, 0, 1]):  # (z-1)^2 then z^2+1
+                padded = list(coeffs) + [0.0] * (5 - len(coeffs))
+                for c in padded[:5]:
+                    fh.write(struct.pack("<ff", float(c), 0.0))
+
+        meta = _run_sweep({
+            "mode": "solve",
+            "coeffs_file": coeffs_path,
+            "n_coeffs": 5,
+            "n2": 2,
+            "i1_start": 0,
+            "i1_end": 1,
+            "match_roots": False,
+        }, solve_out)
+
+        self.assertEqual(meta["n_t"], 2)
+        roots = _read_roots(solve_out, meta["degree"])
+        complex_step = [z for z in roots[1] if abs(z) > 1e-10]
+        self.assertEqual(len(complex_step), 2)
+        for z in complex_step:
+            self.assertLess(abs(z * z + 1), 1e-2, f"bad reseed root {z}")
+
 
 class TestGridSmoke(unittest.TestCase):
     """Test the grid mode (inline coefficients + solve)."""
@@ -731,14 +759,15 @@ class TestGridVsCoeffgenSolve(unittest.TestCase):
             "match_roots": False,
         }, grid_out)
 
-        # Coeffgen + solve — no unit_circle because giga_30 applies it internally.
-        # Grid mode calls giga_30(x1, x2) which does exp(2πi·x) inside.
-        # CoeffFuncC wrapper (WRAP_OLD) passes only real parts, so coeffgen
-        # with no transforms passes (x1, 0) → giga_30(x1, x2), same as grid mode.
+        # Coeffgen + solve must use the legacy old_giga_30 wrapper.
+        # Grid mode still dispatches through lookupFunction() and calls the
+        # original old-ABI giga_30(x1, x2) implementation directly. The bare
+        # "giga_30" coeffgen entry now points at the newer transpiled catalog
+        # implementation, which is a different polynomial family.
         cg_out = "/tmp/test_equiv_cg.bin"
         meta_cg = _run_sweep({
             "mode": "coeffgen",
-            "function": "giga_30",
+            "function": "old_giga_30",
             "param_transforms": [],
             "coeff_transforms": [],
             "n1": 5, "n2": 5,

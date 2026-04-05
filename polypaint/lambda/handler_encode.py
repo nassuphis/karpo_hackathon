@@ -8,6 +8,7 @@ import json
 import os
 import struct
 import subprocess
+import time
 
 import boto3
 
@@ -26,8 +27,9 @@ def handler(event, context):
     task_id = params.get("task_id", "encode")
 
     try:
+        progress = {"phase": "encode", "format": fmt}
         if job_id:
-            report_status(job_id, task_id, "started")
+            report_status(job_id, task_id, "started", result_data=progress)
 
         in_path = "/tmp/encode_in.raw"
         ext = "jpeg" if fmt != "png" else "png"
@@ -41,8 +43,9 @@ def handler(event, context):
         total_h = params["height"]
 
         if job_id:
-            report_status(job_id, task_id, "stitching")
+            report_status(job_id, task_id, "stitching", result_data=progress)
 
+        t_stitch = time.time()
         with open(in_path, "wb") as f:
             f.write(struct.pack("<III", total_w, total_h, 3))
             for tr in range(n_rows):
@@ -63,9 +66,10 @@ def handler(event, context):
                         end = start + tw * 3
                         f.write(pixels_data[start:end])
                 del row_tiles
+        progress["stitch_ms"] = int((time.time() - t_stitch) * 1000)
 
         if job_id:
-            report_status(job_id, task_id, "encoding")
+            report_status(job_id, task_id, "encoding", result_data=progress)
 
         # Encode
         bilevel = params.get("bilevel", False)
@@ -74,8 +78,10 @@ def handler(event, context):
             encode_args.append(f"--quality={quality}")
         if bilevel:
             encode_args.append("--bilevel")
+        t_encode = time.time()
         result = subprocess.run(encode_args, capture_output=True, text=True,
                                 timeout=300, env=imgpipe_env())
+        progress["encode_ms"] = int((time.time() - t_encode) * 1000)
         if result.returncode != 0:
             raise RuntimeError(f"raw2jpeg failed: {result.stderr.strip()}")
         encode_meta = json.loads(result.stdout)
@@ -87,10 +93,13 @@ def handler(event, context):
             if v is None:
                 continue
             extra_meta[str(k)] = str(v)
+        t_upload = time.time()
         with open(out_path, "rb") as f:
             s3.put_object(Bucket=BUCKET, Key=out_key,
                           Body=f, ContentType=content_type,
                           Metadata={"width": str(total_w), "height": str(total_h), **extra_meta})
+        progress["upload_ms"] = int((time.time() - t_upload) * 1000)
+        progress["file_size"] = encode_meta["file_size"]
 
         image_url = s3.generate_presigned_url(
             "get_object",
@@ -104,7 +113,7 @@ def handler(event, context):
                 pass
 
         if job_id:
-            report_status(job_id, task_id, "done")
+            report_status(job_id, task_id, "done", result_data=progress)
 
         return ok_response({
             "out_key": out_key,
@@ -114,5 +123,7 @@ def handler(event, context):
 
     except Exception as e:
         if job_id:
-            report_status(job_id, task_id, "error", str(e))
+            progress = locals().get("progress", {"phase": "encode"})
+            progress["error"] = str(e)
+            report_status(job_id, task_id, "error", str(e), result_data=progress)
         raise

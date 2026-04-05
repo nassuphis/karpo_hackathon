@@ -9,6 +9,7 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(__file__))
 LAMBDA_DIR = os.path.join(ROOT, "lambda")
 SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
+PARITY_FUNCTIONS = ["poly_795"]
 
 
 def _run_sweep(spec, out_path):

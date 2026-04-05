@@ -94,6 +94,16 @@ class TestDispatchHandler(unittest.TestCase):
         self.assertEqual(body["fired"], 1)
 
     @patch("handler_dispatch.lambda_client")
+    def test_dispatch_sweep_mt_target(self, mock_client):
+        from handler_dispatch import handler
+        mock_client.invoke.return_value = {"StatusCode": 202}
+        jobs = [{"job_id": "j", "chunk_idx": 0, "coeffs_key": "renders/j/coeffs_0000.bin", "n_coeffs": 24, "n_steps": 1000}]
+        event = self._make_event({"target": "sweep_mt", "jobs": jobs})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["fired"], 1)
+
+    @patch("handler_dispatch.lambda_client")
     def test_dispatch_repalette_target(self, mock_client):
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 202}
@@ -396,6 +406,36 @@ class TestStorageCleanRender(unittest.TestCase):
         mock_s3.delete_objects.assert_not_called()
 
     @patch("handler_storage.s3")
+    def test_clean_render_bilevel_deletes_stale_bits_and_tiles(self, mock_s3):
+        """Bilevel cleanup must purge old job-scoped .bits intermediates before a new render."""
+        from handler_storage import handle_clean_render
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate(Bucket, Prefix):
+            mapping = {
+                "renders/j/bilevel_t": [{"Contents": [{"Key": "renders/j/bilevel_t0000.tif"}]}],
+                "renders/j/bits_chunk_": [{"Contents": [{"Key": "renders/j/bits_chunk_0000_t0000.bits"}]}],
+            }
+            return mapping.get(Prefix, [{"Contents": []}])
+
+        mock_paginator.paginate.side_effect = paginate
+        mock_s3.delete_objects.return_value = {"Deleted": [
+            {"Key": "renders/j/bilevel_t0000.tif"},
+            {"Key": "renders/j/bits_chunk_0000_t0000.bits"},
+        ]}
+
+        event = {"body": json.dumps({"job_id": "j", "pipeline": "bilevel"})}
+        result = handle_clean_render(event)
+        body = json.loads(result["body"])
+        self.assertEqual(body["deleted"], 2)
+
+        deleted_keys = [o["Key"] for o in mock_s3.delete_objects.call_args[1]["Delete"]["Objects"]]
+        self.assertIn("renders/j/bilevel_t0000.tif", deleted_keys)
+        self.assertIn("renders/j/bits_chunk_0000_t0000.bits", deleted_keys)
+        self.assertNotIn("renders/j/image_bilevel.tif", deleted_keys)
+
+    @patch("handler_storage.s3")
     def test_clean_render_default_pipeline_is_color(self, mock_s3):
         """No pipeline param defaults to color (backward compat)."""
         from handler_storage import handle_clean_render
@@ -522,6 +562,36 @@ class TestStorageCleanRender(unittest.TestCase):
         event = {"body": json.dumps({"job_id": "j", "pipeline": "coeff_bilevel"})}
         handle_clean_render(event)
         mock_s3.delete_objects.assert_not_called()
+
+    @patch("handler_storage.s3")
+    def test_coeff_cleanup_deletes_stale_coeff_bits_and_tiles(self, mock_s3):
+        """Coeff bilevel cleanup must purge old coeff bitsets before a new render."""
+        from handler_storage import handle_clean_render
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate(Bucket, Prefix):
+            mapping = {
+                "renders/j/coeff_t": [{"Contents": [{"Key": "renders/j/coeff_t0000.tif"}]}],
+                "renders/j/coeff_bits_chunk_": [{"Contents": [{"Key": "renders/j/coeff_bits_chunk_0000_t0000.bits"}]}],
+            }
+            return mapping.get(Prefix, [{"Contents": []}])
+
+        mock_paginator.paginate.side_effect = paginate
+        mock_s3.delete_objects.return_value = {"Deleted": [
+            {"Key": "renders/j/coeff_t0000.tif"},
+            {"Key": "renders/j/coeff_bits_chunk_0000_t0000.bits"},
+        ]}
+
+        event = {"body": json.dumps({"job_id": "j", "pipeline": "coeff_bilevel"})}
+        result = handle_clean_render(event)
+        body = json.loads(result["body"])
+        self.assertEqual(body["deleted"], 2)
+
+        deleted_keys = [o["Key"] for o in mock_s3.delete_objects.call_args[1]["Delete"]["Objects"]]
+        self.assertIn("renders/j/coeff_t0000.tif", deleted_keys)
+        self.assertIn("renders/j/coeff_bits_chunk_0000_t0000.bits", deleted_keys)
+        self.assertNotIn("renders/j/image_coeffs_bilevel.tif", deleted_keys)
 
 
 class TestRenderSummaryPalette(unittest.TestCase):
@@ -1386,6 +1456,77 @@ class TestSolveFromCoeffs(unittest.TestCase):
             self.assertIn("solve failed", str(ctx.exception))
 
     # test_grid_mode_still_works: removed — handle_compute_only_stripe deleted
+
+
+class TestSolveFromCoeffsMT(unittest.TestCase):
+
+    def _make_event(self, body):
+        return {"body": json.dumps(body)}
+
+    @patch("handler_sweep_mt.report_status")
+    @patch("handler_sweep_mt.os.path.getsize", return_value=400)
+    @patch("handler_sweep_mt.os.remove")
+    @patch("handler_sweep_mt.s3")
+    @patch("handler_sweep_mt.subprocess")
+    def test_solve_mt_routes_on_coeffs_key(self, mock_subprocess, mock_s3, mock_remove, mock_getsize, mock_ddb):
+        from handler_sweep_mt import handler
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({
+            "n_t": 500,
+            "degree": 24,
+            "avg_iterations": 12.3,
+            "n_threads": 4,
+        })
+        mock_subprocess.run.return_value = mock_result
+
+        mock_body = MagicMock()
+        mock_body.read.return_value = b"\x00" * 1000
+        mock_s3.get_object.return_value = {"Body": mock_body}
+
+        import builtins
+        original_open = builtins.open
+
+        def mock_open(path, mode="r", **kwargs):
+            if "/tmp/" in str(path) and "b" in mode:
+                m = MagicMock()
+                m.__enter__ = MagicMock(return_value=m)
+                m.__exit__ = MagicMock(return_value=False)
+                if "w" in mode:
+                    m.write = MagicMock()
+                else:
+                    m.read = MagicMock(return_value=b"\x00" * 500)
+                return m
+            return original_open(path, mode, **kwargs)
+
+        with patch("builtins.open", side_effect=mock_open):
+            event = self._make_event({
+                "job_id": "solve-mt-test",
+                "stripe_idx": 0,
+                "coeffs_key": "renders/solve-mt-test/coeffs_0000.bin",
+                "n_coeffs": 24,
+                "n1": 100,
+                "n2": 100,
+                "i1_start": 0,
+                "i1_end": 10,
+            })
+            result = handler(event, None)
+
+        body = json.loads(result["body"])
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(body["stripe_idx"], 0)
+        self.assertEqual(body["n_t"], 500)
+        self.assertEqual(body["degree"], 24)
+        self.assertEqual(body["n_threads"], 4)
+        self.assertEqual(body["n_procs"], 4)
+
+        spec = json.loads(mock_subprocess.run.call_args[1]["input"])
+        self.assertEqual(spec["mode"], "solve_mt")
+        self.assertEqual(spec["n_coeffs"], 24)
+        self.assertEqual(spec["i1_start"], 0)
+        self.assertEqual(spec["i1_end"], 1)
+        self.assertEqual(spec["n2"], 1000)
+        self.assertFalse(spec["match_roots"])
 
 
 # ── Test: handler_preview.py (single-call preview generation) ────────────

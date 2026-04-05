@@ -668,6 +668,11 @@ def test_summary_all_fields():
                   "clip_below_count", "clip_inrange_count", "clip_above_count",
                   "clip_below_frac", "clip_inrange_frac", "clip_above_frac",
                   "clip_fallback", "clip_fallback_reason",
+                  "metric_validity_policy", "metric_min_finite_roots", "total_root_slots", "finite_root_count",
+                  "fully_finite_solve_count", "partial_finite_solve_count", "zero_finite_solve_count",
+                  "usable_solve_count", "forced_zero_score_count", "finite_root_frac",
+                  "fully_finite_solve_frac", "partial_finite_solve_frac", "zero_finite_solve_frac", "usable_solve_frac",
+                  "mean_finite_roots_per_solve", "min_finite_roots_per_solve", "max_finite_roots_per_solve",
                   "intermediate_hist_bins", "final_bins",
                   "cuts_norm", "cuts_score", "final_bin_counts", "final_bin_fracs",
                   "min_score_count", "max_score_count", "clip_lo_count", "clip_hi_count",
@@ -684,6 +689,67 @@ def test_summary_all_fields():
         f"bin sum {sum(result['final_bin_counts'])} != inrange {result['clip_inrange_count']}"
     # No hist_full field (removed)
     assert "hist_full" not in result, "hist_full should be removed from summary"
+    os.remove(path)
+
+
+def test_summary_reports_finite_root_diagnostics():
+    """Summary exposes finite-root / forced-zero diagnostics for partial-invalid solves."""
+    path = "/tmp/sp_test_summary_finite_diag.bin"
+    degree = 4
+    solves = [
+        [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)],
+        [(float("inf"), 0.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)],
+        [(float("inf"), 0.0), (float("nan"), 0.0), (float("inf"), 1.0), (0.0, float("nan"))],
+    ]
+    write_bin(path, solves, degree)
+    r, err = run_summary(path, degree, metric="asymmetry_re")
+    assert r is not None, f"summary failed: {err}"
+    assert r["metric_validity_policy"] == "finite_only_min_roots"
+    assert r["metric_min_finite_roots"] == 1
+    assert r["total_root_slots"] == 12
+    assert r["finite_root_count"] == 7
+    assert r["fully_finite_solve_count"] == 1
+    assert r["partial_finite_solve_count"] == 1
+    assert r["zero_finite_solve_count"] == 1
+    assert r["usable_solve_count"] == 2
+    assert r["forced_zero_score_count"] == 1
+    assert abs(r["finite_root_frac"] - (7.0 / 12.0)) < 1e-6
+    assert abs(r["usable_solve_frac"] - (2.0 / 3.0)) < 1e-6
+    assert abs(r["mean_finite_roots_per_solve"] - (7.0 / 3.0)) < 1e-6
+    assert r["min_finite_roots_per_solve"] == 0
+    assert r["max_finite_roots_per_solve"] == 4
+    os.remove(path)
+
+
+def test_clip_centroid_re_uses_only_finite_roots():
+    """Centroid metrics should score partial-invalid solves from their finite roots."""
+    path = "/tmp/sp_test_clip_centroid_partial.bin"
+    degree = 4
+    solves = [
+        [(1.0, 0.0), (3.0, 0.0), (float("inf"), 0.0), (float("nan"), 0.0)],
+        [(-2.0, 0.0), (0.0, 0.0), (float("inf"), 0.0), (float("nan"), 0.0)],
+    ]
+    write_bin(path, solves, degree)
+    r, err = run_clip(path, degree, metric="centroid_re")
+    assert r is not None, f"clip failed: {err}"
+    assert abs(r["min_score"] - (-1.0)) < 1e-6, r
+    assert abs(r["max_score"] - 2.0) < 1e-6, r
+    os.remove(path)
+
+
+def test_clip_proximity_requires_two_finite_roots():
+    """Pairwise metrics still require enough finite roots after filtering."""
+    path = "/tmp/sp_test_clip_proximity_partial.bin"
+    degree = 4
+    solves = [
+        [(0.0, 0.0), (0.01, 0.0), (float("inf"), 0.0), (float("nan"), 0.0)],
+        [(7.0, 0.0), (float("inf"), 0.0), (float("inf"), 0.0), (float("nan"), 0.0)],
+    ]
+    write_bin(path, solves, degree)
+    r, err = run_clip(path, degree, metric="proximity")
+    assert r is not None, f"clip failed: {err}"
+    assert abs(r["min_score"] - 0.0) < 1e-6, r
+    assert r["max_score"] > 1.9, r
     os.remove(path)
 
 

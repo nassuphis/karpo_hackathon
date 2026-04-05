@@ -94,6 +94,36 @@ static int solveEA(double *cr, double *ci, int n,
     return MAX_ITER;
 }
 
+static void seedEAInitialGuess(double *rootRe, double *rootIm, int degree) {
+    for (int i = 0; i < degree; i++) {
+        double ang = 2.0 * M_PI * i / degree + 0.3;
+        double r = 1.0 + 0.1 * i / degree;
+        rootRe[i] = r * cos(ang);
+        rootIm[i] = r * sin(ang);
+    }
+}
+
+static int warmStartNeedsReseed(const double *rootRe, const double *rootIm, int effDeg) {
+    if (effDeg <= 0) return 0;
+
+    double warmMag = 0;
+    for (int i = 0; i < effDeg; i++) {
+        double re = rootRe[i], im = rootIm[i];
+        if (!isfinite(re) || !isfinite(im)) return 1;
+        warmMag += re * re + im * im;
+    }
+    if (warmMag < 1e-20) return 1;
+
+    for (int i = 0; i < effDeg; i++) {
+        for (int j = i + 1; j < effDeg; j++) {
+            double dR = rootRe[i] - rootRe[j];
+            double dI = rootIm[i] - rootIm[j];
+            if (dR * dR + dI * dI < 1e-18) return 1;
+        }
+    }
+    return 0;
+}
+
 /* ---- Greedy root matching ---- */
 
 static void matchRoots(double *newRe, double *newIm,
@@ -3995,12 +4025,12 @@ static int runSolveFromCoeffs(const char *buf, const char *outPath) {
         int effDeg = effN - 1;
 
         int iters;
-        /* Set trailing-zero roots to 0 (z=0 with multiplicity trailingZeros) */
-        for (int i = 0; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
 
         if (effDeg <= 0) {
+            for (int i = 0; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
             iters = 0;
         } else if (effDeg == 1) {
+            for (int i = 1; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
             rootRe[0] = 0; rootIm[0] = 0;
             double aR = coeffRe[start], aI = coeffIm[start];
             double bR = coeffRe[start+1], bI = coeffIm[start+1];
@@ -4011,19 +4041,13 @@ static int runSolveFromCoeffs(const char *buf, const char *outPath) {
             }
             iters = 1;
         } else {
-            /* Re-init warm-start if previous roots are all zero (e.g. after a
-             * degenerate step). EA needs non-degenerate starting points. */
-            double warmMag = 0;
-            for (int i = 0; i < effDeg; i++)
-                warmMag += rootRe[i]*rootRe[i] + rootIm[i]*rootIm[i];
-            if (warmMag < 1e-20) {
-                for (int i = 0; i < effDeg; i++) {
-                    double ang = 2.0 * M_PI * i / effDeg + 0.3;
-                    double r = 1.0 + 0.1 * i / effDeg;
-                    rootRe[i] = r * cos(ang);
-                    rootIm[i] = r * sin(ang);
-                }
-            }
+            /* Set trailing-zero roots to 0 (z=0 with multiplicity trailingZeros),
+             * but preserve the active solver slots as the warm-start chain. */
+            for (int i = effDeg; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
+            /* Re-init when the preserved warm start has collapsed (all zero,
+             * non-finite, or duplicate roots from a repeated-root step). */
+            if (warmStartNeedsReseed(rootRe, rootIm, effDeg))
+                seedEAInitialGuess(rootRe, rootIm, effDeg);
             iters = solveEA(coeffRe + start, coeffIm + start, effN,
                             rootRe, rootIm, effDeg);
         }
@@ -4174,11 +4198,12 @@ static int runGrid(const char *buf, const char *outPath) {
 
             /* Solve */
             int iters;
-            for (int i = 0; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
 
             if (effDeg <= 0) {
+                for (int i = 0; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
                 iters = 0;
             } else if (effDeg == 1) {
+                for (int i = 1; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
                 rootRe[0] = 0; rootIm[0] = 0;
                 double aR = coeffRe[start], aI = coeffIm[start];
                 double bR = coeffRe[start+1], bI = coeffIm[start+1];
@@ -4189,17 +4214,9 @@ static int runGrid(const char *buf, const char *outPath) {
                 }
                 iters = 1;
             } else {
-                double warmMag = 0;
-                for (int ii = 0; ii < effDeg; ii++)
-                    warmMag += rootRe[ii]*rootRe[ii] + rootIm[ii]*rootIm[ii];
-                if (warmMag < 1e-20) {
-                    for (int ii = 0; ii < effDeg; ii++) {
-                        double ang = 2.0 * M_PI * ii / effDeg + 0.3;
-                        double r = 1.0 + 0.1 * ii / effDeg;
-                        rootRe[ii] = r * cos(ang);
-                        rootIm[ii] = r * sin(ang);
-                    }
-                }
+                for (int i = effDeg; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
+                if (warmStartNeedsReseed(rootRe, rootIm, effDeg))
+                    seedEAInitialGuess(rootRe, rootIm, effDeg);
                 iters = solveEA(coeffRe + start, coeffIm + start, effN,
                                 rootRe, rootIm, effDeg);
             }
@@ -4407,12 +4424,13 @@ int main(int argc, char **argv) {
 
         /* Solve */
         int iters;
-        for (int i = 0; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
 
         if (effDeg <= 0) {
+            for (int i = 0; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
             iters = 0;
         } else if (effDeg == 1) {
             /* Linear */
+            for (int i = 1; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
             rootRe[0] = 0; rootIm[0] = 0;
             double aR = coeffRe[start], aI = coeffIm[start];
             double bR = coeffRe[start+1], bI = coeffIm[start+1];
@@ -4423,17 +4441,9 @@ int main(int argc, char **argv) {
             }
             iters = 1;
         } else {
-            double warmMag = 0;
-            for (int i = 0; i < effDeg; i++)
-                warmMag += rootRe[i]*rootRe[i] + rootIm[i]*rootIm[i];
-            if (warmMag < 1e-20) {
-                for (int i = 0; i < effDeg; i++) {
-                    double ang = 2.0 * M_PI * i / effDeg + 0.3;
-                    double r = 1.0 + 0.1 * i / effDeg;
-                    rootRe[i] = r * cos(ang);
-                    rootIm[i] = r * sin(ang);
-                }
-            }
+            for (int i = effDeg; i < degree; i++) { rootRe[i] = 0; rootIm[i] = 0; }
+            if (warmStartNeedsReseed(rootRe, rootIm, effDeg))
+                seedEAInitialGuess(rootRe, rootIm, effDeg);
             iters = solveEA(coeffRe + start, coeffIm + start, effN,
                             rootRe, rootIm, effDeg);
         }

@@ -32,6 +32,7 @@ def _event(**overrides):
         "solve_metric": "crowding",
         "solve_score_quantile": 0.01,
         "solve_score_omega": 4.0,
+        "solve_score_omega_enabled": False,
         "emit_pixel_bins": True,
     }
     payload.update(overrides)
@@ -58,6 +59,7 @@ class TestRasterPixelBins(unittest.TestCase):
                     "metric": "crowding",
                     "clip_quantile": 0.01,
                     "omega": 4.0,
+                    "omega_enabled": False,
                     "clip_lo": -1.0,
                     "clip_hi": 2.0,
                     "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
@@ -73,6 +75,7 @@ class TestRasterPixelBins(unittest.TestCase):
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None):
             self.assertIn("--pixel_bin_prefix=/tmp/pixbin", cmd)
+            self.assertIn("--solve_score_omega_enabled=0", cmd)
             with open("/tmp/pix_t0000.pix", "wb") as fh:
                 fh.write(b"\x00" * 8)
             with open("/tmp/pixbin_t0000.pbx", "wb") as fh:

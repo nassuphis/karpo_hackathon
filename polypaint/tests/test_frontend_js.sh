@@ -264,7 +264,7 @@ try {
 }
 
 // Step 7: Render orchestrator launch smoke test
-// Verifies that runRasterPipeline/runBilevelPipeline/runCoeffBilevelPipeline
+// Verifies that runRasterPipeline/runRasterPipelineMT/runBilevelPipeline/runCoeffBilevelPipeline
 // each dispatch one render_orchestrator job and don't dispatch worker phases directly.
 console.log('');
 console.log('--- Render pipeline orchestration ---');
@@ -292,6 +292,7 @@ const renderEls = {
     'btn-solve-histogram': {},
     'btn-populate-result': {},
     'btn-render-generate': {},
+    'btn-render-generate-mt': {},
     'btn-render-autolevels': {},
     'btn-render-download': {},
     'btn-render-delete': {},
@@ -365,9 +366,17 @@ vm.runInContext(`
 // Stub network + async helpers — MUST be inside VM to override function declarations
 vm.runInContext(`
     var _tilePolls = 0, _encodePolls = 0;
+    var _pipelineDispatchLogs = [];
+    var _pipelineOrigLog = log;
 
     _bilevelDispatchAndPoll = async () => 1234;
     refreshRenderArtifacts = async () => {};
+    log = function(msg, cls, target) {
+        if (target === 'render-log' && String(msg).includes('dispatching')) {
+            _pipelineDispatchLogs.push({ msg, cls, target });
+        }
+        return _pipelineOrigLog(msg, cls, target);
+    };
 
     lambdaPost = async function lambdaPost(name, body, path) {
         if (name === 'storage' && path === '/clean-render') return { deleted: 0 };
@@ -414,7 +423,7 @@ ctx.setInterval = (fn, ms) => { if (typeof fn === 'function') fn(); return 42; }
 ctx.clearInterval = () => {};
 
 async function testPipeline(name, call) {
-    vm.runInContext('_tilePolls = 0; _encodePolls = 0; _fakeNow = 0;', ctx);
+    vm.runInContext('_tilePolls = 0; _encodePolls = 0; _fakeNow = 0; _pipelineDispatchLogs = [];', ctx);
     // Clear status element to detect pipeline-caught errors
     ctx._elements['render-status'].textContent = '';
     try {
@@ -436,8 +445,43 @@ async function testPipeline(name, call) {
 
 (async () => {
     await testPipeline('runRasterPipeline', '(async()=>{ await runRasterPipeline(); })()');
+    {
+        const logs = vm.runInContext('_pipelineDispatchLogs', ctx);
+        const hit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render: dispatching color orchestrator')) : null;
+        if (!hit || hit.cls !== 'ok') {
+            console.error('FATAL: runRasterPipeline should log green render dispatch, got ' + JSON.stringify(logs));
+            process.exit(1);
+        }
+    }
+    await testPipeline('runRasterPipelineMT', '(async()=>{ renderColorMode = "solve_score"; await runRasterPipelineMT(); })()');
+    {
+        const logs = vm.runInContext('_pipelineDispatchLogs', ctx);
+        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with')) : null;
+        const orchHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render: dispatching color orchestrator')) : null;
+        if (!mtHit || mtHit.cls !== 'ok' || !orchHit || orchHit.cls !== 'ok') {
+            console.error('FATAL: runRasterPipelineMT should log green MT + orchestrator dispatch, got ' + JSON.stringify(logs));
+            process.exit(1);
+        }
+    }
     await testPipeline('runBilevelPipeline', '(async()=>{ await runBilevelPipeline(); })()');
     await testPipeline('runCoeffBilevelPipeline', '(async()=>{ await runCoeffBilevelPipeline(); })()');
+
+    vm.runInContext(`
+        renderColorMode = 'solve_score';
+        renderMatchMode = 'none';
+        _activeRenderRun = null;
+        openRenderMtPopup();
+    `, ctx);
+    if (ctx._elements['render-mt-popup-overlay'].style.display !== 'flex') {
+        console.error('FATAL: Generate-MT should open popup overlay');
+        process.exit(1);
+    }
+    if (!(ctx._elements['render-mt-popup-summary'].textContent || '').includes('raster workers=')) {
+        console.error('FATAL: Generate-MT popup should show thread summary');
+        process.exit(1);
+    }
+    console.log('  Generate-MT popup opens with thread summary: OK');
+    vm.runInContext('_closeRenderMtPopup()', ctx);
 
     // Step 8: Direct _bilevelDispatchAndPoll tests
     console.log('');
@@ -644,6 +688,21 @@ async function testPipeline(name, call) {
     console.log('');
     console.log('--- Render family catalogs ---');
 
+    function assertActionButtons(panelHtml, mustHave, mustNotHave, label) {
+        for (const text of mustHave) {
+            if (!panelHtml.includes(text)) {
+                console.error(`FATAL: ${label} should include button/control "${text}"`);
+                process.exit(1);
+            }
+        }
+        for (const text of mustNotHave) {
+            if (panelHtml.includes(text)) {
+                console.error(`FATAL: ${label} should not include button/control "${text}"`);
+                process.exit(1);
+            }
+        }
+    }
+
     {
         const summary = {
             calc: { exists: true, N: 1000, degree: 5 },
@@ -658,27 +717,54 @@ async function testPipeline(name, call) {
                 palette: [
                     { artifact_id: 'pal_a', palette_id: 'pal_a', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/j/palettes/pal_a/image.jpeg', image_url: 'https://img/pal.jpeg', preview_url: 'https://img/pal.png', viewer_url: 'https://img/pal.png', width: 1000, height: 1000, file_size: 70000, metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05 }
                 ],
+                pdf: [
+                    { artifact_id: 'pdf_a', created_at: '2026-03-30T13:00:00Z', document_key: 'renders/j/pdf/pdf_a/document.pdf', viewer_url: 'https://img/pdf.pdf', width: 586, height: 296, file_size: 80000, format: 'pdf', content_type: 'application/pdf', pdf_kind: 'color_spread' }
+                ],
             },
         };
-        vm.runInContext(`_renderActiveFamily = 'color'; _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };`, ctx);
+        vm.runInContext(`_renderActiveFamily = 'color'; _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1 };`, ctx);
         vm.runInContext(`renderArtifactPanel('j', ${JSON.stringify(summary)})`, ctx);
 
         const panelHtml = ctx._elements['render-preview'].innerHTML;
         if (!panelHtml.includes('Color <span style="color:#777">(1)</span>')) { console.error('FATAL: color family tab missing'); process.exit(1); }
         if (!panelHtml.includes('BiLevel <span style="color:#777">(1)</span>')) { console.error('FATAL: bilevel family tab missing'); process.exit(1); }
         if (!panelHtml.includes('Palette <span style="color:#777">(1)</span>')) { console.error('FATAL: palette family tab missing'); process.exit(1); }
+        if (!panelHtml.includes('PDF <span style="color:#777">(1)</span>')) { console.error('FATAL: pdf family tab missing'); process.exit(1); }
         const colorSel = vm.runInContext('_renderSelectedArtifact.color', ctx);
         if (colorSel !== 0) { console.error('FATAL: color family should auto-select first artifact'); process.exit(1); }
         if (!panelHtml.includes('2026-03-30 10:00:00')) { console.error('FATAL: color artifact row created timestamp missing'); process.exit(1); }
         if (!panelHtml.includes('https://img/color.png')) { console.error('FATAL: selected color viewer should use viewer_url'); process.exit(1); }
         if (!panelHtml.includes('id="render-artifact-viewer"')) { console.error('FATAL: render artifact viewer container missing'); process.exit(1); }
         if (!panelHtml.includes('height:360px') || !panelHtml.includes('background:#000')) { console.error('FATAL: render artifact panel should keep fixed black viewport height'); process.exit(1); }
+        assertActionButtons(
+            panelHtml,
+            ['Generate', 'Generate-MT', 'GenerateFromPalette', 'RePalette', 'Populate', 'Autolevels', 'Download', 'Delete', 'DeepZoom'],
+            ['ColorSpread'],
+            'color action row'
+        );
         console.log('  color family auto-select + viewer: OK');
 
         vm.runInContext(`_renderSelectFamily('palette')`, ctx);
         const palHtml = ctx._elements['render-preview'].innerHTML;
         if (!palHtml.includes('https://img/pal.png')) { console.error('FATAL: palette family should show selected palette viewer'); process.exit(1); }
+        assertActionButtons(
+            palHtml,
+            ['Generate', 'RePalette', 'Populate', 'Download', 'Delete', 'DeepZoom'],
+            ['Generate-MT', 'GenerateFromPalette', 'Autolevels', 'ColorSpread'],
+            'palette action row'
+        );
         console.log('  family switch updates catalog: OK');
+
+        vm.runInContext(`_renderSelectFamily('pdf')`, ctx);
+        const pdfHtml = ctx._elements['render-preview'].innerHTML;
+        if (!pdfHtml.includes('https://img/pdf.pdf#toolbar=0&navpanes=0&view=FitH')) { console.error('FATAL: pdf family should show embedded pdf viewer'); process.exit(1); }
+        assertActionButtons(
+            pdfHtml,
+            ['ColorSpread', 'Download', 'Delete'],
+            ['Generate-MT', 'GenerateFromPalette', 'Populate', 'Autolevels', 'DeepZoom'],
+            'pdf action row'
+        );
+        console.log('  pdf family controls + viewer: OK');
 
         vm.runInContext(`
             renderArtifactPanel('j', {
@@ -692,6 +778,7 @@ async function testPipeline(name, call) {
                     bilevel: [],
                     coeffs: [],
                     palette: [],
+                    pdf: [],
                 },
             });
         `, ctx);
@@ -1197,6 +1284,14 @@ async function testPipeline(name, call) {
             _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
             _clearActiveRun();
             _colorRepaletteDispatch = null;
+            _colorRepaletteStartLog = null;
+            _colorRepaletteOrigLog = log;
+            log = function(msg, cls, target) {
+                if (target === 'render-log' && String(msg).includes('Color RePalette: dispatching')) {
+                    _colorRepaletteStartLog = { msg, cls, target };
+                }
+                return _colorRepaletteOrigLog(msg, cls, target);
+            };
             lambdaPost = async function(name, body, path) {
                 if (name === 'dispatch' && body.target === 'color_repalette') {
                     _colorRepaletteDispatch = body;
@@ -1225,10 +1320,13 @@ async function testPipeline(name, call) {
         await vm.runInContext('runColorRepaletteSelectedArtifact()', ctx);
         const dispatch = vm.runInContext('_colorRepaletteDispatch', ctx);
         const runMode = vm.runInContext('_activeRenderRun && _activeRenderRun.mode', ctx);
+        const startLog = vm.runInContext('_colorRepaletteStartLog', ctx);
         if (!dispatch || dispatch.target !== 'color_repalette') { console.error('FATAL: Color RePalette should dispatch color_repalette target'); process.exit(1); }
         if (dispatch.jobs[0].source_artifact_id !== 'color_src') { console.error('FATAL: Color RePalette should send source artifact id, got ' + dispatch.jobs[0].source_artifact_id); process.exit(1); }
         if (dispatch.jobs[0].new_palette !== 'tri_redgold') { console.error('FATAL: Color RePalette should send chosen palette, got ' + dispatch.jobs[0].new_palette); process.exit(1); }
         if (runMode !== 'color_repalette') { console.error('FATAL: Color RePalette should save active run mode, got ' + runMode); process.exit(1); }
+        if (!startLog || startLog.cls !== 'ok') { console.error('FATAL: Color RePalette dispatch log should be green/ok, got ' + JSON.stringify(startLog)); process.exit(1); }
+        vm.runInContext('log = _colorRepaletteOrigLog;', ctx);
         console.log('  Color RePalette popup dispatches fast color reuse run: OK');
     }
 
@@ -1270,7 +1368,7 @@ async function testPipeline(name, call) {
             process.exit(1);
         }
         if (statusText !== 'Color RePalette complete') { console.error('FATAL: Color RePalette completion status should be specific, got ' + statusText); process.exit(1); }
-        if (!String(logText).includes('Color RePalette complete: color_new')) { console.error('FATAL: Color RePalette completion should log explicit completion, got ' + logText); process.exit(1); }
+        if (!String(logText).includes('Color RePalette complete: color_new (')) { console.error('FATAL: Color RePalette completion should log explicit completion with elapsed seconds, got ' + logText); process.exit(1); }
         vm.runInContext(`
             log = _colorRepaletteOrigLog;
             refreshRenderArtifacts = _colorRepaletteOrigRefreshRenderArtifacts;
@@ -1316,8 +1414,16 @@ async function testPipeline(name, call) {
             _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
             _clearActiveRun();
             _autolevelDispatch = null;
+            _autolevelStartLog = null;
+            _autolevelOrigLog = log;
             startActiveRenderObserver = function() { _autolevelObserverStarted = true; };
             _autolevelObserverStarted = false;
+            log = function(msg, cls, target) {
+                if (target === 'render-log' && String(msg).includes('Autolevels: dispatching')) {
+                    _autolevelStartLog = { msg, cls, target };
+                }
+                return _autolevelOrigLog(msg, cls, target);
+            };
             lambdaPost = async function(name, body, path) {
                 if (name === 'dispatch' && body.target === 'autolevels') {
                     _autolevelDispatch = body;
@@ -1391,6 +1497,7 @@ async function testPipeline(name, call) {
         `, ctx);
         await vm.runInContext('runAutolevelSelectedRenderArtifact()', ctx);
         const dispatch = vm.runInContext('_autolevelDispatch', ctx);
+        const startLog = vm.runInContext('_autolevelStartLog', ctx);
         const popupClosed = vm.runInContext("document.getElementById('autolevel-popup-overlay').style.display", ctx);
         const observerStarted = vm.runInContext('_autolevelObserverStarted', ctx);
         const runMode = vm.runInContext('_activeRenderRun && _activeRenderRun.mode', ctx);
@@ -1407,10 +1514,12 @@ async function testPipeline(name, call) {
         if (popupClosed !== 'none') { console.error('FATAL: autolevel popup should close after dispatch'); process.exit(1); }
         if (!observerStarted) { console.error('FATAL: autolevel dispatch should start render observer'); process.exit(1); }
         if (runMode !== 'autolevels') { console.error('FATAL: autolevel dispatch should save active render run mode, got ' + runMode); process.exit(1); }
+        if (!startLog || startLog.cls !== 'ok') { console.error('FATAL: autolevel dispatch log should be green/ok, got ' + JSON.stringify(startLog)); process.exit(1); }
         vm.runInContext(`
             _autolevelDispatch = null;
             openAutolevelPopup();
             _closeAutolevelPopup();
+            log = _autolevelOrigLog;
         `, ctx);
         const canceledDispatch = vm.runInContext('_autolevelDispatch', ctx);
         if (canceledDispatch !== null) { console.error('FATAL: closing autolevel popup should not dispatch'); process.exit(1); }
@@ -2424,8 +2533,37 @@ async function testPipeline(name, call) {
         await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx);
         orchDispatched = vm.runInContext('_orchDispatched', ctx);
         if (!orchDispatched) { console.error('FATAL: runRasterPipeline did not dispatch orchestrator'); process.exit(1); }
+        if (orchDispatched.params.raster_engine !== 'single') { console.error('FATAL: runRasterPipeline should request single raster engine, got ' + orchDispatched.params.raster_engine); process.exit(1); }
         if (orchDispatched.mode !== 'color') { console.error('FATAL: mode should be color, got ' + orchDispatched.mode); process.exit(1); }
         console.log('  12a runRasterPipeline dispatches orchestrator: OK (mode=color)');
+    }
+
+    // 12a2: runRasterPipelineMT dispatches one render_orchestrator job with mt raster engine + thread count
+    {
+        let orchDispatched = null;
+        vm.runInContext(`
+            renderColorMode = 'solve_score';
+            var _orchDispatched = null;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch' && body.target === 'render_orchestrator') {
+                    _orchDispatched = body.jobs[0];
+                    return { fired: 1, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: 1, complete: true, results: [{ phase: 'done' }] };
+                }
+                return {};
+            };
+            refreshRenderArtifacts = async function() {};
+        `, ctx);
+        ctx._elements['btn-render-generate-mt'] = ctx._mkEl();
+        await vm.runInContext('(async()=>{ await runRasterPipelineMT(6); })()', ctx);
+        orchDispatched = vm.runInContext('_orchDispatched', ctx);
+        if (!orchDispatched) { console.error('FATAL: runRasterPipelineMT did not dispatch orchestrator'); process.exit(1); }
+        if (orchDispatched.params.raster_engine !== 'mt') { console.error('FATAL: runRasterPipelineMT should request mt raster engine, got ' + orchDispatched.params.raster_engine); process.exit(1); }
+        if (orchDispatched.params.raster_mt_threads !== 6) { console.error('FATAL: runRasterPipelineMT should pass raster_mt_threads=6, got ' + orchDispatched.params.raster_mt_threads); process.exit(1); }
+        if (orchDispatched.mode !== 'color') { console.error('FATAL: mode should be color, got ' + orchDispatched.mode); process.exit(1); }
+        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, threads=6)');
     }
 
     // 12b: runBilevelPipeline dispatches one render_orchestrator job
@@ -2455,6 +2593,7 @@ async function testPipeline(name, call) {
         // Search the source for direct dispatch of worker phases in the new launch functions
         const launchCode = [
             vm.runInContext('runRasterPipeline.toString()', ctx),
+            vm.runInContext('runRasterPipelineMT.toString()', ctx),
             vm.runInContext('runBilevelPipeline.toString()', ctx),
             vm.runInContext('runCoeffBilevelPipeline.toString()', ctx),
         ].join('\n');
@@ -2672,8 +2811,100 @@ async function testPipeline(name, call) {
         if (!logText.includes('autolevels:')) { console.error('FATAL: autolevel completion should log debug line'); process.exit(1); }
         if (!logText.includes('R[16..210]') || !logText.includes('G[18..220]') || !logText.includes('B[20..240]')) { console.error('FATAL: autolevel debug log should include RGB extents, got ' + logText); process.exit(1); }
         if (!logText.includes('pooled[12..220]') || !logText.includes('tol/ch=11') || !logText.includes('levels=0.047..0.863')) { console.error('FATAL: autolevel debug log should include pooled extents, tolerance, and levels, got ' + logText); process.exit(1); }
+        if (!logText.includes('Render complete: autolevels_dbg (')) { console.error('FATAL: autolevel completion should include elapsed seconds, got ' + logText); process.exit(1); }
         console.log('  12k autolevel completion logs debug extents: OK');
         vm.runInContext('_activeRenderRun = null;', ctx);
+    }
+
+    // 12l: solve-score progress log includes wall + total timing
+    {
+        ctx._elements['render-log'] = ctx._mkEl();
+        ctx._elements['render-status'] = ctx._mkEl();
+        vm.runInContext("_activeRenderRun = {job_id:'j', mode:'color', run_id:'r_hist', task_id:'render_run_color_r_hist', started_at_ms: Date.now() - 4000}; _renderPhaseTracker = null; _lastLoggedPhase = null;", ctx);
+        vm.runInContext(`
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/check-status' && body.task_prefix === 'render_run_color_r_hist') {
+                    return {
+                        errors: 0,
+                        done: 0,
+                        complete: false,
+                        latest_update_ms: Date.now() - 1500,
+                        results: [{
+                            phase: 'solve_score_hist',
+                            phase_label: 'Solve score: hist',
+                            expected: 100,
+                            subtask_prefix: 'render_r_hist_solve_score_hist_',
+                            updated_at_ms: Date.now() - 5000
+                        }]
+                    };
+                }
+                if (name === 'storage' && path === '/check-status' && body.task_prefix === 'render_r_hist_solve_score_hist_') {
+                    return {
+                        errors: 0,
+                        done: 24,
+                        expected: 100,
+                        complete: false,
+                        latest_update_ms: Date.now() - 1500,
+                        results: [
+                            { dl_ms: 1200, compute_ms: 3400 },
+                            { dl_ms: 800, compute_ms: 2600 }
+                        ]
+                    };
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await _pollActiveRenderRun(); })()', ctx); } catch(e) {}
+        const logText = ctx._elements['render-log'].textContent || '';
+        if (!logText.includes('Solve score: hist 24/100')) { console.error('FATAL: solve-score hist progress should log count, got ' + logText); process.exit(1); }
+        if (!logText.includes('wall=') || !logText.includes('total=dl')) { console.error('FATAL: solve-score hist progress should log wall + total timing, got ' + logText); process.exit(1); }
+        console.log('  12l solve-score progress logs wall + total timing: OK');
+        vm.runInContext('_activeRenderRun = null; _renderPhaseTracker = null;', ctx);
+    }
+
+    // 12m: color completion logs raster perf summary with engine + threads in seconds
+    {
+        ctx._elements['render-log'] = ctx._mkEl();
+        vm.runInContext("_activeRenderRun = {job_id:'j', mode:'color', run_id:'r_perf', task_id:'render_run_color_r_perf', started_at_ms: Date.now() - 1000}; _renderPhaseTracker = { phase:'raster', phase_label:'Raster', started_at_ms: Date.now() - 2500, prefix:'render_r_perf_raster_', expected:2 };", ctx);
+        vm.runInContext(`
+            refreshRenderArtifacts = async function() {};
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/check-status' && body.task_prefix === 'render_run_color_r_perf') {
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: true,
+                        results: [{
+                            phase: 'done',
+                            phase_label: 'Done',
+                            family: 'color',
+                            artifact_id: 'color_perf'
+                        }]
+                    };
+                }
+                if (name === 'storage' && path === '/check-status' && body.task_prefix === 'render_r_perf_raster_') {
+                    return {
+                        errors: 0,
+                        done: 2,
+                        complete: false,
+                        results: [
+                            { engine: 'mt', threads: 2, download_us: 1200, native_us: 3400, upload_us: 800, roots_plotted: 50, roots_clipped: 2, tiles_uploaded: 3, pixel_bin_tiles_uploaded: 3 },
+                            { engine: 'mt', threads: 2, download_us: 1400, native_us: 3600, upload_us: 900, roots_plotted: 60, roots_clipped: 1, tiles_uploaded: 4, pixel_bin_tiles_uploaded: 4 }
+                        ]
+                    };
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await _pollActiveRenderRun(); })()', ctx); } catch(e) {}
+        const logText = ctx._elements['render-log'].textContent || '';
+        if (!logText.includes('Raster performance: engine=mt threads=2 chunks=2')) { console.error('FATAL: color completion should log raster perf engine/threads/chunks, got ' + logText); process.exit(1); }
+        if (!logText.includes('wall=')) { console.error('FATAL: raster perf log should include wall time in seconds, got ' + logText); process.exit(1); }
+        if (!logText.includes('Download time: 0.0s') || !logText.includes('Native raster time: 0.0s') || !logText.includes('Upload time: 0.0s')) { console.error('FATAL: raster perf log should spell out timing labels, got ' + logText); process.exit(1); }
+        if (!logText.includes('Emitted root hits: 110') || !logText.includes('Clipped roots: 3') || !logText.includes('Tile files uploaded: 7') || !logText.includes('Pixel-bin files uploaded: 7')) { console.error('FATAL: raster perf log should aggregate worker metrics with full labels, got ' + logText); process.exit(1); }
+        if (!logText.includes('Render complete: color_perf (')) { console.error('FATAL: render completion log should include elapsed seconds, got ' + logText); process.exit(1); }
+        console.log('  12m color completion logs raster perf summary: OK');
+        vm.runInContext('_activeRenderRun = null; _renderPhaseTracker = null;', ctx);
     }
 
     // Step 13: Solve histogram debug button
@@ -2748,6 +2979,13 @@ async function testPipeline(name, call) {
                         clip_below_count: 2, clip_inrange_count: 46, clip_above_count: 2,
                         clip_below_frac: 0.04, clip_inrange_frac: 0.92, clip_above_frac: 0.04,
                         clip_fallback: false, clip_fallback_reason: null,
+                        metric_validity_policy: 'finite_only_min_roots',
+                        metric_min_finite_roots: 2,
+                        total_root_slots: 250, finite_root_count: 210,
+                        fully_finite_solve_count: 40, partial_finite_solve_count: 8, zero_finite_solve_count: 2,
+                        usable_solve_count: 45, forced_zero_score_count: 5,
+                        finite_root_frac: 0.84, fully_finite_solve_frac: 0.8, partial_finite_solve_frac: 0.16, zero_finite_solve_frac: 0.04, usable_solve_frac: 0.9,
+                        mean_finite_roots_per_solve: 4.2, min_finite_roots_per_solve: 0, max_finite_roots_per_solve: 5,
                         intermediate_hist_bins: 100, final_bins: 10,
                         cuts_norm: [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9],
                         cuts_score: [-0.3,-0.1,0.1,0.3,0.5,0.7,0.9,1.1,1.3],
@@ -2789,8 +3027,10 @@ async function testPipeline(name, call) {
         if (logText.includes('full range')) { console.error('FATAL: log must not show full range'); process.exit(1); }
         if (!logText.includes('extremes:')) { console.error('FATAL: log should show outlier extremes'); process.exit(1); }
         if (!logText.includes('max_count=3')) { console.error('FATAL: log should show max_count=3'); process.exit(1); }
+        if (!logText.includes('finite diagnostics: full=40')) { console.error('FATAL: log should show finite diagnostics, got ' + logText); process.exit(1); }
+        if (!logText.includes('scoring policy: finite_only_min_roots (min finite roots=2)  usable=45 (90.0%)  forced_zero=5')) { console.error('FATAL: log should show finite-only policy, got ' + logText); process.exit(1); }
         console.log('  13d correct payload, no dispatch, no activeRun: OK');
-        console.log('  13e log shows 10-bin table, no 32-bin, has extremes: OK');
+        console.log('  13e log shows 10-bin table, no 32-bin, has extremes + finite diagnostics: OK');
     }
 
     // Step 14: Render palette family generation
@@ -3148,6 +3388,57 @@ async function testPipeline(name, call) {
             console.log('  results populate restores compute settings: OK');
         } catch (e) {
             console.error('FATAL: results populate: ' + e.message);
+            process.exit(1);
+        }
+    }
+
+    console.log('');
+    console.log('--- AE-MT solver wiring ---');
+    {
+        ctx._elements['res-solver'] = ctx._elements['res-solver'] || { textContent: '-', style: {} };
+
+        try {
+            if (typeof vm.runInContext('runCalculateAEMT', ctx) !== 'function') {
+                console.error('FATAL: runCalculateAEMT should exist');
+                process.exit(1);
+            }
+
+            vm.runInContext(`
+                _selectedJobId = 'job_mt';
+                _resultsCache = [{
+                    job_id: 'job_mt',
+                    _detail: {
+                        times: 2,
+                        pipeline: { function: 'g1' },
+                        calc: { N: 900, n_chunks: 18, solver: 'aberth_mt' }
+                    }
+                }];
+            `, ctx);
+            await vm.runInContext('(async()=>{ await populateSelectedResult(); })()', ctx);
+
+            const status = ctx._elements['compute-status'].textContent;
+            if (!status.includes('Calculate-AE-MT')) {
+                console.error('FATAL: populate result should mention Calculate-AE-MT, got ' + status);
+                process.exit(1);
+            }
+
+            vm.runInContext(`
+                _applyDetail(null, {
+                    times: 1,
+                    calc: { solver: 'aberth_mt' },
+                    param_transforms_display: [],
+                    coeff_transforms: []
+                }, document.getElementById('results-preview'), document.getElementById('results-info'), 'job_mt');
+            `, ctx);
+            const solverLabel = ctx._elements['res-solver'].textContent;
+            if (solverLabel !== 'AE-MT') {
+                console.error('FATAL: res-solver should show AE-MT, got ' + solverLabel);
+                process.exit(1);
+            }
+
+            console.log('  AE-MT populate + detail labels: OK');
+        } catch (e) {
+            console.error('FATAL: AE-MT solver wiring: ' + e.message);
             process.exit(1);
         }
     }

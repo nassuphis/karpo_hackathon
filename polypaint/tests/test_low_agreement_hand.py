@@ -474,6 +474,8 @@ CASES = [
     ("poly_814", "poly900.py", 25, [["t1radd", "0.30"], ["t1iadd", "0.20"], ["t2radd", "-0.10"], ["t2iadd", "0.70"]]),
 ]
 
+PARITY_FUNCTIONS = sorted({func_name for func_name, _source_file, _n_coeffs, _transforms in CASES})
+
 
 @pytest.mark.parametrize("func_name,source_file,n_coeffs,transforms", CASES)
 def test_low_agreement_hand_overrides_match_python_reference(func_name, source_file, n_coeffs, transforms):

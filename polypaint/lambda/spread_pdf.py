@@ -61,7 +61,16 @@ def _draw_image_cover(c, reader, img_size, x, y, w, h):
                 preserveAspectRatio=False, mask='auto')
 
 
-def _draw_text_page(c, title, body, is_right, filename=None):
+def _draw_text_page(c, title, body, is_right, filename=None, meta=None):
+    """Draw the text page of a spread.
+
+    If `meta` is provided, it overrides `body` with structured render metadata:
+      meta.pipeline    — e.g. "[unit_circle,coeff7] poly_155 [rev] N=500, times=1"
+      meta.viewport    — e.g. "LL: -1.17, -1.16  UR: 1.14, 1.16"
+      meta.color_mode  — e.g. "RAINBOW", "SOLVE SCORE: crowding q=5.0% w=1 reef"
+      meta.degree      — e.g. "Degree: 70"
+      meta.artifact_id — e.g. "color_run_1775151791677_vni4ec"
+    """
     if is_right:
         trim_x = 0
     else:
@@ -80,34 +89,64 @@ def _draw_text_page(c, title, body, is_right, filename=None):
         c.setFont("Helvetica-Bold", 28)
         c.drawCentredString(center_x, center_y + 40, title)
 
-    y = center_y - 20
-    if body:
+    if meta:
+        # Structured metadata lines, centered, white
+        y = center_y - 20
+        desc_lines = []
+        if meta.get("pipeline"):
+            desc_lines.append(meta["pipeline"])
+        if meta.get("viewport"):
+            desc_lines.append(meta["viewport"])
+        if meta.get("color_mode"):
+            desc_lines.append(meta["color_mode"])
+        if meta.get("degree"):
+            desc_lines.append(meta["degree"])
+
         c.setFont(BODY_FONT, 11)
-        words = body.split()
-        lines = []
-        line = ""
-        for word in words:
-            test = f"{line} {word}".strip()
-            if c.stringWidth(test, BODY_FONT, 11) <= tw:
-                line = test
-            else:
-                if line:
-                    lines.append(line)
-                line = word
-        if line:
-            lines.append(line)
-
-        for ln in lines:
+        for ln in desc_lines:
             c.drawCentredString(center_x, y, ln)
-            y -= 16
+            y -= 18
 
-    if filename:
-        c.setFont("Courier", 8)
-        c.setFillColorRGB(0.5, 0.5, 0.5)
-        c.drawCentredString(center_x, y - 16, filename)
+        # Artifact ID at the bottom in grey
+        artifact_id = meta.get("artifact_id", filename or "")
+        if artifact_id:
+            c.setFont("Courier", 8)
+            c.setFillColorRGB(0.5, 0.5, 0.5)
+            c.drawCentredString(center_x, y - 20, artifact_id)
+    else:
+        y = center_y - 20
+        if body:
+            c.setFont(BODY_FONT, 11)
+            words = body.split()
+            lines = []
+            line = ""
+            for word in words:
+                test = f"{line} {word}".strip()
+                if c.stringWidth(test, BODY_FONT, 11) <= tw:
+                    line = test
+                else:
+                    if line:
+                        lines.append(line)
+                    line = word
+            if line:
+                lines.append(line)
+
+            for ln in lines:
+                c.drawCentredString(center_x, y, ln)
+                y -= 16
+
+        if filename:
+            c.setFont("Courier", 8)
+            c.setFillColorRGB(0.5, 0.5, 0.5)
+            c.drawCentredString(center_x, y - 16, filename)
 
 
-def build_color_spread_pdf(image_path, output_pdf_path, title, body, filename=None):
+def build_color_spread_pdf(image_path, output_pdf_path, title, body=None, filename=None, meta=None):
+    """Build a two-page spread PDF: text page (left) + image page (right).
+
+    If `meta` is provided (dict with pipeline, viewport, color_mode, degree, artifact_id),
+    the text page shows structured render metadata instead of freeform body text.
+    """
     image_path = Path(image_path)
     output_pdf_path = Path(output_pdf_path)
     output_pdf_path.parent.mkdir(parents=True, exist_ok=True)
@@ -121,7 +160,7 @@ def build_color_spread_pdf(image_path, output_pdf_path, title, body, filename=No
     c.saveState()
     c.setFillColor(black)
     c.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
-    _draw_text_page(c, title or "", body or "", is_right=False, filename=filename)
+    _draw_text_page(c, title or "", body or "", is_right=False, filename=filename, meta=meta)
     c.restoreState()
 
     c.saveState()

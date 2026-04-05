@@ -327,7 +327,7 @@ button {
         <h2>Configuration</h2>
         <label>Config URL (config.json)</label>
         <div style="display:flex; gap:8px; align-items:center">
-            <input type="text" id="config-url" value="http://polypaint.s3-website-us-east-1.amazonaws.com/config.json" style="flex:1">
+            <input type="text" id="config-url" value="https://polypaint.s3.us-east-1.amazonaws.com/config.json" style="flex:1">
             <button onclick="loadLambdaConfig()" class="btn-secondary" style="padding:4px 12px">Load</button>
             <span id="config-status" style="font-size:11px; color:#888"></span>
         </div>
@@ -5375,11 +5375,149 @@ function _renderSelectArtifact(family, idx) {
     renderArtifactPanel(document.getElementById('render-results-dir').value.trim(), window._lastRenderSummary || { families: _renderArtifacts, calc: {} }, { preserveScroll: true, ensureSelected: true });
 }
 
-async function downloadSelectedRenderArtifact() {
+let _renderSaveDirHandle = null;
+
+function _toggleDownloadMenu() {
+    const menu = document.getElementById('download-menu');
+    if (!menu) return;
+    const show = menu.style.display === 'none';
+    menu.style.display = show ? 'block' : 'none';
+    if (show) {
+        // Update Dir label to show current directory
+        const dirItem = document.getElementById('dl-menu-dir');
+        if (dirItem) {
+            dirItem.textContent = _renderSaveDirHandle
+                ? '\u2713 ' + (_renderSaveDirHandle.name || 'folder') + ' \u2014 change\u2026'
+                : 'Save to Dir\u2026';
+        }
+    }
+}
+// Close menu on outside click
+document.addEventListener('click', function(e) {
+    const menu = document.getElementById('download-menu');
+    const btn = document.getElementById('btn-render-download');
+    if (menu && btn && !btn.contains(e.target) && !menu.contains(e.target)) {
+        menu.style.display = 'none';
+    }
+});
+
+async function _buildArtifactMeta(jobId, art) {
+    const metaObj = {};
+    for (const [k, v] of Object.entries(art)) {
+        if (v != null && v !== '' && typeof v !== 'function') metaObj[k] = v;
+    }
+    metaObj.job_id = jobId;
+    // Fetch full calc.json via /detail for complete compute metadata
+    try {
+        const detail = await lambdaPost('storage', { job_id: jobId }, '/detail');
+        const calc = detail.calc || {};
+        const pipeline = calc.pipeline || {};
+        const pt = pipeline.param_transforms_display || pipeline.param_transforms || [];
+        const ptStr = pt.map(a => Array.isArray(a) && a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : (Array.isArray(a) ? a[0] : a)).join(', ');
+        const ct = (pipeline.coeff_transforms || []).join(', ');
+        metaObj.compute = {
+            function: pipeline.function || calc.function || '',
+            cfpv: pipeline.cfpv_display || (pipeline.cfpv && pipeline.cfpv.length ? pipeline.cfpv.join(', ') : ''),
+            param_transforms: ptStr || 'none',
+            coeff_transforms: ct || 'none',
+            degree: calc.degree,
+            N: calc.N || calc.n1,
+            times: calc.times || 1,
+            n_chunks: calc.n_chunks || calc.n_stripes,
+            solver: calc.solver || '',
+            total_roots: (calc.N || calc.n1 || 0) * (calc.N || calc.n1 || 0) * (calc.times || 1) * (calc.degree || 0),
+        };
+    } catch (e) {
+        metaObj.compute = { error: 'Failed to load calc.json: ' + e.message };
+    }
+    return metaObj;
+}
+
+async function _dlMenuAction(mode) {
+    document.getElementById('download-menu').style.display = 'none';
     const jobId = document.getElementById('render-results-dir').value.trim();
     const art = _renderSelectedArtifactEntry();
     if (!jobId || !art) return;
-    await downloadPresignedFile(art.image_url || art.viewer_url || '', _renderArtifactFilename(jobId, art), art.image_key);
+
+    const imageFilename = _renderArtifactFilename(jobId, art);
+    const metaFilename = imageFilename.replace(/\.[^.]+$/, '_meta.json');
+
+    if (mode === 'image') {
+        await downloadPresignedFile(art.image_url || art.viewer_url || '', imageFilename, art.image_key);
+        return;
+    }
+
+    const metaObj = await _buildArtifactMeta(jobId, art);
+    const metaBlob = new Blob([JSON.stringify(metaObj, null, 2)], { type: 'application/json' });
+
+    if (mode === 'dir') {
+        if (typeof window.showDirectoryPicker !== 'function') {
+            alert('Directory picker requires Chrome or Edge over HTTPS (or localhost).');
+            return;
+        }
+        try {
+            _renderSaveDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+            log('Save directory: ' + _renderSaveDirHandle.name, 'ok', 'render-log');
+        } catch (e) {
+            if (e.name !== 'AbortError') alert('Directory picker failed: ' + e.message);
+        }
+        return;
+    }
+
+    // Save to directory if one is set, otherwise browser download
+    if (_renderSaveDirHandle) {
+        const btn = document.getElementById('btn-render-download');
+        const orig = btn ? btn.textContent : 'Download \u25bc';
+        if (btn) { btn.disabled = true; }
+        try {
+            const dirHandle = _renderSaveDirHandle;
+            if ((await dirHandle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
+                if ((await dirHandle.requestPermission({ mode: 'readwrite' })) !== 'granted') {
+                    _renderSaveDirHandle = null;
+                    throw new Error('Permission denied — directory cleared');
+                }
+            }
+
+            if (mode === 'image+meta') {
+                if (btn) btn.textContent = 'Saving metadata...';
+                const metaHandle = await dirHandle.getFileHandle(metaFilename, { create: true });
+                const metaWritable = await metaHandle.createWritable();
+                await metaWritable.write(metaBlob);
+                await metaWritable.close();
+            }
+
+            if (btn) btn.textContent = 'Downloading image...';
+            const presign = await lambdaPost('storage', { key: art.image_key, filename: imageFilename }, '/presign');
+            const resp = await fetch(presign.url);
+            if (!resp.ok) throw new Error(`Image download failed: ${resp.status}`);
+            const imageBlob = await resp.blob();
+            const imgHandle = await dirHandle.getFileHandle(imageFilename, { create: true });
+            const imgWritable = await imgHandle.createWritable();
+            await imgWritable.write(imageBlob);
+            await imgWritable.close();
+
+            if (btn) { btn.textContent = 'Saved to ' + dirHandle.name; setTimeout(() => { btn.textContent = orig; }, 2000); }
+        } catch (e) {
+            if (e.name === 'AbortError') { /* cancelled */ }
+            else alert('Save failed: ' + e.message);
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+        return;
+    }
+
+    // No directory set — browser downloads
+    if (mode === 'image+meta') {
+        const metaUrl = URL.createObjectURL(metaBlob);
+        const a = document.createElement('a');
+        a.href = metaUrl;
+        a.download = metaFilename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(metaUrl);
+    }
+    await downloadPresignedFile(art.image_url || art.viewer_url || '', imageFilename, art.image_key);
 }
 
 async function deleteSelectedRenderArtifact() {
@@ -5518,7 +5656,14 @@ function renderArtifactPanel(jobId, summary, options = {}) {
                     ${_renderActiveFamily === 'palette' ? '<button class="btn-secondary" id="btn-render-repalette" onclick="openRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>' : ''}
                     ${(_renderActiveFamily === 'color' || _renderActiveFamily === 'palette') ? '<button class="btn-secondary" id="btn-render-populate" onclick="populateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Populate</button>' : ''}
                     ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-autolevels" onclick="openAutolevelPopup()" style="padding:4px 12px; font-size:11px" disabled>Autolevels</button>' : ''}
-                    <button class="btn-secondary" id="btn-render-download" onclick="downloadSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Download</button>
+                    <div style="display:inline-block; position:relative">
+                        <button class="btn-secondary" id="btn-render-download" onclick="_toggleDownloadMenu()" style="padding:4px 12px; font-size:11px" disabled>Download \u25bc</button>
+                        <div id="download-menu" style="display:none; position:absolute; bottom:100%; left:0; background:#2a2a3e; border:1px solid #555; border-radius:4px; z-index:100; min-width:120px; margin-bottom:2px">
+                            <div onclick="_dlMenuAction('image')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Image</div>
+                            <div onclick="_dlMenuAction('image+meta')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Image + Meta</div>
+                            <div id="dl-menu-dir" onclick="_dlMenuAction('dir')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Save to Dir\u2026</div>
+                        </div>
+                    </div>
                     <button class="btn-secondary" id="btn-render-delete" onclick="deleteSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Delete</button>
                     ${_renderActiveFamily !== 'pdf' ? '<button class="btn-secondary" id="btn-render-deepzoom" onclick="deepZoomSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>DeepZoom</button>' : ''}
                 </div>

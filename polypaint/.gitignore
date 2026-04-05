@@ -1,11 +1,11 @@
-# Compiled C binaries (built by deploy.sh or locally)
+# Compiled C binaries built at deploy time (not tracked)
+# These are rebuilt by deploy.sh from source .c files.
+# Tracked binaries (ARM64 ELF committed to git) are NOT listed here.
 lambda/sweep
 lambda/sweep_test
 lambda/sweep_cli
 lambda/sweep_cli_new
 lambda/solver
-lambda/roots2pix
-lambda/roots2pix_local
 lambda/pixassemble
 lambda/raw2jpeg
 lambda/lores_viewport
@@ -13,20 +13,16 @@ lambda/lores_viewport_*
 lambda/imgpipe
 lambda/bilevel
 lambda/bilevel_raster
-lambda/bilevel_raster_local
 lambda/bilevel_merge
-lambda/bilevel_merge_local
-lambda/coeffs_bilevel_raster
-lambda/coeffs_bilevel_raster_local
 lambda/param_gen
-lambda/param_gen_local
 lambda/tiff_compat
-lambda/tiff_compat_local
 lambda/png_export
-lambda/png_export_local
 lambda/dz_export
-lambda/dz_export_local
 lambda/sweep_cm
+lambda/coeffs_bilevel_raster
+# Local-only test binaries (never deployed)
+lambda/*_local
+lambda/*_test
 
 # Lambda packaging
 lambda/deploy.zip
@@ -35,16 +31,21 @@ lambda/*.zip
 # Cross-compile layers (large, built separately)
 lambda/layer-build/
 lambda/layer-build-lapack/
+lambda/layer-build-pdf/
 
 # Python bytecode
-lambda/__pycache__/
+__pycache__/
+*.pyc
 
 # Backup files
-lambda/*.bak
+*.bak
 
 # Test output binaries
 lambda/*.bin
 /tmp/
+
+# Build/output artifacts
+output/
 
 # Large images
 images/*.tif
@@ -52,8 +53,9 @@ images/*.png
 
 # macOS
 .DS_Store
+
+# Node
 node_modules
-lambda/solve_proximity_stats_test
 
 # Playwright test artifacts
 test-results/

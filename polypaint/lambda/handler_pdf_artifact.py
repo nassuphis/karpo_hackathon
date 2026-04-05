@@ -143,6 +143,107 @@ def _body_from(job_id, calc, src_meta, created_at):
     return " ".join(str(x).strip() for x in lines if str(x).strip())
 
 
+def _build_spread_meta(job_id, calc, src_meta, source_artifact_id):
+    """Build structured metadata dict for the PDF text page."""
+    # Pipeline line: [transforms] function [coeff_transforms] N=..., times=...
+    pipeline_parts = []
+    pt = _transforms_summary(src_meta.get("root_transforms"))
+    fn = str(calc.get("function", "") or "").strip()
+    pipeline = calc.get("pipeline", {}) if isinstance(calc.get("pipeline"), dict) else {}
+    ct_raw = pipeline.get("coeff_transforms", [])
+    ct = ",".join(str(x) for x in ct_raw) if ct_raw else ""
+    cfpv_display = pipeline.get("cfpv_display", "")
+    fn_str = fn
+    if cfpv_display:
+        fn_str += f"({cfpv_display})"
+    pt_display = pipeline.get("param_transforms_display", [])
+    if pt_display:
+        pt_parts = []
+        for a in pt_display:
+            if isinstance(a, list) and len(a) > 1:
+                pt_parts.append(f"{a[0]}({','.join(str(v) for v in a[1:])})")
+            elif isinstance(a, list) and a:
+                pt_parts.append(str(a[0]))
+            else:
+                pt_parts.append(str(a))
+        pt_str = ",".join(pt_parts)
+    else:
+        pt_str = pt
+    pipeline_line = f"[{pt_str}] {fn_str}"
+    if ct:
+        pipeline_line += f" [{ct}]"
+    n_val = calc.get("N", calc.get("n1", ""))
+    times = calc.get("times", 1)
+    if n_val not in ("", None):
+        pipeline_line += f" N={n_val}"
+    if times not in ("", None):
+        pipeline_line += f", times={times}"
+
+    # Viewport line
+    vp_parts = []
+    quantile_val = src_meta.get("quantile", "")
+    shim_val = src_meta.get("shim", "")
+    view_mode = src_meta.get("view_mode", "auto")
+    sq_ext = src_meta.get("square_extent", "")
+    if view_mode == "square" and sq_ext:
+        vp_parts.append(f"Square extent={sq_ext}")
+    else:
+        if quantile_val not in ("", None):
+            try:
+                vp_parts.append(f"q={float(quantile_val)*100:.1f}%")
+            except Exception:
+                pass
+        if shim_val not in ("", None):
+            try:
+                vp_parts.append(f"shim={float(shim_val)*100:.1f}%")
+            except Exception:
+                pass
+    viewport_line = "View: " + ", ".join(vp_parts) if vp_parts else ""
+
+    # Color mode line
+    color_mode = str(src_meta.get("color_mode", "") or "").strip()
+    palette = str(src_meta.get("palette", "") or "")
+    if color_mode == "solve_score":
+        metric = str(src_meta.get("solve_metric", "") or "")
+        q = src_meta.get("solve_score_quantile", "")
+        omega = src_meta.get("solve_score_omega", "")
+        cm_parts = [f"SOLVE SCORE: {metric}"]
+        if q not in ("", None):
+            try:
+                cm_parts.append(f"q={float(q)*100:.1f}%")
+            except Exception:
+                pass
+        if omega not in ("", None):
+            cm_parts.append(f"w={omega}")
+        if palette:
+            cm_parts.append(palette)
+        color_line = " ".join(cm_parts)
+    elif color_mode == "saved_palette":
+        metric = str(src_meta.get("palette_source_metric") or src_meta.get("solve_metric") or "")
+        color_line = f"SAVED PALETTE: {metric}"
+        if palette:
+            color_line += f" {palette}"
+    elif color_mode == "proximity":
+        color_line = f"ROOT PROXIMITY: {palette}" if palette else "ROOT PROXIMITY"
+    elif color_mode == "constant":
+        cc = str(src_meta.get("constant_color", "") or "")
+        color_line = f"CONSTANT: #{cc}" if cc else "CONSTANT"
+    else:
+        color_line = "RAINBOW"
+
+    # Degree line
+    degree = calc.get("degree", "")
+    degree_line = f"Degree: {degree}" if degree not in ("", None) else ""
+
+    return {
+        "pipeline": pipeline_line,
+        "viewport": viewport_line,
+        "color_mode": color_line,
+        "degree": degree_line,
+        "artifact_id": source_artifact_id,
+    }
+
+
 def handler(event, context):
     params = parse_body(event)
     job_id = params["job_id"]
@@ -191,12 +292,14 @@ def handler(event, context):
             calc = {}
 
         title = _title_from(calc, src_meta)
-        body = _body_from(job_id, calc, src_meta, created_at)
         filename = os.path.splitext(os.path.basename(source_image_key))[0]
         source_display_name = _source_display_name(src_meta, source_artifact_id)
 
+        # Build structured metadata for the text page
+        spread_meta = _build_spread_meta(job_id, calc, src_meta, source_artifact_id)
+
         _phase(job_id, task_id, "processing", "compose_pdf", "Compose PDF", **progress)
-        build_color_spread_pdf(source_local, output_local, title, body, filename=filename)
+        build_color_spread_pdf(source_local, output_local, title, meta=spread_meta)
 
         meta = {
             "family": "pdf",

@@ -89,11 +89,12 @@ def _lorem_for_image(image_path: Path) -> str:
 
 def generate_spread_pdf(image_path: Path, output_path: Path):
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Local mode: use lorem placeholder text (no artifact metadata available)
     return build_color_spread_pdf(
         image_path,
         output_path,
         _spread_title(image_path),
-        _lorem_for_image(image_path),
+        body=_lorem_for_image(image_path),
         filename=image_path.stem,
     )
 

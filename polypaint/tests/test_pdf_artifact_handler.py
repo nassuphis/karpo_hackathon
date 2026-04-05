@@ -62,11 +62,16 @@ class TestPdfArtifactHandler(unittest.TestCase):
                 "extra": ExtraArgs or {},
             }
 
-        def fake_build(image_path, output_path, title, body, filename=None):
+        def fake_build(image_path, output_path, title, body=None, filename=None, meta=None):
             self.assertTrue(str(image_path).endswith("pdf_source.jpeg"))
-            self.assertEqual(filename, "image")
             self.assertIn("poly_645", title)
-            self.assertIn("clusteriness", body)
+            # Structured meta should be provided
+            self.assertIsNotNone(meta)
+            self.assertIn("pipeline", meta)
+            self.assertIn("color_mode", meta)
+            self.assertIn("artifact_id", meta)
+            self.assertIn("SOLVE SCORE", meta["color_mode"])
+            self.assertEqual(meta["artifact_id"], "color_src")
             with open(output_path, "wb") as fh:
                 fh.write(b"%PDF-1.4 fake pdf")
             return output_path

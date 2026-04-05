@@ -42,7 +42,7 @@ VIEWPORT_MEMORY=512   # pure Python
 STORAGE_MEMORY=512    # pure Python
 DISPATCH_MEMORY=1769  # 1 vCPU — 50 threads doing SSL need real CPU
 RASTER_MEMORY=1769    # 1 vCPU, roots2pix (no canvas allocation)
-RASTER_MT_MEMORY=4096 # higher CPU tier for parallel roots2pix workers
+RASTER_MT_MEMORY=4096 # higher CPU tier for native pthread raster
 RASTER_MT_THREADS=4   # default per-Lambda worker count for color raster MT
 FINALIZE_MEMORY=1769  # 1 vCPU, pixassemble (64 MB tile buffer for 4096²)
 COEFFGEN_MEMORY=1769  # 1 vCPU, coefficient generation (no solver, striped)
@@ -69,7 +69,7 @@ COLOR_REPALETTE_MEMORY=1769  # fast tile recolor from persisted pixel bins
 PDF_ARTIFACT_NAME="polypaint-pdf-artifact"
 PDF_ARTIFACT_MEMORY=2048  # single-shot PDF composition from saved Color image
 SOLVE_PROXIMITY_NAME="polypaint-solve-proximity"
-SOLVE_PROXIMITY_MEMORY=1769  # 1 vCPU, solve_proximity_stats binary
+SOLVE_PROXIMITY_MEMORY=4096  # higher CPU tier for pthread solve-score phases
 RENDER_ORCHESTRATOR_NAME="polypaint-render-orchestrator"
 RENDER_ORCHESTRATOR_MEMORY=512  # starter only — validates + starts Step Functions
 RENDER_PLAN_NAME="polypaint-render-plan"
@@ -351,6 +351,9 @@ aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/sweep_mt lambda/sweep_mt.c
 echo "  roots2pix (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/roots2pix lambda/roots2pix.c -lm
 
+echo "  roots2pix_mt (static, ARM64)..."
+aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/roots2pix_mt lambda/roots2pix_mt.c -lm
+
 echo "  pixassemble (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/pixassemble lambda/pixassemble.c -lm
 
@@ -364,7 +367,7 @@ echo "  coeffs_bilevel_raster (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/coeffs_bilevel_raster lambda/coeffs_bilevel_raster.c -lm
 
 echo "  solve_proximity_stats (static, ARM64)..."
-aarch64-linux-musl-gcc -O3 -static -o lambda/solve_proximity_stats lambda/solve_proximity_stats.c -lm
+aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/solve_proximity_stats lambda/solve_proximity_stats.c -lm
 echo "  solve_palette_debug (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/solve_palette_debug lambda/solve_palette_debug.c -lm
 echo "  solve_palette_chunk (static, ARM64)..."
@@ -639,15 +642,15 @@ chmod +x "$RASTER_DIR"/roots2pix
 cd "$RASTER_DIR" && zip -r9 /tmp/polypaint-raster.zip . -q && cd "$SCRIPT_DIR"
 echo "  Raster:   $(du -h /tmp/polypaint-raster.zip | cut -f1)  (roots2pix)"
 
-# Raster-MT: handler_raster_mt.py + shared.py + roots2pix
+# Raster-MT: handler_raster_mt.py + shared.py + roots2pix_mt
 RASTER_MT_DIR=/tmp/polypaint-raster-mt
 rm -rf "$RASTER_MT_DIR"
 mkdir -p "$RASTER_MT_DIR"
 cp lambda/handler_raster_mt.py lambda/shared.py "$RASTER_MT_DIR/"
-cp lambda/roots2pix "$RASTER_MT_DIR/"
-chmod +x "$RASTER_MT_DIR"/roots2pix
+cp lambda/roots2pix_mt "$RASTER_MT_DIR/"
+chmod +x "$RASTER_MT_DIR"/roots2pix_mt
 cd "$RASTER_MT_DIR" && zip -r9 /tmp/polypaint-raster-mt.zip . -q && cd "$SCRIPT_DIR"
-echo "  RastMT:   $(du -h /tmp/polypaint-raster-mt.zip | cut -f1)  (parallel roots2pix)"
+echo "  RastMT:   $(du -h /tmp/polypaint-raster-mt.zip | cut -f1)  (roots2pix_mt)"
 
 # Finalize: handler_finalize.py + shared.py + pixassemble + pixbinassemble
 FINALIZE_DIR=/tmp/polypaint-finalize

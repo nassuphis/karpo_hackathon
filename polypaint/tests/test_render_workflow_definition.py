@@ -232,6 +232,16 @@ class TestWorkflowDefinition(unittest.TestCase):
         worker = color_map["ItemProcessor"]["States"]["RasterWorker"]
         self.assertEqual(worker["Parameters"]["FunctionName.$"], "$.raster_function_name")
 
+    def test_solve_score_tasks_carry_thread_count(self):
+        clip_payload = self.states["ColorSolveScoreClipTask"]["Parameters"]["Payload"]
+        self.assertEqual(clip_payload["solve_score_threads.$"], "$.plan.solve_score.threads")
+
+        hist_selector = self.states["ColorSolveScoreHistMap"]["ItemSelector"]
+        self.assertEqual(hist_selector["solve_score_threads.$"], "$.plan.solve_score.threads")
+
+        merge_payload = self.states["ColorSolveScoreMergeTask"]["Parameters"]["Payload"]
+        self.assertEqual(merge_payload["solve_score_threads.$"], "$.plan.solve_score.threads")
+
 
 if __name__ == "__main__":
     unittest.main()

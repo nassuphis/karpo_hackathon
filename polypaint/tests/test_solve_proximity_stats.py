@@ -21,14 +21,41 @@ import os
 import struct
 import subprocess
 import sys
+import shutil
 
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 LAPACK_BUILD = os.path.join(LAMBDA_DIR, "layer-build-lapack")
 ROOT = os.path.join(os.path.dirname(__file__), "..")
+SOLVE_PROX_SRC = os.path.join(LAMBDA_DIR, "solve_proximity_stats.c")
+SOLVE_PROX_BIN = os.path.join(LAMBDA_DIR, "solve_proximity_stats")
+_ENSURED_BINARY = False
+
+
+def _ensure_solve_proximity_binary():
+    global _ENSURED_BINARY
+    if _ENSURED_BINARY:
+        return
+    if (os.path.exists(SOLVE_PROX_BIN)
+            and os.path.getmtime(SOLVE_PROX_BIN) >= os.path.getmtime(SOLVE_PROX_SRC)):
+        _ENSURED_BINARY = True
+        return
+    cc = shutil.which("aarch64-linux-musl-gcc")
+    if not cc:
+        raise RuntimeError("aarch64-linux-musl-gcc not found; cannot rebuild lambda/solve_proximity_stats")
+    r = subprocess.run(
+        [cc, "-O3", "-static", "-pthread", "-o", SOLVE_PROX_BIN, SOLVE_PROX_SRC, "-lm"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"failed to rebuild solve_proximity_stats: {r.stderr.strip()}")
+    _ENSURED_BINARY = True
 
 
 def _docker_run(cmd_inside):
     """Run a command inside ARM64 Docker with /src mounted to lambda/."""
+    _ensure_solve_proximity_binary()
     r = subprocess.run(
         ["docker", "run", "--rm", "--platform", "linux/arm64",
          "-v", f"{os.path.abspath(LAMBDA_DIR)}:/src",
@@ -138,6 +165,7 @@ def test_clip_basic():
     assert result["n_solves"] == 3
     assert result["degree"] == 2
     assert result["metric"] == "proximity"
+    assert result["threads"] == 1
     score_a = expected_proximity_score(SOLVE_A)
     score_b = expected_proximity_score(SOLVE_B)
     assert abs(result["min_score"] - score_a) < 0.01, f"min_score={result['min_score']}, expected ~{score_a}"
@@ -172,6 +200,7 @@ def test_hist_basic():
     assert result is not None, f"hist failed: {err}"
     assert result["n_solves"] == 3
     assert result["metric"] == "proximity"
+    assert result["threads"] == 1
     assert len(result["hist"]) == 10
     assert sum(result["hist"]) == 3
     # With default omega=1, u=0 and u=1 both map to the top bin, while u=0.5 maps to the bottom bin.
@@ -628,7 +657,7 @@ def test_hist_centroid_dist():
 # 12. Summary mode
 # ================================================================
 
-def run_summary(bin_path, degree, metric="proximity", quantile_lo="0.001", quantile_hi="0.999"):
+def run_summary(bin_path, degree, metric="proximity", quantile_lo="0.001", quantile_hi="0.999", **kwargs):
     """Run summary mode via Docker."""
     import shutil
     host_bin = os.path.join(LAMBDA_DIR, "_test_input.bin")
@@ -637,6 +666,8 @@ def run_summary(bin_path, degree, metric="proximity", quantile_lo="0.001", quant
         args = (f"/src/solve_proximity_stats /src/_test_input.bin --mode=summary "
                 f"--degree={degree} --metric={metric} "
                 f"--quantile_lo={quantile_lo} --quantile_hi={quantile_hi}")
+        for k, v in kwargs.items():
+            args += f" --{k}={v}"
         r = _docker_run(args)
         if r.returncode != 0:
             return None, r.stderr
@@ -662,6 +693,7 @@ def test_summary_all_fields():
     assert result["metric"] == "proximity"
     assert result["n_solves"] == 200
     assert result["degree"] == 2
+    assert result["threads"] == 1
     for field in ["min_score", "max_score", "mean_score", "stddev_score",
                   "q05", "q10", "q25", "q50", "q75", "q90", "q95",
                   "clip_lo", "clip_hi", "full_range", "clip_range",
@@ -689,6 +721,15 @@ def test_summary_all_fields():
         f"bin sum {sum(result['final_bin_counts'])} != inrange {result['clip_inrange_count']}"
     # No hist_full field (removed)
     assert "hist_full" not in result, "hist_full should be removed from summary"
+    os.remove(path)
+
+
+def test_summary_reports_requested_threads():
+    path = "/tmp/sp_test_summary_threads.bin"
+    write_bin(path, [SOLVE_A, SOLVE_B, SOLVE_C, SOLVE_A], 2)
+    result, err = run_summary(path, 2, metric="proximity", threads=2)
+    assert result is not None, f"summary failed: {err}"
+    assert result["threads"] == 2
     os.remove(path)
 
 
@@ -1038,6 +1079,7 @@ if __name__ == "__main__":
         ("hist spread metric", test_hist_spread),
         # Summary mode
         ("summary all fields", test_summary_all_fields),
+        ("summary threads passthrough", test_summary_reports_requested_threads),
         ("summary centroid_re smoke", test_summary_centroid_re_smoke),
         ("summary dist_unit_circle smoke", test_summary_dist_unit_circle_smoke),
         ("summary quantiles monotone", test_summary_quantiles_monotone),

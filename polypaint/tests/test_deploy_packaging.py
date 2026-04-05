@@ -131,10 +131,12 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("handler_raster.py", packaged)
         self.assertIn("roots2pix", packaged["handler_raster.py"])
         self.assertIn("handler_raster_mt.py", packaged)
-        self.assertIn("roots2pix", packaged["handler_raster_mt.py"])
+        self.assertIn("roots2pix_mt", packaged["handler_raster_mt.py"])
         self.assertIn('create_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', DEPLOY_TEXT)
         self.assertIn('update_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', DEPLOY_TEXT)
         self.assertIn("RASTER_MT_THREADS", DEPLOY_TEXT)
+        self.assertIn("aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/roots2pix_mt lambda/roots2pix_mt.c -lm", DEPLOY_TEXT)
+        self.assertIn("aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/solve_proximity_stats lambda/solve_proximity_stats.c -lm", DEPLOY_TEXT)
 
         self.assertIn("handler_sweep_mt.py", packaged)
         self.assertIn("sweep_mt", packaged["handler_sweep_mt.py"])

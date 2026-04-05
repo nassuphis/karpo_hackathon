@@ -108,6 +108,18 @@ def _validate_omega_enabled(value):
     raise RuntimeError(f"solve_score_omega_enabled must be boolean-like, got {value!r}")
 
 
+def _validate_threads(value, default=1):
+    if value in (None, ""):
+        return default
+    try:
+        threads = int(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"solve_score_threads must be an integer, got {value!r}")
+    if not (1 <= threads <= 16):
+        raise RuntimeError(f"solve_score_threads must be in [1, 16], got {threads}")
+    return threads
+
+
 def handle_clip(params):
     job_id = params["job_id"]
     task_id = params["task_id"]
@@ -117,10 +129,11 @@ def handle_clip(params):
     solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
     solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
     solve_score_omega_enabled = _validate_omega_enabled(params.get("solve_score_omega_enabled", True))
+    solve_score_threads = _validate_threads(params.get("solve_score_threads", 1), default=1)
     lores_bin_key = params["lores_bin_key"]
     root_transforms = params.get("root_transforms")
     out_key = params["out_key"]
-    progress = {"phase": "clip", "metric": metric, "source_key": lores_bin_key, "omega": solve_score_omega, "omega_enabled": solve_score_omega_enabled}
+    progress = {"phase": "clip", "metric": metric, "source_key": lores_bin_key, "omega": solve_score_omega, "omega_enabled": solve_score_omega_enabled, "threads": solve_score_threads}
 
     try:
         _cleanup_tmp()
@@ -138,7 +151,8 @@ def handle_clip(params):
         quantile_hi = 1.0 - solve_score_quantile
         cmd = [BINARY, _TMP_INPUT, "--mode=clip", f"--degree={degree}",
                f"--metric={metric}", f"--quantile_lo={quantile_lo}", f"--quantile_hi={quantile_hi}",
-               f"--omega={solve_score_omega}", f"--omega_enabled={1 if solve_score_omega_enabled else 0}"]
+               f"--omega={solve_score_omega}", f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
+               f"--threads={solve_score_threads}"]
         xf_path = _write_xforms(root_transforms)
         if xf_path:
             cmd.append(f"--root_xforms={xf_path}")
@@ -151,6 +165,7 @@ def handle_clip(params):
 
         clip_data = json.loads(result.stdout)
         progress["compute_ms"] = compute_ms
+        progress["threads"] = int(clip_data.get("threads", solve_score_threads))
         progress["n_solves"] = clip_data["n_solves"]
         progress["clip_lo"] = clip_data["clip_lo"]
         progress["clip_hi"] = clip_data["clip_hi"]
@@ -200,13 +215,14 @@ def handle_hist(params):
     solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
     solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
     solve_score_omega_enabled = _validate_omega_enabled(params.get("solve_score_omega_enabled", True))
+    solve_score_threads = _validate_threads(params.get("solve_score_threads", 1), default=1)
     bin_key = params["bin_key"]
     degree = params["degree"]
     clip_key = params["clip_key"]
     hist_bins = params.get("hist_bins", 100)
     root_transforms = params.get("root_transforms")
     out_key = params["out_key"]
-    progress = {"phase": "hist", "metric": metric, "chunk_idx": chunk_idx, "omega": solve_score_omega, "omega_enabled": solve_score_omega_enabled}
+    progress = {"phase": "hist", "metric": metric, "chunk_idx": chunk_idx, "omega": solve_score_omega, "omega_enabled": solve_score_omega_enabled, "threads": solve_score_threads}
 
     try:
         _cleanup_tmp()
@@ -226,7 +242,8 @@ def handle_hist(params):
         cmd = [BINARY, _TMP_INPUT, "--mode=hist", f"--degree={degree}",
                f"--metric={metric}",
                f"--clip_lo={clip_data['clip_lo']}", f"--clip_hi={clip_data['clip_hi']}",
-               f"--hist_bins={hist_bins}", f"--omega={solve_score_omega}", f"--omega_enabled={1 if solve_score_omega_enabled else 0}"]
+               f"--hist_bins={hist_bins}", f"--omega={solve_score_omega}", f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
+               f"--threads={solve_score_threads}"]
         xf_path = _write_xforms(root_transforms)
         if xf_path:
             cmd.append(f"--root_xforms={xf_path}")
@@ -239,6 +256,7 @@ def handle_hist(params):
 
         hist_data = json.loads(result.stdout)
         progress["compute_ms"] = compute_ms
+        progress["threads"] = int(hist_data.get("threads", solve_score_threads))
         progress["n_solves"] = hist_data["n_solves"]
 
         artifact = {
@@ -281,13 +299,14 @@ def handle_merge(params):
     solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
     solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
     solve_score_omega_enabled = _validate_omega_enabled(params.get("solve_score_omega_enabled", True))
+    solve_score_threads = _validate_threads(params.get("solve_score_threads", 1), default=1)
     n_chunks = params.get("n_chunks", params.get("n_stripes"))
     if n_chunks is None:
         raise RuntimeError("merge requires n_chunks")
     hist_prefix = params["hist_prefix"]
     clip_key = params["clip_key"]
     out_key = params["out_key"]
-    progress = {"phase": "merge", "metric": metric, "n_chunks": n_chunks, "omega": solve_score_omega, "omega_enabled": solve_score_omega_enabled}
+    progress = {"phase": "merge", "metric": metric, "n_chunks": n_chunks, "omega": solve_score_omega, "omega_enabled": solve_score_omega_enabled, "threads": 1}
 
     try:
         _cleanup_tmp()
@@ -410,6 +429,7 @@ def handle_summary(params):
     solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
     solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
     solve_score_omega_enabled = _validate_omega_enabled(params.get("solve_score_omega_enabled", True))
+    solve_score_threads = _validate_threads(params.get("solve_score_threads", 1), default=1)
     lores_bin_key = params["lores_bin_key"]
     root_transforms = params.get("root_transforms")
 
@@ -425,7 +445,8 @@ def handle_summary(params):
         cmd = [BINARY, _TMP_INPUT, "--mode=summary", f"--degree={degree}",
                f"--metric={metric}",
                f"--quantile_lo={quantile_lo}", f"--quantile_hi={quantile_hi}",
-               f"--omega={solve_score_omega}", f"--omega_enabled={1 if solve_score_omega_enabled else 0}"]
+               f"--omega={solve_score_omega}", f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
+               f"--threads={solve_score_threads}"]
         xf_path = _write_xforms(root_transforms)
         if xf_path:
             cmd.append(f"--root_xforms={xf_path}")
@@ -441,6 +462,7 @@ def handle_summary(params):
         summary["dl_ms"] = dl_ms
         summary["compute_ms"] = compute_ms
         summary["source_size"] = size
+        summary["threads"] = int(summary.get("threads", solve_score_threads))
 
         return ok_response(summary)
 

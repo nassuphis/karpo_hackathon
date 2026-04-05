@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PolyPaint Lambda</title>
+<title>PolyPaint Lambda 1.0</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
@@ -320,7 +320,7 @@ button {
 </head>
 <body>
 <div class="container">
-    <h1>PolyPaint Lambda</h1>
+    <h1>PolyPaint Lambda 1.0</h1>
 
     <!-- Config -->
     <div class="panel">
@@ -1017,14 +1017,16 @@ button {
         <div id="render-mt-popup-summary" class="autolevel-popup-summary"></div>
         <div style="padding:0 14px 8px 14px">
             <div class="autolevel-stage-row" style="align-items:center">
-                <div class="autolevel-stage-text">Parallel roots2pix workers inside one raster Lambda.</div>
+                <div class="autolevel-stage-text">Choose native thread counts for solve-score preprocessing and raster.</div>
                 <div class="autolevel-inline-fields">
-                    <span class="inline-label">Threads</span>
+                    <span class="inline-label">Solve score</span>
+                    <input id="render-mt-solve-score-threads" type="number" min="1" max="16" step="1" value="4">
+                    <span class="inline-label">Raster</span>
                     <input id="render-mt-threads" type="number" min="1" max="16" step="1" value="4">
                 </div>
             </div>
         </div>
-        <div class="autolevel-popup-help">Use this to compare the multithreaded raster path against normal Generate. Solve score, Constant, and Rainbow with match=none are supported.</div>
+        <div class="autolevel-popup-help">Use this to compare the native multithreaded path against normal Generate. Raster MT supports Solve score, Saved palette, Constant, and Rainbow with match=none. Solve score threads only matter for Solve score mode.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -1687,7 +1689,7 @@ let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
 let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
 let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '' };
-let _renderMtPopupState = { open: false, threads: 4 };
+let _renderMtPopupState = { open: false, rasterThreads: 4, solveScoreThreads: 4 };
 let _generateFromPalettePopupState = { open: false, filter: '', highlightIdx: 0, sourcePaletteId: '' };
 let _pdfColorSpreadPopupState = { open: false, filter: '', highlightIdx: 0, sourceArtifactId: '' };
 let _functionPopupState = { open: false, filter: '', highlightIdx: 0 };
@@ -2779,7 +2781,11 @@ function _clampRenderMtThreads(value) {
 }
 
 function _closeRenderMtPopup() {
-    _renderMtPopupState = { open: false, threads: _clampRenderMtThreads(_renderMtPopupState.threads) };
+    _renderMtPopupState = {
+        open: false,
+        rasterThreads: _clampRenderMtThreads(_renderMtPopupState.rasterThreads),
+        solveScoreThreads: _clampRenderMtThreads(_renderMtPopupState.solveScoreThreads),
+    };
     const overlay = document.getElementById('render-mt-popup-overlay');
     if (overlay) {
         overlay.style.display = 'none';
@@ -2791,21 +2797,29 @@ function _renderRenderMtPopup() {
     const overlay = document.getElementById('render-mt-popup-overlay');
     const summaryEl = document.getElementById('render-mt-popup-summary');
     const threadsEl = document.getElementById('render-mt-threads');
+    const solveScoreThreadsEl = document.getElementById('render-mt-solve-score-threads');
     const runBtn = document.getElementById('render-mt-popup-run');
-    if (!overlay || !summaryEl || !threadsEl) return;
+    if (!overlay || !summaryEl || !threadsEl || !solveScoreThreadsEl) return;
     if (!_renderMtPopupState.open) {
         _closeRenderMtPopup();
         return;
     }
-    const threads = _clampRenderMtThreads(_renderMtPopupState.threads);
-    _renderMtPopupState.threads = threads;
+    const threads = _clampRenderMtThreads(_renderMtPopupState.rasterThreads);
+    const solveScoreThreads = _clampRenderMtThreads(_renderMtPopupState.solveScoreThreads);
+    const solveScoreRelevant = renderColorMode === 'solve_score';
+    _renderMtPopupState.rasterThreads = threads;
+    _renderMtPopupState.solveScoreThreads = solveScoreThreads;
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
     threadsEl.value = String(threads);
+    solveScoreThreadsEl.value = String(solveScoreThreads);
+    solveScoreThreadsEl.disabled = !solveScoreRelevant;
     const modeLabel = renderColorMode === 'rainbow'
         ? `Rainbow (${renderMatchMode})`
         : renderColorMode.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
-    summaryEl.textContent = `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster workers=${threads}`;
+    summaryEl.textContent = solveScoreRelevant
+        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • solve score threads=${solveScoreThreads} • raster threads=${threads}`
+        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster threads=${threads} • solve score threads unused`;
     if (runBtn) runBtn.disabled = !_renderColorMtEligible() || !!_activeRenderRun;
 }
 
@@ -2813,7 +2827,8 @@ function openRenderMtPopup() {
     if (!_renderColorMtEligible() || _activeRenderRun) return;
     _renderMtPopupState = {
         open: true,
-        threads: _clampRenderMtThreads(_renderMtPopupState.threads || 4),
+        rasterThreads: _clampRenderMtThreads(_renderMtPopupState.rasterThreads || 4),
+        solveScoreThreads: _clampRenderMtThreads(_renderMtPopupState.solveScoreThreads || 4),
     };
     _renderRenderMtPopup();
     const threadsEl = document.getElementById('render-mt-threads');
@@ -3201,6 +3216,7 @@ function _initRenderMtPopup() {
     const cancelBtn = document.getElementById('render-mt-popup-cancel');
     const runBtn = document.getElementById('render-mt-popup-run');
     const threadsEl = document.getElementById('render-mt-threads');
+    const solveScoreThreadsEl = document.getElementById('render-mt-solve-score-threads');
     if (overlay) {
         overlay.addEventListener('click', (ev) => {
             if (ev.target === overlay) _closeRenderMtPopup();
@@ -3210,7 +3226,13 @@ function _initRenderMtPopup() {
     if (cancelBtn) cancelBtn.addEventListener('click', _closeRenderMtPopup);
     if (threadsEl) {
         threadsEl.addEventListener('input', (ev) => {
-            _renderMtPopupState.threads = _clampRenderMtThreads(ev.target.value);
+            _renderMtPopupState.rasterThreads = _clampRenderMtThreads(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
+    if (solveScoreThreadsEl) {
+        solveScoreThreadsEl.addEventListener('input', (ev) => {
+            _renderMtPopupState.solveScoreThreads = _clampRenderMtThreads(ev.target.value);
             _renderRenderMtPopup();
         });
     }
@@ -3220,10 +3242,12 @@ function _initRenderMtPopup() {
             try {
                 runBtn.disabled = true;
                 runBtn.textContent = 'Executing...';
-                const threads = _clampRenderMtThreads(document.getElementById('render-mt-threads').value);
-                _renderMtPopupState.threads = threads;
+                const rasterThreads = _clampRenderMtThreads(document.getElementById('render-mt-threads').value);
+                const solveScoreThreads = _clampRenderMtThreads(document.getElementById('render-mt-solve-score-threads').value);
+                _renderMtPopupState.rasterThreads = rasterThreads;
+                _renderMtPopupState.solveScoreThreads = solveScoreThreads;
                 _closeRenderMtPopup();
-                await runRasterPipelineMT(threads);
+                await runRasterPipelineMT({ rasterThreads, solveScoreThreads });
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = btnText;
@@ -3239,10 +3263,12 @@ function _initRenderMtPopup() {
         }
         if (ev.key === 'Enter') {
             ev.preventDefault();
-            const threads = _clampRenderMtThreads(document.getElementById('render-mt-threads').value);
-            _renderMtPopupState.threads = threads;
+            const rasterThreads = _clampRenderMtThreads(document.getElementById('render-mt-threads').value);
+            const solveScoreThreads = _clampRenderMtThreads(document.getElementById('render-mt-solve-score-threads').value);
+            _renderMtPopupState.rasterThreads = rasterThreads;
+            _renderMtPopupState.solveScoreThreads = solveScoreThreads;
             _closeRenderMtPopup();
-            runRasterPipelineMT(threads);
+            runRasterPipelineMT({ rasterThreads, solveScoreThreads });
         }
     });
 }
@@ -4250,6 +4276,7 @@ function _renderCommonParams() {
 
 function _renderColorMtEligible() {
     if (renderColorMode === 'solve_score') return true;
+    if (renderColorMode === 'saved_palette') return true;
     if (renderColorMode === 'constant') return true;
     if (renderColorMode === 'rainbow' && renderMatchMode === 'none') return true;
     return false;
@@ -4775,16 +4802,30 @@ async function runRasterPipeline() {
     }
 }
 
-async function runRasterPipelineMT(threadCount = null) {
+async function runRasterPipelineMT(threadConfig = null) {
     const btn = document.getElementById('btn-render-generate-mt');
     if (btn) btn.disabled = true;
     try {
         if (!_renderColorMtEligible()) {
-            throw new Error('Generate-MT supports Solve score, Constant, and Rainbow with match=none');
+            throw new Error('Generate-MT supports Solve score, Saved palette, Constant, and Rainbow with match=none');
         }
-        const threads = _clampRenderMtThreads(threadCount == null ? _renderMtPopupState.threads : threadCount);
-        log(`Render-MT: dispatching with ${threads} threads...`, 'ok', 'render-log');
-        await _launchRenderOrchestrator('color', { raster_engine: 'mt', raster_mt_threads: threads });
+        const rasterThreads = _clampRenderMtThreads(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.rasterThreads != null
+                ? threadConfig.rasterThreads
+                : _renderMtPopupState.rasterThreads
+        );
+        const solveScoreThreads = _clampRenderMtThreads(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.solveScoreThreads != null
+                ? threadConfig.solveScoreThreads
+                : _renderMtPopupState.solveScoreThreads
+        );
+        const relevantSolveScoreThreads = renderColorMode === 'solve_score' ? solveScoreThreads : 1;
+        log(`Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster threads=${rasterThreads}...`, 'ok', 'render-log');
+        await _launchRenderOrchestrator('color', {
+            raster_engine: 'mt',
+            raster_mt_threads: rasterThreads,
+            solve_score_threads: relevantSolveScoreThreads,
+        });
     } catch (e) {
         document.getElementById('render-status').textContent = 'Render-MT error: ' + e.message;
         document.getElementById('render-status').className = 'status error';
@@ -5113,8 +5154,9 @@ function _aggregateSolveScorePhasePerf(results) {
         acc.dl_ms += Number(row.dl_ms) || 0;
         acc.compute_ms += Number(row.compute_ms) || 0;
         acc.upload_ms += Number(row.upload_ms) || 0;
+        acc.threads = Math.max(acc.threads, Number(row.threads) || 1);
         return acc;
-    }, { tasks: 0, dl_ms: 0, compute_ms: 0, upload_ms: 0 });
+    }, { tasks: 0, dl_ms: 0, compute_ms: 0, upload_ms: 0, threads: 1 });
 }
 
 function _aggregateFinalizePerf(results) {
@@ -5173,6 +5215,7 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         if (!perf) return `wall=${_fmtSecondsMs(wallMs)}`;
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsMs(perf.dl_ms)} + compute ${_fmtSecondsMs(perf.compute_ms)}`;
         if (perf.upload_ms > 0) msg += ` + up ${_fmtSecondsMs(perf.upload_ms)}`;
+        msg += ` · threads=${perf.threads}`;
         return msg;
     }
     if (phase === 'finalize') {
@@ -5873,12 +5916,17 @@ function _toggleDownloadMenu() {
     const show = menu.style.display === 'none';
     menu.style.display = show ? 'block' : 'none';
     if (show) {
+        const fileItem = document.getElementById('dl-menu-file');
         // Update Dir label to show current directory
         const dirItem = document.getElementById('dl-menu-dir');
+        if (fileItem) {
+            fileItem.textContent = _renderActiveFamily === 'pdf' ? 'Save PDF' : 'Image';
+        }
         if (dirItem) {
+            const baseLabel = _renderActiveFamily === 'pdf' ? 'Select Dir\u2026' : 'Save to Dir\u2026';
             dirItem.textContent = _renderSaveDirHandle
                 ? '\u2713 ' + (_renderSaveDirHandle.name || 'folder') + ' \u2014 change\u2026'
-                : 'Save to Dir\u2026';
+                : baseLabel;
         }
     }
 }
@@ -5946,7 +5994,8 @@ async function _dlMenuAction(mode) {
         return;
     }
 
-    const metaObj = (mode === 'image+meta') ? await _buildArtifactMeta(jobId, art) : null;
+    const normalizedMode = mode === 'pdf_file' ? 'image' : mode;
+    const metaObj = (normalizedMode === 'image+meta') ? await _buildArtifactMeta(jobId, art) : null;
     const metaBlob = metaObj ? new Blob([JSON.stringify(metaObj, null, 2)], { type: 'application/json' }) : null;
 
     // Save to directory if one is set, otherwise browser download
@@ -5963,7 +6012,7 @@ async function _dlMenuAction(mode) {
                 }
             }
 
-            if (mode === 'image+meta') {
+            if (normalizedMode === 'image+meta') {
                 if (btn) btn.textContent = 'Saving metadata...';
                 const metaHandle = await dirHandle.getFileHandle(metaFilename, { create: true });
                 const metaWritable = await metaHandle.createWritable();
@@ -5992,7 +6041,7 @@ async function _dlMenuAction(mode) {
     }
 
     // No directory set — browser downloads
-    if (mode === 'image+meta') {
+    if (normalizedMode === 'image+meta') {
         const metaUrl = URL.createObjectURL(metaBlob);
         const a = document.createElement('a');
         a.href = metaUrl;
@@ -6097,7 +6146,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread raster path. Generate-MT opens a popup where you choose the multithreaded raster worker count for Solve score, Constant, and Rainbow with match=none so you can compare perf. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread path. Generate-MT opens a popup where you choose native solve-score and raster thread counts for Solve score, Saved palette, Constant, and Rainbow with match=none so you can compare perf. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color.</span>';
     } else if (_renderActiveFamily === 'pdf') {
@@ -6150,9 +6199,12 @@ function renderArtifactPanel(jobId, summary, options = {}) {
                     <div style="display:inline-block; position:relative">
                         <button class="btn-secondary" id="btn-render-download" onclick="_toggleDownloadMenu()" style="padding:4px 12px; font-size:11px" disabled>Download \u25bc</button>
                         <div id="download-menu" style="display:none; position:absolute; bottom:100%; left:0; background:#2a2a3e; border:1px solid #555; border-radius:4px; z-index:100; min-width:120px; margin-bottom:2px">
-                            <div onclick="_dlMenuAction('image')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Image</div>
-                            <div onclick="_dlMenuAction('image+meta')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Image + Meta</div>
-                            <div id="dl-menu-dir" onclick="_dlMenuAction('dir')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Save to Dir\u2026</div>
+                            ${_renderActiveFamily === 'pdf'
+                                ? `<div id="dl-menu-file" onclick="_dlMenuAction('pdf_file')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Save PDF</div>
+                                   <div id="dl-menu-dir" onclick="_dlMenuAction('dir')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Select Dir\u2026</div>`
+                                : `<div id="dl-menu-file" onclick="_dlMenuAction('image')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Image</div>
+                                   <div onclick="_dlMenuAction('image+meta')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Image + Meta</div>
+                                   <div id="dl-menu-dir" onclick="_dlMenuAction('dir')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Save to Dir\u2026</div>`}
                         </div>
                     </div>
                     <button class="btn-secondary" id="btn-render-delete" onclick="deleteSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Delete</button>

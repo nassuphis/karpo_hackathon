@@ -44,7 +44,7 @@ class TestRasterMT(unittest.TestCase):
     @patch("handler_raster_mt.report_status")
     @patch("handler_raster_mt.subprocess.run")
     @patch("handler_raster_mt.s3")
-    def test_solve_score_mt_merges_worker_outputs_and_reports_perf(self, mock_s3, mock_run, mock_report):
+    def test_solve_score_mt_invokes_native_binary_once_and_uploads_outputs(self, mock_s3, mock_run, mock_report):
         import handler_raster_mt as mod
 
         uploads = {}
@@ -52,7 +52,7 @@ class TestRasterMT(unittest.TestCase):
         def get_object(**kwargs):
             key = kwargs["Key"]
             if key == "renders/j/chunk_0.bin":
-                return {"Body": MagicMock(read=lambda: b"\x00" * 160)}  # 4 solves, degree 5
+                return {"Body": MagicMock(read=lambda: b"\x00" * 160)}
             if key == "renders/j/solve_scores/crowding_bins.json":
                 payload = {
                     "family": "solve_score",
@@ -74,25 +74,22 @@ class TestRasterMT(unittest.TestCase):
         mock_s3.upload_fileobj.side_effect = upload_fileobj
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None):
-            out_prefix = cmd[2]
-            self.assertIn("--pixel_bin_prefix=" + out_prefix.replace("/tmp/pix_w", "/tmp/pixbin_w"), cmd)
-            if out_prefix.endswith("w00"):
-                pix_bytes = b"A" * 8
-                pbx_bytes = b"a" * 8
-                plotted = 11
-                clipped = 1
-            else:
-                pix_bytes = b"B" * 8
-                pbx_bytes = b"b" * 8
-                plotted = 13
-                clipped = 2
-            with open(out_prefix + "_t0000.pix", "wb") as fh:
-                fh.write(pix_bytes)
-            with open(out_prefix.replace("/tmp/pix_w", "/tmp/pixbin_w") + "_t0000.pbx", "wb") as fh:
-                fh.write(pbx_bytes)
+            self.assertTrue(cmd[0].endswith("roots2pix_mt"))
+            self.assertEqual(cmd[1], "/tmp/stripe.bin")
+            self.assertEqual(cmd[2], "/tmp/pix")
+            self.assertIn("--color=solve_score", cmd)
+            self.assertIn("--threads=2", cmd)
+            self.assertIn("--pixel_bin_prefix=/tmp/pixbin", cmd)
+            self.assertIn("--solve_metric=crowding", cmd)
+            self.assertIn("--solve_score_omega=4.0", cmd)
+            self.assertIn("--solve_score_omega_enabled=0", cmd)
+            with open("/tmp/pix_t0000.pix", "wb") as fh:
+                fh.write(b"A" * 8)
+            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
+                fh.write(b"a" * 8)
             return MagicMock(
                 returncode=0,
-                stdout=json.dumps({"roots_plotted": plotted, "roots_clipped": clipped}),
+                stdout=json.dumps({"threads": 2, "roots_plotted": 24, "roots_clipped": 3}),
                 stderr="",
             )
 
@@ -107,8 +104,9 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
         self.assertEqual(body["roots_plotted"], 24)
         self.assertEqual(body["roots_clipped"], 3)
-        self.assertEqual(uploads["renders/j/pix_chunk_0000_t0000.pix"], b"A" * 8 + b"B" * 8)
-        self.assertEqual(uploads["renders/j/pixbin_chunk_0000_t0000.pbx"], b"a" * 8 + b"b" * 8)
+        self.assertEqual(mock_run.call_count, 1)
+        self.assertEqual(uploads["renders/j/pix_chunk_0000_t0000.pix"], b"A" * 8)
+        self.assertEqual(uploads["renders/j/pixbin_chunk_0000_t0000.pbx"], b"a" * 8)
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
         done_kwargs = mock_report.call_args_list[-1].kwargs
@@ -138,16 +136,16 @@ class TestRasterMT(unittest.TestCase):
         )
         mock_s3.upload_fileobj.side_effect = lambda fileobj, bucket, key: None
 
-        seen = []
+        seen_cmds = []
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None):
-            seen.append(cmd[2])
-            out_prefix = cmd[2]
-            with open(out_prefix + "_t0000.pix", "wb") as fh:
+            seen_cmds.append(cmd)
+            self.assertIn("--threads=3", cmd)
+            with open("/tmp/pix_t0000.pix", "wb") as fh:
                 fh.write(b"X" * 8)
             return MagicMock(
                 returncode=0,
-                stdout=json.dumps({"roots_plotted": 1, "roots_clipped": 0}),
+                stdout=json.dumps({"threads": 3, "roots_plotted": 1, "roots_clipped": 0}),
                 stderr="",
             )
 
@@ -157,21 +155,21 @@ class TestRasterMT(unittest.TestCase):
         body = json.loads(result["body"])
 
         self.assertEqual(body["threads"], 3)
-        self.assertEqual(len(seen), 3)
+        self.assertEqual(len(seen_cmds), 1)
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")
     @patch("handler_raster_mt.subprocess.run")
     @patch("handler_raster_mt.s3")
-    def test_saved_palette_mt_slices_chunk_bins_per_worker(self, mock_s3, mock_run, mock_report):
+    def test_saved_palette_mt_downloads_full_chunk_bins_once(self, mock_s3, mock_run, mock_report):
         import handler_raster_mt as mod
 
-        seen_slices = []
+        seen_bins = []
 
         def get_object(**kwargs):
             key = kwargs["Key"]
             if key == "renders/j/chunk_0.bin":
-                return {"Body": MagicMock(read=lambda: b"\x00" * 160)}  # 4 solves
+                return {"Body": MagicMock(read=lambda: b"\x00" * 160)}
             if key == "renders/j/palettes/p1/chunks/palette_bins_chunk_0.bin":
                 return {"Body": MagicMock(read=lambda: bytes([9, 8, 7, 6]))}
             raise AssertionError(f"unexpected get_object key: {key}")
@@ -183,13 +181,14 @@ class TestRasterMT(unittest.TestCase):
             solve_bins_arg = next(arg for arg in cmd if arg.startswith("--solve_bins_file="))
             bins_path = solve_bins_arg.split("=", 1)[1]
             with open(bins_path, "rb") as fh:
-                seen_slices.append(fh.read())
-            out_prefix = cmd[2]
-            with open(out_prefix + "_t0000.pix", "wb") as fh:
+                seen_bins.append(fh.read())
+            self.assertIn("--color=saved_palette", cmd)
+            self.assertIn("--threads=2", cmd)
+            with open("/tmp/pix_t0000.pix", "wb") as fh:
                 fh.write(b"\x01" * 8)
             return MagicMock(
                 returncode=0,
-                stdout=json.dumps({"roots_plotted": 10, "roots_clipped": 0}),
+                stdout=json.dumps({"threads": 2, "roots_plotted": 10, "roots_clipped": 0}),
                 stderr="",
             )
 
@@ -205,7 +204,8 @@ class TestRasterMT(unittest.TestCase):
         body = json.loads(result["body"])
 
         self.assertEqual(body["threads"], 2)
-        self.assertEqual(sorted(seen_slices), sorted([bytes([9, 8]), bytes([7, 6])]))
+        self.assertEqual(seen_bins, [bytes([9, 8, 7, 6])])
+        self.assertEqual(mock_run.call_count, 1)
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
 

@@ -21,6 +21,7 @@
  */
 
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -92,6 +93,245 @@ static int count_finite_roots_in_solve(const float *roots, int degree) {
     return count;
 }
 
+static int clamp_threads(int requested, long n_items) {
+    int threads = requested < 1 ? 1 : requested;
+    if (n_items > 0 && threads > (int)n_items) threads = (int)n_items;
+    if (threads < 1) threads = 1;
+    return threads;
+}
+
+typedef struct {
+    const float *buf;
+    long start;
+    long end;
+    int stride;
+    int degree;
+    enum SolveMetric metric;
+    RootXformEntry *rtChain;
+    int nRt;
+    double *scores;
+    int collect_stats;
+    int minFiniteRootsRequired;
+    long finiteRootCount;
+    long fullyFiniteSolveCount;
+    long partialFiniteSolveCount;
+    long zeroFiniteSolveCount;
+    long usableSolveCount;
+    int minFiniteRootsPerSolve;
+    int maxFiniteRootsPerSolve;
+} ScoreWorkerArgs;
+
+static void *score_worker_main(void *arg_) {
+    ScoreWorkerArgs *arg = (ScoreWorkerArgs *)arg_;
+    float wkRe[MAXDEG], wkIm[MAXDEG];
+    for (long s = arg->start; s < arg->end; s++) {
+        const float *roots = arg->buf + s * arg->stride;
+        if (arg->collect_stats) {
+            int finiteRoots = count_finite_roots_in_solve(roots, arg->degree);
+            arg->finiteRootCount += finiteRoots;
+            if (finiteRoots == arg->degree) arg->fullyFiniteSolveCount++;
+            else if (finiteRoots == 0) arg->zeroFiniteSolveCount++;
+            else arg->partialFiniteSolveCount++;
+            if (finiteRoots >= arg->minFiniteRootsRequired) arg->usableSolveCount++;
+            if (finiteRoots < arg->minFiniteRootsPerSolve) arg->minFiniteRootsPerSolve = finiteRoots;
+            if (finiteRoots > arg->maxFiniteRootsPerSolve) arg->maxFiniteRootsPerSolve = finiteRoots;
+        }
+        arg->scores[s] = (arg->nRt > 0)
+            ? score_xformed(roots, arg->degree, arg->metric, arg->rtChain, arg->nRt, wkRe, wkIm)
+            : compute_solve_metric_score(roots, arg->degree, arg->metric);
+    }
+    return NULL;
+}
+
+static void compute_scores_parallel(
+    const float *buf,
+    long nSolves,
+    int stride,
+    int degree,
+    enum SolveMetric metric,
+    RootXformEntry *rtChain,
+    int nRt,
+    double *scores,
+    int requestedThreads,
+    int collectStats,
+    int minFiniteRootsRequired,
+    long *finiteRootCount,
+    long *fullyFiniteSolveCount,
+    long *partialFiniteSolveCount,
+    long *zeroFiniteSolveCount,
+    long *usableSolveCount,
+    int *minFiniteRootsPerSolve,
+    int *maxFiniteRootsPerSolve,
+    int *threadsUsed
+) {
+    int threads = clamp_threads(requestedThreads, nSolves);
+    if (threadsUsed) *threadsUsed = threads;
+    ScoreWorkerArgs *args = calloc((size_t)threads, sizeof(ScoreWorkerArgs));
+    pthread_t *workers = calloc((size_t)threads, sizeof(pthread_t));
+    if (!args || !workers) {
+        fprintf(stderr, "Out of memory for score threads\n");
+        free(args);
+        free(workers);
+        exit(1);
+    }
+
+    long base = nSolves / threads;
+    long extra = nSolves % threads;
+    long start = 0;
+    for (int i = 0; i < threads; i++) {
+        long width = base + (i < extra ? 1 : 0);
+        args[i].buf = buf;
+        args[i].start = start;
+        args[i].end = start + width;
+        args[i].stride = stride;
+        args[i].degree = degree;
+        args[i].metric = metric;
+        args[i].rtChain = rtChain;
+        args[i].nRt = nRt;
+        args[i].scores = scores;
+        args[i].collect_stats = collectStats;
+        args[i].minFiniteRootsRequired = minFiniteRootsRequired;
+        args[i].minFiniteRootsPerSolve = degree;
+        args[i].maxFiniteRootsPerSolve = 0;
+        pthread_create(&workers[i], NULL, score_worker_main, &args[i]);
+        start += width;
+    }
+
+    long finiteRootsTotal = 0;
+    long fullyFiniteTotal = 0;
+    long partialFiniteTotal = 0;
+    long zeroFiniteTotal = 0;
+    long usableTotal = 0;
+    int minFinite = degree;
+    int maxFinite = 0;
+
+    for (int i = 0; i < threads; i++) {
+        pthread_join(workers[i], NULL);
+        if (collectStats) {
+            finiteRootsTotal += args[i].finiteRootCount;
+            fullyFiniteTotal += args[i].fullyFiniteSolveCount;
+            partialFiniteTotal += args[i].partialFiniteSolveCount;
+            zeroFiniteTotal += args[i].zeroFiniteSolveCount;
+            usableTotal += args[i].usableSolveCount;
+            if (args[i].minFiniteRootsPerSolve < minFinite) minFinite = args[i].minFiniteRootsPerSolve;
+            if (args[i].maxFiniteRootsPerSolve > maxFinite) maxFinite = args[i].maxFiniteRootsPerSolve;
+        }
+    }
+
+    if (finiteRootCount) *finiteRootCount = finiteRootsTotal;
+    if (fullyFiniteSolveCount) *fullyFiniteSolveCount = fullyFiniteTotal;
+    if (partialFiniteSolveCount) *partialFiniteSolveCount = partialFiniteTotal;
+    if (zeroFiniteSolveCount) *zeroFiniteSolveCount = zeroFiniteTotal;
+    if (usableSolveCount) *usableSolveCount = usableTotal;
+    if (minFiniteRootsPerSolve) *minFiniteRootsPerSolve = collectStats ? minFinite : degree;
+    if (maxFiniteRootsPerSolve) *maxFiniteRootsPerSolve = collectStats ? maxFinite : degree;
+
+    free(args);
+    free(workers);
+}
+
+typedef struct {
+    const float *buf;
+    long start;
+    long end;
+    int stride;
+    int degree;
+    enum SolveMetric metric;
+    RootXformEntry *rtChain;
+    int nRt;
+    double clipLo;
+    double clipHi;
+    double omega;
+    int omegaEnabled;
+    int histBins;
+    long *hist;
+} HistWorkerArgs;
+
+static void *hist_worker_main(void *arg_) {
+    HistWorkerArgs *arg = (HistWorkerArgs *)arg_;
+    float wkRe[MAXDEG], wkIm[MAXDEG];
+    double range = arg->clipHi - arg->clipLo;
+    for (long s = arg->start; s < arg->end; s++) {
+        const float *roots = arg->buf + s * arg->stride;
+        double score = (arg->nRt > 0)
+            ? score_xformed(roots, arg->degree, arg->metric, arg->rtChain, arg->nRt, wkRe, wkIm)
+            : compute_solve_metric_score(roots, arg->degree, arg->metric);
+        double u = (score - arg->clipLo) / range;
+        if (u < 0) u = 0;
+        if (u > 1) u = 1;
+        u = apply_solve_score_transfer(u, arg->omegaEnabled, arg->omega);
+        int h = (int)(u * arg->histBins);
+        if (h >= arg->histBins) h = arg->histBins - 1;
+        arg->hist[h]++;
+    }
+    return NULL;
+}
+
+static void compute_hist_parallel(
+    const float *buf,
+    long nSolves,
+    int stride,
+    int degree,
+    enum SolveMetric metric,
+    RootXformEntry *rtChain,
+    int nRt,
+    double clipLo,
+    double clipHi,
+    int histBins,
+    double omega,
+    int omegaEnabled,
+    int requestedThreads,
+    long *hist,
+    int *threadsUsed
+) {
+    int threads = clamp_threads(requestedThreads, nSolves);
+    if (threadsUsed) *threadsUsed = threads;
+    HistWorkerArgs *args = calloc((size_t)threads, sizeof(HistWorkerArgs));
+    pthread_t *workers = calloc((size_t)threads, sizeof(pthread_t));
+    if (!args || !workers) {
+        fprintf(stderr, "Out of memory for hist threads\n");
+        free(args);
+        free(workers);
+        exit(1);
+    }
+
+    long base = nSolves / threads;
+    long extra = nSolves % threads;
+    long start = 0;
+    for (int i = 0; i < threads; i++) {
+        long width = base + (i < extra ? 1 : 0);
+        args[i].buf = buf;
+        args[i].start = start;
+        args[i].end = start + width;
+        args[i].stride = stride;
+        args[i].degree = degree;
+        args[i].metric = metric;
+        args[i].rtChain = rtChain;
+        args[i].nRt = nRt;
+        args[i].clipLo = clipLo;
+        args[i].clipHi = clipHi;
+        args[i].omega = omega;
+        args[i].omegaEnabled = omegaEnabled;
+        args[i].histBins = histBins;
+        args[i].hist = calloc((size_t)histBins, sizeof(long));
+        if (!args[i].hist) {
+            fprintf(stderr, "Out of memory for hist worker bins\n");
+            exit(1);
+        }
+        pthread_create(&workers[i], NULL, hist_worker_main, &args[i]);
+        start += width;
+    }
+
+    for (int i = 0; i < threads; i++) {
+        pthread_join(workers[i], NULL);
+        for (int h = 0; h < histBins; h++) hist[h] += args[i].hist[h];
+        free(args[i].hist);
+    }
+
+    free(args);
+    free(workers);
+}
+
 /* ---- Main ---- */
 
 int main(int argc, char **argv) {
@@ -107,6 +347,7 @@ int main(int argc, char **argv) {
     const char *metricStr = getArgStr(argc, argv, "--metric", "proximity");
     double omega = getArgDouble(argc, argv, "--omega", 1.0);
     int omegaEnabled = getArgInt(argc, argv, "--omega_enabled", 1);
+    int requestedThreads = getArgInt(argc, argv, "--threads", 1);
 
     if (degree < 1 || degree > MAXDEG) {
         fprintf(stderr, "Invalid degree: %d (must be 1-%d)\n", degree, MAXDEG);
@@ -156,7 +397,6 @@ int main(int argc, char **argv) {
         }
     }
 
-    float wkRe[MAXDEG], wkIm[MAXDEG];
     const char *metricName = solve_metric_name(metric);
 
     if (strcmp(mode, "clip") == 0) {
@@ -167,12 +407,12 @@ int main(int argc, char **argv) {
         double *scores = malloc(nSolves * sizeof(double));
         if (!scores) { fprintf(stderr, "Out of memory for scores\n"); free(buf); return 1; }
 
-        for (long s = 0; s < nSolves; s++) {
-            const float *roots = buf + s * stride;
-            scores[s] = (nRt > 0)
-                ? score_xformed(roots, degree, metric, rtChain, nRt, wkRe, wkIm)
-                : compute_solve_metric_score(roots, degree, metric);
-        }
+        int threadsUsed = 1;
+        compute_scores_parallel(
+            buf, nSolves, stride, degree, metric, rtChain, nRt, scores,
+            requestedThreads, 0, 0,
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, &threadsUsed
+        );
 
         qsort(scores, nSolves, sizeof(double), cmp_double);
 
@@ -200,10 +440,10 @@ int main(int argc, char **argv) {
             clipHi = scores[0] + 0.5;
         }
 
-        printf("{\"mode\":\"clip\",\"metric\":\"%s\",\"n_solves\":%ld,\"degree\":%d,"
+        printf("{\"mode\":\"clip\",\"metric\":\"%s\",\"n_solves\":%ld,\"degree\":%d,\"threads\":%d,"
                "\"omega\":%.15g,\"omega_enabled\":%s,\"clip_lo\":%.15g,\"clip_hi\":%.15g,"
                "\"min_score\":%.15g,\"max_score\":%.15g}\n",
-               metricName, nSolves, degree, omega, omegaEnabled ? "true" : "false", clipLo, clipHi,
+               metricName, nSolves, degree, threadsUsed, omega, omegaEnabled ? "true" : "false", clipLo, clipHi,
                scores[0], scores[nSolves - 1]);
 
         free(scores);
@@ -228,24 +468,16 @@ int main(int argc, char **argv) {
         long *hist = calloc(histBins, sizeof(long));
         if (!hist) { fprintf(stderr, "Out of memory for histogram\n"); free(buf); return 1; }
 
-        double range = clipHi - clipLo;
-        for (long s = 0; s < nSolves; s++) {
-            const float *roots = buf + s * stride;
-            double score = (nRt > 0)
-                ? score_xformed(roots, degree, metric, rtChain, nRt, wkRe, wkIm)
-                : compute_solve_metric_score(roots, degree, metric);
-            double u = (score - clipLo) / range;
-            if (u < 0) u = 0;
-            if (u > 1) u = 1;
-            u = apply_solve_score_transfer(u, omegaEnabled, omega);
-            int h = (int)(u * histBins);
-            if (h >= histBins) h = histBins - 1;
-            hist[h]++;
-        }
+        int threadsUsed = 1;
+        compute_hist_parallel(
+            buf, nSolves, stride, degree, metric, rtChain, nRt,
+            clipLo, clipHi, histBins, omega, omegaEnabled, requestedThreads,
+            hist, &threadsUsed
+        );
 
-        printf("{\"mode\":\"hist\",\"metric\":\"%s\",\"n_solves\":%ld,\"degree\":%d,"
+        printf("{\"mode\":\"hist\",\"metric\":\"%s\",\"n_solves\":%ld,\"degree\":%d,\"threads\":%d,"
                "\"hist_bins\":%d,\"omega\":%.15g,\"omega_enabled\":%s,\"clip_lo\":%.15g,\"clip_hi\":%.15g,"
-               "\"hist\":[", metricName, nSolves, degree, histBins, omega, omegaEnabled ? "true" : "false", clipLo, clipHi);
+               "\"hist\":[", metricName, nSolves, degree, threadsUsed, histBins, omega, omegaEnabled ? "true" : "false", clipLo, clipHi);
         for (int i = 0; i < histBins; i++) {
             if (i > 0) printf(",");
             printf("%ld", hist[i]);
@@ -272,20 +504,15 @@ int main(int argc, char **argv) {
         int minFiniteRootsPerSolve = degree;
         int maxFiniteRootsPerSolve = 0;
 
-        for (long s = 0; s < nSolves; s++) {
-            const float *roots = buf + s * stride;
-            int finiteRoots = count_finite_roots_in_solve(roots, degree);
-            finiteRootCount += finiteRoots;
-            if (finiteRoots == degree) fullyFiniteSolveCount++;
-            else if (finiteRoots == 0) zeroFiniteSolveCount++;
-            else partialFiniteSolveCount++;
-            if (finiteRoots >= minFiniteRootsRequired) usableSolveCount++;
-            if (finiteRoots < minFiniteRootsPerSolve) minFiniteRootsPerSolve = finiteRoots;
-            if (finiteRoots > maxFiniteRootsPerSolve) maxFiniteRootsPerSolve = finiteRoots;
-            scores[s] = (nRt > 0)
-                ? score_xformed(roots, degree, metric, rtChain, nRt, wkRe, wkIm)
-                : compute_solve_metric_score(roots, degree, metric);
-        }
+        int threadsUsed = 1;
+        compute_scores_parallel(
+            buf, nSolves, stride, degree, metric, rtChain, nRt, scores,
+            requestedThreads, 1, minFiniteRootsRequired,
+            &finiteRootCount, &fullyFiniteSolveCount, &partialFiniteSolveCount,
+            &zeroFiniteSolveCount, &usableSolveCount,
+            &minFiniteRootsPerSolve, &maxFiniteRootsPerSolve,
+            &threadsUsed
+        );
         qsort(scores, nSolves, sizeof(double), cmp_double);
 
         /* Extremes */
@@ -419,8 +646,8 @@ int main(int argc, char **argv) {
         }
 
         /* ---- Emit JSON ---- */
-        printf("{\"mode\":\"summary\",\"metric\":\"%s\",\"n_solves\":%ld,\"degree\":%d,",
-               metricName, nSolves, degree);
+        printf("{\"mode\":\"summary\",\"metric\":\"%s\",\"n_solves\":%ld,\"degree\":%d,\"threads\":%d,",
+               metricName, nSolves, degree, threadsUsed);
         printf("\"min_score\":%.15g,\"max_score\":%.15g,", minScore, maxScore);
         printf("\"mean_score\":%.15g,\"stddev_score\":%.15g,", meanScore, stddevScore);
         printf("\"q05\":%.15g,\"q10\":%.15g,\"q25\":%.15g,\"q50\":%.15g,", q05, q10, q25, q50);

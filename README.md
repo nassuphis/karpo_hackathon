@@ -1,5 +1,7 @@
 # PolyPaint v40
 
+Current Lambda/UI title string: `PolyPaint Lambda 1.0`.
+
 **[Try it live](https://nassuphis.github.io/karpo_hackathon/)**
 
 Interactive polynomial root visualizer. Drag coefficients or roots in the complex plane and watch everything update in real time.

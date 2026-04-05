@@ -96,13 +96,18 @@ def _source_display_name(meta, fallback_id):
 
 
 def _title_from(calc, src_meta):
-    fn = str(calc.get("function", "") or "").strip()
-    degree = calc.get("degree")
-    if fn and degree not in ("", None):
-        return f"{fn} - degree {degree}"
-    if fn:
-        return fn
-    return str(src_meta.get("artifact_id", "") or "Color Spread")
+    return "PolyPaint Lambda 1.0"
+
+
+def _solver_label(raw):
+    solver = str(raw or "").strip()
+    if solver == "aberth":
+        return "AE"
+    if solver == "companion_matrix":
+        return "CM"
+    if solver == "aberth_mt":
+        return "AE-MT"
+    return solver
 
 
 def _transforms_summary(raw):
@@ -203,6 +208,9 @@ def _build_spread_meta(job_id, calc, src_meta, source_artifact_id):
         pipeline_line += f" N={n_val}"
     if times not in ("", None):
         pipeline_line += f", times={times}"
+    solver = _solver_label(calc.get("solver"))
+    if solver:
+        pipeline_line += f", solver={solver}"
 
     # Viewport line
     vp_parts = []
@@ -233,7 +241,7 @@ def _build_spread_meta(job_id, calc, src_meta, source_artifact_id):
         q = src_meta.get("solve_score_quantile", "")
         omega = src_meta.get("solve_score_omega", "")
         omega_enabled = _parse_boolish(src_meta.get("solve_score_omega_enabled", True), True)
-        cm_parts = [f"SOLVE SCORE: {metric}"]
+        cm_parts = [f"solve score: {metric}"]
         if q not in ("", None):
             try:
                 cm_parts.append(f"q={float(q)*100:.1f}%")
@@ -241,31 +249,39 @@ def _build_spread_meta(job_id, calc, src_meta, source_artifact_id):
                 pass
         if omega not in ("", None):
             cm_parts.append(_omega_display(omega_enabled, omega))
-        if palette:
-            cm_parts.append(palette)
         color_line = " ".join(cm_parts)
     elif color_mode == "saved_palette":
         metric = str(src_meta.get("palette_source_metric") or src_meta.get("solve_metric") or "")
-        color_line = f"SAVED PALETTE: {metric}"
-        if palette:
-            color_line += f" {palette}"
+        color_line = f"saved palette: {metric}"
     elif color_mode == "proximity":
-        color_line = f"ROOT PROXIMITY: {palette}" if palette else "ROOT PROXIMITY"
+        color_line = "root proximity"
     elif color_mode == "constant":
         cc = str(src_meta.get("constant_color", "") or "")
-        color_line = f"CONSTANT: #{cc}" if cc else "CONSTANT"
+        color_line = f"constant: #{cc}" if cc else "constant"
     else:
-        color_line = "RAINBOW"
+        color_line = "rainbow"
 
     # Degree line
     degree = calc.get("degree", "")
-    degree_line = f"Degree: {degree}" if degree not in ("", None) else ""
+    degree_line = f"degree: {degree}" if degree not in ("", None) else ""
+    palette_line = f"palette: {palette}" if palette else ""
+
+    lines = [pipeline_line]
+    if viewport_line:
+        lines.append(viewport_line)
+    if color_line:
+        lines.append(color_line)
+    if palette_line:
+        lines.append(palette_line)
+    if degree_line:
+        lines.append(degree_line)
 
     return {
         "pipeline": pipeline_line,
         "viewport": viewport_line,
         "color_mode": color_line,
         "degree": degree_line,
+        "lines": lines,
         "artifact_id": source_artifact_id,
     }
 

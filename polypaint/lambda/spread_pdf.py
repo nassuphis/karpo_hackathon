@@ -90,17 +90,21 @@ def _draw_text_page(c, title, body, is_right, filename=None, meta=None):
         c.drawCentredString(center_x, center_y + 40, title)
 
     if meta:
-        # Structured metadata lines, centered, white
+        # Structured metadata lines, centered, white.
+        structured_lines = meta.get("lines") if isinstance(meta, dict) else None
         y = center_y - 20
         desc_lines = []
-        if meta.get("pipeline"):
-            desc_lines.append(meta["pipeline"])
-        if meta.get("viewport"):
-            desc_lines.append(meta["viewport"])
-        if meta.get("color_mode"):
-            desc_lines.append(meta["color_mode"])
-        if meta.get("degree"):
-            desc_lines.append(meta["degree"])
+        if structured_lines:
+            desc_lines = [str(ln) for ln in structured_lines if str(ln).strip()]
+        else:
+            if meta.get("pipeline"):
+                desc_lines.append(meta["pipeline"])
+            if meta.get("viewport"):
+                desc_lines.append(meta["viewport"])
+            if meta.get("color_mode"):
+                desc_lines.append(meta["color_mode"])
+            if meta.get("degree"):
+                desc_lines.append(meta["degree"])
 
         c.setFont(BODY_FONT, 11)
         for ln in desc_lines:

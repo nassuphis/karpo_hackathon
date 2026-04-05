@@ -51,6 +51,7 @@ class TestPdfArtifactHandler(unittest.TestCase):
                     "degree": 24,
                     "N": 500,
                     "times": 3,
+                    "solver": "aberth",
                 }).encode())}
             raise AssertionError(f"unexpected get_object key: {Key}")
 
@@ -64,13 +65,15 @@ class TestPdfArtifactHandler(unittest.TestCase):
 
         def fake_build(image_path, output_path, title, body=None, filename=None, meta=None):
             self.assertTrue(str(image_path).endswith("pdf_source.jpeg"))
-            self.assertIn("poly_645", title)
+            self.assertEqual(title, "PolyPaint Lambda 1.0")
             # Structured meta should be provided
             self.assertIsNotNone(meta)
             self.assertIn("pipeline", meta)
-            self.assertIn("color_mode", meta)
+            self.assertIn("lines", meta)
             self.assertIn("artifact_id", meta)
-            self.assertIn("SOLVE SCORE", meta["color_mode"])
+            self.assertIn("solve score:", meta["color_mode"])
+            self.assertIn("solver=AE", meta["lines"][0])
+            self.assertIn("palette: tri_redgold", meta["lines"])
             self.assertEqual(meta["artifact_id"], "color_src")
             with open(output_path, "wb") as fh:
                 fh.write(b"%PDF-1.4 fake pdf")

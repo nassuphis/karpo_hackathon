@@ -120,6 +120,7 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["solve_score"]["quantile"] == 0.01
         assert plan["solve_score"]["omega"] == 4.0
         assert plan["solve_score"]["omega_enabled"] is True
+        assert plan["solve_score"]["threads"] == 1
         assert "crowding" in plan["solve_score"]["clip_key"]
         assert "crowding" in plan["solve_score"]["bins_key"]
         assert plan["outputs"]["repalette_capable"] is True
@@ -161,6 +162,25 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["raster"]["requested_threads"] == 6
         assert plan["raster"]["threads"] == 6
         assert plan["raster"]["function_name"] == "polypaint-raster-mt"
+        assert plan["solve_score"]["threads"] == 6
+
+    @patch("handler_render_plan._storage_call")
+    def test_explicit_solve_score_threads_override_raster_threads(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="crowding",
+            raster_engine="mt",
+            raster_mt_threads=6,
+            solve_score_threads=3,
+        ), None)
+        plan = json.loads(result["body"])
+        assert plan["raster"]["threads"] == 6
+        assert plan["solve_score"]["threads"] == 3
 
     @patch("handler_render_plan._storage_call")
     def test_invalid_mt_threads_rejected(self, mock_storage):
@@ -172,6 +192,17 @@ class TestRenderPlan(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             handler(_make_event(color_mode="solve_score", raster_engine="mt", raster_mt_threads=0), None)
         self.assertIn("raster_mt_threads", str(ctx.exception))
+
+    @patch("handler_render_plan._storage_call")
+    def test_invalid_solve_score_threads_rejected(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_make_event(color_mode="solve_score", solve_score_threads=0), None)
+        self.assertIn("solve_score_threads", str(ctx.exception))
 
     @patch("handler_render_plan._storage_call")
     def test_tri_palette_id_accepted_and_preserved(self, mock_storage):

@@ -75,9 +75,7 @@ def _default_output_path(image_path: Path) -> Path:
 
 
 def _spread_title(image_path: Path) -> str:
-    stem = image_path.stem
-    title = stem.replace("_", " ").replace("-", " ").strip()
-    return " ".join(part.capitalize() for part in title.split()) or image_path.stem
+    return "PolyPaint Lambda 1.0"
 
 
 def _lorem_for_image(image_path: Path) -> str:

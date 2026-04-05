@@ -62,15 +62,15 @@ def _validate_raster_engine(value):
     return engine
 
 
-def _validate_raster_mt_threads(value):
+def _validate_thread_count(value, field_name):
     if value in (None, ""):
         return 4
     try:
         threads = int(value)
     except (TypeError, ValueError):
-        raise RuntimeError(f"raster_mt_threads must be an integer, got {value!r}")
+        raise RuntimeError(f"{field_name} must be an integer, got {value!r}")
     if not (1 <= threads <= 16):
-        raise RuntimeError(f"raster_mt_threads must be in [1, 16], got {threads}")
+        raise RuntimeError(f"{field_name} must be in [1, 16], got {threads}")
     return threads
 
 
@@ -146,6 +146,7 @@ def handler(event, context):
         "color_mode": "rainbow",
         "raster_engine": "single",
         "raster_mt_threads": 4,
+        "solve_score_threads": "",
         "solve_metric": "proximity",
         "solve_score_quantile": 0.001,
         "solve_score_omega": 1.0,
@@ -155,7 +156,11 @@ def handler(event, context):
         if key not in rp:
             rp[key] = default
     rp["raster_engine"] = _validate_raster_engine(rp.get("raster_engine", "single"))
-    rp["raster_mt_threads"] = _validate_raster_mt_threads(rp.get("raster_mt_threads", 4))
+    rp["raster_mt_threads"] = _validate_thread_count(rp.get("raster_mt_threads", 4), "raster_mt_threads")
+    solve_score_threads_value = rp.get("solve_score_threads", "")
+    if solve_score_threads_value in (None, ""):
+        solve_score_threads_value = rp["raster_mt_threads"] if rp["raster_engine"] == "mt" else 1
+    rp["solve_score_threads"] = _validate_thread_count(solve_score_threads_value, "solve_score_threads")
 
     # Normalize solve-score params
     color_mode = rp.get("color_mode", "rainbow")
@@ -252,6 +257,7 @@ def handler(event, context):
 
     solve_score = {
         "enabled": solve_score_enabled,
+        "threads": rp["solve_score_threads"] if solve_score_enabled else 1,
         "metric": solve_metric,
         "quantile": solve_score_quantile,
         "omega": solve_score_omega,

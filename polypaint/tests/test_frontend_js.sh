@@ -301,6 +301,13 @@ const renderEls = {
     'render-preview': {},
     'render-info': {},
     'render-log': {},
+    'render-mt-popup-overlay': {},
+    'render-mt-popup-summary': {},
+    'render-mt-popup-close': {},
+    'render-mt-popup-cancel': {},
+    'render-mt-popup-run': {},
+    'render-mt-threads': { value: '4' },
+    'render-mt-solve-score-threads': { value: '4' },
     'autolevel-popup-overlay': {},
     'autolevel-popup-title': {},
     'autolevel-popup-summary': {},
@@ -367,6 +374,7 @@ vm.runInContext(`
 vm.runInContext(`
     var _tilePolls = 0, _encodePolls = 0;
     var _pipelineDispatchLogs = [];
+    var _renderOrchestratorPayloads = [];
     var _pipelineOrigLog = log;
 
     _bilevelDispatchAndPoll = async () => 1234;
@@ -381,7 +389,10 @@ vm.runInContext(`
     lambdaPost = async function lambdaPost(name, body, path) {
         if (name === 'storage' && path === '/clean-render') return { deleted: 0 };
         if (name === 'viewport') return { q_re: [-2, 2], q_im: [-2, 2], scale: 256, pix: 1024, n_roots: 1000 };
-        if (name === 'dispatch' && body.target === 'render_orchestrator') return { fired: 1, errors: [] };
+        if (name === 'dispatch' && body.target === 'render_orchestrator') {
+            _renderOrchestratorPayloads.push(body.jobs[0]);
+            return { fired: 1, errors: [] };
+        }
         if (name === 'dispatch' && body.target === 'autolevels') return { fired: 1, errors: [] };
         if (name === 'dispatch' && body.target === 'finalize') return { fired: body.jobs.length, errors: [] };
         if (name === 'dispatch' && body.target === 'bilevel_stitch') return { fired: 1, errors: [] };
@@ -423,7 +434,7 @@ ctx.setInterval = (fn, ms) => { if (typeof fn === 'function') fn(); return 42; }
 ctx.clearInterval = () => {};
 
 async function testPipeline(name, call) {
-    vm.runInContext('_tilePolls = 0; _encodePolls = 0; _fakeNow = 0; _pipelineDispatchLogs = [];', ctx);
+    vm.runInContext('_tilePolls = 0; _encodePolls = 0; _fakeNow = 0; _pipelineDispatchLogs = []; _renderOrchestratorPayloads = [];', ctx);
     // Clear status element to detect pipeline-caught errors
     ctx._elements['render-status'].textContent = '';
     try {
@@ -453,13 +464,16 @@ async function testPipeline(name, call) {
             process.exit(1);
         }
     }
-    await testPipeline('runRasterPipelineMT', '(async()=>{ renderColorMode = "solve_score"; await runRasterPipelineMT(); })()');
+    await testPipeline('runRasterPipelineMT', '(async()=>{ renderColorMode = "solve_score"; await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3 }); })()');
     {
         const logs = vm.runInContext('_pipelineDispatchLogs', ctx);
-        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with')) : null;
+        const payloads = vm.runInContext('_renderOrchestratorPayloads', ctx);
+        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with solve score threads=3, raster threads=6')) : null;
         const orchHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render: dispatching color orchestrator')) : null;
-        if (!mtHit || mtHit.cls !== 'ok' || !orchHit || orchHit.cls !== 'ok') {
-            console.error('FATAL: runRasterPipelineMT should log green MT + orchestrator dispatch, got ' + JSON.stringify(logs));
+        const mtPayload = Array.isArray(payloads) ? payloads.find((row) => row && row.params && row.params.raster_engine === 'mt') : null;
+        if (!mtHit || mtHit.cls !== 'ok' || !orchHit || orchHit.cls !== 'ok' || !mtPayload ||
+            mtPayload.params.raster_mt_threads !== 6 || mtPayload.params.solve_score_threads !== 3) {
+            console.error('FATAL: runRasterPipelineMT should log green MT + orchestrator dispatch and pass thread counts, got logs=' + JSON.stringify(logs) + ' payloads=' + JSON.stringify(payloads));
             process.exit(1);
         }
     }
@@ -476,11 +490,15 @@ async function testPipeline(name, call) {
         console.error('FATAL: Generate-MT should open popup overlay');
         process.exit(1);
     }
-    if (!(ctx._elements['render-mt-popup-summary'].textContent || '').includes('raster workers=')) {
+    if (!(ctx._elements['render-mt-popup-summary'].textContent || '').includes('solve score threads=')) {
         console.error('FATAL: Generate-MT popup should show thread summary');
         process.exit(1);
     }
-    console.log('  Generate-MT popup opens with thread summary: OK');
+    if (ctx._elements['render-mt-solve-score-threads'].disabled !== false) {
+        console.error('FATAL: Generate-MT popup should enable solve score thread input for solve_score mode');
+        process.exit(1);
+    }
+    console.log('  Generate-MT popup opens with solve-score + raster thread summary: OK');
     vm.runInContext('_closeRenderMtPopup()', ctx);
 
     // Step 8: Direct _bilevelDispatchAndPoll tests
@@ -764,6 +782,8 @@ async function testPipeline(name, call) {
             ['Generate-MT', 'GenerateFromPalette', 'Populate', 'Autolevels', 'DeepZoom'],
             'pdf action row'
         );
+        if (!pdfHtml.includes("Save PDF")) { console.error('FATAL: pdf download menu should offer Save PDF'); process.exit(1); }
+        if (!pdfHtml.includes("Select Dir")) { console.error('FATAL: pdf download menu should offer Select Dir'); process.exit(1); }
         console.log('  pdf family controls + viewer: OK');
 
         vm.runInContext(`
@@ -2538,7 +2558,7 @@ async function testPipeline(name, call) {
         console.log('  12a runRasterPipeline dispatches orchestrator: OK (mode=color)');
     }
 
-    // 12a2: runRasterPipelineMT dispatches one render_orchestrator job with mt raster engine + thread count
+    // 12a2: runRasterPipelineMT dispatches one render_orchestrator job with mt raster + solve-score thread counts
     {
         let orchDispatched = null;
         vm.runInContext(`
@@ -2557,13 +2577,14 @@ async function testPipeline(name, call) {
             refreshRenderArtifacts = async function() {};
         `, ctx);
         ctx._elements['btn-render-generate-mt'] = ctx._mkEl();
-        await vm.runInContext('(async()=>{ await runRasterPipelineMT(6); })()', ctx);
+        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3 }); })()', ctx);
         orchDispatched = vm.runInContext('_orchDispatched', ctx);
         if (!orchDispatched) { console.error('FATAL: runRasterPipelineMT did not dispatch orchestrator'); process.exit(1); }
         if (orchDispatched.params.raster_engine !== 'mt') { console.error('FATAL: runRasterPipelineMT should request mt raster engine, got ' + orchDispatched.params.raster_engine); process.exit(1); }
         if (orchDispatched.params.raster_mt_threads !== 6) { console.error('FATAL: runRasterPipelineMT should pass raster_mt_threads=6, got ' + orchDispatched.params.raster_mt_threads); process.exit(1); }
+        if (orchDispatched.params.solve_score_threads !== 3) { console.error('FATAL: runRasterPipelineMT should pass solve_score_threads=3, got ' + orchDispatched.params.solve_score_threads); process.exit(1); }
         if (orchDispatched.mode !== 'color') { console.error('FATAL: mode should be color, got ' + orchDispatched.mode); process.exit(1); }
-        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, threads=6)');
+        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, raster=6)');
     }
 
     // 12b: runBilevelPipeline dispatches one render_orchestrator job

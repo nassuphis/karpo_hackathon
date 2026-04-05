@@ -1,16 +1,12 @@
 """
-Raster MT Lambda handler — splits one chunk into solve ranges, runs roots2pix in
-parallel subprocesses, then merges worker-local sparse outputs back into the
-standard chunk/tile .pix and .pbx files.
+Raster MT Lambda handler — true native multithreaded raster.
 
-This preserves the existing external contracts used by finalize/repalette while
-trading exact intra-chunk winner semantics for speed.
+Downloads one chunk, invokes roots2pix_mt once with --threads=N, uploads the
+standard chunk/tile .pix and .pbx outputs, and reports comparable perf data.
 """
-import concurrent.futures
 import glob
 import json
 import os
-import shutil
 import subprocess
 import time
 
@@ -19,8 +15,8 @@ import boto3
 from shared import BUCKET, ok_response, parse_body, report_status
 
 s3 = boto3.client("s3")
-ROOTS2PIX = os.path.join(os.path.dirname(__file__), "roots2pix")
-DEFAULT_THREADS = int(os.environ.get("RASTER_MT_THREADS", "2") or "2")
+ROOTS2PIX_MT = os.path.join(os.path.dirname(__file__), "roots2pix_mt")
+DEFAULT_THREADS = int(os.environ.get("RASTER_MT_THREADS", "4") or "4")
 
 
 def _validate_threads(value):
@@ -28,8 +24,8 @@ def _validate_threads(value):
         threads = int(value)
     except (TypeError, ValueError):
         raise RuntimeError(f"raster_mt_threads must be an integer, got {value!r}")
-    if threads < 1:
-        raise RuntimeError(f"raster_mt_threads must be >= 1, got {threads}")
+    if not (1 <= threads <= 16):
+        raise RuntimeError(f"raster_mt_threads must be in [1, 16], got {threads}")
     return threads
 
 
@@ -47,10 +43,8 @@ def _cleanup_tmp():
     for pattern in (
         "/tmp/pix_t*.pix",
         "/tmp/pixbin_t*.pbx",
-        "/tmp/pix_w*_t*.pix",
-        "/tmp/pixbin_w*_t*.pbx",
-        "/tmp/stripe_w*.bin",
-        "/tmp/palette_bins_w*.bin",
+        "/tmp/stripe.bin",
+        "/tmp/palette_bins_chunk.bin",
         "/tmp/root_xforms.json",
     ):
         for stale in glob.glob(pattern):
@@ -60,11 +54,9 @@ def _cleanup_tmp():
                 pass
 
 
-def _build_base_cmd(params, bin_path, out_prefix, saved_bins_path=None):
+def _build_cmd(params, bin_path, saved_bins_path=None):
     cmd = [
-        ROOTS2PIX,
-        bin_path,
-        out_prefix,
+        ROOTS2PIX_MT, bin_path, "/tmp/pix",
         f"--width={params['width']}",
         f"--height={params['height']}",
         f"--tile_size={params['tile_size']}",
@@ -79,13 +71,14 @@ def _build_base_cmd(params, bin_path, out_prefix, saved_bins_path=None):
         f"--palette={params.get('palette', 'inferno')}",
         f"--constant_color={params.get('constant_color', 'ffffff')}",
         f"--rotation={params.get('rotation', 0.0)}",
+        f"--threads={params['raster_mt_threads']}",
     ]
     if params.get("emit_pixel_bins"):
-        cmd.append(f"--pixel_bin_prefix={params['pixel_bin_prefix']}")
+        cmd.append("--pixel_bin_prefix=/tmp/pixbin")
 
     if params.get("color") == "saved_palette":
         if not saved_bins_path:
-            raise RuntimeError("saved_palette color mode requires worker-local bins slice")
+            raise RuntimeError("saved_palette color mode requires saved_palette_bins_key")
         cmd = [a for a in cmd if not a.startswith("--color=")]
         cmd.append("--color=saved_palette")
         cmd.append(f"--solve_bins_file={saved_bins_path}")
@@ -113,124 +106,21 @@ def _build_base_cmd(params, bin_path, out_prefix, saved_bins_path=None):
             raise RuntimeError(
                 f"Bins omega_enabled mismatch: expected {req_omega_enabled}, got {bins_omega_enabled}"
             )
-        ss_metric = ss_data.get("metric", req_metric)
-        cmd.append("--color=solve_score")
-        cmd.append(f"--solve_metric={ss_metric}")
-        cmd.append(f"--solve_score_clip_lo={ss_data['clip_lo']}")
-        cmd.append(f"--solve_score_clip_hi={ss_data['clip_hi']}")
-        cmd.append(f"--solve_score_cuts={','.join(str(c) for c in ss_data['cuts_norm'])}")
-        cmd.append(f"--solve_score_omega={bins_omega}")
-        cmd.append(f"--solve_score_omega_enabled={1 if bins_omega_enabled else 0}")
-        cmd = [a for a in cmd if not a.startswith("--color=") or a == "--color=solve_score"]
+        cmd = [a for a in cmd if not a.startswith("--color=")]
+        cmd.extend([
+            "--color=solve_score",
+            f"--solve_metric={ss_data.get('metric', req_metric)}",
+            f"--solve_score_clip_lo={ss_data['clip_lo']}",
+            f"--solve_score_clip_hi={ss_data['clip_hi']}",
+            f"--solve_score_cuts={','.join(str(c) for c in ss_data['cuts_norm'])}",
+            f"--solve_score_omega={bins_omega}",
+            f"--solve_score_omega_enabled={1 if bins_omega_enabled else 0}",
+        ])
 
     rt_path = params.get("root_xforms_path")
     if rt_path:
         cmd.append(f"--root_xforms={rt_path}")
     return cmd
-
-
-def _merge_outputs(n_tiles, n_workers, emit_pixel_bins):
-    uploaded = 0
-    uploaded_pixel_bins = 0
-    for t in range(n_tiles):
-        pix_out = f"/tmp/pix_t{t:04d}.pix"
-        wrote_pix = False
-        with open(pix_out, "wb") as out_fh:
-            for worker_idx in range(n_workers):
-                worker_path = f"/tmp/pix_w{worker_idx:02d}_t{t:04d}.pix"
-                if os.path.exists(worker_path):
-                    if os.path.getsize(worker_path) > 0:
-                        with open(worker_path, "rb") as in_fh:
-                            shutil.copyfileobj(in_fh, out_fh)
-                        wrote_pix = True
-                    os.remove(worker_path)
-        if wrote_pix:
-            uploaded += 1
-        else:
-            os.remove(pix_out)
-
-        if emit_pixel_bins:
-            pbx_out = f"/tmp/pixbin_t{t:04d}.pbx"
-            wrote_pbx = False
-            with open(pbx_out, "wb") as out_fh:
-                for worker_idx in range(n_workers):
-                    worker_path = f"/tmp/pixbin_w{worker_idx:02d}_t{t:04d}.pbx"
-                    if os.path.exists(worker_path):
-                        if os.path.getsize(worker_path) > 0:
-                            with open(worker_path, "rb") as in_fh:
-                                shutil.copyfileobj(in_fh, out_fh)
-                            wrote_pbx = True
-                        os.remove(worker_path)
-            if wrote_pbx:
-                uploaded_pixel_bins += 1
-            else:
-                os.remove(pbx_out)
-
-    return uploaded, uploaded_pixel_bins
-
-
-def _upload_outputs(job_id, chunk_idx, n_tiles, emit_pixel_bins):
-    uploaded = 0
-    uploaded_pixel_bins = 0
-    for t in range(n_tiles):
-        pix_path = f"/tmp/pix_t{t:04d}.pix"
-        if os.path.exists(pix_path) and os.path.getsize(pix_path) > 0:
-            s3_key = f"renders/{job_id}/pix_chunk_{chunk_idx:04d}_t{t:04d}.pix"
-            with open(pix_path, "rb") as fh:
-                s3.upload_fileobj(fh, BUCKET, s3_key)
-            os.remove(pix_path)
-            uploaded += 1
-        pbx_path = f"/tmp/pixbin_t{t:04d}.pbx"
-        if emit_pixel_bins and os.path.exists(pbx_path):
-            if os.path.getsize(pbx_path) > 0:
-                pbx_key = f"renders/{job_id}/pixbin_chunk_{chunk_idx:04d}_t{t:04d}.pbx"
-                with open(pbx_path, "rb") as fh:
-                    s3.upload_fileobj(fh, BUCKET, pbx_key)
-                uploaded_pixel_bins += 1
-            os.remove(pbx_path)
-    return uploaded, uploaded_pixel_bins
-
-
-def _split_ranges(n_points, n_workers):
-    if n_points <= 0:
-        return []
-    n_workers = max(1, min(n_workers, n_points))
-    base = n_points // n_workers
-    extra = n_points % n_workers
-    ranges = []
-    start = 0
-    for idx in range(n_workers):
-        width = base + (1 if idx < extra else 0)
-        end = start + width
-        ranges.append((idx, start, end))
-        start = end
-    return ranges
-
-
-def _slice_file(src_path, dest_path, start_byte, size_bytes):
-    with open(src_path, "rb") as src, open(dest_path, "wb") as dest:
-        src.seek(start_byte)
-        remaining = size_bytes
-        while remaining > 0:
-            chunk = src.read(min(1024 * 1024, remaining))
-            if not chunk:
-                break
-            dest.write(chunk)
-            remaining -= len(chunk)
-    return dest_path
-
-
-def _run_worker(worker_params):
-    cmd = _build_base_cmd(
-        worker_params["params"],
-        worker_params["bin_path"],
-        worker_params["out_prefix"],
-        worker_params.get("saved_bins_path"),
-    )
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-    if result.returncode != 0:
-        raise RuntimeError(f"roots2pix failed: {result.stderr.strip()}")
-    return json.loads(result.stdout)
 
 
 def handler(event, context):
@@ -243,12 +133,12 @@ def handler(event, context):
     n_tile_cols = params["n_tile_cols"]
     n_tile_rows = params["n_tile_rows"]
     n_tiles = n_tile_cols * n_tile_rows
-    degree = int(params["degree"])
     task_id = params.get("task_id", f"raster_{chunk_idx}")
+    threads = _validate_threads(params.get("raster_mt_threads", DEFAULT_THREADS))
 
     perf = {
         "engine": "mt",
-        "threads": 1,
+        "threads": threads,
         "download_us": 0,
         "native_us": 0,
         "upload_us": 0,
@@ -257,21 +147,22 @@ def handler(event, context):
         "roots_plotted": 0,
         "roots_clipped": 0,
     }
-    emit_pixel_bins = bool(params.get("emit_pixel_bins"))
+
     bin_path = "/tmp/stripe.bin"
     saved_bins_path = "/tmp/palette_bins_chunk.bin"
+    emit_pixel_bins = bool(params.get("emit_pixel_bins"))
 
     try:
         report_status(job_id, task_id, "started")
-
         _cleanup_tmp()
 
-        t0 = time.perf_counter()
+        t_dl = time.perf_counter()
         obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
         with open(bin_path, "wb") as f:
             f.write(obj["Body"].read())
 
         params = dict(params)
+        params["raster_mt_threads"] = threads
         params["root_xforms_path"] = None
         rt_chain = params.get("root_transforms", [])
         if rt_chain:
@@ -295,68 +186,42 @@ def handler(event, context):
             ss_obj = s3.get_object(Bucket=BUCKET, Key=ss_bins_key)
             params["solve_score_bins_data"] = json.loads(ss_obj["Body"].read())
 
-        perf["download_us"] = int((time.perf_counter() - t0) * 1e6)
-
+        perf["download_us"] = int((time.perf_counter() - t_dl) * 1e6)
         report_status(job_id, task_id, "bin_downloaded")
 
-        record_bytes = degree * 8
-        stripe_bytes = os.path.getsize(bin_path)
-        if stripe_bytes % record_bytes != 0:
-            raise RuntimeError(
-                f"chunk byte size {stripe_bytes} is not divisible by degree record size {record_bytes}"
-            )
-        n_points = stripe_bytes // record_bytes
-
-        requested_threads = _validate_threads(params.get(
-            "raster_mt_threads",
-            os.environ.get("RASTER_MT_THREADS", str(DEFAULT_THREADS)) or str(DEFAULT_THREADS),
-        ))
-        ranges = _split_ranges(n_points, requested_threads)
-        perf["threads"] = max(1, len(ranges))
-
-        t1 = time.perf_counter()
-        worker_payloads = []
-        saved_bins_size = os.path.getsize(saved_bins_path) if os.path.exists(saved_bins_path) else 0
-        if os.path.exists(saved_bins_path) and saved_bins_size != n_points:
-            raise RuntimeError(
-                f"saved palette bins size mismatch: expected {n_points} bytes, got {saved_bins_size}"
-            )
-
-        for worker_idx, start, end in ranges:
-            start_byte = start * record_bytes
-            size_bytes = (end - start) * record_bytes
-            worker_bin_path = f"/tmp/stripe_w{worker_idx:02d}.bin"
-            _slice_file(bin_path, worker_bin_path, start_byte, size_bytes)
-            worker_params = dict(params)
-            worker_params["pixel_bin_prefix"] = f"/tmp/pixbin_w{worker_idx:02d}"
-            worker_saved_bins_path = None
-            if os.path.exists(saved_bins_path):
-                worker_saved_bins_path = f"/tmp/palette_bins_w{worker_idx:02d}.bin"
-                _slice_file(saved_bins_path, worker_saved_bins_path, start, end - start)
-            worker_payloads.append({
-                "params": worker_params,
-                "bin_path": worker_bin_path,
-                "saved_bins_path": worker_saved_bins_path,
-                "out_prefix": f"/tmp/pix_w{worker_idx:02d}",
-            })
-
-        worker_results = []
-        if worker_payloads:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(worker_payloads)) as pool:
-                futures = [pool.submit(_run_worker, payload) for payload in worker_payloads]
-                for fut in concurrent.futures.as_completed(futures):
-                    worker_results.append(fut.result())
-
-        merged_pix, merged_pbx = _merge_outputs(n_tiles, len(ranges), emit_pixel_bins)
-        perf["native_us"] = int((time.perf_counter() - t1) * 1e6)
-        perf["roots_plotted"] = sum(int(res.get("roots_plotted", 0)) for res in worker_results)
-        perf["roots_clipped"] = sum(int(res.get("roots_clipped", 0)) for res in worker_results)
+        t_native = time.perf_counter()
+        cmd = _build_cmd(params, bin_path, saved_bins_path if os.path.exists(saved_bins_path) else None)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        perf["native_us"] = int((time.perf_counter() - t_native) * 1e6)
+        if result.returncode != 0:
+            raise RuntimeError(f"roots2pix_mt failed: {result.stderr.strip()}")
+        raster_meta = json.loads(result.stdout)
+        perf["threads"] = int(raster_meta.get("threads", threads))
+        perf["roots_plotted"] = int(raster_meta.get("roots_plotted", 0))
+        perf["roots_clipped"] = int(raster_meta.get("roots_clipped", 0))
 
         report_status(job_id, task_id, "rasterized")
 
-        t2 = time.perf_counter()
-        uploaded, uploaded_pixel_bins = _upload_outputs(job_id, chunk_idx, n_tiles, emit_pixel_bins)
-        perf["upload_us"] = int((time.perf_counter() - t2) * 1e6)
+        t_up = time.perf_counter()
+        uploaded = 0
+        uploaded_pixel_bins = 0
+        for t in range(n_tiles):
+            pix_path = f"/tmp/pix_t{t:04d}.pix"
+            if os.path.exists(pix_path) and os.path.getsize(pix_path) > 0:
+                s3_key = f"renders/{job_id}/pix_chunk_{chunk_idx:04d}_t{t:04d}.pix"
+                with open(pix_path, "rb") as fh:
+                    s3.upload_fileobj(fh, BUCKET, s3_key)
+                os.remove(pix_path)
+                uploaded += 1
+            pbx_path = f"/tmp/pixbin_t{t:04d}.pbx"
+            if emit_pixel_bins and os.path.exists(pbx_path):
+                if os.path.getsize(pbx_path) > 0:
+                    pbx_key = f"renders/{job_id}/pixbin_chunk_{chunk_idx:04d}_t{t:04d}.pbx"
+                    with open(pbx_path, "rb") as fh:
+                        s3.upload_fileobj(fh, BUCKET, pbx_key)
+                    uploaded_pixel_bins += 1
+                os.remove(pbx_path)
+        perf["upload_us"] = int((time.perf_counter() - t_up) * 1e6)
         perf["tiles_uploaded"] = uploaded
         perf["pixel_bin_tiles_uploaded"] = uploaded_pixel_bins
 
@@ -369,10 +234,8 @@ def handler(event, context):
             "raster_us": perf["native_us"],
             "roots_plotted": perf["roots_plotted"],
             "roots_clipped": perf["roots_clipped"],
-            "engine": perf["engine"],
+            "engine": "mt",
             "threads": perf["threads"],
-            "merged_tile_files": merged_pix,
-            "merged_pixel_bin_files": merged_pbx,
         })
 
     except Exception as e:
@@ -380,8 +243,3 @@ def handler(event, context):
         raise
     finally:
         _cleanup_tmp()
-        for tmp_path in (bin_path, saved_bins_path):
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass

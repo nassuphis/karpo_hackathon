@@ -2341,6 +2341,99 @@ class TestRenderArtifactInventory(unittest.TestCase):
         self.assertIn("renders/job_a/preview_palette.png", deleted)
 
 
+class TestFavoritesStorage(unittest.TestCase):
+
+    def test_favorites_key_under_polypaint_prefix(self):
+        import handler_storage
+
+        self.assertEqual(handler_storage.FAVORITES_KEY, "polypaint/favorites/color_artifacts.json")
+
+    @patch("handler_storage.s3")
+    def test_list_favorites_returns_empty_when_missing(self, mock_s3):
+        from handler_storage import handle_list_favorites
+
+        mock_s3.get_object.side_effect = Exception("NoSuchKey")
+
+        result = handle_list_favorites({"body": "{}"})
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["favorites"], [])
+        self.assertEqual(body["count"], 0)
+
+    @patch("handler_storage._write_favorites")
+    @patch("handler_storage._read_favorites")
+    def test_add_favorite_prepends_new_ref(self, mock_read, mock_write):
+        from handler_storage import handle_add_favorite
+
+        mock_read.return_value = [
+            {"job_id": "job_old", "artifact_id": "color_old", "family": "color", "added_at": "2026-01-01T00:00:00Z"}
+        ]
+
+        result = handle_add_favorite({
+            "body": json.dumps({
+                "job_id": "job_new",
+                "artifact_id": "color_new",
+                "family": "color",
+                "display_name": "color_new",
+                "image_key": "renders/job_new/color/color_new/image.jpeg",
+                "preview_key": "renders/job_new/color/color_new/preview.png",
+            })
+        })
+        body = json.loads(result["body"])
+
+        self.assertTrue(body["added"])
+        self.assertEqual(body["count"], 2)
+        written = mock_write.call_args[0][0]
+        self.assertEqual(written[0]["job_id"], "job_new")
+        self.assertEqual(written[0]["artifact_id"], "color_new")
+        self.assertEqual(written[0]["image_key"], "renders/job_new/color/color_new/image.jpeg")
+
+    @patch("handler_storage._write_favorites")
+    @patch("handler_storage._read_favorites")
+    def test_add_favorite_dedupes_existing_ref(self, mock_read, mock_write):
+        from handler_storage import handle_add_favorite
+
+        mock_read.return_value = [
+            {"job_id": "job_a", "artifact_id": "color_1", "family": "color", "added_at": "2026-01-01T00:00:00Z"}
+        ]
+
+        result = handle_add_favorite({
+            "body": json.dumps({
+                "job_id": "job_a",
+                "artifact_id": "color_1",
+                "family": "color",
+            })
+        })
+        body = json.loads(result["body"])
+
+        self.assertFalse(body["added"])
+        self.assertEqual(body["count"], 1)
+        mock_write.assert_not_called()
+
+    @patch("handler_storage._write_favorites")
+    @patch("handler_storage._read_favorites")
+    def test_delete_favorite_removes_only_matching_ref(self, mock_read, mock_write):
+        from handler_storage import handle_delete_favorite
+
+        mock_read.return_value = [
+            {"job_id": "job_a", "artifact_id": "color_1", "family": "color", "added_at": "2026-01-01T00:00:00Z"},
+            {"job_id": "job_b", "artifact_id": "color_2", "family": "color", "added_at": "2026-01-02T00:00:00Z"},
+        ]
+
+        result = handle_delete_favorite({
+            "body": json.dumps({
+                "job_id": "job_a",
+                "artifact_id": "color_1",
+            })
+        })
+        body = json.loads(result["body"])
+
+        self.assertTrue(body["deleted"])
+        self.assertEqual(body["count"], 1)
+        written = mock_write.call_args[0][0]
+        self.assertEqual(written, [{"job_id": "job_b", "artifact_id": "color_2", "family": "color", "added_at": "2026-01-02T00:00:00Z"}])
+
+
 class TestDeepZoomExportPointerWrite(unittest.TestCase):
     """Test that handler_deepzoom_export writes both meta.json and deepzoom_latest.json."""
 

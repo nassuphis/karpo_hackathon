@@ -18,6 +18,11 @@ if [ ! -f "$HTML" ]; then echo "FATAL: $HTML not found"; exit 1; fi
 if [ ! -f "$CATALOG_JS" ]; then echo "FATAL: $CATALOG_JS not found"; exit 1; fi
 if [ ! -f "$TRI_CATALOG_JS" ]; then echo "FATAL: $TRI_CATALOG_JS not found"; exit 1; fi
 if [ ! -f "$LONG_CATALOG_JS" ]; then echo "FATAL: $LONG_CATALOG_JS not found"; exit 1; fi
+grep -q "switchTab('favorites')" "$HTML" || { echo "FATAL: Favorites tab button missing from index.html"; exit 1; }
+grep -q 'id="tab-favorites"' "$HTML" || { echo "FATAL: Favorites tab content missing from index.html"; exit 1; }
+grep -q 'id="btn-favorites-download"' "$HTML" || { echo "FATAL: Favorites Download button missing from index.html"; exit 1; }
+grep -q 'Image + Meta' "$HTML" || { echo "FATAL: Favorites download menu missing Image + Meta"; exit 1; }
+grep -q 'Select Dir…' "$HTML" || { echo "FATAL: Favorites download menu missing Select Dir…"; exit 1; }
 
 echo "=== Frontend JS Execution Test ==="
 
@@ -756,10 +761,12 @@ async function testPipeline(name, call) {
         if (!panelHtml.includes('height:360px') || !panelHtml.includes('background:#000')) { console.error('FATAL: render artifact panel should keep fixed black viewport height'); process.exit(1); }
         assertActionButtons(
             panelHtml,
-            ['Generate', 'Generate-MT', 'GenerateFromPalette', 'RePalette', 'Populate', 'Autolevels', 'Download', 'Delete', 'DeepZoom'],
+            ['Generate', 'Generate-MT', 'GenerateFromPalette', 'RePalette', 'Populate', 'Autolevels', 'Favorite', 'Download', 'Delete', 'DeepZoom'],
             ['ColorSpread'],
             'color action row'
         );
+        const colorActionRowCount = (panelHtml.match(/class="render-action-row"/g) || []).length;
+        if (colorActionRowCount !== 2) { console.error('FATAL: color action buttons should be split into exactly 2 rows of max 5'); process.exit(1); }
         console.log('  color family auto-select + viewer: OK');
 
         vm.runInContext(`_renderSelectFamily('palette')`, ctx);
@@ -818,6 +825,100 @@ async function testPipeline(name, call) {
         const dzDisabled = !!ctx._elements['btn-render-deepzoom'].disabled;
         if (!(dlDisabled && delDisabled && dzDisabled)) { console.error('FATAL: empty family should disable actions'); process.exit(1); }
         console.log('  empty family disables actions: OK');
+    }
+
+    {
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'j' };
+        vm.runInContext(`
+            _favoriteRefs = [];
+            _favoriteRefsLoaded = true;
+            _renderActiveFamily = 'color';
+            renderArtifactPanel('j', {
+                calc: { exists: true, N: 1000, degree: 5 },
+                families: {
+                    color: [
+                        { artifact_id: 'color_fav', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/j/color/color_fav/image.jpeg', image_url: 'https://img/color_fav.jpeg', preview_url: 'https://img/color_fav.png', viewer_url: 'https://img/color_fav.png', width: 1000, height: 1000, file_size: 50000, color_mode: 'rainbow', format: 'jpeg' }
+                    ],
+                    bilevel: [],
+                    coeffs: [],
+                    palette: [],
+                    pdf: [],
+                },
+            });
+            var _favoriteCall = null;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/add-favorite') {
+                    _favoriteCall = { name, body, path };
+                    return { added: true, count: 1, favorites: [{ job_id: 'j', artifact_id: 'color_fav', family: 'color', added_at: '2026-04-05T12:00:00Z' }] };
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await favoriteSelectedRenderArtifact(); })()', ctx); } catch(e) {}
+        const favCall = vm.runInContext('_favoriteCall', ctx);
+        const favText = ctx._elements['btn-render-favorite'].textContent;
+        const favoriteCount = vm.runInContext('_favoriteRefs.length', ctx);
+        if (!favCall || favCall.path !== '/add-favorite') { console.error('FATAL: favorite button should post to /add-favorite'); process.exit(1); }
+        if (favCall.body.job_id !== 'j' || favCall.body.artifact_id !== 'color_fav') { console.error('FATAL: favorite payload should include selected job/artifact'); process.exit(1); }
+        if (favText !== 'Favorited') { console.error('FATAL: favorite button should become Favorited after save, got ' + favText); process.exit(1); }
+        if (favoriteCount !== 1) { console.error('FATAL: favorite action should update cached favorite refs'); process.exit(1); }
+        console.log('  color favorite action posts + updates button state: OK');
+    }
+
+    {
+        ctx._elements['favorites-status'] = ctx._elements['favorites-status'] || ctx._mkEl();
+        ctx._elements['favorites-preview'] = ctx._elements['favorites-preview'] || ctx._mkEl();
+        ctx._elements['favorites-info'] = ctx._elements['favorites-info'] || ctx._mkEl();
+        ctx._elements['favorites-log'] = ctx._elements['favorites-log'] || ctx._mkEl();
+        ctx._elements['btn-favorites-refresh'] = ctx._elements['btn-favorites-refresh'] || { ...ctx._mkEl(), textContent: 'Refresh', disabled: false };
+        vm.runInContext(`
+            _favoriteRefs = [];
+            _favoriteRefsLoaded = false;
+            _favoriteSelectedIdx = -1;
+            var _favoriteListCalls = 0;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/list-favorites') {
+                    _favoriteListCalls++;
+                    return {
+                        favorites: [
+                            { job_id: 'job_a', artifact_id: 'color_a', family: 'color', added_at: '2026-04-05T12:00:00Z' },
+                            { job_id: 'job_missing', artifact_id: 'color_missing', family: 'color', added_at: '2026-04-05T11:00:00Z' }
+                        ],
+                        count: 2
+                    };
+                }
+                if (name === 'storage' && path === '/render-summary' && body.job_id === 'job_a') {
+                    return {
+                        calc: { exists: true, N: 1000, degree: 5 },
+                        families: {
+                            color: [
+                                { artifact_id: 'color_a', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/job_a/color/color_a/image.jpeg', image_url: 'https://img/favorite_a.jpeg', preview_url: 'https://img/favorite_a.png', viewer_url: 'https://img/favorite_a.png', width: 1200, height: 900, file_size: 42000, color_mode: 'rainbow', format: 'jpeg' }
+                            ]
+                        }
+                    };
+                }
+                if (name === 'storage' && path === '/render-summary' && body.job_id === 'job_missing') {
+                    throw new Error('job missing');
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await loadFavoritesInventory(); })()', ctx); } catch(e) {}
+        const favHtml = ctx._elements['favorites-preview'].innerHTML || '';
+        const favInfo = ctx._elements['favorites-info'].textContent || '';
+        const favListCalls = vm.runInContext('_favoriteListCalls', ctx);
+        if (favListCalls !== 1) { console.error('FATAL: favorites should load refs once on first inventory load, got ' + favListCalls); process.exit(1); }
+        if (!favHtml.includes('favorite-art-row-0')) { console.error('FATAL: favorites panel should render hydrated rows'); process.exit(1); }
+        if (!favHtml.includes('favorite-art-row-1')) { console.error('FATAL: favorites panel should render stale rows too'); process.exit(1); }
+        if (!favHtml.includes('https://img/favorite_a.png')) { console.error('FATAL: favorites panel should show selected artifact preview'); process.exit(1); }
+        if (!favHtml.includes('missing artifact')) { console.error('FATAL: favorites panel should label stale refs as missing artifact'); process.exit(1); }
+        if (!favInfo.includes('2 favorites loaded')) { console.error('FATAL: favorites info should show count, got ' + favInfo); process.exit(1); }
+        console.log('  favorites inventory hydrates refs + keeps stale rows: OK');
+
+        try { await vm.runInContext('(async()=>{ await refreshFavoritesInventory(); })()', ctx); } catch(e) {}
+        const favListCallsAfterRefresh = vm.runInContext('_favoriteListCalls', ctx);
+        if (favListCallsAfterRefresh !== 2) { console.error('FATAL: favorites refresh should force /list-favorites reload, got ' + favListCallsAfterRefresh); process.exit(1); }
+        console.log('  favorites refresh forces refetch: OK');
     }
 
     {

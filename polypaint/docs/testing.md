@@ -47,6 +47,7 @@ All tests live in `polypaint/tests/`.
 | `test_poly795_hand.py` | `poly_795` hand-written coeff function matches Python reference, including slice rewrites and both `np.where` branches | `sweep_test` compiled |
 | `test_low_agreement_hand.py` | Batch parity coverage for the repaired low-agreement coeff funcs promoted from transpiled to hand; the current authoritative function list lives in `CASES` inside the test file | `sweep_test` compiled, numpy |
 | `test_deploy_packaging.py` | Lambda zip contents, local sidecar packaging, executable chmod coverage, and deploy-script regressions such as the PDF layer builder entrypoint/tooling contract | Python only |
+| `test_api_route_contracts.py` | Frontend/API contract checks: `index.html` endpoint usage must match backend handler routes and `deploy.sh` API Gateway wiring | Python only |
 | `test_pdf_artifact_handler.py` | PDF artifact Lambda: Color source validation, metadata-derived spread composition, PDF upload contract | Python mocks only |
 | `test_frontend_js.sh` | Frontend JS execution: UI logic, TRI palette popup/swatches, dispatch, Render family catalogs, Palette workflow UI, DeepZoom inventory, render perf logging | Node.js (vm module) |
 | `e2e/deepzoom-inventory.spec.js` | DeepZoom inventory: load, sort, select, arrow keys, share links | Playwright browser |
@@ -81,6 +82,7 @@ uv run python tests/test_bilevel_stitch.py
 uv run python -m pytest tests/test_ae_mt.py -q
 uv run python -m pytest tests/test_poly164_hand.py tests/test_coeff_catalog_consistency.py -q
 uv run python -m pytest tests/test_deploy_packaging.py tests/test_pdf_artifact_handler.py -q
+uv run python -m pytest tests/test_api_route_contracts.py tests/test_deploy_packaging.py -q
 uv run python lambda/gen_parity_results.py
 uv run python -m pytest tests/test_coeff_parity_results.py tests/test_coeff_catalog_consistency.py -q
 uv run python -m pytest tests/test_coeff_catalog_consistency.py tests/test_poly645_hand.py tests/test_poly795_hand.py tests/test_low_agreement_hand.py -q
@@ -277,6 +279,15 @@ Deploy-time contract coverage:
   - `pixbinassemble`
   - `pixel_bins_render`
   - PDF artifact packaging and the PDF layer build-script contract
+  - storage handler routes must be published by `deploy.sh`
+
+### test_api_route_contracts.py
+
+Frontend/API contract coverage:
+
+- every `lambdaPost('storage', ..., '/...')` path used in `index.html` must exist in `handler_storage.py`
+- every frontend storage path must also be published by `deploy.sh`
+- every frontend service name used by `lambdaPost(...)` must exist in the generated `config.json` template
 
 ### test_bilevel_raster.py
 

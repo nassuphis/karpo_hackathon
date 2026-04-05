@@ -1046,6 +1046,9 @@ setup_api_gateway() {
     ensure_route "POST /encode-upload" "$ENCODE_INT"
     ensure_route "POST /viewport" "$VIEWPORT_INT"
     ensure_route "POST /list" "$STORAGE_INT"
+    ensure_route "POST /list-favorites" "$STORAGE_INT"
+    ensure_route "POST /add-favorite" "$STORAGE_INT"
+    ensure_route "POST /delete-favorite" "$STORAGE_INT"
     ensure_route "POST /list-palettes" "$STORAGE_INT"
     ensure_route "POST /delete-palette" "$STORAGE_INT"
     ensure_route "POST /delete-render-artifact" "$STORAGE_INT"
@@ -1775,7 +1778,9 @@ elif [ "$ACTION" = "update" ]; then
     echo "  Storage:  $STORAGE_NAME ($STORAGE_MEMORY MB)"
     echo "  Dispatch: $DISPATCH_NAME ($DISPATCH_MEMORY MB)"
     echo "  Preview:  $PREVIEW_NAME ($PREVIEW_MEMORY MB)"
-    echo "  Site:     http://$BUCKET.s3-website-$REGION.amazonaws.com"
+    echo "  Site:"
+    echo "    HTTP:   http://$BUCKET.s3-website-$REGION.amazonaws.com"
+    echo "    HTTPS:  https://$BUCKET.s3.$REGION.amazonaws.com/index.html"
 else
     echo "Usage: $0 [create|update]"
     exit 1

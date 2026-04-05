@@ -338,6 +338,7 @@ button {
         <div class="tab-btn" onclick="switchTab('results')">Results</div>
         <div class="tab-btn" onclick="switchTab('palette')">Palette</div>
         <div class="tab-btn" onclick="switchTab('render')">Render</div>
+        <div class="tab-btn" onclick="switchTab('favorites')">Favorites</div>
         <div class="tab-btn" onclick="switchTab('deepzoom')">DeepZoom</div>
     </div>
     <div class="panel" style="border-radius:0 8px 8px 8px">
@@ -632,6 +633,26 @@ button {
             <div id="render-info" style="font-size:12px; color:#888; margin-top:4px"></div>
             <div style="margin-top:6px"><button class="btn-secondary" id="btn-render-clear" onclick="_clearRenderState()" style="padding:3px 10px; font-size:10px; color:#888">Clear</button></div>
             <div id="render-log" style="margin-top:8px; font-family:monospace; font-size:11px"></div>
+        </div>
+        <!-- Favorites tab -->
+        <div id="tab-favorites" class="tab-content">
+            <div style="margin-top:8px; margin-bottom:4px; display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap">
+                <div style="display:flex; align-items:center; gap:8px">
+                    <button class="btn-secondary" id="btn-favorites-refresh" onclick="refreshFavoritesInventory()" style="padding:4px 12px; font-size:12px">Refresh</button>
+                    <div style="display:inline-block; position:relative">
+                        <button class="btn-secondary" id="btn-favorites-download" onclick="_toggleFavoritesDownloadMenu()" style="padding:4px 12px; font-size:11px" disabled>Download ▼</button>
+                        <div id="favorites-download-menu" style="display:none; position:absolute; bottom:100%; left:0; background:#2a2a3e; border:1px solid #555; border-radius:4px; z-index:100; min-width:140px; margin-bottom:2px">
+                            <div id="favorites-dl-menu-file" onclick="_favoritesDlMenuAction('image+meta')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Image + Meta</div>
+                            <div id="favorites-dl-menu-dir" onclick="_favoritesDlMenuAction('dir')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Select Dir…</div>
+                        </div>
+                    </div>
+                    <button class="btn-secondary" id="btn-favorites-delete" onclick="deleteSelectedFavorite()" style="padding:4px 12px; font-size:12px" disabled>Delete</button>
+                </div>
+                <div id="favorites-info" style="font-size:11px; color:#666">Favorite Color artifacts across all jobs.</div>
+            </div>
+            <div id="favorites-status" class="status" style="margin-bottom:6px"></div>
+            <div id="favorites-preview" style="margin-top:8px"></div>
+            <div id="favorites-log" style="margin-top:8px; font-family:monospace; font-size:11px"></div>
         </div>
         <!-- Palette tab -->
         <div id="tab-palette" class="tab-content">
@@ -1120,6 +1141,7 @@ function switchTab(name) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === name));
     document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
     if (name === 'results') loadResults();
+    if (name === 'favorites') loadFavoritesInventory();
     if (name === 'palette') loadPaletteInventory();
     if (name === 'deepzoom') loadDeepZoomInventory();
 }
@@ -1164,6 +1186,380 @@ async function _ensureResultsSelection(jobId) {
     const found = _resultsCache.some(r => r.job_id === jobId);
     if (!found) throw new Error(`Result ${jobId} not found`);
     selectResult(jobId);
+}
+
+function _favoriteRefKey(jobId, artifactId) {
+    return `${jobId}::${artifactId}`;
+}
+
+function _isFavorite(jobId, artifactId) {
+    if (!jobId || !artifactId) return false;
+    const key = _favoriteRefKey(jobId, artifactId);
+    return (_favoriteRefs || []).some(ref => _favoriteRefKey(ref.job_id, ref.artifact_id) === key);
+}
+
+async function _loadFavoriteRefs(force = false) {
+    if (_favoriteRefsLoaded && !force) return _favoriteRefs;
+    const resp = await lambdaPost('storage', {}, '/list-favorites');
+    _favoriteRefs = Array.isArray(resp.favorites) ? resp.favorites : [];
+    _favoriteRefsLoaded = true;
+    return _favoriteRefs;
+}
+
+async function _hydrateFavoriteArtifacts() {
+    const refs = Array.isArray(_favoriteRefs) ? _favoriteRefs.slice() : [];
+    if (!refs.length) return [];
+    const grouped = new Map();
+    refs.forEach(ref => {
+        if (!ref || !ref.job_id) return;
+        if (!grouped.has(ref.job_id)) grouped.set(ref.job_id, []);
+        grouped.get(ref.job_id).push(ref);
+    });
+    const summaries = new Map();
+    await asyncPool(4, Array.from(grouped.keys()), async (jobId) => {
+        try {
+            const summary = await lambdaPost('storage', { job_id: jobId }, '/render-summary');
+            summaries.set(jobId, summary || {});
+        } catch (e) {
+            summaries.set(jobId, { _favorite_error: e.message });
+        }
+    });
+    return refs.map(ref => {
+        const summary = summaries.get(ref.job_id) || {};
+        const inv = (summary.families && summary.families.color) || [];
+        const match = inv.find(a => a.artifact_id === ref.artifact_id) || null;
+        if (match) {
+            return {
+                ...match,
+                favorite_ref: ref,
+                favorite_job_id: ref.job_id,
+                favorite_added_at: ref.added_at || '',
+            };
+        }
+        return {
+            family: 'color',
+            artifact_id: ref.artifact_id,
+            favorite_ref: ref,
+            favorite_job_id: ref.job_id,
+            favorite_added_at: ref.added_at || '',
+            display_name: ref.display_name || ref.artifact_id,
+            image_key: ref.image_key || '',
+            preview_key: ref.preview_key || '',
+            image_url: '',
+            viewer_url: '',
+            preview_url: '',
+            width: 0,
+            height: 0,
+            file_size: 0,
+            missing: true,
+            missing_reason: summary._favorite_error || 'missing artifact',
+        };
+    });
+}
+
+async function favoriteSelectedRenderArtifact() {
+    if (_renderActiveFamily !== 'color') return;
+    const art = _renderSelectedArtifactEntry();
+    const jobId = document.getElementById('render-results-dir').value.trim();
+    if (!jobId || !art || !art.artifact_id) return;
+    if (_isFavorite(jobId, art.artifact_id)) {
+        log(`Already in favorites: ${art.artifact_id}`, 'ok', 'render-log');
+        _updateRenderActionButtons();
+        return;
+    }
+    const btn = document.getElementById('btn-render-favorite');
+    const orig = btn ? btn.textContent : 'Favorite';
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+        const resp = await lambdaPost('storage', {
+            job_id: jobId,
+            artifact_id: art.artifact_id,
+            family: 'color',
+            display_name: art.display_name || art.artifact_id,
+            image_key: art.image_key || '',
+            preview_key: art.preview_key || '',
+        }, '/add-favorite');
+        _favoriteRefs = Array.isArray(resp.favorites) ? resp.favorites : _favoriteRefs;
+        _favoriteRefsLoaded = true;
+        log(`Favorited: ${art.artifact_id}`, 'ok', 'render-log');
+        _updateRenderActionButtons();
+        if (document.getElementById('tab-favorites')?.classList.contains('active')) {
+            await loadFavoritesInventory();
+        }
+    } catch (e) {
+        log(`Favorite failed: ${e.message}`, 'err', 'render-log');
+    } finally {
+        if (btn) btn.textContent = orig;
+        _updateRenderActionButtons();
+    }
+}
+
+function _favoriteSelectedEntry() {
+    if (_favoriteSelectedIdx == null || _favoriteSelectedIdx < 0 || _favoriteSelectedIdx >= _favoriteArtifacts.length) return null;
+    return _favoriteArtifacts[_favoriteSelectedIdx] || null;
+}
+
+function _favoriteArtifactSummary(art) {
+    if (!art) return '';
+    if (art.missing) return 'missing artifact';
+    return _renderArtifactSummary(art);
+}
+
+function _favoriteArtifactFilename(art) {
+    if (!art) return 'favorite_artifact';
+    const ext = (art.image_key || '').split('.').pop() || 'bin';
+    return `${art.favorite_job_id || 'job'}_${art.artifact_id || 'favorite'}.${ext}`;
+}
+
+function _favoriteRowElementId(idx) {
+    return `favorite-art-row-${idx}`;
+}
+
+function _captureFavoritesCatalogScroll() {
+    const catalog = document.getElementById('favorites-artifact-catalog');
+    if (!catalog) return;
+    const top = Number(catalog.scrollTop);
+    if (Number.isFinite(top)) _favoriteCatalogScrollTop = top;
+}
+
+function _restoreFavoritesCatalogScroll(options = {}) {
+    const catalog = document.getElementById('favorites-artifact-catalog');
+    if (!catalog) return;
+    const top = Number(_favoriteCatalogScrollTop);
+    if (Number.isFinite(top)) catalog.scrollTop = top;
+    catalog.onscroll = () => {
+        const nextTop = Number(catalog.scrollTop);
+        if (Number.isFinite(nextTop)) _favoriteCatalogScrollTop = nextTop;
+    };
+    if (!options.ensureSelected) return;
+    if (_favoriteSelectedIdx == null || _favoriteSelectedIdx < 0) return;
+    const row = document.getElementById(_favoriteRowElementId(_favoriteSelectedIdx));
+    if (row && typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'nearest' });
+}
+
+function _updateFavoritesActionButtons() {
+    const art = _favoriteSelectedEntry();
+    const hasSelection = !!art;
+    const dlBtn = document.getElementById('btn-favorites-download');
+    const delBtn = document.getElementById('btn-favorites-delete');
+    if (dlBtn) dlBtn.disabled = !(hasSelection && !art.missing && art.image_key);
+    if (delBtn) delBtn.disabled = !hasSelection;
+}
+
+function _favoriteSelect(idx) {
+    if (idx < 0 || idx >= _favoriteArtifacts.length) return;
+    _captureFavoritesCatalogScroll();
+    _favoriteSelectedIdx = idx;
+    renderFavoritesPanel({ preserveScroll: true, ensureSelected: true });
+}
+
+function renderFavoritesPanel(options = {}) {
+    const preview = document.getElementById('favorites-preview');
+    const info = document.getElementById('favorites-info');
+    if (!preview || !info) return;
+    const inv = _favoriteArtifacts || [];
+    if (!inv.length) {
+        _favoriteSelectedIdx = -1;
+        preview.innerHTML = '<div style="border:1px solid #333; border-radius:6px; padding:10px; background:#141424; color:#666">No favorite Color artifacts yet.</div>';
+        info.textContent = 'Favorite Color artifacts across all jobs.';
+        _updateFavoritesActionButtons();
+        return;
+    }
+    if (_favoriteSelectedIdx == null || _favoriteSelectedIdx < 0 || _favoriteSelectedIdx >= inv.length) _favoriteSelectedIdx = 0;
+    const activeArt = _favoriteSelectedEntry();
+    let catalogHtml = '<table style="width:100%; border-collapse:collapse"><tr style="border-bottom:1px solid #333; position:sticky; top:0; background:#1a1a2e"><th style="text-align:left;padding:4px">Added</th><th style="text-align:left;padding:4px">Job</th><th>Dims</th><th>Size</th><th style="text-align:left">Summary</th></tr>';
+    inv.forEach((art, i) => {
+        const isSel = i === _favoriteSelectedIdx;
+        const dims = art.width && art.height ? `${art.width}x${art.height}` : '';
+        const added = (art.favorite_added_at || '').replace('T', ' ').slice(0, 19);
+        catalogHtml += `<tr id="${_favoriteRowElementId(i)}" class="favorite-art-row" data-idx="${i}" onclick="_favoriteSelect(${i})" style="border-bottom:1px solid #222; cursor:pointer; background:${isSel ? '#2a2a4e' : ''}">`;
+        catalogHtml += `<td style="padding:4px; font-size:11px">${added}</td>`;
+        catalogHtml += `<td style="padding:4px; font-family:monospace; font-size:11px">${art.favorite_job_id || ''}</td>`;
+        catalogHtml += `<td style="padding:4px; text-align:center">${dims}</td>`;
+        catalogHtml += `<td style="padding:4px; text-align:center">${_fmtSize(art.file_size || art.size || 0)}</td>`;
+        catalogHtml += `<td style="padding:4px">${_favoriteArtifactSummary(art)}</td>`;
+        catalogHtml += '</tr>';
+    });
+    catalogHtml += '</table>';
+
+    let viewerHtml = '<div style="color:#444; font-size:12px; padding:12px 0; text-align:center">No artifact selected</div>';
+    if (activeArt) {
+        if (activeArt.missing) viewerHtml = `<div style="color:#888; font-size:12px; padding:12px 0; text-align:center">Missing artifact<br><span style="color:#555">${activeArt.missing_reason || ''}</span></div>`;
+        else if (activeArt.viewer_url) viewerHtml = `<img src="${activeArt.viewer_url}" style="max-width:100%; max-height:100%; background:#000; display:block; margin:0 auto">`;
+    }
+
+    preview.innerHTML = `
+        <div style="border:1px solid #333; border-radius:6px; padding:10px; background:#141424">
+            <div style="display:grid; grid-template-columns:minmax(340px, 44%) 1fr; gap:12px; align-items:start">
+                <div id="favorites-artifact-catalog" style="height:360px; max-height:360px; overflow-y:auto; border:1px solid #333; border-radius:4px">${catalogHtml}</div>
+                <div id="favorites-artifact-viewer" style="height:360px; max-height:360px; border:1px solid #333; border-radius:4px; background:#000; padding:8px; display:flex; align-items:center; justify-content:center; overflow:hidden">${viewerHtml}</div>
+            </div>
+        </div>
+    `;
+    info.textContent = `${inv.length} favorite${inv.length === 1 ? '' : 's'} loaded.`;
+    _updateFavoritesActionButtons();
+    if (options.preserveScroll) _restoreFavoritesCatalogScroll({ ensureSelected: !!options.ensureSelected });
+    else {
+        _favoriteCatalogScrollTop = 0;
+        _restoreFavoritesCatalogScroll({ ensureSelected: false });
+    }
+}
+
+async function loadFavoritesInventory() {
+    const statusEl = document.getElementById('favorites-status');
+    if (statusEl) {
+        statusEl.textContent = 'Loading...';
+        statusEl.className = 'status';
+    }
+    try {
+        if (!_favoriteRefsLoaded) await _loadFavoriteRefs();
+        _favoriteArtifacts = await _hydrateFavoriteArtifacts();
+        renderFavoritesPanel();
+        if (statusEl) {
+            statusEl.textContent = 'Ready';
+            statusEl.className = 'status ok';
+        }
+    } catch (e) {
+        _favoriteArtifacts = [];
+        _favoriteSelectedIdx = -1;
+        renderFavoritesPanel();
+        if (statusEl) {
+            statusEl.textContent = 'Refresh failed: ' + e.message;
+            statusEl.className = 'status error';
+        }
+    }
+}
+
+async function refreshFavoritesInventory() {
+    const btn = document.getElementById('btn-favorites-refresh');
+    const orig = btn ? btn.textContent : 'Refresh';
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Refreshing...'; }
+        await _loadFavoriteRefs(true);
+        await loadFavoritesInventory();
+        log('Favorites refreshed', 'ok', 'favorites-log');
+    } catch (e) {
+        log(`Favorites refresh failed: ${e.message}`, 'err', 'favorites-log');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+}
+
+function _toggleFavoritesDownloadMenu() {
+    const menu = document.getElementById('favorites-download-menu');
+    if (!menu) return;
+    const show = menu.style.display === 'none' || !menu.style.display;
+    menu.style.display = show ? 'block' : 'none';
+    if (show) {
+        const dirItem = document.getElementById('favorites-dl-menu-dir');
+        if (dirItem) {
+            dirItem.textContent = _favoriteSaveDirHandle
+                ? '\u2713 ' + (_favoriteSaveDirHandle.name || 'folder') + ' \u2014 change\u2026'
+                : 'Select Dir\u2026';
+        }
+    }
+}
+
+document.addEventListener('click', function(e) {
+    const menu = document.getElementById('favorites-download-menu');
+    const btn = document.getElementById('btn-favorites-download');
+    if (menu && btn && !btn.contains(e.target) && !menu.contains(e.target)) menu.style.display = 'none';
+});
+
+async function _favoritesDlMenuAction(mode) {
+    const menu = document.getElementById('favorites-download-menu');
+    if (menu) menu.style.display = 'none';
+    const art = _favoriteSelectedEntry();
+    if (!art || art.missing || !art.image_key) return;
+    if (mode === 'dir') {
+        if (typeof window.showDirectoryPicker !== 'function') {
+            alert('Directory picker requires Chrome or Edge over HTTPS (or localhost).');
+            return;
+        }
+        try {
+            _favoriteSaveDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+            log('Favorites save directory: ' + _favoriteSaveDirHandle.name, 'ok', 'favorites-log');
+        } catch (e) {
+            if (e.name !== 'AbortError') alert('Directory picker failed: ' + e.message);
+        }
+        return;
+    }
+    const jobId = art.favorite_job_id;
+    const imageFilename = _favoriteArtifactFilename(art);
+    const metaFilename = imageFilename.replace(/\.[^.]+$/, '_meta.json');
+    const metaObj = await _buildArtifactMeta(jobId, art);
+    const metaBlob = new Blob([JSON.stringify(metaObj, null, 2)], { type: 'application/json' });
+    if (_favoriteSaveDirHandle) {
+        const btn = document.getElementById('btn-favorites-download');
+        const orig = btn ? btn.textContent : 'Download \u25bc';
+        try {
+            if (btn) btn.disabled = true;
+            const dirHandle = _favoriteSaveDirHandle;
+            if ((await dirHandle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
+                if ((await dirHandle.requestPermission({ mode: 'readwrite' })) !== 'granted') {
+                    _favoriteSaveDirHandle = null;
+                    throw new Error('Permission denied — directory cleared');
+                }
+            }
+            if (btn) btn.textContent = 'Saving metadata...';
+            const metaHandle = await dirHandle.getFileHandle(metaFilename, { create: true });
+            const metaWritable = await metaHandle.createWritable();
+            await metaWritable.write(metaBlob);
+            await metaWritable.close();
+            if (btn) btn.textContent = 'Downloading image...';
+            const presign = await lambdaPost('storage', { key: art.image_key, filename: imageFilename }, '/presign');
+            const resp = await fetch(presign.url);
+            if (!resp.ok) throw new Error(`Image download failed: ${resp.status}`);
+            const imageBlob = await resp.blob();
+            const imgHandle = await dirHandle.getFileHandle(imageFilename, { create: true });
+            const imgWritable = await imgHandle.createWritable();
+            await imgWritable.write(imageBlob);
+            await imgWritable.close();
+            if (btn) { btn.textContent = 'Saved to ' + dirHandle.name; setTimeout(() => { btn.textContent = orig; }, 2000); }
+        } catch (e) {
+            if (e.name !== 'AbortError') alert('Save failed: ' + e.message);
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+        return;
+    }
+    const metaUrl = URL.createObjectURL(metaBlob);
+    const a = document.createElement('a');
+    a.href = metaUrl;
+    a.download = metaFilename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(metaUrl);
+    await downloadPresignedFile(art.image_url || art.viewer_url || '', imageFilename, art.image_key);
+}
+
+async function deleteSelectedFavorite() {
+    const art = _favoriteSelectedEntry();
+    if (!art) return;
+    if (!confirm(`Remove favorite reference for ${art.artifact_id || ''}?`)) return;
+    const btn = document.getElementById('btn-favorites-delete');
+    const orig = btn ? btn.textContent : 'Delete';
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Deleting...'; }
+        const resp = await lambdaPost('storage', {
+            job_id: art.favorite_job_id,
+            artifact_id: art.artifact_id,
+        }, '/delete-favorite');
+        _favoriteRefs = Array.isArray(resp.favorites) ? resp.favorites : _favoriteRefs.filter(ref => _favoriteRefKey(ref.job_id, ref.artifact_id) !== _favoriteRefKey(art.favorite_job_id, art.artifact_id));
+        _favoriteRefsLoaded = true;
+        const nextIdx = _favoriteSelectedIdx;
+        _favoriteArtifacts = await _hydrateFavoriteArtifacts();
+        _favoriteSelectedIdx = _favoriteArtifacts.length ? Math.min(nextIdx, _favoriteArtifacts.length - 1) : -1;
+        renderFavoritesPanel({ preserveScroll: true, ensureSelected: true });
+        log(`Favorite removed: ${art.artifact_id}`, 'ok', 'favorites-log');
+        _updateRenderActionButtons();
+    } catch (e) {
+        log(`Favorite delete failed: ${e.message}`, 'err', 'favorites-log');
+    } finally {
+        if (btn) btn.textContent = orig;
+        _updateFavoritesActionButtons();
+    }
 }
 
 function renderResultsTable() {
@@ -1564,6 +1960,7 @@ async function loadLambdaConfig() {
         const count = Object.keys(_lambdaUrls).length;
         statusEl.textContent = `${count} endpoints loaded`;
         statusEl.style.color = '#4ecca3';
+        try { await _loadFavoriteRefs(true); } catch (e) {}
     } catch (e) {
         statusEl.textContent = 'Error: ' + e.message;
         statusEl.style.color = '#ff5555';
@@ -1683,6 +2080,12 @@ let _renderActiveFamily = 'color';
 let _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [], pdf: [] };
 let _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1 };
 let _renderCatalogScrollTop = { color: 0, bilevel: 0, coeffs: 0, palette: 0, pdf: 0 };
+let _favoriteRefs = [];
+let _favoriteArtifacts = [];
+let _favoriteSelectedIdx = -1;
+let _favoriteCatalogScrollTop = 0;
+let _favoriteSaveDirHandle = null;
+let _favoriteRefsLoaded = false;
 let _triPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _builtinPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
@@ -5628,6 +6031,14 @@ function _renderArtifactFilename(jobId, art) {
     return `${jobId}_${art.artifact_id || art.family}.${ext}`;
 }
 
+function _renderActionButtonRows(buttons, maxPerRow = 5) {
+    const rows = [];
+    for (let i = 0; i < buttons.length; i += maxPerRow) {
+        rows.push(buttons.slice(i, i + maxPerRow));
+    }
+    return rows.map(row => `<div class="render-action-row" style="display:flex; flex-wrap:wrap; align-items:center; gap:8px">${row.join('')}</div>`).join('');
+}
+
 function _setRenderSliderValue(inputId, labelId, value, decimals) {
     const input = document.getElementById(inputId);
     const label = document.getElementById(labelId);
@@ -5833,12 +6244,14 @@ function populateSelectedRenderArtifact() {
 function _updateRenderActionButtons() {
     const art = _renderSelectedArtifactEntry();
     const hasSelection = !!art;
+    const jobId = document.getElementById('render-results-dir')?.value.trim() || '';
     const genMtBtn = document.getElementById('btn-render-generate-mt');
     const dlBtn = document.getElementById('btn-render-download');
     const delBtn = document.getElementById('btn-render-delete');
     const dzBtn = document.getElementById('btn-render-deepzoom');
     const popBtn = document.getElementById('btn-render-populate');
     const autoBtn = document.getElementById('btn-render-autolevels');
+    const favBtn = document.getElementById('btn-render-favorite');
     const repalBtn = document.getElementById('btn-render-repalette');
     const colorRepalBtn = document.getElementById('btn-render-color-repalette');
     const fromPalBtn = document.getElementById('btn-render-generate-from-palette');
@@ -5855,6 +6268,11 @@ function _updateRenderActionButtons() {
     if (colorRepalBtn) colorRepalBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && _canColorRepaletteArtifact(art)) || !!_activeRenderRun;
     if (fromPalBtn) fromPalBtn.disabled = !(_renderActiveFamily === 'color' && reusablePalettes.length > 0) || !!_activeRenderRun;
     if (pdfBtn) pdfBtn.disabled = !(_renderActiveFamily === 'pdf' && colorSources.length > 0) || !!_activeRenderRun;
+    if (favBtn) {
+        const isFav = _renderActiveFamily === 'color' && hasSelection && _isFavorite(jobId, art.artifact_id);
+        favBtn.textContent = isFav ? 'Favorited' : 'Favorite';
+        favBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && !isFav) || !!_activeRenderRun;
+    }
 }
 
 function _captureRenderCatalogScroll(family) {
@@ -6138,6 +6556,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     const activeFamilyInv = _renderArtifacts[_renderActiveFamily] || [];
     const activeIdx = _renderSelectedArtifact[_renderActiveFamily];
     const activeArt = activeIdx >= 0 ? activeFamilyInv[activeIdx] : null;
+    const favoriteSelected = _renderActiveFamily === 'color' && activeArt && _isFavorite(jobId, activeArt.artifact_id);
     const familyTabs = ['color', 'bilevel', 'coeffs', 'palette', 'pdf'].map((family) => {
         const active = family === _renderActiveFamily;
         const count = (_renderArtifacts[family] || []).length;
@@ -6182,34 +6601,39 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         }
     }
 
+    const actionButtons = [];
+    if (_renderActiveFamily === 'pdf') {
+        actionButtons.push('<button class="btn-primary" id="btn-render-pdf-colorspread" onclick="openPdfColorSpreadPopup()" style="padding:4px 12px; font-size:11px">ColorSpread</button>');
+    } else {
+        actionButtons.push('<button class="btn-primary" id="btn-render-generate" onclick="generateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px">Generate</button>');
+    }
+    if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-generate-mt" onclick="generateSelectedRenderArtifactMT()" style="padding:4px 12px; font-size:11px">Generate-MT</button>');
+    if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-generate-from-palette" onclick="openGenerateFromPalettePopup()" style="padding:4px 12px; font-size:11px" disabled>GenerateFromPalette</button>');
+    if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-color-repalette" onclick="openColorRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>');
+    if (_renderActiveFamily === 'palette') actionButtons.push('<button class="btn-secondary" id="btn-render-repalette" onclick="openRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>');
+    if (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette') actionButtons.push('<button class="btn-secondary" id="btn-render-populate" onclick="populateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Populate</button>');
+    if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-autolevels" onclick="openAutolevelPopup()" style="padding:4px 12px; font-size:11px" disabled>Autolevels</button>');
+    if (_renderActiveFamily === 'color') actionButtons.push(`<button class="btn-secondary" id="btn-render-favorite" onclick="favoriteSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" ${favoriteSelected ? 'disabled' : ''}>${favoriteSelected ? 'Favorited' : 'Favorite'}</button>`);
+    actionButtons.push(`<div style="display:inline-block; position:relative">
+        <button class="btn-secondary" id="btn-render-download" onclick="_toggleDownloadMenu()" style="padding:4px 12px; font-size:11px" disabled>Download \u25bc</button>
+        <div id="download-menu" style="display:none; position:absolute; bottom:100%; left:0; background:#2a2a3e; border:1px solid #555; border-radius:4px; z-index:100; min-width:120px; margin-bottom:2px">
+            ${_renderActiveFamily === 'pdf'
+                ? `<div id="dl-menu-file" onclick="_dlMenuAction('pdf_file')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Save PDF</div>
+                   <div id="dl-menu-dir" onclick="_dlMenuAction('dir')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Select Dir\u2026</div>`
+                : `<div id="dl-menu-file" onclick="_dlMenuAction('image')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Image</div>
+                   <div onclick="_dlMenuAction('image+meta')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Image + Meta</div>
+                   <div id="dl-menu-dir" onclick="_dlMenuAction('dir')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Save to Dir\u2026</div>`}
+        </div>
+    </div>`);
+    actionButtons.push('<button class="btn-secondary" id="btn-render-delete" onclick="deleteSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Delete</button>');
+    if (_renderActiveFamily !== 'pdf') actionButtons.push('<button class="btn-secondary" id="btn-render-deepzoom" onclick="deepZoomSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>DeepZoom</button>');
+    const actionRowsHtml = _renderActionButtonRows(actionButtons, 5);
+
     preview.innerHTML = `
         <div style="border:1px solid #333; border-radius:6px; padding:10px; background:#141424">
             <div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:10px">${familyTabs}</div>
-            <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px">
-                <div style="display:flex; align-items:center; gap:8px">
-                    ${_renderActiveFamily === 'pdf'
-                        ? '<button class="btn-primary" id="btn-render-pdf-colorspread" onclick="openPdfColorSpreadPopup()" style="padding:4px 12px; font-size:11px">ColorSpread</button>'
-                        : '<button class="btn-primary" id="btn-render-generate" onclick="generateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px">Generate</button>'}
-                    ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-generate-mt" onclick="generateSelectedRenderArtifactMT()" style="padding:4px 12px; font-size:11px">Generate-MT</button>' : ''}
-                    ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-generate-from-palette" onclick="openGenerateFromPalettePopup()" style="padding:4px 12px; font-size:11px" disabled>GenerateFromPalette</button>' : ''}
-                    ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-color-repalette" onclick="openColorRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>' : ''}
-                    ${_renderActiveFamily === 'palette' ? '<button class="btn-secondary" id="btn-render-repalette" onclick="openRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>' : ''}
-                    ${(_renderActiveFamily === 'color' || _renderActiveFamily === 'palette') ? '<button class="btn-secondary" id="btn-render-populate" onclick="populateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Populate</button>' : ''}
-                    ${_renderActiveFamily === 'color' ? '<button class="btn-secondary" id="btn-render-autolevels" onclick="openAutolevelPopup()" style="padding:4px 12px; font-size:11px" disabled>Autolevels</button>' : ''}
-                    <div style="display:inline-block; position:relative">
-                        <button class="btn-secondary" id="btn-render-download" onclick="_toggleDownloadMenu()" style="padding:4px 12px; font-size:11px" disabled>Download \u25bc</button>
-                        <div id="download-menu" style="display:none; position:absolute; bottom:100%; left:0; background:#2a2a3e; border:1px solid #555; border-radius:4px; z-index:100; min-width:120px; margin-bottom:2px">
-                            ${_renderActiveFamily === 'pdf'
-                                ? `<div id="dl-menu-file" onclick="_dlMenuAction('pdf_file')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Save PDF</div>
-                                   <div id="dl-menu-dir" onclick="_dlMenuAction('dir')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Select Dir\u2026</div>`
-                                : `<div id="dl-menu-file" onclick="_dlMenuAction('image')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Image</div>
-                                   <div onclick="_dlMenuAction('image+meta')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Image + Meta</div>
-                                   <div id="dl-menu-dir" onclick="_dlMenuAction('dir')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Save to Dir\u2026</div>`}
-                        </div>
-                    </div>
-                    <button class="btn-secondary" id="btn-render-delete" onclick="deleteSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Delete</button>
-                    ${_renderActiveFamily !== 'pdf' ? '<button class="btn-secondary" id="btn-render-deepzoom" onclick="deepZoomSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>DeepZoom</button>' : ''}
-                </div>
+            <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:8px">
+                ${actionRowsHtml}
                 <div style="font-size:11px; color:#666">Click row to view. Arrow keys navigate within ${_renderFamilyLabel(_renderActiveFamily)}.</div>
             </div>
             <div style="font-size:11px; color:#666; margin-bottom:8px">${controlsExtra}</div>

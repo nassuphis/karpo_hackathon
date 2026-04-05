@@ -3,6 +3,9 @@ Storage Lambda handler — S3 metadata operations + DynamoDB status tracking.
 
 Routes:
   POST /list           — list all computed jobs with metadata
+  POST /list-favorites — list persisted favorite Color artifact refs
+  POST /add-favorite   — add one favorite Color artifact ref
+  POST /delete-favorite — delete one favorite Color artifact ref
   POST /list-palettes  — list saved palette variants for one job
   POST /delete-palette — delete one saved palette variant
   POST /delete-render-artifact — delete one immutable render artifact variant
@@ -22,12 +25,52 @@ import boto3
 from shared import BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response, _get_ddb
 
 s3 = boto3.client("s3")
+FAVORITES_KEY = "polypaint/favorites/color_artifacts.json"
+
+
+def _is_missing_s3_error(exc):
+    code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+    if code in {"NoSuchKey", "404", "NotFound"}:
+        return True
+    msg = str(exc)
+    return "NoSuchKey" in msg or "NotFound" in msg
+
+
+def _read_favorites():
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=FAVORITES_KEY)
+    except Exception as exc:
+        if _is_missing_s3_error(exc):
+            return []
+        raise
+    raw = obj["Body"].read()
+    data = json.loads(raw) if raw else []
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and isinstance(data.get("favorites"), list):
+        return data["favorites"]
+    return []
+
+
+def _write_favorites(items):
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=FAVORITES_KEY,
+        Body=json.dumps(items, separators=(",", ":"), sort_keys=True).encode(),
+        ContentType="application/json",
+    )
 
 
 def handler(event, context):
     path = event.get("rawPath", event.get("path", "/"))
     if path.endswith("/list"):
         return handle_list(event)
+    elif path.endswith("/list-favorites"):
+        return handle_list_favorites(event)
+    elif path.endswith("/add-favorite"):
+        return handle_add_favorite(event)
+    elif path.endswith("/delete-favorite"):
+        return handle_delete_favorite(event)
     elif path.endswith("/list-palettes"):
         return handle_list_palettes(event)
     elif path.endswith("/delete-palette"):
@@ -67,6 +110,52 @@ def handler(event, context):
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
         "body": json.dumps({"error": f"Unknown route: {path}"}),
     }
+
+
+def handle_list_favorites(event):
+    favorites = _read_favorites()
+    return ok_response({"favorites": favorites, "count": len(favorites)})
+
+
+def handle_add_favorite(event):
+    params = parse_body(event)
+    job_id = params["job_id"]
+    artifact_id = params["artifact_id"]
+    family = params.get("family", "color")
+    if family != "color":
+        raise ValueError("Only color favorites are supported")
+    favorites = _read_favorites()
+    key = (job_id, artifact_id)
+    added = not any((item.get("job_id"), item.get("artifact_id")) == key for item in favorites)
+    if added:
+        entry = {
+            "job_id": job_id,
+            "artifact_id": artifact_id,
+            "family": "color",
+            "added_at": params.get("added_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        for field in ("display_name", "image_key", "preview_key"):
+            value = params.get(field)
+            if value:
+                entry[field] = value
+        favorites = [entry] + favorites
+        _write_favorites(favorites)
+    return ok_response({"added": added, "favorites": favorites, "count": len(favorites)})
+
+
+def handle_delete_favorite(event):
+    params = parse_body(event)
+    job_id = params["job_id"]
+    artifact_id = params["artifact_id"]
+    favorites = _read_favorites()
+    kept = [
+        item for item in favorites
+        if not (item.get("job_id") == job_id and item.get("artifact_id") == artifact_id)
+    ]
+    deleted = len(kept) != len(favorites)
+    if deleted:
+        _write_favorites(kept)
+    return ok_response({"deleted": deleted, "favorites": kept, "count": len(kept)})
 
 
 def handle_list(event):

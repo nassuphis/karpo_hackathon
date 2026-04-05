@@ -325,8 +325,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (strcmp(matchStr, "none") != 0) {
-        fprintf(stderr, "roots2pix_mt only supports --match=none\n");
+    if (strcmp(matchStr, "none") != 0 && colorMode == COLOR_RAINBOW) {
+        fprintf(stderr, "roots2pix_mt only supports --match=none in rainbow mode\n");
         return 1;
     }
     if (degree < 1 || degree > MAXDEG) {

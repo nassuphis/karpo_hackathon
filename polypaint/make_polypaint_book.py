@@ -178,25 +178,19 @@ def _draw_text_page(c, title, body, is_right, filename=None):
 
     if body:
         c.setFont(BODY_FONT, 11)
-        # Simple line wrapping for body text
-        words = body.split()
-        lines = []
-        line = ""
-        for word in words:
-            test = f"{line} {word}".strip()
-            if c.stringWidth(test, BODY_FONT, 11) <= tw:
-                line = test
-            else:
-                if line:
-                    lines.append(line)
-                line = word
-        if line:
-            lines.append(line)
-
         y = center_y - 20
-        for ln in lines:
-            c.drawCentredString(center_x, y, ln)
-            y -= 16  # ~11pt + leading
+        # Render each line separately, centered
+        for para in body.split("\n"):
+            para = para.strip()
+            if not para:
+                y -= 8
+                continue
+            # Word-wrap within each line if needed
+            wrapped = _wrap_text(c, para, BODY_FONT, 11, tw)
+            for ln in wrapped:
+                c.drawCentredString(center_x, y, ln)
+                y -= 16
+            y -= 4  # small gap between metadata lines
 
     if filename:
         c.setFont("Courier", 8)
@@ -259,8 +253,7 @@ def generate_content_pdf(output_path, pages_config):
     for entry in pages_config:
         # Verso (left page): text
         _emit_page(is_right=False)
-        img_name = entry.get("image", "")
-        snap_name = os.path.splitext(os.path.basename(img_name))[0] if img_name else None
+        snap_name = entry.get("filename") or os.path.splitext(os.path.basename(entry.get("image", "")))[0]
         _draw_text_page(c, entry.get("title", ""),
                         entry.get("text", ""), is_right=False,
                         filename=snap_name)
@@ -420,59 +413,203 @@ def generate_cover_pdf(output_path, title="Polynomiography", subtitle="",
           f"spine {SPINE_W/mm:.0f} mm)")
 
 
+# ── Auto-discovery ────────────────────────────────────────────────────
+
+def _discover_snaps(snaps_dir):
+    """Find image+meta pairs in snaps_dir. Returns list of (image_path, meta_dict)."""
+    snaps_dir = Path(snaps_dir)
+    pairs = []
+    for img in sorted(snaps_dir.glob("*.jpeg")):
+        meta_path = img.with_name(img.stem + "_meta.json")
+        if meta_path.exists():
+            with open(meta_path) as f:
+                meta = json.load(f)
+            pairs.append((str(img), meta))
+        else:
+            # Image without meta — use filename as fallback
+            pairs.append((str(img), {}))
+    return pairs
+
+
+def _solver_tag(solver):
+    if solver == "companion_matrix":
+        return "Companion Matrix"
+    if solver == "aberth_mt":
+        return "Aberth-Ehrlich (parallel)"
+    if solver in ("aberth", ""):
+        return "Aberth-Ehrlich"
+    return solver
+
+
+def _color_description(meta):
+    color_mode = str(meta.get("color_mode", "") or "").strip()
+    palette = str(meta.get("palette", "") or "").replace("tri_", "").replace("long_", "").replace("_", " ")
+    metric = str(meta.get("solve_metric", "") or "").replace("_", " ")
+    if color_mode == "solve_score":
+        return f"Colored by {metric} score, {palette} palette"
+    if color_mode == "proximity":
+        return f"Root proximity coloring, {palette} palette"
+    if color_mode == "constant":
+        return "Uniform coloring"
+    return "Index rainbow coloring"
+
+
+def _title_from_meta(meta):
+    """Generate an artsy title from the polynomial function and parameters."""
+    compute = meta.get("compute", {})
+    fn = compute.get("function", "")
+    if not fn:
+        return "Title"
+    # Strip poly_ prefix for display
+    fn_short = fn.replace("poly_", "").replace("giga_", "g")
+    return f"Study {fn_short}"
+
+
+def _text_from_meta(meta):
+    """Build artsy text page content from artifact _meta.json."""
+    compute = meta.get("compute", {})
+    fn = compute.get("function", "")
+    pt = compute.get("param_transforms", "none")
+    ct = compute.get("coeff_transforms", "none")
+    cfpv = compute.get("cfpv", "")
+    degree = compute.get("degree", meta.get("degree", ""))
+    n_val = compute.get("N", "")
+    times = compute.get("times", 1)
+    solver = compute.get("solver", "")
+    total_roots = compute.get("total_roots", "")
+
+    lines = []
+
+    # Line 1: the polynomial identity
+    fn_str = f"{fn}({cfpv})" if cfpv else fn
+    if fn_str:
+        lines.append(fn_str)
+
+    # Line 2: parameter space
+    if pt and pt != "none":
+        lines.append(f"Parameters swept through {pt}")
+    if ct and ct != "none":
+        lines.append(f"Coefficients transformed by {ct}")
+
+    # Line 3: scale
+    scale_parts = []
+    if degree:
+        scale_parts.append(f"degree {degree}")
+    if n_val:
+        grid = f"{n_val}\u00d7{n_val}"
+        if times and int(times) > 1:
+            grid += f"\u00d7{times}"
+        scale_parts.append(f"{grid} grid")
+    if total_roots:
+        try:
+            scale_parts.append(f"{int(total_roots):,} roots")
+        except (ValueError, TypeError):
+            pass
+    if scale_parts:
+        lines.append(", ".join(scale_parts))
+
+    # Line 4: coloring
+    color_desc = _color_description(meta)
+    if color_desc:
+        lines.append(color_desc)
+
+    # Line 5: solver
+    stag = _solver_tag(solver)
+    if stag:
+        lines.append(f"Solved by {stag}")
+
+    body = "\n".join(lines) if lines else ""
+    filename = meta.get("artifact_id", "")
+    title = _title_from_meta(meta)
+    return title, body, filename
+
+
 # ── Config & CLI ──────────────────────────────────────────────────────
 
-SAMPLE_CONFIG = {
+DEFAULT_CONFIG = {
     "title": "PolyPaint",
     "subtitle": "Polynomial Root Visualizations",
-    "pages": [
-        {
-            "image": "snaps/polypaint-bitmap-2026-02-27T18-40-07.png",
-            "title": "Example",
-            "text": "A polynomial root visualization."
-        }
-    ]
+    "description": "",
+    "author": "",
+    "snaps_dir": "snaps",
+    "cover_image": None,
+    "back_image": None,
 }
 
+CONFIG_PATH = "polypaint_book_config.json"
 
-def init_config(path="book_config.json"):
-    """Create a template config file."""
+
+def init_config(path=CONFIG_PATH, snaps_dir="snaps"):
+    """Scan snaps/ for image+meta pairs and write a full config with per-page entries.
+
+    The generated config is the source of truth — edit titles and text before generating.
+    Re-running --init overwrites the config, so back it up if you've made edits.
+    """
+    pairs = _discover_snaps(snaps_dir)
+
+    pages = []
+    for img_path, meta in pairs:
+        title_text, body, filename = _text_from_meta(meta)
+        pages.append({
+            "image": img_path,
+            "title": title_text,
+            "text": body,
+            "filename": filename,
+        })
+
+    config = dict(DEFAULT_CONFIG)
+    config["snaps_dir"] = snaps_dir
+    config["pages"] = pages
+    if pages:
+        config["cover_image"] = pages[0]["image"]
+
     with open(path, "w") as f:
-        json.dump(SAMPLE_CONFIG, f, indent=2)
-    print(f"Created {path}")
+        json.dump(config, f, indent=2)
+    print(f"Created {path} with {len(pages)} page(s) from {snaps_dir}/")
+    if pages:
+        print("  Edit titles and text in the config, then run without --init to generate PDFs.")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate WhiteWall coffee table book PDFs")
-    parser.add_argument("config", nargs="?", help="Path to book_config.json")
+        description="Generate WhiteWall coffee table book PDFs from polypaint render artifacts")
+    parser.add_argument("config", nargs="?", default=CONFIG_PATH,
+                        help=f"Path to config (default: {CONFIG_PATH})")
     parser.add_argument("-o", "--output-prefix", default="polypaint_book",
                         help="Output file prefix (default: polypaint_book)")
     parser.add_argument("--init", action="store_true",
-                        help="Create template book_config.json")
+                        help=f"Scan snaps/ and create/overwrite {CONFIG_PATH}")
+    parser.add_argument("--snaps-dir", default="snaps",
+                        help="Snaps directory for --init (default: snaps)")
     args = parser.parse_args()
 
     if args.init:
-        init_config()
+        init_config(args.config, args.snaps_dir)
         return
 
-    if not args.config:
-        parser.error("Provide a config file, or use --init to create one")
+    if not os.path.exists(args.config):
+        print(f"Config not found: {args.config}")
+        print(f"Run: python make_polypaint_book.py --init")
+        sys.exit(1)
 
     with open(args.config) as f:
         config = json.load(f)
 
-    title = config.get("title", "Polynomiography")
+    title = config.get("title", "PolyPaint")
     subtitle = config.get("subtitle", "")
-    pages = config.get("pages", [])
-    front_image = config.get("cover_image",
-                             pages[0]["image"] if pages else None)
-    back_image = config.get("back_image")
     description = config.get("description", "")
     author = config.get("author", "")
+    pages = config.get("pages", [])
+
+    if not pages:
+        print("No pages in config. Run --init to populate from snaps/")
+        sys.exit(1)
+
+    front_image = config.get("cover_image") or (pages[0]["image"] if pages else None)
+    back_image = config.get("back_image")
 
     print(f"Generating WhiteWall PDFs: '{title}'")
-    n_content = 1 + len(pages) * 2  # 1 blank + 2 per entry
+    n_content = 1 + len(pages) * 2
     n_padded = n_content + (4 - n_content % 4) % 4
     n_padded = max(4, n_padded)
     print(f"  {len(pages)} spread(s) -> {n_padded} content pages")

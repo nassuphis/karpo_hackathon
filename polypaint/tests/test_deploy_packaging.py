@@ -9,6 +9,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAMBDA_DIR = ROOT / "lambda"
 DEPLOY_TEXT = (ROOT / "deploy.sh").read_text()
 LOCAL_MODULES = {p.stem for p in LAMBDA_DIR.glob("*.py")}
+HANDLER_STORAGE_TEXT = (LAMBDA_DIR / "handler_storage.py").read_text()
 
 
 def _joined_shell_lines(text):
@@ -145,6 +146,9 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("SWEEP_MT_FUNCTION", DEPLOY_TEXT)
         self.assertIn('ensure_route "POST /sweep-mt" "$SWEEP_MT_INT"', DEPLOY_TEXT)
         self.assertIn('"sweep-mt": "%s/sweep-mt"', DEPLOY_TEXT)
+        self.assertIn('ensure_route "POST /list-favorites" "$STORAGE_INT"', DEPLOY_TEXT)
+        self.assertIn('ensure_route "POST /add-favorite" "$STORAGE_INT"', DEPLOY_TEXT)
+        self.assertIn('ensure_route "POST /delete-favorite" "$STORAGE_INT"', DEPLOY_TEXT)
 
         self.assertIn("handler_autolevels.py", packaged)
         self.assertIn("autolevels_render", packaged["handler_autolevels.py"])
@@ -196,6 +200,25 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('LOCAL_HASH=$(shasum "$SCRIPT_DIR/${asset}" | cut -d\' \' -f1)', DEPLOY_TEXT)
         self.assertIn('REMOTE_HASH=$(shasum "${TMP_DIR}/${asset}" | cut -d\' \' -f1)', DEPLOY_TEXT)
         self.assertIn('FATAL: deployed ${asset} does not match local file', DEPLOY_TEXT)
+
+    def test_updated_summary_prints_http_and_https_site_urls_together(self):
+        self.assertIn('echo "  Site:"', DEPLOY_TEXT)
+        self.assertIn('echo "    HTTP:   http://$BUCKET.s3-website-$REGION.amazonaws.com"', DEPLOY_TEXT)
+        self.assertIn('echo "    HTTPS:  https://$BUCKET.s3.$REGION.amazonaws.com/index.html"', DEPLOY_TEXT)
+
+    def test_storage_handler_routes_are_published_by_deploy(self):
+        storage_routes = sorted(set(re.findall(r'path\.endswith\("/([^"]+)"\)', HANDLER_STORAGE_TEXT)))
+        self.assertGreater(len(storage_routes), 10, "failed to discover storage handler routes")
+        missing = []
+        for route in storage_routes:
+            needle = f'ensure_route "POST /{route}" "$STORAGE_INT"'
+            if needle not in DEPLOY_TEXT:
+                missing.append(route)
+        if missing:
+            self.fail(
+                "deploy.sh is missing API Gateway storage routes for: "
+                + ", ".join(missing)
+            )
 
 
 if __name__ == "__main__":

@@ -108,13 +108,40 @@ or
 
 ### Contents
 
-For each service:
+For each frontend service:
 
 - frontend service key
-- API Gateway route
+- direct API Gateway route or base URL shape
 - backing Lambda
-- handler type
+- handler family
 - whether it is directly called from frontend
+
+For storage-like services, the manifest must also list subroutes.
+
+For dispatch-driven flows, the manifest must separately list dispatch targets.
+
+This is important because the current app uses both:
+
+- direct service keys, such as:
+  - `storage`
+  - `preview`
+  - `coeffgen`
+  - `sweep`
+  - `sweep-mt`
+  - `sweep-cm`
+  - `solve_proximity`
+- dispatch targets, such as:
+  - `render_orchestrator`
+  - `palette_orchestrator`
+  - `repalette`
+  - `color_repalette`
+  - `pdf_artifact`
+  - `autolevels`
+  - `deepzoom_export`
+  - `coeffgen`
+  - `sweep`
+  - `sweep_mt`
+  - `sweep_cm`
 
 Example shape:
 
@@ -137,6 +164,22 @@ Example shape:
     },
     "solve_proximity": {
       "base_path": "/solve-proximity"
+    },
+    "dispatch": {
+      "base_path": "/dispatch-render",
+      "targets": [
+        "render_orchestrator",
+        "palette_orchestrator",
+        "repalette",
+        "color_repalette",
+        "pdf_artifact",
+        "autolevels",
+        "deepzoom_export",
+        "coeffgen",
+        "sweep",
+        "sweep_mt",
+        "sweep_cm"
+      ]
     }
   }
 }
@@ -148,7 +191,19 @@ Use the manifest to generate or validate:
 
 - `config.json` contents in [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh)
 - API Gateway `ensure_route` entries in [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh)
-- frontend service key list used by [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html)
+- frontend service key usage in [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html)
+- dispatch target usage in [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html)
+- dispatch target availability in [lambda/handler_dispatch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_dispatch.py)
+
+### Migration rule
+
+Do not switch deploy generation to the manifest first.
+
+The safe order is:
+
+1. scrape current `deploy.sh` / frontend / dispatch state into the manifest
+2. validate the current tree against that manifest
+3. only then make `deploy.sh` generate from it
 
 ### Rule
 
@@ -206,13 +261,15 @@ into:
 
 Test user actions as flows, not just as DOM fragments.
 
-### New test file
+### Test location
 
-Add a focused suite, for example:
+Do not create a second independent frontend harness if it can be avoided.
 
-- [tests/test_frontend_action_contracts.js](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_frontend_action_contracts.js)
+The first implementation should extend:
 
-run from a small shell wrapper or Node directly.
+- [tests/test_frontend_js.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_frontend_js.sh)
+
+Only split into a second JS contract file if the existing shell harness becomes genuinely unmanageable.
 
 ### What it should assert
 
@@ -221,6 +278,7 @@ For each important action:
 - which frontend function is called
 - which service key is used
 - which path is used
+- which dispatch target is used, if any
 - which required payload keys are present
 - what success state is expected in UI state
 - what error state is expected in UI state
@@ -335,14 +393,18 @@ If the action cannot be expressed in a test, it is not ready to merge.
 
 ### Step 1
 
-Add API manifest and move route/service definitions into it.
+Add an additive API manifest generated from the current tree.
 
 ### Step 2
 
-Make [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh) consume the manifest for:
+Validate the current tree against the manifest:
 
-- `ensure_route`
-- `config.json`
+- frontend service keys
+- frontend storage subroutes
+- frontend dispatch targets
+- deploy `config.json`
+- deploy `ensure_route`
+- dispatch target map in [lambda/handler_dispatch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_dispatch.py)
 
 ### Step 3
 
@@ -350,20 +412,23 @@ Add `scripts/predeploy_check.sh` and call it from `deploy.sh update`.
 
 ### Step 4
 
-Add frontend action contract tests for:
+Only after validation is stable, make [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh) consume the manifest for:
+
+- `ensure_route`
+- `config.json`
+
+### Step 5
+
+Extend frontend action contract tests for:
 
 - Favorites
 - PDF
 - Color RePalette
 - Generate-MT
 
-### Step 5
-
-Tighten `lambdaPost()` retry/error policy.
-
 ### Step 6
 
-Add remote API route verification after deploy.
+Tighten `lambdaPost()` retry/error policy.
 
 ## Definition of Done
 
@@ -372,8 +437,9 @@ This plan is successful when:
 1. adding a new frontend route without backend support fails locally
 2. adding a backend route without deploy wiring fails locally
 3. adding a service key to frontend without `config.json` support fails locally
-4. `deploy.sh update` refuses to start AWS work if contract tests fail
-5. first-click failures from missing route/config wiring become rare exceptions instead of routine mistakes
+4. adding a dispatch target to frontend without `handler_dispatch.py` support fails locally
+5. `deploy.sh update` refuses to start AWS work if contract tests fail
+6. first-click failures from missing route/config wiring become rare exceptions instead of routine mistakes
 
 ## Minimum Required Tests After This Plan
 
@@ -399,4 +465,4 @@ It is:
 - generated deploy/config wiring
 - mandatory local predeploy gate
 
-That attacks the real failure mode directly: contract drift between frontend, handlers, and deploy.
+That attacks the real failure mode directly: contract drift between frontend, handlers, dispatch, and deploy.

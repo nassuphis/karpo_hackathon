@@ -232,6 +232,16 @@ class TestWorkflowDefinition(unittest.TestCase):
         worker = color_map["ItemProcessor"]["States"]["RasterWorker"]
         self.assertEqual(worker["Parameters"]["FunctionName.$"], "$.raster_function_name")
 
+    def test_chunked_workers_use_chunk_item_bin_keys(self):
+        hist_selector = self.states["ColorSolveScoreHistMap"]["ItemSelector"]
+        self.assertEqual(hist_selector["bin_key.$"], "$$.Map.Item.Value.bin_key")
+
+        color_raster_selector = self.states["ColorRasterMap"]["ItemSelector"]
+        self.assertEqual(color_raster_selector["bin_key.$"], "$$.Map.Item.Value.bin_key")
+
+        bilevel_selector = self.states["BilevelRasterMap"]["ItemSelector"]
+        self.assertEqual(bilevel_selector["bin_key.$"], "$$.Map.Item.Value.bin_key")
+
     def test_solve_score_tasks_carry_thread_count(self):
         clip_payload = self.states["ColorSolveScoreClipTask"]["Parameters"]["Payload"]
         self.assertEqual(clip_payload["solve_score_threads.$"], "$.plan.solve_score.threads")

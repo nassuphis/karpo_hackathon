@@ -30,6 +30,23 @@ DEFAULT_BACKGROUND_COLOR = "000000"
 DEFAULT_BACKGROUND_THRESHOLD = 4
 
 
+def _build_chunk_items(calc, job_id):
+    chunks = list(calc.get("chunks", calc.get("stripes", [])) or [])
+    if chunks:
+        chunk_items = []
+        for raw in chunks:
+            idx = raw.get("idx", raw.get("chunk_idx", raw.get("stripe_idx")))
+            bin_key = raw.get("bin_key", raw.get("s3_key"))
+            if idx is None or not bin_key:
+                raise RuntimeError(f"Invalid chunk metadata: idx={idx} bin_key={bin_key!r}")
+            chunk_items.append({"chunk_idx": int(idx), "bin_key": str(bin_key)})
+        chunk_items.sort(key=lambda item: item["chunk_idx"])
+        return chunk_items
+
+    n_chunks = calc.get("n_chunks", calc.get("n_stripes", 10))
+    return [{"chunk_idx": c, "bin_key": f"renders/{job_id}/chunk_{c}.bin"} for c in range(n_chunks)]
+
+
 def _validate_omega(value):
     try:
         omega = float(value)
@@ -104,8 +121,9 @@ def handler(event, context):
     viewport = _compute_viewport(job_id, rp)
 
     # Extract calc fields
-    n_chunks = calc.get("n_chunks", calc.get("n_stripes", 10))
     degree = calc.get("degree", 1)
+    chunk_items = _build_chunk_items(calc, job_id)
+    n_chunks = len(chunk_items)
 
     # Grid computation
     pix = rp["pix"]
@@ -116,9 +134,6 @@ def handler(event, context):
 
     # Precompute tile keys for encode
     tile_keys = [f"renders/{job_id}/tile_{t:04d}.raw" for t in range(n_tiles)]
-
-    # Compact chunk items
-    chunk_items = [{"chunk_idx": c} for c in range(n_chunks)]
 
     # Compact tile items (precompute tile_w/tile_h to avoid ASL arithmetic)
     tile_items = []

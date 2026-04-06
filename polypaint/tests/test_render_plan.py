@@ -57,7 +57,29 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["calc"]["degree"] == 5
         assert plan["calc"]["n_chunks"] == 3
         assert len(plan["chunk_items"]) == 3
-        assert plan["chunk_items"][0] == {"chunk_idx": 0}
+        assert plan["chunk_items"][0] == {"chunk_idx": 0, "bin_key": "renders/j/chunk_0.bin"}
+
+    @patch("handler_render_plan._storage_call")
+    def test_color_plan_uses_calc_chunk_bin_keys_when_present(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5,
+            "n_chunks": 99,
+            "chunks": [
+                {"idx": 2, "bin_key": "renders/j/custom/chunk_two.bin"},
+                {"idx": 0, "s3_key": "renders/j/custom/chunk_zero.bin"},
+                {"idx": 1, "bin_key": "renders/j/custom/chunk_one.bin"},
+            ],
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(), None)
+        plan = json.loads(result["body"])
+
+        assert plan["calc"]["n_chunks"] == 3
+        assert plan["chunk_items"] == [
+            {"chunk_idx": 0, "bin_key": "renders/j/custom/chunk_zero.bin"},
+            {"chunk_idx": 1, "bin_key": "renders/j/custom/chunk_one.bin"},
+            {"chunk_idx": 2, "bin_key": "renders/j/custom/chunk_two.bin"},
+        ]
 
     @patch("handler_render_plan._invoke_sync")
     @patch("handler_render_plan._storage_call")

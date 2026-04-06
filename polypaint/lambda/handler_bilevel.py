@@ -52,7 +52,10 @@ def handle_raster(params):
         bin_key = f"renders/{job_id}/chunk_{chunk_idx}.bin"
         bin_path = "/tmp/stripe.bin"
         t0 = time.time()
-        obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
+        try:
+            obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
+        except Exception as e:
+            raise RuntimeError(f"Failed to download root chunk s3://{BUCKET}/{bin_key}: {e}") from e
         with open(bin_path, "wb") as f:
             for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
                 f.write(chunk)
@@ -145,7 +148,10 @@ def handle_coeff_raster(params):
         bin_key = params.get("coeffs_key", f"renders/{job_id}/coeffs_{chunk_idx:04d}.bin")
         bin_path = "/tmp/coeffs.bin"
         t0 = time.time()
-        obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
+        try:
+            obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
+        except Exception as e:
+            raise RuntimeError(f"Failed to download coeffs chunk s3://{BUCKET}/{bin_key}: {e}") from e
         with open(bin_path, "wb") as f:
             for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
                 f.write(chunk)

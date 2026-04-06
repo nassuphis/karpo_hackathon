@@ -65,7 +65,10 @@ def handler(event, context):
         report_status(job_id, task_id, "started", result_data=progress)
 
         t0 = time.time()
-        obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
+        try:
+            obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
+        except Exception as e:
+            raise RuntimeError(f"Failed to download root chunk s3://{BUCKET}/{bin_key}: {e}") from e
         with open(_TMP_INPUT, "wb") as f:
             for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
                 f.write(chunk)
@@ -73,7 +76,10 @@ def handler(event, context):
         progress["dl_ms"] = dl_ms
         progress["source_size"] = os.path.getsize(_TMP_INPUT)
 
-        bins_obj = s3.get_object(Bucket=BUCKET, Key=bins_key)
+        try:
+            bins_obj = s3.get_object(Bucket=BUCKET, Key=bins_key)
+        except Exception as e:
+            raise RuntimeError(f"Failed to download solve-score bins s3://{BUCKET}/{bins_key}: {e}") from e
         bins_data = json.loads(bins_obj["Body"].read())
         if bins_data.get("family") != "solve_score":
             raise RuntimeError(f"Bins artifact missing or wrong family: {bins_data.get('family')}")

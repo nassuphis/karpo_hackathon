@@ -50,7 +50,10 @@ def handle_solve_from_coeffs(params):
         t0 = time.time()
 
         # Download coefficient file (whole file, no range reads)
-        resp = s3.get_object(Bucket=BUCKET, Key=coeffs_key)
+        try:
+            resp = s3.get_object(Bucket=BUCKET, Key=coeffs_key)
+        except Exception as e:
+            raise RuntimeError(f"Failed to download coefficients s3://{BUCKET}/{coeffs_key}: {e}") from e
         coeffs_data = resp["Body"].read()
 
         coeffs_file = "/tmp/coeffs_stripe.bin"

@@ -37,7 +37,10 @@ def _cleanup_tmp():
 
 
 def _download(key, path):
-    obj = s3.get_object(Bucket=BUCKET, Key=key)
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+    except Exception as e:
+        raise RuntimeError(f"Failed to download s3://{BUCKET}/{key}: {e}") from e
     with open(path, "wb") as f:
         for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
             f.write(chunk)

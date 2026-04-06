@@ -47,7 +47,7 @@ All tests live in `polypaint/tests/`.
 | `test_poly795_hand.py` | `poly_795` hand-written coeff function matches Python reference, including slice rewrites and both `np.where` branches | `sweep_test` compiled |
 | `test_low_agreement_hand.py` | Batch parity coverage for the repaired low-agreement coeff funcs promoted from transpiled to hand; the current authoritative function list lives in `CASES` inside the test file | `sweep_test` compiled, numpy |
 | `test_deploy_packaging.py` | Lambda zip contents, local sidecar packaging, executable chmod coverage, and deploy-script regressions such as the PDF layer builder entrypoint/tooling contract | Python only |
-| `test_api_route_contracts.py` | Frontend/API contract checks: `index.html` endpoint usage must match backend handler routes and `deploy.sh` API Gateway wiring | Python only |
+| `test_api_route_contracts.py` | Manifest-backed API contract checks: tracked `api_manifest.json` must match the current tree, frontend service/route usage must match deploy wiring, and dispatch/solver mappings must stay aligned | Python only |
 | `test_pdf_artifact_handler.py` | PDF artifact Lambda: Color source validation, metadata-derived spread composition, PDF upload contract | Python mocks only |
 | `test_frontend_js.sh` | Frontend JS execution: UI logic, TRI palette popup/swatches, dispatch, Render family catalogs, Palette workflow UI, DeepZoom inventory, render perf logging | Node.js (vm module) |
 | `e2e/deepzoom-inventory.spec.js` | DeepZoom inventory: load, sort, select, arrow keys, share links | Playwright browser |
@@ -83,6 +83,8 @@ uv run python -m pytest tests/test_ae_mt.py -q
 uv run python -m pytest tests/test_poly164_hand.py tests/test_coeff_catalog_consistency.py -q
 uv run python -m pytest tests/test_deploy_packaging.py tests/test_pdf_artifact_handler.py -q
 uv run python -m pytest tests/test_api_route_contracts.py tests/test_deploy_packaging.py -q
+python3 api_manifest.py --check
+bash scripts/predeploy_check.sh
 uv run python lambda/gen_parity_results.py
 uv run python -m pytest tests/test_coeff_parity_results.py tests/test_coeff_catalog_consistency.py -q
 uv run python -m pytest tests/test_coeff_catalog_consistency.py tests/test_poly645_hand.py tests/test_poly795_hand.py tests/test_low_agreement_hand.py -q
@@ -109,6 +111,23 @@ The packaging test is permanent and checks the specific PDF-layer regression poi
 - the PDF artifact Lambda is wired into `deploy.sh`
 
 If the real layer build is not run after changing the script, the deploy path is not considered verified.
+
+### Predeploy contract gate
+
+Before `deploy.sh update` touches AWS, run:
+
+```bash
+bash scripts/predeploy_check.sh
+```
+
+This gate checks:
+
+- tracked `api_manifest.json` still matches the current tree
+- API contracts in `tests/test_api_route_contracts.py`
+- deploy/package contracts in `tests/test_deploy_packaging.py`
+- frontend action/contract coverage in `tests/test_frontend_js.sh`
+
+`deploy.sh update` now runs this gate automatically before Lambda layer builds, binary compiles, or AWS updates.
 
 ### Hand override workflow
 

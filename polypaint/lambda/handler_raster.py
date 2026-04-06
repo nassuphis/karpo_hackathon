@@ -49,7 +49,10 @@ def handler(event, context):
         t_dl = time.perf_counter()
         bin_path = "/tmp/stripe.bin"
         saved_bins_path = "/tmp/palette_bins_chunk.bin"
-        obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
+        try:
+            obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
+        except Exception as e:
+            raise RuntimeError(f"Failed to download root chunk s3://{BUCKET}/{bin_key}: {e}") from e
         with open(bin_path, "wb") as f:
             f.write(obj["Body"].read())
 
@@ -100,14 +103,20 @@ def handler(event, context):
         if color == "saved_palette":
             if not saved_palette_bins_key:
                 raise RuntimeError("saved_palette color mode requires saved_palette_bins_key")
-            bins_obj = s3.get_object(Bucket=BUCKET, Key=saved_palette_bins_key)
+            try:
+                bins_obj = s3.get_object(Bucket=BUCKET, Key=saved_palette_bins_key)
+            except Exception as e:
+                raise RuntimeError(f"Failed to download saved palette bins s3://{BUCKET}/{saved_palette_bins_key}: {e}") from e
             with open(saved_bins_path, "wb") as bf:
                 bf.write(bins_obj["Body"].read())
             cmd = [a for a in cmd if not a.startswith("--color=")]
             cmd.append("--color=saved_palette")
             cmd.append(f"--solve_bins_file={saved_bins_path}")
         if ss_bins_key and color in ("solve_score", "solve_proximity"):
-            ss_obj = s3.get_object(Bucket=BUCKET, Key=ss_bins_key)
+            try:
+                ss_obj = s3.get_object(Bucket=BUCKET, Key=ss_bins_key)
+            except Exception as e:
+                raise RuntimeError(f"Failed to download solve-score bins s3://{BUCKET}/{ss_bins_key}: {e}") from e
             ss_data = json.loads(ss_obj["Body"].read())
             # Validate bins artifact — must have family and matching metric
             if ss_data.get("family") != "solve_score":

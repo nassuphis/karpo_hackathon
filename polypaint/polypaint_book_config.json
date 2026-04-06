@@ -4,9 +4,81 @@
   "description": "",
   "author": "",
   "snaps_dir": "snaps",
-  "cover_image": "snaps/compute_mnk2ptxy_color_run_1775291797683_56tfl2.jpeg",
-  "back_image": null,
+  "cover_image": "snaps/compute_mnldwxog_color_run_1775395251839_4ozqvy.jpeg",
+  "back_image": "snaps/compute_mna6w5mo_legacy_color.jpeg",
   "pages": [
+    {
+      "image": "snaps/compute_mn5xlizz_legacy_color.jpeg",
+      "title": "The Furnace Eye",
+      "text": "A creative coefficient function maps ten roots through a cumulative-sum sorting transform, scrambling the natural ordering into layered interference rings. The result is a molten vortex \u2014 teal crystal petals spiraling around a core of burning amber debris. The eye at the center is the void where all ten roots nearly coincide, and the surrounding turbulence is the chaos of their separation.\n\ncreative9 \u00b7 degree 10 \u00b7 2000\u00d72000 \u00b7 rainbow \u00b7 Aberth-Ehrlich",
+      "filename": "legacy_color"
+    },
+    {
+      "image": "snaps/compute_mn949d40_legacy_color.jpeg",
+      "title": "Ouroboros Gate",
+      "text": "Thirty-four roots trace a luminous torus in teal and copper, its surface braided with fine moiré interference where nearby root paths cross. Inside the ring, folded curtains of light reveal the internal geometry \u2014 a nautilus of coefficient-space curvature made visible. The halo above is the whisper of roots escaping to infinity before the solver pulls them back.\n\npoly_373 \u00b7 degree 34 \u00b7 4000\u00d74000 \u00b7 rainbow \u00b7 Aberth-Ehrlich",
+      "filename": "legacy_color"
+    },
+    {
+      "image": "snaps/compute_mna6w5mo_legacy_color.jpeg",
+      "title": "Spectral Owl",
+      "text": "An apparition emerges from the coefficient reversal: a pale blue face with horned crests and hollow eyes, draped in coral ribbons that trail into smoke. The bilateral symmetry comes from the unit-circle parameter sweep; the ghostly translucence from thirty-five roots layered at near-identical positions, each contributing a faint trace that accumulates into this uncanny portrait.\n\npoly_729 \u00b7 degree 35 \u00b7 4000\u00d74000 \u00b7 rainbow \u00b7 Aberth-Ehrlich",
+      "filename": "legacy_color"
+    },
+    {
+      "image": "snaps/compute_mnaqpkax_legacy_color.jpeg",
+      "title": "Jade Orchid",
+      "text": "Four translucent petals of aquamarine light overlap around a molten amber pistil, their edges traced with fine moiré from the thirty-four interfering root paths. The dark silhouette at the center is the singular point where the polynomial's leading coefficient vanishes and the root cloud collapses. The texture within each petal is the ripple pattern of roots threading through near-degenerate coefficient space.\n\npoly_369 \u00b7 degree 34 \u00b7 4000\u00d74000 \u00b7 rainbow \u00b7 Aberth-Ehrlich",
+      "filename": "legacy_color"
+    },
+    {
+      "image": "snaps/compute_mnba3p0f_legacy_color.jpeg",
+      "title": "Chromatic Cuffs",
+      "text": "Eight roots at low degree produce a compact, jewel-like form: two interlocking lobes of teal and amber, polished to a liquid sheen. The simplicity of the polynomial allows each root to carve a distinct surface, and the coefficient reversal folds the figure into bilateral symmetry. The dark eyes within are fixed points where roots lock in place regardless of the parameter sweep.\n\npoly_714 \u00b7 degree 8 \u00b7 4000\u00d74000 \u00b7 rainbow \u00b7 Aberth-Ehrlich",
+      "filename": "legacy_color"
+    },
+    {
+      "image": "snaps/compute_mnd40su0_legacy_color.jpeg",
+      "title": "Iridescent Moth",
+      "text": "Nine roots scatter into a diagonal creature: two broad iridescent wings trailing rainbow striations, a cluster of smaller droplets forming the thorax. The low degree means each root moves independently with ample room, and the coeff3 parameter transform tilts the symmetry axis away from the vertical. The rainbow palette maps root index to hue, so each wing carries the full visible spectrum in parallel bands.\n\ngiga_53 \u00b7 degree 9 \u00b7 4000\u00d74000 \u00b7 rainbow \u00b7 Aberth-Ehrlich",
+      "filename": "legacy_color"
+    },
+    {
+      "image": "snaps/compute_mnd870ks_legacy_color.jpeg",
+      "title": "Pollen Star",
+      "text": "A dense radial burst of gold and violet erupts from a bright central mass, its spokes dissolving into dark tendrils at the periphery. Thirty-five roots at high density create this explosive texture \u2014 the core is where roots cluster tightly, and the violet threads are the few that escape the gravitational pull of the dominant eigenvalues. The coeff10 transform amplifies the higher-order coefficients, scattering the outer roots into chaotic filaments.\n\npoly_344 \u00b7 degree 35 \u00b7 4000\u00d74000 \u00b7 rainbow \u00b7 Aberth-Ehrlich",
+      "filename": "legacy_color"
+    },
+    {
+      "image": "snaps/compute_mnew3s32_color_run_1774978421622_nje71c.jpeg",
+      "title": "Dithered Orbit",
+      "text": "A luminous ring of cyan and green hovers in a haze of scattered point-dust, its surface woven with fine helical bands from the disk-dither perturbation. The dither adds controlled noise to the parameter sweep, breaking the perfect determinism of the root paths into a probabilistic cloud. The anisotropy solve-score lights up where the root cloud stretches asymmetrically \u2014 the ring itself is nearly isotropic, but the interior folds betray directional bias.\n\npoly_484 \u00b7 degree 35 \u00b7 4000\u00d74000 \u00b7 anisotropy \u00b7 rainbow d3 \u00b7 Aberth-Ehrlich",
+      "filename": "color_run_1774978421622_nje71c"
+    },
+    {
+      "image": "snaps/compute_mnfiu1ul_color_run_1775410452166_qfvopn.jpeg",
+      "title": "Iron Butterfly",
+      "text": "Four broad blades radiate from a dark rosette at the center, banded in gradients of crimson, charcoal, and dull gold. The hand-crafted giga_62 function places its twenty-four roots with deliberate asymmetry, and the shelliness score measures how uniformly the roots distribute around their centroid. Where the shell is even, the color is dark; where roots bunch along one radius, the red-gold palette flares to life at the blade tips.\n\ngiga_62 \u00b7 degree 24 \u00b7 4000\u00d74000 \u00b7 shelliness \u00b7 redgold \u00b7 Aberth-Ehrlich",
+      "filename": "color_run_1775410452166_qfvopn"
+    },
+    {
+      "image": "snaps/compute_mnfthc5h_autolevels_1775410207268_zbsl70.jpeg",
+      "title": "Ember Corona",
+      "text": "An autolevels pass stretches the dynamic range of this creative-function render, pulling hidden structure out of the shadows. A ring of crimson embers surrounds a dark cavity, with pale ash-gray shards radiating outward. The nn-variation score measures how inconsistently each root's nearest neighbor changes across the parameter space \u2014 high variation means the neighborhood is unstable, and those zones glow brightest.\n\ncreative9 \u00b7 degree 10 \u00b7 2500\u00d72500 \u00b7 nn variation \u00b7 redgold \u00b7 Aberth-Ehrlich \u00b7 autolevels",
+      "filename": "autolevels_1775410207268_zbsl70"
+    },
+    {
+      "image": "snaps/compute_mnfyeq35_color_run_1775409926322_h4yl1v.jpeg",
+      "title": "Horned Mask",
+      "text": "Eight roots at low degree carve a compact, sculptural form: a face-like mass of ochre and dark red, flanked by curved horns. The shelliness score colors the image by radial uniformity \u2014 where roots form a neat shell around the centroid the tone is flat; where they clump along one axis, the warm palette intensifies. The result is an accidental totem, its expression shifting with each slight change in the coefficient function.\n\npoly_700 \u00b7 degree 8 \u00b7 5000\u00d75000 \u00b7 shelliness \u00b7 redgold \u00b7 Aberth-Ehrlich",
+      "filename": "color_run_1775409926322_h4yl1v"
+    },
+    {
+      "image": "snaps/compute_mngd4m3d_color_run_1775409654621_zehlyt.jpeg",
+      "title": "Bauhaus Pendulum",
+      "text": "A necklace of copper-gold beads encircles a void, suspended from a single dark thread. At the top, a small crown of woven primary colors \u2014 the Bauhaus palette applied to the clusteriness score \u2014 reveals where seventy roots crowd together most tightly. The disk-dither perturbation softens the geometry, and the low grid count leaves each bead individually resolved, each one a miniature solve where the root cluster pattern differs subtly from its neighbors.\n\npoly_70 \u00b7 degree 70 \u00b7 100\u00d7100 \u00b7 clusteriness \u00b7 bauhaus grid 13 \u00b7 Aberth-Ehrlich",
+      "filename": "color_run_1775409654621_zehlyt"
+    },
     {
       "image": "snaps/compute_mnk2ptxy_color_run_1775291797683_56tfl2.jpeg",
       "title": "Autumn Rosary",
@@ -18,6 +90,18 @@
       "title": "Solar Reliquary",
       "text": "Twenty-two hand-wrought coefficients climb through ascending powers, each folded with sine, cosine, and the logarithmic shadow of the parameters. At degree seventy, the roots compress into a gilded sphere ribbed with fine radial teeth, split by a violet meridian where conjugate symmetry breaks. Filaments of scattered light radiate outward \u2014 the outliers, roots that escaped the gravitational center, glowing brightest in the inferno palette where deviation from the median is greatest.\n\npoly_160 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 outlierness \u00b7 inferno \u00b7 Aberth-Ehrlich (parallel)",
       "filename": "color_run_1775395251839_4ozqvy"
+    },
+    {
+      "image": "snaps/compute_mnm353ts_color_repalette_1775415383474_uwhptv.jpeg",
+      "title": "Gilt Crescent",
+      "text": "Forty-nine roots from a moth-family function curl into a sweeping crescent of gold, lavender, and rose. The open arc is woven from hundreds of tiny spiraling loops \u2014 each one a cluster of roots drawn together by the anisotropy score, which measures how elongated the local root cloud becomes. Where the crescent thickens, the loops tighten into a gilded chain; where it frays at the gap, the lavender ink dissolves into a mist of individual filaments. A color repalette applied the ink-gold-lavender tri-palette to a previously computed solve, recoloring without resolving.\n\nmoth4 \u00b7 degree 49 \u00b7 2000\u00d72000 \u00b7 anisotropy \u00b7 ink gold lavender \u00b7 Aberth-Ehrlich (parallel) \u00b7 repalette",
+      "filename": "color_repalette_1775415383474_uwhptv"
+    },
+    {
+      "image": "snaps/compute_mnm4mcr5_color_repalette_1775438508164_a13tad.jpeg",
+      "title": "Corroded Annulus",
+      "text": "A thick torus of weathered bronze and turquoise encircles a ragged black void, its inner wall crumbling into fractal debris. The square-dither perturbation scatters the parameter grid just enough to roughen every surface, and the zzold transform folds old coefficient history back into the current step. The outlierness score picks out roots that stray farthest from the median radial distance \u2014 the cyan shards are the structural outliers, glowing where the annulus erodes. The reef palette gives it the patina of submerged metal reclaimed by the sea.\n\npoly_673 \u00b7 degree 35 \u00b7 3000\u00d73000 \u00b7 outlierness \u00b7 reef \u00b7 Aberth-Ehrlich (parallel) \u00b7 repalette",
+      "filename": "color_repalette_1775438508164_a13tad"
     }
   ]
 }

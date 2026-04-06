@@ -190,6 +190,7 @@ def handle_list(event):
             entry["N"] = calc.get("N", calc.get("n1", 0))
             entry["n1"] = calc.get("n1", entry["N"])
             entry["n_chunks"] = calc.get("n_chunks", calc.get("n_stripes", 0))
+            entry["times"] = calc.get("times", 1)
             chunks = calc.get("chunks", calc.get("stripes", []))
             entry["total_size"] = sum(s.get("bin_size", 0) for s in chunks)
             entry["total_size"] += calc.get("total_coeffs_size", 0)

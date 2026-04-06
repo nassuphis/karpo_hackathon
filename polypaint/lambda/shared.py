@@ -17,6 +17,15 @@ REF_SIZE = 4096  # reference image dimension for scale computation
 _ddb = None
 
 
+def s3_get_object(s3_client, key, bucket=None):
+    """Wrapper around s3.get_object that includes the key in any error message."""
+    bucket = bucket or BUCKET
+    try:
+        return s3_client.get_object(Bucket=bucket, Key=key)
+    except Exception as e:
+        raise RuntimeError(f"S3 GetObject failed: s3://{bucket}/{key} — {e}") from e
+
+
 def _get_ddb():
     """Lazy-init DynamoDB client (avoids cold-start cost for Lambdas that don't use it)."""
     global _ddb

@@ -1934,7 +1934,7 @@ async function testPipeline(name, call) {
         `, ctx);
         // Re-eval just the arrow key handler to capture it
         const appCode = fs.readFileSync(process.argv[5], 'utf8');
-        const handlerMatch = appCode.match(/\/\/ Arrow key navigation[\s\S]*?(?=\nfunction viewDeepZoom)/);
+        const handlerMatch = appCode.match(/\/\/ Arrow key navigation for deepzoom inventory[\s\S]*?(?=\nfunction viewDeepZoom)/);
         if (handlerMatch) {
             vm.runInContext(handlerMatch[0], ctx);
             // Now call it

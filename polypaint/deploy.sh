@@ -105,9 +105,14 @@ SWEEP_CM_MEMORY=4096  # companion matrix eigensolve needs more memory
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
-TEST_PYTHON="$SCRIPT_DIR/../.venv/bin/python"
-if [ ! -x "$TEST_PYTHON" ]; then
-    TEST_PYTHON="python3"
+if command -v uv >/dev/null 2>&1; then
+    TEST_PYTHON=(uv run python)
+elif [ -x "$SCRIPT_DIR/.venv/bin/python" ]; then
+    TEST_PYTHON=("$SCRIPT_DIR/.venv/bin/python")
+elif [ -x "$SCRIPT_DIR/../.venv/bin/python" ]; then
+    TEST_PYTHON=("$SCRIPT_DIR/../.venv/bin/python")
+else
+    TEST_PYTHON=(python3)
 fi
 
 # --- S3 website bucket setup (idempotent) ---
@@ -188,6 +193,13 @@ if [ $? -ne 0 ]; then
 fi
 rm -f /tmp/_jscheck.js
 echo "  JS syntax OK"
+
+echo ""
+echo "Running predeploy contract gate..."
+bash "$SCRIPT_DIR/scripts/predeploy_check.sh" || {
+    echo "FATAL: predeploy contract gate failed"
+    exit 1
+}
 
 # --- Build and publish Lambda layers ---
 echo ""
@@ -319,7 +331,7 @@ cc -O2 -o lambda/sweep_test lambda/sweep_cli.c -lm
 
 # Step 3: Regenerate parity overlay from pytest-backed hand parity suites
 echo "Generating parity overlay from pytest..."
-"$TEST_PYTHON" lambda/gen_parity_results.py || { echo "FATAL: parity overlay generation failed"; exit 1; }
+"${TEST_PYTHON[@]}" lambda/gen_parity_results.py || { echo "FATAL: parity overlay generation failed"; exit 1; }
 
 # Step 4: Probe degrees and generate JS catalog
 echo "Generating JS catalog (probing degrees)..."

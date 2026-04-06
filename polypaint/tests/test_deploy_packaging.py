@@ -10,6 +10,8 @@ LAMBDA_DIR = ROOT / "lambda"
 DEPLOY_TEXT = (ROOT / "deploy.sh").read_text()
 LOCAL_MODULES = {p.stem for p in LAMBDA_DIR.glob("*.py")}
 HANDLER_STORAGE_TEXT = (LAMBDA_DIR / "handler_storage.py").read_text()
+API_MANIFEST_PATH = ROOT / "api_manifest.json"
+PREDEPLOY_SCRIPT_PATH = ROOT / "scripts" / "predeploy_check.sh"
 
 
 def _joined_shell_lines(text):
@@ -219,6 +221,25 @@ class TestDeployPackaging(unittest.TestCase):
                 "deploy.sh is missing API Gateway storage routes for: "
                 + ", ".join(missing)
             )
+
+    def test_phase1_phase2_files_exist_and_are_wired(self):
+        self.assertTrue(API_MANIFEST_PATH.exists(), "api_manifest.json should be tracked")
+        self.assertTrue(PREDEPLOY_SCRIPT_PATH.exists(), "scripts/predeploy_check.sh should exist")
+        self.assertIn('bash "$SCRIPT_DIR/scripts/predeploy_check.sh"', DEPLOY_TEXT)
+        predeploy_text = PREDEPLOY_SCRIPT_PATH.read_text()
+        self.assertIn("api_manifest.py --check", predeploy_text)
+        self.assertIn("tests/test_api_route_contracts.py", predeploy_text)
+        self.assertIn("tests/test_deploy_packaging.py", predeploy_text)
+        self.assertIn("tests/test_frontend_js.sh", predeploy_text)
+
+    def test_python_runner_prefers_uv_with_local_fallbacks(self):
+        predeploy_text = PREDEPLOY_SCRIPT_PATH.read_text()
+        self.assertIn("command -v uv", DEPLOY_TEXT)
+        self.assertIn("command -v uv", predeploy_text)
+        self.assertIn('TEST_PYTHON=(uv run python)', DEPLOY_TEXT)
+        self.assertIn('TEST_PYTHON=(uv run python)', predeploy_text)
+        self.assertIn('$SCRIPT_DIR/.venv/bin/python', DEPLOY_TEXT)
+        self.assertIn('$ROOT/.venv/bin/python', predeploy_text)
 
 
 if __name__ == "__main__":

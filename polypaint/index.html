@@ -419,16 +419,20 @@ button {
                         <button class="btn-secondary" onclick="loadResults()" style="margin:0; padding:4px 12px">Refresh</button>
                         <span id="results-count" style="font-size:11px; color:#666"></span>
                     </div>
+                    <div style="display:flex; gap:4px; margin-bottom:4px; align-items:center">
+                        <input type="text" id="results-filter" placeholder="Filter by function..." style="flex:1; padding:3px 6px; font-size:11px; background:#141424; color:#ccc; border:1px solid #333; border-radius:3px" onkeydown="if(event.key==='Enter')renderResultsTable()">
+                        <button class="btn-secondary" onclick="renderResultsTable()" style="padding:3px 8px; font-size:10px">Filter</button>
+                    </div>
                     <div id="results-scroll" tabindex="0" style="flex:1; overflow-y:auto; border:1px solid #0f3460; border-radius:4px; outline:none">
                         <table style="width:100%; border-collapse:collapse; font-size:11px; font-family:monospace">
                             <thead>
                                 <tr style="background:#1a1a2e; position:sticky; top:0; z-index:1">
                                     <th style="text-align:left; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460">Job ID</th>
-                                    <th style="text-align:left; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460">Function</th>
-                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460">Deg</th>
-                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460">N</th>
-                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460">Chk</th>
-                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460">Size</th>
+                                    <th style="text-align:left; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460; cursor:pointer" onclick="_resultsToggleSort('function')">Function <span id="results-sort-function"></span></th>
+                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460; cursor:pointer" onclick="_resultsToggleSort('degree')">Deg <span id="results-sort-degree"></span></th>
+                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460; cursor:pointer" onclick="_resultsToggleSort('N')">N <span id="results-sort-N"></span></th>
+                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460; cursor:pointer" onclick="_resultsToggleSort('times')">Times <span id="results-sort-times"></span></th>
+                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460; cursor:pointer" onclick="_resultsToggleSort('total_size')">Size <span id="results-sort-total_size"></span></th>
                                 </tr>
                             </thead>
                             <tbody id="results-tbody"></tbody>
@@ -1573,17 +1577,58 @@ async function deleteSelectedFavorite() {
     }
 }
 
+let _resultsSortCol = null;  // null | 'function' | 'degree' | 'N' | 'times' | 'total_size'
+let _resultsSortDir = null;  // null | 'asc' | 'desc'
+
+function _resultsToggleSort(col) {
+    if (_resultsSortCol === col) {
+        if (_resultsSortDir === 'asc') _resultsSortDir = 'desc';
+        else if (_resultsSortDir === 'desc') { _resultsSortCol = null; _resultsSortDir = null; }
+        else { _resultsSortDir = 'asc'; }
+    } else {
+        _resultsSortCol = col;
+        _resultsSortDir = 'asc';
+    }
+    // Update sort indicators
+    for (const c of ['function', 'degree', 'N', 'times', 'total_size']) {
+        const el = document.getElementById('results-sort-' + c);
+        if (el) el.textContent = _resultsSortCol === c ? (_resultsSortDir === 'asc' ? '\u25b2' : '\u25bc') : '';
+    }
+    renderResultsTable();
+}
+
 function renderResultsTable() {
     const tbody = document.getElementById('results-tbody');
     tbody.innerHTML = '';
     const fmtSize = (b) => b > 1e6 ? (b/1e6).toFixed(1)+'M' : (b/1e3).toFixed(0)+'K';
 
-    for (const r of _resultsCache) {
+    // Filter
+    const filterEl = document.getElementById('results-filter');
+    const filter = (filterEl ? filterEl.value.trim().toLowerCase() : '');
+    let rows = _resultsCache;
+    if (filter) {
+        rows = rows.filter(r => (r.function || '').toLowerCase().includes(filter));
+    }
+
+    // Sort
+    if (_resultsSortCol && _resultsSortDir) {
+        const col = _resultsSortCol;
+        const dir = _resultsSortDir === 'asc' ? 1 : -1;
+        rows = [...rows].sort((a, b) => {
+            let va = col === 'function' ? (a[col] || '') : (Number(a[col]) || 0);
+            let vb = col === 'function' ? (b[col] || '') : (Number(b[col]) || 0);
+            if (col === 'N') { va = Number(a.N || a.n1 || 0); vb = Number(b.N || b.n1 || 0); }
+            if (col === 'times') { va = Number(a.times || 1); vb = Number(b.times || 1); }
+            if (typeof va === 'string') return dir * va.localeCompare(vb);
+            return dir * (va - vb);
+        });
+    }
+
+    for (const r of rows) {
         const tr = document.createElement('tr');
         if (r.job_id === _selectedJobId) tr.className = 'selected';
         tr.onclick = () => selectResult(r.job_id);
 
-        // Short ID: strip "compute_" prefix
         const shortId = r.job_id.replace(/^compute_/, '');
 
         tr.innerHTML =
@@ -1591,7 +1636,7 @@ function renderResultsTable() {
             `<td style="color:#4ecca3">${r.function || '?'}</td>` +
             `<td style="text-align:right">${r.degree || ''}</td>` +
             `<td style="text-align:right">${r.N || r.n1 || ''}</td>` +
-            `<td style="text-align:right">${r.n_chunks || r.n_stripes || ''}</td>` +
+            `<td style="text-align:right">${r.times || 1}</td>` +
             `<td style="text-align:right;color:#888">${fmtSize(r.total_size || 0)}</td>`;
         tbody.appendChild(tr);
     }

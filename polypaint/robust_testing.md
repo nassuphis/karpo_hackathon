@@ -159,9 +159,6 @@ Example shape:
         "/delete-favorite"
       ]
     },
-    "dispatch": {
-      "base_path": "/dispatch-render"
-    },
     "solve_proximity": {
       "base_path": "/solve-proximity"
     },
@@ -194,6 +191,7 @@ Use the manifest to generate or validate:
 - frontend service key usage in [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html)
 - dispatch target usage in [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html)
 - dispatch target availability in [lambda/handler_dispatch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_dispatch.py)
+- solver endpoint mapping in [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html), especially `sweep`, `sweep-mt`, and `sweep-cm`
 
 ### Migration rule
 
@@ -204,6 +202,12 @@ The safe order is:
 1. scrape current `deploy.sh` / frontend / dispatch state into the manifest
 2. validate the current tree against that manifest
 3. only then make `deploy.sh` generate from it
+
+Phase 1 is validation-only.
+
+It must not change runtime behavior.
+It must not make `deploy.sh` consume the manifest yet.
+Its only job is to describe current reality and fail locally when the tree drifts away from it.
 
 ### Rule
 
@@ -270,6 +274,12 @@ The first implementation should extend:
 - [tests/test_frontend_js.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_frontend_js.sh)
 
 Only split into a second JS contract file if the existing shell harness becomes genuinely unmanageable.
+
+The first extension of the current contract tests must cover:
+
+- dispatch targets used from `lambdaPost('dispatch', { target: ... })`
+- dynamic solver direct endpoints chosen by `_solverLoresEndpoint(...)`
+- dynamic solver dispatch targets chosen by `_solverDispatchTarget(...)`
 
 ### What it should assert
 
@@ -402,6 +412,8 @@ Validate the current tree against the manifest:
 - frontend service keys
 - frontend storage subroutes
 - frontend dispatch targets
+- frontend dynamic solver service mapping
+- frontend dynamic solver dispatch mapping
 - deploy `config.json`
 - deploy `ensure_route`
 - dispatch target map in [lambda/handler_dispatch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_dispatch.py)
@@ -438,8 +450,9 @@ This plan is successful when:
 2. adding a backend route without deploy wiring fails locally
 3. adding a service key to frontend without `config.json` support fails locally
 4. adding a dispatch target to frontend without `handler_dispatch.py` support fails locally
-5. `deploy.sh update` refuses to start AWS work if contract tests fail
-6. first-click failures from missing route/config wiring become rare exceptions instead of routine mistakes
+5. adding a solver endpoint/dispatch mapping in frontend without matching deploy/dispatch support fails locally
+6. `deploy.sh update` refuses to start AWS work if contract tests fail
+7. first-click failures from missing route/config wiring become rare exceptions instead of routine mistakes
 
 ## Minimum Required Tests After This Plan
 
@@ -449,6 +462,14 @@ These must be part of the normal predeploy path:
 uv run python -m pytest tests/test_api_route_contracts.py tests/test_deploy_packaging.py -q
 bash tests/test_frontend_js.sh
 ```
+
+And for Phase 1 specifically, the contract suite is not done until it covers:
+
+- direct frontend services
+- storage subroutes
+- dispatch targets
+- solver endpoint mapping
+- solver dispatch mapping
 
 For route-heavy or new-action changes, also run:
 

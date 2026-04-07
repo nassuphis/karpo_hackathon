@@ -157,6 +157,7 @@
               "solve_score_omega.$": "$.plan.solve_score.omega",
               "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
               "solve_score_threads.$": "$.plan.solve_score.threads",
+              "solve_score_hist_input_mode.$": "$.plan.solve_score.hist_input_mode",
               "bin_key.$": "$$.Map.Item.Value.bin_key",
               "degree.$": "$.plan.calc.degree",
               "clip_key.$": "$.plan.solve_score.clip_key",

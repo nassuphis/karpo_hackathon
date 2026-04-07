@@ -21,6 +21,7 @@ BINARY = os.path.join(os.path.dirname(__file__), "solve_proximity_stats")
 VALID_METRICS = {"proximity", "crowding", "spread", "anisotropy", "area",
                  "clusteriness", "shelliness", "outlierness", "nn_variation", "real_axis_proximity",
                  "centroid_re", "centroid_im", "centroid_dist", "dist_unit_circle", "asymmetry_re"}
+VALID_HIST_INPUT_MODES = {"tmpfile", "stdin"}
 
 _TMP_INPUT = "/tmp/solve_prox_input.bin"
 _TMP_XFORMS = "/tmp/solve_prox_root_xforms.json"
@@ -123,6 +124,48 @@ def _validate_threads(value, default=1):
     return threads
 
 
+def _validate_hist_input_mode(value):
+    mode = str(value or "tmpfile").strip().lower()
+    if mode not in VALID_HIST_INPUT_MODES:
+        raise RuntimeError(f"solve_score_hist_input_mode must be one of {', '.join(sorted(VALID_HIST_INPUT_MODES))}, got {value!r}")
+    return mode
+
+
+def _run_binary_with_streamed_input(cmd, obj, input_size, timeout=120):
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    body = obj["Body"]
+    try:
+        t_stream = time.time()
+        try:
+            if proc.stdin is None:
+                raise RuntimeError("stdin pipe unavailable")
+            for chunk in body.iter_chunks(chunk_size=1024 * 1024):
+                if not chunk:
+                    continue
+                proc.stdin.write(chunk)
+        except BrokenPipeError:
+            pass
+        finally:
+            if proc.stdin is not None:
+                proc.stdin.close()
+        stream_ms = int((time.time() - t_stream) * 1000)
+        t_wait = time.time()
+        stdout = proc.stdout.read() if proc.stdout is not None else b""
+        stderr = proc.stderr.read() if proc.stderr is not None else b""
+        rc = proc.wait(timeout=timeout)
+        wait_ms = int((time.time() - t_wait) * 1000)
+        return rc, stdout.decode("utf-8", errors="replace"), stderr.decode("utf-8", errors="replace"), stream_ms, wait_ms
+    except Exception:
+        proc.kill()
+        proc.wait()
+        raise
+    finally:
+        try:
+            body.close()
+        except Exception:
+            pass
+
+
 def handle_clip(params):
     job_id = params["job_id"]
     task_id = params["task_id"]
@@ -219,45 +262,77 @@ def handle_hist(params):
     solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
     solve_score_omega_enabled = _validate_omega_enabled(params.get("solve_score_omega_enabled", True))
     solve_score_threads = _validate_threads(params.get("solve_score_threads", 1), default=1)
+    solve_score_hist_input_mode = _validate_hist_input_mode(params.get("solve_score_hist_input_mode", "tmpfile"))
     bin_key = params["bin_key"]
     degree = params["degree"]
     clip_key = params["clip_key"]
     hist_bins = params.get("hist_bins", 100)
     root_transforms = params.get("root_transforms")
     out_key = params["out_key"]
-    progress = {"phase": "hist", "metric": metric, "chunk_idx": chunk_idx, "omega": solve_score_omega, "omega_enabled": solve_score_omega_enabled, "threads": solve_score_threads}
+    progress = {
+        "phase": "hist",
+        "metric": metric,
+        "chunk_idx": chunk_idx,
+        "omega": solve_score_omega,
+        "omega_enabled": solve_score_omega_enabled,
+        "threads": solve_score_threads,
+        "input_mode": solve_score_hist_input_mode,
+    }
 
     try:
         _cleanup_tmp()
         report_status(job_id, task_id, "started", result_data=progress)
 
         t0 = time.time()
-        size = _download(bin_key, _TMP_INPUT)
-        progress["source_size"] = size
-
         clip_obj = s3.get_object(Bucket=BUCKET, Key=clip_key)
         clip_data = json.loads(clip_obj["Body"].read())
-        dl_ms = int((time.time() - t0) * 1000)
-        progress["dl_ms"] = dl_ms
 
-        report_status(job_id, task_id, "bin_downloaded", result_data=progress)
-
-        cmd = [BINARY, _TMP_INPUT, "--mode=hist", f"--degree={degree}",
-               f"--metric={metric}",
-               f"--clip_lo={clip_data['clip_lo']}", f"--clip_hi={clip_data['clip_hi']}",
-               f"--hist_bins={hist_bins}", f"--omega={solve_score_omega}", f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
-               f"--threads={solve_score_threads}"]
         xf_path = _write_xforms(root_transforms)
+        cmd = [
+            BINARY,
+            _TMP_INPUT if solve_score_hist_input_mode == "tmpfile" else "-",
+            "--mode=hist",
+            f"--degree={degree}",
+            f"--metric={metric}",
+            f"--clip_lo={clip_data['clip_lo']}",
+            f"--clip_hi={clip_data['clip_hi']}",
+            f"--hist_bins={hist_bins}",
+            f"--omega={solve_score_omega}",
+            f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
+            f"--threads={solve_score_threads}",
+        ]
         if xf_path:
             cmd.append(f"--root_xforms={xf_path}")
 
-        t1 = time.time()
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        compute_ms = int((time.time() - t1) * 1000)
-        if result.returncode != 0:
-            raise RuntimeError(f"solve_proximity_stats hist failed: {result.stderr.strip()}")
+        hist_stdout = None
+        hist_stderr = None
+        hist_rc = 0
+        if solve_score_hist_input_mode == "stdin":
+            bin_obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
+            input_size = int(bin_obj.get("ContentLength") or 0)
+            if input_size > 0:
+                cmd.append(f"--input_size={input_size}")
+            progress["source_size"] = input_size
+            pre_stream_ms = int((time.time() - t0) * 1000)
+            hist_rc, hist_stdout, hist_stderr, stream_ms, compute_ms = _run_binary_with_streamed_input(cmd, bin_obj, input_size, timeout=120)
+            progress["dl_ms"] = pre_stream_ms + stream_ms
+            report_status(job_id, task_id, "bin_downloaded", result_data=progress)
+        else:
+            size = _download(bin_key, _TMP_INPUT)
+            progress["source_size"] = size
+            progress["dl_ms"] = int((time.time() - t0) * 1000)
+            report_status(job_id, task_id, "bin_downloaded", result_data=progress)
+            t1 = time.time()
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            compute_ms = int((time.time() - t1) * 1000)
+            hist_rc = result.returncode
+            hist_stdout = result.stdout
+            hist_stderr = result.stderr
 
-        hist_data = json.loads(result.stdout)
+        if hist_rc != 0:
+            raise RuntimeError(f"solve_proximity_stats hist failed: {(hist_stderr or '').strip()}")
+
+        hist_data = json.loads(hist_stdout)
         progress["compute_ms"] = compute_ms
         progress["threads"] = int(hist_data.get("threads", solve_score_threads))
         progress["n_solves"] = hist_data["n_solves"]

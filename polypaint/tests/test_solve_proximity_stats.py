@@ -110,6 +110,30 @@ def run_clip(bin_path, degree, metric="proximity", **kwargs):
                 pass
 
 
+def run_clip_stdin(bin_path, degree, metric="proximity", **kwargs):
+    """Run clip mode via Docker, streaming the input file on stdin."""
+    docker_bin = "/src/_test_input.bin"
+    host_bin = os.path.join(LAMBDA_DIR, "_test_input.bin")
+    shutil.copy(bin_path, host_bin)
+    try:
+        size = os.path.getsize(host_bin)
+        args = (
+            f"/src/solve_proximity_stats - --input_size={size} --mode=clip "
+            f"--degree={degree} --metric={metric} < {docker_bin}"
+        )
+        for k, v in kwargs.items():
+            args += f" --{k}={v}"
+        r = _docker_run(args)
+        if r.returncode != 0:
+            return None, r.stderr
+        return json.loads(r.stdout), None
+    finally:
+        try:
+            os.remove(host_bin)
+        except OSError:
+            pass
+
+
 def run_hist(bin_path, degree, clip_lo, clip_hi, hist_bins=100, metric="proximity", **kwargs):
     """Run hist mode via Docker."""
     import shutil
@@ -119,6 +143,30 @@ def run_hist(bin_path, degree, clip_lo, clip_hi, hist_bins=100, metric="proximit
         args = (f"/src/solve_proximity_stats /src/_test_input.bin --mode=hist "
                 f"--degree={degree} --clip_lo={clip_lo} --clip_hi={clip_hi} "
                 f"--hist_bins={hist_bins} --metric={metric}")
+        for k, v in kwargs.items():
+            args += f" --{k}={v}"
+        r = _docker_run(args)
+        if r.returncode != 0:
+            return None, r.stderr
+        return json.loads(r.stdout), None
+    finally:
+        try:
+            os.remove(host_bin)
+        except OSError:
+            pass
+
+
+def run_hist_stdin(bin_path, degree, clip_lo, clip_hi, hist_bins=100, metric="proximity", **kwargs):
+    """Run hist mode via Docker, streaming the input file on stdin."""
+    host_bin = os.path.join(LAMBDA_DIR, "_test_input.bin")
+    shutil.copy(bin_path, host_bin)
+    try:
+        size = os.path.getsize(host_bin)
+        args = (
+            f"/src/solve_proximity_stats - --input_size={size} --mode=hist "
+            f"--degree={degree} --clip_lo={clip_lo} --clip_hi={clip_hi} "
+            f"--hist_bins={hist_bins} --metric={metric} < /src/_test_input.bin"
+        )
         for k, v in kwargs.items():
             args += f" --{k}={v}"
         r = _docker_run(args)
@@ -175,6 +223,22 @@ def test_clip_basic():
     os.remove(path)
 
 
+def test_clip_stdin_matches_file_input():
+    path = "/tmp/sp_test_clip_stdin.bin"
+    write_bin(path, [SOLVE_A, SOLVE_B, SOLVE_C], 2)
+    file_result, file_err = run_clip(path, 2, metric="proximity")
+    stdin_result, stdin_err = run_clip_stdin(path, 2, metric="proximity")
+    assert file_result is not None, f"file clip failed: {file_err}"
+    assert stdin_result is not None, f"stdin clip failed: {stdin_err}"
+    assert stdin_result["n_solves"] == file_result["n_solves"]
+    assert stdin_result["metric"] == file_result["metric"]
+    assert abs(stdin_result["clip_lo"] - file_result["clip_lo"]) < 1e-12
+    assert abs(stdin_result["clip_hi"] - file_result["clip_hi"]) < 1e-12
+    assert abs(stdin_result["min_score"] - file_result["min_score"]) < 1e-12
+    assert abs(stdin_result["max_score"] - file_result["max_score"]) < 1e-12
+    os.remove(path)
+
+
 def test_clip_many_solves():
     """Clip with 200 solves to exercise quantile path."""
     path = "/tmp/sp_test_clip_many.bin"
@@ -206,6 +270,20 @@ def test_hist_basic():
     # With default omega=1, u=0 and u=1 both map to the top bin, while u=0.5 maps to the bottom bin.
     assert result["hist"][0] >= 1, f"bin 0 should have solve_c after omega remap: {result['hist']}"
     assert result["hist"][9] >= 2, f"bin 9 should have solve_a and solve_b after omega remap: {result['hist']}"
+    os.remove(path)
+
+
+def test_hist_stdin_matches_file_input():
+    path = "/tmp/sp_test_hist_stdin.bin"
+    write_bin(path, [SOLVE_A, SOLVE_B, SOLVE_C], 2)
+    file_result, file_err = run_hist(path, 2, clip_lo=0.0, clip_hi=2.0, hist_bins=10, metric="proximity")
+    stdin_result, stdin_err = run_hist_stdin(path, 2, clip_lo=0.0, clip_hi=2.0, hist_bins=10, metric="proximity")
+    assert file_result is not None, f"file hist failed: {file_err}"
+    assert stdin_result is not None, f"stdin hist failed: {stdin_err}"
+    assert stdin_result["n_solves"] == file_result["n_solves"]
+    assert stdin_result["metric"] == file_result["metric"]
+    assert stdin_result["threads"] == file_result["threads"]
+    assert stdin_result["hist"] == file_result["hist"]
     os.remove(path)
 
 

@@ -83,6 +83,319 @@ But the backend must become:
 - exact raster winner parity with single-thread output
 - proximity-mode MT in the first native pass unless it is straightforward
 
+## Immediate A/B: solve-score hist input mode
+
+Before broader architecture changes, there is one small, self-contained
+optimization worth measuring directly:
+
+- remove the `/tmp` write/read round-trip from the solve-score `hist` phase
+
+Today the path is:
+
+1. Python downloads a chunk from S3 to `/tmp/solve_prox_input.bin`
+2. Python launches `solve_proximity_stats /tmp/solve_prox_input.bin ...`
+3. the C binary opens that file and reads the whole chunk back into RAM
+4. pthread workers compute on the in-memory buffer
+
+That means:
+
+- one S3 download per hist Lambda
+- one local disk write per hist Lambda
+- one local disk read per hist Lambda
+
+The threads themselves do not download anything.
+
+### Goal
+
+Add an explicit benchmark toggle for solve-score hist input mode:
+
+- `tmp file`
+- `stdin`
+
+The user must be able to run both modes from the UI and compare logs.
+
+### Why make it user-selectable
+
+This is a performance experiment.
+
+Do not silently switch the codepath.
+
+We want:
+
+- same compute job
+- same render settings
+- same thread count
+- one changed variable: hist input mode
+
+That means the mode must be:
+
+- visible in the popup
+- visible in progress logs
+- visible in final perf summaries
+
+## UI plan for hist input mode
+
+### Generate
+
+`Render -> Color -> Generate` should only open a popup when:
+
+- `color_mode === solve_score`
+
+For all other color modes:
+
+- `Generate` should keep its current direct behavior
+
+When `color_mode === solve_score`, `Generate` opens a small popup with:
+
+- `Histogram input`
+  - `tmp file`
+  - `stdin`
+- short summary of current baseline thread usage:
+  - `solve score threads=1`
+  - `raster threads=1`
+
+This popup is a baseline A/B chooser, not a full MT control surface.
+
+### Generate-MT
+
+Keep the existing `Generate-MT` popup, but add one more control:
+
+- `Histogram input`
+  - `tmp file`
+  - `stdin`
+
+So the MT popup becomes:
+
+- `Solve score threads`
+- `Raster threads`
+- `Histogram input`
+
+### Logging
+
+All solve-score hist progress logs must include:
+
+- `threads=<N>`
+- `input=tmpfile` or `input=stdin`
+
+Examples:
+
+- `Solve score: hist 324/500 · wall=111.9s aggregate=dl 1001.0s + compute 19.3s · threads=7 · input=tmpfile`
+- `Solve score: hist 324/500 · wall=104.2s aggregate=dl 812.4s + compute 19.0s · threads=7 · input=stdin`
+
+Final phase/perf summaries should also include the input mode.
+
+## Backend parameter plan
+
+Add a new render parameter:
+
+- `solve_score_hist_input_mode`
+
+Allowed values:
+
+- `tmpfile`
+- `stdin`
+
+Default:
+
+- `tmpfile`
+
+Reason:
+
+- baseline remains the current shipped behavior
+- experiment is explicit
+
+### Parameter plumbing
+
+Thread this parameter through:
+
+- `index.html`
+- `lambda/handler_render_plan.py`
+- `stepfunctions/render_workflow.asl.json.template`
+- `lambda/handler_solve_proximity.py`
+
+It only matters for solve-score phases, especially `hist`.
+
+It may be passed through `clip` and `summary` too for consistency, but
+the primary benchmark target is `hist`.
+
+## Native/C implementation plan
+
+### Current limitation
+
+[lambda/solve_proximity_stats.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_proximity_stats.c)
+currently requires a seekable file path:
+
+- reads `argv[1]`
+- `fopen()`
+- `fseek()/ftell()`
+- `fread()`
+
+So a pipe cannot work with the current code.
+
+### New input contract
+
+Teach the binary to accept:
+
+- normal file path
+- `-` meaning `stdin`
+- optional `--input_size=BYTES`
+
+### `stdin` mode behavior
+
+Do not implement stdin mode as an unbounded `realloc` growth loop unless
+there is no size information.
+
+Preferred behavior:
+
+1. the handler gets the S3 object `Content-Length`
+2. the handler passes `--input_size=BYTES`
+3. when `argv[1] == "-"`, the binary:
+   - `malloc()`s exactly once
+   - reads stdin into that preallocated buffer
+   - validates that the expected byte count was fully read
+
+Fallback behavior:
+
+- if `--input_size` is absent, use a growable buffer path
+
+So the primary path is:
+
+1. preallocate from `--input_size`
+2. read stdin fully into RAM
+3. validate total byte count
+4. compute `nSolves` from `degree`
+5. run the existing threaded compute on that buffer
+
+Important:
+
+- keep the file-path mode unchanged
+- do not fork a second binary
+- keep one codepath after the buffer is in memory
+
+### Why this is safe
+
+This does not change:
+
+- metric math
+- histogram math
+- thread partitioning
+- JSON output schema
+
+It only changes how the input chunk gets into RAM.
+
+## Python/Lambda implementation plan
+
+### `tmpfile` mode
+
+Keep the current behavior:
+
+1. download S3 object to `/tmp/solve_prox_input.bin`
+2. launch the binary with that path
+
+### `stdin` mode
+
+In [lambda/handler_solve_proximity.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_solve_proximity.py):
+
+1. call `s3.get_object(...)`
+2. read `Content-Length`
+2. start `subprocess.Popen(...)` with:
+   - `stdin=subprocess.PIPE`
+   - `stdout=subprocess.PIPE`
+   - `stderr=subprocess.PIPE`
+3. launch the binary as:
+   - `solve_proximity_stats - --input_size=<Content-Length> --mode=hist ...`
+4. stream `Body.iter_chunks(...)` into child stdin
+5. close stdin
+6. collect stdout/stderr
+
+This removes:
+
+- the `/tmp` input file write
+- the C-side reopen of that file
+- the C-side reread from disk
+
+It does **not** remove:
+
+- one S3 download per hist Lambda
+- the shared clip JSON fetch
+
+## Expected outcome
+
+This is an incremental optimization, not a full architectural fix.
+
+It should reduce:
+
+- per-worker local I/O
+- per-worker `dl_ms`
+- maybe phase wall time
+
+It will not solve the bigger issue that:
+
+- hist is still one Lambda per chunk
+- and therefore still strongly S3/object-overhead bound
+
+So success criteria are modest:
+
+- measurable reduction in aggregate hist `dl`
+- measurable reduction in hist wall time on the same job/settings
+- no correctness drift
+
+## Tests
+
+### Native / unit
+
+Add tests for `solve_proximity_stats`:
+
+- file-path input still works
+- stdin input produces identical JSON output for the same chunk
+- both `clip` and `hist` keep existing behavior
+
+### Lambda handler
+
+Add handler tests for:
+
+- `solve_score_hist_input_mode=tmpfile`
+- `solve_score_hist_input_mode=stdin`
+- invalid mode rejected
+
+The handler tests should assert:
+
+- tmpfile mode uses `_download(...)`
+- stdin mode uses child stdin streaming
+- returned progress/result payload includes the input mode
+
+### Frontend
+
+Extend [tests/test_frontend_js.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_frontend_js.sh):
+
+- `Generate` opens popup only in solve-score mode
+- popup includes hist input selector
+- `Generate-MT` popup includes hist input selector
+- orchestrator payload includes `solve_score_hist_input_mode`
+- log lines include `input=...`
+
+## Implementation order
+
+1. add binary stdin support
+2. add handler support and progress metadata
+3. add popup control in `Generate-MT`
+4. add conditional popup for `Generate` in solve-score mode
+5. add logging
+6. add regression tests
+7. benchmark `tmpfile` vs `stdin`
+
+## Decision rule
+
+After benchmarking:
+
+- if `stdin` gives a clear win, make it the default
+- but only after the benchmark path has been validated in the UI and logs
+
+Until then:
+
+- keep `tmpfile` as the default baseline
+- keep the input mode explicit
+
 ## Where the Time Actually Goes
 
 For `Render -> Color -> Generate` in `solve_score` mode there are two expensive areas:
@@ -225,6 +538,22 @@ Suggested shape:
 - `tile_occ_words`
 - `tile_rgb`
 - `tile_bin`
+
+### Solve-score thread-safety prerequisite
+
+For `color_mode=solve_score`, raster workers will call the solve-score
+metric path concurrently.
+
+That requires [lambda/solve_score.h](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_score.h)
+to remain thread-safe under concurrent calls.
+
+The current expectation is:
+
+- no shared mutable global scratch state
+- only per-call stack buffers or local heap allocations
+
+This should be treated as an explicit implementation check, not an
+implicit assumption.
 
 ### Pixel claim semantics
 

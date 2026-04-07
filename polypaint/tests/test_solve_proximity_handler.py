@@ -17,6 +17,21 @@ import unittest.mock as mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 
+class _ChunkBody:
+    def __init__(self, data):
+        self._data = data
+
+    def read(self):
+        return self._data
+
+    def iter_chunks(self, chunk_size=1024 * 1024):
+        for i in range(0, len(self._data), chunk_size):
+            yield self._data[i:i + chunk_size]
+
+    def close(self):
+        return None
+
+
 def _make_mock_s3(clip_data, hist_responses):
     """Build a mock S3 client for merge tests."""
     mock_s3 = mock.MagicMock()
@@ -29,6 +44,23 @@ def _make_mock_s3(clip_data, hist_responses):
             data = hist_responses[key]
             return {"Body": mock.MagicMock(read=lambda d=data: json.dumps(d).encode())}
         raise mock_s3.exceptions.NoSuchKey({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+
+    mock_s3.get_object = mock_get
+    mock_s3.put_object = mock.MagicMock()
+    mock_s3.exceptions = type('Exc', (), {'NoSuchKey': type('NoSuchKey', (Exception,), {})})()
+    return mock_s3
+
+
+def _make_hist_mock_s3(bin_bytes, clip_data):
+    mock_s3 = mock.MagicMock()
+
+    def mock_get(**kwargs):
+        key = kwargs.get("Key", "")
+        if key == "renders/test/chunk_0.bin":
+            return {"Body": _ChunkBody(bin_bytes), "ContentLength": len(bin_bytes)}
+        if key == "renders/test/solve_scores/clip.json":
+            return {"Body": _ChunkBody(json.dumps(clip_data).encode())}
+        raise AssertionError(f"unexpected get_object key: {key}")
 
     mock_s3.get_object = mock_get
     mock_s3.put_object = mock.MagicMock()
@@ -84,6 +116,104 @@ def _uniform_hist_data(prefix, n_stripes, metric="proximity", clip_quantile=0.00
             "hist": [20] * 100, "n_solves": 2000,
         }
     return clip_data, hist_responses
+
+
+def test_hist_tmpfile_mode_runs_binary_with_tmp_input():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = _make_hist_mock_s3(
+        b"\x00" * 32,
+        {"clip_lo": 0.0, "clip_hi": 1.0, "family": "solve_score", "metric": "proximity"},
+    )
+    mock_run = mock.MagicMock(return_value=mock.MagicMock(
+        returncode=0,
+        stdout=json.dumps({"threads": 2, "n_solves": 2, "hist": [2, 0, 0, 0]}),
+        stderr="",
+    ))
+    orig_s3, orig_report, orig_run = hsp.s3, hsp.report_status, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.report_status = mock.MagicMock()
+    hsp.subprocess.run = mock_run
+    try:
+        result = hsp.handle_hist({
+            "job_id": "test",
+            "task_id": "hist_test",
+            "chunk_idx": 0,
+            "metric": "proximity",
+            "bin_key": "renders/test/chunk_0.bin",
+            "degree": 2,
+            "clip_key": "renders/test/solve_scores/clip.json",
+            "hist_bins": 4,
+            "out_key": "renders/test/solve_scores/chunk_0_hist.json",
+        })
+        body = json.loads(result["body"])
+        assert body["input_mode"] == "tmpfile"
+        cmd = mock_run.call_args.args[0]
+        assert cmd[1] == hsp._TMP_INPUT
+        assert not any(arg.startswith("--input_size=") for arg in cmd)
+    finally:
+        hsp.s3 = orig_s3
+        hsp.report_status = orig_report
+        hsp.subprocess.run = orig_run
+
+
+def test_hist_stdin_mode_streams_input_and_passes_input_size():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = _make_hist_mock_s3(
+        b"\x01" * 48,
+        {"clip_lo": -1.0, "clip_hi": 2.0, "family": "solve_score", "metric": "centroid_re"},
+    )
+    mock_stream = mock.MagicMock(return_value=(0, json.dumps({"threads": 5, "n_solves": 3, "hist": [1, 1, 1]}), "", 12, 34))
+    orig_s3, orig_report, orig_stream = hsp.s3, hsp.report_status, hsp._run_binary_with_streamed_input
+    hsp.s3 = mock_s3
+    hsp.report_status = mock.MagicMock()
+    hsp._run_binary_with_streamed_input = mock_stream
+    try:
+        result = hsp.handle_hist({
+            "job_id": "test",
+            "task_id": "hist_test",
+            "chunk_idx": 0,
+            "metric": "centroid_re",
+            "bin_key": "renders/test/chunk_0.bin",
+            "degree": 3,
+            "clip_key": "renders/test/solve_scores/clip.json",
+            "hist_bins": 3,
+            "out_key": "renders/test/solve_scores/chunk_0_hist.json",
+            "solve_score_hist_input_mode": "stdin",
+        })
+        body = json.loads(result["body"])
+        assert body["input_mode"] == "stdin"
+        cmd = mock_stream.call_args.args[0]
+        assert cmd[1] == "-"
+        assert any(arg == "--input_size=48" for arg in cmd)
+        streamed_obj = mock_stream.call_args.args[1]
+        assert streamed_obj["ContentLength"] == 48
+    finally:
+        hsp.s3 = orig_s3
+        hsp.report_status = orig_report
+        hsp._run_binary_with_streamed_input = orig_stream
+
+
+def test_hist_invalid_input_mode_rejected():
+    import handler_solve_proximity as hsp
+
+    try:
+        hsp.handle_hist({
+            "job_id": "test",
+            "task_id": "hist_test",
+            "chunk_idx": 0,
+            "metric": "proximity",
+            "bin_key": "renders/test/chunk_0.bin",
+            "degree": 2,
+            "clip_key": "renders/test/solve_scores/clip.json",
+            "hist_bins": 4,
+            "out_key": "renders/test/solve_scores/chunk_0_hist.json",
+            "solve_score_hist_input_mode": "pipe",
+        })
+        assert False, "should have raised on invalid solve_score_hist_input_mode"
+    except RuntimeError as e:
+        assert "solve_score_hist_input_mode" in str(e)
 
 
 def test_merge_uniform_histogram():

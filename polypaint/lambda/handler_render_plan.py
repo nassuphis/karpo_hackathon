@@ -91,6 +91,13 @@ def _validate_thread_count(value, field_name):
     return threads
 
 
+def _validate_hist_input_mode(value):
+    mode = str(value or "tmpfile").strip().lower()
+    if mode not in ("tmpfile", "stdin"):
+        raise RuntimeError(f"solve_score_hist_input_mode must be 'tmpfile' or 'stdin', got {value!r}")
+    return mode
+
+
 def _load_palette_meta(job_id, palette_id):
     try:
         obj = s3.get_object(Bucket=BUCKET, Key=f"renders/{job_id}/palettes/{palette_id}/meta.json")
@@ -166,6 +173,7 @@ def handler(event, context):
         "solve_score_quantile": 0.001,
         "solve_score_omega": 1.0,
         "solve_score_omega_enabled": True,
+        "solve_score_hist_input_mode": "tmpfile",
     }
     for key, default in _PARAM_DEFAULTS.items():
         if key not in rp:
@@ -176,6 +184,7 @@ def handler(event, context):
     if solve_score_threads_value in (None, ""):
         solve_score_threads_value = rp["raster_mt_threads"] if rp["raster_engine"] == "mt" else 1
     rp["solve_score_threads"] = _validate_thread_count(solve_score_threads_value, "solve_score_threads")
+    rp["solve_score_hist_input_mode"] = _validate_hist_input_mode(rp.get("solve_score_hist_input_mode", "tmpfile"))
 
     # Normalize solve-score params
     color_mode = rp.get("color_mode", "rainbow")
@@ -277,6 +286,7 @@ def handler(event, context):
         "quantile": solve_score_quantile,
         "omega": solve_score_omega,
         "omega_enabled": solve_score_omega_enabled,
+        "hist_input_mode": rp["solve_score_hist_input_mode"] if solve_score_enabled else "tmpfile",
         "clip_key": f"renders/{job_id}/solve_scores/{solve_metric}_clip.json",
         "hist_prefix": f"renders/{job_id}/solve_scores/{solve_metric}/",
         "bins_key": f"renders/{job_id}/solve_scores/{solve_metric}_bins.json",

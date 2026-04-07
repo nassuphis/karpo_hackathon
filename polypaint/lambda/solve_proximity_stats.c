@@ -13,7 +13,9 @@
  *
  * Usage:
  *   solve_proximity_stats input.bin --mode=clip --degree=D [--metric=proximity] [--quantile_lo=0.001] [--quantile_hi=0.999] [--root_xforms=file.json]
+ *   solve_proximity_stats - --input_size=BYTES --mode=clip --degree=D [--metric=proximity] [--quantile_lo=0.001] [--quantile_hi=0.999] [--root_xforms=file.json]
  *   solve_proximity_stats input.bin --mode=hist --degree=D [--metric=proximity] --clip_lo=X --clip_hi=Y --hist_bins=100 [--omega=1] [--root_xforms=file.json]
+ *   solve_proximity_stats - --input_size=BYTES --mode=hist --degree=D [--metric=proximity] --clip_lo=X --clip_hi=Y --hist_bins=100 [--omega=1] [--root_xforms=file.json]
  *
  * Output: JSON to stdout.
  *
@@ -25,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 #include "root_xforms.h"
 #include "solve_score.h"
@@ -52,9 +55,139 @@ static double getArgDouble(int argc, char **argv, const char *key, double def) {
     return v ? atof(v) : def;
 }
 
+static long long getArgLongLong(int argc, char **argv, const char *key, long long def) {
+    const char *v = getArg(argc, argv, key);
+    return v ? atoll(v) : def;
+}
+
 static const char *getArgStr(int argc, char **argv, const char *key, const char *def) {
     const char *v = getArg(argc, argv, key);
     return v ? v : def;
+}
+
+/* ---- Input loading ---- */
+
+static int read_exact_stdin(float **bufOut, long *fileSizeOut, long long inputSizeHint) {
+    if (inputSizeHint <= 0) return 0;
+    if (inputSizeHint > LONG_MAX) {
+        fprintf(stderr, "input_size too large: %lld\n", inputSizeHint);
+        return -1;
+    }
+    long fileSize = (long)inputSizeHint;
+    float *buf = malloc((size_t)fileSize);
+    if (!buf) {
+        fprintf(stderr, "Out of memory: %ld bytes\n", fileSize);
+        return -1;
+    }
+    char *dst = (char *)buf;
+    long total = 0;
+    while (total < fileSize) {
+        size_t want = (size_t)(fileSize - total);
+        size_t got = fread(dst + total, 1, want, stdin);
+        if (got == 0) {
+            if (ferror(stdin)) {
+                fprintf(stderr, "stdin read error\n");
+            } else {
+                fprintf(stderr, "Short stdin read: got %ld of %ld bytes\n", total, fileSize);
+            }
+            free(buf);
+            return -1;
+        }
+        total += (long)got;
+    }
+    *bufOut = buf;
+    *fileSizeOut = fileSize;
+    return 1;
+}
+
+static int read_grow_stdin(float **bufOut, long *fileSizeOut) {
+    size_t cap = 1024 * 1024;
+    char *buf = malloc(cap);
+    if (!buf) {
+        fprintf(stderr, "Out of memory for stdin buffer\n");
+        return -1;
+    }
+    size_t size = 0;
+    while (1) {
+        if (size == cap) {
+            size_t nextCap = cap * 2;
+            char *next = realloc(buf, nextCap);
+            if (!next) {
+                fprintf(stderr, "Out of memory growing stdin buffer\n");
+                free(buf);
+                return -1;
+            }
+            buf = next;
+            cap = nextCap;
+        }
+        size_t got = fread(buf + size, 1, cap - size, stdin);
+        size += got;
+        if (got == 0) {
+            if (ferror(stdin)) {
+                fprintf(stderr, "stdin read error\n");
+                free(buf);
+                return -1;
+            }
+            break;
+        }
+    }
+    if (size > LONG_MAX) {
+        fprintf(stderr, "stdin buffer too large\n");
+        free(buf);
+        return -1;
+    }
+    *bufOut = (float *)buf;
+    *fileSizeOut = (long)size;
+    return 1;
+}
+
+static int read_input(const char *inPath, long long inputSizeHint, float **bufOut, long *fileSizeOut) {
+    if (strcmp(inPath, "-") == 0) {
+        int rc = read_exact_stdin(bufOut, fileSizeOut, inputSizeHint);
+        if (rc != 0) return rc > 0 ? 0 : -1;
+        rc = read_grow_stdin(bufOut, fileSizeOut);
+        return rc > 0 ? 0 : -1;
+    }
+
+    FILE *f = fopen(inPath, "rb");
+    if (!f) {
+        fprintf(stderr, "Cannot open %s\n", inPath);
+        return -1;
+    }
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fprintf(stderr, "fseek failed for %s\n", inPath);
+        fclose(f);
+        return -1;
+    }
+    long fileSize = ftell(f);
+    if (fileSize < 0) {
+        fprintf(stderr, "ftell failed for %s\n", inPath);
+        fclose(f);
+        return -1;
+    }
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fprintf(stderr, "fseek rewind failed for %s\n", inPath);
+        fclose(f);
+        return -1;
+    }
+
+    float *buf = malloc((size_t)fileSize);
+    if (!buf) {
+        fprintf(stderr, "Out of memory: %ld bytes\n", fileSize);
+        fclose(f);
+        return -1;
+    }
+    if ((long)fread(buf, 1, (size_t)fileSize, f) != fileSize) {
+        fprintf(stderr, "Short read\n");
+        free(buf);
+        fclose(f);
+        return -1;
+    }
+    fclose(f);
+
+    *bufOut = buf;
+    *fileSizeOut = fileSize;
+    return 0;
 }
 
 /* ---- Score with root transforms applied in working buffer ---- */
@@ -336,12 +469,13 @@ static void compute_hist_parallel(
 
 int main(int argc, char **argv) {
     if (argc < 3) {
-        fprintf(stderr, "Usage: solve_proximity_stats input.bin --mode=clip|hist|summary --degree=D "
+        fprintf(stderr, "Usage: solve_proximity_stats input.bin| - --mode=clip|hist|summary --degree=D "
                 "[--metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re] [options]\n");
         return 1;
     }
 
     const char *inPath = argv[1];
+    long long inputSizeHint = getArgLongLong(argc, argv, "--input_size", -1);
     const char *mode = getArgStr(argc, argv, "--mode", "");
     int degree = getArgInt(argc, argv, "--degree", 0);
     const char *metricStr = getArgStr(argc, argv, "--metric", "proximity");
@@ -360,29 +494,18 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Read input file */
-    FILE *f = fopen(inPath, "rb");
-    if (!f) { fprintf(stderr, "Cannot open %s\n", inPath); return 1; }
-    fseek(f, 0, SEEK_END);
-    long fileSize = ftell(f);
-    fseek(f, 0, SEEK_SET);
+    /* Read input file/stdin */
+    long fileSize = 0;
+    float *buf = NULL;
+    if (read_input(inPath, inputSizeHint, &buf, &fileSize) != 0) return 1;
 
     int stride = degree * 2;
     long nSolves = fileSize / (stride * (long)sizeof(float));
     if (nSolves <= 0) {
         fprintf(stderr, "Empty or invalid file: %ld bytes, degree=%d\n", fileSize, degree);
-        fclose(f);
+        free(buf);
         return 1;
     }
-
-    float *buf = malloc(fileSize);
-    if (!buf) { fprintf(stderr, "Out of memory: %ld bytes\n", fileSize); fclose(f); return 1; }
-    if ((long)fread(buf, 1, fileSize, f) != fileSize) {
-        fprintf(stderr, "Short read\n");
-        free(buf); fclose(f);
-        return 1;
-    }
-    fclose(f);
 
     /* Parse root transforms */
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);

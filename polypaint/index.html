@@ -9,6 +9,36 @@
 body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
 h1 { color: #e94560; margin-bottom: 20px; }
 .container { max-width: 900px; margin: 0 auto; }
+.app-header {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 16px; margin-bottom: 16px;
+}
+.app-title-wrap {
+    min-width: 0; flex: 1;
+}
+.app-title-wrap h1 {
+    margin-bottom: 6px;
+}
+.app-config-wrap {
+    position: relative; flex-shrink: 0;
+}
+.config-popup {
+    position: absolute; top: calc(100% + 8px); right: 0;
+    width: min(360px, calc(100vw - 40px));
+    background: #16213e; border: 1px solid #0f3460; border-radius: 8px;
+    padding: 12px; display: none; z-index: 1400;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+}
+.config-popup.active { display: block; }
+.config-popup h2 {
+    color: #e94560; font-size: 14px; text-transform: uppercase; margin-bottom: 10px;
+}
+.config-popup .config-row {
+    display: flex; gap: 8px; align-items: center;
+}
+.config-popup .config-meta {
+    font-size: 11px; color: #888; line-height: 1.5; margin-top: 10px;
+}
 
 .panel {
     background: #16213e; border-radius: 8px; padding: 16px;
@@ -320,16 +350,22 @@ button {
 </head>
 <body>
 <div class="container">
-    <h1>PolyPaint Lambda 1.0 <span id="build-id-label" style="color:#888; font-size:16px; font-weight:400"></span></h1>
-
-    <!-- Config -->
-    <div class="panel">
-        <h2>Configuration</h2>
-        <label>Config URL (config.json)</label>
-        <div style="display:flex; gap:8px; align-items:center">
-            <input type="text" id="config-url" value="https://polypaint.s3.us-east-1.amazonaws.com/config.json" style="flex:1">
-            <button onclick="loadLambdaConfig()" class="btn-secondary" style="padding:4px 12px">Load</button>
-            <span id="config-status" style="font-size:11px; color:#888"></span>
+    <div class="app-header">
+        <div class="app-title-wrap">
+            <h1>PolyPaint Lambda 1.0 <span id="build-id-label" style="color:#888; font-size:16px; font-weight:400"></span></h1>
+        </div>
+        <div class="app-config-wrap">
+            <button id="btn-config-toggle" type="button" class="btn-secondary" onclick="_toggleConfigPopup()" style="margin:0; padding:4px 12px">Config &#9881;</button>
+            <div id="config-popup" class="config-popup" aria-hidden="true">
+                <h2>Configuration</h2>
+                <label>Config URL (config.json)</label>
+                <div class="config-row">
+                    <input type="text" id="config-url" value="https://polypaint.s3.us-east-1.amazonaws.com/config.json" style="flex:1">
+                    <button onclick="loadLambdaConfig()" class="btn-secondary" style="margin:0; padding:4px 12px">Load</button>
+                </div>
+                <div id="config-status" style="font-size:11px; color:#888; margin-top:8px"></div>
+                <div id="config-build-meta" class="config-meta"></div>
+            </div>
         </div>
     </div>
 
@@ -498,7 +534,7 @@ button {
             <div class="anim-row">
                 <label>Results Dir:</label>
                 <input type="text" id="render-results-dir" placeholder="populate via Compute tab or enter job_id" style="flex:1; font-family:monospace; font-size:12px">
-                <button class="btn-secondary" onclick="refreshRenderArtifacts()" style="padding:2px 10px; font-size:11px">Refresh</button>
+                <button class="btn-secondary" onclick="refreshRenderArtifacts()" style="margin:0; padding:2px 10px; font-size:11px">Refresh</button>
             </div>
             <div class="color-box">
                 <div class="color-title">View</div>
@@ -603,7 +639,7 @@ button {
                     <span id="render-solve-score-quantile-val" style="font-size:10px; display:inline-block; width:2.5em; text-align:right">0.1</span><span style="font-size:10px">%</span>
                     <input type="range" id="render-solve-score-quantile" min="0.1" max="5.0" step="0.1" value="0.1" style="width:120px; margin-left:4px"
                         oninput="document.getElementById('render-solve-score-quantile-val').textContent=parseFloat(this.value).toFixed(1)">
-                    <button id="btn-solve-histogram" onclick="runSolveScoreHistogramDebug()" style="font-size:10px; margin-left:8px; padding:1px 8px">Histogram</button>
+                    <button id="btn-solve-histogram" onclick="runSolveScoreHistogramDebug()" style="margin:0 0 0 8px; font-size:10px; padding:1px 8px">Histogram</button>
                 </div>
                 <div class="color-row">
                     <span class="color-dot" data-mode="constant" onclick="setColorMode('constant')"></span>
@@ -646,16 +682,16 @@ button {
         <div id="tab-favorites" class="tab-content">
             <div style="margin-top:8px; margin-bottom:4px; display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap">
                 <div style="display:flex; align-items:center; gap:8px">
-                    <button class="btn-secondary" id="btn-favorites-refresh" onclick="refreshFavoritesInventory()" style="padding:4px 12px; font-size:12px">Refresh</button>
-                    <button class="btn-secondary" id="btn-favorites-go-render" onclick="goRenderSelectedFavorite()" style="padding:4px 12px; font-size:12px" disabled>GoRender</button>
+                    <button class="btn-secondary" id="btn-favorites-refresh" onclick="refreshFavoritesInventory()" style="margin:0; padding:4px 12px; font-size:12px">Refresh</button>
+                    <button class="btn-secondary" id="btn-favorites-go-render" onclick="goRenderSelectedFavorite()" style="margin:0; padding:4px 12px; font-size:12px" disabled>GoRender</button>
                     <div style="display:inline-block; position:relative">
-                        <button class="btn-secondary" id="btn-favorites-download" onclick="_toggleFavoritesDownloadMenu()" style="padding:4px 12px; font-size:11px" disabled>Download ▼</button>
+                        <button class="btn-secondary" id="btn-favorites-download" onclick="_toggleFavoritesDownloadMenu()" style="margin:0; padding:4px 12px; font-size:11px" disabled>Download ▼</button>
                         <div id="favorites-download-menu" style="display:none; position:absolute; bottom:100%; left:0; background:#2a2a3e; border:1px solid #555; border-radius:4px; z-index:100; min-width:140px; margin-bottom:2px">
                             <div id="favorites-dl-menu-file" onclick="_favoritesDlMenuAction('image+meta')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Image + Meta</div>
                             <div id="favorites-dl-menu-dir" onclick="_favoritesDlMenuAction('dir')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Select Dir…</div>
                         </div>
                     </div>
-                    <button class="btn-secondary" id="btn-favorites-delete" onclick="deleteSelectedFavorite()" style="padding:4px 12px; font-size:12px" disabled>Delete</button>
+                    <button class="btn-secondary" id="btn-favorites-delete" onclick="deleteSelectedFavorite()" style="margin:0; padding:4px 12px; font-size:12px" disabled>Delete</button>
                 </div>
                 <div id="favorites-info" style="font-size:11px; color:#666">Favorite Color artifacts across all jobs.</div>
             </div>
@@ -668,7 +704,7 @@ button {
             <div class="anim-row" style="gap:8px; align-items:center">
                 <label>Results Dir:</label>
                 <input type="text" id="palette-results-dir" placeholder="compute_xxxxxxxx" style="flex:1; font-family:monospace; font-size:12px">
-                <button class="btn-secondary" onclick="loadPaletteInventory()" style="padding:4px 12px">Refresh</button>
+                <button class="btn-secondary" onclick="loadPaletteInventory()" style="margin:0; padding:4px 12px">Refresh</button>
             </div>
             <div class="color-box">
                 <div class="color-title">Solve Score Palette</div>
@@ -705,7 +741,7 @@ button {
                     <span id="palette-solve-score-quantile-val" style="font-size:10px; display:inline-block; width:2.5em; text-align:right">0.1</span><span style="font-size:10px">%</span>
                     <input type="range" id="palette-solve-score-quantile" min="0.1" max="5.0" step="0.1" value="0.1" style="width:120px; margin-left:4px"
                         oninput="document.getElementById('palette-solve-score-quantile-val').textContent=parseFloat(this.value).toFixed(1)">
-                    <button id="btn-palette-create" onclick="runPaletteArtifact()" style="font-size:10px; margin-left:8px; padding:1px 8px">Palette</button>
+                    <button id="btn-palette-create" onclick="runPaletteArtifact()" style="margin:0 0 0 8px; font-size:10px; padding:1px 8px">Palette</button>
                 </div>
             </div>
             <div class="anim-row" style="flex-wrap:wrap; margin-top:8px">
@@ -738,10 +774,10 @@ button {
         <div id="tab-deepzoom" class="tab-content">
             <div id="deepzoom-viewer" style="width:100%; height:500px; background:#000; border:1px solid #333; display:none"></div>
             <div style="margin-top:8px; margin-bottom:4px; display:flex; align-items:center; gap:8px">
-                <button class="btn-secondary" onclick="loadDeepZoomInventory()" style="padding:4px 12px; font-size:12px">Refresh</button>
-                <button class="btn-secondary" id="btn-dz-goto-result" onclick="_dzGotoSelectedResult()" style="padding:4px 12px; font-size:12px" disabled>Goto Result</button>
-                <button class="btn-secondary" id="btn-dz-populate" onclick="_dzPopulateSelectedResult()" style="padding:4px 12px; font-size:12px" disabled>Populate</button>
-                <button class="btn-secondary" id="btn-dz-delete" onclick="_dzDeleteSelected()" style="padding:4px 12px; font-size:12px" disabled>Delete</button>
+                <button class="btn-secondary" onclick="loadDeepZoomInventory()" style="margin:0; padding:4px 12px; font-size:12px">Refresh</button>
+                <button class="btn-secondary" id="btn-dz-goto-result" onclick="_dzGotoSelectedResult()" style="margin:0; padding:4px 12px; font-size:12px" disabled>Goto Result</button>
+                <button class="btn-secondary" id="btn-dz-populate" onclick="_dzPopulateSelectedResult()" style="margin:0; padding:4px 12px; font-size:12px" disabled>Populate</button>
+                <button class="btn-secondary" id="btn-dz-delete" onclick="_dzDeleteSelected()" style="margin:0; padding:4px 12px; font-size:12px" disabled>Delete</button>
                 <span style="font-size:11px; color:#666">Click row to view. Arrow keys to navigate.</span>
             </div>
             <div id="deepzoom-status" class="status" style="margin-bottom:6px"></div>
@@ -1038,6 +1074,36 @@ button {
     </div>
 </div>
 
+<div id="render-generate-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="render-generate-popup-title">
+        <div class="tri-popup-head">
+            <div id="render-generate-popup-title" class="tri-popup-title">Generate</div>
+            <button id="render-generate-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div id="render-generate-popup-summary" class="autolevel-popup-summary"></div>
+        <div style="padding:0 14px 8px 14px">
+            <div class="autolevel-stage-row" style="align-items:center">
+                <div class="autolevel-stage-text">Choose how each solve-score histogram worker feeds chunk input into the native binary.</div>
+                <div class="autolevel-inline-fields">
+                    <span class="inline-label">Histogram input</span>
+                    <select id="render-generate-hist-input-mode">
+                        <option value="tmpfile">tmp file</option>
+                        <option value="stdin">stdin</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        <div class="autolevel-popup-help">Only used for Solve score renders. It lets you compare the existing temp-file path against streaming the S3 chunk directly into solve_proximity_stats over stdin.</div>
+        <div class="autolevel-popup-actions">
+            <div></div>
+            <div style="display:flex; gap:8px">
+                <button id="render-generate-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+                <button id="render-generate-popup-run" type="button" class="btn-primary" style="padding:6px 12px">Execute</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div id="render-mt-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
     <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="render-mt-popup-title">
         <div class="tri-popup-head">
@@ -1051,12 +1117,17 @@ button {
                 <div class="autolevel-inline-fields">
                     <span class="inline-label">Solve score</span>
                     <input id="render-mt-solve-score-threads" type="number" min="1" max="16" step="1" value="4">
+                    <span class="inline-label">Hist input</span>
+                    <select id="render-mt-hist-input-mode">
+                        <option value="tmpfile">tmp file</option>
+                        <option value="stdin">stdin</option>
+                    </select>
                     <span class="inline-label">Raster</span>
                     <input id="render-mt-threads" type="number" min="1" max="16" step="1" value="4">
                 </div>
             </div>
         </div>
-        <div class="autolevel-popup-help">Use this to compare the native multithreaded path against normal Generate. Raster MT supports Solve score, Saved palette, Constant, and Rainbow with match=none. Solve score threads only matter for Solve score mode.</div>
+        <div class="autolevel-popup-help">Use this to compare the native multithreaded path against normal Generate. Raster MT supports Solve score, Saved palette, Constant, and Rainbow with match=none. Solve score threads and hist input only matter for Solve score mode.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -2079,10 +2150,29 @@ const APP_TITLE_BASE = 'PolyPaint Lambda 1.0';
 let _lambdaUrls = {};  // {sweep, coeffgen, raster, finalize, encode, viewport, storage, dispatch}
 let _buildInfo = {};
 
+function _setConfigPopupOpen(open) {
+    const popup = document.getElementById('config-popup');
+    const btn = document.getElementById('btn-config-toggle');
+    if (!popup) return;
+    popup._open = !!open;
+    popup.style.display = open ? 'block' : 'none';
+    popup.classList.toggle('active', !!open);
+    popup.setAttribute('aria-hidden', open ? 'false' : 'true');
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function _toggleConfigPopup(forceOpen) {
+    const popup = document.getElementById('config-popup');
+    if (!popup) return;
+    const next = typeof forceOpen === 'boolean' ? forceOpen : !popup._open;
+    _setConfigPopupOpen(next);
+}
+
 function _applyBuildInfo(build) {
     _buildInfo = (build && typeof build === 'object') ? build : {};
     const buildId = typeof _buildInfo.build_id === 'string' ? _buildInfo.build_id.trim() : '';
     const labelEl = document.getElementById('build-id-label');
+    const metaEl = document.getElementById('config-build-meta');
     if (labelEl) {
         labelEl.textContent = buildId ? `· build ${buildId}` : '';
         if (buildId) {
@@ -2096,6 +2186,16 @@ function _applyBuildInfo(build) {
         } else {
             labelEl.title = '';
         }
+    }
+    if (metaEl) {
+        const parts = [];
+        if (buildId) parts.push(`build: ${buildId}`);
+        if (_buildInfo.deployed_at_utc) parts.push(`deployed: ${_buildInfo.deployed_at_utc}`);
+        if (_buildInfo.git_rev) parts.push(`git: ${_buildInfo.git_rev}${_buildInfo.git_dirty ? ' (dirty)' : ''}`);
+        if (_buildInfo.frontend_sha256) parts.push(`frontend sha256: ${_buildInfo.frontend_sha256}`);
+        metaEl.innerHTML = parts.length
+            ? parts.map(line => `<div>${line}</div>`).join('')
+            : '<div>Build metadata unavailable.</div>';
     }
     document.title = buildId ? `${APP_TITLE_BASE} · build ${buildId}` : APP_TITLE_BASE;
 }
@@ -2202,6 +2302,19 @@ async function asyncPool(limit, items, fn) {
 // Load config on page load
 loadLambdaConfig();
 
+document.addEventListener('click', function(e) {
+    const popup = document.getElementById('config-popup');
+    const btn = document.getElementById('btn-config-toggle');
+    if (!popup || !popup._open) return;
+    const target = e.target;
+    if (popup.contains(target) || (btn && btn.contains(target))) return;
+    _setConfigPopupOpen(false);
+});
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') _setConfigPopupOpen(false);
+});
+
 /* ---- Color controls ---- */
 let renderColorMode = 'rainbow';
 let renderMatchMode = 'none';
@@ -2249,7 +2362,8 @@ let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
 let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
 let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '' };
-let _renderMtPopupState = { open: false, rasterThreads: 4, solveScoreThreads: 4 };
+let _renderGeneratePopupState = { open: false, histInputMode: 'tmpfile' };
+let _renderMtPopupState = { open: false, rasterThreads: 4, solveScoreThreads: 4, histInputMode: 'tmpfile' };
 let _generateFromPalettePopupState = { open: false, filter: '', highlightIdx: 0, sourcePaletteId: '' };
 let _pdfColorSpreadPopupState = { open: false, filter: '', highlightIdx: 0, sourceArtifactId: '' };
 let _functionPopupState = { open: false, filter: '', highlightIdx: 0 };
@@ -3340,11 +3454,58 @@ function _clampRenderMtThreads(value) {
     return Math.max(1, Math.min(16, n));
 }
 
+function _normalizeSolveScoreHistInputMode(value) {
+    return String(value || 'tmpfile').trim().toLowerCase() === 'stdin' ? 'stdin' : 'tmpfile';
+}
+
+function _closeRenderGeneratePopup() {
+    _renderGeneratePopupState = {
+        open: false,
+        histInputMode: _normalizeSolveScoreHistInputMode(_renderGeneratePopupState.histInputMode),
+    };
+    const overlay = document.getElementById('render-generate-popup-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+}
+
+function _renderRenderGeneratePopup() {
+    const overlay = document.getElementById('render-generate-popup-overlay');
+    const summaryEl = document.getElementById('render-generate-popup-summary');
+    const inputModeEl = document.getElementById('render-generate-hist-input-mode');
+    const runBtn = document.getElementById('render-generate-popup-run');
+    if (!overlay || !summaryEl || !inputModeEl) return;
+    if (!_renderGeneratePopupState.open) {
+        _closeRenderGeneratePopup();
+        return;
+    }
+    const inputMode = _normalizeSolveScoreHistInputMode(_renderGeneratePopupState.histInputMode);
+    _renderGeneratePopupState.histInputMode = inputMode;
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    inputModeEl.value = inputMode;
+    summaryEl.textContent = `Mode: Solve score • output ${document.getElementById('render-pix').value || '?'} px • histogram input=${inputMode}`;
+    if (runBtn) runBtn.disabled = !!_activeRenderRun;
+}
+
+function openRenderGeneratePopup() {
+    if (_activeRenderRun) return;
+    _renderGeneratePopupState = {
+        open: true,
+        histInputMode: _normalizeSolveScoreHistInputMode(_renderGeneratePopupState.histInputMode || 'tmpfile'),
+    };
+    _renderRenderGeneratePopup();
+    const inputModeEl = document.getElementById('render-generate-hist-input-mode');
+    if (inputModeEl && typeof inputModeEl.focus === 'function') inputModeEl.focus();
+}
+
 function _closeRenderMtPopup() {
     _renderMtPopupState = {
         open: false,
         rasterThreads: _clampRenderMtThreads(_renderMtPopupState.rasterThreads),
         solveScoreThreads: _clampRenderMtThreads(_renderMtPopupState.solveScoreThreads),
+        histInputMode: _normalizeSolveScoreHistInputMode(_renderMtPopupState.histInputMode),
     };
     const overlay = document.getElementById('render-mt-popup-overlay');
     if (overlay) {
@@ -3358,28 +3519,33 @@ function _renderRenderMtPopup() {
     const summaryEl = document.getElementById('render-mt-popup-summary');
     const threadsEl = document.getElementById('render-mt-threads');
     const solveScoreThreadsEl = document.getElementById('render-mt-solve-score-threads');
+    const histInputModeEl = document.getElementById('render-mt-hist-input-mode');
     const runBtn = document.getElementById('render-mt-popup-run');
-    if (!overlay || !summaryEl || !threadsEl || !solveScoreThreadsEl) return;
+    if (!overlay || !summaryEl || !threadsEl || !solveScoreThreadsEl || !histInputModeEl) return;
     if (!_renderMtPopupState.open) {
         _closeRenderMtPopup();
         return;
     }
     const threads = _clampRenderMtThreads(_renderMtPopupState.rasterThreads);
     const solveScoreThreads = _clampRenderMtThreads(_renderMtPopupState.solveScoreThreads);
+    const histInputMode = _normalizeSolveScoreHistInputMode(_renderMtPopupState.histInputMode);
     const solveScoreRelevant = renderColorMode === 'solve_score';
     _renderMtPopupState.rasterThreads = threads;
     _renderMtPopupState.solveScoreThreads = solveScoreThreads;
+    _renderMtPopupState.histInputMode = histInputMode;
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
     threadsEl.value = String(threads);
     solveScoreThreadsEl.value = String(solveScoreThreads);
+    histInputModeEl.value = histInputMode;
     solveScoreThreadsEl.disabled = !solveScoreRelevant;
+    histInputModeEl.disabled = !solveScoreRelevant;
     const modeLabel = renderColorMode === 'rainbow'
         ? `Rainbow (${renderMatchMode})`
         : renderColorMode.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
     summaryEl.textContent = solveScoreRelevant
-        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • solve score threads=${solveScoreThreads} • raster threads=${threads}`
-        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster threads=${threads} • solve score threads unused`;
+        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • solve score threads=${solveScoreThreads} • hist input=${histInputMode} • raster threads=${threads}`
+        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster threads=${threads} • solve score threads unused • hist input unused`;
     if (runBtn) runBtn.disabled = !_renderColorMtEligible() || !!_activeRenderRun;
 }
 
@@ -3389,6 +3555,7 @@ function openRenderMtPopup() {
         open: true,
         rasterThreads: _clampRenderMtThreads(_renderMtPopupState.rasterThreads || 4),
         solveScoreThreads: _clampRenderMtThreads(_renderMtPopupState.solveScoreThreads || 4),
+        histInputMode: _normalizeSolveScoreHistInputMode(_renderMtPopupState.histInputMode || 'tmpfile'),
     };
     _renderRenderMtPopup();
     const threadsEl = document.getElementById('render-mt-threads');
@@ -3777,6 +3944,7 @@ function _initRenderMtPopup() {
     const runBtn = document.getElementById('render-mt-popup-run');
     const threadsEl = document.getElementById('render-mt-threads');
     const solveScoreThreadsEl = document.getElementById('render-mt-solve-score-threads');
+    const histInputModeEl = document.getElementById('render-mt-hist-input-mode');
     if (overlay) {
         overlay.addEventListener('click', (ev) => {
             if (ev.target === overlay) _closeRenderMtPopup();
@@ -3796,6 +3964,12 @@ function _initRenderMtPopup() {
             _renderRenderMtPopup();
         });
     }
+    if (histInputModeEl) {
+        histInputModeEl.addEventListener('change', (ev) => {
+            _renderMtPopupState.histInputMode = _normalizeSolveScoreHistInputMode(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
     if (runBtn) {
         runBtn.addEventListener('click', async () => {
             const btnText = runBtn.textContent;
@@ -3804,10 +3978,12 @@ function _initRenderMtPopup() {
                 runBtn.textContent = 'Executing...';
                 const rasterThreads = _clampRenderMtThreads(document.getElementById('render-mt-threads').value);
                 const solveScoreThreads = _clampRenderMtThreads(document.getElementById('render-mt-solve-score-threads').value);
+                const histInputMode = _normalizeSolveScoreHistInputMode(document.getElementById('render-mt-hist-input-mode').value);
                 _renderMtPopupState.rasterThreads = rasterThreads;
                 _renderMtPopupState.solveScoreThreads = solveScoreThreads;
+                _renderMtPopupState.histInputMode = histInputMode;
                 _closeRenderMtPopup();
-                await runRasterPipelineMT({ rasterThreads, solveScoreThreads });
+                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode });
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = btnText;
@@ -3825,10 +4001,64 @@ function _initRenderMtPopup() {
             ev.preventDefault();
             const rasterThreads = _clampRenderMtThreads(document.getElementById('render-mt-threads').value);
             const solveScoreThreads = _clampRenderMtThreads(document.getElementById('render-mt-solve-score-threads').value);
+            const histInputMode = _normalizeSolveScoreHistInputMode(document.getElementById('render-mt-hist-input-mode').value);
             _renderMtPopupState.rasterThreads = rasterThreads;
             _renderMtPopupState.solveScoreThreads = solveScoreThreads;
+            _renderMtPopupState.histInputMode = histInputMode;
             _closeRenderMtPopup();
-            runRasterPipelineMT({ rasterThreads, solveScoreThreads });
+            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode });
+        }
+    });
+}
+
+function _initRenderGeneratePopup() {
+    const overlay = document.getElementById('render-generate-popup-overlay');
+    const closeBtn = document.getElementById('render-generate-popup-close');
+    const cancelBtn = document.getElementById('render-generate-popup-cancel');
+    const runBtn = document.getElementById('render-generate-popup-run');
+    const inputModeEl = document.getElementById('render-generate-hist-input-mode');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closeRenderGeneratePopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closeRenderGeneratePopup);
+    if (cancelBtn) cancelBtn.addEventListener('click', _closeRenderGeneratePopup);
+    if (inputModeEl) {
+        inputModeEl.addEventListener('change', (ev) => {
+            _renderGeneratePopupState.histInputMode = _normalizeSolveScoreHistInputMode(ev.target.value);
+            _renderRenderGeneratePopup();
+        });
+    }
+    if (runBtn) {
+        runBtn.addEventListener('click', async () => {
+            const btnText = runBtn.textContent;
+            try {
+                runBtn.disabled = true;
+                runBtn.textContent = 'Executing...';
+                const histInputMode = _normalizeSolveScoreHistInputMode(document.getElementById('render-generate-hist-input-mode').value);
+                _renderGeneratePopupState.histInputMode = histInputMode;
+                _closeRenderGeneratePopup();
+                await runRasterPipeline({ histInputMode });
+            } finally {
+                runBtn.disabled = false;
+                runBtn.textContent = btnText;
+            }
+        });
+    }
+    document.addEventListener('keydown', (ev) => {
+        if (!_renderGeneratePopupState.open) return;
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closeRenderGeneratePopup();
+            return;
+        }
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            const histInputMode = _normalizeSolveScoreHistInputMode(document.getElementById('render-generate-hist-input-mode').value);
+            _renderGeneratePopupState.histInputMode = histInputMode;
+            _closeRenderGeneratePopup();
+            runRasterPipeline({ histInputMode });
         }
     });
 }
@@ -4445,6 +4675,7 @@ _initFunctionPopup();
 _initAutolevelPopup();
 _initRepalettePopup();
 _initColorRepalettePopup();
+_initRenderGeneratePopup();
 _initRenderMtPopup();
 _initGenerateFromPalettePopup();
 _initPdfColorSpreadPopup();
@@ -5327,6 +5558,14 @@ async function _launchRenderOrchestrator(mode, paramsPatch = null) {
     const runId = _generateRunId();
     const taskId = 'render_run_' + mode + '_' + runId;
     const effectiveColorMode = paramsPatch && paramsPatch.color_mode ? paramsPatch.color_mode : renderColorMode;
+    const solveScoreHistInputMode = effectiveColorMode === 'solve_score'
+        ? _normalizeSolveScoreHistInputMode(
+            (paramsPatch && paramsPatch.solve_score_hist_input_mode)
+            || _renderGeneratePopupState.histInputMode
+            || _renderMtPopupState.histInputMode
+            || 'tmpfile'
+        )
+        : undefined;
 
     const orchPayload = {
         job_id: p.jobId,
@@ -5348,6 +5587,7 @@ async function _launchRenderOrchestrator(mode, paramsPatch = null) {
             solve_score_quantile: effectiveColorMode === 'solve_score' ? p.solveScoreQuantile : undefined,
             solve_score_omega: effectiveColorMode === 'solve_score' ? p.solveScoreOmega : undefined,
             solve_score_omega_enabled: effectiveColorMode === 'solve_score' ? p.solveScoreOmegaEnabled : undefined,
+            solve_score_hist_input_mode: solveScoreHistInputMode,
             match_mode: renderMatchMode,
             palette: _activeRenderPalette() || 'inferno',
             root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
@@ -5382,11 +5622,24 @@ async function _launchRenderOrchestrator(mode, paramsPatch = null) {
     startActiveRenderObserver();
 }
 
-async function runRasterPipeline() {
+async function runRasterPipeline(config = null) {
     const btn = document.getElementById('btn-render-generate');
     if (btn) btn.disabled = true;
     try {
-        await _launchRenderOrchestrator('color', { raster_engine: 'single' });
+        const histInputMode = renderColorMode === 'solve_score'
+            ? _normalizeSolveScoreHistInputMode(
+                config && typeof config === 'object' && config.histInputMode != null
+                    ? config.histInputMode
+                    : _renderGeneratePopupState.histInputMode
+            )
+            : 'tmpfile';
+        if (renderColorMode === 'solve_score') {
+            log(`Render: dispatching with solve score hist input=${histInputMode}...`, 'ok', 'render-log');
+        }
+        await _launchRenderOrchestrator('color', {
+            raster_engine: 'single',
+            solve_score_hist_input_mode: histInputMode,
+        });
     } catch (e) {
         document.getElementById('render-status').textContent = 'Render error: ' + e.message;
         document.getElementById('render-status').className = 'status error';
@@ -5413,12 +5666,21 @@ async function runRasterPipelineMT(threadConfig = null) {
                 ? threadConfig.solveScoreThreads
                 : _renderMtPopupState.solveScoreThreads
         );
+        const histInputMode = _normalizeSolveScoreHistInputMode(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.histInputMode != null
+                ? threadConfig.histInputMode
+                : _renderMtPopupState.histInputMode
+        );
         const relevantSolveScoreThreads = renderColorMode === 'solve_score' ? solveScoreThreads : 1;
-        log(`Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster threads=${rasterThreads}...`, 'ok', 'render-log');
+        const mtMsg = renderColorMode === 'solve_score'
+            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, raster threads=${rasterThreads}...`
+            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster threads=${rasterThreads}...`;
+        log(mtMsg, 'ok', 'render-log');
         await _launchRenderOrchestrator('color', {
             raster_engine: 'mt',
             raster_mt_threads: rasterThreads,
             solve_score_threads: relevantSolveScoreThreads,
+            solve_score_hist_input_mode: histInputMode,
         });
     } catch (e) {
         document.getElementById('render-status').textContent = 'Render-MT error: ' + e.message;
@@ -5749,8 +6011,9 @@ function _aggregateSolveScorePhasePerf(results) {
         acc.compute_ms += Number(row.compute_ms) || 0;
         acc.upload_ms += Number(row.upload_ms) || 0;
         acc.threads = Math.max(acc.threads, Number(row.threads) || 1);
+        if (!acc.input_mode && row.input_mode) acc.input_mode = String(row.input_mode);
         return acc;
-    }, { tasks: 0, dl_ms: 0, compute_ms: 0, upload_ms: 0, threads: 1 });
+    }, { tasks: 0, dl_ms: 0, compute_ms: 0, upload_ms: 0, threads: 1, input_mode: '' });
 }
 
 function _aggregateFinalizePerf(results) {
@@ -5810,6 +6073,7 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsMs(perf.dl_ms)} + compute ${_fmtSecondsMs(perf.compute_ms)}`;
         if (perf.upload_ms > 0) msg += ` + up ${_fmtSecondsMs(perf.upload_ms)}`;
         msg += ` · threads=${perf.threads}`;
+        if (phase === 'solve_score_hist' && perf.input_mode) msg += ` · input=${perf.input_mode}`;
         return msg;
     }
     if (phase === 'finalize') {
@@ -6726,6 +6990,10 @@ async function generateSelectedRenderArtifact() {
         await runCoeffBilevelPipeline();
         return;
     }
+    if (_renderActiveFamily === 'color' && renderColorMode === 'solve_score') {
+        openRenderGeneratePopup();
+        return;
+    }
     await runRasterPipeline();
 }
 
@@ -6770,7 +7038,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread path. Generate-MT opens a popup where you choose native solve-score and raster thread counts for Solve score, Saved palette, Constant, and Rainbow with match=none so you can compare perf. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread path. In Solve score mode it opens a popup where you choose histogram input tmp file vs stdin for benchmarking. Generate-MT opens a popup where you choose native solve-score threads, histogram input, and raster threads for Solve score, Saved palette, Constant, and Rainbow with match=none so you can compare perf. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color.</span>';
     } else if (_renderActiveFamily === 'pdf') {

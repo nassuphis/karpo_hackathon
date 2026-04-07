@@ -248,6 +248,7 @@ class TestWorkflowDefinition(unittest.TestCase):
 
         hist_selector = self.states["ColorSolveScoreHistMap"]["ItemSelector"]
         self.assertEqual(hist_selector["solve_score_threads.$"], "$.plan.solve_score.threads")
+        self.assertEqual(hist_selector["solve_score_hist_input_mode.$"], "$.plan.solve_score.hist_input_mode")
 
         merge_payload = self.states["ColorSolveScoreMergeTask"]["Parameters"]["Payload"]
         self.assertEqual(merge_payload["solve_score_threads.$"], "$.plan.solve_score.threads")

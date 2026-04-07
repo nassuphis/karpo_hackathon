@@ -143,6 +143,7 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["solve_score"]["omega"] == 4.0
         assert plan["solve_score"]["omega_enabled"] is True
         assert plan["solve_score"]["threads"] == 1
+        assert plan["solve_score"]["hist_input_mode"] == "tmpfile"
         assert "crowding" in plan["solve_score"]["clip_key"]
         assert "crowding" in plan["solve_score"]["bins_key"]
         assert plan["outputs"]["repalette_capable"] is True
@@ -203,6 +204,32 @@ class TestRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
         assert plan["raster"]["threads"] == 6
         assert plan["solve_score"]["threads"] == 3
+
+    @patch("handler_render_plan._storage_call")
+    def test_solve_score_hist_input_mode_override(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="crowding",
+            solve_score_hist_input_mode="stdin",
+        ), None)
+        plan = json.loads(result["body"])
+        assert plan["solve_score"]["hist_input_mode"] == "stdin"
+
+    @patch("handler_render_plan._storage_call")
+    def test_invalid_solve_score_hist_input_mode_rejected(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_make_event(color_mode="solve_score", solve_score_hist_input_mode="socket"), None)
+        self.assertIn("solve_score_hist_input_mode", str(ctx.exception))
 
     @patch("handler_render_plan._storage_call")
     def test_invalid_mt_threads_rejected(self, mock_storage):

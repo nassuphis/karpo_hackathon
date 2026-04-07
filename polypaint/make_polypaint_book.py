@@ -149,12 +149,13 @@ def _wrap_text(c, text, font, size, max_width):
     return lines
 
 
-def _draw_text_page(c, title, body, is_right, filename=None):
+def _draw_text_page(c, title, body, is_right, filename=None, job_id=None):
     """Draw centered title + body text, white on black.
 
     Text is placed within the trim area with safety margins.
     is_right: whether this is a recto page (affects trim offset).
-    filename: optional snapshot name shown below body in Courier.
+    filename: optional artifact id shown below body in Courier.
+    job_id: optional compute job id shown alongside filename.
     """
     # Trim area origin (bottom-left of trim box within gross page)
     if is_right:
@@ -192,10 +193,11 @@ def _draw_text_page(c, title, body, is_right, filename=None):
                 y -= 16
             y -= 4  # small gap between metadata lines
 
-    if filename:
+    if filename or job_id:
         c.setFont("Courier", 8)
         c.setFillColorRGB(0.5, 0.5, 0.5)
-        c.drawCentredString(center_x, y - 16, filename)
+        id_parts = [p for p in [job_id, filename] if p]
+        c.drawCentredString(center_x, y - 16, " \u00b7 ".join(id_parts))
 
 
 # ── Content PDF ───────────────────────────────────────────────────────
@@ -256,7 +258,7 @@ def generate_content_pdf(output_path, pages_config):
         snap_name = entry.get("filename") or os.path.splitext(os.path.basename(entry.get("image", "")))[0]
         _draw_text_page(c, entry.get("title", ""),
                         entry.get("text", ""), is_right=False,
-                        filename=snap_name)
+                        filename=snap_name, job_id=entry.get("job_id", ""))
         c.showPage()
         page_num += 1
 
@@ -316,19 +318,27 @@ def generate_cover_pdf(output_path, title="Polynomiography", subtitle="",
 
     if front_image and os.path.exists(front_image):
         reader, size = _load_image_rgb(front_image)
-        # Fill the front panel area (extending into bleed on right/top/bottom)
-        _draw_image_cover(c, reader, size,
-                          front_left, 0,
-                          PANEL_W + COVER_BLEED, COVER_GROSS_H)
+        # Image at 2/3 of panel size, centered horizontally, in upper portion
+        img_scale = 2.0 / 3.0
+        img_w = PANEL_W * img_scale
+        img_h = COVER_NET_H * img_scale
+        img_x = front_left + (PANEL_W - img_w) / 2
+        gap_below_img = 25 * mm
+        title_block_h = 36 + (20 if subtitle else 0)  # approximate title + subtitle height
+        # Vertically center: image + gap + title block
+        total_block = img_h + gap_below_img + title_block_h
+        block_top = COVER_BLEED + (COVER_NET_H + total_block) / 2
+        img_y = block_top - img_h
+        _draw_image_cover(c, reader, size, img_x, img_y, img_w, img_h)
 
-        # Title overlay with dark outline for readability
-        title_y = COVER_BLEED + COVER_NET_H * 0.12
-        _draw_outlined_text(c, title.upper(), front_cx, title_y,
-                            "Helvetica-Bold", 36, spacing=4)
+        # Title below the image, no text on the image
+        title_y = img_y - gap_below_img
+        c.setFillColorRGB(1, 1, 1)
+        c.setFont("Helvetica-Bold", 36)
+        c.drawCentredString(front_cx, title_y, title.upper())
         if subtitle:
-            sub_y = title_y - 30
-            _draw_outlined_text(c, subtitle, front_cx, sub_y,
-                                "Helvetica", 13, spacing=1.5)
+            c.setFont("Helvetica", 13)
+            c.drawCentredString(front_cx, title_y - 24, subtitle)
     else:
         # Text-only front cover
         c.setFillColorRGB(1, 1, 1)
@@ -520,8 +530,9 @@ def _text_from_meta(meta):
 
     body = "\n".join(lines) if lines else ""
     filename = meta.get("artifact_id", "")
+    job_id = meta.get("job_id", "")
     title = _title_from_meta(meta)
-    return title, body, filename
+    return title, body, filename, job_id
 
 
 # ── Config & CLI ──────────────────────────────────────────────────────
@@ -549,12 +560,13 @@ def init_config(path=CONFIG_PATH, snaps_dir="snaps"):
 
     pages = []
     for img_path, meta in pairs:
-        title_text, body, filename = _text_from_meta(meta)
+        title_text, body, filename, job_id = _text_from_meta(meta)
         pages.append({
             "image": img_path,
             "title": title_text,
             "text": body,
             "filename": filename,
+            "job_id": job_id,
         })
 
     config = dict(DEFAULT_CONFIG)

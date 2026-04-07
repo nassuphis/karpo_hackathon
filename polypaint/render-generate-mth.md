@@ -44,6 +44,33 @@ Conclusion:
 - no multiprocessing hacks
 - no subprocess fan-out inside the raster Lambda
 
+## Status Update: stdin A/B Result
+
+The solve-score `hist` `tmpfile` vs `stdin` benchmark was worth doing.
+
+Result:
+
+- `stdin` did not help
+- `stdin` was slightly slower than `tmpfile`
+- there was effectively zero useful savings
+
+Why:
+
+- the current `stdin` path is still full-buffered
+- the C binary still reads the whole chunk before histogramming
+- there is no real read/compute overlap
+- `tmpfile` benefits from local page-cache behavior on the Lambda host
+- `stdin` adds Python pipe overhead and backpressure
+
+So the conclusion is:
+
+- `stdin` as currently implemented is not the optimization
+- the real next step is native S3 I/O in the hot path
+- and likely batching multiple chunks per invocation
+
+This document now treats `stdin` as an experiment that answered a useful
+question, not as the main path forward.
+
 ## New Goal
 
 `Generate-MT` should remain:
@@ -65,6 +92,7 @@ But the backend must become:
 `Generate-MT` becomes:
 
 - the real threaded implementation
+- and the testbed for native batched S3 I/O
 
 ## Scope
 
@@ -82,6 +110,602 @@ But the backend must become:
 - multithreaded encode
 - exact raster winner parity with single-thread output
 - proximity-mode MT in the first native pass unless it is straightforward
+
+## New Experiment Goal: Native S3 Hist Pipeline
+
+The next serious experiment is:
+
+- move solve-score `hist` chunk I/O out of Python
+- move chunk download and histogramming into the native hot path
+- batch multiple chunks per Lambda invocation
+- measure how much wall time drops when startup, Python copy, and per-chunk
+  overhead are reduced
+
+This is attractive because:
+
+- render is still too slow
+- the same native I/O pattern can later be reused for raster and other steps
+- it is a meaningful systems experiment, not just a micro-optimization
+
+## What We Are Actually Optimizing
+
+The current solve-score `hist` architecture is:
+
+1. one Step Functions item per chunk
+2. one Lambda invocation per chunk
+3. Python `boto3` download per chunk
+4. Python launches one native process per chunk
+5. native process histograms one chunk
+6. Lambda uploads one tiny JSON result
+
+This means the system pays, per chunk:
+
+- Lambda startup / handler overhead
+- Python import / `boto3` / subprocess overhead
+- one S3 object fetch
+- one clip JSON fetch
+- one native process launch
+
+When there are hundreds of chunks, that overhead dominates.
+
+The current bottleneck is not the score math.
+
+The current bottleneck is:
+
+- too many small chunk invocations
+- too much Python in the hot path
+- too much per-object overhead
+
+## Key AWS Facts
+
+Some facts to pin down so we do not optimize the wrong thing:
+
+- Lambda and S3 are already in the same region
+  - this project is in `us-east-1`
+  - there is no extra region change to make here
+- there is no user-facing "faster Ethernet" setting for Lambda
+- increasing Lambda memory can increase:
+  - CPU
+  - network throughput
+  - general per-invocation performance
+- if a Lambda is put inside a VPC, S3 access can get worse unless the network
+  path is configured carefully
+
+So the main performance levers here are:
+
+- fewer invocations
+- larger per-invocation useful work
+- native I/O
+- appropriate Lambda memory sizing
+- better overlap of download and compute
+
+## Native S3 Hist Plan
+
+### Goal
+
+Build a new solve-score `hist` execution path where:
+
+- one Lambda invocation handles multiple chunks
+- one native process handles the batch
+- native worker threads do the download + histogram work
+- Python is only orchestration, not the hot path
+
+### Core idea
+
+Instead of:
+
+- `1 chunk = 1 Lambda = 1 download = 1 native process`
+
+do:
+
+- `1 batch = N chunks = 1 Lambda = 1 native process`
+
+Inside that one native process:
+
+- threads pull chunk work from a queue
+- each thread downloads a chunk directly
+- each thread histograms that chunk directly
+- each thread emits one per-chunk histogram result
+
+That saves:
+
+- Lambda startup overhead
+- handler setup overhead
+- repeated clip reads
+- repeated process launch overhead
+
+## Native I/O Model
+
+There are two realistic ways to let native code fetch chunk data.
+
+### Option A: native AWS S3 client
+
+The binary directly talks to S3 using a native AWS client.
+
+Pros:
+
+- direct S3 access
+- no presigned URL step
+
+Cons:
+
+- packaging is heavier
+- auth/signing in native code is more complex
+
+### Option B: presigned HTTPS URLs plus native HTTP
+
+The handler creates presigned URLs for chunk objects, then the native binary
+downloads them via HTTPS.
+
+Pros:
+
+- no AWS auth code in the binary
+- easier to reuse across binaries
+- easier to test locally
+- compatible with ordinary HTTP range requests
+
+Cons:
+
+- one presign step in Python
+- still need a robust native HTTP client
+
+Recommendation:
+
+- use presigned URLs plus native HTTP for the first serious experiment
+
+Reason:
+
+- it keeps AWS-specific auth out of the C code
+- it is easier to reuse later in raster/finalize experiments
+- it keeps the native binary focused on I/O + compute, not credential logic
+
+### Packaging concern
+
+This choice adds a real packaging question.
+
+If the native binary uses `libcurl` for HTTPS, the deploy story must account for:
+
+- `libcurl`
+- TLS dependencies such as OpenSSL or the platform TLS stack
+- ARM64 Lambda compatibility
+- binary size / layer size
+- whether the binary is:
+  - dynamically linked against a dedicated layer
+  - or statically linked as part of the build
+
+This is not optional detail.
+
+Before implementation, choose one explicit packaging model and test it in the
+same deploy-style ARM64 runtime used elsewhere in this repo.
+
+Preferred first check:
+
+- prove that a tiny ARM64 Lambda-side binary using presigned HTTPS + `libcurl`
+  can be built, packaged, invoked, and smoke-tested cleanly
+
+If that turns into dependency pain, revisit:
+
+- whether native HTTP is still worth it for the first pass
+- or whether a cheaper batching experiment should come first
+
+## Threading Model for Hist
+
+### First native hist version: thread-per-chunk work queue
+
+Do **not** start with per-chunk section sharding.
+
+Start with:
+
+- one chunk descriptor per work item
+- one shared queue
+- worker threads pop chunk jobs
+- each worker:
+  - downloads one whole chunk
+  - histograms it
+  - writes one in-memory result record
+  - moves to the next chunk
+
+This is the simplest useful design and already removes a lot of overhead.
+
+### Why this is the right first step
+
+- much simpler than intra-chunk range sharding
+- preserves the existing per-chunk histogram artifact shape
+- makes batching easy
+- good reuse potential for other pipeline steps
+- probably enough to show whether native I/O batching is worth continuing
+
+### Second native hist version: section sharding inside one chunk
+
+If chunk objects are individually large enough that one chunk is still a
+bottleneck, then add a second layer:
+
+- split one chunk into solve-aligned byte ranges
+- assign those ranges to multiple threads
+- each thread downloads its own HTTP range
+- each thread computes a private histogram for its range
+- reduce the per-thread histograms at the end
+
+This is more complex and should be a v2 optimization, not the first pass.
+
+## Solve-Aligned Chunk Sectioning
+
+For a given degree:
+
+- `solve_bytes = degree * 2 * sizeof(float)`
+
+Any per-thread byte range must:
+
+- start on a multiple of `solve_bytes`
+- end on a multiple of `solve_bytes`
+
+That guarantees:
+
+- no partial solve decoding
+- no cross-thread record overlap
+
+So the user’s idea is valid, but it should be treated as:
+
+- a second-phase optimization for very large chunks
+
+not the very first native batching pass.
+
+## Batch Shape
+
+### Important point
+
+The goal is not to load the entire batch into memory before doing anything.
+
+The goal is:
+
+- bounded in-memory concurrency
+- download + compute overlap
+
+### Batch descriptor
+
+Each hist Lambda should receive a batch like:
+
+- `batch_id`
+- `chunks[]`
+  - `chunk_idx`
+  - `bin_key`
+  - `byte_size`
+  - `hist_out_key`
+
+### In-memory execution model
+
+Within one invocation:
+
+- maintain a bounded number of in-flight chunk downloads
+- as soon as one chunk is fully available to a worker, histogram it
+- upload results after the native phase completes
+
+### Memory budgeting
+
+The safe limit should be computed from:
+
+- Lambda memory
+- fixed Python/native overhead
+- per-chunk resident bytes
+- thread-local scratch
+- safety margin
+
+For the first pass, keep it simple:
+
+- process chunks one at a time per worker
+- bounded worker count
+- no attempt to hold dozens of full chunks in RAM simultaneously
+
+That means memory stays roughly:
+
+- `threads * chunk_bytes`
+- plus fixed overhead
+
+not:
+
+- `batch_count * chunk_bytes`
+
+### Practical rule
+
+Use a budget like:
+
+- `max_resident_chunk_bytes <= 35% to 45% of Lambda memory`
+
+and derive:
+
+- worker count
+- in-flight chunk count
+- max batch size
+
+from that.
+
+## Workflow / Step Functions Plan
+
+### Current
+
+- `ColorSolveScoreHistMap` iterates `chunk_items`
+- one item per chunk
+
+### New
+
+Change the plan to emit:
+
+- `hist_chunk_batches`
+
+Each batch contains:
+
+- a small list of chunk descriptors
+
+Then `ColorSolveScoreHistMap` iterates batches, not chunks.
+
+Each batch Lambda:
+
+- downloads/handles multiple chunks
+- produces multiple histogram JSON artifacts
+
+This keeps:
+
+- the merge contract the same
+- one histogram artifact per original chunk
+
+while reducing:
+
+- number of Lambda invocations
+- number of Step Functions transitions
+
+## Cheap Staging Experiment Before Native HTTP
+
+Before committing to native HTTP, there is a cheaper test that isolates the
+main hypothesis:
+
+- does batching multiple chunks into one Lambda invocation help materially on
+  its own?
+
+### Stage 0 experiment
+
+Implement a temporary batched hist path that still uses the current Python
+download model:
+
+- one hist Lambda invocation receives `N` chunks
+- Python processes them sequentially in one invocation
+- for each chunk:
+  - download to tmpfile
+  - run the existing one-chunk binary
+  - collect/upload that chunk histogram
+
+This experiment is intentionally boring.
+
+It does **not** try to fix Python hot-path overhead completely.
+
+It only answers:
+
+- how much of the current slowdown comes from
+  - per-invocation startup
+  - per-invocation setup
+  - repeated clip fetch / process launch / Step Functions overhead
+
+### Why this stage matters
+
+If this stage already gives a meaningful win, then:
+
+- the batching hypothesis is real
+- native HTTP is justified as the next step
+
+If this stage gives little or no win, then:
+
+- the main bottleneck is probably not invocation count alone
+- and native HTTP may not be worth the added packaging complexity
+
+### Success threshold for Stage 0
+
+A rough threshold:
+
+- if Python-batched sequential hist cuts wall time enough to be clearly visible
+  on the same render, proceed to native HTTP
+- if it barely moves, stop and profile before adding `libcurl`
+
+## Handler shape
+
+Add a dedicated batched hist handler path inside
+[lambda/handler_solve_proximity.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_solve_proximity.py)
+or split it into a new handler if that keeps the code cleaner.
+
+Preferred first shape:
+
+- keep the same handler
+- add a new phase such as:
+  - `hist_batch`
+
+The handler would:
+
+1. load the clip artifact once
+2. presign all chunk keys in the batch
+3. invoke one native binary for the whole batch
+4. upload the resulting per-chunk hist JSONs
+5. report batched perf
+
+## Native hist binary shape
+
+Recommended first step:
+
+- add a new binary instead of overloading the current CLI too much
+
+Suggested file:
+
+- `lambda/solve_proximity_hist_batch.c`
+
+Reason:
+
+- it keeps the current tested one-chunk CLI stable
+- avoids turning `solve_proximity_stats.c` into an awkward multi-mode transport tool
+- makes experiment rollback easy
+
+### Native batch input
+
+Pass one small JSON manifest path or JSON string describing:
+
+- metric
+- clip bounds
+- omega settings
+- degree
+- threads
+- chunk descriptors:
+  - `chunk_idx`
+  - `url`
+  - `size`
+
+### Native batch output
+
+Emit one JSON summary to stdout containing:
+
+- `threads`
+- `chunks_processed`
+- `bytes_downloaded`
+- `download_ms`
+- `compute_ms`
+- per-chunk histogram payloads in memory-friendly compact form
+
+The Python handler then uploads those per-chunk hist JSON objects to S3.
+
+## Native HTTP implementation
+
+### First recommendation
+
+Use an HTTP client that supports:
+
+- regular GET
+- range GET
+- connection reuse
+- concurrent transfers
+
+Examples:
+
+- `libcurl` with multi interface
+
+Why:
+
+- mature
+- straightforward for presigned HTTPS
+- supports the exact concurrent range/read patterns we care about
+
+### First version behavior
+
+Do not overreach.
+
+For v1 native hist batching:
+
+- one whole-object GET per chunk
+- one chunk owned by one worker at a time
+- connection reuse across the batch
+
+Only add range GET section sharding after that baseline is measured.
+
+## How This Reuses for Other Stages
+
+This is the most important systems payoff.
+
+If native presigned-URL I/O works for hist, the same pattern can be reused for:
+
+- raster chunk input
+- palette chunk input
+- maybe finalize input reads
+
+So hist is a useful proving ground for:
+
+- native HTTP in Lambda
+- batched work per invocation
+- shared thread pools
+- measured download/compute overlap
+
+## Logging Requirements
+
+This experiment must report enough detail to be credible.
+
+### Hist progress logs
+
+For batched hist:
+
+- `threads=<N>`
+- `batch_chunks=<K>`
+- `bytes=<...>`
+- `input=native_http_batch`
+
+Example:
+
+```text
+Solve score: hist 24/125 batches · wall=18.6s aggregate=download 41.2s + compute 33.7s · threads=8 · batch_chunks=4 · input=native_http_batch
+```
+
+### Final hist perf fields
+
+Per batch result data should include:
+
+- `threads`
+- `chunks_processed`
+- `bytes_downloaded`
+- `download_ms`
+- `compute_ms`
+- `upload_ms`
+- `input_mode=native_http_batch`
+
+Optional but strongly recommended:
+
+- `download_mb_per_s`
+- `avg_chunk_download_ms`
+- `avg_chunk_compute_ms`
+
+## Benchmark Plan
+
+Benchmark these in order:
+
+1. current baseline
+   - one chunk per Lambda
+   - Python download
+   - tmpfile input
+
+2. current stdin experiment
+   - one chunk per Lambda
+   - Python download
+   - stdin input
+
+3. native hist batch v1
+   - multiple chunks per Lambda
+   - native whole-object GET
+   - one chunk per worker at a time
+
+4. native hist batch v2, only if needed
+   - intra-chunk range sharding
+
+## Success Criteria
+
+The experiment is worth continuing if native hist batching gives:
+
+- clear wall-time reduction on the same render
+- lower total chunk overhead per solve-score hist phase
+- enough gain to justify reusing the model in raster
+
+Reasonable target:
+
+- at least `2x` faster hist wall time
+
+If it cannot beat the current tmpfile baseline convincingly, stop there.
+
+## Implementation Order
+
+1. update the render plan to support hist batches
+2. add a cheap Stage 0 batched hist path:
+   - multiple chunks per Lambda
+   - current Python download model
+   - current one-chunk native binary reused sequentially
+3. add detailed logging for Stage 0 and benchmark it against the current
+   tmpfile baseline
+4. if Stage 0 shows a real win, choose and validate the native HTTP packaging
+   model
+5. add the native batch hist binary
+6. add presign plumbing in the handler
+7. replace Stage 0 with native batched hist
+8. benchmark against the current tmpfile baseline
+9. only then decide whether to extend the native I/O model to raster
 
 ## Immediate A/B: solve-score hist input mode
 

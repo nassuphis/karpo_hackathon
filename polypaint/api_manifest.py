@@ -161,8 +161,11 @@ def _extract_dispatch_targets(dispatch_text: str) -> list[str]:
 
 
 def _extract_deploy_config_services(deploy_text: str) -> dict[str, str]:
+    ignored = {"build_id", "deployed_at_utc", "git_rev", "frontend_sha256"}
     services = {}
     for key, suffix in re.findall(r'"([^"]+)": "%s([^"]*)"', deploy_text):
+        if key in ignored:
+            continue
         services[key] = suffix
     if not services:
         raise RuntimeError("Could not parse config.json template from deploy.sh")

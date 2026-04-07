@@ -102,6 +102,11 @@ LAPACK_LAYER=""
 PDF_PY_LAYER=""
 SWEEP_CM_NAME="polypaint-sweep-cm"
 SWEEP_CM_MEMORY=4096  # companion matrix eigensolve needs more memory
+BUILD_ID=""
+BUILD_DEPLOYED_AT_UTC=""
+BUILD_GIT_REV="nogit"
+BUILD_GIT_DIRTY=false
+BUILD_FRONTEND_SHA256=""
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -147,6 +152,37 @@ ensure_bucket_website() {
   ]
 }"
     echo "  bucket policy: public read on ${BUCKET}/*"
+}
+
+build_deploy_metadata() {
+    BUILD_DEPLOYED_AT_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local BUILD_STAMP
+    BUILD_STAMP=$(date -u +"%Y%m%d-%H%M%S")
+
+    BUILD_GIT_REV="nogit"
+    BUILD_GIT_DIRTY=false
+    if git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        BUILD_GIT_REV=$(git -C "$SCRIPT_DIR" rev-parse --short=7 HEAD 2>/dev/null || echo "nogit")
+        if ! git -C "$SCRIPT_DIR" diff --quiet --ignore-submodules HEAD -- >/dev/null 2>&1; then
+            BUILD_GIT_DIRTY=true
+        fi
+    fi
+
+    BUILD_FRONTEND_SHA256=$(
+        cat \
+            "$SCRIPT_DIR/index.html" \
+            "$SCRIPT_DIR/coeff_func_catalog_js.js" \
+            "$SCRIPT_DIR/tri_palette_catalog_js.js" \
+            "$SCRIPT_DIR/long_palette_catalog_js.js" \
+        | shasum | cut -d' ' -f1
+    )
+
+    local BUILD_HASH_SHORT
+    BUILD_HASH_SHORT=${BUILD_FRONTEND_SHA256:0:12}
+    BUILD_ID="${BUILD_STAMP}-${BUILD_GIT_REV}-${BUILD_HASH_SHORT}"
+    if [ "$BUILD_GIT_DIRTY" = true ]; then
+        BUILD_ID="${BUILD_ID}-dirty"
+    fi
 }
 
 # --- Deployed frontend smoke test ---
@@ -1086,6 +1122,8 @@ setup_api_gateway() {
         --query 'ApiEndpoint' --output text)
     echo "  API Gateway URL: $API_URL"
 
+    build_deploy_metadata
+
     printf '{
   "sweep": "%s/sweep",
   "sweep-mt": "%s/sweep-mt",
@@ -1103,11 +1141,19 @@ setup_api_gateway() {
   "deepzoom-export": "%s/deepzoom-export",
   "sweep-cm": "%s/sweep-cm",
   "solve_proximity": "%s/solve-proximity",
-  "palette-debug": "%s/palette-debug"
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" \
+  "palette-debug": "%s/palette-debug",
+  "build": {
+    "build_id": "%s",
+    "deployed_at_utc": "%s",
+    "git_rev": "%s",
+    "git_dirty": %s,
+    "frontend_sha256": "%s"
+  }
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$BUILD_ID" "$BUILD_DEPLOYED_AT_UTC" "$BUILD_GIT_REV" "$BUILD_GIT_DIRTY" "$BUILD_FRONTEND_SHA256" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" --region "$REGION"
     echo "  config.json uploaded"
+    echo "  Build ID: $BUILD_ID"
 }
 
 if [ "$ACTION" = "create" ]; then
@@ -1790,6 +1836,7 @@ elif [ "$ACTION" = "update" ]; then
     echo "  Storage:  $STORAGE_NAME ($STORAGE_MEMORY MB)"
     echo "  Dispatch: $DISPATCH_NAME ($DISPATCH_MEMORY MB)"
     echo "  Preview:  $PREVIEW_NAME ($PREVIEW_MEMORY MB)"
+    echo "  Build:    $BUILD_ID"
     echo "  Site:"
     echo "    HTTP:   http://$BUCKET.s3-website-$REGION.amazonaws.com"
     echo "    HTTPS:  https://$BUCKET.s3.$REGION.amazonaws.com/index.html"

@@ -205,8 +205,19 @@ class TestDeployPackaging(unittest.TestCase):
 
     def test_updated_summary_prints_http_and_https_site_urls_together(self):
         self.assertIn('echo "  Site:"', DEPLOY_TEXT)
+        self.assertIn('echo "  Build:    $BUILD_ID"', DEPLOY_TEXT)
         self.assertIn('echo "    HTTP:   http://$BUCKET.s3-website-$REGION.amazonaws.com"', DEPLOY_TEXT)
         self.assertIn('echo "    HTTPS:  https://$BUCKET.s3.$REGION.amazonaws.com/index.html"', DEPLOY_TEXT)
+
+    def test_deploy_writes_build_metadata_into_config_json(self):
+        self.assertIn('build_deploy_metadata()', DEPLOY_TEXT)
+        self.assertIn('"build": {', DEPLOY_TEXT)
+        self.assertIn('"build_id": "%s"', DEPLOY_TEXT)
+        self.assertIn('"deployed_at_utc": "%s"', DEPLOY_TEXT)
+        self.assertIn('"git_rev": "%s"', DEPLOY_TEXT)
+        self.assertIn('"git_dirty": %s', DEPLOY_TEXT)
+        self.assertIn('"frontend_sha256": "%s"', DEPLOY_TEXT)
+        self.assertIn('echo "  Build ID: $BUILD_ID"', DEPLOY_TEXT)
 
     def test_storage_handler_routes_are_published_by_deploy(self):
         storage_routes = sorted(set(re.findall(r'path\.endswith\("/([^"]+)"\)', HANDLER_STORAGE_TEXT)))

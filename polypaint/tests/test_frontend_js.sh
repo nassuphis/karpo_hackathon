@@ -20,7 +20,11 @@ if [ ! -f "$TRI_CATALOG_JS" ]; then echo "FATAL: $TRI_CATALOG_JS not found"; exi
 if [ ! -f "$LONG_CATALOG_JS" ]; then echo "FATAL: $LONG_CATALOG_JS not found"; exit 1; fi
 grep -q "switchTab('favorites')" "$HTML" || { echo "FATAL: Favorites tab button missing from index.html"; exit 1; }
 grep -q 'id="tab-favorites"' "$HTML" || { echo "FATAL: Favorites tab content missing from index.html"; exit 1; }
+grep -q 'id="btn-favorites-go-render"' "$HTML" || { echo "FATAL: Favorites GoRender button missing from index.html"; exit 1; }
 grep -q 'id="btn-favorites-download"' "$HTML" || { echo "FATAL: Favorites Download button missing from index.html"; exit 1; }
+grep -q 'id="results-filter-mode"' "$HTML" || { echo "FATAL: Results filter mode dropdown missing from index.html"; exit 1; }
+grep -q 'id="build-id-label"' "$HTML" || { echo "FATAL: build id label missing from index.html"; exit 1; }
+grep -q 'onclick="renderResultsTable()" style="margin:0; padding:3px 8px; font-size:10px"' "$HTML" || { echo "FATAL: Results Filter button should override global button margin"; exit 1; }
 grep -q 'Image + Meta' "$HTML" || { echo "FATAL: Favorites download menu missing Image + Meta"; exit 1; }
 grep -q 'Select Dir…' "$HTML" || { echo "FATAL: Favorites download menu missing Select Dir…"; exit 1; }
 
@@ -157,6 +161,7 @@ console.log('  long catalog loaded: ' + longCatLen + ' palettes');
 // Step 2: Load app JS (strip auto-init populateDropdown call)
 let appCode = fs.readFileSync(process.argv[5], 'utf8');
 appCode = appCode.replace(/^populateDropdown\(\);$/m, '// populateDropdown() — deferred to test');
+appCode = appCode.replace(/^loadLambdaConfig\(\);$/m, '// loadLambdaConfig() — deferred to test');
 try {
     vm.runInContext(appCode, ctx, { filename: 'index-inline.js' });
 } catch (e) {
@@ -460,6 +465,64 @@ async function testPipeline(name, call) {
 }
 
 (async () => {
+    {
+        ctx._elements['config-url'] = ctx._elements['config-url'] || ctx._mkEl();
+        ctx._elements['config-url'].value = 'https://cfg/build.json';
+        vm.runInContext(`
+            fetch = async function(url) {
+                if (url !== 'https://cfg/build.json') throw new Error('unexpected config url ' + url);
+                return {
+                    ok: true,
+                    json: async function() {
+                        return {
+                            sweep: 'https://api.example/sweep',
+                            storage: 'https://api.example',
+                            build: {
+                                build_id: '20260407-120000-abc1234-deadbeefcafe',
+                                deployed_at_utc: '2026-04-07T12:00:00Z',
+                                git_rev: 'abc1234',
+                                git_dirty: false,
+                                frontend_sha256: 'deadbeefcafebabefeedface'
+                            }
+                        };
+                    }
+                };
+            };
+        `, ctx);
+        try {
+            await vm.runInContext('(async()=>{ await loadLambdaConfig(); })()', ctx);
+            const label = ctx._elements['build-id-label'].textContent || '';
+            const tooltip = ctx._elements['build-id-label'].title || '';
+            const status = ctx._elements['config-status'].textContent || '';
+            const title = ctx.document.title || '';
+            const endpointKeys = vm.runInContext('Object.keys(_lambdaUrls).sort().join(",")', ctx);
+            if (!label.includes('build 20260407-120000-abc1234-deadbeefcafe')) {
+                console.error('FATAL: build id label not applied, got ' + label);
+                process.exit(1);
+            }
+            if (!title.includes('build 20260407-120000-abc1234-deadbeefcafe')) {
+                console.error('FATAL: document title should include build id, got ' + title);
+                process.exit(1);
+            }
+            if (!tooltip.includes('frontend sha256: deadbeefcafebabefeedface')) {
+                console.error('FATAL: build tooltip missing frontend hash, got ' + tooltip);
+                process.exit(1);
+            }
+            if (status !== '2 endpoints loaded') {
+                console.error('FATAL: config status should count only endpoint services, got ' + status);
+                process.exit(1);
+            }
+            if (endpointKeys !== 'storage,sweep') {
+                console.error('FATAL: _lambdaUrls should only contain endpoint services, got ' + endpointKeys);
+                process.exit(1);
+            }
+            console.log('  config load applies build id to title: OK');
+        } catch (e) {
+            console.error('FATAL: build id config load: ' + e.message);
+            process.exit(1);
+        }
+    }
+
     await testPipeline('runRasterPipeline', '(async()=>{ await runRasterPipeline(); })()');
     {
         const logs = vm.runInContext('_pipelineDispatchLogs', ctx);
@@ -761,12 +824,12 @@ async function testPipeline(name, call) {
         if (!panelHtml.includes('height:360px') || !panelHtml.includes('background:#000')) { console.error('FATAL: render artifact panel should keep fixed black viewport height'); process.exit(1); }
         assertActionButtons(
             panelHtml,
-            ['Generate', 'Generate-MT', 'GenerateFromPalette', 'RePalette', 'Populate', 'Autolevels', 'Favorite', 'Download', 'Delete', 'DeepZoom'],
+            ['Generate', 'Generate-MT', 'GenerateFromPalette', 'RePalette', 'Populate', 'Autolevels', 'GoResult', 'Favorite', 'Download', 'Delete', 'DeepZoom'],
             ['ColorSpread'],
             'color action row'
         );
         const colorActionRowCount = (panelHtml.match(/class="render-action-row"/g) || []).length;
-        if (colorActionRowCount !== 2) { console.error('FATAL: color action buttons should be split into exactly 2 rows of max 5'); process.exit(1); }
+        if (colorActionRowCount !== 3) { console.error('FATAL: color action buttons should be split into exactly 3 rows of max 5'); process.exit(1); }
         console.log('  color family auto-select + viewer: OK');
 
         vm.runInContext(`_renderSelectFamily('palette')`, ctx);
@@ -832,6 +895,7 @@ async function testPipeline(name, call) {
         vm.runInContext(`
             _favoriteRefs = [];
             _favoriteRefsLoaded = true;
+            _renderLoadedJobId = 'j';
             _renderActiveFamily = 'color';
             renderArtifactPanel('j', {
                 calc: { exists: true, N: 1000, degree: 5 },
@@ -919,6 +983,81 @@ async function testPipeline(name, call) {
         const favListCallsAfterRefresh = vm.runInContext('_favoriteListCalls', ctx);
         if (favListCallsAfterRefresh !== 2) { console.error('FATAL: favorites refresh should force /list-favorites reload, got ' + favListCallsAfterRefresh); process.exit(1); }
         console.log('  favorites refresh forces refetch: OK');
+
+        ctx._elements['btn-favorites-go-render'] = ctx._elements['btn-favorites-go-render'] || { ...ctx._mkEl(), textContent: 'GoRender', disabled: false };
+        try {
+            await vm.runInContext(`
+                (async()=>{
+                    _favoriteGoRenderOrigEnsure = _ensureResultsSelection;
+                    _favoriteGoRenderOrigRefresh = refreshRenderArtifacts;
+                    _favoriteGoRenderOrigSwitch = switchTab;
+                    _favoriteGoRenderOrigLog = log;
+                    _favoriteGoRenderCalls = { ensure: [], refresh: [], tabs: [], logs: [] };
+                    _ensureResultsSelection = async function(jobId) { _favoriteGoRenderCalls.ensure.push(jobId); };
+                    refreshRenderArtifacts = async function(jobId, opts) {
+                        _favoriteGoRenderCalls.refresh.push({ jobId, opts });
+                        _renderActiveFamily = (opts && opts.selectFamily) || 'color';
+                        _renderArtifacts = {
+                            color: [{ artifact_id: 'color_a' }],
+                            bilevel: [],
+                            coeffs: [],
+                            palette: [],
+                            pdf: [],
+                        };
+                    };
+                    switchTab = function(name) { _favoriteGoRenderCalls.tabs.push(name); };
+                    log = function(msg, cls, target) { _favoriteGoRenderCalls.logs.push({ msg, cls, target }); };
+                    _favoriteSelectedIdx = 0;
+                    await goRenderSelectedFavorite();
+                    _ensureResultsSelection = _favoriteGoRenderOrigEnsure;
+                    refreshRenderArtifacts = _favoriteGoRenderOrigRefresh;
+                    switchTab = _favoriteGoRenderOrigSwitch;
+                    log = _favoriteGoRenderOrigLog;
+                })()
+            `, ctx);
+        } catch(e) { console.error('FATAL: goRenderSelectedFavorite(found): ' + e.message); process.exit(1); }
+        const goFoundCalls = vm.runInContext('_favoriteGoRenderCalls', ctx);
+        if (!goFoundCalls || goFoundCalls.ensure[0] !== 'job_a') { console.error('FATAL: GoRender should ensure selected job_a'); process.exit(1); }
+        if (!goFoundCalls.tabs.includes('render')) { console.error('FATAL: GoRender should switch to render tab'); process.exit(1); }
+        if (!goFoundCalls.refresh.length || goFoundCalls.refresh[0].jobId !== 'job_a') { console.error('FATAL: GoRender should refresh render artifacts for selected favorite job'); process.exit(1); }
+        if ((goFoundCalls.refresh[0].opts || {}).selectArtifactId !== 'color_a') { console.error('FATAL: GoRender should request selected artifact id'); process.exit(1); }
+        if (!goFoundCalls.logs.some(x => x.msg === 'GoRender selected: color_a' && x.target === 'favorites-log')) { console.error('FATAL: GoRender should log successful artifact selection'); process.exit(1); }
+        console.log('  favorites GoRender switches to render and selects artifact when present: OK');
+
+        try {
+            await vm.runInContext(`
+                (async()=>{
+                    _favoriteGoRenderOrigEnsure = _ensureResultsSelection;
+                    _favoriteGoRenderOrigRefresh = refreshRenderArtifacts;
+                    _favoriteGoRenderOrigSwitch = switchTab;
+                    _favoriteGoRenderOrigLog = log;
+                    _favoriteGoRenderCalls = { ensure: [], refresh: [], tabs: [], logs: [] };
+                    _ensureResultsSelection = async function(jobId) { _favoriteGoRenderCalls.ensure.push(jobId); };
+                    refreshRenderArtifacts = async function(jobId, opts) {
+                        _favoriteGoRenderCalls.refresh.push({ jobId, opts });
+                        _renderActiveFamily = (opts && opts.selectFamily) || 'color';
+                        _renderArtifacts = {
+                            color: [{ artifact_id: 'different_artifact' }],
+                            bilevel: [],
+                            coeffs: [],
+                            palette: [],
+                            pdf: [],
+                        };
+                    };
+                    switchTab = function(name) { _favoriteGoRenderCalls.tabs.push(name); };
+                    log = function(msg, cls, target) { _favoriteGoRenderCalls.logs.push({ msg, cls, target }); };
+                    _favoriteSelectedIdx = 1;
+                    await goRenderSelectedFavorite();
+                    _ensureResultsSelection = _favoriteGoRenderOrigEnsure;
+                    refreshRenderArtifacts = _favoriteGoRenderOrigRefresh;
+                    switchTab = _favoriteGoRenderOrigSwitch;
+                    log = _favoriteGoRenderOrigLog;
+                })()
+            `, ctx);
+        } catch(e) { console.error('FATAL: goRenderSelectedFavorite(missing): ' + e.message); process.exit(1); }
+        const goMissingCalls = vm.runInContext('_favoriteGoRenderCalls', ctx);
+        if (!goMissingCalls.logs.some(x => x.msg === 'Selected artifact not in render table: color_missing' && x.target === 'favorites-log')) { console.error('FATAL: GoRender should log missing artifact when not found in render table'); process.exit(1); }
+        console.log('  favorites GoRender logs when selected artifact is missing from render table: OK');
     }
 
     {
@@ -3512,6 +3651,217 @@ async function testPipeline(name, call) {
             console.error('FATAL: results populate: ' + e.message);
             process.exit(1);
         }
+    }
+
+    {
+        ctx._elements['render-preview'] = ctx._elements['render-preview'] || ctx._mkEl();
+        ctx._elements['render-info'] = ctx._elements['render-info'] || ctx._mkEl();
+        ctx._elements['render-results-dir'] = ctx._elements['render-results-dir'] || { ...ctx._mkEl(), value: 'job_old' };
+        ctx._elements['palette-results-dir'] = ctx._elements['palette-results-dir'] || { ...ctx._mkEl(), value: 'job_old' };
+        ctx._elements['results-dir'] = ctx._elements['results-dir'] || { ...ctx._mkEl(), value: 'job_old' };
+        ctx._elements['results-scroll'] = ctx._elements['results-scroll'] || { ...ctx._mkEl(), focus() {} };
+        ctx._elements['results-preview'] = ctx._elements['results-preview'] || ctx._mkEl();
+        ctx._elements['results-info'] = ctx._elements['results-info'] || ctx._mkEl();
+        ctx._elements['btn-render-result'] = ctx._elements['btn-render-result'] || { ...ctx._mkEl(), disabled: true };
+        ctx._elements['btn-populate-result'] = ctx._elements['btn-populate-result'] || { ...ctx._mkEl(), disabled: true };
+        ctx._elements['btn-preview'] = ctx._elements['btn-preview'] || { ...ctx._mkEl(), disabled: true };
+        ctx._elements['btn-delete'] = ctx._elements['btn-delete'] || { ...ctx._mkEl(), disabled: true };
+        try {
+            vm.runInContext(`
+                _renderLoadedJobId = 'job_old';
+                renderArtifactPanel('job_old', {
+                    calc: { exists: true, N: 1000, degree: 5 },
+                    families: {
+                        color: [
+                            { artifact_id: 'old_art', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/job_old/color/old_art/image.jpeg', image_url: 'https://img/old.jpeg', preview_url: 'https://img/old.png', viewer_url: 'https://img/old.png', width: 1000, height: 1000, file_size: 50000, color_mode: 'rainbow', format: 'jpeg' }
+                        ],
+                        bilevel: [],
+                        coeffs: [],
+                        palette: [],
+                        pdf: []
+                    }
+                });
+                _resultsCache = [{ job_id: 'job_new', function: 'g1', degree: 4, N: 100, times: 1, total_size: 1000 }];
+                selectResult('job_new');
+            `, ctx);
+        } catch (e) {
+            console.error('FATAL: render inventory invalidation on result select: ' + e.message);
+            process.exit(1);
+        }
+        const renderDirValAfterSelect = ctx._elements['render-results-dir'].value;
+        const loadedJobAfterSelect = vm.runInContext('_renderLoadedJobId', ctx);
+        const renderColorCountAfterSelect = vm.runInContext('_renderArtifacts.color.length', ctx);
+        const renderPreviewAfterSelect = ctx._elements['render-preview'].innerHTML || '';
+        if (renderDirValAfterSelect !== 'job_new') { console.error('FATAL: selectResult should set render-results-dir job_new, got ' + renderDirValAfterSelect); process.exit(1); }
+        if (loadedJobAfterSelect !== '') { console.error('FATAL: selecting a new result should invalidate loaded render job id, got ' + loadedJobAfterSelect); process.exit(1); }
+        if (renderColorCountAfterSelect !== 0) { console.error('FATAL: selecting a new result should clear stale render artifacts'); process.exit(1); }
+        if (!renderPreviewAfterSelect.includes('No saved artifacts yet.')) { console.error('FATAL: selecting a new result should clear stale render preview panel'); process.exit(1); }
+        console.log('  selecting a new result invalidates stale render artifacts: OK');
+    }
+
+    {
+        try {
+            await vm.runInContext(`
+                (async()=>{
+                    _renderNeedsRefresh = true;
+                    _renderLoadedJobId = '';
+                    document.getElementById('render-results-dir').value = 'job_auto';
+                    _autoRefreshCalls = [];
+                    _autoRefreshOrig = refreshRenderArtifacts;
+                    refreshRenderArtifacts = async function(jobId, opts) {
+                        _autoRefreshCalls.push({ jobId, opts });
+                        _renderLoadedJobId = jobId;
+                        _renderNeedsRefresh = false;
+                    };
+                    switchTab('render');
+                    await Promise.resolve();
+                    refreshRenderArtifacts = _autoRefreshOrig;
+                })()
+            `, ctx);
+        } catch (e) {
+            console.error('FATAL: render auto refresh on tab switch: ' + e.message);
+            process.exit(1);
+        }
+        const autoRefreshCalls = vm.runInContext('_autoRefreshCalls', ctx);
+        if (!Array.isArray(autoRefreshCalls) || autoRefreshCalls.length !== 1 || autoRefreshCalls[0].jobId !== 'job_auto') {
+            console.error('FATAL: switching to render with dirty job should auto-refresh that render inventory');
+            process.exit(1);
+        }
+        console.log('  switching to render auto-refreshes dirty render inventory: OK');
+    }
+
+    {
+        ctx._elements['results-filter'] = { ...ctx._mkEl(), value: 'creative', placeholder: 'Filter by function...' };
+        ctx._elements['results-filter-mode'] = { ...ctx._mkEl(), value: 'function' };
+        ctx._elements['results-tbody'] = ctx._elements['results-tbody'] || ctx._mkEl();
+        vm.runInContext(`
+            _resultsCache = [
+                { job_id: 'compute_alpha123', function: 'creative9', degree: 7, N: 100, times: 1, total_size: 1000 },
+                { job_id: 'compute_beta456', function: 'g1', degree: 4, N: 100, times: 1, total_size: 1000 }
+            ];
+        `, ctx);
+        vm.runInContext(`_updateResultsFilterUi(); renderResultsTable();`, ctx);
+        const byFunctionCount = vm.runInContext('document.getElementById("results-tbody").children.length', ctx);
+        const byFunctionFirst = vm.runInContext('document.getElementById("results-tbody").children[0] ? document.getElementById("results-tbody").children[0].innerHTML : ""', ctx);
+        const functionPlaceholder = ctx._elements['results-filter'].placeholder || '';
+        if (byFunctionCount !== 1 || !byFunctionFirst.includes('alpha123') || byFunctionFirst.includes('beta456')) {
+            console.error('FATAL: results function filter should match function names only');
+            process.exit(1);
+        }
+        if (functionPlaceholder !== 'Filter by function...') {
+            console.error('FATAL: results function filter placeholder mismatch: ' + functionPlaceholder);
+            process.exit(1);
+        }
+
+        ctx._elements['results-filter-mode'].value = 'job_id';
+        ctx._elements['results-filter'].value = 'beta456';
+        vm.runInContext(`_updateResultsFilterUi(); renderResultsTable();`, ctx);
+        const byJobCount = vm.runInContext('document.getElementById("results-tbody").children.length', ctx);
+        const byJobFirst = vm.runInContext('document.getElementById("results-tbody").children[0] ? document.getElementById("results-tbody").children[0].innerHTML : ""', ctx);
+        const jobPlaceholder = ctx._elements['results-filter'].placeholder || '';
+        if (byJobCount !== 1 || !byJobFirst.includes('beta456') || byJobFirst.includes('alpha123')) {
+            console.error('FATAL: results job-id filter should match job ids only');
+            process.exit(1);
+        }
+        if (jobPlaceholder !== 'Filter by job id...') {
+            console.error('FATAL: results job-id filter placeholder mismatch: ' + jobPlaceholder);
+            process.exit(1);
+        }
+        console.log('  results filter mode switches between function and job id: OK');
+    }
+
+    {
+        ctx._elements['results-filter'] = { ...ctx._mkEl(), value: '' };
+        ctx._elements['results-filter-mode'] = { ...ctx._mkEl(), value: 'function' };
+        ctx._elements['results-tbody'] = ctx._elements['results-tbody'] || ctx._mkEl();
+        ctx._elements['results-scroll'] = ctx._elements['results-scroll'] || { ...ctx._mkEl(), focus() {} };
+        ctx._elements['btn-populate-result'] = ctx._elements['btn-populate-result'] || { ...ctx._mkEl(), disabled: true };
+        ctx._elements['btn-preview'] = ctx._elements['btn-preview'] || { ...ctx._mkEl(), disabled: true };
+        ctx._elements['btn-render-result'] = ctx._elements['btn-render-result'] || { ...ctx._mkEl(), disabled: true };
+        ctx._elements['btn-delete'] = ctx._elements['btn-delete'] || { ...ctx._mkEl(), disabled: true };
+        ctx._elements['render-results-dir'] = ctx._elements['render-results-dir'] || { ...ctx._mkEl(), value: '' };
+        ctx._elements['palette-results-dir'] = ctx._elements['palette-results-dir'] || { ...ctx._mkEl(), value: '' };
+        ctx._elements['results-dir'] = ctx._elements['results-dir'] || { ...ctx._mkEl(), value: '' };
+        ctx._elements['results-preview'] = ctx._elements['results-preview'] || ctx._mkEl();
+        ctx._elements['results-info'] = ctx._elements['results-info'] || ctx._mkEl();
+        try {
+            vm.runInContext(`
+                _resultsSortCol = 'total_size';
+                _resultsSortDir = 'desc';
+                _resultsCache = [
+                    { job_id: 'job_small', function: 'g1', degree: 4, N: 100, times: 1, total_size: 1000 },
+                    { job_id: 'job_big', function: 'creative9', degree: 7, N: 100, times: 1, total_size: 5000 }
+                ];
+                renderResultsTable();
+                selectResult(document.getElementById('results-tbody').children[0].dataset.jobId);
+            `, ctx);
+        } catch (e) {
+            console.error('FATAL: results selection after sort: ' + e.message);
+            process.exit(1);
+        }
+        const firstRowJob = vm.runInContext('document.getElementById("results-tbody").children[0].dataset.jobId', ctx);
+        const firstRowClass = vm.runInContext('document.getElementById("results-tbody").children[0].className || ""', ctx);
+        const secondRowClass = vm.runInContext('document.getElementById("results-tbody").children[1].className || ""', ctx);
+        const firstRowScrollCalls = vm.runInContext('document.getElementById("results-tbody").children[0]._scrollIntoViewCalls || 0', ctx);
+        const secondRowScrollCalls = vm.runInContext('document.getElementById("results-tbody").children[1]._scrollIntoViewCalls || 0', ctx);
+        if (firstRowJob !== 'job_big') {
+            console.error('FATAL: descending size sort should render job_big first, got ' + firstRowJob);
+            process.exit(1);
+        }
+        if (firstRowClass !== 'selected' || secondRowClass === 'selected') {
+            console.error('FATAL: selecting the first visible row after sort should highlight that same row');
+            process.exit(1);
+        }
+        if (firstRowScrollCalls !== 1 || secondRowScrollCalls !== 0) {
+            console.error('FATAL: sorted selection should scroll the clicked visible row only');
+            process.exit(1);
+        }
+        console.log('  results selection follows visible sorted rows: OK');
+    }
+
+    {
+        ctx._elements['render-results-dir'] = ctx._elements['render-results-dir'] || { ...ctx._mkEl(), value: '' };
+        ctx._elements['render-log'] = ctx._elements['render-log'] || ctx._mkEl();
+        ctx._elements['results-scroll'] = ctx._elements['results-scroll'] || { ...ctx._mkEl(), focus() {} };
+        ctx._elements['btn-populate-result'] = ctx._elements['btn-populate-result'] || { ...ctx._mkEl(), disabled: true };
+        ctx._elements['btn-preview'] = ctx._elements['btn-preview'] || { ...ctx._mkEl(), disabled: true };
+        ctx._elements['btn-render-result'] = ctx._elements['btn-render-result'] || { ...ctx._mkEl(), disabled: true };
+        ctx._elements['btn-delete'] = ctx._elements['btn-delete'] || { ...ctx._mkEl(), disabled: true };
+        ctx._elements['palette-results-dir'] = ctx._elements['palette-results-dir'] || { ...ctx._mkEl(), value: '' };
+        ctx._elements['results-dir'] = ctx._elements['results-dir'] || { ...ctx._mkEl(), value: '' };
+        try {
+            await vm.runInContext(`
+                (async()=>{
+                    _resultsCache = [{ job_id: 'job_go', function: 'creative9', degree: 7, N: 100, times: 1, total_size: 1000 }];
+                    _selectedJobId = null;
+                    _goResultOrigSwitchTab = switchTab;
+                    _goResultTabs = [];
+                    switchTab = function(name) { _goResultTabs.push(name); };
+                    document.getElementById('render-results-dir').value = 'job_go';
+                    await goResultFromRender();
+                    switchTab = _goResultOrigSwitchTab;
+                })()
+            `, ctx);
+        } catch (e) {
+            console.error('FATAL: goResultFromRender: ' + e.message);
+            process.exit(1);
+        }
+        const selectedJob = vm.runInContext('_selectedJobId', ctx);
+        const goResultTabs = vm.runInContext('_goResultTabs', ctx);
+        const renderLogText = ctx._elements['render-log'].textContent || '';
+        if (selectedJob !== 'job_go') {
+            console.error('FATAL: GoResult should select job_go in results, got ' + selectedJob);
+            process.exit(1);
+        }
+        if (!Array.isArray(goResultTabs) || !goResultTabs.includes('results')) {
+            console.error('FATAL: GoResult should switch to results tab');
+            process.exit(1);
+        }
+        if (!renderLogText.includes('GoResult selected: job_go')) {
+            console.error('FATAL: GoResult should log successful selection');
+            process.exit(1);
+        }
+        console.log('  render GoResult selects the result set and switches tabs: OK');
     }
 
     console.log('');

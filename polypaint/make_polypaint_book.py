@@ -59,7 +59,7 @@ BLEED_3 = 3 * mm               # 3 mm bleed on top, bottom, outer edge
 # Binding (inside) edge: 0 mm bleed
 
 # Cover spread
-COVER_NET_W = 609.4 * mm        # back panel + spine + front panel
+COVER_NET_W = 609 * mm           # back panel + spine + front panel
 COVER_NET_H = 296 * mm          # content height + 2 x 3 mm board wrap
 COVER_BLEED = 10 * mm           # 10 mm bleed all four sides
 SPINE_W = 11 * mm               # spine for 28 pp Fuji Crystal semi-matte

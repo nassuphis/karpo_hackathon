@@ -102,6 +102,84 @@
       "title": "Corroded Annulus",
       "text": "A thick torus of weathered bronze and turquoise encircles a ragged black void, its inner wall crumbling into fractal debris. The square-dither perturbation scatters the parameter grid just enough to roughen every surface, and the zzold transform folds old coefficient history back into the current step. The outlierness score picks out roots that stray farthest from the median radial distance \u2014 the cyan shards are the structural outliers, glowing where the annulus erodes. The reef palette gives it the patina of submerged metal reclaimed by the sea.\n\npoly_673 \u00b7 degree 35 \u00b7 3000\u00d73000 \u00b7 outlierness \u00b7 reef \u00b7 Aberth-Ehrlich (parallel) \u00b7 repalette",
       "filename": "color_repalette_1775438508164_a13tad"
+    },
+    {
+      "image": "snaps/compute_mn3m0d9d_legacy_color.jpeg",
+      "title": "Swirled Maelstrom",
+      "text": "Seventy roots spiral through a golden vortex, their paths warped by the swirler transform that twists the coefficient vector like taffy before reversing it. The leading coefficient is a seventh-power sum of both parameters; the remaining sixty-nine alternate between sine and cosine envelopes keyed to the logarithmic magnitude of each input. Concentric rings of olive and amber record the orbital velocity of the root cloud as it tightens toward the luminous inner ring.\n\npoly_52 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 rainbow \u00b7 Aberth-Ehrlich",
+      "filename": "legacy_color"
+    },
+    {
+      "image": "snaps/compute_mn4u8dq4_color_run_1775467012290_78rj0s.jpeg",
+      "title": "Feathered Meridian",
+      "text": "A corona of fine hair-like filaments rings a dark interior, bisected by a luminous thread where roots cascade through a narrow channel. The creative10 function generates seventy roots through an opaque iterative recipe, and the zzold transform feeds each step\u2019s output back as the next step\u2019s input. The companion-matrix solver finds every eigenvalue exactly, and the shelliness score reveals where the root shell is thinnest \u2014 the bright thread is the seam where the corona splits open. The reef palette maps shell uniformity to teal-and-copper tones.\n\ncreative10 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 shelliness \u00b7 reef \u00b7 Companion Matrix",
+      "filename": "color_run_1775467012290_78rj0s"
+    },
+    {
+      "image": "snaps/compute_mnee2msp_color_run_1774975165942_geqi9a.jpeg",
+      "title": "Neon Anemone",
+      "text": "A dense knot of iridescent green and blue tendrils sits at the center of a radiating burst of magenta and violet rays. Thirty-five roots per solve create this sea-creature texture, with the clusteriness score measuring how tightly the nearest neighbors pack. The core is where clusters are densest; the magenta rays are the sparse zones where roots spread apart. The rainbow d3 palette wraps the full visible spectrum around the cluster gradient, giving the image its electric, bioluminescent quality.\n\npoly_483 \u00b7 degree 35 \u00b7 4000\u00d74000 \u00b7 clusteriness \u00b7 rainbow d3 \u00b7 Aberth-Ehrlich",
+      "filename": "color_run_1774975165942_geqi9a"
+    },
+    {
+      "image": "snaps/compute_mnhk7ffg_color_run_1775143302405_h34ih0.jpeg",
+      "title": "Sea Urchin",
+      "text": "A spherical mass of fine bristles in sage green, coral, and straw radiates outward from a hollow dark center, bisected by a faint equatorial line where satellite spirals orbit. Each bristle is a streak of root positions across neighboring parameter values; the shelliness score colors them by radial uniformity. The fauvism wild tri-palette \u2014 named for the early-twentieth-century painters who unleashed raw color \u2014 maps shell regularity to muted earth tones and shell disorder to vivid coral flares at the tips.\n\npoly_570 \u00b7 degree 35 \u00b7 5000\u00d75000 \u00b7 shelliness \u00b7 fauvism wild \u00b7 Aberth-Ehrlich",
+      "filename": "color_run_1775143302405_h34ih0"
+    },
+    {
+      "image": "snaps/compute_mnlhjs5c_color_run_1775385431774_70h4hc.jpeg",
+      "title": "Opal Torus",
+      "text": "A translucent torus floats in darkness, its surface shimmering with concentric bands of jade, lavender, and pale cream. The centroid-distance metric \u2014 one of the new position-sensitive scores \u2014 measures how far each solve\u2019s root cloud center sits from the origin. The resulting gradient creates these smooth iridescent shells: green where the centroid is far, violet where it draws close, and a dark pupil at the center where roots converge to a single point. The companion-matrix solver ensures every eigenvalue is exact.\n\npoly_164 \u00b7 degree 70 \u00b7 2000\u00d72000 \u00b7 centroid dist \u00b7 rainbow d3 \u00b7 Companion Matrix",
+      "filename": "color_run_1775385431774_70h4hc"
+    },
+    {
+      "image": "snaps/compute_mnmip89h_color_run_1775440916244_y1r1fp.jpeg",
+      "title": "Golden Archipelago",
+      "text": "A sprawling golden landmass with dark volcanic eyes and violet undershadows floats among a scatter of smaller islands and droplets. The polynomial alternates even and odd coefficient rules \u2014 even indices divide by the index, odd indices multiply and add a logarithmic offset \u2014 creating a root cloud that fragments into distinct territories. The crowding score measures mean pairwise log-distance, and the gilded palette maps dense crowds to burnished gold and sparse voids to deep purple. The parallel Aberth solver races through twenty-five million solves to fill every inlet.\n\npoly_50 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 crowding \u00b7 gilded \u00b7 Aberth-Ehrlich (parallel)",
+      "filename": "color_run_1775440916244_y1r1fp"
+    },
+    {
+      "image": "snaps/compute_mmw2ilf7_legacy_color.jpeg",
+      "title": "Cyclops Nebula",
+      "text": "Fifty roots arrange themselves into a glowing green-cyan sphere with a single dark eye at its center, ringed by concentric gold bands. The polynomial splits its coefficients into two halves \u2014 the first twenty-five scale linearly with the square-plus-imaginary-cube of the parameters, the second twenty-five mirror them with a conjugate twist. That structural palindrome creates the radial symmetry. Faint gossamer threads extend beyond the main body, the outermost roots tracing orbital paths through coefficient space.\n\npoly_8 \u00b7 degree 50 \u00b7 4000\u00d74000 \u00b7 rainbow \u00b7 Aberth-Ehrlich",
+      "filename": "legacy_color"
+    },
+    {
+      "image": "snaps/compute_mn4m2zqp_autolevels_1775482729023_7m3x1w.jpeg",
+      "title": "Magenta Tempest",
+      "text": "A churning storm of magenta and silver spills across the frame, its internal structure a tangle of feathered arcs and spirals. The roots5 parameter transform maps the input through a fifth-root lattice, and autolevels stretches the contrast to reveal structure hidden in the original render\u2019s shadows. Ten roots at low degree give each filament room to breathe, and the absence of coefficient transforms lets the raw creative function\u2019s personality dominate \u2014 chaotic, asymmetric, and unapologetically vivid.\n\np11b3 \u00b7 degree 10 \u00b7 5000\u00d75000 \u00b7 rainbow \u00b7 autolevels",
+      "filename": "autolevels_1775482729023_7m3x1w"
+    },
+    {
+      "image": "snaps/compute_mnh1uj4s_autolevels_1775132462930_ucwa0c.jpeg",
+      "title": "Eclipse Tiara",
+      "text": "A crown of copper and violet beads arcs across the upper half of the frame, each bead a dense cluster of roots scored by crowding proximity. Below, a luminous crescent of pale lavender sweeps upward, cradling a black disk like a partial eclipse. The autolevels pass pulls the faint radial spoke-lines \u2014 nearly invisible in the original render \u2014 into a delicate web of interference fringes. The metal-copper-violet tri-palette gives the piece its jeweled warmth against the void.\n\npoly_52 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 crowding \u00b7 metal copper violet \u00b7 Aberth-Ehrlich \u00b7 autolevels",
+      "filename": "autolevels_1775132462930_ucwa0c"
+    },
+    {
+      "image": "snaps/compute_mnj8n3f1_color_run_1775242109272_2iobyh.jpeg",
+      "title": "Byzantine Orb",
+      "text": "A golden sphere of intricate lattice-work floats above a base of folded purple and amber drapery, its surface tessellated with diamond-shaped cells that tighten toward the center. The polynomial fills its seventy coefficients from both ends \u2014 a squared power series from the left and a three-halves power series from the right, meeting at five complex-exponential pivots in the middle. The clusteriness score at a tight quantile clip reveals the finest gradations of root packing, and the inferno palette maps density to incandescent gold.\n\npoly_126 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 clusteriness q=1.8% \u00b7 inferno \u00b7 Aberth-Ehrlich",
+      "filename": "color_run_1775242109272_2iobyh"
+    },
+    {
+      "image": "snaps/compute_mnk0a4lj_color_repalette_1775290818927_uza56f.jpeg",
+      "title": "Bauhaus Mandala",
+      "text": "A red sun burns at the center of a dark grid of curved blue lines, its interior a crumpled bouquet of cobalt and white. The outlierness score lights up the roots that deviate most from the median radial distance, and the Bauhaus primaries tri-palette \u2014 red, blue, yellow in the spirit of Kandinsky and Klee \u2014 maps that deviation into bold primary blocks. The surrounding net is the moiré of seventy near-periodic root orbits, their interference pattern creating the illusion of a woven fabric.\n\npoly_147 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 outlierness \u00b7 bauhaus primaries \u00b7 Aberth-Ehrlich \u00b7 repalette",
+      "filename": "color_repalette_1775290818927_uza56f"
+    },
+    {
+      "image": "snaps/compute_mn4mbz8j_legacy_color.jpeg",
+      "title": "Red Turbine",
+      "text": "Ten roots whip through a sixth-root parameter lattice, their paths smeared into a rotating blur of salmon, slate, and charcoal. The low degree gives each root trail its own visible arc; the roots6 transform maps the complex plane through a branching cut that fractures the smooth sweep into discrete angular sectors. At the center a dark turbine hub spins, wreathed in short spokes of blue-gray where the root tracks overlap most densely. No coefficient transform is applied \u2014 the raw creative function speaks unfiltered.\n\np11b3 \u00b7 degree 10 \u00b7 5000\u00d75000 \u00b7 rainbow",
+      "filename": "legacy_color"
+    },
+    {
+      "image": "snaps/compute_mn4u8dq4_legacy_color.jpeg",
+      "title": "Thermograph",
+      "text": "Seventy roots resolved by companion-matrix eigendecomposition form a luminous disk ringed by cyan spikes and layered with concentric thermal bands \u2014 orange at the burning center, red and violet in the mid-zones, cyan at the cool outer shell. The zzold transform feeds the previous step\u2019s coefficients back as seeds for the next, building up interference patterns visible as the faint grid texture across the inner rings. A small dark pupil anchors the composition. The rainbow palette maps root index to hue, so the thermal appearance is an accident of how the eigenvalue ordering correlates with radial distance.\n\ncreative10 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 rainbow \u00b7 Companion Matrix",
+      "filename": "legacy_color"
     }
   ]
 }

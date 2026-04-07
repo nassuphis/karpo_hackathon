@@ -320,7 +320,7 @@ button {
 </head>
 <body>
 <div class="container">
-    <h1>PolyPaint Lambda 1.0</h1>
+    <h1>PolyPaint Lambda 1.0 <span id="build-id-label" style="color:#888; font-size:16px; font-weight:400"></span></h1>
 
     <!-- Config -->
     <div class="panel">
@@ -420,8 +420,12 @@ button {
                         <span id="results-count" style="font-size:11px; color:#666"></span>
                     </div>
                     <div style="display:flex; gap:4px; margin-bottom:4px; align-items:center">
-                        <input type="text" id="results-filter" placeholder="Filter by function..." style="flex:1; padding:3px 6px; font-size:11px; background:#141424; color:#ccc; border:1px solid #333; border-radius:3px" onkeydown="if(event.key==='Enter')renderResultsTable()">
-                        <button class="btn-secondary" onclick="renderResultsTable()" style="padding:3px 8px; font-size:10px">Filter</button>
+                        <input type="text" id="results-filter" placeholder="Filter by function..." style="flex:0 1 68%; padding:3px 6px; font-size:11px; background:#141424; color:#ccc; border:1px solid #333; border-radius:3px" onkeydown="if(event.key==='Enter')renderResultsTable()">
+                        <select id="results-filter-mode" style="flex:0 0 140px; padding:3px 6px; font-size:11px; background:#141424; color:#ccc; border:1px solid #333; border-radius:3px" onchange="_updateResultsFilterUi(); renderResultsTable()">
+                            <option value="function">Filter function</option>
+                            <option value="job_id">Filter job id</option>
+                        </select>
+                        <button class="btn-secondary" onclick="renderResultsTable()" style="margin:0; padding:3px 8px; font-size:10px">Filter</button>
                     </div>
                     <div id="results-scroll" tabindex="0" style="flex:1; overflow-y:auto; border:1px solid #0f3460; border-radius:4px; outline:none">
                         <table style="width:100%; border-collapse:collapse; font-size:11px; font-family:monospace">
@@ -643,6 +647,7 @@ button {
             <div style="margin-top:8px; margin-bottom:4px; display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap">
                 <div style="display:flex; align-items:center; gap:8px">
                     <button class="btn-secondary" id="btn-favorites-refresh" onclick="refreshFavoritesInventory()" style="padding:4px 12px; font-size:12px">Refresh</button>
+                    <button class="btn-secondary" id="btn-favorites-go-render" onclick="goRenderSelectedFavorite()" style="padding:4px 12px; font-size:12px" disabled>GoRender</button>
                     <div style="display:inline-block; position:relative">
                         <button class="btn-secondary" id="btn-favorites-download" onclick="_toggleFavoritesDownloadMenu()" style="padding:4px 12px; font-size:11px" disabled>Download ▼</button>
                         <div id="favorites-download-menu" style="display:none; position:absolute; bottom:100%; left:0; background:#2a2a3e; border:1px solid #555; border-radius:4px; z-index:100; min-width:140px; margin-bottom:2px">
@@ -1145,6 +1150,7 @@ function switchTab(name) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === name));
     document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
     if (name === 'results') loadResults();
+    if (name === 'render') _maybeAutoRefreshRenderInventory();
     if (name === 'favorites') loadFavoritesInventory();
     if (name === 'palette') loadPaletteInventory();
     if (name === 'deepzoom') loadDeepZoomInventory();
@@ -1344,8 +1350,10 @@ function _restoreFavoritesCatalogScroll(options = {}) {
 function _updateFavoritesActionButtons() {
     const art = _favoriteSelectedEntry();
     const hasSelection = !!art;
+    const goBtn = document.getElementById('btn-favorites-go-render');
     const dlBtn = document.getElementById('btn-favorites-download');
     const delBtn = document.getElementById('btn-favorites-delete');
+    if (goBtn) goBtn.disabled = !(hasSelection && art.favorite_job_id);
     if (dlBtn) dlBtn.disabled = !(hasSelection && !art.missing && art.image_key);
     if (delBtn) delBtn.disabled = !hasSelection;
 }
@@ -1446,6 +1454,31 @@ async function refreshFavoritesInventory() {
         log(`Favorites refresh failed: ${e.message}`, 'err', 'favorites-log');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+}
+
+async function goRenderSelectedFavorite() {
+    const art = _favoriteSelectedEntry();
+    if (!art || !art.favorite_job_id) return;
+    const btn = document.getElementById('btn-favorites-go-render');
+    const orig = btn ? btn.textContent : 'GoRender';
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Opening...'; }
+        await _ensureResultsSelection(art.favorite_job_id);
+        switchTab('render');
+        await refreshRenderArtifacts(art.favorite_job_id, {
+            selectFamily: 'color',
+            selectArtifactId: art.artifact_id || null,
+        });
+        const inv = (_renderArtifacts && _renderArtifacts.color) || [];
+        const found = inv.some(entry => entry && entry.artifact_id === art.artifact_id);
+        if (found) log(`GoRender selected: ${art.artifact_id}`, 'ok', 'favorites-log');
+        else log(`Selected artifact not in render table: ${art.artifact_id}`, '', 'favorites-log');
+    } catch (e) {
+        log(`GoRender failed: ${e.message}`, 'err', 'favorites-log');
+    } finally {
+        if (btn) btn.textContent = orig;
+        _updateFavoritesActionButtons();
     }
 }
 
@@ -1580,6 +1613,19 @@ async function deleteSelectedFavorite() {
 let _resultsSortCol = null;  // null | 'function' | 'degree' | 'N' | 'times' | 'total_size'
 let _resultsSortDir = null;  // null | 'asc' | 'desc'
 
+function _resultsFilterMode() {
+    const el = document.getElementById('results-filter-mode');
+    const value = (el && el.value) ? String(el.value) : 'function';
+    return value === 'job_id' ? 'job_id' : 'function';
+}
+
+function _updateResultsFilterUi() {
+    const mode = _resultsFilterMode();
+    const filterEl = document.getElementById('results-filter');
+    if (!filterEl) return;
+    filterEl.placeholder = mode === 'job_id' ? 'Filter by job id...' : 'Filter by function...';
+}
+
 function _resultsToggleSort(col) {
     if (_resultsSortCol === col) {
         if (_resultsSortDir === 'asc') _resultsSortDir = 'desc';
@@ -1605,9 +1651,18 @@ function renderResultsTable() {
     // Filter
     const filterEl = document.getElementById('results-filter');
     const filter = (filterEl ? filterEl.value.trim().toLowerCase() : '');
+    const filterMode = _resultsFilterMode();
     let rows = _resultsCache;
     if (filter) {
-        rows = rows.filter(r => (r.function || '').toLowerCase().includes(filter));
+        if (filterMode === 'job_id') {
+            rows = rows.filter(r => {
+                const full = String(r.job_id || '').toLowerCase();
+                const short = full.replace(/^compute_/, '');
+                return full.includes(filter) || short.includes(filter);
+            });
+        } else {
+            rows = rows.filter(r => (r.function || '').toLowerCase().includes(filter));
+        }
     }
 
     // Sort
@@ -1626,6 +1681,7 @@ function renderResultsTable() {
 
     for (const r of rows) {
         const tr = document.createElement('tr');
+        tr.dataset.jobId = r.job_id;
         if (r.job_id === _selectedJobId) tr.className = 'selected';
         tr.onclick = () => selectResult(r.job_id);
 
@@ -1646,12 +1702,16 @@ function selectResult(jobId) {
     _selectedJobId = jobId;
 
     // Update selection highlight
-    document.querySelectorAll('#results-tbody tr').forEach(tr => tr.classList.remove('selected'));
-    const rows = document.querySelectorAll('#results-tbody tr');
-    const idx = _resultsCache.findIndex(r => r.job_id === jobId);
-    if (idx >= 0 && rows[idx]) {
-        rows[idx].classList.add('selected');
-        rows[idx].scrollIntoView({ block: 'nearest' });
+    const tbody = document.getElementById('results-tbody');
+    const rows = Array.from((tbody && tbody.children) || []);
+    let targetRow = null;
+    for (const row of rows) {
+        const isTarget = (row.dataset && row.dataset.jobId) === jobId;
+        row.className = isTarget ? 'selected' : '';
+        if (isTarget) targetRow = row;
+    }
+    if (targetRow) {
+        targetRow.scrollIntoView({ block: 'nearest' });
     }
 
     // Focus the scroll container so arrow keys work
@@ -1664,7 +1724,7 @@ function selectResult(jobId) {
     document.getElementById('btn-delete').disabled = false;
 
     // Populate render-results-dir for easy render access
-    document.getElementById('render-results-dir').value = jobId;
+    _setRenderResultsJob(jobId);
     document.getElementById('palette-results-dir').value = jobId;
     document.getElementById('results-dir').value = jobId;
 
@@ -1703,6 +1763,18 @@ function selectResult(jobId) {
                 previewEl.innerHTML = '<span style="color:#444; font-size:11px">No preview</span>';
             }
         });
+    }
+}
+
+async function goResultFromRender() {
+    const jobId = document.getElementById('render-results-dir')?.value.trim();
+    if (!jobId) return;
+    try {
+        await _ensureResultsSelection(jobId);
+        switchTab('results');
+        log(`GoResult selected: ${jobId}`, 'ok', 'render-log');
+    } catch (e) {
+        log(`GoResult failed: ${e.message}`, 'err', 'render-log');
     }
 }
 
@@ -1887,7 +1959,7 @@ async function deleteResult() {
 
 function renderResult() {
     if (!_selectedJobId) return;
-    document.getElementById('render-results-dir').value = _selectedJobId;
+    _setRenderResultsJob(_selectedJobId);
     switchTab('render');
 }
 
@@ -2003,7 +2075,30 @@ async function populateSelectedResult() {
 }
 
 /* ---- Lambda config ---- */
+const APP_TITLE_BASE = 'PolyPaint Lambda 1.0';
 let _lambdaUrls = {};  // {sweep, coeffgen, raster, finalize, encode, viewport, storage, dispatch}
+let _buildInfo = {};
+
+function _applyBuildInfo(build) {
+    _buildInfo = (build && typeof build === 'object') ? build : {};
+    const buildId = typeof _buildInfo.build_id === 'string' ? _buildInfo.build_id.trim() : '';
+    const labelEl = document.getElementById('build-id-label');
+    if (labelEl) {
+        labelEl.textContent = buildId ? `· build ${buildId}` : '';
+        if (buildId) {
+            const tooltip = [
+                `build: ${buildId}`,
+                _buildInfo.deployed_at_utc ? `deployed: ${_buildInfo.deployed_at_utc}` : '',
+                _buildInfo.git_rev ? `git: ${_buildInfo.git_rev}${_buildInfo.git_dirty ? ' (dirty)' : ''}` : '',
+                _buildInfo.frontend_sha256 ? `frontend sha256: ${_buildInfo.frontend_sha256}` : '',
+            ].filter(Boolean).join('\n');
+            labelEl.title = tooltip;
+        } else {
+            labelEl.title = '';
+        }
+    }
+    document.title = buildId ? `${APP_TITLE_BASE} · build ${buildId}` : APP_TITLE_BASE;
+}
 
 async function loadLambdaConfig() {
     const url = document.getElementById('config-url').value.trim();
@@ -2012,7 +2107,11 @@ async function loadLambdaConfig() {
         statusEl.textContent = 'Loading...';
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        _lambdaUrls = await resp.json();
+        const raw = await resp.json();
+        _lambdaUrls = (raw && typeof raw.services === 'object' && raw.services)
+            ? raw.services
+            : Object.fromEntries(Object.entries(raw || {}).filter(([, value]) => typeof value === 'string'));
+        _applyBuildInfo(raw && raw.build ? raw.build : null);
         const count = Object.keys(_lambdaUrls).length;
         statusEl.textContent = `${count} endpoints loaded`;
         statusEl.style.color = '#4ecca3';
@@ -2136,6 +2235,8 @@ let _renderActiveFamily = 'color';
 let _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [], pdf: [] };
 let _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1 };
 let _renderCatalogScrollTop = { color: 0, bilevel: 0, coeffs: 0, palette: 0, pdf: 0 };
+let _renderLoadedJobId = '';
+let _renderNeedsRefresh = false;
 let _favoriteRefs = [];
 let _favoriteArtifacts = [];
 let _favoriteSelectedIdx = -1;
@@ -5174,9 +5275,43 @@ function _clearActiveRun() {
 function _clearRenderState() {
     _clearActiveRun();
     stopActiveRenderObserver();
+    _invalidateRenderInventory();
     const statusEl = document.getElementById('render-status');
     if (statusEl) { statusEl.textContent = 'Ready'; statusEl.className = 'status'; }
     log('Render state cleared', '', 'render-log');
+}
+
+function _invalidateRenderInventory(jobId = null) {
+    _renderLoadedJobId = '';
+    _renderNeedsRefresh = !!(jobId || (document.getElementById('render-results-dir')?.value.trim() || ''));
+    _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [], pdf: [] };
+    _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1 };
+    window._lastRenderSummary = { families: _renderArtifacts, calc: {} };
+    const preview = document.getElementById('render-preview');
+    const info = document.getElementById('render-info');
+    if (preview && info) {
+        renderArtifactPanel(jobId || (document.getElementById('render-results-dir')?.value.trim() || ''), window._lastRenderSummary, { preserveScroll: false });
+    }
+}
+
+function _setRenderResultsJob(jobId, options = {}) {
+    const nextJobId = (jobId || '').trim();
+    const input = document.getElementById('render-results-dir');
+    const prevJobId = input ? String(input.value || '').trim() : '';
+    if (input) input.value = nextJobId;
+    if (options.invalidate !== false && prevJobId !== nextJobId) {
+        _invalidateRenderInventory(nextJobId);
+    }
+}
+
+async function _maybeAutoRefreshRenderInventory() {
+    const jobId = document.getElementById('render-results-dir')?.value.trim() || '';
+    if (!jobId || !(_renderNeedsRefresh || _renderLoadedJobId !== jobId) || _activeRenderRun) return;
+    try {
+        await refreshRenderArtifacts(jobId);
+    } catch (e) {
+        // refreshRenderArtifacts already updates render status on failure
+    }
 }
 
 function _loadActiveRun() {
@@ -5966,6 +6101,15 @@ window.addEventListener('focus', function() {
 (function() {
     _syncSolveScoreOmegaUi('render');
     _syncSolveScoreOmegaUi('palette');
+    _updateResultsFilterUi();
+    const renderJobInput = document.getElementById('render-results-dir');
+    if (renderJobInput && !renderJobInput._polypaintBound) {
+        renderJobInput._polypaintBound = true;
+        renderJobInput.addEventListener('input', function() {
+            const current = String(renderJobInput.value || '').trim();
+            if (current !== _renderLoadedJobId) _invalidateRenderInventory(current);
+        });
+    }
     const renderRun = _loadActiveRun();
     if (renderRun) {
         _activeRenderRun = renderRun;
@@ -6001,6 +6145,8 @@ async function refreshRenderArtifacts(jobIdOverride, options = {}) {
             preserveScroll: true,
             ensureSelected: !!options.selectArtifactId,
         });
+        _renderLoadedJobId = jobId;
+        _renderNeedsRefresh = false;
         if (!_activeRenderRun) {
             statusEl.textContent = 'Ready';
             statusEl.className = 'status ok';
@@ -6301,6 +6447,7 @@ function _updateRenderActionButtons() {
     const art = _renderSelectedArtifactEntry();
     const hasSelection = !!art;
     const jobId = document.getElementById('render-results-dir')?.value.trim() || '';
+    const inventoryMatchesJob = !!jobId && jobId === _renderLoadedJobId;
     const genMtBtn = document.getElementById('btn-render-generate-mt');
     const dlBtn = document.getElementById('btn-render-download');
     const delBtn = document.getElementById('btn-render-delete');
@@ -6308,26 +6455,28 @@ function _updateRenderActionButtons() {
     const popBtn = document.getElementById('btn-render-populate');
     const autoBtn = document.getElementById('btn-render-autolevels');
     const favBtn = document.getElementById('btn-render-favorite');
+    const goResultBtn = document.getElementById('btn-render-go-result');
     const repalBtn = document.getElementById('btn-render-repalette');
     const colorRepalBtn = document.getElementById('btn-render-color-repalette');
     const fromPalBtn = document.getElementById('btn-render-generate-from-palette');
     const pdfBtn = document.getElementById('btn-render-pdf-colorspread');
     const reusablePalettes = _reusablePaletteArtifacts();
     const colorSources = _pdfColorSourceArtifacts();
-    if (dlBtn) dlBtn.disabled = !hasSelection;
+    if (dlBtn) dlBtn.disabled = !(hasSelection && inventoryMatchesJob);
     if (genMtBtn) genMtBtn.disabled = !(_renderActiveFamily === 'color' && _renderColorMtEligible()) || !!_activeRenderRun;
-    if (delBtn) delBtn.disabled = !hasSelection;
-    if (dzBtn) dzBtn.disabled = !hasSelection || _renderActiveFamily === 'pdf';
-    if (popBtn) popBtn.disabled = !(hasSelection && (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette'));
-    if (autoBtn) autoBtn.disabled = !(hasSelection && _renderActiveFamily === 'color' && art && art.image_key) || !!_activeRenderRun;
-    if (repalBtn) repalBtn.disabled = !(_renderActiveFamily === 'palette' && hasSelection && _canRepaletteArtifact(art)) || !!_activeRenderRun;
-    if (colorRepalBtn) colorRepalBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && _canColorRepaletteArtifact(art)) || !!_activeRenderRun;
+    if (delBtn) delBtn.disabled = !(hasSelection && inventoryMatchesJob);
+    if (dzBtn) dzBtn.disabled = !(hasSelection && inventoryMatchesJob) || _renderActiveFamily === 'pdf';
+    if (popBtn) popBtn.disabled = !(hasSelection && inventoryMatchesJob && (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette'));
+    if (autoBtn) autoBtn.disabled = !(hasSelection && inventoryMatchesJob && _renderActiveFamily === 'color' && art && art.image_key) || !!_activeRenderRun;
+    if (repalBtn) repalBtn.disabled = !(_renderActiveFamily === 'palette' && hasSelection && inventoryMatchesJob && _canRepaletteArtifact(art)) || !!_activeRenderRun;
+    if (colorRepalBtn) colorRepalBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && _canColorRepaletteArtifact(art)) || !!_activeRenderRun;
     if (fromPalBtn) fromPalBtn.disabled = !(_renderActiveFamily === 'color' && reusablePalettes.length > 0) || !!_activeRenderRun;
     if (pdfBtn) pdfBtn.disabled = !(_renderActiveFamily === 'pdf' && colorSources.length > 0) || !!_activeRenderRun;
+    if (goResultBtn) goResultBtn.disabled = !(_renderActiveFamily === 'color' && jobId) || !!_activeRenderRun;
     if (favBtn) {
-        const isFav = _renderActiveFamily === 'color' && hasSelection && _isFavorite(jobId, art.artifact_id);
+        const isFav = _renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && _isFavorite(jobId, art.artifact_id);
         favBtn.textContent = isFav ? 'Favorited' : 'Favorite';
-        favBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && !isFav) || !!_activeRenderRun;
+        favBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && !isFav) || !!_activeRenderRun;
     }
 }
 
@@ -6669,6 +6818,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     if (_renderActiveFamily === 'palette') actionButtons.push('<button class="btn-secondary" id="btn-render-repalette" onclick="openRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>');
     if (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette') actionButtons.push('<button class="btn-secondary" id="btn-render-populate" onclick="populateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Populate</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-autolevels" onclick="openAutolevelPopup()" style="padding:4px 12px; font-size:11px" disabled>Autolevels</button>');
+    if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-go-result" onclick="goResultFromRender()" style="padding:4px 12px; font-size:11px" disabled>GoResult</button>');
     if (_renderActiveFamily === 'color') actionButtons.push(`<button class="btn-secondary" id="btn-render-favorite" onclick="favoriteSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" ${favoriteSelected ? 'disabled' : ''}>${favoriteSelected ? 'Favorited' : 'Favorite'}</button>`);
     actionButtons.push(`<div style="display:inline-block; position:relative">
         <button class="btn-secondary" id="btn-render-download" onclick="_toggleDownloadMenu()" style="padding:4px 12px; font-size:11px" disabled>Download \u25bc</button>
@@ -7522,7 +7672,7 @@ async function runCalculateWithSolver(solverMode) {
             : 0;
 
         document.getElementById('results-dir').value = jobId;
-        document.getElementById('render-results-dir').value = jobId;
+        _setRenderResultsJob(jobId);
 
         document.getElementById('compute-status').textContent =
             `Computed | ${actualChunks} chunks | coeffgen ${fmtMs(coeffgenMs)} | solve ${fmtMs(computeWallMs)} | ` +

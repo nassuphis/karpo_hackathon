@@ -352,7 +352,8 @@
               "n_tile_cols.$": "$.plan.grid.n_tile_cols",
               "n_tile_rows.$": "$.plan.grid.n_tile_rows",
               "emit_pixel_bins.$": "$.plan.outputs.repalette_capable",
-              "pixel_bins_out_key.$": "States.ArrayGetItem($.plan.grid.pixel_bin_tile_keys, $$.Map.Item.Value.tile_idx)"
+              "pixel_bins_out_key.$": "States.ArrayGetItem($.plan.grid.pixel_bin_tile_keys, $$.Map.Item.Value.tile_idx)",
+              "finalize_workers.$": "$.plan.finalize.workers"
             },
             "ItemProcessor": {
               "ProcessorConfig": {"Mode": "INLINE"},

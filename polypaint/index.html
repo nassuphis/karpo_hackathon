@@ -1181,9 +1181,14 @@ button {
                 <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
                 <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
                 <input id="render-mt-merge-workers" type="number" min="1" max="64" step="1" value="16">
+
+                <div class="render-mt-matrix-stage">Finalize</div>
+                <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+                <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+                <input id="render-mt-finalize-workers" type="number" min="1" max="64" step="1" value="16">
             </div>
         </div>
-        <div class="autolevel-popup-help">Use this to compare the native multithreaded path against normal Generate. Raster MT supports Solve score, Saved palette, Constant, and Rainbow with match=none. Hist controls and merge workers only matter for Solve score mode. Raster input lets you compare the existing temp-file chunk path against the native sectioned range-download path inside raster.</div>
+        <div class="autolevel-popup-help">Use this to compare the native multithreaded path against normal Generate. Raster MT supports Solve score, Saved palette, Constant, and Rainbow with match=none. Hist controls and merge workers only matter for Solve score mode. Finalize workers apply to all MT color renders. Raster input lets you compare the existing temp-file chunk path against the native sectioned range-download path inside raster.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -2426,6 +2431,7 @@ let _renderMtPopupState = {
     histInputMode: 'tmpfile',
     rasterInputMode: 'tmpfile',
     mergeWorkers: 16,
+    finalizeWorkers: 16,
 };
 let _generateFromPalettePopupState = { open: false, filter: '', highlightIdx: 0, sourcePaletteId: '' };
 let _pdfColorSpreadPopupState = { open: false, filter: '', highlightIdx: 0, sourceArtifactId: '' };
@@ -3517,10 +3523,18 @@ function _clampRenderMtThreads(value) {
     return Math.max(1, Math.min(16, n));
 }
 
-function _clampRenderMtMergeWorkers(value) {
+function _clampRenderMtWorkerCount(value) {
     let n = parseInt(value, 10);
     if (!Number.isFinite(n)) n = 16;
     return Math.max(1, Math.min(64, n));
+}
+
+function _clampRenderMtMergeWorkers(value) {
+    return _clampRenderMtWorkerCount(value);
+}
+
+function _clampRenderMtFinalizeWorkers(value) {
+    return _clampRenderMtWorkerCount(value);
 }
 
 function _normalizeSolveScoreHistInputMode(value) {
@@ -3586,6 +3600,7 @@ function _closeRenderMtPopup() {
         histInputMode: _normalizeSolveScoreHistInputMode(_renderMtPopupState.histInputMode),
         rasterInputMode: _normalizeRasterInputMode(_renderMtPopupState.rasterInputMode),
         mergeWorkers: _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers),
+        finalizeWorkers: _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers),
     };
     const overlay = document.getElementById('render-mt-popup-overlay');
     if (overlay) {
@@ -3602,8 +3617,9 @@ function _renderRenderMtPopup() {
     const histInputModeEl = document.getElementById('render-mt-hist-input-mode');
     const rasterInputModeEl = document.getElementById('render-mt-raster-input-mode');
     const mergeWorkersEl = document.getElementById('render-mt-merge-workers');
+    const finalizeWorkersEl = document.getElementById('render-mt-finalize-workers');
     const runBtn = document.getElementById('render-mt-popup-run');
-    if (!overlay || !summaryEl || !threadsEl || !solveScoreThreadsEl || !histInputModeEl || !rasterInputModeEl || !mergeWorkersEl) return;
+    if (!overlay || !summaryEl || !threadsEl || !solveScoreThreadsEl || !histInputModeEl || !rasterInputModeEl || !mergeWorkersEl || !finalizeWorkersEl) return;
     if (!_renderMtPopupState.open) {
         _closeRenderMtPopup();
         return;
@@ -3613,12 +3629,14 @@ function _renderRenderMtPopup() {
     const histInputMode = _normalizeSolveScoreHistInputMode(_renderMtPopupState.histInputMode);
     const rasterInputMode = _normalizeRasterInputMode(_renderMtPopupState.rasterInputMode);
     const mergeWorkers = _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers);
+    const finalizeWorkers = _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers);
     const solveScoreRelevant = renderColorMode === 'solve_score';
     _renderMtPopupState.rasterThreads = threads;
     _renderMtPopupState.solveScoreThreads = solveScoreThreads;
     _renderMtPopupState.histInputMode = histInputMode;
     _renderMtPopupState.rasterInputMode = rasterInputMode;
     _renderMtPopupState.mergeWorkers = mergeWorkers;
+    _renderMtPopupState.finalizeWorkers = finalizeWorkers;
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
     threadsEl.value = String(threads);
@@ -3626,15 +3644,17 @@ function _renderRenderMtPopup() {
     histInputModeEl.value = histInputMode;
     rasterInputModeEl.value = rasterInputMode;
     mergeWorkersEl.value = String(mergeWorkers);
+    finalizeWorkersEl.value = String(finalizeWorkers);
     solveScoreThreadsEl.disabled = !solveScoreRelevant;
     histInputModeEl.disabled = !solveScoreRelevant;
     mergeWorkersEl.disabled = !solveScoreRelevant;
+    finalizeWorkersEl.disabled = false;
     const modeLabel = renderColorMode === 'rainbow'
         ? `Rainbow (${renderMatchMode})`
         : renderColorMode.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
     summaryEl.textContent = solveScoreRelevant
-        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • hist threads=${solveScoreThreads} • hist input=${histInputMode} • merge workers=${mergeWorkers} • raster input=${rasterInputMode} • raster threads=${threads}`
-        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster input=${rasterInputMode} • raster threads=${threads} • hist unused • merge unused`;
+        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • hist threads=${solveScoreThreads} • hist input=${histInputMode} • merge workers=${mergeWorkers} • raster input=${rasterInputMode} • raster threads=${threads} • finalize workers=${finalizeWorkers}`
+        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster input=${rasterInputMode} • raster threads=${threads} • finalize workers=${finalizeWorkers} • hist unused • merge unused`;
     if (runBtn) runBtn.disabled = !_renderColorMtEligible() || !!_activeRenderRun;
 }
 
@@ -3647,6 +3667,7 @@ function openRenderMtPopup() {
         histInputMode: _normalizeSolveScoreHistInputMode(_renderMtPopupState.histInputMode || 'tmpfile'),
         rasterInputMode: _normalizeRasterInputMode(_renderMtPopupState.rasterInputMode || 'tmpfile'),
         mergeWorkers: _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers || 16),
+        finalizeWorkers: _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers || 16),
     };
     _renderRenderMtPopup();
     const threadsEl = document.getElementById('render-mt-threads');
@@ -4038,6 +4059,7 @@ function _initRenderMtPopup() {
     const histInputModeEl = document.getElementById('render-mt-hist-input-mode');
     const rasterInputModeEl = document.getElementById('render-mt-raster-input-mode');
     const mergeWorkersEl = document.getElementById('render-mt-merge-workers');
+    const finalizeWorkersEl = document.getElementById('render-mt-finalize-workers');
     if (overlay) {
         overlay.addEventListener('click', (ev) => {
             if (ev.target === overlay) _closeRenderMtPopup();
@@ -4075,6 +4097,12 @@ function _initRenderMtPopup() {
             _renderRenderMtPopup();
         });
     }
+    if (finalizeWorkersEl) {
+        finalizeWorkersEl.addEventListener('input', (ev) => {
+            _renderMtPopupState.finalizeWorkers = _clampRenderMtFinalizeWorkers(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
     if (runBtn) {
         runBtn.addEventListener('click', async () => {
             const btnText = runBtn.textContent;
@@ -4086,13 +4114,15 @@ function _initRenderMtPopup() {
                 const histInputMode = _normalizeSolveScoreHistInputMode(document.getElementById('render-mt-hist-input-mode').value);
                 const rasterInputMode = _normalizeRasterInputMode(document.getElementById('render-mt-raster-input-mode').value);
                 const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('render-mt-merge-workers').value);
+                const finalizeWorkers = _clampRenderMtFinalizeWorkers(document.getElementById('render-mt-finalize-workers').value);
                 _renderMtPopupState.rasterThreads = rasterThreads;
                 _renderMtPopupState.solveScoreThreads = solveScoreThreads;
                 _renderMtPopupState.histInputMode = histInputMode;
                 _renderMtPopupState.rasterInputMode = rasterInputMode;
                 _renderMtPopupState.mergeWorkers = mergeWorkers;
+                _renderMtPopupState.finalizeWorkers = finalizeWorkers;
                 _closeRenderMtPopup();
-                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, rasterInputMode, mergeWorkers });
+                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, rasterInputMode, mergeWorkers, finalizeWorkers });
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = btnText;
@@ -4113,13 +4143,15 @@ function _initRenderMtPopup() {
             const histInputMode = _normalizeSolveScoreHistInputMode(document.getElementById('render-mt-hist-input-mode').value);
             const rasterInputMode = _normalizeRasterInputMode(document.getElementById('render-mt-raster-input-mode').value);
             const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('render-mt-merge-workers').value);
+            const finalizeWorkers = _clampRenderMtFinalizeWorkers(document.getElementById('render-mt-finalize-workers').value);
             _renderMtPopupState.rasterThreads = rasterThreads;
             _renderMtPopupState.solveScoreThreads = solveScoreThreads;
             _renderMtPopupState.histInputMode = histInputMode;
             _renderMtPopupState.rasterInputMode = rasterInputMode;
             _renderMtPopupState.mergeWorkers = mergeWorkers;
+            _renderMtPopupState.finalizeWorkers = finalizeWorkers;
             _closeRenderMtPopup();
-            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, rasterInputMode, mergeWorkers });
+            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, rasterInputMode, mergeWorkers, finalizeWorkers });
         }
     });
 }
@@ -5794,11 +5826,16 @@ async function runRasterPipelineMT(threadConfig = null) {
                 ? threadConfig.mergeWorkers
                 : _renderMtPopupState.mergeWorkers
         );
+        const finalizeWorkers = _clampRenderMtFinalizeWorkers(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.finalizeWorkers != null
+                ? threadConfig.finalizeWorkers
+                : _renderMtPopupState.finalizeWorkers
+        );
         const relevantSolveScoreThreads = renderColorMode === 'solve_score' ? solveScoreThreads : 1;
         const relevantMergeWorkers = renderColorMode === 'solve_score' ? mergeWorkers : 1;
         const mtMsg = renderColorMode === 'solve_score'
-            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, merge workers=${relevantMergeWorkers}, raster input=${rasterInputMode}, raster threads=${rasterThreads}...`
-            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster input=${rasterInputMode}, raster threads=${rasterThreads}...`;
+            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, merge workers=${relevantMergeWorkers}, raster input=${rasterInputMode}, raster threads=${rasterThreads}, finalize workers=${finalizeWorkers}...`
+            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster input=${rasterInputMode}, raster threads=${rasterThreads}, finalize workers=${finalizeWorkers}...`;
         log(mtMsg, 'ok', 'render-log');
         await _launchRenderOrchestrator('color', {
             raster_engine: 'mt',
@@ -5807,6 +5844,7 @@ async function runRasterPipelineMT(threadConfig = null) {
             solve_score_threads: relevantSolveScoreThreads,
             solve_score_hist_input_mode: histInputMode,
             solve_score_merge_workers: relevantMergeWorkers,
+            finalize_workers: finalizeWorkers,
         });
     } catch (e) {
         document.getElementById('render-status').textContent = 'Render-MT error: ' + e.message;

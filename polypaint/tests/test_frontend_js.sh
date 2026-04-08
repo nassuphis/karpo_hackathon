@@ -29,6 +29,7 @@ grep -q 'id="config-popup"' "$HTML" || { echo "FATAL: Config popup missing from 
 grep -q '<option value="sectioned">sectioned native</option>' "$HTML" || { echo "FATAL: sectioned hist input option missing from index.html"; exit 1; }
 grep -q 'id="render-mt-raster-input-mode"' "$HTML" || { echo "FATAL: render MT raster input selector missing from index.html"; exit 1; }
 grep -q 'id="render-mt-merge-workers"' "$HTML" || { echo "FATAL: render MT merge workers input missing from index.html"; exit 1; }
+grep -q 'id="render-mt-finalize-workers"' "$HTML" || { echo "FATAL: render MT finalize workers input missing from index.html"; exit 1; }
 grep -q 'onclick="loadLambdaConfig()" class="btn-secondary" style="margin:0; padding:4px 12px"' "$HTML" || { echo "FATAL: Config Load button should override global button margin"; exit 1; }
 grep -q 'onclick="renderResultsTable()" style="margin:0; padding:3px 8px; font-size:10px"' "$HTML" || { echo "FATAL: Results Filter button should override global button margin"; exit 1; }
 grep -q 'id="btn-solve-histogram" onclick="runSolveScoreHistogramDebug()" style="margin:0 0 0 8px; font-size:10px; padding:1px 8px"' "$HTML" || { echo "FATAL: Solve histogram button should override global button margin"; exit 1; }
@@ -335,6 +336,7 @@ const renderEls = {
     'render-mt-hist-input-mode': { value: 'tmpfile' },
     'render-mt-raster-input-mode': { value: 'tmpfile' },
     'render-mt-merge-workers': { value: '16' },
+    'render-mt-finalize-workers': { value: '16' },
     'autolevel-popup-overlay': {},
     'autolevel-popup-title': {},
     'autolevel-popup-summary': {},
@@ -579,18 +581,19 @@ async function testPipeline(name, call) {
     }
     console.log('  Generate popup opens for solve-score input A/B: OK');
     vm.runInContext('_closeRenderGeneratePopup()', ctx);
-    await testPipeline('runRasterPipelineMT', '(async()=>{ renderColorMode = "solve_score"; await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, mergeWorkers: 12 }); })()');
+    await testPipeline('runRasterPipelineMT', '(async()=>{ renderColorMode = "solve_score"; await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, mergeWorkers: 12, finalizeWorkers: 18 }); })()');
     {
         const logs = vm.runInContext('_pipelineDispatchLogs', ctx);
         const payloads = vm.runInContext('_renderOrchestratorPayloads', ctx);
-        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, merge workers=12, raster input=tmpfile, raster threads=6')) : null;
+        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, merge workers=12, raster input=tmpfile, raster threads=6, finalize workers=18')) : null;
         const orchHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render: dispatching color orchestrator')) : null;
         const mtPayload = Array.isArray(payloads) ? payloads.find((row) => row && row.params && row.params.raster_engine === 'mt') : null;
         if (!mtHit || mtHit.cls !== 'ok' || !orchHit || orchHit.cls !== 'ok' || !mtPayload ||
             mtPayload.params.raster_mt_threads !== 6 || mtPayload.params.solve_score_threads !== 3 ||
             mtPayload.params.solve_score_hist_input_mode !== 'tmpfile' ||
             mtPayload.params.solve_score_merge_workers !== 12 ||
-            mtPayload.params.raster_input_mode !== 'tmpfile') {
+            mtPayload.params.raster_input_mode !== 'tmpfile' ||
+            mtPayload.params.finalize_workers !== 18) {
             console.error('FATAL: runRasterPipelineMT should log green MT + orchestrator dispatch and pass thread counts, got logs=' + JSON.stringify(logs) + ' payloads=' + JSON.stringify(payloads));
             process.exit(1);
         }
@@ -608,7 +611,8 @@ async function testPipeline(name, call) {
         console.error('FATAL: Generate-MT should open popup overlay');
         process.exit(1);
     }
-    if (!(ctx._elements['render-mt-popup-summary'].textContent || '').includes('merge workers=')) {
+    if (!(ctx._elements['render-mt-popup-summary'].textContent || '').includes('merge workers=')
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('finalize workers=')) {
         console.error('FATAL: Generate-MT popup should show thread summary');
         process.exit(1);
     }
@@ -622,6 +626,10 @@ async function testPipeline(name, call) {
     }
     if (ctx._elements['render-mt-merge-workers'].disabled !== false) {
         console.error('FATAL: Generate-MT popup should enable merge workers input for solve_score mode');
+        process.exit(1);
+    }
+    if (ctx._elements['render-mt-finalize-workers'].disabled !== false) {
+        console.error('FATAL: Generate-MT popup should enable finalize workers input');
         process.exit(1);
     }
     console.log('  Generate-MT popup opens with solve-score + raster thread summary: OK');
@@ -2877,7 +2885,7 @@ async function testPipeline(name, call) {
             refreshRenderArtifacts = async function() {};
         `, ctx);
         ctx._elements['btn-render-generate-mt'] = ctx._mkEl();
-        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", rasterInputMode: "sectioned", mergeWorkers: 14 }); })()', ctx);
+        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", rasterInputMode: "sectioned", mergeWorkers: 14, finalizeWorkers: 22 }); })()', ctx);
         orchDispatched = vm.runInContext('_orchDispatched', ctx);
         if (!orchDispatched) { console.error('FATAL: runRasterPipelineMT did not dispatch orchestrator'); process.exit(1); }
         if (orchDispatched.params.raster_engine !== 'mt') { console.error('FATAL: runRasterPipelineMT should request mt raster engine, got ' + orchDispatched.params.raster_engine); process.exit(1); }
@@ -2885,9 +2893,10 @@ async function testPipeline(name, call) {
         if (orchDispatched.params.solve_score_threads !== 3) { console.error('FATAL: runRasterPipelineMT should pass solve_score_threads=3, got ' + orchDispatched.params.solve_score_threads); process.exit(1); }
         if (orchDispatched.params.solve_score_hist_input_mode !== 'sectioned') { console.error('FATAL: runRasterPipelineMT should pass solve_score_hist_input_mode=sectioned, got ' + orchDispatched.params.solve_score_hist_input_mode); process.exit(1); }
         if (orchDispatched.params.solve_score_merge_workers !== 14) { console.error('FATAL: runRasterPipelineMT should pass solve_score_merge_workers=14, got ' + orchDispatched.params.solve_score_merge_workers); process.exit(1); }
+        if (orchDispatched.params.finalize_workers !== 22) { console.error('FATAL: runRasterPipelineMT should pass finalize_workers=22, got ' + orchDispatched.params.finalize_workers); process.exit(1); }
         if (orchDispatched.params.raster_input_mode !== 'sectioned') { console.error('FATAL: runRasterPipelineMT should pass raster_input_mode=sectioned, got ' + orchDispatched.params.raster_input_mode); process.exit(1); }
         if (orchDispatched.mode !== 'color') { console.error('FATAL: mode should be color, got ' + orchDispatched.mode); process.exit(1); }
-        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, hist=sectioned, merge=14, raster_input=sectioned, raster=6)');
+        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, hist=sectioned, merge=14, finalize=22, raster_input=sectioned, raster=6)');
     }
 
     // 12b: runBilevelPipeline dispatches one render_orchestrator job

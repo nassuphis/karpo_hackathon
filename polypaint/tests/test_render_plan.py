@@ -241,6 +241,21 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["solve_score"]["merge_workers"] == 24
 
     @patch("handler_render_plan._storage_call")
+    def test_finalize_workers_override(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="crowding",
+            finalize_workers=20,
+        ), None)
+        plan = json.loads(result["body"])
+        assert plan["finalize"]["workers"] == 20
+
+    @patch("handler_render_plan._storage_call")
     def test_solve_score_hist_input_mode_override(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail({
             "degree": 5, "n_chunks": 2,
@@ -324,6 +339,17 @@ class TestRenderPlan(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             handler(_make_event(color_mode="solve_score", solve_score_merge_workers=0), None)
         self.assertIn("solve_score_merge_workers", str(ctx.exception))
+
+    @patch("handler_render_plan._storage_call")
+    def test_invalid_finalize_workers_rejected(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_make_event(color_mode="solve_score", finalize_workers=0), None)
+        self.assertIn("finalize_workers", str(ctx.exception))
 
     @patch("handler_render_plan._storage_call")
     def test_tri_palette_id_accepted_and_preserved(self, mock_storage):

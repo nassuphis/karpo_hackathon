@@ -259,6 +259,9 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(merge_payload["solve_score_threads.$"], "$.plan.solve_score.threads")
         self.assertEqual(merge_payload["solve_score_merge_workers.$"], "$.plan.solve_score.merge_workers")
 
+        finalize_selector = self.states["ColorFinalizeMap"]["ItemSelector"]
+        self.assertEqual(finalize_selector["finalize_workers.$"], "$.plan.finalize.workers")
+
     def test_status_tasks_forward_run_started_at_ms(self):
         phase_states = [
             "CleanRender",

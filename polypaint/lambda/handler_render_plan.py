@@ -91,7 +91,7 @@ def _validate_thread_count(value, field_name):
     return threads
 
 
-def _validate_merge_worker_count(value, field_name):
+def _validate_worker_count(value, field_name):
     if value in (None, ""):
         return 16
     try:
@@ -190,6 +190,7 @@ def handler(event, context):
         "raster_input_mode": "tmpfile",
         "solve_score_threads": "",
         "solve_score_merge_workers": 16,
+        "finalize_workers": 16,
         "solve_metric": "proximity",
         "solve_score_quantile": 0.001,
         "solve_score_omega": 1.0,
@@ -206,9 +207,13 @@ def handler(event, context):
     if solve_score_threads_value in (None, ""):
         solve_score_threads_value = rp["raster_mt_threads"] if rp["raster_engine"] == "mt" else 1
     rp["solve_score_threads"] = _validate_thread_count(solve_score_threads_value, "solve_score_threads")
-    rp["solve_score_merge_workers"] = _validate_merge_worker_count(
+    rp["solve_score_merge_workers"] = _validate_worker_count(
         rp.get("solve_score_merge_workers", 16),
         "solve_score_merge_workers",
+    )
+    rp["finalize_workers"] = _validate_worker_count(
+        rp.get("finalize_workers", 16),
+        "finalize_workers",
     )
     rp["solve_score_hist_input_mode"] = _validate_hist_input_mode(rp.get("solve_score_hist_input_mode", "tmpfile"))
 
@@ -317,6 +322,9 @@ def handler(event, context):
         "clip_key": f"renders/{job_id}/solve_scores/{solve_metric}_clip.json",
         "hist_prefix": f"renders/{job_id}/solve_scores/{solve_metric}/",
         "bins_key": f"renders/{job_id}/solve_scores/{solve_metric}_bins.json",
+    }
+    finalize = {
+        "workers": rp["finalize_workers"],
     }
 
     color_repalette_capable = mode == "color" and color_mode in ("solve_score", "saved_palette")
@@ -462,6 +470,7 @@ def handler(event, context):
         "chunk_items": chunk_items,
         "tile_items": tile_items,
         "solve_score": solve_score,
+        "finalize": finalize,
         "raster": raster,
         "saved_palette": saved_palette,
         "outputs": outputs,

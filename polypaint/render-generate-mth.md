@@ -1071,6 +1071,11 @@ UI requirement for this phase:
 
 - expose `Finalize workers` as a tunable worker-count control in the
   `Generate-MT` popup
+- this is now a dedicated `Finalize` row in the MT table:
+  - `Hist`: threads, input
+  - `Raster`: threads, input
+  - `Merge`: workers
+  - `Finalize`: workers
 - treat it like `Merge workers`, not like hist/raster thread count
 - do not add finalize-specific input-mode controls in the first pass
 

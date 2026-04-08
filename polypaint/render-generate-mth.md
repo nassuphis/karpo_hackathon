@@ -1,6 +1,7 @@
 # Render Generate MT
 
-Status: sectioned hist shipped; sectioned raster shipped; merge shipped; finalize next.
+Status: sectioned hist shipped; sectioned raster shipped; merge shipped;
+finalize v1 shipped.
 
 The first `Generate-MT` implementation did not materially improve `Render -> Color`.
 In practice it was flat or slower than the single-thread baseline.
@@ -21,8 +22,9 @@ Since then, solve-score `hist` has been reworked into a native sectioned path
 and is now live. Raster now also has a sectioned input path behind an explicit
 `tmpfile | sectioned` selector. Both materially improved real render runs.
 Solve-score `merge` is now also shipped with concurrent small-object fan-in.
-The next target is `finalize`, which is now the largest remaining structural
-bottleneck.
+`finalize` now has ordered concurrent fan-in with tunable worker count, and
+render wall timing in the UI now comes from AWS-side timestamps instead of the
+browser clock.
 
 ## Finding
 
@@ -113,7 +115,7 @@ But the backend must become:
 
 ### Out of scope
 
-- multithreaded finalize
+- native multithreaded finalize hot-path rewrite
 - multithreaded encode
 - exact raster winner parity with single-thread output
 - proximity-mode MT in the first native pass unless it is straightforward
@@ -255,6 +257,18 @@ With the shipped raster sectioned path, representative live runs showed:
   - raster aggregate `dl 569.1s + native 31.8s + up 179.2s`
   - finalize wall `106.5s`
   - total render wall `200.8s`
+- after the finalize worker rollout shipped, a new live run showed:
+  - hist `tmpfile`, `threads=4`: wall `40.9s`
+  - merge `workers=16`: wall `1.5s`
+  - raster `tmpfile`, `threads=4`: wall `42.5s`
+  - finalize `workers=16`: wall `8.8s`
+  - total render wall `104.9s`
+  - this run emitted a much smaller output set than the earlier dense sectioned
+    runs:
+    - emitted root hits `21.6M` instead of `54.8M`
+    - tile files uploaded `502` instead of `1500`
+  - so it proves the shipped finalize optimization works, but it is not a clean
+    apples-to-apples replacement for the earlier `200.8s` dense-run number
 
 Practical conclusion:
 
@@ -264,8 +278,11 @@ Practical conclusion:
 - after merge fan-in shipped, end-to-end render wall dropped again to `200.8s`
 - that is roughly a `48%` end-to-end reduction from the earlier `382.9s`
   baseline
-- merge is no longer a major stage; finalize is now clearly the largest
-  remaining wall-time stage
+- after finalize fan-in shipped with `16` workers, finalize fell from the
+  earlier `~100s` range to single-digit wall time in the latest live run
+- merge is now negligible in practice on these runs
+- finalize is no longer the obvious dominant stage; the remaining bottleneck is
+  now workload-dependent between hist and raster
 
 ## Key AWS Facts
 
@@ -353,7 +370,8 @@ That first merge attack is now shipped and appears to have done what it needed
 to do:
 
 - merge is no longer the stage worth optimizing first
-- finalize is now the larger remaining fan-in/fan-out problem
+- finalize was the next fan-in/fan-out stage after merge, and its ordered
+  worker-pool v1 is now also shipped
 
 ## Lessons From s5cmd
 
@@ -866,7 +884,7 @@ Optional but strongly recommended:
 - `avg_section_download_ms`
 - `avg_section_compute_ms`
 
-## Hist, Raster, And Merge Outcome; Finalize Next
+## Hist, Raster, Merge, And Finalize Outcome
 
 The solve-score and raster experiments have now answered the important question.
 
@@ -880,6 +898,7 @@ Done:
 6. shipped native sectioned raster path
 7. live render validation of sectioned raster
 8. shipped concurrent solve-score merge fan-in
+9. shipped concurrent finalize fan-in with tunable worker count
 
 Conclusion:
 
@@ -888,7 +907,12 @@ Conclusion:
 - keep section thread count selectable
 - keep sectioned raster
 - keep raster `tmpfile` as the fallback/baseline
-- treat `finalize` as the next implementation target
+- keep merge workers tunable
+- keep finalize workers tunable
+- the current remaining bottleneck depends on the render family and output
+  density; there is no single universally dominant stage now
+- use same-family / same-density runs when comparing `tmpfile` vs `sectioned`
+  or thread-count changes
 
 ## Success Criteria
 
@@ -901,15 +925,18 @@ For the hist work, the experiment is already worth continuing because it gave:
 The current live numbers indicate:
 
 - merge has already fallen enough that it is no longer the first thing to fix
-- finalize is now about `~100s` wall and is the largest single remaining stage
+- finalize v1 succeeded: on the latest live run it fell to `8.8s` wall with
+  `16` workers
+- the old `~100s` finalize timings are now pre-finalize-optimization history,
+  not the current shipped state
+- end-to-end comparisons still need workload discipline, because sparse runs can
+  look dramatically better than dense runs even with the same code
 
-For finalize, the next target should be:
+For the next optimization round, the target should be:
 
-- clear reduction in finalize wall time on the same render family
-- lower finalize read time first
-- no change to the current tile/raw output contract in the first pass
-- no change to the current `1 finalize Lambda per tile` workflow shape in the
-  first pass
+- keep validating on the same render family before comparing modes
+- focus on whichever stage is actually dominant for that workload
+- keep the current tile/raw output contract unless a deeper redesign is chosen
 
 ## Chunk Count Is A Design Choice
 
@@ -996,14 +1023,14 @@ solve-score merge if the cut-derivation architecture also changes.
 - direct-final-output raster must replace today's finalize contract cleanly
 - solve-score cut derivation must be redesigned if merge is to disappear
 
-So the current plan remains:
+So the current plan now is:
 
-1. optimize finalize now
-2. then reassess whether finalize is good enough
+1. treat merge and finalize v1 as shipped
+2. keep measuring heavy and light render families separately
 3. keep the "few large streamed objects" architecture as the next deeper
-   redesign if merge/finalize still dominate
+   redesign if fan-in/fan-out stages become dominant again
 
-## Finalize: Sharpened Optimization Path
+## Finalize: Shipped V1 Outcome
 
 `finalize` is not another sectioned-read problem.
 
@@ -1067,6 +1094,17 @@ This gives:
 - preserved "last wins" semantics
 - no first-pass workflow change
 
+This is now shipped.
+
+Representative live results:
+
+- before finalize fan-in optimization:
+  - finalize wall was in the `~100s` range on the sectioned render runs above
+- after finalize fan-in optimization with `16` workers:
+  - finalize wall `8.8s`
+  - finalize aggregate `read 11.7s + assemble 0.2s + up 9.5s + pbx 8.0s`
+  - total render wall `104.9s`
+
 UI requirement for this phase:
 
 - expose `Finalize workers` as a tunable worker-count control in the
@@ -1116,13 +1154,12 @@ follow-ons are structural:
 
 1. keep the current sectioned hist path stable
 2. keep the current sectioned raster path stable
-3. optimize `finalize`
-4. keep `1 finalize Lambda -> 1 tile`
-5. add bounded concurrent finalize input prefetch with strict chunk-order replay
-   into `pixassemble` / `pixbinassemble`
-6. tune worker count together with S3 client `max_pool_connections`
-7. benchmark finalize read wall time before/after ordered fan-in
-8. only then decide whether finalize needs a larger structural redesign
+3. keep merge and finalize v1 stable
+4. keep measuring same-family renders before changing defaults
+5. tune hist/raster/finalize controls only from real wall-time data
+6. if fan-in/fan-out becomes dominant again, benchmark whether a deeper
+   streamed-object redesign is worth the complexity
+7. only then decide whether finalize needs a larger structural redesign
 
 ## Appendix: Completed stdin A/B
 
@@ -1206,8 +1243,9 @@ So merge is:
 - many small output uploads
 - significant object-count fan-in/fan-out
 
-So finalize is currently the largest remaining structural bottleneck, but it is
-the step after merge, not before it.
+So finalize is still structurally a small-object fan-in/fan-out stage, but the
+shipped ordered-prefetch worker pool means it is no longer automatically the
+largest wall-time stage on every render family.
 
 ## Current UI / Logging Expectations
 
@@ -1225,8 +1263,7 @@ the step after merge, not before it.
 - should keep explicit selectors while benchmarking
 - popup layout should stay table-like and compact:
   - columns: `Threads`, `Input`, `Workers`
-  - rows: `Hist`, `Raster`, `Merge`
-  - add `Finalize` as a fourth row when finalize worker tuning is exposed
+  - rows: `Hist`, `Raster`, `Merge`, `Finalize`
 - stage-specific controls:
   - `Hist`: threads + input
   - `Raster`: threads + input
@@ -1239,9 +1276,31 @@ Logs should continue to make the active path obvious:
 
 - hist logs include `threads=` and `input=`
 - raster logs include `threads=` and `input=`
-- merge logs should include `workers=`
-- finalize logs should include `workers=` once finalize fan-in is tunable
+- solve-score merge phase logs currently show `threads=<merge_workers>` because
+  they reuse the solve-score phase perf formatter
+- popup summaries and `Render-MT` dispatch logs show `merge workers=`
+- `Render-MT` dispatch logs include `finalize workers=`
+- finalize backend status rows carry `workers`, but the current browser finalize
+  perf summary shows `read + assemble + up + pbx`, not `workers`
 - completion logs include elapsed wall time
+
+## Timing Semantics
+
+The current UI no longer trusts browser wall-clock timing for render duration.
+
+What is shipped now:
+
+- top-level render elapsed time is derived from AWS-side timestamps:
+  - `run_started_at_ms`
+  - `updated_at_ms`
+- phase wall time is derived from:
+  - phase `started_at_ms`
+  - latest worker/server timestamp seen for that phase
+- browser `Date.now()` is only a fallback when server timestamps are missing
+
+This matters because hidden/background browser tabs can throttle timers.
+Current render `wall=` numbers are therefore intended to reflect workflow-side
+timing, not tab visibility artifacts.
 
 ## Relevant Files
 
@@ -1251,8 +1310,12 @@ Core implementation files:
 - [lambda/solve_proximity_hist_sectioned.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_proximity_hist_sectioned.c)
 - [lambda/handler_raster_mt.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_raster_mt.py)
 - [lambda/roots2pix_mt.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/roots2pix_mt.c)
+- [lambda/handler_finalize.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_finalize.py)
 - [lambda/handler_render_plan.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_render_plan.py)
+- [lambda/handler_render_orchestrator.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_render_orchestrator.py)
+- [lambda/handler_render_status.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_render_status.py)
 - [stepfunctions/render_workflow.asl.json.template](/Users/nicknassuphis/karpo_hackathon/polypaint/stepfunctions/render_workflow.asl.json.template)
+- [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html)
 - [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html)
 - [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh)
 

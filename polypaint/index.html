@@ -494,7 +494,7 @@ button {
                 <!-- Left: scrollable table -->
                 <div style="flex:1; min-width:0; display:flex; flex-direction:column">
                     <div style="margin-bottom:6px; display:flex; align-items:center; gap:8px">
-                        <button class="btn-secondary" onclick="loadResults()" style="margin:0; padding:4px 12px">Refresh</button>
+                        <button class="btn-secondary" onclick="openResultsRefreshPopup()" style="margin:0; padding:4px 12px">Refresh</button>
                         <span id="results-count" style="font-size:11px; color:#666"></span>
                     </div>
                     <div style="display:flex; gap:4px; margin-bottom:4px; align-items:center">
@@ -520,6 +520,7 @@ button {
                             <tbody id="results-tbody"></tbody>
                         </table>
                     </div>
+                    <div id="results-log" style="margin-top:8px; max-height:120px; overflow-y:auto; font-family:monospace; font-size:11px"></div>
                 </div>
                 <!-- Right: buttons + preview thumbnail -->
                 <div style="width:200px; flex-shrink:0; display:flex; flex-direction:column">
@@ -824,6 +825,33 @@ button {
             </div>
             <div id="deepzoom-status" class="status" style="margin-bottom:6px"></div>
             <div id="deepzoom-inventory" style="font-size:12px; color:#ccc; max-height:200px; overflow-y:auto; border:1px solid #333; border-radius:4px"></div>
+        </div>
+    </div>
+</div>
+
+<div id="results-refresh-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="results-refresh-popup-title">
+        <div class="tri-popup-head">
+            <div id="results-refresh-popup-title" class="tri-popup-title">Results Refresh</div>
+            <button id="results-refresh-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div id="results-refresh-popup-summary" class="autolevel-popup-summary"></div>
+        <div style="padding:0 14px 8px 14px">
+            <div class="autolevel-stage-row" style="align-items:center">
+                <div class="autolevel-stage-text">Tune `/list` fan-in worker count. Timings shown after refresh come from the AWS `/list` response, not browser wall time.</div>
+                <div class="autolevel-inline-fields">
+                    <span class="inline-label">Workers</span>
+                    <input id="results-refresh-workers" type="number" min="1" max="64" step="1" value="32">
+                </div>
+            </div>
+        </div>
+        <div class="autolevel-popup-help">Use this to benchmark Results refresh fan-in. The control only changes backend `list_workers`; displayed timings still come from server-side `list_us` and breakdown fields.</div>
+        <div class="autolevel-popup-actions">
+            <div></div>
+            <div style="display:flex; gap:8px">
+                <button id="results-refresh-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+                <button id="results-refresh-popup-run" type="button" class="btn-primary" style="padding:6px 12px">Execute</button>
+            </div>
         </div>
     </div>
 </div>
@@ -1293,19 +1321,88 @@ let _resultsCache = [];      // last fetched results
 let _selectedJobId = null;   // currently selected job_id
 let _resultsLoading = false;
 
-async function loadResults() {
+function _clampResultsListWorkers(value) {
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n)) return 32;
+    return Math.max(1, Math.min(64, n));
+}
+
+function _closeResultsRefreshPopup() {
+    _resultsRefreshPopupState = {
+        open: false,
+        workers: _clampResultsListWorkers(_resultsRefreshPopupState.workers),
+    };
+    const overlay = document.getElementById('results-refresh-popup-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+}
+
+function _renderResultsRefreshPopup() {
+    const overlay = document.getElementById('results-refresh-popup-overlay');
+    const summaryEl = document.getElementById('results-refresh-popup-summary');
+    const workersEl = document.getElementById('results-refresh-workers');
+    const runBtn = document.getElementById('results-refresh-popup-run');
+    if (!overlay || !summaryEl || !workersEl) return;
+    if (!_resultsRefreshPopupState.open) {
+        _closeResultsRefreshPopup();
+        return;
+    }
+    const workers = _clampResultsListWorkers(_resultsRefreshPopupState.workers);
+    _resultsRefreshPopupState.workers = workers;
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    workersEl.value = String(workers);
+    summaryEl.textContent = `Refresh Results • workers=${workers} • timings shown after refresh come from AWS /list`;
+    if (runBtn) runBtn.disabled = !!_resultsLoading;
+}
+
+function openResultsRefreshPopup() {
+    _resultsRefreshPopupState = {
+        open: true,
+        workers: _clampResultsListWorkers(_resultsRefreshPopupState.workers || 32),
+    };
+    _renderResultsRefreshPopup();
+    const workersEl = document.getElementById('results-refresh-workers');
+    if (workersEl && typeof workersEl.focus === 'function') workersEl.focus();
+}
+
+async function loadResults(options = null) {
     if (_resultsLoading) return;
     _resultsLoading = true;
     const countEl = document.getElementById('results-count');
+    const requestedWorkers = _clampResultsListWorkers(
+        options && typeof options === 'object' && options.listWorkers != null
+            ? options.listWorkers
+            : _resultsRefreshPopupState.workers
+    );
+    _resultsRefreshPopupState.workers = requestedWorkers;
     countEl.textContent = 'Loading...';
+    log(`Results refresh: loading... workers=${requestedWorkers}`, '', 'results-log');
 
     try {
-        const data = await lambdaPost('storage', {}, '/list');
+        const data = await lambdaPost('storage', { list_workers: requestedWorkers }, '/list');
         _resultsCache = data.results || [];
         renderResultsTable();
         countEl.textContent = `${data.count} results (${(data.list_us/1e6).toFixed(1)}s)`;
+        const fmtUs = (us) => _fmtMs((Number(us) || 0) / 1000);
+        const parts = [
+            `Results refresh: ${data.count || 0} jobs in ${fmtUs(data.list_us)}`
+        ];
+        const detail = [];
+        if (data.prefix_list_us != null) detail.push(`prefix ${fmtUs(data.prefix_list_us)}`);
+        if (data.calc_fetch_us != null) detail.push(`calc ${fmtUs(data.calc_fetch_us)}`);
+        if (data.sort_us != null) detail.push(`sort ${fmtUs(data.sort_us)}`);
+        if (detail.length) parts.push(detail.join(' + '));
+        const tune = [];
+        if (data.list_workers != null) tune.push(`workers=${data.list_workers}`);
+        if (data.s3_pool_connections != null) tune.push(`pool=${data.s3_pool_connections}`);
+        if (tune.length) parts.push(tune.join(' '));
+        log(parts.join(' · '), 'ok', 'results-log');
     } catch (e) {
         countEl.textContent = 'Error: ' + e.message;
+        log('Results refresh failed: ' + e.message, 'err', 'results-log');
     } finally {
         _resultsLoading = false;
     }
@@ -1865,7 +1962,7 @@ function selectResult(jobId) {
     const infoEl = document.getElementById('results-info');
 
     // Show defaults while /detail loads
-    previewEl.innerHTML = '<span style="color:#444; font-size:11px">Loading...</span>';
+    _setPreviewPlaceholder(previewEl, 'Loading...');
     document.getElementById('res-cfun').textContent = r ? (r.function || '?') : '?';
     document.getElementById('res-degree').textContent = r ? (r.degree || '-') : '-';
     document.getElementById('res-stripes').textContent = r ? (r.n_chunks || r.n_stripes || '-') : '-';
@@ -1892,7 +1989,7 @@ function selectResult(jobId) {
         }).catch(e => {
             if (_selectedJobId === jobId) {
                 infoEl.textContent = `detail error: ${e.message}`;
-                previewEl.innerHTML = '<span style="color:#444; font-size:11px">No preview</span>';
+                _setPreviewPlaceholder(previewEl, 'No preview');
             }
         });
     }
@@ -1915,9 +2012,9 @@ function _applyDetail(r, detail, previewEl, infoEl, jobId) {
 
     // Preview
     if (detail.has_preview && detail.preview_url) {
-        previewEl.innerHTML = `<img src="${detail.preview_url}" style="max-width:100%; max-height:100%; image-rendering:pixelated">`;
+        _setPreviewImage(previewEl, detail.preview_url);
     } else {
-        previewEl.innerHTML = '<span style="color:#444; font-size:11px">No preview</span>';
+        _setPreviewPlaceholder(previewEl, 'No preview');
     }
 
     // Pipeline info
@@ -2318,10 +2415,66 @@ async function lambdaPost(name, body, path) {
     throw new Error(`${name}: failed after 5 retries`);
 }
 
+function _escapeHtml(value) {
+    const s = value == null ? '' : String(value);
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function _safeHttpUrl(value) {
+    const s = value == null ? '' : String(value).trim();
+    if (!s) return '';
+    try {
+        const base = (window.location && window.location.href) ? window.location.href : 'http://localhost/';
+        const resolved = new URL(s, base);
+        if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return '';
+        return resolved.href;
+    } catch (e) {
+        return '';
+    }
+}
+
+function _setInlineError(container, message, styleText) {
+    if (!container) return;
+    container.replaceChildren();
+    const errorEl = document.createElement('div');
+    errorEl.style.cssText = styleText || 'color:#e94560';
+    errorEl.textContent = 'Error: ' + (message == null ? '' : String(message));
+    container.appendChild(errorEl);
+}
+
+function _setPreviewPlaceholder(previewEl, message) {
+    if (!previewEl) return;
+    previewEl.replaceChildren();
+    const placeholderEl = document.createElement('span');
+    placeholderEl.style.cssText = 'color:#444; font-size:11px';
+    placeholderEl.textContent = message;
+    previewEl.appendChild(placeholderEl);
+}
+
+function _setPreviewImage(previewEl, url) {
+    if (!previewEl) return;
+    const safeUrl = _safeHttpUrl(url);
+    if (!safeUrl) {
+        _setPreviewPlaceholder(previewEl, 'No preview');
+        return;
+    }
+    previewEl.replaceChildren();
+    const imgEl = document.createElement('img');
+    imgEl.src = safeUrl;
+    imgEl.style.cssText = 'max-width:100%; max-height:100%; image-rendering:pixelated';
+    previewEl.appendChild(imgEl);
+}
+
 // Download a file via presigned URL with Content-Disposition: attachment
 // Gets a new presigned URL with download filename baked in, then navigates to it.
-async function downloadPresignedFile(originalUrl, filename, explicitKey) {
-    const btn = event && event.target;
+async function downloadPresignedFile(originalUrl, filename, explicitKey, clickEvent) {
+    const activeEvent = clickEvent || ((typeof window !== 'undefined' && window.event) ? window.event : null);
+    const btn = activeEvent && activeEvent.target ? activeEvent.target : null;
     const origText = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Preparing download...'; }
     try {
@@ -2423,6 +2576,7 @@ let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
 let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
 let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '' };
+let _resultsRefreshPopupState = { open: false, workers: 32 };
 let _renderGeneratePopupState = { open: false, histInputMode: 'tmpfile' };
 let _renderMtPopupState = {
     open: false,
@@ -4156,6 +4310,58 @@ function _initRenderMtPopup() {
     });
 }
 
+function _initResultsRefreshPopup() {
+    const overlay = document.getElementById('results-refresh-popup-overlay');
+    const closeBtn = document.getElementById('results-refresh-popup-close');
+    const cancelBtn = document.getElementById('results-refresh-popup-cancel');
+    const runBtn = document.getElementById('results-refresh-popup-run');
+    const workersEl = document.getElementById('results-refresh-workers');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closeResultsRefreshPopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closeResultsRefreshPopup);
+    if (cancelBtn) cancelBtn.addEventListener('click', _closeResultsRefreshPopup);
+    if (workersEl) {
+        workersEl.addEventListener('input', (ev) => {
+            _resultsRefreshPopupState.workers = _clampResultsListWorkers(ev.target.value);
+            _renderResultsRefreshPopup();
+        });
+    }
+    if (runBtn) {
+        runBtn.addEventListener('click', async () => {
+            const btnText = runBtn.textContent;
+            try {
+                runBtn.disabled = true;
+                runBtn.textContent = 'Executing...';
+                const workers = _clampResultsListWorkers(document.getElementById('results-refresh-workers').value);
+                _resultsRefreshPopupState.workers = workers;
+                _closeResultsRefreshPopup();
+                await loadResults({ listWorkers: workers });
+            } finally {
+                runBtn.disabled = false;
+                runBtn.textContent = btnText;
+            }
+        });
+    }
+    document.addEventListener('keydown', (ev) => {
+        if (!_resultsRefreshPopupState.open) return;
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closeResultsRefreshPopup();
+            return;
+        }
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            const workers = _clampResultsListWorkers(document.getElementById('results-refresh-workers').value);
+            _resultsRefreshPopupState.workers = workers;
+            _closeResultsRefreshPopup();
+            loadResults({ listWorkers: workers });
+        }
+    });
+}
+
 function _initRenderGeneratePopup() {
     const overlay = document.getElementById('render-generate-popup-overlay');
     const closeBtn = document.getElementById('render-generate-popup-close');
@@ -4820,6 +5026,7 @@ _initFunctionPopup();
 _initAutolevelPopup();
 _initRepalettePopup();
 _initColorRepalettePopup();
+_initResultsRefreshPopup();
 _initRenderGeneratePopup();
 _initRenderMtPopup();
 _initGenerateFromPalettePopup();
@@ -5145,14 +5352,14 @@ function _renderChips(which) {
             const inputsHtml = item.params.map((val, pi) => {
                 const pd = pDefs[pi] || {};
                 const im = pd.target ? 'text' : 'decimal';
-                return `<input class="chip-input" type="text" inputmode="${im}" value="${val}" placeholder="${pd.ph||''}" onchange="updateChipParam(${i},${pi},this.value,'${which}')" onclick="event.stopPropagation()">`;
+                return `<input class="chip-input" type="text" inputmode="${im}" value="${_escapeHtml(val)}" placeholder="${_escapeHtml(pd.ph || '')}" onchange="updateChipParam(${i},${pi},this.value,'${which}')" onclick="event.stopPropagation()">`;
             }).join('');
-            const label = spec.label || item.name;
+            const label = _escapeHtml(spec.label || item.name);
             return `<span class="chip">${label}${inputsHtml}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
         }).join('');
     } else {
         el.innerHTML = chain.map((name, i) =>
-            `<span class="chip">${name}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`
+            `<span class="chip">${_escapeHtml(name)}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`
         ).join('');
     }
 }
@@ -5313,10 +5520,10 @@ async function loadPaletteInventory(opts) {
         _paletteInventory.forEach((pal, i) => {
             const rtCount = (pal.root_transforms || []).length;
             html += `<tr class="palette-inv-row" data-idx="${i}" style="border-bottom:1px solid #222; cursor:pointer" onclick="_paletteSelect(${i})" tabindex="-1">`;
-            html += `<td style="padding:4px; font-size:11px">${(pal.created_at || '').replace('T', ' ').slice(0, 19)}</td>`;
-            html += `<td style="padding:4px; text-align:center">${pal.metric || ''}</td>`;
-            html += `<td style="padding:4px; text-align:center">${pal.solve_score_quantile != null ? (pal.solve_score_quantile * 100).toFixed(1) + '%' : ''}</td>`;
-            html += `<td style="padding:4px; text-align:center">${pal.palette || ''}</td>`;
+            html += `<td style="padding:4px; font-size:11px">${_escapeHtml((pal.created_at || '').replace('T', ' ').slice(0, 19))}</td>`;
+            html += `<td style="padding:4px; text-align:center">${_escapeHtml(pal.metric || '')}</td>`;
+            html += `<td style="padding:4px; text-align:center">${_escapeHtml(pal.solve_score_quantile != null ? (pal.solve_score_quantile * 100).toFixed(1) + '%' : '')}</td>`;
+            html += `<td style="padding:4px; text-align:center">${_escapeHtml(pal.palette || '')}</td>`;
             html += `<td style="padding:4px; text-align:center">${rtCount}</td>`;
             html += '</tr>';
         });
@@ -5332,7 +5539,7 @@ async function loadPaletteInventory(opts) {
         statusEl.textContent = 'Ready';
         statusEl.className = 'status ok';
     } catch (e) {
-        container.innerHTML = `<div style="color:#e94560; padding:8px">Error: ${e.message}</div>`;
+        _setInlineError(container, e.message, 'color:#e94560; padding:8px');
         infoEl.textContent = '';
         statusEl.textContent = 'Refresh failed: ' + e.message;
         statusEl.className = 'status error';
@@ -7521,7 +7728,7 @@ async function loadDeepZoomInventory() {
             statusEl.textContent = 'Refresh failed: ' + e.message;
             statusEl.className = 'status error';
         }
-        container.innerHTML = `<div style="color:#e94560">Error: ${e.message}</div>`;
+        _setInlineError(container, e.message);
     }
 }
 
@@ -7558,14 +7765,15 @@ function _dzRenderInventory(selectIdx = 0) {
     let html = '<table style="width:100%; border-collapse:collapse" id="dz-inv-table">';
     html += '<tr style="border-bottom:1px solid #333; position:sticky; top:0; background:#1a1a2e"><th style="text-align:left;padding:4px">Job</th><th>Size</th><th>Created</th><th>Tiles</th><th>Share</th></tr>';
     inv.forEach((ex, i) => {
-        const shareCell = ex.share_url
-            ? `<a href="${ex.share_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" style="color:#4a9eff;text-decoration:none">Open</a>`
+        const shareUrl = _safeHttpUrl(ex.share_url);
+        const shareCell = shareUrl
+            ? `<a href="${_escapeHtml(shareUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" style="color:#4a9eff;text-decoration:none">Open</a>`
             : '<span style="color:#555">?</span>';
         html += `<tr class="dz-inv-row" data-idx="${i}" style="border-bottom:1px solid #222; cursor:pointer" onclick="_dzSelect(${i})" tabindex="-1">`;
-        html += `<td style="padding:4px; font-family:monospace; font-size:11px">${ex.job_id}</td>`;
-        html += `<td style="padding:4px; text-align:center">${ex.width}×${ex.height}</td>`;
-        html += `<td style="padding:4px; font-size:11px">${(ex.created_at || '').replace('T', ' ').slice(0, 19)}</td>`;
-        html += `<td style="padding:4px; text-align:center">${ex.tiles_uploaded || ''}</td>`;
+        html += `<td style="padding:4px; font-family:monospace; font-size:11px">${_escapeHtml(ex.job_id)}</td>`;
+        html += `<td style="padding:4px; text-align:center">${_escapeHtml(`${ex.width}×${ex.height}`)}</td>`;
+        html += `<td style="padding:4px; font-size:11px">${_escapeHtml((ex.created_at || '').replace('T', ' ').slice(0, 19))}</td>`;
+        html += `<td style="padding:4px; text-align:center">${_escapeHtml(ex.tiles_uploaded || '')}</td>`;
         html += `<td style="padding:4px; text-align:center">${shareCell}</td>`;
         html += `</tr>`;
     });
@@ -7587,7 +7795,12 @@ function _dzSelect(idx) {
     if (row) row.scrollIntoView({ block: 'nearest' });
     _dzSetButtonsEnabled(true);
     // View it
-    viewDeepZoom(inv[idx].dzi_url);
+    const dziUrl = _safeHttpUrl(inv[idx].dzi_url);
+    if (!dziUrl) {
+        _dzClearViewer();
+        return;
+    }
+    viewDeepZoom(dziUrl);
 }
 
 async function _dzGotoSelectedResult() {
@@ -7849,19 +8062,40 @@ async function runParamDebug() {
 
         const images = result.images || [];
         log(`  param debug: ${result.total_ms}ms, ${result.n_points} points, ${images.length} image(s)`, 'ok');
+        const statusEl = document.getElementById('compute-status');
+        statusEl.replaceChildren();
+        const summaryEl = document.createElement('div');
+        summaryEl.style.marginBottom = '8px';
+        summaryEl.textContent = `Param debug done (${result.total_ms}ms, ${result.n_points} points)`;
+        statusEl.appendChild(summaryEl);
 
-        // Show preview images + download buttons
-        const parts = images.map(img => {
-            const preview = img.preview_url
-                ? `<img src="${img.preview_url}" style="max-width:512px; border:1px solid #333; background:#000; display:block; margin-bottom:6px">`
-                : '';
-            return `<div style="display:inline-block; vertical-align:top; margin-right:12px">` +
-                preview +
-                `<button class="btn-primary" onclick="window.open('${img.url}')" style="padding:4px 12px; font-size:12px">` +
-                `Download ${img.label} TIFF (${img.pixels_set} px, ${(img.file_size/1024).toFixed(0)} KB)</button></div>`;
-        }).join('');
-        document.getElementById('compute-status').innerHTML =
-            `<div style="margin-bottom:8px">Param debug done (${result.total_ms}ms, ${result.n_points} points)</div>` + parts;
+        for (const img of images) {
+            const wrapperEl = document.createElement('div');
+            wrapperEl.style.cssText = 'display:inline-block; vertical-align:top; margin-right:12px';
+
+            const previewUrl = _safeHttpUrl(img.preview_url);
+            if (previewUrl) {
+                const previewEl = document.createElement('img');
+                previewEl.src = previewUrl;
+                previewEl.style.cssText = 'max-width:512px; border:1px solid #333; background:#000; display:block; margin-bottom:6px';
+                wrapperEl.appendChild(previewEl);
+            }
+
+            const buttonEl = document.createElement('button');
+            buttonEl.className = 'btn-primary';
+            buttonEl.style.cssText = 'padding:4px 12px; font-size:12px';
+            const fileSizeKb = Number.isFinite(img.file_size) ? (img.file_size / 1024).toFixed(0) : '?';
+            buttonEl.textContent = `Download ${img.label || ''} TIFF (${img.pixels_set || 0} px, ${fileSizeKb} KB)`;
+            const downloadUrl = _safeHttpUrl(img.url);
+            if (downloadUrl) {
+                buttonEl.addEventListener('click', () => window.open(downloadUrl, '_blank', 'noopener,noreferrer'));
+            } else {
+                buttonEl.disabled = true;
+                buttonEl.title = 'Invalid download URL';
+            }
+            wrapperEl.appendChild(buttonEl);
+            statusEl.appendChild(wrapperEl);
+        }
 
     } catch (e) {
         document.getElementById('compute-status').textContent = 'Param debug error: ' + e.message;

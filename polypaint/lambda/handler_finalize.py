@@ -44,7 +44,11 @@ def _finalize_s3_client(max_workers):
 
 
 def _is_missing_s3_error(exc):
-    return exc.response["Error"]["Code"] == "NoSuchKey"
+    code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+    if code in {"NoSuchKey", "404", "NotFound"}:
+        return True
+    msg = str(exc)
+    return "NoSuchKey" in msg or "NotFound" in msg
 
 
 def _read_body_bytes(body):

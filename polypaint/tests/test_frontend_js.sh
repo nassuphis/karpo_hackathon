@@ -23,6 +23,9 @@ grep -q 'id="tab-favorites"' "$HTML" || { echo "FATAL: Favorites tab content mis
 grep -q 'id="btn-favorites-go-render"' "$HTML" || { echo "FATAL: Favorites GoRender button missing from index.html"; exit 1; }
 grep -q 'id="btn-favorites-download"' "$HTML" || { echo "FATAL: Favorites Download button missing from index.html"; exit 1; }
 grep -q 'id="results-filter-mode"' "$HTML" || { echo "FATAL: Results filter mode dropdown missing from index.html"; exit 1; }
+grep -q 'id="results-log"' "$HTML" || { echo "FATAL: Results log missing from index.html"; exit 1; }
+grep -q 'id="results-refresh-popup-overlay"' "$HTML" || { echo "FATAL: Results refresh popup missing from index.html"; exit 1; }
+grep -q 'id="results-refresh-workers"' "$HTML" || { echo "FATAL: Results refresh workers input missing from index.html"; exit 1; }
 grep -q 'id="build-id-label"' "$HTML" || { echo "FATAL: build id label missing from index.html"; exit 1; }
 grep -q 'id="btn-config-toggle"' "$HTML" || { echo "FATAL: Config gear toggle missing from index.html"; exit 1; }
 grep -q 'id="config-popup"' "$HTML" || { echo "FATAL: Config popup missing from index.html"; exit 1; }
@@ -125,7 +128,10 @@ const ctx = {
     clearInterval: () => {},
     requestAnimationFrame: () => 0,
     cancelAnimationFrame: () => {},
-    URL: { createObjectURL() { return ''; }, revokeObjectURL() {} },
+    URL: Object.assign(class URLShim extends URL {}, {
+        createObjectURL() { return ''; },
+        revokeObjectURL() {},
+    }),
     Blob: class {},
     FileReader: class { readAsText() {} readAsDataURL() {} },
     HTMLCanvasElement: class {},
@@ -3719,6 +3725,40 @@ async function testPipeline(name, call) {
             console.error('FATAL: _applyDetail without preview_stats crashed: ' + e.message);
             process.exit(1);
         }
+
+        try {
+            vm.runInContext(`
+                _selectedJobId = 'test_bad_preview';
+                var previewEl3 = document.getElementById('results-preview');
+                var infoEl3 = document.getElementById('results-info');
+                _applyDetail(null, {
+                    has_preview: true,
+                    preview_url: 'javascript:alert(1)',
+                    param_transforms_display: [],
+                    coeff_transforms: [],
+                    times: 1,
+                    calc: {},
+                    q_re: [-2, 2],
+                    q_im: [-2, 2],
+                    file_count: 10
+                }, previewEl3, infoEl3, 'test_bad_preview');
+            `, ctx);
+            const previewChild = ctx._elements['results-preview'].children[0];
+            const previewSrc = previewChild && previewChild.src ? String(previewChild.src) : '';
+            const previewText = previewChild && previewChild.textContent ? String(previewChild.textContent) : '';
+            if (previewSrc.includes('javascript:')) {
+                console.error('FATAL: _applyDetail should reject unsafe preview URLs');
+                process.exit(1);
+            }
+            if (previewText !== 'No preview') {
+                console.error('FATAL: invalid preview URL should fall back to No preview, got: ' + previewText);
+                process.exit(1);
+            }
+            console.log('  16c _applyDetail rejects unsafe preview URLs: OK');
+        } catch (e) {
+            console.error('FATAL: _applyDetail unsafe preview URL: ' + e.message);
+            process.exit(1);
+        }
     }
 
     console.log('');
@@ -3909,6 +3949,100 @@ async function testPipeline(name, call) {
     }
 
     {
+        ctx._elements['results-refresh-popup-overlay'] = ctx._elements['results-refresh-popup-overlay'] || { ...ctx._mkEl(), style: {} };
+        ctx._elements['results-refresh-popup-summary'] = ctx._elements['results-refresh-popup-summary'] || { ...ctx._mkEl(), textContent: '' };
+        ctx._elements['results-refresh-workers'] = ctx._elements['results-refresh-workers'] || { ...ctx._mkEl(), value: '32' };
+        try {
+            vm.runInContext(`
+                _resultsRefreshPopupState = { open: false, workers: 32 };
+                openResultsRefreshPopup();
+            `, ctx);
+        } catch (e) {
+            console.error('FATAL: results refresh popup open: ' + e.message);
+            process.exit(1);
+        }
+        const resultsPopupDisplay = ctx._elements['results-refresh-popup-overlay'].style.display || '';
+        const resultsPopupAria = ctx._elements['results-refresh-popup-overlay']['aria-hidden'] || ctx._elements['results-refresh-popup-overlay']._ariaHidden || '';
+        const resultsPopupSummary = ctx._elements['results-refresh-popup-summary'].textContent || '';
+        const resultsPopupWorkers = ctx._elements['results-refresh-workers'].value || '';
+        if (resultsPopupDisplay !== 'flex' || !resultsPopupSummary.includes('workers=32') || resultsPopupWorkers !== '32') {
+            console.error('FATAL: results refresh popup should open with current worker count');
+            process.exit(1);
+        }
+        vm.runInContext(`_closeResultsRefreshPopup();`, ctx);
+        console.log('  results refresh popup opens with worker controls: OK');
+    }
+
+    {
+        ctx._elements['results-count'] = { ...ctx._mkEl(), textContent: '' };
+        ctx._elements['results-log'] = ctx._mkEl();
+        ctx._elements['results-filter'] = { ...ctx._mkEl(), value: '', placeholder: 'Filter by function...' };
+        ctx._elements['results-filter-mode'] = { ...ctx._mkEl(), value: 'function' };
+        ctx._elements['results-tbody'] = ctx._elements['results-tbody'] || ctx._mkEl();
+        ctx._elements['results-refresh-workers'] = ctx._elements['results-refresh-workers'] || { ...ctx._mkEl(), value: '16' };
+        vm.runInContext(`
+            _resultsLoading = false;
+            _resultsCache = [];
+            _resultsListCalls = [];
+            _resultsRefreshPopupState = { open: false, workers: 16 };
+            lambdaPost = async function(name, body, path) {
+                if (name === 'storage' && path === '/list') {
+                    _resultsListCalls.push(body);
+                    return {
+                        count: 2,
+                        list_us: 4900000,
+                        prefix_list_us: 200000,
+                        calc_fetch_us: 4600000,
+                        sort_us: 100000,
+                        list_workers: 16,
+                        s3_pool_connections: 32,
+                        results: [
+                            { job_id: 'compute_a', function: 'g1', degree: 4, N: 100, times: 1, total_size: 1000 },
+                            { job_id: 'compute_b', function: 'creative9', degree: 7, N: 200, times: 2, total_size: 5000 }
+                        ]
+                    };
+                }
+                throw new Error('unexpected lambdaPost in loadResults test');
+            };
+        `, ctx);
+        try {
+            await vm.runInContext('(async()=>{ await loadResults(); })()', ctx);
+        } catch (e) {
+            console.error('FATAL: results load log test: ' + e.message);
+            process.exit(1);
+        }
+        const resultsCountText = ctx._elements['results-count'].textContent || '';
+        const resultsLogText = ctx._elements['results-log'].textContent || '';
+        const resultsRowCount = vm.runInContext('document.getElementById("results-tbody").children.length', ctx);
+        const listWorkersSent = vm.runInContext('_resultsListCalls[0] && _resultsListCalls[0].list_workers', ctx);
+        if (resultsCountText !== '2 results (4.9s)') {
+            console.error('FATAL: results count should include total wall time, got ' + resultsCountText);
+            process.exit(1);
+        }
+        if (listWorkersSent !== 16) {
+            console.error('FATAL: loadResults should send list_workers from popup state, got ' + listWorkersSent);
+            process.exit(1);
+        }
+        if (!resultsLogText.includes('Results refresh: 2 jobs in 4.9s')) {
+            console.error('FATAL: results log should include total refresh timing, got ' + resultsLogText);
+            process.exit(1);
+        }
+        if (!resultsLogText.includes('prefix 0.2s + calc 4.6s + sort 0.1s')) {
+            console.error('FATAL: results log should include backend timing breakdown, got ' + resultsLogText);
+            process.exit(1);
+        }
+        if (!resultsLogText.includes('workers=16 pool=32')) {
+            console.error('FATAL: results log should include list tuning details, got ' + resultsLogText);
+            process.exit(1);
+        }
+        if (resultsRowCount !== 2) {
+            console.error('FATAL: loadResults should populate the table, got ' + resultsRowCount + ' rows');
+            process.exit(1);
+        }
+        console.log('  results refresh logs backend timing breakdown: OK');
+    }
+
+    {
         ctx._elements['results-filter'] = { ...ctx._mkEl(), value: '' };
         ctx._elements['results-filter-mode'] = { ...ctx._mkEl(), value: 'function' };
         ctx._elements['results-tbody'] = ctx._elements['results-tbody'] || ctx._mkEl();
@@ -4049,6 +4183,66 @@ async function testPipeline(name, call) {
             console.log('  AE-MT populate + detail labels: OK');
         } catch (e) {
             console.error('FATAL: AE-MT solver wiring: ' + e.message);
+            process.exit(1);
+        }
+    }
+
+    console.log('');
+    console.log('--- Frontend escaping ---');
+    {
+        ctx._elements['pt-chips'] = ctx._elements['pt-chips'] || ctx._mkEl();
+        try {
+            vm.runInContext(`
+                _ptCatalog.evil = {
+                    label: '<img src=x onerror=1>',
+                    params: [{ ph: '"><svg/onload=1>' }]
+                };
+                _ptChain = [{ name: 'evil', params: ['"><script>1</script>'] }];
+                _renderChips('pt');
+            `, ctx);
+            const chipsHtml = ctx._elements['pt-chips']._html || '';
+            if (chipsHtml.includes('<img src=x onerror=1>') || chipsHtml.includes('<script>1</script>') || chipsHtml.includes('"><svg/onload=1>')) {
+                console.error('FATAL: _renderChips should escape chip label/value/placeholder HTML');
+                process.exit(1);
+            }
+            if (!chipsHtml.includes('&lt;img src=x onerror=1&gt;')) {
+                console.error('FATAL: _renderChips should preserve escaped chip label text');
+                process.exit(1);
+            }
+            console.log('  chip rendering escapes injected HTML: OK');
+        } catch (e) {
+            console.error('FATAL: chip escaping: ' + e.message);
+            process.exit(1);
+        }
+    }
+
+    {
+        ctx._elements['deepzoom-inventory'] = ctx._elements['deepzoom-inventory'] || ctx._mkEl();
+        try {
+            vm.runInContext(`
+                window._dzInventory = [{
+                    job_id: '<job>',
+                    width: 1,
+                    height: 1,
+                    created_at: '2026-01-01T00:00:00',
+                    tiles_uploaded: '<tiles>',
+                    share_url: 'javascript:alert(1)',
+                    dzi_url: 'javascript:alert(2)'
+                }];
+                _dzRenderInventory(0);
+            `, ctx);
+            const dzHtml = ctx._elements['deepzoom-inventory']._html || '';
+            if (dzHtml.includes('javascript:alert')) {
+                console.error('FATAL: DeepZoom inventory should not emit javascript: share URLs');
+                process.exit(1);
+            }
+            if (!dzHtml.includes('&lt;job&gt;') || !dzHtml.includes('&lt;tiles&gt;')) {
+                console.error('FATAL: DeepZoom inventory should escape job/tile text');
+                process.exit(1);
+            }
+            console.log('  DeepZoom inventory escapes text and rejects unsafe share URLs: OK');
+        } catch (e) {
+            console.error('FATAL: deepzoom escaping: ' + e.message);
             process.exit(1);
         }
     }

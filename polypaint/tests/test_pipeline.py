@@ -139,12 +139,12 @@ class TestDispatchHandler(unittest.TestCase):
 
 class TestStorageList(unittest.TestCase):
 
-    @patch("handler_storage._key_exists")
-    @patch("handler_storage.s3")
-    def test_list_uses_delimiter(self, mock_s3, mock_exists):
+    @patch("handler_storage._results_list_s3_client")
+    def test_list_uses_delimiter(self, mock_client_factory):
         """Verify list uses Delimiter='/' to get folders, not enumerate all objects."""
         from handler_storage import handle_list
-        mock_exists.return_value = False
+        mock_s3 = MagicMock()
+        mock_client_factory.return_value = mock_s3
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [{
@@ -173,16 +173,21 @@ class TestStorageList(unittest.TestCase):
         # Verify Delimiter was used in paginate call
         paginate_kwargs = mock_paginator.paginate.call_args[1]
         self.assertEqual(paginate_kwargs["Delimiter"], "/")
+        self.assertEqual(body["list_workers"], 2)
+        self.assertEqual(body["s3_pool_connections"], 64)
+        self.assertIn("prefix_list_us", body)
+        self.assertIn("calc_fetch_us", body)
+        self.assertIn("sort_us", body)
 
         funcs = {r["function"] for r in body["results"]}
         self.assertEqual(funcs, {"giga_1", "giga_5"})
 
-    @patch("handler_storage._key_exists")
-    @patch("handler_storage.s3")
-    def test_list_total_size_from_calc(self, mock_s3, mock_exists):
+    @patch("handler_storage._results_list_s3_client")
+    def test_list_total_size_from_calc(self, mock_client_factory):
         """Verify total_size computed from calc.json stripes, not S3 enumeration."""
         from handler_storage import handle_list
-        mock_exists.return_value = False
+        mock_s3 = MagicMock()
+        mock_client_factory.return_value = mock_s3
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [{
@@ -201,12 +206,12 @@ class TestStorageList(unittest.TestCase):
         body = json.loads(result["body"])
         self.assertEqual(body["results"][0]["total_size"], 7500)
 
-    @patch("handler_storage._key_exists")
-    @patch("handler_storage.s3")
-    def test_list_missing_calc_json(self, mock_s3, mock_exists):
+    @patch("handler_storage._results_list_s3_client")
+    def test_list_missing_calc_json(self, mock_client_factory):
         """Jobs without calc.json still appear with function='?'."""
         from handler_storage import handle_list
-        mock_exists.return_value = False
+        mock_s3 = MagicMock()
+        mock_client_factory.return_value = mock_s3
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [{
@@ -221,11 +226,15 @@ class TestStorageList(unittest.TestCase):
         self.assertEqual(body["count"], 1)
         self.assertEqual(body["results"][0]["function"], "?")
         self.assertEqual(body["results"][0]["total_size"], 0)
+        self.assertEqual(body["metadata_error_count"], 1)
+        self.assertEqual(body["metadata_errors"][0]["job_id"], "orphan")
 
-    @patch("handler_storage.s3")
-    def test_list_returns_only_table_fields(self, mock_s3):
+    @patch("handler_storage._results_list_s3_client")
+    def test_list_returns_only_table_fields(self, mock_client_factory):
         """Verify /list returns lean table fields, no preview/image checks."""
         from handler_storage import handle_list
+        mock_s3 = MagicMock()
+        mock_client_factory.return_value = mock_s3
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [{
@@ -249,6 +258,30 @@ class TestStorageList(unittest.TestCase):
         self.assertNotIn("has_image", r)
         self.assertNotIn("preview_url", r)
         self.assertNotIn("pipeline", r)
+
+    def test_list_allows_worker_override(self):
+        """Verify /list validates and applies requested worker count."""
+        from handler_storage import handle_list
+
+        fake_s3 = MagicMock()
+        mock_paginator = MagicMock()
+        fake_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{
+            "CommonPrefixes": [{"Prefix": "renders/job1/"}]
+        }]
+        fake_s3.get_object.return_value = {
+            "Body": MagicMock(read=MagicMock(return_value=json.dumps({
+                "function": "giga_1", "degree": 24, "n1": 100, "n_stripes": 1
+            }).encode()))
+        }
+
+        with patch("handler_storage._results_list_s3_client", return_value=fake_s3) as mock_factory:
+            result = handle_list({"body": json.dumps({"list_workers": 8})})
+
+        body = json.loads(result["body"])
+        self.assertEqual(body["list_workers"], 1)
+        self.assertEqual(body["s3_pool_connections"], 16)
+        mock_factory.assert_called_once_with(8)
 
     @patch("handler_storage._key_exists")
     @patch("handler_storage.s3")
@@ -2348,8 +2381,9 @@ class TestFavoritesStorage(unittest.TestCase):
 
         self.assertEqual(handler_storage.FAVORITES_KEY, "polypaint/favorites/color_artifacts.json")
 
+    @patch("handler_storage._favorite_store_initialized", return_value=False)
     @patch("handler_storage.s3")
-    def test_list_favorites_returns_empty_when_missing(self, mock_s3):
+    def test_list_favorites_returns_empty_when_missing(self, mock_s3, mock_init):
         from handler_storage import handle_list_favorites
 
         mock_s3.get_object.side_effect = Exception("NoSuchKey")
@@ -2360,12 +2394,16 @@ class TestFavoritesStorage(unittest.TestCase):
         self.assertEqual(body["favorites"], [])
         self.assertEqual(body["count"], 0)
 
-    @patch("handler_storage._write_favorites")
-    @patch("handler_storage._read_favorites")
-    def test_add_favorite_prepends_new_ref(self, mock_read, mock_write):
+    @patch("handler_storage._read_favorites_from_ddb")
+    @patch("handler_storage._put_favorite_entry")
+    @patch("handler_storage._ensure_favorites_store_ready")
+    def test_add_favorite_prepends_new_ref(self, mock_ensure, mock_put, mock_read):
         from handler_storage import handle_add_favorite
 
+        mock_put.return_value = True
         mock_read.return_value = [
+            {"job_id": "job_new", "artifact_id": "color_new", "family": "color", "added_at": "2026-01-02T00:00:00Z",
+             "image_key": "renders/job_new/color/color_new/image.jpeg"},
             {"job_id": "job_old", "artifact_id": "color_old", "family": "color", "added_at": "2026-01-01T00:00:00Z"}
         ]
 
@@ -2383,16 +2421,18 @@ class TestFavoritesStorage(unittest.TestCase):
 
         self.assertTrue(body["added"])
         self.assertEqual(body["count"], 2)
-        written = mock_write.call_args[0][0]
-        self.assertEqual(written[0]["job_id"], "job_new")
-        self.assertEqual(written[0]["artifact_id"], "color_new")
-        self.assertEqual(written[0]["image_key"], "renders/job_new/color/color_new/image.jpeg")
+        written = mock_put.call_args[0][0]
+        self.assertEqual(written["job_id"], "job_new")
+        self.assertEqual(written["artifact_id"], "color_new")
+        self.assertEqual(written["image_key"], "renders/job_new/color/color_new/image.jpeg")
 
-    @patch("handler_storage._write_favorites")
-    @patch("handler_storage._read_favorites")
-    def test_add_favorite_dedupes_existing_ref(self, mock_read, mock_write):
+    @patch("handler_storage._read_favorites_from_ddb")
+    @patch("handler_storage._put_favorite_entry")
+    @patch("handler_storage._ensure_favorites_store_ready")
+    def test_add_favorite_dedupes_existing_ref(self, mock_ensure, mock_put, mock_read):
         from handler_storage import handle_add_favorite
 
+        mock_put.return_value = False
         mock_read.return_value = [
             {"job_id": "job_a", "artifact_id": "color_1", "family": "color", "added_at": "2026-01-01T00:00:00Z"}
         ]
@@ -2408,15 +2448,16 @@ class TestFavoritesStorage(unittest.TestCase):
 
         self.assertFalse(body["added"])
         self.assertEqual(body["count"], 1)
-        mock_write.assert_not_called()
+        mock_put.assert_called_once()
 
-    @patch("handler_storage._write_favorites")
-    @patch("handler_storage._read_favorites")
-    def test_delete_favorite_removes_only_matching_ref(self, mock_read, mock_write):
+    @patch("handler_storage._read_favorites_from_ddb")
+    @patch("handler_storage._delete_favorite_entry")
+    @patch("handler_storage._ensure_favorites_store_ready")
+    def test_delete_favorite_removes_only_matching_ref(self, mock_ensure, mock_delete, mock_read):
         from handler_storage import handle_delete_favorite
 
+        mock_delete.return_value = True
         mock_read.return_value = [
-            {"job_id": "job_a", "artifact_id": "color_1", "family": "color", "added_at": "2026-01-01T00:00:00Z"},
             {"job_id": "job_b", "artifact_id": "color_2", "family": "color", "added_at": "2026-01-02T00:00:00Z"},
         ]
 
@@ -2430,8 +2471,32 @@ class TestFavoritesStorage(unittest.TestCase):
 
         self.assertTrue(body["deleted"])
         self.assertEqual(body["count"], 1)
-        written = mock_write.call_args[0][0]
-        self.assertEqual(written, [{"job_id": "job_b", "artifact_id": "color_2", "family": "color", "added_at": "2026-01-02T00:00:00Z"}])
+        mock_delete.assert_called_once_with("job_a", "color_1")
+        self.assertEqual(body["favorites"], [{"job_id": "job_b", "artifact_id": "color_2", "family": "color", "added_at": "2026-01-02T00:00:00Z"}])
+
+    def test_order_color_variants_breaks_cycles(self):
+        from handler_storage import _order_color_variants
+
+        variants = [
+            {"artifact_id": "a", "derived_from_artifact_id": "b", "created_at": "2026-01-01T00:00:00Z"},
+            {"artifact_id": "b", "derived_from_artifact_id": "a", "created_at": "2026-01-02T00:00:00Z"},
+        ]
+        ordered = _order_color_variants(variants)
+
+        self.assertEqual(len(ordered), 2)
+        self.assertCountEqual([item["artifact_id"] for item in ordered], ["a", "b"])
+
+    def test_order_palette_variants_breaks_cycles(self):
+        from handler_storage import _order_palette_variants
+
+        variants = [
+            {"palette_id": "a", "derived_from_palette_id": "b", "created_at": "2026-01-01T00:00:00Z"},
+            {"palette_id": "b", "derived_from_palette_id": "a", "created_at": "2026-01-02T00:00:00Z"},
+        ]
+        ordered = _order_palette_variants(variants)
+
+        self.assertEqual(len(ordered), 2)
+        self.assertCountEqual([item["palette_id"] for item in ordered], ["a", "b"])
 
 
 class TestDeepZoomExportPointerWrite(unittest.TestCase):

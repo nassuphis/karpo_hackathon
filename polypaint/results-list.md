@@ -1,6 +1,6 @@
 # Results List Refresh
 
-Status: design note for making `Results -> Refresh` feel fast again.
+Status: Phase 1 shipped. Phase 2 still planned.
 
 ## Problem
 
@@ -84,13 +84,29 @@ This is exactly the same issue already identified for solve-score `merge`.
 
 Keep the current `/list` contract and improve only its fan-in behavior.
 
-Change [lambda/handler_storage.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_storage.py)
-`handle_list()` so it:
+Shipped in [lambda/handler_storage.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_storage.py)
+and [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html).
+
+`handle_list()` now:
 
 - uses a dedicated S3 client for the list path
 - sets a larger botocore `max_pool_connections`
 - keeps a bounded worker pool for `calc.json` reads
-- benchmarks worker counts and pool sizes together
+- returns timing breakdown so the UI can log what happened
+
+The Results tab now has a scrolling `results-log` area and logs:
+
+- refresh start
+- refresh success with total/list breakdown
+- worker and pool settings
+- refresh failure
+
+The `Refresh` button now opens a small popup with:
+
+- `Workers`
+
+That value is sent to `/list` as `list_workers`, so tuning happens on the AWS
+side instead of by measuring browser wall time.
 
 Suggested first sweep:
 
@@ -152,14 +168,18 @@ all richer metadata should stay behind:
 
 ### Short term
 
-Implement Phase 1 now:
+Phase 1 is now the baseline:
 
 - dedicated list S3 client
 - tuned `max_pool_connections`
 - bounded worker pool
-- measure before/after
+- visible timing/logging in the Results tab
+- popup control for worker-count tuning
 
-This is low risk and should reduce refresh time without any workflow churn.
+The next question is measurement:
+
+- is this fast enough in practice
+- or does the product still need the catalog/index path
 
 ### Medium term
 

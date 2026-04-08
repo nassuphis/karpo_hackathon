@@ -88,12 +88,12 @@ class TestDispatchHandler(unittest.TestCase):
 
 class TestStorageList(unittest.TestCase):
 
-    @patch("handler_storage._key_exists")
-    @patch("handler_storage.s3")
-    def test_list_uses_delimiter(self, mock_s3, mock_exists):
+    @patch("handler_storage._results_list_s3_client")
+    def test_list_uses_delimiter(self, mock_client_factory):
         """Verify list uses Delimiter='/' to get folders, not enumerate all objects."""
         from handler_storage import handle_list
-        mock_exists.return_value = False
+        mock_s3 = MagicMock()
+        mock_client_factory.return_value = mock_s3
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [{
@@ -122,16 +122,18 @@ class TestStorageList(unittest.TestCase):
         # Verify Delimiter was used in paginate call
         paginate_kwargs = mock_paginator.paginate.call_args[1]
         self.assertEqual(paginate_kwargs["Delimiter"], "/")
+        self.assertEqual(body["list_workers"], 2)
+        self.assertEqual(body["s3_pool_connections"], 64)
 
         funcs = {r["function"] for r in body["results"]}
         self.assertEqual(funcs, {"giga_1", "giga_5"})
 
-    @patch("handler_storage._key_exists")
-    @patch("handler_storage.s3")
-    def test_list_total_size_from_calc(self, mock_s3, mock_exists):
+    @patch("handler_storage._results_list_s3_client")
+    def test_list_total_size_from_calc(self, mock_client_factory):
         """Verify total_size computed from calc.json stripes, not S3 enumeration."""
         from handler_storage import handle_list
-        mock_exists.return_value = False
+        mock_s3 = MagicMock()
+        mock_client_factory.return_value = mock_s3
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [{
@@ -150,12 +152,12 @@ class TestStorageList(unittest.TestCase):
         body = json.loads(result["body"])
         self.assertEqual(body["results"][0]["total_size"], 7500)
 
-    @patch("handler_storage._key_exists")
-    @patch("handler_storage.s3")
-    def test_list_missing_calc_json(self, mock_s3, mock_exists):
+    @patch("handler_storage._results_list_s3_client")
+    def test_list_missing_calc_json(self, mock_client_factory):
         """Jobs without calc.json still appear with function='?'."""
         from handler_storage import handle_list
-        mock_exists.return_value = False
+        mock_s3 = MagicMock()
+        mock_client_factory.return_value = mock_s3
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [{

@@ -289,6 +289,20 @@ static void worker_fail(WorkerArgs *arg, const char *msg) {
     arg->error_msg[sizeof(arg->error_msg) - 1] = '\0';
 }
 
+static void free_worker_storage(WorkerArgs *args, int nWorkers, int nTiles) {
+    if (!args) return;
+    for (int i = 0; i < nWorkers; i++) {
+        if (args[i].pixVecs) {
+            for (int t = 0; t < nTiles; t++) free(args[i].pixVecs[t].data);
+        }
+        if (args[i].pbxVecs) {
+            for (int t = 0; t < nTiles; t++) free(args[i].pbxVecs[t].data);
+        }
+        free(args[i].pixVecs);
+        free(args[i].pbxVecs);
+    }
+}
+
 static void *worker_main(void *arg_) {
     WorkerArgs *arg = (WorkerArgs *)arg_;
     float stepBuf[MAXDEG * 2];
@@ -298,36 +312,37 @@ static void *worker_main(void *arg_) {
     unsigned char *sectionBuf = NULL;
     const float *sectionRoots = NULL;
     long localSolves = arg->end - arg->start;
+    long long nativeStartUs = 0;
+    int nativeStarted = 0;
 
     if (arg->inputMode == INPUT_SECTIONED) {
         if (arg->sectionBytes > 0) {
             sectionBuf = malloc(arg->sectionBytes);
             if (!sectionBuf) {
                 worker_fail(arg, "section buffer alloc failed");
-                return NULL;
+                goto cleanup;
             }
             long long dlStartUs = monotonic_us();
             if (!download_section(arg->url, arg->byteStart, arg->byteEnd,
                                   sectionBuf, arg->sectionBytes,
                                   arg->error_msg, sizeof(arg->error_msg))) {
                 arg->error = 1;
-                free(sectionBuf);
-                return NULL;
+                goto cleanup;
             }
             arg->downloadUs = (long)(monotonic_us() - dlStartUs);
             sectionRoots = (const float *)(const void *)sectionBuf;
         }
     }
 
-    long long nativeStartUs = monotonic_us();
+    nativeStartUs = monotonic_us();
+    nativeStarted = 1;
     for (long p = arg->start; p < arg->end; p++) {
         const float *rawStep = NULL;
         if (arg->inputMode == INPUT_SECTIONED) {
             long localIdx = p - arg->start;
             if (localIdx < 0 || localIdx >= localSolves) {
                 worker_fail(arg, "section local index out of range");
-                free(sectionBuf);
-                return NULL;
+                goto cleanup;
             }
             rawStep = sectionRoots + localIdx * arg->stride;
         } else {
@@ -356,7 +371,7 @@ static void *worker_main(void *arg_) {
             uint8_t bin = arg->solveBins[p];
             if (bin > 9) {
                 worker_fail(arg, "saved_palette bin out of range");
-                return NULL;
+                goto cleanup;
             }
             solveBin = bin;
             solveRGB = ((uint32_t)arg->ssPalR[bin] << 16) |
@@ -371,8 +386,14 @@ static void *worker_main(void *arg_) {
             double dy = im - arg->centerIm;
             double rx = dx * arg->cosA - dy * arg->sinA;
             double ry = dx * arg->sinA + dy * arg->cosA;
-            int px = (int)(arg->halfW + rx * arg->scale);
-            int py = (int)(arg->halfH - ry * arg->scale);
+            double pxf = arg->halfW + rx * arg->scale;
+            double pyf = arg->halfH - ry * arg->scale;
+            if (!isfinite(pxf) || !isfinite(pyf)) {
+                arg->rootsClipped++;
+                continue;
+            }
+            int px = (int)pxf;
+            int py = (int)pyf;
             if (px < 0 || px >= arg->W || py < 0 || py >= arg->H) {
                 arg->rootsClipped++;
                 continue;
@@ -401,18 +422,19 @@ static void *worker_main(void *arg_) {
 
             if (!vec_push2(&arg->pixVecs[tileId], pixIdx, rgb)) {
                 worker_fail(arg, "pix vec alloc failed");
-                return NULL;
+                goto cleanup;
             }
             if (arg->emitPixelBins && (arg->colorMode == COLOR_SOLVE_SCORE || arg->colorMode == COLOR_SAVED_PALETTE)) {
                 if (!vec_push2(&arg->pbxVecs[tileId], pixIdx, (uint32_t)solveBin)) {
                     worker_fail(arg, "pbx vec alloc failed");
-                    return NULL;
+                    goto cleanup;
                 }
             }
             arg->rootsPlotted++;
         }
     }
-    arg->nativeUs = (long)(monotonic_us() - nativeStartUs);
+cleanup:
+    if (nativeStarted) arg->nativeUs = (long)(monotonic_us() - nativeStartUs);
     free(sectionBuf);
     return NULL;
 }
@@ -645,7 +667,26 @@ int main(int argc, char **argv) {
     int tileW[MAX_TILES];
     int tileH[MAX_TILES];
     size_t tileWordCount[MAX_TILES];
-    uint64_t *tileBits[MAX_TILES];
+    uint64_t *tileBits[MAX_TILES] = {0};
+    unsigned char rbPalR[MAXDEG], rbPalG[MAXDEG], rbPalB[MAXDEG];
+    unsigned char ssPalR[10] = {0}, ssPalG[10] = {0}, ssPalB[10] = {0};
+    int emitPixelBins = pixelBinPrefix &&
+        (colorMode == COLOR_SOLVE_SCORE || colorMode == COLOR_SAVED_PALETTE);
+    int threads = clamp_threads(requestedThreads, nPoints);
+    WorkerArgs *args = NULL;
+    pthread_t *workers = NULL;
+    int workersPrepared = 0;
+    int workersStarted = 0;
+    int workersJoined = 0;
+    int curlInitialized = 0;
+    int exitCode = 1;
+    long rootsPlotted = 0;
+    long rootsClipped = 0;
+    long rootsDeduped = 0;
+    long totalDownloadUs = 0;
+    long totalNativeUs = 0;
+    char workerErrorMsg[256] = {0};
+
     for (int t = 0; t < nTiles; t++) {
         int tc = t % nTileCols;
         int tr = t / nTileCols;
@@ -653,47 +694,44 @@ int main(int argc, char **argv) {
         tileH[t] = (tr < nTileRows - 1) ? tileSize : (H - tr * tileSize);
         if (tileW[t] <= 0 || tileH[t] <= 0) {
             fprintf(stderr, "Invalid tile %d geometry\n", t);
-            free(solveBins);
-            free(roots);
-            return 1;
+            goto cleanup;
         }
         tileWordCount[t] = (((size_t)tileW[t] * (size_t)tileH[t]) + 63u) / 64u;
         tileBits[t] = calloc(tileWordCount[t], sizeof(uint64_t));
         if (!tileBits[t]) {
             fprintf(stderr, "Cannot allocate tile bitset %d\n", t);
-            free(solveBins);
-            free(roots);
-            return 1;
+            goto cleanup;
         }
     }
 
-    unsigned char rbPalR[MAXDEG], rbPalG[MAXDEG], rbPalB[MAXDEG];
     for (int i = 0; i < degree; i++) {
         rainbowRGB(i, degree, &rbPalR[i], &rbPalG[i], &rbPalB[i]);
     }
-    const PaletteDef *proxPal = findPalette(palName);
-    unsigned char ssPalR[10], ssPalG[10], ssPalB[10];
-    for (int b = 0; b < 10; b++) {
-        paletteRGB(proxPal, (b + 0.5) / 10.0, &ssPalR[b], &ssPalG[b], &ssPalB[b]);
+    if (colorMode == COLOR_SOLVE_SCORE || colorMode == COLOR_SAVED_PALETTE) {
+        const PaletteDef *proxPal = findPalette(palName);
+        if (!proxPal) {
+            fprintf(stderr, "Unknown palette: %s\n", palName);
+            goto cleanup;
+        }
+        for (int b = 0; b < 10; b++) {
+            paletteRGB(proxPal, (b + 0.5) / 10.0, &ssPalR[b], &ssPalG[b], &ssPalB[b]);
+        }
     }
-
-    int emitPixelBins = pixelBinPrefix &&
-        (colorMode == COLOR_SOLVE_SCORE || colorMode == COLOR_SAVED_PALETTE);
-    int threads = clamp_threads(requestedThreads, nPoints);
 
     if (inputMode == INPUT_SECTIONED) {
-        curl_global_init(CURL_GLOBAL_DEFAULT);
+        CURLcode curlRc = curl_global_init(CURL_GLOBAL_DEFAULT);
+        if (curlRc != CURLE_OK) {
+            fprintf(stderr, "curl_global_init failed: %s\n", curl_easy_strerror(curlRc));
+            goto cleanup;
+        }
+        curlInitialized = 1;
     }
 
-    WorkerArgs *args = calloc((size_t)threads, sizeof(WorkerArgs));
-    pthread_t *workers = calloc((size_t)threads, sizeof(pthread_t));
+    args = calloc((size_t)threads, sizeof(WorkerArgs));
+    workers = calloc((size_t)threads, sizeof(pthread_t));
     if (!args || !workers) {
         fprintf(stderr, "Out of memory for raster threads\n");
-        free(workers);
-        free(args);
-        free(solveBins);
-        free(roots);
-        return 1;
+        goto cleanup;
     }
 
     long base = nPoints / threads;
@@ -735,7 +773,9 @@ int main(int argc, char **argv) {
         args[i].solveBytes = solveBytes;
         args[i].sectionBytes = (size_t)width * (size_t)solveBytes;
         args[i].byteStart = (unsigned long long)start * (unsigned long long)solveBytes;
-        args[i].byteEnd = args[i].byteStart + (unsigned long long)args[i].sectionBytes - 1ULL;
+        args[i].byteEnd = args[i].sectionBytes > 0
+            ? args[i].byteStart + (unsigned long long)args[i].sectionBytes - 1ULL
+            : args[i].byteStart;
         args[i].solveBins = solveBins;
         args[i].rtChain = rtChain;
         args[i].nRt = nRt;
@@ -751,19 +791,20 @@ int main(int argc, char **argv) {
         memcpy(args[i].ssPalB, ssPalB, sizeof(ssPalB));
         if (!args[i].pixVecs || (emitPixelBins && !args[i].pbxVecs)) {
             fprintf(stderr, "Out of memory for worker vectors\n");
-            return 1;
+            goto cleanup;
         }
-        pthread_create(&workers[i], NULL, worker_main, &args[i]);
+        workersPrepared++;
         start += width;
     }
 
-    long rootsPlotted = 0;
-    long rootsClipped = 0;
-    long rootsDeduped = 0;
-    long totalDownloadUs = 0;
-    long totalNativeUs = 0;
-    int workerError = 0;
-    char workerErrorMsg[256] = {0};
+    for (int i = 0; i < threads; i++) {
+        if (pthread_create(&workers[i], NULL, worker_main, &args[i]) != 0) {
+            fprintf(stderr, "pthread_create failed for worker %d\n", i);
+            goto cleanup;
+        }
+        workersStarted++;
+    }
+
     for (int i = 0; i < threads; i++) {
         pthread_join(workers[i], NULL);
         rootsPlotted += args[i].rootsPlotted;
@@ -771,14 +812,15 @@ int main(int argc, char **argv) {
         rootsDeduped += args[i].rootsDeduped;
         totalDownloadUs += args[i].downloadUs;
         totalNativeUs += args[i].nativeUs;
-        if (args[i].error && !workerError) {
-            workerError = 1;
+        if (args[i].error && !workerErrorMsg[0]) {
             strncpy(workerErrorMsg, args[i].error_msg, sizeof(workerErrorMsg) - 1);
+            workerErrorMsg[sizeof(workerErrorMsg) - 1] = '\0';
         }
     }
-    if (workerError) {
+    workersJoined = 1;
+    if (workerErrorMsg[0]) {
         fprintf(stderr, "roots2pix_mt worker failed: %s\n", workerErrorMsg);
-        return 1;
+        goto cleanup;
     }
 
     char pathBuf[512];
@@ -796,7 +838,7 @@ int main(int argc, char **argv) {
             FILE *fout = fopen(pathBuf, "wb");
             if (!fout) {
                 fprintf(stderr, "Cannot create %s\n", pathBuf);
-                return 1;
+                goto cleanup;
             }
             for (int i = 0; i < threads; i++) {
                 if (args[i].pixVecs[t].len > 0) {
@@ -812,7 +854,7 @@ int main(int argc, char **argv) {
             FILE *fb = fopen(pathBuf, "wb");
             if (!fb) {
                 fprintf(stderr, "Cannot create %s\n", pathBuf);
-                return 1;
+                goto cleanup;
             }
             for (int i = 0; i < threads; i++) {
                 if (args[i].pbxVecs[t].len > 0) {
@@ -844,20 +886,18 @@ int main(int argc, char **argv) {
         printf(",\"constant_color\":\"%s\"", constColorStr);
     }
     printf("}\n");
+    exitCode = 0;
 
-    for (int i = 0; i < threads; i++) {
-        for (int t = 0; t < nTiles; t++) {
-            free(args[i].pixVecs[t].data);
-            if (emitPixelBins) free(args[i].pbxVecs[t].data);
-        }
-        free(args[i].pixVecs);
-        free(args[i].pbxVecs);
+cleanup:
+    if (workers && !workersJoined) {
+        for (int i = 0; i < workersStarted; i++) pthread_join(workers[i], NULL);
     }
+    free_worker_storage(args, workersPrepared, nTiles);
     for (int t = 0; t < nTiles; t++) free(tileBits[t]);
     free(workers);
     free(args);
     free(solveBins);
     free(roots);
-    if (inputMode == INPUT_SECTIONED) curl_global_cleanup();
-    return 0;
+    if (curlInitialized) curl_global_cleanup();
+    return exitCode;
 }

@@ -21,11 +21,43 @@ import json
 import time
 
 import boto3
+from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from shared import BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response, _get_ddb
 
 s3 = boto3.client("s3")
 FAVORITES_KEY = "polypaint/favorites/color_artifacts.json"
+FAVORITES_DDB_JOB_ID = "favorites#color"
+FAVORITES_DDB_META_TASK_ID = "__meta__"
+FAVORITES_DDB_TASK_PREFIX = "favorite#"
+DEFAULT_RESULTS_LIST_WORKERS = 32
+MAX_RESULTS_LIST_WORKERS = 64
+
+
+def _validate_results_list_workers(value):
+    if value in (None, ""):
+        value = DEFAULT_RESULTS_LIST_WORKERS
+    try:
+        workers = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"list_workers must be an integer, got {value!r}")
+    if not (1 <= workers <= MAX_RESULTS_LIST_WORKERS):
+        raise ValueError(
+            f"list_workers must be in [1, {MAX_RESULTS_LIST_WORKERS}], got {workers}"
+        )
+    return workers
+
+
+def _results_list_pool_size(workers):
+    return max(16, int(workers) * 2)
+
+
+def _results_list_s3_client(max_workers):
+    return boto3.client(
+        "s3",
+        config=Config(max_pool_connections=_results_list_pool_size(max_workers)),
+    )
 
 
 def _is_missing_s3_error(exc):
@@ -36,7 +68,11 @@ def _is_missing_s3_error(exc):
     return "NoSuchKey" in msg or "NotFound" in msg
 
 
-def _read_favorites():
+def _favorite_task_id(job_id, artifact_id):
+    return f"{FAVORITES_DDB_TASK_PREFIX}{job_id}#{artifact_id}"
+
+
+def _load_legacy_favorites():
     try:
         obj = s3.get_object(Bucket=BUCKET, Key=FAVORITES_KEY)
     except Exception as exc:
@@ -52,13 +88,150 @@ def _read_favorites():
     return []
 
 
-def _write_favorites(items):
-    s3.put_object(
-        Bucket=BUCKET,
-        Key=FAVORITES_KEY,
-        Body=json.dumps(items, separators=(",", ":"), sort_keys=True).encode(),
-        ContentType="application/json",
+def _list_favorite_rows():
+    ddb = _get_ddb()
+    kwargs = {
+        "TableName": JOBS_TABLE,
+        "KeyConditionExpression": "job_id = :jid",
+        "ExpressionAttributeValues": {
+            ":jid": {"S": FAVORITES_DDB_JOB_ID},
+        },
+    }
+    rows = []
+    while True:
+        resp = ddb.query(**kwargs)
+        rows.extend(resp.get("Items", []))
+        if "LastEvaluatedKey" not in resp:
+            break
+        kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+    return rows
+
+
+def _favorite_store_initialized():
+    ddb = _get_ddb()
+    resp = ddb.get_item(
+        TableName=JOBS_TABLE,
+        Key={
+            "job_id": {"S": FAVORITES_DDB_JOB_ID},
+            "task_id": {"S": FAVORITES_DDB_META_TASK_ID},
+        },
+        ProjectionExpression="job_id, task_id",
     )
+    return "Item" in resp
+
+
+def _favorite_from_row(row):
+    entry = {
+        "job_id": row["favorite_job_id"]["S"],
+        "artifact_id": row["favorite_artifact_id"]["S"],
+        "family": row.get("family", {}).get("S", "color"),
+        "added_at": row.get("added_at", {}).get("S", ""),
+    }
+    for field in ("display_name", "image_key", "preview_key"):
+        value = row.get(field, {}).get("S")
+        if value:
+            entry[field] = value
+    return entry
+
+
+def _sort_favorites(items):
+    return sorted(items, key=lambda item: item.get("added_at", ""), reverse=True)
+
+
+def _read_favorites_from_ddb():
+    rows = _list_favorite_rows()
+    favorites = []
+    for row in rows:
+        task_id = row.get("task_id", {}).get("S")
+        if task_id == FAVORITES_DDB_META_TASK_ID:
+            continue
+        if task_id and task_id.startswith(FAVORITES_DDB_TASK_PREFIX):
+            favorites.append(_favorite_from_row(row))
+    return _sort_favorites(favorites)
+
+
+def _put_favorite_meta():
+    try:
+        _get_ddb().put_item(
+            TableName=JOBS_TABLE,
+            Item={
+                "job_id": {"S": FAVORITES_DDB_JOB_ID},
+                "task_id": {"S": FAVORITES_DDB_META_TASK_ID},
+                "family": {"S": "color"},
+                "updated_at_ms": {"N": str(int(time.time() * 1000))},
+            },
+            ConditionExpression="attribute_not_exists(job_id) AND attribute_not_exists(task_id)",
+        )
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        if code != "ConditionalCheckFailedException":
+            raise
+
+
+def _put_favorite_entry(entry, allow_existing=False):
+    item = {
+        "job_id": {"S": FAVORITES_DDB_JOB_ID},
+        "task_id": {"S": _favorite_task_id(entry["job_id"], entry["artifact_id"])},
+        "favorite_job_id": {"S": entry["job_id"]},
+        "favorite_artifact_id": {"S": entry["artifact_id"]},
+        "family": {"S": "color"},
+        "added_at": {"S": entry["added_at"]},
+        "updated_at_ms": {"N": str(int(time.time() * 1000))},
+    }
+    for field in ("display_name", "image_key", "preview_key"):
+        value = entry.get(field)
+        if value:
+            item[field] = {"S": value}
+    try:
+        _get_ddb().put_item(
+            TableName=JOBS_TABLE,
+            Item=item,
+            ConditionExpression="attribute_not_exists(job_id) AND attribute_not_exists(task_id)",
+        )
+        return True
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        if code == "ConditionalCheckFailedException" and allow_existing:
+            return False
+        if code == "ConditionalCheckFailedException":
+            return False
+        raise
+
+
+def _delete_favorite_entry(job_id, artifact_id):
+    resp = _get_ddb().delete_item(
+        TableName=JOBS_TABLE,
+        Key={
+            "job_id": {"S": FAVORITES_DDB_JOB_ID},
+            "task_id": {"S": _favorite_task_id(job_id, artifact_id)},
+        },
+        ReturnValues="ALL_OLD",
+    )
+    return "Attributes" in resp
+
+
+def _ensure_favorites_store_ready():
+    if _favorite_store_initialized():
+        return
+    legacy = _load_legacy_favorites()
+    _put_favorite_meta()
+    for entry in legacy:
+        if entry.get("job_id") and entry.get("artifact_id"):
+            _put_favorite_entry({
+                "job_id": entry["job_id"],
+                "artifact_id": entry["artifact_id"],
+                "family": "color",
+                "added_at": entry.get("added_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "display_name": entry.get("display_name"),
+                "image_key": entry.get("image_key"),
+                "preview_key": entry.get("preview_key"),
+            }, allow_existing=True)
+
+
+def _read_favorites():
+    if _favorite_store_initialized():
+        return _read_favorites_from_ddb()
+    return _load_legacy_favorites()
 
 
 def handler(event, context):
@@ -124,22 +297,19 @@ def handle_add_favorite(event):
     family = params.get("family", "color")
     if family != "color":
         raise ValueError("Only color favorites are supported")
-    favorites = _read_favorites()
-    key = (job_id, artifact_id)
-    added = not any((item.get("job_id"), item.get("artifact_id")) == key for item in favorites)
-    if added:
-        entry = {
-            "job_id": job_id,
-            "artifact_id": artifact_id,
-            "family": "color",
-            "added_at": params.get("added_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
-        for field in ("display_name", "image_key", "preview_key"):
-            value = params.get(field)
-            if value:
-                entry[field] = value
-        favorites = [entry] + favorites
-        _write_favorites(favorites)
+    _ensure_favorites_store_ready()
+    entry = {
+        "job_id": job_id,
+        "artifact_id": artifact_id,
+        "family": "color",
+        "added_at": params.get("added_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    for field in ("display_name", "image_key", "preview_key"):
+        value = params.get(field)
+        if value:
+            entry[field] = value
+    added = _put_favorite_entry(entry, allow_existing=True)
+    favorites = _read_favorites_from_ddb()
     return ok_response({"added": added, "favorites": favorites, "count": len(favorites)})
 
 
@@ -147,15 +317,10 @@ def handle_delete_favorite(event):
     params = parse_body(event)
     job_id = params["job_id"]
     artifact_id = params["artifact_id"]
-    favorites = _read_favorites()
-    kept = [
-        item for item in favorites
-        if not (item.get("job_id") == job_id and item.get("artifact_id") == artifact_id)
-    ]
-    deleted = len(kept) != len(favorites)
-    if deleted:
-        _write_favorites(kept)
-    return ok_response({"deleted": deleted, "favorites": kept, "count": len(kept)})
+    _ensure_favorites_store_ready()
+    deleted = _delete_favorite_entry(job_id, artifact_id)
+    favorites = _read_favorites_from_ddb()
+    return ok_response({"deleted": deleted, "favorites": favorites, "count": len(favorites)})
 
 
 def handle_list(event):
@@ -165,11 +330,15 @@ def handle_list(event):
     """
     import concurrent.futures
 
+    params = parse_body(event)
+    requested_workers = _validate_results_list_workers(params.get("list_workers"))
+    list_s3 = _results_list_s3_client(requested_workers)
     t0 = time.time()
 
     # List folder prefixes under renders/ — O(n_jobs), not O(all_objects)
     job_ids = []
-    paginator = s3.get_paginator('list_objects_v2')
+    t_prefix_0 = time.time()
+    paginator = list_s3.get_paginator('list_objects_v2')
     for page in paginator.paginate(Bucket=BUCKET, Prefix='renders/',
                                    Delimiter='/'):
         for prefix in page.get('CommonPrefixes', []):
@@ -177,13 +346,14 @@ def handle_list(event):
             job_id = prefix['Prefix'].split('/')[1]
             if job_id:
                 job_ids.append(job_id)
+    prefix_list_us = int((time.time() - t_prefix_0) * 1e6)
 
     # Read calc.json for each job (parallelized) — table fields only
     def read_calc(job_id):
         entry = {"job_id": job_id}
         try:
-            obj = s3.get_object(Bucket=BUCKET,
-                                Key=f"renders/{job_id}/calc.json")
+            obj = list_s3.get_object(Bucket=BUCKET,
+                                     Key=f"renders/{job_id}/calc.json")
             calc = json.loads(obj["Body"].read())
             entry["function"] = calc.get("function", "?")
             entry["degree"] = calc.get("degree", 0)
@@ -196,22 +366,41 @@ def handle_list(event):
             entry["total_size"] += calc.get("total_coeffs_size", 0)
             entry["total_roots"] = calc.get("total_roots",
                 sum(s.get("bin_size", 0) for s in chunks) // 8)
-        except Exception:
+        except Exception as exc:
             entry["function"] = "?"
             entry["total_size"] = 0
+            entry["_metadata_error"] = f"{type(exc).__name__}: {exc}"
 
         return entry
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+    list_workers = min(requested_workers, max(1, len(job_ids) or 1))
+    t_calc_0 = time.time()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=list_workers) as pool:
         results = list(pool.map(read_calc, job_ids))
+    calc_fetch_us = int((time.time() - t_calc_0) * 1e6)
+
+    metadata_errors = []
+    for entry in results:
+        err = entry.pop("_metadata_error", None)
+        if err:
+            metadata_errors.append({"job_id": entry["job_id"], "error": err[:200]})
 
     # Sort by job_id descending (job_ids contain timestamps)
+    t_sort_0 = time.time()
     results.sort(key=lambda r: r["job_id"], reverse=True)
+    sort_us = int((time.time() - t_sort_0) * 1e6)
 
     return ok_response({
         "results": results,
         "count": len(results),
         "list_us": int((time.time() - t0) * 1e6),
+        "prefix_list_us": prefix_list_us,
+        "calc_fetch_us": calc_fetch_us,
+        "sort_us": sort_us,
+        "list_workers": list_workers,
+        "s3_pool_connections": _results_list_pool_size(requested_workers),
+        "metadata_error_count": len(metadata_errors),
+        "metadata_errors": metadata_errors[:20],
     })
 
 
@@ -511,11 +700,11 @@ def _order_color_variants(variants):
         aid = art.get("artifact_id")
         if aid in seen:
             return
+        if aid:
+            seen.add(aid)
         for child in children.get(aid, []):
             append_with_children(child)
         ordered.append(art)
-        if aid:
-            seen.add(aid)
 
     for art in top:
         append_with_children(art)
@@ -547,11 +736,11 @@ def _order_palette_variants(variants):
         aid = art.get("palette_id") or art.get("artifact_id")
         if aid in seen:
             return
+        if aid:
+            seen.add(aid)
         for child in children.get(aid, []):
             append_with_children(child)
         ordered.append(art)
-        if aid:
-            seen.add(aid)
 
     for art in top:
         append_with_children(art)

@@ -27,14 +27,29 @@ extern void zgeev_(char *jobvl, char *jobvr, int *n,
                    double _Complex *work, int *lwork,
                    double *rwork, int *info);
 
+#define READ_BUF_SIZE (256 * 1024)
+
 /* Simple JSON parser helpers */
 static char *read_stdin(void) {
     size_t cap = 4096, len = 0;
     char *buf = malloc(cap);
-    int c;
-    while ((c = fgetc(stdin)) != EOF) {
-        if (len + 1 >= cap) { cap *= 2; buf = realloc(buf, cap); }
-        buf[len++] = (char)c;
+    if (!buf) return NULL;
+    char chunk[READ_BUF_SIZE];
+    size_t nread;
+    while ((nread = fread(chunk, 1, sizeof(chunk), stdin)) > 0) {
+        if (len + nread + 1 > cap) {
+            size_t new_cap = cap;
+            while (len + nread + 1 > new_cap) new_cap *= 2;
+            char *new_buf = realloc(buf, new_cap);
+            if (!new_buf) {
+                free(buf);
+                return NULL;
+            }
+            buf = new_buf;
+            cap = new_cap;
+        }
+        memcpy(buf + len, chunk, nread);
+        len += nread;
     }
     buf[len] = '\0';
     return buf;
@@ -134,6 +149,13 @@ static int solve_companion(const double *cfRe, const double *cfIm, int nCoeffs,
     /* Compute eigenvalues */
     double _Complex *W = malloc(n * sizeof(double _Complex));
     double *rwork = malloc(2 * n * sizeof(double));
+    if (!W || !rwork) {
+        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
+        free(rwork);
+        free(W);
+        free(A);
+        return nCoeffs - 1;
+    }
     int info, lwork = -1;
     double _Complex wkopt;
     char jobvl = 'N', jobvr = 'N';
@@ -149,7 +171,17 @@ static int solve_companion(const double *cfRe, const double *cfIm, int nCoeffs,
         return nCoeffs - 1;
     }
     lwork = (int)creal(wkopt);
+    if (lwork < 1) {
+        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
+        free(rwork); free(W); free(A);
+        return nCoeffs - 1;
+    }
     double _Complex *work = malloc(lwork * sizeof(double _Complex));
+    if (!work) {
+        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
+        free(rwork); free(W); free(A);
+        return nCoeffs - 1;
+    }
 
     /* Actual eigensolve */
     zgeev_(&jobvl, &jobvr, &n, A, &n, W, NULL, &ldvl, NULL, &ldvr,
@@ -187,6 +219,10 @@ int main(int argc, char **argv) {
     const char *outPath = argv[1];
 
     char *buf = read_stdin();
+    if (!buf) {
+        fprintf(stderr, "Out of memory reading spec from stdin\n");
+        return 1;
+    }
 
     /* Parse spec */
     char coeffsFile[256] = "";
@@ -213,6 +249,18 @@ int main(int argc, char **argv) {
     float *rootIm = malloc(degree * sizeof(float));
     double *cfRe = malloc(nCoeffs * sizeof(double));
     double *cfIm = malloc(nCoeffs * sizeof(double));
+    if (!coeffBuf || !rootRe || !rootIm || !cfRe || !cfIm) {
+        fprintf(stderr, "Out of memory allocating solver buffers\n");
+        free(cfIm);
+        free(cfRe);
+        free(rootIm);
+        free(rootRe);
+        free(coeffBuf);
+        free(buf);
+        fclose(fout);
+        fclose(fin);
+        return 1;
+    }
 
     long totalSteps = 0;
     long skippedOverflow = 0;

@@ -41,6 +41,7 @@ class TestRenderStatus(unittest.TestCase):
         assert rd["phase"] == "queued"
         assert rd["phase_label"] == "Queued"
         assert rd["execution_arn"] == "arn:test"
+        assert rd["run_started_at_ms"] == 1000
 
     @patch("handler_render_status._get_ddb")
     def test_phase_update_with_subtask(self, mock_get_ddb):
@@ -53,6 +54,7 @@ class TestRenderStatus(unittest.TestCase):
             "mode": "color",
             "phase": "raster",
             "phase_label": "Raster",
+            "run_started_at_ms": 1000,
             "expected": 10,
             "subtask_prefix": "render_run_abc_raster_",
         }
@@ -61,6 +63,7 @@ class TestRenderStatus(unittest.TestCase):
         rd = json.loads(item["result_data"]["S"])
         assert rd["phase"] == "raster"
         assert rd["phase_label"] == "Raster"
+        assert rd["run_started_at_ms"] == 1000
         assert rd["expected"] == 10
         assert rd["subtask_prefix"] == "render_run_abc_raster_"
 
@@ -73,6 +76,7 @@ class TestRenderStatus(unittest.TestCase):
             "task_id": "render_run_color_run_abc",
             "run_id": "run_abc",
             "mode": "color",
+            "run_started_at_ms": 1000,
             "image_key": "renders/j/image.jpeg",
         }
         handler(event, None)
@@ -80,6 +84,7 @@ class TestRenderStatus(unittest.TestCase):
         assert item["task_status"]["S"] == "done"
         rd = json.loads(item["result_data"]["S"])
         assert rd["phase"] == "done"
+        assert rd["run_started_at_ms"] == 1000
         assert rd["image_key"] == "renders/j/image.jpeg"
 
     @patch("handler_render_status._get_ddb")

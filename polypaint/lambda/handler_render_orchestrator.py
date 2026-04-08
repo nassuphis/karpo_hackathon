@@ -43,6 +43,7 @@ def handler(event, context):
         "run_id": run_id,
         "task_id": task_id,
         "mode": mode,
+        "run_started_at_ms": now_ms,
         "params": params.get("params", {}),
     }
 
@@ -62,6 +63,7 @@ def handler(event, context):
         "phase_label": "Queued",
         "execution_arn": execution_arn,
         "started_at_ms": now_ms,
+        "run_started_at_ms": now_ms,
         "updated_at_ms": now_ms,
     }
     report_status(job_id, task_id, "queued", result_data=result_data)

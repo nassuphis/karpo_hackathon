@@ -114,6 +114,10 @@ class TestWorkflowDefinition(unittest.TestCase):
         bp = self.states["BuildPlan"]
         assert bp.get("ResultPath") is not None, "BuildPlan must have ResultPath"
 
+    def test_parse_plan_preserves_run_started_at_ms(self):
+        parse_plan = self.states["ParsePlan"]
+        self.assertEqual(parse_plan["Parameters"]["run_started_at_ms.$"], "$.run_started_at_ms")
+
     def test_report_states_use_null_result_path(self):
         """Status/report states must use ResultPath: null."""
         report_states = [n for n in self.all_states
@@ -229,6 +233,7 @@ class TestWorkflowDefinition(unittest.TestCase):
         color_map = self.states["ColorRasterMap"]
         selector = color_map["ItemSelector"]
         self.assertEqual(selector["raster_function_name.$"], "$.plan.raster.function_name")
+        self.assertEqual(selector["raster_input_mode.$"], "$.plan.raster.input_mode")
         worker = color_map["ItemProcessor"]["States"]["RasterWorker"]
         self.assertEqual(worker["Parameters"]["FunctionName.$"], "$.raster_function_name")
 
@@ -252,6 +257,34 @@ class TestWorkflowDefinition(unittest.TestCase):
 
         merge_payload = self.states["ColorSolveScoreMergeTask"]["Parameters"]["Payload"]
         self.assertEqual(merge_payload["solve_score_threads.$"], "$.plan.solve_score.threads")
+        self.assertEqual(merge_payload["solve_score_merge_workers.$"], "$.plan.solve_score.merge_workers")
+
+    def test_status_tasks_forward_run_started_at_ms(self):
+        phase_states = [
+            "CleanRender",
+            "ColorSolveScoreClipPhase",
+            "ColorSolveScoreHistPhase",
+            "ColorSolveScoreMergePhase",
+            "ColorRasterPhase",
+            "ColorFinalizePhase",
+            "ColorEncodePhase",
+            "BilevelRasterPhase",
+            "BilevelMergePhase",
+            "BilevelStitchPhase",
+            "CoeffRasterPhase",
+            "CoeffMergePhase",
+            "CoeffStitchPhase",
+        ]
+        for name in phase_states:
+            payload = self.states[name]["Parameters"]["Payload"]
+            self.assertEqual(payload["run_started_at_ms.$"], "$.run_started_at_ms")
+
+        for name in ["ReportDoneColor", "ReportDoneBilevel", "ReportDoneCoeffBilevel"]:
+            payload = self.states[name]["Parameters"]["Payload"]
+            self.assertEqual(payload["run_started_at_ms.$"], "$.run_started_at_ms")
+
+        error_payload = self.top_states["ReportError"]["Parameters"]["Payload"]
+        self.assertEqual(error_payload["run_started_at_ms.$"], "$.run_started_at_ms")
 
 
 if __name__ == "__main__":

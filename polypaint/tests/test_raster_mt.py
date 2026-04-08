@@ -77,6 +77,7 @@ class TestRasterMT(unittest.TestCase):
             self.assertTrue(cmd[0].endswith("roots2pix_mt"))
             self.assertEqual(cmd[1], "/tmp/stripe.bin")
             self.assertEqual(cmd[2], "/tmp/pix")
+            self.assertIn("--input_mode=tmpfile", cmd)
             self.assertIn("--color=solve_score", cmd)
             self.assertIn("--threads=2", cmd)
             self.assertIn("--pixel_bin_prefix=/tmp/pixbin", cmd)
@@ -100,6 +101,7 @@ class TestRasterMT(unittest.TestCase):
 
         self.assertEqual(body["threads"], 2)
         self.assertEqual(body["engine"], "mt")
+        self.assertEqual(body["input_mode"], "tmpfile")
         self.assertEqual(body["tiles_uploaded"], 1)
         self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
         self.assertEqual(body["roots_plotted"], 24)
@@ -112,6 +114,7 @@ class TestRasterMT(unittest.TestCase):
         done_kwargs = mock_report.call_args_list[-1].kwargs
         self.assertEqual(done_kwargs["result_data"]["engine"], "mt")
         self.assertEqual(done_kwargs["result_data"]["threads"], 2)
+        self.assertEqual(done_kwargs["result_data"]["input_mode"], "tmpfile")
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")
@@ -141,6 +144,7 @@ class TestRasterMT(unittest.TestCase):
         def fake_run(cmd, capture_output=False, text=False, timeout=None):
             seen_cmds.append(cmd)
             self.assertIn("--threads=3", cmd)
+            self.assertIn("--input_mode=tmpfile", cmd)
             with open("/tmp/pix_t0000.pix", "wb") as fh:
                 fh.write(b"X" * 8)
             return MagicMock(
@@ -184,6 +188,7 @@ class TestRasterMT(unittest.TestCase):
                 seen_bins.append(fh.read())
             self.assertIn("--color=saved_palette", cmd)
             self.assertIn("--threads=2", cmd)
+            self.assertIn("--input_mode=tmpfile", cmd)
             with open("/tmp/pix_t0000.pix", "wb") as fh:
                 fh.write(b"\x01" * 8)
             return MagicMock(
@@ -208,6 +213,70 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(mock_run.call_count, 1)
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
+
+    @patch.dict(os.environ, {"RASTER_MT_THREADS": "2", "AWS_LAMBDA_FUNCTION_MEMORY_SIZE": "10240"}, clear=False)
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.run")
+    @patch("handler_raster_mt.s3")
+    def test_sectioned_mode_uses_presigned_url_and_skips_python_chunk_download(self, mock_s3, mock_run, mock_report):
+        import handler_raster_mt as mod
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/solve_scores/crowding_bins.json":
+                payload = {
+                    "family": "solve_score",
+                    "metric": "crowding",
+                    "clip_quantile": 0.01,
+                    "omega": 4.0,
+                    "omega_enabled": False,
+                    "clip_lo": -1.0,
+                    "clip_hi": 2.0,
+                    "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                }
+                return {"Body": MagicMock(read=lambda: json.dumps(payload).encode())}
+            raise AssertionError(f"unexpected get_object key: {key}")
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.head_object.return_value = {"ContentLength": 160}
+        mock_s3.generate_presigned_url.return_value = "https://example.com/input.bin?sig=1"
+        mock_s3.upload_fileobj.side_effect = lambda fileobj, bucket, key: None
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None):
+            self.assertIn("--input_mode=sectioned", cmd)
+            self.assertIn("--url=https://example.com/input.bin?sig=1", cmd)
+            self.assertIn("--input_size=160", cmd)
+            with open("/tmp/pix_t0000.pix", "wb") as fh:
+                fh.write(b"Z" * 8)
+            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
+                fh.write(b"z" * 8)
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({
+                    "threads": 2,
+                    "roots_plotted": 11,
+                    "roots_clipped": 1,
+                    "input_mode": "sectioned",
+                    "download_us": 1200,
+                    "native_us": 3400,
+                }),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler(_event(raster_input_mode="sectioned"), None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["input_mode"], "sectioned")
+        self.assertEqual(body["threads"], 2)
+        mock_s3.head_object.assert_called_once_with(Bucket="polypaint", Key="renders/j/chunk_0.bin")
+        mock_s3.generate_presigned_url.assert_called_once()
+        statuses = [call.args[2] for call in mock_report.call_args_list]
+        self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
+        done_kwargs = mock_report.call_args_list[-1].kwargs
+        self.assertEqual(done_kwargs["result_data"]["input_mode"], "sectioned")
+        self.assertEqual(done_kwargs["result_data"]["download_us"], 1200)
 
 
 if __name__ == "__main__":

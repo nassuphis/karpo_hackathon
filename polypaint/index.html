@@ -283,6 +283,48 @@ button {
 .autolevel-inline-fields select {
     width: auto;
 }
+.render-mt-matrix {
+    display: grid;
+    grid-template-columns: 60px 78px minmax(0, 116px) 78px;
+    gap: 8px 10px;
+    align-items: center;
+    width: 100%;
+    margin-top: 10px;
+}
+.render-mt-matrix-head {
+    color: #777; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+}
+.render-mt-matrix-stage {
+    color: #ddd; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase;
+}
+.render-mt-matrix input,
+.render-mt-matrix select {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    font-size: 12px; padding: 5px 7px;
+    background: #0f172d; color: #ddd; border: 1px solid #2b3f66; border-radius: 4px;
+}
+.render-mt-matrix-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    color: #66768f;
+    font-size: 12px;
+    border: 1px solid #20304f;
+    border-radius: 4px;
+    background: rgba(11, 18, 34, 0.65);
+    box-sizing: border-box;
+    width: 100%;
+}
+@media (max-width: 640px) {
+    .render-mt-matrix {
+        grid-template-columns: 60px 70px minmax(0, 1fr) 70px;
+    }
+}
 .autolevel-inline-check {
     min-width: 0; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
     color: #ddd; font-size: 12px;
@@ -1088,12 +1130,12 @@ button {
                     <span class="inline-label">Histogram input</span>
                     <select id="render-generate-hist-input-mode">
                         <option value="tmpfile">tmp file</option>
-                        <option value="stdin">stdin</option>
+                        <option value="sectioned">sectioned native</option>
                     </select>
                 </div>
             </div>
         </div>
-        <div class="autolevel-popup-help">Only used for Solve score renders. It lets you compare the existing temp-file path against streaming the S3 chunk directly into solve_proximity_stats over stdin.</div>
+        <div class="autolevel-popup-help">Only used for Solve score renders. It lets you compare the existing temp-file path against the native sectioned range-download path inside the histogram worker.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -1112,22 +1154,36 @@ button {
         </div>
         <div id="render-mt-popup-summary" class="autolevel-popup-summary"></div>
         <div style="padding:0 14px 8px 14px">
-            <div class="autolevel-stage-row" style="align-items:center">
-                <div class="autolevel-stage-text">Choose native thread counts for solve-score preprocessing and raster.</div>
-                <div class="autolevel-inline-fields">
-                    <span class="inline-label">Solve score</span>
-                    <input id="render-mt-solve-score-threads" type="number" min="1" max="16" step="1" value="4">
-                    <span class="inline-label">Hist input</span>
-                    <select id="render-mt-hist-input-mode">
-                        <option value="tmpfile">tmp file</option>
-                        <option value="stdin">stdin</option>
-                    </select>
-                    <span class="inline-label">Raster</span>
-                    <input id="render-mt-threads" type="number" min="1" max="16" step="1" value="4">
-                </div>
+            <div class="autolevel-stage-text">Choose native thread counts, input modes, and merge workers for the MT path.</div>
+            <div class="render-mt-matrix">
+                <div></div>
+                <div class="render-mt-matrix-head">Threads</div>
+                <div class="render-mt-matrix-head">Input</div>
+                <div class="render-mt-matrix-head">Workers</div>
+
+                <div class="render-mt-matrix-stage">Hist</div>
+                <input id="render-mt-solve-score-threads" type="number" min="1" max="16" step="1" value="4">
+                <select id="render-mt-hist-input-mode">
+                    <option value="tmpfile">tmp file</option>
+                    <option value="sectioned">sectioned native</option>
+                </select>
+                <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+
+                <div class="render-mt-matrix-stage">Raster</div>
+                <input id="render-mt-threads" type="number" min="1" max="16" step="1" value="4">
+                <select id="render-mt-raster-input-mode">
+                    <option value="tmpfile">tmp file</option>
+                    <option value="sectioned">sectioned native</option>
+                </select>
+                <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+
+                <div class="render-mt-matrix-stage">Merge</div>
+                <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+                <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+                <input id="render-mt-merge-workers" type="number" min="1" max="64" step="1" value="16">
             </div>
         </div>
-        <div class="autolevel-popup-help">Use this to compare the native multithreaded path against normal Generate. Raster MT supports Solve score, Saved palette, Constant, and Rainbow with match=none. Solve score threads and hist input only matter for Solve score mode.</div>
+        <div class="autolevel-popup-help">Use this to compare the native multithreaded path against normal Generate. Raster MT supports Solve score, Saved palette, Constant, and Rainbow with match=none. Hist controls and merge workers only matter for Solve score mode. Raster input lets you compare the existing temp-file chunk path against the native sectioned range-download path inside raster.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -2363,7 +2419,14 @@ let _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: 
 let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
 let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '' };
 let _renderGeneratePopupState = { open: false, histInputMode: 'tmpfile' };
-let _renderMtPopupState = { open: false, rasterThreads: 4, solveScoreThreads: 4, histInputMode: 'tmpfile' };
+let _renderMtPopupState = {
+    open: false,
+    rasterThreads: 4,
+    solveScoreThreads: 4,
+    histInputMode: 'tmpfile',
+    rasterInputMode: 'tmpfile',
+    mergeWorkers: 16,
+};
 let _generateFromPalettePopupState = { open: false, filter: '', highlightIdx: 0, sourcePaletteId: '' };
 let _pdfColorSpreadPopupState = { open: false, filter: '', highlightIdx: 0, sourceArtifactId: '' };
 let _functionPopupState = { open: false, filter: '', highlightIdx: 0 };
@@ -3454,8 +3517,23 @@ function _clampRenderMtThreads(value) {
     return Math.max(1, Math.min(16, n));
 }
 
+function _clampRenderMtMergeWorkers(value) {
+    let n = parseInt(value, 10);
+    if (!Number.isFinite(n)) n = 16;
+    return Math.max(1, Math.min(64, n));
+}
+
 function _normalizeSolveScoreHistInputMode(value) {
-    return String(value || 'tmpfile').trim().toLowerCase() === 'stdin' ? 'stdin' : 'tmpfile';
+    const mode = String(value || 'tmpfile').trim().toLowerCase();
+    if (mode === 'stdin') return 'stdin';
+    if (mode === 'sectioned') return 'sectioned';
+    return 'tmpfile';
+}
+
+function _normalizeRasterInputMode(value) {
+    const mode = String(value || 'tmpfile').trim().toLowerCase();
+    if (mode === 'sectioned') return 'sectioned';
+    return 'tmpfile';
 }
 
 function _closeRenderGeneratePopup() {
@@ -3506,6 +3584,8 @@ function _closeRenderMtPopup() {
         rasterThreads: _clampRenderMtThreads(_renderMtPopupState.rasterThreads),
         solveScoreThreads: _clampRenderMtThreads(_renderMtPopupState.solveScoreThreads),
         histInputMode: _normalizeSolveScoreHistInputMode(_renderMtPopupState.histInputMode),
+        rasterInputMode: _normalizeRasterInputMode(_renderMtPopupState.rasterInputMode),
+        mergeWorkers: _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers),
     };
     const overlay = document.getElementById('render-mt-popup-overlay');
     if (overlay) {
@@ -3520,8 +3600,10 @@ function _renderRenderMtPopup() {
     const threadsEl = document.getElementById('render-mt-threads');
     const solveScoreThreadsEl = document.getElementById('render-mt-solve-score-threads');
     const histInputModeEl = document.getElementById('render-mt-hist-input-mode');
+    const rasterInputModeEl = document.getElementById('render-mt-raster-input-mode');
+    const mergeWorkersEl = document.getElementById('render-mt-merge-workers');
     const runBtn = document.getElementById('render-mt-popup-run');
-    if (!overlay || !summaryEl || !threadsEl || !solveScoreThreadsEl || !histInputModeEl) return;
+    if (!overlay || !summaryEl || !threadsEl || !solveScoreThreadsEl || !histInputModeEl || !rasterInputModeEl || !mergeWorkersEl) return;
     if (!_renderMtPopupState.open) {
         _closeRenderMtPopup();
         return;
@@ -3529,23 +3611,30 @@ function _renderRenderMtPopup() {
     const threads = _clampRenderMtThreads(_renderMtPopupState.rasterThreads);
     const solveScoreThreads = _clampRenderMtThreads(_renderMtPopupState.solveScoreThreads);
     const histInputMode = _normalizeSolveScoreHistInputMode(_renderMtPopupState.histInputMode);
+    const rasterInputMode = _normalizeRasterInputMode(_renderMtPopupState.rasterInputMode);
+    const mergeWorkers = _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers);
     const solveScoreRelevant = renderColorMode === 'solve_score';
     _renderMtPopupState.rasterThreads = threads;
     _renderMtPopupState.solveScoreThreads = solveScoreThreads;
     _renderMtPopupState.histInputMode = histInputMode;
+    _renderMtPopupState.rasterInputMode = rasterInputMode;
+    _renderMtPopupState.mergeWorkers = mergeWorkers;
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
     threadsEl.value = String(threads);
     solveScoreThreadsEl.value = String(solveScoreThreads);
     histInputModeEl.value = histInputMode;
+    rasterInputModeEl.value = rasterInputMode;
+    mergeWorkersEl.value = String(mergeWorkers);
     solveScoreThreadsEl.disabled = !solveScoreRelevant;
     histInputModeEl.disabled = !solveScoreRelevant;
+    mergeWorkersEl.disabled = !solveScoreRelevant;
     const modeLabel = renderColorMode === 'rainbow'
         ? `Rainbow (${renderMatchMode})`
         : renderColorMode.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
     summaryEl.textContent = solveScoreRelevant
-        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • solve score threads=${solveScoreThreads} • hist input=${histInputMode} • raster threads=${threads}`
-        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster threads=${threads} • solve score threads unused • hist input unused`;
+        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • hist threads=${solveScoreThreads} • hist input=${histInputMode} • merge workers=${mergeWorkers} • raster input=${rasterInputMode} • raster threads=${threads}`
+        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster input=${rasterInputMode} • raster threads=${threads} • hist unused • merge unused`;
     if (runBtn) runBtn.disabled = !_renderColorMtEligible() || !!_activeRenderRun;
 }
 
@@ -3556,6 +3645,8 @@ function openRenderMtPopup() {
         rasterThreads: _clampRenderMtThreads(_renderMtPopupState.rasterThreads || 4),
         solveScoreThreads: _clampRenderMtThreads(_renderMtPopupState.solveScoreThreads || 4),
         histInputMode: _normalizeSolveScoreHistInputMode(_renderMtPopupState.histInputMode || 'tmpfile'),
+        rasterInputMode: _normalizeRasterInputMode(_renderMtPopupState.rasterInputMode || 'tmpfile'),
+        mergeWorkers: _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers || 16),
     };
     _renderRenderMtPopup();
     const threadsEl = document.getElementById('render-mt-threads');
@@ -3945,6 +4036,8 @@ function _initRenderMtPopup() {
     const threadsEl = document.getElementById('render-mt-threads');
     const solveScoreThreadsEl = document.getElementById('render-mt-solve-score-threads');
     const histInputModeEl = document.getElementById('render-mt-hist-input-mode');
+    const rasterInputModeEl = document.getElementById('render-mt-raster-input-mode');
+    const mergeWorkersEl = document.getElementById('render-mt-merge-workers');
     if (overlay) {
         overlay.addEventListener('click', (ev) => {
             if (ev.target === overlay) _closeRenderMtPopup();
@@ -3970,6 +4063,18 @@ function _initRenderMtPopup() {
             _renderRenderMtPopup();
         });
     }
+    if (rasterInputModeEl) {
+        rasterInputModeEl.addEventListener('change', (ev) => {
+            _renderMtPopupState.rasterInputMode = _normalizeRasterInputMode(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
+    if (mergeWorkersEl) {
+        mergeWorkersEl.addEventListener('input', (ev) => {
+            _renderMtPopupState.mergeWorkers = _clampRenderMtMergeWorkers(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
     if (runBtn) {
         runBtn.addEventListener('click', async () => {
             const btnText = runBtn.textContent;
@@ -3979,11 +4084,15 @@ function _initRenderMtPopup() {
                 const rasterThreads = _clampRenderMtThreads(document.getElementById('render-mt-threads').value);
                 const solveScoreThreads = _clampRenderMtThreads(document.getElementById('render-mt-solve-score-threads').value);
                 const histInputMode = _normalizeSolveScoreHistInputMode(document.getElementById('render-mt-hist-input-mode').value);
+                const rasterInputMode = _normalizeRasterInputMode(document.getElementById('render-mt-raster-input-mode').value);
+                const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('render-mt-merge-workers').value);
                 _renderMtPopupState.rasterThreads = rasterThreads;
                 _renderMtPopupState.solveScoreThreads = solveScoreThreads;
                 _renderMtPopupState.histInputMode = histInputMode;
+                _renderMtPopupState.rasterInputMode = rasterInputMode;
+                _renderMtPopupState.mergeWorkers = mergeWorkers;
                 _closeRenderMtPopup();
-                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode });
+                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, rasterInputMode, mergeWorkers });
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = btnText;
@@ -4002,11 +4111,15 @@ function _initRenderMtPopup() {
             const rasterThreads = _clampRenderMtThreads(document.getElementById('render-mt-threads').value);
             const solveScoreThreads = _clampRenderMtThreads(document.getElementById('render-mt-solve-score-threads').value);
             const histInputMode = _normalizeSolveScoreHistInputMode(document.getElementById('render-mt-hist-input-mode').value);
+            const rasterInputMode = _normalizeRasterInputMode(document.getElementById('render-mt-raster-input-mode').value);
+            const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('render-mt-merge-workers').value);
             _renderMtPopupState.rasterThreads = rasterThreads;
             _renderMtPopupState.solveScoreThreads = solveScoreThreads;
             _renderMtPopupState.histInputMode = histInputMode;
+            _renderMtPopupState.rasterInputMode = rasterInputMode;
+            _renderMtPopupState.mergeWorkers = mergeWorkers;
             _closeRenderMtPopup();
-            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode });
+            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, rasterInputMode, mergeWorkers });
         }
     });
 }
@@ -5671,16 +5784,29 @@ async function runRasterPipelineMT(threadConfig = null) {
                 ? threadConfig.histInputMode
                 : _renderMtPopupState.histInputMode
         );
+        const rasterInputMode = _normalizeRasterInputMode(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.rasterInputMode != null
+                ? threadConfig.rasterInputMode
+                : _renderMtPopupState.rasterInputMode
+        );
+        const mergeWorkers = _clampRenderMtMergeWorkers(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.mergeWorkers != null
+                ? threadConfig.mergeWorkers
+                : _renderMtPopupState.mergeWorkers
+        );
         const relevantSolveScoreThreads = renderColorMode === 'solve_score' ? solveScoreThreads : 1;
+        const relevantMergeWorkers = renderColorMode === 'solve_score' ? mergeWorkers : 1;
         const mtMsg = renderColorMode === 'solve_score'
-            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, raster threads=${rasterThreads}...`
-            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster threads=${rasterThreads}...`;
+            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, merge workers=${relevantMergeWorkers}, raster input=${rasterInputMode}, raster threads=${rasterThreads}...`
+            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster input=${rasterInputMode}, raster threads=${rasterThreads}...`;
         log(mtMsg, 'ok', 'render-log');
         await _launchRenderOrchestrator('color', {
             raster_engine: 'mt',
             raster_mt_threads: rasterThreads,
+            raster_input_mode: rasterInputMode,
             solve_score_threads: relevantSolveScoreThreads,
             solve_score_hist_input_mode: histInputMode,
+            solve_score_merge_workers: relevantMergeWorkers,
         });
     } catch (e) {
         document.getElementById('render-status').textContent = 'Render-MT error: ' + e.message;
@@ -5973,12 +6099,46 @@ function _fmtSecondsUs(us) {
     return (n / 1000000).toFixed(1) + 's';
 }
 
+function _coerceTimestampMs(value) {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function _pickLatestTimestampMs(...values) {
+    let best = null;
+    for (const value of values) {
+        const n = _coerceTimestampMs(value);
+        if (n != null && (best == null || n > best)) best = n;
+    }
+    return best;
+}
+
+function _serverElapsedMs(startMs, endMs) {
+    const start = _coerceTimestampMs(startMs);
+    const end = _coerceTimestampMs(endMs);
+    if (start == null || end == null) return null;
+    return Math.max(0, end - start);
+}
+
+function _syncRenderRunServerStart(run, rd) {
+    if (!run || !rd) return;
+    let serverStartMs = _coerceTimestampMs(rd.run_started_at_ms);
+    if (serverStartMs == null && String(rd.phase || '') === 'queued') {
+        serverStartMs = _coerceTimestampMs(rd.started_at_ms);
+    }
+    if (serverStartMs != null && run.server_started_at_ms !== serverStartMs) {
+        run.server_started_at_ms = serverStartMs;
+        _saveActiveRun(run);
+    }
+}
+
 function _aggregateRasterPerf(results) {
     const rows = Array.isArray(results) ? results.filter(r => r && (r.engine || r.native_us != null || r.threads != null)) : [];
     if (!rows.length) return null;
     return rows.reduce((acc, row) => {
         acc.engine = acc.engine || row.engine || 'single';
         acc.threads = Math.max(acc.threads, Number(row.threads) || 1);
+        if (!acc.input_mode && row.input_mode) acc.input_mode = String(row.input_mode);
         acc.chunks += 1;
         acc.download_us += Number(row.download_us) || 0;
         acc.native_us += Number(row.native_us) || 0;
@@ -5991,6 +6151,7 @@ function _aggregateRasterPerf(results) {
     }, {
         engine: '',
         threads: 1,
+        input_mode: '',
         chunks: 0,
         download_us: 0,
         native_us: 0,
@@ -6065,6 +6226,7 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         const perf = _aggregateRasterPerf(results);
         if (!perf) return '';
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsUs(perf.download_us)} + native ${_fmtSecondsUs(perf.native_us)} + up ${_fmtSecondsUs(perf.upload_us)} · threads=${perf.threads}`;
+        if (perf.input_mode) msg += ` · input=${perf.input_mode}`;
         return msg;
     }
     if (phase === 'solve_score_clip' || phase === 'solve_score_hist' || phase === 'solve_score_merge') {
@@ -6094,15 +6256,20 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
 function _updateRenderPhaseTracker(run, rd) {
     if (!run || !rd) return;
     const phase = rd.phase || rd.phase_label || '';
+    const startedAtMs = _coerceTimestampMs(rd.started_at_ms) || _coerceTimestampMs(rd.updated_at_ms) || Date.now();
+    const updatedAtMs = _coerceTimestampMs(rd.updated_at_ms) || startedAtMs;
     if (!_renderPhaseTracker || _renderPhaseTracker.phase !== phase) {
         const info = _renderPhaseSubtaskInfo(run, rd);
         _renderPhaseTracker = {
             phase,
             phase_label: rd.phase_label || phase || 'working',
-            started_at_ms: Number(rd.updated_at_ms) || Date.now(),
+            started_at_ms: startedAtMs,
+            last_server_update_ms: updatedAtMs,
             prefix: info ? info.prefix : '',
             expected: info ? info.expected : 0,
         };
+    } else if (updatedAtMs != null) {
+        _renderPhaseTracker.last_server_update_ms = updatedAtMs;
     }
 }
 
@@ -6114,7 +6281,14 @@ async function _logRenderPhaseCompletion(run, tracker) {
             task_prefix: tracker.prefix,
             expected: tracker.expected || 1,
         }, '/check-status');
-        const wallMs = Date.now() - (tracker.started_at_ms || Date.now());
+        const wallMs = _serverElapsedMs(
+            tracker.started_at_ms,
+            _pickLatestTimestampMs(
+                subcheck.latest_done_ms,
+                subcheck.latest_update_ms,
+                tracker.last_server_update_ms
+            )
+        );
         const perfText = _renderPhasePerfSummary(tracker.phase, subcheck.results || [], wallMs);
         if (perfText) log(`${tracker.phase_label} complete · ${perfText}`, '', 'render-log');
     } catch (e) {
@@ -6133,10 +6307,17 @@ async function _logRenderRasterPerf(run) {
         const perf = _aggregateRasterPerf(subcheck.results || []);
         if (!perf) return;
         const wallMs = _renderPhaseTracker && _renderPhaseTracker.phase === 'raster'
-            ? (Date.now() - _renderPhaseTracker.started_at_ms)
+            ? (_serverElapsedMs(
+                _renderPhaseTracker.started_at_ms,
+                _pickLatestTimestampMs(
+                    subcheck.latest_done_ms,
+                    subcheck.latest_update_ms,
+                    _renderPhaseTracker.last_server_update_ms
+                )
+            ) || 0)
             : 0;
         const lines = [
-            `Raster performance: engine=${perf.engine || 'single'} threads=${perf.threads} chunks=${perf.chunks} wall=${_fmtSecondsMs(wallMs)}`,
+            `Raster performance: engine=${perf.engine || 'single'} threads=${perf.threads}${perf.input_mode ? ` input=${perf.input_mode}` : ''} chunks=${perf.chunks} wall=${_fmtSecondsMs(wallMs)}`,
             `  Download time: ${_fmtSecondsUs(perf.download_us)}`,
             `  Native raster time: ${_fmtSecondsUs(perf.native_us)}`,
             `  Upload time: ${_fmtSecondsUs(perf.upload_us)}`,
@@ -6164,7 +6345,15 @@ function _renderRunCompleteLabel(run) {
 
 function _renderRunCompleteLog(run, rd) {
     const target = rd.artifact_id || rd.palette_id || rd.image_key || run.mode;
-    const elapsed = run && run.started_at_ms ? ` (${_fmtMs(Date.now() - run.started_at_ms)})` : '';
+    const elapsedMs = _serverElapsedMs(
+        rd && rd.run_started_at_ms ? rd.run_started_at_ms : (run ? run.server_started_at_ms : null),
+        rd && rd.updated_at_ms ? rd.updated_at_ms : null
+    );
+    const fallbackElapsedMs = elapsedMs == null && run && run.started_at_ms
+        ? Math.max(0, Date.now() - run.started_at_ms)
+        : null;
+    const shownElapsedMs = elapsedMs != null ? elapsedMs : fallbackElapsedMs;
+    const elapsed = shownElapsedMs != null ? ` (${_fmtMs(shownElapsedMs)})` : '';
     if (run && run.mode === 'repalette') return 'RePalette complete: ' + target + elapsed;
     if (run && run.mode === 'color_repalette') return 'Color RePalette complete: ' + target + elapsed;
     if (run && run.mode === 'pdf') return 'PDF complete: ' + target + elapsed;
@@ -6226,10 +6415,11 @@ async function _pollActiveRenderRun() {
         }
 
         const rd = check.results?.[0] || {};
+        _syncRenderRunServerStart(run, rd);
 
         // No DDB row found — abandoned run
         if (!rd.phase && !rd.phase_label) {
-            const age_ms = Date.now() - (run.started_at_ms || 0);
+            const age_ms = Date.now() - ((run.server_started_at_ms || run.started_at_ms) || 0);
             if (age_ms > RENDER_NO_ROW_STALE_MS) {
                 statusEl.textContent = 'Ready';
                 statusEl.className = 'status';
@@ -6249,7 +6439,7 @@ async function _pollActiveRenderRun() {
         }
 
         // Secondary poll for subtask counts + freshness
-        let done = 0, expected = 0, workerFreshMs = null, subResults = [];
+        let done = 0, expected = 0, workerFreshMs = null, subResults = [], phaseLatestMs = _pickLatestTimestampMs(rd.updated_at_ms, check.latest_update_ms);
         if (rd.subtask_prefix && rd.expected) {
             try {
                 const subcheck = await lambdaPost('storage', {
@@ -6258,6 +6448,12 @@ async function _pollActiveRenderRun() {
                 done = subcheck.done || 0;
                 expected = subcheck.expected || rd.expected || 0;
                 subResults = subcheck.results || [];
+                phaseLatestMs = _pickLatestTimestampMs(
+                    subcheck.latest_done_ms,
+                    subcheck.latest_update_ms,
+                    subcheck.latest_nonterminal_ms,
+                    phaseLatestMs
+                );
                 if (subcheck.latest_update_ms) {
                     workerFreshMs = Date.now() - subcheck.latest_update_ms;
                 }
@@ -6269,14 +6465,20 @@ async function _pollActiveRenderRun() {
             if (phaseInfo && phaseInfo.prefix) {
                 try {
                     const subcheck = await lambdaPost('storage', {
-                        job_id: run.job_id, task_prefix: phaseInfo.prefix, expected: phaseInfo.expected || 1,
-                    }, '/check-status');
-                    done = subcheck.done || 0;
-                    expected = subcheck.expected || phaseInfo.expected || 0;
-                    subResults = subcheck.results || [];
-                    if (subcheck.latest_update_ms) {
-                        workerFreshMs = Date.now() - subcheck.latest_update_ms;
-                    }
+                    job_id: run.job_id, task_prefix: phaseInfo.prefix, expected: phaseInfo.expected || 1,
+                }, '/check-status');
+                done = subcheck.done || 0;
+                expected = subcheck.expected || phaseInfo.expected || 0;
+                subResults = subcheck.results || [];
+                phaseLatestMs = _pickLatestTimestampMs(
+                    subcheck.latest_done_ms,
+                    subcheck.latest_update_ms,
+                    subcheck.latest_nonterminal_ms,
+                    phaseLatestMs
+                );
+                if (subcheck.latest_update_ms) {
+                    workerFreshMs = Date.now() - subcheck.latest_update_ms;
+                }
                 } catch (e) {
                     expected = phaseInfo.expected || 0;
                 }
@@ -6287,7 +6489,15 @@ async function _pollActiveRenderRun() {
             await _logRenderPhaseCompletion(run, _renderPhaseTracker);
         }
         _updateRenderPhaseTracker(run, rd);
-        const phaseWallMs = _renderPhaseTracker ? (Date.now() - _renderPhaseTracker.started_at_ms) : 0;
+        const phaseWallMs = _renderPhaseTracker
+            ? (_serverElapsedMs(
+                _renderPhaseTracker.started_at_ms,
+                _pickLatestTimestampMs(
+                    phaseLatestMs,
+                    _renderPhaseTracker.last_server_update_ms
+                )
+            ) || 0)
+            : 0;
         const phasePerfText = _renderPhasePerfSummary(phaseCode, subResults, phaseWallMs);
 
         // Determine liveness signal
@@ -7038,7 +7248,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread path. In Solve score mode it opens a popup where you choose histogram input tmp file vs stdin for benchmarking. Generate-MT opens a popup where you choose native solve-score threads, histogram input, and raster threads for Solve score, Saved palette, Constant, and Rainbow with match=none so you can compare perf. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread path. In Solve score mode it opens a popup where you choose histogram input tmp file vs sectioned native for benchmarking. Generate-MT opens a popup where you choose hist threads, hist input, merge workers, raster input tmp file vs sectioned native, and raster threads for Solve score, Saved palette, Constant, and Rainbow with match=none so you can compare perf. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color.</span>';
     } else if (_renderActiveFamily === 'pdf') {

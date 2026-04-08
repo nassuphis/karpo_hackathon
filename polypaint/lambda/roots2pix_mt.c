@@ -15,16 +15,18 @@
  *   - proximity
  *   - rainbow with greedy / hungarian
  *
- * Build:
- *   aarch64-linux-musl-gcc -O3 -static -pthread -o roots2pix_mt roots2pix_mt.c -lm
+ * Build (sectioned mode needs libcurl at runtime):
+ *   gcc -O3 -pthread -o roots2pix_mt roots2pix_mt.c -lcurl -lm -Wl,-rpath,'$ORIGIN/lib'
  */
 
+#include <curl/curl.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "palette_lut.h"
 #include "root_xforms.h"
@@ -40,11 +42,23 @@ enum ColorMode {
     COLOR_SAVED_PALETTE = 3,
 };
 
+enum InputMode {
+    INPUT_TMPFILE = 0,
+    INPUT_SECTIONED = 1,
+};
+
 typedef struct {
     uint32_t *data;
     size_t len;
     size_t cap;
 } U32Vec;
+
+typedef struct {
+    unsigned char *data;
+    size_t expected;
+    size_t size;
+    int overflow;
+} DownloadBuffer;
 
 typedef struct {
     int id;
@@ -66,6 +80,7 @@ typedef struct {
     double halfW;
     double halfH;
     enum ColorMode colorMode;
+    enum InputMode inputMode;
     enum SolveMetric solveMetric;
     double solveScoreClipLo;
     double solveScoreClipHi;
@@ -76,6 +91,11 @@ typedef struct {
     uint32_t constRGB;
     int emitPixelBins;
     const float *roots;
+    const char *url;
+    long solveBytes;
+    size_t sectionBytes;
+    unsigned long long byteStart;
+    unsigned long long byteEnd;
     const uint8_t *solveBins;
     RootXformEntry *rtChain;
     int nRt;
@@ -92,6 +112,8 @@ typedef struct {
     long rootsPlotted;
     long rootsClipped;
     long rootsDeduped;
+    long downloadUs;
+    long nativeUs;
     int error;
     char error_msg[256];
 } WorkerArgs;
@@ -116,6 +138,11 @@ static double getArgDouble(int argc, char **argv, const char *key, double def) {
     return v ? atof(v) : def;
 }
 
+static long long getArgLongLong(int argc, char **argv, const char *key, long long def) {
+    const char *v = getArg(argc, argv, key);
+    return v ? atoll(v) : def;
+}
+
 static const char *getArgStr(int argc, char **argv, const char *key, const char *def) {
     const char *v = getArg(argc, argv, key);
     return v ? v : def;
@@ -126,6 +153,80 @@ static int clamp_threads(int requested, long n_items) {
     if (n_items > 0 && threads > (int)n_items) threads = (int)n_items;
     if (threads < 1) threads = 1;
     return threads;
+}
+
+static long long monotonic_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000000LL + (long long)(ts.tv_nsec / 1000LL);
+}
+
+static size_t write_section_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
+    size_t total = size * nmemb;
+    DownloadBuffer *buf = (DownloadBuffer *)userdata;
+    if (buf->size + total > buf->expected) {
+        buf->overflow = 1;
+        return 0;
+    }
+    memcpy(buf->data + buf->size, ptr, total);
+    buf->size += total;
+    return total;
+}
+
+static int download_section(const char *url, unsigned long long byteStart, unsigned long long byteEnd,
+                            unsigned char *out, size_t expected, char *errBuf, size_t errBufLen) {
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        snprintf(errBuf, errBufLen, "curl_easy_init failed");
+        return 0;
+    }
+
+    DownloadBuffer dl = {
+        .data = out,
+        .expected = expected,
+        .size = 0,
+        .overflow = 0,
+    };
+    char rangeBuf[96];
+    char curlErr[CURL_ERROR_SIZE] = {0};
+    snprintf(rangeBuf, sizeof(rangeBuf), "%llu-%llu",
+             (unsigned long long)byteStart, (unsigned long long)byteEnd);
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_RANGE, rangeBuf);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_section_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &dl);
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curlErr);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "identity");
+    curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
+
+    CURLcode rc = curl_easy_perform(curl);
+    long httpStatus = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpStatus);
+    curl_easy_cleanup(curl);
+
+    if (rc != CURLE_OK) {
+        snprintf(errBuf, errBufLen, "range GET failed for bytes %s: %s",
+                 rangeBuf, curlErr[0] ? curlErr : curl_easy_strerror(rc));
+        return 0;
+    }
+    if (httpStatus != 206L && httpStatus != 200L) {
+        snprintf(errBuf, errBufLen, "unexpected HTTP status %ld for bytes %s", httpStatus, rangeBuf);
+        return 0;
+    }
+    if (dl.overflow) {
+        snprintf(errBuf, errBufLen, "range GET overflow for bytes %s", rangeBuf);
+        return 0;
+    }
+    if (dl.size != expected) {
+        snprintf(errBuf, errBufLen, "short range GET for bytes %s: got %zu of %zu bytes",
+                 rangeBuf, dl.size, expected);
+        return 0;
+    }
+    return 1;
 }
 
 static void rainbowRGB(int index, int total,
@@ -194,9 +295,44 @@ static void *worker_main(void *arg_) {
     float wkRe[MAXDEG];
     float wkIm[MAXDEG];
     double ssRange = arg->solveScoreClipHi - arg->solveScoreClipLo;
+    unsigned char *sectionBuf = NULL;
+    const float *sectionRoots = NULL;
+    long localSolves = arg->end - arg->start;
 
+    if (arg->inputMode == INPUT_SECTIONED) {
+        if (arg->sectionBytes > 0) {
+            sectionBuf = malloc(arg->sectionBytes);
+            if (!sectionBuf) {
+                worker_fail(arg, "section buffer alloc failed");
+                return NULL;
+            }
+            long long dlStartUs = monotonic_us();
+            if (!download_section(arg->url, arg->byteStart, arg->byteEnd,
+                                  sectionBuf, arg->sectionBytes,
+                                  arg->error_msg, sizeof(arg->error_msg))) {
+                arg->error = 1;
+                free(sectionBuf);
+                return NULL;
+            }
+            arg->downloadUs = (long)(monotonic_us() - dlStartUs);
+            sectionRoots = (const float *)(const void *)sectionBuf;
+        }
+    }
+
+    long long nativeStartUs = monotonic_us();
     for (long p = arg->start; p < arg->end; p++) {
-        const float *rawStep = arg->roots + p * arg->stride;
+        const float *rawStep = NULL;
+        if (arg->inputMode == INPUT_SECTIONED) {
+            long localIdx = p - arg->start;
+            if (localIdx < 0 || localIdx >= localSolves) {
+                worker_fail(arg, "section local index out of range");
+                free(sectionBuf);
+                return NULL;
+            }
+            rawStep = sectionRoots + localIdx * arg->stride;
+        } else {
+            rawStep = arg->roots + p * arg->stride;
+        }
         const float *step = prepare_step(rawStep, arg->degree, arg->rtChain, arg->nRt, stepBuf, wkRe, wkIm);
 
         uint32_t solveRGB = 0;
@@ -276,14 +412,17 @@ static void *worker_main(void *arg_) {
             arg->rootsPlotted++;
         }
     }
+    arg->nativeUs = (long)(monotonic_us() - nativeStartUs);
+    free(sectionBuf);
     return NULL;
 }
 
 int main(int argc, char **argv) {
     if (argc < 3) {
-        fprintf(stderr, "Usage: roots2pix_mt stripe.bin /tmp/pix "
+        fprintf(stderr, "Usage: roots2pix_mt stripe.bin|ignored /tmp/pix "
                 "--width=W --height=H --center_re=X --center_im=Y --scale=S "
                 "--degree=D --tile_size=T --n_tile_cols=C --n_tile_rows=R "
+                "[--input_mode=tmpfile|sectioned] [--url=URL] [--input_size=BYTES] "
                 "[--threads=N] [--color=rainbow|solve_score|saved_palette|constant] "
                 "[--match=none] [--palette=<name>] [--constant_color=RRGGBB] "
                 "[--solve_metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re] "
@@ -295,6 +434,9 @@ int main(int argc, char **argv) {
 
     const char *binPath = argv[1];
     const char *outPrefix = argv[2];
+    const char *inputModeStr = getArgStr(argc, argv, "--input_mode", "tmpfile");
+    const char *url = getArgStr(argc, argv, "--url", NULL);
+    long long inputSize = getArgLongLong(argc, argv, "--input_size", -1);
     int W = getArgInt(argc, argv, "--width", 4096);
     int H = getArgInt(argc, argv, "--height", 4096);
     double centerRe = getArgDouble(argc, argv, "--center_re", 0.0);
@@ -314,6 +456,12 @@ int main(int argc, char **argv) {
     const char *pixelBinPrefix = getArgStr(argc, argv, "--pixel_bin_prefix", NULL);
     const char *constColorStr = getArgStr(argc, argv, "--constant_color", "ffffff");
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
+    enum InputMode inputMode = INPUT_TMPFILE;
+    if (strcmp(inputModeStr, "sectioned") == 0) inputMode = INPUT_SECTIONED;
+    else if (strcmp(inputModeStr, "tmpfile") != 0) {
+        fprintf(stderr, "Unsupported input mode: %s\n", inputModeStr);
+        return 1;
+    }
 
     enum ColorMode colorMode = COLOR_RAINBOW;
     if (strcmp(colorStr, "solve_score") == 0 || strcmp(colorStr, "solve_proximity") == 0) colorMode = COLOR_SOLVE_SCORE;
@@ -400,36 +548,60 @@ int main(int argc, char **argv) {
                         (((constHex >> 8) & 0xffu) << 8) |
                         (constHex & 0xffu);
 
-    FILE *fin = fopen(binPath, "rb");
-    if (!fin) {
-        fprintf(stderr, "Cannot open %s\n", binPath);
-        return 1;
-    }
-    fseek(fin, 0, SEEK_END);
-    long fileSize = ftell(fin);
-    fseek(fin, 0, SEEK_SET);
-
     int stride = degree * 2;
-    long nPoints = fileSize / (stride * (long)sizeof(float));
-    if (nPoints <= 0) {
-        fprintf(stderr, "Empty root file\n");
-        fclose(fin);
-        return 1;
-    }
+    long solveBytes = stride * (long)sizeof(float);
+    long fileSize = 0;
+    long nPoints = 0;
+    float *roots = NULL;
 
-    float *roots = malloc((size_t)fileSize);
-    if (!roots) {
-        fprintf(stderr, "Cannot allocate %ld bytes\n", fileSize);
+    if (inputMode == INPUT_TMPFILE) {
+        FILE *fin = fopen(binPath, "rb");
+        if (!fin) {
+            fprintf(stderr, "Cannot open %s\n", binPath);
+            return 1;
+        }
+        fseek(fin, 0, SEEK_END);
+        fileSize = ftell(fin);
+        fseek(fin, 0, SEEK_SET);
+        nPoints = fileSize / solveBytes;
+        if (nPoints <= 0) {
+            fprintf(stderr, "Empty root file\n");
+            fclose(fin);
+            return 1;
+        }
+        roots = malloc((size_t)fileSize);
+        if (!roots) {
+            fprintf(stderr, "Cannot allocate %ld bytes\n", fileSize);
+            fclose(fin);
+            return 1;
+        }
+        if ((long)fread(roots, 1, (size_t)fileSize, fin) != fileSize) {
+            fprintf(stderr, "Short read\n");
+            fclose(fin);
+            free(roots);
+            return 1;
+        }
         fclose(fin);
-        return 1;
+    } else {
+        if (!url || !*url) {
+            fprintf(stderr, "sectioned input requires --url\n");
+            return 1;
+        }
+        if (inputSize <= 0) {
+            fprintf(stderr, "sectioned input requires --input_size\n");
+            return 1;
+        }
+        if ((inputSize % solveBytes) != 0) {
+            fprintf(stderr, "Invalid input_size %lld for degree=%d (solve_bytes=%ld)\n", inputSize, degree, solveBytes);
+            return 1;
+        }
+        fileSize = (long)inputSize;
+        nPoints = fileSize / solveBytes;
+        if (nPoints <= 0) {
+            fprintf(stderr, "Empty sectioned input\n");
+            return 1;
+        }
     }
-    if ((long)fread(roots, 1, (size_t)fileSize, fin) != fileSize) {
-        fprintf(stderr, "Short read\n");
-        fclose(fin);
-        free(roots);
-        return 1;
-    }
-    fclose(fin);
 
     uint8_t *solveBins = NULL;
     if (colorMode == COLOR_SAVED_PALETTE) {
@@ -509,6 +681,10 @@ int main(int argc, char **argv) {
         (colorMode == COLOR_SOLVE_SCORE || colorMode == COLOR_SAVED_PALETTE);
     int threads = clamp_threads(requestedThreads, nPoints);
 
+    if (inputMode == INPUT_SECTIONED) {
+        curl_global_init(CURL_GLOBAL_DEFAULT);
+    }
+
     WorkerArgs *args = calloc((size_t)threads, sizeof(WorkerArgs));
     pthread_t *workers = calloc((size_t)threads, sizeof(pthread_t));
     if (!args || !workers) {
@@ -544,6 +720,7 @@ int main(int argc, char **argv) {
         args[i].halfW = W / 2.0;
         args[i].halfH = H / 2.0;
         args[i].colorMode = colorMode;
+        args[i].inputMode = inputMode;
         args[i].solveMetric = solveMetric;
         args[i].solveScoreClipLo = solveScoreClipLo;
         args[i].solveScoreClipHi = solveScoreClipHi;
@@ -554,6 +731,11 @@ int main(int argc, char **argv) {
         args[i].constRGB = constRGB;
         args[i].emitPixelBins = emitPixelBins;
         args[i].roots = roots;
+        args[i].url = url;
+        args[i].solveBytes = solveBytes;
+        args[i].sectionBytes = (size_t)width * (size_t)solveBytes;
+        args[i].byteStart = (unsigned long long)start * (unsigned long long)solveBytes;
+        args[i].byteEnd = args[i].byteStart + (unsigned long long)args[i].sectionBytes - 1ULL;
         args[i].solveBins = solveBins;
         args[i].rtChain = rtChain;
         args[i].nRt = nRt;
@@ -578,6 +760,8 @@ int main(int argc, char **argv) {
     long rootsPlotted = 0;
     long rootsClipped = 0;
     long rootsDeduped = 0;
+    long totalDownloadUs = 0;
+    long totalNativeUs = 0;
     int workerError = 0;
     char workerErrorMsg[256] = {0};
     for (int i = 0; i < threads; i++) {
@@ -585,6 +769,8 @@ int main(int argc, char **argv) {
         rootsPlotted += args[i].rootsPlotted;
         rootsClipped += args[i].rootsClipped;
         rootsDeduped += args[i].rootsDeduped;
+        totalDownloadUs += args[i].downloadUs;
+        totalNativeUs += args[i].nativeUs;
         if (args[i].error && !workerError) {
             workerError = 1;
             strncpy(workerErrorMsg, args[i].error_msg, sizeof(workerErrorMsg) - 1);
@@ -643,9 +829,12 @@ int main(int argc, char **argv) {
 
     printf("{\"roots_plotted\":%ld,\"roots_clipped\":%ld,\"n_points\":%ld,"
            "\"degree\":%d,\"threads\":%d,\"color\":\"%s\",\"match\":\"%s\","
-           "\"n_tiles\":%d,\"tiles_with_data\":%d,\"total_entries\":%ld",
+           "\"n_tiles\":%d,\"tiles_with_data\":%d,\"total_entries\":%ld,"
+           "\"input_mode\":\"%s\",\"download_us\":%ld,\"native_us\":%ld",
            rootsPlotted, rootsClipped, nPoints, degree, threads, colorStr, matchStr,
-           nTiles, tilesWithData, totalEntries);
+           nTiles, tilesWithData, totalEntries,
+           inputMode == INPUT_SECTIONED ? "sectioned" : "tmpfile",
+           totalDownloadUs, totalNativeUs);
     if (colorMode == COLOR_SOLVE_SCORE) {
         printf(",\"palette\":\"%s\",\"solve_score\":true,\"solve_metric\":\"%s\",\"solve_score_omega\":%.15g,\"solve_score_omega_enabled\":%s",
                palName, solve_metric_name(solveMetric), solveScoreOmega, solveScoreOmegaEnabled ? "true" : "false");
@@ -669,5 +858,6 @@ int main(int argc, char **argv) {
     free(args);
     free(solveBins);
     free(roots);
+    if (inputMode == INPUT_SECTIONED) curl_global_cleanup();
     return 0;
 }

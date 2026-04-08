@@ -161,6 +161,8 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["raster"]["requested_engine"] == "single"
         assert plan["raster"]["engine"] == "single"
         assert plan["raster"]["requested_threads"] == 4
+        assert plan["raster"]["requested_input_mode"] == "tmpfile"
+        assert plan["raster"]["input_mode"] == "tmpfile"
         assert plan["raster"]["threads"] == 1
         assert plan["raster"]["function_name"] == "polypaint-raster"
         assert plan["raster"]["eligible"] is True
@@ -184,8 +186,26 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["raster"]["engine"] == "mt"
         assert plan["raster"]["requested_threads"] == 6
         assert plan["raster"]["threads"] == 6
+        assert plan["raster"]["input_mode"] == "tmpfile"
         assert plan["raster"]["function_name"] == "polypaint-raster-mt"
         assert plan["solve_score"]["threads"] == 6
+
+    @patch("handler_render_plan._storage_call")
+    def test_raster_input_mode_sectioned_override(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="crowding",
+            raster_engine="mt",
+            raster_input_mode="sectioned",
+        ), None)
+        plan = json.loads(result["body"])
+        assert plan["raster"]["requested_input_mode"] == "sectioned"
+        assert plan["raster"]["input_mode"] == "sectioned"
 
     @patch("handler_render_plan._storage_call")
     def test_explicit_solve_score_threads_override_raster_threads(self, mock_storage):
@@ -206,6 +226,21 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["solve_score"]["threads"] == 3
 
     @patch("handler_render_plan._storage_call")
+    def test_solve_score_merge_workers_override(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="crowding",
+            solve_score_merge_workers=24,
+        ), None)
+        plan = json.loads(result["body"])
+        assert plan["solve_score"]["merge_workers"] == 24
+
+    @patch("handler_render_plan._storage_call")
     def test_solve_score_hist_input_mode_override(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail({
             "degree": 5, "n_chunks": 2,
@@ -219,6 +254,21 @@ class TestRenderPlan(unittest.TestCase):
         ), None)
         plan = json.loads(result["body"])
         assert plan["solve_score"]["hist_input_mode"] == "stdin"
+
+    @patch("handler_render_plan._storage_call")
+    def test_solve_score_hist_input_mode_sectioned_override(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="crowding",
+            solve_score_hist_input_mode="sectioned",
+        ), None)
+        plan = json.loads(result["body"])
+        assert plan["solve_score"]["hist_input_mode"] == "sectioned"
 
     @patch("handler_render_plan._storage_call")
     def test_invalid_solve_score_hist_input_mode_rejected(self, mock_storage):
@@ -243,6 +293,17 @@ class TestRenderPlan(unittest.TestCase):
         self.assertIn("raster_mt_threads", str(ctx.exception))
 
     @patch("handler_render_plan._storage_call")
+    def test_invalid_raster_input_mode_rejected(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_make_event(color_mode="solve_score", raster_engine="mt", raster_input_mode="socket"), None)
+        self.assertIn("raster_input_mode", str(ctx.exception))
+
+    @patch("handler_render_plan._storage_call")
     def test_invalid_solve_score_threads_rejected(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail({
             "degree": 5, "n_chunks": 2,
@@ -252,6 +313,17 @@ class TestRenderPlan(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             handler(_make_event(color_mode="solve_score", solve_score_threads=0), None)
         self.assertIn("solve_score_threads", str(ctx.exception))
+
+    @patch("handler_render_plan._storage_call")
+    def test_invalid_solve_score_merge_workers_rejected(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_make_event(color_mode="solve_score", solve_score_merge_workers=0), None)
+        self.assertIn("solve_score_merge_workers", str(ctx.exception))
 
     @patch("handler_render_plan._storage_call")
     def test_tri_palette_id_accepted_and_preserved(self, mock_storage):

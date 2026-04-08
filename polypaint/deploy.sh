@@ -70,6 +70,8 @@ PDF_ARTIFACT_NAME="polypaint-pdf-artifact"
 PDF_ARTIFACT_MEMORY=2048  # single-shot PDF composition from saved Color image
 SOLVE_PROXIMITY_NAME="polypaint-solve-proximity"
 SOLVE_PROXIMITY_MEMORY=4096  # higher CPU tier for pthread solve-score phases
+SOLVE_PROXIMITY_BENCH_NAME="polypaint-solve-proximity-bench"
+SOLVE_PROXIMITY_BENCH_MEMORY=10240  # benchmark Lambda for high-CPU/high-network hist concurrency sweeps
 RENDER_ORCHESTRATOR_NAME="polypaint-render-orchestrator"
 RENDER_ORCHESTRATOR_MEMORY=512  # starter only — validates + starts Step Functions
 RENDER_PLAN_NAME="polypaint-render-plan"
@@ -399,8 +401,28 @@ aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/sweep_mt lambda/sweep_mt.c
 echo "  roots2pix (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/roots2pix lambda/roots2pix.c -lm
 
-echo "  roots2pix_mt (static, ARM64)..."
-aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/roots2pix_mt lambda/roots2pix_mt.c -lm
+echo "  roots2pix_mt (Docker ARM64, dynamic libcurl)..."
+docker run --rm --platform linux/arm64 \
+    -v "$SCRIPT_DIR/lambda:/src" \
+    public.ecr.aws/amazonlinux/amazonlinux:2023 \
+    bash -c '
+        set -euo pipefail
+        dnf install -y gcc libcurl-devel 2>&1 | tail -1
+        gcc -O3 -pthread -o /src/roots2pix_mt /src/roots2pix_mt.c \
+            -lcurl -lm -Wl,-rpath,\$ORIGIN/lib
+        rm -rf /src/roots2pix_mt_lib
+        mkdir -p /src/roots2pix_mt_lib
+        for lib in $(ldd /src/roots2pix_mt | awk "/=> \// {print \$3}"); do
+            base=$(basename "$lib")
+            case "$base" in
+                libc.so.*|libm.so.*|libpthread.so.*|ld-linux-aarch64.so.*|libdl.so.*|librt.so.*)
+                    continue
+                    ;;
+            esac
+            cp -L "$lib" /src/roots2pix_mt_lib/
+        done
+        echo "  roots2pix_mt compiled: $(file /src/roots2pix_mt)"
+    '
 
 echo "  pixassemble (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/pixassemble lambda/pixassemble.c -lm
@@ -416,6 +438,28 @@ aarch64-linux-musl-gcc -O3 -static -o lambda/coeffs_bilevel_raster lambda/coeffs
 
 echo "  solve_proximity_stats (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/solve_proximity_stats lambda/solve_proximity_stats.c -lm
+echo "  solve_proximity_hist_sectioned (Docker ARM64, dynamic libcurl)..."
+docker run --rm --platform linux/arm64 \
+    -v "$SCRIPT_DIR/lambda:/src" \
+    public.ecr.aws/amazonlinux/amazonlinux:2023 \
+    bash -c '
+        set -euo pipefail
+        dnf install -y gcc libcurl-devel 2>&1 | tail -1
+        gcc -O3 -pthread -o /src/solve_proximity_hist_sectioned /src/solve_proximity_hist_sectioned.c \
+            -lcurl -lm -Wl,-rpath,\$ORIGIN/lib
+        rm -rf /src/solve_proximity_hist_sectioned_lib
+        mkdir -p /src/solve_proximity_hist_sectioned_lib
+        for lib in $(ldd /src/solve_proximity_hist_sectioned | awk "/=> \// {print \$3}"); do
+            base=$(basename "$lib")
+            case "$base" in
+                libc.so.*|libm.so.*|libpthread.so.*|ld-linux-aarch64.so.*|libdl.so.*|librt.so.*)
+                    continue
+                    ;;
+            esac
+            cp -L "$lib" /src/solve_proximity_hist_sectioned_lib/
+        done
+        echo "  solve_proximity_hist_sectioned compiled: $(file /src/solve_proximity_hist_sectioned)"
+    '
 echo "  solve_palette_debug (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/solve_palette_debug lambda/solve_palette_debug.c -lm
 echo "  solve_palette_chunk (static, ARM64)..."
@@ -693,9 +737,10 @@ echo "  Raster:   $(du -h /tmp/polypaint-raster.zip | cut -f1)  (roots2pix)"
 # Raster-MT: handler_raster_mt.py + shared.py + roots2pix_mt
 RASTER_MT_DIR=/tmp/polypaint-raster-mt
 rm -rf "$RASTER_MT_DIR"
-mkdir -p "$RASTER_MT_DIR"
+mkdir -p "$RASTER_MT_DIR/lib"
 cp lambda/handler_raster_mt.py lambda/shared.py "$RASTER_MT_DIR/"
 cp lambda/roots2pix_mt "$RASTER_MT_DIR/"
+cp lambda/roots2pix_mt_lib/* "$RASTER_MT_DIR/lib/" 2>/dev/null || true
 chmod +x "$RASTER_MT_DIR"/roots2pix_mt
 cd "$RASTER_MT_DIR" && zip -r9 /tmp/polypaint-raster-mt.zip . -q && cd "$SCRIPT_DIR"
 echo "  RastMT:   $(du -h /tmp/polypaint-raster-mt.zip | cut -f1)  (roots2pix_mt)"
@@ -829,12 +874,24 @@ echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_expo
 # Solve Proximity: handler_solve_proximity.py + shared.py + solve_proximity_stats binary
 SP_DIR=/tmp/polypaint-solve-proximity
 rm -rf "$SP_DIR"
-mkdir -p "$SP_DIR"
+mkdir -p "$SP_DIR/lib"
 cp lambda/handler_solve_proximity.py lambda/shared.py "$SP_DIR/"
-cp lambda/solve_proximity_stats "$SP_DIR/"
-chmod +x "$SP_DIR"/solve_proximity_stats
+cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SP_DIR/"
+cp lambda/solve_proximity_hist_sectioned_lib/* "$SP_DIR/lib/" 2>/dev/null || true
+chmod +x "$SP_DIR"/solve_proximity_stats "$SP_DIR"/solve_proximity_hist_sectioned
 cd "$SP_DIR" && zip -r9 /tmp/polypaint-solve-proximity.zip . -q && cd "$SCRIPT_DIR"
-echo "  SolvPrx: $(du -h /tmp/polypaint-solve-proximity.zip | cut -f1)  (solve_proximity_stats binary)"
+echo "  SolvPrx: $(du -h /tmp/polypaint-solve-proximity.zip | cut -f1)  (solve_proximity_stats + sectioned hist)"
+
+# Solve Proximity Bench: benchmark handler + solve proximity helpers + solve_proximity_stats binary
+SP_BENCH_DIR=/tmp/polypaint-solve-proximity-bench
+rm -rf "$SP_BENCH_DIR"
+mkdir -p "$SP_BENCH_DIR/lib"
+cp lambda/handler_solve_proximity_bench.py lambda/handler_solve_proximity.py lambda/shared.py "$SP_BENCH_DIR/"
+cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SP_BENCH_DIR/"
+cp lambda/solve_proximity_hist_sectioned_lib/* "$SP_BENCH_DIR/lib/" 2>/dev/null || true
+chmod +x "$SP_BENCH_DIR"/solve_proximity_stats "$SP_BENCH_DIR"/solve_proximity_hist_sectioned
+cd "$SP_BENCH_DIR" && zip -r9 /tmp/polypaint-solve-proximity-bench.zip . -q && cd "$SCRIPT_DIR"
+echo "  SolvPrxB: $(du -h /tmp/polypaint-solve-proximity-bench.zip | cut -f1)  (AWS hist benchmark)"
 
 # Palette Debug: handler_palette_debug.py + shared.py + solve_palette_debug + raw2jpeg (needs libvips layer)
 PD_DIR=/tmp/polypaint-palette-debug
@@ -1275,7 +1332,7 @@ if [ "$ACTION" = "create" ]; then
         "$RASTER_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
     create_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip" \
-        "$RASTER_MT_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_MT_THREADS=$RASTER_MT_THREADS" "$BINARY_TMP"
+        "$RASTER_MT_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_MT_THREADS=$RASTER_MT_THREADS,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
 
     create_lambda "$FINALIZE_NAME" "handler_finalize.handler" "/tmp/polypaint-finalize.zip" \
         "$FINALIZE_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
@@ -1317,7 +1374,10 @@ if [ "$ACTION" = "create" ]; then
         "$PDF_ARTIFACT_MEMORY" "$ROLE_ARN" "$PDF_PY_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
 
     create_lambda "$SOLVE_PROXIMITY_NAME" "handler_solve_proximity.handler" "/tmp/polypaint-solve-proximity.zip" \
-        "$SOLVE_PROXIMITY_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+        "$SOLVE_PROXIMITY_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
+
+    create_lambda "$SOLVE_PROXIMITY_BENCH_NAME" "handler_solve_proximity_bench.handler" "/tmp/polypaint-solve-proximity-bench.zip" \
+        "$SOLVE_PROXIMITY_BENCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
 
     create_lambda "$PALETTE_DEBUG_NAME" "handler_palette_debug.handler" "/tmp/polypaint-palette-debug.zip" \
         "$PALETTE_DEBUG_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -1517,6 +1577,7 @@ if [ "$ACTION" = "create" ]; then
     echo "  Storage:  $STORAGE_NAME ($STORAGE_MEMORY MB)"
     echo "  Dispatch: $DISPATCH_NAME ($DISPATCH_MEMORY MB)"
     echo "  Preview:  $PREVIEW_NAME ($PREVIEW_MEMORY MB)"
+    echo "  SolvPrxB: $SOLVE_PROXIMITY_BENCH_NAME ($SOLVE_PROXIMITY_BENCH_MEMORY MB)"
     echo "  Bilevel:  $BILEVEL_NAME ($BILEVEL_MEMORY MB)"
     echo "  BiStitch: $BILEVEL_STITCH_NAME ($BILEVEL_STITCH_MEMORY MB)"
 
@@ -1552,7 +1613,7 @@ elif [ "$ACTION" = "update" ]; then
         "$RASTER_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
     update_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip" \
-        "$RASTER_MT_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_MT_THREADS=$RASTER_MT_THREADS" "$BINARY_TMP"
+        "$RASTER_MT_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_MT_THREADS=$RASTER_MT_THREADS,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
 
     update_lambda "$FINALIZE_NAME" "handler_finalize.handler" "/tmp/polypaint-finalize.zip" \
         "$FINALIZE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
@@ -1594,7 +1655,10 @@ elif [ "$ACTION" = "update" ]; then
         "$PDF_ARTIFACT_MEMORY" "$PDF_PY_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
 
     update_lambda "$SOLVE_PROXIMITY_NAME" "handler_solve_proximity.handler" "/tmp/polypaint-solve-proximity.zip" \
-        "$SOLVE_PROXIMITY_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+        "$SOLVE_PROXIMITY_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
+
+    update_lambda "$SOLVE_PROXIMITY_BENCH_NAME" "handler_solve_proximity_bench.handler" "/tmp/polypaint-solve-proximity-bench.zip" \
+        "$SOLVE_PROXIMITY_BENCH_MEMORY" "" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
 
     update_lambda "$PALETTE_DEBUG_NAME" "handler_palette_debug.handler" "/tmp/polypaint-palette-debug.zip" \
         "$PALETTE_DEBUG_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -1836,6 +1900,7 @@ elif [ "$ACTION" = "update" ]; then
     echo "  Storage:  $STORAGE_NAME ($STORAGE_MEMORY MB)"
     echo "  Dispatch: $DISPATCH_NAME ($DISPATCH_MEMORY MB)"
     echo "  Preview:  $PREVIEW_NAME ($PREVIEW_MEMORY MB)"
+    echo "  SolvPrxB: $SOLVE_PROXIMITY_BENCH_NAME ($SOLVE_PROXIMITY_BENCH_MEMORY MB)"
     echo "  Build:    $BUILD_ID"
     echo "  Site:"
     echo "    HTTP:   http://$BUCKET.s3-website-$REGION.amazonaws.com"

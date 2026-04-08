@@ -43,6 +43,7 @@ def handler(event, context):
 
 def _write_queued(params, job_id, task_id):
     now_ms = int(time.time() * 1000)
+    run_started_at_ms = params.get("run_started_at_ms", params.get("started_at_ms", now_ms))
     result_data = {
         "job_id": job_id,
         "run_id": params["run_id"],
@@ -51,6 +52,7 @@ def _write_queued(params, job_id, task_id):
         "phase_label": "Queued",
         "execution_arn": params.get("execution_arn", ""),
         "started_at_ms": params.get("started_at_ms", now_ms),
+        "run_started_at_ms": run_started_at_ms,
         "updated_at_ms": now_ms,
     }
     _put_row(job_id, task_id, "queued", result_data)
@@ -59,6 +61,7 @@ def _write_queued(params, job_id, task_id):
 
 def _write_phase(params, job_id, task_id):
     now_ms = int(time.time() * 1000)
+    run_started_at_ms = params.get("run_started_at_ms", params.get("started_at_ms", now_ms))
     result_data = {
         "job_id": job_id,
         "run_id": params.get("run_id", ""),
@@ -67,6 +70,7 @@ def _write_phase(params, job_id, task_id):
         "phase_label": params["phase_label"],
         "execution_arn": params.get("execution_arn", ""),
         "started_at_ms": params.get("started_at_ms", now_ms),
+        "run_started_at_ms": run_started_at_ms,
         "updated_at_ms": now_ms,
     }
     if "expected" in params:
@@ -79,6 +83,7 @@ def _write_phase(params, job_id, task_id):
 
 def _write_done(params, job_id, task_id):
     now_ms = int(time.time() * 1000)
+    run_started_at_ms = params.get("run_started_at_ms", params.get("started_at_ms", now_ms))
     result_data = {
         "job_id": job_id,
         "run_id": params.get("run_id", ""),
@@ -87,6 +92,7 @@ def _write_done(params, job_id, task_id):
         "phase_label": "Done",
         "execution_arn": params.get("execution_arn", ""),
         "started_at_ms": params.get("started_at_ms", now_ms),
+        "run_started_at_ms": run_started_at_ms,
         "updated_at_ms": now_ms,
     }
     if "image_key" in params:
@@ -104,6 +110,7 @@ def _write_done(params, job_id, task_id):
 def _write_error(params, job_id, task_id):
     now_ms = int(time.time() * 1000)
     error_msg = _extract_error_message(params)
+    run_started_at_ms = params.get("run_started_at_ms", params.get("started_at_ms", now_ms))
     result_data = {
         "job_id": job_id,
         "run_id": params.get("run_id", ""),
@@ -112,6 +119,7 @@ def _write_error(params, job_id, task_id):
         "phase_label": "Error",
         "execution_arn": params.get("execution_arn", ""),
         "started_at_ms": params.get("started_at_ms", now_ms),
+        "run_started_at_ms": run_started_at_ms,
         "updated_at_ms": now_ms,
     }
     _put_row(job_id, task_id, "error", result_data, error_msg=error_msg)

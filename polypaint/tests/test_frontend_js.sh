@@ -26,6 +26,9 @@ grep -q 'id="results-filter-mode"' "$HTML" || { echo "FATAL: Results filter mode
 grep -q 'id="build-id-label"' "$HTML" || { echo "FATAL: build id label missing from index.html"; exit 1; }
 grep -q 'id="btn-config-toggle"' "$HTML" || { echo "FATAL: Config gear toggle missing from index.html"; exit 1; }
 grep -q 'id="config-popup"' "$HTML" || { echo "FATAL: Config popup missing from index.html"; exit 1; }
+grep -q '<option value="sectioned">sectioned native</option>' "$HTML" || { echo "FATAL: sectioned hist input option missing from index.html"; exit 1; }
+grep -q 'id="render-mt-raster-input-mode"' "$HTML" || { echo "FATAL: render MT raster input selector missing from index.html"; exit 1; }
+grep -q 'id="render-mt-merge-workers"' "$HTML" || { echo "FATAL: render MT merge workers input missing from index.html"; exit 1; }
 grep -q 'onclick="loadLambdaConfig()" class="btn-secondary" style="margin:0; padding:4px 12px"' "$HTML" || { echo "FATAL: Config Load button should override global button margin"; exit 1; }
 grep -q 'onclick="renderResultsTable()" style="margin:0; padding:3px 8px; font-size:10px"' "$HTML" || { echo "FATAL: Results Filter button should override global button margin"; exit 1; }
 grep -q 'id="btn-solve-histogram" onclick="runSolveScoreHistogramDebug()" style="margin:0 0 0 8px; font-size:10px; padding:1px 8px"' "$HTML" || { echo "FATAL: Solve histogram button should override global button margin"; exit 1; }
@@ -330,6 +333,8 @@ const renderEls = {
     'render-mt-threads': { value: '4' },
     'render-mt-solve-score-threads': { value: '4' },
     'render-mt-hist-input-mode': { value: 'tmpfile' },
+    'render-mt-raster-input-mode': { value: 'tmpfile' },
+    'render-mt-merge-workers': { value: '16' },
     'autolevel-popup-overlay': {},
     'autolevel-popup-title': {},
     'autolevel-popup-summary': {},
@@ -574,16 +579,18 @@ async function testPipeline(name, call) {
     }
     console.log('  Generate popup opens for solve-score input A/B: OK');
     vm.runInContext('_closeRenderGeneratePopup()', ctx);
-    await testPipeline('runRasterPipelineMT', '(async()=>{ renderColorMode = "solve_score"; await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3 }); })()');
+    await testPipeline('runRasterPipelineMT', '(async()=>{ renderColorMode = "solve_score"; await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, mergeWorkers: 12 }); })()');
     {
         const logs = vm.runInContext('_pipelineDispatchLogs', ctx);
         const payloads = vm.runInContext('_renderOrchestratorPayloads', ctx);
-        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, raster threads=6')) : null;
+        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, merge workers=12, raster input=tmpfile, raster threads=6')) : null;
         const orchHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render: dispatching color orchestrator')) : null;
         const mtPayload = Array.isArray(payloads) ? payloads.find((row) => row && row.params && row.params.raster_engine === 'mt') : null;
         if (!mtHit || mtHit.cls !== 'ok' || !orchHit || orchHit.cls !== 'ok' || !mtPayload ||
             mtPayload.params.raster_mt_threads !== 6 || mtPayload.params.solve_score_threads !== 3 ||
-            mtPayload.params.solve_score_hist_input_mode !== 'tmpfile') {
+            mtPayload.params.solve_score_hist_input_mode !== 'tmpfile' ||
+            mtPayload.params.solve_score_merge_workers !== 12 ||
+            mtPayload.params.raster_input_mode !== 'tmpfile') {
             console.error('FATAL: runRasterPipelineMT should log green MT + orchestrator dispatch and pass thread counts, got logs=' + JSON.stringify(logs) + ' payloads=' + JSON.stringify(payloads));
             process.exit(1);
         }
@@ -601,7 +608,7 @@ async function testPipeline(name, call) {
         console.error('FATAL: Generate-MT should open popup overlay');
         process.exit(1);
     }
-    if (!(ctx._elements['render-mt-popup-summary'].textContent || '').includes('solve score threads=')) {
+    if (!(ctx._elements['render-mt-popup-summary'].textContent || '').includes('merge workers=')) {
         console.error('FATAL: Generate-MT popup should show thread summary');
         process.exit(1);
     }
@@ -611,6 +618,10 @@ async function testPipeline(name, call) {
     }
     if (ctx._elements['render-mt-hist-input-mode'].disabled !== false) {
         console.error('FATAL: Generate-MT popup should enable hist input selector for solve_score mode');
+        process.exit(1);
+    }
+    if (ctx._elements['render-mt-merge-workers'].disabled !== false) {
+        console.error('FATAL: Generate-MT popup should enable merge workers input for solve_score mode');
         process.exit(1);
     }
     console.log('  Generate-MT popup opens with solve-score + raster thread summary: OK');
@@ -2837,14 +2848,14 @@ async function testPipeline(name, call) {
         ctx._elements['render-status'].textContent = '';
         ctx._elements['btn-raster-all'] = ctx._mkEl();
         ctx._elements['btn-render-generate'] = ctx._mkEl();
-        vm.runInContext("_viewMode = 'square'; _rtChain = []; _renderGeneratePopupState.histInputMode = 'stdin';", ctx);
+        vm.runInContext("_viewMode = 'square'; _rtChain = []; _renderGeneratePopupState.histInputMode = 'sectioned';", ctx);
         await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx);
         orchDispatched = vm.runInContext('_orchDispatched', ctx);
         if (!orchDispatched) { console.error('FATAL: runRasterPipeline did not dispatch orchestrator'); process.exit(1); }
         if (orchDispatched.params.raster_engine !== 'single') { console.error('FATAL: runRasterPipeline should request single raster engine, got ' + orchDispatched.params.raster_engine); process.exit(1); }
-        if (orchDispatched.params.solve_score_hist_input_mode !== 'stdin') { console.error('FATAL: runRasterPipeline should pass solve_score_hist_input_mode=stdin, got ' + orchDispatched.params.solve_score_hist_input_mode); process.exit(1); }
+        if (orchDispatched.params.solve_score_hist_input_mode !== 'sectioned') { console.error('FATAL: runRasterPipeline should pass solve_score_hist_input_mode=sectioned, got ' + orchDispatched.params.solve_score_hist_input_mode); process.exit(1); }
         if (orchDispatched.mode !== 'color') { console.error('FATAL: mode should be color, got ' + orchDispatched.mode); process.exit(1); }
-        console.log('  12a runRasterPipeline dispatches orchestrator: OK (mode=color, hist=stdin)');
+        console.log('  12a runRasterPipeline dispatches orchestrator: OK (mode=color, hist=sectioned)');
     }
 
     // 12a2: runRasterPipelineMT dispatches one render_orchestrator job with mt raster + solve-score thread counts
@@ -2866,15 +2877,17 @@ async function testPipeline(name, call) {
             refreshRenderArtifacts = async function() {};
         `, ctx);
         ctx._elements['btn-render-generate-mt'] = ctx._mkEl();
-        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "stdin" }); })()', ctx);
+        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", rasterInputMode: "sectioned", mergeWorkers: 14 }); })()', ctx);
         orchDispatched = vm.runInContext('_orchDispatched', ctx);
         if (!orchDispatched) { console.error('FATAL: runRasterPipelineMT did not dispatch orchestrator'); process.exit(1); }
         if (orchDispatched.params.raster_engine !== 'mt') { console.error('FATAL: runRasterPipelineMT should request mt raster engine, got ' + orchDispatched.params.raster_engine); process.exit(1); }
         if (orchDispatched.params.raster_mt_threads !== 6) { console.error('FATAL: runRasterPipelineMT should pass raster_mt_threads=6, got ' + orchDispatched.params.raster_mt_threads); process.exit(1); }
         if (orchDispatched.params.solve_score_threads !== 3) { console.error('FATAL: runRasterPipelineMT should pass solve_score_threads=3, got ' + orchDispatched.params.solve_score_threads); process.exit(1); }
-        if (orchDispatched.params.solve_score_hist_input_mode !== 'stdin') { console.error('FATAL: runRasterPipelineMT should pass solve_score_hist_input_mode=stdin, got ' + orchDispatched.params.solve_score_hist_input_mode); process.exit(1); }
+        if (orchDispatched.params.solve_score_hist_input_mode !== 'sectioned') { console.error('FATAL: runRasterPipelineMT should pass solve_score_hist_input_mode=sectioned, got ' + orchDispatched.params.solve_score_hist_input_mode); process.exit(1); }
+        if (orchDispatched.params.solve_score_merge_workers !== 14) { console.error('FATAL: runRasterPipelineMT should pass solve_score_merge_workers=14, got ' + orchDispatched.params.solve_score_merge_workers); process.exit(1); }
+        if (orchDispatched.params.raster_input_mode !== 'sectioned') { console.error('FATAL: runRasterPipelineMT should pass raster_input_mode=sectioned, got ' + orchDispatched.params.raster_input_mode); process.exit(1); }
         if (orchDispatched.mode !== 'color') { console.error('FATAL: mode should be color, got ' + orchDispatched.mode); process.exit(1); }
-        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, hist=stdin, raster=6)');
+        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, hist=sectioned, merge=14, raster_input=sectioned, raster=6)');
     }
 
     // 12b: runBilevelPipeline dispatches one render_orchestrator job
@@ -3157,8 +3170,8 @@ async function testPipeline(name, call) {
                         complete: false,
                         latest_update_ms: Date.now() - 1500,
                         results: [
-                            { dl_ms: 1200, compute_ms: 3400, input_mode: 'stdin' },
-                            { dl_ms: 800, compute_ms: 2600, input_mode: 'stdin' }
+                            { dl_ms: 1200, compute_ms: 3400, input_mode: 'sectioned' },
+                            { dl_ms: 800, compute_ms: 2600, input_mode: 'sectioned' }
                         ]
                     };
                 }
@@ -3169,7 +3182,7 @@ async function testPipeline(name, call) {
         const logText = ctx._elements['render-log'].textContent || '';
         if (!logText.includes('Solve score: hist 24/100')) { console.error('FATAL: solve-score hist progress should log count, got ' + logText); process.exit(1); }
         if (!logText.includes('wall=') || !logText.includes('total=dl')) { console.error('FATAL: solve-score hist progress should log wall + total timing, got ' + logText); process.exit(1); }
-        if (!logText.includes('input=stdin')) { console.error('FATAL: solve-score hist progress should log input mode, got ' + logText); process.exit(1); }
+        if (!logText.includes('input=sectioned')) { console.error('FATAL: solve-score hist progress should log input mode, got ' + logText); process.exit(1); }
         console.log('  12l solve-score progress logs wall + total timing: OK');
         vm.runInContext('_activeRenderRun = null; _renderPhaseTracker = null;', ctx);
     }
@@ -3200,8 +3213,8 @@ async function testPipeline(name, call) {
                         done: 2,
                         complete: false,
                         results: [
-                            { engine: 'mt', threads: 2, download_us: 1200, native_us: 3400, upload_us: 800, roots_plotted: 50, roots_clipped: 2, tiles_uploaded: 3, pixel_bin_tiles_uploaded: 3 },
-                            { engine: 'mt', threads: 2, download_us: 1400, native_us: 3600, upload_us: 900, roots_plotted: 60, roots_clipped: 1, tiles_uploaded: 4, pixel_bin_tiles_uploaded: 4 }
+                            { engine: 'mt', threads: 2, input_mode: 'sectioned', download_us: 1200, native_us: 3400, upload_us: 800, roots_plotted: 50, roots_clipped: 2, tiles_uploaded: 3, pixel_bin_tiles_uploaded: 3 },
+                            { engine: 'mt', threads: 2, input_mode: 'sectioned', download_us: 1400, native_us: 3600, upload_us: 900, roots_plotted: 60, roots_clipped: 1, tiles_uploaded: 4, pixel_bin_tiles_uploaded: 4 }
                         ]
                     };
                 }
@@ -3210,13 +3223,78 @@ async function testPipeline(name, call) {
         `, ctx);
         try { await vm.runInContext('(async()=>{ await _pollActiveRenderRun(); })()', ctx); } catch(e) {}
         const logText = ctx._elements['render-log'].textContent || '';
-        if (!logText.includes('Raster performance: engine=mt threads=2 chunks=2')) { console.error('FATAL: color completion should log raster perf engine/threads/chunks, got ' + logText); process.exit(1); }
+        if (!logText.includes('Raster performance: engine=mt threads=2 input=sectioned chunks=2')) { console.error('FATAL: color completion should log raster perf engine/threads/input/chunks, got ' + logText); process.exit(1); }
         if (!logText.includes('wall=')) { console.error('FATAL: raster perf log should include wall time in seconds, got ' + logText); process.exit(1); }
         if (!logText.includes('Download time: 0.0s') || !logText.includes('Native raster time: 0.0s') || !logText.includes('Upload time: 0.0s')) { console.error('FATAL: raster perf log should spell out timing labels, got ' + logText); process.exit(1); }
         if (!logText.includes('Emitted root hits: 110') || !logText.includes('Clipped roots: 3') || !logText.includes('Tile files uploaded: 7') || !logText.includes('Pixel-bin files uploaded: 7')) { console.error('FATAL: raster perf log should aggregate worker metrics with full labels, got ' + logText); process.exit(1); }
         if (!logText.includes('Render complete: color_perf (')) { console.error('FATAL: render completion log should include elapsed seconds, got ' + logText); process.exit(1); }
         console.log('  12m color completion logs raster perf summary: OK');
         vm.runInContext('_activeRenderRun = null; _renderPhaseTracker = null;', ctx);
+    }
+
+    // 12n: render wall timing uses server timestamps, not browser Date.now()
+    {
+        ctx._elements['render-log'] = ctx._mkEl();
+        ctx._elements['render-status'] = ctx._mkEl();
+        vm.runInContext(`
+            if (!window._origDateNow) window._origDateNow = Date.now;
+            Date.now = function() { return 900000; };
+            _activeRenderRun = {
+                job_id:'j',
+                mode:'color',
+                run_id:'r_server_time',
+                task_id:'render_run_color_r_server_time',
+                started_at_ms: 1000,
+                server_started_at_ms: 100000
+            };
+            _renderPhaseTracker = {
+                phase:'raster',
+                phase_label:'Raster',
+                started_at_ms: 110000,
+                last_server_update_ms: 111000,
+                prefix:'render_r_server_time_raster_',
+                expected:2
+            };
+        `, ctx);
+        vm.runInContext(`
+            refreshRenderArtifacts = async function() {};
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/check-status' && body.task_prefix === 'render_run_color_r_server_time') {
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: true,
+                        results: [{
+                            phase: 'done',
+                            phase_label: 'Done',
+                            family: 'color',
+                            artifact_id: 'color_server_time',
+                            run_started_at_ms: 100000,
+                            updated_at_ms: 130000
+                        }]
+                    };
+                }
+                if (name === 'storage' && path === '/check-status' && body.task_prefix === 'render_r_server_time_raster_') {
+                    return {
+                        errors: 0,
+                        done: 2,
+                        latest_done_ms: 120000,
+                        latest_update_ms: 120000,
+                        results: [
+                            { engine: 'mt', threads: 2, input_mode: 'sectioned', download_us: 1200, native_us: 3400, upload_us: 800, roots_plotted: 50, roots_clipped: 2, tiles_uploaded: 3, pixel_bin_tiles_uploaded: 3 },
+                            { engine: 'mt', threads: 2, input_mode: 'sectioned', download_us: 1400, native_us: 3600, upload_us: 900, roots_plotted: 60, roots_clipped: 1, tiles_uploaded: 4, pixel_bin_tiles_uploaded: 4 }
+                        ]
+                    };
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await _pollActiveRenderRun(); })()', ctx); } catch(e) {}
+        const logText = ctx._elements['render-log'].textContent || '';
+        if (!logText.includes('Raster complete · wall=10.0s')) { console.error('FATAL: raster phase completion wall time should use server timestamps, got ' + logText); process.exit(1); }
+        if (!logText.includes('Render complete: color_server_time (30.0s)')) { console.error('FATAL: render completion wall time should use server timestamps, got ' + logText); process.exit(1); }
+        console.log('  12n render wall timing uses server timestamps: OK');
+        vm.runInContext('Date.now = window._origDateNow; _activeRenderRun = null; _renderPhaseTracker = null;', ctx);
     }
 
     // Step 13: Solve histogram debug button

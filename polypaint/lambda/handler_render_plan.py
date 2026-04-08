@@ -91,10 +91,29 @@ def _validate_thread_count(value, field_name):
     return threads
 
 
+def _validate_merge_worker_count(value, field_name):
+    if value in (None, ""):
+        return 16
+    try:
+        workers = int(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"{field_name} must be an integer, got {value!r}")
+    if not (1 <= workers <= 64):
+        raise RuntimeError(f"{field_name} must be in [1, 64], got {workers}")
+    return workers
+
+
+def _validate_raster_input_mode(value):
+    mode = str(value or "tmpfile").strip().lower()
+    if mode not in ("tmpfile", "sectioned"):
+        raise RuntimeError(f"raster_input_mode must be 'tmpfile' or 'sectioned', got {value!r}")
+    return mode
+
+
 def _validate_hist_input_mode(value):
     mode = str(value or "tmpfile").strip().lower()
-    if mode not in ("tmpfile", "stdin"):
-        raise RuntimeError(f"solve_score_hist_input_mode must be 'tmpfile' or 'stdin', got {value!r}")
+    if mode not in ("tmpfile", "stdin", "sectioned"):
+        raise RuntimeError(f"solve_score_hist_input_mode must be 'tmpfile', 'stdin', or 'sectioned', got {value!r}")
     return mode
 
 
@@ -168,7 +187,9 @@ def handler(event, context):
         "color_mode": "rainbow",
         "raster_engine": "single",
         "raster_mt_threads": 4,
+        "raster_input_mode": "tmpfile",
         "solve_score_threads": "",
+        "solve_score_merge_workers": 16,
         "solve_metric": "proximity",
         "solve_score_quantile": 0.001,
         "solve_score_omega": 1.0,
@@ -180,10 +201,15 @@ def handler(event, context):
             rp[key] = default
     rp["raster_engine"] = _validate_raster_engine(rp.get("raster_engine", "single"))
     rp["raster_mt_threads"] = _validate_thread_count(rp.get("raster_mt_threads", 4), "raster_mt_threads")
+    rp["raster_input_mode"] = _validate_raster_input_mode(rp.get("raster_input_mode", "tmpfile"))
     solve_score_threads_value = rp.get("solve_score_threads", "")
     if solve_score_threads_value in (None, ""):
         solve_score_threads_value = rp["raster_mt_threads"] if rp["raster_engine"] == "mt" else 1
     rp["solve_score_threads"] = _validate_thread_count(solve_score_threads_value, "solve_score_threads")
+    rp["solve_score_merge_workers"] = _validate_merge_worker_count(
+        rp.get("solve_score_merge_workers", 16),
+        "solve_score_merge_workers",
+    )
     rp["solve_score_hist_input_mode"] = _validate_hist_input_mode(rp.get("solve_score_hist_input_mode", "tmpfile"))
 
     # Normalize solve-score params
@@ -282,6 +308,7 @@ def handler(event, context):
     solve_score = {
         "enabled": solve_score_enabled,
         "threads": rp["solve_score_threads"] if solve_score_enabled else 1,
+        "merge_workers": rp["solve_score_merge_workers"] if solve_score_enabled else 1,
         "metric": solve_metric,
         "quantile": solve_score_quantile,
         "omega": solve_score_omega,
@@ -298,8 +325,10 @@ def handler(event, context):
     raster = {
         "requested_engine": requested_raster_engine,
         "requested_threads": requested_raster_threads,
+        "requested_input_mode": rp.get("raster_input_mode", "tmpfile"),
         "threads": 1,
         "engine": "single",
+        "input_mode": "tmpfile",
         "function_name": RASTER_FUNCTION,
         "eligible": False,
         "reason": "mode_not_color" if mode != "color" else "unsupported_color_mode",
@@ -321,6 +350,7 @@ def handler(event, context):
             if requested_raster_engine == "mt":
                 raster["engine"] = "mt"
                 raster["threads"] = requested_raster_threads
+                raster["input_mode"] = rp.get("raster_input_mode", "tmpfile")
                 raster["function_name"] = RASTER_MT_FUNCTION
         elif requested_raster_engine == "mt" and raster["reason"]:
             raster["reason"] = f"mt_requested_but_{raster['reason']}"

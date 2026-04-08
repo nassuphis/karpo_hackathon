@@ -10,18 +10,21 @@ import json
 import os
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import boto3
+from botocore.config import Config
 
 from shared import BUCKET, parse_body, ok_response, report_status
 
 s3 = boto3.client("s3")
 BINARY = os.path.join(os.path.dirname(__file__), "solve_proximity_stats")
+SECTIONED_HIST_BINARY = os.path.join(os.path.dirname(__file__), "solve_proximity_hist_sectioned")
 
 VALID_METRICS = {"proximity", "crowding", "spread", "anisotropy", "area",
                  "clusteriness", "shelliness", "outlierness", "nn_variation", "real_axis_proximity",
                  "centroid_re", "centroid_im", "centroid_dist", "dist_unit_circle", "asymmetry_re"}
-VALID_HIST_INPUT_MODES = {"tmpfile", "stdin"}
+VALID_HIST_INPUT_MODES = {"tmpfile", "stdin", "sectioned"}
 
 _TMP_INPUT = "/tmp/solve_prox_input.bin"
 _TMP_XFORMS = "/tmp/solve_prox_root_xforms.json"
@@ -124,11 +127,33 @@ def _validate_threads(value, default=1):
     return threads
 
 
+def _validate_merge_workers(value, default=None):
+    if value in (None, ""):
+        value = os.environ.get("SOLVE_SCORE_MERGE_WORKERS", default if default is not None else 16)
+    try:
+        workers = int(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"solve_score_merge_workers must be an integer, got {value!r}")
+    if not (1 <= workers <= 64):
+        raise RuntimeError(f"solve_score_merge_workers must be in [1, 64], got {workers}")
+    return workers
+
+
 def _validate_hist_input_mode(value):
     mode = str(value or "tmpfile").strip().lower()
     if mode not in VALID_HIST_INPUT_MODES:
         raise RuntimeError(f"solve_score_hist_input_mode must be one of {', '.join(sorted(VALID_HIST_INPUT_MODES))}, got {value!r}")
     return mode
+
+
+def _sectioned_input_size_limit():
+    try:
+        memory_mb = int(os.environ.get("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "0") or 0)
+    except (TypeError, ValueError):
+        memory_mb = 0
+    if memory_mb <= 0:
+        return 0
+    return (memory_mb * 1024 * 1024) // 2
 
 
 def _run_binary_with_streamed_input(cmd, obj, input_size, timeout=120):
@@ -164,6 +189,58 @@ def _run_binary_with_streamed_input(cmd, obj, input_size, timeout=120):
             body.close()
         except Exception:
             pass
+
+
+def _merge_s3_client(max_workers):
+    pool_size = max(10, int(max_workers) + 1)
+    return boto3.client("s3", config=Config(max_pool_connections=pool_size))
+
+
+def _load_json_body(obj):
+    body = obj["Body"]
+    try:
+        data = body.read()
+    finally:
+        try:
+            body.close()
+        except Exception:
+            pass
+    return json.loads(data)
+
+
+def _load_merge_histogram_artifact(client, hist_prefix, chunk_idx, metric, solve_score_quantile,
+                                   solve_score_omega, solve_score_omega_enabled, hist_bins):
+    key = f"{hist_prefix}chunk_{chunk_idx}_hist.json"
+    try:
+        try:
+            obj = client.get_object(Bucket=BUCKET, Key=key)
+        except client.exceptions.NoSuchKey:
+            legacy_key = f"{hist_prefix}stripe_{chunk_idx}_hist.json"
+            obj = client.get_object(Bucket=BUCKET, Key=legacy_key)
+            key = legacy_key
+        data = _load_json_body(obj)
+    except client.exceptions.NoSuchKey:
+        raise RuntimeError(f"Missing histogram: {key}")
+
+    if data.get("family") == "solve_score" and data.get("metric") != metric:
+        raise RuntimeError(f"Chunk {chunk_idx} metric mismatch: expected {metric}, got {data.get('metric')}")
+    if data.get("family") == "solve_score" and data.get("clip_quantile") != solve_score_quantile:
+        raise RuntimeError(f"Chunk {chunk_idx} quantile mismatch: expected {solve_score_quantile}, got {data.get('clip_quantile')}")
+    if data.get("family") == "solve_score" and float(data.get("omega", 1.0)) != solve_score_omega:
+        raise RuntimeError(f"Chunk {chunk_idx} omega mismatch: expected {solve_score_omega}, got {data.get('omega')}")
+    if data.get("family") == "solve_score" and _validate_omega_enabled(data.get("omega_enabled", True)) != solve_score_omega_enabled:
+        raise RuntimeError(f"Chunk {chunk_idx} omega_enabled mismatch: expected {solve_score_omega_enabled}, got {data.get('omega_enabled')}")
+
+    chunk_hist = data["hist"]
+    if len(chunk_hist) != hist_bins:
+        raise RuntimeError(f"Chunk {chunk_idx} histogram has {len(chunk_hist)} bins, expected {hist_bins}")
+
+    return {
+        "chunk_idx": chunk_idx,
+        "hist": chunk_hist,
+        "n_solves": data["n_solves"],
+        "key": key,
+    }
 
 
 def handle_clip(params):
@@ -288,26 +365,71 @@ def handle_hist(params):
         clip_data = json.loads(clip_obj["Body"].read())
 
         xf_path = _write_xforms(root_transforms)
-        cmd = [
-            BINARY,
-            _TMP_INPUT if solve_score_hist_input_mode == "tmpfile" else "-",
-            "--mode=hist",
-            f"--degree={degree}",
-            f"--metric={metric}",
-            f"--clip_lo={clip_data['clip_lo']}",
-            f"--clip_hi={clip_data['clip_hi']}",
-            f"--hist_bins={hist_bins}",
-            f"--omega={solve_score_omega}",
-            f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
-            f"--threads={solve_score_threads}",
-        ]
-        if xf_path:
-            cmd.append(f"--root_xforms={xf_path}")
-
         hist_stdout = None
         hist_stderr = None
         hist_rc = 0
-        if solve_score_hist_input_mode == "stdin":
+        if solve_score_hist_input_mode == "sectioned":
+            input_size = int(params.get("bin_size") or 0)
+            if input_size <= 0:
+                head = s3.head_object(Bucket=BUCKET, Key=bin_key)
+                input_size = int(head.get("ContentLength") or 0)
+            if input_size <= 0:
+                raise RuntimeError(f"Failed to determine size for s3://{BUCKET}/{bin_key}")
+            size_limit = _sectioned_input_size_limit()
+            if size_limit > 0 and input_size > size_limit:
+                raise RuntimeError(
+                    f"sectioned hist input too large for current Lambda memory: "
+                    f"{input_size} bytes > safe limit {size_limit} bytes"
+                )
+            progress["source_size"] = input_size
+            presigned_url = s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": BUCKET, "Key": bin_key},
+                ExpiresIn=900,
+            )
+            cmd = [
+                SECTIONED_HIST_BINARY,
+                f"--url={presigned_url}",
+                f"--input_size={input_size}",
+                f"--degree={degree}",
+                f"--metric={metric}",
+                f"--clip_lo={clip_data['clip_lo']}",
+                f"--clip_hi={clip_data['clip_hi']}",
+                f"--hist_bins={hist_bins}",
+                f"--omega={solve_score_omega}",
+                f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
+                f"--threads={solve_score_threads}",
+            ]
+            if xf_path:
+                cmd.append(f"--root_xforms={xf_path}")
+            pre_native_ms = int((time.time() - t0) * 1000)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            hist_rc = result.returncode
+            hist_stdout = result.stdout
+            hist_stderr = result.stderr
+            if hist_rc != 0:
+                raise RuntimeError(f"solve_proximity_hist_sectioned failed: {(hist_stderr or '').strip()}")
+            hist_data = json.loads(hist_stdout)
+            progress["dl_ms"] = pre_native_ms + int(hist_data.get("download_ms", 0))
+            progress["compute_ms"] = int(hist_data.get("compute_ms", 0))
+            progress["wall_ms"] = int(hist_data.get("wall_ms", 0))
+            report_status(job_id, task_id, "bin_downloaded", result_data=progress)
+        elif solve_score_hist_input_mode == "stdin":
+            cmd = [
+                BINARY,
+                "-",
+                "--mode=hist",
+                f"--degree={degree}",
+                f"--metric={metric}",
+                f"--clip_lo={clip_data['clip_lo']}",
+                f"--clip_hi={clip_data['clip_hi']}",
+                f"--hist_bins={hist_bins}",
+                f"--omega={solve_score_omega}",
+                f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
+                f"--threads={solve_score_threads}",
+            ]
+            if xf_path:
+                cmd.append(f"--root_xforms={xf_path}")
             bin_obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
             input_size = int(bin_obj.get("ContentLength") or 0)
             if input_size > 0:
@@ -318,6 +440,21 @@ def handle_hist(params):
             progress["dl_ms"] = pre_stream_ms + stream_ms
             report_status(job_id, task_id, "bin_downloaded", result_data=progress)
         else:
+            cmd = [
+                BINARY,
+                _TMP_INPUT,
+                "--mode=hist",
+                f"--degree={degree}",
+                f"--metric={metric}",
+                f"--clip_lo={clip_data['clip_lo']}",
+                f"--clip_hi={clip_data['clip_hi']}",
+                f"--hist_bins={hist_bins}",
+                f"--omega={solve_score_omega}",
+                f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
+                f"--threads={solve_score_threads}",
+            ]
+            if xf_path:
+                cmd.append(f"--root_xforms={xf_path}")
             size = _download(bin_key, _TMP_INPUT)
             progress["source_size"] = size
             progress["dl_ms"] = int((time.time() - t0) * 1000)
@@ -333,7 +470,8 @@ def handle_hist(params):
             raise RuntimeError(f"solve_proximity_stats hist failed: {(hist_stderr or '').strip()}")
 
         hist_data = json.loads(hist_stdout)
-        progress["compute_ms"] = compute_ms
+        if solve_score_hist_input_mode != "sectioned":
+            progress["compute_ms"] = compute_ms
         progress["threads"] = int(hist_data.get("threads", solve_score_threads))
         progress["n_solves"] = hist_data["n_solves"]
 
@@ -381,19 +519,30 @@ def handle_merge(params):
     n_chunks = params.get("n_chunks", params.get("n_stripes"))
     if n_chunks is None:
         raise RuntimeError("merge requires n_chunks")
+    n_chunks = int(n_chunks)
+    merge_workers = min(_validate_merge_workers(params.get("solve_score_merge_workers")), max(1, n_chunks))
     hist_prefix = params["hist_prefix"]
     clip_key = params["clip_key"]
     out_key = params["out_key"]
-    progress = {"phase": "merge", "metric": metric, "n_chunks": n_chunks, "omega": solve_score_omega, "omega_enabled": solve_score_omega_enabled, "threads": 1}
+    progress = {
+        "phase": "merge",
+        "metric": metric,
+        "n_chunks": n_chunks,
+        "omega": solve_score_omega,
+        "omega_enabled": solve_score_omega_enabled,
+        "threads": merge_workers,
+        "workers": merge_workers,
+    }
 
     try:
         _cleanup_tmp()
         report_status(job_id, task_id, "started", result_data=progress)
 
+        merge_s3 = _merge_s3_client(merge_workers)
         t_dl = time.time()
         # Load and validate clip data
-        clip_obj = s3.get_object(Bucket=BUCKET, Key=clip_key)
-        clip_data = json.loads(clip_obj["Body"].read())
+        clip_obj = merge_s3.get_object(Bucket=BUCKET, Key=clip_key)
+        clip_data = _load_json_body(clip_obj)
         if clip_data.get("family") == "solve_score" and clip_data.get("metric") != metric:
             raise RuntimeError(f"Clip metric mismatch: expected {metric}, got {clip_data.get('metric')}")
         if clip_data.get("family") == "solve_score" and clip_data.get("clip_quantile") != solve_score_quantile:
@@ -406,34 +555,27 @@ def handle_merge(params):
 
         total_hist = [0] * hist_bins
         total_solves = 0
-        for c in range(n_chunks):
-            key = f"{hist_prefix}chunk_{c}_hist.json"
-            try:
-                try:
-                    obj = s3.get_object(Bucket=BUCKET, Key=key)
-                except s3.exceptions.NoSuchKey:
-                    # Backward compatibility for old stripe-named hist artifacts
-                    legacy_key = f"{hist_prefix}stripe_{c}_hist.json"
-                    obj = s3.get_object(Bucket=BUCKET, Key=legacy_key)
-                    key = legacy_key
-                data = json.loads(obj["Body"].read())
-                # Validate metric match
-                if data.get("family") == "solve_score" and data.get("metric") != metric:
-                    raise RuntimeError(f"Chunk {c} metric mismatch: expected {metric}, got {data.get('metric')}")
-                if data.get("family") == "solve_score" and data.get("clip_quantile") != solve_score_quantile:
-                    raise RuntimeError(f"Chunk {c} quantile mismatch: expected {solve_score_quantile}, got {data.get('clip_quantile')}")
-                if data.get("family") == "solve_score" and float(data.get("omega", 1.0)) != solve_score_omega:
-                    raise RuntimeError(f"Chunk {c} omega mismatch: expected {solve_score_omega}, got {data.get('omega')}")
-                if data.get("family") == "solve_score" and _validate_omega_enabled(data.get("omega_enabled", True)) != solve_score_omega_enabled:
-                    raise RuntimeError(f"Chunk {c} omega_enabled mismatch: expected {solve_score_omega_enabled}, got {data.get('omega_enabled')}")
-                chunk_hist = data["hist"]
-                if len(chunk_hist) != hist_bins:
-                    raise RuntimeError(f"Chunk {c} histogram has {len(chunk_hist)} bins, expected {hist_bins}")
+        with ThreadPoolExecutor(max_workers=merge_workers) as executor:
+            futures = {
+                executor.submit(
+                    _load_merge_histogram_artifact,
+                    merge_s3,
+                    hist_prefix,
+                    c,
+                    metric,
+                    solve_score_quantile,
+                    solve_score_omega,
+                    solve_score_omega_enabled,
+                    hist_bins,
+                ): c
+                for c in range(n_chunks)
+            }
+            for future in as_completed(futures):
+                loaded = future.result()
+                chunk_hist = loaded["hist"]
                 for i in range(hist_bins):
                     total_hist[i] += chunk_hist[i]
-                total_solves += data["n_solves"]
-            except s3.exceptions.NoSuchKey:
-                raise RuntimeError(f"Missing histogram: {key}")
+                total_solves += loaded["n_solves"]
 
         progress["dl_ms"] = int((time.time() - t_dl) * 1000)
         progress["n_solves_total"] = total_solves

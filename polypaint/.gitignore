@@ -21,6 +21,10 @@ lambda/dz_export
 lambda/sweep_cm
 lambda/coeffs_bilevel_raster
 lambda/roots2pix_mt
+lambda/solve_proximity_hist_sectioned
+# Shared lib directories (copied from Docker builds)
+lambda/roots2pix_mt_lib/
+lambda/solve_proximity_hist_sectioned_lib/
 # Local-only test binaries (never deployed)
 lambda/*_local
 lambda/*_test

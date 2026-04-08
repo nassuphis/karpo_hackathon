@@ -63,20 +63,24 @@ def _make_hist_mock_s3(bin_bytes, clip_data):
         raise AssertionError(f"unexpected get_object key: {key}")
 
     mock_s3.get_object = mock_get
+    mock_s3.head_object = mock.MagicMock(return_value={"ContentLength": len(bin_bytes)})
+    mock_s3.generate_presigned_url = mock.MagicMock(return_value="https://example.com/range.bin")
     mock_s3.put_object = mock.MagicMock()
     mock_s3.exceptions = type('Exc', (), {'NoSuchKey': type('NoSuchKey', (Exception,), {})})()
     return mock_s3
 
 
-def _run_merge(n_stripes, clip_data, hist_responses, metric="proximity", solve_score_quantile=0.001, solve_score_omega=1.0):
+def _run_merge(n_stripes, clip_data, hist_responses, metric="proximity", solve_score_quantile=0.001,
+               solve_score_omega=1.0, solve_score_merge_workers=None):
     """Run merge phase with mocked S3."""
     import handler_solve_proximity as hsp
     mock_s3 = _make_mock_s3(clip_data, hist_responses)
-    orig_s3, orig_report = hsp.s3, hsp.report_status
+    orig_s3, orig_report, orig_merge_client = hsp.s3, hsp.report_status, hsp._merge_s3_client
     hsp.s3 = mock_s3
     hsp.report_status = mock.MagicMock()
+    hsp._merge_s3_client = mock.MagicMock(return_value=mock_s3)
     try:
-        result = hsp.handle_merge({
+        payload = {
             "job_id": "test",
             "task_id": "merge_test",
             "metric": metric,
@@ -86,7 +90,10 @@ def _run_merge(n_stripes, clip_data, hist_responses, metric="proximity", solve_s
             "hist_prefix": "renders/test/solve_scores/",
             "clip_key": "renders/test/solve_scores/clip.json",
             "out_key": "renders/test/solve_scores/bins.json",
-        })
+        }
+        if solve_score_merge_workers is not None:
+            payload["solve_score_merge_workers"] = solve_score_merge_workers
+        result = hsp.handle_merge(payload)
         # Capture what was written to S3
         put_calls = mock_s3.put_object.call_args_list
         written_artifact = None
@@ -97,6 +104,7 @@ def _run_merge(n_stripes, clip_data, hist_responses, metric="proximity", solve_s
     finally:
         hsp.s3 = orig_s3
         hsp.report_status = orig_report
+        hsp._merge_s3_client = orig_merge_client
 
 
 def _uniform_hist_data(prefix, n_stripes, metric="proximity", clip_quantile=0.001):
@@ -216,6 +224,61 @@ def test_hist_invalid_input_mode_rejected():
         assert "solve_score_hist_input_mode" in str(e)
 
 
+def test_hist_sectioned_mode_uses_presigned_url_and_sectioned_binary():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = _make_hist_mock_s3(
+        b"\x02" * 64,
+        {"clip_lo": -2.0, "clip_hi": 3.0, "family": "solve_score", "metric": "centroid_re"},
+    )
+    mock_run = mock.MagicMock(return_value=mock.MagicMock(
+        returncode=0,
+        stdout=json.dumps({
+            "threads": 4,
+            "n_solves": 4,
+            "download_ms": 123,
+            "compute_ms": 45,
+            "wall_ms": 101,
+            "hist": [1, 1, 1, 1],
+        }),
+        stderr="",
+    ))
+    orig_s3, orig_report, orig_run = hsp.s3, hsp.report_status, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.report_status = mock.MagicMock()
+    hsp.subprocess.run = mock_run
+    try:
+        result = hsp.handle_hist({
+            "job_id": "test",
+            "task_id": "hist_test",
+            "chunk_idx": 0,
+            "metric": "centroid_re",
+            "bin_key": "renders/test/chunk_0.bin",
+            "degree": 4,
+            "clip_key": "renders/test/solve_scores/clip.json",
+            "hist_bins": 4,
+            "out_key": "renders/test/solve_scores/chunk_0_hist.json",
+            "solve_score_hist_input_mode": "sectioned",
+            "solve_score_threads": 4,
+        })
+        body = json.loads(result["body"])
+        assert body["input_mode"] == "sectioned"
+        assert body["threads"] == 4
+        assert body["source_size"] == 64
+        assert body["compute_ms"] == 45
+        assert body["wall_ms"] == 101
+        cmd = mock_run.call_args.args[0]
+        assert cmd[0] == hsp.SECTIONED_HIST_BINARY
+        assert any(arg == "--input_size=64" for arg in cmd)
+        assert any(arg == "--threads=4" for arg in cmd)
+        assert any(arg.startswith("--url=https://example.com/") for arg in cmd)
+        mock_s3.generate_presigned_url.assert_called_once()
+    finally:
+        hsp.s3 = orig_s3
+        hsp.report_status = orig_report
+        hsp.subprocess.run = orig_run
+
+
 def test_merge_uniform_histogram():
     """Uniform histogram -> evenly spaced cuts."""
     clip_data, hist_responses = _uniform_hist_data(
@@ -300,6 +363,40 @@ def test_merge_error_missing_stripe():
         assert False, "should have raised"
     except RuntimeError as e:
         assert "Missing histogram" in str(e), f"wrong error: {e}"
+
+
+def test_merge_uses_chunk_artifacts_when_present():
+    clip_data = {
+        "family": "solve_score", "metric": "proximity",
+        "clip_quantile": 0.001,
+        "omega": 1.0,
+        "clip_lo": 0.0, "clip_hi": 10.0, "root_transforms": [],
+    }
+    hist_responses = {
+        "renders/test/solve_scores/chunk_0_hist.json": {
+            "family": "solve_score", "metric": "proximity",
+            "clip_quantile": 0.001,
+            "omega": 1.0,
+            "hist": [10] * 100, "n_solves": 1000,
+        }
+    }
+    body, artifact = _run_merge(1, clip_data, hist_responses, metric="proximity")
+    assert body["n_solves_total"] == 1000
+    assert artifact["n_solves_total"] == 1000
+
+
+def test_merge_reports_configured_worker_count():
+    clip_data, hist_responses = _uniform_hist_data(
+        "renders/test/solve_scores/", 2, metric="proximity")
+    body, _ = _run_merge(
+        2,
+        clip_data,
+        hist_responses,
+        metric="proximity",
+        solve_score_merge_workers=8,
+    )
+    assert body["threads"] == 2
+    assert body["workers"] == 2
 
 
 # ================================================================

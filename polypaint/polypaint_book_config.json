@@ -230,6 +230,27 @@
       "text": "A crystalline rosette of ice-blue petals, each petal a translucent loop of overlapping root trajectories, surrounds a core of red and white shards. Forty-nine roots per solve create the petal count; the coeff5 transform and reversal enforce the rotational symmetry. The crowding score measures mean log-distance between all root pairs, and the blue-white-red palette maps that density gradient into a frozen botanical: blue where roots breathe, white where they crowd, red at the dense heart where the polynomial\u2019s structure collapses to a singularity.\n\ngiga_45 \u00b7 degree 49 \u00b7 5000\u00d75000 \u00b7 crowding \u00b7 bwred \u00b7 Aberth-Ehrlich (parallel)",
       "filename": "color_run_1775506371438_yegz4o",
       "job_id": "compute_mnnm1pg8"
+    },
+    {
+      "image": "snaps/compute_mmw2ilf7_color_run_1775547693638_8tznuf.jpeg",
+      "title": "Abyssal Iris",
+      "text": "The same palindromic polynomial that produced the Cyclops Nebula, now recolored by clusteriness \u2014 how tightly nearest-neighbor roots pack. The result is an iris of deep teal and copper, its pupil ringed by a corrugated corona of densely clustered roots that glow amber in the reef palette. The surrounding haze is where roots spread thin, their spacing too wide to register on the cluster score. Fifty roots per solve, four thousand squared parameter pairs, each one a separate eigenvalue problem.\n\npoly_8 \u00b7 degree 50 \u00b7 4000\u00d74000 \u00b7 clusteriness \u00b7 reef",
+      "filename": "color_run_1775547693638_8tznuf",
+      "job_id": "compute_mmw2ilf7"
+    },
+    {
+      "image": "snaps/compute_mmw2ilf7_color_run_1775548079594_kvp2ew.jpeg",
+      "title": "Unit Circle Scar",
+      "text": "The same polynomial again, but now the distance-from-unit-circle metric reveals a different anatomy. The bright amber ring is where roots sit closest to |z|=1, and the teal glow marks where they drift away. The dark pupil at the center is unchanged \u2014 it is the structural void where no roots land regardless of the metric. This pair of images, Abyssal Iris and Unit Circle Scar, demonstrates how the same root cloud tells completely different stories depending on which geometric property you measure.\n\npoly_8 \u00b7 degree 50 \u00b7 4000\u00d74000 \u00b7 dist unit circle \u00b7 reef",
+      "filename": "color_run_1775548079594_kvp2ew",
+      "job_id": "compute_mmw2ilf7"
+    },
+    {
+      "image": "snaps/compute_mn4li5pn_legacy_color.jpeg",
+      "title": "Turquoise Citadel",
+      "text": "Twenty-five roots swirl through a coefficient field twisted by the swirler transform, then reversed. The result is a rough-edged fortress of turquoise and amber, its outer walls stippled with granular texture where the root density thins to scattered points. A ring of golden orbs orbits a central black void like sentinels at the gates. Four smaller satellite eyes glow at the corners \u2014 fixed points where specific roots lock in place regardless of the parameter sweep. The absence of a parameter transform means the raw grid coordinates drive the geometry directly.\n\ngiga_25 \u00b7 degree 25 \u00b7 5000\u00d75000 \u00b7 rainbow",
+      "filename": "legacy_color",
+      "job_id": "compute_mn4li5pn"
     }
   ]
 }

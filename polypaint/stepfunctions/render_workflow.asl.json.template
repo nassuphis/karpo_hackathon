@@ -19,6 +19,7 @@
                 "job_id.$": "$.job_id",
                 "task_id.$": "$.task_id",
                 "run_id.$": "$.run_id",
+                "run_started_at_ms.$": "$.run_started_at_ms",
                 "mode.$": "$.mode",
                 "phase": "plan",
                 "phase_label": "Clean + plan"
@@ -49,6 +50,7 @@
             "Parameters": {
               "job_id.$": "$.job_id",
               "run_id.$": "$.run_id",
+              "run_started_at_ms.$": "$.run_started_at_ms",
               "task_id.$": "$.task_id",
               "mode.$": "$.mode",
               "params.$": "$.params",
@@ -85,6 +87,7 @@
                 "job_id.$": "$.job_id",
                 "task_id.$": "$.task_id",
                 "run_id.$": "$.run_id",
+                "run_started_at_ms.$": "$.run_started_at_ms",
                 "mode.$": "$.mode",
                 "phase": "solve_score_clip",
                 "phase_label": "Solve score: clip",
@@ -132,6 +135,7 @@
                 "job_id.$": "$.job_id",
                 "task_id.$": "$.task_id",
                 "run_id.$": "$.run_id",
+                "run_started_at_ms.$": "$.run_started_at_ms",
                 "mode.$": "$.mode",
                 "phase": "solve_score_hist",
                 "phase_label": "Solve score: hist",
@@ -194,6 +198,7 @@
                 "job_id.$": "$.job_id",
                 "task_id.$": "$.task_id",
                 "run_id.$": "$.run_id",
+                "run_started_at_ms.$": "$.run_started_at_ms",
                 "mode.$": "$.mode",
                 "phase": "solve_score_merge",
                 "phase_label": "Solve score: merge",
@@ -220,6 +225,7 @@
                 "solve_score_omega.$": "$.plan.solve_score.omega",
                 "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
                 "solve_score_threads.$": "$.plan.solve_score.threads",
+                "solve_score_merge_workers.$": "$.plan.solve_score.merge_workers",
                 "hist_prefix.$": "$.plan.solve_score.hist_prefix",
                 "clip_key.$": "$.plan.solve_score.clip_key",
                 "out_key.$": "$.plan.solve_score.bins_key",
@@ -241,6 +247,7 @@
                 "job_id.$": "$.job_id",
                 "task_id.$": "$.task_id",
                 "run_id.$": "$.run_id",
+                "run_started_at_ms.$": "$.run_started_at_ms",
                 "mode.$": "$.mode",
                 "phase": "raster",
                 "phase_label": "Raster",
@@ -285,7 +292,8 @@
               "solve_score_omega.$": "$.plan.solve_score.omega",
               "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
               "raster_function_name.$": "$.plan.raster.function_name",
-              "raster_mt_threads.$": "$.plan.raster.threads"
+              "raster_mt_threads.$": "$.plan.raster.threads",
+              "raster_input_mode.$": "$.plan.raster.input_mode"
             },
             "ItemProcessor": {
               "ProcessorConfig": {"Mode": "INLINE"},
@@ -315,6 +323,7 @@
                 "job_id.$": "$.job_id",
                 "task_id.$": "$.task_id",
                 "run_id.$": "$.run_id",
+                "run_started_at_ms.$": "$.run_started_at_ms",
                 "mode.$": "$.mode",
                 "phase": "finalize",
                 "phase_label": "Finalize",
@@ -373,6 +382,7 @@
                 "job_id.$": "$.job_id",
                 "task_id.$": "$.task_id",
                 "run_id.$": "$.run_id",
+                "run_started_at_ms.$": "$.run_started_at_ms",
                 "mode.$": "$.mode",
                 "phase": "encode",
                 "phase_label": "Encode",
@@ -433,7 +443,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.image_key" }
+              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.image_key" }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -445,7 +455,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "bilevel_raster", "phase_label": "BiLevel raster", "expected.$": "$.plan.calc.n_chunks", "subtask_prefix.$": "States.Format('render_{}_bilevel_raster_', $.run_id)" }
+              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "phase": "bilevel_raster", "phase_label": "BiLevel raster", "expected.$": "$.plan.calc.n_chunks", "subtask_prefix.$": "States.Format('render_{}_bilevel_raster_', $.run_id)" }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -476,7 +486,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "bilevel_merge", "phase_label": "BiLevel merge", "expected.$": "$.plan.grid.n_tiles", "subtask_prefix.$": "States.Format('render_{}_bilevel_merge_', $.run_id)" }
+              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "phase": "bilevel_merge", "phase_label": "BiLevel merge", "expected.$": "$.plan.grid.n_tiles", "subtask_prefix.$": "States.Format('render_{}_bilevel_merge_', $.run_id)" }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -505,7 +515,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "bilevel_stitch", "phase_label": "BiLevel stitch", "expected": 1 }
+              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "phase": "bilevel_stitch", "phase_label": "BiLevel stitch", "expected": 1 }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -546,7 +556,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.bilevel_key" }
+              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.bilevel_key" }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -558,7 +568,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "coeff_raster", "phase_label": "Coeffs raster", "expected.$": "$.plan.calc.n_chunks", "subtask_prefix.$": "States.Format('render_{}_coeff_bilevel_raster_', $.run_id)" }
+              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "phase": "coeff_raster", "phase_label": "Coeffs raster", "expected.$": "$.plan.calc.n_chunks", "subtask_prefix.$": "States.Format('render_{}_coeff_bilevel_raster_', $.run_id)" }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -589,7 +599,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "coeff_merge", "phase_label": "Coeffs merge", "expected.$": "$.plan.grid.n_tiles", "subtask_prefix.$": "States.Format('render_{}_coeff_bilevel_merge_', $.run_id)" }
+              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "phase": "coeff_merge", "phase_label": "Coeffs merge", "expected.$": "$.plan.grid.n_tiles", "subtask_prefix.$": "States.Format('render_{}_coeff_bilevel_merge_', $.run_id)" }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -619,7 +629,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "phase": "coeff_stitch", "phase_label": "Coeffs stitch", "expected": 1 }
+              "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "phase": "coeff_stitch", "phase_label": "Coeffs stitch", "expected": 1 }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -660,7 +670,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${StatusFunctionArn}",
-              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.coeff_bilevel_key" }
+              "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.coeff_bilevel_key" }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
@@ -692,6 +702,7 @@
           "job_id.$": "$.job_id",
           "task_id.$": "$.task_id",
           "run_id.$": "$.run_id",
+          "run_started_at_ms.$": "$.run_started_at_ms",
           "mode.$": "$.mode",
           "Error.$": "$.error_info.Error",
           "Cause.$": "$.error_info.Cause"

@@ -1,6 +1,6 @@
 # Render Generate MT
 
-Status: v1 failed.
+Status: sectioned hist shipped; sectioned raster shipped; merge shipped; finalize next.
 
 The first `Generate-MT` implementation did not materially improve `Render -> Color`.
 In practice it was flat or slower than the single-thread baseline.
@@ -16,6 +16,13 @@ added too much overhead and did not attack the real hot path cleanly.
 That approach is now considered a dead end.
 
 This document replaces the old plan.
+
+Since then, solve-score `hist` has been reworked into a native sectioned path
+and is now live. Raster now also has a sectioned input path behind an explicit
+`tmpfile | sectioned` selector. Both materially improved real render runs.
+Solve-score `merge` is now also shipped with concurrent small-object fan-in.
+The next target is `finalize`, which is now the largest remaining structural
+bottleneck.
 
 ## Finding
 
@@ -66,7 +73,7 @@ So the conclusion is:
 
 - `stdin` as currently implemented is not the optimization
 - the real next step is native S3 I/O in the hot path
-- and likely batching multiple chunks per invocation
+- and, after that success, native raster I/O in the hot path
 
 This document now treats `stdin` as an experiment that answered a useful
 question, not as the main path forward.
@@ -92,7 +99,7 @@ But the backend must become:
 `Generate-MT` becomes:
 
 - the real threaded implementation
-- and the testbed for native batched S3 I/O
+- and the testbed for native hot-path I/O
 
 ## Scope
 
@@ -111,50 +118,154 @@ But the backend must become:
 - exact raster winner parity with single-thread output
 - proximity-mode MT in the first native pass unless it is straightforward
 
-## New Experiment Goal: Native S3 Hist Pipeline
+## Implemented Single-Chunk Hist Pipeline
 
-The next serious experiment is:
+The solve-score `hist` experiment is now implemented:
 
+- keep the existing `1 chunk -> 1 Lambda` contract
 - move solve-score `hist` chunk I/O out of Python
-- move chunk download and histogramming into the native hot path
-- batch multiple chunks per Lambda invocation
-- measure how much wall time drops when startup, Python copy, and per-chunk
-  overhead are reduced
+- move chunk section download and histogramming into the native hot path
+- split one chunk into solve-aligned sections
+- let one native thread own one section end-to-end
 
-This is attractive because:
+This is now the preferred direction because it:
 
-- render is still too slow
-- the same native I/O pattern can later be reused for raster and other steps
-- it is a meaningful systems experiment, not just a micro-optimization
+- matches the shipped workflow and status model
+- avoids any Step Functions contract churn
+- avoids changing the per-chunk histogram artifact shape
+- attacks the real hot path directly
 
-## What We Are Actually Optimizing
+## What We Actually Learned
 
-The current solve-score `hist` architecture is:
+The useful result is no longer theoretical.
 
-1. one Step Functions item per chunk
-2. one Lambda invocation per chunk
-3. Python `boto3` download per chunk
-4. Python launches one native process per chunk
-5. native process histograms one chunk
-6. Lambda uploads one tiny JSON result
+We now have:
 
-This means the system pays, per chunk:
+- local laptop measurements
+- AWS-side in-region benchmark Lambda measurements
+- real end-to-end render runs on the shipped sectioned hist path
 
-- Lambda startup / handler overhead
-- Python import / `boto3` / subprocess overhead
-- one S3 object fetch
-- one clip JSON fetch
-- one native process launch
+The local results were useful for inspection and correctness, but not for
+download tuning. They were limited by the developer machine WAN path and Python
+`boto3` behavior.
 
-When there are hundreds of chunks, that overhead dominates.
+### AWS benchmark findings
 
-The current bottleneck is not the score math.
+Using the dedicated benchmark Lambda on `10240 MB`, with one invocation
+processing one chunk at a time but sweeping internal chunk-worker concurrency:
 
-The current bottleneck is:
+- `compute_mmw2ilf7`
+  - `max_chunks=8`
+  - best tested concurrency: `2`
+- `compute_mnj8n3f1`
+  - `max_chunks=8`
+  - best tested concurrency: `2`
+- `compute_mn4id70k`
+  - `max_chunks=8`
+  - `2` and `3` were effectively tied
+  - `4` was worse
+- `compute_mnlddojx`
+  - `max_chunks=8`
+  - best tested concurrency: `2`
 
-- too many small chunk invocations
-- too much Python in the hot path
-- too much per-object overhead
+What this actually proved:
+
+- do **not** assume "more cores => more chunk workers"
+- for the **multi-chunk benchmark Lambda**, internal chunk-worker concurrency had
+  a sweet spot around `2`
+
+Also:
+
+- this phase remains overwhelmingly download-bound
+- compute time is tiny relative to chunk download time
+
+But this benchmark was not the final shipped path.
+
+It measured:
+
+- one benchmark Lambda
+- multiple whole chunks processed inside that invocation
+
+It did **not** measure:
+
+- one real hist Lambda per chunk
+- one chunk split into sections
+- each thread owning one section end to end
+
+So it was useful for direction, but not for setting the final sectioned-hist
+thread default.
+
+### Live render findings on the shipped sectioned path
+
+Real render runs are the source of truth for the implementation that now exists.
+
+Representative runs on the same render family showed:
+
+- `tmpfile`, `threads=2`
+  - hist wall `58.1s`
+  - total render wall `382.9s`
+- `sectioned`, `threads=2`
+  - hist wall `50.4s`
+  - total render wall `261.6s`
+- `sectioned`, `threads=4`
+  - hist wall `38.8s`
+  - total render wall `250.2s`
+- `sectioned`, `threads=6`
+  - hist wall `34.4s`
+  - total render wall `240.7s`
+
+Practical conclusion from the shipped path:
+
+- `sectioned` is materially faster than `tmpfile`
+- on the shipped sectioned path, `6` beat `4`, and `4` beat `2`, in the tested
+  runs
+- summed `download_ms` rises with more section threads, but wall time falls
+- therefore tuning must optimize for `wall`, not aggregate download time
+
+So the current live conclusion is:
+
+- parallel section download inside one chunk
+- is the real win
+- the old benchmark-Lambda `2 is best` result should **not** be reused blindly
+  as the default for the shipped sectioned path
+- keep the thread count user-selectable and keep measuring `1,2,4,6`
+
+### Raster observations from the same runs
+
+The same render series also showed better raster wall times as thread count
+increased:
+
+- raster `threads=2`: wall `63.7s`
+- raster `threads=4`: wall `62.3s`
+- raster `threads=6`: wall `57.9s`
+
+That earlier observation was before the raster sectioned path shipped.
+
+With the shipped raster sectioned path, representative live runs showed:
+
+- `sectioned`, `threads=6`
+  - raster wall `50.0s`
+  - raster aggregate `dl 566.5s + native 30.2s + up 160.8s`
+  - total render wall `219.5s`
+  - finalize wall `100.4s`
+  - solve-score merge wall `19.8s`
+- `sectioned`, `threads=6`, `merge workers=16`
+  - hist wall `58.6s`
+  - raster wall `49.8s`
+  - raster aggregate `dl 569.1s + native 31.8s + up 179.2s`
+  - finalize wall `106.5s`
+  - total render wall `200.8s`
+
+Practical conclusion:
+
+- sectioned raster is a real improvement over the earlier tmpfile raster path
+- end-to-end render wall time dropped from the earlier `~382.9s` tmpfile/hist
+  baseline to `219.5s` on the sectioned hist + sectioned raster path
+- after merge fan-in shipped, end-to-end render wall dropped again to `200.8s`
+- that is roughly a `48%` end-to-end reduction from the earlier `382.9s`
+  baseline
+- merge is no longer a major stage; finalize is now clearly the largest
+  remaining wall-time stage
 
 ## Key AWS Facts
 
@@ -168,51 +279,160 @@ Some facts to pin down so we do not optimize the wrong thing:
   - CPU
   - network throughput
   - general per-invocation performance
-- if a Lambda is put inside a VPC, S3 access can get worse unless the network
-  path is configured carefully
+- the benchmark Lambda showed that chunk-level internal concurrency had a sweet
+  spot around `2`
+- the shipped sectioned hist path scaled differently and improved through `6`
+  threads in the measured live runs
 
 So the main performance levers here are:
 
-- fewer invocations
-- larger per-invocation useful work
 - native I/O
+- overlapping section download with section compute
 - appropriate Lambda memory sizing
-- better overlap of download and compute
+- path-specific concurrency tuning based on wall time
 
-## Native S3 Hist Plan
+## Solve-Score Merge: Different Bottleneck
+
+`merge` is not another large-chunk sectioned-read problem.
+
+Current merge does:
+
+- download `clip.json`
+- download every per-chunk histogram artifact
+- parse JSON
+- sum 100-bin arrays
+- derive 10 equal-density score thresholds ("cuts")
+- upload one final bins JSON
+
+So its shape is:
+
+- many small S3 objects
+- mostly request latency / fan-in overhead
+- almost no compute
+
+Representative live run:
+
+- merge wall `19.8s`
+- aggregate `dl 17.6s + compute 0.0s`
+
+Current render shape here is `500` histogram artifacts, not `100`, so that
+download time is plausible as pure small-object S3 GET latency plus JSON parse
+overhead.
+
+That means the direct hist/raster sectioned approach does **not** translate.
+
+The right merge attack is:
+
+- concurrent small-object fetch fan-in
+- not sectioned range GET
+
+First merge implementation target:
+
+1. keep the same merge Lambda contract
+2. keep the same per-chunk hist artifact keys
+3. fetch hist JSONs concurrently with a bounded Python worker pool
+4. sum them into one accumulator
+5. derive cuts exactly as today
+6. keep the final bins artifact unchanged
+
+Implementation notes:
+
+- use `ThreadPoolExecutor` first; this is an S3 fan-in problem, not a new native
+  binary problem
+- raise the boto3/botocore S3 client `max_pool_connections` to at least the
+  worker count; otherwise worker counts above the default client pool size do
+  not actually increase concurrent GET throughput
+- benchmark bounded worker counts such as `8`, `16`, and `32`
+
+Possible later follow-ons, only if needed:
+
+- move chunk hist artifacts from JSON to a tiny binary format
+- partial/tree merge if one merge Lambda becomes the limit
+
+That first merge attack is now shipped and appears to have done what it needed
+to do:
+
+- merge is no longer the stage worth optimizing first
+- finalize is now the larger remaining fan-in/fan-out problem
+
+## Lessons From s5cmd
+
+The useful lesson from `s5cmd` is the split between two different kinds of
+parallelism:
+
+- many-object worker concurrency
+- per-object part/range concurrency
+
+That maps directly to this renderer:
+
+- solve-score `merge`
+  - many small histogram artifacts
+  - use bounded worker-pool fan-in
+- `finalize`
+  - many small raster artifacts
+  - also a worker-pool problem, not a sectioned-read problem
+- sectioned `hist`
+  - one large chunk object
+  - use per-object range concurrency
+- sectioned `raster`
+  - one large chunk object
+  - use per-object range concurrency
+
+So the plan should follow the same separation:
+
+- many small objects -> worker pool
+- few large objects -> ranged section concurrency
+
+One concrete consequence:
+
+- thread count alone is not enough on the many-object path
+- the S3 client connection pool must scale with the worker count too
+- otherwise merge/finalize will not realize the intended concurrency
+
+## Native Single-Chunk Hist Design
 
 ### Goal
 
 Build a new solve-score `hist` execution path where:
 
-- one Lambda invocation handles multiple chunks
-- one native process handles the batch
-- native worker threads do the download + histogram work
+- one Lambda invocation still handles one chunk
+- one native process handles that chunk
+- native worker threads split the chunk into solve-aligned sections
+- each worker thread downloads and histograms its own section
 - Python is only orchestration, not the hot path
 
 ### Core idea
 
 Instead of:
 
-- `1 chunk = 1 Lambda = 1 download = 1 native process`
+- Python downloads the whole chunk
+- Python writes `/tmp`
+- native code rereads `/tmp`
+- native threads only parallelize the score math
 
 do:
 
-- `1 batch = N chunks = 1 Lambda = 1 native process`
+- Python prepares the request and invokes the native binary
+- native code receives the chunk URL/size/degree/thread count
+- native code splits the chunk into solve-aligned sections
+- each thread:
+  - downloads its own byte range
+  - decodes solves in that section
+  - computes a private histogram
+- the process reduces per-thread histograms at the end
 
-Inside that one native process:
+This keeps:
 
-- threads pull chunk work from a queue
-- each thread downloads a chunk directly
-- each thread histograms that chunk directly
-- each thread emits one per-chunk histogram result
+- `1 chunk -> 1 Lambda`
+- one histogram artifact per chunk
+- current Step Functions map shape
+- current merge contract
 
-That saves:
+while removing:
 
-- Lambda startup overhead
-- handler setup overhead
-- repeated clip reads
-- repeated process launch overhead
+- Python chunk download from the hot path
+- `/tmp` input write
+- `/tmp` reread in the native process
 
 ## Native I/O Model
 
@@ -234,8 +454,8 @@ Cons:
 
 ### Option B: presigned HTTPS URLs plus native HTTP
 
-The handler creates presigned URLs for chunk objects, then the native binary
-downloads them via HTTPS.
+The handler creates a presigned URL for the chunk object, then the native
+binary downloads byte ranges via HTTPS.
 
 Pros:
 
@@ -251,17 +471,17 @@ Cons:
 
 Recommendation:
 
-- use presigned URLs plus native HTTP for the first serious experiment
+- use presigned URLs plus native HTTP for the first real single-chunk sectioned implementation
 
 Reason:
 
 - it keeps AWS-specific auth out of the C code
-- it is easier to reuse later in raster/finalize experiments
+- it is easier to reuse later in raster and other chunk readers
 - it keeps the native binary focused on I/O + compute, not credential logic
 
 ### Packaging concern
 
-This choice adds a real packaging question.
+This choice originally added a real packaging question.
 
 If the native binary uses `libcurl` for HTTPS, the deploy story must account for:
 
@@ -275,60 +495,89 @@ If the native binary uses `libcurl` for HTTPS, the deploy story must account for
 
 This is not optional detail.
 
-Before implementation, choose one explicit packaging model and test it in the
-same deploy-style ARM64 runtime used elsewhere in this repo.
+For sectioned hist, this question is now resolved.
 
-Preferred first check:
+What was actually shipped:
 
-- prove that a tiny ARM64 Lambda-side binary using presigned HTTPS + `libcurl`
-  can be built, packaged, invoked, and smoke-tested cleanly
+- ARM64 Docker build using `libcurl`
+- dynamic runtime packaging of the needed `libcurl` dependencies
+- deploy wiring that places those runtime libraries alongside the binary
+- local and deploy-side smoke coverage for the sectioned hist path
 
-If that turns into dependency pain, revisit:
+So raster should not reopen the packaging decision from scratch.
 
-- whether native HTTP is still worth it for the first pass
-- or whether a cheaper batching experiment should come first
+Raster should reuse the same model:
+
+- presigned HTTPS
+- `libcurl`
+- the same deploy/runtime library packaging pattern already proven by sectioned
+  hist
+
+What still remains for raster is narrower:
+
+- verify that `roots2pix_mt` links and runs cleanly with the same runtime libs
+- add a raster-specific local Range-HTTP smoke test
+- add deploy packaging checks for the raster binary if new runtime artifacts are
+  introduced
+
+In other words:
+
+- hist solved the `libcurl` packaging question
+- raster still needs its own binary/runtime validation
+- but the transport/packaging approach itself is no longer speculative
 
 ## Threading Model for Hist
 
-### First native hist version: thread-per-chunk work queue
+### First native hist version: one thread per section
 
-Do **not** start with per-chunk section sharding.
+Do **not** start with:
+
+- one thread pool for load
+- another thread pool for compute
+- queues between them
+
+That is too clever for v1.
 
 Start with:
 
-- one chunk descriptor per work item
-- one shared queue
-- worker threads pop chunk jobs
-- each worker:
-  - downloads one whole chunk
-  - histograms it
-  - writes one in-memory result record
-  - moves to the next chunk
+- one solve-aligned chunk section per worker
+- one worker thread owns that section
+- that same thread:
+  - downloads the section
+  - histograms the section
+  - accumulates a private histogram
 
-This is the simplest useful design and already removes a lot of overhead.
+This is the simplest design that actually attacks the bottleneck.
 
 ### Why this is the right first step
 
-- much simpler than intra-chunk range sharding
-- preserves the existing per-chunk histogram artifact shape
-- makes batching easy
-- good reuse potential for other pipeline steps
-- probably enough to show whether native I/O batching is worth continuing
+- no Step Functions change
+- no per-chunk batching contract change
+- no second coordination layer between I/O and compute
+- low memory pressure
+- directly aligned with the AWS benchmark evidence
 
-### Second native hist version: section sharding inside one chunk
+### Initial thread-count policy
 
-If chunk objects are individually large enough that one chunk is still a
-bottleneck, then add a second layer:
+Support explicit thread counts:
 
-- split one chunk into solve-aligned byte ranges
-- assign those ranges to multiple threads
-- each thread downloads its own HTTP range
-- each thread computes a private histogram for its range
-- reduce the per-thread histograms at the end
+- `1`
+- `2`
+- `4`
+- `6`
 
-This is more complex and should be a v2 optimization, not the first pass.
+Historical first default:
 
-## Solve-Aligned Chunk Sectioning
+- `2`
+
+Current guidance:
+
+- keep section thread count user-selectable
+- benchmark `1`, `2`, `4`, `6` on real renders
+- do not treat the older multi-chunk benchmark-Lambda `2 is best` result as the
+  settled sectioned-hist default
+
+## Solve-Aligned Sectioning
 
 For a given degree:
 
@@ -344,80 +593,97 @@ That guarantees:
 - no partial solve decoding
 - no cross-thread record overlap
 
-So the user’s idea is valid, but it should be treated as:
+So for a `1GB` chunk:
 
-- a second-phase optimization for very large chunks
+- compute total solves from `Content-Length`
+- split by solve count, not arbitrary bytes
+- assign contiguous solve ranges to threads
 
-not the very first native batching pass.
+## Memory Model
 
-## Batch Shape
+This plan is intentionally conservative.
 
-### Important point
+The goal is **not**:
 
-The goal is not to load the entire batch into memory before doing anything.
+- load the entire chunk into one giant shared buffer first
 
 The goal is:
 
-- bounded in-memory concurrency
-- download + compute overlap
+- each thread owns one section buffer
+- each thread downloads only its own section
+- each thread computes directly from that section buffer
 
-### Batch descriptor
+Important clarification:
 
-Each hist Lambda should receive a batch like:
+- `section_bytes ~= chunk_bytes / threads`
+- total resident section input across all workers is therefore roughly:
+  - `threads * section_bytes ~= chunk_bytes`
 
-- `batch_id`
-- `chunks[]`
-  - `chunk_idx`
-  - `bin_key`
-  - `byte_size`
-  - `hist_out_key`
+So resident input memory scales mainly with total chunk size, not linearly with
+thread count.
 
-### In-memory execution model
+So memory stays roughly:
 
-Within one invocation:
+- `chunk_bytes`
+- plus small per-thread HTTP/read buffers
+- plus fixed process overhead
+- plus small histogram scratch
 
-- maintain a bounded number of in-flight chunk downloads
-- as soon as one chunk is fully available to a worker, histogram it
-- upload results after the native phase completes
+That is a better fit for Lambda than:
 
-### Memory budgeting
+- whole-chunk duplicate buffers
+- multi-chunk in-flight buffering
 
-The safe limit should be computed from:
+### Initial hard guard
 
-- Lambda memory
-- fixed Python/native overhead
-- per-chunk resident bytes
-- thread-local scratch
-- safety margin
+For the first native sectioned implementation, make the binary or handler reject
+chunk sizes above a conservative budget instead of trying to soldier on.
 
-For the first pass, keep it simple:
+Recommended initial guard:
 
-- process chunks one at a time per worker
-- bounded worker count
-- no attempt to hold dozens of full chunks in RAM simultaneously
+- `max_chunk_bytes <= 0.5 * lambda_memory_bytes`
 
-That means memory stays roughly:
+This is intentionally conservative.
 
-- `threads * chunk_bytes`
-- plus fixed overhead
+It leaves room for:
 
-not:
+- Python runtime
+- native process overhead
+- `libcurl` / TLS buffers
+- per-thread section buffers
+- root-transform scratch
+- output JSON / bookkeeping
 
-- `batch_count * chunk_bytes`
+Example:
 
-### Practical rule
+- `10240 MB` Lambda
+- initial supported chunk size limit: about `5 GB`
 
-Use a budget like:
+That is already far above the current benchmarked chunk sizes, which were on
+the order of:
 
-- `max_resident_chunk_bytes <= 35% to 45% of Lambda memory`
+- `~61 MB`
+- `~27 MB`
+- `~134 MB`
 
-and derive:
+So the first version has ample headroom while still having a real safety stop.
 
-- worker count
-- in-flight chunk count
-- max batch size
+### Thread-count implication
 
-from that.
+For this design, thread count still matters for:
+
+- HTTP connection pressure
+- per-thread temporary buffers
+- total scratch
+
+but it does **not** multiply the full input buffer size.
+
+That is one more reason the live thread-count sweep should remain:
+
+- `1`
+- `2`
+- `4`
+- `6`
 
 ## Workflow / Step Functions Plan
 
@@ -425,149 +691,95 @@ from that.
 
 - `ColorSolveScoreHistMap` iterates `chunk_items`
 - one item per chunk
+- one `solve_proximity` Lambda invocation per chunk
 
-### New
+### Keep this
 
-Change the plan to emit:
+Do **not** change the render workflow contract for the first pass.
 
-- `hist_chunk_batches`
+That means:
 
-Each batch contains:
+- `ColorSolveScoreHistMap` stays chunk-based
+- merge stays exactly the same
+- status/progress semantics stay the same
 
-- a small list of chunk descriptors
+Only the internals of the hist Lambda change.
 
-Then `ColorSolveScoreHistMap` iterates batches, not chunks.
+## Handler Shape
 
-Each batch Lambda:
-
-- downloads/handles multiple chunks
-- produces multiple histogram JSON artifacts
-
-This keeps:
-
-- the merge contract the same
-- one histogram artifact per original chunk
-
-while reducing:
-
-- number of Lambda invocations
-- number of Step Functions transitions
-
-## Cheap Staging Experiment Before Native HTTP
-
-Before committing to native HTTP, there is a cheaper test that isolates the
-main hypothesis:
-
-- does batching multiple chunks into one Lambda invocation help materially on
-  its own?
-
-### Stage 0 experiment
-
-Implement a temporary batched hist path that still uses the current Python
-download model:
-
-- one hist Lambda invocation receives `N` chunks
-- Python processes them sequentially in one invocation
-- for each chunk:
-  - download to tmpfile
-  - run the existing one-chunk binary
-  - collect/upload that chunk histogram
-
-This experiment is intentionally boring.
-
-It does **not** try to fix Python hot-path overhead completely.
-
-It only answers:
-
-- how much of the current slowdown comes from
-  - per-invocation startup
-  - per-invocation setup
-  - repeated clip fetch / process launch / Step Functions overhead
-
-### Why this stage matters
-
-If this stage already gives a meaningful win, then:
-
-- the batching hypothesis is real
-- native HTTP is justified as the next step
-
-If this stage gives little or no win, then:
-
-- the main bottleneck is probably not invocation count alone
-- and native HTTP may not be worth the added packaging complexity
-
-### Success threshold for Stage 0
-
-A rough threshold:
-
-- if Python-batched sequential hist cuts wall time enough to be clearly visible
-  on the same render, proceed to native HTTP
-- if it barely moves, stop and profile before adding `libcurl`
-
-## Handler shape
-
-Add a dedicated batched hist handler path inside
+Add a dedicated native sectioned hist path inside
 [lambda/handler_solve_proximity.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_solve_proximity.py)
-or split it into a new handler if that keeps the code cleaner.
+or split it into a sibling handler if that keeps the code cleaner.
 
 Preferred first shape:
 
 - keep the same handler
-- add a new phase such as:
-  - `hist_batch`
+- add a new hist input/engine mode for native sectioned download
 
 The handler would:
 
 1. load the clip artifact once
-2. presign all chunk keys in the batch
-3. invoke one native binary for the whole batch
-4. upload the resulting per-chunk hist JSONs
-5. report batched perf
+2. presign the chunk object
+3. invoke one native binary for that one chunk
+4. receive one histogram JSON result
+5. upload the per-chunk histogram artifact
+6. report detailed perf including thread count
 
-## Native hist binary shape
+Python should **not**:
+
+- download the chunk
+- write `/tmp` input
+- split chunk sections itself
+
+## Native Hist Binary Shape
 
 Recommended first step:
 
-- add a new binary instead of overloading the current CLI too much
+- add a dedicated native binary instead of overloading the current CLI too much
 
 Suggested file:
 
-- `lambda/solve_proximity_hist_batch.c`
+- `lambda/solve_proximity_hist_sectioned.c`
 
 Reason:
 
-- it keeps the current tested one-chunk CLI stable
-- avoids turning `solve_proximity_stats.c` into an awkward multi-mode transport tool
-- makes experiment rollback easy
+- keeps the current tested one-chunk CLI stable
+- makes rollback easy
+- lets the new binary focus on:
+  - presigned URL input
+  - range GET
+  - section partitioning
+  - histogram reduction
 
-### Native batch input
+### Native input
 
-Pass one small JSON manifest path or JSON string describing:
+Pass:
 
 - metric
 - clip bounds
 - omega settings
 - degree
-- threads
-- chunk descriptors:
-  - `chunk_idx`
-  - `url`
-  - `size`
+- thread count
+- chunk size
+- presigned chunk URL
+- optional root transforms path
 
-### Native batch output
+### Native output
 
 Emit one JSON summary to stdout containing:
 
 - `threads`
-- `chunks_processed`
 - `bytes_downloaded`
 - `download_ms`
 - `compute_ms`
-- per-chunk histogram payloads in memory-friendly compact form
+- `n_solves`
+- `hist`
 
-The Python handler then uploads those per-chunk hist JSON objects to S3.
+Optionally include:
 
-## Native HTTP implementation
+- per-thread section stats
+
+## Native HTTP Implementation
 
 ### First recommendation
 
@@ -576,7 +788,6 @@ Use an HTTP client that supports:
 - regular GET
 - range GET
 - connection reuse
-- concurrent transfers
 
 Examples:
 
@@ -586,35 +797,37 @@ Why:
 
 - mature
 - straightforward for presigned HTTPS
-- supports the exact concurrent range/read patterns we care about
+- supports exactly the concurrent range/read pattern we care about
 
 ### First version behavior
 
 Do not overreach.
 
-For v1 native hist batching:
+For v1 native sectioned hist:
 
-- one whole-object GET per chunk
-- one chunk owned by one worker at a time
-- connection reuse across the batch
+- one chunk object
+- one presigned URL
+- `N` range GETs
+- `N` worker threads
+- one local histogram per thread
+- one final reduce
 
-Only add range GET section sharding after that baseline is measured.
+No streaming-for-huge-chunks logic yet.
+
+If streaming is needed later, add it as a follow-on optimization.
 
 ## How This Reuses for Other Stages
 
-This is the most important systems payoff.
-
-If native presigned-URL I/O works for hist, the same pattern can be reused for:
+If native presigned-URL range I/O works for hist, the same pattern can later be
+reused for:
 
 - raster chunk input
-- palette chunk input
-- maybe finalize input reads
+- other read-heavy chunked phases
 
-So hist is a useful proving ground for:
+So hist remains a useful proving ground for:
 
 - native HTTP in Lambda
-- batched work per invocation
-- shared thread pools
+- in-process section parallelism
 - measured download/compute overlap
 
 ## Logging Requirements
@@ -623,877 +836,445 @@ This experiment must report enough detail to be credible.
 
 ### Hist progress logs
 
-For batched hist:
+For sectioned single-chunk hist:
 
 - `threads=<N>`
-- `batch_chunks=<K>`
 - `bytes=<...>`
-- `input=native_http_batch`
+- `input=native_http_sectioned`
+- `sections=<N>`
 
 Example:
 
 ```text
-Solve score: hist 24/125 batches · wall=18.6s aggregate=download 41.2s + compute 33.7s · threads=8 · batch_chunks=4 · input=native_http_batch
+Solve score: hist 24/500 · wall=18.6s aggregate=download 41.2s + compute 33.7s · threads=2 · sections=2 · input=native_http_sectioned
 ```
 
 ### Final hist perf fields
 
-Per batch result data should include:
+Per chunk result data should include:
 
 - `threads`
-- `chunks_processed`
+- `sections`
 - `bytes_downloaded`
 - `download_ms`
 - `compute_ms`
-- `upload_ms`
-- `input_mode=native_http_batch`
+- `input_mode=native_http_sectioned`
 
 Optional but strongly recommended:
 
 - `download_mb_per_s`
-- `avg_chunk_download_ms`
-- `avg_chunk_compute_ms`
+- `avg_section_download_ms`
+- `avg_section_compute_ms`
 
-## Benchmark Plan
+## Hist, Raster, And Merge Outcome; Finalize Next
 
-Benchmark these in order:
+The solve-score and raster experiments have now answered the important question.
 
-1. current baseline
-   - one chunk per Lambda
-   - Python download
-   - tmpfile input
+Done:
 
-2. current stdin experiment
-   - one chunk per Lambda
-   - Python download
-   - stdin input
+1. `tmpfile` baseline
+2. `stdin` A/B
+3. AWS-side benchmark Lambda
+4. shipped native sectioned hist path
+5. live render tuning on `2`, `4`, `6`
+6. shipped native sectioned raster path
+7. live render validation of sectioned raster
+8. shipped concurrent solve-score merge fan-in
 
-3. native hist batch v1
-   - multiple chunks per Lambda
-   - native whole-object GET
-   - one chunk per worker at a time
+Conclusion:
 
-4. native hist batch v2, only if needed
-   - intra-chunk range sharding
+- keep sectioned hist
+- keep `tmpfile` only as the fallback/baseline
+- keep section thread count selectable
+- keep sectioned raster
+- keep raster `tmpfile` as the fallback/baseline
+- treat `finalize` as the next implementation target
 
 ## Success Criteria
 
-The experiment is worth continuing if native hist batching gives:
+For the hist work, the experiment is already worth continuing because it gave:
 
 - clear wall-time reduction on the same render
-- lower total chunk overhead per solve-score hist phase
+- a reusable pattern for native sectioned input
 - enough gain to justify reusing the model in raster
 
-Reasonable target:
+The current live numbers indicate:
 
-- at least `2x` faster hist wall time
+- merge has already fallen enough that it is no longer the first thing to fix
+- finalize is now about `~100s` wall and is the largest single remaining stage
 
-If it cannot beat the current tmpfile baseline convincingly, stop there.
+For finalize, the next target should be:
+
+- clear reduction in finalize wall time on the same render family
+- lower finalize read time first
+- no change to the current tile/raw output contract in the first pass
+- no change to the current `1 finalize Lambda per tile` workflow shape in the
+  first pass
+
+## Chunk Count Is A Design Choice
+
+The current `500`-chunk render shape is an implementation choice, not a law of
+the problem.
+
+Today we do:
+
+- solve emits many chunk objects
+- hist runs per chunk
+- merge combines per-chunk hist artifacts into one global cut artifact
+- raster runs per chunk
+- finalize reads all per-chunk raster artifacts and assembles the final image
+
+That shape is good for:
+
+- retry isolation
+- simple Step Functions map fan-out
+- bounded per-Lambda memory
+
+But it also creates the two remaining fan-in bottlenecks:
+
+- solve-score `merge`
+- render `finalize`
+
+### Larger structural option
+
+A future redesign could intentionally reduce chunk count, or even collapse to
+one very large solve object after solve, then raster it with sectioned streaming
+reads.
+
+That would mean:
+
+- solve emits one large object, or a small number of large objects
+- raster threads range-GET solve-aligned sections from that object
+- solve data is streamed section by section, not fully materialized in memory
+- shared image/tile state is kept in memory
+- raster emits final image artifacts directly
+
+If that path works, it could remove most or all of:
+
+- per-chunk raster artifact fan-in
+- finalize as a separate stage
+
+### What "no merge / no finalize" really means
+
+For non-solve-score color modes:
+
+- yes, in principle a direct streamed raster path could eliminate the current
+  finalize stage entirely
+- raster would write the final image/tile outputs directly instead of emitting
+  per-chunk intermediates
+
+For `solve_score` color mode:
+
+- finalize could still disappear under that model
+- but merge only disappears if global cuts are no longer produced from
+  per-chunk hist artifacts
+
+That requires one of:
+
+1. accept lores-only cuts and skip full hist/merge
+2. compute the full global histogram inside the same monolithic or few-object
+   streamed worker path, then derive cuts there
+3. do a two-pass streamed design over the large solve object:
+   - pass 1: histogram / cut derivation
+   - pass 2: raster with final cuts
+
+So "one huge streamed chunk" can remove finalize cleanly, but it only removes
+solve-score merge if the cut-derivation architecture also changes.
+
+### Why this is attractive
+
+- the solve data can be much larger than memory, while the final image/tile
+  state still fits in memory
+- native sectioned range GET already proved useful for hist and raster
+- it attacks the current fan-in stages at the source instead of optimizing
+  around them
+
+### Why this is not the immediate next step
+
+- one huge-object raster worker has larger timeout and retry blast radius
+- image/tile state must stay bounded and predictable
+- direct-final-output raster must replace today's finalize contract cleanly
+- solve-score cut derivation must be redesigned if merge is to disappear
+
+So the current plan remains:
+
+1. optimize finalize now
+2. then reassess whether finalize is good enough
+3. keep the "few large streamed objects" architecture as the next deeper
+   redesign if merge/finalize still dominate
+
+## Finalize: Sharpened Optimization Path
+
+`finalize` is not another sectioned-read problem.
+
+Current [lambda/handler_finalize.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_finalize.py)
+does this for each tile:
+
+- loop over all chunk-local `.pix` files in chunk order
+- `get_object` each one sequentially
+- stream them into `pixassemble`
+- then loop over all `.pbx` files sequentially
+- stream them into `pixbinassemble`
+- upload the final tile raw and final dense pixel-bin tile
+
+So finalize is a combined problem:
+
+- many small-object S3 GET latency
+- many small-object S3 PUT latency
+- object-count fan-in/fan-out
+
+### Important correctness constraint
+
+[lambda/pixassemble.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/pixassemble.c)
+is explicitly:
+
+- "last wins"
+
+That means finalize cannot simply fetch chunk files concurrently and write them
+to `pixassemble` stdin in arbitrary completion order.
+
+If chunk ordering changes, winner semantics can change.
+
+So the first finalize optimization must preserve logical chunk order even if the
+downloads happen in parallel.
+
+### First finalize attack
+
+Keep the current contract:
+
+- one finalize Lambda per tile
+- same tile outputs
+- same `pixassemble` / `pixbinassemble` tools
+
+But change the internal read path to:
+
+1. dedicated finalize S3 client with higher `max_pool_connections`
+2. bounded worker-pool fetch for per-chunk `.pix` objects
+3. bounded worker-pool fetch for per-chunk `.pbx` objects
+4. preserve chunk order when feeding bytes into the assembler stdin
+
+Recommended implementation shape:
+
+- submit chunk fetches ahead of time with a bounded prefetch window
+- store completed chunk bodies in a small in-memory reorder buffer keyed by
+  `chunk_idx`
+- only write to `pixassemble` / `pixbinassemble` when the next required chunk in
+  order is available
+
+This gives:
+
+- overlap of S3 request latency
+- preserved "last wins" semantics
+- no first-pass workflow change
+
+UI requirement for this phase:
+
+- expose `Finalize workers` as a tunable worker-count control in the
+  `Generate-MT` popup
+- treat it like `Merge workers`, not like hist/raster thread count
+- do not add finalize-specific input-mode controls in the first pass
+
+### What not to do first
+
+Do not start by:
+
+- rewriting finalize in native C
+- changing tile output contracts
+- changing chunk-local artifact layout
+- writing inputs to `/tmp` just to sort them again
+
+Those may become useful later, but they are not the first attack.
+
+### First-pass measurement goal
+
+For the current render family, first-pass finalize optimization should try to
+reduce:
+
+- `read_ms` first
+
+without regressing:
+
+- `assemble_ms`
+- `upload_ms`
+
+### Likely later follow-ons
+
+If the order-preserving prefetch attack is not enough, the next finalize
+follow-ons are structural:
+
+- reduce the number of intermediate raster objects emitted per tile
+- group chunk-local raster outputs into fewer larger finalize inputs
+- or bypass finalize entirely under the deeper "few large streamed objects"
+  redesign
 
 ## Implementation Order
 
-1. update the render plan to support hist batches
-2. add a cheap Stage 0 batched hist path:
-   - multiple chunks per Lambda
-   - current Python download model
-   - current one-chunk native binary reused sequentially
-3. add detailed logging for Stage 0 and benchmark it against the current
-   tmpfile baseline
-4. if Stage 0 shows a real win, choose and validate the native HTTP packaging
-   model
-5. add the native batch hist binary
-6. add presign plumbing in the handler
-7. replace Stage 0 with native batched hist
-8. benchmark against the current tmpfile baseline
-9. only then decide whether to extend the native I/O model to raster
+1. keep the current sectioned hist path stable
+2. keep the current sectioned raster path stable
+3. optimize `finalize`
+4. keep `1 finalize Lambda -> 1 tile`
+5. add bounded concurrent finalize input prefetch with strict chunk-order replay
+   into `pixassemble` / `pixbinassemble`
+6. tune worker count together with S3 client `max_pool_connections`
+7. benchmark finalize read wall time before/after ordered fan-in
+8. only then decide whether finalize needs a larger structural redesign
 
-## Immediate A/B: solve-score hist input mode
+## Appendix: Completed stdin A/B
 
-Before broader architecture changes, there is one small, self-contained
-optimization worth measuring directly:
+The old `tmpfile` vs `stdin` experiment is no longer part of the main plan.
 
-- remove the `/tmp` write/read round-trip from the solve-score `hist` phase
+Outcome:
 
-Today the path is:
-
-1. Python downloads a chunk from S3 to `/tmp/solve_prox_input.bin`
-2. Python launches `solve_proximity_stats /tmp/solve_prox_input.bin ...`
-3. the C binary opens that file and reads the whole chunk back into RAM
-4. pthread workers compute on the in-memory buffer
-
-That means:
-
-- one S3 download per hist Lambda
-- one local disk write per hist Lambda
-- one local disk read per hist Lambda
-
-The threads themselves do not download anything.
-
-### Goal
-
-Add an explicit benchmark toggle for solve-score hist input mode:
-
-- `tmp file`
-- `stdin`
-
-The user must be able to run both modes from the UI and compare logs.
-
-### Why make it user-selectable
-
-This is a performance experiment.
-
-Do not silently switch the codepath.
-
-We want:
-
-- same compute job
-- same render settings
-- same thread count
-- one changed variable: hist input mode
-
-That means the mode must be:
-
-- visible in the popup
-- visible in progress logs
-- visible in final perf summaries
-
-## UI plan for hist input mode
-
-### Generate
-
-`Render -> Color -> Generate` should only open a popup when:
-
-- `color_mode === solve_score`
-
-For all other color modes:
-
-- `Generate` should keep its current direct behavior
-
-When `color_mode === solve_score`, `Generate` opens a small popup with:
-
-- `Histogram input`
-  - `tmp file`
-  - `stdin`
-- short summary of current baseline thread usage:
-  - `solve score threads=1`
-  - `raster threads=1`
-
-This popup is a baseline A/B chooser, not a full MT control surface.
-
-### Generate-MT
-
-Keep the existing `Generate-MT` popup, but add one more control:
-
-- `Histogram input`
-  - `tmp file`
-  - `stdin`
-
-So the MT popup becomes:
-
-- `Solve score threads`
-- `Raster threads`
-- `Histogram input`
-
-### Logging
-
-All solve-score hist progress logs must include:
-
-- `threads=<N>`
-- `input=tmpfile` or `input=stdin`
-
-Examples:
-
-- `Solve score: hist 324/500 · wall=111.9s aggregate=dl 1001.0s + compute 19.3s · threads=7 · input=tmpfile`
-- `Solve score: hist 324/500 · wall=104.2s aggregate=dl 812.4s + compute 19.0s · threads=7 · input=stdin`
-
-Final phase/perf summaries should also include the input mode.
-
-## Backend parameter plan
-
-Add a new render parameter:
-
-- `solve_score_hist_input_mode`
-
-Allowed values:
-
-- `tmpfile`
-- `stdin`
-
-Default:
-
-- `tmpfile`
+- `stdin` did not help
+- `stdin` was slightly slower than `tmpfile`
+- it did not provide the read/compute overlap needed to move wall time
 
 Reason:
 
-- baseline remains the current shipped behavior
-- experiment is explicit
+- the implementation was still full-buffered
+- the binary still consumed the full chunk before histogramming
+- so the real bottleneck remained chunk download
 
-### Parameter plumbing
+Historical note only:
 
-Thread this parameter through:
-
-- `index.html`
-- `lambda/handler_render_plan.py`
-- `stepfunctions/render_workflow.asl.json.template`
-- `lambda/handler_solve_proximity.py`
-
-It only matters for solve-score phases, especially `hist`.
-
-It may be passed through `clip` and `summary` too for consistency, but
-the primary benchmark target is `hist`.
-
-## Native/C implementation plan
-
-### Current limitation
-
-[lambda/solve_proximity_stats.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_proximity_stats.c)
-currently requires a seekable file path:
-
-- reads `argv[1]`
-- `fopen()`
-- `fseek()/ftell()`
-- `fread()`
-
-So a pipe cannot work with the current code.
-
-### New input contract
-
-Teach the binary to accept:
-
-- normal file path
-- `-` meaning `stdin`
-- optional `--input_size=BYTES`
-
-### `stdin` mode behavior
-
-Do not implement stdin mode as an unbounded `realloc` growth loop unless
-there is no size information.
-
-Preferred behavior:
-
-1. the handler gets the S3 object `Content-Length`
-2. the handler passes `--input_size=BYTES`
-3. when `argv[1] == "-"`, the binary:
-   - `malloc()`s exactly once
-   - reads stdin into that preallocated buffer
-   - validates that the expected byte count was fully read
-
-Fallback behavior:
-
-- if `--input_size` is absent, use a growable buffer path
-
-So the primary path is:
-
-1. preallocate from `--input_size`
-2. read stdin fully into RAM
-3. validate total byte count
-4. compute `nSolves` from `degree`
-5. run the existing threaded compute on that buffer
-
-Important:
-
-- keep the file-path mode unchanged
-- do not fork a second binary
-- keep one codepath after the buffer is in memory
-
-### Why this is safe
-
-This does not change:
-
-- metric math
-- histogram math
-- thread partitioning
-- JSON output schema
-
-It only changes how the input chunk gets into RAM.
-
-## Python/Lambda implementation plan
-
-### `tmpfile` mode
-
-Keep the current behavior:
-
-1. download S3 object to `/tmp/solve_prox_input.bin`
-2. launch the binary with that path
-
-### `stdin` mode
-
-In [lambda/handler_solve_proximity.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_solve_proximity.py):
-
-1. call `s3.get_object(...)`
-2. read `Content-Length`
-2. start `subprocess.Popen(...)` with:
-   - `stdin=subprocess.PIPE`
-   - `stdout=subprocess.PIPE`
-   - `stderr=subprocess.PIPE`
-3. launch the binary as:
-   - `solve_proximity_stats - --input_size=<Content-Length> --mode=hist ...`
-4. stream `Body.iter_chunks(...)` into child stdin
-5. close stdin
-6. collect stdout/stderr
-
-This removes:
-
-- the `/tmp` input file write
-- the C-side reopen of that file
-- the C-side reread from disk
-
-It does **not** remove:
-
-- one S3 download per hist Lambda
-- the shared clip JSON fetch
-
-## Expected outcome
-
-This is an incremental optimization, not a full architectural fix.
-
-It should reduce:
-
-- per-worker local I/O
-- per-worker `dl_ms`
-- maybe phase wall time
-
-It will not solve the bigger issue that:
-
-- hist is still one Lambda per chunk
-- and therefore still strongly S3/object-overhead bound
-
-So success criteria are modest:
-
-- measurable reduction in aggregate hist `dl`
-- measurable reduction in hist wall time on the same job/settings
-- no correctness drift
-
-## Tests
-
-### Native / unit
-
-Add tests for `solve_proximity_stats`:
-
-- file-path input still works
-- stdin input produces identical JSON output for the same chunk
-- both `clip` and `hist` keep existing behavior
-
-### Lambda handler
-
-Add handler tests for:
-
-- `solve_score_hist_input_mode=tmpfile`
-- `solve_score_hist_input_mode=stdin`
-- invalid mode rejected
-
-The handler tests should assert:
-
-- tmpfile mode uses `_download(...)`
-- stdin mode uses child stdin streaming
-- returned progress/result payload includes the input mode
-
-### Frontend
-
-Extend [tests/test_frontend_js.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_frontend_js.sh):
-
-- `Generate` opens popup only in solve-score mode
-- popup includes hist input selector
-- `Generate-MT` popup includes hist input selector
+- keep the existing `stdin` support as a completed experiment
+- do not invest further in that path for the main solve-score MT work
 - orchestrator payload includes `solve_score_hist_input_mode`
 - log lines include `input=...`
 
-## Implementation order
+## Current Runtime Architecture
 
-1. add binary stdin support
-2. add handler support and progress metadata
-3. add popup control in `Generate-MT`
-4. add conditional popup for `Generate` in solve-score mode
-5. add logging
-6. add regression tests
-7. benchmark `tmpfile` vs `stdin`
+### Hist
 
-## Decision rule
+The shipped solve-score `hist` path is now:
 
-After benchmarking:
+- one chunk per Lambda
+- presigned URL handed to a native sectioned binary
+- solve-aligned sections
+- one thread owns one section end-to-end
+- one per-chunk histogram artifact emitted
 
-- if `stdin` gives a clear win, make it the default
-- but only after the benchmark path has been validated in the UI and logs
+The older `tmpfile` path remains only as:
 
-Until then:
+- fallback
+- baseline for comparison
 
-- keep `tmpfile` as the default baseline
-- keep the input mode explicit
+### Raster
 
-## Where the Time Actually Goes
+The shipped `Generate-MT` raster path is now:
 
-For `Render -> Color -> Generate` in `solve_score` mode there are two expensive areas:
+- one chunk per Lambda
+- native `roots2pix_mt`
+- selectable raster input:
+  - `tmpfile`
+  - `sectioned`
+- one thread owns one solve-aligned section end-to-end
+- shared tile/image state in memory
+- atomic pixel claim semantics
+- one final chunk raster output set per Lambda
 
-1. solve-score prepass
-   - `clip`
-   - `hist`
-   - `merge`
+The important point is:
 
-2. raster
-   - per-root projection
-   - viewport clipping
-   - pixel claim
-   - color/bin emission
+- raster sectioning is now real and shipped
+- future work should optimize around this path, not the discarded subprocess
+  fan-out version
 
-The subprocess raster version only partially attacked (2), and attacked it badly.
+### Merge
 
-The proper next version must handle:
+`merge` remains:
 
-- true threading inside [lambda/solve_proximity_stats.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_proximity_stats.c)
-- true threading inside a new
-  [lambda/roots2pix_mt.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/roots2pix_mt.c)
+- one Lambda
+- many small histogram artifact downloads
+- almost no compute
 
-## Revised Architecture
+So merge is:
 
-## 1. Solve-score prepass: native threads
+- not a native sectioned-read problem
+- not a new C-binary problem
+- a Python S3 fan-in problem
 
-Do not create subprocess workers for solve-score phases.
+### Finalize
 
-Instead:
+`finalize` remains:
 
-- extend [lambda/solve_proximity_stats.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_proximity_stats.c)
-  with `--threads=N`
-- keep one process
-- split solve ranges across pthread workers
-- use shared input buffer
-- use per-thread accumulators / output slices
-- reduce once at the end
+- many small raster artifact downloads
+- many small output uploads
+- significant object-count fan-in/fan-out
 
-### Clip phase
+So finalize is currently the largest remaining structural bottleneck, but it is
+the step after merge, not before it.
 
-For `clip`:
+## Current UI / Logging Expectations
 
-1. download the lores `.bin` once
-2. split solves into contiguous ranges
-3. each thread computes solve scores for its range into a shared `double scores[n]`
-4. after join, one thread computes:
-   - min
-   - max
-   - quantiles
-   - clip range
+`Generate`:
 
-This is the cleanest way to get exact clip statistics without per-thread approximation.
+- remains the single-render baseline
+- in `solve_score` mode, the hist input selector is still useful as an explicit
+  A/B between:
+  - `tmpfile`
+  - `sectioned`
 
-### Hist phase
+`Generate-MT`:
 
-For `hist`:
+- remains the threaded path
+- should keep explicit selectors while benchmarking
+- popup layout should stay table-like and compact:
+  - columns: `Threads`, `Input`, `Workers`
+  - rows: `Hist`, `Raster`, `Merge`
+  - add `Finalize` as a fourth row when finalize worker tuning is exposed
+- stage-specific controls:
+  - `Hist`: threads + input
+  - `Raster`: threads + input
+  - `Merge`: workers
+  - `Finalize`: workers
+- cells that do not apply to a stage should render as disabled/placeholder cells,
+  not as extra free-form controls
 
-1. download one chunk `.bin` once
-2. split solves into contiguous ranges
-3. each thread:
-   - computes solve scores for its range
-   - applies clip normalization / omega
-   - increments a private histogram
-4. reduce the private histograms into the final histogram
+Logs should continue to make the active path obvious:
 
-### Merge phase
+- hist logs include `threads=` and `input=`
+- raster logs include `threads=` and `input=`
+- merge logs should include `workers=`
+- finalize logs should include `workers=` once finalize fan-in is tunable
+- completion logs include elapsed wall time
 
-`merge` is not the big CPU problem.
+## Relevant Files
 
-Leave it single-threaded initially unless profiling says otherwise.
+Core implementation files:
 
-It should still report:
-
-- `threads=1`
-
-for consistency.
-
-### Implementation note
-
-Do not create a second `solve_proximity_stats_mt` binary unless needed.
-
-Preferred shape:
-
-- one binary
-- one codepath
-- `--threads=1` for baseline
-- `--threads=N` for MT
-
-That keeps behavior drift smaller.
-
-## 2. Raster: true native threads
-
-The subprocess fan-out in
-[lambda/handler_raster_mt.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_raster_mt.py)
-must be removed or fully replaced.
-
-The new path is:
-
-- one chunk download
-- one process
-- true native threads inside `roots2pix_mt`
-- one set of final `.pix` / `.pbx` outputs
-
-### New binary
-
-Add:
-
-- [lambda/roots2pix_mt.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/roots2pix_mt.c)
-
-Also extract shared logic from
-[lambda/roots2pix.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/roots2pix.c)
-into a common header, for example:
-
-- `lambda/roots2pix_core.h`
-
-so single-thread and MT do not diverge unnecessarily.
-
-### Required execution model
-
-For one chunk:
-
-1. read the chunk `.bin` once
-2. read saved-palette bins once if needed
-3. split solve indices across threads
-4. each thread processes its solve range in place
-5. threads write into shared tile state
-6. after join, one thread serializes the final `.pix` / `.pbx` files
-
-### Shared raster state
-
-Use shared per-tile state in memory:
-
-- occupancy bitset as `uint64_t[]`
-- packed RGB buffer per pixel
-- optional pixel-bin buffer per pixel when `emit_pixel_bins` is enabled
-
-Suggested shape:
-
-- `tile_occ_words`
-- `tile_rgb`
-- `tile_bin`
-
-### Solve-score thread-safety prerequisite
-
-For `color_mode=solve_score`, raster workers will call the solve-score
-metric path concurrently.
-
-That requires [lambda/solve_score.h](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_score.h)
-to remain thread-safe under concurrent calls.
-
-The current expectation is:
-
-- no shared mutable global scratch state
-- only per-call stack buffers or local heap allocations
-
-This should be treated as an explicit implementation check, not an
-implicit assumption.
-
-### Pixel claim semantics
-
-Speed matters more than repeatability.
-
-We do **not** need exact parity with single-thread winner order.
-
-But we **do** need:
-
-- no undefined behavior
-- no torn writes
-- the final color must be the color of a real root that hit that pixel
-
-So:
-
-- do not use racy plain writes
-- do use atomic bit claims on the occupancy word
-
-Recommended rule:
-
-1. compute pixel index
-2. atomically `fetch_or` the bit
-3. if this thread set the bit first:
-   - write packed RGB
-   - write pixel bin if enabled
-4. otherwise:
-   - skip
-
-That gives:
-
-- one winner per pixel
-- winner is always a real root
-- no per-thread `.pix` streams
-- no merge pass
-
-### Serialization
-
-After all worker threads finish:
-
-- scan the final tile state once
-- emit exactly one `.pix` record per occupied pixel
-- emit exactly one `.pbx` byte per occupied pixel when enabled
-
-This keeps:
-
-- finalize unchanged
-- fast Color RePalette unchanged
-
-## 3. The Lambda path
-
-`Generate-MT` should still use:
-
-- [lambda/handler_raster_mt.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_raster_mt.py)
-
-but that handler must become a thin wrapper over the native MT binary.
-
-It should no longer:
-
-- slice chunk files into worker subfiles
-- create per-worker saved-bin files
-- launch multiple `roots2pix` subprocesses
-- concatenate worker outputs
-
-Instead it should:
-
-1. download input once
-2. invoke `roots2pix_mt`
-3. upload final chunk/tile outputs
-4. report perf
-
-So the handler name can stay, but the implementation must be replaced.
-
-## UI / UX
-
-`Render -> Color` keeps:
-
-- `Generate`
-- `Generate-MT`
-
-`Generate-MT` popup must become more explicit.
-
-### Popup fields
-
-For now it should include:
-
-- `Solve-score threads`
-- `Raster threads`
-
-Defaults:
-
-- if color mode is `solve_score`: both default to the same value
-- otherwise only raster threads matter, but the popup can still show both
-
-If we want a simpler v1 UI, allow:
-
-- one `Threads` field
-
-and use it for both solve-score and raster.
-
-But the backend/logging must still report per-phase thread counts separately.
-
-### Supported modes for native MT
-
-First native MT target set:
-
-- `solve_score`
-- `saved_palette`
-- `constant`
-- `rainbow` with `match=none`
-
-Stay single-thread for now:
-
-- `proximity`
-- `rainbow` + `match=greedy`
-- `rainbow` + `match=hungarian`
-
-## Logging requirements
-
-This is mandatory.
-
-The old logs were not good enough.
-
-### Rule
-
-Every timed phase must report:
-
-- wall seconds
-- summed worker seconds where applicable
-- thread count
-
-### Solve-score phase logs
-
-For:
-
-- `Solve score: clip`
-- `Solve score: hist`
-- `Solve score: merge`
-
-log:
-
-- `threads=<N>`
-
-Examples:
-
-```text
-Solve score: clip 1/1 · wall=3.2s · total=download 0.4s + compute 2.8s · threads=8
-Solve score: hist 24/100 · wall=18.6s · total=download 3.7s + compute 41.9s · threads=8
-Solve score: merge 1/1 · wall=0.9s · total=download 0.2s + compute 0.7s · threads=1
-```
-
-### Raster logs
-
-The current compact acronyms are not good enough.
-
-Keep the new multi-line block and make it authoritative.
-
-Required fields:
-
-- engine
-- threads
-- chunks
-- wall time
-- download time
-- native raster time
-- upload time
-- emitted root hits
-- clipped roots
-- tile files uploaded
-- pixel-bin files uploaded
-
-### Completion logs
-
-All Color-family operations must end with elapsed seconds:
-
-- `Render complete: ... (12.3s)`
-- `Color RePalette complete: ... (2.1s)`
-- `Autolevels complete` still goes through the generic render completion log, so it must include elapsed seconds too
-- `GenerateFromPalette` ends as a normal color render, so it must include elapsed seconds too
-
-## Perf fields
-
-## Raster perf fields
-
-Both raster handlers should report:
-
-- `engine`
-- `threads`
-- `download_us`
-- `native_us`
-- `upload_us`
-- `roots_plotted`
-- `roots_clipped`
-- `tiles_uploaded`
-- `pixel_bin_tiles_uploaded`
-
-Optional deeper fields from the native JSON are strongly recommended:
-
-- `transform_us`
-- `score_us`
-- `project_us`
-- `claim_us`
-- `serialize_us`
-
-Those will matter once `roots2pix_mt` exists, because we will want to know
-whether the time is really in:
-
-- score/bin lookup
-- projection
-- atomic claim
-- serialization
-
-## Solve-score perf fields
-
-For `handler_solve_proximity.py`, each phase result should report:
-
-- `threads`
-- `dl_ms`
-- `compute_ms`
-- `upload_ms` where applicable
-
-This should come from the binary result if possible, otherwise from the handler.
-
-## Concrete file changes
-
-### New files
-
-- [lambda/roots2pix_mt.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/roots2pix_mt.c)
-- `lambda/roots2pix_core.h`
-- [tests/test_roots2pix_mt.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_roots2pix_mt.py)
-
-### Existing files to change
-
-- [lambda/handler_raster_mt.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_raster_mt.py)
-  - replace subprocess fan-out with one native MT invocation
-- [lambda/roots2pix.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/roots2pix.c)
-  - extract shared core
-- [lambda/solve_proximity_stats.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_proximity_stats.c)
-  - add native threading
 - [lambda/handler_solve_proximity.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_solve_proximity.py)
-  - pass thread count through
-  - report threads in result data
+- [lambda/solve_proximity_hist_sectioned.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_proximity_hist_sectioned.c)
+- [lambda/handler_raster_mt.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_raster_mt.py)
+- [lambda/roots2pix_mt.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/roots2pix_mt.c)
 - [lambda/handler_render_plan.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_render_plan.py)
-  - plan fields for solve-score threads and raster threads
 - [stepfunctions/render_workflow.asl.json.template](/Users/nicknassuphis/karpo_hackathon/polypaint/stepfunctions/render_workflow.asl.json.template)
-  - thread fields threaded through the solve-score and raster phases
 - [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html)
-  - `Generate-MT` popup fields
-  - phase logging with thread counts
-  - render completion logs with elapsed seconds
 - [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh)
-  - compile `roots2pix_mt`
-  - keep `-pthread`
-- [docs/testing.md](/Users/nicknassuphis/karpo_hackathon/polypaint/docs/testing.md)
 
-## Lambda sizing
+Key verification files:
 
-Keep a separate MT raster Lambda.
-
-That part of the earlier plan was still right.
-
-But tune it for the native implementation, not the subprocess hack.
-
-Initial guidance:
-
-- `RASTER_MT_MEMORY >= 4096`
-- benchmark `threads=2`, `4`, `6`, `8`
-
-The chosen default should come from actual measurements on the native code, not
-from the previous subprocess version.
-
-## Tests
-
-## New required tests
-
-### Solve-score MT tests
-
-Add tests that verify:
-
-- `--threads=1` and `--threads=N` produce the same clip outputs
-- `--threads=1` and `--threads=N` produce the same hist outputs
-- per-phase result data includes `threads`
-
-### Raster MT tests
-
-Add tests that verify:
-
-- `roots2pix_mt` produces valid `.pix` output
-- `roots2pix_mt` produces valid `.pbx` output when enabled
-- `threads=1` and `threads=N` both work
-- emitted colors always come from a real root hit
-- no duplicate final `.pix` entries for one pixel in one chunk/tile output
-
-Do **not** require exact winner parity with single-thread output.
-
-### Frontend tests
-
-Extend the JS harness so it asserts:
-
-- `Generate-MT` popup exposes thread settings
-- solve-score phase logs include `threads=`
-- raster perf block includes `threads=`
-- all Color-family completion logs include elapsed seconds
+- [tests/test_solve_proximity_hist_sectioned.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_solve_proximity_hist_sectioned.py)
+- [tests/test_roots2pix_mt_sectioned.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_roots2pix_mt_sectioned.py)
+- [tests/test_raster_mt.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_raster_mt.py)
+- [tests/test_render_plan.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_render_plan.py)
+- [tests/test_render_workflow_definition.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_render_workflow_definition.py)
+- [tests/test_deploy_packaging.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_deploy_packaging.py)
+- [tests/test_frontend_js.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_frontend_js.sh)
 
 ## Recommendation
 
-Do not spend more time tuning the subprocess version.
+The plan is now:
 
-Treat it as discarded work.
+1. keep the shipped sectioned hist path stable
+2. keep the shipped sectioned raster path stable
+3. keep the shipped concurrent solve-score merge path stable
+4. implement ordered concurrent fan-in for `finalize`
+5. benchmark finalize worker counts together with S3 client
+   `max_pool_connections`
+6. only then decide whether the deeper "few large streamed objects" redesign is
+   justified
 
-The next real implementation should be:
+That sequencing matches both the measured timings and the `s5cmd` lesson:
 
-1. native threads inside `solve_proximity_stats`
-2. native threads inside `roots2pix_mt`
-3. one-process MT raster handler
-4. explicit per-phase thread telemetry
-5. benchmark against the single-thread baseline
-
-That is the first version that has a real chance of making `Generate-MT`
-meaningfully faster.
+- many small objects -> worker-pool concurrency
+- few large objects -> ranged section concurrency

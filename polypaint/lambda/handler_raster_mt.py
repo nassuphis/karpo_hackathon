@@ -17,6 +17,7 @@ from shared import BUCKET, ok_response, parse_body, report_status
 s3 = boto3.client("s3")
 ROOTS2PIX_MT = os.path.join(os.path.dirname(__file__), "roots2pix_mt")
 DEFAULT_THREADS = int(os.environ.get("RASTER_MT_THREADS", "4") or "4")
+VALID_RASTER_INPUT_MODES = {"tmpfile", "sectioned"}
 
 
 def _validate_threads(value):
@@ -37,6 +38,23 @@ def _parse_boolish(value, default=True):
     if isinstance(value, (int, float)):
         return bool(value)
     return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _validate_raster_input_mode(value):
+    mode = str(value or "tmpfile").strip().lower()
+    if mode not in VALID_RASTER_INPUT_MODES:
+        raise RuntimeError(f"raster_input_mode must be one of {', '.join(sorted(VALID_RASTER_INPUT_MODES))}, got {value!r}")
+    return mode
+
+
+def _sectioned_input_size_limit():
+    try:
+        memory_mb = int(os.environ.get("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "0") or 0)
+    except (TypeError, ValueError):
+        memory_mb = 0
+    if memory_mb <= 0:
+        return 0
+    return (memory_mb * 1024 * 1024) // 2
 
 
 def _cleanup_tmp():
@@ -72,7 +90,13 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
         f"--constant_color={params.get('constant_color', 'ffffff')}",
         f"--rotation={params.get('rotation', 0.0)}",
         f"--threads={params['raster_mt_threads']}",
+        f"--input_mode={params.get('raster_input_mode', 'tmpfile')}",
     ]
+    if params.get("raster_input_mode") == "sectioned":
+        cmd.extend([
+            f"--url={params['sectioned_url']}",
+            f"--input_size={params['sectioned_input_size']}",
+        ])
     if params.get("emit_pixel_bins"):
         cmd.append("--pixel_bin_prefix=/tmp/pixbin")
 
@@ -135,10 +159,12 @@ def handler(event, context):
     n_tiles = n_tile_cols * n_tile_rows
     task_id = params.get("task_id", f"raster_{chunk_idx}")
     threads = _validate_threads(params.get("raster_mt_threads", DEFAULT_THREADS))
+    raster_input_mode = _validate_raster_input_mode(params.get("raster_input_mode", "tmpfile"))
 
     perf = {
         "engine": "mt",
         "threads": threads,
+        "input_mode": raster_input_mode,
         "download_us": 0,
         "native_us": 0,
         "upload_us": 0,
@@ -156,13 +182,9 @@ def handler(event, context):
         report_status(job_id, task_id, "started")
         _cleanup_tmp()
 
-        t_dl = time.perf_counter()
-        obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
-        with open(bin_path, "wb") as f:
-            f.write(obj["Body"].read())
-
         params = dict(params)
         params["raster_mt_threads"] = threads
+        params["raster_input_mode"] = raster_input_mode
         params["root_xforms_path"] = None
         rt_chain = params.get("root_transforms", [])
         if rt_chain:
@@ -186,17 +208,45 @@ def handler(event, context):
             ss_obj = s3.get_object(Bucket=BUCKET, Key=ss_bins_key)
             params["solve_score_bins_data"] = json.loads(ss_obj["Body"].read())
 
-        perf["download_us"] = int((time.perf_counter() - t_dl) * 1e6)
+        if raster_input_mode == "sectioned":
+            input_size = int(params.get("bin_size") or 0)
+            if input_size <= 0:
+                head = s3.head_object(Bucket=BUCKET, Key=bin_key)
+                input_size = int(head.get("ContentLength") or 0)
+            if input_size <= 0:
+                raise RuntimeError(f"Failed to determine size for s3://{BUCKET}/{bin_key}")
+            size_limit = _sectioned_input_size_limit()
+            if size_limit > 0 and input_size > size_limit:
+                raise RuntimeError(
+                    f"sectioned raster input too large for current Lambda memory: "
+                    f"{input_size} bytes > safe limit {size_limit} bytes"
+                )
+            params["sectioned_input_size"] = input_size
+            params["sectioned_url"] = s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": BUCKET, "Key": bin_key},
+                ExpiresIn=900,
+            )
+        else:
+            t_dl = time.perf_counter()
+            obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
+            with open(bin_path, "wb") as f:
+                f.write(obj["Body"].read())
+            perf["download_us"] = int((time.perf_counter() - t_dl) * 1e6)
+
         report_status(job_id, task_id, "bin_downloaded")
 
         t_native = time.perf_counter()
         cmd = _build_cmd(params, bin_path, saved_bins_path if os.path.exists(saved_bins_path) else None)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        perf["native_us"] = int((time.perf_counter() - t_native) * 1e6)
+        native_wall_us = int((time.perf_counter() - t_native) * 1e6)
         if result.returncode != 0:
             raise RuntimeError(f"roots2pix_mt failed: {result.stderr.strip()}")
         raster_meta = json.loads(result.stdout)
         perf["threads"] = int(raster_meta.get("threads", threads))
+        perf["input_mode"] = str(raster_meta.get("input_mode", raster_input_mode))
+        perf["download_us"] = int(raster_meta.get("download_us", perf["download_us"]))
+        perf["native_us"] = int(raster_meta.get("native_us", native_wall_us))
         perf["roots_plotted"] = int(raster_meta.get("roots_plotted", 0))
         perf["roots_clipped"] = int(raster_meta.get("roots_clipped", 0))
 
@@ -236,6 +286,7 @@ def handler(event, context):
             "roots_clipped": perf["roots_clipped"],
             "engine": "mt",
             "threads": perf["threads"],
+            "input_mode": perf["input_mode"],
         })
 
     except Exception as e:

@@ -690,6 +690,48 @@
     "kind": "transpiled"
   },
   {
+    "name": "giga_138",
+    "c_symbol": "poly_giga_138_c",
+    "source": "giga.py",
+    "kind": "transpiled"
+  },
+  {
+    "name": "giga_139",
+    "c_symbol": "giga_139_c",
+    "source": "giga.py",
+    "params": [
+      {
+        "name": "int1",
+        "label": "int1",
+        "default": 251,
+        "min": 1,
+        "max": 1000000
+      },
+      {
+        "name": "int2",
+        "label": "int2",
+        "default": 37,
+        "min": 1,
+        "max": 1000000
+      },
+      {
+        "name": "int3",
+        "label": "int3",
+        "default": 619,
+        "min": 1,
+        "max": 1000000
+      },
+      {
+        "name": "deg",
+        "label": "deg",
+        "default": 11,
+        "min": 2,
+        "max": 256
+      }
+    ],
+    "kind": "hand"
+  },
+  {
     "name": "g1",
     "c_symbol": "g1_c",
     "source": "ops_poly.py",

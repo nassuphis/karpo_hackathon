@@ -12285,14 +12285,115 @@ static void poly_giga_137_c(double x1r, double x1i, double x2r, double x2i,
     (void)x1r; (void)x1i; (void)x2r; (void)x2i;
 }
 
-/* poly_giga_138: auto-stubbed (unhandled constructs in source) */
 static void poly_giga_138_c(double x1r, double x1i, double x2r, double x2i,
                      const double *cfpv, int n_cfpv,
                      double *cRe, double *cIm, int *nCoeffs) {
-    *nCoeffs = 36;
+    *nCoeffs = 11;
     (void)cfpv; (void)n_cfpv;
-    for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
-    (void)x1r; (void)x1i; (void)x2r; (void)x2i;
+    for (int _i = 0; _i < 11; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
+    double n = 11.0;
+    double _add1r = 0, _add1i = 0;
+    _add1r = x1r + x2r; _add1i = x1i + x2i;
+    double _c2r = 0, _c2i = 0;
+    _c2r = 3.0; _c2i = 0;
+    double _add3r = 0, _add3i = 0;
+    _add3r = _add1r + _c2r; _add3i = _add1i + _c2i;
+    double denom_r = _add3r, denom_i = _add3i;
+    double _abs4r = 0, _abs4i = 0;
+    _abs4r = c_abs(denom_r, denom_i); _abs4i = 0;
+    double adenom_r = _abs4r, adenom_i = _abs4i;
+    double _c5r = 0, _c5i = 0;
+    _c5r = 1.0; _c5i = 0;
+    if (adenom_r < _c5r) {
+        double _c6r = 0, _c6i = 0;
+        _c6r = 1e-30; _c6i = 0;
+        if (adenom_r > _c6r) {
+            double _div7r = 0, _div7i = 0;
+            c_div(denom_r, denom_i, adenom_r, adenom_i, &_div7r, &_div7i);
+            denom_r = _div7r; denom_i = _div7i;
+        }
+    }
+    double z1_r = x1r, z1_i = x1i;
+    double _add8r = 0, _add8i = 0;
+    _add8r = x1r + x2r; _add8i = x1i + x2i;
+    double z2_r = _add8r, z2_i = _add8i;
+    double _sub9r = 0, _sub9i = 0;
+    _sub9r = x2r - x1r; _sub9i = x2i - x1i;
+    double _c10r = 0, _c10i = 0;
+    _c10r = 1.0; _c10i = 0;
+    double _sub11r = 0, _sub11i = 0;
+    _sub11r = n - _c10r; _sub11i = 0 - _c10i;
+    double _div12r = 0, _div12i = 0;
+    c_div(_sub9r, _sub9i, _sub11r, _sub11i, &_div12r, &_div12i);
+    double step1_r = _div12r, step1_i = _div12i;
+    double _mul13r = 0, _mul13i = 0;
+    c_mul(x1r, x1i, x2r, x2i, &_mul13r, &_mul13i);
+    double _sub14r = 0, _sub14i = 0;
+    _sub14r = _mul13r - z2_r; _sub14i = _mul13i - z2_i;
+    double _c15r = 0, _c15i = 0;
+    _c15r = 1.0; _c15i = 0;
+    double _sub16r = 0, _sub16i = 0;
+    _sub16r = n - _c15r; _sub16i = 0 - _c15i;
+    double _div17r = 0, _div17i = 0;
+    c_div(_sub14r, _sub14i, _sub16r, _sub16i, &_div17r, &_div17i);
+    double step2_r = _div17r, step2_i = _div17i;
+    for (int k = 0; k < (int)(n); k++) {
+        double _c18r = 0, _c18i = 0;
+        _c18r = 0.0; _c18i = 1.0;
+        double _c19r = 0, _c19i = 0;
+        _c19r = 2.0; _c19i = 0;
+        double _mul20r = 0, _mul20i = 0;
+        c_mul(_c18r, _c18i, _c19r, _c19i, &_mul20r, &_mul20i);
+        double _mul21r = 0, _mul21i = 0;
+        c_mul(_mul20r, _mul20i, M_PI, 0, &_mul21r, &_mul21i);
+        double _mul22r = 0, _mul22i = 0;
+        c_mul(_mul21r, _mul21i, z1_r, z1_i, &_mul22r, &_mul22i);
+        double _exp23r = 0, _exp23i = 0;
+        c_exp2(_mul22r, _mul22i, &_exp23r, &_exp23i);
+        double v1_r = _exp23r, v1_i = _exp23i;
+        double _c24r = 0, _c24i = 0;
+        _c24r = 0.0; _c24i = 1.0;
+        double _c25r = 0, _c25i = 0;
+        _c25r = 2.0; _c25i = 0;
+        double _mul26r = 0, _mul26i = 0;
+        c_mul(_c24r, _c24i, _c25r, _c25i, &_mul26r, &_mul26i);
+        double _mul27r = 0, _mul27i = 0;
+        c_mul(_mul26r, _mul26i, M_PI, 0, &_mul27r, &_mul27i);
+        double _mul28r = 0, _mul28i = 0;
+        c_mul(_mul27r, _mul27i, z2_r, z2_i, &_mul28r, &_mul28i);
+        double _exp29r = 0, _exp29i = 0;
+        c_exp2(_mul28r, _mul28i, &_exp29r, &_exp29i);
+        double v2_r = _exp29r, v2_i = _exp29i;
+        double _c30r = 0, _c30i = 0;
+        _c30r = 0.0; _c30i = 1.0;
+        double _mul31r = 0, _mul31i = 0;
+        c_mul(_c30r, _c30i, v2_r, v2_i, &_mul31r, &_mul31i);
+        double _add32r = 0, _add32i = 0;
+        _add32r = v1_r + _mul31r; _add32i = v1_i + _mul31i;
+        double v_r = _add32r, v_i = _add32i;
+        double _c33r = 0, _c33i = 0;
+        _c33r = 0.0; _c33i = 1.0;
+        double _mul34r = 0, _mul34i = 0;
+        c_mul(_c33r, _c33i, M_PI, 0, &_mul34r, &_mul34i);
+        double _mul35r = 0, _mul35i = 0;
+        c_mul(n, 0, v_r, v_i, &_mul35r, &_mul35i);
+        double _div36r = 0, _div36i = 0;
+        c_div(_mul35r, _mul35i, denom_r, denom_i, &_div36r, &_div36i);
+        double _mul37r = 0, _mul37i = 0;
+        c_mul(_mul34r, _mul34i, _div36r, _div36i, &_mul37r, &_mul37i);
+        double _exp38r = 0, _exp38i = 0;
+        c_exp2(_mul37r, _mul37i, &_exp38r, &_exp38i);
+        { int _idx = k; if (_idx >= 0 && _idx < 11) { cRe[_idx] = _exp38r; cIm[_idx] = _exp38i; } }
+        double _add39r = 0, _add39i = 0;
+        _add39r = z1_r + step1_r; _add39i = z1_i + step1_i;
+        z1_r = _add39r; z1_i = _add39i;
+        double _add40r = 0, _add40i = 0;
+        _add40r = z2_r + step2_r; _add40i = z2_i + step2_i;
+        z2_r = _add40r; z2_i = _add40i;
+    }
+    for (int _i = 0; _i < 11; _i++) {
+        if (!isfinite(cRe[_i]) || !isfinite(cIm[_i])) { cRe[_i] = 0; cIm[_i] = 0; }
+    }
 }
 
 /* poly_giga_139: too complex for auto-transpile, stubbed */
@@ -12354,5 +12455,4 @@ static void poly_giga_145_c(double x1r, double x1i, double x2r, double x2i,
     for (int _i = 0; _i < 36; _i++) { cRe[_i] = 0; cIm[_i] = 0; }
     (void)x1r; (void)x1i; (void)x2r; (void)x2i;
 }
-
 

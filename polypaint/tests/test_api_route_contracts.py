@@ -22,7 +22,7 @@ class TestApiRouteContracts(unittest.TestCase):
         frontend = self.generated["frontend"]
         backend = self.generated["backend"]
         deploy = self.generated["deploy"]
-        self.assertGreaterEqual(len(frontend["literal_services"]), 8)
+        self.assertGreaterEqual(len(frontend["literal_services"]), 7)
         self.assertGreaterEqual(len(frontend["storage_paths"]), 10)
         self.assertGreaterEqual(len(frontend["dispatch_targets"]), 6)
         self.assertEqual(set(frontend["solver_lores_endpoints"]), {"aberth", "aberth_mt", "companion_matrix"})

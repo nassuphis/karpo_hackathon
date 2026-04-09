@@ -21,7 +21,7 @@ import boto3
 from shared import BUCKET, parse_body, ok_response, report_status
 
 s3 = boto3.client("s3")
-SWEEP = os.path.join(os.path.dirname(__file__), "sweep")
+SWEEP = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
 
 
 def handler(event, context):
@@ -157,7 +157,7 @@ def handle_coeffgen_chunked(params):
     step_start = params["step_start"]
     step_count = params["step_count"]
     params_key = params["params_key"]
-    task_id = f"coeffgen_{chunk_idx}"
+    task_id = params.get("task_id", f"coeffgen_{chunk_idx}")
 
     try:
         report_status(job_id, task_id, "started")
@@ -218,8 +218,7 @@ def handle_coeffgen_chunked(params):
             except OSError:
                 pass
 
-        report_status(job_id, task_id, "done")
-        return ok_response({
+        result_data = {
             "job_id": job_id,
             "chunk_idx": chunk_idx,
             "coeffs_key": coeffs_key,
@@ -227,6 +226,13 @@ def handle_coeffgen_chunked(params):
             "n_coeffs": meta["n_coeffs"],
             "degree": meta["degree"],
             "elapsed_us": int((time.time() - t0) * 1e6),
+        }
+        report_status(job_id, task_id, "done", result_data=result_data)
+        return ok_response({
+            "chunk_idx": chunk_idx,
+            "coeffs_size": meta["data_bytes"],
+            "n_coeffs": meta["n_coeffs"],
+            "degree": meta["degree"],
         })
 
     except Exception as e:
@@ -246,7 +252,7 @@ def handle_legacy_coeffgen(params):
     grid_n = params.get("N", params.get("n1"))
     i1_start = params.get("row_start", params.get("i1_start"))
     i1_end = params.get("row_end", params.get("i1_end"))
-    task_id = f"coeffgen_{stripe_idx}"
+    task_id = params.get("task_id", f"coeffgen_{stripe_idx}")
 
     try:
         report_status(job_id, task_id, "started")
@@ -299,8 +305,7 @@ def handle_legacy_coeffgen(params):
         except OSError:
             pass
 
-        report_status(job_id, task_id, "done")
-        return ok_response({
+        result_data = {
             "job_id": job_id,
             "stripe_idx": stripe_idx,
             "coeffs_key": coeffs_key,
@@ -308,7 +313,9 @@ def handle_legacy_coeffgen(params):
             "n_coeffs": meta["n_coeffs"],
             "degree": meta["degree"],
             "elapsed_us": elapsed_us,
-        })
+        }
+        report_status(job_id, task_id, "done", result_data=result_data)
+        return ok_response(result_data)
 
     except Exception as e:
         report_status(job_id, task_id, "error", str(e))

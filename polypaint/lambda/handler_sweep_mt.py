@@ -35,7 +35,7 @@ def handle_solve_mt_from_coeffs(params):
         i1_start = params.get("row_start", params.get("i1_start"))
         i1_end = params.get("row_end", params.get("i1_end"))
         n_steps = (i1_end - i1_start) * n2
-    task_id = f"sweep_{chunk_idx}"
+    task_id = params.get("task_id", f"sweep_{chunk_idx}")
 
     try:
         report_status(job_id, task_id, "started")

@@ -10,6 +10,7 @@ typedef struct {
 
 static const double _cfpv_defaults_creative8[] = {71.0};
 static const double _cfpv_defaults_creative9[] = {71.0};
+static const double _cfpv_defaults_giga_139[] = {251.0, 37.0, 619.0, 11.0};
 
 static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_19") == 0) return giga_19_c;
@@ -124,6 +125,8 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "giga_133") == 0) return poly_giga_133_c;
     if (strcmp(name, "giga_134") == 0) return poly_giga_134_c;
     if (strcmp(name, "giga_136") == 0) return poly_giga_136_c;
+    if (strcmp(name, "giga_138") == 0) return poly_giga_138_c;
+    if (strcmp(name, "giga_139") == 0) return giga_139_c;
     if (strcmp(name, "g1") == 0) return g1_c;
     if (strcmp(name, "g2") == 0) return g2_c;
     if (strcmp(name, "g3") == 0) return g3_c;
@@ -1216,6 +1219,8 @@ static const CoeffFuncSpec _coeffFuncSpecs[] = {
     {"giga_133", poly_giga_133_c, 0, NULL},
     {"giga_134", poly_giga_134_c, 0, NULL},
     {"giga_136", poly_giga_136_c, 0, NULL},
+    {"giga_138", poly_giga_138_c, 0, NULL},
+    {"giga_139", giga_139_c, 4, _cfpv_defaults_giga_139},
     {"g1", g1_c, 0, NULL},
     {"g2", g2_c, 0, NULL},
     {"g3", g3_c, 0, NULL},
@@ -2193,7 +2198,7 @@ static const CoeffFuncSpec _coeffFuncSpecs[] = {
     {"poly_rnd_path6", poly_rnd_path6_c, 0, NULL},
     {"poly_rnd_path7", poly_rnd_path7_c, 0, NULL},
 };
-static const int _nCoeffFuncSpecs = 1088;
+static const int _nCoeffFuncSpecs = 1090;
 
 static const CoeffFuncSpec *lookupCoeffFuncSpec(const char *name) {
     for (int i = 0; i < _nCoeffFuncSpecs; i++) {

@@ -6,6 +6,7 @@
       "bilevel_stitch",
       "coeffgen",
       "color_repalette",
+      "compute_orchestrator",
       "deepzoom_export",
       "encode",
       "finalize",
@@ -107,8 +108,8 @@
   "frontend": {
     "dispatch_targets": [
       "autolevels",
-      "coeffgen",
       "color_repalette",
+      "compute_orchestrator",
       "deepzoom_export",
       "palette_orchestrator",
       "pdf_artifact",
@@ -116,7 +117,6 @@
       "repalette"
     ],
     "literal_services": [
-      "coeffgen",
       "dispatch",
       "param-debug",
       "png-export",
@@ -151,8 +151,7 @@
       "/list-favorites",
       "/list-palettes",
       "/presign",
-      "/render-summary",
-      "/save-metadata"
+      "/render-summary"
     ]
   },
   "version": 1

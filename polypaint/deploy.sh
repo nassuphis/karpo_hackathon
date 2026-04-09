@@ -5,7 +5,7 @@
 # Core Lambdas:
 #   polypaint-sweep        — single-thread AE root solver (sweep binary)
 #   polypaint-sweep-mt     — multithreaded AE root solver (sweep_mt binary)
-#   polypaint-coeffgen     — composable coefficient generation (sweep binary, coeffgen mode)
+#   polypaint-coeffgen     — composable coefficient generation (sweep_coeffgen binary, coeffgen mode)
 #   polypaint-raster       — bin→tile-bucketed .pix sparse pixel output (roots2pix binary)
 #   polypaint-raster-mt    — multithreaded color raster via parallel roots2pix workers
 #   polypaint-finalize     — assemble .pix files into .raw tile (pixassemble binary)
@@ -79,6 +79,13 @@ RENDER_PLAN_MEMORY=512
 RENDER_STATUS_NAME="polypaint-render-status"
 RENDER_STATUS_MEMORY=256
 RENDER_STATE_MACHINE_NAME="polypaint-render-workflow"
+COMPUTE_ORCHESTRATOR_NAME="polypaint-compute-orchestrator"
+COMPUTE_ORCHESTRATOR_MEMORY=512
+COMPUTE_PLAN_NAME="polypaint-compute-plan"
+COMPUTE_PLAN_MEMORY=512
+COMPUTE_STATUS_NAME="polypaint-compute-status"
+COMPUTE_STATUS_MEMORY=256
+COMPUTE_STATE_MACHINE_NAME="polypaint-compute-workflow"
 PALETTE_ORCHESTRATOR_NAME="polypaint-palette-orchestrator"
 PALETTE_ORCHESTRATOR_MEMORY=512
 PALETTE_PLAN_NAME="polypaint-palette-render-plan"
@@ -615,8 +622,8 @@ TIFTEST
         echo "--- All smoke tests passed ---"
     '
 
-# Compile sweep_cm (companion matrix solver, needs LAPACK/OpenBLAS)
-echo "  sweep_cm (Docker ARM64, dynamically linked against LAPACK)..."
+# Compile LAPACK-backed coeffgen/sweep_cm helpers
+echo "  sweep_coeffgen + sweep_cm (Docker ARM64, dynamically linked against LAPACK)..."
 LAPACK_BUILD="$SCRIPT_DIR/lambda/layer-build-lapack"
 if [ ! -d "$LAPACK_BUILD/lib" ]; then
     echo "ERROR: LAPACK layer-build directory missing. Run lambda/build-lapack-layer.sh first."
@@ -630,6 +637,9 @@ docker run --rm --platform linux/arm64 \
         set -euo pipefail
         dnf install -y gcc 2>&1 | tail -1
         export LD_LIBRARY_PATH=/opt/lib
+        gcc -O3 -DHAVE_LAPACK_COMPANION -o /src/sweep_coeffgen /src/sweep_cli.c \
+            -L/opt/lib -llapack -lopenblas -lm -Wl,-rpath,/opt/lib
+        echo "  sweep_coeffgen compiled: $(file /src/sweep_coeffgen)"
         gcc -O3 -o /src/sweep_cm /src/sweep_cm.c \
             -L/opt/lib -llapack -lopenblas -lm -Wl,-rpath,/opt/lib
         echo "  sweep_cm compiled: $(file /src/sweep_cm)"
@@ -680,15 +690,15 @@ chmod +x "$SWEEP_MT_DIR"/sweep_mt
 cd "$SWEEP_MT_DIR" && zip -r9 /tmp/polypaint-sweep-mt.zip . -q && cd "$SCRIPT_DIR"
 echo "  SweepMT:  $(du -h /tmp/polypaint-sweep-mt.zip | cut -f1)  (sweep_mt)"
 
-# Coeffgen: handler_coeffgen.py + shared.py + sweep
+# Coeffgen: handler_coeffgen.py + shared.py + sweep_coeffgen (needs LAPACK layer)
 COEFFGEN_DIR=/tmp/polypaint-coeffgen
 rm -rf "$COEFFGEN_DIR"
 mkdir -p "$COEFFGEN_DIR"
 cp lambda/handler_coeffgen.py lambda/shared.py "$COEFFGEN_DIR/"
-cp lambda/sweep "$COEFFGEN_DIR/"
-chmod +x "$COEFFGEN_DIR"/sweep
+cp lambda/sweep_coeffgen "$COEFFGEN_DIR/"
+chmod +x "$COEFFGEN_DIR"/sweep_coeffgen
 cd "$COEFFGEN_DIR" && zip -r9 /tmp/polypaint-coeffgen.zip . -q && cd "$SCRIPT_DIR"
-echo "  Coeffgen: $(du -h /tmp/polypaint-coeffgen.zip | cut -f1)  (sweep)"
+echo "  Coeffgen: $(du -h /tmp/polypaint-coeffgen.zip | cut -f1)  (sweep_coeffgen + LAPACK layer)"
 
 # Encode: handler_encode.py + shared.py + raw2jpeg
 ENCODE_DIR=/tmp/polypaint-encode
@@ -965,6 +975,30 @@ mkdir -p "$STATUS_DIR"
 cp lambda/handler_render_status.py lambda/shared.py "$STATUS_DIR/"
 cd "$STATUS_DIR" && zip -r9 /tmp/polypaint-render-status.zip . -q && cd "$SCRIPT_DIR"
 echo "  RndStat: $(du -h /tmp/polypaint-render-status.zip | cut -f1)  (status updater)"
+
+# Compute Orchestrator (starter): handler_compute_orchestrator.py + shared.py
+COMP_ORCH_DIR=/tmp/polypaint-compute-orchestrator
+rm -rf "$COMP_ORCH_DIR"
+mkdir -p "$COMP_ORCH_DIR"
+cp lambda/handler_compute_orchestrator.py lambda/shared.py "$COMP_ORCH_DIR/"
+cd "$COMP_ORCH_DIR" && zip -r9 /tmp/polypaint-compute-orchestrator.zip . -q && cd "$SCRIPT_DIR"
+echo "  CmpOrch: $(du -h /tmp/polypaint-compute-orchestrator.zip | cut -f1)  (starter only)"
+
+# Compute Plan: handler_compute_plan.py + shared.py
+COMP_PLAN_DIR=/tmp/polypaint-compute-plan
+rm -rf "$COMP_PLAN_DIR"
+mkdir -p "$COMP_PLAN_DIR"
+cp lambda/handler_compute_plan.py lambda/shared.py "$COMP_PLAN_DIR/"
+cd "$COMP_PLAN_DIR" && zip -r9 /tmp/polypaint-compute-plan.zip . -q && cd "$SCRIPT_DIR"
+echo "  CmpPlan: $(du -h /tmp/polypaint-compute-plan.zip | cut -f1)  (plan + finalize)"
+
+# Compute Status: handler_compute_status.py + shared.py
+COMP_STATUS_DIR=/tmp/polypaint-compute-status
+rm -rf "$COMP_STATUS_DIR"
+mkdir -p "$COMP_STATUS_DIR"
+cp lambda/handler_compute_status.py lambda/shared.py "$COMP_STATUS_DIR/"
+cd "$COMP_STATUS_DIR" && zip -r9 /tmp/polypaint-compute-status.zip . -q && cd "$SCRIPT_DIR"
+echo "  CmpStat: $(du -h /tmp/polypaint-compute-status.zip | cut -f1)  (status updater)"
 
 # Sweep-CM: handler_sweep_cm.py + shared.py + sweep_cm (needs LAPACK layer)
 CM_DIR=/tmp/polypaint-sweep-cm
@@ -1308,7 +1342,7 @@ if [ "$ACTION" = "create" ]; then
         "$SWEEP_MT_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
 
     create_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
-        "$COEFFGEN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+        "$COEFFGEN_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     create_lambda "$ENCODE_NAME" "handler_encode.handler" "/tmp/polypaint-encode.zip" \
         "$ENCODE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -1323,7 +1357,7 @@ if [ "$ACTION" = "create" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     create_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -1432,6 +1466,9 @@ if [ "$ACTION" = "create" ]; then
     # Render ASL template with actual Lambda ARNs
     RENDER_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PLAN_NAME}"
     RENDER_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_STATUS_NAME}"
+    COMPUTE_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_PLAN_NAME}"
+    COMPUTE_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_STATUS_NAME}"
+    COEFFGEN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COEFFGEN_NAME}"
     RASTER_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RASTER_NAME}"
     FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_NAME}"
     ENCODE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ENCODE_NAME}"
@@ -1453,6 +1490,11 @@ if [ "$ACTION" = "create" ]; then
         -e "s|\${PreviewFunctionArn}|${PREVIEW_ARN}|g" \
         stepfunctions/render_workflow.asl.json.template > /tmp/render_workflow.asl.json
 
+    sed -e "s|\${PlanFunctionArn}|${COMPUTE_PLAN_ARN}|g" \
+        -e "s|\${StatusFunctionArn}|${COMPUTE_STATUS_ARN}|g" \
+        -e "s|\${CoeffgenFunctionArn}|${COEFFGEN_ARN}|g" \
+        stepfunctions/compute_workflow.asl.json.template > /tmp/compute_workflow.asl.json
+
     # Create or update state machine
     RENDER_SM_ARN=$(aws stepfunctions create-state-machine \
         --name "$RENDER_STATE_MACHINE_NAME" \
@@ -1470,6 +1512,23 @@ if [ "$ACTION" = "create" ]; then
     echo "  State machine: $RENDER_STATE_MACHINE_NAME ($RENDER_SM_ARN)"
 
     RENDER_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}"
+
+    COMPUTE_SM_ARN=$(aws stepfunctions create-state-machine \
+        --name "$COMPUTE_STATE_MACHINE_NAME" \
+        --definition "file:///tmp/compute_workflow.asl.json" \
+        --role-arn "$SFN_ROLE_ARN" \
+        --type STANDARD \
+        --region "$REGION" \
+        --query 'stateMachineArn' --output text 2>/dev/null || \
+        aws stepfunctions update-state-machine \
+            --state-machine-arn "arn:aws:states:${REGION}:${ACCT}:stateMachine:${COMPUTE_STATE_MACHINE_NAME}" \
+            --definition "file:///tmp/compute_workflow.asl.json" \
+            --role-arn "$SFN_ROLE_ARN" \
+            --region "$REGION" \
+            --query 'updateDate' --output text)
+    echo "  State machine: $COMPUTE_STATE_MACHINE_NAME ($COMPUTE_SM_ARN)"
+
+    COMPUTE_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${COMPUTE_STATE_MACHINE_NAME}"
 
     PALETTE_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_PLAN_NAME}"
     PALETTE_CHUNK_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_CHUNK_NAME}"
@@ -1501,6 +1560,12 @@ if [ "$ACTION" = "create" ]; then
     # Starter Lambda — now only needs state machine ARN, not all worker names
     create_lambda "$RENDER_ORCHESTRATOR_NAME" "handler_render_orchestrator.handler" "/tmp/polypaint-render-orchestrator.zip" \
         "$RENDER_ORCHESTRATOR_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RENDER_STATE_MACHINE_ARN=$RENDER_SM_ARN"
+    create_lambda "$COMPUTE_ORCHESTRATOR_NAME" "handler_compute_orchestrator.handler" "/tmp/polypaint-compute-orchestrator.zip" \
+        "$COMPUTE_ORCHESTRATOR_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,COMPUTE_STATE_MACHINE_ARN=$COMPUTE_SM_ARN"
+    create_lambda "$COMPUTE_PLAN_NAME" "handler_compute_plan.handler" "/tmp/polypaint-compute-plan.zip" \
+        "$COMPUTE_PLAN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME"
+    create_lambda "$COMPUTE_STATUS_NAME" "handler_compute_status.handler" "/tmp/polypaint-compute-status.zip" \
+        "$COMPUTE_STATUS_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
 
     create_lambda "$PALETTE_ORCHESTRATOR_NAME" "handler_palette_orchestrator.handler" "/tmp/polypaint-palette-orchestrator.zip" \
         "$PALETTE_ORCHESTRATOR_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,PALETTE_STATE_MACHINE_ARN=$PALETTE_SM_ARN"
@@ -1513,7 +1578,7 @@ if [ "$ACTION" = "create" ]; then
             \"Statement\": [{
                 \"Effect\": \"Allow\",
                 \"Action\": \"states:StartExecution\",
-                \"Resource\": [\"${RENDER_SM_ARN}\", \"${PALETTE_SM_ARN}\"]
+                \"Resource\": [\"${RENDER_SM_ARN}\", \"${COMPUTE_SM_ARN}\", \"${PALETTE_SM_ARN}\"]
             }]
         }"
 
@@ -1589,7 +1654,7 @@ elif [ "$ACTION" = "update" ]; then
         "$SWEEP_MT_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
 
     update_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
-        "$COEFFGEN_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+        "$COEFFGEN_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     update_lambda "$ENCODE_NAME" "handler_encode.handler" "/tmp/polypaint-encode.zip" \
         "$ENCODE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -1604,7 +1669,7 @@ elif [ "$ACTION" = "update" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     update_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -1677,12 +1742,19 @@ elif [ "$ACTION" = "update" ]; then
 
     update_lambda "$RENDER_STATUS_NAME" "handler_render_status.handler" "/tmp/polypaint-render-status.zip" \
         "$RENDER_STATUS_MEMORY" "" "JOBS_TABLE=$JOBS_TABLE"
+    update_lambda "$COMPUTE_PLAN_NAME" "handler_compute_plan.handler" "/tmp/polypaint-compute-plan.zip" \
+        "$COMPUTE_PLAN_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME"
+    update_lambda "$COMPUTE_STATUS_NAME" "handler_compute_status.handler" "/tmp/polypaint-compute-status.zip" \
+        "$COMPUTE_STATUS_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
 
     # Update Step Functions state machine
     echo "Updating Step Functions state machine..."
     ACCT=$(aws sts get-caller-identity --query 'Account' --output text)
     RENDER_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PLAN_NAME}"
     RENDER_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_STATUS_NAME}"
+    COMPUTE_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_PLAN_NAME}"
+    COMPUTE_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_STATUS_NAME}"
+    COEFFGEN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COEFFGEN_NAME}"
     RASTER_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RASTER_NAME}"
     FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_NAME}"
     ENCODE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ENCODE_NAME}"
@@ -1691,6 +1763,7 @@ elif [ "$ACTION" = "update" ]; then
     BILEVEL_STITCH_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_STITCH_NAME}"
     SOLVE_PROXIMITY_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
     RENDER_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}"
+    COMPUTE_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${COMPUTE_STATE_MACHINE_NAME}"
     PALETTE_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_PLAN_NAME}"
     PALETTE_CHUNK_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_CHUNK_NAME}"
     PALETTE_FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_FINALIZE_NAME}"
@@ -1712,6 +1785,11 @@ elif [ "$ACTION" = "update" ]; then
         -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
         -e "s|\${PreviewFunctionArn}|${PREVIEW_ARN}|g" \
         stepfunctions/render_workflow.asl.json.template > /tmp/render_workflow.asl.json
+
+    sed -e "s|\${PlanFunctionArn}|${COMPUTE_PLAN_ARN}|g" \
+        -e "s|\${StatusFunctionArn}|${COMPUTE_STATUS_ARN}|g" \
+        -e "s|\${CoeffgenFunctionArn}|${COEFFGEN_ARN}|g" \
+        stepfunctions/compute_workflow.asl.json.template > /tmp/compute_workflow.asl.json
 
     sed -e "s|\${PlanFunctionArn}|${PALETTE_PLAN_ARN}|g" \
         -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
@@ -1766,6 +1844,22 @@ elif [ "$ACTION" = "update" ]; then
     echo "  State machine: $RENDER_STATE_MACHINE_NAME"
 
     aws stepfunctions update-state-machine \
+        --state-machine-arn "$COMPUTE_SM_ARN" \
+        --definition "$(cat /tmp/compute_workflow.asl.json)" \
+        --role-arn "$SFN_ROLE_ARN" \
+        --region "$REGION" >/dev/null 2>&1 || {
+        echo "  Compute state machine doesn't exist, creating..."
+        aws stepfunctions create-state-machine \
+            --name "$COMPUTE_STATE_MACHINE_NAME" \
+            --definition "$(cat /tmp/compute_workflow.asl.json)" \
+            --role-arn "$SFN_ROLE_ARN" \
+            --type STANDARD \
+            --region "$REGION" \
+            --query 'stateMachineArn' --output text
+    }
+    echo "  State machine: $COMPUTE_STATE_MACHINE_NAME"
+
+    aws stepfunctions update-state-machine \
         --state-machine-arn "$PALETTE_SM_ARN" \
         --definition "$(cat /tmp/palette_workflow.asl.json)" \
         --role-arn "$SFN_ROLE_ARN" \
@@ -1784,6 +1878,8 @@ elif [ "$ACTION" = "update" ]; then
     # Starter Lambda — uses state machine ARN, not worker names
     update_lambda "$RENDER_ORCHESTRATOR_NAME" "handler_render_orchestrator.handler" "/tmp/polypaint-render-orchestrator.zip" \
         "$RENDER_ORCHESTRATOR_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RENDER_STATE_MACHINE_ARN=$RENDER_SM_ARN"
+    update_lambda "$COMPUTE_ORCHESTRATOR_NAME" "handler_compute_orchestrator.handler" "/tmp/polypaint-compute-orchestrator.zip" \
+        "$COMPUTE_ORCHESTRATOR_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,COMPUTE_STATE_MACHINE_ARN=$COMPUTE_SM_ARN"
     update_lambda "$PALETTE_ORCHESTRATOR_NAME" "handler_palette_orchestrator.handler" "/tmp/polypaint-palette-orchestrator.zip" \
         "$PALETTE_ORCHESTRATOR_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,PALETTE_STATE_MACHINE_ARN=$PALETTE_SM_ARN"
 
@@ -1795,7 +1891,7 @@ elif [ "$ACTION" = "update" ]; then
             \"Statement\": [{
                 \"Effect\": \"Allow\",
                 \"Action\": \"states:StartExecution\",
-                \"Resource\": [\"${RENDER_SM_ARN}\", \"${PALETTE_SM_ARN}\"]
+                \"Resource\": [\"${RENDER_SM_ARN}\", \"${COMPUTE_SM_ARN}\", \"${PALETTE_SM_ARN}\"]
             }]
         }" 2>/dev/null || true
 

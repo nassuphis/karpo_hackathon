@@ -2786,37 +2786,49 @@ def poly_giga_137(t1, t2):
        
 #def p11b2_v5(t1, t2):
 def poly_giga_138(t1, t2):
-        try:
-            n  = 11
-            v1 = np.exp(1j*2*np.pi*np.linspace(t1, t2, n))
-            v2 = np.exp(1j*2*np.pi*np.linspace(t1+t2, t1*t2, n))
+    n = 11
+    try:
+        cf = np.zeros(n, dtype=complex)
+        denom = t1 + t2 + 3
+        adenom = np.abs(denom)
+        if adenom < 1:
+            if adenom > 1e-30:
+                denom = denom / adenom
+        z1 = t1
+        z2 = t1 + t2
+        step1 = (t2 - t1) / (n - 1)
+        step2 = (t1 * t2 - z2) / (n - 1)
+        for k in range(n):
+            v1 = np.exp(1j * 2 * np.pi * z1)
+            v2 = np.exp(1j * 2 * np.pi * z2)
             v = v1 + 1j * v2
-            denom =  t1 + t2 + 3 
-            if np.abs(denom)<1 :
-                denom = denom / abs(denom)
-            u  = n * np.power(v,1) / denom 
-            uc = np.exp(1j * np.pi * u)
-            cf = uc
-            return cf
-        except:
-            return np.zeros(0, dtype=complex)
+            cf[k] = np.exp(1j * np.pi * (n * v / denom))
+            z1 = z1 + step1
+            z2 = z2 + step2
+        return cf.astype(np.complex128)
+    except Exception:
+        return np.zeros(n, dtype=complex)
         
 
 #def p11b3(t1, t2):
-def poly_giga_139(t1, t2):
+def poly_giga_139(t1, t2, int1=251, int2=37, int3=619, deg=11):
     try:
+        deg = int(max(2, deg))
+        int1 = int(int1)
+        int2 = max(1, int(int2))
+        int3 = int(int3)
         t = t1 + t2 # balls with holes
         a = np.abs(t1+t2) / 2 # number between 0 and 1 
-        m = int( a * 251 ) % 37 # integer 0 - 10
-        v = (np.arange(11)+1) / (t+4)
-        p1 = int( 7 * a * len(v) ) % len(v) # pick a random spot
+        m = int(a * int1) % int2
+        v = (np.arange(deg)+1) / (t+4)
+        p1 = int(7 * a * len(v)) % len(v) # pick a random spot
         v[p1] = (p1+1)/(t + np.abs(t)*2 + 1 + m) # stick m in it
-        p2 = int( 619 * a * len(v) ) % len(v) # pick a random spot
+        p2 = int(int3 * a * len(v)) % len(v) # pick a random spot
         v[p2] = (p2+1)/(t + np.abs(t)*2 + 1 + m//2) # stick m in it
         cf = np.exp(1j * np.pi * v)
         return cf.astype(np.complex128)
-    except:
-        return np.zeros(4, dtype=complex)
+    except Exception:
+        return np.zeros(max(2, int(deg)), dtype=complex)
     
 def p11b3(t1, t2):
         try:

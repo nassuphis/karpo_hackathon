@@ -7,13 +7,15 @@ since grown a second parameterized layer:
 
 - coefficient transforms now support a mixed wire format:
   - plain names for no-arg transforms, e.g. `"rev"`
-  - array form for parametric transforms, e.g. `["roots", "6"]`
+  - array form for parametric transforms, e.g. `["roots", "6", "hi"]`
 - the Compute tab now renders coefficient-transform chips with inline argument
   inputs, the same way parameter/root transforms do
 - currently shipped parametric coefficient transforms include:
-  - `roots(k)`
+  - `roots(k, hi|lo)`
   - `power(k)` shown in the UI as `p(k)`
   - `invpower(k)` shown in the UI as `invp(k)`
+- currently shipped native coefficient transforms also include:
+  - `roots_cm(hi|lo)`
 
 So the effective pipeline is now:
 

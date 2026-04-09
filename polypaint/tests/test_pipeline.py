@@ -133,6 +133,16 @@ class TestDispatchHandler(unittest.TestCase):
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 1)
 
+    @patch("handler_dispatch.lambda_client")
+    def test_dispatch_compute_orchestrator_target(self, mock_client):
+        from handler_dispatch import handler
+        mock_client.invoke.return_value = {"StatusCode": 202}
+        jobs = [{"job_id": "j", "run_id": "run_1", "params": {"solver_mode": "companion_matrix", "N": 100, "n_chunks": 4, "function": "g1"}}]
+        event = self._make_event({"target": "compute_orchestrator", "jobs": jobs})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["fired"], 1)
+
 
 # ── Test: handler_storage.py (list, check_keys, check_status, clean_render) ──
 
@@ -1218,11 +1228,12 @@ class TestCoeffgenHandler(unittest.TestCase):
             "i1_end": 6,
         })
         handler(event, None)
-
+    
         # Verify started + done status reported
         calls = mock_report.call_args_list
         self.assertEqual(calls[0], unittest.mock.call("ddb-test", "coeffgen_2", "started"))
-        self.assertEqual(calls[1], unittest.mock.call("ddb-test", "coeffgen_2", "done"))
+        self.assertEqual(calls[1][0], ("ddb-test", "coeffgen_2", "done"))
+        self.assertIn("result_data", calls[1][1])
 
     @patch("builtins.open")
     @patch("handler_coeffgen.os.path.getsize")

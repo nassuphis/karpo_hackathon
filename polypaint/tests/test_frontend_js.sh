@@ -403,6 +403,7 @@ vm.runInContext(`
     renderColorMode = 'rainbow';
     renderMatchMode = 'none';
     renderPalette = 'inferno';
+    _realLambdaPost = lambdaPost;
 `, ctx);
 
 // Stub network + async helpers — MUST be inside VM to override function declarations
@@ -561,6 +562,45 @@ async function testPipeline(name, call) {
             console.error('FATAL: config popup toggle: ' + e.message);
             process.exit(1);
         }
+    }
+
+    {
+        await vm.runInContext(`
+            _lambdaUrls = { coeffgen: 'https://api.example' };
+            var _lambdaRetryCalls = 0;
+            fetch = async function(url, opts) {
+                _lambdaRetryCalls++;
+                return {
+                    ok: false,
+                    status: 503,
+                    text: async function() { return 'busy-' + _lambdaRetryCalls; }
+                };
+            };
+        `, ctx);
+        const retryErr = await vm.runInContext(`(async()=>{ try { await _realLambdaPost('coeffgen', {
+                phase: 'coeffgen_chunked',
+                job_id: 'compute_retry',
+                chunk_idx: 7,
+                function: 'poly_445',
+                coeff_transforms: [['power','8'], ['invpower','3'], ['roots_cm','lo']]
+            }, '/run'); return ''; } catch (e) { return String((e && e.message) || e || ''); } })()`, ctx);
+        if (!retryErr.includes('coeffgen/run request failed after 5 retries')) {
+            console.error('FATAL: lambdaPost retry error should include endpoint, got ' + retryErr);
+            process.exit(1);
+        }
+        if (!retryErr.includes('phase=coeffgen_chunked') || !retryErr.includes('job=compute_retry') || !retryErr.includes('chunk=7') || !retryErr.includes('function=poly_445')) {
+            console.error('FATAL: lambdaPost retry error should include request context, got ' + retryErr);
+            process.exit(1);
+        }
+        if (!retryErr.includes('coeff=power(8),invpower(3),roots_cm(lo)')) {
+            console.error('FATAL: lambdaPost retry error should include coeff transform context, got ' + retryErr);
+            process.exit(1);
+        }
+        if (!retryErr.includes('attempt 1: HTTP 503 busy-1') || !retryErr.includes('attempt 5: HTTP 503 busy-5')) {
+            console.error('FATAL: lambdaPost retry error should include per-attempt history, got ' + retryErr);
+            process.exit(1);
+        }
+        console.log('  lambdaPost retry errors keep endpoint/context/history: OK');
     }
 
     await testPipeline('runRasterPipeline', '(async()=>{ await runRasterPipeline(); })()');
@@ -1280,6 +1320,7 @@ async function testPipeline(name, call) {
                 _ctChain = [];
                 addChip('ct', 'roots');
                 updateChipParam(0, 0, '5', 'ct');
+                updateChipParam(0, 1, 'lo', 'ct');
             `, ctx);
         } catch (e) { console.error('FATAL: addChip(roots ct): ' + e.message); process.exit(1); }
         const coeffRootsInfo = vm.runInContext(`(() => {
@@ -1289,16 +1330,16 @@ async function testPipeline(name, call) {
             const wire = JSON.stringify(_serializeNamedChain(_ctChain));
             return { html, inputs, wire };
         })()`, ctx);
-        if (!coeffRootsInfo.html.includes('roots') || coeffRootsInfo.inputs !== 1) {
-            console.error('FATAL: roots coeff transform chip should render one visible k input');
+        if (!coeffRootsInfo.html.includes('roots(') || coeffRootsInfo.inputs !== 2) {
+            console.error('FATAL: roots coeff transform chip should render k and hi|lo inputs');
             process.exit(1);
         }
-        if (!coeffRootsInfo.wire.includes('[\"roots\",\"5\"]')) {
-            console.error('FATAL: roots coeff transform should serialize as [\"roots\",\"5\"], got ' + coeffRootsInfo.wire);
+        if (!coeffRootsInfo.wire.includes('[\"roots\",\"5\",\"lo\"]')) {
+            console.error('FATAL: roots coeff transform should serialize as [\"roots\",\"5\",\"lo\"], got ' + coeffRootsInfo.wire);
             process.exit(1);
         }
         vm.runInContext(`_ctChain = []; _renderChips('ct');`, ctx);
-        console.log('  roots coeff transform chip renders k + serializes: OK');
+        console.log('  roots coeff transform chip renders k/pad + serializes: OK');
     }
 
     {
@@ -1353,6 +1394,33 @@ async function testPipeline(name, call) {
         }
         vm.runInContext(`_ctChain = []; _renderChips('ct');`, ctx);
         console.log('  invpower coeff transform chip renders invp(k) + serializes: OK');
+    }
+
+    {
+        try {
+            vm.runInContext(`
+                _ctChain = [];
+                addChip('ct', 'roots_cm');
+                updateChipParam(0, 0, 'lo', 'ct');
+            `, ctx);
+        } catch (e) { console.error('FATAL: addChip(roots_cm ct): ' + e.message); process.exit(1); }
+        const coeffRootsCmInfo = vm.runInContext(`(() => {
+            const chips = document.getElementById('ct-chips');
+            const html = chips ? chips.innerHTML : '';
+            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
+            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            return { html, inputs, wire };
+        })()`, ctx);
+        if (!coeffRootsCmInfo.html.includes('roots_cm(') || coeffRootsCmInfo.inputs !== 1) {
+            console.error('FATAL: roots_cm coeff transform chip should render with one hi|lo input');
+            process.exit(1);
+        }
+        if (coeffRootsCmInfo.wire !== '[[\"roots_cm\",\"lo\"]]') {
+            console.error('FATAL: roots_cm coeff transform should serialize as [[\"roots_cm\",\"lo\"]], got ' + coeffRootsCmInfo.wire);
+            process.exit(1);
+        }
+        vm.runInContext(`_ctChain = []; _renderChips('ct');`, ctx);
+        console.log('  roots_cm coeff transform renders pad input + serializes: OK');
     }
 
     {
@@ -3082,6 +3150,263 @@ async function testPipeline(name, call) {
             process.exit(1);
         }
         console.log('  12d no direct worker dispatch in launch functions: OK');
+    }
+
+    // 12d2: compute dispatches one compute_orchestrator job and does not call coeffgen/sweep directly
+    {
+        vm.runInContext(`
+            var _computeOrchDispatched = null;
+            var _computeCoeffgenCalls = 0;
+            var _computeSolveCalls = 0;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch' && body.target === 'compute_orchestrator') {
+                    _computeOrchDispatched = body.jobs[0];
+                    return { fired: 1, errors: [] };
+                }
+                if (name === 'coeffgen') {
+                    _computeCoeffgenCalls++;
+                    throw new Error('runCalculateWithSolver should not call coeffgen directly');
+                }
+                if (name === 'sweep' || name === 'sweep-mt' || name === 'sweep-cm') {
+                    _computeSolveCalls++;
+                    throw new Error('runCalculateWithSolver should not call solve directly');
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: true,
+                        results: [{
+                            phase: 'done',
+                            phase_label: 'Done',
+                            run_started_at_ms: 1000,
+                            updated_at_ms: 6000
+                        }]
+                    };
+                }
+                if (name === 'storage' && path === '/detail') {
+                    return {
+                        calc: {
+                            N: 64,
+                            degree: 5,
+                            n_chunks: 4,
+                            total_coeffs_size: 1600,
+                            lores: { bin_size: 512 },
+                            chunks: [
+                                { bin_size: 80, compute_us: 1000, n_t: 10, avg_iterations: 3.0 },
+                                { bin_size: 88, compute_us: 1100, n_t: 10, avg_iterations: 3.0 },
+                                { bin_size: 96, compute_us: 1200, n_t: 10, avg_iterations: 3.0 },
+                                { bin_size: 104, compute_us: 1300, n_t: 10, avg_iterations: 3.0 }
+                            ]
+                        }
+                    };
+                }
+                return {};
+            };
+        `, ctx);
+        ctx._elements['btn-calculate-cm'] = ctx._elements['btn-calculate-cm'] || ctx._mkEl();
+        ctx._elements['compute-status'] = ctx._elements['compute-status'] || { ...ctx._mkEl(), textContent: '' };
+        ctx._elements['compute-log'] = ctx._elements['compute-log'] || ctx._mkEl();
+        ctx._elements['results-dir'] = ctx._elements['results-dir'] || { ...ctx._mkEl(), value: '' };
+        ctx._elements['render-results-dir'] = ctx._elements['render-results-dir'] || { ...ctx._mkEl(), value: '' };
+        ctx._elements['render-function'] = ctx._elements['render-function'] || { ...ctx._mkEl(), value: 'g1' };
+        ctx._elements['render-n'] = ctx._elements['render-n'] || { ...ctx._mkEl(), value: '64' };
+        ctx._elements['render-stripes'] = ctx._elements['render-stripes'] || { ...ctx._mkEl(), value: '4' };
+        ctx._elements['render-times'] = ctx._elements['render-times'] || { ...ctx._mkEl(), value: '1' };
+        vm.runInContext(`
+            document.getElementById('render-function').value = 'g1';
+            document.getElementById('render-n').value = '64';
+            document.getElementById('render-stripes').value = '4';
+            document.getElementById('render-times').value = '1';
+            _ptChain = [];
+            _ctChain = [];
+            _cfpv = [];
+        `, ctx);
+        await vm.runInContext('(async()=>{ await runCalculateCM(); })()', ctx);
+        const orch = vm.runInContext('_computeOrchDispatched', ctx);
+        const coeffgenCalls = vm.runInContext('_computeCoeffgenCalls', ctx);
+        const solveCalls = vm.runInContext('_computeSolveCalls', ctx);
+        const status = ctx._elements['compute-status'].textContent;
+        const computeLogTexts = ctx._elements['compute-log'].textContent || '';
+        if (!orch) { console.error('FATAL: runCalculateCM did not dispatch compute orchestrator'); process.exit(1); }
+        if (orch.params.solver_mode !== 'companion_matrix') { console.error('FATAL: compute orchestrator should receive companion_matrix, got ' + orch.params.solver_mode); process.exit(1); }
+        if (orch.params.N !== 64 || orch.params.n_chunks !== 4 || orch.params.function !== 'g1') {
+            console.error('FATAL: compute orchestrator payload missing compute params');
+            process.exit(1);
+        }
+        if (coeffgenCalls !== 0 || solveCalls !== 0) {
+            console.error('FATAL: compute launch should not call coeffgen/sweep directly');
+            process.exit(1);
+        }
+        if (!status.includes('Computed | 4 chunks | deg 5 | total 5.0s')) {
+            console.error('FATAL: compute status should reflect orchestrated completion, got ' + status);
+            process.exit(1);
+        }
+        if (!computeLogTexts.includes('Compute-CM compute_')) {
+            console.error('FATAL: compute log should keep solver tag in final summary');
+            process.exit(1);
+        }
+        console.log('  12d2 compute dispatches orchestrator only: OK');
+    }
+
+    // 12d3: compute progress logs should show coeffgen/solve DDB progress, not just completions
+    {
+        vm.runInContext(`
+            var _computeProgressOrch = null;
+            var _computeTopChecks = 0;
+            var _computeCoeffSubchecks = 0;
+            var _computeSolveSubchecks = 0;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch' && body.target === 'compute_orchestrator') {
+                    _computeProgressOrch = body.jobs[0];
+                    return { fired: 1, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    if (body.task_prefix === 'coeffgen_prog_') {
+                        _computeCoeffSubchecks++;
+                        if (_computeCoeffSubchecks === 1) {
+                            return {
+                                errors: 0,
+                                done: 2,
+                                expected: 4,
+                                results: [{ elapsed_us: 2000000, coeffs_size: 4000000, degree: 10 }],
+                                latest_update_ms: 3000
+                            };
+                        }
+                        return {
+                            errors: 0,
+                            done: 4,
+                            expected: 4,
+                            results: [{ elapsed_us: 8000000, coeffs_size: 12000000, degree: 10 }],
+                            latest_done_ms: 5000,
+                            latest_update_ms: 5000
+                        };
+                    }
+                    if (body.task_prefix === 'solve_prog_') {
+                        _computeSolveSubchecks++;
+                        if (_computeSolveSubchecks === 1) {
+                            return {
+                                errors: 0,
+                                done: 3,
+                                expected: 4,
+                                results: [{ compute_us: 5000000, bin_size: 3000000, n_t: 20, avg_iterations: 0.0 }],
+                                latest_update_ms: 7000
+                            };
+                        }
+                        return {
+                            errors: 0,
+                            done: 4,
+                            expected: 4,
+                            results: [{ compute_us: 9000000, bin_size: 5000000, n_t: 25, avg_iterations: 0.0 }],
+                            latest_done_ms: 9000,
+                            latest_update_ms: 9000
+                        };
+                    }
+                    _computeTopChecks++;
+                    if (_computeTopChecks === 1) {
+                        return {
+                            errors: 0,
+                            done: 0,
+                            complete: false,
+                            results: [{
+                                phase: 'coeffgen',
+                                phase_label: 'Coeffgen',
+                                solver_mode: 'companion_matrix',
+                                expected: 4,
+                                subtask_prefix: 'coeffgen_prog_',
+                                run_started_at_ms: 1000,
+                                started_at_ms: 1500,
+                                updated_at_ms: 2500
+                            }]
+                        };
+                    }
+                    if (_computeTopChecks === 2) {
+                        return {
+                            errors: 0,
+                            done: 0,
+                            complete: false,
+                            results: [{
+                                phase: 'solve',
+                                phase_label: 'Solve',
+                                solver_mode: 'companion_matrix',
+                                expected: 4,
+                                subtask_prefix: 'solve_prog_',
+                                run_started_at_ms: 1000,
+                                started_at_ms: 5500,
+                                updated_at_ms: 6500
+                            }]
+                        };
+                    }
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: true,
+                        results: [{
+                            phase: 'done',
+                            phase_label: 'Done',
+                            solver_mode: 'companion_matrix',
+                            run_started_at_ms: 1000,
+                            updated_at_ms: 12000
+                        }]
+                    };
+                }
+                if (name === 'storage' && path === '/detail') {
+                    return {
+                        calc: {
+                            N: 64,
+                            degree: 10,
+                            n_chunks: 4,
+                            total_coeffs_size: 12000000,
+                            lores: { bin_size: 1024 },
+                            chunks: [
+                                { bin_size: 100, compute_us: 1000, n_t: 10, avg_iterations: 0.0 },
+                                { bin_size: 100, compute_us: 1000, n_t: 10, avg_iterations: 0.0 },
+                                { bin_size: 100, compute_us: 1000, n_t: 10, avg_iterations: 0.0 },
+                                { bin_size: 100, compute_us: 1000, n_t: 10, avg_iterations: 0.0 }
+                            ]
+                        }
+                    };
+                }
+                return {};
+            };
+        `, ctx);
+        ctx._elements['btn-calculate-cm'] = ctx._elements['btn-calculate-cm'] || ctx._mkEl();
+        ctx._elements['compute-status'] = { ...ctx._mkEl(), textContent: '' };
+        ctx._elements['compute-log'] = ctx._mkEl();
+        ctx._elements['results-dir'] = ctx._elements['results-dir'] || { ...ctx._mkEl(), value: '' };
+        ctx._elements['render-results-dir'] = ctx._elements['render-results-dir'] || { ...ctx._mkEl(), value: '' };
+        ctx._elements['render-function'] = ctx._elements['render-function'] || { ...ctx._mkEl(), value: 'g1' };
+        ctx._elements['render-n'] = ctx._elements['render-n'] || { ...ctx._mkEl(), value: '64' };
+        ctx._elements['render-stripes'] = ctx._elements['render-stripes'] || { ...ctx._mkEl(), value: '4' };
+        ctx._elements['render-times'] = ctx._elements['render-times'] || { ...ctx._mkEl(), value: '1' };
+        vm.runInContext(`
+            document.getElementById('render-function').value = 'g1';
+            document.getElementById('render-n').value = '64';
+            document.getElementById('render-stripes').value = '4';
+            document.getElementById('render-times').value = '1';
+            _ptChain = [];
+            _ctChain = [];
+            _cfpv = [];
+        `, ctx);
+        await vm.runInContext('(async()=>{ await runCalculateCM(); })()', ctx);
+        const progressTexts = ctx._elements['compute-log'].textContent || '';
+        if (!progressTexts.includes('Coeffgen 2/4')) {
+            console.error('FATAL: compute log should show coeffgen DDB progress, got:\\n' + progressTexts);
+            process.exit(1);
+        }
+        if (!progressTexts.includes('Solve (CM) 3/4')) {
+            console.error('FATAL: compute log should show solve progress with solver tag, got:\\n' + progressTexts);
+            process.exit(1);
+        }
+        if (!progressTexts.includes('Coeffgen complete')) {
+            console.error('FATAL: compute log should keep coeffgen completion summary, got:\\n' + progressTexts);
+            process.exit(1);
+        }
+        if (!progressTexts.includes('Solve (CM) complete')) {
+            console.error('FATAL: compute log should keep solve completion summary, got:\\n' + progressTexts);
+            process.exit(1);
+        }
+        console.log('  12d3 compute logs DDB progress increments: OK');
     }
 
     // 12e: active run record written to localStorage

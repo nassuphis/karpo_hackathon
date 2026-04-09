@@ -33,6 +33,7 @@ FUNCTIONS = {
     "render_preview": os.environ.get("RENDER_PREVIEW_FUNCTION", "polypaint-render-preview"),
     "solve_proximity": os.environ.get("SOLVE_PROXIMITY_FUNCTION", "polypaint-solve-proximity"),
     "render_orchestrator": os.environ.get("RENDER_ORCHESTRATOR_FUNCTION", "polypaint-render-orchestrator"),
+    "compute_orchestrator": os.environ.get("COMPUTE_ORCHESTRATOR_FUNCTION", "polypaint-compute-orchestrator"),
     "palette_orchestrator": os.environ.get("PALETTE_ORCHESTRATOR_FUNCTION", "polypaint-palette-orchestrator"),
     "autolevels": os.environ.get("AUTOLEVELS_FUNCTION", "polypaint-autolevels"),
     "repalette": os.environ.get("REPALETTE_FUNCTION", "polypaint-repalette"),

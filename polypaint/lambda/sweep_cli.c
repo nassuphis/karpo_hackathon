@@ -17,6 +17,7 @@
 #include <time.h>
 #include <stdint.h>
 #include <unistd.h>
+#include "companion_solver.h"
 
 #define MAX_DEGREE 255
 #define MAX_COEFFS 256
@@ -323,7 +324,7 @@ static int parseString(const char *p, char *out, int maxLen) {
 
 typedef struct {
     char name[64];
-    double args[MAX_CT_ARGS];
+    char args[MAX_CT_ARGS][64];
     int nArgs;
 } CtEntry;
 
@@ -335,6 +336,30 @@ static inline void quantize_params_f32(double *z1r, double *z1i,
     float q2r = (float)(*z2r), q2i = (float)(*z2i);
     *z1r = (double)q1r; *z1i = (double)q1i;
     *z2r = (double)q2r; *z2i = (double)q2i;
+}
+
+static int coeff_transform_chain_needs_quantized_params(const CtEntry *entries, int count) {
+    for (int i = 0; i < count; i++) {
+        if (entries[i].nArgs > 0) return 1;
+    }
+    return 0;
+}
+
+static int ct_arg_int(const CtEntry *e, int idx, int fallback) {
+    if (!e || idx < 0 || idx >= e->nArgs) return fallback;
+    char *end = NULL;
+    long v = strtol(e->args[idx], &end, 10);
+    if (end == e->args[idx]) return fallback;
+    return (int)v;
+}
+
+static int ct_arg_pad_lo(const CtEntry *e, int idx, int fallbackLo) {
+    if (!e || idx < 0 || idx >= e->nArgs) return fallbackLo;
+    const char *arg = e->args[idx];
+    if (strcmp(arg, "lo") == 0) return 1;
+    if (strcmp(arg, "hi") == 0) return 0;
+    fprintf(stderr, "Invalid roots pad mode: %s (expected hi or lo)\n", arg);
+    return -1;
 }
 
 static int parseStringArray(const char *p, char names[][64], int maxCount) {
@@ -2606,10 +2631,65 @@ static void ct_invpower(double *cRe, double *cIm, int *nCoeffs, int power) {
     }
 }
 
-/* roots(k): run k Aberth-Ehrlich iterations on the current coefficient vector,
- * then treat the resulting roots as the next coefficient vector.
- * Output length stays constant by prepending a zero highest-order coefficient. */
-static void ct_roots(double *cRe, double *cIm, int *nCoeffs, int iters) {
+static void ct_write_roots_padded(double *cRe, double *cIm, int totalCoeffs,
+                                  const double *rootRe, const double *rootIm,
+                                  int nRoots, int padLo) {
+    if (totalCoeffs <= 0) return;
+    for (int i = 0; i < totalCoeffs; i++) {
+        cRe[i] = 0.0;
+        cIm[i] = 0.0;
+    }
+    if (nRoots <= 0) return;
+    if (padLo) {
+        for (int i = 0; i < nRoots && i < totalCoeffs - 1; i++) {
+            cRe[i] = rootRe[i];
+            cIm[i] = rootIm[i];
+        }
+        return;
+    }
+    for (int i = 0; i < nRoots && i + 1 < totalCoeffs; i++) {
+        cRe[i + 1] = rootRe[i];
+        cIm[i + 1] = rootIm[i];
+    }
+}
+
+/* roots_cm(mode): compute roots via companion matrix and treat those roots as
+ * the next coefficient vector. Output length stays constant by padding one zero
+ * either at the highest-order side ("hi") or constant side ("lo"). */
+static int ct_roots_cm(double *cRe, double *cIm, int *nCoeffs, int padLo) {
+    int n = *nCoeffs;
+    int degree = n - 1;
+    if (n <= 0) return 0;
+    if (degree <= 0) {
+        cRe[0] = 0.0;
+        cIm[0] = 0.0;
+        return 0;
+    }
+    if (!companion_solver_available()) {
+        fprintf(stderr, "roots_cm unavailable in this build\n");
+        return 1;
+    }
+
+    float rootRe[MAX_DEGREE], rootIm[MAX_DEGREE];
+    int rc = solve_companion_coeffs(cRe, cIm, n, rootRe, rootIm);
+    if (rc == 0) {
+        fprintf(stderr, "roots_cm companion solve failed\n");
+        return 1;
+    }
+    double outRe[MAX_DEGREE], outIm[MAX_DEGREE];
+    for (int i = 0; i < degree; i++) {
+        outRe[i] = (double)rootRe[i];
+        outIm[i] = (double)rootIm[i];
+    }
+    ct_write_roots_padded(cRe, cIm, n, outRe, outIm, degree, padLo);
+    return 0;
+}
+
+/* roots(k,mode): run k Aberth-Ehrlich iterations on the current coefficient
+ * vector, then treat the resulting roots as the next coefficient vector.
+ * Output length stays constant by padding one zero at the highest-order side
+ * ("hi") or constant side ("lo"). */
+static void ct_roots(double *cRe, double *cIm, int *nCoeffs, int iters, int padLo) {
     int n = *nCoeffs;
     int degree = n - 1;
     if (n <= 0) return;
@@ -2641,13 +2721,7 @@ static void ct_roots(double *cRe, double *cIm, int *nCoeffs, int iters) {
         seedEAInitialGuess(rootRe, rootIm, effDeg);
         solveEALimited(cRe + start, cIm + start, effN, rootRe, rootIm, effDeg, iters);
     }
-
-    cRe[0] = 0.0;
-    cIm[0] = 0.0;
-    for (int i = 0; i < degree; i++) {
-        cRe[i + 1] = (i < effDeg) ? rootRe[i] : 0.0;
-        cIm[i + 1] = (i < effDeg) ? rootIm[i] : 0.0;
-    }
+    ct_write_roots_padded(cRe, cIm, n, rootRe, rootIm, effDeg, padLo);
 }
 
 static CoeffTransform lookupCoeffTransform(const char *name) {
@@ -2669,19 +2743,26 @@ static CoeffTransform lookupCoeffTransform(const char *name) {
 }
 
 static int dispatchCt(const CtEntry *e, double *cRe, double *cIm, int *nCoeffs) {
+    if (strcmp(e->name, "roots_cm") == 0) {
+        int padLo = ct_arg_pad_lo(e, 0, 0);
+        if (padLo < 0) return 1;
+        return ct_roots_cm(cRe, cIm, nCoeffs, padLo);
+    }
     if (strcmp(e->name, "power") == 0) {
-        int k = e->nArgs > 0 ? (int)e->args[0] : 8;
+        int k = ct_arg_int(e, 0, 8);
         ct_power(cRe, cIm, nCoeffs, k);
         return 0;
     }
     if (strcmp(e->name, "invpower") == 0) {
-        int k = e->nArgs > 0 ? (int)e->args[0] : 4;
+        int k = ct_arg_int(e, 0, 4);
         ct_invpower(cRe, cIm, nCoeffs, k);
         return 0;
     }
     if (strcmp(e->name, "roots") == 0) {
-        int k = e->nArgs > 0 ? (int)e->args[0] : 8;
-        ct_roots(cRe, cIm, nCoeffs, k);
+        int k = ct_arg_int(e, 0, 8);
+        int padLo = ct_arg_pad_lo(e, 1, 0);
+        if (padLo < 0) return 1;
+        ct_roots(cRe, cIm, nCoeffs, k, padLo);
         return 0;
     }
     CoeffTransform fn = lookupCoeffTransform(e->name);
@@ -3145,14 +3226,24 @@ static int parseCtChain(const char *p, CtEntry *entries, int maxCount) {
             if (*p == ',') { p++; p = skip(p); }
             if (*p == '"') {
                 p++;
-                char tmp[64]; int j = 0;
-                while (*p && *p != '"' && j < 63) tmp[j++] = *p++;
-                tmp[j] = '\0';
+                int j = 0;
+                while (*p && *p != '"' && j < 63) entries[count].args[entries[count].nArgs][j++] = *p++;
+                entries[count].args[entries[count].nArgs][j] = '\0';
                 if (*p == '"') p++;
-                entries[count].args[entries[count].nArgs++] = atof(tmp);
+                entries[count].nArgs++;
             } else if (*p == '-' || (*p >= '0' && *p <= '9')) {
-                entries[count].args[entries[count].nArgs++] = atof(p);
-                while (*p && *p != ',' && *p != ']') p++;
+                int j = 0;
+                while (*p && *p != ',' && *p != ']' && j < 63) {
+                    entries[count].args[entries[count].nArgs][j++] = *p++;
+                }
+                while (j > 0 && (entries[count].args[entries[count].nArgs][j - 1] == ' ' ||
+                                 entries[count].args[entries[count].nArgs][j - 1] == '\t' ||
+                                 entries[count].args[entries[count].nArgs][j - 1] == '\n' ||
+                                 entries[count].args[entries[count].nArgs][j - 1] == '\r')) {
+                    j--;
+                }
+                entries[count].args[entries[count].nArgs][j] = '\0';
+                entries[count].nArgs++;
             } else {
                 break;
             }
@@ -3644,6 +3735,73 @@ static void p11b3_c(double x1r, double x1i, double x2r, double x2i,
     }
 }
 
+/* giga_139: parametric p11b3 variant.
+ * CFPV: int1, int2, int3, deg
+ * Defaults reproduce the original Python implementation. */
+static void giga_139_c(double x1r, double x1i, double x2r, double x2i,
+                    const double *cfpv, int n_cfpv,
+                    double *cRe, double *cIm, int *nCoeffs) {
+    int int1 = (n_cfpv > 0) ? (int)cfpv[0] : 251;
+    int int2 = (n_cfpv > 1) ? (int)cfpv[1] : 37;
+    int int3 = (n_cfpv > 2) ? (int)cfpv[2] : 619;
+    int deg = (n_cfpv > 3 && cfpv[3] >= 2 && cfpv[3] <= MAX_COEFFS) ? (int)cfpv[3] : 11;
+    if (int2 <= 0) int2 = 1;
+    *nCoeffs = deg;
+    for (int i = 0; i < deg; i++) { cRe[i] = 0; cIm[i] = 0; }
+
+    /* t = t1 + t2 */
+    double tr = x1r + x2r, ti = x1i + x2i;
+    /* a = |t1+t2| / 2 */
+    double a = sqrt(tr * tr + ti * ti) / 2.0;
+    /* m = int(a * int1) % int2 */
+    int m = ((int)(a * (double)int1)) % int2;
+
+    double vr[MAX_COEFFS], vi[MAX_COEFFS];
+    /* v[k] = (k+1) / (t+4) */
+    double dr = tr + 4.0, di = ti;
+    double d2 = dr * dr + di * di;
+    if (d2 < 1e-30) d2 = 1e-30;
+    for (int k = 0; k < deg; k++) {
+        double nr = (double)(k + 1);
+        vr[k] = nr * dr / d2;
+        vi[k] = -nr * di / d2;
+    }
+
+    /* p1 = int(7 * a * deg) % deg; v[p1] = (p1+1) / (t + |t|*2 + 1 + m) */
+    double abst = sqrt(tr * tr + ti * ti);
+    int p1 = ((int)(7.0 * a * (double)deg)) % deg;
+    {
+        double denr = tr + abst * 2.0 + 1.0 + m, deni = ti;
+        double dd = denr * denr + deni * deni;
+        if (dd < 1e-30) dd = 1e-30;
+        double nr = (double)(p1 + 1);
+        vr[p1] = nr * denr / dd;
+        vi[p1] = -nr * deni / dd;
+    }
+
+    /* p2 = int(int3 * a * deg) % deg; v[p2] = (p2+1) / (t + |t|*2 + 1 + m//2) */
+    int p2 = ((int)((double)int3 * a * (double)deg)) % deg;
+    {
+        double denr = tr + abst * 2.0 + 1.0 + (m / 2), deni = ti;
+        double dd = denr * denr + deni * deni;
+        if (dd < 1e-30) dd = 1e-30;
+        double nr = (double)(p2 + 1);
+        vr[p2] = nr * denr / dd;
+        vi[p2] = -nr * deni / dd;
+    }
+
+    /* cf = exp(i * pi * v) */
+    for (int k = 0; k < deg; k++) {
+        double er = -M_PI * vi[k], ei = M_PI * vr[k];
+        double e = exp(er);
+        cRe[k] = e * cos(ei);
+        cIm[k] = e * sin(ei);
+    }
+    for (int k = 0; k < deg; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0; cIm[k] = 0; }
+    }
+}
+
 /* poly_creative10: geometric algebra product terms with alternating signs.
  * gp = dot(t1,t2) + i*wedge(t1,t2), cf[k] = gp^(k+1), cf[even] *= -1. */
 static void creative10_hand_c(double x1r, double x1i, double x2r, double x2i,
@@ -3825,6 +3983,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     int nCt = 0;
     cp = findKey(buf, "coeff_transforms");
     if (cp) nCt = parseCtChain(cp, ctEntries, MAX_CHAIN);
+    int quantizeParams = coeff_transform_chain_needs_quantized_params(ctEntries, nCt);
 
     /* Look up coefficient function spec */
     const CoeffFuncSpec *spec = lookupCoeffFuncSpec(funcName);
@@ -3858,7 +4017,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     {
         double z1r = 0, z1i = 0, z2r = 0, z2i = 0;
         for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, n1);
-        quantize_params_f32(&z1r, &z1i, &z2r, &z2i);
+        if (quantizeParams) quantize_params_f32(&z1r, &z1i, &z2r, &z2i);
         coeffFunc(z1r, z1i, z2r, z2i, cfpv, n_cfpv, probeRe, probeIm, &probeN);
         for (int t = 0; t < nCt; t++) {
             if (dispatchCt(&ctEntries[t], probeRe, probeIm, &probeN) != 0) return 1;
@@ -3895,7 +4054,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
 
             double z1r = x1, z1i = 0.0, z2r = x2, z2i = 0.0;
             for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, n1);
-            quantize_params_f32(&z1r, &z1i, &z2r, &z2i);
+            if (quantizeParams) quantize_params_f32(&z1r, &z1i, &z2r, &z2i);
 
             double cRe[MAX_COEFFS], cIm[MAX_COEFFS];
             int nCoeffs;

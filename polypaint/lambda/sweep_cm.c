@@ -18,14 +18,8 @@
 #include <complex.h>
 #include <time.h>
 
-/* LAPACK zgeev: complex double general matrix eigenvalues */
-extern void zgeev_(char *jobvl, char *jobvr, int *n,
-                   double _Complex *a, int *lda,
-                   double _Complex *w,
-                   double _Complex *vl, int *ldvl,
-                   double _Complex *vr, int *ldvr,
-                   double _Complex *work, int *lwork,
-                   double *rwork, int *info);
+#define HAVE_LAPACK_COMPANION 1
+#include "companion_solver.h"
 
 #define READ_BUF_SIZE (256 * 1024)
 
@@ -78,137 +72,10 @@ static void parse_string(const char *p, char *out, int max) {
     out[i] = '\0';
 }
 
-/* Solve one polynomial via companion matrix.
- * cf[0..n-1] are complex coefficients: cf[0]*z^(n-1) + cf[1]*z^(n-2) + ... + cf[n-1].
- * Returns roots in out_re/out_im, returns actual degree (number of roots). */
+/* Shared companion solver implementation lives in companion_solver.h. */
 static int solve_companion(const double *cfRe, const double *cfIm, int nCoeffs,
                            float *out_re, float *out_im) {
-    /* Find effective degree (skip leading zeros) */
-    int first = 0;
-    double maxMag = 0;
-    for (int k = 0; k < nCoeffs; k++) {
-        double m = cfRe[k] * cfRe[k] + cfIm[k] * cfIm[k];
-        if (m > maxMag) maxMag = m;
-    }
-    /* All-zero polynomial: no roots */
-    if (maxMag < 1e-60) {
-        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
-        return nCoeffs - 1;
-    }
-    double thr = maxMag * 1e-15;
-    while (first < nCoeffs - 1 && (cfRe[first] * cfRe[first] + cfIm[first] * cfIm[first]) < thr)
-        first++;
-
-    int degree = nCoeffs - 1 - first;
-    if (degree <= 0) {
-        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
-        return nCoeffs - 1;
-    }
-
-    /* Linear case: -cf[1]/cf[0] */
-    if (degree == 1) {
-        double _Complex a = cfRe[first] + I * cfIm[first];
-        double _Complex b = cfRe[first + 1] + I * cfIm[first + 1];
-        double _Complex root = -b / a;
-        out_re[0] = (float)creal(root);
-        out_im[0] = (float)cimag(root);
-        /* Fill remaining with zeros */
-        for (int k = 1; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
-        return nCoeffs - 1;
-    }
-
-    /* Build companion matrix (column-major for LAPACK) */
-    int n = degree;
-    double _Complex *A = calloc(n * n, sizeof(double _Complex));
-    if (!A) return 0;
-
-    /* Normalize to monic: divide by leading coefficient */
-    double _Complex lead = cfRe[first] + I * cfIm[first];
-    if (!isfinite(cabs(lead))) {
-        /* Overflow: coefficient magnitude exceeds double range — skip this polynomial */
-        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
-        free(A);
-        return -(nCoeffs - 1);  /* negative = skipped due to overflow */
-    }
-    for (int j = 0; j < n; j++) {
-        /* First row: -b[j]/lead where b[j] = cf[first+1+j] */
-        double _Complex bj = cfRe[first + 1 + j] + I * cfIm[first + 1 + j];
-        A[j * n + 0] = -bj / lead;  /* A[0][j] in column-major = A[j*n + 0] */
-        if (!isfinite(creal(A[j * n + 0])) || !isfinite(cimag(A[j * n + 0]))) {
-            /* Overflow in normalized coefficient — skip */
-            for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
-            free(A);
-            return -(nCoeffs - 1);
-        }
-    }
-    /* Sub-diagonal of 1s */
-    for (int k = 1; k < n; k++) {
-        A[(k - 1) * n + k] = 1.0;  /* A[k][k-1] in column-major */
-    }
-
-    /* Compute eigenvalues */
-    double _Complex *W = malloc(n * sizeof(double _Complex));
-    double *rwork = malloc(2 * n * sizeof(double));
-    if (!W || !rwork) {
-        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
-        free(rwork);
-        free(W);
-        free(A);
-        return nCoeffs - 1;
-    }
-    int info, lwork = -1;
-    double _Complex wkopt;
-    char jobvl = 'N', jobvr = 'N';
-    int ldvl = 1, ldvr = 1;
-
-    /* Workspace query */
-    zgeev_(&jobvl, &jobvr, &n, A, &n, W, NULL, &ldvl, NULL, &ldvr,
-           &wkopt, &lwork, rwork, &info);
-    if (info != 0) {
-        /* Workspace query failed — zero output */
-        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
-        free(rwork); free(W); free(A);
-        return nCoeffs - 1;
-    }
-    lwork = (int)creal(wkopt);
-    if (lwork < 1) {
-        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
-        free(rwork); free(W); free(A);
-        return nCoeffs - 1;
-    }
-    double _Complex *work = malloc(lwork * sizeof(double _Complex));
-    if (!work) {
-        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
-        free(rwork); free(W); free(A);
-        return nCoeffs - 1;
-    }
-
-    /* Actual eigensolve */
-    zgeev_(&jobvl, &jobvr, &n, A, &n, W, NULL, &ldvl, NULL, &ldvr,
-           work, &lwork, rwork, &info);
-    if (info != 0) {
-        /* Eigensolve failed or partially converged — zero output */
-        for (int k = 0; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
-        free(work); free(rwork); free(W); free(A);
-        return nCoeffs - 1;
-    }
-
-    /* Write roots */
-    for (int k = 0; k < n; k++) {
-        double re = creal(W[k]), im = cimag(W[k]);
-        if (!isfinite(re) || !isfinite(im)) { re = 0; im = 0; }
-        out_re[k] = (float)re;
-        out_im[k] = (float)im;
-    }
-    /* Pad remaining slots with zeros */
-    for (int k = n; k < nCoeffs - 1; k++) { out_re[k] = 0; out_im[k] = 0; }
-
-    free(work);
-    free(rwork);
-    free(W);
-    free(A);
-
-    return nCoeffs - 1;  /* Always return full degree for format compatibility */
+    return solve_companion_coeffs(cfRe, cfIm, nCoeffs, out_re, out_im);
 }
 
 int main(int argc, char **argv) {

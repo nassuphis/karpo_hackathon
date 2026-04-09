@@ -116,7 +116,7 @@ def test_coeffgen_chunked_parametric_coeff_transform_matches_monolithic():
     """Chunked coeffgen matches monolithic for parametric coeff transforms too."""
     print("test_coeffgen_chunked_parametric_coeff_transform_matches_monolithic...")
     n, times, func = 8, 1, "g39"
-    ct = [["roots", "6"]]
+    ct = [["roots", "6", "lo"]]
     pt = [["unit_circle"]]
 
     run_mode({

@@ -603,6 +603,21 @@ class TestCoeffTransforms(unittest.TestCase):
 
         np.testing.assert_allclose(invpowered, expected, rtol=1e-5, atol=1e-5)
 
+    def test_roots_hi_lo_only_change_zero_padding_side(self):
+        """roots(k,hi|lo) should compute the same roots and only move the padding zero."""
+        meta_hi = self._coeffgen([["roots", "5", "hi"]], "/tmp/test_ct_roots_hi.bin")
+        meta_lo = self._coeffgen([["roots", "5", "lo"]], "/tmp/test_ct_roots_lo.bin")
+
+        n = meta_hi["n_coeffs"]
+        self.assertEqual(n, meta_lo["n_coeffs"])
+
+        roots_hi = _read_coeffs("/tmp/test_ct_roots_hi.bin", n)
+        roots_lo = _read_coeffs("/tmp/test_ct_roots_lo.bin", n)
+
+        np.testing.assert_allclose(roots_hi[:, 1:], roots_lo[:, :-1], rtol=1e-5, atol=1e-5)
+        np.testing.assert_allclose(roots_hi[:, 0], 0.0 + 0.0j, atol=1e-7)
+        np.testing.assert_allclose(roots_lo[:, -1], 0.0 + 0.0j, atol=1e-7)
+
 
 class TestParamTransforms(unittest.TestCase):
     """Test parameter transforms produce expected results."""

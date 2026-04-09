@@ -173,6 +173,13 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("handler_autolevels.py", packaged)
         self.assertIn("autolevels_render", packaged["handler_autolevels.py"])
 
+        self.assertIn("handler_resize_artifact.py", packaged)
+        self.assertIn("shared.py", packaged["handler_resize_artifact.py"])
+        self.assertIn('create_lambda "$RESIZE_ARTIFACT_NAME" "handler_resize_artifact.handler" "/tmp/polypaint-resize-artifact.zip"', DEPLOY_TEXT)
+        self.assertIn('update_lambda "$RESIZE_ARTIFACT_NAME" "handler_resize_artifact.handler" "/tmp/polypaint-resize-artifact.zip"', DEPLOY_TEXT)
+        self.assertIn('RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME', DEPLOY_TEXT)
+        self.assertIn('"$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
+
         self.assertIn("handler_repalette.py", packaged)
         self.assertIn("palette_names.py", packaged["handler_repalette.py"])
         self.assertIn("tri_palette_names_generated.py", packaged["handler_repalette.py"])

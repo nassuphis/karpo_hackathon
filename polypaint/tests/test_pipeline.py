@@ -2111,6 +2111,92 @@ class TestRenderSummary(unittest.TestCase):
         self.assertAlmostEqual(child["quality"], 83.0)
 
     @patch("handler_storage.s3")
+    def test_render_summary_orders_resize_children_above_parent(self, mock_s3):
+        from handler_storage import handle_render_summary
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate_side_effect(**kwargs):
+            prefix = kwargs.get("Prefix", "")
+            if prefix == "renders/j/color/":
+                return [{
+                    "CommonPrefixes": [
+                        {"Prefix": "renders/j/color/color_base/"},
+                        {"Prefix": "renders/j/color/resize_child/"},
+                    ]
+                }]
+            return [{"CommonPrefixes": []}]
+
+        mock_paginator.paginate.side_effect = paginate_side_effect
+
+        meta_by_key = {
+            "renders/j/color/color_base/image.jpeg": {
+                "ContentLength": 1100,
+                "ContentType": "image/jpeg",
+                "Metadata": {
+                    "artifact_id": "color_base",
+                    "created_at": "2026-04-02T10:00:00Z",
+                    "family": "color",
+                    "format": "jpeg",
+                    "color_mode": "solve_score",
+                    "palette": "tri_redgold",
+                    "root_transforms": "[]",
+                    "pix": "3000",
+                    "quality": "77",
+                    "width": "3000",
+                    "height": "2000",
+                },
+            },
+            "renders/j/color/color_base/preview.png": {"ContentLength": 100, "ContentType": "image/png", "Metadata": {}},
+            "renders/j/color/resize_child/image.jpeg": {
+                "ContentLength": 900,
+                "ContentType": "image/jpeg",
+                "Metadata": {
+                    "artifact_id": "resize_child",
+                    "created_at": "2026-04-02T10:05:00Z",
+                    "family": "color",
+                    "format": "jpeg",
+                    "color_mode": "solve_score",
+                    "palette": "tri_redgold",
+                    "root_transforms": "[]",
+                    "pix": "2048",
+                    "quality": "83",
+                    "width": "2048",
+                    "height": "1365",
+                    "derived_from_artifact_id": "color_base",
+                    "postprocess_kind": "resize",
+                    "postprocess_profile": "libvips_resize_v1",
+                    "resize_params": "{\"engine\":\"thumbnail\",\"target_size\":2048,\"size_mode\":\"down\"}",
+                },
+            },
+            "renders/j/color/resize_child/preview.png": {"ContentLength": 100, "ContentType": "image/png", "Metadata": {}},
+        }
+
+        def mock_head(**kwargs):
+            key = kwargs["Key"]
+            if key in meta_by_key:
+                return meta_by_key[key]
+            raise Exception("NoSuchKey")
+
+        mock_s3.head_object.side_effect = mock_head
+        mock_s3.get_object.side_effect = Exception("NoSuchKey")
+        mock_s3.generate_presigned_url.return_value = "https://signed"
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+        arts = body["families"]["color"]
+
+        self.assertEqual([a["artifact_id"] for a in arts[:2]], ["resize_child", "color_base"])
+        child = arts[0]
+        self.assertEqual(child["derived_from_artifact_id"], "color_base")
+        self.assertEqual(child["postprocess_kind"], "resize")
+        self.assertEqual(child["postprocess_profile"], "libvips_resize_v1")
+        self.assertEqual(child["resize_params"]["engine"], "thumbnail")
+        self.assertEqual(child["resize_params"]["target_size"], 2048)
+        self.assertEqual(child["resize_params"]["size_mode"], "down")
+
+    @patch("handler_storage.s3")
     def test_render_summary_missing_artifacts_are_false(self, mock_s3):
         """Legacy top-level artifacts are still returned as exists=false when missing."""
         from handler_storage import handle_render_summary

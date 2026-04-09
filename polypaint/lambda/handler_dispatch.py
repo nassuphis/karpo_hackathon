@@ -36,6 +36,7 @@ FUNCTIONS = {
     "compute_orchestrator": os.environ.get("COMPUTE_ORCHESTRATOR_FUNCTION", "polypaint-compute-orchestrator"),
     "palette_orchestrator": os.environ.get("PALETTE_ORCHESTRATOR_FUNCTION", "polypaint-palette-orchestrator"),
     "autolevels": os.environ.get("AUTOLEVELS_FUNCTION", "polypaint-autolevels"),
+    "resize_artifact": os.environ.get("RESIZE_ARTIFACT_FUNCTION", "polypaint-resize-artifact"),
     "repalette": os.environ.get("REPALETTE_FUNCTION", "polypaint-repalette"),
     "color_repalette": os.environ.get("COLOR_REPALETTE_FUNCTION", "polypaint-color-repalette"),
     "pdf_artifact": os.environ.get("PDF_ARTIFACT_FUNCTION", "polypaint-pdf-artifact"),

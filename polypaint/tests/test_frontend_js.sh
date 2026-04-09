@@ -35,6 +35,8 @@ grep -q 'id="render-mt-merge-workers"' "$HTML" || { echo "FATAL: render MT merge
 grep -q 'id="render-mt-finalize-workers"' "$HTML" || { echo "FATAL: render MT finalize workers input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-hist-retries"' "$HTML" || { echo "FATAL: render MT hist retries input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-raster-retries"' "$HTML" || { echo "FATAL: render MT raster retries input missing from index.html"; exit 1; }
+grep -q 'id="btn-render-resize"' "$HTML" || { echo "FATAL: color Resize button missing from index.html"; exit 1; }
+grep -q 'id="resize-popup-overlay"' "$HTML" || { echo "FATAL: resize popup missing from index.html"; exit 1; }
 grep -q 'id="btn-png-export"' "$HTML" || { echo "FATAL: bilevel PNG export button missing from index.html"; exit 1; }
 grep -q 'id="btn-tiff-compat"' "$HTML" || { echo "FATAL: bilevel TIFF compat button missing from index.html"; exit 1; }
 grep -q 'onclick="loadLambdaConfig()" class="btn-secondary" style="margin:0; padding:4px 12px"' "$HTML" || { echo "FATAL: Config Load button should override global button margin"; exit 1; }
@@ -323,6 +325,7 @@ const renderEls = {
     'btn-render-generate': {},
     'btn-render-generate-mt': {},
     'btn-render-autolevels': {},
+    'btn-render-resize': {},
     'btn-render-download': {},
     'btn-render-delete': {},
     'btn-render-deepzoom': {},
@@ -381,6 +384,40 @@ const renderEls = {
     'autolevel-exclude-background': { checked: true },
     'autolevel-jpeg-optimize': { checked: false },
     'autolevel-jpeg-interlace': { checked: false },
+    'resize-popup-overlay': {},
+    'resize-popup-title': {},
+    'resize-popup-summary': {},
+    'resize-popup-close': {},
+    'resize-popup-revert': {},
+    'resize-popup-cancel': {},
+    'resize-popup-run': {},
+    'resize-current-size': { value: '' },
+    'resize-target-size': { value: '1024' },
+    'resize-engine': { value: 'thumbnail' },
+    'resize-size-mode': { value: 'both' },
+    'resize-crop': { value: 'none' },
+    'resize-linear': { checked: false },
+    'resize-no-rotate': { checked: false },
+    'resize-input-profile': { value: '' },
+    'resize-output-profile': { value: '' },
+    'resize-intent': { value: 'perceptual' },
+    'resize-fail-on': { value: 'none' },
+    'resize-kernel': { value: 'lanczos3' },
+    'resize-gap': { value: '2' },
+    'resize-vscale': { value: '1' },
+    'resize-output-format': { value: 'jpeg' },
+    'resize-quality': { value: '90' },
+    'resize-jpeg-subsample': { value: 'on' },
+    'resize-jpeg-optimize': { checked: false },
+    'resize-jpeg-interlace': { checked: false },
+    'resize-png-row': {},
+    'resize-png-compression': { value: '6' },
+    'resize-png-q': { value: '100' },
+    'resize-png-dither': { value: '1' },
+    'resize-png-bitdepth': { value: '8' },
+    'resize-png-effort': { value: '7' },
+    'resize-png-interlace': { checked: false },
+    'resize-png-palette': { checked: false },
     'palette-results-dir': { value: '' },
     'palette-solve-score': { value: 'proximity' },
     'palette-solve-score-quantile': { value: '0.1' },
@@ -436,6 +473,7 @@ vm.runInContext(`
             return { fired: 1, errors: [] };
         }
         if (name === 'dispatch' && body.target === 'autolevels') return { fired: 1, errors: [] };
+        if (name === 'dispatch' && body.target === 'resize_artifact') return { fired: 1, errors: [] };
         if (name === 'dispatch' && body.target === 'finalize') return { fired: body.jobs.length, errors: [] };
         if (name === 'dispatch' && body.target === 'bilevel_stitch') return { fired: 1, errors: [] };
         if (name === 'dispatch' && body.target === 'bilevel') return { fired: body.jobs.length, errors: [] };
@@ -2143,6 +2181,149 @@ async function testPipeline(name, call) {
         const canceledDispatch = vm.runInContext('_autolevelDispatch', ctx);
         if (canceledDispatch !== null) { console.error('FATAL: closing autolevel popup should not dispatch'); process.exit(1); }
         console.log('  autolevel popup dispatches derived color artifact run: OK');
+    }
+
+    {
+        const summary = {
+            calc: { exists: true, N: 3000, degree: 7 },
+            families: {
+                color: [
+                    {
+                        artifact_id: 'color_src',
+                        created_at: '2026-04-02T10:00:00Z',
+                        image_key: 'renders/j/color/color_src/image.jpeg',
+                        image_url: 'https://img/color_src.jpeg',
+                        preview_url: 'https://img/color_src.png',
+                        viewer_url: 'https://img/color_src.png',
+                        width: 3000,
+                        height: 2000,
+                        pix: 3000,
+                        format: 'jpeg',
+                        quality: 81,
+                        file_size: 64000,
+                        color_mode: 'solve_score',
+                        solve_metric: 'anisotropy',
+                        solve_score_quantile: 0.02,
+                        solve_score_omega: 6,
+                        palette: 'tri_redgold',
+                        resize_params: {
+                            engine: 'thumbnail',
+                            target_size: 2048,
+                            size_mode: 'down',
+                            crop: 'attention',
+                            linear: true,
+                            quality: 83,
+                            jpeg_subsample_mode: 'off',
+                            jpeg_optimize_coding: true,
+                            jpeg_interlace: true,
+                        },
+                    }
+                ],
+                bilevel: [],
+                coeffs: [],
+                palette: [],
+            },
+        };
+        vm.runInContext(`
+            _renderActiveFamily = 'color';
+            _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
+            _clearActiveRun();
+            _resizeDispatch = null;
+            _resizeStartLog = null;
+            _resizeOrigLog = log;
+            startActiveRenderObserver = function() { _resizeObserverStarted = true; };
+            _resizeObserverStarted = false;
+            log = function(msg, cls, target) {
+                if (target === 'render-log' && String(msg).includes('Resize: dispatching')) {
+                    _resizeStartLog = { msg, cls, target };
+                }
+                return _resizeOrigLog(msg, cls, target);
+            };
+            lambdaPost = async function(name, body, path) {
+                if (name === 'dispatch' && body.target === 'resize_artifact') {
+                    _resizeDispatch = body;
+                    return { fired: 1, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: 1, complete: true, status_counts: { done: 1 }, results: [{ phase: 'done', phase_label: 'Done', family: 'color', artifact_id: 'resize_done' }] };
+                }
+                return { ok: true };
+            };
+            renderArtifactPanel('j', ${JSON.stringify(summary)});
+        `, ctx);
+        const panelHtml = ctx._elements['render-preview'].innerHTML || '';
+        if (!panelHtml.includes('Resize')) { console.error('FATAL: color artifact panel should show Resize button'); process.exit(1); }
+        vm.runInContext('openResizePopup()', ctx);
+        const overlayDisplay = vm.runInContext("document.getElementById('resize-popup-overlay').style.display", ctx);
+        const popupSummary = vm.runInContext("document.getElementById('resize-popup-summary').textContent", ctx);
+        const popupCurrent = vm.runInContext("document.getElementById('resize-current-size').value", ctx);
+        const popupTarget = vm.runInContext("document.getElementById('resize-target-size').value", ctx);
+        const popupQuality = vm.runInContext("document.getElementById('resize-quality').value", ctx);
+        const popupEngine = vm.runInContext("document.getElementById('resize-engine').value", ctx);
+        if (overlayDisplay !== 'flex') { console.error('FATAL: resize popup should open'); process.exit(1); }
+        if (!String(popupSummary).includes('color_src')) { console.error('FATAL: resize popup should describe selected artifact, got ' + popupSummary); process.exit(1); }
+        if (!String(popupSummary).includes('current=3000x2000')) { console.error('FATAL: resize popup should include current size, got ' + popupSummary); process.exit(1); }
+        if (popupCurrent !== '3000x2000') { console.error('FATAL: resize popup should seed current size, got ' + popupCurrent); process.exit(1); }
+        if (popupTarget !== '2048') { console.error('FATAL: resize popup should seed target size from artifact, got ' + popupTarget); process.exit(1); }
+        if (popupQuality !== '83') { console.error('FATAL: resize popup should seed quality from artifact, got ' + popupQuality); process.exit(1); }
+        if (popupEngine !== 'thumbnail') { console.error('FATAL: resize popup should seed engine from artifact, got ' + popupEngine); process.exit(1); }
+        vm.runInContext(`
+            document.getElementById('resize-engine').value = 'resize';
+            _syncResizePopupControls();
+            document.getElementById('resize-target-size').value = '1024';
+            document.getElementById('resize-kernel').value = 'mitchell';
+            document.getElementById('resize-gap').value = '3.5';
+            document.getElementById('resize-vscale').value = '0.75';
+        `, ctx);
+        const resizeGapDisabled = vm.runInContext("document.getElementById('resize-gap').disabled", ctx);
+        const resizeKernelDisabled = vm.runInContext("document.getElementById('resize-kernel').disabled", ctx);
+        const thumbCropDisabled = vm.runInContext("document.getElementById('resize-crop').disabled", ctx);
+        if (resizeGapDisabled || resizeKernelDisabled) { console.error('FATAL: resize controls should enable for resize engine'); process.exit(1); }
+        if (!thumbCropDisabled) { console.error('FATAL: thumbnail crop should disable for resize engine'); process.exit(1); }
+        vm.runInContext('_revertResizePopupDefaults()', ctx);
+        const revertedTarget = vm.runInContext("document.getElementById('resize-target-size').value", ctx);
+        const revertedEngine = vm.runInContext("document.getElementById('resize-engine').value", ctx);
+        if (revertedTarget !== '3000' || revertedEngine !== 'thumbnail') { console.error('FATAL: resize revert should restore base defaults, got target=' + revertedTarget + ' engine=' + revertedEngine); process.exit(1); }
+        vm.runInContext(`
+            document.getElementById('resize-engine').value = 'resize';
+            document.getElementById('resize-target-size').value = '1024';
+            document.getElementById('resize-kernel').value = 'mitchell';
+            document.getElementById('resize-gap').value = '3.5';
+            document.getElementById('resize-vscale').value = '0.75';
+            document.getElementById('resize-quality').value = '84';
+            document.getElementById('resize-jpeg-subsample').value = 'off';
+            document.getElementById('resize-jpeg-optimize').checked = true;
+            document.getElementById('resize-jpeg-interlace').checked = true;
+            _syncResizePopupControls();
+        `, ctx);
+        await vm.runInContext('runResizeSelectedRenderArtifact()', ctx);
+        const dispatch = vm.runInContext('_resizeDispatch', ctx);
+        const startLog = vm.runInContext('_resizeStartLog', ctx);
+        const popupClosed = vm.runInContext("document.getElementById('resize-popup-overlay').style.display", ctx);
+        const observerStarted = vm.runInContext('_resizeObserverStarted', ctx);
+        const runMode = vm.runInContext('_activeRenderRun && _activeRenderRun.mode', ctx);
+        if (!dispatch || dispatch.target !== 'resize_artifact') { console.error('FATAL: resize should dispatch via dispatch Lambda'); process.exit(1); }
+        if (!dispatch.jobs || dispatch.jobs.length !== 1) { console.error('FATAL: resize dispatch should send one job'); process.exit(1); }
+        if (dispatch.jobs[0].source_artifact_id !== 'color_src') { console.error('FATAL: resize should target selected color artifact, got ' + dispatch.jobs[0].source_artifact_id); process.exit(1); }
+        if (dispatch.jobs[0].resize_params.engine !== 'resize') { console.error('FATAL: resize should send edited engine'); process.exit(1); }
+        if (dispatch.jobs[0].resize_params.target_size !== 1024) { console.error('FATAL: resize should send edited target size, got ' + dispatch.jobs[0].resize_params.target_size); process.exit(1); }
+        if (dispatch.jobs[0].resize_params.kernel !== 'mitchell') { console.error('FATAL: resize should send edited kernel, got ' + dispatch.jobs[0].resize_params.kernel); process.exit(1); }
+        if (dispatch.jobs[0].resize_params.gap !== 3.5 || dispatch.jobs[0].resize_params.vscale !== 0.75) { console.error('FATAL: resize should send edited gap/vscale'); process.exit(1); }
+        if (dispatch.jobs[0].resize_params.quality !== 84 || dispatch.jobs[0].resize_params.jpeg_subsample_mode !== 'off') { console.error('FATAL: resize should send edited output params'); process.exit(1); }
+        if (!dispatch.jobs[0].resize_params.jpeg_optimize_coding || !dispatch.jobs[0].resize_params.jpeg_interlace) { console.error('FATAL: resize should send JPEG checkbox params'); process.exit(1); }
+        if (popupClosed !== 'none') { console.error('FATAL: resize popup should close after dispatch'); process.exit(1); }
+        if (!observerStarted) { console.error('FATAL: resize dispatch should start render observer'); process.exit(1); }
+        if (runMode !== 'resize') { console.error('FATAL: resize dispatch should save active render run mode, got ' + runMode); process.exit(1); }
+        if (!startLog || startLog.cls !== 'ok') { console.error('FATAL: resize dispatch log should be green/ok, got ' + JSON.stringify(startLog)); process.exit(1); }
+        vm.runInContext(`
+            _resizeDispatch = null;
+            openResizePopup();
+            _closeResizePopup();
+            log = _resizeOrigLog;
+        `, ctx);
+        const canceledDispatch = vm.runInContext('_resizeDispatch', ctx);
+        if (canceledDispatch !== null) { console.error('FATAL: closing resize popup should not dispatch'); process.exit(1); }
+        console.log('  resize popup dispatches derived color artifact run: OK');
     }
 
     {

@@ -3,7 +3,7 @@
 Docker runtime regression test for deploy binaries.
 
 Runs inside ARM64 Docker container with /src mounted to lambda/.
-Tests: AE/AE-MT/CM solvers, CFPV coeffgen, render preview (vipsthumbnail),
+Tests: AE/AE-MT/CM solvers, CFPV coeffgen, libvips preview/resize runtime,
 solve_proximity_stats, and catalog degree verification.
 
 Invoked by scripts/test-docker-runtime.sh — not run directly.
@@ -71,6 +71,44 @@ def cleanup(*paths):
             os.remove(p)
         except OSError:
             pass
+
+
+def read_png_dims(path):
+    with open(path, "rb") as f:
+        header = f.read(24)
+    assert header[:8] == b"\x89PNG\r\n\x1a\n", "PNG signature missing for %s" % path
+    assert header[12:16] == b"IHDR", "PNG IHDR missing for %s" % path
+    return struct.unpack(">II", header[16:24])
+
+
+def read_jpeg_dims(path):
+    with open(path, "rb") as f:
+        assert f.read(2) == b"\xff\xd8", "JPEG SOI missing for %s" % path
+        while True:
+            marker = f.read(1)
+            if not marker:
+                break
+            while marker == b"\xff":
+                marker = f.read(1)
+                if not marker:
+                    break
+            if not marker:
+                break
+            code = marker[0]
+            if code in (0xD8, 0xD9):
+                continue
+            seg_len_bytes = f.read(2)
+            if len(seg_len_bytes) != 2:
+                break
+            seg_len = struct.unpack(">H", seg_len_bytes)[0]
+            assert seg_len >= 2, "bad JPEG segment length in %s" % path
+            if code in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                data = f.read(5)
+                assert len(data) == 5, "truncated JPEG SOF in %s" % path
+                height, width = struct.unpack(">HH", data[1:5])
+                return width, height
+            f.seek(seg_len - 2, os.SEEK_CUR)
+    raise AssertionError("JPEG SOF marker not found for %s" % path)
 
 
 # ── AE/CM Solver Tests ───────────────────────────────────────────────────
@@ -304,6 +342,82 @@ def test_render_preview():
     print("=== Render preview tests PASSED ===")
 
 
+# ── Resize Artifact libvips Runtime ──────────────────────────────────────
+
+def test_resize_runtime():
+    print("\n--- Resize artifact libvips runtime ---")
+
+    vips_path = "/opt/bin/vips"
+    vt_path = "/opt/bin/vipsthumbnail"
+    assert os.path.exists(vips_path), "vips not found at %s" % vips_path
+    assert os.path.exists(vt_path), "vipsthumbnail not found at %s" % vt_path
+
+    r = subprocess.run([vips_path, "--vips-version"], capture_output=True, text=True, timeout=5)
+    assert r.returncode == 0, "vips --vips-version failed: " + r.stderr[:200]
+    print("  vips: %s" % (r.stdout.strip() or r.stderr.strip()))
+
+    r = subprocess.run([vt_path, "--vips-version"], capture_output=True, text=True, timeout=5)
+    assert r.returncode == 0, "vipsthumbnail --vips-version failed: " + r.stderr[:200]
+    print("  vipsthumbnail: %s" % (r.stdout.strip() or r.stderr.strip()))
+
+    env = {**os.environ, "LD_LIBRARY_PATH": "/opt/lib", "PATH": "/opt/bin:" + os.environ.get("PATH", "")}
+    test_raw = "/tmp/resize_rt.raw"
+    test_jpeg = "/tmp/resize_rt.jpeg"
+    thumb_png = "/tmp/resize_rt_thumb.png"
+    resize_png = "/tmp/resize_rt_resized.png"
+    resize_v_png = "/tmp/resize_rt_resized_v.png"
+
+    with open(test_raw, "wb") as f:
+        f.write(struct.pack("<III", 64, 32, 3))
+        for y in range(32):
+            for x in range(64):
+                f.write(bytes([(x * 4) % 256, (y * 8) % 256, ((x + y) * 3) % 256]))
+
+    r = subprocess.run(["/src/raw2jpeg", test_raw, test_jpeg, "--quality=90"],
+                       capture_output=True, text=True, timeout=10, env=env)
+    assert r.returncode == 0, "raw2jpeg failed: " + r.stderr[:200]
+    assert os.path.getsize(test_jpeg) > 0, "runtime resize test JPEG is empty"
+    jpeg_dims = read_jpeg_dims(test_jpeg)
+    assert jpeg_dims == (64, 32), "unexpected source JPEG dims %r" % (jpeg_dims,)
+    print("  source JPEG: %dx%d" % jpeg_dims)
+
+    r = subprocess.run([
+        vips_path, "thumbnail", test_jpeg, thumb_png, "16",
+        "--height", "16", "--size", "down", "--linear", "--crop", "attention",
+        "--intent", "perceptual", "--fail-on", "none"
+    ], capture_output=True, text=True, timeout=20, env=env)
+    assert r.returncode == 0, "vips thumbnail failed: " + r.stderr[:200]
+    thumb_dims = read_png_dims(thumb_png)
+    assert thumb_dims == (16, 16), "unexpected thumbnail dims %r" % (thumb_dims,)
+    print("  vips thumbnail: OK (%dx%d)" % thumb_dims)
+
+    r = subprocess.run([
+        vips_path, "resize", test_jpeg, resize_png,
+        str(32.0 / 64.0),
+        "--kernel", "mitchell",
+        "--gap", "2"
+    ], capture_output=True, text=True, timeout=20, env=env)
+    assert r.returncode == 0, "vips resize failed: " + r.stderr[:200]
+    resize_dims = read_png_dims(resize_png)
+    assert resize_dims == (32, 16), "unexpected resized dims %r" % (resize_dims,)
+    print("  vips resize: OK (%dx%d)" % resize_dims)
+
+    r = subprocess.run([
+        vips_path, "resize", test_jpeg, resize_v_png,
+        str(32.0 / 64.0),
+        "--kernel", "mitchell",
+        "--gap", "2",
+        "--vscale", "1"
+    ], capture_output=True, text=True, timeout=20, env=env)
+    assert r.returncode == 0, "vips resize --vscale failed: " + r.stderr[:200]
+    resize_v_dims = read_png_dims(resize_v_png)
+    assert resize_v_dims == (32, 32), "unexpected resized --vscale dims %r" % (resize_v_dims,)
+    print("  vips resize + vscale=1: OK (%dx%d)" % resize_v_dims)
+
+    cleanup(test_raw, test_jpeg, thumb_png, resize_png, resize_v_png)
+    print("=== Resize artifact runtime tests PASSED ===")
+
+
 # ── solve_proximity_stats Tests (all metrics) ────────────────────────────
 
 def _write_sps_bin(path):
@@ -514,6 +628,7 @@ if __name__ == "__main__":
     test_ae_cm_solvers()
     test_cfpv_coeffgen()
     test_render_preview()
+    test_resize_runtime()
     test_solve_proximity_stats()
     test_roots2pix_solve_score()
     test_catalog_degrees()

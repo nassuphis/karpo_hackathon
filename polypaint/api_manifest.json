@@ -16,6 +16,7 @@
       "render_orchestrator",
       "render_preview",
       "repalette",
+      "resize_artifact",
       "solve_proximity",
       "sweep",
       "sweep_cm",
@@ -114,7 +115,8 @@
       "palette_orchestrator",
       "pdf_artifact",
       "render_orchestrator",
-      "repalette"
+      "repalette",
+      "resize_artifact"
     ],
     "literal_services": [
       "dispatch",

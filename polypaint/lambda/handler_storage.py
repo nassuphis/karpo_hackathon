@@ -651,6 +651,7 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["postprocess_kind"] = meta.get("postprocess_kind", "")
         entry["postprocess_profile"] = meta.get("postprocess_profile", "")
         entry["autolevels_params"] = _parse_json(meta.get("autolevels_params"))
+        entry["resize_params"] = _parse_json(meta.get("resize_params"))
         entry["repalette_capable"] = repalette_capable
         entry["pixel_bins_prefix"] = meta.get("pixel_bins_prefix", "")
         pbe = meta.get("pixel_bins_empty", "")

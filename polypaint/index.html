@@ -1119,6 +1119,195 @@ button {
                 <button id="autolevel-popup-run" type="button" class="btn-primary" style="padding:6px 12px">AutoLevel</button>
             </div>
         </div>
+</div>
+</div>
+
+<div id="resize-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="resize-popup-title">
+        <div class="tri-popup-head">
+            <div id="resize-popup-title" class="tri-popup-title">Resize</div>
+            <button id="resize-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div id="resize-popup-summary" class="autolevel-popup-summary"></div>
+        <div class="autolevel-pipeline">
+            <div class="autolevel-stage">
+                <div class="autolevel-stage-head">
+                    <div class="autolevel-stage-toggle"><span>1. Target</span></div>
+                    <div class="autolevel-stage-note">Use one scalar target size. Thumbnail treats it as a square box or crop target; resize scales the longest edge to this value.</div>
+                </div>
+                <div class="autolevel-stage-body">
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">Current artifact size and requested target.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Current</span>
+                            <input id="resize-current-size" type="text" value="" disabled>
+                            <span class="inline-label">Target</span>
+                            <input id="resize-target-size" type="number" min="1" max="200000" step="1" value="5000">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="autolevel-stage">
+                <div class="autolevel-stage-head">
+                    <div class="autolevel-stage-toggle"><span>2. Engine</span></div>
+                    <div class="autolevel-stage-note">`thumbnail` exposes the richer libvips resize surface; `resize` exposes low-level kernel/gap controls.</div>
+                </div>
+                <div class="autolevel-stage-body">
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">Choose the libvips operation to run.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Engine</span>
+                            <select id="resize-engine">
+                                <option value="thumbnail">thumbnail</option>
+                                <option value="resize">resize</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="autolevel-stage">
+                <div class="autolevel-stage-head">
+                    <div class="autolevel-stage-toggle"><span>3. Thumbnail Options</span></div>
+                    <div class="autolevel-stage-note">These map to libvips `thumbnail_image`: fit policy, crop strategy, linear-light reduction, profiles, ICC intent, and error handling.</div>
+                </div>
+                <div id="resize-stage-thumbnail" class="autolevel-stage-body">
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">Fit behavior inside the target square.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Size</span>
+                            <select id="resize-size-mode">
+                                <option value="both">both</option>
+                                <option value="down">down</option>
+                                <option value="up">up</option>
+                                <option value="force">force</option>
+                            </select>
+                            <span class="inline-label">Crop</span>
+                            <select id="resize-crop">
+                                <option value="none">none</option>
+                                <option value="centre">centre</option>
+                                <option value="entropy">entropy</option>
+                                <option value="attention">attention</option>
+                                <option value="low">low</option>
+                                <option value="high">high</option>
+                                <option value="all">all</option>
+                            </select>
+                            <label class="autolevel-inline-check"><input id="resize-linear" type="checkbox"> Linear light</label>
+                            <label class="autolevel-inline-check"><input id="resize-no-rotate" type="checkbox"> No rotate</label>
+                        </div>
+                    </div>
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">ICC and load-failure behavior.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Input profile</span>
+                            <input id="resize-input-profile" type="text" value="" placeholder="optional profile path">
+                            <span class="inline-label">Output profile</span>
+                            <input id="resize-output-profile" type="text" value="" placeholder="optional profile path">
+                        </div>
+                    </div>
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">Rendering intent and loader fail threshold.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Intent</span>
+                            <select id="resize-intent">
+                                <option value="perceptual">perceptual</option>
+                                <option value="relative">relative</option>
+                                <option value="saturation">saturation</option>
+                                <option value="absolute">absolute</option>
+                            </select>
+                            <span class="inline-label">Fail on</span>
+                            <select id="resize-fail-on">
+                                <option value="none">none</option>
+                                <option value="truncated">truncated</option>
+                                <option value="error">error</option>
+                                <option value="warning">warning</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="autolevel-stage">
+                <div class="autolevel-stage-head">
+                    <div class="autolevel-stage-toggle"><span>4. Resize Options</span></div>
+                    <div class="autolevel-stage-note">These map to libvips `resize`: resampling kernel, reducing gap, and vertical scale multiplier.</div>
+                </div>
+                <div id="resize-stage-resize" class="autolevel-stage-body">
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">Kernel and shrink-gap controls.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Kernel</span>
+                            <select id="resize-kernel">
+                                <option value="nearest">nearest</option>
+                                <option value="linear">linear</option>
+                                <option value="cubic">cubic</option>
+                                <option value="mitchell">mitchell</option>
+                                <option value="lanczos2">lanczos2</option>
+                                <option value="lanczos3">lanczos3</option>
+                            </select>
+                            <span class="inline-label">Gap</span>
+                            <input id="resize-gap" type="number" min="0" max="100" step="0.01" value="2">
+                            <span class="inline-label">V scale</span>
+                            <input id="resize-vscale" type="number" min="0.01" max="100" step="0.01" value="1">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="autolevel-stage">
+                <div class="autolevel-stage-head">
+                    <div class="autolevel-stage-toggle"><span>5. Output</span></div>
+                    <div class="autolevel-stage-note">Resize keeps the existing image format, then saves with these output settings.</div>
+                </div>
+                <div class="autolevel-stage-body">
+                    <div class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">Output format follows the selected artifact.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Format</span>
+                            <input id="resize-output-format" type="text" value="jpeg" disabled>
+                            <span class="inline-label">Quality</span>
+                            <input id="resize-quality" type="number" min="1" max="100" step="1" value="90">
+                            <span class="inline-label">Subsample</span>
+                            <select id="resize-jpeg-subsample">
+                                <option value="on">on</option>
+                                <option value="auto">auto</option>
+                                <option value="off">off</option>
+                            </select>
+                            <label class="autolevel-inline-check"><input id="resize-jpeg-optimize" type="checkbox"> Optimize</label>
+                            <label class="autolevel-inline-check"><input id="resize-jpeg-interlace" type="checkbox"> Progressive</label>
+                        </div>
+                    </div>
+                    <div id="resize-png-row" class="autolevel-stage-row">
+                        <div class="autolevel-stage-text">PNG save options.</div>
+                        <div class="autolevel-inline-fields">
+                            <span class="inline-label">Compression</span>
+                            <input id="resize-png-compression" type="number" min="0" max="9" step="1" value="6">
+                            <span class="inline-label">Q</span>
+                            <input id="resize-png-q" type="number" min="0" max="100" step="1" value="100">
+                            <span class="inline-label">Dither</span>
+                            <input id="resize-png-dither" type="number" min="0" max="1" step="0.01" value="1">
+                            <span class="inline-label">Bitdepth</span>
+                            <select id="resize-png-bitdepth">
+                                <option value="1">1</option>
+                                <option value="2">2</option>
+                                <option value="4">4</option>
+                                <option value="8">8</option>
+                                <option value="16">16</option>
+                            </select>
+                            <span class="inline-label">Effort</span>
+                            <input id="resize-png-effort" type="number" min="1" max="10" step="1" value="7">
+                            <label class="autolevel-inline-check"><input id="resize-png-interlace" type="checkbox"> Interlace</label>
+                            <label class="autolevel-inline-check"><input id="resize-png-palette" type="checkbox"> Palette</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="autolevel-popup-help">Resize creates a new immutable Color artifact derived from the selected image. `thumbnail` is the high-level libvips path; `resize` is the low-level kernel path.</div>
+        <div class="autolevel-popup-actions">
+            <button id="resize-popup-revert" type="button" class="btn-secondary" style="padding:6px 12px">Revert</button>
+            <div style="display:flex; gap:8px">
+                <button id="resize-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+                <button id="resize-popup-run" type="button" class="btn-primary" style="padding:6px 12px">Resize</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -2710,6 +2899,7 @@ let _triPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _builtinPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
+let _resizePopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
 let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
 let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '' };
 let _resultsRefreshPopupState = { open: false, workers: 32 };
@@ -5192,6 +5382,303 @@ function _initAutolevelPopup() {
     });
 }
 
+function _resizeBaseParamsForArtifact(art) {
+    const width = Number(art && art.width);
+    const height = Number(art && art.height);
+    const pix = Number(art && art.pix);
+    const currentSize = Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+        ? Math.max(width, height)
+        : (Number.isFinite(pix) && pix > 0 ? pix : 1024);
+    const fmt = String((art && art.format) || ((art && art.image_key || '').split('.').pop()) || 'jpeg').toLowerCase() === 'png' ? 'png' : 'jpeg';
+    const quality = Number(art && art.quality);
+    return {
+        engine: 'thumbnail',
+        target_size: Math.round(currentSize),
+        size_mode: 'both',
+        crop: 'none',
+        linear: false,
+        no_rotate: false,
+        input_profile: '',
+        output_profile: '',
+        intent: 'perceptual',
+        fail_on: 'none',
+        kernel: 'lanczos3',
+        gap: 2,
+        vscale: 1,
+        format: fmt,
+        quality: Number.isFinite(quality) && quality > 0 ? Math.round(quality) : 90,
+        jpeg_subsample_mode: 'on',
+        jpeg_optimize_coding: false,
+        jpeg_interlace: false,
+        png_compression: 6,
+        png_interlace: false,
+        png_palette: false,
+        png_Q: 100,
+        png_dither: 1,
+        png_bitdepth: 8,
+        png_effort: 7,
+    };
+}
+
+function _resizeParamsForArtifact(art) {
+    const params = _resizeBaseParamsForArtifact(art);
+    if (art && art.resize_params && typeof art.resize_params === 'object') Object.assign(params, art.resize_params);
+    return params;
+}
+
+function _resizePopupSourceArtifact() {
+    const families = (window._lastRenderSummary && window._lastRenderSummary.families) || {};
+    const colorInv = families.color || [];
+    const targetId = (_resizePopupState && _resizePopupState.sourceArtifactId) || '';
+    if (targetId) {
+        const hit = colorInv.find((art) => art && art.artifact_id === targetId);
+        if (hit) return hit;
+    }
+    return _renderSelectedArtifactEntry();
+}
+
+function _setResizeStageDisabled(bodyId, disabled) {
+    const body = document.getElementById(bodyId);
+    if (body) body.classList.toggle('disabled', !!disabled);
+}
+
+function _syncResizePopupControls() {
+    const engine = (document.getElementById('resize-engine') && document.getElementById('resize-engine').value) || 'thumbnail';
+    const fmt = (document.getElementById('resize-output-format') && document.getElementById('resize-output-format').value) || 'jpeg';
+    const setDisabled = (ids, disabled) => ids.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !!disabled;
+    });
+    const thumbnailIds = ['resize-size-mode', 'resize-crop', 'resize-linear', 'resize-no-rotate', 'resize-input-profile', 'resize-output-profile', 'resize-intent', 'resize-fail-on'];
+    const resizeIds = ['resize-kernel', 'resize-gap', 'resize-vscale'];
+    const jpegIds = ['resize-quality', 'resize-jpeg-subsample', 'resize-jpeg-optimize', 'resize-jpeg-interlace'];
+    const pngIds = ['resize-png-compression', 'resize-png-q', 'resize-png-dither', 'resize-png-bitdepth', 'resize-png-effort', 'resize-png-interlace', 'resize-png-palette'];
+    setDisabled(thumbnailIds, engine !== 'thumbnail');
+    setDisabled(resizeIds, engine !== 'resize');
+    setDisabled(jpegIds, fmt !== 'jpeg');
+    setDisabled(pngIds, fmt !== 'png');
+    _setResizeStageDisabled('resize-stage-thumbnail', engine !== 'thumbnail');
+    _setResizeStageDisabled('resize-stage-resize', engine !== 'resize');
+    const pngRow = document.getElementById('resize-png-row');
+    if (pngRow) pngRow.style.display = fmt === 'png' ? '' : 'none';
+}
+
+function _writeResizePopupParams(art, params) {
+    const fmt = String((params && params.format) || ((art && art.format) || 'jpeg')).toLowerCase() === 'png' ? 'png' : 'jpeg';
+    const width = Number(art && art.width);
+    const height = Number(art && art.height);
+    const currentSizeText = Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+        ? (width === height ? `${Math.round(width)}` : `${Math.round(width)}x${Math.round(height)}`)
+        : String(Math.round(Number(params && params.target_size) || 0));
+    const summaryEl = document.getElementById('resize-popup-summary');
+    if (summaryEl) {
+        const parts = [
+            art && art.artifact_id ? art.artifact_id : 'selected artifact',
+            fmt ? `format=${fmt}` : '',
+            `current=${currentSizeText}`,
+            `target=${Math.round(Number(params && params.target_size) || 0)}`,
+            `engine=${params.engine || 'thumbnail'}`,
+        ].filter(Boolean);
+        summaryEl.textContent = parts.join(' · ');
+    }
+    const setValue = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.value = String(value);
+    };
+    const setChecked = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.checked = !!value;
+    };
+    setValue('resize-current-size', currentSizeText);
+    setValue('resize-target-size', params.target_size);
+    setValue('resize-engine', params.engine || 'thumbnail');
+    setValue('resize-size-mode', params.size_mode || 'both');
+    setValue('resize-crop', params.crop || 'none');
+    setChecked('resize-linear', !!params.linear);
+    setChecked('resize-no-rotate', !!params.no_rotate);
+    setValue('resize-input-profile', params.input_profile || '');
+    setValue('resize-output-profile', params.output_profile || '');
+    setValue('resize-intent', params.intent || 'perceptual');
+    setValue('resize-fail-on', params.fail_on || 'none');
+    setValue('resize-kernel', params.kernel || 'lanczos3');
+    setValue('resize-gap', params.gap == null ? 2 : params.gap);
+    setValue('resize-vscale', params.vscale == null ? 1 : params.vscale);
+    setValue('resize-output-format', fmt);
+    setValue('resize-quality', params.quality == null ? 90 : params.quality);
+    setValue('resize-jpeg-subsample', params.jpeg_subsample_mode || 'on');
+    setChecked('resize-jpeg-optimize', !!params.jpeg_optimize_coding);
+    setChecked('resize-jpeg-interlace', !!params.jpeg_interlace);
+    setValue('resize-png-compression', params.png_compression == null ? 6 : params.png_compression);
+    setValue('resize-png-q', params.png_Q == null ? 100 : params.png_Q);
+    setValue('resize-png-dither', params.png_dither == null ? 1 : params.png_dither);
+    setValue('resize-png-bitdepth', params.png_bitdepth == null ? 8 : params.png_bitdepth);
+    setValue('resize-png-effort', params.png_effort == null ? 7 : params.png_effort);
+    setChecked('resize-png-interlace', !!params.png_interlace);
+    setChecked('resize-png-palette', !!params.png_palette);
+    _syncResizePopupControls();
+}
+
+function _readResizePopupParams() {
+    const readNum = (id, fallback) => {
+        const el = document.getElementById(id);
+        const value = Number(el && el.value);
+        return Number.isFinite(value) ? value : fallback;
+    };
+    const readSel = (id, fallback) => {
+        const el = document.getElementById(id);
+        return (el && el.value) ? String(el.value) : fallback;
+    };
+    const readChk = (id) => {
+        const el = document.getElementById(id);
+        return !!(el && el.checked);
+    };
+    return {
+        engine: readSel('resize-engine', 'thumbnail'),
+        target_size: Math.max(1, Math.round(readNum('resize-target-size', 1024))),
+        size_mode: readSel('resize-size-mode', 'both'),
+        crop: readSel('resize-crop', 'none'),
+        linear: readChk('resize-linear'),
+        no_rotate: readChk('resize-no-rotate'),
+        input_profile: readSel('resize-input-profile', '').trim(),
+        output_profile: readSel('resize-output-profile', '').trim(),
+        intent: readSel('resize-intent', 'perceptual'),
+        fail_on: readSel('resize-fail-on', 'none'),
+        kernel: readSel('resize-kernel', 'lanczos3'),
+        gap: readNum('resize-gap', 2),
+        vscale: readNum('resize-vscale', 1),
+        format: readSel('resize-output-format', 'jpeg'),
+        quality: Math.round(readNum('resize-quality', 90)),
+        jpeg_subsample_mode: readSel('resize-jpeg-subsample', 'on'),
+        jpeg_optimize_coding: readChk('resize-jpeg-optimize'),
+        jpeg_interlace: readChk('resize-jpeg-interlace'),
+        png_compression: Math.round(readNum('resize-png-compression', 6)),
+        png_Q: Math.round(readNum('resize-png-q', 100)),
+        png_dither: readNum('resize-png-dither', 1),
+        png_bitdepth: Math.round(readNum('resize-png-bitdepth', 8)),
+        png_effort: Math.round(readNum('resize-png-effort', 7)),
+        png_interlace: readChk('resize-png-interlace'),
+        png_palette: readChk('resize-png-palette'),
+    };
+}
+
+function _closeResizePopup() {
+    _resizePopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
+    const overlay = document.getElementById('resize-popup-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+}
+
+function _revertResizePopupDefaults() {
+    const art = _resizePopupSourceArtifact();
+    if (!art) return;
+    _writeResizePopupParams(art, _resizeBaseParamsForArtifact(art));
+}
+
+function openResizePopup() {
+    if (_renderActiveFamily !== 'color') return;
+    const art = _renderSelectedArtifactEntry();
+    if (!art || !art.image_key) return;
+    _resizePopupState = {
+        open: true,
+        sourceArtifactId: art.artifact_id || '',
+        sourceImageKey: art.image_key || '',
+    };
+    _writeResizePopupParams(art, _resizeParamsForArtifact(art));
+    const overlay = document.getElementById('resize-popup-overlay');
+    if (overlay) {
+        overlay.style.display = 'flex';
+        overlay.setAttribute('aria-hidden', 'false');
+    }
+    const targetEl = document.getElementById('resize-target-size');
+    if (targetEl && typeof targetEl.focus === 'function') targetEl.focus();
+}
+
+async function runResizeSelectedRenderArtifact() {
+    const art = _renderSelectedArtifactEntry();
+    const jobId = document.getElementById('render-results-dir').value.trim();
+    const statusEl = document.getElementById('render-status');
+    const btn = document.getElementById('resize-popup-run');
+
+    if (_renderActiveFamily !== 'color') return;
+    if (!jobId || !art || !art.image_key) return;
+    if (_activeRenderRun) {
+        log('Resize: render in progress, wait for completion', 'err', 'render-log');
+        return;
+    }
+
+    const origText = btn ? btn.textContent : 'Resize';
+    if (btn) { btn.disabled = true; btn.textContent = 'Dispatching...'; }
+    try {
+        const params = _readResizePopupParams();
+        const runId = _generateRunId();
+        const taskId = 'resize_artifact_' + runId;
+        const artifactId = 'resize_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+
+        statusEl.textContent = 'Dispatching resize...';
+        statusEl.className = 'status';
+        log('Resize: dispatching for ' + (art.artifact_id || 'selected color artifact') + '...', 'ok', 'render-log');
+
+        const dispResult = await lambdaPost('dispatch', {
+            target: 'resize_artifact',
+            jobs: [{
+                job_id: jobId,
+                task_id: taskId,
+                artifact_id: artifactId,
+                source_artifact_id: _resizePopupState.sourceArtifactId || art.artifact_id || '',
+                source_image_key: _resizePopupState.sourceImageKey || art.image_key,
+                resize_params: params,
+            }],
+            expected_keys: [],
+        });
+        if ((dispResult.fired || 0) !== 1) throw new Error('Resize dispatch failed');
+
+        _saveActiveRun({
+            job_id: jobId,
+            mode: 'resize',
+            run_id: runId,
+            task_id: taskId,
+            started_at_ms: Date.now(),
+        });
+        _closeResizePopup();
+        log('  resize dispatched: ' + artifactId, 'ok', 'render-log');
+        startActiveRenderObserver();
+    } catch (e) {
+        statusEl.textContent = 'Resize failed: ' + e.message;
+        statusEl.className = 'status error';
+        log('Resize failed: ' + e.message, 'err', 'render-log');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
+    }
+}
+
+function _initResizePopup() {
+    const overlay = document.getElementById('resize-popup-overlay');
+    const closeBtn = document.getElementById('resize-popup-close');
+    const cancelBtn = document.getElementById('resize-popup-cancel');
+    const runBtn = document.getElementById('resize-popup-run');
+    const revertBtn = document.getElementById('resize-popup-revert');
+    const engineEl = document.getElementById('resize-engine');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closeResizePopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closeResizePopup);
+    if (cancelBtn) cancelBtn.addEventListener('click', _closeResizePopup);
+    if (runBtn) runBtn.addEventListener('click', runResizeSelectedRenderArtifact);
+    if (revertBtn) revertBtn.addEventListener('click', _revertResizePopupDefaults);
+    if (engineEl) engineEl.addEventListener('change', _syncResizePopupControls);
+    document.addEventListener('keydown', (ev) => {
+        if (!_resizePopupState.open) return;
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closeResizePopup();
+        }
+    });
+}
+
 function buildPaletteCircles(containerId, mode, getCurrentPalette) {
     _syncTriDefaults();
     _renderPaletteRow(mode);
@@ -5204,6 +5691,7 @@ _initBuiltinPalettePopup();
 _initLongPalettePopup();
 _initFunctionPopup();
 _initAutolevelPopup();
+_initResizePopup();
 _initRepalettePopup();
 _initColorRepalettePopup();
 _initResultsRefreshPopup();
@@ -6574,6 +7062,25 @@ function _fmtAutolevelDebugLine(rd) {
     return parts.join(' · ');
 }
 
+function _fmtResizeDebugLine(rd) {
+    const dbg = rd && rd.resize_debug;
+    if (!dbg || typeof dbg !== 'object') return '';
+    const parts = [];
+    if (dbg.engine) parts.push(`engine=${dbg.engine}`);
+    if (dbg.target_size != null) parts.push(`target=${dbg.target_size}`);
+    if (dbg.size_mode) parts.push(`size=${dbg.size_mode}`);
+    if (dbg.crop) parts.push(`crop=${dbg.crop}`);
+    if (dbg.kernel) parts.push(`kernel=${dbg.kernel}`);
+    if (dbg.gap != null && dbg.gap !== '') parts.push(`gap=${dbg.gap}`);
+    if (dbg.vscale != null && dbg.vscale !== '') parts.push(`vscale=${dbg.vscale}`);
+    if (dbg.linear != null) parts.push(`linear=${dbg.linear ? 'on' : 'off'}`);
+    if (dbg.source_dims) parts.push(`src=${dbg.source_dims}`);
+    if (dbg.out_dims) parts.push(`out=${dbg.out_dims}`);
+    if (dbg.format) parts.push(`fmt=${dbg.format}`);
+    if (dbg.process_ms != null) parts.push(`process=${_fmtSecondsMs(dbg.process_ms)}`);
+    return parts.join(' · ');
+}
+
 function _fmtSecondsMs(ms) {
     const n = Number(ms || 0);
     if (!Number.isFinite(n) || n <= 0) return '0.0s';
@@ -6833,6 +7340,7 @@ function _renderRunCompleteLabel(run) {
     if (!run) return 'Render complete';
     if (run.mode === 'repalette') return 'RePalette complete';
     if (run.mode === 'color_repalette') return 'Color RePalette complete';
+    if (run.mode === 'resize') return 'Resize complete';
     if (run.mode === 'pdf') return 'PDF complete';
     return 'Render complete';
 }
@@ -6845,6 +7353,8 @@ function _formatTaskErrorContext(detail) {
     if (rd.phase) parts.push(`phase=${rd.phase}`);
     if (rd.chunk_idx !== undefined && rd.chunk_idx !== null) parts.push(`chunk=${rd.chunk_idx}`);
     if (rd.metric) parts.push(`metric=${rd.metric}`);
+    if (rd.engine) parts.push(`engine=${rd.engine}`);
+    if (rd.target_size !== undefined && rd.target_size !== null) parts.push(`target=${rd.target_size}`);
     if (rd.input_mode) parts.push(`input=${rd.input_mode}`);
     if (rd.threads !== undefined && rd.threads !== null) parts.push(`threads=${rd.threads}`);
     if (rd.workers !== undefined && rd.workers !== null) parts.push(`workers=${rd.workers}`);
@@ -6868,6 +7378,7 @@ function _renderRunCompleteLog(run, rd) {
     const elapsed = shownElapsedMs != null ? ` (${_fmtMs(shownElapsedMs)})` : '';
     if (run && run.mode === 'repalette') return 'RePalette complete: ' + target + elapsed;
     if (run && run.mode === 'color_repalette') return 'Color RePalette complete: ' + target + elapsed;
+    if (run && run.mode === 'resize') return 'Resize complete: ' + target + elapsed;
     if (run && run.mode === 'pdf') return 'PDF complete: ' + target + elapsed;
     return 'Render complete: ' + target + elapsed;
 }
@@ -6886,6 +7397,8 @@ async function _handleRenderRunCompletion(run, rd) {
     log(_renderRunCompleteLog(run, rd), 'ok', 'render-log');
     const autoDbg = _fmtAutolevelDebugLine(rd);
     if (autoDbg) log('  autolevels: ' + autoDbg, '', 'render-log');
+    const resizeDbg = _fmtResizeDebugLine(rd);
+    if (resizeDbg) log('  resize: ' + resizeDbg, '', 'render-log');
 
     _clearActiveRun();
     stopActiveRenderObserver();
@@ -7197,6 +7710,9 @@ function _renderArtifactSummary(art) {
         if (art.postprocess_kind === 'autolevels') {
             return [base, 'autolevels'].filter(Boolean).join(' · ');
         }
+        if (art.postprocess_kind === 'resize') {
+            return [base, 'resize'].filter(Boolean).join(' · ');
+        }
         if (art.derivation_kind === 'color_repalette') {
             return [base, 'repalette'].filter(Boolean).join(' · ');
         }
@@ -7443,6 +7959,7 @@ function _updateRenderActionButtons() {
     const dzBtn = document.getElementById('btn-render-deepzoom');
     const popBtn = document.getElementById('btn-render-populate');
     const autoBtn = document.getElementById('btn-render-autolevels');
+    const resizeBtn = document.getElementById('btn-render-resize');
     const favBtn = document.getElementById('btn-render-favorite');
     const goResultBtn = document.getElementById('btn-render-go-result');
     const repalBtn = document.getElementById('btn-render-repalette');
@@ -7460,6 +7977,7 @@ function _updateRenderActionButtons() {
     if (dzBtn) dzBtn.disabled = !(hasSelection && inventoryMatchesJob) || _renderActiveFamily === 'pdf';
     if (popBtn) popBtn.disabled = !(hasSelection && inventoryMatchesJob && (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette'));
     if (autoBtn) autoBtn.disabled = !(hasSelection && inventoryMatchesJob && _renderActiveFamily === 'color' && art && art.image_key) || !!_activeRenderRun;
+    if (resizeBtn) resizeBtn.disabled = !(hasSelection && inventoryMatchesJob && _renderActiveFamily === 'color' && art && art.image_key) || !!_activeRenderRun;
     if (repalBtn) repalBtn.disabled = !(_renderActiveFamily === 'palette' && hasSelection && inventoryMatchesJob && _canRepaletteArtifact(art)) || !!_activeRenderRun;
     if (colorRepalBtn) colorRepalBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && _canColorRepaletteArtifact(art)) || !!_activeRenderRun;
     if (fromPalBtn) fromPalBtn.disabled = !(_renderActiveFamily === 'color' && reusablePalettes.length > 0) || !!_activeRenderRun;
@@ -7768,7 +8286,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread path. In Solve score mode it opens a popup where you choose histogram input tmp file vs sectioned native for benchmarking. Generate-MT opens a popup where you choose hist threads, hist input, merge workers, raster input tmp file vs sectioned native, and raster threads for Solve score, Saved palette, Constant, and Rainbow with match=none so you can compare perf. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread path. In Solve score mode it opens a popup where you choose histogram input tmp file vs sectioned native for benchmarking. Generate-MT opens a popup where you choose hist threads, hist input, merge workers, raster input tmp file vs sectioned native, and raster threads for Solve score, Saved palette, Constant, and Rainbow with match=none so you can compare perf. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image. Resize derives a new immutable Color artifact using libvips resize/thumbnail operations.</span>';
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color.</span>';
     } else if (_renderActiveFamily === 'pdf') {
@@ -7818,6 +8336,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     if (_renderActiveFamily === 'bilevel') actionButtons.push('<button class="btn-secondary" id="btn-tiff-compat" onclick="runTiffCompat(document.getElementById(\'render-results-dir\').value.trim(), (_renderSelectedArtifactEntry() || {}).image_key)" style="padding:4px 12px; font-size:11px" disabled>Preview-Compatible TIFF</button>');
     if (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette') actionButtons.push('<button class="btn-secondary" id="btn-render-populate" onclick="populateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Populate</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-autolevels" onclick="openAutolevelPopup()" style="padding:4px 12px; font-size:11px" disabled>Autolevels</button>');
+    if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-resize" onclick="openResizePopup()" style="padding:4px 12px; font-size:11px" disabled>Resize</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-go-result" onclick="goResultFromRender()" style="padding:4px 12px; font-size:11px" disabled>GoResult</button>');
     if (_renderActiveFamily === 'color') actionButtons.push(`<button class="btn-secondary" id="btn-render-favorite" onclick="favoriteSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" ${favoriteSelected ? 'disabled' : ''}>${favoriteSelected ? 'Favorited' : 'Favorite'}</button>`);
     actionButtons.push(`<div style="display:inline-block; position:relative">

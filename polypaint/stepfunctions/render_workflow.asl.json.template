@@ -162,6 +162,7 @@
               "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
               "solve_score_threads.$": "$.plan.solve_score.threads",
               "solve_score_hist_input_mode.$": "$.plan.solve_score.hist_input_mode",
+              "solve_score_hist_retries.$": "$.plan.solve_score.hist_retries",
               "bin_key.$": "$$.Map.Item.Value.bin_key",
               "degree.$": "$.plan.calc.degree",
               "clip_key.$": "$.plan.solve_score.clip_key",
@@ -293,7 +294,8 @@
               "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
               "raster_function_name.$": "$.plan.raster.function_name",
               "raster_mt_threads.$": "$.plan.raster.threads",
-              "raster_input_mode.$": "$.plan.raster.input_mode"
+              "raster_input_mode.$": "$.plan.raster.input_mode",
+              "raster_sectioned_retries.$": "$.plan.raster.sectioned_retries"
             },
             "ItemProcessor": {
               "ProcessorConfig": {"Mode": "INLINE"},

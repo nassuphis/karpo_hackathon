@@ -106,6 +106,16 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         params = json.dumps(parse_post["Parameters"])
         self.assertNotIn('"coeffgen_results.$"', params)
 
+    def test_coeffgen_map_discards_worker_outputs(self):
+        coeffgen_map = self.states["CoeffgenMap"]
+        self.assertIsNone(coeffgen_map.get("ResultPath"))
+
+    def test_post_coeffgen_uses_task_prefix_not_coeffgen_results(self):
+        post = self.states["PostCoeffgen"]
+        params = json.dumps(post["Parameters"])
+        self.assertIn('"task_prefix.$": "$.plan.coeffgen.task_prefix"', params)
+        self.assertNotIn('"coeffgen_results.$"', params)
+
     def test_post_coeffgen_phase_is_explicit(self):
         post_phase = self.states["PostCoeffgenPhase"]
         self.assertEqual(post_phase["Type"], "Task")

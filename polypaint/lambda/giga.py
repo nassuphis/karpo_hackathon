@@ -2784,28 +2784,179 @@ def poly_giga_137(t1, t2):
     except:
         return np.zeros(23, dtype=complex)   
        
-#def p11b2_v5(t1, t2):
-def poly_giga_138(t1, t2):
-    n = 11
+def p11b2(t1, t2):
     try:
-        cf = np.zeros(n, dtype=complex)
+        n = 71
+        v = np.linspace(0, 1, n)
         denom = t1 + t2 + 3
         adenom = np.abs(denom)
         if adenom < 1:
             if adenom > 1e-30:
                 denom = denom / adenom
-        z1 = t1
-        z2 = t1 + t2
-        step1 = (t2 - t1) / (n - 1)
-        step2 = (t1 * t2 - z2) / (n - 1)
-        for k in range(n):
-            v1 = np.exp(1j * 2 * np.pi * z1)
-            v2 = np.exp(1j * 2 * np.pi * z2)
-            v = v1 + 1j * v2
-            cf[k] = np.exp(1j * np.pi * (n * v / denom))
-            z1 = z1 + step1
-            z2 = z2 + step2
+        u = 7 * n * np.power(v, 3) / denom
+        uc = np.exp(1j * np.pi * u)
+        sf = np.arange(n) % (int(101 * np.abs(t1 + t2)) % 51 + 1)
+        cf = sf * uc
         return cf.astype(np.complex128)
+    except Exception:
+        return np.zeros(0, dtype=np.complex128)
+
+
+def p11a(t1, t2):
+    try:
+        n = 40
+        a = np.abs(t1 + t2) / 2
+        m = int((10 * a) % 13) + 3
+        v = np.arange(n) / (max(m, 3) + t1 + t2)
+        uc = np.exp(1j * np.pi * v)
+        sf = np.arange(n) % (m * 2)
+        cf = sf * uc
+        return cf.astype(np.complex128)
+    except Exception:
+        return np.zeros(0, dtype=np.complex128)
+
+
+def p11a_v1(t1, t2):
+    try:
+        n = 40
+        a = np.abs(t1 + t2) / 2
+        m = int((5 * a) % 21) + 3
+        v = np.power(np.linspace(0, 1, n), 0.75) / (max(m, 3) + t1 + t2)
+        uc = np.exp(1j * 50 * np.pi * v)
+        sf = np.arange(n) % (m + 10)
+        cf = sf * uc
+        return cf.astype(np.complex128)
+    except Exception:
+        return np.zeros(0, dtype=np.complex128)
+
+
+def p11a1(t1, t2):
+    try:
+        n = 40
+        a = np.abs(t1 + t2) / 2
+        m = int((10 * a) % 13)
+        v0 = np.linspace(0, 1, n)
+        v = n * v0 / (m + 3 + t1 + t2)
+        uc = np.exp(1j * np.pi * v)
+        sf = np.arange(n) % (m * 2)
+        cf = sf * uc
+        return cf.astype(np.complex128)
+    except Exception:
+        return np.zeros(0, dtype=np.complex128)
+
+
+def p11a2(t1, t2):
+    try:
+        n = 40
+        a = np.abs(t1 + t2) / 2
+        m = int((101 * a) % 17)
+        v0 = np.linspace(0, 1, n)
+        v = n * v0 / (m + 3 + t1 + t2)
+        uc = np.exp(1j * np.pi * v)
+        sf = np.arange(n) % (m * 2)
+        cf = sf * uc
+        return cf.astype(np.complex128)
+    except Exception:
+        return np.zeros(0, dtype=np.complex128)
+
+
+def p11b2_v1(t1, t2):
+    try:
+        n = 71
+        v = np.linspace(0, 1, n)
+        denom = t1 + t2 + 3
+        adenom = np.abs(denom)
+        if adenom < 1:
+            if adenom > 1e-30:
+                denom = denom / adenom
+        u = 7 * n * np.power(v, 15) / denom
+        uc = np.exp(1j * np.pi * u)
+        sf = (np.arange(n) + 1) % (int(4583 * np.abs(t1 + t2)) % 71 + 1)
+        cf = (sf + 1) * uc
+        return cf.astype(np.complex128)
+    except Exception:
+        return np.zeros(0, dtype=np.complex128)
+
+
+def p11b2_v2(t1, t2):
+    try:
+        n = 11
+        v = np.linspace(0, 1, n)
+        denom = t1 + t2 + 3
+        adenom = np.abs(denom)
+        if adenom < 1:
+            if adenom > 1e-30:
+                denom = denom / adenom
+        u = 7 * n * np.power(v, 15) / denom
+        uc = np.exp(1j * np.pi * u)
+        sf = (np.arange(n) + 1) % (int(4583 * np.abs(t1 + t2)) % 11 + 1)
+        cf = (sf + 1) * uc
+        return cf.astype(np.complex128)
+    except Exception:
+        return np.zeros(0, dtype=np.complex128)
+
+
+def p11b2_v3(t1, t2):
+    try:
+        n = 11
+        v = np.linspace(0, 1, n)
+        denom = t1 + t2 + 3
+        adenom = np.abs(denom)
+        if adenom < 1:
+            if adenom > 1e-30:
+                denom = denom / adenom
+        u = 7 * n * np.power(v, 15) / denom
+        uc = np.exp(1j * np.pi * u)
+        sf = np.power(np.cos(2 * np.pi * (v + 0.5j)), 3) * (n - 1)
+        cf = (sf + 1) * uc
+        return cf.astype(np.complex128)
+    except Exception:
+        return np.zeros(0, dtype=np.complex128)
+
+
+def p11b2_v4(t1, t2):
+    try:
+        n = 11
+        v = np.linspace(0, 1, n)
+        denom = t1 + t2 + 3
+        adenom = np.abs(denom)
+        if adenom < 1:
+            if adenom > 1e-30:
+                denom = denom / adenom
+        u = 7 * n * np.power(v, 15) / denom
+        uc = np.exp(1j * np.pi * u)
+        sf = np.power(np.cos(2 * np.pi * (v - 0.5j)), 3) * (n - 1)
+        cf = (sf + 1) * uc
+        return cf.astype(np.complex128)
+    except Exception:
+        return np.zeros(0, dtype=np.complex128)
+
+
+def p11b2_v5(t1, t2):
+    try:
+        n = 11
+        v1 = np.exp(1j * 2 * np.pi * np.linspace(t1, t2, n))
+        v2 = np.exp(1j * 2 * np.pi * np.linspace(t1 + t2, t1 * t2, n))
+        v = v1 + 1j * v2
+        denom = t1 + t2 + 3
+        adenom = np.abs(denom)
+        if adenom < 1:
+            if adenom > 1e-30:
+                denom = denom / adenom
+        u = n * v / denom
+        cf = np.exp(1j * np.pi * u)
+        return cf.astype(np.complex128)
+    except Exception:
+        return np.zeros(0, dtype=np.complex128)
+
+
+def poly_giga_138(t1, t2):
+    n = 11
+    try:
+        cf = p11b2_v5(t1, t2)
+        if len(cf) != n:
+            return np.zeros(n, dtype=complex)
+        return cf
     except Exception:
         return np.zeros(n, dtype=complex)
         

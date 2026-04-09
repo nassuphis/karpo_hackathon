@@ -1502,6 +1502,44 @@ class TestSolveFromCoeffs(unittest.TestCase):
                 handler(event, None)
             self.assertIn("solve failed", str(ctx.exception))
 
+    @patch("handler_sweep.report_status")
+    @patch("handler_sweep.s3")
+    def test_solve_enospc_reports_tmp_context(self, mock_s3, mock_report):
+        from handler_sweep import handler
+        mock_body = MagicMock()
+        mock_body.read.return_value = b"\x00" * 100
+        mock_s3.get_object.return_value = {"Body": mock_body}
+
+        import builtins
+        original_open = builtins.open
+
+        def mock_open(path, mode="r", **kwargs):
+            if path == "/tmp/coeffs_stripe.bin" and "wb" in mode:
+                raise OSError(28, "No space left on device")
+            return original_open(path, mode, **kwargs)
+
+        with patch("builtins.open", side_effect=mock_open):
+            event = self._make_event({
+                "job_id": "enospc-test",
+                "stripe_idx": 3,
+                "coeffs_key": "renders/enospc-test/coeffs_0003.bin",
+                "n_coeffs": 7,
+                "n_steps": 1234,
+            })
+            with self.assertRaises(RuntimeError) as ctx:
+                handler(event, None)
+
+        msg = str(ctx.exception)
+        self.assertIn("no space left on device", msg)
+        self.assertIn("device=/tmp", msg)
+        self.assertIn("coeffs=s3://polypaint/renders/enospc-test/coeffs_0003.bin", msg)
+        self.assertIn("estimated_roots_size=", msg)
+        self.assertIn("estimated_peak_tmp=", msg)
+        self.assertIn("chunk=3", msg)
+        self.assertIn("task=sweep_3", msg)
+        mock_report.assert_called()
+        self.assertEqual(mock_report.call_args[0][2], "error")
+
     # test_grid_mode_still_works: removed — handle_compute_only_stripe deleted
 
 
@@ -1574,6 +1612,44 @@ class TestSolveFromCoeffsMT(unittest.TestCase):
         self.assertEqual(spec["i1_end"], 1)
         self.assertEqual(spec["n2"], 1000)
         self.assertFalse(spec["match_roots"])
+
+    @patch("handler_sweep_mt.report_status")
+    @patch("handler_sweep_mt.s3")
+    def test_solve_mt_enospc_reports_tmp_context(self, mock_s3, mock_report):
+        from handler_sweep_mt import handler
+        mock_body = MagicMock()
+        mock_body.read.return_value = b"\x00" * 100
+        mock_s3.get_object.return_value = {"Body": mock_body}
+
+        import builtins
+        original_open = builtins.open
+
+        def mock_open(path, mode="r", **kwargs):
+            if path == "/tmp/coeffs_chunk_mt.bin" and "wb" in mode:
+                raise OSError(28, "No space left on device")
+            return original_open(path, mode, **kwargs)
+
+        with patch("builtins.open", side_effect=mock_open):
+            event = self._make_event({
+                "job_id": "enospc-mt-test",
+                "stripe_idx": 4,
+                "coeffs_key": "renders/enospc-mt-test/coeffs_0004.bin",
+                "n_coeffs": 9,
+                "n_steps": 4321,
+            })
+            with self.assertRaises(RuntimeError) as ctx:
+                handler(event, None)
+
+        msg = str(ctx.exception)
+        self.assertIn("solve_mt local temp write failed", msg)
+        self.assertIn("device=/tmp", msg)
+        self.assertIn("coeffs=s3://polypaint/renders/enospc-mt-test/coeffs_0004.bin", msg)
+        self.assertIn("estimated_roots_size=", msg)
+        self.assertIn("estimated_peak_tmp=", msg)
+        self.assertIn("chunk=4", msg)
+        self.assertIn("task=sweep_4", msg)
+        mock_report.assert_called()
+        self.assertEqual(mock_report.call_args[0][2], "error")
 
 
 # ── Test: handler_preview.py (single-call preview generation) ────────────

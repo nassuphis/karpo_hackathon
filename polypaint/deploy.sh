@@ -1336,10 +1336,10 @@ if [ "$ACTION" = "create" ]; then
 
     # --- Create all Lambdas ---
     create_lambda "$SWEEP_NAME" "handler_sweep.handler" "/tmp/polypaint-sweep.zip" \
-        "$SWEEP_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+        "$SWEEP_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
     create_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip" \
-        "$SWEEP_MT_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+        "$SWEEP_MT_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
     create_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
         "$COEFFGEN_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -1648,10 +1648,10 @@ if [ "$ACTION" = "create" ]; then
 
 elif [ "$ACTION" = "update" ]; then
     update_lambda "$SWEEP_NAME" "handler_sweep.handler" "/tmp/polypaint-sweep.zip" \
-        "$SWEEP_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+        "$SWEEP_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
     update_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip" \
-        "$SWEEP_MT_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+        "$SWEEP_MT_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
     update_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
         "$COEFFGEN_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"

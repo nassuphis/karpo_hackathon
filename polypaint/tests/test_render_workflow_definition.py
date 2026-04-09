@@ -254,6 +254,7 @@ class TestWorkflowDefinition(unittest.TestCase):
         hist_selector = self.states["ColorSolveScoreHistMap"]["ItemSelector"]
         self.assertEqual(hist_selector["solve_score_threads.$"], "$.plan.solve_score.threads")
         self.assertEqual(hist_selector["solve_score_hist_input_mode.$"], "$.plan.solve_score.hist_input_mode")
+        self.assertEqual(hist_selector["solve_score_hist_retries.$"], "$.plan.solve_score.hist_retries")
 
         merge_payload = self.states["ColorSolveScoreMergeTask"]["Parameters"]["Payload"]
         self.assertEqual(merge_payload["solve_score_threads.$"], "$.plan.solve_score.threads")
@@ -261,6 +262,9 @@ class TestWorkflowDefinition(unittest.TestCase):
 
         finalize_selector = self.states["ColorFinalizeMap"]["ItemSelector"]
         self.assertEqual(finalize_selector["finalize_workers.$"], "$.plan.finalize.workers")
+
+        color_raster_selector = self.states["ColorRasterMap"]["ItemSelector"]
+        self.assertEqual(color_raster_selector["raster_sectioned_retries.$"], "$.plan.raster.sectioned_retries")
 
     def test_status_tasks_forward_run_started_at_ms(self):
         phase_states = [

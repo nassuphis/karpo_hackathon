@@ -11,7 +11,14 @@ import time
 
 import boto3
 
-from shared import BUCKET, parse_body, ok_response, report_status
+from shared import (
+    BUCKET,
+    build_tmp_enospc_message,
+    is_enospc,
+    parse_body,
+    ok_response,
+    report_status,
+)
 
 s3 = boto3.client("s3")
 SWEEP_CM = os.path.join(os.path.dirname(__file__), "sweep_cm")
@@ -65,6 +72,19 @@ def handle_solve_cm(params):
         )
         print(f"sweep_cm rc={result.returncode} stdout={repr(result.stdout[:200])} stderr={repr(result.stderr[:500])}")
         if result.returncode != 0:
+            if "No space left on device" in (result.stderr or ""):
+                raise RuntimeError(build_tmp_enospc_message(
+                    solver_label="solve_cm",
+                    phase="native solve",
+                    tmp_file=bin_path,
+                    coeffs_key=coeffs_key,
+                    coeffs_size=len(coeffs_data),
+                    n_coeffs=n_coeffs,
+                    n_steps=n_steps,
+                    job_id=job_id,
+                    chunk_idx=chunk_idx,
+                    task_id=task_id,
+                ))
             raise RuntimeError(f"solve_cm failed (rc={result.returncode}): {result.stderr.strip()}")
         if not result.stdout.strip().startswith("{"):
             raise RuntimeError(f"solve_cm produced non-JSON stdout: {result.stdout[:200]!r} stderr: {result.stderr[:200]!r}")
@@ -101,5 +121,20 @@ def handle_solve_cm(params):
         return ok_response({**result_data, "n_procs": 1})
 
     except Exception as e:
+        if is_enospc(e):
+            err = RuntimeError(build_tmp_enospc_message(
+                solver_label="solve_cm",
+                phase="local temp write",
+                tmp_file="/tmp",
+                coeffs_key=coeffs_key,
+                coeffs_size=len(coeffs_data) if 'coeffs_data' in locals() else 0,
+                n_coeffs=n_coeffs,
+                n_steps=n_steps,
+                job_id=job_id,
+                chunk_idx=chunk_idx,
+                task_id=task_id,
+            ))
+            report_status(job_id, task_id, "error", str(err))
+            raise err from e
         report_status(job_id, task_id, "error", str(e))
         raise

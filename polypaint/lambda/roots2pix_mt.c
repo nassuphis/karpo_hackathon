@@ -114,6 +114,7 @@ typedef struct {
     long rootsDeduped;
     long downloadUs;
     long nativeUs;
+    int retries;
     int error;
     char error_msg[256];
 } WorkerArgs;
@@ -161,6 +162,14 @@ static long long monotonic_us(void) {
     return (long long)ts.tv_sec * 1000000LL + (long long)(ts.tv_nsec / 1000LL);
 }
 
+static void sleep_ms(long ms) {
+    if (ms <= 0) return;
+    struct timespec ts;
+    ts.tv_sec = ms / 1000L;
+    ts.tv_nsec = (ms % 1000L) * 1000000L;
+    nanosleep(&ts, NULL);
+}
+
 static size_t write_section_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
     size_t total = size * nmemb;
     DownloadBuffer *buf = (DownloadBuffer *)userdata;
@@ -173,8 +182,20 @@ static size_t write_section_cb(char *ptr, size_t size, size_t nmemb, void *userd
     return total;
 }
 
+static int retryable_range_failure(CURLcode rc, long httpStatus) {
+    if (httpStatus == 429L || httpStatus == 500L || httpStatus == 502L ||
+        httpStatus == 503L || httpStatus == 504L) return 1;
+    return rc == CURLE_HTTP_RETURNED_ERROR ||
+           rc == CURLE_OPERATION_TIMEDOUT ||
+           rc == CURLE_COULDNT_CONNECT ||
+           rc == CURLE_COULDNT_RESOLVE_HOST ||
+           rc == CURLE_RECV_ERROR ||
+           rc == CURLE_SEND_ERROR ||
+           rc == CURLE_GOT_NOTHING;
+}
+
 static int download_section(const char *url, unsigned long long byteStart, unsigned long long byteEnd,
-                            unsigned char *out, size_t expected, char *errBuf, size_t errBufLen) {
+                            unsigned char *out, size_t expected, int retries, char *errBuf, size_t errBufLen) {
     CURL *curl = curl_easy_init();
     if (!curl) {
         snprintf(errBuf, errBufLen, "curl_easy_init failed");
@@ -203,27 +224,48 @@ static int download_section(const char *url, unsigned long long byteStart, unsig
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "identity");
     curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
 
-    CURLcode rc = curl_easy_perform(curl);
+    int attempts = retries + 1;
+    CURLcode rc = CURLE_OK;
     long httpStatus = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpStatus);
+    for (int attempt = 0; attempt < attempts; attempt++) {
+        dl.size = 0;
+        dl.overflow = 0;
+        curlErr[0] = '\0';
+        httpStatus = 0;
+        rc = curl_easy_perform(curl);
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpStatus);
+        if (rc == CURLE_OK &&
+            (httpStatus == 206L || httpStatus == 200L) &&
+            !dl.overflow &&
+            dl.size == expected) {
+            break;
+        }
+        if (attempt + 1 >= attempts || !retryable_range_failure(rc, httpStatus)) {
+            break;
+        }
+        sleep_ms(150L * (attempt + 1));
+    }
     curl_easy_cleanup(curl);
 
     if (rc != CURLE_OK) {
-        snprintf(errBuf, errBufLen, "range GET failed for bytes %s: %s",
-                 rangeBuf, curlErr[0] ? curlErr : curl_easy_strerror(rc));
+        snprintf(errBuf, errBufLen, "range GET failed for bytes %s after %d attempt%s: %s",
+                 rangeBuf, attempts, attempts == 1 ? "" : "s",
+                 curlErr[0] ? curlErr : curl_easy_strerror(rc));
         return 0;
     }
     if (httpStatus != 206L && httpStatus != 200L) {
-        snprintf(errBuf, errBufLen, "unexpected HTTP status %ld for bytes %s", httpStatus, rangeBuf);
+        snprintf(errBuf, errBufLen, "unexpected HTTP status %ld for bytes %s after %d attempt%s",
+                 httpStatus, rangeBuf, attempts, attempts == 1 ? "" : "s");
         return 0;
     }
     if (dl.overflow) {
-        snprintf(errBuf, errBufLen, "range GET overflow for bytes %s", rangeBuf);
+        snprintf(errBuf, errBufLen, "range GET overflow for bytes %s after %d attempt%s",
+                 rangeBuf, attempts, attempts == 1 ? "" : "s");
         return 0;
     }
     if (dl.size != expected) {
-        snprintf(errBuf, errBufLen, "short range GET for bytes %s: got %zu of %zu bytes",
-                 rangeBuf, dl.size, expected);
+        snprintf(errBuf, errBufLen, "short range GET for bytes %s after %d attempt%s: got %zu of %zu bytes",
+                 rangeBuf, attempts, attempts == 1 ? "" : "s", dl.size, expected);
         return 0;
     }
     return 1;
@@ -325,6 +367,7 @@ static void *worker_main(void *arg_) {
             long long dlStartUs = monotonic_us();
             if (!download_section(arg->url, arg->byteStart, arg->byteEnd,
                                   sectionBuf, arg->sectionBytes,
+                                  arg->retries,
                                   arg->error_msg, sizeof(arg->error_msg))) {
                 arg->error = 1;
                 goto cleanup;
@@ -444,7 +487,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Usage: roots2pix_mt stripe.bin|ignored /tmp/pix "
                 "--width=W --height=H --center_re=X --center_im=Y --scale=S "
                 "--degree=D --tile_size=T --n_tile_cols=C --n_tile_rows=R "
-                "[--input_mode=tmpfile|sectioned] [--url=URL] [--input_size=BYTES] "
+                "[--input_mode=tmpfile|sectioned] [--url=URL] [--input_size=BYTES] [--retries=N] "
                 "[--threads=N] [--color=rainbow|solve_score|saved_palette|constant] "
                 "[--match=none] [--palette=<name>] [--constant_color=RRGGBB] "
                 "[--solve_metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re] "
@@ -470,6 +513,7 @@ int main(int argc, char **argv) {
     int tileSize = getArgInt(argc, argv, "--tile_size", 4096);
     int nTileCols = getArgInt(argc, argv, "--n_tile_cols", 1);
     int nTileRows = getArgInt(argc, argv, "--n_tile_rows", 1);
+    int retries = getArgInt(argc, argv, "--retries", 2);
     int requestedThreads = getArgInt(argc, argv, "--threads", 1);
     const char *colorStr = getArgStr(argc, argv, "--color", "rainbow");
     const char *matchStr = getArgStr(argc, argv, "--match", "none");
@@ -505,6 +549,10 @@ int main(int argc, char **argv) {
     }
     if (W < 1 || H < 1) {
         fprintf(stderr, "Invalid dimensions: %dx%d\n", W, H);
+        return 1;
+    }
+    if (retries < 0 || retries > 10) {
+        fprintf(stderr, "Invalid retries: %d\n", retries);
         return 1;
     }
 
@@ -770,6 +818,7 @@ int main(int argc, char **argv) {
         args[i].emitPixelBins = emitPixelBins;
         args[i].roots = roots;
         args[i].url = url;
+        args[i].retries = retries;
         args[i].solveBytes = solveBytes;
         args[i].sectionBytes = (size_t)width * (size_t)solveBytes;
         args[i].byteStart = (unsigned long long)start * (unsigned long long)solveBytes;
@@ -872,10 +921,11 @@ int main(int argc, char **argv) {
     printf("{\"roots_plotted\":%ld,\"roots_clipped\":%ld,\"n_points\":%ld,"
            "\"degree\":%d,\"threads\":%d,\"color\":\"%s\",\"match\":\"%s\","
            "\"n_tiles\":%d,\"tiles_with_data\":%d,\"total_entries\":%ld,"
-           "\"input_mode\":\"%s\",\"download_us\":%ld,\"native_us\":%ld",
+           "\"input_mode\":\"%s\",\"retries\":%d,\"download_us\":%ld,\"native_us\":%ld",
            rootsPlotted, rootsClipped, nPoints, degree, threads, colorStr, matchStr,
            nTiles, tilesWithData, totalEntries,
            inputMode == INPUT_SECTIONED ? "sectioned" : "tmpfile",
+           retries,
            totalDownloadUs, totalNativeUs);
     if (colorMode == COLOR_SOLVE_SCORE) {
         printf(",\"palette\":\"%s\",\"solve_score\":true,\"solve_metric\":\"%s\",\"solve_score_omega\":%.15g,\"solve_score_omega_enabled\":%s",

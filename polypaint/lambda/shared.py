@@ -6,6 +6,7 @@ import math
 import os
 import struct
 import time
+import errno
 
 import boto3
 
@@ -142,3 +143,47 @@ def compute_viewport_from_bin(bin_data, quantile=0.0, shim=0.05):
         "q_re": [q_min_re, q_max_re],
         "q_im": [q_min_im, q_max_im],
     }
+
+
+def format_bytes(n):
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return "?"
+    units = ["B", "KB", "MB", "GB", "TB"]
+    value = float(n)
+    unit = units[0]
+    for unit in units:
+        if abs(value) < 1024.0 or unit == units[-1]:
+            break
+        value /= 1024.0
+    if unit == "B":
+        return f"{int(value)}{unit}"
+    return f"{value:.1f}{unit}"
+
+
+def tmp_space_stats(path="/tmp"):
+    st = os.statvfs(path)
+    total = int(st.f_blocks) * int(st.f_frsize)
+    free = int(st.f_bavail) * int(st.f_frsize)
+    return {"path": path, "total_bytes": total, "free_bytes": free}
+
+
+def is_enospc(exc):
+    return isinstance(exc, OSError) and getattr(exc, "errno", None) == errno.ENOSPC
+
+
+def build_tmp_enospc_message(*, solver_label, phase, tmp_file, coeffs_key,
+                             coeffs_size, n_coeffs, n_steps, job_id,
+                             chunk_idx, task_id):
+    degree = max(0, int(n_coeffs) - 1)
+    roots_bytes = int(n_steps) * degree * 8
+    peak_tmp_bytes = int(coeffs_size) + roots_bytes
+    stats = tmp_space_stats("/tmp")
+    return (
+        f"{solver_label} {phase} failed: no space left on device while writing {tmp_file} "
+        f"(device={stats['path']}, free={format_bytes(stats['free_bytes'])}, total={format_bytes(stats['total_bytes'])}, "
+        f"coeffs=s3://{BUCKET}/{coeffs_key}, coeffs_size={format_bytes(coeffs_size)}, "
+        f"estimated_roots_size={format_bytes(roots_bytes)}, estimated_peak_tmp={format_bytes(peak_tmp_bytes)}, "
+        f"n_coeffs={n_coeffs}, degree={degree}, n_steps={n_steps}, job={job_id}, chunk={chunk_idx}, task={task_id})"
+    )

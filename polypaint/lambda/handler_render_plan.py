@@ -103,6 +103,18 @@ def _validate_worker_count(value, field_name):
     return workers
 
 
+def _validate_retry_count(value, field_name):
+    if value in (None, ""):
+        return 2
+    try:
+        retries = int(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"{field_name} must be an integer, got {value!r}")
+    if not (0 <= retries <= 10):
+        raise RuntimeError(f"{field_name} must be in [0, 10], got {retries}")
+    return retries
+
+
 def _validate_raster_input_mode(value):
     mode = str(value or "tmpfile").strip().lower()
     if mode not in ("tmpfile", "sectioned"):
@@ -188,6 +200,7 @@ def handler(event, context):
         "raster_engine": "single",
         "raster_mt_threads": 4,
         "raster_input_mode": "tmpfile",
+        "raster_sectioned_retries": 2,
         "solve_score_threads": "",
         "solve_score_merge_workers": 16,
         "finalize_workers": 16,
@@ -196,6 +209,7 @@ def handler(event, context):
         "solve_score_omega": 1.0,
         "solve_score_omega_enabled": True,
         "solve_score_hist_input_mode": "tmpfile",
+        "solve_score_hist_retries": 2,
     }
     for key, default in _PARAM_DEFAULTS.items():
         if key not in rp:
@@ -203,6 +217,10 @@ def handler(event, context):
     rp["raster_engine"] = _validate_raster_engine(rp.get("raster_engine", "single"))
     rp["raster_mt_threads"] = _validate_thread_count(rp.get("raster_mt_threads", 4), "raster_mt_threads")
     rp["raster_input_mode"] = _validate_raster_input_mode(rp.get("raster_input_mode", "tmpfile"))
+    rp["raster_sectioned_retries"] = _validate_retry_count(
+        rp.get("raster_sectioned_retries", 2),
+        "raster_sectioned_retries",
+    )
     solve_score_threads_value = rp.get("solve_score_threads", "")
     if solve_score_threads_value in (None, ""):
         solve_score_threads_value = rp["raster_mt_threads"] if rp["raster_engine"] == "mt" else 1
@@ -216,6 +234,10 @@ def handler(event, context):
         "finalize_workers",
     )
     rp["solve_score_hist_input_mode"] = _validate_hist_input_mode(rp.get("solve_score_hist_input_mode", "tmpfile"))
+    rp["solve_score_hist_retries"] = _validate_retry_count(
+        rp.get("solve_score_hist_retries", 2),
+        "solve_score_hist_retries",
+    )
 
     # Normalize solve-score params
     color_mode = rp.get("color_mode", "rainbow")
@@ -319,6 +341,7 @@ def handler(event, context):
         "omega": solve_score_omega,
         "omega_enabled": solve_score_omega_enabled,
         "hist_input_mode": rp["solve_score_hist_input_mode"] if solve_score_enabled else "tmpfile",
+        "hist_retries": rp["solve_score_hist_retries"] if solve_score_enabled else 0,
         "clip_key": f"renders/{job_id}/solve_scores/{solve_metric}_clip.json",
         "hist_prefix": f"renders/{job_id}/solve_scores/{solve_metric}/",
         "bins_key": f"renders/{job_id}/solve_scores/{solve_metric}_bins.json",
@@ -334,9 +357,11 @@ def handler(event, context):
         "requested_engine": requested_raster_engine,
         "requested_threads": requested_raster_threads,
         "requested_input_mode": rp.get("raster_input_mode", "tmpfile"),
+        "requested_sectioned_retries": rp.get("raster_sectioned_retries", 2),
         "threads": 1,
         "engine": "single",
         "input_mode": "tmpfile",
+        "sectioned_retries": 0,
         "function_name": RASTER_FUNCTION,
         "eligible": False,
         "reason": "mode_not_color" if mode != "color" else "unsupported_color_mode",
@@ -359,6 +384,7 @@ def handler(event, context):
                 raster["engine"] = "mt"
                 raster["threads"] = requested_raster_threads
                 raster["input_mode"] = rp.get("raster_input_mode", "tmpfile")
+                raster["sectioned_retries"] = rp.get("raster_sectioned_retries", 2)
                 raster["function_name"] = RASTER_MT_FUNCTION
         elif requested_raster_engine == "mt" and raster["reason"]:
             raster["reason"] = f"mt_requested_but_{raster['reason']}"

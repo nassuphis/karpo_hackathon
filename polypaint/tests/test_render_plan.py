@@ -144,6 +144,7 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["solve_score"]["omega_enabled"] is True
         assert plan["solve_score"]["threads"] == 1
         assert plan["solve_score"]["hist_input_mode"] == "tmpfile"
+        assert plan["solve_score"]["hist_retries"] == 2
         assert "crowding" in plan["solve_score"]["clip_key"]
         assert "crowding" in plan["solve_score"]["bins_key"]
         assert plan["outputs"]["repalette_capable"] is True
@@ -162,7 +163,9 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["raster"]["engine"] == "single"
         assert plan["raster"]["requested_threads"] == 4
         assert plan["raster"]["requested_input_mode"] == "tmpfile"
+        assert plan["raster"]["requested_sectioned_retries"] == 2
         assert plan["raster"]["input_mode"] == "tmpfile"
+        assert plan["raster"]["sectioned_retries"] == 0
         assert plan["raster"]["threads"] == 1
         assert plan["raster"]["function_name"] == "polypaint-raster"
         assert plan["raster"]["eligible"] is True
@@ -206,6 +209,27 @@ class TestRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
         assert plan["raster"]["requested_input_mode"] == "sectioned"
         assert plan["raster"]["input_mode"] == "sectioned"
+        assert plan["raster"]["sectioned_retries"] == 2
+
+    @patch("handler_render_plan._storage_call")
+    def test_sectioned_retry_overrides(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="crowding",
+            raster_engine="mt",
+            raster_input_mode="sectioned",
+            raster_sectioned_retries=5,
+            solve_score_hist_retries=4,
+        ), None)
+        plan = json.loads(result["body"])
+        assert plan["solve_score"]["hist_retries"] == 4
+        assert plan["raster"]["requested_sectioned_retries"] == 5
+        assert plan["raster"]["sectioned_retries"] == 5
 
     @patch("handler_render_plan._storage_call")
     def test_explicit_solve_score_threads_override_raster_threads(self, mock_storage):
@@ -350,6 +374,20 @@ class TestRenderPlan(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             handler(_make_event(color_mode="solve_score", finalize_workers=0), None)
         self.assertIn("finalize_workers", str(ctx.exception))
+
+    @patch("handler_render_plan._storage_call")
+    def test_invalid_sectioned_retries_rejected(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_make_event(color_mode="solve_score", solve_score_hist_retries=-1), None)
+        self.assertIn("solve_score_hist_retries", str(ctx.exception))
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_make_event(color_mode="solve_score", raster_sectioned_retries=11), None)
+        self.assertIn("raster_sectioned_retries", str(ctx.exception))
 
     @patch("handler_render_plan._storage_call")
     def test_tri_palette_id_accepted_and_preserved(self, mock_storage):

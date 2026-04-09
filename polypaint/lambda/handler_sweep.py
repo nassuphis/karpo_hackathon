@@ -14,7 +14,14 @@ import time
 
 import boto3
 
-from shared import BUCKET, parse_body, ok_response, report_status
+from shared import (
+    BUCKET,
+    build_tmp_enospc_message,
+    is_enospc,
+    parse_body,
+    ok_response,
+    report_status,
+)
 
 s3 = boto3.client("s3")
 SWEEP = os.path.join(os.path.dirname(__file__), "sweep")
@@ -78,6 +85,19 @@ def handle_solve_from_coeffs(params):
             capture_output=True, text=True, timeout=840
         )
         if result.returncode != 0:
+            if "No space left on device" in (result.stderr or ""):
+                raise RuntimeError(build_tmp_enospc_message(
+                    solver_label="solve",
+                    phase="native solve",
+                    tmp_file=bin_path,
+                    coeffs_key=coeffs_key,
+                    coeffs_size=len(coeffs_data),
+                    n_coeffs=n_coeffs,
+                    n_steps=n_steps,
+                    job_id=job_id,
+                    chunk_idx=chunk_idx,
+                    task_id=task_id,
+                ))
             raise RuntimeError(f"solve failed: {result.stderr.strip()}")
         compute_meta = json.loads(result.stdout)
 
@@ -109,5 +129,20 @@ def handle_solve_from_coeffs(params):
         return ok_response({**result_data, "n_procs": 1})
 
     except Exception as e:
+        if is_enospc(e):
+            err = RuntimeError(build_tmp_enospc_message(
+                solver_label="solve",
+                phase="local temp write",
+                tmp_file="/tmp",
+                coeffs_key=coeffs_key,
+                coeffs_size=len(coeffs_data) if 'coeffs_data' in locals() else 0,
+                n_coeffs=n_coeffs,
+                n_steps=n_steps,
+                job_id=job_id,
+                chunk_idx=chunk_idx,
+                task_id=task_id,
+            ))
+            report_status(job_id, task_id, "error", str(err))
+            raise err from e
         report_status(job_id, task_id, "error", str(e))
         raise

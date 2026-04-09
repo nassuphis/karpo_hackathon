@@ -47,6 +47,18 @@ def _validate_raster_input_mode(value):
     return mode
 
 
+def _validate_sectioned_retries(value):
+    if value in (None, ""):
+        value = 2
+    try:
+        retries = int(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"raster_sectioned_retries must be an integer, got {value!r}")
+    if not (0 <= retries <= 10):
+        raise RuntimeError(f"raster_sectioned_retries must be in [0, 10], got {retries}")
+    return retries
+
+
 def _sectioned_input_size_limit():
     try:
         memory_mb = int(os.environ.get("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "0") or 0)
@@ -96,6 +108,7 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
         cmd.extend([
             f"--url={params['sectioned_url']}",
             f"--input_size={params['sectioned_input_size']}",
+            f"--retries={params.get('raster_sectioned_retries', 2)}",
         ])
     if params.get("emit_pixel_bins"):
         cmd.append("--pixel_bin_prefix=/tmp/pixbin")
@@ -160,11 +173,13 @@ def handler(event, context):
     task_id = params.get("task_id", f"raster_{chunk_idx}")
     threads = _validate_threads(params.get("raster_mt_threads", DEFAULT_THREADS))
     raster_input_mode = _validate_raster_input_mode(params.get("raster_input_mode", "tmpfile"))
+    raster_sectioned_retries = _validate_sectioned_retries(params.get("raster_sectioned_retries", 2))
 
     perf = {
         "engine": "mt",
         "threads": threads,
         "input_mode": raster_input_mode,
+        "retries": raster_sectioned_retries,
         "download_us": 0,
         "native_us": 0,
         "upload_us": 0,
@@ -185,6 +200,7 @@ def handler(event, context):
         params = dict(params)
         params["raster_mt_threads"] = threads
         params["raster_input_mode"] = raster_input_mode
+        params["raster_sectioned_retries"] = raster_sectioned_retries
         params["root_xforms_path"] = None
         rt_chain = params.get("root_transforms", [])
         if rt_chain:
@@ -245,6 +261,7 @@ def handler(event, context):
         raster_meta = json.loads(result.stdout)
         perf["threads"] = int(raster_meta.get("threads", threads))
         perf["input_mode"] = str(raster_meta.get("input_mode", raster_input_mode))
+        perf["retries"] = int(raster_meta.get("retries", raster_sectioned_retries))
         perf["download_us"] = int(raster_meta.get("download_us", perf["download_us"]))
         perf["native_us"] = int(raster_meta.get("native_us", native_wall_us))
         perf["roots_plotted"] = int(raster_meta.get("roots_plotted", 0))

@@ -3,7 +3,7 @@ Compute workflow plan/finalize Lambda.
 
 Actions:
   build_plan (default): validate request and build compute workflow plan.
-  post_coeffgen: derive degree/n_coeffs, lores sizing, and solve items.
+  post_coeffgen: derive degree/n_coeffs and lores sizing from coeffgen task rows.
   finalize_metadata: write calc.json after lores + hires solve complete.
 """
 import json
@@ -12,9 +12,10 @@ import os
 
 import boto3
 
-from shared import BUCKET, ok_response, parse_body
+from shared import BUCKET, JOBS_TABLE, ok_response, parse_body
 
 s3 = boto3.client("s3")
+_ddb = None
 
 SWEEP_FUNCTION = os.environ.get("SWEEP_FUNCTION", "polypaint-sweep")
 SWEEP_MT_FUNCTION = os.environ.get("SWEEP_MT_FUNCTION", "polypaint-sweep-mt")
@@ -25,6 +26,13 @@ MAX_N = 50000
 MAX_TIMES = 1000
 MAX_CHUNKS = 5000
 MAX_TOTAL_STEPS = 2_500_000_000
+
+
+def _get_ddb():
+    global _ddb
+    if _ddb is None:
+        _ddb = boto3.client("dynamodb")
+    return _ddb
 
 
 def handler(event, context):
@@ -134,7 +142,12 @@ def handle_post_coeffgen(params):
     plan = params["plan"]
     coeffgen_results = list(params.get("coeffgen_results") or [])
     if not coeffgen_results:
-        raise RuntimeError("post_coeffgen requires non-empty coeffgen_results")
+        expected = int(plan.get("compute", {}).get("n_chunks") or len(plan.get("chunk_items", [])))
+        coeffgen_results = _load_coeffgen_results_from_ddb(
+            params["job_id"],
+            params.get("task_prefix") or plan["coeffgen"]["task_prefix"],
+            expected,
+        )
 
     first = coeffgen_results[0]
     degree = _validate_positive_int(first.get("degree"), "degree", max_value=4096)
@@ -174,6 +187,60 @@ def handle_post_coeffgen(params):
         },
     }
     return ok_response(post)
+
+
+def _load_coeffgen_results_from_ddb(job_id, task_prefix, expected):
+    ddb = _get_ddb()
+    kwargs = {
+        "TableName": JOBS_TABLE,
+        "ConsistentRead": True,
+        "KeyConditionExpression": "job_id = :jid AND begins_with(task_id, :pfx)",
+        "ExpressionAttributeValues": {
+            ":jid": {"S": job_id},
+            ":pfx": {"S": task_prefix},
+        },
+        "ProjectionExpression": "task_id, task_status, error_msg, result_data",
+    }
+    rows = []
+    while True:
+        resp = ddb.query(**kwargs)
+        rows.extend(resp.get("Items", []))
+        if "LastEvaluatedKey" not in resp:
+            break
+        kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+
+    done_results = []
+    errors = []
+    for item in rows:
+        status = item["task_status"]["S"]
+        if status == "done":
+            rd = item.get("result_data", {}).get("S")
+            if not rd:
+                raise RuntimeError(
+                    f"post_coeffgen missing result_data for {item['task_id']['S']}"
+                )
+            try:
+                done_results.append(json.loads(rd))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"post_coeffgen invalid result_data for {item['task_id']['S']}: {exc}"
+                ) from exc
+        elif status == "error":
+            errors.append({
+                "task_id": item["task_id"]["S"],
+                "error_msg": item.get("error_msg", {}).get("S", "unknown"),
+            })
+
+    if errors:
+        sample = ", ".join(f"{e['task_id']}: {e['error_msg']}" for e in errors[:3])
+        raise RuntimeError(
+            f"post_coeffgen saw {len(errors)} coeffgen errors for prefix {task_prefix}: {sample}"
+        )
+    if len(done_results) != expected:
+        raise RuntimeError(
+            f"post_coeffgen expected {expected} coeffgen results for prefix {task_prefix}, found {len(done_results)}"
+        )
+    return done_results
 
 
 def handle_finalize_metadata(params):

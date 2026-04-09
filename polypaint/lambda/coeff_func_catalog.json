@@ -114,8 +114,68 @@
     "kind": "hand"
   },
   {
+    "name": "p11a",
+    "c_symbol": "p11a_c",
+    "source": "sweep_cli.c",
+    "kind": "hand"
+  },
+  {
+    "name": "p11a_v1",
+    "c_symbol": "p11a_v1_c",
+    "source": "sweep_cli.c",
+    "kind": "hand"
+  },
+  {
+    "name": "p11a1",
+    "c_symbol": "p11a1_c",
+    "source": "sweep_cli.c",
+    "kind": "hand"
+  },
+  {
+    "name": "p11a2",
+    "c_symbol": "p11a2_c",
+    "source": "sweep_cli.c",
+    "kind": "hand"
+  },
+  {
     "name": "p11b3",
     "c_symbol": "p11b3_c",
+    "source": "sweep_cli.c",
+    "kind": "hand"
+  },
+  {
+    "name": "p11b2",
+    "c_symbol": "p11b2_c",
+    "source": "sweep_cli.c",
+    "kind": "hand"
+  },
+  {
+    "name": "p11b2_v1",
+    "c_symbol": "p11b2_v1_c",
+    "source": "sweep_cli.c",
+    "kind": "hand"
+  },
+  {
+    "name": "p11b2_v2",
+    "c_symbol": "p11b2_v2_c",
+    "source": "sweep_cli.c",
+    "kind": "hand"
+  },
+  {
+    "name": "p11b2_v3",
+    "c_symbol": "p11b2_v3_c",
+    "source": "sweep_cli.c",
+    "kind": "hand"
+  },
+  {
+    "name": "p11b2_v4",
+    "c_symbol": "p11b2_v4_c",
+    "source": "sweep_cli.c",
+    "kind": "hand"
+  },
+  {
+    "name": "p11b2_v5",
+    "c_symbol": "p11b2_v5_c",
     "source": "sweep_cli.c",
     "kind": "hand"
   },

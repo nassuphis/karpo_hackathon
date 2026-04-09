@@ -294,7 +294,7 @@ button {
 }
 .render-mt-matrix {
     display: grid;
-    grid-template-columns: 60px 78px minmax(0, 116px) 78px;
+    grid-template-columns: 60px 72px minmax(0, 108px) 72px 72px;
     gap: 8px 10px;
     align-items: center;
     width: 100%;
@@ -331,7 +331,7 @@ button {
 }
 @media (max-width: 640px) {
     .render-mt-matrix {
-        grid-template-columns: 60px 70px minmax(0, 1fr) 70px;
+        grid-template-columns: 60px 64px minmax(0, 1fr) 64px 64px;
     }
 }
 .autolevel-inline-check {
@@ -1202,12 +1202,13 @@ button {
         </div>
         <div id="render-mt-popup-summary" class="autolevel-popup-summary"></div>
         <div style="padding:0 14px 8px 14px">
-            <div class="autolevel-stage-text">Choose native thread counts, input modes, and merge workers for the MT path.</div>
+            <div class="autolevel-stage-text">Choose native thread counts, input modes, workers, and sectioned-read retries for the MT path.</div>
             <div class="render-mt-matrix">
                 <div></div>
                 <div class="render-mt-matrix-head">Threads</div>
                 <div class="render-mt-matrix-head">Input</div>
                 <div class="render-mt-matrix-head">Workers</div>
+                <div class="render-mt-matrix-head">Retries</div>
 
                 <div class="render-mt-matrix-stage">Hist</div>
                 <input id="render-mt-solve-score-threads" type="number" min="1" max="16" step="1" value="4">
@@ -1216,6 +1217,7 @@ button {
                     <option value="sectioned">sectioned native</option>
                 </select>
                 <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+                <input id="render-mt-hist-retries" type="number" min="0" max="10" step="1" value="2">
 
                 <div class="render-mt-matrix-stage">Raster</div>
                 <input id="render-mt-threads" type="number" min="1" max="16" step="1" value="4">
@@ -1224,19 +1226,22 @@ button {
                     <option value="sectioned">sectioned native</option>
                 </select>
                 <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+                <input id="render-mt-raster-retries" type="number" min="0" max="10" step="1" value="2">
 
                 <div class="render-mt-matrix-stage">Merge</div>
                 <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
                 <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
                 <input id="render-mt-merge-workers" type="number" min="1" max="64" step="1" value="16">
+                <div class="render-mt-matrix-empty" aria-hidden="true">sdk</div>
 
                 <div class="render-mt-matrix-stage">Finalize</div>
                 <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
                 <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
                 <input id="render-mt-finalize-workers" type="number" min="1" max="64" step="1" value="16">
+                <div class="render-mt-matrix-empty" aria-hidden="true">sdk</div>
             </div>
         </div>
-        <div class="autolevel-popup-help">Use this to compare the native multithreaded path against normal Generate. Raster MT supports Solve score, Saved palette, Constant, and Rainbow with match=none. Hist controls and merge workers only matter for Solve score mode. Finalize workers apply to all MT color renders. Raster input lets you compare the existing temp-file chunk path against the native sectioned range-download path inside raster.</div>
+        <div class="autolevel-popup-help">Use this to compare the native multithreaded path against normal Generate. Raster MT supports Solve score, Saved palette, Constant, and Rainbow with match=none. Hist controls and merge workers only matter for Solve score mode. Finalize workers apply to all MT color renders. Retries only apply to the native sectioned libcurl readers in Hist and Raster; Merge and Finalize already use SDK-managed S3 retries.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -2714,7 +2719,9 @@ let _renderMtPopupState = {
     rasterThreads: 4,
     solveScoreThreads: 4,
     histInputMode: 'tmpfile',
+    histRetries: 2,
     rasterInputMode: 'tmpfile',
+    rasterRetries: 2,
     mergeWorkers: 16,
     finalizeWorkers: 16,
 };
@@ -3822,6 +3829,12 @@ function _clampRenderMtFinalizeWorkers(value) {
     return _clampRenderMtWorkerCount(value);
 }
 
+function _clampRenderMtRetries(value) {
+    let n = parseInt(value, 10);
+    if (!Number.isFinite(n)) n = 2;
+    return Math.max(0, Math.min(10, n));
+}
+
 function _normalizeSolveScoreHistInputMode(value) {
     const mode = String(value || 'tmpfile').trim().toLowerCase();
     if (mode === 'stdin') return 'stdin';
@@ -3883,7 +3896,9 @@ function _closeRenderMtPopup() {
         rasterThreads: _clampRenderMtThreads(_renderMtPopupState.rasterThreads),
         solveScoreThreads: _clampRenderMtThreads(_renderMtPopupState.solveScoreThreads),
         histInputMode: _normalizeSolveScoreHistInputMode(_renderMtPopupState.histInputMode),
+        histRetries: _clampRenderMtRetries(_renderMtPopupState.histRetries),
         rasterInputMode: _normalizeRasterInputMode(_renderMtPopupState.rasterInputMode),
+        rasterRetries: _clampRenderMtRetries(_renderMtPopupState.rasterRetries),
         mergeWorkers: _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers),
         finalizeWorkers: _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers),
     };
@@ -3900,11 +3915,13 @@ function _renderRenderMtPopup() {
     const threadsEl = document.getElementById('render-mt-threads');
     const solveScoreThreadsEl = document.getElementById('render-mt-solve-score-threads');
     const histInputModeEl = document.getElementById('render-mt-hist-input-mode');
+    const histRetriesEl = document.getElementById('render-mt-hist-retries');
     const rasterInputModeEl = document.getElementById('render-mt-raster-input-mode');
+    const rasterRetriesEl = document.getElementById('render-mt-raster-retries');
     const mergeWorkersEl = document.getElementById('render-mt-merge-workers');
     const finalizeWorkersEl = document.getElementById('render-mt-finalize-workers');
     const runBtn = document.getElementById('render-mt-popup-run');
-    if (!overlay || !summaryEl || !threadsEl || !solveScoreThreadsEl || !histInputModeEl || !rasterInputModeEl || !mergeWorkersEl || !finalizeWorkersEl) return;
+    if (!overlay || !summaryEl || !threadsEl || !solveScoreThreadsEl || !histInputModeEl || !histRetriesEl || !rasterInputModeEl || !rasterRetriesEl || !mergeWorkersEl || !finalizeWorkersEl) return;
     if (!_renderMtPopupState.open) {
         _closeRenderMtPopup();
         return;
@@ -3912,14 +3929,18 @@ function _renderRenderMtPopup() {
     const threads = _clampRenderMtThreads(_renderMtPopupState.rasterThreads);
     const solveScoreThreads = _clampRenderMtThreads(_renderMtPopupState.solveScoreThreads);
     const histInputMode = _normalizeSolveScoreHistInputMode(_renderMtPopupState.histInputMode);
+    const histRetries = _clampRenderMtRetries(_renderMtPopupState.histRetries);
     const rasterInputMode = _normalizeRasterInputMode(_renderMtPopupState.rasterInputMode);
+    const rasterRetries = _clampRenderMtRetries(_renderMtPopupState.rasterRetries);
     const mergeWorkers = _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers);
     const finalizeWorkers = _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers);
     const solveScoreRelevant = renderColorMode === 'solve_score';
     _renderMtPopupState.rasterThreads = threads;
     _renderMtPopupState.solveScoreThreads = solveScoreThreads;
     _renderMtPopupState.histInputMode = histInputMode;
+    _renderMtPopupState.histRetries = histRetries;
     _renderMtPopupState.rasterInputMode = rasterInputMode;
+    _renderMtPopupState.rasterRetries = rasterRetries;
     _renderMtPopupState.mergeWorkers = mergeWorkers;
     _renderMtPopupState.finalizeWorkers = finalizeWorkers;
     overlay.style.display = 'flex';
@@ -3927,19 +3948,23 @@ function _renderRenderMtPopup() {
     threadsEl.value = String(threads);
     solveScoreThreadsEl.value = String(solveScoreThreads);
     histInputModeEl.value = histInputMode;
+    histRetriesEl.value = String(histRetries);
     rasterInputModeEl.value = rasterInputMode;
+    rasterRetriesEl.value = String(rasterRetries);
     mergeWorkersEl.value = String(mergeWorkers);
     finalizeWorkersEl.value = String(finalizeWorkers);
     solveScoreThreadsEl.disabled = !solveScoreRelevant;
     histInputModeEl.disabled = !solveScoreRelevant;
+    histRetriesEl.disabled = !solveScoreRelevant || histInputMode !== 'sectioned';
     mergeWorkersEl.disabled = !solveScoreRelevant;
     finalizeWorkersEl.disabled = false;
+    rasterRetriesEl.disabled = rasterInputMode !== 'sectioned';
     const modeLabel = renderColorMode === 'rainbow'
         ? `Rainbow (${renderMatchMode})`
         : renderColorMode.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
     summaryEl.textContent = solveScoreRelevant
-        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • hist threads=${solveScoreThreads} • hist input=${histInputMode} • merge workers=${mergeWorkers} • raster input=${rasterInputMode} • raster threads=${threads} • finalize workers=${finalizeWorkers}`
-        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster input=${rasterInputMode} • raster threads=${threads} • finalize workers=${finalizeWorkers} • hist unused • merge unused`;
+        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • hist threads=${solveScoreThreads} • hist input=${histInputMode} • hist retries=${histRetries} • merge workers=${mergeWorkers} • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • finalize workers=${finalizeWorkers}`
+        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • finalize workers=${finalizeWorkers} • hist unused • merge unused`;
     if (runBtn) runBtn.disabled = !_renderColorMtEligible() || !!_activeRenderRun;
 }
 
@@ -3950,7 +3975,9 @@ function openRenderMtPopup() {
         rasterThreads: _clampRenderMtThreads(_renderMtPopupState.rasterThreads || 4),
         solveScoreThreads: _clampRenderMtThreads(_renderMtPopupState.solveScoreThreads || 4),
         histInputMode: _normalizeSolveScoreHistInputMode(_renderMtPopupState.histInputMode || 'tmpfile'),
+        histRetries: _clampRenderMtRetries(_renderMtPopupState.histRetries ?? 2),
         rasterInputMode: _normalizeRasterInputMode(_renderMtPopupState.rasterInputMode || 'tmpfile'),
+        rasterRetries: _clampRenderMtRetries(_renderMtPopupState.rasterRetries ?? 2),
         mergeWorkers: _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers || 16),
         finalizeWorkers: _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers || 16),
     };
@@ -4342,7 +4369,9 @@ function _initRenderMtPopup() {
     const threadsEl = document.getElementById('render-mt-threads');
     const solveScoreThreadsEl = document.getElementById('render-mt-solve-score-threads');
     const histInputModeEl = document.getElementById('render-mt-hist-input-mode');
+    const histRetriesEl = document.getElementById('render-mt-hist-retries');
     const rasterInputModeEl = document.getElementById('render-mt-raster-input-mode');
+    const rasterRetriesEl = document.getElementById('render-mt-raster-retries');
     const mergeWorkersEl = document.getElementById('render-mt-merge-workers');
     const finalizeWorkersEl = document.getElementById('render-mt-finalize-workers');
     if (overlay) {
@@ -4370,9 +4399,21 @@ function _initRenderMtPopup() {
             _renderRenderMtPopup();
         });
     }
+    if (histRetriesEl) {
+        histRetriesEl.addEventListener('input', (ev) => {
+            _renderMtPopupState.histRetries = _clampRenderMtRetries(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
     if (rasterInputModeEl) {
         rasterInputModeEl.addEventListener('change', (ev) => {
             _renderMtPopupState.rasterInputMode = _normalizeRasterInputMode(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
+    if (rasterRetriesEl) {
+        rasterRetriesEl.addEventListener('input', (ev) => {
+            _renderMtPopupState.rasterRetries = _clampRenderMtRetries(ev.target.value);
             _renderRenderMtPopup();
         });
     }
@@ -4397,17 +4438,21 @@ function _initRenderMtPopup() {
                 const rasterThreads = _clampRenderMtThreads(document.getElementById('render-mt-threads').value);
                 const solveScoreThreads = _clampRenderMtThreads(document.getElementById('render-mt-solve-score-threads').value);
                 const histInputMode = _normalizeSolveScoreHistInputMode(document.getElementById('render-mt-hist-input-mode').value);
+                const histRetries = _clampRenderMtRetries(document.getElementById('render-mt-hist-retries').value);
                 const rasterInputMode = _normalizeRasterInputMode(document.getElementById('render-mt-raster-input-mode').value);
+                const rasterRetries = _clampRenderMtRetries(document.getElementById('render-mt-raster-retries').value);
                 const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('render-mt-merge-workers').value);
                 const finalizeWorkers = _clampRenderMtFinalizeWorkers(document.getElementById('render-mt-finalize-workers').value);
                 _renderMtPopupState.rasterThreads = rasterThreads;
                 _renderMtPopupState.solveScoreThreads = solveScoreThreads;
                 _renderMtPopupState.histInputMode = histInputMode;
+                _renderMtPopupState.histRetries = histRetries;
                 _renderMtPopupState.rasterInputMode = rasterInputMode;
+                _renderMtPopupState.rasterRetries = rasterRetries;
                 _renderMtPopupState.mergeWorkers = mergeWorkers;
                 _renderMtPopupState.finalizeWorkers = finalizeWorkers;
                 _closeRenderMtPopup();
-                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, rasterInputMode, mergeWorkers, finalizeWorkers });
+                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, mergeWorkers, finalizeWorkers });
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = btnText;
@@ -4426,17 +4471,21 @@ function _initRenderMtPopup() {
             const rasterThreads = _clampRenderMtThreads(document.getElementById('render-mt-threads').value);
             const solveScoreThreads = _clampRenderMtThreads(document.getElementById('render-mt-solve-score-threads').value);
             const histInputMode = _normalizeSolveScoreHistInputMode(document.getElementById('render-mt-hist-input-mode').value);
+            const histRetries = _clampRenderMtRetries(document.getElementById('render-mt-hist-retries').value);
             const rasterInputMode = _normalizeRasterInputMode(document.getElementById('render-mt-raster-input-mode').value);
+            const rasterRetries = _clampRenderMtRetries(document.getElementById('render-mt-raster-retries').value);
             const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('render-mt-merge-workers').value);
             const finalizeWorkers = _clampRenderMtFinalizeWorkers(document.getElementById('render-mt-finalize-workers').value);
             _renderMtPopupState.rasterThreads = rasterThreads;
             _renderMtPopupState.solveScoreThreads = solveScoreThreads;
             _renderMtPopupState.histInputMode = histInputMode;
+            _renderMtPopupState.histRetries = histRetries;
             _renderMtPopupState.rasterInputMode = rasterInputMode;
+            _renderMtPopupState.rasterRetries = rasterRetries;
             _renderMtPopupState.mergeWorkers = mergeWorkers;
             _renderMtPopupState.finalizeWorkers = finalizeWorkers;
             _closeRenderMtPopup();
-            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, rasterInputMode, mergeWorkers, finalizeWorkers });
+            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, mergeWorkers, finalizeWorkers });
         }
     });
 }
@@ -6204,10 +6253,20 @@ async function runRasterPipelineMT(threadConfig = null) {
                 ? threadConfig.histInputMode
                 : _renderMtPopupState.histInputMode
         );
+        const histRetries = _clampRenderMtRetries(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.histRetries != null
+                ? threadConfig.histRetries
+                : _renderMtPopupState.histRetries
+        );
         const rasterInputMode = _normalizeRasterInputMode(
             threadConfig && typeof threadConfig === 'object' && threadConfig.rasterInputMode != null
                 ? threadConfig.rasterInputMode
                 : _renderMtPopupState.rasterInputMode
+        );
+        const rasterRetries = _clampRenderMtRetries(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.rasterRetries != null
+                ? threadConfig.rasterRetries
+                : _renderMtPopupState.rasterRetries
         );
         const mergeWorkers = _clampRenderMtMergeWorkers(
             threadConfig && typeof threadConfig === 'object' && threadConfig.mergeWorkers != null
@@ -6222,15 +6281,17 @@ async function runRasterPipelineMT(threadConfig = null) {
         const relevantSolveScoreThreads = renderColorMode === 'solve_score' ? solveScoreThreads : 1;
         const relevantMergeWorkers = renderColorMode === 'solve_score' ? mergeWorkers : 1;
         const mtMsg = renderColorMode === 'solve_score'
-            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, merge workers=${relevantMergeWorkers}, raster input=${rasterInputMode}, raster threads=${rasterThreads}, finalize workers=${finalizeWorkers}...`
-            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster input=${rasterInputMode}, raster threads=${rasterThreads}, finalize workers=${finalizeWorkers}...`;
+            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, hist retries=${histRetries}, merge workers=${relevantMergeWorkers}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, finalize workers=${finalizeWorkers}...`
+            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, finalize workers=${finalizeWorkers}...`;
         log(mtMsg, 'ok', 'render-log');
         await _launchRenderOrchestrator('color', {
             raster_engine: 'mt',
             raster_mt_threads: rasterThreads,
             raster_input_mode: rasterInputMode,
+            raster_sectioned_retries: rasterRetries,
             solve_score_threads: relevantSolveScoreThreads,
             solve_score_hist_input_mode: histInputMode,
+            solve_score_hist_retries: histRetries,
             solve_score_merge_workers: relevantMergeWorkers,
             finalize_workers: finalizeWorkers,
         });
@@ -6565,6 +6626,7 @@ function _aggregateRasterPerf(results) {
         acc.engine = acc.engine || row.engine || 'single';
         acc.threads = Math.max(acc.threads, Number(row.threads) || 1);
         if (!acc.input_mode && row.input_mode) acc.input_mode = String(row.input_mode);
+        acc.retries = Math.max(acc.retries, Number(row.retries) || 0);
         acc.chunks += 1;
         acc.download_us += Number(row.download_us) || 0;
         acc.native_us += Number(row.native_us) || 0;
@@ -6578,6 +6640,7 @@ function _aggregateRasterPerf(results) {
         engine: '',
         threads: 1,
         input_mode: '',
+        retries: 0,
         chunks: 0,
         download_us: 0,
         native_us: 0,
@@ -6599,8 +6662,9 @@ function _aggregateSolveScorePhasePerf(results) {
         acc.upload_ms += Number(row.upload_ms) || 0;
         acc.threads = Math.max(acc.threads, Number(row.threads) || 1);
         if (!acc.input_mode && row.input_mode) acc.input_mode = String(row.input_mode);
+        acc.retries = Math.max(acc.retries, Number(row.retries) || 0);
         return acc;
-    }, { tasks: 0, dl_ms: 0, compute_ms: 0, upload_ms: 0, threads: 1, input_mode: '' });
+    }, { tasks: 0, dl_ms: 0, compute_ms: 0, upload_ms: 0, threads: 1, input_mode: '', retries: 0 });
 }
 
 function _aggregateFinalizePerf(results) {
@@ -6653,6 +6717,7 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         if (!perf) return '';
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsUs(perf.download_us)} + native ${_fmtSecondsUs(perf.native_us)} + up ${_fmtSecondsUs(perf.upload_us)} · threads=${perf.threads}`;
         if (perf.input_mode) msg += ` · input=${perf.input_mode}`;
+        if (perf.input_mode === 'sectioned') msg += ` · retries=${perf.retries}`;
         return msg;
     }
     if (phase === 'solve_score_clip' || phase === 'solve_score_hist' || phase === 'solve_score_merge') {
@@ -6661,7 +6726,10 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsMs(perf.dl_ms)} + compute ${_fmtSecondsMs(perf.compute_ms)}`;
         if (perf.upload_ms > 0) msg += ` + up ${_fmtSecondsMs(perf.upload_ms)}`;
         msg += ` · threads=${perf.threads}`;
-        if (phase === 'solve_score_hist' && perf.input_mode) msg += ` · input=${perf.input_mode}`;
+        if (phase === 'solve_score_hist' && perf.input_mode) {
+            msg += ` · input=${perf.input_mode}`;
+            if (perf.input_mode === 'sectioned') msg += ` · retries=${perf.retries}`;
+        }
         return msg;
     }
     if (phase === 'finalize') {
@@ -7062,11 +7130,11 @@ async function refreshRenderArtifacts(jobIdOverride, options = {}) {
             const matchIdx = inv.findIndex(a => a.artifact_id === options.selectArtifactId || a.palette_id === options.selectArtifactId);
             if (matchIdx >= 0) _renderSelectedArtifact[_renderActiveFamily] = matchIdx;
         }
+        _renderLoadedJobId = jobId;
         renderArtifactPanel(jobId, summary, {
             preserveScroll: true,
             ensureSelected: !!options.selectArtifactId,
         });
-        _renderLoadedJobId = jobId;
         _renderNeedsRefresh = false;
         if (!_activeRenderRun) {
             statusEl.textContent = 'Ready';
@@ -7381,8 +7449,11 @@ function _updateRenderActionButtons() {
     const colorRepalBtn = document.getElementById('btn-render-color-repalette');
     const fromPalBtn = document.getElementById('btn-render-generate-from-palette');
     const pdfBtn = document.getElementById('btn-render-pdf-colorspread');
+    const tiffCompatBtn = document.getElementById('btn-tiff-compat');
+    const pngExportBtn = document.getElementById('btn-png-export');
     const reusablePalettes = _reusablePaletteArtifacts();
     const colorSources = _pdfColorSourceArtifacts();
+    const canConvertBilevel = _renderActiveFamily === 'bilevel' && hasSelection && inventoryMatchesJob && !!(art && art.image_key);
     if (dlBtn) dlBtn.disabled = !(hasSelection && inventoryMatchesJob);
     if (genMtBtn) genMtBtn.disabled = !(_renderActiveFamily === 'color' && _renderColorMtEligible()) || !!_activeRenderRun;
     if (delBtn) delBtn.disabled = !(hasSelection && inventoryMatchesJob);
@@ -7393,6 +7464,8 @@ function _updateRenderActionButtons() {
     if (colorRepalBtn) colorRepalBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && _canColorRepaletteArtifact(art)) || !!_activeRenderRun;
     if (fromPalBtn) fromPalBtn.disabled = !(_renderActiveFamily === 'color' && reusablePalettes.length > 0) || !!_activeRenderRun;
     if (pdfBtn) pdfBtn.disabled = !(_renderActiveFamily === 'pdf' && colorSources.length > 0) || !!_activeRenderRun;
+    if (tiffCompatBtn) tiffCompatBtn.disabled = !canConvertBilevel || !!_activeRenderRun;
+    if (pngExportBtn) pngExportBtn.disabled = !canConvertBilevel || !!_activeRenderRun;
     if (goResultBtn) goResultBtn.disabled = !(_renderActiveFamily === 'color' && jobId) || !!_activeRenderRun;
     if (favBtn) {
         const isFav = _renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && _isFavorite(jobId, art.artifact_id);
@@ -7741,6 +7814,8 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-generate-from-palette" onclick="openGenerateFromPalettePopup()" style="padding:4px 12px; font-size:11px" disabled>GenerateFromPalette</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-color-repalette" onclick="openColorRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>');
     if (_renderActiveFamily === 'palette') actionButtons.push('<button class="btn-secondary" id="btn-render-repalette" onclick="openRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>');
+    if (_renderActiveFamily === 'bilevel') actionButtons.push('<button class="btn-secondary" id="btn-png-export" onclick="runPngExport(document.getElementById(\'render-results-dir\').value.trim(), (_renderSelectedArtifactEntry() || {}).image_key)" style="padding:4px 12px; font-size:11px" disabled>PNG</button>');
+    if (_renderActiveFamily === 'bilevel') actionButtons.push('<button class="btn-secondary" id="btn-tiff-compat" onclick="runTiffCompat(document.getElementById(\'render-results-dir\').value.trim(), (_renderSelectedArtifactEntry() || {}).image_key)" style="padding:4px 12px; font-size:11px" disabled>Preview-Compatible TIFF</button>');
     if (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette') actionButtons.push('<button class="btn-secondary" id="btn-render-populate" onclick="populateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Populate</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-autolevels" onclick="openAutolevelPopup()" style="padding:4px 12px; font-size:11px" disabled>Autolevels</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-go-result" onclick="goResultFromRender()" style="padding:4px 12px; font-size:11px" disabled>GoResult</button>');

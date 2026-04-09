@@ -115,10 +115,31 @@ typedef struct {
     long downloadMs;
     long computeMs;
     long bytesDownloaded;
+    int retries;
     int failed;
     long httpStatus;
     char error[256];
 } HistSectionArgs;
+
+static void sleep_ms(long ms) {
+    if (ms <= 0) return;
+    struct timespec ts;
+    ts.tv_sec = ms / 1000L;
+    ts.tv_nsec = (ms % 1000L) * 1000000L;
+    nanosleep(&ts, NULL);
+}
+
+static int retryable_range_failure(CURLcode rc, long httpStatus) {
+    if (httpStatus == 429L || httpStatus == 500L || httpStatus == 502L ||
+        httpStatus == 503L || httpStatus == 504L) return 1;
+    return rc == CURLE_HTTP_RETURNED_ERROR ||
+           rc == CURLE_OPERATION_TIMEDOUT ||
+           rc == CURLE_COULDNT_CONNECT ||
+           rc == CURLE_COULDNT_RESOLVE_HOST ||
+           rc == CURLE_RECV_ERROR ||
+           rc == CURLE_SEND_ERROR ||
+           rc == CURLE_GOT_NOTHING;
+}
 
 static size_t write_section_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
     size_t total = size * nmemb;
@@ -169,35 +190,56 @@ static void *hist_section_worker_main(void *arg_) {
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "identity");
     curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
 
+    int attempts = arg->retries + 1;
     long dlStart = monotonic_ms();
-    CURLcode rc = curl_easy_perform(curl);
+    CURLcode rc = CURLE_OK;
+    for (int attempt = 0; attempt < attempts; attempt++) {
+        dl.size = 0;
+        dl.overflow = 0;
+        curlErr[0] = '\0';
+        arg->httpStatus = 0;
+        rc = curl_easy_perform(curl);
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &arg->httpStatus);
+        if (rc == CURLE_OK &&
+            (arg->httpStatus == 206L || arg->httpStatus == 200L) &&
+            !dl.overflow &&
+            dl.size == dl.expected) {
+            break;
+        }
+        if (attempt + 1 >= attempts || !retryable_range_failure(rc, arg->httpStatus)) {
+            break;
+        }
+        sleep_ms(150L * (attempt + 1));
+    }
     arg->downloadMs = monotonic_ms() - dlStart;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &arg->httpStatus);
     if (rc != CURLE_OK) {
-        snprintf(arg->error, sizeof(arg->error), "range GET failed for bytes %s: %s",
-                 rangeBuf, curlErr[0] ? curlErr : curl_easy_strerror(rc));
+        snprintf(arg->error, sizeof(arg->error), "range GET failed for bytes %s after %d attempt%s: %s",
+                 rangeBuf, attempts, attempts == 1 ? "" : "s",
+                 curlErr[0] ? curlErr : curl_easy_strerror(rc));
         arg->failed = 1;
         curl_easy_cleanup(curl);
         free(dl.data);
         return NULL;
     }
     if (arg->httpStatus != 206L && arg->httpStatus != 200L) {
-        snprintf(arg->error, sizeof(arg->error), "unexpected HTTP status %ld for bytes %s", arg->httpStatus, rangeBuf);
+        snprintf(arg->error, sizeof(arg->error), "unexpected HTTP status %ld for bytes %s after %d attempt%s",
+                 arg->httpStatus, rangeBuf, attempts, attempts == 1 ? "" : "s");
         arg->failed = 1;
         curl_easy_cleanup(curl);
         free(dl.data);
         return NULL;
     }
     if (dl.overflow) {
-        snprintf(arg->error, sizeof(arg->error), "range GET overflow for bytes %s", rangeBuf);
+        snprintf(arg->error, sizeof(arg->error), "range GET overflow for bytes %s after %d attempt%s",
+                 rangeBuf, attempts, attempts == 1 ? "" : "s");
         arg->failed = 1;
         curl_easy_cleanup(curl);
         free(dl.data);
         return NULL;
     }
     if (dl.size != dl.expected) {
-        snprintf(arg->error, sizeof(arg->error), "short range GET for bytes %s: got %zu of %zu bytes",
-                 rangeBuf, dl.size, dl.expected);
+        snprintf(arg->error, sizeof(arg->error), "short range GET for bytes %s after %d attempt%s: got %zu of %zu bytes",
+                 rangeBuf, attempts, attempts == 1 ? "" : "s", dl.size, dl.expected);
         arg->failed = 1;
         curl_easy_cleanup(curl);
         free(dl.data);
@@ -246,6 +288,7 @@ int main(int argc, char **argv) {
     double omega = getArgDouble(argc, argv, "--omega", 1.0);
     int omegaEnabled = getArgInt(argc, argv, "--omega_enabled", 1);
     int requestedThreads = getArgInt(argc, argv, "--threads", 2);
+    int retries = getArgInt(argc, argv, "--retries", 2);
 
     if (!url || !*url) {
         fprintf(stderr, "Missing --url\n");
@@ -265,6 +308,10 @@ int main(int argc, char **argv) {
     }
     if (histBins < 1 || histBins > 10000) {
         fprintf(stderr, "Invalid hist_bins: %d\n", histBins);
+        return 1;
+    }
+    if (retries < 0 || retries > 10) {
+        fprintf(stderr, "Invalid retries: %d\n", retries);
         return 1;
     }
 
@@ -332,6 +379,7 @@ int main(int argc, char **argv) {
         args[i].omega = omega;
         args[i].omegaEnabled = omegaEnabled;
         args[i].histBins = histBins;
+        args[i].retries = retries;
         args[i].hist = calloc((size_t)histBins, sizeof(long));
         if (!args[i].hist) {
             fprintf(stderr, "Out of memory for hist bins\n");
@@ -379,10 +427,10 @@ int main(int argc, char **argv) {
 
     const char *metricName = solve_metric_name(metric);
     printf("{\"mode\":\"hist\",\"metric\":\"%s\",\"n_solves\":%ld,\"degree\":%d,\"threads\":%d,"
-           "\"hist_bins\":%d,\"omega\":%.15g,\"omega_enabled\":%s,\"clip_lo\":%.15g,\"clip_hi\":%.15g,"
+           "\"hist_bins\":%d,\"retries\":%d,\"omega\":%.15g,\"omega_enabled\":%s,\"clip_lo\":%.15g,\"clip_hi\":%.15g,"
            "\"download_ms\":%ld,\"compute_ms\":%ld,\"wall_ms\":%ld,\"bytes_downloaded\":%ld,"
            "\"hist\":[",
-           metricName, nSolves, degree, threads, histBins, omega,
+           metricName, nSolves, degree, threads, histBins, retries, omega,
            omegaEnabled ? "true" : "false", clipLo, clipHi,
            downloadMs, computeMs, wallMs, bytesDownloaded);
     for (int i = 0; i < histBins; i++) {

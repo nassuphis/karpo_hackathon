@@ -32,7 +32,17 @@ static CoeffFuncC lookupCoeffFuncC(const char *name) {
     if (strcmp(name, "p7f") == 0) return p7f_c;
     if (strcmp(name, "p821") == 0) return p821_c;
     if (strcmp(name, "moth4") == 0) return moth4_c;
+    if (strcmp(name, "p11a") == 0) return p11a_c;
+    if (strcmp(name, "p11a_v1") == 0) return p11a_v1_c;
+    if (strcmp(name, "p11a1") == 0) return p11a1_c;
+    if (strcmp(name, "p11a2") == 0) return p11a2_c;
     if (strcmp(name, "p11b3") == 0) return p11b3_c;
+    if (strcmp(name, "p11b2") == 0) return p11b2_c;
+    if (strcmp(name, "p11b2_v1") == 0) return p11b2_v1_c;
+    if (strcmp(name, "p11b2_v2") == 0) return p11b2_v2_c;
+    if (strcmp(name, "p11b2_v3") == 0) return p11b2_v3_c;
+    if (strcmp(name, "p11b2_v4") == 0) return p11b2_v4_c;
+    if (strcmp(name, "p11b2_v5") == 0) return p11b2_v5_c;
     if (strcmp(name, "creative8") == 0) return creative8_c;
     if (strcmp(name, "creative9") == 0) return creative9_c;
     if (strcmp(name, "creative10") == 0) return creative10_hand_c;
@@ -1126,7 +1136,17 @@ static const CoeffFuncSpec _coeffFuncSpecs[] = {
     {"p7f", p7f_c, 0, NULL},
     {"p821", p821_c, 0, NULL},
     {"moth4", moth4_c, 0, NULL},
+    {"p11a", p11a_c, 0, NULL},
+    {"p11a_v1", p11a_v1_c, 0, NULL},
+    {"p11a1", p11a1_c, 0, NULL},
+    {"p11a2", p11a2_c, 0, NULL},
     {"p11b3", p11b3_c, 0, NULL},
+    {"p11b2", p11b2_c, 0, NULL},
+    {"p11b2_v1", p11b2_v1_c, 0, NULL},
+    {"p11b2_v2", p11b2_v2_c, 0, NULL},
+    {"p11b2_v3", p11b2_v3_c, 0, NULL},
+    {"p11b2_v4", p11b2_v4_c, 0, NULL},
+    {"p11b2_v5", p11b2_v5_c, 0, NULL},
     {"creative8", creative8_c, 1, _cfpv_defaults_creative8},
     {"creative9", creative9_c, 1, _cfpv_defaults_creative9},
     {"creative10", creative10_hand_c, 0, NULL},
@@ -2198,7 +2218,7 @@ static const CoeffFuncSpec _coeffFuncSpecs[] = {
     {"poly_rnd_path6", poly_rnd_path6_c, 0, NULL},
     {"poly_rnd_path7", poly_rnd_path7_c, 0, NULL},
 };
-static const int _nCoeffFuncSpecs = 1090;
+static const int _nCoeffFuncSpecs = 1100;
 
 static const CoeffFuncSpec *lookupCoeffFuncSpec(const char *name) {
     for (int i = 0; i < _nCoeffFuncSpecs; i++) {

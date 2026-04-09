@@ -146,6 +146,18 @@ def _validate_hist_input_mode(value):
     return mode
 
 
+def _validate_sectioned_retries(value, field_name):
+    if value in (None, ""):
+        value = 2
+    try:
+        retries = int(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"{field_name} must be an integer, got {value!r}")
+    if not (0 <= retries <= 10):
+        raise RuntimeError(f"{field_name} must be in [0, 10], got {retries}")
+    return retries
+
+
 def _sectioned_input_size_limit():
     try:
         memory_mb = int(os.environ.get("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "0") or 0)
@@ -340,6 +352,10 @@ def handle_hist(params):
     solve_score_omega_enabled = _validate_omega_enabled(params.get("solve_score_omega_enabled", True))
     solve_score_threads = _validate_threads(params.get("solve_score_threads", 1), default=1)
     solve_score_hist_input_mode = _validate_hist_input_mode(params.get("solve_score_hist_input_mode", "tmpfile"))
+    solve_score_hist_retries = _validate_sectioned_retries(
+        params.get("solve_score_hist_retries", 2),
+        "solve_score_hist_retries",
+    )
     bin_key = params["bin_key"]
     degree = params["degree"]
     clip_key = params["clip_key"]
@@ -354,6 +370,7 @@ def handle_hist(params):
         "omega_enabled": solve_score_omega_enabled,
         "threads": solve_score_threads,
         "input_mode": solve_score_hist_input_mode,
+        "retries": solve_score_hist_retries,
         "source_bucket": BUCKET,
         "source_key": bin_key,
         "clip_key": clip_key,
@@ -402,6 +419,7 @@ def handle_hist(params):
                 f"--omega={solve_score_omega}",
                 f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
                 f"--threads={solve_score_threads}",
+                f"--retries={solve_score_hist_retries}",
             ]
             if xf_path:
                 cmd.append(f"--root_xforms={xf_path}")
@@ -417,7 +435,7 @@ def handle_hist(params):
                     f"s3://{BUCKET}/{bin_key} "
                     f"(clip=s3://{BUCKET}/{clip_key}, job={job_id}, task={task_id}, "
                     f"chunk={chunk_idx}, input=sectioned, size={input_size}, "
-                    f"threads={solve_score_threads}, metric={metric}): {stderr_summary}"
+                    f"threads={solve_score_threads}, retries={solve_score_hist_retries}, metric={metric}): {stderr_summary}"
                 )
             hist_data = json.loads(hist_stdout)
             progress["dl_ms"] = pre_native_ms + int(hist_data.get("download_ms", 0))

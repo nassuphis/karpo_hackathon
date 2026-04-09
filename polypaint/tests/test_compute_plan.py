@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
@@ -36,7 +37,8 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(first["solve_task_id"], "compute_run_abc_solve_0")
         self.assertEqual(first["bin_key"], "renders/compute_j/chunk_0.bin")
 
-    def test_post_coeffgen_returns_compact_payload_without_sweep_items(self):
+    @patch("handler_compute_plan._get_ddb")
+    def test_post_coeffgen_returns_compact_payload_without_sweep_items(self, mock_get_ddb):
         import handler_compute_plan as mod
 
         plan = {
@@ -55,14 +57,27 @@ class TestComputePlan(unittest.TestCase):
                 for i in range(4)
             ],
             "compute": {"N": 100, "times": 1},
+            "coeffgen": {"task_prefix": "compute_run_abc_coeffgen_"},
         }
-        coeffgen_results = [
-            {"chunk_idx": i, "coeffs_size": 1000, "n_coeffs": 11, "degree": 10}
-            for i in range(4)
-        ]
+        mock_get_ddb.return_value.query.return_value = {
+            "Items": [
+                {
+                    "task_id": {"S": f"compute_run_abc_coeffgen_{i}"},
+                    "task_status": {"S": "done"},
+                    "result_data": {"S": json.dumps({
+                        "chunk_idx": i,
+                        "coeffs_size": 1000,
+                        "n_coeffs": 11,
+                        "degree": 10,
+                    })},
+                }
+                for i in range(4)
+            ]
+        }
         result = mod.handle_post_coeffgen({
+            "job_id": "compute_j",
             "plan": plan,
-            "coeffgen_results": coeffgen_results,
+            "task_prefix": "compute_run_abc_coeffgen_",
         })
         post = json.loads(result["body"])
         self.assertEqual(post["degree"], 10)
@@ -70,8 +85,12 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(post["total_coeffs_size"], 4000)
         self.assertNotIn("sweep_items", post)
         self.assertIn("lores", post)
+        kwargs = mock_get_ddb.return_value.query.call_args.kwargs
+        self.assertTrue(kwargs["ConsistentRead"])
+        self.assertEqual(kwargs["ExpressionAttributeValues"][":pfx"]["S"], "compute_run_abc_coeffgen_")
 
-    def test_post_coeffgen_payload_stays_small_for_500_chunks(self):
+    @patch("handler_compute_plan._get_ddb")
+    def test_post_coeffgen_payload_stays_small_for_500_chunks(self, mock_get_ddb):
         import handler_compute_plan as mod
 
         plan = {
@@ -90,14 +109,27 @@ class TestComputePlan(unittest.TestCase):
                 for i in range(500)
             ],
             "compute": {"N": 5000, "times": 1},
+            "coeffgen": {"task_prefix": "compute_run_big_coeffgen_"},
         }
-        coeffgen_results = [
-            {"chunk_idx": i, "coeffs_size": 4_400_000, "n_coeffs": 11, "degree": 10}
-            for i in range(500)
-        ]
+        mock_get_ddb.return_value.query.return_value = {
+            "Items": [
+                {
+                    "task_id": {"S": f"compute_run_big_coeffgen_{i}"},
+                    "task_status": {"S": "done"},
+                    "result_data": {"S": json.dumps({
+                        "chunk_idx": i,
+                        "coeffs_size": 4_400_000,
+                        "n_coeffs": 11,
+                        "degree": 10,
+                    })},
+                }
+                for i in range(500)
+            ]
+        }
         result = mod.handle_post_coeffgen({
+            "job_id": "compute_j",
             "plan": plan,
-            "coeffgen_results": coeffgen_results,
+            "task_prefix": "compute_run_big_coeffgen_",
         })
         body = result["body"]
         self.assertLess(len(body.encode("utf-8")), 4096)

@@ -33,6 +33,10 @@ grep -q '<option value="sectioned">sectioned native</option>' "$HTML" || { echo 
 grep -q 'id="render-mt-raster-input-mode"' "$HTML" || { echo "FATAL: render MT raster input selector missing from index.html"; exit 1; }
 grep -q 'id="render-mt-merge-workers"' "$HTML" || { echo "FATAL: render MT merge workers input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-finalize-workers"' "$HTML" || { echo "FATAL: render MT finalize workers input missing from index.html"; exit 1; }
+grep -q 'id="render-mt-hist-retries"' "$HTML" || { echo "FATAL: render MT hist retries input missing from index.html"; exit 1; }
+grep -q 'id="render-mt-raster-retries"' "$HTML" || { echo "FATAL: render MT raster retries input missing from index.html"; exit 1; }
+grep -q 'id="btn-png-export"' "$HTML" || { echo "FATAL: bilevel PNG export button missing from index.html"; exit 1; }
+grep -q 'id="btn-tiff-compat"' "$HTML" || { echo "FATAL: bilevel TIFF compat button missing from index.html"; exit 1; }
 grep -q 'onclick="loadLambdaConfig()" class="btn-secondary" style="margin:0; padding:4px 12px"' "$HTML" || { echo "FATAL: Config Load button should override global button margin"; exit 1; }
 grep -q 'onclick="renderResultsTable()" style="margin:0; padding:3px 8px; font-size:10px"' "$HTML" || { echo "FATAL: Results Filter button should override global button margin"; exit 1; }
 grep -q 'id="btn-solve-histogram" onclick="runSolveScoreHistogramDebug()" style="margin:0 0 0 8px; font-size:10px; padding:1px 8px"' "$HTML" || { echo "FATAL: Solve histogram button should override global button margin"; exit 1; }
@@ -340,7 +344,9 @@ const renderEls = {
     'render-mt-threads': { value: '4' },
     'render-mt-solve-score-threads': { value: '4' },
     'render-mt-hist-input-mode': { value: 'tmpfile' },
+    'render-mt-hist-retries': { value: '2' },
     'render-mt-raster-input-mode': { value: 'tmpfile' },
+    'render-mt-raster-retries': { value: '2' },
     'render-mt-merge-workers': { value: '16' },
     'render-mt-finalize-workers': { value: '16' },
     'autolevel-popup-overlay': {},
@@ -627,18 +633,20 @@ async function testPipeline(name, call) {
     }
     console.log('  Generate popup opens for solve-score input A/B: OK');
     vm.runInContext('_closeRenderGeneratePopup()', ctx);
-    await testPipeline('runRasterPipelineMT', '(async()=>{ renderColorMode = "solve_score"; await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, mergeWorkers: 12, finalizeWorkers: 18 }); })()');
+    await testPipeline('runRasterPipelineMT', '(async()=>{ renderColorMode = "solve_score"; await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histRetries: 4, rasterRetries: 5, mergeWorkers: 12, finalizeWorkers: 18 }); })()');
     {
         const logs = vm.runInContext('_pipelineDispatchLogs', ctx);
         const payloads = vm.runInContext('_renderOrchestratorPayloads', ctx);
-        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, merge workers=12, raster input=tmpfile, raster threads=6, finalize workers=18')) : null;
+        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, hist retries=4, merge workers=12, raster input=tmpfile, raster retries=5, raster threads=6, finalize workers=18')) : null;
         const orchHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render: dispatching color orchestrator')) : null;
         const mtPayload = Array.isArray(payloads) ? payloads.find((row) => row && row.params && row.params.raster_engine === 'mt') : null;
         if (!mtHit || mtHit.cls !== 'ok' || !orchHit || orchHit.cls !== 'ok' || !mtPayload ||
             mtPayload.params.raster_mt_threads !== 6 || mtPayload.params.solve_score_threads !== 3 ||
             mtPayload.params.solve_score_hist_input_mode !== 'tmpfile' ||
+            mtPayload.params.solve_score_hist_retries !== 4 ||
             mtPayload.params.solve_score_merge_workers !== 12 ||
             mtPayload.params.raster_input_mode !== 'tmpfile' ||
+            mtPayload.params.raster_sectioned_retries !== 5 ||
             mtPayload.params.finalize_workers !== 18) {
             console.error('FATAL: runRasterPipelineMT should log green MT + orchestrator dispatch and pass thread counts, got logs=' + JSON.stringify(logs) + ' payloads=' + JSON.stringify(payloads));
             process.exit(1);
@@ -657,7 +665,9 @@ async function testPipeline(name, call) {
         console.error('FATAL: Generate-MT should open popup overlay');
         process.exit(1);
     }
-    if (!(ctx._elements['render-mt-popup-summary'].textContent || '').includes('merge workers=')
+    if (!(ctx._elements['render-mt-popup-summary'].textContent || '').includes('hist retries=')
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('raster retries=')
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('merge workers=')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('finalize workers=')) {
         console.error('FATAL: Generate-MT popup should show thread summary');
         process.exit(1);
@@ -670,12 +680,20 @@ async function testPipeline(name, call) {
         console.error('FATAL: Generate-MT popup should enable hist input selector for solve_score mode');
         process.exit(1);
     }
+    if (ctx._elements['render-mt-hist-retries'].disabled !== true) {
+        console.error('FATAL: Generate-MT popup should disable hist retries when hist input is tmpfile');
+        process.exit(1);
+    }
     if (ctx._elements['render-mt-merge-workers'].disabled !== false) {
         console.error('FATAL: Generate-MT popup should enable merge workers input for solve_score mode');
         process.exit(1);
     }
     if (ctx._elements['render-mt-finalize-workers'].disabled !== false) {
         console.error('FATAL: Generate-MT popup should enable finalize workers input');
+        process.exit(1);
+    }
+    if (ctx._elements['render-mt-raster-retries'].disabled !== true) {
+        console.error('FATAL: Generate-MT popup should disable raster retries when raster input is tmpfile');
         process.exit(1);
     }
     console.log('  Generate-MT popup opens with solve-score + raster thread summary: OK');
@@ -902,6 +920,7 @@ async function testPipeline(name, call) {
     }
 
     {
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'j' };
         const summary = {
             calc: { exists: true, N: 1000, degree: 5 },
             families: {
@@ -920,7 +939,7 @@ async function testPipeline(name, call) {
                 ],
             },
         };
-        vm.runInContext(`_renderActiveFamily = 'color'; _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1 };`, ctx);
+        vm.runInContext(`_activeRenderRun = null; _activePaletteRun = null; _renderLoadedJobId = 'j'; _renderActiveFamily = 'color'; _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1 };`, ctx);
         vm.runInContext(`renderArtifactPanel('j', ${JSON.stringify(summary)})`, ctx);
 
         const panelHtml = ctx._elements['render-preview'].innerHTML;
@@ -954,6 +973,21 @@ async function testPipeline(name, call) {
             'palette action row'
         );
         console.log('  family switch updates catalog: OK');
+
+        vm.runInContext(`_renderSelectFamily('bilevel')`, ctx);
+        const bilevelHtml = ctx._elements['render-preview'].innerHTML;
+        if (!bilevelHtml.includes('https://img/bil.png')) { console.error('FATAL: bilevel family should show selected bilevel viewer'); process.exit(1); }
+        assertActionButtons(
+            bilevelHtml,
+            ['Generate', 'PNG', 'Preview-Compatible TIFF', 'Download', 'Delete', 'DeepZoom'],
+            ['Generate-MT', 'GenerateFromPalette', 'RePalette', 'Populate', 'Autolevels', 'ColorSpread', 'Favorite'],
+            'bilevel action row'
+        );
+        if (!!ctx._elements['btn-png-export'].disabled || !!ctx._elements['btn-tiff-compat'].disabled) {
+            console.error('FATAL: bilevel PNG/compat buttons should be enabled for selected bilevel artifact');
+            process.exit(1);
+        }
+        console.log('  bilevel family conversion controls restored: OK');
 
         vm.runInContext(`_renderSelectFamily('pdf')`, ctx);
         const pdfHtml = ctx._elements['render-preview'].innerHTML;
@@ -1039,6 +1073,52 @@ async function testPipeline(name, call) {
         if (favText !== 'Favorited') { console.error('FATAL: favorite button should become Favorited after save, got ' + favText); process.exit(1); }
         if (favoriteCount !== 1) { console.error('FATAL: favorite action should update cached favorite refs'); process.exit(1); }
         console.log('  color favorite action posts + updates button state: OK');
+    }
+
+    {
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'j' };
+        vm.runInContext(`
+            _renderLoadedJobId = 'j';
+            _renderActiveFamily = 'bilevel';
+            renderArtifactPanel('j', {
+                calc: { exists: true, N: 1000, degree: 5 },
+                families: {
+                    color: [],
+                    bilevel: [
+                        { artifact_id: 'bil_a', created_at: '2026-03-30T11:00:00Z', image_key: 'renders/j/bilevel/bil_a/image.tif', image_url: 'https://img/bil.tif', preview_url: 'https://img/bil.png', viewer_url: 'https://img/bil.png', width: 1000, height: 1000, file_size: 60000, format: 'tif' }
+                    ],
+                    coeffs: [],
+                    palette: [],
+                    pdf: [],
+                },
+            });
+            var _bilevelConvertCalls = [];
+            lambdaPost = async function lambdaPost(name, body, path) {
+                _bilevelConvertCalls.push({ name, body, path });
+                if (name === 'png-export') return { convert_ms: 12, file_size: 12345, url: 'https://img/bil_export.png' };
+                if (name === 'tiff-compat') return { convert_ms: 17, file_size: 23456, url: 'https://img/bil_compat.tif' };
+                return {};
+            };
+            _bilevelRefreshCalls = [];
+            refreshRenderArtifacts = async function(jobId) { _bilevelRefreshCalls.push(jobId); };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await runPngExport("j", "renders/j/bilevel/bil_a/image.tif"); await runTiffCompat("j", "renders/j/bilevel/bil_a/image.tif"); })()', ctx); } catch(e) {}
+        const convertCalls = vm.runInContext('_bilevelConvertCalls', ctx);
+        const refreshCalls = vm.runInContext('_bilevelRefreshCalls', ctx);
+        if (!convertCalls || convertCalls.length !== 2) { console.error('FATAL: bilevel conversion actions should make two backend calls'); process.exit(1); }
+        if (convertCalls[0].name !== 'png-export' || convertCalls[0].body.source_key !== 'renders/j/bilevel/bil_a/image.tif') {
+            console.error('FATAL: PNG export should post selected bilevel TIFF source key');
+            process.exit(1);
+        }
+        if (convertCalls[1].name !== 'tiff-compat' || convertCalls[1].body.source_key !== 'renders/j/bilevel/bil_a/image.tif') {
+            console.error('FATAL: TIFF compat should post selected bilevel TIFF source key');
+            process.exit(1);
+        }
+        if (!Array.isArray(refreshCalls) || refreshCalls.length !== 2 || refreshCalls[0] !== 'j' || refreshCalls[1] !== 'j') {
+            console.error('FATAL: bilevel conversion actions should refresh render artifacts after success');
+            process.exit(1);
+        }
+        console.log('  bilevel PNG/compat actions call backend routes and refresh inventory: OK');
     }
 
     {
@@ -3098,18 +3178,20 @@ async function testPipeline(name, call) {
             refreshRenderArtifacts = async function() {};
         `, ctx);
         ctx._elements['btn-render-generate-mt'] = ctx._mkEl();
-        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", rasterInputMode: "sectioned", mergeWorkers: 14, finalizeWorkers: 22 }); })()', ctx);
+        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", histRetries: 4, rasterInputMode: "sectioned", rasterRetries: 7, mergeWorkers: 14, finalizeWorkers: 22 }); })()', ctx);
         orchDispatched = vm.runInContext('_orchDispatched', ctx);
         if (!orchDispatched) { console.error('FATAL: runRasterPipelineMT did not dispatch orchestrator'); process.exit(1); }
         if (orchDispatched.params.raster_engine !== 'mt') { console.error('FATAL: runRasterPipelineMT should request mt raster engine, got ' + orchDispatched.params.raster_engine); process.exit(1); }
         if (orchDispatched.params.raster_mt_threads !== 6) { console.error('FATAL: runRasterPipelineMT should pass raster_mt_threads=6, got ' + orchDispatched.params.raster_mt_threads); process.exit(1); }
         if (orchDispatched.params.solve_score_threads !== 3) { console.error('FATAL: runRasterPipelineMT should pass solve_score_threads=3, got ' + orchDispatched.params.solve_score_threads); process.exit(1); }
         if (orchDispatched.params.solve_score_hist_input_mode !== 'sectioned') { console.error('FATAL: runRasterPipelineMT should pass solve_score_hist_input_mode=sectioned, got ' + orchDispatched.params.solve_score_hist_input_mode); process.exit(1); }
+        if (orchDispatched.params.solve_score_hist_retries !== 4) { console.error('FATAL: runRasterPipelineMT should pass solve_score_hist_retries=4, got ' + orchDispatched.params.solve_score_hist_retries); process.exit(1); }
         if (orchDispatched.params.solve_score_merge_workers !== 14) { console.error('FATAL: runRasterPipelineMT should pass solve_score_merge_workers=14, got ' + orchDispatched.params.solve_score_merge_workers); process.exit(1); }
         if (orchDispatched.params.finalize_workers !== 22) { console.error('FATAL: runRasterPipelineMT should pass finalize_workers=22, got ' + orchDispatched.params.finalize_workers); process.exit(1); }
         if (orchDispatched.params.raster_input_mode !== 'sectioned') { console.error('FATAL: runRasterPipelineMT should pass raster_input_mode=sectioned, got ' + orchDispatched.params.raster_input_mode); process.exit(1); }
+        if (orchDispatched.params.raster_sectioned_retries !== 7) { console.error('FATAL: runRasterPipelineMT should pass raster_sectioned_retries=7, got ' + orchDispatched.params.raster_sectioned_retries); process.exit(1); }
         if (orchDispatched.mode !== 'color') { console.error('FATAL: mode should be color, got ' + orchDispatched.mode); process.exit(1); }
-        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, hist=sectioned, merge=14, finalize=22, raster_input=sectioned, raster=6)');
+        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, hist=sectioned, hist_retries=4, merge=14, finalize=22, raster_input=sectioned, raster_retries=7, raster=6)');
     }
 
     // 12b: runBilevelPipeline dispatches one render_orchestrator job

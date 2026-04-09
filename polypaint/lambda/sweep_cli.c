@@ -3677,6 +3677,242 @@ static void moth4_c(double x1r, double x1i, double x2r, double x2i,
     }
 }
 
+/* p11b2: 71 coefficients, cubic ramp over normalized denominator. */
+static void p11a_c(double x1r, double x1i, double x2r, double x2i,
+                   const double *cfpv, int n_cfpv,
+                   double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    const int n = 40;
+    *nCoeffs = n;
+
+    double sumr = x1r + x2r;
+    double sumi = x1i + x2i;
+    double a = sqrt(sumr * sumr + sumi * sumi) / 2.0;
+    int m = ((int)(10.0 * a)) % 13 + 3;
+    double denr = (double)(m > 3 ? m : 3) + sumr;
+    double deni = sumi;
+    double d2 = denr * denr + deni * deni;
+    if (d2 < 1e-30) d2 = 1e-30;
+    int mod_base = m * 2;
+
+    for (int k = 0; k < n; k++) {
+        double vr = (double)k * denr / d2;
+        double vi = -(double)k * deni / d2;
+        double er = -M_PI * vi;
+        double ei = M_PI * vr;
+        double scale = exp(er);
+        double ucr = scale * cos(ei);
+        double uci = scale * sin(ei);
+        double coeff_scale = mod_base > 0 ? (double)(k % mod_base) : 0.0;
+        cRe[k] = coeff_scale * ucr;
+        cIm[k] = coeff_scale * uci;
+    }
+
+    for (int k = 0; k < n; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0.0; cIm[k] = 0.0; }
+    }
+}
+
+static void p11a_v1_c(double x1r, double x1i, double x2r, double x2i,
+                      const double *cfpv, int n_cfpv,
+                      double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    const int n = 40;
+    *nCoeffs = n;
+
+    double sumr = x1r + x2r;
+    double sumi = x1i + x2i;
+    double a = sqrt(sumr * sumr + sumi * sumi) / 2.0;
+    int m = ((int)(5.0 * a)) % 21 + 3;
+    double denr = (double)(m > 3 ? m : 3) + sumr;
+    double deni = sumi;
+    double d2 = denr * denr + deni * deni;
+    if (d2 < 1e-30) d2 = 1e-30;
+    int mod_base = m + 10;
+
+    for (int k = 0; k < n; k++) {
+        double v0 = (double)k / (double)(n - 1);
+        double numer = pow(v0, 0.75);
+        double vr = numer * denr / d2;
+        double vi = -numer * deni / d2;
+        double er = -50.0 * M_PI * vi;
+        double ei = 50.0 * M_PI * vr;
+        double scale = exp(er);
+        double ucr = scale * cos(ei);
+        double uci = scale * sin(ei);
+        double coeff_scale = mod_base > 0 ? (double)(k % mod_base) : 0.0;
+        cRe[k] = coeff_scale * ucr;
+        cIm[k] = coeff_scale * uci;
+    }
+
+    for (int k = 0; k < n; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0.0; cIm[k] = 0.0; }
+    }
+}
+
+static void p11a1_c(double x1r, double x1i, double x2r, double x2i,
+                    const double *cfpv, int n_cfpv,
+                    double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    const int n = 40;
+    *nCoeffs = n;
+
+    double sumr = x1r + x2r;
+    double sumi = x1i + x2i;
+    double a = sqrt(sumr * sumr + sumi * sumi) / 2.0;
+    int m = ((int)(10.0 * a)) % 13;
+    double denr = (double)(m + 3) + sumr;
+    double deni = sumi;
+    double d2 = denr * denr + deni * deni;
+    if (d2 < 1e-30) d2 = 1e-30;
+    int mod_base = m * 2;
+
+    for (int k = 0; k < n; k++) {
+        double v0 = (double)k / (double)(n - 1);
+        double numer = (double)n * v0;
+        double vr = numer * denr / d2;
+        double vi = -numer * deni / d2;
+        double er = -M_PI * vi;
+        double ei = M_PI * vr;
+        double scale = exp(er);
+        double ucr = scale * cos(ei);
+        double uci = scale * sin(ei);
+        double coeff_scale = mod_base > 0 ? (double)(k % mod_base) : 0.0;
+        cRe[k] = coeff_scale * ucr;
+        cIm[k] = coeff_scale * uci;
+    }
+
+    for (int k = 0; k < n; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0.0; cIm[k] = 0.0; }
+    }
+}
+
+static void p11a2_c(double x1r, double x1i, double x2r, double x2i,
+                    const double *cfpv, int n_cfpv,
+                    double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    const int n = 40;
+    *nCoeffs = n;
+
+    double sumr = x1r + x2r;
+    double sumi = x1i + x2i;
+    double a = sqrt(sumr * sumr + sumi * sumi) / 2.0;
+    int m = ((int)(101.0 * a)) % 17;
+    double denr = (double)(m + 3) + sumr;
+    double deni = sumi;
+    double d2 = denr * denr + deni * deni;
+    if (d2 < 1e-30) d2 = 1e-30;
+    int mod_base = m * 2;
+
+    for (int k = 0; k < n; k++) {
+        double v0 = (double)k / (double)(n - 1);
+        double numer = (double)n * v0;
+        double vr = numer * denr / d2;
+        double vi = -numer * deni / d2;
+        double er = -M_PI * vi;
+        double ei = M_PI * vr;
+        double scale = exp(er);
+        double ucr = scale * cos(ei);
+        double uci = scale * sin(ei);
+        double coeff_scale = mod_base > 0 ? (double)(k % mod_base) : 0.0;
+        cRe[k] = coeff_scale * ucr;
+        cIm[k] = coeff_scale * uci;
+    }
+
+    for (int k = 0; k < n; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0.0; cIm[k] = 0.0; }
+    }
+}
+
+/* p11b2: 71 coefficients, cubic ramp over normalized denominator. */
+static void p11b2_c(double x1r, double x1i, double x2r, double x2i,
+                    const double *cfpv, int n_cfpv,
+                    double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    const int n = 71;
+    *nCoeffs = n;
+
+    double sumr = x1r + x2r;
+    double sumi = x1i + x2i;
+    double denr = sumr + 3.0;
+    double deni = sumi;
+    double adenom = sqrt(denr * denr + deni * deni);
+    if (adenom < 1.0 && adenom > 1e-30) {
+        denr /= adenom;
+        deni /= adenom;
+    }
+
+    double d2 = denr * denr + deni * deni;
+    if (d2 < 1e-30) d2 = 1e-30;
+
+    int mod_base = ((int)(101.0 * sqrt(sumr * sumr + sumi * sumi))) % 51 + 1;
+    for (int k = 0; k < n; k++) {
+        double v = (double)k / (double)(n - 1);
+        double numer = 7.0 * (double)n * pow(v, 3.0);
+        double ur = numer * denr / d2;
+        double ui = -numer * deni / d2;
+
+        double er = -M_PI * ui;
+        double ei = M_PI * ur;
+        double scale = exp(er);
+        double ucr = scale * cos(ei);
+        double uci = scale * sin(ei);
+
+        double coeff_scale = (double)(k % mod_base);
+        cRe[k] = coeff_scale * ucr;
+        cIm[k] = coeff_scale * uci;
+    }
+
+    for (int k = 0; k < n; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0.0; cIm[k] = 0.0; }
+    }
+}
+
+/* p11b2_v1: 71 coefficients, power-15 ramp over normalized denominator. */
+static void p11b2_v1_c(double x1r, double x1i, double x2r, double x2i,
+                       const double *cfpv, int n_cfpv,
+                       double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    const int n = 71;
+    *nCoeffs = n;
+
+    double sumr = x1r + x2r;
+    double sumi = x1i + x2i;
+    double denr = sumr + 3.0;
+    double deni = sumi;
+    double adenom = sqrt(denr * denr + deni * deni);
+    if (adenom < 1.0 && adenom > 1e-30) {
+        denr /= adenom;
+        deni /= adenom;
+    }
+
+    double d2 = denr * denr + deni * deni;
+    if (d2 < 1e-30) d2 = 1e-30;
+
+    int mod_base = ((int)(4583.0 * sqrt(sumr * sumr + sumi * sumi))) % 71 + 1;
+    for (int k = 0; k < n; k++) {
+        double v = (double)k / (double)(n - 1);
+        double numer = 7.0 * (double)n * pow(v, 15.0);
+        double ur = numer * denr / d2;
+        double ui = -numer * deni / d2;
+
+        double er = -M_PI * ui;
+        double ei = M_PI * ur;
+        double scale = exp(er);
+        double ucr = scale * cos(ei);
+        double uci = scale * sin(ei);
+
+        int sf = ((k + 1) % mod_base);
+        double coeff_scale = (double)(sf + 1);
+        cRe[k] = coeff_scale * ucr;
+        cIm[k] = coeff_scale * uci;
+    }
+
+    for (int k = 0; k < n; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0.0; cIm[k] = 0.0; }
+    }
+}
+
 /* p11b3: 11 coefficients, array mutation with integer indexing */
 static void p11b3_c(double x1r, double x1i, double x2r, double x2i,
                     const double *cfpv, int n_cfpv,
@@ -3732,6 +3968,227 @@ static void p11b3_c(double x1r, double x1i, double x2r, double x2i,
     /* NaN guard */
     for (int k = 0; k < 11; k++) {
         if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0; cIm[k] = 0; }
+    }
+}
+
+/* p11b2_v2: 11 coefficients, unit-interval power ramp over normalized denominator. */
+static void p11b2_v2_c(double x1r, double x1i, double x2r, double x2i,
+                       const double *cfpv, int n_cfpv,
+                       double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    const int n = 11;
+    *nCoeffs = n;
+
+    /* denom = t1 + t2 + 3 */
+    double sumr = x1r + x2r;
+    double sumi = x1i + x2i;
+    double denr = sumr + 3.0;
+    double deni = sumi;
+    double adenom = sqrt(denr * denr + deni * deni);
+    if (adenom < 1.0 && adenom > 1e-30) {
+        denr /= adenom;
+        deni /= adenom;
+    }
+
+    double d2 = denr * denr + deni * deni;
+    if (d2 < 1e-30) d2 = 1e-30;
+
+    int mod_base = ((int)(4583.0 * sqrt(sumr * sumr + sumi * sumi))) % 11 + 1;
+    for (int k = 0; k < n; k++) {
+        double v = (double)k / (double)(n - 1); /* linspace(0,1,11) */
+        double numer = 7.0 * (double)n * pow(v, 15.0);
+
+        /* u = numer / denom */
+        double ur = numer * denr / d2;
+        double ui = -numer * deni / d2;
+
+        /* uc = exp(i * pi * u) */
+        double er = -M_PI * ui;
+        double ei = M_PI * ur;
+        double scale = exp(er);
+        double ucr = scale * cos(ei);
+        double uci = scale * sin(ei);
+
+        int sf = ((k + 1) % mod_base);
+        double coeff_scale = (double)(sf + 1);
+        cRe[k] = coeff_scale * ucr;
+        cIm[k] = coeff_scale * uci;
+    }
+
+    for (int k = 0; k < n; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0.0; cIm[k] = 0.0; }
+    }
+}
+
+/* p11b2_v3: 11 coefficients, complex-cosine envelope with +0.5i shift. */
+static void p11b2_v3_c(double x1r, double x1i, double x2r, double x2i,
+                       const double *cfpv, int n_cfpv,
+                       double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    const int n = 11;
+    *nCoeffs = n;
+
+    double sumr = x1r + x2r;
+    double sumi = x1i + x2i;
+    double denr = sumr + 3.0;
+    double deni = sumi;
+    double adenom = sqrt(denr * denr + deni * deni);
+    if (adenom < 1.0 && adenom > 1e-30) {
+        denr /= adenom;
+        deni /= adenom;
+    }
+
+    double d2 = denr * denr + deni * deni;
+    if (d2 < 1e-30) d2 = 1e-30;
+
+    for (int k = 0; k < n; k++) {
+        double v = (double)k / (double)(n - 1);
+        double numer = 7.0 * (double)n * pow(v, 15.0);
+        double ur = numer * denr / d2;
+        double ui = -numer * deni / d2;
+
+        double er = -M_PI * ui;
+        double ei = M_PI * ur;
+        double scale = exp(er);
+        double ucr = scale * cos(ei);
+        double uci = scale * sin(ei);
+
+        double a = 2.0 * M_PI * v;
+        double b = M_PI;
+        double zr = cos(a) * cosh(b);
+        double zi = -sin(a) * sinh(b);
+        double z2r = zr * zr - zi * zi;
+        double z2i = 2.0 * zr * zi;
+        double z3r = z2r * zr - z2i * zi;
+        double z3i = z2r * zi + z2i * zr;
+        double sfr = z3r * (double)(n - 1);
+        double sfi = z3i * (double)(n - 1);
+        double coeffr = sfr + 1.0;
+        double coeffi = sfi;
+        cRe[k] = coeffr * ucr - coeffi * uci;
+        cIm[k] = coeffr * uci + coeffi * ucr;
+    }
+
+    for (int k = 0; k < n; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0.0; cIm[k] = 0.0; }
+    }
+}
+
+/* p11b2_v4: 11 coefficients, complex-cosine envelope with -0.5i shift. */
+static void p11b2_v4_c(double x1r, double x1i, double x2r, double x2i,
+                       const double *cfpv, int n_cfpv,
+                       double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    const int n = 11;
+    *nCoeffs = n;
+
+    double sumr = x1r + x2r;
+    double sumi = x1i + x2i;
+    double denr = sumr + 3.0;
+    double deni = sumi;
+    double adenom = sqrt(denr * denr + deni * deni);
+    if (adenom < 1.0 && adenom > 1e-30) {
+        denr /= adenom;
+        deni /= adenom;
+    }
+
+    double d2 = denr * denr + deni * deni;
+    if (d2 < 1e-30) d2 = 1e-30;
+
+    for (int k = 0; k < n; k++) {
+        double v = (double)k / (double)(n - 1);
+        double numer = 7.0 * (double)n * pow(v, 15.0);
+        double ur = numer * denr / d2;
+        double ui = -numer * deni / d2;
+
+        double er = -M_PI * ui;
+        double ei = M_PI * ur;
+        double scale = exp(er);
+        double ucr = scale * cos(ei);
+        double uci = scale * sin(ei);
+
+        double a = 2.0 * M_PI * v;
+        double b = -M_PI;
+        double zr = cos(a) * cosh(b);
+        double zi = -sin(a) * sinh(b);
+        double z2r = zr * zr - zi * zi;
+        double z2i = 2.0 * zr * zi;
+        double z3r = z2r * zr - z2i * zi;
+        double z3i = z2r * zi + z2i * zr;
+        double sfr = z3r * (double)(n - 1);
+        double sfi = z3i * (double)(n - 1);
+        double coeffr = sfr + 1.0;
+        double coeffi = sfi;
+        cRe[k] = coeffr * ucr - coeffi * uci;
+        cIm[k] = coeffr * uci + coeffi * ucr;
+    }
+
+    for (int k = 0; k < n; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0.0; cIm[k] = 0.0; }
+    }
+}
+
+/* p11b2_v5: 11 coefficients, exponential line interpolation family.
+ * This is the same underlying construction as giga_138, exposed under its older name. */
+static void p11b2_v5_c(double x1r, double x1i, double x2r, double x2i,
+                       const double *cfpv, int n_cfpv,
+                       double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    const int n = 11;
+    *nCoeffs = n;
+
+    double denr = x1r + x2r + 3.0;
+    double deni = x1i + x2i;
+    double adenom = sqrt(denr * denr + deni * deni);
+    if (adenom < 1.0 && adenom > 1e-30) {
+        denr /= adenom;
+        deni /= adenom;
+    }
+    double d2 = denr * denr + deni * deni;
+    if (d2 < 1e-30) d2 = 1e-30;
+
+    double z1r = x1r, z1i = x1i;
+    double z2r = x1r + x2r, z2i = x1i + x2i;
+    double step1r = (x2r - x1r) / (double)(n - 1);
+    double step1i = (x2i - x1i) / (double)(n - 1);
+    double prod_r = x1r * x2r - x1i * x2i;
+    double prod_i = x1r * x2i + x1i * x2r;
+    double step2r = (prod_r - z2r) / (double)(n - 1);
+    double step2i = (prod_i - z2i) / (double)(n - 1);
+
+    for (int k = 0; k < n; k++) {
+        double v1_scale = exp(-2.0 * M_PI * z1i);
+        double v1_angle = 2.0 * M_PI * z1r;
+        double v1r = v1_scale * cos(v1_angle);
+        double v1i = v1_scale * sin(v1_angle);
+
+        double v2_scale = exp(-2.0 * M_PI * z2i);
+        double v2_angle = 2.0 * M_PI * z2r;
+        double v2r = v2_scale * cos(v2_angle);
+        double v2i = v2_scale * sin(v2_angle);
+
+        double vr = v1r - v2i;
+        double vi = v1i + v2r;
+
+        double numer_r = (double)n * vr;
+        double numer_i = (double)n * vi;
+        double ur = (numer_r * denr + numer_i * deni) / d2;
+        double ui = (numer_i * denr - numer_r * deni) / d2;
+
+        double er = -M_PI * ui;
+        double ei = M_PI * ur;
+        double scale = exp(er);
+        cRe[k] = scale * cos(ei);
+        cIm[k] = scale * sin(ei);
+
+        z1r += step1r;
+        z1i += step1i;
+        z2r += step2r;
+        z2i += step2i;
+    }
+
+    for (int k = 0; k < n; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0.0; cIm[k] = 0.0; }
     }
 }
 

@@ -160,7 +160,7 @@
                 }
               }
             },
-            "ResultPath": "$.coeffgen_results",
+            "ResultPath": null,
             "Next": "PostCoeffgenPhase"
           },
 
@@ -195,7 +195,7 @@
                 "action": "post_coeffgen",
                 "job_id.$": "$.job_id",
                 "plan.$": "$.plan",
-                "coeffgen_results.$": "$.coeffgen_results"
+                "task_prefix.$": "$.plan.coeffgen.task_prefix"
               }
             },
             "ResultSelector": {

@@ -1014,20 +1014,25 @@ def handle_check_status(event):
                     latest_nonterminal_ms = row_ms
 
             # Collect result_data
+            parsed_rd = None
             rd = item.get("result_data", {}).get("S")
             if rd:
                 try:
-                    results.append(json.loads(rd))
+                    parsed_rd = json.loads(rd)
+                    results.append(parsed_rd)
                 except Exception:
                     pass
 
             if status == "done":
                 done += 1
             elif status == "error":
-                error_details.append({
+                detail = {
                     "task_id": task_id_val,
                     "error_msg": item.get("error_msg", {}).get("S", "unknown"),
-                })
+                }
+                if parsed_rd is not None:
+                    detail["result_data"] = parsed_rd
+                error_details.append(detail)
             else:
                 entry = {"task_id": task_id_val, "status": status}
                 if row_ms is not None:

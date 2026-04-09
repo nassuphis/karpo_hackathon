@@ -562,6 +562,47 @@ class TestCoeffTransforms(unittest.TestCase):
                 else:
                     self.assertAlmostEqual(abs(neg[s, k] + plain[s, k]), 0, places=5)
 
+    def test_power_matches_python_formula(self):
+        """ct_power(k) matches the intended elementwise geometric-series formula."""
+        meta_plain = self._coeffgen([], "/tmp/test_ct_plain6.bin")
+        meta_pow = self._coeffgen([["power", "6"]], "/tmp/test_ct_power6.bin")
+
+        n = meta_plain["n_coeffs"]
+        plain = _read_coeffs("/tmp/test_ct_plain6.bin", n)
+        powered = _read_coeffs("/tmp/test_ct_power6.bin", n)
+
+        idx = np.arange(1, n + 1, dtype=np.complex128)
+        expected = np.zeros_like(plain, dtype=np.complex128)
+        for s in range(len(plain)):
+            geom = np.ones(n, dtype=np.complex128)
+            acc = np.ones(n, dtype=np.complex128)
+            for _ in range(6):
+                geom = geom * plain[s]
+                acc = acc + geom
+            expected[s] = acc * idx
+
+        np.testing.assert_allclose(powered, expected, rtol=1e-5, atol=1e-5)
+
+    def test_invpower_matches_python_formula(self):
+        """ct_invpower(k) matches the intended reciprocal-threshold formula."""
+        meta_plain = self._coeffgen([], "/tmp/test_ct_plain7.bin")
+        meta_invpow = self._coeffgen([["invpower", "4"]], "/tmp/test_ct_invpower4.bin")
+
+        n = meta_plain["n_coeffs"]
+        plain = _read_coeffs("/tmp/test_ct_plain7.bin", n)
+        invpowered = _read_coeffs("/tmp/test_ct_invpower4.bin", n)
+
+        expected = np.zeros_like(plain, dtype=np.complex128)
+        for s in range(len(plain)):
+            geom = np.ones(n, dtype=np.complex128)
+            acc = np.ones(n, dtype=np.complex128)
+            for _ in range(4):
+                geom = geom * plain[s]
+                acc = acc + geom
+            expected[s] = np.where(np.abs(acc) > 1.0, 1.0 / acc, 1.0 + 0.0j)
+
+        np.testing.assert_allclose(invpowered, expected, rtol=1e-5, atol=1e-5)
+
 
 class TestParamTransforms(unittest.TestCase):
     """Test parameter transforms produce expected results."""

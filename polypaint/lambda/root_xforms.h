@@ -151,6 +151,67 @@ static void rt_roots_toline(float *re, float *im, int degree) {
     }
 }
 
+/* line_to_unit_circle(): inverse Cayley transform z = (w-i)/(w+i).
+ * Maps real line → unit circle, upper half-plane → unit disk. */
+static void rt_line_to_unit_circle(float *re, float *im, int degree) {
+    for (int k = 0; k < degree; k++) {
+        double wr = re[k], wi = im[k];
+        /* num = w - i */
+        double nr = wr, ni = wi - 1.0;
+        /* den = w + i */
+        double dr = wr, di = wi + 1.0;
+        double d2 = dr * dr + di * di;
+        if (d2 < 1e-30) { re[k] = 1e15f; im[k] = 1e15f; continue; }  /* pole at w=-i → ∞ */
+        re[k] = (float)((nr * dr + ni * di) / d2);
+        im[k] = (float)((ni * dr - nr * di) / d2);
+    }
+}
+
+/* invert_roots(): z' = 1 / z. */
+static void rt_invert_roots(float *re, float *im, int degree) {
+    for (int k = 0; k < degree; k++) {
+        double zr = re[k], zi = im[k];
+        double d2 = zr * zr + zi * zi;
+        if (d2 < 1e-30) { re[k] = 1e15f; im[k] = 1e15f; continue; }  /* pole at z=0 → ∞ */
+        re[k] = (float)(zr / d2);
+        im[k] = (float)(-zi / d2);
+    }
+}
+
+/* add_complex(a,b): z' = z + (a + i*b). */
+static void rt_add_complex(float *re, float *im, int degree, double a, double b) {
+    for (int k = 0; k < degree; k++) {
+        re[k] = (float)(re[k] + a);
+        im[k] = (float)(im[k] + b);
+    }
+}
+
+/* mul_complex(a,b): z' = z * (a + i*b). */
+static void rt_mul_complex(float *re, float *im, int degree, double a, double b) {
+    for (int k = 0; k < degree; k++) {
+        double zr = re[k], zi = im[k];
+        re[k] = (float)(zr * a - zi * b);
+        im[k] = (float)(zr * b + zi * a);
+    }
+}
+
+/* moebius(a,b,c,d): real-coefficient Mobius transform z' = (a z + b)/(c z + d). */
+static void rt_moebius(float *re, float *im, int degree, double a, double b, double c, double d) {
+    for (int k = 0; k < degree; k++) {
+        double zr = re[k], zi = im[k];
+        /* num = a z + b */
+        double nr = a * zr + b;
+        double ni = a * zi;
+        /* den = c z + d */
+        double dr = c * zr + d;
+        double di = c * zi;
+        double den2 = dr * dr + di * di;
+        if (den2 < 1e-30) { re[k] = 1e15f; im[k] = 1e15f; continue; }  /* pole where c z + d = 0 */
+        re[k] = (float)((nr * dr + ni * di) / den2);
+        im[k] = (float)((ni * dr - nr * di) / den2);
+    }
+}
+
 /* pull_towards_center(alpha, sigma): Gaussian radial shrink toward origin.
  * r' = r * (1 - alpha * exp(-(r/sigma)^2)). */
 static void rt_pull_towards_center(float *re, float *im, int degree, double alpha, double sigma) {
@@ -182,6 +243,24 @@ static void apply_root_xforms(const RootXformEntry *entries, int n_entries,
             rt_pull_unit_circle(re, im, degree, sigma, alpha);
         } else if (strcmp(e->name, "roots_toline") == 0) {
             rt_roots_toline(re, im, degree);
+        } else if (strcmp(e->name, "line_to_unit_circle") == 0) {
+            rt_line_to_unit_circle(re, im, degree);
+        } else if (strcmp(e->name, "invert_roots") == 0) {
+            rt_invert_roots(re, im, degree);
+        } else if (strcmp(e->name, "add_complex") == 0) {
+            double a = e->n_args > 0 ? e->args[0] : 0.0;
+            double b = e->n_args > 1 ? e->args[1] : 0.0;
+            rt_add_complex(re, im, degree, a, b);
+        } else if (strcmp(e->name, "mul_complex") == 0) {
+            double a = e->n_args > 0 ? e->args[0] : 1.0;
+            double b = e->n_args > 1 ? e->args[1] : 0.0;
+            rt_mul_complex(re, im, degree, a, b);
+        } else if (strcmp(e->name, "moebius") == 0) {
+            double a = e->n_args > 0 ? e->args[0] : 1.0;
+            double b = e->n_args > 1 ? e->args[1] : 0.0;
+            double c = e->n_args > 2 ? e->args[2] : 0.0;
+            double d = e->n_args > 3 ? e->args[3] : 1.0;
+            rt_moebius(re, im, degree, a, b, c, d);
         } else if (strcmp(e->name, "pull_towards_center") == 0) {
             double alpha = e->n_args > 0 ? e->args[0] : 1.0;
             double sigma = e->n_args > 1 ? e->args[1] : 0.75;

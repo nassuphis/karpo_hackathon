@@ -86,9 +86,12 @@ Suggested chunk payload:
   "times": 10000,
   "params_key": "renders/compute_xxx/params.bin",
   "function": "g39",
-  "coeff_transforms": ["rev"]
+  "coeff_transforms": ["rev", ["roots", "6"]]
 }
 ```
+
+`coeff_transforms` can now mix plain string entries and parametric array
+entries.
 
 No row-range fields are needed for coeffgen anymore.
 

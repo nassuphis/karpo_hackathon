@@ -1272,7 +1272,7 @@ if [ "$ACTION" = "create" ]; then
         \"Version\": \"2012-10-17\",
         \"Statement\": [{
             \"Effect\": \"Allow\",
-            \"Action\": [\"dynamodb:PutItem\", \"dynamodb:Query\", \"dynamodb:BatchWriteItem\"],
+            \"Action\": [\"dynamodb:PutItem\", \"dynamodb:GetItem\", \"dynamodb:DeleteItem\", \"dynamodb:Query\", \"dynamodb:BatchWriteItem\"],
             \"Resource\": \"arn:aws:dynamodb:${REGION}:${ACCT}:table/${JOBS_TABLE}\"
         }]
     }"
@@ -1845,7 +1845,7 @@ elif [ "$ACTION" = "update" ]; then
             \"Version\": \"2012-10-17\",
             \"Statement\": [{
                 \"Effect\": \"Allow\",
-                \"Action\": [\"dynamodb:PutItem\", \"dynamodb:Query\", \"dynamodb:BatchWriteItem\"],
+                \"Action\": [\"dynamodb:PutItem\", \"dynamodb:GetItem\", \"dynamodb:DeleteItem\", \"dynamodb:Query\", \"dynamodb:BatchWriteItem\"],
                 \"Resource\": \"arn:aws:dynamodb:${REGION}:${ACCT}:table/${JOBS_TABLE}\"
             }]
         }" 2>/dev/null || true

@@ -112,6 +112,55 @@ def test_coeffgen_chunked_matches_monolithic():
     print("  PASS")
 
 
+def test_coeffgen_chunked_parametric_coeff_transform_matches_monolithic():
+    """Chunked coeffgen matches monolithic for parametric coeff transforms too."""
+    print("test_coeffgen_chunked_parametric_coeff_transform_matches_monolithic...")
+    n, times, func = 8, 1, "g39"
+    ct = [["roots", "6"]]
+    pt = [["unit_circle"]]
+
+    run_mode({
+        "mode": "coeffgen", "function": func, "n1": n, "n2": n,
+        "i1_start": 0, "i1_end": n,
+        "param_transforms": pt, "coeff_transforms": ct, "times": times,
+    }, "/tmp/ck_roots_old.bin")
+
+    pg = run_mode({
+        "mode": "param_gen", "n1": n, "n2": n, "times": times,
+        "param_transforms": pt,
+    }, "/tmp/ck_roots_params.bin")
+    n_steps = pg["n_steps"]
+
+    chunks = []
+    chunk_size = n_steps // 2
+    for i in range(2):
+        ss = i * chunk_size
+        sc = chunk_size if i < 1 else n_steps - ss
+        run_mode({
+            "mode": "coeffgen_chunked", "function": func,
+            "params_file": "/tmp/ck_roots_params.bin",
+            "step_start": ss, "step_count": sc,
+            "coeff_transforms": ct,
+        }, f"/tmp/ck_roots_chunk{i}.bin")
+        with open(f"/tmp/ck_roots_chunk{i}.bin", "rb") as f:
+            chunks.append(f.read())
+        os.remove(f"/tmp/ck_roots_chunk{i}.bin")
+
+    new_all = b"".join(chunks)
+    with open("/tmp/ck_roots_old.bin", "rb") as f:
+        old_all = f.read()
+
+    assert len(old_all) == len(new_all), f"Size: {len(old_all)} vs {len(new_all)}"
+    old_vals = struct.unpack(f"<{len(old_all)//4}f", old_all)
+    new_vals = struct.unpack(f"<{len(new_all)//4}f", new_all)
+    max_err = max(abs(a - b) for a, b in zip(old_vals, new_vals))
+    assert max_err < 1e-3, f"Max error too large: {max_err:.2e}"
+
+    for f in ["/tmp/ck_roots_old.bin", "/tmp/ck_roots_params.bin"]:
+        os.remove(f)
+    print("  PASS")
+
+
 def test_chunk_planner_coverage():
     """Chunk planner: no gaps, no overlaps, full coverage."""
     print("test_chunk_planner_coverage...")

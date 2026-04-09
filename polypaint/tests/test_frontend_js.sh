@@ -1249,6 +1249,145 @@ async function testPipeline(name, call) {
     }
 
     {
+        try {
+            vm.runInContext(`
+                _rtChain = [];
+                addChip('rt', 'moebius');
+            `, ctx);
+        } catch (e) { console.error('FATAL: addChip(moebius): ' + e.message); process.exit(1); }
+        const moebiusInfo = vm.runInContext(`(() => {
+            const chips = document.getElementById('rt-chips');
+            const html = chips ? chips.innerHTML : '';
+            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
+            const rt = JSON.stringify(_rtChain);
+            return { html, inputs, rt };
+        })()`, ctx);
+        if (!moebiusInfo.html.includes('f(z)=') || !moebiusInfo.html.includes('z+') || moebiusInfo.inputs !== 4) {
+            console.error('FATAL: moebius root transform chip should render equation with 4 inputs');
+            process.exit(1);
+        }
+        if (!moebiusInfo.rt.includes('"moebius"') || !moebiusInfo.rt.includes('"1"') || !moebiusInfo.rt.includes('"0"')) {
+            console.error('FATAL: moebius root transform chip should use default params, got ' + moebiusInfo.rt);
+            process.exit(1);
+        }
+        vm.runInContext(`_rtChain = []; _renderChips('rt');`, ctx);
+        console.log('  moebius root transform chip renders equation + defaults: OK');
+    }
+
+    {
+        try {
+            vm.runInContext(`
+                _ctChain = [];
+                addChip('ct', 'roots');
+                updateChipParam(0, 0, '5', 'ct');
+            `, ctx);
+        } catch (e) { console.error('FATAL: addChip(roots ct): ' + e.message); process.exit(1); }
+        const coeffRootsInfo = vm.runInContext(`(() => {
+            const chips = document.getElementById('ct-chips');
+            const html = chips ? chips.innerHTML : '';
+            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
+            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            return { html, inputs, wire };
+        })()`, ctx);
+        if (!coeffRootsInfo.html.includes('roots') || coeffRootsInfo.inputs !== 1) {
+            console.error('FATAL: roots coeff transform chip should render one visible k input');
+            process.exit(1);
+        }
+        if (!coeffRootsInfo.wire.includes('[\"roots\",\"5\"]')) {
+            console.error('FATAL: roots coeff transform should serialize as [\"roots\",\"5\"], got ' + coeffRootsInfo.wire);
+            process.exit(1);
+        }
+        vm.runInContext(`_ctChain = []; _renderChips('ct');`, ctx);
+        console.log('  roots coeff transform chip renders k + serializes: OK');
+    }
+
+    {
+        try {
+            vm.runInContext(`
+                _ctChain = [];
+                addChip('ct', 'power');
+                updateChipParam(0, 0, '7', 'ct');
+            `, ctx);
+        } catch (e) { console.error('FATAL: addChip(power ct): ' + e.message); process.exit(1); }
+        const coeffPowerInfo = vm.runInContext(`(() => {
+            const chips = document.getElementById('ct-chips');
+            const html = chips ? chips.innerHTML : '';
+            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
+            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            return { html, inputs, wire };
+        })()`, ctx);
+        if (!coeffPowerInfo.html.includes('p(') || coeffPowerInfo.inputs !== 1) {
+            console.error('FATAL: power coeff transform chip should render p(k) with one visible input');
+            process.exit(1);
+        }
+        if (!coeffPowerInfo.wire.includes('[\"power\",\"7\"]')) {
+            console.error('FATAL: power coeff transform should serialize as [\"power\",\"7\"], got ' + coeffPowerInfo.wire);
+            process.exit(1);
+        }
+        vm.runInContext(`_ctChain = []; _renderChips('ct');`, ctx);
+        console.log('  power coeff transform chip renders p(k) + serializes: OK');
+    }
+
+    {
+        try {
+            vm.runInContext(`
+                _ctChain = [];
+                addChip('ct', 'invpower');
+                updateChipParam(0, 0, '4', 'ct');
+            `, ctx);
+        } catch (e) { console.error('FATAL: addChip(invpower ct): ' + e.message); process.exit(1); }
+        const coeffInvPowerInfo = vm.runInContext(`(() => {
+            const chips = document.getElementById('ct-chips');
+            const html = chips ? chips.innerHTML : '';
+            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
+            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            return { html, inputs, wire };
+        })()`, ctx);
+        if (!coeffInvPowerInfo.html.includes('invp(') || coeffInvPowerInfo.inputs !== 1) {
+            console.error('FATAL: invpower coeff transform chip should render invp(k) with one visible input');
+            process.exit(1);
+        }
+        if (!coeffInvPowerInfo.wire.includes('[\"invpower\",\"4\"]')) {
+            console.error('FATAL: invpower coeff transform should serialize as [\"invpower\",\"4\"], got ' + coeffInvPowerInfo.wire);
+            process.exit(1);
+        }
+        vm.runInContext(`_ctChain = []; _renderChips('ct');`, ctx);
+        console.log('  invpower coeff transform chip renders invp(k) + serializes: OK');
+    }
+
+    {
+        try {
+            vm.runInContext(`
+                _rtChain = [];
+                addChip('rt', 'invert_roots');
+                addChip('rt', 'add_complex');
+                addChip('rt', 'mul_complex');
+            `, ctx);
+        } catch (e) { console.error('FATAL: addChip(invert/add/mul): ' + e.message); process.exit(1); }
+        const simpleRtInfo = vm.runInContext(`(() => {
+            const chips = document.getElementById('rt-chips');
+            const html = chips ? chips.innerHTML : '';
+            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
+            const rt = JSON.stringify(_rtChain);
+            return { html, inputs, rt };
+        })()`, ctx);
+        if (!simpleRtInfo.html.includes('1/z') || !simpleRtInfo.html.includes('z+(') || !simpleRtInfo.html.includes('z*(') || !simpleRtInfo.html.includes('+i')) {
+            console.error('FATAL: invert/add/mul root transform chips should render expected formulas');
+            process.exit(1);
+        }
+        if (simpleRtInfo.inputs !== 4) {
+            console.error('FATAL: add_complex + mul_complex should render 4 inputs total, got ' + simpleRtInfo.inputs);
+            process.exit(1);
+        }
+        if (!simpleRtInfo.rt.includes('"invert_roots"') || !simpleRtInfo.rt.includes('"add_complex"') || !simpleRtInfo.rt.includes('"mul_complex"')) {
+            console.error('FATAL: invert/add/mul root transform chain missing expected names, got ' + simpleRtInfo.rt);
+            process.exit(1);
+        }
+        vm.runInContext(`_rtChain = []; _renderChips('rt');`, ctx);
+        console.log('  invert/add/mul root transform chips render labels + defaults: OK');
+    }
+
+    {
         const summary = {
             calc: { exists: true, N: 1000, degree: 5 },
             families: {
@@ -2393,11 +2532,11 @@ async function testPipeline(name, call) {
         console.log('  render palette rows collapsed: OK (root=' + rpCount + ', solve=' + ssCount + ')');
     }
 
-    // 11a2: built-in popup swatches exist in render rows; TRI and LONG exist in all rows
+    // 11a2: built-in popup swatches exist in all palette rows; TRI and LONG exist in all rows
     {
         ctx._elements['palette-circles-palette-tab'] = ctx._mkEl();
         vm.runInContext("_renderPaletteRow('palette_tab')", ctx);
-        ['palette-circles-root-proximity', 'palette-circles-solve-score'].forEach((id) => {
+        ['palette-circles-root-proximity', 'palette-circles-solve-score', 'palette-circles-palette-tab'].forEach((id) => {
             const container = ctx._elements[id];
             const builtin = container.children.find(ch => ch.dataset && ch.dataset.palettePopup === 'builtin');
             if (!builtin) {

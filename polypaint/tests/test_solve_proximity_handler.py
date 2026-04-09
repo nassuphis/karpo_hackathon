@@ -279,6 +279,51 @@ def test_hist_sectioned_mode_uses_presigned_url_and_sectioned_binary():
         hsp.subprocess.run = orig_run
 
 
+def test_hist_sectioned_failure_includes_object_context():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = _make_hist_mock_s3(
+        b"\x02" * 64,
+        {"clip_lo": -2.0, "clip_hi": 3.0, "family": "solve_score", "metric": "centroid_re"},
+    )
+    mock_run = mock.MagicMock(return_value=mock.MagicMock(
+        returncode=1,
+        stdout="",
+        stderr="range GET failed for bytes 16-31: The requested URL returned error: 503",
+    ))
+    orig_s3, orig_report, orig_run = hsp.s3, hsp.report_status, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.report_status = mock.MagicMock()
+    hsp.subprocess.run = mock_run
+    try:
+        try:
+            hsp.handle_hist({
+                "job_id": "test",
+                "task_id": "hist_test",
+                "chunk_idx": 7,
+                "metric": "centroid_re",
+                "bin_key": "renders/test/chunk_7.bin",
+                "degree": 4,
+                "clip_key": "renders/test/solve_scores/clip.json",
+                "hist_bins": 4,
+                "out_key": "renders/test/solve_scores/chunk_7_hist.json",
+                "solve_score_hist_input_mode": "sectioned",
+                "solve_score_threads": 6,
+            })
+            assert False, "expected sectioned hist failure"
+        except RuntimeError as e:
+            msg = str(e)
+            assert "s3://polypaint/renders/test/chunk_7.bin" in msg
+            assert "clip=s3://polypaint/renders/test/solve_scores/clip.json" in msg
+            assert "chunk=7" in msg
+            assert "threads=6" in msg
+            assert "range GET failed for bytes 16-31" in msg
+    finally:
+        hsp.s3 = orig_s3
+        hsp.report_status = orig_report
+        hsp.subprocess.run = orig_run
+
+
 def test_merge_uniform_histogram():
     """Uniform histogram -> evenly spaced cuts."""
     clip_data, hist_responses = _uniform_hist_data(

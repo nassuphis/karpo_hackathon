@@ -181,7 +181,11 @@ def _build_spread_meta(job_id, calc, src_meta, source_artifact_id):
     fn = str(calc.get("function", "") or "").strip()
     pipeline = calc.get("pipeline", {}) if isinstance(calc.get("pipeline"), dict) else {}
     ct_raw = pipeline.get("coeff_transforms", [])
-    ct = ",".join(str(x) for x in ct_raw) if ct_raw else ""
+    ct = ",".join(
+        f"{x[0]}({','.join(str(v) for v in x[1:])})" if isinstance(x, list) and len(x) > 1
+        else (str(x[0]) if isinstance(x, list) and x else str(x))
+        for x in ct_raw
+    ) if ct_raw else ""
     cfpv_display = pipeline.get("cfpv_display", "")
     fn_str = fn
     if cfpv_display:

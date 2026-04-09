@@ -96,6 +96,15 @@ button {
     background: #1a1a2e; border: 1px solid #0f3460; border-radius: 3px;
     color: #e0e0e0; font-size: 11px; text-align: center;
 }
+.chip .chip-formula {
+    display: inline-flex; align-items: center; gap: 3px; margin-left: 2px;
+}
+.chip .chip-op {
+    color: #9ab; font-size: 10px;
+}
+.chip .chip-equals {
+    color: #9ab; margin-right: 1px;
+}
 
 .color-dot {
     width: 10px; height: 10px; border-radius: 50%; display: inline-block;
@@ -429,9 +438,6 @@ button {
                 <input type="number" id="render-times" value="1" min="1" max="100" step="1" style="width:5em">
                 <label>Chunks:</label>
                 <input type="number" id="render-stripes" value="10" min="1" max="500" step="1" style="width:5em">
-                <button class="btn-secondary" onclick="loadRenderPreset('fast')" style="margin-left:8px">Fast N=100</button>
-                <button class="btn-secondary" onclick="loadRenderPreset('medium')">Medium N=500</button>
-                <button class="btn-secondary" onclick="loadRenderPreset('hires')">Hi-res N=1K</button>
             </div>
             <div class="anim-row" style="flex-wrap:wrap">
                 <label style="min-width:90px">Param transforms:</label>
@@ -468,6 +474,9 @@ button {
                     <option value="sort_abs">sort_abs</option>
                     <option value="cumsum">cumsum</option>
                     <option value="sort_cumsum">sort_cumsum</option>
+                    <option value="power">power</option>
+                    <option value="invpower">invpower</option>
+                    <option value="roots">roots</option>
                 </select>
             </div>
             <div style="margin-top:8px; display:flex; gap:6px; align-items:center">
@@ -712,6 +721,11 @@ button {
                     <option value="rotate_roots">rotate_roots</option>
                     <option value="pull_unit_circle">pull_unit_circle</option>
                     <option value="roots_toline">roots_toline (Cayley)</option>
+                    <option value="line_to_unit_circle">line_to_unit_circle (inverse Cayley)</option>
+                    <option value="invert_roots">invert_roots (1/z)</option>
+                    <option value="add_complex">add_complex</option>
+                    <option value="mul_complex">mul_complex</option>
+                    <option value="moebius">moebius</option>
                     <option value="pull_towards_center">pull_towards_center</option>
                 </select>
             </div>
@@ -795,6 +809,11 @@ button {
                     <option value="rotate_roots">rotate_roots</option>
                     <option value="pull_unit_circle">pull_unit_circle</option>
                     <option value="roots_toline">roots_toline (Cayley)</option>
+                    <option value="line_to_unit_circle">line_to_unit_circle (inverse Cayley)</option>
+                    <option value="invert_roots">invert_roots (1/z)</option>
+                    <option value="add_complex">add_complex</option>
+                    <option value="mul_complex">mul_complex</option>
+                    <option value="moebius">moebius</option>
                     <option value="pull_towards_center">pull_towards_center</option>
                 </select>
             </div>
@@ -2027,7 +2046,9 @@ function _applyDetail(r, detail, previewEl, infoEl, jobId) {
     const resCfpv = pipeline.cfpv_display ? pipeline.cfpv_display
         : (pipeline.cfpv && pipeline.cfpv.length) ? pipeline.cfpv.join(', ') : '-';
     document.getElementById('res-cfpv').textContent = resCfpv;
-    document.getElementById('res-cform').textContent = ct.length ? ct.join(', ') : 'none';
+    document.getElementById('res-cform').textContent = ct.length
+        ? ct.map(item => Array.isArray(item) && item.length > 1 ? `${item[0]}(${item.slice(1).join(',')})` : (Array.isArray(item) ? item[0] : item)).join(', ')
+        : 'none';
     document.getElementById('res-times').textContent = detail.times || '-';
     const calc = detail.calc || {};
     const solver = calc.solver || detail.solver || '';
@@ -2194,17 +2215,17 @@ function renderResult() {
 
 function _setChainFromSaved(which, values) {
     const normalized = Array.isArray(values) ? values : [];
-    if (which === 'ct') {
-        _ctChain = normalized.map(item => Array.isArray(item) ? String(item[0]) : String(item));
-    } else {
-        const chain = normalized.map(item => {
-            if (!Array.isArray(item) || !item.length) return null;
+    const chain = normalized.map(item => {
+        if (Array.isArray(item) && item.length) {
             return { name: String(item[0]), params: item.slice(1).map(v => String(v)) };
-        }).filter(Boolean);
-        if (which === 'pt') _ptChain = chain;
-        else if (which === 'rt') _rtChain = chain;
-        else if (which === 'palette-rt') _paletteRtChain = chain;
-    }
+        }
+        if (item == null || item === '') return null;
+        return { name: String(item), params: [] };
+    }).filter(Boolean);
+    if (which === 'pt') _ptChain = chain;
+    else if (which === 'ct') _ctChain = chain;
+    else if (which === 'rt') _rtChain = chain;
+    else if (which === 'palette-rt') _paletteRtChain = chain;
     _renderChips(which);
 }
 
@@ -2425,6 +2446,34 @@ function _escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+function _catalogForChain(which) {
+    if (which === 'pt') return _ptCatalog;
+    if (which === 'ct') return _ctCatalog;
+    return _rtCatalog;
+}
+
+function _chainForWhich(which) {
+    if (which === 'pt') return _ptChain;
+    if (which === 'rt') return _rtChain;
+    if (which === 'palette-rt') return _paletteRtChain;
+    return _ctChain;
+}
+
+function _displayTransformEntry(item) {
+    if (!item || !item.name) return '';
+    return item.params && item.params.length ? `${item.name}(${item.params.join(',')})` : item.name;
+}
+
+function _serializeNamedChain(chain) {
+    return (Array.isArray(chain) ? chain : []).map(item =>
+        item && item.params && item.params.length ? [item.name, ...item.params] : item.name
+    );
+}
+
+function _displayCoeffTransforms() {
+    return _chainForWhich('ct').map(_displayTransformEntry);
+}
+
 function _safeHttpUrl(value) {
     const s = value == null ? '' : String(value).trim();
     if (!s) return '';
@@ -2637,7 +2686,7 @@ function _longCatalog() {
 }
 
 function _modeUsesBuiltinPopup(mode) {
-    return mode === 'proximity' || mode === 'solve_score' || mode === 'repalette' || mode === 'color_repalette' || mode === 'generate_from_palette';
+    return mode === 'proximity' || mode === 'solve_score' || mode === 'palette_tab' || mode === 'repalette' || mode === 'color_repalette' || mode === 'generate_from_palette';
 }
 
 function _builtinPaletteEntryByName(name) {
@@ -5088,11 +5137,25 @@ const _rtCatalog = {
     rotate_roots:     { params: [{ph:'turns', def:'0'}] },
     pull_unit_circle: { params: [{ph:'sigma', def:'0.75'}, {ph:'alpha', def:'1'}] },
     roots_toline:     {},
+    line_to_unit_circle: {},
+    invert_roots:     { label: '1/z' },
+    add_complex:      { params: [{ph:'a', def:'0'}, {ph:'b', def:'0'}], label: 'z+(a+ib)' },
+    mul_complex:      { params: [{ph:'a', def:'1'}, {ph:'b', def:'0'}], label: 'z*(a+ib)' },
+    moebius:          { params: [{ph:'a', def:'1'}, {ph:'b', def:'0'}, {ph:'c', def:'0'}, {ph:'d', def:'1'}], label: 'moebius' },
     pull_towards_center: { params: [{ph:'alpha', def:'1'}, {ph:'sigma', def:'0.75'}] },
 };
 
+const _ctCatalog = {
+    rev: {}, conj: {}, normalize: {}, deriv: {}, scale100: {}, safe: {},
+    negate_odd: {}, max2one: {}, swirler: {}, sort_mod_keep_angle: {},
+    sort_abs: {}, cumsum: {}, sort_cumsum: {},
+    power: { params: [{ph:'k', def:'8'}], label: 'p' },
+    invpower: { params: [{ph:'k', def:'4'}], label: 'invp' },
+    roots: { params: [{ph:'k', def:'8'}], label: 'roots' },
+};
+
 let _ptChain = [];  // parameter transform chain (array of {name, params: [str,...]})
-let _ctChain = [];  // coefficient transform chain (array of strings)
+let _ctChain = [];  // coefficient transform chain (array of {name, params: [str,...]})
 let _cfpv = [];     // coefficient function parameter vector (array of doubles)
 let _rtChain = [];  // root transform chain (array of {name, params: [str,...]})
 let _paletteRtChain = [];  // palette-tab root transform chain
@@ -5273,9 +5336,9 @@ function updateCfpvRow() {
 
 function addChip(which, name) {
     if (!name) return;
-    const chain = which === 'pt' ? _ptChain : which === 'rt' ? _rtChain : which === 'palette-rt' ? _paletteRtChain : _ctChain;
-    if (which === 'pt' || which === 'rt' || which === 'palette-rt') {
-        const catalog = which === 'pt' ? _ptCatalog : _rtCatalog;
+    const chain = _chainForWhich(which);
+    if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt') {
+        const catalog = _catalogForChain(which);
         const spec = catalog[name] || {};
         const p = spec.params || [];
         chain.push({ name, params: p.map(d => d.def || '') });
@@ -5286,7 +5349,7 @@ function addChip(which, name) {
 }
 
 function removeChip(which, idx) {
-    const chain = which === 'pt' ? _ptChain : which === 'rt' ? _rtChain : which === 'palette-rt' ? _paletteRtChain : _ctChain;
+    const chain = _chainForWhich(which);
     chain.splice(idx, 1);
     _renderChips(which);
 }
@@ -5324,9 +5387,9 @@ function _serializeParamTransforms() {
 }
 
 function updateChipParam(chipIdx, paramIdx, value, which) {
-    const chain = which === 'pt' ? _ptChain : which === 'rt' ? _rtChain : _paletteRtChain;
+    const chain = _chainForWhich(which);
     if (chipIdx >= 0 && chipIdx < chain.length) {
-        const catalog = which === 'pt' ? _ptCatalog : _rtCatalog;
+        const catalog = _catalogForChain(which);
         const spec = catalog[chain[chipIdx].name] || {};
         const pDef = (spec.params || [])[paramIdx];
         if (pDef && pDef.target) {
@@ -5340,23 +5403,52 @@ function updateChipParam(chipIdx, paramIdx, value, which) {
     }
 }
 
+function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef) {
+    const pd = paramDef || {};
+    const im = pd.target ? 'text' : 'decimal';
+    return `<input class="chip-input" type="text" inputmode="${im}" value="${_escapeHtml(value)}" placeholder="${_escapeHtml(pd.ph || '')}" onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">`;
+}
+
+function _renderRtChipHtml(item, i, which, catalog) {
+    const spec = catalog[item.name] || {};
+    const pDefs = spec.params || [];
+    if (which === 'ct' && item.name === 'power') {
+        const k = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
+        return `<span class="chip"><span class="chip-formula"><span>p(</span><span>${k}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
+    if (which === 'ct' && item.name === 'invpower') {
+        const k = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
+        return `<span class="chip"><span class="chip-formula"><span>invp(</span><span>${k}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
+    if (item.name === 'moebius') {
+        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
+        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
+        const c = _chipInputHtml(which, i, 2, item.params[2] || '', pDefs[2]);
+        const d = _chipInputHtml(which, i, 3, item.params[3] || '', pDefs[3]);
+        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula">(<span>${a}</span><span class="chip-op">z+</span><span>${b}</span>)/(<span>${c}</span><span class="chip-op">z+</span><span>${d}</span>)</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
+    if (item.name === 'add_complex') {
+        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
+        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
+        return `<span class="chip"><span class="chip-formula"><span>z+(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
+    if (item.name === 'mul_complex') {
+        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
+        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
+        return `<span class="chip"><span class="chip-formula"><span>z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
+    const inputsHtml = item.params.map((val, pi) => _chipInputHtml(which, i, pi, val, pDefs[pi] || {})).join('');
+    const label = _escapeHtml(spec.label || item.name);
+    return `<span class="chip">${label}${inputsHtml}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+}
+
 function _renderChips(which) {
-    const chain = which === 'pt' ? _ptChain : which === 'rt' ? _rtChain : which === 'palette-rt' ? _paletteRtChain : _ctChain;
+    const chain = _chainForWhich(which);
     const el = document.getElementById(which + '-chips');
     if (!el) return;
-    if (which === 'pt' || which === 'rt' || which === 'palette-rt') {
-        const catalog = which === 'pt' ? _ptCatalog : _rtCatalog;
-        el.innerHTML = chain.map((item, i) => {
-            const spec = catalog[item.name] || {};
-            const pDefs = spec.params || [];
-            const inputsHtml = item.params.map((val, pi) => {
-                const pd = pDefs[pi] || {};
-                const im = pd.target ? 'text' : 'decimal';
-                return `<input class="chip-input" type="text" inputmode="${im}" value="${_escapeHtml(val)}" placeholder="${_escapeHtml(pd.ph || '')}" onchange="updateChipParam(${i},${pi},this.value,'${which}')" onclick="event.stopPropagation()">`;
-            }).join('');
-            const label = _escapeHtml(spec.label || item.name);
-            return `<span class="chip">${label}${inputsHtml}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-        }).join('');
+    if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt') {
+        const catalog = _catalogForChain(which);
+        el.innerHTML = chain.map((item, i) => _renderRtChipHtml(item, i, which, catalog)).join('');
     } else {
         el.innerHTML = chain.map((name, i) =>
             `<span class="chip">${_escapeHtml(name)}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`
@@ -5364,16 +5456,6 @@ function _renderChips(which) {
     }
 }
 _renderChips('palette-rt');
-
-function loadRenderPreset(name) {
-    if (name === 'fast') {
-        document.getElementById('render-n').value = '100';
-    } else if (name === 'medium') {
-        document.getElementById('render-n').value = '500';
-    } else if (name === 'hires') {
-        document.getElementById('render-n').value = '1000';
-    }
-}
 
 const _fmtMs = (ms) => (ms/1000).toFixed(1) + 's';
 const _fmtStatus = (sc) => sc ? Object.entries(sc).map(([k,v]) => `${k}:${v}`).join(' ') : '';
@@ -6588,6 +6670,24 @@ function _renderRunCompleteLabel(run) {
     return 'Render complete';
 }
 
+function _formatTaskErrorContext(detail) {
+    const rd = detail && detail.result_data;
+    if (!rd || typeof rd !== 'object') return '';
+    const parts = [];
+    if (detail.task_id) parts.push(`task=${detail.task_id}`);
+    if (rd.phase) parts.push(`phase=${rd.phase}`);
+    if (rd.chunk_idx !== undefined && rd.chunk_idx !== null) parts.push(`chunk=${rd.chunk_idx}`);
+    if (rd.metric) parts.push(`metric=${rd.metric}`);
+    if (rd.input_mode) parts.push(`input=${rd.input_mode}`);
+    if (rd.threads !== undefined && rd.threads !== null) parts.push(`threads=${rd.threads}`);
+    if (rd.workers !== undefined && rd.workers !== null) parts.push(`workers=${rd.workers}`);
+    if (rd.source_bucket && rd.source_key) parts.push(`source=s3://${rd.source_bucket}/${rd.source_key}`);
+    else if (rd.source_key) parts.push(`source=${rd.source_key}`);
+    if (rd.source_size !== undefined && rd.source_size !== null) parts.push(`size=${rd.source_size}`);
+    if (rd.clip_key) parts.push(`clip=${rd.clip_key}`);
+    return parts.join(' · ');
+}
+
 function _renderRunCompleteLog(run, rd) {
     const target = rd.artifact_id || rd.palette_id || rd.image_key || run.mode;
     const elapsedMs = _serverElapsedMs(
@@ -6650,10 +6750,13 @@ async function _pollActiveRenderRun() {
 
         // Terminal error
         if (check.errors > 0) {
-            const msg = check.error_details?.[0]?.error_msg || 'unknown error';
+            const detail = check.error_details?.[0] || {};
+            const msg = detail.error_msg || 'unknown error';
+            const ctx = _formatTaskErrorContext(detail);
             statusEl.textContent = 'Render error: ' + msg;
             statusEl.className = 'status error';
             log('Render failed: ' + msg, 'err', 'render-log');
+            if (ctx) log('  context: ' + ctx, 'err', 'render-log');
             _clearActiveRun();
             stopActiveRenderObserver();
             return;
@@ -7294,7 +7397,7 @@ async function _buildArtifactMeta(jobId, art) {
         const pipeline = calc.pipeline || {};
         const pt = pipeline.param_transforms_display || pipeline.param_transforms || [];
         const ptStr = pt.map(a => Array.isArray(a) && a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : (Array.isArray(a) ? a[0] : a)).join(', ');
-        const ct = (pipeline.coeff_transforms || []).join(', ');
+        const ct = (pipeline.coeff_transforms || []).map(item => Array.isArray(item) && item.length > 1 ? `${item[0]}(${item.slice(1).join(',')})` : (Array.isArray(item) ? item[0] : item)).join(', ');
         metaObj.compute = {
             function: pipeline.function || calc.function || '',
             cfpv: pipeline.cfpv_display || (pipeline.cfpv && pipeline.cfpv.length ? pipeline.cfpv.join(', ') : ''),
@@ -7995,7 +8098,10 @@ async function _bilevelDispatchAndPoll(opts) {
         }, '/check-status');
 
         if (check.errors > 0) {
-            const msgs = check.error_details.map(e => e.task_id + ': ' + e.error_msg).join('\n');
+            const msgs = check.error_details.map(e => {
+                const ctx = _formatTaskErrorContext(e);
+                return e.task_id + ': ' + e.error_msg + (ctx ? `\n  context: ${ctx}` : '');
+            }).join('\n');
             throw new Error(`${check.errors} ${label} tasks failed:\n${msgs}`);
         }
         if (check.done !== lastDone) {
@@ -8116,7 +8222,7 @@ async function runCalculateWithSolver(solverMode) {
     const jobId = 'compute_' + Date.now().toString(36);
 
     const paramTransforms = _serializeParamTransforms();
-    const coeffTransforms = [..._ctChain];
+    const coeffTransforms = _serializeNamedChain(_ctChain);
     const cfpv = _cfpv.length > 0 ? [..._cfpv] : null;
     // Build human-readable cfpv display from catalog params
     let cfpvDisplay = '';
@@ -8127,7 +8233,8 @@ async function runCalculateWithSolver(solverMode) {
     }
     const ptDisplay = _displayParamTransforms().map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(',');
     const cfpvStr = cfpvDisplay ? `(${cfpvDisplay})` : '';
-    const pipelineStr = `[${ptDisplay||'none'}] ${funcName}${cfpvStr} [${coeffTransforms.join(',')||'none'}]`;
+    const coeffTransformsDisplay = _displayCoeffTransforms();
+    const pipelineStr = `[${ptDisplay||'none'}] ${funcName}${cfpvStr} [${coeffTransformsDisplay.join(',')||'none'}]`;
 
     const btn = document.getElementById(_solverButtonId(solverMode));
 

@@ -37,10 +37,13 @@ static int cmpDouble(const void *a, const void *b) {
 
 /* ---- Ehrlich-Aberth solver ---- */
 
-static int solveEA(double *cr, double *ci, int n,
-                   double *rRe, double *rIm, int degree)
+static int solveEALimited(double *cr, double *ci, int n,
+                          double *rRe, double *rIm, int degree,
+                          int maxIter)
 {
-    for (int iter = 0; iter < MAX_ITER; iter++) {
+    if (maxIter < 1) maxIter = 1;
+    if (maxIter > MAX_ITER) maxIter = MAX_ITER;
+    for (int iter = 0; iter < maxIter; iter++) {
         double maxCorr2 = 0;
         for (int i = 0; i < degree; i++) {
             double zR = rRe[i], zI = rIm[i];
@@ -91,7 +94,13 @@ static int solveEA(double *cr, double *ci, int n,
         }
         if (maxCorr2 < TOL2) return iter + 1;
     }
-    return MAX_ITER;
+    return maxIter;
+}
+
+static int solveEA(double *cr, double *ci, int n,
+                   double *rRe, double *rIm, int degree)
+{
+    return solveEALimited(cr, ci, n, rRe, rIm, degree, MAX_ITER);
 }
 
 static void seedEAInitialGuess(double *rootRe, double *rootIm, int degree) {
@@ -310,6 +319,23 @@ static int parseString(const char *p, char *out, int maxLen) {
 /* ---- Parse a JSON array of strings (e.g. ["unit_circle","rev"]) ---- */
 
 #define MAX_CHAIN 16
+#define MAX_CT_ARGS 8
+
+typedef struct {
+    char name[64];
+    double args[MAX_CT_ARGS];
+    int nArgs;
+} CtEntry;
+
+/* Match the persisted param_gen representation so monolithic coeffgen and
+ * streamed coeffgen_chunked see the same transformed inputs. */
+static inline void quantize_params_f32(double *z1r, double *z1i,
+                                       double *z2r, double *z2i) {
+    float q1r = (float)(*z1r), q1i = (float)(*z1i);
+    float q2r = (float)(*z2r), q2i = (float)(*z2i);
+    *z1r = (double)q1r; *z1i = (double)q1i;
+    *z2r = (double)q2r; *z2i = (double)q2i;
+}
 
 static int parseStringArray(const char *p, char names[][64], int maxCount) {
     p = skip(p);
@@ -2516,6 +2542,114 @@ static void ct_sort_cumsum(double *cRe, double *cIm, int *nCoeffs) {
     for (int k = 0; k < n; k++) { cRe[k] = tmpR[idx[k]]; cIm[k] = tmpI[idx[k]]; }
 }
 
+/* power(k): cf[i] = (i+1) * sum_{j=0..k} cf[i]^j */
+static void ct_power(double *cRe, double *cIm, int *nCoeffs, int power) {
+    int n = *nCoeffs;
+    if (power < 0) power = 0;
+    for (int i = 0; i < n; i++) {
+        double zr = cRe[i], zi = cIm[i];
+        double sumR = 1.0, sumI = 0.0;
+        double powR = 1.0, powI = 0.0;
+        for (int p = 1; p <= power; p++) {
+            double nextPowR = powR * zr - powI * zi;
+            double nextPowI = powR * zi + powI * zr;
+            powR = nextPowR;
+            powI = nextPowI;
+            sumR += powR;
+            sumI += powI;
+        }
+        double scale = (double)(i + 1);
+        cRe[i] = sumR * scale;
+        cIm[i] = sumI * scale;
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) {
+            cRe[i] = 0.0;
+            cIm[i] = 0.0;
+        }
+    }
+}
+
+/* invpower(k): let s = sum_{j=0..k} cf[i]^j.
+ * If |s| > 1, cf[i] = 1/s, else cf[i] = 1. */
+static void ct_invpower(double *cRe, double *cIm, int *nCoeffs, int power) {
+    int n = *nCoeffs;
+    if (power < 0) power = 0;
+    for (int i = 0; i < n; i++) {
+        double zr = cRe[i], zi = cIm[i];
+        double sumR = 1.0, sumI = 0.0;
+        double powR = 1.0, powI = 0.0;
+        for (int p = 1; p <= power; p++) {
+            double nextPowR = powR * zr - powI * zi;
+            double nextPowI = powR * zi + powI * zr;
+            powR = nextPowR;
+            powI = nextPowI;
+            sumR += powR;
+            sumI += powI;
+        }
+        double sumMag = hypot(sumR, sumI);
+        if (isfinite(sumMag) && sumMag > 1.0) {
+            double denom = sumR * sumR + sumI * sumI;
+            if (denom > 1e-300) {
+                cRe[i] =  sumR / denom;
+                cIm[i] = -sumI / denom;
+            } else {
+                cRe[i] = 1.0;
+                cIm[i] = 0.0;
+            }
+        } else {
+            cRe[i] = 1.0;
+            cIm[i] = 0.0;
+        }
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) {
+            cRe[i] = 1.0;
+            cIm[i] = 0.0;
+        }
+    }
+}
+
+/* roots(k): run k Aberth-Ehrlich iterations on the current coefficient vector,
+ * then treat the resulting roots as the next coefficient vector.
+ * Output length stays constant by prepending a zero highest-order coefficient. */
+static void ct_roots(double *cRe, double *cIm, int *nCoeffs, int iters) {
+    int n = *nCoeffs;
+    int degree = n - 1;
+    if (n <= 0) return;
+    if (iters < 1) iters = 1;
+    if (degree <= 0) {
+        cRe[0] = 0.0;
+        cIm[0] = 0.0;
+        return;
+    }
+
+    int start = 0;
+    while (start < n - 1 &&
+           cRe[start] * cRe[start] + cIm[start] * cIm[start] < 1e-30)
+        start++;
+    int effN = n - start;
+
+    int trailingZeros = 0;
+    while (trailingZeros < effN - 1) {
+        int idx = start + effN - 1 - trailingZeros;
+        if (cRe[idx] * cRe[idx] + cIm[idx] * cIm[idx] >= 1e-30) break;
+        trailingZeros++;
+    }
+    effN -= trailingZeros;
+    int effDeg = effN - 1;
+
+    double rootRe[MAX_DEGREE], rootIm[MAX_DEGREE];
+    for (int i = 0; i < degree; i++) { rootRe[i] = 0.0; rootIm[i] = 0.0; }
+    if (effDeg > 0) {
+        seedEAInitialGuess(rootRe, rootIm, effDeg);
+        solveEALimited(cRe + start, cIm + start, effN, rootRe, rootIm, effDeg, iters);
+    }
+
+    cRe[0] = 0.0;
+    cIm[0] = 0.0;
+    for (int i = 0; i < degree; i++) {
+        cRe[i + 1] = (i < effDeg) ? rootRe[i] : 0.0;
+        cIm[i + 1] = (i < effDeg) ? rootIm[i] : 0.0;
+    }
+}
+
 static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "none") == 0)        return ct_none;
     if (strcmp(name, "rev") == 0)         return ct_rev;
@@ -2532,6 +2666,31 @@ static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "cumsum") == 0)   return ct_cumsum;
     if (strcmp(name, "sort_cumsum") == 0) return ct_sort_cumsum;
     return NULL;
+}
+
+static int dispatchCt(const CtEntry *e, double *cRe, double *cIm, int *nCoeffs) {
+    if (strcmp(e->name, "power") == 0) {
+        int k = e->nArgs > 0 ? (int)e->args[0] : 8;
+        ct_power(cRe, cIm, nCoeffs, k);
+        return 0;
+    }
+    if (strcmp(e->name, "invpower") == 0) {
+        int k = e->nArgs > 0 ? (int)e->args[0] : 4;
+        ct_invpower(cRe, cIm, nCoeffs, k);
+        return 0;
+    }
+    if (strcmp(e->name, "roots") == 0) {
+        int k = e->nArgs > 0 ? (int)e->args[0] : 8;
+        ct_roots(cRe, cIm, nCoeffs, k);
+        return 0;
+    }
+    CoeffTransform fn = lookupCoeffTransform(e->name);
+    if (!fn) {
+        fprintf(stderr, "Unknown coeff transform: %s\n", e->name);
+        return 1;
+    }
+    fn(cRe, cIm, nCoeffs);
+    return 0;
 }
 
 /* ==== Fast xorshift64 RNG for dithering ==== */
@@ -2941,6 +3100,65 @@ static int parsePtChain(const char *p, PtEntry *entries, int maxCount) {
         }
         p = skip(p);
         if (*p == ']') p++; /* close inner ] */
+        count++;
+    }
+    return count;
+}
+
+/* ==== Coefficient transform dispatch (string-or-array format) ==== */
+
+/* Parse coeff_transforms: ["rev", ["roots", "8"], ...] */
+static int parseCtChain(const char *p, CtEntry *entries, int maxCount) {
+    p = skip(p);
+    if (*p != '[') return 0;
+    p++;
+    int count = 0;
+    while (count < maxCount) {
+        p = skip(p);
+        if (*p == ']') break;
+        if (*p == ',') { p++; p = skip(p); }
+
+        entries[count].nArgs = 0;
+        if (*p == '"') {
+            p++;
+            int i = 0;
+            while (*p && *p != '"' && i < 63) entries[count].name[i++] = *p++;
+            entries[count].name[i] = '\0';
+            if (*p == '"') p++;
+            count++;
+            continue;
+        }
+
+        if (*p != '[') break;
+        p++;
+        p = skip(p);
+        if (*p != '"') break;
+        p++;
+        int i = 0;
+        while (*p && *p != '"' && i < 63) entries[count].name[i++] = *p++;
+        entries[count].name[i] = '\0';
+        if (*p == '"') p++;
+
+        while (entries[count].nArgs < MAX_CT_ARGS) {
+            p = skip(p);
+            if (*p == ']') break;
+            if (*p == ',') { p++; p = skip(p); }
+            if (*p == '"') {
+                p++;
+                char tmp[64]; int j = 0;
+                while (*p && *p != '"' && j < 63) tmp[j++] = *p++;
+                tmp[j] = '\0';
+                if (*p == '"') p++;
+                entries[count].args[entries[count].nArgs++] = atof(tmp);
+            } else if (*p == '-' || (*p >= '0' && *p <= '9')) {
+                entries[count].args[entries[count].nArgs++] = atof(p);
+                while (*p && *p != ',' && *p != ']') p++;
+            } else {
+                break;
+            }
+        }
+        p = skip(p);
+        if (*p == ']') p++;
         count++;
     }
     return count;
@@ -3603,18 +3821,10 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     if (cp) nPt = parsePtChain(cp, ptEntries, MAX_CHAIN);
 
     /* Parse coefficient transform chain */
-    char ctNames[MAX_CHAIN][64];
+    CtEntry ctEntries[MAX_CHAIN];
     int nCt = 0;
     cp = findKey(buf, "coeff_transforms");
-    if (cp) nCt = parseStringArray(cp, ctNames, MAX_CHAIN);
-    CoeffTransform ctChain[MAX_CHAIN];
-    for (int t = 0; t < nCt; t++) {
-        ctChain[t] = lookupCoeffTransform(ctNames[t]);
-        if (!ctChain[t]) {
-            fprintf(stderr, "Unknown coeff transform: %s\n", ctNames[t]);
-            return 1;
-        }
-    }
+    if (cp) nCt = parseCtChain(cp, ctEntries, MAX_CHAIN);
 
     /* Look up coefficient function spec */
     const CoeffFuncSpec *spec = lookupCoeffFuncSpec(funcName);
@@ -3648,8 +3858,11 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     {
         double z1r = 0, z1i = 0, z2r = 0, z2i = 0;
         for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, n1);
+        quantize_params_f32(&z1r, &z1i, &z2r, &z2i);
         coeffFunc(z1r, z1i, z2r, z2i, cfpv, n_cfpv, probeRe, probeIm, &probeN);
-        for (int t = 0; t < nCt; t++) ctChain[t](probeRe, probeIm, &probeN);
+        for (int t = 0; t < nCt; t++) {
+            if (dispatchCt(&ctEntries[t], probeRe, probeIm, &probeN) != 0) return 1;
+        }
     }
     int nCoeffsOut = probeN;
     int degree = nCoeffsOut - 1;
@@ -3682,11 +3895,18 @@ static int runCoeffGen(const char *buf, const char *outPath) {
 
             double z1r = x1, z1i = 0.0, z2r = x2, z2i = 0.0;
             for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, n1);
+            quantize_params_f32(&z1r, &z1i, &z2r, &z2i);
 
             double cRe[MAX_COEFFS], cIm[MAX_COEFFS];
             int nCoeffs;
             coeffFunc(z1r, z1i, z2r, z2i, cfpv, n_cfpv, cRe, cIm, &nCoeffs);
-            for (int t = 0; t < nCt; t++) ctChain[t](cRe, cIm, &nCoeffs);
+            for (int t = 0; t < nCt; t++) {
+                if (dispatchCt(&ctEntries[t], cRe, cIm, &nCoeffs) != 0) {
+                    fclose(fout);
+                    free(stepBuf);
+                    return 1;
+                }
+            }
 
             if (nCoeffs != nCoeffsOut) {
                 fprintf(stderr, "nCoeffs mismatch: probe returned %d but step (%d,%d) pass %d returned %d\n",
@@ -3816,18 +4036,10 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
     }
 
     /* Parse coefficient transform chain */
-    char ctNames[MAX_CHAIN][64];
+    CtEntry ctEntries[MAX_CHAIN];
     int nCt = 0;
     cp = findKey(buf, "coeff_transforms");
-    if (cp) nCt = parseStringArray(cp, ctNames, MAX_CHAIN);
-    CoeffTransform ctChain[MAX_CHAIN];
-    for (int t = 0; t < nCt; t++) {
-        ctChain[t] = lookupCoeffTransform(ctNames[t]);
-        if (!ctChain[t]) {
-            fprintf(stderr, "Unknown coeff transform: %s\n", ctNames[t]);
-            return 1;
-        }
-    }
+    if (cp) nCt = parseCtChain(cp, ctEntries, MAX_CHAIN);
 
     /* Look up coefficient function spec */
     const CoeffFuncSpec *spec = lookupCoeffFuncSpec(funcName);
@@ -3878,7 +4090,12 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
     coeffFunc((double)probe[0], (double)probe[1],
               (double)probe[2], (double)probe[3],
               cfpv, n_cfpv, probeRe, probeIm, &probeN);
-    for (int t = 0; t < nCt; t++) ctChain[t](probeRe, probeIm, &probeN);
+    for (int t = 0; t < nCt; t++) {
+        if (dispatchCt(&ctEntries[t], probeRe, probeIm, &probeN) != 0) {
+            fclose(fin);
+            return 1;
+        }
+    }
     int nCoeffsOut = probeN;
     int degree = nCoeffsOut - 1;
 
@@ -3903,7 +4120,14 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
         coeffFunc((double)params[0], (double)params[1],
                   (double)params[2], (double)params[3],
                   cfpv, n_cfpv, cRe, cIm, &nCoeffs);
-        for (int t = 0; t < nCt; t++) ctChain[t](cRe, cIm, &nCoeffs);
+        for (int t = 0; t < nCt; t++) {
+            if (dispatchCt(&ctEntries[t], cRe, cIm, &nCoeffs) != 0) {
+                fclose(fin);
+                fclose(fout);
+                free(stepBuf);
+                return 1;
+            }
+        }
 
         if (nCoeffs != nCoeffsOut) {
             fprintf(stderr, "nCoeffs mismatch: probe returned %d but step %ld returned %d\n",

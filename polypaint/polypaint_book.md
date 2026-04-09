@@ -29,7 +29,7 @@ Example:
 Each `_meta.json` contains:
 - `compute.function` — e.g. `poly_150`
 - `compute.param_transforms` — e.g. `unit_circle, coeff7`
-- `compute.coeff_transforms` — e.g. `rev`
+- `compute.coeff_transforms` — e.g. `rev`, `roots(6)`, `p(8)`, `invp(4)`
 - `compute.degree` — e.g. `70`
 - `compute.N` — e.g. `1000`
 - `compute.times` — e.g. `1`

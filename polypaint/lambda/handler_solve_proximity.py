@@ -354,6 +354,9 @@ def handle_hist(params):
         "omega_enabled": solve_score_omega_enabled,
         "threads": solve_score_threads,
         "input_mode": solve_score_hist_input_mode,
+        "source_bucket": BUCKET,
+        "source_key": bin_key,
+        "clip_key": clip_key,
     }
 
     try:
@@ -408,7 +411,14 @@ def handle_hist(params):
             hist_stdout = result.stdout
             hist_stderr = result.stderr
             if hist_rc != 0:
-                raise RuntimeError(f"solve_proximity_hist_sectioned failed: {(hist_stderr or '').strip()}")
+                stderr_summary = (hist_stderr or "").strip() or "unknown error"
+                raise RuntimeError(
+                    "solve_proximity_hist_sectioned failed for "
+                    f"s3://{BUCKET}/{bin_key} "
+                    f"(clip=s3://{BUCKET}/{clip_key}, job={job_id}, task={task_id}, "
+                    f"chunk={chunk_idx}, input=sectioned, size={input_size}, "
+                    f"threads={solve_score_threads}, metric={metric}): {stderr_summary}"
+                )
             hist_data = json.loads(hist_stdout)
             progress["dl_ms"] = pre_native_ms + int(hist_data.get("download_ms", 0))
             progress["compute_ms"] = int(hist_data.get("compute_ms", 0))

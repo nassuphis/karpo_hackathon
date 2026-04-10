@@ -39,6 +39,7 @@ grep -q 'id="compute-preview-n"' "$HTML" || { echo "FATAL: compute preview N inp
 grep -q 'id="compute-preview-solver"' "$HTML" || { echo "FATAL: compute preview solver selector missing from index.html"; exit 1; }
 grep -q 'id="compute-preview-quantile"' "$HTML" || { echo "FATAL: compute preview quantile input missing from index.html"; exit 1; }
 grep -q 'id="compute-preview-shim"' "$HTML" || { echo "FATAL: compute preview shim input missing from index.html"; exit 1; }
+grep -q 'id="compute-preview-size"' "$HTML" || { echo "FATAL: compute preview size input missing from index.html"; exit 1; }
 grep -q 'id="btn-compute-preview"' "$HTML" || { echo "FATAL: compute preview button missing from index.html"; exit 1; }
 grep -q 'id="compute-preview-box"' "$HTML" || { echo "FATAL: compute preview image box missing from index.html"; exit 1; }
 grep -q 'id="btn-render-resize"' "$HTML" || { echo "FATAL: color Resize button missing from index.html"; exit 1; }
@@ -764,6 +765,7 @@ async function testPipeline(name, call) {
                 return {
                     solver_mode: body.solver_mode,
                     N_preview: body.N_preview,
+                    preview_size: body.preview_size,
                     quantile: body.quantile,
                     shim: body.shim,
                     degree: 10,
@@ -789,8 +791,8 @@ async function testPipeline(name, call) {
             const statusText = ctx._elements['compute-preview-status'].textContent || '';
             const box = ctx._elements['compute-preview-box'];
             const img = (box.children || [])[0];
-            if (!payload || payload.solver_mode !== 'companion_matrix' || payload.N_preview !== 128 || payload.function !== 'g1' || payload.quantile !== 0.015 || payload.shim !== 0.075) {
-                console.error('FATAL: compute preview should call compute-preview with solver/function/N-preview/quantile/shim, got ' + JSON.stringify(payload));
+            if (!payload || payload.solver_mode !== 'companion_matrix' || payload.N_preview !== 128 || payload.preview_size !== 1000 || payload.function !== 'g1' || payload.quantile !== 0.015 || payload.shim !== 0.075) {
+                console.error('FATAL: compute preview should call compute-preview with solver/function/N-preview/pix/quantile/shim, got ' + JSON.stringify(payload));
                 process.exit(1);
             }
             if (!statusText.includes('Preview ready')) {

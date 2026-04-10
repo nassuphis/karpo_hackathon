@@ -495,6 +495,8 @@ button {
                     <input type="number" id="compute-preview-quantile" value="0" min="0" max="10" step="0.1" style="width:5em" onchange="_markComputePreviewStale()">
                     <label>Shim%:</label>
                     <input type="number" id="compute-preview-shim" value="5" min="0" max="50" step="0.5" style="width:5em" onchange="_markComputePreviewStale()">
+                    <label>Pix:</label>
+                    <input type="number" id="compute-preview-size" value="1000" min="64" max="4096" step="8" style="width:6em" onchange="_markComputePreviewStale()">
                     <button class="btn-primary" id="btn-compute-preview" onclick="runComputePreview()" style="background:#375; margin:0">Preview</button>
                     <span style="font-size:11px; color:#666">ephemeral · times=1 · not saved</span>
                 </div>
@@ -2552,6 +2554,7 @@ function _computePreviewHasImage() {
 function _computePreviewSignatureNow() {
     return JSON.stringify({
         n_preview: parseInt(document.getElementById('compute-preview-n')?.value) || 256,
+        preview_size: parseInt(document.getElementById('compute-preview-size')?.value) || 1000,
         solver_mode: document.getElementById('compute-preview-solver')?.value || 'aberth',
         quantile: (parseFloat(document.getElementById('compute-preview-quantile')?.value) || 0) / 100,
         shim: (parseFloat(document.getElementById('compute-preview-shim')?.value) || 5) / 100,
@@ -2607,6 +2610,7 @@ function _applyComputePreviewResult(result) {
     const statusEl = _computePreviewStatusEl();
     const infoLines = [
         `solver: ${_solverTag(result.solver_mode || 'aberth')}`,
+        `image: ${result.image_width}×${result.image_height}`,
         `view: q=${((Number(result.quantile) || 0) * 100).toFixed(1)}% · shim=${((Number(result.shim) || 0) * 100).toFixed(1)}%`,
         `degree: ${result.degree}`,
         `roots: ${result.n_roots_in_view}/${result.n_roots_total} in view`,
@@ -2639,6 +2643,7 @@ async function runComputePreview() {
     const statusEl = _computePreviewStatusEl();
     const funcName = document.getElementById('render-function').value;
     const nPreview = Math.max(8, parseInt(document.getElementById('compute-preview-n').value) || 256);
+    const previewSize = Math.max(64, parseInt(document.getElementById('compute-preview-size').value) || 1000);
     const solverMode = document.getElementById('compute-preview-solver').value || 'aberth';
     const quantile = Math.max(0, parseFloat(document.getElementById('compute-preview-quantile').value) || 0) / 100;
     const shim = Math.max(0, parseFloat(document.getElementById('compute-preview-shim').value) || 5) / 100;
@@ -2655,10 +2660,11 @@ async function runComputePreview() {
     }
     _setComputePreviewPlaceholder('Working...');
     try {
-        log(`Compute preview (${_solverTag(solverMode)}): [${ptDisplay || 'none'}] ${funcName} [${coeffTransformsDisplay.join(',') || 'none'}] N-preview=${nPreview} · q=${(quantile * 100).toFixed(1)}% · shim=${(shim * 100).toFixed(1)}%...`, '', 'compute-log');
+        log(`Compute preview (${_solverTag(solverMode)}): [${ptDisplay || 'none'}] ${funcName} [${coeffTransformsDisplay.join(',') || 'none'}] N-preview=${nPreview} · pix=${previewSize} · q=${(quantile * 100).toFixed(1)}% · shim=${(shim * 100).toFixed(1)}%...`, '', 'compute-log');
         const result = await lambdaPost('compute-preview', {
             solver_mode: solverMode,
             N_preview: nPreview,
+            preview_size: previewSize,
             quantile,
             shim,
             function: funcName,

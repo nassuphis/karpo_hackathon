@@ -14,6 +14,7 @@ def _event(**overrides):
     payload = {
         "solver_mode": "aberth",
         "N_preview": 32,
+        "preview_size": 1000,
         "function": "g1",
         "param_transforms": [],
         "coeff_transforms": [],
@@ -85,8 +86,9 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertEqual(body["solver_mode"], "companion_matrix")
         self.assertEqual(body["N_preview"], 32)
         self.assertEqual(body["degree"], 2)
-        self.assertEqual(body["image_width"], 32)
-        self.assertEqual(body["image_height"], 32)
+        self.assertEqual(body["preview_size"], 1000)
+        self.assertEqual(body["image_width"], 1000)
+        self.assertEqual(body["image_height"], 1000)
         self.assertEqual(body["quantile"], 0.02)
         self.assertEqual(body["shim"], 0.1)
         self.assertTrue(body["image_png_base64"].startswith("iVBOR"))
@@ -135,6 +137,11 @@ class TestComputePreviewHandler(unittest.TestCase):
         body = json.loads(result["body"])
         self.assertEqual(result["statusCode"], 500)
         self.assertIn("preview shim must be in [0, 1]", body["message"])
+
+        result = mod.handler({"body": json.dumps(_event(preview_size=99999))}, None)
+        body = json.loads(result["body"])
+        self.assertEqual(result["statusCode"], 500)
+        self.assertIn("preview size must be between 64 and", body["message"])
 
 
 if __name__ == "__main__":

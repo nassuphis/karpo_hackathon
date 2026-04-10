@@ -28,6 +28,7 @@ SWEEP_CM = os.path.join(os.path.dirname(__file__), "sweep_cm")
 TMP_COEFFS = "/tmp/preview_coeffs.bin"
 TMP_ROOTS = "/tmp/preview_roots.bin"
 MAX_PREVIEW_N = 1024
+MAX_PREVIEW_PIX = 4096
 MAX_COEFFS_EST = 256
 TMP_HEADROOM = 0.8
 
@@ -89,6 +90,16 @@ def _ensure_preview_n(value):
     if n_preview < 8 or n_preview > MAX_PREVIEW_N:
         raise ValueError(f"N-preview must be between 8 and {MAX_PREVIEW_N}, got {n_preview}")
     return n_preview
+
+
+def _ensure_preview_size(value):
+    try:
+        preview_size = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid preview size: {value!r}") from None
+    if preview_size < 64 or preview_size > MAX_PREVIEW_PIX:
+        raise ValueError(f"preview size must be between 64 and {MAX_PREVIEW_PIX}, got {preview_size}")
+    return preview_size
 
 
 def _validate_cfpv(values):
@@ -205,6 +216,7 @@ def handler(event, context):
             return _json_response(400, {"message": "compute preview missing function"})
 
         n_preview = _ensure_preview_n(params.get("N_preview"))
+        preview_size = _ensure_preview_size(params.get("preview_size", 1000))
         solver_mode = str(params.get("solver_mode") or "aberth").strip() or "aberth"
         if solver_mode not in {"aberth", "aberth_mt", "companion_matrix"}:
             return _json_response(400, {"message": f"unsupported preview solver_mode: {solver_mode}"})
@@ -295,17 +307,18 @@ def handler(event, context):
         viewport_ms = int((time.time() - t0) * 1000)
 
         t0 = time.time()
-        gray, n_roots_in_view = _raster_gray_preview(roots_data, n_preview, n_preview, viewport)
+        gray, n_roots_in_view = _raster_gray_preview(roots_data, preview_size, preview_size, viewport)
         raster_ms = int((time.time() - t0) * 1000)
 
         t0 = time.time()
-        png_data = encode_png_gray(n_preview, n_preview, gray)
+        png_data = encode_png_gray(preview_size, preview_size, gray)
         encode_ms = int((time.time() - t0) * 1000)
 
         total_ms = int((time.time() - t_total) * 1000)
         response = {
             "solver_mode": solver_mode,
             "N_preview": n_preview,
+            "preview_size": preview_size,
             "degree": degree,
             "n_coeffs": n_coeffs,
             "n_roots_total": len(roots_data) // 8,
@@ -318,8 +331,8 @@ def handler(event, context):
             "total_ms": total_ms,
             "coeffs_size": coeffs_size,
             "roots_size": len(roots_data),
-            "image_width": n_preview,
-            "image_height": n_preview,
+            "image_width": preview_size,
+            "image_height": preview_size,
             "quantile": quantile,
             "shim": shim,
             "image_png_base64": base64.b64encode(png_data).decode("ascii"),

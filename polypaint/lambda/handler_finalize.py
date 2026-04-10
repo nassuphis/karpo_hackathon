@@ -15,7 +15,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from shared import BUCKET, parse_body, ok_response, report_status
+from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -98,6 +98,7 @@ def _ordered_prefetch(n_items, workers, load_fn):
 
 def handler(event, context):
     params = parse_body(event)
+    contract_warnings = []
     job_id = params["job_id"]
     tile_idx = params["tile_idx"]
     n_chunks = params.get("n_chunks", params.get("n_stripes"))
@@ -108,18 +109,21 @@ def handler(event, context):
     task_id = params.get("task_id", f"tile_{tile_idx}")
     emit_pixel_bins = bool(params.get("emit_pixel_bins")) and bool(params.get("pixel_bins_out_key"))
     pixel_bins_out_key = params.get("pixel_bins_out_key")
-    finalize_workers = min(_validate_finalize_workers(params.get("finalize_workers")), max(1, int(n_chunks)))
+    finalize_workers = min(
+        _validate_finalize_workers(contract_param(params, "finalize_workers", None, contract_warnings, warning_default=os.environ.get("FINALIZE_WORKERS", DEFAULT_FINALIZE_WORKERS))),
+        max(1, int(n_chunks))
+    )
     finalize_s3 = _finalize_s3_client(finalize_workers)
 
     t0 = time.time()
     logger.info(f"[{task_id}] START tile_idx={tile_idx} n_chunks={n_chunks} tile={tile_w}x{tile_h} workers={finalize_workers}")
-    progress = {
+    progress = attach_contract_warnings({
         "phase": "finalize",
         "tile_idx": tile_idx,
         "n_chunks": n_chunks,
         "emit_pixel_bins": emit_pixel_bins,
         "workers": finalize_workers,
-    }
+    }, contract_warnings)
 
     try:
         report_status(job_id, task_id, "started", result_data=progress)

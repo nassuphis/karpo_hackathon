@@ -266,6 +266,52 @@ class TestWorkflowDefinition(unittest.TestCase):
         color_raster_selector = self.states["ColorRasterMap"]["ItemSelector"]
         self.assertEqual(color_raster_selector["raster_sectioned_retries.$"], "$.plan.raster.sectioned_retries")
 
+    def test_color_solve_score_tasks_forward_critical_fields(self):
+        clip = self.states["ColorSolveScoreClipTask"]["Parameters"]["Payload"]
+        self.assertEqual(clip["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(clip["solve_score_omega.$"], "$.plan.solve_score.omega")
+        self.assertEqual(clip["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+        self.assertEqual(clip["root_transforms.$"], "$.plan.params.root_transforms")
+
+        hist = self.states["ColorSolveScoreHistMap"]["ItemSelector"]
+        self.assertEqual(hist["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(hist["solve_score_omega.$"], "$.plan.solve_score.omega")
+        self.assertEqual(hist["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+        self.assertEqual(hist["root_transforms.$"], "$.plan.params.root_transforms")
+
+        merge = self.states["ColorSolveScoreMergeTask"]["Parameters"]["Payload"]
+        self.assertEqual(merge["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(merge["solve_score_omega.$"], "$.plan.solve_score.omega")
+        self.assertEqual(merge["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+
+        raster = self.states["ColorRasterMap"]["ItemSelector"]
+        self.assertEqual(raster["root_transforms.$"], "$.plan.params.root_transforms")
+        self.assertEqual(raster["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(raster["solve_score_omega.$"], "$.plan.solve_score.omega")
+        self.assertEqual(raster["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+
+    def test_color_finalize_and_encode_forward_critical_fields(self):
+        finalize = self.states["ColorFinalizeMap"]["ItemSelector"]
+        self.assertEqual(finalize["emit_pixel_bins.$"], "$.plan.outputs.repalette_capable")
+        self.assertEqual(finalize["pixel_bins_out_key.$"], "States.ArrayGetItem($.plan.grid.pixel_bin_tile_keys, $$.Map.Item.Value.tile_idx)")
+        self.assertEqual(finalize["finalize_workers.$"], "$.plan.finalize.workers")
+
+        encode = self.states["ColorEncodeTask"]["Parameters"]["Payload"]
+        self.assertEqual(encode["metadata.$"], "$.plan.outputs.metadata")
+        self.assertEqual(encode["out_key.$"], "$.plan.outputs.image_key")
+
+    def test_bilevel_and_coeff_pipeline_forward_critical_fields(self):
+        bilevel_raster = self.states["BilevelRasterMap"]["ItemSelector"]
+        self.assertEqual(bilevel_raster["root_transforms.$"], "$.plan.params.root_transforms")
+
+        bilevel_stitch = self.states["BilevelStitchTask"]["Parameters"]["Payload"]
+        self.assertEqual(bilevel_stitch["metadata.$"], "$.plan.outputs.metadata")
+        self.assertEqual(bilevel_stitch["preview_key.$"], "$.plan.outputs.preview_key")
+
+        coeff_stitch = self.states["CoeffStitchTask"]["Parameters"]["Payload"]
+        self.assertEqual(coeff_stitch["metadata.$"], "$.plan.outputs.metadata")
+        self.assertEqual(coeff_stitch["preview_key.$"], "$.plan.outputs.preview_key")
+
     def test_status_tasks_forward_run_started_at_ms(self):
         phase_states = [
             "CleanRender",

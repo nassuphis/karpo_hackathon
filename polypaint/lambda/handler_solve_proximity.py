@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 from botocore.config import Config
 
-from shared import BUCKET, parse_body, ok_response, report_status
+from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
 s3 = boto3.client("s3")
 BINARY = os.path.join(os.path.dirname(__file__), "solve_proximity_stats")
@@ -256,19 +256,20 @@ def _load_merge_histogram_artifact(client, hist_prefix, chunk_idx, metric, solve
 
 
 def handle_clip(params):
+    contract_warnings = []
     job_id = params["job_id"]
     task_id = params["task_id"]
     degree = params["degree"]
-    metric = params.get("metric", "proximity")
+    metric = contract_param(params, "metric", "proximity", contract_warnings)
     _validate_metric(metric)
-    solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
-    solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
-    solve_score_omega_enabled = _validate_omega_enabled(params.get("solve_score_omega_enabled", True))
-    solve_score_threads = _validate_threads(params.get("solve_score_threads", 1), default=1)
+    solve_score_quantile = _validate_quantile(contract_param(params, "solve_score_quantile", 0.001, contract_warnings))
+    solve_score_omega = _validate_omega(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
+    solve_score_omega_enabled = _validate_omega_enabled(contract_param(params, "solve_score_omega_enabled", True, contract_warnings))
+    solve_score_threads = _validate_threads(contract_param(params, "solve_score_threads", 1, contract_warnings), default=1)
     lores_bin_key = params["lores_bin_key"]
-    root_transforms = params.get("root_transforms")
+    root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
     out_key = params["out_key"]
-    progress = {"phase": "clip", "metric": metric, "source_key": lores_bin_key, "omega": solve_score_omega, "omega_enabled": solve_score_omega_enabled, "threads": solve_score_threads}
+    progress = attach_contract_warnings({"phase": "clip", "metric": metric, "source_key": lores_bin_key, "omega": solve_score_omega, "omega_enabled": solve_score_omega_enabled, "threads": solve_score_threads}, contract_warnings)
 
     try:
         _cleanup_tmp()
@@ -340,29 +341,30 @@ def handle_clip(params):
 
 
 def handle_hist(params):
+    contract_warnings = []
     job_id = params["job_id"]
     task_id = params["task_id"]
     chunk_idx = params.get("chunk_idx", params.get("stripe_idx"))
     if chunk_idx is None:
         raise RuntimeError("hist requires chunk_idx")
-    metric = params.get("metric", "proximity")
+    metric = contract_param(params, "metric", "proximity", contract_warnings)
     _validate_metric(metric)
-    solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
-    solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
-    solve_score_omega_enabled = _validate_omega_enabled(params.get("solve_score_omega_enabled", True))
-    solve_score_threads = _validate_threads(params.get("solve_score_threads", 1), default=1)
-    solve_score_hist_input_mode = _validate_hist_input_mode(params.get("solve_score_hist_input_mode", "tmpfile"))
+    solve_score_quantile = _validate_quantile(contract_param(params, "solve_score_quantile", 0.001, contract_warnings))
+    solve_score_omega = _validate_omega(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
+    solve_score_omega_enabled = _validate_omega_enabled(contract_param(params, "solve_score_omega_enabled", True, contract_warnings))
+    solve_score_threads = _validate_threads(contract_param(params, "solve_score_threads", 1, contract_warnings), default=1)
+    solve_score_hist_input_mode = _validate_hist_input_mode(contract_param(params, "solve_score_hist_input_mode", "tmpfile", contract_warnings))
     solve_score_hist_retries = _validate_sectioned_retries(
-        params.get("solve_score_hist_retries", 2),
+        contract_param(params, "solve_score_hist_retries", 2, contract_warnings),
         "solve_score_hist_retries",
     )
     bin_key = params["bin_key"]
     degree = params["degree"]
     clip_key = params["clip_key"]
     hist_bins = params.get("hist_bins", 100)
-    root_transforms = params.get("root_transforms")
+    root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
     out_key = params["out_key"]
-    progress = {
+    progress = attach_contract_warnings({
         "phase": "hist",
         "metric": metric,
         "chunk_idx": chunk_idx,
@@ -374,7 +376,7 @@ def handle_hist(params):
         "source_bucket": BUCKET,
         "source_key": bin_key,
         "clip_key": clip_key,
-    }
+    }, contract_warnings)
 
     try:
         _cleanup_tmp()
@@ -536,23 +538,24 @@ def handle_hist(params):
 
 
 def handle_merge(params):
+    contract_warnings = []
     job_id = params["job_id"]
     task_id = params["task_id"]
-    metric = params.get("metric", "proximity")
+    metric = contract_param(params, "metric", "proximity", contract_warnings)
     _validate_metric(metric)
-    solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
-    solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
-    solve_score_omega_enabled = _validate_omega_enabled(params.get("solve_score_omega_enabled", True))
-    solve_score_threads = _validate_threads(params.get("solve_score_threads", 1), default=1)
+    solve_score_quantile = _validate_quantile(contract_param(params, "solve_score_quantile", 0.001, contract_warnings))
+    solve_score_omega = _validate_omega(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
+    solve_score_omega_enabled = _validate_omega_enabled(contract_param(params, "solve_score_omega_enabled", True, contract_warnings))
+    solve_score_threads = _validate_threads(contract_param(params, "solve_score_threads", 1, contract_warnings), default=1)
     n_chunks = params.get("n_chunks", params.get("n_stripes"))
     if n_chunks is None:
         raise RuntimeError("merge requires n_chunks")
     n_chunks = int(n_chunks)
-    merge_workers = min(_validate_merge_workers(params.get("solve_score_merge_workers")), max(1, n_chunks))
+    merge_workers = min(_validate_merge_workers(contract_param(params, "solve_score_merge_workers", None, contract_warnings, warning_default="auto")), max(1, n_chunks))
     hist_prefix = params["hist_prefix"]
     clip_key = params["clip_key"]
     out_key = params["out_key"]
-    progress = {
+    progress = attach_contract_warnings({
         "phase": "merge",
         "metric": metric,
         "n_chunks": n_chunks,
@@ -560,7 +563,7 @@ def handle_merge(params):
         "omega_enabled": solve_score_omega_enabled,
         "threads": merge_workers,
         "workers": merge_workers,
-    }
+    }, contract_warnings)
 
     try:
         _cleanup_tmp()

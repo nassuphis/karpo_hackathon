@@ -306,6 +306,7 @@
                 "palette.$": "$.plan.params.palette",
                 "solve_score_quantile.$": "$.plan.solve_score.quantile",
                 "solve_score_omega.$": "$.plan.solve_score.omega",
+                "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
                 "root_transforms.$": "$.plan.params.root_transforms",
                 "image_key.$": "$.plan.outputs.image_key",
                 "preview_key.$": "$.plan.outputs.preview_key",

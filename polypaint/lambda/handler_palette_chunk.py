@@ -11,7 +11,7 @@ import time
 
 import boto3
 
-from shared import BUCKET, parse_body, ok_response, report_status
+from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
 s3 = boto3.client("s3")
 BINARY = os.path.join(os.path.dirname(__file__), "solve_palette_chunk")
@@ -42,24 +42,25 @@ def _parse_boolish(value, default=True):
 
 def handler(event, context):
     params = parse_body(event)
+    contract_warnings = []
     job_id = params["job_id"]
     task_id = params["task_id"]
     chunk_idx = params["chunk_idx"]
     bin_key = params["bin_key"]
     degree = params["degree"]
     metric = params["metric"]
-    q = params["solve_score_quantile"]
-    omega = float(params.get("solve_score_omega", 1.0))
-    omega_enabled = _parse_boolish(params.get("solve_score_omega_enabled", True), True)
+    q = contract_param(params, "solve_score_quantile", 0.001, contract_warnings)
+    omega = float(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
+    omega_enabled = _parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
     bins_key = params["solve_score_bins_key"]
     step_start = int(params["step_start"])
     step_count = int(params["step_count"])
-    root_transforms = params.get("root_transforms", [])
+    root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
     score_key = params["score_key"]
     palette_bins_key = params["palette_bins_key"]
     meta_key = params["meta_key"]
 
-    progress = {"phase": "palette_chunk", "chunk_idx": chunk_idx, "metric": metric}
+    progress = attach_contract_warnings({"phase": "palette_chunk", "chunk_idx": chunk_idx, "metric": metric}, contract_warnings)
     try:
         _cleanup()
         report_status(job_id, task_id, "started", result_data=progress)
@@ -123,11 +124,19 @@ def handler(event, context):
             raise RuntimeError(f"solve_palette_chunk failed: {result.stderr.strip()}")
         meta = json.loads(result.stdout)
 
-        report_status(job_id, task_id, "computed", result_data={
-            **progress,
-            "compute_ms": compute_ms,
-            "step_count": step_count,
-        })
+        report_status(
+            job_id,
+            task_id,
+            "computed",
+            result_data=attach_contract_warnings(
+                {
+                    **progress,
+                    "compute_ms": compute_ms,
+                    "step_count": step_count,
+                },
+                contract_warnings,
+            ),
+        )
 
         with open(_TMP_SCORES, "rb") as sf:
             s3.upload_fileobj(sf, BUCKET, score_key, ExtraArgs={"ContentType": "application/octet-stream"})
@@ -152,7 +161,7 @@ def handler(event, context):
         }
         s3.put_object(Bucket=BUCKET, Key=meta_key, Body=json.dumps(chunk_meta), ContentType="application/json")
 
-        result_data = {
+        result_data = attach_contract_warnings({
             "chunk_idx": chunk_idx,
             "step_start": step_start,
             "step_count": step_count,
@@ -160,7 +169,7 @@ def handler(event, context):
             "palette_bins_key": palette_bins_key,
             "meta_key": meta_key,
             "compute_ms": compute_ms,
-        }
+        }, contract_warnings)
         report_status(job_id, task_id, "done", result_data=result_data)
         return ok_response(result_data)
     except Exception as e:

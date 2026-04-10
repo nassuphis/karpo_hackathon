@@ -27,6 +27,7 @@ def _event(**overrides):
         "palette": "reef",
         "solve_score_quantile": 0.01,
         "solve_score_omega": 3.0,
+        "solve_score_omega_enabled": True,
         "root_transforms": [["rotate_roots", "0.25"]],
         "image_key": "renders/j/palettes/pal_1/image.jpeg",
         "preview_key": "renders/j/palettes/pal_1/preview.png",
@@ -229,6 +230,166 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             self.assertIn("filled 8 samples, expected 16", str(ctx.exception))
             mock_run.assert_not_called()
             self.assertEqual(mock_report.call_args_list[-1].args[2], "error")
+
+    @patch("handler_palette_finalize.report_status")
+    @patch("handler_palette_finalize._delete_keys")
+    @patch("handler_palette_finalize._list_keys")
+    @patch("handler_palette_finalize.s3")
+    @patch("handler_palette_finalize.subprocess.run")
+    def test_finalize_respects_explicit_omega_enabled_false(
+        self, mock_run, mock_s3, mock_list_keys, mock_delete_keys, mock_report
+    ):
+        import handler_palette_finalize as mod
+
+        with tempfile.TemporaryDirectory() as td, \
+             patch.object(mod, "_TMP_BINS", os.path.join(td, "bins_full.bin")), \
+             patch.object(mod, "_TMP_RAW", os.path.join(td, "palette.raw")), \
+             patch.object(mod, "_TMP_JPEG", os.path.join(td, "palette.jpeg")), \
+             patch.object(mod, "_TMP_PREVIEW", os.path.join(td, "palette_preview.png")):
+
+            mock_list_keys.side_effect = lambda prefix: (
+                ["renders/j/palettes/pal_1/chunks/meta_chunk_0.json"]
+                if prefix.endswith("meta_chunk_")
+                else (["renders/j/palettes/pal_1/solve_score/chunk_0_hist.json"] if prefix.endswith("solve_score/") else [])
+            )
+
+            meta0 = {
+                "chunk_idx": 0,
+                "step_start": 0,
+                "step_count": 4,
+                "palette_bins_key": "renders/j/palettes/pal_1/chunks/palette_bins_chunk_0.bin",
+            }
+            bins_meta = {
+                "clip_lo": -1.0,
+                "clip_hi": 2.0,
+                "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                "omega": 3.0,
+                "omega_enabled": False,
+            }
+            clip_meta = {"clip_fallback": False, "clip_fallback_reason": None}
+
+            def get_object(**kwargs):
+                key = kwargs["Key"]
+                mapping = {
+                    "renders/j/palettes/pal_1/chunks/meta_chunk_0.json": json.dumps(meta0).encode(),
+                    "renders/j/palettes/pal_1/chunks/palette_bins_chunk_0.bin": bytes([0, 1, 2, 3]),
+                    "renders/j/palettes/pal_1/solve_score/crowding_bins.json": json.dumps(bins_meta).encode(),
+                    "renders/j/palettes/pal_1/solve_score/crowding_clip.json": json.dumps(clip_meta).encode(),
+                }
+                if key not in mapping:
+                    raise AssertionError(f"unexpected get_object key: {key}")
+                return {"Body": MagicMock(read=lambda data=mapping[key]: data)}
+
+            mock_s3.get_object.side_effect = get_object
+            mock_s3.upload_fileobj.side_effect = lambda *args, **kwargs: None
+
+            def run_side_effect(cmd, capture_output, text, timeout, env=None):
+                exe = os.path.basename(cmd[0])
+                if exe == "palette_bins_render":
+                    with open(mod._TMP_RAW, "wb") as f:
+                        f.write((2).to_bytes(4, "little"))
+                        f.write((2).to_bytes(4, "little"))
+                        f.write((3).to_bytes(4, "little"))
+                        f.write(b"\x11\x22\x33" * 4)
+                    return MagicMock(returncode=0, stdout="{}", stderr="")
+                if exe == "raw2jpeg":
+                    with open(mod._TMP_JPEG, "wb") as f:
+                        f.write(b"\xff\xd8testjpeg")
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                if exe == "vipsthumbnail":
+                    with open(mod._TMP_PREVIEW, "wb") as f:
+                        f.write(b"\x89PNGpreview")
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                raise AssertionError(f"unexpected subprocess: {cmd}")
+
+            mock_run.side_effect = run_side_effect
+
+            result = mod.handler(_event(N=2, times=1, solve_score_omega_enabled=False), None)
+            body = json.loads(result["body"])
+            self.assertEqual(body["palette_id"], "pal_1")
+            meta_put = json.loads(mock_s3.put_object.call_args.kwargs["Body"])
+            self.assertFalse(meta_put["solve_score_omega_enabled"])
+
+    @patch("handler_palette_finalize.report_status")
+    @patch("handler_palette_finalize._delete_keys")
+    @patch("handler_palette_finalize._list_keys")
+    @patch("handler_palette_finalize.s3")
+    @patch("handler_palette_finalize.subprocess.run")
+    def test_finalize_warns_when_omega_enabled_missing_and_default_used(
+        self, mock_run, mock_s3, mock_list_keys, mock_delete_keys, mock_report
+    ):
+        import handler_palette_finalize as mod
+
+        with tempfile.TemporaryDirectory() as td, \
+             patch.object(mod, "_TMP_BINS", os.path.join(td, "bins_full.bin")), \
+             patch.object(mod, "_TMP_RAW", os.path.join(td, "palette.raw")), \
+             patch.object(mod, "_TMP_JPEG", os.path.join(td, "palette.jpeg")), \
+             patch.object(mod, "_TMP_PREVIEW", os.path.join(td, "palette_preview.png")):
+
+            mock_list_keys.side_effect = lambda prefix: (
+                ["renders/j/palettes/pal_1/chunks/meta_chunk_0.json"]
+                if prefix.endswith("meta_chunk_")
+                else (["renders/j/palettes/pal_1/solve_score/chunk_0_hist.json"] if prefix.endswith("solve_score/") else [])
+            )
+
+            meta0 = {
+                "chunk_idx": 0,
+                "step_start": 0,
+                "step_count": 4,
+                "palette_bins_key": "renders/j/palettes/pal_1/chunks/palette_bins_chunk_0.bin",
+            }
+            bins_meta = {
+                "clip_lo": -1.0,
+                "clip_hi": 2.0,
+                "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                "omega": 3.0,
+                "omega_enabled": True,
+            }
+            clip_meta = {"clip_fallback": False, "clip_fallback_reason": None}
+
+            def get_object(**kwargs):
+                key = kwargs["Key"]
+                mapping = {
+                    "renders/j/palettes/pal_1/chunks/meta_chunk_0.json": json.dumps(meta0).encode(),
+                    "renders/j/palettes/pal_1/chunks/palette_bins_chunk_0.bin": bytes([0, 1, 2, 3]),
+                    "renders/j/palettes/pal_1/solve_score/crowding_bins.json": json.dumps(bins_meta).encode(),
+                    "renders/j/palettes/pal_1/solve_score/crowding_clip.json": json.dumps(clip_meta).encode(),
+                }
+                if key not in mapping:
+                    raise AssertionError(f"unexpected get_object key: {key}")
+                return {"Body": MagicMock(read=lambda data=mapping[key]: data)}
+
+            mock_s3.get_object.side_effect = get_object
+            mock_s3.upload_fileobj.side_effect = lambda *args, **kwargs: None
+
+            def run_side_effect(cmd, capture_output, text, timeout, env=None):
+                exe = os.path.basename(cmd[0])
+                if exe == "palette_bins_render":
+                    with open(mod._TMP_RAW, "wb") as f:
+                        f.write((2).to_bytes(4, "little"))
+                        f.write((2).to_bytes(4, "little"))
+                        f.write((3).to_bytes(4, "little"))
+                        f.write(b"\x11\x22\x33" * 4)
+                    return MagicMock(returncode=0, stdout="{}", stderr="")
+                if exe == "raw2jpeg":
+                    with open(mod._TMP_JPEG, "wb") as f:
+                        f.write(b"\xff\xd8testjpeg")
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                if exe == "vipsthumbnail":
+                    with open(mod._TMP_PREVIEW, "wb") as f:
+                        f.write(b"\x89PNGpreview")
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                raise AssertionError(f"unexpected subprocess: {cmd}")
+
+            mock_run.side_effect = run_side_effect
+
+            event = _event(N=2, times=1)
+            event.pop("solve_score_omega_enabled")
+            mod.handler(event, None)
+
+            done_kwargs = mock_report.call_args_list[-1].kwargs
+            warned = {w["param"] for w in done_kwargs["result_data"]["contract_warnings"]}
+            self.assertIn("solve_score_omega_enabled", warned)
 
 
 if __name__ == "__main__":

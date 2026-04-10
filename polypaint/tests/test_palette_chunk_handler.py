@@ -119,6 +119,11 @@ class TestPaletteChunkHandler(unittest.TestCase):
 
             statuses = [c.args[2] for c in mock_report.call_args_list]
             self.assertEqual(statuses, ["started", "bin_downloaded", "computed", "done"])
+            done_kwargs = mock_report.call_args_list[-1].kwargs
+            self.assertEqual(done_kwargs["result_data"]["contract_warning_count"], 2)
+            warned = {w["param"] for w in done_kwargs["result_data"]["contract_warnings"]}
+            self.assertIn("solve_score_omega", warned)
+            self.assertIn("solve_score_omega_enabled", warned)
 
     @patch("handler_palette_chunk.report_status")
     @patch("handler_palette_chunk.s3")

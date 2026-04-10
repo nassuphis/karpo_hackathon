@@ -218,6 +218,42 @@ if (missing.length) {
 }
 console.log('  required functions: all present');
 
+// Step 3b: Contract warnings should be logged once with task/phase context
+try {
+    ctx._elements['render-log'] = ctx._elements['render-log'] || ctx._mkEl();
+    vm.runInContext(`
+        _logContractWarnings([{
+            task_id: 'task_warn_1',
+            result_data: {
+                phase: 'palette_finalize',
+                contract_warnings: [{ param: 'solve_score_omega_enabled', default: true }]
+            }
+        }], 'render-log');
+        _logContractWarnings([{
+            task_id: 'task_warn_1',
+            result_data: {
+                phase: 'palette_finalize',
+                contract_warnings: [{ param: 'solve_score_omega_enabled', default: true }]
+            }
+        }], 'render-log');
+    `, ctx);
+    const warningText = ctx._elements['render-log'].textContent || '';
+    const needle = 'Warning: parameter solve_score_omega_enabled missing, default true used (task=task_warn_1, phase=palette_finalize)';
+    if (!warningText.includes(needle)) {
+        console.error('FATAL: contract warning missing from render log: ' + warningText);
+        process.exit(1);
+    }
+    const count = (warningText.match(/Warning: parameter solve_score_omega_enabled missing, default true used/g) || []).length;
+    if (count !== 1) {
+        console.error('FATAL: contract warning should log once, got ' + count);
+        process.exit(1);
+    }
+    console.log('  contract warnings logged once: OK');
+} catch (e) {
+    console.error('FATAL: contract warning logging crashed: ' + e.message);
+    process.exit(1);
+}
+
 // Step 4: Run populateDropdown and verify actual option count
 try {
     vm.runInContext('populateDropdown()', ctx);
@@ -608,6 +644,50 @@ async function testPipeline(name, call) {
             console.log('  config popup toggles: OK');
         } catch (e) {
             console.error('FATAL: config popup toggle: ' + e.message);
+            process.exit(1);
+        }
+
+        vm.runInContext(`
+            _lambdaUrls = { sweep: 'https://api.example/sweep' };
+            _buildInfo = {};
+            document.getElementById('config-url').value = 'https://cfg/reload.json';
+            var _cfgReloadCalls = [];
+            fetch = async function(url, opts) {
+                _cfgReloadCalls.push(url);
+                if (url === 'https://cfg/reload.json') {
+                    return {
+                        ok: true,
+                        json: async function() {
+                            return {
+                                'compute-preview': 'https://api.example/compute-preview',
+                                build: { build_id: 'cfg-reload-build' }
+                            };
+                        }
+                    };
+                }
+                if (url === 'https://api.example/compute-preview') {
+                    return {
+                        ok: true,
+                        json: async function() { return { ok: true, phase: 'preview' }; }
+                    };
+                }
+                throw new Error('unexpected fetch url ' + url);
+            };
+        `, ctx);
+        try {
+            const reloaded = await vm.runInContext(`(async()=>{ return await _realLambdaPost('compute-preview', { function:'g1', N_preview:64, solver_mode:'aberth' }); })()`, ctx);
+            const calls = vm.runInContext('_cfgReloadCalls.join(",")', ctx);
+            if (!reloaded || reloaded.ok !== true) {
+                console.error('FATAL: lambdaPost should succeed after config reload, got ' + JSON.stringify(reloaded));
+                process.exit(1);
+            }
+            if (!calls.includes('https://cfg/reload.json') || !calls.includes('https://api.example/compute-preview')) {
+                console.error('FATAL: lambdaPost should reload config then call new service, got ' + calls);
+                process.exit(1);
+            }
+            console.log('  lambdaPost reloads stale config for new services: OK');
+        } catch (e) {
+            console.error('FATAL: lambdaPost stale-config reload: ' + e.message);
             process.exit(1);
         }
     }

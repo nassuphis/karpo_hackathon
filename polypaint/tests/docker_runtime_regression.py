@@ -289,6 +289,54 @@ def test_cfpv_coeffgen():
     print("=== CFPV coeffgen tests PASSED ===")
 
 
+def test_compute_preview_runtime_combo():
+    print("\n--- Compute preview runtime combo ---")
+
+    env = {**os.environ, "LD_LIBRARY_PATH": "/opt/lib", "PATH": "/opt/bin:" + os.environ.get("PATH", "")}
+    coeff_path = "/tmp/compute_preview_coeffs.bin"
+    roots_path = "/tmp/compute_preview_roots.bin"
+
+    coeff_spec = {
+        "mode": "coeffgen",
+        "function": "g1",
+        "n1": 8,
+        "n2": 8,
+        "i1_start": 0,
+        "i1_end": 8,
+        "times": 1,
+        "param_transforms": [["unit_circle"]],
+        "coeff_transforms": [["roots_cm", "hi"]],
+    }
+    r = subprocess.run(["/src/sweep_coeffgen", coeff_path],
+                       input=json.dumps(coeff_spec), capture_output=True, text=True, timeout=30, env=env)
+    assert r.returncode == 0, "sweep_coeffgen preview combo failed: " + r.stderr[:200]
+    coeff_meta = json.loads(r.stdout)
+    assert coeff_meta["n_coeffs"] >= 2, "unexpected n_coeffs %r" % coeff_meta
+    assert os.path.getsize(coeff_path) == coeff_meta["data_bytes"], "coeff preview combo size mismatch"
+    print("  sweep_coeffgen + roots_cm: OK (%s bytes)" % coeff_meta["data_bytes"])
+
+    solve_spec = {
+        "mode": "solve_cm",
+        "coeffs_file": coeff_path,
+        "n_coeffs": coeff_meta["n_coeffs"],
+        "n_steps": 64,
+    }
+    r = subprocess.run(["/src/sweep_cm", roots_path],
+                       input=json.dumps(solve_spec), capture_output=True, text=True, timeout=30, env=env)
+    assert r.returncode == 0, "sweep_cm preview combo failed: " + r.stderr[:200]
+    solve_meta = json.loads(r.stdout)
+    degree = solve_meta["degree"]
+    assert degree == coeff_meta["degree"], "degree mismatch coeffgen=%s solve=%s" % (coeff_meta["degree"], degree)
+    roots = read_roots(roots_path, degree)
+    assert len(roots) == 64, "expected 64 polynomials, got %d" % len(roots)
+    finite = all(math.isfinite(z.real) and math.isfinite(z.imag) for poly in roots for z in poly)
+    assert finite, "compute preview combo produced non-finite roots"
+    print("  sweep_cm on preview coeffs: OK (degree=%d, polys=%d)" % (degree, len(roots)))
+
+    cleanup(coeff_path, roots_path)
+    print("=== Compute preview runtime combo PASSED ===")
+
+
 # ── Render Preview (vipsthumbnail) Tests ─────────────────────────────────
 
 def test_render_preview():
@@ -619,7 +667,7 @@ def test_catalog_degrees():
 
 if __name__ == "__main__":
     print("--- Binary validation ---")
-    for bin_path in ["/src/sweep", "/src/sweep_mt", "/src/sweep_cm"]:
+    for bin_path in ["/src/sweep", "/src/sweep_mt", "/src/sweep_cm", "/src/sweep_coeffgen"]:
         magic = open(bin_path, "rb").read(4)
         assert magic == b"\x7fELF", "%s is not an ELF binary" % bin_path
         print("  %s: ELF OK" % bin_path)
@@ -627,6 +675,7 @@ if __name__ == "__main__":
     print("--- Generating test fixtures ---")
     test_ae_cm_solvers()
     test_cfpv_coeffgen()
+    test_compute_preview_runtime_combo()
     test_render_preview()
     test_resize_runtime()
     test_solve_proximity_stats()

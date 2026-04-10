@@ -9,7 +9,15 @@ import time
 
 import boto3
 
-from shared import BUCKET, parse_body, ok_response, report_status, imgpipe_env
+from shared import (
+    BUCKET,
+    attach_contract_warnings,
+    contract_param,
+    parse_body,
+    ok_response,
+    report_status,
+    imgpipe_env,
+)
 
 s3 = boto3.client("s3")
 PALETTE_RENDER = os.path.join(os.path.dirname(__file__), "palette_bins_render")
@@ -67,18 +75,19 @@ def _list_keys(prefix):
 
 def handler(event, context):
     params = parse_body(event)
+    contract_warnings = []
     job_id = params["job_id"]
     task_id = params["task_id"]
     palette_id = params["palette_id"]
     full_n = int(params["N"])
-    times = int(params.get("times", 1) or 1)
+    times = int(contract_param(params, "times", 1, contract_warnings) or 1)
     degree = int(params["degree"])
     metric = params["metric"]
     palette = params["palette"]
-    q = params["solve_score_quantile"]
-    omega = float(params.get("solve_score_omega", 1.0))
-    omega_enabled = _parse_boolish(params.get("solve_score_omega_enabled", True), True)
-    root_transforms = params.get("root_transforms", [])
+    q = contract_param(params, "solve_score_quantile", 0.001, contract_warnings)
+    omega = float(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
+    omega_enabled = _parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
+    root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
     image_key = params["image_key"]
     preview_key = params["preview_key"]
     meta_key = params["meta_key"]
@@ -90,7 +99,7 @@ def handler(event, context):
     chunk_bins_prefix = params.get("chunk_bins_prefix", chunks_prefix + "palette_bins_chunk_")
     chunk_meta_prefix = params.get("chunk_meta_prefix", chunks_prefix + "meta_chunk_")
 
-    progress = {"phase": "palette_finalize", "palette_id": palette_id}
+    progress = attach_contract_warnings({"phase": "palette_finalize", "palette_id": palette_id}, contract_warnings)
     try:
         _cleanup_tmp()
         report_status(job_id, task_id, "started", result_data=progress)
@@ -146,7 +155,12 @@ def handler(event, context):
         if _parse_boolish(bins_meta.get("omega_enabled", True), True) != omega_enabled:
             raise RuntimeError(f"Solve-score bins omega_enabled mismatch: expected {omega_enabled}, got {bins_meta.get('omega_enabled')}")
         assemble_ms = int((time.time() - t0) * 1000)
-        report_status(job_id, task_id, "assembled", result_data={**progress, "assemble_ms": assemble_ms})
+        report_status(
+            job_id,
+            task_id,
+            "assembled",
+            result_data=attach_contract_warnings({**progress, "assemble_ms": assemble_ms}, contract_warnings),
+        )
 
         t1 = time.time()
         env = imgpipe_env()
@@ -234,7 +248,7 @@ def handler(event, context):
         # Cleanup only this workflow's temporary solve-score scratch after success.
         _delete_keys(_list_keys(solve_score_prefix) + [solve_score_clip_key, solve_score_bins_key])
 
-        result_data = {
+        result_data = attach_contract_warnings({
             "palette_id": palette_id,
             "image_key": image_key,
             "preview_key": preview_key,
@@ -242,7 +256,7 @@ def handler(event, context):
             "assemble_ms": assemble_ms,
             "render_ms": render_ms,
             "encode_ms": encode_ms,
-        }
+        }, contract_warnings)
         report_status(job_id, task_id, "done", result_data=result_data)
         return ok_response(result_data)
     except Exception as e:

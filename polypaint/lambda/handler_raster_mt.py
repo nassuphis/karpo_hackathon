@@ -12,7 +12,7 @@ import time
 
 import boto3
 
-from shared import BUCKET, ok_response, parse_body, report_status
+from shared import BUCKET, attach_contract_warnings, contract_param, ok_response, parse_body, report_status
 
 s3 = boto3.client("s3")
 ROOTS2PIX_MT = os.path.join(os.path.dirname(__file__), "roots2pix_mt")
@@ -162,6 +162,7 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
 
 def handler(event, context):
     params = parse_body(event)
+    contract_warnings = []
     job_id = params["job_id"]
     chunk_idx = params.get("chunk_idx", params.get("stripe_idx"))
     if chunk_idx is None:
@@ -171,11 +172,11 @@ def handler(event, context):
     n_tile_rows = params["n_tile_rows"]
     n_tiles = n_tile_cols * n_tile_rows
     task_id = params.get("task_id", f"raster_{chunk_idx}")
-    threads = _validate_threads(params.get("raster_mt_threads", DEFAULT_THREADS))
-    raster_input_mode = _validate_raster_input_mode(params.get("raster_input_mode", "tmpfile"))
-    raster_sectioned_retries = _validate_sectioned_retries(params.get("raster_sectioned_retries", 2))
+    threads = _validate_threads(contract_param(params, "raster_mt_threads", DEFAULT_THREADS, contract_warnings))
+    raster_input_mode = _validate_raster_input_mode(contract_param(params, "raster_input_mode", "tmpfile", contract_warnings))
+    raster_sectioned_retries = _validate_sectioned_retries(contract_param(params, "raster_sectioned_retries", 2, contract_warnings))
 
-    perf = {
+    perf = attach_contract_warnings({
         "engine": "mt",
         "threads": threads,
         "input_mode": raster_input_mode,
@@ -187,22 +188,26 @@ def handler(event, context):
         "pixel_bin_tiles_uploaded": 0,
         "roots_plotted": 0,
         "roots_clipped": 0,
-    }
+    }, contract_warnings)
 
     bin_path = "/tmp/stripe.bin"
     saved_bins_path = "/tmp/palette_bins_chunk.bin"
     emit_pixel_bins = bool(params.get("emit_pixel_bins"))
 
     try:
-        report_status(job_id, task_id, "started")
+        report_status(job_id, task_id, "started", result_data=perf)
         _cleanup_tmp()
 
         params = dict(params)
         params["raster_mt_threads"] = threads
         params["raster_input_mode"] = raster_input_mode
         params["raster_sectioned_retries"] = raster_sectioned_retries
+        params["match"] = contract_param(params, "match", "none", contract_warnings)
+        params["palette"] = contract_param(params, "palette", "inferno", contract_warnings)
+        params["constant_color"] = contract_param(params, "constant_color", "ffffff", contract_warnings)
+        params["rotation"] = contract_param(params, "rotation", 0.0, contract_warnings)
         params["root_xforms_path"] = None
-        rt_chain = params.get("root_transforms", [])
+        rt_chain = contract_param(params, "root_transforms", [], contract_warnings)
         if rt_chain:
             rt_path = "/tmp/root_xforms.json"
             with open(rt_path, "w") as rtf:
@@ -210,7 +215,12 @@ def handler(event, context):
             params["root_xforms_path"] = rt_path
 
         ss_bins_key = params.get("solve_score_bins_key") or params.get("solve_proximity_bins_key")
-        color = params.get("color", "rainbow")
+        color = contract_param(params, "color", "rainbow", contract_warnings)
+        if color in ("solve_score", "solve_proximity"):
+            params["solve_metric"] = contract_param(params, "solve_metric", "proximity", contract_warnings)
+            params["solve_score_quantile"] = contract_param(params, "solve_score_quantile", 0.001, contract_warnings)
+            params["solve_score_omega"] = contract_param(params, "solve_score_omega", 1.0, contract_warnings)
+            params["solve_score_omega_enabled"] = contract_param(params, "solve_score_omega_enabled", True, contract_warnings)
         if color in ("solve_score", "solve_proximity") and not ss_bins_key:
             raise RuntimeError(f"{color} color mode requires solve_score_bins_key")
         if color == "saved_palette":
@@ -292,6 +302,7 @@ def handler(event, context):
         perf["tiles_uploaded"] = uploaded
         perf["pixel_bin_tiles_uploaded"] = uploaded_pixel_bins
 
+        attach_contract_warnings(perf, contract_warnings)
         report_status(job_id, task_id, "done", result_data=perf)
         return ok_response({
             "chunk_idx": chunk_idx,
@@ -307,6 +318,7 @@ def handler(event, context):
         })
 
     except Exception as e:
+        attach_contract_warnings(perf, contract_warnings)
         report_status(job_id, task_id, "error", str(e), result_data=perf)
         raise
     finally:

@@ -8,13 +8,6 @@
   "back_image": "snaps/compute_mna6w5mo_legacy_color.jpeg",
   "pages": [
     {
-      "image": "snaps/compute_mmw2ilf7_legacy_color.jpeg",
-      "title": "Cyclops Nebula",
-      "text": "Fifty roots arrange themselves into a glowing green-cyan sphere with a single dark eye at its center, ringed by concentric gold bands. The polynomial splits its coefficients into two halves \u2014 the first twenty-five scale linearly with the square-plus-imaginary-cube of the parameters, the second twenty-five mirror them with a conjugate twist. That structural palindrome creates the radial symmetry. Faint gossamer threads extend beyond the main body, the outermost roots tracing orbital paths through coefficient space.\n\npoly_8 \u00b7 degree 50 \u00b7 4000\u00d74000 \u00b7 rainbow \u00b7 Aberth-Ehrlich",
-      "filename": "legacy_color",
-      "job_id": "compute_mmw2ilf7"
-    },
-    {
       "image": "snaps/compute_mn22l4xs_color_repalette_1775540006600_es2fwk.jpeg",
       "title": "Amber Nautilus",
       "text": "Concentric rings of amber and teal spiral inward toward a luminous cyan vortex, the whole figure turning like a chambered shell cut in half. The square-dither perturbation roughens the ring edges into beaded chains, and the zzold feedback transform layers each step\u2019s history into the next. The centroid-distance metric colors each solve by how far its root cloud center sits from the origin \u2014 the outermost rings are farthest, glowing gold; the inner spiral is closest, shining cyan. The reef palette completes the oceanic illusion.\n\npoly_592 \u00b7 degree 35 \u00b7 3000\u00d73000\u00d720 \u00b7 centroid dist \u00b7 reef \u00b7 repalette",
@@ -251,6 +244,20 @@
       "text": "Twenty-five roots swirl through a coefficient field twisted by the swirler transform, then reversed. The result is a rough-edged fortress of turquoise and amber, its outer walls stippled with granular texture where the root density thins to scattered points. A ring of golden orbs orbits a central black void like sentinels at the gates. Four smaller satellite eyes glow at the corners \u2014 fixed points where specific roots lock in place regardless of the parameter sweep. The absence of a parameter transform means the raw grid coordinates drive the geometry directly.\n\ngiga_25 \u00b7 degree 25 \u00b7 5000\u00d75000 \u00b7 rainbow",
       "filename": "legacy_color",
       "job_id": "compute_mn4li5pn"
+    },
+    {
+      "image": "snaps/compute_mnrsdqxx_color_run_1775758377938_3jmyyn.jpeg",
+      "title": "Anemone Crown",
+      "text": "Sixteen translucent cyan anemones form a halo around a central iris of nested amber rings, the whole figure suspended in deep black like a votive lamp. The polynomial folds its ten coefficients through a cumulative sum and a reversal, then sweeps the parameters around the unit circle \u2014 a structural recipe that forces the radial symmetry. The dist-unit-circle metric scores each solve by how far its roots stray from |z|=1: warm amber where roots sit on the circle itself, cool cyan where they drift away. The reef palette gives the result its bioluminescent stillness, like deep-water life caught mid-pulse.\n\np11b2_v2 \u00b7 degree 10 \u00b7 5000\u00d75000 \u00b7 dist unit circle \u00b7 reef \u00b7 Aberth-Ehrlich (parallel)",
+      "filename": "color_run_1775758377938_3jmyyn",
+      "job_id": "compute_mnrsdqxx"
+    },
+    {
+      "image": "snaps/compute_mnrwzp5m_resize_1775773305249_bmav15.jpeg",
+      "title": "Mirror Spawn",
+      "text": "Two crimson and ivory crescents curl toward each other, their feathered edges meeting at top and bottom to enclose a perfect oval void. Each crescent is a ribcage of fine filaments, the vertebrae articulated by the square-dither perturbation that scatters the parameter grid into a granular cloud. Twenty-two roots per solve, swept five times across a five-thousand-square parameter mesh, produce nearly three billion individual root positions. The shelliness score measures how uniformly each root cloud distributes around its centroid, and the red-gold palette flares brightest where the shells fracture into structural disorder. The image is the resized print of an autolevels original, preserving the haunting mirror-creature anatomy at exhibition scale.\n\np7f \u00b7 degree 22 \u00b7 5000\u00d75000\u00d75 \u00b7 shelliness \u00b7 tri redgold \u00b7 Aberth-Ehrlich (parallel) \u00b7 resize",
+      "filename": "resize_1775773305249_bmav15",
+      "job_id": "compute_mnrwzp5m"
     }
   ]
 }

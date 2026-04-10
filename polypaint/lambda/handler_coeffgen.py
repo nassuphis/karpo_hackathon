@@ -18,7 +18,7 @@ import time
 
 import boto3
 
-from shared import BUCKET, parse_body, ok_response, report_status
+from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
 s3 = boto3.client("s3")
 SWEEP = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
@@ -44,12 +44,13 @@ def handle_param_gen(params):
     """
     job_id = params["job_id"]
     task_id = params.get("task_id", "param_gen")
+    contract_warnings = []
 
     try:
-        report_status(job_id, task_id, "started")
+        report_status(job_id, task_id, "started", result_data=attach_contract_warnings({"phase": "param_gen"}, contract_warnings))
 
         grid_n = params.get("N", params.get("n1"))
-        times = params.get("times", 1)
+        times = contract_param(params, "times", 1, contract_warnings)
         params_key = params.get("params_key", f"renders/{job_id}/params.bin")
         t0 = time.time()
 
@@ -60,7 +61,7 @@ def handle_param_gen(params):
             "n1": grid_n,
             "n2": grid_n,
             "times": times,
-            "param_transforms": params.get("param_transforms", []),
+            "param_transforms": contract_param(params, "param_transforms", [], contract_warnings),
         }
         if grid_n_override:
             spec["gridN"] = grid_n_override
@@ -142,11 +143,11 @@ def handle_param_gen(params):
             "data_bytes": meta["data_bytes"],
             "elapsed_us": int((time.time() - t0) * 1e6),
         }
-        report_status(job_id, task_id, "done", result_data=result_data)
+        report_status(job_id, task_id, "done", result_data=attach_contract_warnings(result_data, contract_warnings))
         return ok_response({"job_id": job_id, **result_data})
 
     except Exception as e:
-        report_status(job_id, task_id, "error", str(e))
+        report_status(job_id, task_id, "error", str(e), result_data=attach_contract_warnings({"phase": "param_gen"}, contract_warnings))
         raise
 
 
@@ -158,9 +159,10 @@ def handle_coeffgen_chunked(params):
     step_count = params["step_count"]
     params_key = params["params_key"]
     task_id = params.get("task_id", f"coeffgen_{chunk_idx}")
+    contract_warnings = []
 
     try:
-        report_status(job_id, task_id, "started")
+        report_status(job_id, task_id, "started", result_data=attach_contract_warnings({"phase": "coeffgen_chunked", "chunk_idx": chunk_idx}, contract_warnings))
 
         # Range-read our slice of params.bin from S3
         record_bytes = 16  # 4 × float32
@@ -182,7 +184,7 @@ def handle_coeffgen_chunked(params):
         spec = {
             "mode": "coeffgen_chunked",
             "function": params["function"],
-            "coeff_transforms": params.get("coeff_transforms", []),
+            "coeff_transforms": contract_param(params, "coeff_transforms", [], contract_warnings),
             "params_file": params_file,
             "step_start": 0,  # file contains only our slice
             "step_count": step_count,
@@ -227,7 +229,7 @@ def handle_coeffgen_chunked(params):
             "degree": meta["degree"],
             "elapsed_us": int((time.time() - t0) * 1e6),
         }
-        report_status(job_id, task_id, "done", result_data=result_data)
+        report_status(job_id, task_id, "done", result_data=attach_contract_warnings(result_data, contract_warnings))
         return ok_response({
             "chunk_idx": chunk_idx,
             "coeffs_size": meta["data_bytes"],
@@ -236,7 +238,7 @@ def handle_coeffgen_chunked(params):
         })
 
     except Exception as e:
-        report_status(job_id, task_id, "error", str(e))
+        report_status(job_id, task_id, "error", str(e), result_data=attach_contract_warnings({"phase": "coeffgen_chunked", "chunk_idx": chunk_idx}, contract_warnings))
         for p in ["/tmp/params_chunk.bin", f"/tmp/coeffs_chunk_{chunk_idx}.bin"]:
             try:
                 os.remove(p)

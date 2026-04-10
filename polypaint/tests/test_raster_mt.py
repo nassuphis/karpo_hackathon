@@ -115,6 +115,10 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(done_kwargs["result_data"]["engine"], "mt")
         self.assertEqual(done_kwargs["result_data"]["threads"], 2)
         self.assertEqual(done_kwargs["result_data"]["input_mode"], "tmpfile")
+        warned = {w["param"] for w in done_kwargs["result_data"]["contract_warnings"]}
+        self.assertIn("raster_mt_threads", warned)
+        self.assertIn("raster_input_mode", warned)
+        self.assertIn("raster_sectioned_retries", warned)
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")

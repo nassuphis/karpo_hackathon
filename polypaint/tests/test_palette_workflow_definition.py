@@ -65,6 +65,46 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertIn("placeholder-PaletteChunkFunctionArn", asl_str)
         self.assertIn("placeholder-PaletteFinalizeFunctionArn", asl_str)
 
+    def test_finalize_task_preserves_omega_enabled(self):
+        payload = self.states["PaletteFinalizeTask"]["Parameters"]["Payload"]
+        self.assertEqual(payload["solve_score_omega.$"], "$.plan.solve_score.omega")
+        self.assertEqual(
+            payload["solve_score_omega_enabled.$"],
+            "$.plan.solve_score.omega_enabled",
+        )
+
+    def test_solve_score_tasks_forward_critical_fields(self):
+        clip = self.states["SolveScoreClipTask"]["Parameters"]["Payload"]
+        self.assertEqual(clip["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(clip["solve_score_omega.$"], "$.plan.solve_score.omega")
+        self.assertEqual(clip["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+        self.assertEqual(clip["root_transforms.$"], "$.plan.params.root_transforms")
+
+        hist = self.states["SolveScoreHistMap"]["ItemSelector"]
+        self.assertEqual(hist["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(hist["solve_score_omega.$"], "$.plan.solve_score.omega")
+        self.assertEqual(hist["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+        self.assertEqual(hist["root_transforms.$"], "$.plan.params.root_transforms")
+
+        merge = self.states["SolveScoreMergeTask"]["Parameters"]["Payload"]
+        self.assertEqual(merge["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(merge["solve_score_omega.$"], "$.plan.solve_score.omega")
+        self.assertEqual(merge["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+
+    def test_palette_chunk_and_finalize_forward_critical_fields(self):
+        chunk = self.states["PaletteChunkMap"]["ItemSelector"]
+        self.assertEqual(chunk["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(chunk["solve_score_omega.$"], "$.plan.solve_score.omega")
+        self.assertEqual(chunk["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+        self.assertEqual(chunk["root_transforms.$"], "$.plan.params.root_transforms")
+
+        finalize = self.states["PaletteFinalizeTask"]["Parameters"]["Payload"]
+        self.assertEqual(finalize["times.$"], "$.plan.calc.times")
+        self.assertEqual(finalize["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(finalize["solve_score_omega.$"], "$.plan.solve_score.omega")
+        self.assertEqual(finalize["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+        self.assertEqual(finalize["root_transforms.$"], "$.plan.params.root_transforms")
+
 
 if __name__ == "__main__":
     unittest.main()

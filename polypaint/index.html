@@ -1539,6 +1539,50 @@ function log(msg, cls='', target='compute-log') {
     while (el.children.length > 500) el.removeChild(el.lastChild);
 }
 
+const _loggedContractWarnings = new Set();
+
+function _fmtContractDefault(value) {
+    if (value === undefined) return 'undefined';
+    if (typeof value === 'string') return value;
+    try { return JSON.stringify(value); } catch (e) {}
+    return String(value);
+}
+
+function _entryContractWarnings(entry) {
+    if (!entry || typeof entry !== 'object') return [];
+    const payload = entry.result_data && typeof entry.result_data === 'object' ? entry.result_data : entry;
+    const warnings = Array.isArray(payload.contract_warnings) ? payload.contract_warnings : [];
+    if (!warnings.length) return [];
+    return warnings.map(w => ({
+        task_id: entry.task_id || payload.task_id || '',
+        phase: payload.phase || entry.phase || '',
+        param: w && w.param ? String(w.param) : '',
+        default_value: w && Object.prototype.hasOwnProperty.call(w, 'default') ? w.default : undefined,
+    }));
+}
+
+function _logContractWarnings(entries, target='compute-log') {
+    const list = Array.isArray(entries) ? entries : [entries];
+    for (const entry of list) {
+        for (const warning of _entryContractWarnings(entry)) {
+            const dedupeKey = [
+                target,
+                warning.task_id || '',
+                warning.phase || '',
+                warning.param || '',
+                _fmtContractDefault(warning.default_value),
+            ].join('|');
+            if (_loggedContractWarnings.has(dedupeKey)) continue;
+            _loggedContractWarnings.add(dedupeKey);
+            const ctx = [];
+            if (warning.task_id) ctx.push(`task=${warning.task_id}`);
+            if (warning.phase) ctx.push(`phase=${warning.phase}`);
+            const suffix = ctx.length ? ` (${ctx.join(', ')})` : '';
+            log(`Warning: parameter ${warning.param} missing, default ${_fmtContractDefault(warning.default_value)} used${suffix}`, '', target);
+        }
+    }
+}
+
 /* ---- Tabs ---- */
 function switchTab(name) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === name));
@@ -2767,6 +2811,16 @@ function lambdaUrl(name, path) {
     return base + (path || '');
 }
 
+async function _ensureLambdaServiceConfigured(name) {
+    if ((_lambdaUrls[name] || '').trim()) return;
+    await loadLambdaConfig();
+    if ((_lambdaUrls[name] || '').trim()) return;
+    const loaded = Object.keys(_lambdaUrls || {}).sort();
+    const loadedText = loaded.length ? ` loaded services=${loaded.join(',')}` : ' loaded services=none';
+    const buildText = _buildInfo && _buildInfo.build_id ? ` build=${_buildInfo.build_id}` : '';
+    throw new Error(`Lambda URL not configured for "${name}" after reloading config.json.${buildText}${loadedText}`);
+}
+
 function _clipErrorText(value, maxLen = 240) {
     const s = value == null ? '' : String(value).replace(/\s+/g, ' ').trim();
     if (!s) return '';
@@ -2838,6 +2892,7 @@ function _formatLambdaRetryAttempt(kind, attempt, detail) {
 
 // Helper: POST JSON to a Lambda and parse response
 async function lambdaPost(name, body, path) {
+    await _ensureLambdaServiceConfigured(name);
     const url = lambdaUrl(name, path);
     const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
     const endpoint = `${name}${path || ''}`;
@@ -6600,6 +6655,7 @@ async function _pollActivePaletteRun() {
         }, '/check-status');
 
         if (check.errors > 0) {
+            _logContractWarnings(check.error_details || [], 'palette-log');
             const msg = check.error_details?.[0]?.error_msg || 'unknown error';
             statusEl.textContent = 'Palette error: ' + msg;
             statusEl.className = 'status error';
@@ -6618,6 +6674,10 @@ async function _pollActivePaletteRun() {
         }
 
         const rd = check.results?.[0] || {};
+        _logContractWarnings([rd], 'palette-log');
+        if (document.getElementById('tab-render')?.classList.contains('active') && _renderActiveFamily === 'palette') {
+            _logContractWarnings([rd], 'render-log');
+        }
         if (!rd.phase && !rd.phase_label) {
             const ageMs = Date.now() - (run.started_at_ms || 0);
             if (ageMs > PALETTE_NO_ROW_STALE_MS) {
@@ -6659,6 +6719,10 @@ async function _pollActivePaletteRun() {
                 }, '/check-status');
                 done = subcheck.done || 0;
                 expected = subcheck.expected || rd.expected || 0;
+                _logContractWarnings(subcheck.results || [], 'palette-log');
+                if (document.getElementById('tab-render')?.classList.contains('active') && _renderActiveFamily === 'palette') {
+                    _logContractWarnings(subcheck.results || [], 'render-log');
+                }
                 if (subcheck.latest_update_ms) workerFreshMs = Date.now() - subcheck.latest_update_ms;
             } catch(e) {
                 expected = rd.expected || 0;
@@ -7601,6 +7665,7 @@ async function _pollActiveRenderRun() {
 
         // Terminal error
         if (check.errors > 0) {
+            _logContractWarnings(check.error_details || [], 'render-log');
             const detail = check.error_details?.[0] || {};
             const msg = detail.error_msg || 'unknown error';
             const ctx = _formatTaskErrorContext(detail);
@@ -7614,6 +7679,7 @@ async function _pollActiveRenderRun() {
         }
 
         const rd = check.results?.[0] || {};
+        _logContractWarnings([rd], 'render-log');
         _syncRenderRunServerStart(run, rd);
 
         // No DDB row found — abandoned run
@@ -7647,6 +7713,7 @@ async function _pollActiveRenderRun() {
                 done = subcheck.done || 0;
                 expected = subcheck.expected || rd.expected || 0;
                 subResults = subcheck.results || [];
+                _logContractWarnings(subResults, 'render-log');
                 phaseLatestMs = _pickLatestTimestampMs(
                     subcheck.latest_done_ms,
                     subcheck.latest_update_ms,
@@ -7669,6 +7736,7 @@ async function _pollActiveRenderRun() {
                 done = subcheck.done || 0;
                 expected = subcheck.expected || phaseInfo.expected || 0;
                 subResults = subcheck.results || [];
+                _logContractWarnings(subResults, 'render-log');
                 phaseLatestMs = _pickLatestTimestampMs(
                     subcheck.latest_done_ms,
                     subcheck.latest_update_ms,
@@ -9262,6 +9330,7 @@ async function runCalculateWithSolver(solverMode) {
             }, '/check-status');
 
             if (check.errors > 0) {
+                _logContractWarnings(check.error_details || [], 'compute-log');
                 const detail = check.error_details?.[0] || {};
                 const msg = detail.error_msg || 'unknown error';
                 const ctx = _formatTaskErrorContext(detail);
@@ -9269,6 +9338,7 @@ async function runCalculateWithSolver(solverMode) {
             }
 
             const rd = check.results?.[0] || {};
+            _logContractWarnings([rd], 'compute-log');
             const phase = rd.phase || '';
             const phaseLabel = rd.phase_label || phase || 'Working';
             const phaseStartMs = _coerceTimestampMs(rd.started_at_ms) || _coerceTimestampMs(rd.updated_at_ms);
@@ -9308,6 +9378,7 @@ async function runCalculateWithSolver(solverMode) {
                 done = Number(subcheck.done) || 0;
                 expected = Number(subcheck.expected) || expected;
                 subResults = subcheck.results || [];
+                _logContractWarnings(subResults, 'compute-log');
                 if (phaseTracker) {
                     phaseTracker.last_server_update_ms = _pickLatestTimestampMs(
                         phaseTracker.last_server_update_ms,

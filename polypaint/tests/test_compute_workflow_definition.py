@@ -122,6 +122,44 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         self.assertEqual(post_phase["Parameters"]["Payload"]["phase"], "post_coeffgen")
         self.assertEqual(post_phase["Parameters"]["Payload"]["phase_label"], "Post coeffgen")
 
+    def test_param_gen_tasks_forward_times_and_param_transforms(self):
+        param_gen = self.states["ParamGenTask"]["Parameters"]["Payload"]
+        self.assertEqual(param_gen["times.$"], "$.plan.compute.times")
+        self.assertEqual(param_gen["param_transforms.$"], "$.plan.pipeline.param_transforms")
+
+        lores_param_gen = self.states["LoresParamGenTask"]["Parameters"]["Payload"]
+        self.assertEqual(lores_param_gen["times.$"], "$.plan.compute.times")
+        self.assertEqual(lores_param_gen["param_transforms.$"], "$.plan.pipeline.param_transforms")
+        self.assertEqual(lores_param_gen["gridN.$"], "$.plan.compute.N")
+
+    def test_coeffgen_tasks_forward_pipeline_fields(self):
+        coeffgen = self.states["CoeffgenMap"]["ItemSelector"]
+        self.assertEqual(coeffgen["function.$"], "$.plan.pipeline.function")
+        self.assertEqual(coeffgen["coeff_transforms.$"], "$.plan.pipeline.coeff_transforms")
+        self.assertEqual(coeffgen["cfpv.$"], "$.plan.pipeline.cfpv")
+        self.assertEqual(coeffgen["params_key.$"], "$.plan.compute.params_key")
+
+        lores_coeffgen = self.states["LoresCoeffgenTask"]["Parameters"]["Payload"]
+        self.assertEqual(lores_coeffgen["function.$"], "$.plan.pipeline.function")
+        self.assertEqual(lores_coeffgen["coeff_transforms.$"], "$.plan.pipeline.coeff_transforms")
+        self.assertEqual(lores_coeffgen["cfpv.$"], "$.plan.pipeline.cfpv")
+
+    def test_solve_tasks_forward_chunk_and_solver_fields(self):
+        lores_solve = self.states["LoresSolveTask"]["Parameters"]
+        self.assertEqual(lores_solve["FunctionName.$"], "$.plan.solve.function_name")
+        lores_payload = lores_solve["Payload"]
+        self.assertEqual(lores_payload["coeffs_key.$"], "$.post.lores.coeffs_key")
+        self.assertEqual(lores_payload["n_coeffs.$"], "$.post.n_coeffs")
+        self.assertEqual(lores_payload["n_steps.$"], "$.post.lores.n_steps")
+        self.assertEqual(lores_payload["s3_key.$"], "$.post.lores.bin_key")
+
+        solve_map = self.states["SolveMap"]["ItemSelector"]
+        self.assertEqual(solve_map["coeffs_key.$"], "$$.Map.Item.Value.coeffs_key")
+        self.assertEqual(solve_map["n_coeffs.$"], "$.post.n_coeffs")
+        self.assertEqual(solve_map["n_steps.$"], "$$.Map.Item.Value.step_count")
+        self.assertEqual(solve_map["s3_key.$"], "$$.Map.Item.Value.bin_key")
+        self.assertEqual(solve_map["solver_function_name.$"], "$.plan.solve.function_name")
+
 
 if __name__ == "__main__":
     unittest.main()

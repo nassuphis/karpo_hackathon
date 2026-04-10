@@ -54,6 +54,32 @@ def report_status(job_id, task_id, status, error_msg=None, result_data=None):
     _get_ddb().put_item(TableName=JOBS_TABLE, Item=item)
 
 
+def contract_param(params, key, default, warnings=None, *, missing_values=(None, ""), warning_default=None):
+    """Fetch a behavioral param and record a contract warning if it is missing.
+
+    This is for workflow/API contract fields where a silent handler default can mask
+    a missing Step Functions/UI payload field and change behavior.
+    """
+    missing = key not in params or params.get(key) in missing_values
+    if missing:
+        if warnings is not None:
+            warnings.append({
+                "kind": "missing_param_default",
+                "param": key,
+                "default": warning_default if warning_default is not None else default,
+            })
+        return default
+    return params.get(key)
+
+
+def attach_contract_warnings(result_data, warnings):
+    if result_data is None or not warnings:
+        return result_data
+    result_data["contract_warnings"] = list(warnings)
+    result_data["contract_warning_count"] = len(warnings)
+    return result_data
+
+
 def parse_body(event):
     """Parse request body from various invocation formats."""
     if isinstance(event.get("body"), str):

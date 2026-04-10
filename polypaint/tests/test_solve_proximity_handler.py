@@ -159,6 +159,13 @@ def test_hist_tmpfile_mode_runs_binary_with_tmp_input():
         cmd = mock_run.call_args.args[0]
         assert cmd[1] == hsp._TMP_INPUT
         assert not any(arg.startswith("--input_size=") for arg in cmd)
+        done_kwargs = hsp.report_status.call_args_list[-1].kwargs
+        warned = {w["param"] for w in done_kwargs["result_data"]["contract_warnings"]}
+        assert "solve_score_quantile" in warned
+        assert "solve_score_omega" in warned
+        assert "solve_score_omega_enabled" in warned
+        assert "solve_score_threads" in warned
+        assert "solve_score_hist_input_mode" in warned
     finally:
         hsp.s3 = orig_s3
         hsp.report_status = orig_report

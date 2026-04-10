@@ -12,7 +12,7 @@ import time
 
 import boto3
 
-from shared import BUCKET, parse_body, ok_response, report_status
+from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
 s3 = boto3.client("s3")
 ROOTS2PIX = os.path.join(os.path.dirname(__file__), "roots2pix")
@@ -30,6 +30,7 @@ def _parse_boolish(value, default=True):
 
 def handler(event, context):
     params = parse_body(event)
+    contract_warnings = []
     job_id = params["job_id"]
     chunk_idx = params.get("chunk_idx", params.get("stripe_idx"))
     if chunk_idx is None:
@@ -41,7 +42,7 @@ def handler(event, context):
     task_id = params.get("task_id", f"raster_{chunk_idx}")
 
     try:
-        report_status(job_id, task_id, "started")
+        report_status(job_id, task_id, "started", result_data=attach_contract_warnings({"phase": "raster", "chunk_idx": chunk_idx}, contract_warnings))
         download_us = 0
         upload_us = 0
 
@@ -77,14 +78,14 @@ def handler(event, context):
             f"--center_im={params['center_im']}",
             f"--scale={params['scale']}",
             f"--degree={params['degree']}",
-            f"--color={params.get('color', 'rainbow')}",
-            f"--match={params.get('match', 'none')}",
-            f"--palette={params.get('palette', 'inferno')}",
-            f"--constant_color={params.get('constant_color', 'ffffff')}",
-            f"--rotation={params.get('rotation', 0.0)}",
+            f"--color={contract_param(params, 'color', 'rainbow', contract_warnings)}",
+            f"--match={contract_param(params, 'match', 'none', contract_warnings)}",
+            f"--palette={contract_param(params, 'palette', 'inferno', contract_warnings)}",
+            f"--constant_color={contract_param(params, 'constant_color', 'ffffff', contract_warnings)}",
+            f"--rotation={contract_param(params, 'rotation', 0.0, contract_warnings)}",
         ]
         # Write root transforms sidecar if present
-        rt_chain = params.get("root_transforms", [])
+        rt_chain = contract_param(params, "root_transforms", [], contract_warnings)
         if rt_chain:
             rt_path = "/tmp/root_xforms.json"
             with open(rt_path, "w") as rtf:
@@ -95,7 +96,7 @@ def handler(event, context):
             cmd.append("--pixel_bin_prefix=/tmp/pixbin")
 
         # Solve-score bins: download JSON, parse, pass as CLI args
-        color = params.get("color", "rainbow")
+        color = contract_param(params, "color", "rainbow", contract_warnings)
         ss_bins_key = params.get("solve_score_bins_key") or params.get("solve_proximity_bins_key")
         saved_palette_bins_key = params.get("saved_palette_bins_key")
         if color in ("solve_score", "solve_proximity") and not ss_bins_key:
@@ -121,19 +122,19 @@ def handler(event, context):
             # Validate bins artifact — must have family and matching metric
             if ss_data.get("family") != "solve_score":
                 raise RuntimeError(f"Bins artifact missing or wrong family: {ss_data.get('family')}")
-            req_metric = params.get("solve_metric", "proximity")
+            req_metric = contract_param(params, "solve_metric", "proximity", contract_warnings)
             if ss_data.get("metric") != req_metric:
                 raise RuntimeError(f"Bins metric mismatch: expected {req_metric}, got {ss_data.get('metric')}")
-            req_q = params.get("solve_score_quantile", 0.001)
+            req_q = contract_param(params, "solve_score_quantile", 0.001, contract_warnings)
             if "clip_quantile" not in ss_data:
                 raise RuntimeError("Bins artifact missing clip_quantile")
             if ss_data["clip_quantile"] != req_q:
                 raise RuntimeError(f"Bins quantile mismatch: expected {req_q}, got {ss_data['clip_quantile']}")
-            req_omega = float(params.get("solve_score_omega", 1.0))
+            req_omega = float(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
             bins_omega = float(ss_data.get("omega", 1.0))
             if bins_omega != req_omega:
                 raise RuntimeError(f"Bins omega mismatch: expected {req_omega}, got {bins_omega}")
-            req_omega_enabled = _parse_boolish(params.get("solve_score_omega_enabled", True), True)
+            req_omega_enabled = _parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
             bins_omega_enabled = _parse_boolish(ss_data.get("omega_enabled", True), True)
             if bins_omega_enabled != req_omega_enabled:
                 raise RuntimeError(f"Bins omega_enabled mismatch: expected {req_omega_enabled}, got {bins_omega_enabled}")
@@ -183,7 +184,7 @@ def handler(event, context):
                 os.remove(pbx_path)
         upload_us = int((time.perf_counter() - t_up) * 1e6)
 
-        result_data = {
+        result_data = attach_contract_warnings({
             "engine": "single",
             "threads": 1,
             "download_us": download_us,
@@ -193,7 +194,7 @@ def handler(event, context):
             "pixel_bin_tiles_uploaded": uploaded_pixel_bins,
             "roots_plotted": raster_meta["roots_plotted"],
             "roots_clipped": raster_meta["roots_clipped"],
-        }
+        }, contract_warnings)
         report_status(job_id, task_id, "done", result_data=result_data)
         return ok_response({
             "chunk_idx": chunk_idx,
@@ -208,7 +209,7 @@ def handler(event, context):
         })
 
     except Exception as e:
-        report_status(job_id, task_id, "error", str(e))
+        report_status(job_id, task_id, "error", str(e), result_data=attach_contract_warnings({"phase": "raster", "chunk_idx": chunk_idx}, contract_warnings))
         raise
     finally:
         for tmp_path in ("/tmp/stripe.bin", "/tmp/palette_bins_chunk.bin", "/tmp/root_xforms.json"):

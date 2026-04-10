@@ -35,6 +35,13 @@ grep -q 'id="render-mt-merge-workers"' "$HTML" || { echo "FATAL: render MT merge
 grep -q 'id="render-mt-finalize-workers"' "$HTML" || { echo "FATAL: render MT finalize workers input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-hist-retries"' "$HTML" || { echo "FATAL: render MT hist retries input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-raster-retries"' "$HTML" || { echo "FATAL: render MT raster retries input missing from index.html"; exit 1; }
+grep -q 'id="render-generate-save-associated-palette"' "$HTML" || { echo "FATAL: render generate associated palette checkbox missing from index.html"; exit 1; }
+grep -q 'id="render-mt-save-associated-palette"' "$HTML" || { echo "FATAL: render MT associated palette checkbox missing from index.html"; exit 1; }
+grep -q 'id="generate-from-palette-raster-threads"' "$HTML" || { echo "FATAL: GenerateFromPalette raster threads input missing from index.html"; exit 1; }
+grep -q 'id="generate-from-palette-raster-input-mode"' "$HTML" || { echo "FATAL: GenerateFromPalette raster input selector missing from index.html"; exit 1; }
+grep -q 'id="generate-from-palette-raster-retries"' "$HTML" || { echo "FATAL: GenerateFromPalette raster retries input missing from index.html"; exit 1; }
+grep -q 'id="generate-from-palette-finalize-workers"' "$HTML" || { echo "FATAL: GenerateFromPalette finalize workers input missing from index.html"; exit 1; }
+grep -q 'id="generate-from-palette-save-associated-palette"' "$HTML" || { echo "FATAL: GenerateFromPalette associated palette checkbox missing from index.html"; exit 1; }
 grep -q 'id="compute-preview-n"' "$HTML" || { echo "FATAL: compute preview N input missing from index.html"; exit 1; }
 grep -q 'id="compute-preview-solver"' "$HTML" || { echo "FATAL: compute preview solver selector missing from index.html"; exit 1; }
 grep -q 'id="compute-preview-quantile"' "$HTML" || { echo "FATAL: compute preview quantile input missing from index.html"; exit 1; }
@@ -381,7 +388,11 @@ const renderEls = {
     'render-generate-popup-close': {},
     'render-generate-popup-cancel': {},
     'render-generate-popup-run': {},
+    'render-generate-hist-row': {},
+    'render-generate-associated-row': {},
     'render-generate-hist-input-mode': { value: 'tmpfile' },
+    'render-generate-save-associated-palette': { checked: false },
+    'render-generate-popup-help': {},
     'render-mt-popup-overlay': {},
     'render-mt-popup-summary': {},
     'render-mt-popup-close': {},
@@ -395,6 +406,23 @@ const renderEls = {
     'render-mt-raster-retries': { value: '2' },
     'render-mt-merge-workers': { value: '16' },
     'render-mt-finalize-workers': { value: '16' },
+    'render-mt-associated-row': {},
+    'render-mt-save-associated-palette': { checked: false },
+    'generate-from-palette-popup-overlay': {},
+    'generate-from-palette-popup-title': {},
+    'generate-from-palette-popup-summary': {},
+    'generate-from-palette-popup-close': {},
+    'generate-from-palette-popup-cancel': {},
+    'generate-from-palette-popup-run': {},
+    'generate-from-palette-popup-filter': { value: '' },
+    'generate-from-palette-popup-body': {},
+    'generate-from-palette-raster-threads': { value: '4' },
+    'generate-from-palette-raster-input-mode': { value: 'tmpfile' },
+    'generate-from-palette-raster-retries': { value: '2' },
+    'generate-from-palette-finalize-workers': { value: '16' },
+    'generate-from-palette-save-associated-palette': { checked: false },
+    'generate-from-palette-popup-help': {},
+    'palette-circles-generate-from-palette': {},
     'autolevel-popup-overlay': {},
     'autolevel-popup-title': {},
     'autolevel-popup-summary': {},
@@ -839,13 +867,36 @@ async function testPipeline(name, call) {
         console.error('FATAL: solve-score Generate popup should show histogram input summary');
         process.exit(1);
     }
+    if (ctx._elements['render-generate-associated-row'].style.display === 'none') {
+        console.error('FATAL: solve-score Generate popup should show associated palette checkbox');
+        process.exit(1);
+    }
     console.log('  Generate popup opens for solve-score input A/B: OK');
     vm.runInContext('_closeRenderGeneratePopup()', ctx);
+    vm.runInContext(`
+        renderColorMode = 'saved_palette';
+        _activeRenderRun = null;
+        generateSelectedRenderArtifact();
+    `, ctx);
+    if (ctx._elements['render-generate-popup-overlay'].style.display !== 'flex') {
+        console.error('FATAL: saved-palette Generate should open popup overlay');
+        process.exit(1);
+    }
+    if (!(ctx._elements['render-generate-popup-summary'].textContent || '').includes('hist unused')) {
+        console.error('FATAL: saved-palette Generate popup should show hist unused summary');
+        process.exit(1);
+    }
+    if (ctx._elements['render-generate-associated-row'].style.display === 'none') {
+        console.error('FATAL: saved-palette Generate popup should show associated palette checkbox');
+        process.exit(1);
+    }
+    vm.runInContext('_closeRenderGeneratePopup()', ctx);
+    vm.runInContext(`renderColorMode = 'solve_score';`, ctx);
     await testPipeline('runRasterPipelineMT', '(async()=>{ renderColorMode = "solve_score"; await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histRetries: 4, rasterRetries: 5, mergeWorkers: 12, finalizeWorkers: 18 }); })()');
     {
         const logs = vm.runInContext('_pipelineDispatchLogs', ctx);
         const payloads = vm.runInContext('_renderOrchestratorPayloads', ctx);
-        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, hist retries=4, merge workers=12, raster input=tmpfile, raster retries=5, raster threads=6, finalize workers=18')) : null;
+        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, hist retries=4, merge workers=12, raster input=tmpfile, raster retries=5, raster threads=6, finalize workers=18, associated palette=no')) : null;
         const orchHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render: dispatching color orchestrator')) : null;
         const mtPayload = Array.isArray(payloads) ? payloads.find((row) => row && row.params && row.params.raster_engine === 'mt') : null;
         if (!mtHit || mtHit.cls !== 'ok' || !orchHit || orchHit.cls !== 'ok' || !mtPayload ||
@@ -855,7 +906,8 @@ async function testPipeline(name, call) {
             mtPayload.params.solve_score_merge_workers !== 12 ||
             mtPayload.params.raster_input_mode !== 'tmpfile' ||
             mtPayload.params.raster_sectioned_retries !== 5 ||
-            mtPayload.params.finalize_workers !== 18) {
+            mtPayload.params.finalize_workers !== 18 ||
+            mtPayload.params.save_associated_palette !== false) {
             console.error('FATAL: runRasterPipelineMT should log green MT + orchestrator dispatch and pass thread counts, got logs=' + JSON.stringify(logs) + ' payloads=' + JSON.stringify(payloads));
             process.exit(1);
         }
@@ -902,6 +954,10 @@ async function testPipeline(name, call) {
     }
     if (ctx._elements['render-mt-raster-retries'].disabled !== true) {
         console.error('FATAL: Generate-MT popup should disable raster retries when raster input is tmpfile');
+        process.exit(1);
+    }
+    if (ctx._elements['render-mt-associated-row'].style.display === 'none') {
+        console.error('FATAL: Generate-MT popup should show associated palette checkbox');
         process.exit(1);
     }
     console.log('  Generate-MT popup opens with solve-score + raster thread summary: OK');
@@ -2093,21 +2149,23 @@ async function testPipeline(name, call) {
         if (!panelHtml.includes('GenerateFromPalette')) { console.error('FATAL: color artifact panel should show GenerateFromPalette button'); process.exit(1); }
         vm.runInContext('openGenerateFromPalettePopup()', ctx);
         const popupDisplay = vm.runInContext("document.getElementById('generate-from-palette-popup-overlay').style.display", ctx);
-        const bodyRows = ctx._elements['generate-from-palette-popup-body'].children || [];
+        const visibleCount = vm.runInContext('_visibleGenerateFromPaletteCatalog().length', ctx);
         const summaryText = vm.runInContext("document.getElementById('generate-from-palette-popup-summary').textContent", ctx);
-        const paletteRow = ctx._elements['palette-circles-generate-from-palette'].children || [];
         if (popupDisplay !== 'flex') { console.error('FATAL: GenerateFromPalette popup should open'); process.exit(1); }
-        if (bodyRows.length !== 1) { console.error('FATAL: GenerateFromPalette should show only reusable palettes, got ' + bodyRows.length); process.exit(1); }
-        if (paletteRow.length !== 3) { console.error('FATAL: GenerateFromPalette palette row should collapse to PAL/TRI/LONG buttons, got ' + paletteRow.length); process.exit(1); }
-        if ((paletteRow[0].textContent || '') !== 'PAL') { console.error('FATAL: GenerateFromPalette first swatch should be PAL button, got ' + (paletteRow[0].textContent || '')); process.exit(1); }
-        if (!(String(paletteRow[0].className || '').includes('active'))) { console.error('FATAL: GenerateFromPalette should seed PAL as active from source palette magma'); process.exit(1); }
+        if (visibleCount !== 1) { console.error('FATAL: GenerateFromPalette should expose exactly one reusable palette, got ' + visibleCount); process.exit(1); }
         if (!String(summaryText).includes('source palette=magma')) { console.error('FATAL: GenerateFromPalette summary should show source palette, got ' + summaryText); process.exit(1); }
         if (!String(summaryText).includes('output colorvector=magma')) { console.error('FATAL: GenerateFromPalette summary should seed output colorvector from source palette, got ' + summaryText); process.exit(1); }
+        if (!String(summaryText).includes('raster input=tmpfile') || !String(summaryText).includes('associated palette=no')) { console.error('FATAL: GenerateFromPalette summary should show MT execution settings, got ' + summaryText); process.exit(1); }
         vm.runInContext(`_openTriPalettePopup('generate_from_palette')`, ctx);
         if (ctx._elements['tri-popup-overlay'].style.display !== 'flex') { console.error('FATAL: GenerateFromPalette TRI popup should open on top'); process.exit(1); }
         const triTitle = vm.runInContext("document.getElementById('tri-popup-title').textContent", ctx);
         if (!triTitle.includes('GenerateFromPalette')) { console.error('FATAL: GenerateFromPalette TRI popup title should mention GenerateFromPalette, got ' + triTitle); process.exit(1); }
         vm.runInContext(`_closeTriPalettePopup(); setPaletteForMode('generate_from_palette', 'tri_redgold')`, ctx);
+        ctx._elements['generate-from-palette-raster-threads'].value = '7';
+        ctx._elements['generate-from-palette-raster-input-mode'].value = 'sectioned';
+        ctx._elements['generate-from-palette-raster-retries'].value = '3';
+        ctx._elements['generate-from-palette-finalize-workers'].value = '19';
+        ctx._elements['generate-from-palette-save-associated-palette'].checked = true;
         await vm.runInContext('runGenerateFromPaletteSelected()', ctx);
         const dispatch = vm.runInContext('_gfpDispatch', ctx);
         if (!dispatch || dispatch.target !== 'render_orchestrator') { console.error('FATAL: GenerateFromPalette should dispatch render orchestrator'); process.exit(1); }
@@ -2115,7 +2173,95 @@ async function testPipeline(name, call) {
         if (params.color_mode !== 'saved_palette') { console.error('FATAL: GenerateFromPalette should set color_mode=saved_palette, got ' + params.color_mode); process.exit(1); }
         if (params.saved_palette_id !== 'pal_reuse') { console.error('FATAL: GenerateFromPalette should send chosen palette id, got ' + params.saved_palette_id); process.exit(1); }
         if (params.palette !== 'tri_redgold') { console.error('FATAL: GenerateFromPalette should send chosen output palette, got ' + params.palette); process.exit(1); }
+        if (params.raster_engine !== 'mt' || params.raster_mt_threads !== 7 || params.raster_input_mode !== 'sectioned' || params.raster_sectioned_retries !== 3 || params.finalize_workers !== 19 || params.save_associated_palette !== true) {
+            console.error('FATAL: GenerateFromPalette should dispatch MT execution settings and associated palette flag, got ' + JSON.stringify(params));
+            process.exit(1);
+        }
         console.log('  GenerateFromPalette popup dispatches saved-palette render: OK');
+    }
+
+    {
+        await vm.runInContext(`
+            lambdaPost = async function(service, payload, path) {
+                if (service !== 'storage' || path !== '/detail' || !payload || payload.job_id !== 'j') {
+                    throw new Error('unexpected metadata detail request: ' + JSON.stringify({ service, payload, path }));
+                }
+                return {
+                    calc: {
+                        N: 3000,
+                        degree: 7,
+                        times: 2,
+                        solver: 'aberth_mt',
+                        pipeline: {
+                            function: 'poly_demo',
+                            cfpv: [1, 2],
+                            param_transforms: [['foo', '3']],
+                            coeff_transforms: [['bar', '4']]
+                        }
+                    }
+                };
+            };
+            window.__artifactMeta = null;
+        `, ctx);
+        await vm.runInContext(`(async()=>{
+            window.__artifactMeta = await _buildArtifactMeta('j', {
+                artifact_id: 'color_assoc',
+                image_key: 'renders/j/color/color_assoc/image.jpeg',
+                associated_palette_image_key: 'renders/j/palettes/pal_assoc/image.jpeg'
+            }, {
+                imageFilename: 'j_color_assoc.jpeg',
+                paletteFilename: 'j_color_assoc_palette.jpeg'
+            });
+        })()`, ctx);
+        const meta = vm.runInContext('window.__artifactMeta', ctx);
+        const keys = Object.keys(meta || {});
+        if (meta.image_file !== 'j_color_assoc.jpeg' || meta.palette_file !== 'j_color_assoc_palette.jpeg') {
+            console.error('FATAL: metadata should record downloaded image/palette filenames, got ' + JSON.stringify(meta));
+            process.exit(1);
+        }
+        if (!(keys.includes('compute')) || keys.indexOf('image_file') > keys.indexOf('compute') || keys.indexOf('palette_file') > keys.indexOf('compute')) {
+            console.error('FATAL: image_file/palette_file should appear before compute in metadata, got keys ' + JSON.stringify(keys));
+            process.exit(1);
+        }
+        console.log('  image+meta metadata records image/palette filenames: OK');
+    }
+
+    {
+        await vm.runInContext(`
+            _renderActiveFamily = 'color';
+            _renderArtifacts = {
+                color: [{
+                    artifact_id: 'color_assoc',
+                    family: 'color',
+                    image_key: 'renders/j/color/color_assoc/image.jpeg',
+                    image_url: 'https://img/color_assoc.jpeg',
+                    viewer_url: 'https://img/color_assoc.png',
+                    format: 'jpeg',
+                    associated_palette_image_key: 'renders/j/palettes/pal_assoc/image.jpeg'
+                }],
+                bilevel: [],
+                coeffs: [],
+                palette: [],
+                pdf: [],
+            };
+            _renderSelectedArtifact = { color: 0, bilevel: -1, coeffs: -1, palette: -1, pdf: -1 };
+            document.getElementById('render-results-dir').value = 'j';
+            _renderSaveDirHandle = null;
+            window._dlBundle = [];
+            _buildArtifactMeta = async function() { return { artifact_id: 'color_assoc' }; };
+            _downloadBlob = function(blob, filename) { window._dlBundle.push({ type: 'blob', filename }); };
+            _downloadStorageKeyBlob = async function(key, filename) { window._dlBundle.push({ type: 'storage', key, filename }); };
+        `, ctx);
+        await vm.runInContext(`(async()=>{ await _dlMenuAction('image+meta'); })()`, ctx);
+        const bundle = vm.runInContext('window._dlBundle', ctx) || [];
+        const metaHit = bundle.find((item) => item.type === 'blob' && item.filename === 'j_color_assoc_meta.json');
+        const paletteHit = bundle.find((item) => item.type === 'storage' && item.key === 'renders/j/palettes/pal_assoc/image.jpeg' && item.filename === 'j_color_assoc_palette.jpeg');
+        const imageHit = bundle.find((item) => item.type === 'storage' && item.key === 'renders/j/color/color_assoc/image.jpeg' && item.filename === 'j_color_assoc.jpeg');
+        if (!metaHit || !paletteHit || !imageHit) {
+            console.error('FATAL: image+meta should download meta + associated palette + image, got ' + JSON.stringify(bundle));
+            process.exit(1);
+        }
+        console.log('  image+meta bundles associated palette download: OK');
     }
 
     {
@@ -3547,13 +3693,14 @@ async function testPipeline(name, call) {
         ctx._elements['btn-raster-all'] = ctx._mkEl();
         ctx._elements['btn-render-generate'] = ctx._mkEl();
         vm.runInContext("_viewMode = 'square'; _rtChain = []; _renderGeneratePopupState.histInputMode = 'sectioned';", ctx);
-        await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx);
+        await vm.runInContext('(async()=>{ await runRasterPipeline({ saveAssociatedPalette: true }); })()', ctx);
         orchDispatched = vm.runInContext('_orchDispatched', ctx);
         if (!orchDispatched) { console.error('FATAL: runRasterPipeline did not dispatch orchestrator'); process.exit(1); }
         if (orchDispatched.params.raster_engine !== 'single') { console.error('FATAL: runRasterPipeline should request single raster engine, got ' + orchDispatched.params.raster_engine); process.exit(1); }
         if (orchDispatched.params.solve_score_hist_input_mode !== 'sectioned') { console.error('FATAL: runRasterPipeline should pass solve_score_hist_input_mode=sectioned, got ' + orchDispatched.params.solve_score_hist_input_mode); process.exit(1); }
+        if (orchDispatched.params.save_associated_palette !== true) { console.error('FATAL: runRasterPipeline should pass save_associated_palette=true when selected, got ' + orchDispatched.params.save_associated_palette); process.exit(1); }
         if (orchDispatched.mode !== 'color') { console.error('FATAL: mode should be color, got ' + orchDispatched.mode); process.exit(1); }
-        console.log('  12a runRasterPipeline dispatches orchestrator: OK (mode=color, hist=sectioned)');
+        console.log('  12a runRasterPipeline dispatches orchestrator: OK (mode=color, hist=sectioned, associated_palette=yes)');
     }
 
     // 12a2: runRasterPipelineMT dispatches one render_orchestrator job with mt raster + solve-score thread counts
@@ -3575,7 +3722,7 @@ async function testPipeline(name, call) {
             refreshRenderArtifacts = async function() {};
         `, ctx);
         ctx._elements['btn-render-generate-mt'] = ctx._mkEl();
-        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", histRetries: 4, rasterInputMode: "sectioned", rasterRetries: 7, mergeWorkers: 14, finalizeWorkers: 22 }); })()', ctx);
+        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", histRetries: 4, rasterInputMode: "sectioned", rasterRetries: 7, mergeWorkers: 14, finalizeWorkers: 22, saveAssociatedPalette: true }); })()', ctx);
         orchDispatched = vm.runInContext('_orchDispatched', ctx);
         if (!orchDispatched) { console.error('FATAL: runRasterPipelineMT did not dispatch orchestrator'); process.exit(1); }
         if (orchDispatched.params.raster_engine !== 'mt') { console.error('FATAL: runRasterPipelineMT should request mt raster engine, got ' + orchDispatched.params.raster_engine); process.exit(1); }
@@ -3587,8 +3734,9 @@ async function testPipeline(name, call) {
         if (orchDispatched.params.finalize_workers !== 22) { console.error('FATAL: runRasterPipelineMT should pass finalize_workers=22, got ' + orchDispatched.params.finalize_workers); process.exit(1); }
         if (orchDispatched.params.raster_input_mode !== 'sectioned') { console.error('FATAL: runRasterPipelineMT should pass raster_input_mode=sectioned, got ' + orchDispatched.params.raster_input_mode); process.exit(1); }
         if (orchDispatched.params.raster_sectioned_retries !== 7) { console.error('FATAL: runRasterPipelineMT should pass raster_sectioned_retries=7, got ' + orchDispatched.params.raster_sectioned_retries); process.exit(1); }
+        if (orchDispatched.params.save_associated_palette !== true) { console.error('FATAL: runRasterPipelineMT should pass save_associated_palette=true when selected, got ' + orchDispatched.params.save_associated_palette); process.exit(1); }
         if (orchDispatched.mode !== 'color') { console.error('FATAL: mode should be color, got ' + orchDispatched.mode); process.exit(1); }
-        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, hist=sectioned, hist_retries=4, merge=14, finalize=22, raster_input=sectioned, raster_retries=7, raster=6)');
+        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, hist=sectioned, hist_retries=4, merge=14, finalize=22, raster_input=sectioned, raster_retries=7, raster=6, associated_palette=yes)');
     }
 
     // 12b: runBilevelPipeline dispatches one render_orchestrator job

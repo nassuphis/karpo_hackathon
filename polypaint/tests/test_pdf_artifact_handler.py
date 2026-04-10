@@ -38,6 +38,9 @@ class TestPdfArtifactHandler(unittest.TestCase):
                 "solve_metric": "clusteriness",
                 "solve_score_quantile": "0.05",
                 "solve_score_omega": "3",
+                "associated_palette_mode": "generated",
+                "associated_palette_id": "pal_color_src",
+                "associated_palette_image_key": "renders/job1/palettes/pal_color_src/image.jpeg",
                 "root_transforms": '[["rotate_roots","0.25"]]',
             }
         }
@@ -45,6 +48,8 @@ class TestPdfArtifactHandler(unittest.TestCase):
         def get_object(Bucket=None, Key=None):
             if Key == "renders/job1/color/color_src/image.jpeg":
                 return {"Body": MagicMock(iter_chunks=lambda chunk_size=None: [b"jpeg-bytes"])}
+            if Key == "renders/job1/palettes/pal_color_src/image.jpeg":
+                return {"Body": MagicMock(iter_chunks=lambda chunk_size=None: [b"palette-jpeg"])}
             if Key == "renders/job1/calc.json":
                 return {"Body": MagicMock(read=lambda: json.dumps({
                     "function": "poly_645",
@@ -63,8 +68,9 @@ class TestPdfArtifactHandler(unittest.TestCase):
                 "extra": ExtraArgs or {},
             }
 
-        def fake_build(image_path, output_path, title, body=None, filename=None, meta=None):
+        def fake_build(image_path, output_path, title, body=None, filename=None, meta=None, palette_image_path=None):
             self.assertTrue(str(image_path).endswith("pdf_source.jpeg"))
+            self.assertTrue(str(palette_image_path).endswith("pdf_palette.jpeg"))
             self.assertEqual(title, "PolyPaint Lambda 1.0")
             # Structured meta should be provided
             self.assertIsNotNone(meta)
@@ -104,6 +110,9 @@ class TestPdfArtifactHandler(unittest.TestCase):
         self.assertEqual(meta["source_image_key"], "renders/job1/color/color_src/image.jpeg")
         self.assertEqual(meta["source_palette"], "tri_redgold")
         self.assertEqual(meta["source_solve_metric"], "clusteriness")
+        self.assertEqual(meta["source_associated_palette_mode"], "generated")
+        self.assertEqual(meta["source_associated_palette_id"], "pal_color_src")
+        self.assertEqual(meta["source_associated_palette_image_key"], "renders/job1/palettes/pal_color_src/image.jpeg")
         self.assertEqual(meta["page_count"], "1")
         self.assertEqual(meta["width_mm"], "586")
         self.assertEqual(meta["height_mm"], "296")

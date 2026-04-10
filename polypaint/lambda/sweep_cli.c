@@ -3939,6 +3939,73 @@ static void p11b2_v1_c(double x1r, double x1i, double x2r, double x2i,
     }
 }
 
+/* giga_11a: 25 coefficients, powers of t1+t2 divided by index. */
+static void giga_11a_c(double x1r, double x1i, double x2r, double x2i,
+                       const double *cfpv, int n_cfpv,
+                       double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    const int n = 25;
+    *nCoeffs = n;
+
+    double br = x1r + x2r;
+    double bi = x1i + x2i;
+    double pr = br;
+    double pi = bi;
+
+    for (int k = 1; k <= n; k++) {
+        cRe[k - 1] = pr / (double)k;
+        cIm[k - 1] = pi / (double)k;
+        if (k < n) {
+            double nr = pr * br - pi * bi;
+            double ni = pr * bi + pi * br;
+            pr = nr;
+            pi = ni;
+        }
+    }
+
+    for (int k = 0; k < n; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0.0; cIm[k] = 0.0; }
+    }
+}
+
+/* giga_11b: 40 coefficients, modular scale over exponential reciprocal ramp. */
+static void giga_11b_c(double x1r, double x1i, double x2r, double x2i,
+                       const double *cfpv, int n_cfpv,
+                       double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    const int n = 40;
+    *nCoeffs = n;
+
+    double sumr = x1r + x2r;
+    double sumi = x1i + x2i;
+    int m = ((int)fmod(5.0 * sqrt(sumr * sumr + sumi * sumi), 17.0)) + 1;
+    if (m < 1) m = 1;
+
+    for (int k = 0; k < n; k++) {
+        double scale_factor = (double)(k % m);
+        double denr = sumr + (double)m;
+        double deni = sumi;
+        double d2 = denr * denr + deni * deni;
+        if (d2 < 1e-30) d2 = 1e-30;
+
+        double numer = (double)(k + 1);
+        double ur = numer * denr / d2;
+        double ui = -numer * deni / d2;
+
+        double er = -M_PI * ui;
+        double ei = M_PI * ur;
+        double escale = exp(er);
+        double expr = escale * cos(ei);
+        double expi = escale * sin(ei);
+        cRe[k] = scale_factor * expr;
+        cIm[k] = scale_factor * expi;
+    }
+
+    for (int k = 0; k < n; k++) {
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) { cRe[k] = 0.0; cIm[k] = 0.0; }
+    }
+}
+
 /* p11b3: 11 coefficients, array mutation with integer indexing */
 static void p11b3_c(double x1r, double x1i, double x2r, double x2i,
                     const double *cfpv, int n_cfpv,

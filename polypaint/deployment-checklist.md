@@ -51,6 +51,13 @@ When claiming a feature is ready, explicitly report:
 - Required environment variables are attached.
 - Required `/tmp` size is attached.
 - Required IAM permissions are attached if the handler touches AWS resources.
+- If the feature changes a Step Functions workflow template, every deploy path that renders that template is checked.
+  - In this repo that usually means both the create and update renderings in [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh), not just one sed block.
+- If workflow/config rendering logic is duplicated, the target fix is to extract one shared helper used by both deploy and tests.
+- Parity tests are only a temporary guard while duplication still exists; they are not the desired end state.
+- Artifact-rendering tests should call the same helper/path that deploy uses, not a parallel substitution implementation.
+- Non-recoverable deploy operations must not be hidden behind `|| true` or blanket `2>/dev/null` suppression.
+- Re-runnability should come from specific idempotence handling for expected "already exists" errors, not from swallowing every failure.
 
 This must be enforced by:
 
@@ -72,6 +79,7 @@ This must be enforced by:
 - If the feature adds DynamoDB actions, S3 actions, Step Functions calls, Lambda invokes, or other IAM-sensitive behavior, those permissions are checked directly.
 - If the feature adds an API Gateway route, verify the Lambda is included in the API Gateway invoke-permission grant path, not just route/integration creation.
 - The feature is not considered ready if it only works locally or in mocks but the role is missing actions.
+- Preferred pattern: handlers declare required actions explicitly, and deploy tests compare the deployed role policy against the union of those declarations.
 
 ## 8. Runtime Dependency Reality
 
@@ -89,6 +97,11 @@ This is required when a feature introduces:
 - a new libvips path
 - a new LAPACK/OpenBLAS path
 - a new helper binary dependency
+- a new native binary whose `.so` dependencies could drift
+
+Runtime checks should include shared-library resolution, not just binary presence:
+
+- e.g. run `ldd` in the Lambda-like container and assert there are no `not found` lines
 
 ## 9. Handler Tests
 
@@ -177,6 +190,7 @@ See also:
   - remove a config key
   - redeploy a prior known-good version
 - The rollback path should be known before the feature is called ready.
+- If deploy mutates multiple AWS resources, `deploy.sh` should record which step failed so rollback starts from facts instead of guesswork.
 
 ## 18. Deploy Readiness Gate
 
@@ -207,3 +221,13 @@ If the feature is user-facing, add:
 - one real post-deploy smoke invocation
 - confirmation that the expected UI surface works against the deployed backend
 - confirmation that the deployed logs/status/error path is actually readable
+
+Minimum default smoke floor for major user-facing releases:
+
+- one compute flow
+- one render color flow
+- one render bilevel flow
+- one palette flow
+- one compute-preview flow
+
+When routes are added or changed, also run at least one deployed payload-shape smoke against the real API route and assert it returns structured JSON rather than a permission or gateway failure.

@@ -235,6 +235,136 @@
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ColorAssociatedPaletteChoice"
+          },
+
+          "ColorAssociatedPaletteChoice": {
+            "Type": "Choice",
+            "Choices": [
+              {"Variable": "$.plan.associated_palette.mode", "StringEquals": "generated", "Next": "ColorAssociatedPalettePhase"}
+            ],
+            "Default": "ColorRasterPhase"
+          },
+
+          "ColorAssociatedPalettePhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "run_started_at_ms.$": "$.run_started_at_ms",
+                "mode.$": "$.mode",
+                "phase": "associated_palette_chunk",
+                "phase_label": "Associated palette",
+                "expected.$": "$.plan.calc.n_chunks",
+                "subtask_prefix.$": "States.Format('render_{}_associated_palette_', $.run_id)"
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ColorAssociatedPaletteMap"
+          },
+
+          "ColorAssociatedPaletteMap": {
+            "Type": "Map",
+            "ItemsPath": "$.plan.chunk_items",
+            "MaxConcurrency": 10,
+            "ItemSelector": {
+              "job_id.$": "$.job_id",
+              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
+              "bin_key.$": "$$.Map.Item.Value.bin_key",
+              "step_start.$": "$$.Map.Item.Value.step_start",
+              "step_count.$": "$$.Map.Item.Value.step_count",
+              "degree.$": "$.plan.calc.degree",
+              "metric.$": "$.plan.associated_palette.metric",
+              "solve_score_quantile.$": "$.plan.associated_palette.quantile",
+              "solve_score_omega.$": "$.plan.associated_palette.omega",
+              "solve_score_omega_enabled.$": "$.plan.associated_palette.omega_enabled",
+              "root_transforms.$": "$.plan.params.root_transforms",
+              "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
+              "score_key.$": "States.Format('{}{}.bin', $.plan.associated_palette.chunk_scores_prefix, $$.Map.Item.Value.chunk_idx)",
+              "palette_bins_key.$": "States.Format('{}{}.bin', $.plan.associated_palette.chunk_bins_prefix, $$.Map.Item.Value.chunk_idx)",
+              "meta_key.$": "States.Format('{}{}.json', $.plan.associated_palette.chunk_meta_prefix, $$.Map.Item.Value.chunk_idx)",
+              "task_id.$": "States.Format('render_{}_associated_palette_{}', $.run_id, $$.Map.Item.Value.chunk_idx)"
+            },
+            "ItemProcessor": {
+              "ProcessorConfig": {"Mode": "INLINE"},
+              "StartAt": "AssociatedPaletteWorker",
+              "States": {
+                "AssociatedPaletteWorker": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": { "FunctionName": "${PaletteChunkFunctionArn}", "Payload.$": "$" },
+                  "ResultPath": null,
+                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+                  "End": true
+                }
+              }
+            },
+            "ResultPath": null,
+            "Next": "ColorAssociatedPaletteFinalizePhase"
+          },
+
+          "ColorAssociatedPaletteFinalizePhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "run_started_at_ms.$": "$.run_started_at_ms",
+                "mode.$": "$.mode",
+                "phase": "associated_palette_finalize",
+                "phase_label": "Associated palette: finalize",
+                "expected": 1,
+                "subtask_prefix.$": "States.Format('render_{}_associated_palette_finalize', $.run_id)"
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ColorAssociatedPaletteFinalizeTask"
+          },
+
+          "ColorAssociatedPaletteFinalizeTask": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${PaletteFinalizeFunctionArn}",
+              "Payload": {
+                "job_id.$": "$.job_id",
+                "task_id.$": "States.Format('render_{}_associated_palette_finalize', $.run_id)",
+                "palette_id.$": "$.plan.associated_palette.palette_id",
+                "N.$": "$.plan.calc.N",
+                "times.$": "$.plan.calc.times",
+                "degree.$": "$.plan.calc.degree",
+                "metric.$": "$.plan.associated_palette.metric",
+                "palette.$": "$.plan.associated_palette.palette",
+                "solve_score_quantile.$": "$.plan.associated_palette.quantile",
+                "solve_score_omega.$": "$.plan.associated_palette.omega",
+                "solve_score_omega_enabled.$": "$.plan.associated_palette.omega_enabled",
+                "root_transforms.$": "$.plan.params.root_transforms",
+                "image_key.$": "$.plan.associated_palette.image_key",
+                "preview_key.$": "$.plan.associated_palette.preview_key",
+                "meta_key.$": "$.plan.associated_palette.meta_key",
+                "chunks_prefix.$": "$.plan.associated_palette.chunks_prefix",
+                "chunk_scores_prefix.$": "$.plan.associated_palette.chunk_scores_prefix",
+                "chunk_bins_prefix.$": "$.plan.associated_palette.chunk_bins_prefix",
+                "chunk_meta_prefix.$": "$.plan.associated_palette.chunk_meta_prefix",
+                "solve_score_prefix.$": "$.plan.solve_score.hist_prefix",
+                "solve_score_clip_key.$": "$.plan.solve_score.clip_key",
+                "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
+                "cleanup_solve_score_scratch": false
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "ColorRasterPhase"
           },
 

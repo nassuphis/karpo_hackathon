@@ -237,6 +237,33 @@ def poly_giga_11(t1, t2):
         return np.zeros(n, dtype=complex)
 
 
+def poly_giga_11a(t1, t2):
+    n = 25
+    try:
+        k = np.arange(1, n + 1)
+        base = t1 + t2
+        cf = base**k / k
+        return cf.astype(np.complex128)
+    except Exception:
+        return np.zeros(n, dtype=complex)
+
+
+def poly_giga_11b(t1, t2):
+    try:
+        n = 40
+        cf = np.zeros(n, dtype=np.complex128)
+        m = int(5 * abs(t1 + t2) % 17) + 1
+        modular_values = np.arange(n) % m
+
+        for k in range(n):
+            scale_factor = modular_values[k]
+            cf[k] = scale_factor * np.exp(1j * np.pi * (k + 1) / (m + t1 + t2))
+
+        return cf.astype(np.complex128)
+    except Exception:
+        return np.zeros(n, dtype=np.complex128)
+
+
 def poly_giga_12(t1, t2):
     n = 20
     try:

@@ -149,13 +149,53 @@ def _wrap_text(c, text, font, size, max_width):
     return lines
 
 
-def _draw_text_page(c, title, body, is_right, filename=None, job_id=None):
+def _pipeline_from_meta(meta):
+    """Build the compute pipeline string in the form
+    `[param_transforms] function [coeff_transforms]`.
+
+    Returns None if the function is missing — caller should skip rendering.
+    Empty/none transform slots are rendered as `[]` so the pipeline shape
+    is always visible.
+    """
+    if not meta:
+        return None
+    compute = meta.get("compute") or {}
+    fn = (compute.get("function") or "").strip()
+    if not fn:
+        return None
+    pt = (compute.get("param_transforms") or "").strip()
+    ct = (compute.get("coeff_transforms") or "").strip()
+    if pt.lower() == "none":
+        pt = ""
+    if ct.lower() == "none":
+        ct = ""
+    return f"[{pt}] {fn} [{ct}]"
+
+
+def _load_image_meta(image_path):
+    """Load the `_meta.json` sidecar for an image, if it exists."""
+    if not image_path:
+        return None
+    p = Path(image_path)
+    meta_path = p.with_name(p.stem + "_meta.json")
+    if not meta_path.exists():
+        return None
+    try:
+        with open(meta_path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _draw_text_page(c, title, body, is_right, filename=None, job_id=None, pipeline=None):
     """Draw centered title + body text, white on black.
 
     Text is placed within the trim area with safety margins.
     is_right: whether this is a recto page (affects trim offset).
     filename: optional artifact id shown below body in Courier.
     job_id: optional compute job id shown alongside filename.
+    pipeline: optional `[param_transforms] function [coeff_transforms]` line
+              shown under the title in Courier (monospace).
     """
     # Trim area origin (bottom-left of trim box within gross page)
     if is_right:
@@ -176,6 +216,12 @@ def _draw_text_page(c, title, body, is_right, filename=None, job_id=None):
     if title:
         c.setFont("Helvetica-Bold", 28)
         c.drawCentredString(center_x, center_y + 40, title)
+
+    if pipeline:
+        c.setFont("Courier", 10)
+        c.setFillColorRGB(0.75, 0.75, 0.75)
+        c.drawCentredString(center_x, center_y + 14, pipeline)
+        c.setFillColorRGB(1, 1, 1)
 
     if body:
         c.setFont(BODY_FONT, 11)
@@ -256,9 +302,12 @@ def generate_content_pdf(output_path, pages_config):
         # Verso (left page): text
         _emit_page(is_right=False)
         snap_name = entry.get("filename") or os.path.splitext(os.path.basename(entry.get("image", "")))[0]
+        meta = _load_image_meta(entry.get("image"))
+        pipeline = _pipeline_from_meta(meta)
         _draw_text_page(c, entry.get("title", ""),
                         entry.get("text", ""), is_right=False,
-                        filename=snap_name, job_id=entry.get("job_id", ""))
+                        filename=snap_name, job_id=entry.get("job_id", ""),
+                        pipeline=pipeline)
         c.showPage()
         page_num += 1
 

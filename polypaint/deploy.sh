@@ -1518,6 +1518,8 @@ if [ "$ACTION" = "create" ]; then
         -e "s|\${BilevelFunctionArn}|${BILEVEL_ARN}|g" \
         -e "s|\${BilevelStitchFunctionArn}|${BILEVEL_STITCH_ARN}|g" \
         -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
+        -e "s|\${PaletteChunkFunctionArn}|${PALETTE_CHUNK_ARN}|g" \
+        -e "s|\${PaletteFinalizeFunctionArn}|${PALETTE_FINALIZE_ARN}|g" \
         -e "s|\${PreviewFunctionArn}|${PREVIEW_ARN}|g" \
         stepfunctions/render_workflow.asl.json.template > /tmp/render_workflow.asl.json
 
@@ -1820,6 +1822,8 @@ elif [ "$ACTION" = "update" ]; then
         -e "s|\${BilevelFunctionArn}|${BILEVEL_ARN}|g" \
         -e "s|\${BilevelStitchFunctionArn}|${BILEVEL_STITCH_ARN}|g" \
         -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
+        -e "s|\${PaletteChunkFunctionArn}|${PALETTE_CHUNK_ARN}|g" \
+        -e "s|\${PaletteFinalizeFunctionArn}|${PALETTE_FINALIZE_ARN}|g" \
         -e "s|\${PreviewFunctionArn}|${PREVIEW_ARN}|g" \
         stepfunctions/render_workflow.asl.json.template > /tmp/render_workflow.asl.json
 

@@ -33,14 +33,33 @@ DEFAULT_BACKGROUND_THRESHOLD = 4
 def _build_chunk_items(calc, job_id):
     chunks = list(calc.get("chunks", calc.get("stripes", [])) or [])
     if chunks:
+        degree = int(calc.get("degree", 1) or 1)
+        record_bytes = degree * 2 * 4
         chunk_items = []
-        for raw in chunks:
+        step_start = 0
+        ordered_chunks = sorted(
+            chunks,
+            key=lambda raw: raw.get("idx", raw.get("chunk_idx", raw.get("stripe_idx", 0))),
+        )
+        for raw in ordered_chunks:
             idx = raw.get("idx", raw.get("chunk_idx", raw.get("stripe_idx")))
             bin_key = raw.get("bin_key", raw.get("s3_key"))
             if idx is None or not bin_key:
                 raise RuntimeError(f"Invalid chunk metadata: idx={idx} bin_key={bin_key!r}")
-            chunk_items.append({"chunk_idx": int(idx), "bin_key": str(bin_key)})
-        chunk_items.sort(key=lambda item: item["chunk_idx"])
+            item = {"chunk_idx": int(idx), "bin_key": str(bin_key)}
+            step_count = raw.get("step_count", raw.get("n_t"))
+            if step_count in ("", None):
+                bin_size = raw.get("bin_size")
+                if bin_size not in ("", None):
+                    step_count = int(bin_size) // record_bytes
+            if step_count not in ("", None):
+                step_count = int(step_count)
+                if step_count <= 0:
+                    raise RuntimeError(f"Invalid chunk metadata: idx={idx} step_count={step_count}")
+                item["step_start"] = step_start
+                item["step_count"] = step_count
+                step_start += step_count
+            chunk_items.append(item)
         return chunk_items
 
     n_chunks = calc.get("n_chunks", calc.get("n_stripes", 10))
@@ -70,6 +89,41 @@ def _validate_omega_enabled(value):
     if text in ("0", "false", "no", "off"):
         return False
     raise RuntimeError(f"solve_score_omega_enabled must be boolean-like, got {value!r}")
+
+
+def _validate_boolish(value, field_name, default=False):
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    raise RuntimeError(f"{field_name} must be boolean-like, got {value!r}")
+
+
+def _omega_display(enabled, omega):
+    return f"w={omega:g}" if enabled else "w=off"
+
+
+def _associated_palette_display_name(metric, palette, quantile, omega, omega_enabled):
+    parts = []
+    if metric:
+        parts.append(str(metric))
+    if quantile not in ("", None):
+        try:
+            parts.append(f"q={float(quantile) * 100:.1f}%")
+        except Exception:
+            parts.append(f"q={quantile}")
+    if omega not in ("", None):
+        parts.append(_omega_display(omega_enabled, float(omega)))
+    if palette:
+        parts.append(str(palette))
+    return " ".join(part for part in parts if part)
 
 
 def _validate_raster_engine(value):
@@ -160,6 +214,8 @@ def handler(event, context):
 
     # Extract calc fields
     degree = calc.get("degree", 1)
+    full_n = int(calc.get("N", calc.get("n1", 0)) or 0)
+    times = int(calc.get("times", 1) or 1)
     chunk_items = _build_chunk_items(calc, job_id)
     n_chunks = len(chunk_items)
 
@@ -210,6 +266,7 @@ def handler(event, context):
         "solve_score_omega_enabled": True,
         "solve_score_hist_input_mode": "tmpfile",
         "solve_score_hist_retries": 2,
+        "save_associated_palette": False,
     }
     for key, default in _PARAM_DEFAULTS.items():
         if key not in rp:
@@ -238,6 +295,11 @@ def handler(event, context):
         rp.get("solve_score_hist_retries", 2),
         "solve_score_hist_retries",
     )
+    rp["save_associated_palette"] = _validate_boolish(
+        rp.get("save_associated_palette", False),
+        "save_associated_palette",
+        False,
+    )
 
     # Normalize solve-score params
     color_mode = rp.get("color_mode", "rainbow")
@@ -252,6 +314,7 @@ def handler(event, context):
     solve_score_omega = rp.get("solve_score_omega", 1.0)
     solve_score_omega_enabled = rp.get("solve_score_omega_enabled", True)
     palette = rp.get("palette", "inferno")
+    saved_palette_meta = {}
     saved_palette = {
         "enabled": False,
         "palette_id": "",
@@ -278,6 +341,7 @@ def handler(event, context):
             raise RuntimeError(
                 f"Saved palette {saved_palette_id} has unsupported data layout: {source_meta.get('data_layout')!r}"
             )
+        saved_palette_meta = dict(source_meta)
         src_n = int(source_meta.get("N", 0) or 0)
         src_degree = int(source_meta.get("degree", 0) or 0)
         src_times = int(source_meta.get("times", 0) or 0)
@@ -395,6 +459,81 @@ def handler(event, context):
     artifact_prefix = f"renders/{job_id}/{artifact_family}/{artifact_id}/"
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    associated_palette = {
+        "enabled": False,
+        "mode": "none",
+        "palette_id": "",
+        "display_name": "",
+        "image_key": "",
+        "preview_key": "",
+        "meta_key": "",
+        "chunks_prefix": "",
+        "chunk_scores_prefix": "",
+        "chunk_bins_prefix": "",
+        "chunk_meta_prefix": "",
+        "metric": "",
+        "palette": "",
+        "quantile": None,
+        "omega": None,
+        "omega_enabled": True,
+    }
+    if mode == "color" and rp["save_associated_palette"]:
+        if color_mode == "saved_palette":
+            associated_palette = {
+                "enabled": True,
+                "mode": "dependency",
+                "palette_id": saved_palette["palette_id"],
+                "display_name": saved_palette_meta.get("display_name", saved_palette["display_name"]),
+                "image_key": saved_palette_meta.get("image_key", f"renders/{job_id}/palettes/{saved_palette['palette_id']}/image.jpeg"),
+                "preview_key": saved_palette_meta.get("preview_key", f"renders/{job_id}/palettes/{saved_palette['palette_id']}/preview.png"),
+                "meta_key": f"renders/{job_id}/palettes/{saved_palette['palette_id']}/meta.json",
+                "chunks_prefix": "",
+                "chunk_scores_prefix": "",
+                "chunk_bins_prefix": saved_palette["chunk_bins_prefix"],
+                "chunk_meta_prefix": "",
+                "metric": saved_palette["metric"],
+                "palette": saved_palette["palette"],
+                "quantile": saved_palette["quantile"],
+                "omega": saved_palette["omega"],
+                "omega_enabled": saved_palette["omega_enabled"],
+            }
+        elif solve_score_enabled:
+            if not full_n:
+                raise RuntimeError("save_associated_palette requires calc N/n1 for solve_score renders")
+            missing_step_items = [item["chunk_idx"] for item in chunk_items if "step_start" not in item or "step_count" not in item]
+            if missing_step_items:
+                raise RuntimeError(
+                    "save_associated_palette requires chunk step metadata; "
+                    f"missing step_count/bin_size for chunks {missing_step_items[:8]}"
+                )
+            assoc_palette_id = f"pal_{artifact_id}"
+            assoc_prefix = f"renders/{job_id}/palettes/{assoc_palette_id}/"
+            assoc_chunks_prefix = assoc_prefix + "chunks/"
+            associated_palette = {
+                "enabled": True,
+                "mode": "generated",
+                "palette_id": assoc_palette_id,
+                "display_name": _associated_palette_display_name(
+                    solve_metric,
+                    palette,
+                    solve_score_quantile,
+                    solve_score_omega,
+                    solve_score_omega_enabled,
+                ),
+                "image_key": assoc_prefix + "image.jpeg",
+                "preview_key": assoc_prefix + "preview.png",
+                "meta_key": assoc_prefix + "meta.json",
+                "chunks_prefix": assoc_chunks_prefix,
+                "chunk_scores_prefix": assoc_chunks_prefix + "score_chunk_",
+                "chunk_bins_prefix": assoc_chunks_prefix + "palette_bins_chunk_",
+                "chunk_meta_prefix": assoc_chunks_prefix + "meta_chunk_",
+                "metric": solve_metric,
+                "palette": palette,
+                "quantile": solve_score_quantile,
+                "omega": solve_score_omega,
+                "omega_enabled": solve_score_omega_enabled,
+            }
+
     artifact_meta = {
         "artifact_id": artifact_id,
         "family": artifact_family,
@@ -443,6 +582,23 @@ def handler(event, context):
             "pixel_bins_empty": "255" if color_repalette_capable else "",
             "pixel_bins_layout": "tile_u8_v1" if color_repalette_capable else "",
         })
+        if associated_palette["enabled"]:
+            outputs["metadata"].update({
+                "associated_palette_mode": associated_palette["mode"],
+                "associated_palette_id": associated_palette["palette_id"],
+                "associated_palette_display_name": associated_palette["display_name"],
+                "associated_palette_image_key": associated_palette["image_key"],
+                "associated_palette_preview_key": associated_palette["preview_key"],
+                "associated_palette_palette": str(associated_palette["palette"]),
+                "associated_palette_metric": str(associated_palette["metric"]),
+                "associated_palette_quantile": (
+                    str(associated_palette["quantile"]) if associated_palette["quantile"] not in ("", None) else ""
+                ),
+                "associated_palette_omega": (
+                    str(associated_palette["omega"]) if associated_palette["omega"] not in ("", None) else ""
+                ),
+                "associated_palette_omega_enabled": "true" if associated_palette["omega_enabled"] else "false",
+            })
         if color_mode == "saved_palette":
             outputs["metadata"].update({
                 "solve_metric": str(solve_metric),
@@ -477,6 +633,8 @@ def handler(event, context):
         "viewport": viewport,
         "calc": {
             "degree": degree,
+            "N": full_n,
+            "times": times,
             "n_chunks": n_chunks,
             "lores_bin_key": calc.get("lores", {}).get("bin_key", ""),
             "coeffs_keys": calc.get("coeffs_keys", []),
@@ -499,6 +657,7 @@ def handler(event, context):
         "finalize": finalize,
         "raster": raster,
         "saved_palette": saved_palette,
+        "associated_palette": associated_palette,
         "outputs": outputs,
     }
 

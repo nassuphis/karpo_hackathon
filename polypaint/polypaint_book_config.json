@@ -176,13 +176,6 @@
       "job_id": "compute_mnk0a4lj"
     },
     {
-      "image": "snaps/compute_mnk2ptxy_color_run_1775291797683_56tfl2.jpeg",
-      "title": "Autumn Rosary",
-      "text": "An alternating series folds seventy roots into a five-petaled bloom, its coefficients swelling and contracting through a logarithmic breath with period five. The unit circle sweeps the parameters; the reversal mirror doubles the symmetry. Around the central flower, a broken rosary of amber droplets traces the orbit where clustering roots catch the spectral autumn light.\n\npoly_150 \u00b7 degree 70 \u00b7 1000\u00d71000 \u00b7 clusteriness \u00b7 spectral autumn \u00b7 Aberth-Ehrlich",
-      "filename": "color_run_1775291797683_56tfl2",
-      "job_id": "compute_mnk2ptxy"
-    },
-    {
       "image": "snaps/compute_mnldwxog_color_run_1775395251839_4ozqvy.jpeg",
       "title": "Solar Reliquary",
       "text": "Twenty-two hand-wrought coefficients climb through ascending powers, each folded with sine, cosine, and the logarithmic shadow of the parameters. At degree seventy, the roots compress into a gilded sphere ribbed with fine radial teeth, split by a violet meridian where conjugate symmetry breaks. Filaments of scattered light radiate outward \u2014 the outliers, roots that escaped the gravitational center, glowing brightest in the inferno palette where deviation from the median is greatest.\n\npoly_160 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 outlierness \u00b7 inferno \u00b7 Aberth-Ehrlich (parallel)",
@@ -258,6 +251,13 @@
       "text": "Two crimson and ivory crescents curl toward each other, their feathered edges meeting at top and bottom to enclose a perfect oval void. Each crescent is a ribcage of fine filaments, the vertebrae articulated by the square-dither perturbation that scatters the parameter grid into a granular cloud. Twenty-two roots per solve, swept five times across a five-thousand-square parameter mesh, produce nearly three billion individual root positions. The shelliness score measures how uniformly each root cloud distributes around its centroid, and the red-gold palette flares brightest where the shells fracture into structural disorder. The image is the resized print of an autolevels original, preserving the haunting mirror-creature anatomy at exhibition scale.\n\np7f \u00b7 degree 22 \u00b7 5000\u00d75000\u00d75 \u00b7 shelliness \u00b7 tri redgold \u00b7 Aberth-Ehrlich (parallel) \u00b7 resize",
       "filename": "resize_1775773305249_bmav15",
       "job_id": "compute_mnrwzp5m"
+    },
+    {
+      "image": "snaps/compute_mnslycuk_png_1775810362132_laef71.png",
+      "title": "Reliquary Heart",
+      "text": "A small dark heart pinned at the center of a glass orb, framed by an elaborate filigree of white traceries arranged in fourfold symmetry. Eight roots per solve are pushed through a chain of five parameter transforms \u2014 unit circle, three coefficient warps, and a coordinate twist \u2014 producing two hundred million root positions; a bilevel render then reduces them to pure black and white. The fine lattice records every orbital path the roots traced as the parameters swept around the unit circle, and the coefficient reversal locks in the bilateral symmetry. The heart at the center is the structural void where no root cluster ever forms, framed by the ghosts of every solve that came close to it.\n\npoly_727 \u00b7 degree 8 \u00b7 5000\u00d75000 \u00b7 bilevel \u00b7 Aberth-Ehrlich (parallel) \u00b7 png export",
+      "filename": "png_1775810362132_laef71",
+      "job_id": "compute_mnslycuk"
     }
   ]
 }

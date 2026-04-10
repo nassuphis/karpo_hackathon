@@ -60,6 +60,9 @@ class TestWorkflowDefinition(unittest.TestCase):
             "ColorSolveScoreClipPhase", "ColorSolveScoreClipTask",
             "ColorSolveScoreHistPhase", "ColorSolveScoreHistMap",
             "ColorSolveScoreMergePhase", "ColorSolveScoreMergeTask",
+            "ColorAssociatedPaletteChoice",
+            "ColorAssociatedPalettePhase", "ColorAssociatedPaletteMap",
+            "ColorAssociatedPaletteFinalizePhase", "ColorAssociatedPaletteFinalizeTask",
             "ColorRasterPhase", "ColorRasterMap",
             "ColorFinalizePhase", "ColorFinalizeMap",
             "ColorEncodePhase", "ColorEncodeTask",
@@ -90,7 +93,7 @@ class TestWorkflowDefinition(unittest.TestCase):
     def test_required_map_states(self):
         """All expected Map states are actually Map type."""
         map_names = [
-            "ColorSolveScoreHistMap", "ColorRasterMap", "ColorFinalizeMap",
+            "ColorSolveScoreHistMap", "ColorAssociatedPaletteMap", "ColorRasterMap", "ColorFinalizeMap",
             "BilevelRasterMap", "BilevelMergeMap",
             "CoeffRasterMap", "CoeffMergeMap",
         ]
@@ -150,7 +153,7 @@ class TestWorkflowDefinition(unittest.TestCase):
 
     def test_stripe_maps_concurrency_10(self):
         """Stripe-based maps must have MaxConcurrency=10."""
-        for name in ["ColorRasterMap", "ColorSolveScoreHistMap",
+        for name in ["ColorRasterMap", "ColorSolveScoreHistMap", "ColorAssociatedPaletteMap",
                       "BilevelRasterMap", "CoeffRasterMap"]:
             mc = self.states[name].get("MaxConcurrency", 0)
             assert mc == 10, f"{name} MaxConcurrency={mc}, expected 10"
@@ -290,6 +293,33 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(raster["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(raster["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
 
+        assoc_choice = self.states["ColorAssociatedPaletteChoice"]
+        self.assertEqual(
+            assoc_choice["Choices"][0]["Variable"],
+            "$.plan.associated_palette.mode",
+        )
+        self.assertEqual(
+            assoc_choice["Choices"][0]["StringEquals"],
+            "generated",
+        )
+
+        assoc_map = self.states["ColorAssociatedPaletteMap"]["ItemSelector"]
+        self.assertEqual(assoc_map["step_start.$"], "$$.Map.Item.Value.step_start")
+        self.assertEqual(assoc_map["step_count.$"], "$$.Map.Item.Value.step_count")
+        self.assertEqual(assoc_map["metric.$"], "$.plan.associated_palette.metric")
+        self.assertEqual(assoc_map["solve_score_quantile.$"], "$.plan.associated_palette.quantile")
+        self.assertEqual(assoc_map["solve_score_omega.$"], "$.plan.associated_palette.omega")
+        self.assertEqual(assoc_map["solve_score_omega_enabled.$"], "$.plan.associated_palette.omega_enabled")
+        self.assertEqual(assoc_map["solve_score_bins_key.$"], "$.plan.solve_score.bins_key")
+
+        assoc_finalize = self.states["ColorAssociatedPaletteFinalizeTask"]["Parameters"]["Payload"]
+        self.assertEqual(assoc_finalize["N.$"], "$.plan.calc.N")
+        self.assertEqual(assoc_finalize["times.$"], "$.plan.calc.times")
+        self.assertEqual(assoc_finalize["metric.$"], "$.plan.associated_palette.metric")
+        self.assertEqual(assoc_finalize["image_key.$"], "$.plan.associated_palette.image_key")
+        self.assertEqual(assoc_finalize["chunk_bins_prefix.$"], "$.plan.associated_palette.chunk_bins_prefix")
+        self.assertEqual(assoc_finalize["cleanup_solve_score_scratch"], False)
+
     def test_color_finalize_and_encode_forward_critical_fields(self):
         finalize = self.states["ColorFinalizeMap"]["ItemSelector"]
         self.assertEqual(finalize["emit_pixel_bins.$"], "$.plan.outputs.repalette_capable")
@@ -318,6 +348,8 @@ class TestWorkflowDefinition(unittest.TestCase):
             "ColorSolveScoreClipPhase",
             "ColorSolveScoreHistPhase",
             "ColorSolveScoreMergePhase",
+            "ColorAssociatedPalettePhase",
+            "ColorAssociatedPaletteFinalizePhase",
             "ColorRasterPhase",
             "ColorFinalizePhase",
             "ColorEncodePhase",

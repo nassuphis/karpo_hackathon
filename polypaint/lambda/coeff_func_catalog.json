@@ -258,6 +258,18 @@
     "kind": "transpiled"
   },
   {
+    "name": "giga_11a",
+    "c_symbol": "giga_11a_c",
+    "source": "giga.py",
+    "kind": "hand"
+  },
+  {
+    "name": "giga_11b",
+    "c_symbol": "giga_11b_c",
+    "source": "poly.py",
+    "kind": "hand"
+  },
+  {
     "name": "giga_13",
     "c_symbol": "poly_giga_13_c",
     "source": "giga.py",

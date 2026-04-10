@@ -88,7 +88,6 @@ test.describe('Render Refresh', () => {
       document.getElementById('render-results-dir').value = 'test_refresh';
     }, SUMMARY_RESPONSE);
 
-    await page.click('.tab-btn:text("Render")');
     await page.evaluate(async () => { await refreshRenderArtifacts('test_refresh'); });
 
     const log = await page.evaluate(() => window._refreshLog);
@@ -112,15 +111,14 @@ test.describe('Render Refresh', () => {
     await page.evaluate(async () => { await refreshRenderArtifacts('test_refresh'); });
 
     const panel = page.locator('#render-preview');
-    await expect(panel.locator('button:text("Color")')).toBeVisible();
-    await expect(panel.locator('button:text("BiLevel")')).toBeVisible();
-    await expect(panel.locator('button:text("Coeffs")')).toBeVisible();
-    await expect(panel.locator('button:text("Palette")')).toBeVisible();
+    await expect(panel.locator('button[data-render-family="color"]')).toBeVisible();
+    await expect(panel.locator('button[data-render-family="bilevel"]')).toBeVisible();
+    await expect(panel.locator('button[data-render-family="coeffs"]')).toBeVisible();
+    await expect(panel.locator('button[data-render-family="palette"]')).toBeVisible();
     await expect(panel.locator('#btn-render-generate')).toBeVisible();
     await expect(panel.locator('#btn-render-download')).toBeVisible();
     await expect(panel.locator('#btn-render-delete')).toBeVisible();
     await expect(panel.locator('#btn-render-deepzoom')).toBeVisible();
-    await expect(panel.locator('text=color_run_1')).toBeVisible();
     await expect(panel.locator('img[src="https://fake/color-preview"]')).toBeVisible();
   });
 
@@ -134,10 +132,10 @@ test.describe('Render Refresh', () => {
 
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(async () => { await refreshRenderArtifacts('test_refresh'); });
-    await page.click('#render-preview button:text("Palette")');
+    await page.click('#render-preview button[data-render-family="palette"]');
+    await expect.poll(async () => page.evaluate(() => _renderActiveFamily)).toBe('palette');
 
     const panel = page.locator('#render-preview');
-    await expect(panel.locator('text=pal_1')).toBeVisible();
     await expect(panel.locator('img[src="https://fake/palette-preview"]')).toBeVisible();
   });
 

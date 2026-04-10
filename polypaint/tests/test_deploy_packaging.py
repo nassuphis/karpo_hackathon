@@ -85,6 +85,21 @@ def _local_dependencies(py_name, seen=None):
 
 
 class TestDeployPackaging(unittest.TestCase):
+    def test_render_workflow_template_substitutes_palette_function_arns_in_both_deploy_paths(self):
+        joined = _joined_shell_lines(DEPLOY_TEXT)
+        matches = list(re.finditer(
+            r'sed -e "s\|\\\$\{PlanFunctionArn\}\|\$\{RENDER_PLAN_ARN\}\|g".*?'
+            r'stepfunctions/render_workflow\.asl\.json\.template > /tmp/render_workflow\.asl\.json',
+            joined,
+        ))
+        self.assertEqual(len(matches), 2, "expected create and update render-workflow sed blocks")
+        for idx, match in enumerate(matches, start=1):
+            block = match.group(0)
+            self.assertIn(r'-e "s|\${PaletteChunkFunctionArn}|${PALETTE_CHUNK_ARN}|g"', block,
+                          f"render workflow sed block {idx} missing PaletteChunkFunctionArn substitution")
+            self.assertIn(r'-e "s|\${PaletteFinalizeFunctionArn}|${PALETTE_FINALIZE_ARN}|g"', block,
+                          f"render workflow sed block {idx} missing PaletteFinalizeFunctionArn substitution")
+
     def test_all_api_gateway_integrations_have_invoke_permission(self):
         joined = _joined_shell_lines(DEPLOY_TEXT)
         integrated = set(re.findall(r'create_integration "\$(\w+)"', joined))

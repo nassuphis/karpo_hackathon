@@ -81,6 +81,23 @@ class TestRenderPlan(unittest.TestCase):
             {"chunk_idx": 2, "bin_key": "renders/j/custom/chunk_two.bin"},
         ]
 
+    @patch("handler_render_plan._storage_call")
+    def test_color_plan_derives_chunk_step_ranges_when_available(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5,
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_count": 10},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "bin_size": 20 * 5 * 2 * 4},
+            ],
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(), None)
+        plan = json.loads(result["body"])
+        assert plan["chunk_items"] == [
+            {"chunk_idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_start": 0, "step_count": 10},
+            {"chunk_idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_start": 10, "step_count": 20},
+        ]
+
     @patch("handler_render_plan._invoke_sync")
     @patch("handler_render_plan._storage_call")
     def test_color_plan_auto_viewport(self, mock_storage, mock_invoke):
@@ -472,6 +489,50 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["raster"]["engine"] == "single"
         assert plan["raster"]["reason"] == "saved_palette"
 
+    @patch("handler_render_plan.s3")
+    @patch("handler_render_plan._storage_call")
+    def test_saved_palette_associated_dependency_metadata(self, mock_storage, mock_s3):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2, "N": 1024, "times": 3,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        source_meta = {
+            "job_id": "j",
+            "palette_id": "pal_src",
+            "display_name": "crowding q=1.0% w=3 reef",
+            "metric": "crowding",
+            "palette": "reef",
+            "solve_score_quantile": 0.01,
+            "solve_score_omega": 3.0,
+            "solve_score_omega_enabled": False,
+            "root_transforms": [["rotate_roots", "0.25"]],
+            "degree": 5,
+            "N": 1024,
+            "times": 3,
+            "render_reusable": True,
+            "data_layout": "chunk_all_pass_v1",
+            "image_key": "renders/j/palettes/pal_src/image.jpeg",
+            "preview_key": "renders/j/palettes/pal_src/preview.png",
+            "chunk_bins_prefix": "renders/j/palettes/pal_src/chunks/palette_bins_chunk_",
+        }
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(source_meta).encode())}
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="saved_palette",
+            saved_palette_id="pal_src",
+            palette="inferno",
+            save_associated_palette=True,
+        ), None)
+        plan = json.loads(result["body"])
+        assert plan["associated_palette"]["enabled"] is True
+        assert plan["associated_palette"]["mode"] == "dependency"
+        assert plan["associated_palette"]["palette_id"] == "pal_src"
+        assert plan["associated_palette"]["image_key"] == "renders/j/palettes/pal_src/image.jpeg"
+        assert plan["outputs"]["metadata"]["associated_palette_mode"] == "dependency"
+        assert plan["outputs"]["metadata"]["associated_palette_id"] == "pal_src"
+        assert plan["outputs"]["metadata"]["associated_palette_image_key"] == "renders/j/palettes/pal_src/image.jpeg"
+        assert plan["outputs"]["metadata"]["associated_palette_omega_enabled"] == "false"
+
     @patch("handler_render_plan._storage_call")
     def test_solve_score_plan_accepts_disabled_omega(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail({
@@ -486,6 +547,60 @@ class TestRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
         assert plan["solve_score"]["omega_enabled"] is False
         assert plan["outputs"]["metadata"]["solve_score_omega_enabled"] == "false"
+
+    @patch("handler_render_plan._storage_call")
+    def test_solve_score_plan_can_generate_associated_palette(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5,
+            "N": 100,
+            "times": 2,
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_count": 6000},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_count": 14000},
+            ],
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="crowding",
+            solve_score_quantile=0.01,
+            solve_score_omega=4,
+            save_associated_palette=True,
+        ), None)
+        plan = json.loads(result["body"])
+        assoc = plan["associated_palette"]
+        assert assoc["enabled"] is True
+        assert assoc["mode"] == "generated"
+        assert assoc["palette_id"] == "pal_color_run_t"
+        assert assoc["image_key"] == "renders/j/palettes/pal_color_run_t/image.jpeg"
+        assert assoc["chunk_bins_prefix"] == "renders/j/palettes/pal_color_run_t/chunks/palette_bins_chunk_"
+        assert plan["calc"]["N"] == 100
+        assert plan["calc"]["times"] == 2
+        assert plan["outputs"]["metadata"]["associated_palette_mode"] == "generated"
+        assert plan["outputs"]["metadata"]["associated_palette_id"] == "pal_color_run_t"
+        assert plan["outputs"]["metadata"]["associated_palette_image_key"] == "renders/j/palettes/pal_color_run_t/image.jpeg"
+        assert plan["outputs"]["metadata"]["associated_palette_omega_enabled"] == "true"
+
+    @patch("handler_render_plan._storage_call")
+    def test_solve_score_associated_palette_requires_chunk_step_metadata(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5,
+            "N": 100,
+            "times": 1,
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin"},
+            ],
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_make_event(
+                color_mode="solve_score",
+                solve_metric="crowding",
+                save_associated_palette=True,
+            ), None)
+        self.assertIn("requires chunk step metadata", str(ctx.exception))
 
     @patch("handler_render_plan.s3")
     @patch("handler_render_plan._storage_call")

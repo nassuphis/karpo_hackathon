@@ -61,7 +61,18 @@ def _draw_image_cover(c, reader, img_size, x, y, w, h):
                 preserveAspectRatio=False, mask='auto')
 
 
-def _draw_text_page(c, title, body, is_right, filename=None, meta=None):
+def _draw_image_contain(c, reader, img_size, x, y, w, h):
+    img_w, img_h = img_size
+    scale = min(w / img_w, h / img_h)
+    draw_w = img_w * scale
+    draw_h = img_h * scale
+    dx = x + (w - draw_w) / 2
+    dy = y + (h - draw_h) / 2
+    c.drawImage(reader, dx, dy, width=draw_w, height=draw_h,
+                preserveAspectRatio=False, mask='auto')
+
+
+def _draw_text_page(c, title, body, is_right, filename=None, meta=None, palette_reader=None, palette_size=None):
     """Draw the text page of a spread.
 
     If `meta` is provided, it overrides `body` with structured render metadata:
@@ -111,12 +122,24 @@ def _draw_text_page(c, title, body, is_right, filename=None, meta=None):
             c.drawCentredString(center_x, y, ln)
             y -= 18
 
+        artifact_y = y - 20
+        if palette_reader and palette_size:
+            palette_side = 50 * mm  # 5 cm square
+            palette_gap = 10 * mm
+            palette_x = center_x - palette_side / 2
+            palette_y = max(trim_y + 26 * mm, y - palette_gap - palette_side)
+            c.setStrokeColorRGB(1, 1, 1)
+            c.setLineWidth(0.5)
+            c.rect(palette_x, palette_y, palette_side, palette_side, fill=0, stroke=1)
+            _draw_image_contain(c, palette_reader, palette_size, palette_x, palette_y, palette_side, palette_side)
+            artifact_y = palette_y - 14
+
         # Artifact ID at the bottom in grey
         artifact_id = meta.get("artifact_id", filename or "")
         if artifact_id:
             c.setFont("Courier", 8)
             c.setFillColorRGB(0.5, 0.5, 0.5)
-            c.drawCentredString(center_x, y - 20, artifact_id)
+            c.drawCentredString(center_x, artifact_y, artifact_id)
     else:
         y = center_y - 20
         if body:
@@ -145,7 +168,7 @@ def _draw_text_page(c, title, body, is_right, filename=None, meta=None):
             c.drawCentredString(center_x, y - 16, filename)
 
 
-def build_color_spread_pdf(image_path, output_pdf_path, title, body=None, filename=None, meta=None):
+def build_color_spread_pdf(image_path, output_pdf_path, title, body=None, filename=None, meta=None, palette_image_path=None):
     """Build a two-page spread PDF: text page (left) + image page (right).
 
     If `meta` is provided (dict with pipeline, viewport, color_mode, degree, artifact_id),
@@ -156,6 +179,10 @@ def build_color_spread_pdf(image_path, output_pdf_path, title, body=None, filena
     output_pdf_path.parent.mkdir(parents=True, exist_ok=True)
 
     reader, img_size = _load_image_rgb(image_path)
+    palette_reader = None
+    palette_size = None
+    if palette_image_path:
+        palette_reader, palette_size = _load_image_rgb(Path(palette_image_path))
 
     c = canvas.Canvas(str(output_pdf_path), pagesize=(SPREAD_W, SPREAD_H))
     c.setTitle(title or image_path.stem)
@@ -164,7 +191,16 @@ def build_color_spread_pdf(image_path, output_pdf_path, title, body=None, filena
     c.saveState()
     c.setFillColor(black)
     c.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
-    _draw_text_page(c, title or "", body or "", is_right=False, filename=filename, meta=meta)
+    _draw_text_page(
+        c,
+        title or "",
+        body or "",
+        is_right=False,
+        filename=filename,
+        meta=meta,
+        palette_reader=palette_reader,
+        palette_size=palette_size,
+    )
     c.restoreState()
 
     c.saveState()

@@ -1,6 +1,71 @@
 // @ts-check
 const { test, expect } = require('@playwright/test');
 
+const RENDER_POPUP_SUMMARY = {
+  families: {
+    color: [
+      {
+        artifact_id: 'color_1',
+        created_at: '2026-03-30T10:00:00Z',
+        image_key: 'renders/test_job/color/color_1/image.jpeg',
+        image_url: 'https://example.com/c.jpeg',
+        preview_url: 'https://example.com/c.png',
+        viewer_url: 'https://example.com/c.png',
+        file_size: 50000,
+        width: 1000,
+        height: 1000,
+        color_mode: 'rainbow',
+        format: 'jpeg',
+      },
+    ],
+    bilevel: [],
+    coeffs: [],
+    palette: [
+      {
+        artifact_id: 'pal_1',
+        palette_id: 'pal_1',
+        created_at: '2026-03-30T12:00:00Z',
+        image_key: 'renders/test_job/palettes/pal_1/image.jpeg',
+        image_url: 'https://example.com/p.jpeg',
+        preview_url: 'https://example.com/p.png',
+        viewer_url: 'https://example.com/p.png',
+        file_size: 40000,
+        width: 1000,
+        height: 1000,
+        metric: 'crowding',
+        palette: 'reef',
+        solve_score_quantile: 0.05,
+        solve_score_omega: 4,
+        solve_score_omega_enabled: true,
+        render_reusable: true,
+        data_layout: 'chunk_all_pass_v1',
+        chunk_bins_prefix: 'renders/test_job/palettes/pal_1/chunks/palette_bins_chunk_',
+        display_name: 'crowding q=5.0% w=4 reef',
+      },
+    ],
+  },
+  calc: { exists: true, N: 4000, degree: 8 },
+  artifacts: {},
+  deepzoom_latest: { exists: false },
+};
+
+async function seedRenderPopupState(page, colorMode = 'solve_score') {
+  await page.evaluate(({ summary, colorMode }) => {
+    window._renderLaunches = [];
+    window._launchRenderOrchestrator = async function(mode, paramsPatch) {
+      window._renderLaunches.push({ mode, paramsPatch: { ...(paramsPatch || {}) } });
+      return {};
+    };
+    document.getElementById('render-results-dir').value = 'test_job';
+    _renderLoadedJobId = 'test_job';
+    renderColorMode = colorMode;
+    renderSolveMetric = 'crowding';
+    renderSolveScorePalette = 'inferno';
+    renderSavedPalette = 'pal_1';
+    renderArtifactPanel('test_job', summary);
+  }, { summary: RENDER_POPUP_SUMMARY, colorMode });
+}
+
 function renderPaletteContainer(mode) {
   if (mode === 'proximity') return '#palette-circles-root-proximity';
   if (mode === 'solve_score') return '#palette-circles-solve-score';
@@ -172,6 +237,8 @@ test.describe('Solve Score UI', () => {
   test('repalette popup uses PAL/TRI/LONG buttons and nested selectors stay accessible', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'j';
+      _renderLoadedJobId = 'j';
       _renderActiveFamily = 'palette';
       _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
       renderArtifactPanel('j', {
@@ -235,6 +302,7 @@ test.describe('Solve Score UI', () => {
     expect(options).toEqual([
       'Proximity', 'Crowding', 'Spread', 'Anisotropy', 'Area',
       'Clusteriness', 'Shelliness', 'Outlierness', 'NN variation', 'Real-axis proximity',
+      'Centroid Re', 'Centroid Im', 'Centroid Dist', 'Dist unit circle', 'Asymmetry Re',
     ]);
   });
 
@@ -543,6 +611,8 @@ test.describe('Solve Score UI', () => {
   test('render panel shows family tabs and selected-artifact actions', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'test_job';
+      _renderLoadedJobId = 'test_job';
       renderArtifactPanel('test_job', {
         families: {
           color: [{ artifact_id: 'color_1', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/test_job/color/color_1/image.jpeg', image_url: 'https://example.com/c.jpeg', preview_url: 'https://example.com/c.png', viewer_url: 'https://example.com/c.png', file_size: 50000, width: 1000, height: 1000, color_mode: 'rainbow', format: 'jpeg' }],
@@ -557,15 +627,16 @@ test.describe('Solve Score UI', () => {
     });
 
     const panel = page.locator('#render-preview');
-    for (const label of ['Color', 'BiLevel', 'Coeffs', 'Palette']) {
-      await expect(panel.locator('button:text("' + label + '")')).toBeVisible();
-    }
+    await expect(panel.locator('button[data-render-family="color"]')).toBeVisible();
+    await expect(panel.locator('button[data-render-family="bilevel"]')).toBeVisible();
+    await expect(panel.locator('button[data-render-family="coeffs"]')).toBeVisible();
+    await expect(panel.locator('button[data-render-family="palette"]')).toBeVisible();
     await expect(panel.locator('#btn-render-generate')).toBeVisible();
     await expect(panel.locator('#btn-render-populate')).toBeVisible();
     await expect(panel.locator('#btn-render-download')).toBeVisible();
     await expect(panel.locator('#btn-render-delete')).toBeVisible();
     await expect(panel.locator('#btn-render-deepzoom')).toBeVisible();
-    await expect(panel.locator('text=color_1')).toBeVisible();
+    await expect(panel.locator('img[src="https://example.com/c.png"]')).toBeVisible();
   });
 
   test('palette family generate is disabled outside solve_score mode', async ({ page }) => {
@@ -587,6 +658,8 @@ test.describe('Solve Score UI', () => {
   test('switching family updates the selected catalog and viewer', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'test_job';
+      _renderLoadedJobId = 'test_job';
       renderArtifactPanel('test_job', {
         families: {
           color: [{ artifact_id: 'color_1', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/test_job/color/color_1/image.jpeg', image_url: 'https://example.com/c.jpeg', preview_url: 'https://example.com/c.png', viewer_url: 'https://example.com/c.png', file_size: 50000, width: 1000, height: 1000, color_mode: 'rainbow', format: 'jpeg' }],
@@ -600,14 +673,16 @@ test.describe('Solve Score UI', () => {
       });
     });
 
-    await page.click('#render-preview button:text("Palette")');
-    await expect(page.locator('#render-preview').getByText('pal_1')).toBeVisible();
+    await page.click('#render-preview button[data-render-family="palette"]');
+    await expect.poll(async () => page.evaluate(() => _renderActiveFamily)).toBe('palette');
     await expect(page.locator('#render-preview img[src="https://example.com/p.png"]')).toBeVisible();
   });
 
   test('palette family populate restores solve-score settings and switches to color', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'test_job';
+      _renderLoadedJobId = 'test_job';
       renderColorMode = 'rainbow';
       renderSolveMetric = 'proximity';
       renderSolveScorePalette = 'inferno';
@@ -631,7 +706,7 @@ test.describe('Solve Score UI', () => {
 
     await page.click('#btn-render-populate');
 
-    await expect(page.locator('#render-preview')).toContainText('color_1');
+    await expect(page.locator('#render-preview img[src="https://example.com/c.png"]')).toBeVisible();
     const state = await page.evaluate(() => ({
       family: _renderActiveFamily,
       mode: renderColorMode,
@@ -659,5 +734,126 @@ test.describe('Solve Score UI', () => {
       });
     });
     await expect(page.locator('#render-preview')).toContainText('No saved artifacts yet.');
+  });
+
+  test('Generate popup exposes associated palette control and dispatches solve-score settings', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await seedRenderPopupState(page, 'solve_score');
+
+    await page.click('#btn-render-generate');
+    const popup = page.locator('#render-generate-popup-overlay');
+    await expect(popup).toBeVisible();
+    await expect(page.locator('#render-generate-hist-row')).toBeVisible();
+    await expect(page.locator('#render-generate-save-associated-palette')).toBeVisible();
+
+    await page.selectOption('#render-generate-hist-input-mode', 'sectioned');
+    await page.check('#render-generate-save-associated-palette');
+    await page.click('#render-generate-popup-run');
+
+    const launches = await page.evaluate(() => window._renderLaunches);
+    expect(launches).toHaveLength(1);
+    expect(launches[0]).toEqual({
+      mode: 'color',
+      paramsPatch: {
+        raster_engine: 'single',
+        solve_score_hist_input_mode: 'sectioned',
+        save_associated_palette: true,
+      },
+    });
+  });
+
+  test('Generate popup hides histogram controls for saved-palette mode', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await seedRenderPopupState(page, 'saved_palette');
+
+    await page.click('#btn-render-generate');
+    const popup = page.locator('#render-generate-popup-overlay');
+    await expect(popup).toBeVisible();
+    await expect(page.locator('#render-generate-hist-row')).toBeHidden();
+    await expect(page.locator('#render-generate-save-associated-palette')).toBeVisible();
+    await expect(page.locator('#render-generate-popup-summary')).toContainText('hist unused');
+  });
+
+  test('Generate-MT popup exposes retries and associated palette and dispatches MT payload', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await seedRenderPopupState(page, 'solve_score');
+
+    await page.click('#btn-render-generate-mt');
+    const popup = page.locator('#render-mt-popup-overlay');
+    await expect(popup).toBeVisible();
+    await expect(page.locator('#render-mt-hist-retries')).toBeVisible();
+    await expect(page.locator('#render-mt-raster-retries')).toBeVisible();
+    await expect(page.locator('#render-mt-save-associated-palette')).toBeVisible();
+
+    await page.fill('#render-mt-solve-score-threads', '6');
+    await page.selectOption('#render-mt-hist-input-mode', 'sectioned');
+    await page.fill('#render-mt-hist-retries', '3');
+    await page.fill('#render-mt-threads', '7');
+    await page.selectOption('#render-mt-raster-input-mode', 'sectioned');
+    await page.fill('#render-mt-raster-retries', '4');
+    await page.fill('#render-mt-merge-workers', '18');
+    await page.fill('#render-mt-finalize-workers', '19');
+    await page.check('#render-mt-save-associated-palette');
+    await page.click('#render-mt-popup-run');
+
+    const launches = await page.evaluate(() => window._renderLaunches);
+    expect(launches).toHaveLength(1);
+    expect(launches[0]).toEqual({
+      mode: 'color',
+      paramsPatch: {
+        raster_engine: 'mt',
+        raster_mt_threads: 7,
+        solve_score_threads: 6,
+        solve_score_hist_input_mode: 'sectioned',
+        solve_score_hist_retries: 3,
+        raster_input_mode: 'sectioned',
+        raster_sectioned_retries: 4,
+        solve_score_merge_workers: 18,
+        finalize_workers: 19,
+        save_associated_palette: true,
+      },
+    });
+  });
+
+  test('GenerateFromPalette popup has raster/finalize controls, no hist row, and dispatches saved-palette MT payload', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await seedRenderPopupState(page, 'solve_score');
+
+    const btn = page.locator('#btn-render-generate-from-palette');
+    await expect(btn).toBeEnabled();
+    await btn.click();
+
+    const popup = page.locator('#generate-from-palette-popup-overlay');
+    await expect(popup).toBeVisible();
+    await expect(page.locator('#generate-from-palette-raster-threads')).toBeVisible();
+    await expect(page.locator('#generate-from-palette-raster-input-mode')).toBeVisible();
+    await expect(page.locator('#generate-from-palette-raster-retries')).toBeVisible();
+    await expect(page.locator('#generate-from-palette-finalize-workers')).toBeVisible();
+    await expect(page.locator('#generate-from-palette-save-associated-palette')).toBeVisible();
+    await expect(popup.getByText('Hist', { exact: true })).toHaveCount(0);
+
+    await page.fill('#generate-from-palette-raster-threads', '8');
+    await page.selectOption('#generate-from-palette-raster-input-mode', 'sectioned');
+    await page.fill('#generate-from-palette-raster-retries', '5');
+    await page.fill('#generate-from-palette-finalize-workers', '21');
+    await page.check('#generate-from-palette-save-associated-palette');
+    await page.click('#generate-from-palette-popup-run');
+
+    const launches = await page.evaluate(() => window._renderLaunches);
+    expect(launches).toHaveLength(1);
+    expect(launches[0]).toEqual({
+      mode: 'color',
+      paramsPatch: {
+        color_mode: 'saved_palette',
+        saved_palette_id: 'pal_1',
+        palette: 'reef',
+        raster_engine: 'mt',
+        raster_mt_threads: 8,
+        raster_input_mode: 'sectioned',
+        raster_sectioned_retries: 5,
+        finalize_workers: 21,
+        save_associated_palette: true,
+      },
+    });
   });
 });

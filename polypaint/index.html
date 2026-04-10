@@ -1387,7 +1387,7 @@ button {
         </div>
         <div id="render-generate-popup-summary" class="autolevel-popup-summary"></div>
         <div style="padding:0 14px 8px 14px">
-            <div class="autolevel-stage-row" style="align-items:center">
+            <div id="render-generate-hist-row" class="autolevel-stage-row" style="align-items:center">
                 <div class="autolevel-stage-text">Choose how each solve-score histogram worker feeds chunk input into the native binary.</div>
                 <div class="autolevel-inline-fields">
                     <span class="inline-label">Histogram input</span>
@@ -1397,8 +1397,17 @@ button {
                     </select>
                 </div>
             </div>
+            <div id="render-generate-associated-row" class="autolevel-stage-row" style="align-items:center">
+                <div class="autolevel-stage-text">Keep the palette used for this Color render attached to the resulting image artifact.</div>
+                <div class="autolevel-inline-fields">
+                    <label class="inline-label" style="display:flex; align-items:center; gap:6px">
+                        <input id="render-generate-save-associated-palette" type="checkbox">
+                        <span>Save Associated Palette</span>
+                    </label>
+                </div>
+            </div>
         </div>
-        <div class="autolevel-popup-help">Only used for Solve score renders. It lets you compare the existing temp-file path against the native sectioned range-download path inside the histogram worker.</div>
+        <div id="render-generate-popup-help" class="autolevel-popup-help">Only used for Solve score renders. It lets you compare the existing temp-file path against the native sectioned range-download path inside the histogram worker.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -1455,6 +1464,15 @@ button {
                 <input id="render-mt-finalize-workers" type="number" min="1" max="64" step="1" value="16">
                 <div class="render-mt-matrix-empty" aria-hidden="true">sdk</div>
             </div>
+            <div id="render-mt-associated-row" class="autolevel-stage-row" style="align-items:center; margin-top:10px">
+                <div class="autolevel-stage-text">Attach the palette artifact used for this Color render.</div>
+                <div class="autolevel-inline-fields">
+                    <label class="inline-label" style="display:flex; align-items:center; gap:6px">
+                        <input id="render-mt-save-associated-palette" type="checkbox">
+                        <span>Save Associated Palette</span>
+                    </label>
+                </div>
+            </div>
         </div>
         <div class="autolevel-popup-help">Use this to compare the native multithreaded path against normal Generate. Raster MT supports Solve score, Saved palette, Constant, and Rainbow with match=none. Hist controls and merge workers only matter for Solve score mode. Finalize workers apply to all MT color renders. Retries only apply to the native sectioned libcurl readers in Hist and Raster; Merge and Finalize already use SDK-managed S3 retries.</div>
         <div class="autolevel-popup-actions">
@@ -1488,7 +1506,40 @@ button {
         <div style="margin:10px 14px 12px 14px">
             <div id="palette-circles-generate-from-palette" style="display:flex; flex-wrap:wrap; gap:8px"></div>
         </div>
-        <div class="autolevel-popup-help">Reuses the selected palette artifact’s saved bin assignment and lets you choose a different output colorvector.</div>
+        <div style="padding:0 14px 8px 14px">
+            <div class="render-mt-matrix">
+                <div></div>
+                <div class="render-mt-matrix-head">Threads</div>
+                <div class="render-mt-matrix-head">Input</div>
+                <div class="render-mt-matrix-head">Workers</div>
+                <div class="render-mt-matrix-head">Retries</div>
+
+                <div class="render-mt-matrix-stage">Raster</div>
+                <input id="generate-from-palette-raster-threads" type="number" min="1" max="16" step="1" value="4">
+                <select id="generate-from-palette-raster-input-mode">
+                    <option value="tmpfile">tmp file</option>
+                    <option value="sectioned">sectioned native</option>
+                </select>
+                <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+                <input id="generate-from-palette-raster-retries" type="number" min="0" max="10" step="1" value="2">
+
+                <div class="render-mt-matrix-stage">Finalize</div>
+                <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+                <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+                <input id="generate-from-palette-finalize-workers" type="number" min="1" max="64" step="1" value="16">
+                <div class="render-mt-matrix-empty" aria-hidden="true">sdk</div>
+            </div>
+            <div class="autolevel-stage-row" style="align-items:center; margin-top:10px">
+                <div class="autolevel-stage-text">Record the selected source palette as an associated dependency on the new Color artifact.</div>
+                <div class="autolevel-inline-fields">
+                    <label class="inline-label" style="display:flex; align-items:center; gap:6px">
+                        <input id="generate-from-palette-save-associated-palette" type="checkbox">
+                        <span>Save Associated Palette</span>
+                    </label>
+                </div>
+            </div>
+        </div>
+        <div id="generate-from-palette-popup-help" class="autolevel-popup-help">Reuses the selected palette artifact’s saved bin assignment and lets you choose a different output colorvector. This path skips solve-score histogram work and only tunes raster/finalize execution.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -2048,7 +2099,7 @@ async function _favoritesDlMenuAction(mode) {
     const jobId = art.favorite_job_id;
     const imageFilename = _favoriteArtifactFilename(art);
     const metaFilename = imageFilename.replace(/\.[^.]+$/, '_meta.json');
-    const metaObj = await _buildArtifactMeta(jobId, art);
+    const metaObj = await _buildArtifactMeta(jobId, art, { imageFilename, paletteFilename: '' });
     const metaBlob = new Blob([JSON.stringify(metaObj, null, 2)], { type: 'application/json' });
     if (_favoriteSaveDirHandle) {
         const btn = document.getElementById('btn-favorites-download');
@@ -3060,6 +3111,33 @@ async function downloadPresignedFile(originalUrl, filename, explicitKey, clickEv
         if (btn) { btn.disabled = false; btn.textContent = origText; }
     }
 }
+
+async function _presignStorageKey(key, filename) {
+    return await lambdaPost('storage', { key, filename }, '/presign');
+}
+
+async function _fetchStorageBlob(key, filename) {
+    const presign = await _presignStorageKey(key, filename);
+    const resp = await fetch(presign.url);
+    if (!resp.ok) throw new Error(`Download failed: ${resp.status}`);
+    return await resp.blob();
+}
+
+function _downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+async function _downloadStorageKeyBlob(key, filename) {
+    const blob = await _fetchStorageBlob(key, filename);
+    _downloadBlob(blob, filename);
+}
 let _lastDownloadKey = null;
 
 // Concurrency-limited parallel execution (prevents browser connection exhaustion)
@@ -3140,7 +3218,7 @@ let _resizePopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' 
 let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
 let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '' };
 let _resultsRefreshPopupState = { open: false, workers: 32 };
-let _renderGeneratePopupState = { open: false, histInputMode: 'tmpfile' };
+let _renderGeneratePopupState = { open: false, histInputMode: 'tmpfile', saveAssociatedPalette: false };
 let _renderMtPopupState = {
     open: false,
     rasterThreads: 4,
@@ -3151,8 +3229,19 @@ let _renderMtPopupState = {
     rasterRetries: 2,
     mergeWorkers: 16,
     finalizeWorkers: 16,
+    saveAssociatedPalette: false,
 };
-let _generateFromPalettePopupState = { open: false, filter: '', highlightIdx: 0, sourcePaletteId: '' };
+let _generateFromPalettePopupState = {
+    open: false,
+    filter: '',
+    highlightIdx: 0,
+    sourcePaletteId: '',
+    rasterThreads: 4,
+    rasterInputMode: 'tmpfile',
+    rasterRetries: 2,
+    finalizeWorkers: 16,
+    saveAssociatedPalette: false,
+};
 let _pdfColorSpreadPopupState = { open: false, filter: '', highlightIdx: 0, sourceArtifactId: '' };
 let _functionPopupState = { open: false, filter: '', highlightIdx: 0 };
 
@@ -4279,6 +4368,7 @@ function _closeRenderGeneratePopup() {
     _renderGeneratePopupState = {
         open: false,
         histInputMode: _normalizeSolveScoreHistInputMode(_renderGeneratePopupState.histInputMode),
+        saveAssociatedPalette: !!_renderGeneratePopupState.saveAssociatedPalette,
     };
     const overlay = document.getElementById('render-generate-popup-overlay');
     if (overlay) {
@@ -4291,18 +4381,41 @@ function _renderRenderGeneratePopup() {
     const overlay = document.getElementById('render-generate-popup-overlay');
     const summaryEl = document.getElementById('render-generate-popup-summary');
     const inputModeEl = document.getElementById('render-generate-hist-input-mode');
+    const histRowEl = document.getElementById('render-generate-hist-row');
+    const helpEl = document.getElementById('render-generate-popup-help');
+    const assocRowEl = document.getElementById('render-generate-associated-row');
+    const assocEl = document.getElementById('render-generate-save-associated-palette');
     const runBtn = document.getElementById('render-generate-popup-run');
     if (!overlay || !summaryEl || !inputModeEl) return;
     if (!_renderGeneratePopupState.open) {
         _closeRenderGeneratePopup();
         return;
     }
+    const mode = renderColorMode;
+    const solveScoreRelevant = mode === 'solve_score';
+    const assocAllowed = _associatedPaletteAllowedForColorMode(mode);
     const inputMode = _normalizeSolveScoreHistInputMode(_renderGeneratePopupState.histInputMode);
     _renderGeneratePopupState.histInputMode = inputMode;
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
     inputModeEl.value = inputMode;
-    summaryEl.textContent = `Mode: Solve score • output ${document.getElementById('render-pix').value || '?'} px • histogram input=${inputMode}`;
+    if (histRowEl) histRowEl.style.display = solveScoreRelevant ? '' : 'none';
+    if (inputModeEl) inputModeEl.disabled = !solveScoreRelevant;
+    if (assocRowEl) assocRowEl.style.display = assocAllowed ? '' : 'none';
+    if (assocEl) {
+        assocEl.checked = !!_renderGeneratePopupState.saveAssociatedPalette;
+        assocEl.disabled = !assocAllowed;
+    }
+    const modeLabel = mode.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+    const assocLabel = assocAllowed ? (assocEl && assocEl.checked ? 'yes' : 'no') : 'n/a';
+    summaryEl.textContent = solveScoreRelevant
+        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • histogram input=${inputMode} • associated palette=${assocLabel}`
+        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • hist unused • associated palette=${assocLabel}`;
+    if (helpEl) {
+        helpEl.textContent = solveScoreRelevant
+            ? 'Only used for Solve score renders. It lets you compare the existing temp-file path against the native sectioned range-download path inside the histogram worker.'
+            : 'Saved-palette Generate reuses the selected palette artifact’s persisted bins. Histogram controls are unused here.';
+    }
     if (runBtn) runBtn.disabled = !!_activeRenderRun;
 }
 
@@ -4311,10 +4424,13 @@ function openRenderGeneratePopup() {
     _renderGeneratePopupState = {
         open: true,
         histInputMode: _normalizeSolveScoreHistInputMode(_renderGeneratePopupState.histInputMode || 'tmpfile'),
+        saveAssociatedPalette: !!_renderGeneratePopupState.saveAssociatedPalette,
     };
     _renderRenderGeneratePopup();
     const inputModeEl = document.getElementById('render-generate-hist-input-mode');
-    if (inputModeEl && typeof inputModeEl.focus === 'function') inputModeEl.focus();
+    const assocEl = document.getElementById('render-generate-save-associated-palette');
+    const focusEl = renderColorMode === 'solve_score' ? inputModeEl : assocEl;
+    if (focusEl && typeof focusEl.focus === 'function') focusEl.focus();
 }
 
 function _closeRenderMtPopup() {
@@ -4328,6 +4444,7 @@ function _closeRenderMtPopup() {
         rasterRetries: _clampRenderMtRetries(_renderMtPopupState.rasterRetries),
         mergeWorkers: _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers),
         finalizeWorkers: _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers),
+        saveAssociatedPalette: !!_renderMtPopupState.saveAssociatedPalette,
     };
     const overlay = document.getElementById('render-mt-popup-overlay');
     if (overlay) {
@@ -4347,6 +4464,8 @@ function _renderRenderMtPopup() {
     const rasterRetriesEl = document.getElementById('render-mt-raster-retries');
     const mergeWorkersEl = document.getElementById('render-mt-merge-workers');
     const finalizeWorkersEl = document.getElementById('render-mt-finalize-workers');
+    const assocRowEl = document.getElementById('render-mt-associated-row');
+    const assocEl = document.getElementById('render-mt-save-associated-palette');
     const runBtn = document.getElementById('render-mt-popup-run');
     if (!overlay || !summaryEl || !threadsEl || !solveScoreThreadsEl || !histInputModeEl || !histRetriesEl || !rasterInputModeEl || !rasterRetriesEl || !mergeWorkersEl || !finalizeWorkersEl) return;
     if (!_renderMtPopupState.open) {
@@ -4361,7 +4480,9 @@ function _renderRenderMtPopup() {
     const rasterRetries = _clampRenderMtRetries(_renderMtPopupState.rasterRetries);
     const mergeWorkers = _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers);
     const finalizeWorkers = _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers);
+    const saveAssociatedPalette = !!_renderMtPopupState.saveAssociatedPalette;
     const solveScoreRelevant = renderColorMode === 'solve_score';
+    const assocAllowed = _associatedPaletteAllowedForColorMode(renderColorMode);
     _renderMtPopupState.rasterThreads = threads;
     _renderMtPopupState.solveScoreThreads = solveScoreThreads;
     _renderMtPopupState.histInputMode = histInputMode;
@@ -4370,6 +4491,7 @@ function _renderRenderMtPopup() {
     _renderMtPopupState.rasterRetries = rasterRetries;
     _renderMtPopupState.mergeWorkers = mergeWorkers;
     _renderMtPopupState.finalizeWorkers = finalizeWorkers;
+    _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
     threadsEl.value = String(threads);
@@ -4386,12 +4508,18 @@ function _renderRenderMtPopup() {
     mergeWorkersEl.disabled = !solveScoreRelevant;
     finalizeWorkersEl.disabled = false;
     rasterRetriesEl.disabled = rasterInputMode !== 'sectioned';
+    if (assocRowEl) assocRowEl.style.display = assocAllowed ? '' : 'none';
+    if (assocEl) {
+        assocEl.checked = saveAssociatedPalette;
+        assocEl.disabled = !assocAllowed;
+    }
     const modeLabel = renderColorMode === 'rainbow'
         ? `Rainbow (${renderMatchMode})`
         : renderColorMode.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+    const assocLabel = assocAllowed ? (saveAssociatedPalette ? 'yes' : 'no') : 'n/a';
     summaryEl.textContent = solveScoreRelevant
-        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • hist threads=${solveScoreThreads} • hist input=${histInputMode} • hist retries=${histRetries} • merge workers=${mergeWorkers} • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • finalize workers=${finalizeWorkers}`
-        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • finalize workers=${finalizeWorkers} • hist unused • merge unused`;
+        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • hist threads=${solveScoreThreads} • hist input=${histInputMode} • hist retries=${histRetries} • merge workers=${mergeWorkers} • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • finalize workers=${finalizeWorkers} • associated palette=${assocLabel}`
+        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • finalize workers=${finalizeWorkers} • hist unused • merge unused • associated palette=${assocLabel}`;
     if (runBtn) runBtn.disabled = !_renderColorMtEligible() || !!_activeRenderRun;
 }
 
@@ -4407,6 +4535,7 @@ function openRenderMtPopup() {
         rasterRetries: _clampRenderMtRetries(_renderMtPopupState.rasterRetries ?? 2),
         mergeWorkers: _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers || 16),
         finalizeWorkers: _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers || 16),
+        saveAssociatedPalette: !!_renderMtPopupState.saveAssociatedPalette,
     };
     _renderRenderMtPopup();
     const threadsEl = document.getElementById('render-mt-threads');
@@ -4432,7 +4561,17 @@ function _closeGenerateFromPalettePopup() {
     _closeBuiltinPalettePopup();
     _closeTriPalettePopup();
     _closeLongPalettePopup();
-    _generateFromPalettePopupState = { open: false, filter: '', highlightIdx: 0, sourcePaletteId: '' };
+    _generateFromPalettePopupState = {
+        open: false,
+        filter: '',
+        highlightIdx: 0,
+        sourcePaletteId: '',
+        rasterThreads: _clampRenderMtThreads(_generateFromPalettePopupState.rasterThreads),
+        rasterInputMode: _normalizeRasterInputMode(_generateFromPalettePopupState.rasterInputMode),
+        rasterRetries: _clampRenderMtRetries(_generateFromPalettePopupState.rasterRetries),
+        finalizeWorkers: _clampRenderMtFinalizeWorkers(_generateFromPalettePopupState.finalizeWorkers),
+        saveAssociatedPalette: !!_generateFromPalettePopupState.saveAssociatedPalette,
+    };
     const overlay = document.getElementById('generate-from-palette-popup-overlay');
     const filter = document.getElementById('generate-from-palette-popup-filter');
     if (overlay) {
@@ -4449,6 +4588,11 @@ function _renderGenerateFromPalettePopup() {
     const summaryEl = document.getElementById('generate-from-palette-popup-summary');
     const runBtn = document.getElementById('generate-from-palette-popup-run');
     const paletteRowEl = document.getElementById('palette-circles-generate-from-palette');
+    const rasterThreadsEl = document.getElementById('generate-from-palette-raster-threads');
+    const rasterInputModeEl = document.getElementById('generate-from-palette-raster-input-mode');
+    const rasterRetriesEl = document.getElementById('generate-from-palette-raster-retries');
+    const finalizeWorkersEl = document.getElementById('generate-from-palette-finalize-workers');
+    const assocEl = document.getElementById('generate-from-palette-save-associated-palette');
     if (!overlay || !bodyEl || !filterEl || !summaryEl) return;
     if (!_generateFromPalettePopupState.open) {
         _closeGenerateFromPalettePopup();
@@ -4461,6 +4605,14 @@ function _renderGenerateFromPalettePopup() {
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
     filterEl.value = _generateFromPalettePopupState.filter || '';
+    if (rasterThreadsEl) rasterThreadsEl.value = String(_clampRenderMtThreads(_generateFromPalettePopupState.rasterThreads));
+    if (rasterInputModeEl) rasterInputModeEl.value = _normalizeRasterInputMode(_generateFromPalettePopupState.rasterInputMode);
+    if (rasterRetriesEl) {
+        rasterRetriesEl.value = String(_clampRenderMtRetries(_generateFromPalettePopupState.rasterRetries));
+        rasterRetriesEl.disabled = _normalizeRasterInputMode(_generateFromPalettePopupState.rasterInputMode) !== 'sectioned';
+    }
+    if (finalizeWorkersEl) finalizeWorkersEl.value = String(_clampRenderMtFinalizeWorkers(_generateFromPalettePopupState.finalizeWorkers));
+    if (assocEl) assocEl.checked = !!_generateFromPalettePopupState.saveAssociatedPalette;
     bodyEl.replaceChildren();
 
     if (!visible.length) {
@@ -4525,8 +4677,13 @@ function _renderGenerateFromPalettePopup() {
     }
     _renderPaletteRow('generate_from_palette');
     const outputPalette = _currentPaletteForMode('generate_from_palette') || (selected && selected.palette) || '';
+    const rasterThreads = _clampRenderMtThreads(_generateFromPalettePopupState.rasterThreads);
+    const rasterInputMode = _normalizeRasterInputMode(_generateFromPalettePopupState.rasterInputMode);
+    const rasterRetries = _clampRenderMtRetries(_generateFromPalettePopupState.rasterRetries);
+    const finalizeWorkers = _clampRenderMtFinalizeWorkers(_generateFromPalettePopupState.finalizeWorkers);
+    const assocLabel = _generateFromPalettePopupState.saveAssociatedPalette ? 'yes' : 'no';
     summaryEl.textContent = selected
-        ? `Bins: ${selected.display_name || selected.palette_id} • source palette=${selected.palette || '?'} • metric=${selected.metric || '?'} • output colorvector=${outputPalette || '?'}`
+        ? `Bins: ${selected.display_name || selected.palette_id} • source palette=${selected.palette || '?'} • metric=${selected.metric || '?'} • output colorvector=${outputPalette || '?'} • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${rasterThreads} • finalize workers=${finalizeWorkers} • associated palette=${assocLabel}`
         : 'Select a reusable saved palette artifact to drive a new Color render.';
     if (runBtn) runBtn.disabled = !selected;
 }
@@ -4537,7 +4694,17 @@ function openGenerateFromPalettePopup() {
     _syncBuiltinDefaults();
     _syncTriDefaults();
     _syncLongDefaults();
-    _generateFromPalettePopupState = { open: true, filter: '', highlightIdx: 0, sourcePaletteId: '' };
+    _generateFromPalettePopupState = {
+        open: true,
+        filter: '',
+        highlightIdx: 0,
+        sourcePaletteId: '',
+        rasterThreads: _clampRenderMtThreads(_generateFromPalettePopupState.rasterThreads || 4),
+        rasterInputMode: _normalizeRasterInputMode(_generateFromPalettePopupState.rasterInputMode || 'tmpfile'),
+        rasterRetries: _clampRenderMtRetries(_generateFromPalettePopupState.rasterRetries ?? 2),
+        finalizeWorkers: _clampRenderMtFinalizeWorkers(_generateFromPalettePopupState.finalizeWorkers || 16),
+        saveAssociatedPalette: !!_generateFromPalettePopupState.saveAssociatedPalette,
+    };
     _renderGenerateFromPalettePopup();
     const filter = document.getElementById('generate-from-palette-popup-filter');
     if (filter && typeof filter.focus === 'function') filter.focus();
@@ -4560,11 +4727,27 @@ async function runGenerateFromPaletteSelected() {
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Executing...'; }
         const paletteName = _currentPaletteForMode('generate_from_palette') || art.palette || 'inferno';
+        const rasterThreads = _clampRenderMtThreads(document.getElementById('generate-from-palette-raster-threads').value);
+        const rasterInputMode = _normalizeRasterInputMode(document.getElementById('generate-from-palette-raster-input-mode').value);
+        const rasterRetries = _clampRenderMtRetries(document.getElementById('generate-from-palette-raster-retries').value);
+        const finalizeWorkers = _clampRenderMtFinalizeWorkers(document.getElementById('generate-from-palette-finalize-workers').value);
+        const saveAssociatedPalette = !!document.getElementById('generate-from-palette-save-associated-palette').checked;
+        _generateFromPalettePopupState.rasterThreads = rasterThreads;
+        _generateFromPalettePopupState.rasterInputMode = rasterInputMode;
+        _generateFromPalettePopupState.rasterRetries = rasterRetries;
+        _generateFromPalettePopupState.finalizeWorkers = finalizeWorkers;
+        _generateFromPalettePopupState.saveAssociatedPalette = saveAssociatedPalette;
         _closeGenerateFromPalettePopup();
         await _launchRenderOrchestrator('color', {
             color_mode: 'saved_palette',
             saved_palette_id: art.palette_id,
             palette: paletteName,
+            raster_engine: 'mt',
+            raster_mt_threads: rasterThreads,
+            raster_input_mode: rasterInputMode,
+            raster_sectioned_retries: rasterRetries,
+            finalize_workers: finalizeWorkers,
+            save_associated_palette: saveAssociatedPalette,
         });
     } catch (e) {
         const statusEl = document.getElementById('render-status');
@@ -4801,6 +4984,7 @@ function _initRenderMtPopup() {
     const rasterRetriesEl = document.getElementById('render-mt-raster-retries');
     const mergeWorkersEl = document.getElementById('render-mt-merge-workers');
     const finalizeWorkersEl = document.getElementById('render-mt-finalize-workers');
+    const assocEl = document.getElementById('render-mt-save-associated-palette');
     if (overlay) {
         overlay.addEventListener('click', (ev) => {
             if (ev.target === overlay) _closeRenderMtPopup();
@@ -4856,6 +5040,12 @@ function _initRenderMtPopup() {
             _renderRenderMtPopup();
         });
     }
+    if (assocEl) {
+        assocEl.addEventListener('change', (ev) => {
+            _renderMtPopupState.saveAssociatedPalette = !!ev.target.checked;
+            _renderRenderMtPopup();
+        });
+    }
     if (runBtn) {
         runBtn.addEventListener('click', async () => {
             const btnText = runBtn.textContent;
@@ -4870,6 +5060,7 @@ function _initRenderMtPopup() {
                 const rasterRetries = _clampRenderMtRetries(document.getElementById('render-mt-raster-retries').value);
                 const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('render-mt-merge-workers').value);
                 const finalizeWorkers = _clampRenderMtFinalizeWorkers(document.getElementById('render-mt-finalize-workers').value);
+                const saveAssociatedPalette = !!document.getElementById('render-mt-save-associated-palette').checked;
                 _renderMtPopupState.rasterThreads = rasterThreads;
                 _renderMtPopupState.solveScoreThreads = solveScoreThreads;
                 _renderMtPopupState.histInputMode = histInputMode;
@@ -4878,8 +5069,9 @@ function _initRenderMtPopup() {
                 _renderMtPopupState.rasterRetries = rasterRetries;
                 _renderMtPopupState.mergeWorkers = mergeWorkers;
                 _renderMtPopupState.finalizeWorkers = finalizeWorkers;
+                _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
                 _closeRenderMtPopup();
-                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, mergeWorkers, finalizeWorkers });
+                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, mergeWorkers, finalizeWorkers, saveAssociatedPalette });
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = btnText;
@@ -4903,6 +5095,7 @@ function _initRenderMtPopup() {
             const rasterRetries = _clampRenderMtRetries(document.getElementById('render-mt-raster-retries').value);
             const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('render-mt-merge-workers').value);
             const finalizeWorkers = _clampRenderMtFinalizeWorkers(document.getElementById('render-mt-finalize-workers').value);
+            const saveAssociatedPalette = !!document.getElementById('render-mt-save-associated-palette').checked;
             _renderMtPopupState.rasterThreads = rasterThreads;
             _renderMtPopupState.solveScoreThreads = solveScoreThreads;
             _renderMtPopupState.histInputMode = histInputMode;
@@ -4911,8 +5104,9 @@ function _initRenderMtPopup() {
             _renderMtPopupState.rasterRetries = rasterRetries;
             _renderMtPopupState.mergeWorkers = mergeWorkers;
             _renderMtPopupState.finalizeWorkers = finalizeWorkers;
+            _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
             _closeRenderMtPopup();
-            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, mergeWorkers, finalizeWorkers });
+            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, mergeWorkers, finalizeWorkers, saveAssociatedPalette });
         }
     });
 }
@@ -4975,6 +5169,7 @@ function _initRenderGeneratePopup() {
     const cancelBtn = document.getElementById('render-generate-popup-cancel');
     const runBtn = document.getElementById('render-generate-popup-run');
     const inputModeEl = document.getElementById('render-generate-hist-input-mode');
+    const assocEl = document.getElementById('render-generate-save-associated-palette');
     if (overlay) {
         overlay.addEventListener('click', (ev) => {
             if (ev.target === overlay) _closeRenderGeneratePopup();
@@ -4988,6 +5183,12 @@ function _initRenderGeneratePopup() {
             _renderRenderGeneratePopup();
         });
     }
+    if (assocEl) {
+        assocEl.addEventListener('change', (ev) => {
+            _renderGeneratePopupState.saveAssociatedPalette = !!ev.target.checked;
+            _renderRenderGeneratePopup();
+        });
+    }
     if (runBtn) {
         runBtn.addEventListener('click', async () => {
             const btnText = runBtn.textContent;
@@ -4995,9 +5196,11 @@ function _initRenderGeneratePopup() {
                 runBtn.disabled = true;
                 runBtn.textContent = 'Executing...';
                 const histInputMode = _normalizeSolveScoreHistInputMode(document.getElementById('render-generate-hist-input-mode').value);
+                const saveAssociatedPalette = !!document.getElementById('render-generate-save-associated-palette').checked;
                 _renderGeneratePopupState.histInputMode = histInputMode;
+                _renderGeneratePopupState.saveAssociatedPalette = saveAssociatedPalette;
                 _closeRenderGeneratePopup();
-                await runRasterPipeline({ histInputMode });
+                await runRasterPipeline({ histInputMode, saveAssociatedPalette });
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = btnText;
@@ -5014,9 +5217,11 @@ function _initRenderGeneratePopup() {
         if (ev.key === 'Enter') {
             ev.preventDefault();
             const histInputMode = _normalizeSolveScoreHistInputMode(document.getElementById('render-generate-hist-input-mode').value);
+            const saveAssociatedPalette = !!document.getElementById('render-generate-save-associated-palette').checked;
             _renderGeneratePopupState.histInputMode = histInputMode;
+            _renderGeneratePopupState.saveAssociatedPalette = saveAssociatedPalette;
             _closeRenderGeneratePopup();
-            runRasterPipeline({ histInputMode });
+            runRasterPipeline({ histInputMode, saveAssociatedPalette });
         }
     });
 }
@@ -5027,6 +5232,11 @@ function _initGenerateFromPalettePopup() {
     const cancelBtn = document.getElementById('generate-from-palette-popup-cancel');
     const runBtn = document.getElementById('generate-from-palette-popup-run');
     const filterEl = document.getElementById('generate-from-palette-popup-filter');
+    const rasterThreadsEl = document.getElementById('generate-from-palette-raster-threads');
+    const rasterInputModeEl = document.getElementById('generate-from-palette-raster-input-mode');
+    const rasterRetriesEl = document.getElementById('generate-from-palette-raster-retries');
+    const finalizeWorkersEl = document.getElementById('generate-from-palette-finalize-workers');
+    const assocEl = document.getElementById('generate-from-palette-save-associated-palette');
     if (overlay) {
         overlay.addEventListener('click', (ev) => {
             if (ev.target === overlay) _closeGenerateFromPalettePopup();
@@ -5036,6 +5246,36 @@ function _initGenerateFromPalettePopup() {
     if (cancelBtn) cancelBtn.addEventListener('click', _closeGenerateFromPalettePopup);
     if (runBtn) runBtn.addEventListener('click', runGenerateFromPaletteSelected);
     if (filterEl) filterEl.addEventListener('input', (ev) => _applyGenerateFromPaletteFilter(ev.target.value));
+    if (rasterThreadsEl) {
+        rasterThreadsEl.addEventListener('input', (ev) => {
+            _generateFromPalettePopupState.rasterThreads = _clampRenderMtThreads(ev.target.value);
+            _renderGenerateFromPalettePopup();
+        });
+    }
+    if (rasterInputModeEl) {
+        rasterInputModeEl.addEventListener('change', (ev) => {
+            _generateFromPalettePopupState.rasterInputMode = _normalizeRasterInputMode(ev.target.value);
+            _renderGenerateFromPalettePopup();
+        });
+    }
+    if (rasterRetriesEl) {
+        rasterRetriesEl.addEventListener('input', (ev) => {
+            _generateFromPalettePopupState.rasterRetries = _clampRenderMtRetries(ev.target.value);
+            _renderGenerateFromPalettePopup();
+        });
+    }
+    if (finalizeWorkersEl) {
+        finalizeWorkersEl.addEventListener('input', (ev) => {
+            _generateFromPalettePopupState.finalizeWorkers = _clampRenderMtFinalizeWorkers(ev.target.value);
+            _renderGenerateFromPalettePopup();
+        });
+    }
+    if (assocEl) {
+        assocEl.addEventListener('change', (ev) => {
+            _generateFromPalettePopupState.saveAssociatedPalette = !!ev.target.checked;
+            _renderGenerateFromPalettePopup();
+        });
+    }
     document.addEventListener('keydown', (ev) => {
         if (!_generateFromPalettePopupState.open) return;
         const visible = _visibleGenerateFromPaletteCatalog();
@@ -6394,6 +6634,10 @@ function _renderColorMtEligible() {
     return false;
 }
 
+function _associatedPaletteAllowedForColorMode(mode) {
+    return mode === 'solve_score' || mode === 'saved_palette';
+}
+
 function _paletteRootTransforms() {
     return _paletteRtChain.map(item =>
         item.params && item.params.length ? [item.name, ...item.params] : [item.name]);
@@ -6920,6 +7164,7 @@ async function _launchRenderOrchestrator(mode, paramsPatch = null) {
             solve_score_hist_input_mode: solveScoreHistInputMode,
             match_mode: renderMatchMode,
             palette: _activeRenderPalette() || 'inferno',
+            save_associated_palette: false,
             root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
         },
     };
@@ -6963,12 +7208,20 @@ async function runRasterPipeline(config = null) {
                     : _renderGeneratePopupState.histInputMode
             )
             : 'tmpfile';
+        const saveAssociatedPalette = !!(
+            config && typeof config === 'object' && config.saveAssociatedPalette != null
+                ? config.saveAssociatedPalette
+                : _renderGeneratePopupState.saveAssociatedPalette
+        );
         if (renderColorMode === 'solve_score') {
-            log(`Render: dispatching with solve score hist input=${histInputMode}...`, 'ok', 'render-log');
+            log(`Render: dispatching with solve score hist input=${histInputMode}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}...`, 'ok', 'render-log');
+        } else if (renderColorMode === 'saved_palette') {
+            log(`Render: dispatching saved-palette render, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}...`, 'ok', 'render-log');
         }
         await _launchRenderOrchestrator('color', {
             raster_engine: 'single',
             solve_score_hist_input_mode: histInputMode,
+            save_associated_palette: saveAssociatedPalette,
         });
     } catch (e) {
         document.getElementById('render-status').textContent = 'Render error: ' + e.message;
@@ -7026,11 +7279,16 @@ async function runRasterPipelineMT(threadConfig = null) {
                 ? threadConfig.finalizeWorkers
                 : _renderMtPopupState.finalizeWorkers
         );
+        const saveAssociatedPalette = !!(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.saveAssociatedPalette != null
+                ? threadConfig.saveAssociatedPalette
+                : _renderMtPopupState.saveAssociatedPalette
+        );
         const relevantSolveScoreThreads = renderColorMode === 'solve_score' ? solveScoreThreads : 1;
         const relevantMergeWorkers = renderColorMode === 'solve_score' ? mergeWorkers : 1;
         const mtMsg = renderColorMode === 'solve_score'
-            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, hist retries=${histRetries}, merge workers=${relevantMergeWorkers}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, finalize workers=${finalizeWorkers}...`
-            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, finalize workers=${finalizeWorkers}...`;
+            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, hist retries=${histRetries}, merge workers=${relevantMergeWorkers}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}...`
+            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}...`;
         log(mtMsg, 'ok', 'render-log');
         await _launchRenderOrchestrator('color', {
             raster_engine: 'mt',
@@ -7042,6 +7300,7 @@ async function runRasterPipelineMT(threadConfig = null) {
             solve_score_hist_retries: histRetries,
             solve_score_merge_workers: relevantMergeWorkers,
             finalize_workers: finalizeWorkers,
+            save_associated_palette: saveAssociatedPalette,
         });
     } catch (e) {
         document.getElementById('render-status').textContent = 'Render-MT error: ' + e.message;
@@ -8345,12 +8604,16 @@ document.addEventListener('click', function(e) {
     }
 });
 
-async function _buildArtifactMeta(jobId, art) {
+async function _buildArtifactMeta(jobId, art, options = {}) {
+    const imageFilename = String(options.imageFilename || '').trim() || String(art?.image_key || '').split('/').pop() || '';
+    const paletteFilename = String(options.paletteFilename || '').trim() || String(art?.associated_palette_image_key || '').split('/').pop() || '';
     const metaObj = {};
     for (const [k, v] of Object.entries(art)) {
         if (v != null && v !== '' && typeof v !== 'function') metaObj[k] = v;
     }
     metaObj.job_id = jobId;
+    if (imageFilename) metaObj.image_file = imageFilename;
+    if (paletteFilename) metaObj.palette_file = paletteFilename;
     // Fetch full calc.json via /detail for complete compute metadata
     try {
         const detail = await lambdaPost('storage', { job_id: jobId }, '/detail');
@@ -8385,6 +8648,12 @@ async function _dlMenuAction(mode) {
 
     const imageFilename = _renderArtifactFilename(jobId, art);
     const metaFilename = imageFilename.replace(/\.[^.]+$/, '_meta.json');
+    const normalizedMode = mode === 'pdf_file' ? 'image' : mode;
+    const associatedPaletteKey = (normalizedMode === 'image+meta') ? String(art.associated_palette_image_key || '') : '';
+    const paletteExt = associatedPaletteKey ? associatedPaletteKey.split('.').pop().toLowerCase() : '';
+    const paletteFilename = associatedPaletteKey
+        ? imageFilename.replace(/\.[^.]+$/, '') + `_palette.${paletteExt || 'jpeg'}`
+        : '';
 
     if (mode === 'dir') {
         if (typeof window.showDirectoryPicker !== 'function') {
@@ -8400,8 +8669,9 @@ async function _dlMenuAction(mode) {
         return;
     }
 
-    const normalizedMode = mode === 'pdf_file' ? 'image' : mode;
-    const metaObj = (normalizedMode === 'image+meta') ? await _buildArtifactMeta(jobId, art) : null;
+    const metaObj = (normalizedMode === 'image+meta')
+        ? await _buildArtifactMeta(jobId, art, { imageFilename, paletteFilename })
+        : null;
     const metaBlob = metaObj ? new Blob([JSON.stringify(metaObj, null, 2)], { type: 'application/json' }) : null;
 
     // Save to directory if one is set, otherwise browser download
@@ -8426,11 +8696,17 @@ async function _dlMenuAction(mode) {
                 await metaWritable.close();
             }
 
+            if (associatedPaletteKey) {
+                if (btn) btn.textContent = 'Downloading palette...';
+                const paletteBlob = await _fetchStorageBlob(associatedPaletteKey, paletteFilename);
+                const palHandle = await dirHandle.getFileHandle(paletteFilename, { create: true });
+                const palWritable = await palHandle.createWritable();
+                await palWritable.write(paletteBlob);
+                await palWritable.close();
+            }
+
             if (btn) btn.textContent = 'Downloading image...';
-            const presign = await lambdaPost('storage', { key: art.image_key, filename: imageFilename }, '/presign');
-            const resp = await fetch(presign.url);
-            if (!resp.ok) throw new Error(`Image download failed: ${resp.status}`);
-            const imageBlob = await resp.blob();
+            const imageBlob = await _fetchStorageBlob(art.image_key, imageFilename);
             const imgHandle = await dirHandle.getFileHandle(imageFilename, { create: true });
             const imgWritable = await imgHandle.createWritable();
             await imgWritable.write(imageBlob);
@@ -8448,14 +8724,12 @@ async function _dlMenuAction(mode) {
 
     // No directory set — browser downloads
     if (normalizedMode === 'image+meta') {
-        const metaUrl = URL.createObjectURL(metaBlob);
-        const a = document.createElement('a');
-        a.href = metaUrl;
-        a.download = metaFilename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(metaUrl);
+        _downloadBlob(metaBlob, metaFilename);
+        if (associatedPaletteKey) {
+            await _downloadStorageKeyBlob(associatedPaletteKey, paletteFilename);
+        }
+        await _downloadStorageKeyBlob(art.image_key, imageFilename);
+        return;
     }
     await downloadPresignedFile(art.image_url || art.viewer_url || '', imageFilename, art.image_key);
 }
@@ -8509,7 +8783,7 @@ async function generateSelectedRenderArtifact() {
         await runCoeffBilevelPipeline();
         return;
     }
-    if (_renderActiveFamily === 'color' && renderColorMode === 'solve_score') {
+    if (_renderActiveFamily === 'color' && (renderColorMode === 'solve_score' || renderColorMode === 'saved_palette')) {
         openRenderGeneratePopup();
         return;
     }
@@ -8557,7 +8831,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread path. In Solve score mode it opens a popup where you choose histogram input tmp file vs sectioned native for benchmarking. Generate-MT opens a popup where you choose hist threads, hist input, merge workers, raster input tmp file vs sectioned native, and raster threads for Solve score, Saved palette, Constant, and Rainbow with match=none so you can compare perf. GenerateFromPalette reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image. Resize derives a new immutable Color artifact using libvips resize/thumbnail operations.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread path. In Solve score and Saved palette modes it opens a popup where you choose histogram input or save the associated palette. Generate-MT opens a popup where you choose hist threads, hist input, merge workers, raster input tmp file vs sectioned native, raster retries, and raster threads for Solve score, Saved palette, Constant, and Rainbow with match=none so you can compare perf. GenerateFromPalette opens a saved-palette execution popup with raster/finalize controls and reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image. Resize derives a new immutable Color artifact using libvips resize/thumbnail operations.</span>';
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color.</span>';
     } else if (_renderActiveFamily === 'pdf') {

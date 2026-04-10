@@ -1,5 +1,33 @@
 # Testing
 
+## Testing Strategy
+
+PolyPaint uses four test layers. They are meant to catch different failure modes:
+
+1. **Native/binary regression tests**
+   - Catch math drift, file-format breakage, and runtime behavior in C binaries.
+   - Examples: `test_sweep_smoke.py`, `test_param_dump.py`, `test_bilevel_raster.py`, `test_companion_matrix.py`.
+
+2. **Python handler and workflow tests**
+   - Catch Lambda contract bugs, storage/reporting mistakes, Step Functions payload drift, and packaging regressions.
+   - Examples: `test_pipeline.py`, `test_render_plan.py`, `test_render_workflow_definition.py`, `test_deploy_packaging.py`.
+
+3. **Frontend VM tests**
+   - Execute `index.html` JavaScript in a Node VM without a browser.
+   - Catch missing functions, stale IDs, payload-shape regressions, popup logic mistakes, and UI contract drift quickly.
+   - Main file: `test_frontend_js.sh`.
+
+4. **Playwright browser tests**
+   - Catch real DOM/browser regressions: buttons disappearing, popups not opening, selection/focus behavior, wiring between controls and dispatched payloads.
+   - These are the tests that should fail when a visible UI element silently disappears.
+
+The rule of thumb is:
+
+- **VM tests** prove UI logic exists.
+- **Playwright tests** prove the user can actually reach and use it in a browser.
+- **Handler/workflow tests** prove the backend contract is still coherent.
+- **Native tests** prove the math/runtime layer is still correct.
+
 ## Test Location
 
 All tests live in `polypaint/tests/`.
@@ -50,9 +78,32 @@ All tests live in `polypaint/tests/`.
 | `test_api_route_contracts.py` | Manifest-backed API contract checks: tracked `api_manifest.json` must match the current tree, frontend service/route usage must match deploy wiring, and dispatch/solver mappings must stay aligned | Python only |
 | `test_pdf_artifact_handler.py` | PDF artifact Lambda: Color source validation, metadata-derived spread composition, PDF upload contract | Python mocks only |
 | `test_frontend_js.sh` | Frontend JS execution: UI logic, TRI palette popup/swatches, dispatch, Render family catalogs, Palette workflow UI, DeepZoom inventory, render perf logging | Node.js (vm module) |
+| `e2e/compute-ui.spec.js` | Compute tab: preview controls, function picker, compute-preview dispatch/render path | Playwright browser |
+| `e2e/results-ui.spec.js` | Results tab: refresh popup, filtering, selection, populate/render actions | Playwright browser |
+| `e2e/favorites-ui.spec.js` | Favorites tab: inventory load, GoRender, download menu, delete | Playwright browser |
+| `e2e/palette-ui.spec.js` | Palette tab: inventory load, create dispatch, download/delete, keyboard navigation | Playwright browser |
 | `e2e/deepzoom-inventory.spec.js` | DeepZoom inventory: load, sort, select, arrow keys, share links | Playwright browser |
 | `e2e/render-refresh.spec.js` | Render tab refresh: summary call, artifact panel, info line | Playwright browser |
 | `e2e/render-solve-score.spec.js` | Solve score UI: metrics, quantile, TRI palette behavior, dispatch payloads, family catalogs, palette family behavior | Playwright browser |
+
+## UI Coverage Matrix
+
+The UI is not tested by one monolithic suite. Coverage is split deliberately:
+
+| Area | VM coverage (`test_frontend_js.sh`) | Playwright coverage | Current intent |
+|---|---|---|---|
+| Compute | Yes | `e2e/compute-ui.spec.js` | Preview controls, function picker, main calculate affordances must stay visible and wired |
+| Results | Yes | `e2e/results-ui.spec.js` | Refresh popup, filtering, selection, populate/render actions must survive refactors |
+| Favorites | Yes | `e2e/favorites-ui.spec.js` | Inventory, GoRender, download menu, delete must survive refactors |
+| Palette | Yes | `e2e/palette-ui.spec.js` | Inventory, create dispatch, download/delete, keyboard navigation must survive refactors |
+| Render | Yes | `e2e/render-refresh.spec.js`, `e2e/render-solve-score.spec.js` | Family tabs, solve-score controls, render popups, dispatch payloads, and selected-artifact actions are pinned hardest here |
+| DeepZoom | Yes | `e2e/deepzoom-inventory.spec.js` | Inventory, row selection, share links, keyboard navigation |
+
+This does **not** mean every cosmetic detail is browser-tested. It means:
+
+- visible controls that matter operationally should exist in Playwright
+- payload-shape and popup logic should also exist in `test_frontend_js.sh`
+- if a feature adds a new tab control and there is no Playwright assertion for it, coverage is incomplete
 
 ## Running Tests
 
@@ -89,6 +140,49 @@ uv run python lambda/gen_parity_results.py
 uv run python -m pytest tests/test_coeff_parity_results.py tests/test_coeff_catalog_consistency.py -q
 uv run python -m pytest tests/test_coeff_catalog_consistency.py tests/test_poly645_hand.py tests/test_poly795_hand.py tests/test_low_agreement_hand.py -q
 ```
+
+### Frontend JS harness
+
+Run this whenever `index.html` behavior changes, even if the browser UI "looks fine":
+
+```bash
+bash tests/test_frontend_js.sh
+```
+
+This is the fast guard for:
+
+- missing DOM ids
+- stale dispatch payloads
+- popup initialization breakage
+- contract-warning logging
+- inventory/action wiring
+
+### Playwright browser suite
+
+Run the browser suite whenever user-facing tab behavior changes:
+
+```bash
+npx playwright test tests/e2e
+```
+
+Targeted runs are fine while iterating:
+
+```bash
+npx playwright test tests/e2e/compute-ui.spec.js
+npx playwright test tests/e2e/results-ui.spec.js
+npx playwright test tests/e2e/favorites-ui.spec.js
+npx playwright test tests/e2e/palette-ui.spec.js
+npx playwright test tests/e2e/render-refresh.spec.js
+npx playwright test tests/e2e/render-solve-score.spec.js
+npx playwright test tests/e2e/deepzoom-inventory.spec.js
+```
+
+Use Playwright when the question is:
+
+- "does the popup actually open?"
+- "did the button disappear?"
+- "does clicking this still dispatch the right thing?"
+- "does keyboard selection still work?"
 
 ### Deploy-time layer/build checks
 
@@ -464,6 +558,10 @@ Frontend JS execution tests (Node.js vm module, no browser):
 
 Browser-based end-to-end tests:
 
+- **compute-ui.spec.js** — Compute Preview controls, function picker, calculate affordances, preview payload/render path
+- **results-ui.spec.js** — Results refresh popup, filtering, row selection, populate/render handoff
+- **favorites-ui.spec.js** — favorites inventory load, GoRender, download menu, delete
+- **palette-ui.spec.js** — palette inventory load, palette-create dispatch, download/delete, keyboard navigation
 - **deepzoom-inventory.spec.js** — inventory load/sort, row selection, arrow keys, share links, question mark for old exports
 - **render-refresh.spec.js** — single render-summary call, family tabs, selected-artifact actions, info line
 - **render-solve-score.spec.js** — metric selection, quantile dispatch, TRI palette popup/right-click behavior, solve-score controls, palette family behavior
@@ -514,6 +612,9 @@ Tests the native autolevel renderer (libvips):
 | Dispatch / storage / check-status | test_dispatch_resilience |
 | sweep_cm.c | test_companion_matrix (Docker ARM64) |
 | solve_proximity_stats.c | test_solve_proximity_stats (Docker ARM64) |
+| `index.html` UI logic only | `test_frontend_js.sh` |
+| `index.html` visible user flows / popups / tab actions | `npx playwright test tests/e2e` |
+| New tab/button/popup in UI | `test_frontend_js.sh` + at least one Playwright spec that clicks it |
 | solve_palette_debug.c | test_solve_palette_debug (Docker ARM64) |
 | autolevels_render.c / handler_autolevels.py | test_autolevels_handler + test_autolevels_render_native + test_frontend_js.sh |
 | handler_raster.py / handler_raster_mt.py | test_raster_pixel_bins + test_raster_saved_palette + test_raster_mt + test_frontend_js.sh |

@@ -95,6 +95,10 @@ def handler(event, context):
     solve_score_prefix = params["solve_score_prefix"]
     solve_score_clip_key = params["solve_score_clip_key"]
     solve_score_bins_key = params["solve_score_bins_key"]
+    cleanup_solve_score_scratch = _parse_boolish(
+        contract_param(params, "cleanup_solve_score_scratch", True, contract_warnings),
+        True,
+    )
     chunk_scores_prefix = params.get("chunk_scores_prefix", chunks_prefix + "score_chunk_")
     chunk_bins_prefix = params.get("chunk_bins_prefix", chunks_prefix + "palette_bins_chunk_")
     chunk_meta_prefix = params.get("chunk_meta_prefix", chunks_prefix + "meta_chunk_")
@@ -245,8 +249,9 @@ def handler(event, context):
         }
         s3.put_object(Bucket=BUCKET, Key=meta_key, Body=json.dumps(meta_body), ContentType="application/json")
 
-        # Cleanup only this workflow's temporary solve-score scratch after success.
-        _delete_keys(_list_keys(solve_score_prefix) + [solve_score_clip_key, solve_score_bins_key])
+        # Cleanup only when this workflow owns the solve-score scratch.
+        if cleanup_solve_score_scratch:
+            _delete_keys(_list_keys(solve_score_prefix) + [solve_score_clip_key, solve_score_bins_key])
 
         result_data = attach_contract_warnings({
             "palette_id": palette_id,

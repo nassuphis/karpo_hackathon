@@ -1921,6 +1921,72 @@ class TestRenderSummary(unittest.TestCase):
         self.assertAlmostEqual(cj["solve_score_omega"], 6.0)
 
     @patch("handler_storage.s3")
+    def test_render_summary_exposes_associated_palette_metadata(self, mock_s3):
+        from handler_storage import handle_render_summary
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate_side_effect(**kwargs):
+            prefix = kwargs.get("Prefix", "")
+            if prefix == "renders/j/color/":
+                return [{"CommonPrefixes": [{"Prefix": "renders/j/color/color_run_assoc/"}]}]
+            return [{"CommonPrefixes": []}]
+
+        mock_paginator.paginate.side_effect = paginate_side_effect
+
+        def mock_head(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/color/color_run_assoc/image.jpeg":
+                return {
+                    "ContentLength": 1234,
+                    "ContentType": "image/jpeg",
+                    "Metadata": {
+                        "width": "4096",
+                        "height": "4096",
+                        "artifact_id": "color_run_assoc",
+                        "created_at": "2026-04-10T10:00:00Z",
+                        "family": "color",
+                        "color_mode": "solve_score",
+                        "format": "jpeg",
+                        "root_transforms": "[]",
+                        "view_mode": "auto",
+                        "quantile": "0.01",
+                        "shim": "0.07",
+                        "rotation": "0",
+                        "match_mode": "none",
+                        "associated_palette_mode": "generated",
+                        "associated_palette_id": "pal_color_run_assoc",
+                        "associated_palette_display_name": "crowding q=1.0% w=4 inferno",
+                        "associated_palette_image_key": "renders/j/palettes/pal_color_run_assoc/image.jpeg",
+                        "associated_palette_preview_key": "renders/j/palettes/pal_color_run_assoc/preview.png",
+                        "associated_palette_palette": "inferno",
+                        "associated_palette_metric": "crowding",
+                        "associated_palette_quantile": "0.01",
+                        "associated_palette_omega": "4",
+                        "associated_palette_omega_enabled": "false",
+                    },
+                }
+            if key == "renders/j/color/color_run_assoc/preview.png":
+                return {"ContentLength": 500, "ContentType": "image/png", "Metadata": {}}
+            raise Exception("NoSuchKey")
+
+        mock_s3.head_object.side_effect = mock_head
+        mock_s3.get_object.side_effect = Exception("NoSuchKey")
+        mock_s3.generate_presigned_url.return_value = "https://signed"
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+        art = body["families"]["color"][0]
+        self.assertEqual(art["associated_palette_mode"], "generated")
+        self.assertEqual(art["associated_palette_id"], "pal_color_run_assoc")
+        self.assertEqual(art["associated_palette_image_key"], "renders/j/palettes/pal_color_run_assoc/image.jpeg")
+        self.assertEqual(art["associated_palette_metric"], "crowding")
+        self.assertAlmostEqual(art["associated_palette_quantile"], 0.01)
+        self.assertAlmostEqual(art["associated_palette_omega"], 4.0)
+        self.assertFalse(art["associated_palette_omega_enabled"])
+
+    @patch("handler_storage.s3")
     def test_render_summary_exposes_color_repalette_metadata(self, mock_s3):
         from handler_storage import handle_render_summary
 

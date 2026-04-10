@@ -646,6 +646,21 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         src_omega = meta.get("palette_source_omega", "")
         entry["palette_source_omega"] = float(src_omega) if src_omega not in ("", None) else None
         entry["palette_source_omega_enabled"] = _parse_bool(meta.get("palette_source_omega_enabled"), True)
+        entry["associated_palette_mode"] = meta.get("associated_palette_mode", "")
+        entry["associated_palette_id"] = meta.get("associated_palette_id", "")
+        entry["associated_palette_display_name"] = meta.get("associated_palette_display_name", "")
+        entry["associated_palette_image_key"] = meta.get("associated_palette_image_key", "")
+        entry["associated_palette_preview_key"] = meta.get("associated_palette_preview_key", "")
+        entry["associated_palette_palette"] = meta.get("associated_palette_palette", "")
+        entry["associated_palette_metric"] = meta.get("associated_palette_metric", "")
+        assoc_q = meta.get("associated_palette_quantile", "")
+        entry["associated_palette_quantile"] = float(assoc_q) if assoc_q not in ("", None) else None
+        assoc_omega = meta.get("associated_palette_omega", "")
+        entry["associated_palette_omega"] = float(assoc_omega) if assoc_omega not in ("", None) else None
+        entry["associated_palette_omega_enabled"] = _parse_bool(
+            meta.get("associated_palette_omega_enabled"),
+            bool(entry["associated_palette_mode"]),
+        )
         entry["derived_from_artifact_id"] = meta.get("derived_from_artifact_id", "")
         entry["derivation_kind"] = meta.get("derivation_kind", "")
         entry["postprocess_kind"] = meta.get("postprocess_kind", "")

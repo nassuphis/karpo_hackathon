@@ -304,6 +304,7 @@ def handler(event, context):
     source_ext = source_image_key.rsplit(".", 1)[-1].lower()
     source_local = f"/tmp/pdf_source.{source_ext}"
     output_local = "/tmp/pdf_document.pdf"
+    palette_local = None
 
     progress = {
         "family": "pdf",
@@ -331,6 +332,22 @@ def handler(event, context):
             for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
                 fh.write(chunk)
 
+        associated_palette_image_key = str(src_meta.get("associated_palette_image_key") or "").strip()
+        associated_palette_mode = str(src_meta.get("associated_palette_mode") or "").strip()
+        associated_palette_id = str(src_meta.get("associated_palette_id") or "").strip()
+        if associated_palette_image_key:
+            palette_ext = associated_palette_image_key.rsplit(".", 1)[-1].lower()
+            palette_local = f"/tmp/pdf_palette.{palette_ext}"
+            try:
+                pal_obj = s3.get_object(Bucket=BUCKET, Key=associated_palette_image_key)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to download associated palette image s3://{BUCKET}/{associated_palette_image_key}: {e}"
+                ) from e
+            with open(palette_local, "wb") as pf:
+                for chunk in pal_obj["Body"].iter_chunks(chunk_size=1024 * 1024):
+                    pf.write(chunk)
+
         try:
             calc_obj = s3.get_object(Bucket=BUCKET, Key=f"renders/{job_id}/calc.json")
             calc = json.loads(calc_obj["Body"].read())
@@ -345,7 +362,7 @@ def handler(event, context):
         spread_meta = _build_spread_meta(job_id, calc, src_meta, source_artifact_id)
 
         _phase(job_id, task_id, "processing", "compose_pdf", "Compose PDF", **progress)
-        build_color_spread_pdf(source_local, output_local, title, meta=spread_meta)
+        build_color_spread_pdf(source_local, output_local, title, meta=spread_meta, palette_image_path=palette_local)
 
         meta = {
             "family": "pdf",
@@ -364,6 +381,9 @@ def handler(event, context):
             "source_solve_score_omega": src_meta.get("solve_score_omega", ""),
             "source_solve_score_omega_enabled": "true" if _parse_boolish(src_meta.get("solve_score_omega_enabled", True), True) else "false",
             "source_root_transforms": _stringify_meta(src_meta.get("root_transforms", "")),
+            "source_associated_palette_mode": associated_palette_mode,
+            "source_associated_palette_id": associated_palette_id,
+            "source_associated_palette_image_key": associated_palette_image_key,
             "page_count": "1",
             "width_mm": "586",
             "height_mm": "296",
@@ -398,8 +418,9 @@ def handler(event, context):
         report_status(job_id, task_id, "error", str(e), result_data=progress)
         raise
     finally:
-        for path in (source_local, output_local):
+        for path in (source_local, output_local, palette_local):
             try:
-                os.remove(path)
+                if path:
+                    os.remove(path)
             except OSError:
                 pass

@@ -197,6 +197,17 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('update_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip"', DEPLOY_TEXT)
         self.assertIn('"$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib"', DEPLOY_TEXT)
 
+        self.assertIn("handler_compute_preview.py", packaged)
+        self.assertIn("sweep_coeffgen", packaged["handler_compute_preview.py"])
+        self.assertIn("sweep", packaged["handler_compute_preview.py"])
+        self.assertIn("sweep_mt", packaged["handler_compute_preview.py"])
+        self.assertIn("sweep_cm", packaged["handler_compute_preview.py"])
+        self.assertIn('create_lambda "$COMPUTE_PREVIEW_NAME" "handler_compute_preview.handler" "/tmp/polypaint-compute-preview.zip"', DEPLOY_TEXT)
+        self.assertIn('update_lambda "$COMPUTE_PREVIEW_NAME" "handler_compute_preview.handler" "/tmp/polypaint-compute-preview.zip"', DEPLOY_TEXT)
+        self.assertIn('ensure_route "POST /compute-preview" "$COMPUTE_PREVIEW_INT"', DEPLOY_TEXT)
+        self.assertIn('"compute-preview": "%s/compute-preview"', DEPLOY_TEXT)
+        self.assertIn('"$LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
+
         self.assertIn("handler_color_repalette.py", packaged)
         self.assertIn("palette_names.py", packaged["handler_color_repalette.py"])
         self.assertIn("tri_palette_names_generated.py", packaged["handler_color_repalette.py"])

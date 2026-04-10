@@ -35,6 +35,10 @@ grep -q 'id="render-mt-merge-workers"' "$HTML" || { echo "FATAL: render MT merge
 grep -q 'id="render-mt-finalize-workers"' "$HTML" || { echo "FATAL: render MT finalize workers input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-hist-retries"' "$HTML" || { echo "FATAL: render MT hist retries input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-raster-retries"' "$HTML" || { echo "FATAL: render MT raster retries input missing from index.html"; exit 1; }
+grep -q 'id="compute-preview-n"' "$HTML" || { echo "FATAL: compute preview N input missing from index.html"; exit 1; }
+grep -q 'id="compute-preview-solver"' "$HTML" || { echo "FATAL: compute preview solver selector missing from index.html"; exit 1; }
+grep -q 'id="btn-compute-preview"' "$HTML" || { echo "FATAL: compute preview button missing from index.html"; exit 1; }
+grep -q 'id="compute-preview-box"' "$HTML" || { echo "FATAL: compute preview image box missing from index.html"; exit 1; }
 grep -q 'id="btn-render-resize"' "$HTML" || { echo "FATAL: color Resize button missing from index.html"; exit 1; }
 grep -q 'id="resize-popup-overlay"' "$HTML" || { echo "FATAL: resize popup missing from index.html"; exit 1; }
 grep -q 'id="btn-png-export"' "$HTML" || { echo "FATAL: bilevel PNG export button missing from index.html"; exit 1; }
@@ -645,6 +649,82 @@ async function testPipeline(name, call) {
             process.exit(1);
         }
         console.log('  lambdaPost retry errors keep endpoint/context/history: OK');
+    }
+
+    {
+        ctx._elements['render-function'] = ctx._mkEl();
+        ctx._elements['render-function'].value = 'g1';
+        ctx._elements['compute-preview-n'] = ctx._mkEl();
+        ctx._elements['compute-preview-n'].value = '128';
+        ctx._elements['compute-preview-solver'] = ctx._mkEl();
+        ctx._elements['compute-preview-solver'].value = 'companion_matrix';
+        ctx._elements['btn-compute-preview'] = ctx._mkEl();
+        ctx._elements['btn-compute-preview'].disabled = false;
+        ctx._elements['compute-preview-status'] = ctx._mkEl();
+        ctx._elements['compute-preview-status'].className = '';
+        ctx._elements['compute-preview-box'] = ctx._mkEl();
+        ctx._elements['compute-preview-box'].dataset = {};
+        ctx._elements['compute-preview-info'] = ctx._mkEl();
+        ctx._elements['ct-chips'] = ctx._elements['ct-chips'] || ctx._mkEl();
+        vm.runInContext(`
+            _ctChain = [];
+            _ptChain = [];
+            _cfpv = [];
+            var _computePreviewPrevLambdaPost = lambdaPost;
+            var _computePreviewPayload = null;
+            lambdaPost = async function(name, body, path) {
+                if (name !== 'compute-preview') throw new Error('unexpected preview service ' + name);
+                _computePreviewPayload = body;
+                return {
+                    solver_mode: body.solver_mode,
+                    N_preview: body.N_preview,
+                    degree: 10,
+                    n_roots_total: 16384,
+                    n_roots_in_view: 1024,
+                    coeffgen_ms: 12,
+                    solve_ms: 34,
+                    viewport_ms: 2,
+                    raster_ms: 5,
+                    encode_ms: 1,
+                    total_ms: 54,
+                    coeffs_size: 4096,
+                    roots_size: 8192,
+                    image_width: 128,
+                    image_height: 128,
+                    image_png_base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z0ioAAAAASUVORK5CYII='
+                };
+            };
+        `, ctx);
+        try {
+            await vm.runInContext('(async()=>{ await runComputePreview(); })()', ctx);
+            const payload = vm.runInContext('_computePreviewPayload', ctx);
+            const statusText = ctx._elements['compute-preview-status'].textContent || '';
+            const box = ctx._elements['compute-preview-box'];
+            const img = (box.children || [])[0];
+            if (!payload || payload.solver_mode !== 'companion_matrix' || payload.N_preview !== 128 || payload.function !== 'g1') {
+                console.error('FATAL: compute preview should call compute-preview with solver/function/N-preview, got ' + JSON.stringify(payload));
+                process.exit(1);
+            }
+            if (!statusText.includes('Preview ready')) {
+                console.error('FATAL: compute preview should update status, got ' + statusText);
+                process.exit(1);
+            }
+            if (!img || !String(img.src || '').startsWith('data:image/png;base64,')) {
+                console.error('FATAL: compute preview should render inline PNG, got ' + JSON.stringify(box.children || []));
+                process.exit(1);
+            }
+            await vm.runInContext("addChip('ct','power')", ctx);
+            const staleText = ctx._elements['compute-preview-status'].textContent || '';
+            if (!staleText.includes('stale')) {
+                console.error('FATAL: changing coeff transforms should mark compute preview stale, got ' + staleText);
+                process.exit(1);
+            }
+            vm.runInContext('lambdaPost = _computePreviewPrevLambdaPost;', ctx);
+            console.log('  compute preview call + stale invalidation: OK');
+        } catch (e) {
+            console.error('FATAL: compute preview flow: ' + e.message);
+            process.exit(1);
+        }
     }
 
     await testPipeline('runRasterPipeline', '(async()=>{ await runRasterPipeline(); })()');

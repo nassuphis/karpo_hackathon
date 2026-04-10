@@ -7,6 +7,7 @@ import os
 import struct
 import time
 import errno
+import zlib
 
 import boto3
 
@@ -68,6 +69,29 @@ def ok_response(body):
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
         "body": json.dumps(body),
     }
+
+
+def encode_png_gray(width, height, gray_buf):
+    """Encode a grayscale image buffer as PNG bytes."""
+
+    def _chunk(ctype, data):
+        chunk = ctype + data
+        crc = zlib.crc32(chunk) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + chunk + struct.pack(">I", crc)
+
+    raw = bytearray()
+    for y in range(height):
+        raw.append(0)
+        raw.extend(gray_buf[y * width:(y + 1) * width])
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+    idat = zlib.compress(bytes(raw), 6)
+
+    out = b"\x89PNG\r\n\x1a\n"
+    out += _chunk(b"IHDR", ihdr)
+    out += _chunk(b"IDAT", idat)
+    out += _chunk(b"IEND", b"")
+    return out
 
 
 

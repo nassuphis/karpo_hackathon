@@ -480,6 +480,26 @@ button {
                     <option value="roots">roots</option>
                 </select>
             </div>
+            <div class="color-box" style="margin-top:10px">
+                <div class="color-title">Compute Preview</div>
+                <div class="anim-row" style="flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:6px">
+                    <label>N-preview:</label>
+                    <input type="number" id="compute-preview-n" value="256" min="8" max="1024" step="8" style="width:6em" onchange="_markComputePreviewStale()">
+                    <label>Solver:</label>
+                    <select id="compute-preview-solver" style="width:7em; font-size:12px" onchange="_markComputePreviewStale()">
+                        <option value="aberth">AE</option>
+                        <option value="aberth_mt">AE-MT</option>
+                        <option value="companion_matrix">CM</option>
+                    </select>
+                    <button class="btn-primary" id="btn-compute-preview" onclick="runComputePreview()" style="background:#375; margin:0">Preview</button>
+                    <span style="font-size:11px; color:#666">ephemeral · times=1 · not saved</span>
+                </div>
+                <div id="compute-preview-status" class="status" style="margin-top:0">No compute preview yet</div>
+                <div style="display:flex; gap:12px; align-items:flex-start; margin-top:8px; flex-wrap:wrap">
+                    <div id="compute-preview-box" style="width:320px; height:320px; border:1px solid #0f3460; border-radius:4px; background:#000; display:flex; align-items:center; justify-content:center"><span style="color:#444; font-size:11px">No compute preview yet</span></div>
+                    <div id="compute-preview-info" style="min-width:180px; font-size:11px; color:#888; line-height:1.5"></div>
+                </div>
+            </div>
             <div style="margin-top:8px; display:flex; gap:6px; align-items:center">
                 <button class="btn-primary" id="btn-calculate" onclick="runCalculate()" style="background:#2a6">Calculate-AE</button>
                 <button class="btn-primary" id="btn-calculate-mt" onclick="runCalculateAEMT()" style="background:#287">Calculate-AE-MT</button>
@@ -2459,6 +2479,151 @@ function _solverDispatchTarget(solver) {
     return solver === 'companion_matrix' ? 'sweep_cm'
         : solver === 'aberth_mt' ? 'sweep_mt'
         : 'sweep';
+}
+
+let _computePreviewSignature = '';
+let _computePreviewIsStale = false;
+
+function _computePreviewBox() {
+    return document.getElementById('compute-preview-box');
+}
+
+function _computePreviewStatusEl() {
+    return document.getElementById('compute-preview-status');
+}
+
+function _computePreviewInfoEl() {
+    return document.getElementById('compute-preview-info');
+}
+
+function _computePreviewHasImage() {
+    const box = _computePreviewBox();
+    return !!(box && box.dataset && box.dataset.hasImage === '1');
+}
+
+function _computePreviewSignatureNow() {
+    return JSON.stringify({
+        n_preview: parseInt(document.getElementById('compute-preview-n')?.value) || 256,
+        solver_mode: document.getElementById('compute-preview-solver')?.value || 'aberth',
+        function: document.getElementById('render-function')?.value || '',
+        cfpv: _cfpv.length ? [..._cfpv] : [],
+        param_transforms: _serializeParamTransforms(),
+        coeff_transforms: _serializeNamedChain(_ctChain),
+    });
+}
+
+function _setComputePreviewPlaceholder(message) {
+    const box = _computePreviewBox();
+    if (!box) return;
+    box.dataset.hasImage = '0';
+    _setPreviewPlaceholder(box, message || 'No compute preview yet');
+}
+
+function _renderComputePreviewInfo(lines, stale) {
+    const infoEl = _computePreviewInfoEl();
+    if (!infoEl) return;
+    infoEl.replaceChildren();
+    if (stale) {
+        const staleEl = document.createElement('div');
+        staleEl.style.cssText = 'color:#e9c46a; margin-bottom:6px';
+        staleEl.textContent = 'stale';
+        infoEl.appendChild(staleEl);
+    }
+    for (const line of (lines || [])) {
+        const row = document.createElement('div');
+        row.textContent = line;
+        infoEl.appendChild(row);
+    }
+}
+
+function _markComputePreviewStale() {
+    if (!_computePreviewHasImage()) return;
+    const current = _computePreviewSignatureNow();
+    if (current === _computePreviewSignature) return;
+    _computePreviewIsStale = true;
+    const statusEl = _computePreviewStatusEl();
+    if (statusEl) {
+        statusEl.textContent = 'Preview stale — rerun.';
+        statusEl.className = 'status';
+    }
+    const infoEl = _computePreviewInfoEl();
+    if (infoEl && !Array.from(infoEl.children || []).some(el => (el.textContent || '').trim() === 'stale')) {
+        _renderComputePreviewInfo(Array.from(infoEl.children || []).map(el => el.textContent || ''), true);
+    }
+}
+
+function _applyComputePreviewResult(result) {
+    const box = _computePreviewBox();
+    const statusEl = _computePreviewStatusEl();
+    const infoLines = [
+        `solver: ${_solverTag(result.solver_mode || 'aberth')}`,
+        `degree: ${result.degree}`,
+        `roots: ${result.n_roots_in_view}/${result.n_roots_total} in view`,
+        `coeffs: ${((Number(result.coeffs_size) || 0) / 1e6).toFixed(1)}MB`,
+        `roots bin: ${((Number(result.roots_size) || 0) / 1e6).toFixed(1)}MB`,
+        `timing: coeffgen ${result.coeffgen_ms}ms · solve ${result.solve_ms}ms · viewport ${result.viewport_ms}ms · raster ${result.raster_ms}ms`,
+        `total: ${result.total_ms}ms`,
+    ];
+    if (box) {
+        box.replaceChildren();
+        const img = document.createElement('img');
+        img.src = `data:image/png;base64,${result.image_png_base64}`;
+        img.width = result.image_width;
+        img.height = result.image_height;
+        img.style.cssText = 'max-width:100%; max-height:100%; width:100%; height:100%; object-fit:contain; image-rendering:pixelated; background:#000';
+        box.appendChild(img);
+        box.dataset.hasImage = '1';
+    }
+    _computePreviewSignature = _computePreviewSignatureNow();
+    _computePreviewIsStale = false;
+    if (statusEl) {
+        statusEl.textContent = `Preview ready · ${result.image_width}×${result.image_height} · ${result.total_ms}ms`;
+        statusEl.className = 'status ok';
+    }
+    _renderComputePreviewInfo(infoLines, false);
+}
+
+async function runComputePreview() {
+    const btn = document.getElementById('btn-compute-preview');
+    const statusEl = _computePreviewStatusEl();
+    const funcName = document.getElementById('render-function').value;
+    const nPreview = Math.max(8, parseInt(document.getElementById('compute-preview-n').value) || 256);
+    const solverMode = document.getElementById('compute-preview-solver').value || 'aberth';
+    const paramTransforms = _serializeParamTransforms();
+    const coeffTransforms = _serializeNamedChain(_ctChain);
+    const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];
+    const coeffTransformsDisplay = _displayCoeffTransforms();
+    const ptDisplay = _displayParamTransforms().map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(',');
+
+    btn.disabled = true;
+    if (statusEl) {
+        statusEl.textContent = `Previewing ${funcName} with ${_solverTag(solverMode)}...`;
+        statusEl.className = 'status';
+    }
+    _setComputePreviewPlaceholder('Working...');
+    try {
+        log(`Compute preview (${_solverTag(solverMode)}): [${ptDisplay || 'none'}] ${funcName} [${coeffTransformsDisplay.join(',') || 'none'}] N-preview=${nPreview}...`, '', 'compute-log');
+        const result = await lambdaPost('compute-preview', {
+            solver_mode: solverMode,
+            N_preview: nPreview,
+            function: funcName,
+            param_transforms: paramTransforms,
+            coeff_transforms: coeffTransforms,
+            cfpv,
+        });
+        _applyComputePreviewResult(result);
+        log(`  preview (${_solverTag(solverMode)}): ${result.total_ms}ms, degree=${result.degree}, roots=${result.n_roots_in_view}/${result.n_roots_total}`, 'ok', 'compute-log');
+    } catch (e) {
+        if (statusEl) {
+            statusEl.textContent = 'Compute preview failed: ' + e.message;
+            statusEl.className = 'status error';
+        }
+        _setComputePreviewPlaceholder('Preview failed');
+        _renderComputePreviewInfo([], _computePreviewIsStale);
+        log(`Compute preview failed: ${e.message}`, 'err', 'compute-log');
+    } finally {
+        btn.disabled = false;
+    }
 }
 
 function _populateComputeFromDetail(jobId, detail) {
@@ -5835,6 +6000,7 @@ function _setRenderFunction(name) {
     sel.value = name;
     _syncRenderFunctionPicker();
     updateCfpvRow();
+    _markComputePreviewStale();
     return true;
 }
 
@@ -5914,6 +6080,7 @@ function parseCfpv() {
         }
     }
     _cfpv = valid ? vals : [];
+    _markComputePreviewStale();
 }
 
 function updateCfpvRow() {
@@ -5952,6 +6119,7 @@ function updateCfpvRow() {
         defaults.push(p.default);
     }
     _cfpv = defaults;
+    _markComputePreviewStale();
 }
 
 function addChip(which, name) {
@@ -5966,12 +6134,14 @@ function addChip(which, name) {
         chain.push(name);
     }
     _renderChips(which);
+    if (which === 'pt' || which === 'ct') _markComputePreviewStale();
 }
 
 function removeChip(which, idx) {
     const chain = _chainForWhich(which);
     chain.splice(idx, 1);
     _renderChips(which);
+    if (which === 'pt' || which === 'ct') _markComputePreviewStale();
 }
 
 function _normalizeTarget(value) {
@@ -6027,6 +6197,7 @@ function updateChipParam(chipIdx, paramIdx, value, which) {
             chain[chipIdx].params[paramIdx] = value;
         }
         _renderChips(which);
+        if (which === 'pt' || which === 'ct') _markComputePreviewStale();
     }
 }
 

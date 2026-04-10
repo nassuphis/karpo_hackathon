@@ -54,6 +54,7 @@
       "/clean-render",
       "/cleanup",
       "/coeffgen",
+      "/compute-preview",
       "/deepzoom-export",
       "/delete",
       "/delete-favorite",
@@ -88,6 +89,7 @@
     ],
     "config_services": {
       "coeffgen": "/coeffgen",
+      "compute-preview": "/compute-preview",
       "deepzoom-export": "/deepzoom-export",
       "dispatch": "/dispatch-render",
       "encode": "/encode-upload",
@@ -119,6 +121,7 @@
       "resize_artifact"
     ],
     "literal_services": [
+      "compute-preview",
       "dispatch",
       "param-debug",
       "png-export",

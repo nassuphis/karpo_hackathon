@@ -10,42 +10,14 @@ with one fast call. Pure Python, 1024 MB, no layers.
 """
 import json
 import math
-import struct
 import time
-import zlib
+import struct
 
 import boto3
 
-from shared import BUCKET, PRESIGN_EXPIRY, parse_body, ok_response, compute_viewport_from_bin
+from shared import BUCKET, PRESIGN_EXPIRY, parse_body, ok_response, compute_viewport_from_bin, encode_png_gray
 
 s3 = boto3.client("s3")
-
-
-def _encode_png_gray(width, height, gray_buf):
-    """Encode grayscale buffer to PNG (pure Python, no dependencies).
-    gray_buf: bytearray of length width * height (1 byte per pixel).
-    Returns bytes of the PNG file.
-    """
-    def _chunk(ctype, data):
-        c = ctype + data
-        crc = zlib.crc32(c) & 0xFFFFFFFF
-        return struct.pack(">I", len(data)) + c + struct.pack(">I", crc)
-
-    raw = bytearray()
-    for y in range(height):
-        raw.append(0)  # filter: none
-        raw.extend(gray_buf[y * width:(y + 1) * width])
-
-    # color_type=0 (grayscale), bit_depth=8
-    ihdr = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
-    idat = zlib.compress(bytes(raw), 6)
-
-    out = b'\x89PNG\r\n\x1a\n'
-    out += _chunk(b'IHDR', ihdr)
-    out += _chunk(b'IDAT', idat)
-    out += _chunk(b'IEND', b'')
-    return out
-
 
 def handler(event, context):
     params = parse_body(event)
@@ -94,7 +66,7 @@ def handler(event, context):
     del bin_data
 
     # Encode as grayscale PNG (half the size of RGB)
-    png_data = _encode_png_gray(W, H, gray)
+    png_data = encode_png_gray(W, H, gray)
 
     # Upload preview
     preview_key = f"renders/{job_id}/preview.png"

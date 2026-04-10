@@ -28,6 +28,7 @@ RASTER_MT_NAME="polypaint-raster-mt"
 FINALIZE_NAME="polypaint-finalize"
 COEFFGEN_NAME="polypaint-coeffgen"
 PREVIEW_NAME="polypaint-preview"
+COMPUTE_PREVIEW_NAME="polypaint-compute-preview"
 BILEVEL_NAME="polypaint-bilevel"
 ROLE_NAME="polypaint-lambda-role"
 REGION="us-east-1"
@@ -47,6 +48,7 @@ RASTER_MT_THREADS=4   # default per-Lambda worker count for color raster MT
 FINALIZE_MEMORY=1769  # 1 vCPU, pixassemble (64 MB tile buffer for 4096²)
 COEFFGEN_MEMORY=1769  # 1 vCPU, coefficient generation (no solver, striped)
 PREVIEW_MEMORY=1024   # pure Python, PNG encoding via zlib (512 OOMs on large lores)
+COMPUTE_PREVIEW_MEMORY=4096  # sync coeffgen+solve+PNG preview, needs LAPACK for roots_cm/CM
 BILEVEL_MEMORY=1769   # 1 vCPU, bilevel raster + merge
 TIFF_COMPAT_NAME="polypaint-tiff-compat"
 TIFF_COMPAT_MEMORY=4096  # needs RAM for scanline buffer on large images
@@ -775,6 +777,16 @@ cp lambda/handler_preview.py lambda/shared.py "$PREVIEW_DIR/"
 cd "$PREVIEW_DIR" && zip -r9 /tmp/polypaint-preview.zip . -q && cd "$SCRIPT_DIR"
 echo "  Preview:  $(du -h /tmp/polypaint-preview.zip | cut -f1)  (pure Python)"
 
+# Compute Preview: handler_compute_preview.py + shared.py + coeffgen/solve binaries
+COMPUTE_PREVIEW_DIR=/tmp/polypaint-compute-preview
+rm -rf "$COMPUTE_PREVIEW_DIR"
+mkdir -p "$COMPUTE_PREVIEW_DIR"
+cp lambda/handler_compute_preview.py lambda/shared.py "$COMPUTE_PREVIEW_DIR/"
+cp lambda/sweep_coeffgen lambda/sweep lambda/sweep_mt lambda/sweep_cm "$COMPUTE_PREVIEW_DIR/"
+chmod +x "$COMPUTE_PREVIEW_DIR"/sweep_coeffgen "$COMPUTE_PREVIEW_DIR"/sweep "$COMPUTE_PREVIEW_DIR"/sweep_mt "$COMPUTE_PREVIEW_DIR"/sweep_cm
+cd "$COMPUTE_PREVIEW_DIR" && zip -r9 /tmp/polypaint-compute-preview.zip . -q && cd "$SCRIPT_DIR"
+echo "  CPreview: $(du -h /tmp/polypaint-compute-preview.zip | cut -f1)  (sync coeffgen+solve preview)"
+
 # Bilevel: handler_bilevel.py + shared.py + bilevel (needs libvips layer)
 BILEVEL_DIR=/tmp/polypaint-bilevel
 rm -rf "$BILEVEL_DIR"
@@ -1163,15 +1175,17 @@ setup_api_gateway() {
     ensure_route "POST /sweep-mt" "$SWEEP_MT_INT"
     ensure_route "POST /coeffgen" "$COEFFGEN_INT"
 
-    local RASTER_INT FINALIZE_INT PREVIEW_INT
+    local RASTER_INT FINALIZE_INT PREVIEW_INT COMPUTE_PREVIEW_INT
     RASTER_INT=$(create_integration "$RASTER_NAME")
     FINALIZE_INT=$(create_integration "$FINALIZE_NAME")
     PREVIEW_INT=$(create_integration "$PREVIEW_NAME")
+    COMPUTE_PREVIEW_INT=$(create_integration "$COMPUTE_PREVIEW_NAME")
     local PARAM_DEBUG_INT
     PARAM_DEBUG_INT=$(create_integration "$PARAM_DEBUG_NAME")
     ensure_route "POST /raster" "$RASTER_INT"
     ensure_route "POST /finalize" "$FINALIZE_INT"
     ensure_route "POST /preview" "$PREVIEW_INT"
+    ensure_route "POST /compute-preview" "$COMPUTE_PREVIEW_INT"
     ensure_route "POST /param-debug" "$PARAM_DEBUG_INT"
     local TIFF_COMPAT_INT
     TIFF_COMPAT_INT=$(create_integration "$TIFF_COMPAT_NAME")
@@ -1234,6 +1248,7 @@ setup_api_gateway() {
   "encode": "%s/encode-upload",
   "viewport": "%s/viewport",
   "preview": "%s/preview",
+  "compute-preview": "%s/compute-preview",
   "storage": "%s",
   "dispatch": "%s/dispatch-render",
   "param-debug": "%s/param-debug",
@@ -1250,7 +1265,7 @@ setup_api_gateway() {
     "git_dirty": %s,
     "frontend_sha256": "%s"
   }
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$BUILD_ID" "$BUILD_DEPLOYED_AT_UTC" "$BUILD_GIT_REV" "$BUILD_GIT_DIRTY" "$BUILD_FRONTEND_SHA256" \
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$BUILD_ID" "$BUILD_DEPLOYED_AT_UTC" "$BUILD_GIT_REV" "$BUILD_GIT_DIRTY" "$BUILD_FRONTEND_SHA256" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" --region "$REGION"
     echo "  config.json uploaded"
@@ -1383,6 +1398,9 @@ if [ "$ACTION" = "create" ]; then
 
     create_lambda "$PREVIEW_NAME" "handler_preview.handler" "/tmp/polypaint-preview.zip" \
         "$PREVIEW_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
+
+    create_lambda "$COMPUTE_PREVIEW_NAME" "handler_compute_preview.handler" "/tmp/polypaint-compute-preview.zip" \
+        "$COMPUTE_PREVIEW_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     create_lambda "$BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip" \
         "$BILEVEL_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -1698,6 +1716,9 @@ elif [ "$ACTION" = "update" ]; then
 
     update_lambda "$PREVIEW_NAME" "handler_preview.handler" "/tmp/polypaint-preview.zip" \
         "$PREVIEW_MEMORY" "" "BUCKET=$BUCKET"
+
+    update_lambda "$COMPUTE_PREVIEW_NAME" "handler_compute_preview.handler" "/tmp/polypaint-compute-preview.zip" \
+        "$COMPUTE_PREVIEW_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     update_lambda "$BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip" \
         "$BILEVEL_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"

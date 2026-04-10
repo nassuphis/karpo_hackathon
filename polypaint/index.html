@@ -1550,6 +1550,49 @@ button {
     </div>
 </div>
 
+<div id="extract-palette-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="extract-palette-popup-title">
+        <div class="tri-popup-head">
+            <div id="extract-palette-popup-title" class="tri-popup-title">ExtractPalette</div>
+            <button id="extract-palette-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div id="extract-palette-popup-summary" class="autolevel-popup-summary"></div>
+        <div style="padding:0 14px 8px 14px">
+            <div class="render-mt-matrix">
+                <div></div>
+                <div class="render-mt-matrix-head">Threads</div>
+                <div class="render-mt-matrix-head">Input</div>
+                <div class="render-mt-matrix-head">Workers</div>
+                <div class="render-mt-matrix-head">Retries</div>
+
+                <div class="render-mt-matrix-stage">Hist</div>
+                <input id="extract-palette-solve-score-threads" type="number" min="1" max="16" step="1" value="4">
+                <select id="extract-palette-hist-input-mode">
+                    <option value="tmpfile">tmp file</option>
+                    <option value="stdin">stdin</option>
+                    <option value="sectioned">sectioned native</option>
+                </select>
+                <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+                <input id="extract-palette-hist-retries" type="number" min="0" max="10" step="1" value="2">
+
+                <div class="render-mt-matrix-stage">Merge</div>
+                <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+                <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+                <input id="extract-palette-merge-workers" type="number" min="1" max="64" step="1" value="16">
+                <div class="render-mt-matrix-empty" aria-hidden="true">sdk</div>
+            </div>
+        </div>
+        <div id="extract-palette-popup-help" class="autolevel-popup-help">ExtractPalette reuses exact Color lineage. These solve-score execution controls are only used when extraction needs solve-score prepass work; attach and no-op paths ignore them.</div>
+        <div class="autolevel-popup-actions">
+            <div></div>
+            <div style="display:flex; gap:8px">
+                <button id="extract-palette-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+                <button id="extract-palette-popup-run" type="button" class="btn-primary" style="padding:6px 12px">Execute</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div id="pdf-colorspread-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
     <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="pdf-colorspread-popup-title">
         <div class="tri-popup-head">
@@ -3242,6 +3285,13 @@ let _generateFromPalettePopupState = {
     finalizeWorkers: 16,
     saveAssociatedPalette: false,
 };
+let _extractPalettePopupState = {
+    open: false,
+    solveScoreThreads: 4,
+    histInputMode: 'tmpfile',
+    histRetries: 2,
+    mergeWorkers: 16,
+};
 let _pdfColorSpreadPopupState = { open: false, filter: '', highlightIdx: 0, sourceArtifactId: '' };
 let _functionPopupState = { open: false, filter: '', highlightIdx: 0 };
 
@@ -4127,6 +4177,26 @@ function _canColorRepaletteArtifact(art) {
     return !!(art.repalette_capable && art.pixel_bins_prefix);
 }
 
+function _findColorArtifactById(artifactId) {
+    return (_renderArtifacts.color || []).find(art => art && art.artifact_id === artifactId) || null;
+}
+
+function _canExtractPaletteArtifact(art) {
+    if (!art || !art.artifact_id) return false;
+    let current = art;
+    const seen = new Set();
+    while (current && current.artifact_id && !seen.has(current.artifact_id)) {
+        seen.add(current.artifact_id);
+        if (current.associated_palette_id) return true;
+        if (current.color_mode === 'saved_palette' && current.palette_source_id) return true;
+        if (current.color_mode === 'solve_score') return true;
+        const parentId = String(current.derived_from_artifact_id || '').trim();
+        if (!parentId) break;
+        current = _findColorArtifactById(parentId);
+    }
+    return false;
+}
+
 function _reusablePaletteArtifacts() {
     return (_renderArtifacts.palette || []).filter(art =>
         !!(art && art.palette_id && art.render_reusable && art.data_layout === 'chunk_all_pass_v1' && art.chunk_bins_prefix)
@@ -4323,6 +4393,204 @@ async function runColorRepaletteSelectedArtifact() {
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = orig; }
     }
+}
+
+async function runExtractPaletteArtifact(config = null) {
+    const art = _renderSelectedArtifactEntry();
+    const jobId = document.getElementById('render-results-dir').value.trim();
+    if (!jobId || !_canExtractPaletteArtifact(art)) return;
+    if (_activeRenderRun || _activePaletteRun || _loadActivePaletteRun()) {
+        log('ExtractPalette: another render or palette run is already in progress', 'err', 'render-log');
+        return;
+    }
+    const btn = document.getElementById('btn-render-extract-palette');
+    const statusEl = document.getElementById('render-status');
+    const paletteStatusEl = document.getElementById('palette-status');
+    const orig = btn ? btn.textContent : 'ExtractPalette';
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Extracting...'; }
+        if (statusEl) {
+            statusEl.textContent = 'ExtractPalette: dispatching...';
+            statusEl.className = 'status';
+        }
+        if (paletteStatusEl) {
+            paletteStatusEl.textContent = 'ExtractPalette: dispatching...';
+            paletteStatusEl.className = 'status';
+        }
+        const solveScoreThreads = _clampRenderMtThreads(
+            config && typeof config === 'object' && config.solveScoreThreads != null
+                ? config.solveScoreThreads
+                : _extractPalettePopupState.solveScoreThreads
+        );
+        const histInputMode = _normalizeSolveScoreHistInputMode(
+            config && typeof config === 'object' && config.histInputMode != null
+                ? config.histInputMode
+                : _extractPalettePopupState.histInputMode
+        );
+        const histRetries = _clampRenderMtRetries(
+            config && typeof config === 'object' && config.histRetries != null
+                ? config.histRetries
+                : _extractPalettePopupState.histRetries
+        );
+        const mergeWorkers = _clampRenderMtMergeWorkers(
+            config && typeof config === 'object' && config.mergeWorkers != null
+                ? config.mergeWorkers
+                : _extractPalettePopupState.mergeWorkers
+        );
+        _extractPalettePopupState.solveScoreThreads = solveScoreThreads;
+        _extractPalettePopupState.histInputMode = histInputMode;
+        _extractPalettePopupState.histRetries = histRetries;
+        _extractPalettePopupState.mergeWorkers = mergeWorkers;
+        log(`ExtractPalette: starting for ${art.artifact_id} with hist threads=${solveScoreThreads}, hist input=${histInputMode}, hist retries=${histRetries}, merge workers=${mergeWorkers}...`, '', 'render-log');
+        log(`ExtractPalette: starting for ${art.artifact_id} with hist threads=${solveScoreThreads}, hist input=${histInputMode}, hist retries=${histRetries}, merge workers=${mergeWorkers}...`, '', 'palette-log');
+
+        const runId = _generateRunId();
+        const taskId = 'extract_palette_run_' + runId;
+        const dispResult = await lambdaPost('dispatch', {
+            target: 'palette_orchestrator',
+            jobs: [{
+                job_id: jobId,
+                run_id: runId,
+                task_id: taskId,
+                artifact_id: art.artifact_id,
+                params: {
+                    solve_score_threads: solveScoreThreads,
+                    solve_score_hist_input_mode: histInputMode,
+                    solve_score_hist_retries: histRetries,
+                    solve_score_merge_workers: mergeWorkers,
+                },
+            }],
+            expected_keys: [],
+        });
+        if ((dispResult.fired || 0) !== 1) throw new Error('ExtractPalette dispatch failed');
+
+        const paletteJobEl = document.getElementById('palette-results-dir');
+        if (paletteJobEl) paletteJobEl.value = jobId;
+        _saveActivePaletteRun({
+            job_id: jobId,
+            run_id: runId,
+            task_id: taskId,
+            started_at_ms: Date.now(),
+            mode: 'extract_palette',
+            origin: 'render_extract_palette',
+            source_artifact_id: art.artifact_id,
+        });
+        log('  orchestrator dispatched: ' + runId, 'ok', 'render-log');
+        log('  orchestrator dispatched: ' + runId, 'ok', 'palette-log');
+        startActivePaletteObserver();
+    } catch (e) {
+        if (statusEl) {
+            statusEl.textContent = 'ExtractPalette failed';
+            statusEl.className = 'status error';
+        }
+        if (paletteStatusEl) {
+            paletteStatusEl.textContent = 'ExtractPalette failed';
+            paletteStatusEl.className = 'status error';
+        }
+        log('ExtractPalette failed: ' + e.message, 'err', 'render-log');
+        log('ExtractPalette failed: ' + e.message, 'err', 'palette-log');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+}
+
+function _extractPaletteLineageHint(art) {
+    if (!art || !art.artifact_id) return { kind: 'none', label: 'No Color artifact selected.' };
+    let current = art;
+    const seen = new Set();
+    while (current && current.artifact_id && !seen.has(current.artifact_id)) {
+        seen.add(current.artifact_id);
+        if (current.associated_palette_id) {
+            return current === art
+                ? { kind: 'done', label: `Artifact ${art.artifact_id} already has an associated palette; extraction should be a no-op.` }
+                : { kind: 'attach', label: `Artifact ${art.artifact_id} inherits an associated palette from ${current.artifact_id}; extraction should attach that palette without regeneration.` };
+        }
+        if (current.color_mode === 'saved_palette' && current.palette_source_id) {
+            return current === art
+                ? { kind: 'attach', label: `Artifact ${art.artifact_id} is a saved-palette render; extraction should attach the saved palette dependency.` }
+                : { kind: 'attach', label: `Artifact ${art.artifact_id} resolves to saved-palette ancestor ${current.artifact_id}; extraction should attach that saved palette dependency.` };
+        }
+        if (current.color_mode === 'solve_score') {
+            return current === art
+                ? { kind: 'solve_score', label: `Artifact ${art.artifact_id} is a solve-score render; extraction will reuse exact solve-score lineage and may rerun solve-score prepass if scratch is missing.` }
+                : { kind: 'solve_score', label: `Artifact ${art.artifact_id} resolves to solve-score ancestor ${current.artifact_id}; extraction will use that exact lineage and may rerun solve-score prepass if scratch is missing.` };
+        }
+        const parentId = String(current.derived_from_artifact_id || '').trim();
+        if (!parentId) break;
+        current = _findColorArtifactById(parentId);
+    }
+    return { kind: 'none', label: `Artifact ${art.artifact_id} does not expose reusable palette lineage.` };
+}
+
+function _closeExtractPalettePopup() {
+    _extractPalettePopupState = {
+        open: false,
+        solveScoreThreads: _clampRenderMtThreads(_extractPalettePopupState.solveScoreThreads),
+        histInputMode: _normalizeSolveScoreHistInputMode(_extractPalettePopupState.histInputMode),
+        histRetries: _clampRenderMtRetries(_extractPalettePopupState.histRetries),
+        mergeWorkers: _clampRenderMtMergeWorkers(_extractPalettePopupState.mergeWorkers),
+    };
+    const overlay = document.getElementById('extract-palette-popup-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+}
+
+function _renderExtractPalettePopup() {
+    const overlay = document.getElementById('extract-palette-popup-overlay');
+    const summaryEl = document.getElementById('extract-palette-popup-summary');
+    const threadsEl = document.getElementById('extract-palette-solve-score-threads');
+    const histInputModeEl = document.getElementById('extract-palette-hist-input-mode');
+    const histRetriesEl = document.getElementById('extract-palette-hist-retries');
+    const mergeWorkersEl = document.getElementById('extract-palette-merge-workers');
+    const runBtn = document.getElementById('extract-palette-popup-run');
+    if (!overlay || !summaryEl || !threadsEl || !histInputModeEl || !histRetriesEl || !mergeWorkersEl) return;
+    if (!_extractPalettePopupState.open) {
+        _closeExtractPalettePopup();
+        return;
+    }
+    const art = _renderSelectedArtifactEntry();
+    const lineage = _extractPaletteLineageHint(art);
+    const executionRelevant = lineage.kind === 'solve_score';
+    const solveScoreThreads = _clampRenderMtThreads(_extractPalettePopupState.solveScoreThreads);
+    const histInputMode = _normalizeSolveScoreHistInputMode(_extractPalettePopupState.histInputMode);
+    const histRetries = _clampRenderMtRetries(_extractPalettePopupState.histRetries);
+    const mergeWorkers = _clampRenderMtMergeWorkers(_extractPalettePopupState.mergeWorkers);
+    _extractPalettePopupState.solveScoreThreads = solveScoreThreads;
+    _extractPalettePopupState.histInputMode = histInputMode;
+    _extractPalettePopupState.histRetries = histRetries;
+    _extractPalettePopupState.mergeWorkers = mergeWorkers;
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    threadsEl.value = String(solveScoreThreads);
+    histInputModeEl.value = histInputMode;
+    histRetriesEl.value = String(histRetries);
+    mergeWorkersEl.value = String(mergeWorkers);
+    threadsEl.disabled = !executionRelevant;
+    histInputModeEl.disabled = !executionRelevant;
+    histRetriesEl.disabled = !executionRelevant || histInputMode !== 'sectioned';
+    mergeWorkersEl.disabled = !executionRelevant;
+    const artLabel = art && art.artifact_id ? art.artifact_id : '(none)';
+    summaryEl.textContent = executionRelevant
+        ? `Artifact: ${artLabel} • ${lineage.label} • hist threads=${solveScoreThreads} • hist input=${histInputMode} • hist retries=${histRetries} • merge workers=${mergeWorkers}`
+        : `Artifact: ${artLabel} • ${lineage.label} • solve-score execution controls are currently ignored for this lineage.`;
+    if (runBtn) runBtn.disabled = !_canExtractPaletteArtifact(art) || !!_activeRenderRun || !!_activePaletteRun || !!_loadActivePaletteRun();
+}
+
+function openExtractPalettePopup() {
+    const art = _renderSelectedArtifactEntry();
+    if (_activeRenderRun || _activePaletteRun || _loadActivePaletteRun() || !_canExtractPaletteArtifact(art)) return;
+    _extractPalettePopupState = {
+        open: true,
+        solveScoreThreads: _clampRenderMtThreads(_extractPalettePopupState.solveScoreThreads || 4),
+        histInputMode: _normalizeSolveScoreHistInputMode(_extractPalettePopupState.histInputMode || 'tmpfile'),
+        histRetries: _clampRenderMtRetries(_extractPalettePopupState.histRetries ?? 2),
+        mergeWorkers: _clampRenderMtMergeWorkers(_extractPalettePopupState.mergeWorkers || 16),
+    };
+    _renderExtractPalettePopup();
+    const threadsEl = document.getElementById('extract-palette-solve-score-threads');
+    if (threadsEl && typeof threadsEl.focus === 'function') threadsEl.focus();
 }
 
 function _clampRenderMtThreads(value) {
@@ -5304,6 +5572,91 @@ function _initGenerateFromPalettePopup() {
     });
 }
 
+function _initExtractPalettePopup() {
+    const overlay = document.getElementById('extract-palette-popup-overlay');
+    const closeBtn = document.getElementById('extract-palette-popup-close');
+    const cancelBtn = document.getElementById('extract-palette-popup-cancel');
+    const runBtn = document.getElementById('extract-palette-popup-run');
+    const threadsEl = document.getElementById('extract-palette-solve-score-threads');
+    const histInputModeEl = document.getElementById('extract-palette-hist-input-mode');
+    const histRetriesEl = document.getElementById('extract-palette-hist-retries');
+    const mergeWorkersEl = document.getElementById('extract-palette-merge-workers');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closeExtractPalettePopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closeExtractPalettePopup);
+    if (cancelBtn) cancelBtn.addEventListener('click', _closeExtractPalettePopup);
+    if (threadsEl) {
+        threadsEl.addEventListener('input', (ev) => {
+            _extractPalettePopupState.solveScoreThreads = _clampRenderMtThreads(ev.target.value);
+            _renderExtractPalettePopup();
+        });
+    }
+    if (histInputModeEl) {
+        histInputModeEl.addEventListener('change', (ev) => {
+            _extractPalettePopupState.histInputMode = _normalizeSolveScoreHistInputMode(ev.target.value);
+            _renderExtractPalettePopup();
+        });
+    }
+    if (histRetriesEl) {
+        histRetriesEl.addEventListener('input', (ev) => {
+            _extractPalettePopupState.histRetries = _clampRenderMtRetries(ev.target.value);
+            _renderExtractPalettePopup();
+        });
+    }
+    if (mergeWorkersEl) {
+        mergeWorkersEl.addEventListener('input', (ev) => {
+            _extractPalettePopupState.mergeWorkers = _clampRenderMtMergeWorkers(ev.target.value);
+            _renderExtractPalettePopup();
+        });
+    }
+    if (runBtn) {
+        runBtn.addEventListener('click', async () => {
+            const btnText = runBtn.textContent;
+            try {
+                runBtn.disabled = true;
+                runBtn.textContent = 'Executing...';
+                const solveScoreThreads = _clampRenderMtThreads(document.getElementById('extract-palette-solve-score-threads').value);
+                const histInputMode = _normalizeSolveScoreHistInputMode(document.getElementById('extract-palette-hist-input-mode').value);
+                const histRetries = _clampRenderMtRetries(document.getElementById('extract-palette-hist-retries').value);
+                const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('extract-palette-merge-workers').value);
+                _extractPalettePopupState.solveScoreThreads = solveScoreThreads;
+                _extractPalettePopupState.histInputMode = histInputMode;
+                _extractPalettePopupState.histRetries = histRetries;
+                _extractPalettePopupState.mergeWorkers = mergeWorkers;
+                _closeExtractPalettePopup();
+                await runExtractPaletteArtifact({ solveScoreThreads, histInputMode, histRetries, mergeWorkers });
+            } finally {
+                runBtn.disabled = false;
+                runBtn.textContent = btnText;
+            }
+        });
+    }
+    document.addEventListener('keydown', (ev) => {
+        if (!_extractPalettePopupState.open) return;
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closeExtractPalettePopup();
+            return;
+        }
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            const solveScoreThreads = _clampRenderMtThreads(document.getElementById('extract-palette-solve-score-threads').value);
+            const histInputMode = _normalizeSolveScoreHistInputMode(document.getElementById('extract-palette-hist-input-mode').value);
+            const histRetries = _clampRenderMtRetries(document.getElementById('extract-palette-hist-retries').value);
+            const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('extract-palette-merge-workers').value);
+            _extractPalettePopupState.solveScoreThreads = solveScoreThreads;
+            _extractPalettePopupState.histInputMode = histInputMode;
+            _extractPalettePopupState.histRetries = histRetries;
+            _extractPalettePopupState.mergeWorkers = mergeWorkers;
+            _closeExtractPalettePopup();
+            runExtractPaletteArtifact({ solveScoreThreads, histInputMode, histRetries, mergeWorkers });
+        }
+    });
+}
+
 function _initPdfColorSpreadPopup() {
     const overlay = document.getElementById('pdf-colorspread-popup-overlay');
     const closeBtn = document.getElementById('pdf-colorspread-popup-close');
@@ -6175,6 +6528,7 @@ _initResultsRefreshPopup();
 _initRenderGeneratePopup();
 _initRenderMtPopup();
 _initGenerateFromPalettePopup();
+_initExtractPalettePopup();
 _initPdfColorSpreadPopup();
 _updateSolveScoreButtons();  // initial disabled state
 _clearPaletteCanvas('No palette selected');
@@ -6861,6 +7215,8 @@ async function runPaletteArtifact() {
             run_id: runId,
             task_id: taskId,
             started_at_ms: Date.now(),
+            mode: 'palette',
+            origin: 'palette_tab',
         });
         log('  orchestrator dispatched: ' + runId, 'ok', 'palette-log');
         startActivePaletteObserver();
@@ -6876,6 +7232,7 @@ async function runPaletteArtifact() {
 function _saveActivePaletteRun(record) {
     _activePaletteRun = record;
     try { localStorage.setItem('polypaint_active_palette_run', JSON.stringify(record)); } catch(e) {}
+    try { _updateRenderActionButtons(); } catch(e) {}
 }
 
 function _clearActivePaletteRun() {
@@ -6883,6 +7240,7 @@ function _clearActivePaletteRun() {
     _lastPaletteLoggedPhase = null;
     _lastPaletteWarnState = null;
     try { localStorage.removeItem('polypaint_active_palette_run'); } catch(e) {}
+    try { _updateRenderActionButtons(); } catch(e) {}
 }
 
 function _loadActivePaletteRun() {
@@ -6913,10 +7271,23 @@ function resumeActivePaletteObserver() {
     startActivePaletteObserver();
 }
 
+function _paletteRunLabel(run) {
+    return run && run.mode === 'extract_palette' ? 'ExtractPalette' : 'Palette';
+}
+
+function _shouldMirrorPaletteRunToRender(run) {
+    const renderActive = !!document.getElementById('tab-render')?.classList.contains('active');
+    if (!renderActive) return false;
+    if (run && run.origin === 'render_extract_palette') return true;
+    return _renderActiveFamily === 'palette';
+}
+
 async function _pollActivePaletteRun() {
     const run = _activePaletteRun || _loadActivePaletteRun();
     if (!run) { stopActivePaletteObserver(); return; }
     const statusEl = document.getElementById('palette-status');
+    const runLabel = _paletteRunLabel(run);
+    const mirrorToRender = _shouldMirrorPaletteRunToRender(run);
 
     try {
         const check = await lambdaPost('storage', {
@@ -6926,16 +7297,19 @@ async function _pollActivePaletteRun() {
         if (check.errors > 0) {
             _logContractWarnings(check.error_details || [], 'palette-log');
             const msg = check.error_details?.[0]?.error_msg || 'unknown error';
-            statusEl.textContent = 'Palette error: ' + msg;
+            const ctx = _formatTaskErrorContext(check.error_details?.[0] || {});
+            statusEl.textContent = runLabel + ' error: ' + msg;
             statusEl.className = 'status error';
-            log('Palette failed: ' + msg, 'err', 'palette-log');
-            if (document.getElementById('tab-render')?.classList.contains('active') && _renderActiveFamily === 'palette') {
+            log(runLabel + ' failed: ' + msg, 'err', 'palette-log');
+            if (ctx) log('  context: ' + ctx, 'err', 'palette-log');
+            if (mirrorToRender) {
                 const renderStatusEl = document.getElementById('render-status');
                 if (renderStatusEl) {
-                    renderStatusEl.textContent = 'Palette error: ' + msg;
+                    renderStatusEl.textContent = runLabel + ' error: ' + msg;
                     renderStatusEl.className = 'status error';
                 }
-                log('Palette failed: ' + msg, 'err', 'render-log');
+                log(runLabel + ' failed: ' + msg, 'err', 'render-log');
+                if (ctx) log('  context: ' + ctx, 'err', 'render-log');
             }
             _clearActivePaletteRun();
             stopActivePaletteObserver();
@@ -6963,17 +7337,24 @@ async function _pollActivePaletteRun() {
         if (check.complete || rd.phase === 'done') {
             document.getElementById('palette-results-dir').value = run.job_id;
             await loadPaletteInventory({ selectPaletteId: rd.palette_id });
-            await refreshRenderArtifacts(run.job_id, { selectFamily: 'palette', selectArtifactId: rd.palette_id });
-            statusEl.textContent = 'Palette complete';
+            if (run.origin === 'render_extract_palette') {
+                await refreshRenderArtifacts(run.job_id, {
+                    selectFamily: 'color',
+                    selectArtifactId: rd.artifact_id || run.source_artifact_id || null,
+                });
+            } else {
+                await refreshRenderArtifacts(run.job_id, { selectFamily: 'palette', selectArtifactId: rd.palette_id });
+            }
+            statusEl.textContent = runLabel + ' complete';
             statusEl.className = 'status ok';
-            log('Palette complete: ' + (rd.palette_id || rd.image_key || run.run_id), 'ok', 'palette-log');
-            if (document.getElementById('tab-render')?.classList.contains('active')) {
+            log(runLabel + ' complete: ' + (rd.palette_id || rd.image_key || run.run_id), 'ok', 'palette-log');
+            if (mirrorToRender) {
                 const renderStatusEl = document.getElementById('render-status');
                 if (renderStatusEl) {
-                    renderStatusEl.textContent = 'Palette complete';
+                    renderStatusEl.textContent = runLabel + ' complete';
                     renderStatusEl.className = 'status ok';
                 }
-                log('Palette complete: ' + (rd.palette_id || rd.image_key || run.run_id), 'ok', 'render-log');
+                log(runLabel + ' complete: ' + (rd.palette_id || rd.image_key || run.run_id), 'ok', 'render-log');
             }
             _clearActivePaletteRun();
             stopActivePaletteObserver();
@@ -6989,7 +7370,7 @@ async function _pollActivePaletteRun() {
                 done = subcheck.done || 0;
                 expected = subcheck.expected || rd.expected || 0;
                 _logContractWarnings(subcheck.results || [], 'palette-log');
-                if (document.getElementById('tab-render')?.classList.contains('active') && _renderActiveFamily === 'palette') {
+                if (mirrorToRender) {
                     _logContractWarnings(subcheck.results || [], 'render-log');
                 }
                 if (subcheck.latest_update_ms) workerFreshMs = Date.now() - subcheck.latest_update_ms;
@@ -7010,24 +7391,27 @@ async function _pollActivePaletteRun() {
         }
 
         if (freshMs !== null && freshMs > PALETTE_HARD_STALE_MS) {
-            statusEl.textContent = 'Palette stalled (no worker update for 15+ min)';
+            statusEl.textContent = runLabel + ' stalled (no worker update for 15+ min)';
             statusEl.className = 'status error';
             if (_lastPaletteWarnState !== 'hard') {
                 _lastPaletteWarnState = 'hard';
-                log('Palette stalled — no worker update for 15+ min', 'err', 'palette-log');
+                log(runLabel + ' stalled — no worker update for 15+ min', 'err', 'palette-log');
+                if (mirrorToRender) log(runLabel + ' stalled — no worker update for 15+ min', 'err', 'render-log');
             }
         } else if (freshMs !== null && freshMs > PALETTE_WARN_STALE_MS) {
             statusEl.textContent = statusMsg + ' · no worker update for 5+ min';
             statusEl.className = 'status';
             if (_lastPaletteWarnState !== 'warn') {
                 _lastPaletteWarnState = 'warn';
-                log('Warning: palette workers idle for 5+ min', '', 'palette-log');
+                log('Warning: ' + runLabel.toLowerCase() + ' workers idle for 5+ min', '', 'palette-log');
+                if (mirrorToRender) log('Warning: ' + runLabel.toLowerCase() + ' workers idle for 5+ min', '', 'render-log');
             }
         } else {
             statusEl.textContent = statusMsg;
             statusEl.className = 'status';
             if (_lastPaletteWarnState) {
-                log('Palette workers active again', 'ok', 'palette-log');
+                log(runLabel + ' workers active again', 'ok', 'palette-log');
+                if (mirrorToRender) log(runLabel + ' workers active again', 'ok', 'render-log');
                 _lastPaletteWarnState = null;
             }
         }
@@ -7038,6 +7422,7 @@ async function _pollActivePaletteRun() {
             let logMsg = phase;
             if (expected > 0) logMsg += ' ' + done + '/' + expected;
             log(logMsg, '', 'palette-log');
+            if (mirrorToRender) log(logMsg, '', 'render-log');
         }
     } catch (e) {
         // keep polling
@@ -8493,6 +8878,7 @@ function _updateRenderActionButtons() {
     const goResultBtn = document.getElementById('btn-render-go-result');
     const repalBtn = document.getElementById('btn-render-repalette');
     const colorRepalBtn = document.getElementById('btn-render-color-repalette');
+    const extractPalBtn = document.getElementById('btn-render-extract-palette');
     const fromPalBtn = document.getElementById('btn-render-generate-from-palette');
     const pdfBtn = document.getElementById('btn-render-pdf-colorspread');
     const tiffCompatBtn = document.getElementById('btn-tiff-compat');
@@ -8510,6 +8896,7 @@ function _updateRenderActionButtons() {
     if (resizeBtn) resizeBtn.disabled = !(hasSelection && inventoryMatchesJob && _renderActiveFamily === 'color' && art && art.image_key) || !!_activeRenderRun;
     if (repalBtn) repalBtn.disabled = !(_renderActiveFamily === 'palette' && hasSelection && inventoryMatchesJob && _canRepaletteArtifact(art)) || !!_activeRenderRun;
     if (colorRepalBtn) colorRepalBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && _canColorRepaletteArtifact(art)) || !!_activeRenderRun;
+    if (extractPalBtn) extractPalBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && _canExtractPaletteArtifact(art)) || !!_activeRenderRun || !!_activePaletteRun;
     if (fromPalBtn) fromPalBtn.disabled = !(_renderActiveFamily === 'color' && reusablePalettes.length > 0) || !!_activeRenderRun;
     if (pdfBtn) pdfBtn.disabled = !(_renderActiveFamily === 'pdf' && colorSources.length > 0) || !!_activeRenderRun;
     if (tiffCompatBtn) tiffCompatBtn.disabled = !canConvertBilevel || !!_activeRenderRun;
@@ -8831,7 +9218,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread path. In Solve score and Saved palette modes it opens a popup where you choose histogram input or save the associated palette. Generate-MT opens a popup where you choose hist threads, hist input, merge workers, raster input tmp file vs sectioned native, raster retries, and raster threads for Solve score, Saved palette, Constant, and Rainbow with match=none so you can compare perf. GenerateFromPalette opens a saved-palette execution popup with raster/finalize controls and reuses a saved palette artifact’s persisted bins to color roots directly. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image. Resize derives a new immutable Color artifact using libvips resize/thumbnail operations.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread path. In Solve score and Saved palette modes it opens a popup where you choose histogram input or save the associated palette. Generate-MT opens a popup where you choose hist threads, hist input, merge workers, raster input tmp file vs sectioned native, raster retries, and raster threads for Solve score, Saved palette, Constant, and Rainbow with match=none so you can compare perf. GenerateFromPalette opens a saved-palette execution popup with raster/finalize controls and reuses a saved palette artifact’s persisted bins to color roots directly. ExtractPalette opens a popup with hist threads, hist input, merge workers, and retries for exact palette extraction from solve-score lineage; attach/no-op extract paths ignore those controls. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image. Resize derives a new immutable Color artifact using libvips resize/thumbnail operations.</span>';
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color.</span>';
     } else if (_renderActiveFamily === 'pdf') {
@@ -8875,6 +9262,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     }
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-generate-mt" onclick="generateSelectedRenderArtifactMT()" style="padding:4px 12px; font-size:11px">Generate-MT</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-generate-from-palette" onclick="openGenerateFromPalettePopup()" style="padding:4px 12px; font-size:11px" disabled>GenerateFromPalette</button>');
+    if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-extract-palette" onclick="openExtractPalettePopup()" style="padding:4px 12px; font-size:11px" disabled>ExtractPalette</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-color-repalette" onclick="openColorRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>');
     if (_renderActiveFamily === 'palette') actionButtons.push('<button class="btn-secondary" id="btn-render-repalette" onclick="openRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>');
     if (_renderActiveFamily === 'bilevel') actionButtons.push('<button class="btn-secondary" id="btn-png-export" onclick="runPngExport(document.getElementById(\'render-results-dir\').value.trim(), (_renderSelectedArtifactEntry() || {}).image_key)" style="padding:4px 12px; font-size:11px" disabled>PNG</button>');

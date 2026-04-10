@@ -25,6 +25,8 @@ def handler(event, context):
     job_id = params["job_id"]
     run_id = params["run_id"]
     task_id = params.get("task_id", f"palette_run_{run_id}")
+    artifact_id = str(params.get("artifact_id") or "").strip()
+    mode = "extract_palette" if artifact_id else "palette"
     now_ms = int(time.time() * 1000)
     if not STATE_MACHINE_ARN:
         raise RuntimeError("PALETTE_STATE_MACHINE_ARN is not configured")
@@ -33,9 +35,11 @@ def handler(event, context):
         "job_id": job_id,
         "run_id": run_id,
         "task_id": task_id,
-        "mode": "palette",
+        "mode": mode,
         "params": params.get("params", {}),
     }
+    if artifact_id:
+        sfn_input["artifact_id"] = artifact_id
 
     execution = sfn_client.start_execution(
         stateMachineArn=STATE_MACHINE_ARN,
@@ -47,13 +51,15 @@ def handler(event, context):
     result_data = {
         "job_id": job_id,
         "run_id": run_id,
-        "mode": "palette",
+        "mode": mode,
         "phase": "queued",
         "phase_label": "Queued",
         "execution_arn": execution_arn,
         "started_at_ms": now_ms,
         "updated_at_ms": now_ms,
     }
+    if artifact_id:
+        result_data["artifact_id"] = artifact_id
     report_status(job_id, task_id, "queued", result_data=result_data)
 
     return ok_response({

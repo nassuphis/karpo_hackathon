@@ -102,6 +102,7 @@ def handler(event, context):
     chunk_scores_prefix = params.get("chunk_scores_prefix", chunks_prefix + "score_chunk_")
     chunk_bins_prefix = params.get("chunk_bins_prefix", chunks_prefix + "palette_bins_chunk_")
     chunk_meta_prefix = params.get("chunk_meta_prefix", chunks_prefix + "meta_chunk_")
+    source_color_artifact_id = str(params.get("source_color_artifact_id") or "").strip()
 
     progress = attach_contract_warnings({"phase": "palette_finalize", "palette_id": palette_id}, contract_warnings)
     try:
@@ -247,6 +248,9 @@ def handler(event, context):
             "chunk_bins_prefix": chunk_bins_prefix,
             "chunk_meta_prefix": chunk_meta_prefix,
         }
+        if source_color_artifact_id:
+            meta_body["derived_from_color_artifact_id"] = source_color_artifact_id
+            meta_body["derivation_kind"] = "extract_palette"
         s3.put_object(Bucket=BUCKET, Key=meta_key, Body=json.dumps(meta_body), ContentType="application/json")
 
         # Cleanup only when this workflow owns the solve-score scratch.

@@ -1987,6 +1987,75 @@ class TestRenderSummary(unittest.TestCase):
         self.assertFalse(art["associated_palette_omega_enabled"])
 
     @patch("handler_storage.s3")
+    def test_render_summary_reads_associated_palette_from_color_sidecar_overlay(self, mock_s3):
+        from handler_storage import handle_render_summary
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate_side_effect(**kwargs):
+            prefix = kwargs.get("Prefix", "")
+            if prefix == "renders/j/color/":
+                return [{"CommonPrefixes": [{"Prefix": "renders/j/color/color_sidecar/"}]}]
+            return [{"CommonPrefixes": []}]
+
+        mock_paginator.paginate.side_effect = paginate_side_effect
+
+        def mock_head(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/color/color_sidecar/image.jpeg":
+                return {
+                    "ContentLength": 1234,
+                    "ContentType": "image/jpeg",
+                    "Metadata": {
+                        "width": "4096",
+                        "height": "4096",
+                        "artifact_id": "color_sidecar",
+                        "created_at": "2026-04-10T10:00:00Z",
+                        "family": "color",
+                        "color_mode": "solve_score",
+                        "format": "jpeg",
+                        "root_transforms": "[]",
+                        "view_mode": "auto",
+                        "quantile": "0.01",
+                        "shim": "0.07",
+                        "rotation": "0",
+                        "match_mode": "none",
+                    },
+                }
+            if key == "renders/j/color/color_sidecar/preview.png":
+                return {"ContentLength": 500, "ContentType": "image/png", "Metadata": {}}
+            raise Exception("NoSuchKey")
+
+        def mock_get_object(**kwargs):
+            if kwargs["Key"] == "renders/j/color/color_sidecar/meta.json":
+                return {"Body": MagicMock(read=lambda: json.dumps({
+                    "associated_palette_mode": "generated",
+                    "associated_palette_id": "pal_sidecar",
+                    "associated_palette_image_key": "renders/j/palettes/pal_sidecar/image.jpeg",
+                    "associated_palette_metric": "spread",
+                    "associated_palette_quantile": "0.02",
+                    "associated_palette_omega": "6",
+                    "associated_palette_omega_enabled": "false",
+                }).encode())}
+            raise Exception("NoSuchKey")
+
+        mock_s3.head_object.side_effect = mock_head
+        mock_s3.get_object.side_effect = mock_get_object
+        mock_s3.generate_presigned_url.return_value = "https://signed"
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+        art = body["families"]["color"][0]
+        self.assertEqual(art["associated_palette_mode"], "generated")
+        self.assertEqual(art["associated_palette_id"], "pal_sidecar")
+        self.assertEqual(art["associated_palette_image_key"], "renders/j/palettes/pal_sidecar/image.jpeg")
+        self.assertEqual(art["associated_palette_metric"], "spread")
+        self.assertAlmostEqual(art["associated_palette_quantile"], 0.02)
+        self.assertAlmostEqual(art["associated_palette_omega"], 6.0)
+        self.assertFalse(art["associated_palette_omega_enabled"])
+
+    @patch("handler_storage.s3")
     def test_render_summary_exposes_color_repalette_metadata(self, mock_s3):
         from handler_storage import handle_render_summary
 
@@ -2123,6 +2192,16 @@ class TestRenderSummary(unittest.TestCase):
                     "derived_from_artifact_id": "color_base",
                     "postprocess_kind": "autolevels",
                     "postprocess_profile": "preview_default_v1",
+                    "associated_palette_mode": "generated",
+                    "associated_palette_id": "pal_auto",
+                    "associated_palette_display_name": "anisotropy q=2.0% w=6 tri_redgold",
+                    "associated_palette_image_key": "renders/j/palettes/pal_auto/image.jpeg",
+                    "associated_palette_preview_key": "renders/j/palettes/pal_auto/preview.png",
+                    "associated_palette_palette": "tri_redgold",
+                    "associated_palette_metric": "anisotropy",
+                    "associated_palette_quantile": "0.02",
+                    "associated_palette_omega": "6",
+                    "associated_palette_omega_enabled": "false",
                     "background_color": "000000",
                     "background_threshold": "4",
                     "autolevels_params": "{\"quality\":83,\"gamma\":1.1}",
@@ -2175,6 +2254,13 @@ class TestRenderSummary(unittest.TestCase):
         self.assertAlmostEqual(child["background_threshold"], 4.0)
         self.assertEqual(child["autolevels_params"]["quality"], 83)
         self.assertAlmostEqual(child["quality"], 83.0)
+        self.assertEqual(child["associated_palette_mode"], "generated")
+        self.assertEqual(child["associated_palette_id"], "pal_auto")
+        self.assertEqual(child["associated_palette_image_key"], "renders/j/palettes/pal_auto/image.jpeg")
+        self.assertEqual(child["associated_palette_metric"], "anisotropy")
+        self.assertAlmostEqual(child["associated_palette_quantile"], 0.02)
+        self.assertAlmostEqual(child["associated_palette_omega"], 6.0)
+        self.assertFalse(child["associated_palette_omega_enabled"])
 
     @patch("handler_storage.s3")
     def test_render_summary_orders_resize_children_above_parent(self, mock_s3):
@@ -2233,6 +2319,16 @@ class TestRenderSummary(unittest.TestCase):
                     "derived_from_artifact_id": "color_base",
                     "postprocess_kind": "resize",
                     "postprocess_profile": "libvips_resize_v1",
+                    "associated_palette_mode": "dependency",
+                    "associated_palette_id": "pal_resize",
+                    "associated_palette_display_name": "spread q=1.0% w=off magma",
+                    "associated_palette_image_key": "renders/j/palettes/pal_resize/image.jpeg",
+                    "associated_palette_preview_key": "renders/j/palettes/pal_resize/preview.png",
+                    "associated_palette_palette": "magma",
+                    "associated_palette_metric": "spread",
+                    "associated_palette_quantile": "0.01",
+                    "associated_palette_omega": "0",
+                    "associated_palette_omega_enabled": "false",
                     "resize_params": "{\"engine\":\"thumbnail\",\"target_size\":2048,\"size_mode\":\"down\"}",
                 },
             },
@@ -2261,6 +2357,13 @@ class TestRenderSummary(unittest.TestCase):
         self.assertEqual(child["resize_params"]["engine"], "thumbnail")
         self.assertEqual(child["resize_params"]["target_size"], 2048)
         self.assertEqual(child["resize_params"]["size_mode"], "down")
+        self.assertEqual(child["associated_palette_mode"], "dependency")
+        self.assertEqual(child["associated_palette_id"], "pal_resize")
+        self.assertEqual(child["associated_palette_image_key"], "renders/j/palettes/pal_resize/image.jpeg")
+        self.assertEqual(child["associated_palette_metric"], "spread")
+        self.assertAlmostEqual(child["associated_palette_quantile"], 0.01)
+        self.assertAlmostEqual(child["associated_palette_omega"], 0.0)
+        self.assertFalse(child["associated_palette_omega_enabled"])
 
     @patch("handler_storage.s3")
     def test_render_summary_returns_derived_bilevel_png_artifacts(self, mock_s3):

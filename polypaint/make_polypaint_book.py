@@ -99,6 +99,17 @@ def _draw_image_cover(c, reader, img_size, x, y, w, h):
     c.restoreState()
 
 
+def _draw_image_contain(c, reader, img_size, x, y, w, h):
+    """Draw image to fit (contain) inside the rectangle, preserving aspect ratio."""
+    img_w, img_h = img_size
+    scale = min(w / img_w, h / img_h)
+    draw_w = img_w * scale
+    draw_h = img_h * scale
+    draw_x = x + (w - draw_w) / 2
+    draw_y = y + (h - draw_h) / 2
+    c.drawImage(reader, draw_x, draw_y, draw_w, draw_h)
+
+
 def _draw_outlined_text(c, text, x, y, font, size,
                         fill=(1, 1, 1), shadow=(0, 0, 0), spacing=0):
     """Draw centered text with a dark outline for readability over images.
@@ -187,7 +198,161 @@ def _load_image_meta(image_path):
         return None
 
 
-def _draw_text_page(c, title, body, is_right, filename=None, job_id=None, pipeline=None):
+def _palette_image_for_entry(image_path, meta):
+    """Resolve the associated palette image for an entry, if any.
+
+    Preferred source: `meta["palette_file"]`, treated as a filename relative to
+    the image's directory. Fallback: `<image_stem>_palette<image_suffix>` next
+    to the image. Returns the path string if found, else None.
+    """
+    if not image_path:
+        return None
+    img = Path(image_path)
+
+    if meta:
+        palette_file = meta.get("palette_file")
+        if palette_file:
+            candidate = img.parent / palette_file
+            if candidate.exists():
+                return str(candidate)
+
+    fallback = img.with_name(f"{img.stem}_palette{img.suffix}")
+    if fallback.exists():
+        return str(fallback)
+
+    return None
+
+
+def _scan_string_from_compute(compute):
+    """Build the parameter scan string `WxH` or `WxHxN` from compute fields."""
+    n_val = compute.get("N")
+    if not n_val:
+        return ""
+    scan = f"{n_val}\u00d7{n_val}"
+    times = compute.get("times")
+    try:
+        if times and int(times) > 1:
+            scan += f"\u00d7{int(times)}"
+    except (TypeError, ValueError):
+        pass
+    return scan
+
+
+def _solver_label(solver):
+    """Map a solver token to its human-readable label."""
+    if solver == "companion_matrix":
+        return "Companion Matrix"
+    if solver == "aberth_mt":
+        return "Aberth-Ehrlich (parallel)"
+    if solver in ("aberth", "", None):
+        return "Aberth-Ehrlich"
+    return solver
+
+
+def _score_or_color_label(meta):
+    """Return the metric name (for solve_score) or the color method otherwise."""
+    color_mode = (meta.get("color_mode") or "").strip()
+    if color_mode == "solve_score":
+        metric = (meta.get("solve_metric") or "").replace("_", " ").strip()
+        return metric or "solve score"
+    if color_mode == "saved_palette":
+        return "saved palette"
+    if color_mode in ("rainbow", "constant", "proximity"):
+        return color_mode
+    return color_mode
+
+
+def _palette_or_bilevel_label(meta):
+    """Return the palette name, or 'bilevel' for bilevel renders, or '' otherwise."""
+    family = (meta.get("family") or "").strip().lower()
+    if family == "bilevel":
+        return "bilevel"
+    color_mode = (meta.get("color_mode") or "").strip()
+    if color_mode in ("rainbow", "constant"):
+        return ""
+    palette = (meta.get("palette") or "").strip()
+    if not palette:
+        return ""
+    return palette.replace("tri_", "tri ").replace("long_", "long ").replace("_", " ")
+
+
+def _metadata_line_from_meta(meta):
+    """Build the metadata line for the body footer.
+
+    Format: `degree N · WxH[xT] · solver · score-or-color · palette-or-bilevel`
+    Empty slots are dropped.
+    """
+    if not meta:
+        return ""
+    compute = meta.get("compute") or {}
+    parts = []
+
+    degree = compute.get("degree") or meta.get("degree")
+    if degree:
+        parts.append(f"degree {degree}")
+
+    scan = _scan_string_from_compute(compute)
+    if scan:
+        parts.append(scan)
+
+    solver = _solver_label(compute.get("solver", ""))
+    if solver:
+        parts.append(solver)
+
+    score_or_color = _score_or_color_label(meta)
+    if score_or_color:
+        parts.append(score_or_color)
+
+    palette_or_bilevel = _palette_or_bilevel_label(meta)
+    if palette_or_bilevel:
+        parts.append(palette_or_bilevel)
+
+    return " \u00b7 ".join(parts)
+
+
+def _strip_legacy_metadata_line(body):
+    """Drop the trailing `<fn> · degree N · ...` line from a hand-written body.
+
+    The legacy convention puts the metadata line in its own paragraph (separated
+    from the narrative by a blank line). We detect it by looking for ` · degree `
+    in the last `\\n\\n`-separated chunk.
+    """
+    if not body:
+        return body
+    parts = body.split("\n\n")
+    if not parts:
+        return body
+    last = parts[-1].strip()
+    if " \u00b7 degree " in last and "\n" not in last:
+        parts = parts[:-1]
+    return "\n\n".join(parts).rstrip()
+
+
+def _measure_body_consumed(c, body, font, size, max_width):
+    """Dry-run the body layout and return how far below the first baseline the
+    y position ends up after the rendering loop completes.
+
+    Mirrors the body loop in `_draw_text_page` exactly: each wrapped line moves
+    y down by 16pt, each paragraph break adds another 4pt, blank lines add 8pt.
+    """
+    if not body:
+        return 0
+    y = 0
+    drew = False
+    for para in body.split("\n"):
+        para = para.strip()
+        if not para:
+            y -= 8
+            continue
+        wrapped = _wrap_text(c, para, font, size, max_width)
+        for _ in wrapped:
+            y -= 16
+            drew = True
+        y -= 4
+    return -y if drew else 0
+
+
+def _draw_text_page(c, title, body, is_right, filename=None, job_id=None, pipeline=None, palette_path=None):
     """Draw centered title + body text, white on black.
 
     Text is placed within the trim area with safety margins.
@@ -196,6 +361,13 @@ def _draw_text_page(c, title, body, is_right, filename=None, job_id=None, pipeli
     job_id: optional compute job id shown alongside filename.
     pipeline: optional `[param_transforms] function [coeff_transforms]` line
               shown under the title in Courier (monospace).
+    palette_path: optional path to an associated palette image; when provided,
+              an 8 cm square showing the palette is drawn between the body text
+              and the artifact codes, centered horizontally with a thin white
+              border. When a palette is shown, the entire block (title →
+              pipeline → body → palette → artifact codes) is vertically
+              centered on the page; without a palette, the original
+              top-anchored layout is preserved.
     """
     # Trim area origin (bottom-left of trim box within gross page)
     if is_right:
@@ -209,41 +381,79 @@ def _draw_text_page(c, title, body, is_right, filename=None, job_id=None, pipeli
     tx = trim_x + text_margin
     tw = CONTENT_NET - 2 * text_margin
     center_x = tx + tw / 2
-    center_y = trim_y + CONTENT_NET / 2 + 15 * mm  # slightly above vertical center
+
+    palette_side = 80 * mm  # 8 cm square
+    palette_gap = 10 * mm
+
+    # Title baseline:
+    # - With palette: vertically center the entire block on the page.
+    # - Without palette: keep the existing top-anchored offset.
+    if palette_path:
+        consumed = _measure_body_consumed(c, body, BODY_FONT, 11, tw)
+        # Block extent measured from title baseline DOWN to artifact baseline:
+        #   title -> first body baseline:           60pt
+        #   first body baseline -> y_after_body:    consumed
+        #   y_after_body -> palette top:            palette_gap
+        #   palette top -> palette bottom:          palette_side
+        #   palette bottom -> artifact baseline:    14pt
+        block_baseline_span = 60 + consumed + palette_gap + palette_side + 14
+        page_center_y = trim_y + CONTENT_NET / 2
+        title_y = page_center_y + block_baseline_span / 2
+    else:
+        title_y = trim_y + CONTENT_NET / 2 + 15 * mm + 40
+
+    body_first_baseline = title_y - 60
 
     c.setFillColorRGB(1, 1, 1)
 
     if title:
         c.setFont("Helvetica-Bold", 28)
-        c.drawCentredString(center_x, center_y + 40, title)
+        c.drawCentredString(center_x, title_y, title)
 
     if pipeline:
         c.setFont("Courier", 10)
         c.setFillColorRGB(0.75, 0.75, 0.75)
-        c.drawCentredString(center_x, center_y + 14, pipeline)
+        c.drawCentredString(center_x, title_y - 26, pipeline)
         c.setFillColorRGB(1, 1, 1)
 
+    y = body_first_baseline
     if body:
         c.setFont(BODY_FONT, 11)
-        y = center_y - 20
-        # Render each line separately, centered
         for para in body.split("\n"):
             para = para.strip()
             if not para:
                 y -= 8
                 continue
-            # Word-wrap within each line if needed
             wrapped = _wrap_text(c, para, BODY_FONT, 11, tw)
             for ln in wrapped:
                 c.drawCentredString(center_x, y, ln)
                 y -= 16
-            y -= 4  # small gap between metadata lines
+            y -= 4  # small gap between paragraphs
+
+    artifact_y = y - 16
+    if palette_path:
+        try:
+            palette_reader, palette_size = _load_image_rgb(palette_path)
+        except Exception:
+            palette_reader = None
+            palette_size = None
+        if palette_reader is not None:
+            palette_x = center_x - palette_side / 2
+            palette_y = max(trim_y + 26 * mm, y - palette_gap - palette_side)
+            c.saveState()
+            c.setStrokeColorRGB(1, 1, 1)
+            c.setLineWidth(0.5)
+            c.rect(palette_x, palette_y, palette_side, palette_side, fill=0, stroke=1)
+            _draw_image_contain(c, palette_reader, palette_size,
+                                palette_x, palette_y, palette_side, palette_side)
+            c.restoreState()
+            artifact_y = palette_y - 14
 
     if filename or job_id:
         c.setFont("Courier", 8)
         c.setFillColorRGB(0.5, 0.5, 0.5)
         id_parts = [p for p in [job_id, filename] if p]
-        c.drawCentredString(center_x, y - 16, " \u00b7 ".join(id_parts))
+        c.drawCentredString(center_x, artifact_y, " \u00b7 ".join(id_parts))
 
 
 # ── Content PDF ───────────────────────────────────────────────────────
@@ -304,10 +514,18 @@ def generate_content_pdf(output_path, pages_config):
         snap_name = entry.get("filename") or os.path.splitext(os.path.basename(entry.get("image", "")))[0]
         meta = _load_image_meta(entry.get("image"))
         pipeline = _pipeline_from_meta(meta)
+        palette_path = _palette_image_for_entry(entry.get("image"), meta)
+
+        body = entry.get("text", "")
+        new_meta_line = _metadata_line_from_meta(meta)
+        if new_meta_line:
+            cleaned = _strip_legacy_metadata_line(body)
+            body = (cleaned + "\n\n" if cleaned else "") + new_meta_line
+
         _draw_text_page(c, entry.get("title", ""),
-                        entry.get("text", ""), is_right=False,
+                        body, is_right=False,
                         filename=snap_name, job_id=entry.get("job_id", ""),
-                        pipeline=pipeline)
+                        pipeline=pipeline, palette_path=palette_path)
         c.showPage()
         page_num += 1
 

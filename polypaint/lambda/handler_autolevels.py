@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 import boto3
 
+from color_artifact_meta import inherit_associated_palette_metadata, load_color_artifact_head
 from shared import BUCKET, parse_body, ok_response, report_status, imgpipe_env
 
 s3 = boto3.client("s3")
@@ -190,10 +191,12 @@ def handler(event, context):
 
         try:
             src_head = s3.head_object(Bucket=BUCKET, Key=source_image_key)
-            src_meta = dict(src_head.get("Metadata", {}) or {})
         except Exception:
             src_head = {}
-            src_meta = {}
+        try:
+            src_meta = dict(load_color_artifact_head(s3, BUCKET, job_id, source_artifact_id).get("metadata", {}) or {})
+        except Exception:
+            src_meta = dict(src_head.get("Metadata", {}) or {})
 
         background_color = _normalize_background_color(src_meta.get("background_color"))
         background_threshold = _parse_background_threshold(
@@ -267,6 +270,7 @@ def handler(event, context):
             "pixel_bins_layout": "",
             "derivation_kind": "",
         })
+        img_meta.update(inherit_associated_palette_metadata(src_meta))
         if "width" not in img_meta and meta.get("width") is not None:
             img_meta["width"] = str(meta["width"])
         if "height" not in img_meta and meta.get("height") is not None:

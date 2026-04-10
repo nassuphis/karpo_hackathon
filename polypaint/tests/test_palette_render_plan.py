@@ -58,6 +58,10 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertTrue(plan["solve_score"]["omega_enabled"])
         self.assertEqual(plan["params"]["solve_score_omega"], 3.0)
         self.assertTrue(plan["params"]["solve_score_omega_enabled"])
+        self.assertEqual(plan["params"]["solve_score_threads"], 1)
+        self.assertEqual(plan["params"]["solve_score_hist_input_mode"], "tmpfile")
+        self.assertEqual(plan["params"]["solve_score_hist_retries"], 2)
+        self.assertEqual(plan["params"]["solve_score_merge_workers"], 16)
         self.assertEqual(
             plan["chunk_items"],
             [
@@ -184,6 +188,307 @@ class TestPaletteRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
         self.assertFalse(plan["solve_score"]["omega_enabled"])
         self.assertFalse(plan["params"]["solve_score_omega_enabled"])
+
+    @patch("handler_palette_render_plan.s3")
+    def test_extract_plan_short_circuits_when_associated_palette_already_exists(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        mock_s3.head_object.return_value = {
+            "Metadata": {
+                "artifact_id": "color_assoc",
+                "family": "color",
+                "associated_palette_mode": "generated",
+                "associated_palette_id": "pal_assoc",
+                "associated_palette_display_name": "spread q=1.0% w=4 inferno",
+                "associated_palette_image_key": "renders/j/palettes/pal_assoc/image.jpeg",
+                "associated_palette_preview_key": "renders/j/palettes/pal_assoc/preview.png",
+                "associated_palette_palette": "inferno",
+                "associated_palette_metric": "spread",
+                "associated_palette_quantile": "0.01",
+                "associated_palette_omega": "4",
+                "associated_palette_omega_enabled": "false",
+            }
+        }
+
+        result = handler(_event(artifact_id="color_assoc"), None)
+        plan = json.loads(result["body"])
+
+        self.assertEqual(plan["mode"], "extract_palette")
+        self.assertEqual(plan["extract"]["action"], "done")
+        self.assertFalse(plan["attach"]["enabled"])
+        self.assertEqual(plan["palette_id"], "pal_assoc")
+        self.assertEqual(plan["outputs"]["image_key"], "renders/j/palettes/pal_assoc/image.jpeg")
+
+    @patch("handler_palette_render_plan.s3")
+    def test_extract_plan_attaches_saved_palette_dependency(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        def head_object(**kwargs):
+            if kwargs["Key"] != "renders/j/color/color_saved/image.jpeg":
+                raise AssertionError(f"unexpected head_object key: {kwargs['Key']}")
+            return {
+                "Metadata": {
+                    "artifact_id": "color_saved",
+                    "family": "color",
+                    "color_mode": "saved_palette",
+                    "palette_source_id": "pal_src",
+                    "palette_source_display_name": "crowding q=1.0% w=off magma",
+                    "palette_source_palette": "magma",
+                    "palette_source_metric": "crowding",
+                    "palette_source_quantile": "0.01",
+                    "palette_source_omega": "6",
+                    "palette_source_omega_enabled": "false",
+                }
+            }
+
+        def get_object(**kwargs):
+            if kwargs["Key"] != "renders/j/palettes/pal_src/meta.json":
+                raise AssertionError(f"unexpected get_object key: {kwargs['Key']}")
+            meta = {
+                "job_id": "j",
+                "palette_id": "pal_src",
+                "display_name": "crowding q=1.0% w=off magma",
+                "image_key": "renders/j/palettes/pal_src/image.jpeg",
+                "preview_key": "renders/j/palettes/pal_src/preview.png",
+                "metric": "crowding",
+                "palette": "magma",
+                "solve_score_omega_enabled": False,
+            }
+            return {"Body": MagicMock(read=lambda: json.dumps(meta).encode())}
+
+        mock_s3.head_object.side_effect = head_object
+        mock_s3.get_object.side_effect = get_object
+
+        result = handler(_event(artifact_id="color_saved"), None)
+        plan = json.loads(result["body"])
+
+        self.assertEqual(plan["extract"]["action"], "attach")
+        self.assertEqual(plan["attach"]["mode"], "dependency")
+        self.assertEqual(plan["palette_id"], "pal_src")
+        self.assertEqual(plan["attach"]["palette"], "magma")
+        self.assertFalse(plan["attach"]["omega_enabled"])
+
+    @patch("handler_palette_render_plan.s3")
+    def test_extract_plan_reuses_matching_solve_score_scratch_without_cleanup(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        def head_object(**kwargs):
+            mapping = {
+                "renders/j/color/color_child/image.jpeg": {
+                    "Metadata": {
+                        "artifact_id": "color_child",
+                        "family": "color",
+                        "postprocess_kind": "autolevels",
+                        "derived_from_artifact_id": "color_src",
+                    }
+                },
+                "renders/j/color/color_src/image.jpeg": {
+                    "Metadata": {
+                        "artifact_id": "color_src",
+                        "family": "color",
+                        "color_mode": "solve_score",
+                        "solve_metric": "spread",
+                        "solve_score_quantile": "0.02",
+                        "solve_score_omega": "6",
+                        "solve_score_omega_enabled": "true",
+                        "palette": "magma",
+                        "root_transforms": "[]",
+                    }
+                },
+            }
+            if kwargs["Key"] not in mapping:
+                raise AssertionError(f"unexpected head_object key: {kwargs['Key']}")
+            return mapping[kwargs["Key"]]
+
+        def get_object(**kwargs):
+            mapping = {
+                "renders/j/calc.json": {
+                    "degree": 5,
+                    "N": 4,
+                    "times": 1,
+                    "lores": {"bin_key": "renders/j/lores.bin"},
+                    "chunks": [{"idx": 0, "bin_key": "renders/j/chunk_0.bin", "n_t": 16}],
+                },
+                "renders/j/solve_scores/spread_clip.json": {
+                    "family": "solve_score",
+                    "metric": "spread",
+                    "clip_quantile": 0.02,
+                    "omega": 6.0,
+                    "omega_enabled": True,
+                    "root_transforms": [],
+                },
+                "renders/j/solve_scores/spread_bins.json": {
+                    "family": "solve_score",
+                    "metric": "spread",
+                    "clip_quantile": 0.02,
+                    "omega": 6.0,
+                    "omega_enabled": True,
+                    "root_transforms": [],
+                },
+            }
+            if kwargs["Key"] not in mapping:
+                raise AssertionError(f"unexpected get_object key: {kwargs['Key']}")
+            return {"Body": MagicMock(read=lambda data=mapping[kwargs["Key"]]: json.dumps(data).encode())}
+
+        mock_s3.head_object.side_effect = head_object
+        mock_s3.get_object.side_effect = get_object
+
+        result = handler(_event(artifact_id="color_child"), None)
+        plan = json.loads(result["body"])
+
+        self.assertEqual(plan["extract"]["action"], "generate_reuse")
+        self.assertEqual(plan["extract"]["source_artifact_id"], "color_src")
+        self.assertEqual(plan["attach"]["artifact_id"], "color_child")
+        self.assertFalse(plan["solve_score"]["cleanup_scratch"])
+        self.assertEqual(plan["solve_score"]["clip_key"], "renders/j/solve_scores/spread_clip.json")
+        self.assertEqual(plan["solve_score"]["bins_key"], "renders/j/solve_scores/spread_bins.json")
+
+    @patch("handler_palette_render_plan.s3")
+    def test_extract_plan_attaches_inherited_associated_palette_from_parent(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        def head_object(**kwargs):
+            mapping = {
+                "renders/j/color/color_child/image.jpeg": {
+                    "Metadata": {
+                        "artifact_id": "color_child",
+                        "family": "color",
+                        "postprocess_kind": "resize",
+                        "derived_from_artifact_id": "color_src",
+                    }
+                },
+                "renders/j/color/color_src/image.jpeg": {
+                    "Metadata": {
+                        "artifact_id": "color_src",
+                        "family": "color",
+                        "color_mode": "solve_score",
+                        "associated_palette_mode": "generated",
+                        "associated_palette_id": "pal_src",
+                        "associated_palette_display_name": "spread q=1.0% w=4 inferno",
+                        "associated_palette_image_key": "renders/j/palettes/pal_src/image.jpeg",
+                        "associated_palette_preview_key": "renders/j/palettes/pal_src/preview.png",
+                        "associated_palette_palette": "inferno",
+                        "associated_palette_metric": "spread",
+                        "associated_palette_quantile": "0.01",
+                        "associated_palette_omega": "4",
+                        "associated_palette_omega_enabled": "false",
+                    }
+                },
+            }
+            if kwargs["Key"] not in mapping:
+                raise AssertionError(f"unexpected head_object key: {kwargs['Key']}")
+            return mapping[kwargs["Key"]]
+
+        mock_s3.head_object.side_effect = head_object
+
+        result = handler(_event(artifact_id="color_child"), None)
+        plan = json.loads(result["body"])
+
+        self.assertEqual(plan["extract"]["action"], "attach")
+        self.assertEqual(plan["extract"]["reason"], "inherit_existing_association")
+        self.assertEqual(plan["attach"]["artifact_id"], "color_child")
+        self.assertEqual(plan["attach"]["mode"], "generated")
+        self.assertEqual(plan["attach"]["palette_id"], "pal_src")
+        self.assertEqual(plan["attach"]["image_key"], "renders/j/palettes/pal_src/image.jpeg")
+        self.assertEqual(plan["attach"]["preview_key"], "renders/j/palettes/pal_src/preview.png")
+        self.assertFalse(plan["attach"]["omega_enabled"])
+
+    @patch("handler_palette_render_plan.s3")
+    def test_extract_plan_reruns_prepass_when_scratch_missing(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        def head_object(**kwargs):
+            if kwargs["Key"] != "renders/j/color/color_src/image.jpeg":
+                raise AssertionError(f"unexpected head_object key: {kwargs['Key']}")
+            return {
+                "Metadata": {
+                    "artifact_id": "color_src",
+                    "family": "color",
+                    "color_mode": "solve_score",
+                    "solve_metric": "clusteriness",
+                    "solve_score_quantile": "0.01",
+                    "solve_score_omega": "3",
+                    "solve_score_omega_enabled": "true",
+                    "palette": "reef",
+                    "root_transforms": '[["rotate_roots","0.25"]]',
+                }
+            }
+
+        def get_object(**kwargs):
+            if kwargs["Key"] == "renders/j/calc.json":
+                calc = {
+                    "degree": 5,
+                    "N": 4,
+                    "times": 1,
+                    "lores": {"bin_key": "renders/j/lores.bin"},
+                    "chunks": [{"idx": 0, "bin_key": "renders/j/chunk_0.bin", "n_t": 16}],
+                }
+                return {"Body": MagicMock(read=lambda: json.dumps(calc).encode())}
+            raise RuntimeError("NoSuchKey")
+
+        mock_s3.head_object.side_effect = head_object
+        mock_s3.get_object.side_effect = get_object
+
+        result = handler(_event(artifact_id="color_src"), None)
+        plan = json.loads(result["body"])
+
+        self.assertEqual(plan["extract"]["action"], "generate_full")
+        self.assertTrue(plan["solve_score"]["cleanup_scratch"])
+        self.assertIn("/palettes/", plan["solve_score"]["clip_key"])
+        self.assertIn("/palettes/", plan["solve_score"]["bins_key"])
+        self.assertEqual(plan["params"]["root_transforms"], [["rotate_roots", "0.25"]])
+
+    @patch("handler_palette_render_plan.s3")
+    def test_extract_plan_preserves_requested_execution_knobs(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        def head_object(**kwargs):
+            if kwargs["Key"] != "renders/j/color/color_src/image.jpeg":
+                raise AssertionError(f"unexpected head_object key: {kwargs['Key']}")
+            return {
+                "Metadata": {
+                    "artifact_id": "color_src",
+                    "family": "color",
+                    "color_mode": "solve_score",
+                    "solve_metric": "spread",
+                    "solve_score_quantile": "0.02",
+                    "solve_score_omega": "6",
+                    "solve_score_omega_enabled": "true",
+                    "palette": "magma",
+                    "root_transforms": "[]",
+                }
+            }
+
+        def get_object(**kwargs):
+            if kwargs["Key"] == "renders/j/calc.json":
+                calc = {
+                    "degree": 5,
+                    "N": 4,
+                    "times": 1,
+                    "lores": {"bin_key": "renders/j/lores.bin"},
+                    "chunks": [{"idx": 0, "bin_key": "renders/j/chunk_0.bin", "n_t": 16}],
+                }
+                return {"Body": MagicMock(read=lambda: json.dumps(calc).encode())}
+            raise RuntimeError("NoSuchKey")
+
+        mock_s3.head_object.side_effect = head_object
+        mock_s3.get_object.side_effect = get_object
+
+        result = handler(_event(
+            artifact_id="color_src",
+            params={
+                "solve_score_threads": 8,
+                "solve_score_hist_input_mode": "sectioned",
+                "solve_score_hist_retries": 5,
+                "solve_score_merge_workers": 24,
+            },
+        ), None)
+        plan = json.loads(result["body"])
+
+        self.assertEqual(plan["params"]["solve_score_threads"], 8)
+        self.assertEqual(plan["params"]["solve_score_hist_input_mode"], "sectioned")
+        self.assertEqual(plan["params"]["solve_score_hist_retries"], 5)
+        self.assertEqual(plan["params"]["solve_score_merge_workers"], 24)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 import boto3
 
+from color_artifact_meta import inherit_associated_palette_metadata, load_color_artifact_head
 from shared import BUCKET, parse_body, ok_response, report_status, imgpipe_env
 
 s3 = boto3.client("s3")
@@ -346,7 +347,10 @@ def handler(event, context):
         _phase(job_id, task_id, "started", "resize_artifact", "Resize", **progress)
 
         source_head = s3.head_object(Bucket=BUCKET, Key=source_image_key)
-        source_meta = dict(source_head.get("Metadata", {}) or {})
+        try:
+            source_meta = dict(load_color_artifact_head(s3, BUCKET, job_id, source_artifact_id).get("metadata", {}) or {})
+        except Exception:
+            source_meta = dict(source_head.get("Metadata", {}) or {})
         if source_meta.get("family") not in ("", "color"):
             raise RuntimeError("Selected source artifact is not a Color artifact")
 
@@ -433,6 +437,7 @@ def handler(event, context):
             "width": str(out_width),
             "height": str(out_height),
         })
+        img_meta.update(inherit_associated_palette_metadata(source_meta))
         if out_ext != "jpeg":
             img_meta.pop("jpeg_subsample_mode", None)
         normalized_meta = {str(k): _stringify_meta(v) for k, v in img_meta.items() if v not in ("", None)}

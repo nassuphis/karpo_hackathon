@@ -856,4 +856,61 @@ test.describe('Solve Score UI', () => {
       },
     });
   });
+
+  test('ExtractPalette popup dispatches palette orchestrator for selected color artifact lineage', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate((summary) => {
+      window._extractDispatch = null;
+      window.lambdaPost = async function(name, body, path) {
+        if (name === 'dispatch' && body.target === 'palette_orchestrator') {
+          window._extractDispatch = body;
+          return { fired: 1, errors: [] };
+        }
+        return {};
+      };
+      document.getElementById('render-results-dir').value = 'test_job';
+      _renderLoadedJobId = 'test_job';
+      _activeRenderRun = null;
+      _activePaletteRun = null;
+      renderArtifactPanel('test_job', summary);
+    }, {
+      ...RENDER_POPUP_SUMMARY,
+      families: {
+        ...RENDER_POPUP_SUMMARY.families,
+        color: [{
+          ...RENDER_POPUP_SUMMARY.families.color[0],
+          color_mode: 'solve_score',
+          solve_metric: 'spread',
+          solve_score_quantile: 0.02,
+          solve_score_omega: 6,
+          palette: 'magma',
+        }],
+      },
+    });
+
+    const btn = page.locator('#btn-render-extract-palette');
+    await expect(btn).toBeEnabled();
+    await btn.click();
+    await expect(page.locator('#extract-palette-popup-overlay')).toBeVisible();
+    await page.fill('#extract-palette-solve-score-threads', '8');
+    await page.selectOption('#extract-palette-hist-input-mode', 'sectioned');
+    await page.fill('#extract-palette-hist-retries', '5');
+    await page.fill('#extract-palette-merge-workers', '24');
+    await page.click('#extract-palette-popup-run');
+
+    const dispatch = await page.evaluate(() => window._extractDispatch);
+    const activeRun = await page.evaluate(() => _loadActivePaletteRun());
+    expect(dispatch).not.toBeNull();
+    expect(dispatch.target).toBe('palette_orchestrator');
+    expect(dispatch.jobs[0].artifact_id).toBe('color_1');
+    expect(dispatch.jobs[0].params).toEqual({
+      solve_score_threads: 8,
+      solve_score_hist_input_mode: 'sectioned',
+      solve_score_hist_retries: 5,
+      solve_score_merge_workers: 24,
+    });
+    expect(activeRun.mode).toBe('extract_palette');
+    expect(activeRun.origin).toBe('render_extract_palette');
+    expect(activeRun.source_artifact_id).toBe('color_1');
+  });
 });

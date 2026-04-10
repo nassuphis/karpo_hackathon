@@ -24,6 +24,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from color_artifact_meta import color_artifact_meta_key
 from shared import BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response, _get_ddb
 
 s3 = boto3.client("s3")
@@ -584,6 +585,19 @@ def _parse_json(value):
         return None
 
 
+def _load_color_artifact_overlay(job_id, artifact_id):
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=color_artifact_meta_key(job_id, artifact_id))
+    except Exception:
+        return None
+    try:
+        body = obj["Body"].read()
+        data = json.loads(body)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, fallback_meta=None, legacy=False):
     meta = {}
     if image_info:
@@ -788,7 +802,8 @@ def _list_render_family_variants(job_id, family):
         if not image_info:
             return None
         preview_info = _first_existing(head_results, [prefix + k for k in shape["preview_candidates"]])
-        return _render_artifact_entry(family, artifact_id, image_info, preview_info)
+        fallback_meta = _load_color_artifact_overlay(job_id, artifact_id) if family == "color" else None
+        return _render_artifact_entry(family, artifact_id, image_info, preview_info, fallback_meta=fallback_meta)
 
     variants = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(artifact_prefixes), 20) or 1) as pool:
@@ -806,7 +821,8 @@ def _legacy_render_variant(job_id, family):
     if not image_info:
         return None
     preview_info = _first_existing(head_results, [prefix + k for k in shape["legacy_preview_candidates"]])
-    return _render_artifact_entry(family, f"legacy_{family}", image_info, preview_info, legacy=True)
+    fallback_meta = _load_color_artifact_overlay(job_id, f"legacy_{family}") if family == "color" else None
+    return _render_artifact_entry(family, f"legacy_{family}", image_info, preview_info, fallback_meta=fallback_meta, legacy=True)
 
 
 def _delete_prefix_objects(prefix):

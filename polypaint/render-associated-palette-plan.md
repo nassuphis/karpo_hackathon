@@ -120,6 +120,72 @@ This keeps semantics simple:
 - `solve_score` creates a new associated palette artifact
 - `saved_palette` records the already-existing palette artifact
 
+Derived Color artifacts
+-----------------------
+
+Derived Color artifacts should preserve associated-palette lineage.
+
+Specifically:
+- if a Color artifact has an associated palette
+- and the user creates a derived Color artifact from it
+  - e.g. `Autolevels`
+  - e.g. `Resize`
+- then the derived Color artifact should inherit that same associated palette metadata
+
+Rules:
+- do not regenerate the palette
+- do not clear the association
+- copy the associated-palette fields forward to the derived artifact metadata
+- preserve whether the association was:
+  - `generated`
+  - `dependency`
+- preserve the palette image key/id/display metadata exactly
+
+Implementation contract:
+- `Autolevels`, `Resize`, and any other Color-to-Color derivative must inspect
+  the source Color artifact metadata at creation time
+- if the source artifact has:
+  - `associated_palette_mode = generated`
+  - or `associated_palette_mode = dependency`
+  then the derived artifact must copy the full associated-palette field set
+  unchanged
+- if the source artifact has:
+  - `associated_palette_mode = none`
+  - or no associated-palette fields at all
+  then the derived artifact must also have no association of its own
+- the derivative operation must not run:
+  - `palette_chunk`
+  - `palette_finalize`
+  - `ExtractPalette`
+  - or any image-based palette inference
+- this is a metadata inheritance step only
+
+Operational meaning:
+- the derived artifact keeps its own:
+  - `artifact_id`
+  - `image_key`
+  - `preview_key`
+  - `derived_from_artifact_id`
+- but it points at the same associated palette artifact as its source
+- the associated palette is therefore inherited by reference, not copied as a
+  second palette artifact
+
+Non-goal for v1:
+- if a source Color artifact later gains an associated palette through
+  `ExtractPalette`, existing already-created derived artifacts are not
+  retroactively rewritten automatically
+- if the user wants the derived artifact to carry that association too, they
+  can run `ExtractPalette` on the derived artifact, and that operation should
+  resolve the palette through lineage
+
+Reason:
+- these postprocess operations change presentation of the same rendered image
+- they do not change the palette lineage of the image
+- the user should still be able to:
+  - download `image + meta + palette`
+  - make a ColorSpread PDF with the palette square
+  - understand which palette belongs to the derived image
+
 
 Artifact Contract
 -----------------
@@ -146,6 +212,25 @@ Rules:
   - `associated_palette_id` points to the input source palette artifact
 - otherwise
   - `associated_palette_mode = none`
+
+Inheritance rule for derived Color artifacts:
+- `autolevels`, `resize`, and similar Color-to-Color derived artifacts copy the full associated-palette field set from their source Color artifact
+- they do not create a new associated palette of their own
+- their metadata should continue to expose the inherited association through the same fields
+
+Required downstream behavior for inherited associations:
+- `image + meta` on the derived artifact downloads:
+  - the derived image
+  - the derived metadata JSON
+  - the inherited associated palette image
+- ColorSpread PDF on the derived artifact shows the inherited associated
+  palette square
+- render-summary / artifact inventory must surface inherited associations the
+  same way as directly-generated associations
+- UI must not distinguish between:
+  - directly-associated palette
+  - inherited-by-derivation palette
+  except where provenance text explicitly mentions the source
 
 These fields should be exposed in:
 - Color artifact metadata on S3
@@ -255,6 +340,10 @@ Current `Render -> Download -> image + meta` does:
 Required change:
 - if `associated_palette_mode != none` and the palette image exists:
   - also download the palette image
+
+This applies equally to:
+- original Color render artifacts
+- derived Color artifacts such as `Autolevels` and `Resize` that inherited the associated palette metadata
 
 Recommended filenames:
 - color image: current behavior

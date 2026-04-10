@@ -73,6 +73,16 @@ class TestResizeArtifactHandler(unittest.TestCase):
                 "color_mode": "solve_score",
                 "palette": "tri_redgold",
                 "solve_metric": "spread",
+                "associated_palette_mode": "generated",
+                "associated_palette_id": "pal_resize_src",
+                "associated_palette_display_name": "spread q=1.0% w=4 inferno",
+                "associated_palette_image_key": "renders/job1/palettes/pal_resize_src/image.jpeg",
+                "associated_palette_preview_key": "renders/job1/palettes/pal_resize_src/preview.png",
+                "associated_palette_palette": "inferno",
+                "associated_palette_metric": "spread",
+                "associated_palette_quantile": "0.01",
+                "associated_palette_omega": "4",
+                "associated_palette_omega_enabled": "false",
                 "repalette_capable": "true",
                 "pixel_bins_prefix": "renders/job1/color/color_src/pixel_bins/tile_",
             },
@@ -134,6 +144,15 @@ class TestResizeArtifactHandler(unittest.TestCase):
         self.assertEqual(image_meta["quality"], "83")
         self.assertEqual(image_meta["repalette_capable"], "false")
         self.assertNotIn("pixel_bins_prefix", image_meta)
+        self.assertEqual(image_meta["associated_palette_mode"], "generated")
+        self.assertEqual(image_meta["associated_palette_id"], "pal_resize_src")
+        self.assertEqual(image_meta["associated_palette_image_key"], "renders/job1/palettes/pal_resize_src/image.jpeg")
+        self.assertEqual(image_meta["associated_palette_preview_key"], "renders/job1/palettes/pal_resize_src/preview.png")
+        self.assertEqual(image_meta["associated_palette_metric"], "spread")
+        self.assertEqual(image_meta["associated_palette_palette"], "inferno")
+        self.assertEqual(image_meta["associated_palette_quantile"], "0.01")
+        self.assertEqual(image_meta["associated_palette_omega"], "4")
+        self.assertEqual(image_meta["associated_palette_omega_enabled"], "false")
         self.assertIn("resize_params", image_meta)
         resize_meta = json.loads(image_meta["resize_params"])
         self.assertEqual(resize_meta["engine"], "thumbnail")

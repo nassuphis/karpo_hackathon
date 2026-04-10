@@ -2,7 +2,8 @@
 PDF artifact Lambda — derive a new immutable PDF artifact from a saved Color image.
 
 V1 supports one subtype only:
-- ColorSpread: left page text from metadata, right page selected Color artifact image.
+- ColorSpread: left page metadata/text, optional centered 5 cm palette square
+  beneath that text, right page selected Color artifact image.
 """
 import json
 import os
@@ -10,6 +11,7 @@ from datetime import datetime, timezone
 
 import boto3
 
+from color_artifact_meta import load_color_artifact_head
 from shared import BUCKET, parse_body, ok_response, report_status
 from spread_pdf import build_color_spread_pdf
 
@@ -317,7 +319,10 @@ def handler(event, context):
         _phase(job_id, task_id, "started", "pdf", "ColorSpread", **progress)
 
         src_head = s3.head_object(Bucket=BUCKET, Key=source_image_key)
-        src_meta = dict(src_head.get("Metadata", {}) or {})
+        try:
+            src_meta = dict(load_color_artifact_head(s3, BUCKET, job_id, source_artifact_id).get("metadata", {}) or {})
+        except Exception:
+            src_meta = dict(src_head.get("Metadata", {}) or {})
         src_family = str(src_meta.get("family", "") or "color")
         if src_family not in ("", "color"):
             raise RuntimeError(f"ColorSpread requires Color source, got {src_family!r}")

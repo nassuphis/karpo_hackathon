@@ -1219,7 +1219,7 @@ async function testPipeline(name, call) {
         if (!panelHtml.includes('height:360px') || !panelHtml.includes('background:#000')) { console.error('FATAL: render artifact panel should keep fixed black viewport height'); process.exit(1); }
         assertActionButtons(
             panelHtml,
-            ['Generate', 'Generate-MT', 'GenerateFromPalette', 'RePalette', 'Populate', 'Autolevels', 'GoResult', 'Favorite', 'Download', 'Delete', 'DeepZoom'],
+            ['Generate', 'Generate-MT', 'GenerateFromPalette', 'ExtractPalette', 'RePalette', 'Populate', 'Autolevels', 'GoResult', 'Favorite', 'Download', 'Delete', 'DeepZoom'],
             ['ColorSpread'],
             'color action row'
         );
@@ -1233,7 +1233,7 @@ async function testPipeline(name, call) {
         assertActionButtons(
             palHtml,
             ['Generate', 'RePalette', 'Populate', 'Download', 'Delete', 'DeepZoom'],
-            ['Generate-MT', 'GenerateFromPalette', 'Autolevels', 'ColorSpread'],
+            ['Generate-MT', 'GenerateFromPalette', 'ExtractPalette', 'Autolevels', 'ColorSpread'],
             'palette action row'
         );
         console.log('  family switch updates catalog: OK');
@@ -1244,7 +1244,7 @@ async function testPipeline(name, call) {
         assertActionButtons(
             bilevelHtml,
             ['Generate', 'PNG', 'Preview-Compatible TIFF', 'Download', 'Delete', 'DeepZoom'],
-            ['Generate-MT', 'GenerateFromPalette', 'RePalette', 'Populate', 'Autolevels', 'ColorSpread', 'Favorite'],
+            ['Generate-MT', 'GenerateFromPalette', 'ExtractPalette', 'RePalette', 'Populate', 'Autolevels', 'ColorSpread', 'Favorite'],
             'bilevel action row'
         );
         if (!!ctx._elements['btn-png-export'].disabled || !!ctx._elements['btn-tiff-compat'].disabled) {
@@ -1259,7 +1259,7 @@ async function testPipeline(name, call) {
         assertActionButtons(
             pdfHtml,
             ['ColorSpread', 'Download', 'Delete'],
-            ['Generate-MT', 'GenerateFromPalette', 'Populate', 'Autolevels', 'DeepZoom'],
+            ['Generate-MT', 'GenerateFromPalette', 'ExtractPalette', 'Populate', 'Autolevels', 'DeepZoom'],
             'pdf action row'
         );
         if (!pdfHtml.includes("Save PDF")) { console.error('FATAL: pdf download menu should offer Save PDF'); process.exit(1); }
@@ -2178,6 +2178,159 @@ async function testPipeline(name, call) {
             process.exit(1);
         }
         console.log('  GenerateFromPalette popup dispatches saved-palette render: OK');
+    }
+
+    {
+        vm.runInContext(`
+            _extractPaletteDispatch = null;
+            _renderActiveFamily = 'color';
+            _activeRenderRun = null;
+            _activePaletteRun = null;
+            localStorage.removeItem('polypaint_active_palette_run');
+            document.getElementById('render-results-dir').value = 'j';
+            document.getElementById('palette-results-dir').value = '';
+            lambdaPost = async function(name, body, path) {
+                if (name === 'dispatch' && body.target === 'palette_orchestrator') {
+                    _extractPaletteDispatch = body;
+                    return { fired: 1, errors: [] };
+                }
+                return { ok: true };
+            };
+            renderArtifactPanel('j', ${JSON.stringify({
+                calc: { exists: true, N: 3000, degree: 7 },
+                families: {
+                    color: [{
+                        artifact_id: 'color_extract',
+                        created_at: '2026-04-02T10:00:00Z',
+                        image_key: 'renders/j/color/color_extract/image.jpeg',
+                        image_url: 'https://img/color_extract.jpeg',
+                        preview_url: 'https://img/color_extract.png',
+                        viewer_url: 'https://img/color_extract.png',
+                        width: 3000,
+                        height: 3000,
+                        format: 'jpeg',
+                        file_size: 64000,
+                        family: 'color',
+                        color_mode: 'solve_score',
+                        solve_metric: 'spread',
+                        solve_score_quantile: 0.02,
+                        solve_score_omega: 6,
+                        palette: 'magma'
+                    }],
+                    bilevel: [],
+                    coeffs: [],
+                    palette: [],
+                    pdf: [],
+                },
+            })});
+        `, ctx);
+        const extractPanelHtml = ctx._elements['render-preview'].innerHTML || '';
+        if (!extractPanelHtml.includes('btn-render-extract-palette')) { console.error('FATAL: color artifact panel should show ExtractPalette button'); process.exit(1); }
+        await vm.runInContext('openExtractPalettePopup()', ctx);
+        const extractOverlayDisplay = vm.runInContext("document.getElementById('extract-palette-popup-overlay').style.display", ctx);
+        if (extractOverlayDisplay !== 'flex') { console.error('FATAL: ExtractPalette should open execution popup, got ' + extractOverlayDisplay); process.exit(1); }
+        vm.runInContext(`
+            document.getElementById('extract-palette-solve-score-threads').value = '8';
+            document.getElementById('extract-palette-hist-input-mode').value = 'sectioned';
+            document.getElementById('extract-palette-hist-retries').value = '5';
+            document.getElementById('extract-palette-merge-workers').value = '24';
+        `, ctx);
+        await vm.runInContext(`(async()=>{
+            await runExtractPaletteArtifact({
+                solveScoreThreads: 8,
+                histInputMode: 'sectioned',
+                histRetries: 5,
+                mergeWorkers: 24
+            });
+        })()`, ctx);
+        const dispatch = vm.runInContext('_extractPaletteDispatch', ctx);
+        const activeRun = vm.runInContext('_activePaletteRun', ctx);
+        if (!dispatch || dispatch.target !== 'palette_orchestrator') { console.error('FATAL: ExtractPalette should dispatch palette_orchestrator'); process.exit(1); }
+        if (dispatch.jobs[0].artifact_id !== 'color_extract') { console.error('FATAL: ExtractPalette should send selected color artifact id, got ' + dispatch.jobs[0].artifact_id); process.exit(1); }
+        if (dispatch.jobs[0].params.solve_score_threads !== 8 || dispatch.jobs[0].params.solve_score_hist_input_mode !== 'sectioned' || dispatch.jobs[0].params.solve_score_hist_retries !== 5 || dispatch.jobs[0].params.solve_score_merge_workers !== 24) {
+            console.error('FATAL: ExtractPalette should dispatch execution knobs, got ' + JSON.stringify(dispatch.jobs[0].params));
+            process.exit(1);
+        }
+        if (!activeRun || activeRun.mode !== 'extract_palette' || activeRun.origin !== 'render_extract_palette' || activeRun.source_artifact_id !== 'color_extract') {
+            console.error('FATAL: ExtractPalette should save extract-specific active palette run state, got ' + JSON.stringify(activeRun));
+            process.exit(1);
+        }
+        console.log('  ExtractPalette popup dispatches palette orchestrator with execution knobs: OK');
+    }
+
+    {
+        vm.runInContext(`
+            _saveActivePaletteRun({
+                job_id: 'j',
+                run_id: 'run_extract_palette',
+                task_id: 'extract_palette_run_run_extract_palette',
+                started_at_ms: Date.now(),
+                mode: 'extract_palette',
+                origin: 'render_extract_palette',
+                source_artifact_id: 'color_extract'
+            });
+            _extractPaletteRefreshOpts = null;
+            _extractPaletteLoadOpts = null;
+            _extractPaletteLogText = '';
+            _extractPaletteOrigLoad = loadPaletteInventory;
+            _extractPaletteOrigRefresh = refreshRenderArtifacts;
+            _extractPaletteOrigLog = log;
+            _extractPaletteOrigTabContains = document.getElementById('tab-render').classList.contains;
+            _renderActiveFamily = 'color';
+            loadPaletteInventory = async function(opts) { _extractPaletteLoadOpts = opts; };
+            refreshRenderArtifacts = async function(jobId, opts) { _extractPaletteRefreshOpts = { jobId, opts }; };
+            log = function(msg, cls, target) {
+                if (target === 'render-log' && String(msg).includes('ExtractPalette complete')) _extractPaletteLogText = msg;
+                return _extractPaletteOrigLog(msg, cls, target);
+            };
+            document.getElementById('tab-render').classList.contains = function(cls) { return cls === 'active'; };
+            lambdaPost = async function(name, body, path) {
+                if (name === 'storage' && path === '/check-status') {
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: true,
+                        status_counts: { done: 1 },
+                        results: [{
+                            phase: 'done',
+                            phase_label: 'Done',
+                            family: 'palette',
+                            palette_id: 'pal_extract',
+                            artifact_id: 'color_extract',
+                        }]
+                    };
+                }
+                return { ok: true };
+            };
+        `, ctx);
+        await vm.runInContext('(async()=>{ await _pollActivePaletteRun(); })()', ctx);
+        const loadOpts = vm.runInContext('_extractPaletteLoadOpts', ctx);
+        const refreshOpts = vm.runInContext('_extractPaletteRefreshOpts', ctx);
+        const statusText = vm.runInContext("document.getElementById('render-status').textContent", ctx);
+        const logText = vm.runInContext('_extractPaletteLogText', ctx);
+        if (!loadOpts || loadOpts.selectPaletteId !== 'pal_extract') {
+            console.error('FATAL: ExtractPalette completion should load palette inventory with new palette selection, got ' + JSON.stringify(loadOpts));
+            process.exit(1);
+        }
+        if (!refreshOpts || refreshOpts.jobId !== 'j' || !refreshOpts.opts || refreshOpts.opts.selectFamily !== 'color' || refreshOpts.opts.selectArtifactId !== 'color_extract') {
+            console.error('FATAL: ExtractPalette completion should refresh color artifacts and keep source selected, got ' + JSON.stringify(refreshOpts));
+            process.exit(1);
+        }
+        if (statusText !== 'ExtractPalette complete') {
+            console.error('FATAL: ExtractPalette completion should set render status, got ' + statusText);
+            process.exit(1);
+        }
+        if (!String(logText).includes('ExtractPalette complete: pal_extract')) {
+            console.error('FATAL: ExtractPalette completion should log selected palette id, got ' + logText);
+            process.exit(1);
+        }
+        vm.runInContext(`
+            loadPaletteInventory = _extractPaletteOrigLoad;
+            refreshRenderArtifacts = _extractPaletteOrigRefresh;
+            log = _extractPaletteOrigLog;
+            document.getElementById('tab-render').classList.contains = _extractPaletteOrigTabContains;
+        `, ctx);
+        console.log('  ExtractPalette completion refreshes palette inventory and keeps color selection: OK');
     }
 
     {

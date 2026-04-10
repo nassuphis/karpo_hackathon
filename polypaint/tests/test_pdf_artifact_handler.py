@@ -134,6 +134,73 @@ class TestPdfArtifactHandler(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "ColorSpread requires Color source"):
             handler(_event(source_artifact_id="pal_src", source_image_key="renders/job1/palettes/pal_src/image.jpeg"), None)
 
+    @patch("handler_pdf_artifact.report_status")
+    @patch("handler_pdf_artifact.build_color_spread_pdf")
+    @patch("handler_pdf_artifact.s3")
+    def test_handler_reads_associated_palette_from_color_sidecar_overlay(self, mock_s3, mock_build, mock_report):
+        from handler_pdf_artifact import handler
+
+        mock_s3.head_object.return_value = {
+            "Metadata": {
+                "family": "color",
+                "artifact_id": "color_src",
+                "created_at": "2026-04-04T10:00:00Z",
+                "color_mode": "solve_score",
+                "palette": "magma",
+                "solve_metric": "spread",
+                "solve_score_quantile": "0.02",
+                "solve_score_omega": "6",
+                "root_transforms": "[]",
+            }
+        }
+
+        def get_object(Bucket=None, Key=None):
+            if Key == "renders/job1/color/color_src/meta.json":
+                return {"Body": MagicMock(read=lambda: json.dumps({
+                    "associated_palette_mode": "generated",
+                    "associated_palette_id": "pal_sidecar",
+                    "associated_palette_image_key": "renders/job1/palettes/pal_sidecar/image.jpeg",
+                }).encode())}
+            if Key == "renders/job1/color/color_src/image.jpeg":
+                return {"Body": MagicMock(iter_chunks=lambda chunk_size=None: [b"jpeg-bytes"])}
+            if Key == "renders/job1/palettes/pal_sidecar/image.jpeg":
+                return {"Body": MagicMock(iter_chunks=lambda chunk_size=None: [b"palette-jpeg"])}
+            if Key == "renders/job1/calc.json":
+                return {"Body": MagicMock(read=lambda: json.dumps({
+                    "function": "poly_645",
+                    "degree": 24,
+                    "N": 500,
+                    "times": 3,
+                    "solver": "aberth",
+                }).encode())}
+            raise AssertionError(f"unexpected get_object key: {Key}")
+
+        uploads = {}
+
+        def upload_fileobj(fileobj, bucket, key, ExtraArgs=None):
+            uploads[key] = {"body": fileobj.read(), "extra": ExtraArgs or {}}
+
+        def fake_build(image_path, output_path, title, body=None, filename=None, meta=None, palette_image_path=None):
+            self.assertTrue(str(palette_image_path).endswith("pdf_palette.jpeg"))
+            with open(output_path, "wb") as fh:
+                fh.write(b"%PDF-1.4 fake pdf")
+            return output_path
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.upload_fileobj.side_effect = upload_fileobj
+        mock_build.side_effect = fake_build
+
+        result = handler(_event(), None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(result["statusCode"], 200)
+        pdf_key = "renders/job1/pdf/pdf_123/document.pdf"
+        meta = uploads[pdf_key]["extra"]["Metadata"]
+        self.assertEqual(body["artifact_id"], "pdf_123")
+        self.assertEqual(meta["source_associated_palette_mode"], "generated")
+        self.assertEqual(meta["source_associated_palette_id"], "pal_sidecar")
+        self.assertEqual(meta["source_associated_palette_image_key"], "renders/job1/palettes/pal_sidecar/image.jpeg")
+
 
 if __name__ == "__main__":
     unittest.main()

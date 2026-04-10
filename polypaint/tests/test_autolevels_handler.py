@@ -76,6 +76,16 @@ class TestAutolevelsHandler(unittest.TestCase):
                 "solve_score_quantile": "0.02",
                 "solve_score_omega": "6",
                 "palette": "tri_redgold",
+                "associated_palette_mode": "generated",
+                "associated_palette_id": "pal_src",
+                "associated_palette_display_name": "anisotropy q=2.0% w=6 tri_redgold",
+                "associated_palette_image_key": "renders/job1/palettes/pal_src/image.jpeg",
+                "associated_palette_preview_key": "renders/job1/palettes/pal_src/preview.png",
+                "associated_palette_palette": "tri_redgold",
+                "associated_palette_metric": "anisotropy",
+                "associated_palette_quantile": "0.02",
+                "associated_palette_omega": "6",
+                "associated_palette_omega_enabled": "false",
                 "match_mode": "greedy",
                 "background_color": "101214",
                 "background_threshold": "7",
@@ -142,6 +152,15 @@ class TestAutolevelsHandler(unittest.TestCase):
         self.assertEqual(image_meta["color_mode"], "solve_score")
         self.assertEqual(image_meta["solve_metric"], "anisotropy")
         self.assertEqual(image_meta["palette"], "tri_redgold")
+        self.assertEqual(image_meta["associated_palette_mode"], "generated")
+        self.assertEqual(image_meta["associated_palette_id"], "pal_src")
+        self.assertEqual(image_meta["associated_palette_image_key"], "renders/job1/palettes/pal_src/image.jpeg")
+        self.assertEqual(image_meta["associated_palette_preview_key"], "renders/job1/palettes/pal_src/preview.png")
+        self.assertEqual(image_meta["associated_palette_metric"], "anisotropy")
+        self.assertEqual(image_meta["associated_palette_palette"], "tri_redgold")
+        self.assertEqual(image_meta["associated_palette_quantile"], "0.02")
+        self.assertEqual(image_meta["associated_palette_omega"], "6")
+        self.assertEqual(image_meta["associated_palette_omega_enabled"], "false")
         self.assertEqual(image_meta["background_color"], "101214")
         self.assertEqual(image_meta["background_threshold"], "11")
         self.assertIn("autolevels_params", image_meta)

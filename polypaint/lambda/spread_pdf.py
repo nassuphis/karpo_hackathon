@@ -1,6 +1,15 @@
 """
 Shared PDF spread builder used by the local CLI helper and the PDF artifact Lambda.
 
+The spread is a two-page horizontal layout:
+- left page: black background with centered metadata/text
+- right page: full-page image with cover-fit placement
+
+For ColorSpread PDFs, the left page can also show an associated palette image.
+When present, the palette is rendered as a centered 5 cm square beneath the
+metadata lines and above the artifact ID, with a thin white border so the
+palette remains legible against the black page.
+
 The visual treatment intentionally matches make_book.py:
 - same content-page gross dimensions
 - same centered text page
@@ -81,6 +90,13 @@ def _draw_text_page(c, title, body, is_right, filename=None, meta=None, palette_
       meta.color_mode  — e.g. "RAINBOW", "SOLVE SCORE: crowding q=5.0% w=1 reef"
       meta.degree      — e.g. "Degree: 70"
       meta.artifact_id — e.g. "color_run_1775151791677_vni4ec"
+
+    Layout on the left page is intentionally simple and centered:
+    - title near the top of the centered text block
+    - structured metadata lines stacked downward with fixed leading
+    - optional associated palette shown as a centered 5 cm square below the
+      metadata block
+    - artifact ID below the palette in small grey type
     """
     if is_right:
         trim_x = 0
@@ -124,6 +140,9 @@ def _draw_text_page(c, title, body, is_right, filename=None, meta=None, palette_
 
         artifact_y = y - 20
         if palette_reader and palette_size:
+            # The associated palette is presented as a standalone square swatch
+            # block on the text page, centered horizontally so it reads like a
+            # companion object to the metadata rather than a corner thumbnail.
             palette_side = 50 * mm  # 5 cm square
             palette_gap = 10 * mm
             palette_x = center_x - palette_side / 2
@@ -171,8 +190,13 @@ def _draw_text_page(c, title, body, is_right, filename=None, meta=None, palette_
 def build_color_spread_pdf(image_path, output_pdf_path, title, body=None, filename=None, meta=None, palette_image_path=None):
     """Build a two-page spread PDF: text page (left) + image page (right).
 
-    If `meta` is provided (dict with pipeline, viewport, color_mode, degree, artifact_id),
-    the text page shows structured render metadata instead of freeform body text.
+    If `meta` is provided (dict with pipeline, viewport, color_mode, degree,
+    artifact_id), the left page shows structured render metadata instead of
+    freeform body text.
+
+    If `palette_image_path` is provided, that palette image is embedded on the
+    left page as a centered 5 cm square under the metadata text. The right page
+    always remains reserved for the main source image.
     """
     image_path = Path(image_path)
     output_pdf_path = Path(output_pdf_path)

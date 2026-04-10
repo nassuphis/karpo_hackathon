@@ -150,7 +150,7 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
 
             mock_run.side_effect = run_side_effect
 
-            result = mod.handler(_event(), None)
+            result = mod.handler(_event(source_color_artifact_id="color_src"), None)
             body = json.loads(result["body"])
 
             self.assertEqual(body["palette_id"], "pal_1")
@@ -172,6 +172,8 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             self.assertEqual(meta["chunk_scores_prefix"], "renders/j/palettes/pal_1/chunks/score_chunk_")
             self.assertEqual(meta["chunk_bins_prefix"], "renders/j/palettes/pal_1/chunks/palette_bins_chunk_")
             self.assertEqual(meta["chunk_meta_prefix"], "renders/j/palettes/pal_1/chunks/meta_chunk_")
+            self.assertEqual(meta["derived_from_color_artifact_id"], "color_src")
+            self.assertEqual(meta["derivation_kind"], "extract_palette")
             self.assertNotIn("score_key", meta)
             self.assertNotIn("palette_bins_key", meta)
 

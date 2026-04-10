@@ -34,11 +34,14 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
     def test_required_states_exist(self):
         for name in [
             "BuildPlanPhase", "BuildPlan", "ParsePlan",
+            "ExtractActionChoice",
             "SolveScoreClipPhase", "SolveScoreClipTask",
             "SolveScoreHistPhase", "SolveScoreHistMap",
             "SolveScoreMergePhase", "SolveScoreMergeTask",
             "PaletteChunkPhase", "PaletteChunkMap",
             "PaletteFinalizePhase", "PaletteFinalizeTask",
+            "PostFinalizeAttachChoice",
+            "AttachAssociatedPalettePhase", "AttachAssociatedPaletteTask",
             "ReportDone",
         ]:
             self.assertIn(name, self.states, f"missing state: {name}")
@@ -64,6 +67,7 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertIn("placeholder-SolveProximityFunctionArn", asl_str)
         self.assertIn("placeholder-PaletteChunkFunctionArn", asl_str)
         self.assertIn("placeholder-PaletteFinalizeFunctionArn", asl_str)
+        self.assertIn("placeholder-AttachPaletteFunctionArn", asl_str)
 
     def test_finalize_task_preserves_omega_enabled(self):
         payload = self.states["PaletteFinalizeTask"]["Parameters"]["Payload"]
@@ -78,18 +82,24 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(clip["solve_score_quantile.$"], "$.plan.solve_score.quantile")
         self.assertEqual(clip["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(clip["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+        self.assertEqual(clip["solve_score_threads.$"], "$.plan.params.solve_score_threads")
         self.assertEqual(clip["root_transforms.$"], "$.plan.params.root_transforms")
 
         hist = self.states["SolveScoreHistMap"]["ItemSelector"]
         self.assertEqual(hist["solve_score_quantile.$"], "$.plan.solve_score.quantile")
         self.assertEqual(hist["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(hist["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+        self.assertEqual(hist["solve_score_threads.$"], "$.plan.params.solve_score_threads")
+        self.assertEqual(hist["solve_score_hist_input_mode.$"], "$.plan.params.solve_score_hist_input_mode")
+        self.assertEqual(hist["solve_score_hist_retries.$"], "$.plan.params.solve_score_hist_retries")
         self.assertEqual(hist["root_transforms.$"], "$.plan.params.root_transforms")
 
         merge = self.states["SolveScoreMergeTask"]["Parameters"]["Payload"]
         self.assertEqual(merge["solve_score_quantile.$"], "$.plan.solve_score.quantile")
         self.assertEqual(merge["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(merge["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+        self.assertEqual(merge["solve_score_threads.$"], "$.plan.params.solve_score_threads")
+        self.assertEqual(merge["solve_score_merge_workers.$"], "$.plan.params.solve_score_merge_workers")
 
     def test_palette_chunk_and_finalize_forward_critical_fields(self):
         chunk = self.states["PaletteChunkMap"]["ItemSelector"]
@@ -104,6 +114,33 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(finalize["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(finalize["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
         self.assertEqual(finalize["root_transforms.$"], "$.plan.params.root_transforms")
+        self.assertEqual(finalize["cleanup_solve_score_scratch.$"], "$.plan.solve_score.cleanup_scratch")
+        self.assertEqual(finalize["source_color_artifact_id.$"], "$.plan.extract.source_artifact_id")
+
+    def test_extract_attach_branch_is_wired(self):
+        choice = self.states["ExtractActionChoice"]
+        choices = {(item["StringEquals"], item["Next"]) for item in choice["Choices"]}
+        self.assertIn(("done", "ReportDone"), choices)
+        self.assertIn(("attach", "AttachAssociatedPalettePhase"), choices)
+        self.assertIn(("generate_reuse", "PaletteChunkPhase"), choices)
+        self.assertEqual(choice["Default"], "SolveScoreClipPhase")
+
+        post_choice = self.states["PostFinalizeAttachChoice"]
+        self.assertEqual(post_choice["Choices"][0]["Variable"], "$.plan.attach.enabled")
+        self.assertEqual(post_choice["Choices"][0]["Next"], "AttachAssociatedPalettePhase")
+        self.assertEqual(post_choice["Default"], "ReportDone")
+
+        attach = self.states["AttachAssociatedPaletteTask"]["Parameters"]["Payload"]
+        self.assertEqual(attach["artifact_id.$"], "$.plan.attach.artifact_id")
+        self.assertEqual(attach["associated_palette_mode.$"], "$.plan.attach.mode")
+        self.assertEqual(attach["associated_palette_id.$"], "$.plan.attach.palette_id")
+        self.assertEqual(attach["associated_palette_image_key.$"], "$.plan.attach.image_key")
+        self.assertEqual(attach["associated_palette_preview_key.$"], "$.plan.attach.preview_key")
+        self.assertEqual(attach["associated_palette_palette.$"], "$.plan.attach.palette")
+        self.assertEqual(attach["associated_palette_metric.$"], "$.plan.attach.metric")
+        self.assertEqual(attach["associated_palette_quantile.$"], "$.plan.attach.quantile")
+        self.assertEqual(attach["associated_palette_omega.$"], "$.plan.attach.omega")
+        self.assertEqual(attach["associated_palette_omega_enabled.$"], "$.plan.attach.omega_enabled")
 
 
 if __name__ == "__main__":

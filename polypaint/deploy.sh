@@ -98,6 +98,8 @@ PALETTE_CHUNK_NAME="polypaint-palette-chunk"
 PALETTE_CHUNK_MEMORY=1769
 PALETTE_FINALIZE_NAME="polypaint-palette-finalize"
 PALETTE_FINALIZE_MEMORY=4096
+ATTACH_PALETTE_NAME="polypaint-attach-palette-to-color"
+ATTACH_PALETTE_MEMORY=512
 PALETTE_STATE_MACHINE_NAME="polypaint-palette-workflow"
 PALETTE_DEBUG_NAME="polypaint-palette-debug"
 PALETTE_DEBUG_MEMORY=1769
@@ -722,11 +724,11 @@ cp lambda/handler_viewport.py lambda/shared.py "$VIEWPORT_DIR/"
 cd "$VIEWPORT_DIR" && zip -r9 /tmp/polypaint-viewport.zip . -q && cd "$SCRIPT_DIR"
 echo "  Viewport: $(du -h /tmp/polypaint-viewport.zip | cut -f1)  (pure Python)"
 
-# Storage: handler_storage.py + shared.py (pure Python)
+# Storage: handler_storage.py + shared.py + color artifact metadata (pure Python)
 STORAGE_DIR=/tmp/polypaint-storage
 rm -rf "$STORAGE_DIR"
 mkdir -p "$STORAGE_DIR"
-cp lambda/handler_storage.py lambda/shared.py "$STORAGE_DIR/"
+cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py "$STORAGE_DIR/"
 cd "$STORAGE_DIR" && zip -r9 /tmp/polypaint-storage.zip . -q && cd "$SCRIPT_DIR"
 echo "  Storage:  $(du -h /tmp/polypaint-storage.zip | cut -f1)  (pure Python)"
 
@@ -845,21 +847,21 @@ cp lambda/handler_render_preview.py lambda/shared.py "$RENDER_PREVIEW_DIR/"
 cd "$RENDER_PREVIEW_DIR" && zip -r9 /tmp/polypaint-render-preview.zip . -q && cd "$SCRIPT_DIR"
 echo "  RndPrev: $(du -h /tmp/polypaint-render-preview.zip | cut -f1)  (vipsthumbnail via libvips layer)"
 
-# Autolevels: handler_autolevels.py + shared.py + autolevels_render (needs libvips layer)
+# Autolevels: handler_autolevels.py + shared.py + color_artifact_meta.py + autolevels_render (needs libvips layer)
 AUTOLEVELS_DIR=/tmp/polypaint-autolevels
 rm -rf "$AUTOLEVELS_DIR"
 mkdir -p "$AUTOLEVELS_DIR"
-cp lambda/handler_autolevels.py lambda/shared.py "$AUTOLEVELS_DIR/"
+cp lambda/handler_autolevels.py lambda/shared.py lambda/color_artifact_meta.py "$AUTOLEVELS_DIR/"
 cp lambda/autolevels_render "$AUTOLEVELS_DIR/"
 chmod +x "$AUTOLEVELS_DIR"/autolevels_render
 cd "$AUTOLEVELS_DIR" && zip -r9 /tmp/polypaint-autolevels.zip . -q && cd "$SCRIPT_DIR"
 echo "  AutoLvl: $(du -h /tmp/polypaint-autolevels.zip | cut -f1)  (autolevels_render + libvips layer)"
 
-# Resize Artifact: handler_resize_artifact.py + shared.py (needs libvips layer)
+# Resize Artifact: handler_resize_artifact.py + shared.py + color_artifact_meta.py (needs libvips layer)
 RESIZE_ARTIFACT_DIR=/tmp/polypaint-resize-artifact
 rm -rf "$RESIZE_ARTIFACT_DIR"
 mkdir -p "$RESIZE_ARTIFACT_DIR"
-cp lambda/handler_resize_artifact.py lambda/shared.py "$RESIZE_ARTIFACT_DIR/"
+cp lambda/handler_resize_artifact.py lambda/shared.py lambda/color_artifact_meta.py "$RESIZE_ARTIFACT_DIR/"
 cd "$RESIZE_ARTIFACT_DIR" && zip -r9 /tmp/polypaint-resize-artifact.zip . -q && cd "$SCRIPT_DIR"
 echo "  Resize:  $(du -h /tmp/polypaint-resize-artifact.zip | cut -f1)  (resize artifact + libvips layer)"
 
@@ -885,11 +887,11 @@ chmod +x "$COLOR_REPALETTE_DIR"/pixel_bins_render
 cd "$COLOR_REPALETTE_DIR" && zip -r9 /tmp/polypaint-color-repalette.zip . -q && cd "$SCRIPT_DIR"
 echo "  ClrRePal: $(du -h /tmp/polypaint-color-repalette.zip | cut -f1)  (pixel_bins_render)"
 
-# PDF Artifact: handler_pdf_artifact.py + shared.py + spread builder
+# PDF Artifact: handler_pdf_artifact.py + shared.py + color artifact metadata + spread builder
 PDF_ARTIFACT_DIR=/tmp/polypaint-pdf-artifact
 rm -rf "$PDF_ARTIFACT_DIR"
 mkdir -p "$PDF_ARTIFACT_DIR"
-cp lambda/handler_pdf_artifact.py lambda/shared.py lambda/spread_pdf.py "$PDF_ARTIFACT_DIR/"
+cp lambda/handler_pdf_artifact.py lambda/shared.py lambda/color_artifact_meta.py lambda/spread_pdf.py "$PDF_ARTIFACT_DIR/"
 cd "$PDF_ARTIFACT_DIR" && zip -r9 /tmp/polypaint-pdf-artifact.zip . -q && cd "$SCRIPT_DIR"
 echo "  PDFArt:  $(du -h /tmp/polypaint-pdf-artifact.zip | cut -f1)  (spread builder + python pdf layer)"
 
@@ -949,6 +951,7 @@ PAL_PLAN_DIR=/tmp/polypaint-palette-render-plan
 rm -rf "$PAL_PLAN_DIR"
 mkdir -p "$PAL_PLAN_DIR"
 cp lambda/handler_palette_render_plan.py lambda/shared.py \
+   lambda/color_artifact_meta.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PAL_PLAN_DIR/"
 cd "$PAL_PLAN_DIR" && zip -r9 /tmp/polypaint-palette-render-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalPlan: $(du -h /tmp/polypaint-palette-render-plan.zip | cut -f1)  (plan builder)"
@@ -972,6 +975,14 @@ cp lambda/palette_bins_render lambda/raw2jpeg "$PAL_FINAL_DIR/"
 chmod +x "$PAL_FINAL_DIR"/palette_bins_render "$PAL_FINAL_DIR"/raw2jpeg
 cd "$PAL_FINAL_DIR" && zip -r9 /tmp/polypaint-palette-finalize.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalFin:  $(du -h /tmp/polypaint-palette-finalize.zip | cut -f1)  (finalize + libvips layer)"
+
+# Attach Palette to Color: handler_attach_palette_to_color.py + shared.py + color_artifact_meta.py
+ATTACH_PAL_DIR=/tmp/polypaint-attach-palette-to-color
+rm -rf "$ATTACH_PAL_DIR"
+mkdir -p "$ATTACH_PAL_DIR"
+cp lambda/handler_attach_palette_to_color.py lambda/shared.py lambda/color_artifact_meta.py "$ATTACH_PAL_DIR/"
+cd "$ATTACH_PAL_DIR" && zip -r9 /tmp/polypaint-attach-palette-to-color.zip . -q && cd "$SCRIPT_DIR"
+echo "  PalAtt:  $(du -h /tmp/polypaint-attach-palette-to-color.zip | cut -f1)  (attach associated palette metadata)"
 
 # Render Orchestrator (starter): handler_render_orchestrator.py + shared.py
 ORCH_DIR=/tmp/polypaint-render-orchestrator
@@ -1456,6 +1467,9 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$PALETTE_FINALIZE_NAME" "handler_palette_finalize.handler" "/tmp/polypaint-palette-finalize.zip" \
         "$PALETTE_FINALIZE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
+    create_lambda "$ATTACH_PALETTE_NAME" "handler_attach_palette_to_color.handler" "/tmp/polypaint-attach-palette-to-color.zip" \
+        "$ATTACH_PALETTE_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+
     # Render plan + status Lambdas
     create_lambda "$RENDER_PLAN_NAME" "handler_render_plan.handler" "/tmp/polypaint-render-plan.zip" \
         "$RENDER_PLAN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME,RASTER_FUNCTION=$RASTER_NAME,RASTER_MT_FUNCTION=$RASTER_MT_NAME"
@@ -1566,11 +1580,13 @@ if [ "$ACTION" = "create" ]; then
     PALETTE_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_PLAN_NAME}"
     PALETTE_CHUNK_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_CHUNK_NAME}"
     PALETTE_FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_FINALIZE_NAME}"
+    ATTACH_PALETTE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ATTACH_PALETTE_NAME}"
     sed -e "s|\${PlanFunctionArn}|${PALETTE_PLAN_ARN}|g" \
         -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
         -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
         -e "s|\${PaletteChunkFunctionArn}|${PALETTE_CHUNK_ARN}|g" \
         -e "s|\${PaletteFinalizeFunctionArn}|${PALETTE_FINALIZE_ARN}|g" \
+        -e "s|\${AttachPaletteFunctionArn}|${ATTACH_PALETTE_ARN}|g" \
         stepfunctions/palette_workflow.asl.json.template > /tmp/palette_workflow.asl.json
 
     PALETTE_SM_ARN=$(aws stepfunctions create-state-machine \
@@ -1620,7 +1636,7 @@ if [ "$ACTION" = "create" ]; then
 
     # Async invoke config: no retries for most Lambdas (prevents retry storms),
     # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
-    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME"; do
+    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \
@@ -1776,6 +1792,9 @@ elif [ "$ACTION" = "update" ]; then
     update_lambda "$PALETTE_FINALIZE_NAME" "handler_palette_finalize.handler" "/tmp/polypaint-palette-finalize.zip" \
         "$PALETTE_FINALIZE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
+    update_lambda "$ATTACH_PALETTE_NAME" "handler_attach_palette_to_color.handler" "/tmp/polypaint-attach-palette-to-color.zip" \
+        "$ATTACH_PALETTE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+
     update_lambda "$RENDER_PLAN_NAME" "handler_render_plan.handler" "/tmp/polypaint-render-plan.zip" \
         "$RENDER_PLAN_MEMORY" "" "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME,RASTER_FUNCTION=$RASTER_NAME,RASTER_MT_FUNCTION=$RASTER_MT_NAME"
 
@@ -1806,6 +1825,7 @@ elif [ "$ACTION" = "update" ]; then
     PALETTE_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_PLAN_NAME}"
     PALETTE_CHUNK_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_CHUNK_NAME}"
     PALETTE_FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_FINALIZE_NAME}"
+    ATTACH_PALETTE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ATTACH_PALETTE_NAME}"
     PALETTE_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${PALETTE_STATE_MACHINE_NAME}"
 
     SFN_ROLE_NAME="polypaint-sfn-execution-role"
@@ -1837,6 +1857,7 @@ elif [ "$ACTION" = "update" ]; then
         -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
         -e "s|\${PaletteChunkFunctionArn}|${PALETTE_CHUNK_ARN}|g" \
         -e "s|\${PaletteFinalizeFunctionArn}|${PALETTE_FINALIZE_ARN}|g" \
+        -e "s|\${AttachPaletteFunctionArn}|${ATTACH_PALETTE_ARN}|g" \
         stepfunctions/palette_workflow.asl.json.template > /tmp/palette_workflow.asl.json
 
     SFN_TRUST='{
@@ -1941,7 +1962,7 @@ elif [ "$ACTION" = "update" ]; then
 
     # Async invoke config: no retries for most Lambdas (prevents retry storms),
     # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
-    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME"; do
+    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \

@@ -258,6 +258,13 @@
       "text": "A small dark heart pinned at the center of a glass orb, framed by an elaborate filigree of white traceries arranged in fourfold symmetry. Eight roots per solve are pushed through a chain of five parameter transforms \u2014 unit circle, three coefficient warps, and a coordinate twist \u2014 producing two hundred million root positions; a bilevel render then reduces them to pure black and white. The fine lattice records every orbital path the roots traced as the parameters swept around the unit circle, and the coefficient reversal locks in the bilateral symmetry. The heart at the center is the structural void where no root cluster ever forms, framed by the ghosts of every solve that came close to it.\n\npoly_727 \u00b7 degree 8 \u00b7 5000\u00d75000 \u00b7 bilevel \u00b7 Aberth-Ehrlich (parallel) \u00b7 png export",
       "filename": "png_1775810362132_laef71",
       "job_id": "compute_mnslycuk"
+    },
+    {
+      "image": "snaps/compute_mnsrfwp2_color_run_1775822814772_uc6f36.jpeg",
+      "title": "Nautilus Orrery",
+      "text": "A central bloom of teal nautilus spirals curls around a single amber pistil, ringed by a wider lattice of overlapping orbital circles in cyan and copper. Twenty-five roots per solve are pushed through five chained transforms \u2014 a coordinate warp, a squaring, a cumulative sum, an odd-index negation, and a cubing \u2014 producing six hundred million root positions across a five-thousand-square parameter mesh. The proximity score lights up where the nearest pair of roots collapses to its tightest, and the reef palette flares cyan along those collision seams. The orbital mesh outside is the trace of every solve whose roots came close to colliding without quite touching.\n\nold_giga_5 \u00b7 degree 25 \u00b7 5000\u00d75000 \u00b7 proximity \u00b7 reef \u00b7 Aberth-Ehrlich (parallel)",
+      "filename": "color_run_1775822814772_uc6f36",
+      "job_id": "compute_mnsrfwp2"
     }
   ]
 }

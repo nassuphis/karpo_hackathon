@@ -38,6 +38,8 @@ When claiming a feature is ready, explicitly report:
 - The Lambda handler exists.
 - The route is published in [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh).
 - The route is represented in config generation.
+- If the feature is exposed through API Gateway, API Gateway has explicit `lambda:add-permission` invoke rights for that Lambda.
+- Route, integration, config entry, and API Gateway invoke permission stay in sync.
 - The route is covered by contract tests if applicable.
 
 ## 5. Deploy Packaging
@@ -68,6 +70,7 @@ This must be enforced by:
 
 - Any new AWS API use is matched by explicit IAM permissions in [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh).
 - If the feature adds DynamoDB actions, S3 actions, Step Functions calls, Lambda invokes, or other IAM-sensitive behavior, those permissions are checked directly.
+- If the feature adds an API Gateway route, verify the Lambda is included in the API Gateway invoke-permission grant path, not just route/integration creation.
 - The feature is not considered ready if it only works locally or in mocks but the role is missing actions.
 
 ## 8. Runtime Dependency Reality

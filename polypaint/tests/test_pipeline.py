@@ -2197,6 +2197,62 @@ class TestRenderSummary(unittest.TestCase):
         self.assertEqual(child["resize_params"]["size_mode"], "down")
 
     @patch("handler_storage.s3")
+    def test_render_summary_returns_derived_bilevel_png_artifacts(self, mock_s3):
+        from handler_storage import handle_render_summary
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate_side_effect(**kwargs):
+            prefix = kwargs.get("Prefix", "")
+            if prefix == "renders/j/bilevel/":
+                return [{"CommonPrefixes": [{"Prefix": "renders/j/bilevel/png_child/"}]}]
+            return [{"CommonPrefixes": []}]
+
+        mock_paginator.paginate.side_effect = paginate_side_effect
+
+        def mock_head(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/bilevel/png_child/image.png":
+                return {
+                    "ContentLength": 777,
+                    "ContentType": "image/png",
+                    "Metadata": {
+                        "artifact_id": "png_child",
+                        "family": "bilevel",
+                        "created_at": "2026-04-10T12:00:00Z",
+                        "format": "png",
+                        "width": "4096",
+                        "height": "4096",
+                        "derived_from_artifact_id": "bil_base",
+                        "derived_from_image_key": "renders/j/bilevel/bil_base/image.tif",
+                        "postprocess_kind": "png_export",
+                        "postprocess_profile": "bilevel_png_export_v1",
+                    },
+                }
+            if key == "renders/j/bilevel/png_child/preview.png":
+                return {"ContentLength": 111, "ContentType": "image/png", "Metadata": {}}
+            raise Exception("NoSuchKey")
+
+        mock_s3.head_object.side_effect = mock_head
+        mock_s3.get_object.side_effect = Exception("NoSuchKey")
+        mock_s3.generate_presigned_url.return_value = "https://signed"
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+        arts = body["families"]["bilevel"]
+
+        self.assertEqual(len(arts), 1)
+        child = arts[0]
+        self.assertEqual(child["artifact_id"], "png_child")
+        self.assertEqual(child["format"], "png")
+        self.assertEqual(child["derived_from_artifact_id"], "bil_base")
+        self.assertEqual(child["derived_from_image_key"], "renders/j/bilevel/bil_base/image.tif")
+        self.assertEqual(child["postprocess_kind"], "png_export")
+        self.assertEqual(child["postprocess_profile"], "bilevel_png_export_v1")
+        self.assertEqual(child["viewer_url"], "https://signed")
+
+    @patch("handler_storage.s3")
     def test_render_summary_missing_artifacts_are_false(self, mock_s3):
         """Legacy top-level artifacts are still returned as exists=false when missing."""
         from handler_storage import handle_render_summary

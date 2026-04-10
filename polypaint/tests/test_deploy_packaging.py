@@ -85,6 +85,22 @@ def _local_dependencies(py_name, seen=None):
 
 
 class TestDeployPackaging(unittest.TestCase):
+    def test_all_api_gateway_integrations_have_invoke_permission(self):
+        joined = _joined_shell_lines(DEPLOY_TEXT)
+        integrated = set(re.findall(r'create_integration "\$(\w+)"', joined))
+        self.assertGreater(len(integrated), 10, "failed to discover API Gateway integrations")
+
+        perm_match = re.search(r'for FNAME in (.*?); do\s+aws lambda add-permission', joined)
+        self.assertIsNotNone(perm_match, "failed to find API Gateway add-permission loop")
+        permitted = set(re.findall(r'"\$(\w+)"', perm_match.group(1)))
+
+        missing = sorted(integrated - permitted)
+        self.assertEqual(
+            missing,
+            [],
+            f"API Gateway integrations missing invoke permission: {', '.join(missing)}",
+        )
+
     def test_packaged_handlers_include_all_local_dependencies(self):
         packaged = _packaged_handlers()
         self.assertGreater(len(packaged), 10, "failed to parse deploy packaging blocks")

@@ -108,6 +108,30 @@ def _validate_cfpv(values):
     return out
 
 
+def _validate_quantile(value):
+    try:
+        q = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid preview quantile: {value!r}") from None
+    if not math.isfinite(q):
+        raise ValueError(f"invalid preview quantile: {value!r}")
+    if q < 0.0 or q >= 0.5:
+        raise ValueError(f"preview quantile must be in [0, 0.5), got {q}")
+    return q
+
+
+def _validate_shim(value):
+    try:
+        shim = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid preview shim: {value!r}") from None
+    if not math.isfinite(shim):
+        raise ValueError(f"invalid preview shim: {value!r}")
+    if shim < 0.0 or shim > 1.0:
+        raise ValueError(f"preview shim must be in [0, 1], got {shim}")
+    return shim
+
+
 def _preflight_tmp_capacity(n_preview):
     n_steps = n_preview * n_preview
     coeffs_est = n_steps * MAX_COEFFS_EST * 8
@@ -184,6 +208,8 @@ def handler(event, context):
         solver_mode = str(params.get("solver_mode") or "aberth").strip() or "aberth"
         if solver_mode not in {"aberth", "aberth_mt", "companion_matrix"}:
             return _json_response(400, {"message": f"unsupported preview solver_mode: {solver_mode}"})
+        quantile = _validate_quantile(params.get("quantile", 0.0))
+        shim = _validate_shim(params.get("shim", 0.05))
 
         coeff_transforms = params.get("coeff_transforms") or []
         param_transforms = params.get("param_transforms") or []
@@ -265,7 +291,7 @@ def handler(event, context):
         t0 = time.time()
         with open(TMP_ROOTS, "rb") as fh:
             roots_data = fh.read()
-        viewport = compute_viewport_from_bin(roots_data, quantile=0.0, shim=0.05)
+        viewport = compute_viewport_from_bin(roots_data, quantile=quantile, shim=shim)
         viewport_ms = int((time.time() - t0) * 1000)
 
         t0 = time.time()
@@ -294,6 +320,8 @@ def handler(event, context):
             "roots_size": len(roots_data),
             "image_width": n_preview,
             "image_height": n_preview,
+            "quantile": quantile,
+            "shim": shim,
             "image_png_base64": base64.b64encode(png_data).decode("ascii"),
             "q_re": viewport["q_re"],
             "q_im": viewport["q_im"],

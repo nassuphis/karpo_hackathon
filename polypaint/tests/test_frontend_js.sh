@@ -37,6 +37,8 @@ grep -q 'id="render-mt-hist-retries"' "$HTML" || { echo "FATAL: render MT hist r
 grep -q 'id="render-mt-raster-retries"' "$HTML" || { echo "FATAL: render MT raster retries input missing from index.html"; exit 1; }
 grep -q 'id="compute-preview-n"' "$HTML" || { echo "FATAL: compute preview N input missing from index.html"; exit 1; }
 grep -q 'id="compute-preview-solver"' "$HTML" || { echo "FATAL: compute preview solver selector missing from index.html"; exit 1; }
+grep -q 'id="compute-preview-quantile"' "$HTML" || { echo "FATAL: compute preview quantile input missing from index.html"; exit 1; }
+grep -q 'id="compute-preview-shim"' "$HTML" || { echo "FATAL: compute preview shim input missing from index.html"; exit 1; }
 grep -q 'id="btn-compute-preview"' "$HTML" || { echo "FATAL: compute preview button missing from index.html"; exit 1; }
 grep -q 'id="compute-preview-box"' "$HTML" || { echo "FATAL: compute preview image box missing from index.html"; exit 1; }
 grep -q 'id="btn-render-resize"' "$HTML" || { echo "FATAL: color Resize button missing from index.html"; exit 1; }
@@ -738,6 +740,10 @@ async function testPipeline(name, call) {
         ctx._elements['compute-preview-n'].value = '128';
         ctx._elements['compute-preview-solver'] = ctx._mkEl();
         ctx._elements['compute-preview-solver'].value = 'companion_matrix';
+        ctx._elements['compute-preview-quantile'] = ctx._mkEl();
+        ctx._elements['compute-preview-quantile'].value = '1.5';
+        ctx._elements['compute-preview-shim'] = ctx._mkEl();
+        ctx._elements['compute-preview-shim'].value = '7.5';
         ctx._elements['btn-compute-preview'] = ctx._mkEl();
         ctx._elements['btn-compute-preview'].disabled = false;
         ctx._elements['compute-preview-status'] = ctx._mkEl();
@@ -758,6 +764,8 @@ async function testPipeline(name, call) {
                 return {
                     solver_mode: body.solver_mode,
                     N_preview: body.N_preview,
+                    quantile: body.quantile,
+                    shim: body.shim,
                     degree: 10,
                     n_roots_total: 16384,
                     n_roots_in_view: 1024,
@@ -781,8 +789,8 @@ async function testPipeline(name, call) {
             const statusText = ctx._elements['compute-preview-status'].textContent || '';
             const box = ctx._elements['compute-preview-box'];
             const img = (box.children || [])[0];
-            if (!payload || payload.solver_mode !== 'companion_matrix' || payload.N_preview !== 128 || payload.function !== 'g1') {
-                console.error('FATAL: compute preview should call compute-preview with solver/function/N-preview, got ' + JSON.stringify(payload));
+            if (!payload || payload.solver_mode !== 'companion_matrix' || payload.N_preview !== 128 || payload.function !== 'g1' || payload.quantile !== 0.015 || payload.shim !== 0.075) {
+                console.error('FATAL: compute preview should call compute-preview with solver/function/N-preview/quantile/shim, got ' + JSON.stringify(payload));
                 process.exit(1);
             }
             if (!statusText.includes('Preview ready')) {
@@ -1293,12 +1301,12 @@ async function testPipeline(name, call) {
             var _bilevelConvertCalls = [];
             lambdaPost = async function lambdaPost(name, body, path) {
                 _bilevelConvertCalls.push({ name, body, path });
-                if (name === 'png-export') return { convert_ms: 12, file_size: 12345, url: 'https://img/bil_export.png' };
-                if (name === 'tiff-compat') return { convert_ms: 17, file_size: 23456, url: 'https://img/bil_compat.tif' };
+                if (name === 'png-export') return { artifact_id: body.artifact_id, convert_ms: 12, file_size: 12345, url: 'https://img/bil_export.png' };
+                if (name === 'tiff-compat') return { artifact_id: body.artifact_id, convert_ms: 17, file_size: 23456, url: 'https://img/bil_compat.tif' };
                 return {};
             };
             _bilevelRefreshCalls = [];
-            refreshRenderArtifacts = async function(jobId) { _bilevelRefreshCalls.push(jobId); };
+            refreshRenderArtifacts = async function(jobId, opts) { _bilevelRefreshCalls.push({ jobId, opts }); };
         `, ctx);
         try { await vm.runInContext('(async()=>{ await runPngExport("j", "renders/j/bilevel/bil_a/image.tif"); await runTiffCompat("j", "renders/j/bilevel/bil_a/image.tif"); })()', ctx); } catch(e) {}
         const convertCalls = vm.runInContext('_bilevelConvertCalls', ctx);
@@ -1308,15 +1316,31 @@ async function testPipeline(name, call) {
             console.error('FATAL: PNG export should post selected bilevel TIFF source key');
             process.exit(1);
         }
+        if (!convertCalls[0].body.artifact_id || convertCalls[0].body.source_artifact_id !== 'bil_a') {
+            console.error('FATAL: PNG export should create a derived artifact from the selected bilevel artifact');
+            process.exit(1);
+        }
         if (convertCalls[1].name !== 'tiff-compat' || convertCalls[1].body.source_key !== 'renders/j/bilevel/bil_a/image.tif') {
             console.error('FATAL: TIFF compat should post selected bilevel TIFF source key');
             process.exit(1);
         }
-        if (!Array.isArray(refreshCalls) || refreshCalls.length !== 2 || refreshCalls[0] !== 'j' || refreshCalls[1] !== 'j') {
+        if (!convertCalls[1].body.artifact_id || convertCalls[1].body.source_artifact_id !== 'bil_a') {
+            console.error('FATAL: TIFF compat should create a derived artifact from the selected bilevel artifact');
+            process.exit(1);
+        }
+        if (!Array.isArray(refreshCalls) || refreshCalls.length !== 2 || refreshCalls[0].jobId !== 'j' || refreshCalls[1].jobId !== 'j') {
             console.error('FATAL: bilevel conversion actions should refresh render artifacts after success');
             process.exit(1);
         }
-        console.log('  bilevel PNG/compat actions call backend routes and refresh inventory: OK');
+        if (refreshCalls[0].opts.selectFamily !== 'bilevel' || refreshCalls[0].opts.selectArtifactId !== convertCalls[0].body.artifact_id) {
+            console.error('FATAL: PNG export refresh should select the new derived bilevel artifact');
+            process.exit(1);
+        }
+        if (refreshCalls[1].opts.selectFamily !== 'bilevel' || refreshCalls[1].opts.selectArtifactId !== convertCalls[1].body.artifact_id) {
+            console.error('FATAL: TIFF compat refresh should select the new derived bilevel artifact');
+            process.exit(1);
+        }
+        console.log('  bilevel PNG/compat actions create derived artifacts and refresh inventory: OK');
     }
 
     {
@@ -1590,6 +1614,36 @@ async function testPipeline(name, call) {
         }
         vm.runInContext(`_rtChain = []; _renderChips('rt');`, ctx);
         console.log('  moebius root transform chip renders equation + defaults: OK');
+    }
+
+    {
+        try {
+            vm.runInContext(`
+                _ptChain = [];
+                addChip('pt', 'inv_t_plus_2');
+                updateChipParam(0, 0, '2.5', 'pt');
+                updateChipParam(0, 1, '0.25', 'pt');
+                updateChipParam(0, 2, '3', 'pt');
+                updateChipParam(0, 3, '-1', 'pt');
+            `, ctx);
+        } catch (e) { console.error('FATAL: addChip(inv_t_plus_2 pt): ' + e.message); process.exit(1); }
+        const invTInfo = vm.runInContext(`(() => {
+            const chips = document.getElementById('pt-chips');
+            const html = chips ? chips.innerHTML : '';
+            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
+            const wire = JSON.stringify(_serializeParamTransforms());
+            return { html, inputs, wire };
+        })()`, ctx);
+        if (!invTInfo.html.includes('t1=1/(t1+') || !invTInfo.html.includes('t2=1/(t2+') || invTInfo.inputs !== 4) {
+            console.error('FATAL: inv_t_plus_2 param transform chip should render visible formula with 4 inputs');
+            process.exit(1);
+        }
+        if (!invTInfo.wire.includes('[\"inv_t_plus_2\",\"2.5\",\"0.25\",\"3\",\"-1\"]')) {
+            console.error('FATAL: inv_t_plus_2 param transform should serialize numeric args, got ' + invTInfo.wire);
+            process.exit(1);
+        }
+        vm.runInContext(`_ptChain = []; _renderChips('pt');`, ctx);
+        console.log('  inv_t_plus_2 param transform chip renders formula + serializes: OK');
     }
 
     {

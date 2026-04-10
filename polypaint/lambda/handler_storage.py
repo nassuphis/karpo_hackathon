@@ -457,7 +457,7 @@ RENDER_FAMILY_SHAPES = {
         "legacy_preview_candidates": ["preview_color.png"],
     },
     "bilevel": {
-        "image_candidates": ["image.tif"],
+        "image_candidates": ["image.tif", "image.png"],
         "preview_candidates": ["preview.png"],
         "legacy_image_candidates": ["image_bilevel.tif"],
         "legacy_preview_candidates": ["preview_bilevel.png", "image_bilevel_preview.png"],
@@ -657,6 +657,11 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         pbe = meta.get("pixel_bins_empty", "")
         entry["pixel_bins_empty"] = int(pbe) if pbe not in ("", None) else None
         entry["pixel_bins_layout"] = meta.get("pixel_bins_layout", "")
+    elif family in ("bilevel", "coeffs"):
+        entry["derived_from_artifact_id"] = meta.get("derived_from_artifact_id", "")
+        entry["derived_from_image_key"] = meta.get("derived_from_image_key", "")
+        entry["postprocess_kind"] = meta.get("postprocess_kind", "")
+        entry["postprocess_profile"] = meta.get("postprocess_profile", "")
     elif family == "pdf":
         page_count = meta.get("page_count")
         entry["pdf_kind"] = meta.get("pdf_kind", "")

@@ -132,6 +132,29 @@ def test_t2iadd():
     print("  PASS")
 
 
+def test_inv_t_plus_2_parametric():
+    """inv_t_plus_2(re1,im1,re2,im2): reciprocal after per-parameter complex shift."""
+    print("test_inv_t_plus_2_parametric...")
+    data, n = run_param_dump(10, [["inv_t_plus_2", "2", "0", "3", "1"]])
+    z1r, z1i, z2r, z2i = get_point(data, n, 3, 7)
+
+    # t1 = 0.3 -> 1 / (0.3 + 2 + 0i)
+    den1r, den1i = 2.3, 0.0
+    d1 = den1r * den1r + den1i * den1i
+    exp1r, exp1i = den1r / d1, -den1i / d1
+
+    # t2 = 0.7 -> 1 / (0.7 + 3 + 1i)
+    den2r, den2i = 3.7, 1.0
+    d2 = den2r * den2r + den2i * den2i
+    exp2r, exp2i = den2r / d2, -den2i / d2
+
+    assert abs(z1r - exp1r) < 1e-6
+    assert abs(z1i - exp1i) < 1e-6
+    assert abs(z2r - exp2r) < 1e-6
+    assert abs(z2i - exp2i) < 1e-6
+    print("  PASS")
+
+
 def test_output_size():
     """Verify output file size matches n1*n2*4*sizeof(float)."""
     print("test_output_size...")

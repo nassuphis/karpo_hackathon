@@ -1859,6 +1859,24 @@ static void pt_moebius(double *z1r, double *z1i, double *z2r, double *z2i) {
     else { *z2r = 0; *z2i = 0; }
 }
 
+/* inv_t_plus_2(re1, im1, re2, im2):
+ *   t1 = 1 / (t1 + re1 + i*im1)
+ *   t2 = 1 / (t2 + re2 + i*im2)
+ * Defaults (2,0,2,0) match the old fixed inv_t_plus_2 behavior. */
+static void pt_inv_t_plus_2(double *z1r, double *z1i, double *z2r, double *z2i,
+                            double re1, double im1, double re2, double im2) {
+    double d;
+    double ar = *z1r + re1, ai = *z1i + im1;
+    d = ar * ar + ai * ai;
+    if (d > 1e-30) { *z1r = ar / d; *z1i = -ai / d; }
+    else { *z1r = 0; *z1i = 0; }
+
+    ar = *z2r + re2; ai = *z2i + im2;
+    d = ar * ar + ai * ai;
+    if (d > 1e-30) { *z2r = ar / d; *z2i = -ai / d; }
+    else { *z2r = 0; *z2i = 0; }
+}
+
 static void pt_shift1(double *z1r, double *z1i, double *z2r, double *z2i) {
     *z1r += 1.0; *z2r += 1.0; (void)z1i; (void)z2i;
 }
@@ -3377,6 +3395,14 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
         double a1 = 2.0 * M_PI * *z2r, a2 = 2.0 * M_PI * *z1r;
         *z1r = r1 * cos(a1); *z1i = r1 * sin(a1);
         *z2r = r2 * cos(a2); *z2i = r2 * sin(a2);
+        return 0;
+    }
+    if (strcmp(e->name, "inv_t_plus_2") == 0) {
+        double re1 = e->nArgs > 0 ? e->args[0] : 2.0;
+        double im1 = e->nArgs > 1 ? e->args[1] : 0.0;
+        double re2 = e->nArgs > 2 ? e->args[2] : 2.0;
+        double im2 = e->nArgs > 3 ? e->args[3] : 0.0;
+        pt_inv_t_plus_2(z1r, z1i, z2r, z2i, re1, im1, re2, im2);
         return 0;
     }
     if (strcmp(e->name, "crd") == 0) {

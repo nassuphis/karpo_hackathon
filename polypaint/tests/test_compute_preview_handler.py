@@ -35,13 +35,22 @@ class TestComputePreviewHandler(unittest.TestCase):
 
     @patch("handler_compute_preview.tmp_space_stats")
     @patch("handler_compute_preview.subprocess.run")
-    def test_compute_preview_success_cm_returns_inline_png(self, mock_run, mock_tmp_stats):
+    @patch("handler_compute_preview.compute_viewport_from_bin")
+    def test_compute_preview_success_cm_returns_inline_png(self, mock_viewport, mock_run, mock_tmp_stats):
         import handler_compute_preview as mod
 
         mock_tmp_stats.return_value = {
             "path": "/tmp",
             "free_bytes": 8 * 1024 * 1024 * 1024,
             "total_bytes": 10 * 1024 * 1024 * 1024,
+        }
+        mock_viewport.return_value = {
+            "center_re": 0.0,
+            "center_im": 0.0,
+            "scale": 4096.0,
+            "n_roots": 32 * 32 * 2,
+            "q_re": [-1.0, 1.0],
+            "q_im": [-1.0, 1.0],
         }
         calls = []
 
@@ -69,7 +78,7 @@ class TestComputePreviewHandler(unittest.TestCase):
 
         mock_run.side_effect = fake_run
 
-        result = mod.handler({"body": json.dumps(_event(solver_mode="companion_matrix"))}, None)
+        result = mod.handler({"body": json.dumps(_event(solver_mode="companion_matrix", quantile=0.02, shim=0.1))}, None)
         body = json.loads(result["body"])
 
         self.assertEqual(result["statusCode"], 200)
@@ -78,9 +87,15 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertEqual(body["degree"], 2)
         self.assertEqual(body["image_width"], 32)
         self.assertEqual(body["image_height"], 32)
+        self.assertEqual(body["quantile"], 0.02)
+        self.assertEqual(body["shim"], 0.1)
         self.assertTrue(body["image_png_base64"].startswith("iVBOR"))
         self.assertGreater(body["n_roots_total"], 0)
         self.assertEqual(calls, ["sweep_coeffgen", "sweep_cm"])
+        mock_viewport.assert_called_once()
+        _, kwargs = mock_viewport.call_args
+        self.assertEqual(kwargs["quantile"], 0.02)
+        self.assertEqual(kwargs["shim"], 0.1)
 
     @patch("handler_compute_preview.tmp_space_stats")
     @patch("handler_compute_preview.subprocess.run")
@@ -107,6 +122,19 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertIn("N_preview=32", body["message"])
         self.assertIn("function=g1", body["message"])
         self.assertIn("coeff=roots_cm(lo)", body["message"])
+
+    def test_compute_preview_rejects_invalid_quantile_and_shim(self):
+        import handler_compute_preview as mod
+
+        result = mod.handler({"body": json.dumps(_event(quantile=0.6))}, None)
+        body = json.loads(result["body"])
+        self.assertEqual(result["statusCode"], 500)
+        self.assertIn("preview quantile must be in [0, 0.5)", body["message"])
+
+        result = mod.handler({"body": json.dumps(_event(shim=1.5))}, None)
+        body = json.loads(result["body"])
+        self.assertEqual(result["statusCode"], 500)
+        self.assertIn("preview shim must be in [0, 1]", body["message"])
 
 
 if __name__ == "__main__":

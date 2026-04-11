@@ -22,9 +22,11 @@ lambda/sweep_cm
 lambda/coeffs_bilevel_raster
 lambda/roots2pix_mt
 lambda/solve_proximity_hist_sectioned
+lambda/solve_palette_chunk_mt
 # Shared lib directories (copied from Docker builds)
 lambda/roots2pix_mt_lib/
 lambda/solve_proximity_hist_sectioned_lib/
+lambda/solve_palette_chunk_mt_lib/
 # Local-only test binaries (never deployed)
 lambda/*_local
 lambda/*_test

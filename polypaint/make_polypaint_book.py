@@ -49,6 +49,41 @@ for _p in _UNICODE_FONT_PATHS:
         BODY_FONT = "ArialUnicode"
         break
 
+# Register Canela Family for cover display typography.
+# reportlab's TTFont only supports TrueType outlines, not CFF/PostScript OTFs,
+# so the OTF trial files need to be converted to TTF once. See fonts/README or
+# the project README for the one-shot conversion command. If the TTFs are
+# missing we fall back to Helvetica and print a WARNING loudly — no silent
+# fallback.
+_SCRIPT_DIR = Path(__file__).parent
+_CANELA_LIGHT_PATH = _SCRIPT_DIR / "fonts" / "Canela-Light-Trial.ttf"
+_CANELA_REGULAR_PATH = _SCRIPT_DIR / "fonts" / "Canela-Regular-Trial.ttf"
+COVER_DISPLAY_FONT = "Helvetica"
+COVER_DISPLAY_FONT_REGULAR = "Helvetica"
+if _CANELA_LIGHT_PATH.exists():
+    pdfmetrics.registerFont(TTFont("Canela-Light", str(_CANELA_LIGHT_PATH)))
+    COVER_DISPLAY_FONT = "Canela-Light"
+else:
+    print(f"WARNING: Canela Light not found at {_CANELA_LIGHT_PATH}; "
+          f"falling back to Helvetica for cover title.")
+if _CANELA_REGULAR_PATH.exists():
+    pdfmetrics.registerFont(TTFont("Canela-Regular", str(_CANELA_REGULAR_PATH)))
+    COVER_DISPLAY_FONT_REGULAR = "Canela-Regular"
+else:
+    print(f"WARNING: Canela Regular not found at {_CANELA_REGULAR_PATH}; "
+          f"falling back to Helvetica for cover supporting type.")
+
+# Register Tiempos Text Regular for descriptive body copy on content pages.
+# Converted from the trial OTF via otf2ttf — same pattern as Canela.
+_TIEMPOS_REGULAR_PATH = _SCRIPT_DIR / "fonts" / "TiemposText-Regular-Trial.ttf"
+CONTENT_BODY_FONT = BODY_FONT  # fallback to Arial Unicode / Helvetica
+if _TIEMPOS_REGULAR_PATH.exists():
+    pdfmetrics.registerFont(TTFont("Tiempos-Regular", str(_TIEMPOS_REGULAR_PATH)))
+    CONTENT_BODY_FONT = "Tiempos-Regular"
+else:
+    print(f"WARNING: Tiempos Text Regular not found at {_TIEMPOS_REGULAR_PATH}; "
+          f"falling back to {BODY_FONT} for content body copy.")
+
 # ── Dimensions from WhiteWall IDML templates ──────────────────────────
 # Source: cover_A3square_paper-fujiCrystal-semi-matte_28.idml
 #         block_A3square_paper-fujiCrystal-semi-matte_28.idml
@@ -110,6 +145,32 @@ def _draw_image_contain(c, reader, img_size, x, y, w, h):
     c.drawImage(reader, draw_x, draw_y, draw_w, draw_h)
 
 
+def _draw_centered_tracked(c, text, cx, y, font, size, char_space, fill_rgb=None):
+    """Draw text centered around cx at baseline y with additional character
+    spacing (tracking). `char_space` is in points (text-space units).
+
+    Uses a text object because `setCharSpace` is only available there, not on
+    the Canvas directly. Wraps in saveState/restoreState so the Tc (character
+    spacing) does NOT leak into subsequent text draws — otherwise later
+    drawCentredString calls would be shifted right because their stringWidth
+    calculation doesn't know about the inherited Tc.
+    """
+    if not text:
+        return
+    base_width = c.stringWidth(text, font, size)
+    total_width = base_width + char_space * max(0, len(text) - 1)
+    start_x = cx - total_width / 2
+    c.saveState()
+    text_obj = c.beginText(start_x, y)
+    text_obj.setFont(font, size)
+    text_obj.setCharSpace(char_space)
+    if fill_rgb is not None:
+        text_obj.setFillColorRGB(*fill_rgb)
+    text_obj.textOut(text)
+    c.drawText(text_obj)
+    c.restoreState()
+
+
 def _draw_outlined_text(c, text, x, y, font, size,
                         fill=(1, 1, 1), shadow=(0, 0, 0), spacing=0):
     """Draw centered text with a dark outline for readability over images.
@@ -140,6 +201,93 @@ def _draw_outlined_text(c, text, x, y, font, size,
     c.setFillColorRGB(*fill)
     _draw_centered(x, y, text)
     c.restoreState()
+
+
+# ── Per-character font fallback ──────────────────────────────────────
+# Trial versions of Canela and Tiempos only ship 66 glyphs — letters, digits,
+# space, ',', '-', '.'. Descriptive copy needs apostrophes, em dashes, colons,
+# middle dots, x-signs, etc. We split each string into runs: every char that
+# the primary font has stays in the primary font; the rest is drawn in the
+# fallback font (BODY_FONT, which is ArialUnicode or Helvetica — both cover
+# Latin-1 + common typographic chars).
+
+def _font_has_glyph(font_name, ch):
+    """Return True if the registered font has a glyph for `ch`.
+
+    For TTFonts, checks the font's cmap directly. For built-in PDF base
+    fonts (Helvetica, Courier, Times, ...), assumes all Latin-1 + common
+    typographic chars are available via WinAnsi encoding.
+    """
+    try:
+        font = pdfmetrics.getFont(font_name)
+    except KeyError:
+        return False
+    # Registered TTFont — inspect its cmap
+    face = getattr(font, "face", None)
+    char_to_glyph = getattr(face, "charToGlyph", None) if face else None
+    if isinstance(char_to_glyph, dict):
+        return ord(ch) in char_to_glyph
+    # Built-in base font: assume Latin-1 + the common punctuation chars
+    # that WinAnsi covers (em dash, curly quotes, bullet, multiplication,
+    # middle dot, etc.).
+    return True
+
+
+def _split_font_runs(text, primary, fallback):
+    """Split `text` into a list of (font, substring) runs."""
+    if not text:
+        return []
+    runs = []
+    cur_font = None
+    cur = []
+    for ch in text:
+        f = primary if _font_has_glyph(primary, ch) else fallback
+        if f != cur_font:
+            if cur:
+                runs.append((cur_font, "".join(cur)))
+            cur_font = f
+            cur = [ch]
+        else:
+            cur.append(ch)
+    if cur:
+        runs.append((cur_font, "".join(cur)))
+    return runs
+
+
+def _mixed_string_width(c, text, primary, fallback, size):
+    """Advance-sum width of `text` when drawn with per-char font fallback."""
+    return sum(c.stringWidth(s, f, size) for f, s in _split_font_runs(text, primary, fallback))
+
+
+def _draw_mixed_centered(c, text, cx, y, primary, fallback, size):
+    """Draw `text` centered at cx, using primary where available and
+    fallback for characters the primary font is missing."""
+    runs = _split_font_runs(text, primary, fallback)
+    total = sum(c.stringWidth(s, f, size) for f, s in runs)
+    x = cx - total / 2
+    for f, s in runs:
+        c.setFont(f, size)
+        c.drawString(x, y, s)
+        x += c.stringWidth(s, f, size)
+
+
+def _wrap_text_mixed(c, text, primary, fallback, size, max_width):
+    """Word-wrap `text` to fit within `max_width`, measuring with per-char
+    font fallback so lines with mixed-font runs are wrapped correctly."""
+    words = text.split()
+    lines = []
+    line = ""
+    for word in words:
+        test = f"{line} {word}".strip()
+        if _mixed_string_width(c, test, primary, fallback, size) <= max_width:
+            line = test
+        else:
+            if line:
+                lines.append(line)
+            line = word
+    if line:
+        lines.append(line)
+    return lines
 
 
 def _wrap_text(c, text, font, size, max_width):
@@ -328,12 +476,15 @@ def _strip_legacy_metadata_line(body):
     return "\n\n".join(parts).rstrip()
 
 
-def _measure_body_consumed(c, body, font, size, max_width):
+def _measure_body_consumed(c, body, primary, fallback, size, max_width,
+                           leading=19, para_gap=6, blank_gap=10):
     """Dry-run the body layout and return how far below the first baseline the
     y position ends up after the rendering loop completes.
 
     Mirrors the body loop in `_draw_text_page` exactly: each wrapped line moves
-    y down by 16pt, each paragraph break adds another 4pt, blank lines add 8pt.
+    y down by `leading`, each paragraph break adds `para_gap`, blank lines
+    add `blank_gap`. Uses per-char font fallback between `primary` and
+    `fallback` so wrap width measurement matches the actual rendering.
     """
     if not body:
         return 0
@@ -342,13 +493,13 @@ def _measure_body_consumed(c, body, font, size, max_width):
     for para in body.split("\n"):
         para = para.strip()
         if not para:
-            y -= 8
+            y -= blank_gap
             continue
-        wrapped = _wrap_text(c, para, font, size, max_width)
+        wrapped = _wrap_text_mixed(c, para, primary, fallback, size, max_width)
         for _ in wrapped:
-            y -= 16
+            y -= leading
             drew = True
-        y -= 4
+        y -= para_gap
     return -y if drew else 0
 
 
@@ -376,20 +527,39 @@ def _draw_text_page(c, title, body, is_right, filename=None, job_id=None, pipeli
         trim_x = BLEED_3
     trim_y = BLEED_3
 
-    # Text area: trim area inset by generous margins
+    # Text area: trim area inset by generous margins. Body text uses a
+    # NARROWER measure (text_width_body) inside the outer text frame so long
+    # paragraphs don't feel dense when set centered on black. Title and
+    # technical lines still span the full text_width.
     text_margin = 40 * mm
     tx = trim_x + text_margin
     tw = CONTENT_NET - 2 * text_margin
     center_x = tx + tw / 2
+    body_width = tw - 35 * mm  # narrower measure for Tiempos descriptive copy
 
     palette_side = 80 * mm  # 8 cm square
     palette_gap = 10 * mm
+
+    # Body typography — Tiempos Text Regular 10.5pt with 16pt leading.
+    # Per-char font fallback to BODY_FONT (ArialUnicode/Helvetica) for any
+    # glyph the trial Tiempos TTF doesn't ship (apostrophes, em dashes,
+    # middle dots, multiplication signs, etc.).
+    body_font = CONTENT_BODY_FONT
+    body_fallback = BODY_FONT
+    body_size = 10.5
+    body_leading = 16
+    body_para_gap = 6
+    body_blank_gap = 10
 
     # Title baseline:
     # - With palette: vertically center the entire block on the page.
     # - Without palette: keep the existing top-anchored offset.
     if palette_path:
-        consumed = _measure_body_consumed(c, body, BODY_FONT, 11, tw)
+        consumed = _measure_body_consumed(c, body, body_font, body_fallback,
+                                          body_size, body_width,
+                                          leading=body_leading,
+                                          para_gap=body_para_gap,
+                                          blank_gap=body_blank_gap)
         # Block extent measured from title baseline DOWN to artifact baseline:
         #   title -> first body baseline:           60pt
         #   first body baseline -> y_after_body:    consumed
@@ -407,7 +577,7 @@ def _draw_text_page(c, title, body, is_right, filename=None, job_id=None, pipeli
     c.setFillColorRGB(1, 1, 1)
 
     if title:
-        c.setFont("Helvetica-Bold", 28)
+        c.setFont("Canela-Regular" if _CANELA_REGULAR_PATH.exists() else "Helvetica-Bold", 28)
         c.drawCentredString(center_x, title_y, title)
 
     if pipeline:
@@ -418,17 +588,18 @@ def _draw_text_page(c, title, body, is_right, filename=None, job_id=None, pipeli
 
     y = body_first_baseline
     if body:
-        c.setFont(BODY_FONT, 11)
         for para in body.split("\n"):
             para = para.strip()
             if not para:
-                y -= 8
+                y -= body_blank_gap
                 continue
-            wrapped = _wrap_text(c, para, BODY_FONT, 11, tw)
+            wrapped = _wrap_text_mixed(c, para, body_font, body_fallback,
+                                       body_size, body_width)
             for ln in wrapped:
-                c.drawCentredString(center_x, y, ln)
-                y -= 16
-            y -= 4  # small gap between paragraphs
+                _draw_mixed_centered(c, ln, center_x, y,
+                                     body_font, body_fallback, body_size)
+                y -= body_leading
+            y -= body_para_gap
 
     artifact_y = y - 16
     if palette_path:
@@ -555,7 +726,8 @@ def generate_content_pdf(output_path, pages_config):
 
 def generate_cover_pdf(output_path, title="Polynomiography", subtitle="",
                        front_image=None, back_image=None,
-                       description="", author=""):
+                       description="", author="",
+                       imprint=None, spine_palette_image=None):
     """Generate cover PDF as a single double-page spread.
 
     Layout within the net area (left to right):
@@ -583,6 +755,13 @@ def generate_cover_pdf(output_path, title="Polynomiography", subtitle="",
     front_cx = front_left + PANEL_W / 2
     front_cy = COVER_GROSS_H / 2
 
+    # Warm white for display typography — very slightly warm, still reads as white
+    warm_white = (0.98, 0.96, 0.93)
+    # Slightly open tracking for the display title (point-space char spacing).
+    title_char_space = 2.0  # ~55 units at 36pt — "slightly open, not too much"
+    title_font_size = 36
+    title_sub_size = 13
+
     if front_image and os.path.exists(front_image):
         reader, size = _load_image_rgb(front_image)
         # Image at 2/3 of panel size, centered horizontally, in upper portion
@@ -591,29 +770,32 @@ def generate_cover_pdf(output_path, title="Polynomiography", subtitle="",
         img_h = COVER_NET_H * img_scale
         img_x = front_left + (PANEL_W - img_w) / 2
         gap_below_img = 25 * mm
-        title_block_h = 36 + (20 if subtitle else 0)  # approximate title + subtitle height
+        title_block_h = title_font_size + (20 if subtitle else 0)
         # Vertically center: image + gap + title block
         total_block = img_h + gap_below_img + title_block_h
         block_top = COVER_BLEED + (COVER_NET_H + total_block) / 2
         img_y = block_top - img_h
         _draw_image_cover(c, reader, size, img_x, img_y, img_w, img_h)
 
-        # Title below the image, no text on the image
+        # Title below the image — Canela Light, Title Case, slightly warm white,
+        # slightly open tracking.
         title_y = img_y - gap_below_img
-        c.setFillColorRGB(1, 1, 1)
-        c.setFont("Helvetica-Bold", 36)
-        c.drawCentredString(front_cx, title_y, title.upper())
+        _draw_centered_tracked(c, title, front_cx, title_y,
+                               COVER_DISPLAY_FONT, title_font_size,
+                               title_char_space, fill_rgb=warm_white)
         if subtitle:
-            c.setFont("Helvetica", 13)
-            c.drawCentredString(front_cx, title_y - 24, subtitle)
+            _draw_centered_tracked(c, subtitle, front_cx, title_y - 24,
+                                   COVER_DISPLAY_FONT, title_sub_size,
+                                   title_char_space * 0.3, fill_rgb=warm_white)
     else:
         # Text-only front cover
-        c.setFillColorRGB(1, 1, 1)
-        c.setFont("Helvetica-Bold", 48)
-        c.drawCentredString(front_cx, front_cy + 30, title)
+        _draw_centered_tracked(c, title, front_cx, front_cy + 30,
+                               COVER_DISPLAY_FONT, 48,
+                               title_char_space, fill_rgb=warm_white)
         if subtitle:
-            c.setFont("Helvetica", 24)
-            c.drawCentredString(front_cx, front_cy - 30, subtitle)
+            _draw_centered_tracked(c, subtitle, front_cx, front_cy - 30,
+                                   COVER_DISPLAY_FONT, 24,
+                                   title_char_space * 0.5, fill_rgb=warm_white)
 
     # ── Spine text (rotated 90 CCW, read bottom-to-top) ──
     spine_cx = COVER_BLEED + PANEL_W + SPINE_W / 2
@@ -621,10 +803,30 @@ def generate_cover_pdf(output_path, title="Polynomiography", subtitle="",
     c.saveState()
     c.translate(spine_cx, spine_cy)
     c.rotate(90)
-    c.setFillColorRGB(1, 1, 1)
-    c.setFont("Helvetica", 7)
+    c.setFillColorRGB(*warm_white)
+    c.setFont(COVER_DISPLAY_FONT_REGULAR, 7)
     c.drawCentredString(0, -2.5, title)
     c.restoreState()
+
+    # ── Tiny palette square at the bottom of the spine ──
+    if spine_palette_image and os.path.exists(spine_palette_image):
+        try:
+            spine_palette_reader, spine_palette_size = _load_image_rgb(spine_palette_image)
+        except Exception:
+            spine_palette_reader = None
+            spine_palette_size = None
+        if spine_palette_reader is not None:
+            sp_side = SPINE_W - 2  # 2pt padding inside the spine width
+            if sp_side > 0:
+                sp_x = spine_cx - sp_side / 2
+                sp_y = COVER_BLEED + 15 * mm
+                c.saveState()
+                c.setStrokeColorRGB(1, 1, 1)
+                c.setLineWidth(0.25)
+                c.rect(sp_x, sp_y, sp_side, sp_side, fill=0, stroke=1)
+                _draw_image_contain(c, spine_palette_reader, spine_palette_size,
+                                    sp_x, sp_y, sp_side, sp_side)
+                c.restoreState()
 
     # ── Back cover (left panel) ──
     # Vertically center the block: image + gap + description + gap + title
@@ -639,8 +841,8 @@ def generate_cover_pdf(output_path, title="Polynomiography", subtitle="",
     tw = PANEL_W - 2 * text_margin
 
     # Pre-compute description lines to know total block height
-    c.setFont("Helvetica", 9)
-    desc_lines = _wrap_text(c, description, "Helvetica", 9, tw) if description else []
+    c.setFont(COVER_DISPLAY_FONT_REGULAR, 9)
+    desc_lines = _wrap_text(c, description, COVER_DISPLAY_FONT_REGULAR, 9, tw) if description else []
     desc_h = len(desc_lines) * text_leading if desc_lines else 0
 
     # Total block height
@@ -667,21 +869,21 @@ def generate_cover_pdf(output_path, title="Polynomiography", subtitle="",
     # Description text
     if desc_lines:
         c.setFillColorRGB(0.6, 0.6, 0.6)
-        c.setFont("Helvetica", 9)
+        c.setFont(COVER_DISPLAY_FONT_REGULAR, 9)
         for ln in desc_lines:
             c.drawCentredString(back_cx, y, ln)
             y -= text_leading
 
     # Author name
     if author:
-        c.setFillColorRGB(1, 1, 1)
-        c.setFont("Helvetica", 10)
+        c.setFillColorRGB(*warm_white)
+        c.setFont(COVER_DISPLAY_FONT_REGULAR, 10)
         c.drawCentredString(back_cx, y - gap_text_title, author)
 
-    # Title at bottom of back cover
-    c.setFillColorRGB(0.45, 0.45, 0.45)
-    c.setFont("Helvetica", 8)
-    c.drawCentredString(back_cx, COVER_BLEED + 15 * mm, title)
+    # Imprint (falling back to title) at bottom of back cover
+    c.setFillColorRGB(*warm_white)
+    c.setFont(COVER_DISPLAY_FONT_REGULAR, 8)
+    c.drawCentredString(back_cx, COVER_BLEED + 15 * mm, imprint or title)
 
     c.showPage()
     c.save()
@@ -860,6 +1062,8 @@ def main():
                         help=f"Scan snaps/ and create/overwrite {CONFIG_PATH}")
     parser.add_argument("--snaps-dir", default="snaps",
                         help="Snaps directory for --init (default: snaps)")
+    parser.add_argument("--cover-only", action="store_true",
+                        help="Regenerate only the cover PDF (skip content)")
     args = parser.parse_args()
 
     if args.init:
@@ -886,6 +1090,8 @@ def main():
 
     front_image = config.get("cover_image") or (pages[0]["image"] if pages else None)
     back_image = config.get("back_image")
+    imprint = config.get("imprint")
+    spine_palette_image = config.get("spine_palette_image")
 
     print(f"Generating WhiteWall PDFs: '{title}'")
     n_content = 1 + len(pages) * 2
@@ -898,8 +1104,10 @@ def main():
     content_path = f"{args.output_prefix}_content.pdf"
 
     generate_cover_pdf(cover_path, title, subtitle, front_image,
-                       back_image, description, author)
-    generate_content_pdf(content_path, pages)
+                       back_image, description, author,
+                       imprint=imprint, spine_palette_image=spine_palette_image)
+    if not args.cover_only:
+        generate_content_pdf(content_path, pages)
 
     print()
     print("Done! Upload to WhiteWall:")

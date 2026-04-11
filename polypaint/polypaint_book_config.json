@@ -1,8 +1,10 @@
 {
-  "title": "PolyPaint",
-  "subtitle": "Polynomial Root Visualizations",
+  "title": "Complex Portraits",
+  "subtitle": "",
   "description": "",
   "author": "",
+  "imprint": "Wigerich Collective",
+  "spine_palette_image": "snaps/compute_mn3m0d9d_color_run_1775888715163_99401o_palette.jpeg",
   "snaps_dir": "snaps",
   "cover_image": "snaps/compute_mnm4mcr5_color_repalette_1775438508164_a13tad.jpeg",
   "back_image": "snaps/compute_mnm4mcr5_color_repalette_1775438508164_a13tad_palette.jpeg",
@@ -29,10 +31,10 @@
       "job_id": "compute_mn4m2zqp"
     },
     {
-      "image": "snaps/compute_mn4u8dq4_resize_1775885877449_gwveu9.jpeg",
-      "title": "Spectrum Eye",
-      "text": "A luminous iris layered with concentric rainbow rings \u2014 orange core, yellow pupil, green pupil-ring, indigo inner shell, green mid-ring, blue outer shell \u2014 bristled with fine radial spikes at the perimeter. Seventy roots per solve from the creative10 function are pushed through the zzold parameter transform that feeds each step's output back as the next step's input, then resolved by the companion-matrix eigensolver so every eigenvalue lands exactly. The nearest-neighbor variation score at a five percent clip lights up where each root's closest sibling keeps changing identity, and the turbo palette wraps the full visible spectrum around the density gradient. The result reads as a cosmic eye seen through a prism, every ring a separate frequency of the same underlying root cloud. This is a resized print of an autolevels original.\n\ncreative10 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 nn variation \u00b7 turbo \u00b7 Companion Matrix \u00b7 resize",
-      "filename": "resize_1775885877449_gwveu9",
+      "image": "snaps/compute_mn4u8dq4_resize_1775896755482_6r2z58.jpeg",
+      "title": "Bauhaus Bullseye",
+      "text": "A luminous solar bullseye: a red pupil at the center, ringed by concentric bands of yellow, olive, and amber, the whole orb surrounded by a bristling corona of fine radial spikes that taper to the outer darkness. Seventy roots per solve from the creative10 function are pushed through the zzold parameter transform that feeds each step's output back as the next step's input, then resolved by the companion-matrix eigensolver so every eigenvalue lands exactly. The nearest-neighbor variation score at a five percent clip lights up where each root's closest sibling keeps changing identity, and the long Bauhaus shapes palette \u2014 thirteen primary hues in the spirit of the Weimar masters \u2014 paints the shells in hot yellows and reds against a cool olive backdrop. A resized print of an autolevels original, every band a frequency of the same underlying root cloud.\n\ncreative10 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 nn variation \u00b7 long bauhaus shapes 13 \u00b7 Companion Matrix \u00b7 resize",
+      "filename": "resize_1775896755482_6r2z58",
       "job_id": "compute_mn4u8dq4"
     },
     {
@@ -148,10 +150,10 @@
       "job_id": "compute_mnj52k1l"
     },
     {
-      "image": "snaps/compute_mnj8n3f1_color_run_1775242109272_2iobyh.jpeg",
+      "image": "snaps/compute_mnj8n3f1_color_run_1775901965142_hdsuss.jpeg",
       "title": "Byzantine Orb",
       "text": "A golden sphere of intricate lattice-work floats above a base of folded purple and amber drapery, its surface tessellated with diamond-shaped cells that tighten toward the center. The polynomial fills its seventy coefficients from both ends \u2014 a squared power series from the left and a three-halves power series from the right, meeting at five complex-exponential pivots in the middle. The clusteriness score at a tight quantile clip reveals the finest gradations of root packing, and the inferno palette maps density to incandescent gold.\n\npoly_126 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 clusteriness q=1.8% \u00b7 inferno \u00b7 Aberth-Ehrlich",
-      "filename": "color_run_1775242109272_2iobyh",
+      "filename": "color_run_1775901965142_hdsuss",
       "job_id": "compute_mnj8n3f1"
     },
     {
@@ -162,10 +164,10 @@
       "job_id": "compute_mnk0a4lj"
     },
     {
-      "image": "snaps/compute_mnldwxog_color_run_1775395251839_4ozqvy.jpeg",
+      "image": "snaps/compute_mnldwxog_color_run_1775904354714_acrvgp.jpeg",
       "title": "Solar Reliquary",
       "text": "Twenty-two hand-wrought coefficients climb through ascending powers, each folded with sine, cosine, and the logarithmic shadow of the parameters. At degree seventy, the roots compress into a gilded sphere ribbed with fine radial teeth, split by a violet meridian where conjugate symmetry breaks. Filaments of scattered light radiate outward \u2014 the outliers, roots that escaped the gravitational center, glowing brightest in the inferno palette where deviation from the median is greatest.\n\npoly_160 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 outlierness \u00b7 inferno \u00b7 Aberth-Ehrlich (parallel)",
-      "filename": "color_run_1775395251839_4ozqvy",
+      "filename": "color_run_1775904354714_acrvgp",
       "job_id": "compute_mnldwxog"
     },
     {

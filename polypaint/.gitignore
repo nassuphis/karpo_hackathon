@@ -75,3 +75,9 @@ package-lock.json
 # Transpiler duplicates (poly_generated_funcs.h is the tracked version)
 lambda/poly_generated_100.c
 lambda/poly_generated_1000.c
+
+# Font binaries (trial font files — licensing, and we don't track binaries).
+# make_polypaint_book.py falls back to Helvetica with a WARNING if missing.
+fonts/
+Canela_Collection/
+tiempos-font-family/

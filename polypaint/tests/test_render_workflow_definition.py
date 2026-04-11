@@ -149,14 +149,19 @@ class TestWorkflowDefinition(unittest.TestCase):
         assert len(map_states) > 0, "no Map states found"
         for name in map_states:
             mc = self.states[name].get("MaxConcurrency", 0)
-            assert mc > 1, f"{name} has MaxConcurrency={mc}, must be > 1"
+            mc_path = self.states[name].get("MaxConcurrencyPath", "")
+            assert mc > 1 or mc_path, f"{name} missing MaxConcurrency/MaxConcurrencyPath"
 
     def test_stripe_maps_concurrency_10(self):
         """Stripe-based maps must have MaxConcurrency=10."""
-        for name in ["ColorRasterMap", "ColorSolveScoreHistMap", "ColorAssociatedPaletteMap",
+        for name in ["ColorRasterMap", "ColorSolveScoreHistMap",
                       "BilevelRasterMap", "CoeffRasterMap"]:
             mc = self.states[name].get("MaxConcurrency", 0)
             assert mc == 10, f"{name} MaxConcurrency={mc}, expected 10"
+        self.assertEqual(
+            self.states["ColorAssociatedPaletteMap"].get("MaxConcurrencyPath"),
+            "$.plan.associated_palette.chunk_workers",
+        )
 
     def test_tile_maps_concurrency_32(self):
         """Tile-based maps must have MaxConcurrency=32."""
@@ -250,6 +255,10 @@ class TestWorkflowDefinition(unittest.TestCase):
         bilevel_selector = self.states["BilevelRasterMap"]["ItemSelector"]
         self.assertEqual(bilevel_selector["bin_key.$"], "$$.Map.Item.Value.bin_key")
 
+        assoc_selector = self.states["ColorAssociatedPaletteMap"]["ItemSelector"]
+        self.assertEqual(assoc_selector["bin_key.$"], "$$.Map.Item.Value.bin_key")
+        self.assertEqual(assoc_selector["bin_size.$"], "$$.Map.Item.Value.bin_size")
+
     def test_solve_score_tasks_carry_thread_count(self):
         clip_payload = self.states["ColorSolveScoreClipTask"]["Parameters"]["Payload"]
         self.assertEqual(clip_payload["solve_score_threads.$"], "$.plan.solve_score.threads")
@@ -258,6 +267,13 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(hist_selector["solve_score_threads.$"], "$.plan.solve_score.threads")
         self.assertEqual(hist_selector["solve_score_hist_input_mode.$"], "$.plan.solve_score.hist_input_mode")
         self.assertEqual(hist_selector["solve_score_hist_retries.$"], "$.plan.solve_score.hist_retries")
+
+    def test_associated_palette_chunk_forwards_mt_fields(self):
+        selector = self.states["ColorAssociatedPaletteMap"]["ItemSelector"]
+        self.assertEqual(selector["palette_chunk_threads.$"], "$.plan.associated_palette.chunk_threads")
+        self.assertEqual(selector["palette_chunk_input_mode.$"], "$.plan.associated_palette.chunk_input_mode")
+        self.assertEqual(selector["palette_chunk_retries.$"], "$.plan.associated_palette.chunk_retries")
+        self.assertEqual(selector["palette_chunk_workers.$"], "$.plan.associated_palette.chunk_workers")
 
         merge_payload = self.states["ColorSolveScoreMergeTask"]["Parameters"]["Payload"]
         self.assertEqual(merge_payload["solve_score_threads.$"], "$.plan.solve_score.threads")

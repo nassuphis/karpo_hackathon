@@ -94,8 +94,8 @@ class TestRenderPlan(unittest.TestCase):
         result = handler(_make_event(), None)
         plan = json.loads(result["body"])
         assert plan["chunk_items"] == [
-            {"chunk_idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_start": 0, "step_count": 10},
-            {"chunk_idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_start": 10, "step_count": 20},
+            {"chunk_idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_start": 0, "step_count": 10, "bin_size": 10 * 5 * 2 * 4},
+            {"chunk_idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_start": 10, "step_count": 20, "bin_size": 20 * 5 * 2 * 4},
         ]
 
     @patch("handler_render_plan._invoke_sync")
@@ -575,12 +575,42 @@ class TestRenderPlan(unittest.TestCase):
         assert assoc["palette_id"] == "pal_color_run_t"
         assert assoc["image_key"] == "renders/j/palettes/pal_color_run_t/image.jpeg"
         assert assoc["chunk_bins_prefix"] == "renders/j/palettes/pal_color_run_t/chunks/palette_bins_chunk_"
+        assert assoc["chunk_threads"] == 4
+        assert assoc["chunk_input_mode"] == "sectioned"
+        assert assoc["chunk_retries"] == 2
+        assert assoc["chunk_workers"] == 16
         assert plan["calc"]["N"] == 100
         assert plan["calc"]["times"] == 2
         assert plan["outputs"]["metadata"]["associated_palette_mode"] == "generated"
         assert plan["outputs"]["metadata"]["associated_palette_id"] == "pal_color_run_t"
         assert plan["outputs"]["metadata"]["associated_palette_image_key"] == "renders/j/palettes/pal_color_run_t/image.jpeg"
         assert plan["outputs"]["metadata"]["associated_palette_omega_enabled"] == "true"
+
+    @patch("handler_render_plan._storage_call")
+    def test_associated_palette_chunk_defaults_follow_mt_raster_settings_when_present(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5,
+            "N": 100,
+            "times": 1,
+            "chunks": [{"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_count": 10000}],
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="crowding",
+            save_associated_palette=True,
+            raster_engine="mt",
+            raster_mt_threads=7,
+            raster_input_mode="tmpfile",
+            raster_sectioned_retries=5,
+        ), None)
+        plan = json.loads(result["body"])
+        assoc = plan["associated_palette"]
+        assert assoc["chunk_threads"] == 7
+        assert assoc["chunk_input_mode"] == "tmpfile"
+        assert assoc["chunk_retries"] == 0
+        assert assoc["chunk_workers"] == 16
 
     @patch("handler_render_plan._storage_call")
     def test_solve_score_associated_palette_requires_chunk_step_metadata(self, mock_storage):

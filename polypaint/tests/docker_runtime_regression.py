@@ -73,6 +73,13 @@ def cleanup(*paths):
             pass
 
 
+def read_f32_array(path):
+    with open(path, "rb") as f:
+        data = f.read()
+    assert len(data) % 4 == 0, "float32 array size mismatch for %s" % path
+    return struct.unpack("<" + "f" * (len(data) // 4), data)
+
+
 def read_png_dims(path):
     with open(path, "rb") as f:
         header = f.read(24)
@@ -335,6 +342,69 @@ def test_compute_preview_runtime_combo():
 
     cleanup(coeff_path, roots_path)
     print("=== Compute preview runtime combo PASSED ===")
+
+
+# ── Palette Chunk MT Runtime ─────────────────────────────────────────────
+
+def test_palette_chunk_mt_runtime():
+    print("\n--- solve_palette_chunk_mt runtime ---")
+
+    bin_path = "/src/solve_palette_chunk_mt"
+    assert os.path.exists(bin_path), "%s not found" % bin_path
+    assert open(bin_path, "rb").read(4) == b"\x7fELF", "solve_palette_chunk_mt is not ELF"
+
+    r = subprocess.run(["ldd", bin_path], capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "ldd failed for solve_palette_chunk_mt: " + r.stderr[:200]
+    assert "not found" not in r.stdout, "solve_palette_chunk_mt shared libs unresolved: " + r.stdout
+    print("  ldd: OK")
+
+    roots_path = "/tmp/palette_chunk_mt_roots.bin"
+    scores_path = "/tmp/palette_chunk_mt_scores.bin"
+    bins_path = "/tmp/palette_chunk_mt_bins.bin"
+    with open(roots_path, "wb") as f:
+        solves = [
+            [(0.0, 0.0), (1.0, 0.0)],
+            [(0.0, 0.0), (0.5, 0.0)],
+            [(0.0, 0.0), (0.2, 0.0)],
+            [(0.0, 0.0), (0.8, 0.0)],
+        ]
+        for roots in solves:
+            for re, im in roots:
+                f.write(struct.pack("<ff", re, im))
+
+    r = subprocess.run([
+        bin_path, roots_path,
+        "--degree=2",
+        "--metric=proximity",
+        "--clip_lo=0.0",
+        "--clip_hi=2.0",
+        "--cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
+        "--omega=1.0",
+        "--step_count=4",
+        "--threads=3",
+        "--input_mode=tmpfile",
+        "--retries=2",
+        "--scores_out=" + scores_path,
+        "--bins_out=" + bins_path,
+    ], capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "solve_palette_chunk_mt failed: " + r.stderr[:200]
+    meta = json.loads(r.stdout)
+    assert meta["threads"] == 3, "solve_palette_chunk_mt did not report thread count"
+    assert meta["input_mode"] == "tmpfile", "solve_palette_chunk_mt did not report input_mode"
+    assert meta["retries"] == 2, "solve_palette_chunk_mt did not report retries"
+    assert meta["n_samples"] == 4, "solve_palette_chunk_mt did not report n_samples"
+
+    scores = read_f32_array(scores_path)
+    with open(bins_path, "rb") as f:
+        bins = f.read()
+    assert len(scores) == 4, "unexpected score count for solve_palette_chunk_mt"
+    assert len(bins) == 4, "unexpected bin count for solve_palette_chunk_mt"
+    assert all(math.isfinite(v) for v in scores), "solve_palette_chunk_mt produced non-finite scores"
+    assert all(0 <= b <= 9 for b in bins), "solve_palette_chunk_mt produced invalid bins"
+    print("  solve_palette_chunk_mt: OK (threads=%d, bytes=%d)" % (meta["threads"], meta["bytes_downloaded"]))
+
+    cleanup(roots_path, scores_path, bins_path)
+    print("=== solve_palette_chunk_mt runtime PASSED ===")
 
 
 # ── Render Preview (vipsthumbnail) Tests ─────────────────────────────────
@@ -667,7 +737,7 @@ def test_catalog_degrees():
 
 if __name__ == "__main__":
     print("--- Binary validation ---")
-    for bin_path in ["/src/sweep", "/src/sweep_mt", "/src/sweep_cm", "/src/sweep_coeffgen"]:
+    for bin_path in ["/src/sweep", "/src/sweep_mt", "/src/sweep_cm", "/src/sweep_coeffgen", "/src/solve_palette_chunk_mt"]:
         magic = open(bin_path, "rb").read(4)
         assert magic == b"\x7fELF", "%s is not an ELF binary" % bin_path
         print("  %s: ELF OK" % bin_path)
@@ -676,6 +746,7 @@ if __name__ == "__main__":
     test_ae_cm_solvers()
     test_cfpv_coeffgen()
     test_compute_preview_runtime_combo()
+    test_palette_chunk_mt_runtime()
     test_render_preview()
     test_resize_runtime()
     test_solve_proximity_stats()

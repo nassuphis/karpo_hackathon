@@ -62,12 +62,16 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(plan["params"]["solve_score_hist_input_mode"], "tmpfile")
         self.assertEqual(plan["params"]["solve_score_hist_retries"], 2)
         self.assertEqual(plan["params"]["solve_score_merge_workers"], 16)
+        self.assertEqual(plan["params"]["palette_chunk_threads"], 4)
+        self.assertEqual(plan["params"]["palette_chunk_input_mode"], "sectioned")
+        self.assertEqual(plan["params"]["palette_chunk_retries"], 2)
+        self.assertEqual(plan["params"]["palette_chunk_workers"], 16)
         self.assertEqual(
             plan["chunk_items"],
             [
-                {"chunk_idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_start": 0, "step_count": 5},
-                {"chunk_idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_start": 5, "step_count": 17},
-                {"chunk_idx": 2, "bin_key": "renders/j/chunk_2.bin", "step_start": 22, "step_count": 10},
+                {"chunk_idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_start": 0, "step_count": 5, "bin_size": 5 * 5 * 2 * 4},
+                {"chunk_idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_start": 5, "step_count": 17, "bin_size": 17 * 5 * 2 * 4},
+                {"chunk_idx": 2, "bin_key": "renders/j/chunk_2.bin", "step_start": 22, "step_count": 10, "bin_size": 10 * 5 * 2 * 4},
             ],
         )
         self.assertNotIn("palette_items", plan)
@@ -100,7 +104,38 @@ class TestPaletteRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
 
         self.assertEqual(plan["chunk_items"][0]["step_count"], step_count)
+        self.assertEqual(plan["chunk_items"][0]["bin_size"], record_bytes * step_count)
         self.assertEqual(plan["calc"]["n_chunks"], 1)
+
+    @patch("handler_palette_render_plan.s3")
+    def test_extract_plan_accepts_palette_chunk_execution_knobs(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        calc = {
+            "degree": 5,
+            "N": 4,
+            "times": 1,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+            "chunks": [{"idx": 0, "bin_key": "renders/j/chunk_0.bin", "n_t": 16}],
+        }
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(calc).encode())}
+
+        result = handler(_event(params={
+            "metric": "crowding",
+            "palette": "reef",
+            "solve_score_quantile": 0.01,
+            "solve_score_omega": 3,
+            "root_transforms": [],
+            "palette_chunk_threads": 6,
+            "palette_chunk_input_mode": "tmpfile",
+            "palette_chunk_retries": 5,
+            "palette_chunk_workers": 32,
+        }), None)
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["params"]["palette_chunk_threads"], 6)
+        self.assertEqual(plan["params"]["palette_chunk_input_mode"], "tmpfile")
+        self.assertEqual(plan["params"]["palette_chunk_retries"], 5)
+        self.assertEqual(plan["params"]["palette_chunk_workers"], 32)
 
     @patch("handler_palette_render_plan.s3")
     def test_invalid_palette_rejected(self, mock_s3):

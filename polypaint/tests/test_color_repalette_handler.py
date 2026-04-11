@@ -1,4 +1,5 @@
 import io
+import importlib
 import json
 import os
 import struct
@@ -29,6 +30,21 @@ def _lambda_ok(body):
 
 
 class TestColorRepaletteHandler(unittest.TestCase):
+
+    def test_color_repalette_lambda_client_uses_extended_invoke_timeouts(self):
+        with patch.dict(
+            os.environ,
+            {
+                "LAMBDA_INVOKE_READ_TIMEOUT": "930",
+                "LAMBDA_INVOKE_CONNECT_TIMEOUT": "11",
+            },
+            clear=False,
+        ):
+            import handler_color_repalette as mod
+
+            mod = importlib.reload(mod)
+            self.assertEqual(mod.lambda_client.meta.config.read_timeout, 930)
+            self.assertEqual(mod.lambda_client.meta.config.connect_timeout, 11)
 
     @patch("handler_color_repalette.report_status")
     @patch("handler_color_repalette.subprocess.run")

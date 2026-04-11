@@ -15,7 +15,12 @@ from datetime import datetime, timezone
 
 import boto3
 
-from color_artifact_meta import inherit_associated_palette_metadata, load_color_artifact_head
+from color_artifact_meta import (
+    inherit_associated_palette_metadata,
+    load_color_artifact_head,
+    split_color_artifact_metadata,
+    write_color_artifact_meta_overlay,
+)
 from shared import BUCKET, parse_body, ok_response, report_status, imgpipe_env
 
 s3 = boto3.client("s3")
@@ -38,16 +43,6 @@ _VALID_SUBSAMPLE = {"auto", "on", "off"}
 
 def _utc_now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _stringify_meta(value):
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (list, dict)):
-        return json.dumps(value, separators=(",", ":"))
-    return str(value)
 
 
 def _parse_bool(value, default=False):
@@ -440,14 +435,15 @@ def handler(event, context):
         img_meta.update(inherit_associated_palette_metadata(source_meta))
         if out_ext != "jpeg":
             img_meta.pop("jpeg_subsample_mode", None)
-        normalized_meta = {str(k): _stringify_meta(v) for k, v in img_meta.items() if v not in ("", None)}
+        image_meta, overlay_meta = split_color_artifact_metadata(img_meta)
 
         content_type = "image/png" if out_ext == "png" else "image/jpeg"
         with open(out_path, "rb") as fh:
             s3.upload_fileobj(
                 fh, BUCKET, image_key,
-                ExtraArgs={"ContentType": content_type, "Metadata": normalized_meta},
+                ExtraArgs={"ContentType": content_type, "Metadata": image_meta},
             )
+        write_color_artifact_meta_overlay(s3, BUCKET, job_id, artifact_id, overlay_meta)
         with open(preview_path, "rb") as pfh:
             s3.upload_fileobj(
                 pfh, BUCKET, preview_key,

@@ -15,12 +15,23 @@ import time
 from datetime import datetime, timezone
 
 import boto3
+from botocore.config import Config
 
 from palette_names import VALID_PALETTE_NAMES
 from shared import BUCKET, parse_body, ok_response, report_status
 
 s3 = boto3.client("s3")
-lambda_client = boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+LAMBDA_INVOKE_READ_TIMEOUT = int(os.environ.get("LAMBDA_INVOKE_READ_TIMEOUT", "930"))
+LAMBDA_INVOKE_CONNECT_TIMEOUT = int(os.environ.get("LAMBDA_INVOKE_CONNECT_TIMEOUT", "10"))
+lambda_client = boto3.client(
+    "lambda",
+    region_name=os.environ.get("AWS_REGION", "us-east-1"),
+    config=Config(
+        read_timeout=LAMBDA_INVOKE_READ_TIMEOUT,
+        connect_timeout=LAMBDA_INVOKE_CONNECT_TIMEOUT,
+        retries={"max_attempts": 2, "mode": "standard"},
+    ),
+)
 
 PIXEL_BINS_RENDER = os.path.join(os.path.dirname(__file__), "pixel_bins_render")
 ENCODE_FUNCTION = os.environ.get("ENCODE_FUNCTION", "polypaint-encode")

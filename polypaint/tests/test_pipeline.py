@@ -2056,6 +2056,134 @@ class TestRenderSummary(unittest.TestCase):
         self.assertFalse(art["associated_palette_omega_enabled"])
 
     @patch("handler_storage.s3")
+    def test_render_summary_reads_resize_metadata_from_color_sidecar_overlay(self, mock_s3):
+        from handler_storage import handle_render_summary
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate_side_effect(**kwargs):
+            prefix = kwargs.get("Prefix", "")
+            if prefix == "renders/j/color/":
+                return [{"CommonPrefixes": [{"Prefix": "renders/j/color/resize_sidecar/"}]}]
+            return [{"CommonPrefixes": []}]
+
+        mock_paginator.paginate.side_effect = paginate_side_effect
+
+        def mock_head(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/color/resize_sidecar/image.jpeg":
+                return {
+                    "ContentLength": 987,
+                    "ContentType": "image/jpeg",
+                    "Metadata": {
+                        "width": "2048",
+                        "height": "1365",
+                        "artifact_id": "resize_sidecar",
+                        "created_at": "2026-04-10T10:00:00Z",
+                        "family": "color",
+                        "format": "jpeg",
+                        "quality": "83",
+                        "derived_from_artifact_id": "color_src",
+                        "derived_from_image_key": "renders/j/color/color_src/image.jpeg",
+                        "postprocess_kind": "resize",
+                        "postprocess_profile": "libvips_resize_v1",
+                    },
+                }
+            if key == "renders/j/color/resize_sidecar/preview.png":
+                return {"ContentLength": 500, "ContentType": "image/png", "Metadata": {}}
+            raise Exception("NoSuchKey")
+
+        def mock_get_object(**kwargs):
+            if kwargs["Key"] == "renders/j/color/resize_sidecar/meta.json":
+                return {"Body": MagicMock(read=lambda: json.dumps({
+                    "color_mode": "solve_score",
+                    "palette": "inferno",
+                    "associated_palette_mode": "generated",
+                    "associated_palette_id": "pal_resize_sidecar",
+                    "associated_palette_image_key": "renders/j/palettes/pal_resize_sidecar/image.jpeg",
+                    "resize_params": "{\"engine\":\"thumbnail\",\"target_size\":2048,\"size_mode\":\"down\"}",
+                }).encode())}
+            raise Exception("NoSuchKey")
+
+        mock_s3.head_object.side_effect = mock_head
+        mock_s3.get_object.side_effect = mock_get_object
+        mock_s3.generate_presigned_url.return_value = "https://signed"
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+        art = body["families"]["color"][0]
+        self.assertEqual(art["artifact_id"], "resize_sidecar")
+        self.assertEqual(art["postprocess_kind"], "resize")
+        self.assertEqual(art["derived_from_artifact_id"], "color_src")
+        self.assertEqual(art["color_mode"], "solve_score")
+        self.assertEqual(art["palette"], "inferno")
+        self.assertEqual(art["associated_palette_id"], "pal_resize_sidecar")
+        self.assertEqual(art["resize_params"]["engine"], "thumbnail")
+        self.assertEqual(art["resize_params"]["target_size"], 2048)
+        self.assertEqual(art["resize_params"]["size_mode"], "down")
+
+    @patch("handler_storage.s3")
+    def test_render_summary_palette_exposes_linked_color_artifact_id(self, mock_s3):
+        from handler_storage import handle_render_summary
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate_side_effect(**kwargs):
+            prefix = kwargs.get("Prefix", "")
+            if prefix == "renders/j/color/":
+                return [{"CommonPrefixes": []}]
+            if prefix == "renders/j/palettes/":
+                return [{"CommonPrefixes": [{"Prefix": "renders/j/palettes/pal_linked/"}]}]
+            return [{"CommonPrefixes": []}]
+
+        mock_paginator.paginate.side_effect = paginate_side_effect
+
+        def mock_head(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/palettes/pal_linked/image.jpeg":
+                return {
+                    "ContentLength": 1234,
+                    "ContentType": "image/jpeg",
+                    "LastModified": MagicMock(strftime=lambda fmt: "2026-04-10T12:00:00Z"),
+                    "Metadata": {},
+                }
+            if key == "renders/j/palettes/pal_linked/preview.png":
+                return {
+                    "ContentLength": 234,
+                    "ContentType": "image/png",
+                    "LastModified": MagicMock(strftime=lambda fmt: "2026-04-10T12:00:01Z"),
+                    "Metadata": {},
+                }
+            raise Exception("NoSuchKey")
+
+        def mock_get_object(**kwargs):
+            if kwargs["Key"] == "renders/j/palettes/pal_linked/meta.json":
+                return {"Body": MagicMock(read=lambda: json.dumps({
+                    "job_id": "j",
+                    "palette_id": "pal_linked",
+                    "created_at": "2026-04-10T12:00:00Z",
+                    "metric": "spread",
+                    "palette": "magma",
+                    "solve_score_quantile": 0.02,
+                    "image_key": "renders/j/palettes/pal_linked/image.jpeg",
+                    "preview_key": "renders/j/palettes/pal_linked/preview.png",
+                    "derived_from_color_artifact_id": "color_linked",
+                }).encode())}
+            raise Exception("NoSuchKey")
+
+        mock_s3.head_object.side_effect = mock_head
+        mock_s3.get_object.side_effect = mock_get_object
+        mock_s3.generate_presigned_url.return_value = "https://signed"
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+        art = body["families"]["palette"][0]
+        self.assertEqual(art["palette_id"], "pal_linked")
+        self.assertEqual(art["derived_from_color_artifact_id"], "color_linked")
+
+    @patch("handler_storage.s3")
     def test_render_summary_exposes_color_repalette_metadata(self, mock_s3):
         from handler_storage import handle_render_summary
 

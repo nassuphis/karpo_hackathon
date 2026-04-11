@@ -47,9 +47,9 @@ def _build_chunk_items(calc, job_id):
             if idx is None or not bin_key:
                 raise RuntimeError(f"Invalid chunk metadata: idx={idx} bin_key={bin_key!r}")
             item = {"chunk_idx": int(idx), "bin_key": str(bin_key)}
+            bin_size = raw.get("bin_size")
             step_count = raw.get("step_count", raw.get("n_t"))
             if step_count in ("", None):
-                bin_size = raw.get("bin_size")
                 if bin_size not in ("", None):
                     step_count = int(bin_size) // record_bytes
             if step_count not in ("", None):
@@ -58,7 +58,10 @@ def _build_chunk_items(calc, job_id):
                     raise RuntimeError(f"Invalid chunk metadata: idx={idx} step_count={step_count}")
                 item["step_start"] = step_start
                 item["step_count"] = step_count
+                item["bin_size"] = int(bin_size) if bin_size not in ("", None) else int(step_count) * record_bytes
                 step_start += step_count
+            elif bin_size not in ("", None):
+                item["bin_size"] = int(bin_size)
             chunk_items.append(item)
         return chunk_items
 
@@ -267,6 +270,10 @@ def handler(event, context):
         "solve_score_hist_input_mode": "tmpfile",
         "solve_score_hist_retries": 2,
         "save_associated_palette": False,
+        "palette_chunk_threads": "",
+        "palette_chunk_input_mode": "",
+        "palette_chunk_retries": "",
+        "palette_chunk_workers": "",
     }
     for key, default in _PARAM_DEFAULTS.items():
         if key not in rp:
@@ -300,6 +307,22 @@ def handler(event, context):
         "save_associated_palette",
         False,
     )
+    palette_chunk_threads_value = rp.get("palette_chunk_threads", "")
+    if palette_chunk_threads_value in (None, ""):
+        palette_chunk_threads_value = rp["raster_mt_threads"] if rp["raster_engine"] == "mt" else 4
+    palette_chunk_input_value = rp.get("palette_chunk_input_mode", "")
+    if palette_chunk_input_value in (None, ""):
+        palette_chunk_input_value = rp["raster_input_mode"] if rp["raster_engine"] == "mt" else "sectioned"
+    palette_chunk_retries_value = rp.get("palette_chunk_retries", "")
+    if palette_chunk_retries_value in (None, ""):
+        palette_chunk_retries_value = rp["raster_sectioned_retries"] if palette_chunk_input_value == "sectioned" else 0
+    palette_chunk_workers_value = rp.get("palette_chunk_workers", "")
+    if palette_chunk_workers_value in (None, ""):
+        palette_chunk_workers_value = 16
+    rp["palette_chunk_threads"] = _validate_thread_count(palette_chunk_threads_value, "palette_chunk_threads")
+    rp["palette_chunk_input_mode"] = _validate_raster_input_mode(palette_chunk_input_value)
+    rp["palette_chunk_retries"] = _validate_retry_count(palette_chunk_retries_value, "palette_chunk_retries")
+    rp["palette_chunk_workers"] = _validate_worker_count(palette_chunk_workers_value, "palette_chunk_workers")
 
     # Normalize solve-score params
     color_mode = rp.get("color_mode", "rainbow")
@@ -532,6 +555,10 @@ def handler(event, context):
                 "quantile": solve_score_quantile,
                 "omega": solve_score_omega,
                 "omega_enabled": solve_score_omega_enabled,
+                "chunk_threads": rp["palette_chunk_threads"],
+                "chunk_input_mode": rp["palette_chunk_input_mode"],
+                "chunk_retries": rp["palette_chunk_retries"],
+                "chunk_workers": rp["palette_chunk_workers"],
             }
 
     artifact_meta = {

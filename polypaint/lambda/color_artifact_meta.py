@@ -1,9 +1,9 @@
 """
 Helpers for loading and updating Color artifact metadata.
 
-Base Color artifact metadata still lives on the image object, but retroactive
-updates such as ExtractPalette use a sidecar JSON overlay so large image objects
-do not need an in-place CopyObject metadata rewrite.
+Base Color artifact metadata can live on the image object, but bulky or
+retroactive updates use a sidecar JSON overlay so large image objects do not hit
+S3 metadata header limits.
 """
 from __future__ import annotations
 
@@ -13,6 +13,20 @@ from typing import Dict
 
 COLOR_IMAGE_CANDIDATES = ("image.jpeg", "image.png")
 LEGACY_COLOR_IMAGE_CANDIDATES = ("image.jpeg", "image.png")
+COLOR_IMAGE_HEADER_KEYS = {
+    "artifact_id",
+    "family",
+    "created_at",
+    "format",
+    "quality",
+    "width",
+    "height",
+    "pix",
+    "derived_from_artifact_id",
+    "derived_from_image_key",
+    "postprocess_kind",
+    "postprocess_profile",
+}
 
 
 def color_artifact_image_candidates(job_id: str, artifact_id: str):
@@ -27,6 +41,38 @@ def color_artifact_meta_key(job_id: str, artifact_id: str) -> str:
     if artifact_id == "legacy_color":
         return f"renders/{job_id}/meta.json"
     return f"renders/{job_id}/color/{artifact_id}/meta.json"
+
+
+def stringify_color_metadata(meta: Dict[str, object]) -> Dict[str, str]:
+    out = {}
+    for key, value in (meta or {}).items():
+        if value in ("", None):
+            continue
+        if isinstance(value, bool):
+            out[str(key)] = "true" if value else "false"
+        elif isinstance(value, (list, dict)):
+            out[str(key)] = json.dumps(value, separators=(",", ":"))
+        else:
+            out[str(key)] = str(value)
+    return out
+
+
+def split_color_artifact_metadata(full_meta: Dict[str, object]):
+    normalized = stringify_color_metadata(full_meta)
+    image_meta = {key: value for key, value in normalized.items() if key in COLOR_IMAGE_HEADER_KEYS}
+    overlay_meta = {key: value for key, value in normalized.items() if key not in COLOR_IMAGE_HEADER_KEYS}
+    return image_meta, overlay_meta
+
+
+def write_color_artifact_meta_overlay(s3_client, bucket: str, job_id: str, artifact_id: str, meta: Dict[str, object]):
+    normalized = stringify_color_metadata(meta)
+    s3_client.put_object(
+        Bucket=bucket,
+        Key=color_artifact_meta_key(job_id, artifact_id),
+        Body=json.dumps(normalized, separators=(",", ":")).encode("utf-8"),
+        ContentType="application/json",
+    )
+    return normalized
 
 
 def load_color_artifact_meta_overlay(s3_client, bucket: str, job_id: str, artifact_id: str) -> Dict[str, object]:

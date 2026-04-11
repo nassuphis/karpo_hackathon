@@ -1,5 +1,9 @@
 # Deployment Checklist
 
+> This is not optional. Fukin do it.
+>
+> If a change touches native binaries, shared libraries, layers, `LD_LIBRARY_PATH`, Docker-built artifacts, or Lambda runtime packaging, the relevant Docker/runtime test is a hard gate. Do not claim the feature is ready until that Docker check passes and actually covers the changed binary/path.
+
 This is the minimum readiness checklist for any new PolyPaint feature.
 
 If a feature changes backend behavior, frontend behavior, packaging, deploy wiring, native binaries, layers, or runtime dependencies, it is **not ready** until the relevant items below are checked.

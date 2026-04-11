@@ -37,7 +37,7 @@ RUNTIME="python3.12"
 ARCH="arm64"
 SWEEP_MEMORY=10240    # 6 vCPUs for single-thread AE solve with large chunks
 SWEEP_MT_MEMORY=10240 # 6 vCPUs for multithreaded AE solve
-ENCODE_MEMORY=1769    # 1 vCPU + libvips for JPEG/PNG encoding
+ENCODE_MEMORY=10240   # max memory/CPU tier for very large JPEG/PNG encodes
 ENCODE_EPHEMERAL=3072 # 3GB /tmp for preview generation from large images
 VIEWPORT_MEMORY=512   # pure Python
 STORAGE_MEMORY=512    # pure Python
@@ -477,6 +477,28 @@ echo "  solve_palette_debug (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/solve_palette_debug lambda/solve_palette_debug.c -lm
 echo "  solve_palette_chunk (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/solve_palette_chunk lambda/solve_palette_chunk.c -lm
+echo "  solve_palette_chunk_mt (Docker ARM64, dynamic libcurl)..."
+docker run --rm --platform linux/arm64 \
+    -v "$SCRIPT_DIR/lambda:/src" \
+    public.ecr.aws/amazonlinux/amazonlinux:2023 \
+    bash -c '
+        set -euo pipefail
+        dnf install -y gcc libcurl-devel 2>&1 | tail -1
+        gcc -O3 -pthread -o /src/solve_palette_chunk_mt /src/solve_palette_chunk_mt.c \
+            -lcurl -lm -Wl,-rpath,\$ORIGIN/lib
+        rm -rf /src/solve_palette_chunk_mt_lib
+        mkdir -p /src/solve_palette_chunk_mt_lib
+        for lib in $(ldd /src/solve_palette_chunk_mt | awk "/=> \// {print \$3}"); do
+            base=$(basename "$lib")
+            case "$base" in
+                libc.so.*|libm.so.*|libpthread.so.*|ld-linux-aarch64.so.*|libdl.so.*|librt.so.*)
+                    continue
+                    ;;
+            esac
+            cp -L "$lib" /src/solve_palette_chunk_mt_lib/
+        done
+        echo "  solve_palette_chunk_mt compiled: $(file /src/solve_palette_chunk_mt)"
+    '
 echo "  palette_bins_render (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/palette_bins_render lambda/palette_bins_render.c -lm
 
@@ -956,13 +978,14 @@ cp lambda/handler_palette_render_plan.py lambda/shared.py \
 cd "$PAL_PLAN_DIR" && zip -r9 /tmp/polypaint-palette-render-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalPlan: $(du -h /tmp/polypaint-palette-render-plan.zip | cut -f1)  (plan builder)"
 
-# Palette Chunk: handler_palette_chunk.py + shared.py + solve_palette_chunk
+# Palette Chunk: handler_palette_chunk.py + shared.py + solve_palette_chunk + solve_palette_chunk_mt
 PAL_CHUNK_DIR=/tmp/polypaint-palette-chunk
 rm -rf "$PAL_CHUNK_DIR"
-mkdir -p "$PAL_CHUNK_DIR"
+mkdir -p "$PAL_CHUNK_DIR/lib"
 cp lambda/handler_palette_chunk.py lambda/shared.py "$PAL_CHUNK_DIR/"
-cp lambda/solve_palette_chunk "$PAL_CHUNK_DIR/"
-chmod +x "$PAL_CHUNK_DIR"/solve_palette_chunk
+cp lambda/solve_palette_chunk lambda/solve_palette_chunk_mt "$PAL_CHUNK_DIR/"
+cp lambda/solve_palette_chunk_mt_lib/* "$PAL_CHUNK_DIR/lib/" 2>/dev/null || true
+chmod +x "$PAL_CHUNK_DIR"/solve_palette_chunk "$PAL_CHUNK_DIR"/solve_palette_chunk_mt
 cd "$PAL_CHUNK_DIR" && zip -r9 /tmp/polypaint-palette-chunk.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalChnk: $(du -h /tmp/polypaint-palette-chunk.zip | cut -f1)  (chunk scorer)"
 
@@ -1462,7 +1485,7 @@ if [ "$ACTION" = "create" ]; then
         "$PALETTE_PLAN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
 
     create_lambda "$PALETTE_CHUNK_NAME" "handler_palette_chunk.handler" "/tmp/polypaint-palette-chunk.zip" \
-        "$PALETTE_CHUNK_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+        "$PALETTE_CHUNK_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
 
     create_lambda "$PALETTE_FINALIZE_NAME" "handler_palette_finalize.handler" "/tmp/polypaint-palette-finalize.zip" \
         "$PALETTE_FINALIZE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -1787,7 +1810,7 @@ elif [ "$ACTION" = "update" ]; then
         "$PALETTE_PLAN_MEMORY" "" "BUCKET=$BUCKET"
 
     update_lambda "$PALETTE_CHUNK_NAME" "handler_palette_chunk.handler" "/tmp/polypaint-palette-chunk.zip" \
-        "$PALETTE_CHUNK_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+        "$PALETTE_CHUNK_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
 
     update_lambda "$PALETTE_FINALIZE_NAME" "handler_palette_finalize.handler" "/tmp/polypaint-palette-finalize.zip" \
         "$PALETTE_FINALIZE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"

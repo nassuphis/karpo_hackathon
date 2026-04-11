@@ -92,6 +92,7 @@ class TestResizeArtifactHandler(unittest.TestCase):
         }
 
         uploads = {}
+        puts = {}
 
         def upload_fileobj(fileobj, bucket, key, ExtraArgs=None):
             uploads[key] = {
@@ -99,7 +100,14 @@ class TestResizeArtifactHandler(unittest.TestCase):
                 "extra": ExtraArgs or {},
             }
 
+        def put_object(Bucket=None, Key=None, Body=None, ContentType=None):
+            puts[Key] = {
+                "body": Body if isinstance(Body, (bytes, bytearray)) else Body.read(),
+                "content_type": ContentType,
+            }
+
         mock_s3.upload_fileobj.side_effect = upload_fileobj
+        mock_s3.put_object.side_effect = put_object
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None, env=None):
             exe = os.path.basename(cmd[0])
@@ -142,19 +150,26 @@ class TestResizeArtifactHandler(unittest.TestCase):
         self.assertEqual(image_meta["postprocess_profile"], "libvips_resize_v1")
         self.assertEqual(image_meta["format"], "jpeg")
         self.assertEqual(image_meta["quality"], "83")
-        self.assertEqual(image_meta["repalette_capable"], "false")
+        self.assertNotIn("repalette_capable", image_meta)
         self.assertNotIn("pixel_bins_prefix", image_meta)
-        self.assertEqual(image_meta["associated_palette_mode"], "generated")
-        self.assertEqual(image_meta["associated_palette_id"], "pal_resize_src")
-        self.assertEqual(image_meta["associated_palette_image_key"], "renders/job1/palettes/pal_resize_src/image.jpeg")
-        self.assertEqual(image_meta["associated_palette_preview_key"], "renders/job1/palettes/pal_resize_src/preview.png")
-        self.assertEqual(image_meta["associated_palette_metric"], "spread")
-        self.assertEqual(image_meta["associated_palette_palette"], "inferno")
-        self.assertEqual(image_meta["associated_palette_quantile"], "0.01")
-        self.assertEqual(image_meta["associated_palette_omega"], "4")
-        self.assertEqual(image_meta["associated_palette_omega_enabled"], "false")
-        self.assertIn("resize_params", image_meta)
-        resize_meta = json.loads(image_meta["resize_params"])
+        self.assertNotIn("associated_palette_mode", image_meta)
+        self.assertNotIn("resize_params", image_meta)
+
+        meta_key = "renders/job1/color/resize_123/meta.json"
+        self.assertIn(meta_key, puts)
+        sidecar = json.loads(puts[meta_key]["body"])
+        self.assertEqual(sidecar["repalette_capable"], "false")
+        self.assertEqual(sidecar["associated_palette_mode"], "generated")
+        self.assertEqual(sidecar["associated_palette_id"], "pal_resize_src")
+        self.assertEqual(sidecar["associated_palette_image_key"], "renders/job1/palettes/pal_resize_src/image.jpeg")
+        self.assertEqual(sidecar["associated_palette_preview_key"], "renders/job1/palettes/pal_resize_src/preview.png")
+        self.assertEqual(sidecar["associated_palette_metric"], "spread")
+        self.assertEqual(sidecar["associated_palette_palette"], "inferno")
+        self.assertEqual(sidecar["associated_palette_quantile"], "0.01")
+        self.assertEqual(sidecar["associated_palette_omega"], "4")
+        self.assertEqual(sidecar["associated_palette_omega_enabled"], "false")
+        self.assertIn("resize_params", sidecar)
+        resize_meta = json.loads(sidecar["resize_params"])
         self.assertEqual(resize_meta["engine"], "thumbnail")
         self.assertEqual(resize_meta["target_size"], 2048)
         self.assertEqual(resize_meta["crop"], "attention")
@@ -181,22 +196,29 @@ class TestResizeArtifactHandler(unittest.TestCase):
     def test_handler_resize_engine_uses_resize_kernel_and_png_source_fallback(self, mock_s3, mock_run, mock_report):
         from handler_resize_artifact import handler
 
-        mock_s3.head_object.return_value = {
-            "ContentLength": 4567,
-            "Metadata": {
-                "artifact_id": "color_src",
-                "family": "color",
-                "created_at": "2026-04-10T09:00:00Z",
-                "width": "4000",
-                "height": "1000",
-                "pix": "4000",
-            },
-        }
+        def head_object(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/job1/color/color_src/image.jpeg":
+                raise Exception("NoSuchKey")
+            return {
+                "ContentLength": 4567,
+                "Metadata": {
+                    "artifact_id": "color_src",
+                    "family": "color",
+                    "created_at": "2026-04-10T09:00:00Z",
+                    "width": "4000",
+                    "height": "1000",
+                    "pix": "4000",
+                },
+            }
+
+        mock_s3.head_object.side_effect = head_object
         mock_s3.get_object.return_value = {
             "Body": MagicMock(iter_chunks=lambda chunk_size=None: [b"\x89PNGsrc-image-bytes"])
         }
 
         uploads = {}
+        puts = {}
 
         def upload_fileobj(fileobj, bucket, key, ExtraArgs=None):
             uploads[key] = {
@@ -204,7 +226,14 @@ class TestResizeArtifactHandler(unittest.TestCase):
                 "extra": ExtraArgs or {},
             }
 
+        def put_object(Bucket=None, Key=None, Body=None, ContentType=None):
+            puts[Key] = {
+                "body": Body if isinstance(Body, (bytes, bytearray)) else Body.read(),
+                "content_type": ContentType,
+            }
+
         mock_s3.upload_fileobj.side_effect = upload_fileobj
+        mock_s3.put_object.side_effect = put_object
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None, env=None):
             exe = os.path.basename(cmd[0])
@@ -254,7 +283,8 @@ class TestResizeArtifactHandler(unittest.TestCase):
         self.assertIn(image_key, uploads)
         image_meta = uploads[image_key]["extra"]["Metadata"]
         self.assertEqual(image_meta["format"], "png")
-        resize_meta = json.loads(image_meta["resize_params"])
+        self.assertNotIn("resize_params", image_meta)
+        resize_meta = json.loads(json.loads(puts["renders/job1/color/resize_123/meta.json"]["body"])["resize_params"])
         self.assertEqual(resize_meta["engine"], "resize")
         self.assertEqual(resize_meta["kernel"], "mitchell")
         self.assertEqual(resize_meta["gap"], 3.5)

@@ -27,6 +27,10 @@ def _event(**overrides):
         "step_start": 10,
         "step_count": 4,
         "root_transforms": [["rotate_roots", "0.25"]],
+        "palette_chunk_threads": 1,
+        "palette_chunk_input_mode": "tmpfile",
+        "palette_chunk_retries": 2,
+        "palette_chunk_workers": 16,
         "score_key": "renders/j/palettes/p1/chunks/score_chunk_3.bin",
         "palette_bins_key": "renders/j/palettes/p1/chunks/palette_bins_chunk_3.bin",
         "meta_key": "renders/j/palettes/p1/chunks/meta_chunk_3.json",
@@ -124,6 +128,10 @@ class TestPaletteChunkHandler(unittest.TestCase):
             warned = {w["param"] for w in done_kwargs["result_data"]["contract_warnings"]}
             self.assertIn("solve_score_omega", warned)
             self.assertIn("solve_score_omega_enabled", warned)
+            self.assertEqual(done_kwargs["result_data"]["threads"], 1)
+            self.assertEqual(done_kwargs["result_data"]["input_mode"], "tmpfile")
+            self.assertEqual(done_kwargs["result_data"]["retries"], 2)
+            self.assertEqual(done_kwargs["result_data"]["workers"], 16)
 
     @patch("handler_palette_chunk.report_status")
     @patch("handler_palette_chunk.s3")
@@ -165,6 +173,82 @@ class TestPaletteChunkHandler(unittest.TestCase):
             self.assertIn("quantile mismatch", str(ctx.exception))
             mock_run.assert_not_called()
             self.assertEqual(mock_report.call_args_list[-1].args[2], "error")
+
+    @patch("handler_palette_chunk.report_status")
+    @patch("handler_palette_chunk.s3")
+    @patch("handler_palette_chunk.subprocess.run")
+    def test_sectioned_path_passes_mt_knobs_and_presigned_url(self, mock_run, mock_s3, mock_report):
+        import handler_palette_chunk as mod
+
+        with tempfile.TemporaryDirectory() as td, \
+             patch.object(mod, "_TMP_INPUT", os.path.join(td, "input.bin")), \
+             patch.object(mod, "_TMP_SCORES", os.path.join(td, "scores.bin")), \
+             patch.object(mod, "_TMP_BINS", os.path.join(td, "bins.bin")), \
+             patch.object(mod, "_TMP_XFORMS", os.path.join(td, "xforms.json")), \
+             patch.object(mod, "_sectioned_input_size_limit", return_value=10_000_000):
+
+            bins_meta = {
+                "family": "solve_score",
+                "metric": "crowding",
+                "clip_quantile": 0.01,
+                "clip_lo": -1.5,
+                "clip_hi": 2.5,
+                "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+            }
+
+            def get_object(**kwargs):
+                key = kwargs["Key"]
+                if key == "renders/j/palettes/p1/solve_score/crowding_bins.json":
+                    return {"Body": MagicMock(read=lambda: json.dumps(bins_meta).encode())}
+                raise AssertionError(f"unexpected get_object key: {key}")
+
+            mock_s3.get_object.side_effect = get_object
+            mock_s3.head_object.return_value = {"ContentLength": 160}
+            mock_s3.generate_presigned_url.return_value = "https://example.com/chunk_3.bin"
+            mock_s3.upload_fileobj.side_effect = lambda *args, **kwargs: None
+
+            def run_side_effect(cmd, capture_output, text, timeout):
+                self.assertEqual(cmd[0], mod.BINARY_MT)
+                self.assertIn("--threads=6", cmd)
+                self.assertIn("--input_mode=sectioned", cmd)
+                self.assertIn("--retries=4", cmd)
+                self.assertIn("--url=https://example.com/chunk_3.bin", cmd)
+                self.assertIn("--input_size=160", cmd)
+                scores = array("f", [1.0, 2.0, 3.0, 4.0])
+                with open(mod._TMP_SCORES, "wb") as f:
+                    scores.tofile(f)
+                with open(mod._TMP_BINS, "wb") as f:
+                    f.write(bytes([0, 1, 2, 3]))
+                return MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({
+                        "min_score": 1.0,
+                        "max_score": 4.0,
+                        "threads": 6,
+                        "input_mode": "sectioned",
+                        "retries": 4,
+                        "download_ms": 11,
+                        "compute_ms": 22,
+                    }),
+                    stderr="",
+                )
+
+            mock_run.side_effect = run_side_effect
+
+            mod.handler(_event(
+                palette_chunk_threads=6,
+                palette_chunk_input_mode="sectioned",
+                palette_chunk_retries=4,
+                palette_chunk_workers=32,
+            ), None)
+
+            done_kwargs = mock_report.call_args_list[-1].kwargs
+            self.assertEqual(done_kwargs["result_data"]["threads"], 6)
+            self.assertEqual(done_kwargs["result_data"]["input_mode"], "sectioned")
+            self.assertEqual(done_kwargs["result_data"]["retries"], 4)
+            self.assertEqual(done_kwargs["result_data"]["workers"], 32)
+            self.assertEqual(done_kwargs["result_data"]["dl_ms"], 11)
+            self.assertEqual(done_kwargs["result_data"]["compute_ms"], 22)
 
 
 if __name__ == "__main__":

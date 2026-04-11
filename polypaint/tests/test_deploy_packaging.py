@@ -85,6 +85,13 @@ def _local_dependencies(py_name, seen=None):
 
 
 class TestDeployPackaging(unittest.TestCase):
+    def test_encode_memory_is_raised_for_large_repalette_outputs(self):
+        self.assertRegex(
+            DEPLOY_TEXT,
+            r"(?m)^ENCODE_MEMORY=10240\s+# max memory/CPU tier for very large JPEG/PNG encodes$",
+            "encode Lambda memory should stay at 10240 MB for large Color RePalette outputs",
+        )
+
     def test_render_workflow_template_substitutes_palette_function_arns_in_both_deploy_paths(self):
         joined = _joined_shell_lines(DEPLOY_TEXT)
         matches = list(re.finditer(
@@ -217,6 +224,14 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('ensure_route "POST /delete-favorite" "$STORAGE_INT"', DEPLOY_TEXT)
         self.assertIn("handler_storage.py", packaged)
         self.assertIn("color_artifact_meta.py", packaged["handler_storage.py"])
+        self.assertIn("handler_palette_chunk.py", packaged)
+        self.assertIn("solve_palette_chunk", packaged["handler_palette_chunk.py"])
+        self.assertIn("solve_palette_chunk_mt", packaged["handler_palette_chunk.py"])
+        self.assertIn('gcc -O3 -pthread -o /src/solve_palette_chunk_mt /src/solve_palette_chunk_mt.c', DEPLOY_TEXT)
+        self.assertIn('cp lambda/solve_palette_chunk lambda/solve_palette_chunk_mt "$PAL_CHUNK_DIR/"', DEPLOY_TEXT)
+        self.assertIn('cp lambda/solve_palette_chunk_mt_lib/* "$PAL_CHUNK_DIR/lib/"', DEPLOY_TEXT)
+        self.assertRegex(joined, r'create_lambda "\$PALETTE_CHUNK_NAME" "handler_palette_chunk\.handler" "/tmp/polypaint-palette-chunk\.zip"\s+"\$PALETTE_CHUNK_MEMORY" "\$ROLE_ARN" "" "BUCKET=\$BUCKET,JOBS_TABLE=\$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib" "\$BINARY_TMP"')
+        self.assertRegex(joined, r'update_lambda "\$PALETTE_CHUNK_NAME" "handler_palette_chunk\.handler" "/tmp/polypaint-palette-chunk\.zip"\s+"\$PALETTE_CHUNK_MEMORY" "" "BUCKET=\$BUCKET,JOBS_TABLE=\$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib" "\$BINARY_TMP"')
 
         self.assertIn("handler_autolevels.py", packaged)
         self.assertIn("autolevels_render", packaged["handler_autolevels.py"])

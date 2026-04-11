@@ -11,7 +11,7 @@ LIBVIPS_BUILD="$ROOT/lambda/layer-build"
 echo "=== Docker Runtime Regression Test ==="
 
 # Verify binaries exist
-for BIN in "$ROOT/lambda/sweep" "$ROOT/lambda/sweep_mt" "$ROOT/lambda/sweep_cm"; do
+for BIN in "$ROOT/lambda/sweep" "$ROOT/lambda/sweep_mt" "$ROOT/lambda/sweep_cm" "$ROOT/lambda/solve_palette_chunk_mt"; do
     if [ ! -f "$BIN" ]; then
         echo "FATAL: $BIN not found. Run deploy.sh to compile."
         exit 1
@@ -22,6 +22,11 @@ for BIN in "$ROOT/lambda/sweep" "$ROOT/lambda/sweep_mt" "$ROOT/lambda/sweep_cm";
         exit 1
     fi
 done
+
+if [ ! -d "$ROOT/lambda/solve_palette_chunk_mt_lib" ]; then
+    echo "FATAL: solve_palette_chunk_mt_lib not found. Run deploy.sh to compile."
+    exit 1
+fi
 
 if [ ! -d "$LAPACK_BUILD/lib" ]; then
     echo "FATAL: LAPACK layer not built. Run lambda/build-lapack-layer.sh."
@@ -47,7 +52,7 @@ docker run --rm --platform linux/arm64 \
     cp -a /opt-vips/lib/* /opt/lib/ 2>/dev/null || true
     mkdir -p /opt/bin
     cp -a /opt-vips/bin/* /opt/bin/ 2>/dev/null || true
-    export LD_LIBRARY_PATH=/opt/lib
+    export LD_LIBRARY_PATH=/src/solve_palette_chunk_mt_lib:/opt/lib
     export PATH="/opt/bin:$PATH"
 
     # Install Python

@@ -52,7 +52,10 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(self.states["SolveScoreHistMap"]["Type"], "Map")
         self.assertEqual(self.states["PaletteChunkMap"]["Type"], "Map")
         self.assertEqual(self.states["SolveScoreHistMap"]["MaxConcurrency"], 10)
-        self.assertEqual(self.states["PaletteChunkMap"]["MaxConcurrency"], 10)
+        self.assertEqual(
+            self.states["PaletteChunkMap"]["MaxConcurrencyPath"],
+            "$.plan.params.palette_chunk_workers",
+        )
 
     def test_parallel_wrapper_catches_all(self):
         wrapper = self.top_states["WorkflowWrapper"]
@@ -107,6 +110,11 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(chunk["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(chunk["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
         self.assertEqual(chunk["root_transforms.$"], "$.plan.params.root_transforms")
+        self.assertEqual(chunk["palette_chunk_threads.$"], "$.plan.params.palette_chunk_threads")
+        self.assertEqual(chunk["palette_chunk_input_mode.$"], "$.plan.params.palette_chunk_input_mode")
+        self.assertEqual(chunk["palette_chunk_retries.$"], "$.plan.params.palette_chunk_retries")
+        self.assertEqual(chunk["palette_chunk_workers.$"], "$.plan.params.palette_chunk_workers")
+        self.assertEqual(chunk["bin_size.$"], "$$.Map.Item.Value.bin_size")
 
         finalize = self.states["PaletteFinalizeTask"]["Parameters"]["Payload"]
         self.assertEqual(finalize["times.$"], "$.plan.calc.times")

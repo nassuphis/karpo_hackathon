@@ -615,10 +615,10 @@ test.describe('Solve Score UI', () => {
       _renderLoadedJobId = 'test_job';
       renderArtifactPanel('test_job', {
         families: {
-          color: [{ artifact_id: 'color_1', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/test_job/color/color_1/image.jpeg', image_url: 'https://example.com/c.jpeg', preview_url: 'https://example.com/c.png', viewer_url: 'https://example.com/c.png', file_size: 50000, width: 1000, height: 1000, color_mode: 'rainbow', format: 'jpeg' }],
+          color: [{ artifact_id: 'color_1', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/test_job/color/color_1/image.jpeg', image_url: 'https://example.com/c.jpeg', preview_url: 'https://example.com/c.png', viewer_url: 'https://example.com/c.png', file_size: 50000, width: 1000, height: 1000, color_mode: 'rainbow', format: 'jpeg', associated_palette_id: 'pal_1' }],
           bilevel: [{ artifact_id: 'bilevel_1', created_at: '2026-03-30T11:00:00Z', image_key: 'renders/test_job/bilevel/bilevel_1/image.tif', image_url: 'https://example.com/b.tif', preview_url: 'https://example.com/b.png', viewer_url: 'https://example.com/b.png', file_size: 60000, width: 1000, height: 1000, format: 'tif' }],
           coeffs: [{ artifact_id: 'coeffs_1', created_at: '2026-03-30T11:30:00Z', image_key: 'renders/test_job/coeffs/coeffs_1/image.tif', image_url: 'https://example.com/co.tif', preview_url: 'https://example.com/co.png', viewer_url: 'https://example.com/co.png', file_size: 70000, width: 1000, height: 1000, format: 'tif' }],
-          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05 }],
+          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05, derived_from_color_artifact_id: 'color_1' }],
         },
         calc: { exists: true, N: 1000, degree: 5 },
         artifacts: {},
@@ -636,7 +636,10 @@ test.describe('Solve Score UI', () => {
     await expect(panel.locator('#btn-render-download')).toBeVisible();
     await expect(panel.locator('#btn-render-delete')).toBeVisible();
     await expect(panel.locator('#btn-render-deepzoom')).toBeVisible();
+    await expect(panel.locator('#btn-render-go-palette')).toHaveText('GoPalette: pal_1');
     await expect(panel.locator('img[src="https://example.com/c.png"]')).toBeVisible();
+    await expect(panel.locator('text=[P pal_1]')).toBeVisible();
+    await expect(panel.locator('text=id=color_1')).toBeVisible();
   });
 
   test('palette family generate is disabled outside solve_score mode', async ({ page }) => {
@@ -676,6 +679,34 @@ test.describe('Solve Score UI', () => {
     await page.click('#render-preview button[data-render-family="palette"]');
     await expect.poll(async () => page.evaluate(() => _renderActiveFamily)).toBe('palette');
     await expect(page.locator('#render-preview img[src="https://example.com/p.png"]')).toBeVisible();
+  });
+
+  test('GoPalette and GoColor navigate linked render artifacts', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'test_job';
+      _renderLoadedJobId = 'test_job';
+      renderArtifactPanel('test_job', {
+        families: {
+          color: [{ artifact_id: 'color_1', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/test_job/color/color_1/image.jpeg', image_url: 'https://example.com/c.jpeg', preview_url: 'https://example.com/c.png', viewer_url: 'https://example.com/c.png', file_size: 50000, width: 1000, height: 1000, color_mode: 'rainbow', format: 'jpeg', associated_palette_id: 'pal_1' }],
+          bilevel: [],
+          coeffs: [],
+          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05, derived_from_color_artifact_id: 'color_1' }],
+        },
+        calc: { exists: true, N: 1000, degree: 5 },
+        artifacts: {},
+        deepzoom_latest: { exists: false },
+      });
+    });
+
+    await page.click('#btn-render-go-palette');
+    await expect.poll(async () => page.evaluate(() => _renderActiveFamily)).toBe('palette');
+    await expect(page.locator('#btn-render-go-color')).toHaveText('GoColor: color_1');
+    await expect(page.locator('text=[C color_1]')).toBeVisible();
+
+    await page.click('#btn-render-go-color');
+    await expect.poll(async () => page.evaluate(() => _renderActiveFamily)).toBe('color');
+    await expect(page.locator('#btn-render-go-palette')).toHaveText('GoPalette: pal_1');
   });
 
   test('palette family populate restores solve-score settings and switches to color', async ({ page }) => {
@@ -896,6 +927,10 @@ test.describe('Solve Score UI', () => {
     await page.selectOption('#extract-palette-hist-input-mode', 'sectioned');
     await page.fill('#extract-palette-hist-retries', '5');
     await page.fill('#extract-palette-merge-workers', '24');
+    await page.fill('#extract-palette-chunk-threads', '6');
+    await page.selectOption('#extract-palette-chunk-input-mode', 'sectioned');
+    await page.fill('#extract-palette-chunk-retries', '4');
+    await page.fill('#extract-palette-chunk-workers', '32');
     await page.click('#extract-palette-popup-run');
 
     const dispatch = await page.evaluate(() => window._extractDispatch);
@@ -908,9 +943,104 @@ test.describe('Solve Score UI', () => {
       solve_score_hist_input_mode: 'sectioned',
       solve_score_hist_retries: 5,
       solve_score_merge_workers: 24,
+      palette_chunk_threads: 6,
+      palette_chunk_input_mode: 'sectioned',
+      palette_chunk_retries: 4,
+      palette_chunk_workers: 32,
     });
     expect(activeRun.mode).toBe('extract_palette');
     expect(activeRun.origin).toBe('render_extract_palette');
     expect(activeRun.source_artifact_id).toBe('color_1');
+  });
+
+  test('ExtractPalette completion uses named elapsed log and Autolevels completion is named', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate((summary) => {
+      window.refreshRenderArtifacts = async function() {};
+      window.loadPaletteInventory = async function() {};
+      window._logRenderRasterPerf = async function() {};
+      window.renderArtifactPanel('test_job', summary);
+      _renderLoadedJobId = 'test_job';
+      document.getElementById('render-results-dir').value = 'test_job';
+      _renderActiveFamily = 'color';
+      _renderSelectedArtifact = { color: 0, bilevel: -1, coeffs: -1, palette: -1, pdf: -1 };
+      _clearActivePaletteRun();
+      _saveActivePaletteRun({
+        job_id: 'test_job',
+        run_id: 'run_extract_done',
+        task_id: 'extract_palette_run_run_extract_done',
+        started_at_ms: 1000,
+        mode: 'extract_palette',
+        origin: 'render_extract_palette',
+        source_artifact_id: 'color_1',
+        server_started_at_ms: 2000,
+      });
+    }, {
+      ...RENDER_POPUP_SUMMARY,
+      families: {
+        ...RENDER_POPUP_SUMMARY.families,
+        color: [{
+          ...RENDER_POPUP_SUMMARY.families.color[0],
+          associated_palette_id: 'pal_1',
+        }],
+      },
+    });
+
+    await page.evaluate(() => _pollActivePaletteRun = async function() {
+      const run = _activePaletteRun || _loadActivePaletteRun();
+      const statusEl = document.getElementById('palette-status');
+      const mirrorToRender = true;
+      const rd = {
+        phase: 'done',
+        phase_label: 'Done',
+        family: 'palette',
+        palette_id: 'pal_extract',
+        artifact_id: 'color_1',
+        updated_at_ms: 15000,
+        run_started_at_ms: 2000,
+      };
+      document.getElementById('palette-results-dir').value = run.job_id;
+      await loadPaletteInventory({ selectPaletteId: rd.palette_id });
+      await refreshRenderArtifacts(run.job_id, { selectFamily: 'color', selectArtifactId: rd.artifact_id || run.source_artifact_id || null });
+      statusEl.textContent = 'ExtractPalette complete';
+      statusEl.className = 'status ok';
+      const completeMsg = _paletteRunCompleteLog(run, rd);
+      log(completeMsg, 'ok', 'palette-log');
+      if (mirrorToRender) {
+        const renderStatusEl = document.getElementById('render-status');
+        if (renderStatusEl) {
+          renderStatusEl.textContent = 'ExtractPalette complete';
+          renderStatusEl.className = 'status ok';
+        }
+        log(completeMsg, 'ok', 'render-log');
+      }
+      _clearActivePaletteRun();
+    });
+    await page.evaluate(async () => { await _pollActivePaletteRun(); });
+    await expect(page.locator('#render-status')).toHaveText('ExtractPalette complete');
+    await expect(page.locator('#render-log')).toContainText('ExtractPalette complete: pal_extract (13.0s)');
+
+    await page.evaluate(() => {
+      window.refreshRenderArtifacts = async function() {};
+      window._logRenderRasterPerf = async function() {};
+      _saveActiveRun({
+        job_id: 'test_job',
+        run_id: 'run_auto_done',
+        task_id: 'render_run_autolevels_run_auto_done',
+        started_at_ms: 1000,
+        server_started_at_ms: 2000,
+        mode: 'autolevels',
+      });
+    });
+    await page.evaluate(async () => {
+      await _handleRenderRunCompletion(_activeRenderRun, {
+        family: 'color',
+        artifact_id: 'autolevels_done',
+        updated_at_ms: 15000,
+        run_started_at_ms: 2000,
+      });
+    });
+    await expect(page.locator('#render-status')).toHaveText('Autolevels complete');
+    await expect(page.locator('#render-log')).toContainText('Autolevels complete: autolevels_done (13.0s)');
   });
 });

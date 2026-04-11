@@ -37,6 +37,18 @@ def _validate_threads(value, default=1):
     return threads
 
 
+def _validate_palette_chunk_threads(value, default=4):
+    if value in (None, ""):
+        value = default
+    try:
+        threads = int(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"palette_chunk_threads must be an integer, got {value!r}")
+    if not (1 <= threads <= 16):
+        raise RuntimeError(f"palette_chunk_threads must be in [1, 16], got {threads}")
+    return threads
+
+
 def _validate_merge_workers(value, default=16):
     if value in (None, ""):
         value = default
@@ -49,11 +61,33 @@ def _validate_merge_workers(value, default=16):
     return workers
 
 
+def _validate_palette_chunk_workers(value, default=16):
+    if value in (None, ""):
+        value = default
+    try:
+        workers = int(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"palette_chunk_workers must be an integer, got {value!r}")
+    if not (1 <= workers <= 64):
+        raise RuntimeError(f"palette_chunk_workers must be in [1, 64], got {workers}")
+    return workers
+
+
 def _validate_hist_input_mode(value):
     mode = str(value or "tmpfile").strip().lower()
     if mode not in {"tmpfile", "stdin", "sectioned"}:
         raise RuntimeError(
             "solve_score_hist_input_mode must be one of sectioned, stdin, tmpfile, "
+            f"got {value!r}"
+        )
+    return mode
+
+
+def _validate_palette_chunk_input_mode(value):
+    mode = str(value or "sectioned").strip().lower()
+    if mode not in {"tmpfile", "sectioned"}:
+        raise RuntimeError(
+            "palette_chunk_input_mode must be one of sectioned, tmpfile, "
             f"got {value!r}"
         )
     return mode
@@ -222,6 +256,7 @@ def _build_chunk_items(calc):
             "bin_key": bin_key,
             "step_start": step_start,
             "step_count": step_count,
+            "bin_size": int(raw.get("bin_size")) if raw.get("bin_size") not in ("", None) else int(step_count) * record_bytes,
         })
         step_start += step_count
     return chunk_items
@@ -269,6 +304,10 @@ def _execution_params(raw_params):
         "solve_score_hist_input_mode": _validate_hist_input_mode(pp.get("solve_score_hist_input_mode", "tmpfile")),
         "solve_score_hist_retries": _validate_sectioned_retries(pp.get("solve_score_hist_retries", 2)),
         "solve_score_merge_workers": _validate_merge_workers(pp.get("solve_score_merge_workers", 16), default=16),
+        "palette_chunk_threads": _validate_palette_chunk_threads(pp.get("palette_chunk_threads", 4), default=4),
+        "palette_chunk_input_mode": _validate_palette_chunk_input_mode(pp.get("palette_chunk_input_mode", "sectioned")),
+        "palette_chunk_retries": _validate_sectioned_retries(pp.get("palette_chunk_retries", 2)),
+        "palette_chunk_workers": _validate_palette_chunk_workers(pp.get("palette_chunk_workers", 16), default=16),
     }
 
 

@@ -93,6 +93,10 @@ class TestAutolevelsHandler(unittest.TestCase):
         }
 
         uploads = {}
+        puts = {}
+        puts = {}
+        puts = {}
+        puts = {}
 
         def upload_fileobj(fileobj, bucket, key, ExtraArgs=None):
             uploads[key] = {
@@ -100,7 +104,14 @@ class TestAutolevelsHandler(unittest.TestCase):
                 "extra": ExtraArgs or {},
             }
 
+        def put_object(Bucket=None, Key=None, Body=None, ContentType=None):
+            puts[Key] = {
+                "body": Body if isinstance(Body, (bytes, bytearray)) else Body.read(),
+                "content_type": ContentType,
+            }
+
         mock_s3.upload_fileobj.side_effect = upload_fileobj
+        mock_s3.put_object.side_effect = put_object
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None, env=None):
             exe = os.path.basename(cmd[0])
@@ -149,21 +160,29 @@ class TestAutolevelsHandler(unittest.TestCase):
         self.assertEqual(image_meta["family"], "color")
         self.assertEqual(image_meta["format"], "jpeg")
         self.assertEqual(image_meta["quality"], "83")
-        self.assertEqual(image_meta["color_mode"], "solve_score")
-        self.assertEqual(image_meta["solve_metric"], "anisotropy")
-        self.assertEqual(image_meta["palette"], "tri_redgold")
-        self.assertEqual(image_meta["associated_palette_mode"], "generated")
-        self.assertEqual(image_meta["associated_palette_id"], "pal_src")
-        self.assertEqual(image_meta["associated_palette_image_key"], "renders/job1/palettes/pal_src/image.jpeg")
-        self.assertEqual(image_meta["associated_palette_preview_key"], "renders/job1/palettes/pal_src/preview.png")
-        self.assertEqual(image_meta["associated_palette_metric"], "anisotropy")
-        self.assertEqual(image_meta["associated_palette_palette"], "tri_redgold")
-        self.assertEqual(image_meta["associated_palette_quantile"], "0.02")
-        self.assertEqual(image_meta["associated_palette_omega"], "6")
-        self.assertEqual(image_meta["associated_palette_omega_enabled"], "false")
-        self.assertEqual(image_meta["background_color"], "101214")
-        self.assertEqual(image_meta["background_threshold"], "11")
-        self.assertIn("autolevels_params", image_meta)
+        self.assertNotIn("color_mode", image_meta)
+        self.assertNotIn("associated_palette_mode", image_meta)
+        self.assertNotIn("background_color", image_meta)
+        self.assertNotIn("autolevels_params", image_meta)
+
+        meta_key = "renders/job1/color/autolevels_123/meta.json"
+        self.assertIn(meta_key, puts)
+        sidecar = json.loads(puts[meta_key]["body"])
+        self.assertEqual(sidecar["color_mode"], "solve_score")
+        self.assertEqual(sidecar["solve_metric"], "anisotropy")
+        self.assertEqual(sidecar["palette"], "tri_redgold")
+        self.assertEqual(sidecar["associated_palette_mode"], "generated")
+        self.assertEqual(sidecar["associated_palette_id"], "pal_src")
+        self.assertEqual(sidecar["associated_palette_image_key"], "renders/job1/palettes/pal_src/image.jpeg")
+        self.assertEqual(sidecar["associated_palette_preview_key"], "renders/job1/palettes/pal_src/preview.png")
+        self.assertEqual(sidecar["associated_palette_metric"], "anisotropy")
+        self.assertEqual(sidecar["associated_palette_palette"], "tri_redgold")
+        self.assertEqual(sidecar["associated_palette_quantile"], "0.02")
+        self.assertEqual(sidecar["associated_palette_omega"], "6")
+        self.assertEqual(sidecar["associated_palette_omega_enabled"], "false")
+        self.assertEqual(sidecar["background_color"], "101214")
+        self.assertEqual(sidecar["background_threshold"], "11")
+        self.assertIn("autolevels_params", sidecar)
         self.assertIn("--background-color=101214", render_cmd)
         self.assertIn("--background-threshold=11", render_cmd)
         self.assertIn("--exclude-background=1", render_cmd)
@@ -194,6 +213,7 @@ class TestAutolevelsHandler(unittest.TestCase):
         mock_s3.head_object.return_value = {"Metadata": {}}
 
         uploads = {}
+        puts = {}
 
         def upload_fileobj(fileobj, bucket, key, ExtraArgs=None):
             uploads[key] = {
@@ -201,7 +221,14 @@ class TestAutolevelsHandler(unittest.TestCase):
                 "extra": ExtraArgs or {},
             }
 
+        def put_object(Bucket=None, Key=None, Body=None, ContentType=None):
+            puts[Key] = {
+                "body": Body if isinstance(Body, (bytes, bytearray)) else Body.read(),
+                "content_type": ContentType,
+            }
+
         mock_s3.upload_fileobj.side_effect = upload_fileobj
+        mock_s3.put_object.side_effect = put_object
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None, env=None):
             exe = os.path.basename(cmd[0])
@@ -229,8 +256,11 @@ class TestAutolevelsHandler(unittest.TestCase):
         self.assertIn("--background-threshold=4", render_cmd)
         self.assertIn("--exclude-background=1", render_cmd)
         image_meta = uploads["renders/job1/color/autolevels_123/image.jpeg"]["extra"]["Metadata"]
-        self.assertEqual(image_meta["background_color"], "000000")
-        self.assertEqual(image_meta["background_threshold"], "4")
+        self.assertNotIn("background_color", image_meta)
+        self.assertNotIn("background_threshold", image_meta)
+        sidecar = json.loads(puts["renders/job1/color/autolevels_123/meta.json"]["body"])
+        self.assertEqual(sidecar["background_color"], "000000")
+        self.assertEqual(sidecar["background_threshold"], "4")
 
     @patch("handler_autolevels.report_status")
     @patch("handler_autolevels.s3")

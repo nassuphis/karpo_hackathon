@@ -5,7 +5,7 @@
   "author": "",
   "snaps_dir": "snaps",
   "cover_image": "snaps/compute_mnm4mcr5_color_repalette_1775438508164_a13tad.jpeg",
-  "back_image": "snaps/compute_mna6w5mo_color_run_1775847486017_8sidpi.jpeg",
+  "back_image": "snaps/compute_mnm4mcr5_color_repalette_1775438508164_a13tad_palette.jpeg",
   "pages": [
     {
       "image": "snaps/compute_mn22l4xs_color_repalette_1775540006600_es2fwk.jpeg",
@@ -15,10 +15,10 @@
       "job_id": "compute_mn22l4xs"
     },
     {
-      "image": "snaps/compute_mn3m0d9d_legacy_color.jpeg",
-      "title": "Swirled Maelstrom",
-      "text": "Seventy roots spiral through a golden vortex, their paths warped by the swirler transform that twists the coefficient vector like taffy before reversing it. The leading coefficient is a seventh-power sum of both parameters; the remaining sixty-nine alternate between sine and cosine envelopes keyed to the logarithmic magnitude of each input. Concentric rings of olive and amber record the orbital velocity of the root cloud as it tightens toward the luminous inner ring.\n\npoly_52 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 rainbow \u00b7 Aberth-Ehrlich",
-      "filename": "legacy_color",
+      "image": "snaps/compute_mn3m0d9d_color_run_1775888715163_99401o.jpeg",
+      "title": "Crown of Thorns",
+      "text": "A single rust-and-ember crown floats in a vast field of concentric brown ripples, its circumference dotted with small dark voids like thorns worked into the metal. Seventy roots per solve sweep around the unit circle through the swirler coefficient transform and reversal \u2014 the swirler twists the coefficient vector like taffy before the reversal folds it back on itself. The clusteriness score at a tight 1.5 percent clip lights up where the nearest neighbors pack most densely, and the desert-warmwhite-ember tri-palette paints the crown in ember and the surrounding rings in burnt umber. The dark perforations are the solve points where no root cluster ever forms, small holes burned into the metal band.\n\npoly_52 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 clusteriness \u00b7 tri desert warmwhite ember",
+      "filename": "color_run_1775888715163_99401o",
       "job_id": "compute_mn3m0d9d"
     },
     {
@@ -29,17 +29,10 @@
       "job_id": "compute_mn4m2zqp"
     },
     {
-      "image": "snaps/compute_mn4u8dq4_color_run_1775467012290_78rj0s.jpeg",
-      "title": "Feathered Meridian",
-      "text": "A corona of fine hair-like filaments rings a dark interior, bisected by a luminous thread where roots cascade through a narrow channel. The creative10 function generates seventy roots through an opaque iterative recipe, and the zzold transform feeds each step\u2019s output back as the next step\u2019s input. The companion-matrix solver finds every eigenvalue exactly, and the shelliness score reveals where the root shell is thinnest \u2014 the bright thread is the seam where the corona splits open. The reef palette maps shell uniformity to teal-and-copper tones.\n\ncreative10 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 shelliness \u00b7 reef \u00b7 Companion Matrix",
-      "filename": "color_run_1775467012290_78rj0s",
-      "job_id": "compute_mn4u8dq4"
-    },
-    {
-      "image": "snaps/compute_mn4u8dq4_legacy_color.jpeg",
-      "title": "Thermograph",
-      "text": "Seventy roots resolved by companion-matrix eigendecomposition form a luminous disk ringed by cyan spikes and layered with concentric thermal bands \u2014 orange at the burning center, red and violet in the mid-zones, cyan at the cool outer shell. The zzold transform feeds the previous step\u2019s coefficients back as seeds for the next, building up interference patterns visible as the faint grid texture across the inner rings. A small dark pupil anchors the composition. The rainbow palette maps root index to hue, so the thermal appearance is an accident of how the eigenvalue ordering correlates with radial distance.\n\ncreative10 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 rainbow \u00b7 Companion Matrix",
-      "filename": "legacy_color",
+      "image": "snaps/compute_mn4u8dq4_resize_1775885877449_gwveu9.jpeg",
+      "title": "Spectrum Eye",
+      "text": "A luminous iris layered with concentric rainbow rings \u2014 orange core, yellow pupil, green pupil-ring, indigo inner shell, green mid-ring, blue outer shell \u2014 bristled with fine radial spikes at the perimeter. Seventy roots per solve from the creative10 function are pushed through the zzold parameter transform that feeds each step's output back as the next step's input, then resolved by the companion-matrix eigensolver so every eigenvalue lands exactly. The nearest-neighbor variation score at a five percent clip lights up where each root's closest sibling keeps changing identity, and the turbo palette wraps the full visible spectrum around the density gradient. The result reads as a cosmic eye seen through a prism, every ring a separate frequency of the same underlying root cloud. This is a resized print of an autolevels original.\n\ncreative10 \u00b7 degree 70 \u00b7 5000\u00d75000 \u00b7 nn variation \u00b7 turbo \u00b7 Companion Matrix \u00b7 resize",
+      "filename": "resize_1775885877449_gwveu9",
       "job_id": "compute_mn4u8dq4"
     },
     {
@@ -176,17 +169,17 @@
       "job_id": "compute_mnldwxog"
     },
     {
-      "image": "snaps/compute_mnlhjs5c_color_run_1775385431774_70h4hc.jpeg",
-      "title": "Opal Torus",
-      "text": "A translucent torus floats in darkness, its surface shimmering with concentric bands of jade, lavender, and pale cream. The centroid-distance metric \u2014 one of the new position-sensitive scores \u2014 measures how far each solve\u2019s root cloud center sits from the origin. The resulting gradient creates these smooth iridescent shells: green where the centroid is far, violet where it draws close, and a dark pupil at the center where roots converge to a single point. The companion-matrix solver ensures every eigenvalue is exact.\n\npoly_164 \u00b7 degree 70 \u00b7 2000\u00d72000 \u00b7 centroid dist \u00b7 rainbow d3 \u00b7 Companion Matrix",
-      "filename": "color_run_1775385431774_70h4hc",
+      "image": "snaps/compute_mnlhjs5c_resize_1775893239507_anm00m.jpeg",
+      "title": "Basketwork Moon",
+      "text": "A luminous pale sphere floats in darkness, its outer shell woven with fine jade basketwork texture, the interior layered with concentric bands of cream, lavender, and pale mauve. A small dark pupil anchors the composition at the center. Seventy roots per solve from poly_164 are pushed through the unit-circle parameter sweep, a seventh-coefficient transform, and a reversal, then resolved by the companion-matrix eigensolver so every eigenvalue lands exactly. The centroid-distance metric measures how far each solve's root cloud centroid drifts from the origin, with omega=6 periodic remapping producing the multiple concentric shells. The rainbow-d3 palette softens the hard boundaries into the ghostly pastel gradient. This is a resized print of a companion-matrix original.\n\npoly_164 \u00b7 degree 70 \u00b7 2000\u00d72000 \u00b7 centroid dist \u00b7 rainbow d3 \u00b7 Companion Matrix \u00b7 resize",
+      "filename": "resize_1775893239507_anm00m",
       "job_id": "compute_mnlhjs5c"
     },
     {
-      "image": "snaps/compute_mnm353ts_color_repalette_1775415383474_uwhptv.jpeg",
-      "title": "Gilt Crescent",
-      "text": "Forty-nine roots from a moth-family function curl into a sweeping crescent of gold, lavender, and rose. The open arc is woven from hundreds of tiny spiraling loops \u2014 each one a cluster of roots drawn together by the anisotropy score, which measures how elongated the local root cloud becomes. Where the crescent thickens, the loops tighten into a gilded chain; where it frays at the gap, the lavender ink dissolves into a mist of individual filaments. A color repalette applied the ink-gold-lavender tri-palette to a previously computed solve, recoloring without resolving.\n\nmoth4 \u00b7 degree 49 \u00b7 2000\u00d72000 \u00b7 anisotropy \u00b7 ink gold lavender \u00b7 Aberth-Ehrlich (parallel) \u00b7 repalette",
-      "filename": "color_repalette_1775415383474_uwhptv",
+      "image": "snaps/compute_mnm353ts_color_run_1775891098696_kle4j2.jpeg",
+      "title": "Gilded Coil",
+      "text": "A broken ring of gold, lavender, and rose filaments curls around a dark interior, one end terminating in a small detached cluster of tangled strands. Forty-nine roots per solve from the moth4 function are pushed through the xim parameter transform and reversed at the coefficient stage. The anisotropy score at a five percent clip lights up where the local root cloud stretches asymmetrically \u2014 where the roots stop distributing isotropically and start elongating along one axis \u2014 and the ink-gold-lavender tri-palette stains the stretched zones in gold and the relaxed zones in soft lavender. The gap in the ring is where the anisotropy breaks down entirely, the filaments dissolving into the small detached cluster that hangs outside the main loop.\n\nmoth4 \u00b7 degree 49 \u00b7 2000\u00d72000 \u00b7 anisotropy \u00b7 tri ink gold lavender \u00b7 Aberth-Ehrlich (parallel)",
+      "filename": "color_run_1775891098696_kle4j2",
       "job_id": "compute_mnm353ts"
     },
     {
@@ -225,10 +218,17 @@
       "job_id": "compute_mmw2ilf7"
     },
     {
-      "image": "snaps/compute_mn4li5pn_legacy_color.jpeg",
-      "title": "Turquoise Citadel",
-      "text": "Twenty-five roots swirl through a coefficient field twisted by the swirler transform, then reversed. The result is a rough-edged fortress of turquoise and amber, its outer walls stippled with granular texture where the root density thins to scattered points. A ring of golden orbs orbits a central black void like sentinels at the gates. Four smaller satellite eyes glow at the corners \u2014 fixed points where specific roots lock in place regardless of the parameter sweep. The absence of a parameter transform means the raw grid coordinates drive the geometry directly.\n\ngiga_25 \u00b7 degree 25 \u00b7 5000\u00d75000 \u00b7 rainbow",
-      "filename": "legacy_color",
+      "image": "snaps/compute_mn4li5pn_color_run_1775890172648_t5bk0w.jpeg",
+      "title": "Beaded Eye",
+      "text": "A teal iris rings a black pupil, its inner edge studded with amber beads, the whole figure suspended in a loose square cloud of cyan and copper dust with small amber spots at each corner. Twenty-five roots per solve are pushed through the swirler coefficient transform and reversed, with no parameter transform \u2014 raw grid coordinates drive the geometry directly. The nearest-neighbor variation score at a tight 1.5 percent clip lights up where each root's closest sibling keeps changing identity across the parameter sweep, and the reef palette stains the stable interior in cyan and the unstable outer dust in warm amber. The four corner spots are fixed points where specific roots lock in place regardless of where the parameters go.\n\ngiga_25 \u00b7 degree 25 \u00b7 5000\u00d75000 \u00b7 nn variation \u00b7 reef",
+      "filename": "color_run_1775890172648_t5bk0w",
+      "job_id": "compute_mn4li5pn"
+    },
+    {
+      "image": "snaps/compute_mn4li5pn_color_run_1775890524774_sym338.jpeg",
+      "title": "Amber Rosary",
+      "text": "The same giga_25 polynomial colored by a different metric: the iris now reads as a thick amber rosary, its twenty-five beads articulated in warm gold with fine teal highlights, still suspended in the same square dust cloud. Pushed through the swirler coefficient transform and reversed without a parameter transform, the coefficient field is identical to Beaded Eye \u2014 only the coloring metric changes. The clusteriness score at a 1.5 percent clip lights up where the nearest neighbors pack most tightly, and the reef palette flares amber at those dense points. Where Beaded Eye shows neighbor instability, this image shows neighbor density; the underlying root geometry is the same cloud viewed through a different lens.\n\ngiga_25 \u00b7 degree 25 \u00b7 5000\u00d75000 \u00b7 clusteriness \u00b7 reef",
+      "filename": "color_run_1775890524774_sym338",
       "job_id": "compute_mn4li5pn"
     },
     {
@@ -272,6 +272,20 @@
       "text": "A coral rosette of amber petals rings a turquoise crown, suspended in a delicate web of faint orbital threads pulled out of the shadows by the autolevels pass. Forty-nine roots per solve are pushed through three chained parameter transforms \u2014 unit circle, an inverse-t-plus-two warp, and a coefficient-eleven mapping \u2014 generating over a billion root positions across a five-thousand-square parameter mesh. The outlierness score at a tight 0.1% clip lights up roots straying farthest from the median radial distance, and the reef palette traces the crown in cyan and the petals in copper. The web outside is the ghost of every solve whose roots barely escaped the central cluster.\n\ngiga_45 \u00b7 degree 49 \u00b7 5000\u00d75000 \u00b7 outlierness \u00b7 reef \u00b7 Aberth-Ehrlich (parallel) \u00b7 autolevels",
       "filename": "autolevels_1775813269255_ozqp2s",
       "job_id": "compute_mnsod6uw"
+    },
+    {
+      "image": "snaps/compute_mnmxepi7_autolevels_1775886492140_bl6rc5.jpeg",
+      "title": "Votive Lamp",
+      "text": "A dark hollow sphere ringed with cyan bristles stands against the void, pierced from top to bottom by a vertical stream of gold that branches at the base into a fan of cyan and amber rays. The composition reads as a votive candle in a glass jar, or a lantern caught mid-burn: the outer shell is the glass, the vertical axis is the flame, the fanning base is the light spilling onto the altar. Eighty-nine roots per solve \u2014 near the degree limit \u2014 are pushed through the reversal coefficient transform with no parameter transform at all, letting the giga_19_fixed1 function speak directly. The shelliness score at a tight 0.1 percent clip lights up where the roots distribute uniformly around their centroid, and the reef palette traces the uniform outer shell in cyan and the broken axis in burning amber. An autolevels pass stretches the dynamic range to keep the faint outer bristles visible.\n\ngiga_19_fixed1 \u00b7 degree 89 \u00b7 5000\u00d75000 \u00b7 shelliness \u00b7 reef \u00b7 Aberth-Ehrlich (parallel) \u00b7 autolevels",
+      "filename": "autolevels_1775886492140_bl6rc5",
+      "job_id": "compute_mnmxepi7"
+    },
+    {
+      "image": "snaps/compute_mnrsdqxx_color_run_1775759298124_8evjt5.jpeg",
+      "title": "Peacock Wheel",
+      "text": "Sixteen small peacock eyes in amber and gold ring a central teal pupil, the whole wheel suspended on a dense haze of fine orbital threads that smear the backdrop into a soft aurora. Same p11b2_v2 polynomial that produces Anemone Crown, with the same unit-circle parameter sweep and the same cumulative-sum-plus-reversal coefficient chain \u2014 only the coloring metric changes. Where Anemone Crown used the distance-from-unit-circle score, this image uses clusteriness at a five percent clip, lighting up where the nearest neighbors pack most tightly. The reef palette now paints the dense peacock eyes in amber and the sparse orbital haze in cool cyan. Same root cloud, same ten roots per solve, different way of looking at the geometry.\n\np11b2_v2 \u00b7 degree 10 \u00b7 5000\u00d75000 \u00b7 clusteriness \u00b7 reef \u00b7 Aberth-Ehrlich (parallel)",
+      "filename": "color_run_1775759298124_8evjt5",
+      "job_id": "compute_mnrsdqxx"
     },
     {
       "image": "snaps/compute_mn4mbz8j_autolevels_1775834651178_zqb1cl.jpeg",

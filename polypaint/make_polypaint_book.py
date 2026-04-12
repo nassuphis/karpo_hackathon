@@ -28,6 +28,7 @@ import argparse
 import json
 import os
 import sys
+from collections import namedtuple
 from pathlib import Path
 
 from reportlab.lib.units import mm
@@ -37,52 +38,205 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from PIL import Image as PILImage
 
-# Register a Unicode-capable font for body text (supports subscript digits etc.)
-_UNICODE_FONT_PATHS = [
-    "/Library/Fonts/Arial Unicode.ttf",
-    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-]
-BODY_FONT = "Helvetica"  # fallback
-for _p in _UNICODE_FONT_PATHS:
-    if os.path.exists(_p):
-        pdfmetrics.registerFont(TTFont("ArialUnicode", _p))
-        BODY_FONT = "ArialUnicode"
-        break
-
-# Register Canela Family for cover display typography.
-# reportlab's TTFont only supports TrueType outlines, not CFF/PostScript OTFs,
-# so the OTF trial files need to be converted to TTF once. See fonts/README or
-# the project README for the one-shot conversion command. If the TTFs are
-# missing we fall back to Helvetica and print a WARNING loudly — no silent
-# fallback.
+# ── Font registry ─────────────────────────────────────────────────────
+#
+# All typefaces used by the book are registered here under a stable "key"
+# (lowercase, hyphenated). The key is what the CLI and config reference;
+# the registered reportlab name is what `setFont` takes.
+#
+# Every font is a TrueType file so the final PDF has all glyphs EMBEDDED —
+# print shops see the exact outlines we used instead of falling back to
+# generic Helvetica. The one exception is the Canvas's default font state
+# (reportlab writes it to every page's font resources even if we never draw
+# with it); we shadow the base "Helvetica" name with Arial.ttf for that.
 _SCRIPT_DIR = Path(__file__).parent
+
+# (key, reportlab-name, [candidate paths in priority order])
+_FONT_SPECS = [
+    # Category: body/title fallback (needed for per-char font fallback when
+    # the descriptive body font doesn't ship a glyph — apostrophes, em dashes,
+    # middle dots, etc.). Arial Unicode has wide coverage.
+    ("arial-unicode", "ArialUnicode", [
+        "/Library/Fonts/Arial Unicode.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    ]),
+    # Canela family (trial) — display serif for titles
+    ("canela-light", "Canela-Light", [
+        _SCRIPT_DIR / "fonts" / "Canela-Light-Trial.ttf",
+    ]),
+    ("canela-regular", "Canela-Regular", [
+        _SCRIPT_DIR / "fonts" / "Canela-Regular-Trial.ttf",
+    ]),
+    # Tiempos Text Regular (trial) — reading serif for descriptive copy
+    ("tiempos-regular", "Tiempos-Regular", [
+        _SCRIPT_DIR / "fonts" / "TiemposText-Regular-Trial.ttf",
+    ]),
+    # Tiempos Headline Regular (trial) — display serif sibling of Tiempos Text
+    ("tiempos-headline", "TiemposHeadline-Regular", [
+        _SCRIPT_DIR / "fonts" / "TiemposHeadline-Regular-Trial.ttf",
+    ]),
+    # Lyon — warm humanist display serif
+    ("lyon", "Lyon-Regular", [
+        _SCRIPT_DIR / "fonts" / "Lyon-Regular.ttf",
+    ]),
+    # "Sabon-similar" candidates — three different Sabon-adjacent serifs
+    ("baramond", "Baramond-Regular", [
+        _SCRIPT_DIR / "fonts" / "Baramond-Regular.ttf",
+    ]),
+    ("optisarone", "OPTISarone-Regular", [
+        _SCRIPT_DIR / "fonts" / "OPTISarone-Regular.ttf",
+    ]),
+    ("sibila", "Sibila-Regular", [
+        _SCRIPT_DIR / "fonts" / "Sibila-Regular.ttf",
+    ]),
+    # Sohne (trial) — clean sans for title OR body experimentation
+    ("sohne-buch", "Sohne-Buch", [
+        _SCRIPT_DIR / "fonts" / "Sohne-Buch-Trial.ttf",
+    ]),
+    # Monospace choices
+    ("courier-prime", "CourierPrime", [
+        _SCRIPT_DIR / "fonts" / "CourierPrime-Regular.ttf",
+    ]),
+    ("sohne-mono", "SohneMono-Buch", [
+        _SCRIPT_DIR / "fonts" / "SohneMono-Buch-Trial.ttf",
+    ]),
+    ("jetbrains-mono", "JetBrainsMono", [
+        _SCRIPT_DIR / "fonts" / "JetBrainsMono-Regular.ttf",
+    ]),
+    ("monaco", "Monaco", [
+        "/System/Library/Fonts/Monaco.ttf",
+    ]),
+    # Helvetica shadow — maps the Canvas default "Helvetica" to an Arial TTF
+    # so the leftover default-state font reference is embedded too.
+    ("helvetica", "Helvetica", [
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial.ttf",
+    ]),
+]
+
+FONT_REGISTRY = {}  # key -> registered reportlab name
+for _key, _name, _paths in _FONT_SPECS:
+    for _p in _paths:
+        if Path(_p).exists():
+            try:
+                pdfmetrics.registerFont(TTFont(_name, str(_p)))
+                FONT_REGISTRY[_key] = _name
+                break
+            except Exception as _e:
+                print(f"WARNING: failed to register {_key} from {_p}: {_e}")
+if "helvetica" not in FONT_REGISTRY:
+    print("WARNING: no Arial TTF found to shadow base Helvetica; the PDF "
+          "may contain an un-embedded Helvetica reference in page resources.")
+
+# Defaults for the three font categories (title, body, mono). Changeable
+# per run via CLI flags.
+DEFAULT_TITLE_FONT_KEY = "canela-regular"
+DEFAULT_BODY_FONT_KEY = "tiempos-regular"
+DEFAULT_MONO_FONT_KEY = "courier-prime"
+DEFAULT_BODY_FALLBACK_KEY = "arial-unicode"  # never user-selected
+
+# Module-level convenience names kept for the rest of the file. These are
+# the RESOLVED defaults — individual calls can override by passing a
+# different FontSet.
+BODY_FONT = FONT_REGISTRY.get(DEFAULT_BODY_FALLBACK_KEY) or "Helvetica"
+CONTENT_BODY_FONT = FONT_REGISTRY.get(DEFAULT_BODY_FONT_KEY) or BODY_FONT
+MONO_FONT = FONT_REGISTRY.get(DEFAULT_MONO_FONT_KEY) or "Courier"
+COVER_DISPLAY_FONT = FONT_REGISTRY.get("canela-light") or "Helvetica"
+COVER_DISPLAY_FONT_REGULAR = FONT_REGISTRY.get("canela-regular") or "Helvetica"
+
+# Legacy compatibility: some older call sites still test whether these paths
+# exist to decide between Canela and Helvetica-Bold. Keep the path variables
+# so those branches still work unchanged.
 _CANELA_LIGHT_PATH = _SCRIPT_DIR / "fonts" / "Canela-Light-Trial.ttf"
 _CANELA_REGULAR_PATH = _SCRIPT_DIR / "fonts" / "Canela-Regular-Trial.ttf"
-COVER_DISPLAY_FONT = "Helvetica"
-COVER_DISPLAY_FONT_REGULAR = "Helvetica"
-if _CANELA_LIGHT_PATH.exists():
-    pdfmetrics.registerFont(TTFont("Canela-Light", str(_CANELA_LIGHT_PATH)))
-    COVER_DISPLAY_FONT = "Canela-Light"
-else:
-    print(f"WARNING: Canela Light not found at {_CANELA_LIGHT_PATH}; "
-          f"falling back to Helvetica for cover title.")
-if _CANELA_REGULAR_PATH.exists():
-    pdfmetrics.registerFont(TTFont("Canela-Regular", str(_CANELA_REGULAR_PATH)))
-    COVER_DISPLAY_FONT_REGULAR = "Canela-Regular"
-else:
-    print(f"WARNING: Canela Regular not found at {_CANELA_REGULAR_PATH}; "
-          f"falling back to Helvetica for cover supporting type.")
 
-# Register Tiempos Text Regular for descriptive body copy on content pages.
-# Converted from the trial OTF via otf2ttf — same pattern as Canela.
-_TIEMPOS_REGULAR_PATH = _SCRIPT_DIR / "fonts" / "TiemposText-Regular-Trial.ttf"
-CONTENT_BODY_FONT = BODY_FONT  # fallback to Arial Unicode / Helvetica
-if _TIEMPOS_REGULAR_PATH.exists():
-    pdfmetrics.registerFont(TTFont("Tiempos-Regular", str(_TIEMPOS_REGULAR_PATH)))
-    CONTENT_BODY_FONT = "Tiempos-Regular"
-else:
-    print(f"WARNING: Tiempos Text Regular not found at {_TIEMPOS_REGULAR_PATH}; "
-          f"falling back to {BODY_FONT} for content body copy.")
+
+# ── Resolved font / gap sets ─────────────────────────────────────────
+
+FontSet = namedtuple("FontSet", ["title", "body", "body_fallback",
+                                 "mono", "mono_fallback"])
+# All five members are RESOLVED reportlab font names (strings you can pass
+# to setFont), not registry keys. The *_fallback slots are used by
+# `_draw_mixed_centered` when the primary font is missing a glyph — picked
+# to be fonts with wide ASCII + Latin-1 coverage so experimental limited
+# trial fonts still render all their content legibly.
+
+SizeSet = namedtuple("SizeSet", ["title", "body", "mono"])
+# Point sizes (float). `mono` is the pipeline-line size; the artifact-id line
+# renders at `mono - 1` so the credit line stays quietly smaller.
+
+DEFAULT_SIZES = SizeSet(title=33.6, body=10.5, mono=9.0)
+
+ColorSet = namedtuple("ColorSet", ["text", "mono"])
+# Two RGB float triples in [0, 1]:
+#   text  — title and body color (also the metadata "choice" line)
+#   mono  — pipeline + artifact-id color (single gray, not two-tone)
+
+DEFAULT_COLORS = ColorSet(
+    text=(0xF2 / 255, 0xEE / 255, 0xE6 / 255),   # #F2EEE6 warm off-white
+    mono=(0x80 / 255, 0x80 / 255, 0x80 / 255),   # #808080 medium gray
+)
+
+GapSet = namedtuple("GapSet", ["title_pipeline", "pipeline_body",
+                               "body_meta", "meta_palette"])
+# All four members are INTEGER LINE UNITS, where 1 line unit == body_leading
+# (currently 16pt). "Line unit" is an abstract vertical rhythm unit independent
+# of the actual font sizes.
+
+DEFAULT_GAPS = GapSet(title_pipeline=3, pipeline_body=3, body_meta=3, meta_palette=3)
+
+
+def parse_hex_color(s):
+    """Parse a CSS-style hex color `#RRGGBB` or `RRGGBB` into a 3-tuple of
+    floats in [0, 1]. Raises ValueError on malformed input."""
+    if s is None:
+        return None
+    s = s.strip().lstrip("#")
+    if len(s) != 6:
+        raise ValueError(f"hex color must be 6 hex digits, got {s!r}")
+    r = int(s[0:2], 16) / 255
+    g = int(s[2:4], 16) / 255
+    b = int(s[4:6], 16) / 255
+    return (r, g, b)
+
+
+def resolve_fonts(title_key=None, body_key=None, mono_key=None):
+    """Map registry keys to reportlab font names, with defaults + fallbacks.
+
+    Unknown keys are reported with a loud WARNING (not silently substituted)
+    so experimenting users see why their chosen font didn't take effect.
+    """
+    def _resolve(key, default_key, category):
+        k = key or default_key
+        name = FONT_REGISTRY.get(k)
+        if name is None:
+            print(f"WARNING: {category} font key '{k}' not in registry; "
+                  f"available: {sorted(FONT_REGISTRY.keys())}")
+            # Fall back to the default key's resolved name if available,
+            # else to the registry's Helvetica shadow (still embedded).
+            return (FONT_REGISTRY.get(default_key)
+                    or FONT_REGISTRY.get("helvetica")
+                    or "Helvetica")
+        return name
+    mono_fallback = (FONT_REGISTRY.get(DEFAULT_MONO_FONT_KEY)  # courier-prime
+                     or FONT_REGISTRY.get("monaco")
+                     or FONT_REGISTRY.get(DEFAULT_BODY_FALLBACK_KEY)
+                     or FONT_REGISTRY.get("helvetica")
+                     or "Courier")
+    return FontSet(
+        title=_resolve(title_key, DEFAULT_TITLE_FONT_KEY, "title"),
+        body=_resolve(body_key, DEFAULT_BODY_FONT_KEY, "body"),
+        body_fallback=FONT_REGISTRY.get(DEFAULT_BODY_FALLBACK_KEY)
+                      or FONT_REGISTRY.get("helvetica")
+                      or "Helvetica",
+        mono=_resolve(mono_key, DEFAULT_MONO_FONT_KEY, "mono"),
+        mono_fallback=mono_fallback,
+    )
+
+# Warm off-white used for ALL letter color on cover and content pages.
+# Pure white on pure black is harsh; #F2EEE6 is a soft warm white that reads
+# as "white" but with less glare.
+LETTER_COLOR = (0xF2 / 255, 0xEE / 255, 0xE6 / 255)  # ~(0.949, 0.933, 0.902)
 
 # ── Dimensions from WhiteWall IDML templates ──────────────────────────
 # Source: cover_A3square_paper-fujiCrystal-semi-matte_28.idml
@@ -310,11 +464,12 @@ def _wrap_text(c, text, font, size, max_width):
 
 def _pipeline_from_meta(meta):
     """Build the compute pipeline string in the form
-    `[param_transforms] function [coeff_transforms]`.
+    `[ param_transforms ]   function   [ coeff_transforms ]`.
 
     Returns None if the function is missing — caller should skip rendering.
-    Empty/none transform slots are rendered as `[]` so the pipeline shape
-    is always visible.
+    Empty/none transform slots render as `[ ]` so the pipeline shape is
+    always visible. Brackets have internal padding and elements are separated
+    by three spaces so the line reads wider and airier than a dense default.
     """
     if not meta:
         return None
@@ -328,22 +483,42 @@ def _pipeline_from_meta(meta):
         pt = ""
     if ct.lower() == "none":
         ct = ""
-    return f"[{pt}] {fn} [{ct}]"
+    pt_box = f"[ {pt} ]" if pt else "[ ]"
+    ct_box = f"[ {ct} ]" if ct else "[ ]"
+    return f"{pt_box}   {fn}   {ct_box}"
 
 
 def _load_image_meta(image_path):
-    """Load the `_meta.json` sidecar for an image, if it exists."""
+    """Load the `_meta.json` sidecar for an image.
+
+    First tries the exact `<stem>_meta.json` sidecar. If that's missing but
+    the filename starts with `compute_<job_id>_`, falls back to any other
+    `compute_<job_id>_*_meta.json` in the same directory so the pipeline /
+    compute info can still be recovered (the compute payload is identical
+    across artifacts of the same job — only the post-processing differs).
+    """
     if not image_path:
         return None
     p = Path(image_path)
     meta_path = p.with_name(p.stem + "_meta.json")
-    if not meta_path.exists():
-        return None
-    try:
-        with open(meta_path) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
+    if meta_path.exists():
+        try:
+            with open(meta_path) as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # Fallback: any other meta from the same compute job.
+    parts = p.stem.split("_")
+    if len(parts) >= 2 and parts[0] == "compute":
+        job_prefix = f"compute_{parts[1]}_"
+        for candidate in sorted(p.parent.glob(f"{job_prefix}*_meta.json")):
+            try:
+                with open(candidate) as f:
+                    return json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+    return None
 
 
 def _palette_image_for_entry(image_path, meta):
@@ -476,20 +651,18 @@ def _strip_legacy_metadata_line(body):
     return "\n\n".join(parts).rstrip()
 
 
-def _measure_body_consumed(c, body, primary, fallback, size, max_width,
-                           leading=19, para_gap=6, blank_gap=10):
-    """Dry-run the body layout and return how far below the first baseline the
-    y position ends up after the rendering loop completes.
+def _measure_body_last_baseline_offset(c, body, primary, fallback, size, max_width,
+                                       leading=16, para_gap=6, blank_gap=10):
+    """Dry-run the body layout and return the distance from the first body
+    baseline to the LAST body baseline (i.e., the y offset of the last line
+    drawn, positive). If body has no drawable content, returns 0.
 
-    Mirrors the body loop in `_draw_text_page` exactly: each wrapped line moves
-    y down by `leading`, each paragraph break adds `para_gap`, blank lines
-    add `blank_gap`. Uses per-char font fallback between `primary` and
-    `fallback` so wrap width measurement matches the actual rendering.
+    Mirrors the body loop in `_draw_text_page` exactly.
     """
     if not body:
         return 0
     y = 0
-    drew = False
+    last = None
     for para in body.split("\n"):
         para = para.strip()
         if not para:
@@ -497,13 +670,15 @@ def _measure_body_consumed(c, body, primary, fallback, size, max_width,
             continue
         wrapped = _wrap_text_mixed(c, para, primary, fallback, size, max_width)
         for _ in wrapped:
+            last = y
             y -= leading
-            drew = True
         y -= para_gap
-    return -y if drew else 0
+    return -last if last is not None else 0
 
 
-def _draw_text_page(c, title, body, is_right, filename=None, job_id=None, pipeline=None, palette_path=None):
+def _draw_text_page(c, title, body, is_right, filename=None, job_id=None,
+                    pipeline=None, palette_path=None, meta_line=None,
+                    fonts=None, sizes=None, colors=None, gaps=None):
     """Draw centered title + body text, white on black.
 
     Text is placed within the trim area with safety margins.
@@ -537,55 +712,83 @@ def _draw_text_page(c, title, body, is_right, filename=None, job_id=None, pipeli
     center_x = tx + tw / 2
     body_width = tw - 35 * mm  # narrower measure for Tiempos descriptive copy
 
-    palette_side = 80 * mm  # 8 cm square
-    palette_gap = 10 * mm
+    fonts = fonts or resolve_fonts()
+    sizes = sizes or DEFAULT_SIZES
+    colors = colors or DEFAULT_COLORS
+    gaps = gaps or DEFAULT_GAPS
 
-    # Body typography — Tiempos Text Regular 10.5pt with 16pt leading.
-    # Per-char font fallback to BODY_FONT (ArialUnicode/Helvetica) for any
-    # glyph the trial Tiempos TTF doesn't ship (apostrophes, em dashes,
-    # middle dots, multiplication signs, etc.).
-    body_font = CONTENT_BODY_FONT
-    body_fallback = BODY_FONT
-    body_size = 10.5
-    body_leading = 16
+    palette_side = 80 * mm  # 8 cm square
+
+    # Title + gap constants.
+    # All inter-element gaps are integer LINE UNITS (1 line unit == body_leading),
+    # plumbed through `gaps` so they're CLI-controllable for layout experimentation.
+    title_size = sizes.title
+    body_leading = 16  # also used as "line unit" for vertical rhythm
+    title_to_pipeline = gaps.title_pipeline * body_leading
+    pipeline_to_body  = gaps.pipeline_body  * body_leading
+    body_to_meta      = gaps.body_meta      * body_leading
+    palette_gap       = gaps.meta_palette   * body_leading  # meta baseline -> palette top
+    title_to_body_no_pipeline = 5 * body_leading  # 80pt (when no pipeline line)
+
+    # Body typography — size from `sizes.body`.
+    # Per-char font fallback to `fonts.body_fallback` for any glyph the
+    # descriptive body font doesn't ship (apostrophes, em dashes, middle
+    # dots, multiplication signs, etc.).
+    body_font = fonts.body
+    body_fallback = fonts.body_fallback
+    body_size = sizes.body
     body_para_gap = 6
     body_blank_gap = 10
+
+    # Monospace line sizes: pipeline at `sizes.mono`, artifact-id one point
+    # smaller for the quieter credit line. Both share the same `colors.mono`.
+    mono_pipeline_size = sizes.mono
+    mono_artifact_size = max(6.0, sizes.mono - 1.0)
+    mono_color = colors.mono
+    text_color = colors.text
+
+    title_to_body = (title_to_pipeline + pipeline_to_body) if pipeline else title_to_body_no_pipeline
 
     # Title baseline:
     # - With palette: vertically center the entire block on the page.
     # - Without palette: keep the existing top-anchored offset.
     if palette_path:
-        consumed = _measure_body_consumed(c, body, body_font, body_fallback,
-                                          body_size, body_width,
-                                          leading=body_leading,
-                                          para_gap=body_para_gap,
-                                          blank_gap=body_blank_gap)
+        last_body_offset = _measure_body_last_baseline_offset(
+            c, body, body_font, body_fallback, body_size, body_width,
+            leading=body_leading, para_gap=body_para_gap, blank_gap=body_blank_gap)
         # Block extent measured from title baseline DOWN to artifact baseline:
-        #   title -> first body baseline:           60pt
-        #   first body baseline -> y_after_body:    consumed
-        #   y_after_body -> palette top:            palette_gap
-        #   palette top -> palette bottom:          palette_side
-        #   palette bottom -> artifact baseline:    14pt
-        block_baseline_span = 60 + consumed + palette_gap + palette_side + 14
+        #   title             -> first body baseline:   title_to_body
+        #   first body bl     -> last body bl:          last_body_offset
+        #   last body bl      -> meta baseline:         body_to_meta (if meta)
+        #   last visible bl   -> palette top:           palette_gap
+        #   palette top       -> palette bottom:        palette_side
+        #   palette bottom    -> artifact baseline:     14pt
+        meta_extent = body_to_meta if meta_line else 0
+        block_baseline_span = (title_to_body + last_body_offset + meta_extent
+                               + palette_gap + palette_side + 14)
         page_center_y = trim_y + CONTENT_NET / 2
         title_y = page_center_y + block_baseline_span / 2
     else:
         title_y = trim_y + CONTENT_NET / 2 + 15 * mm + 40
 
-    body_first_baseline = title_y - 60
+    body_first_baseline = title_y - title_to_body
 
-    c.setFillColorRGB(1, 1, 1)
+    c.setFillColorRGB(*text_color)
 
     if title:
-        c.setFont("Canela-Regular" if _CANELA_REGULAR_PATH.exists() else "Helvetica-Bold", 28)
+        c.setFont(fonts.title, title_size)
         c.drawCentredString(center_x, title_y, title)
 
     if pipeline:
-        c.setFont("Courier", 10)
-        c.setFillColorRGB(0.75, 0.75, 0.75)
-        c.drawCentredString(center_x, title_y - 26, pipeline)
-        c.setFillColorRGB(1, 1, 1)
+        c.setFillColorRGB(*mono_color)
+        _draw_mixed_centered(c, pipeline, center_x,
+                             title_y - title_to_pipeline,
+                             fonts.mono, fonts.mono_fallback,
+                             mono_pipeline_size)
+        c.setFillColorRGB(*text_color)
 
+    # Render body, tracking the last drawn baseline for downstream layout.
+    last_baseline = body_first_baseline
     y = body_first_baseline
     if body:
         for para in body.split("\n"):
@@ -598,10 +801,18 @@ def _draw_text_page(c, title, body, is_right, filename=None, job_id=None, pipeli
             for ln in wrapped:
                 _draw_mixed_centered(c, ln, center_x, y,
                                      body_font, body_fallback, body_size)
+                last_baseline = y
                 y -= body_leading
             y -= body_para_gap
 
-    artifact_y = y - 16
+    # Metadata "choice" line — fixed 3-empty-line gap from the last body baseline.
+    if meta_line:
+        meta_y = last_baseline - body_to_meta
+        _draw_mixed_centered(c, meta_line, center_x, meta_y,
+                             body_font, body_fallback, body_size)
+        last_baseline = meta_y
+
+    artifact_y = last_baseline - 16
     if palette_path:
         try:
             palette_reader, palette_size = _load_image_rgb(palette_path)
@@ -610,33 +821,83 @@ def _draw_text_page(c, title, body, is_right, filename=None, job_id=None, pipeli
             palette_size = None
         if palette_reader is not None:
             palette_x = center_x - palette_side / 2
-            palette_y = max(trim_y + 26 * mm, y - palette_gap - palette_side)
-            c.saveState()
-            c.setStrokeColorRGB(1, 1, 1)
-            c.setLineWidth(0.5)
-            c.rect(palette_x, palette_y, palette_side, palette_side, fill=0, stroke=1)
+            # Fixed vertical distance from the last rendered baseline (meta
+            # line or last body line) to palette top.
+            palette_y = last_baseline - palette_gap - palette_side
             _draw_image_contain(c, palette_reader, palette_size,
                                 palette_x, palette_y, palette_side, palette_side)
-            c.restoreState()
             artifact_y = palette_y - 14
 
     if filename or job_id:
-        c.setFont("Courier", 8)
-        c.setFillColorRGB(0.5, 0.5, 0.5)
+        c.setFillColorRGB(*mono_color)
         id_parts = [p for p in [job_id, filename] if p]
-        c.drawCentredString(center_x, artifact_y, " \u00b7 ".join(id_parts))
+        _draw_mixed_centered(c, " \u00b7 ".join(id_parts), center_x, artifact_y,
+                             fonts.mono, fonts.mono_fallback,
+                             mono_artifact_size)
 
 
 # ── Content PDF ───────────────────────────────────────────────────────
 
-def generate_content_pdf(output_path, pages_config):
-    """Generate content pages PDF.
+def _emit_black_page(c, is_right):
+    """Set the trim box for verso/recto and paint a full black background."""
+    if is_right:
+        c.setTrimBox((
+            0, BLEED_3, CONTENT_NET, BLEED_3 + CONTENT_NET,
+        ))
+    else:
+        c.setTrimBox((
+            BLEED_3, BLEED_3, BLEED_3 + CONTENT_NET, BLEED_3 + CONTENT_NET,
+        ))
+    c.setFillColorRGB(0, 0, 0)
+    c.rect(0, 0, CONTENT_GROSS_W, CONTENT_GROSS_H, fill=1, stroke=0)
+
+
+def _render_entry_verso(c, entry, fonts, sizes, colors, gaps):
+    """Render the text side (verso) for one config entry on the current page.
+    Assumes `_emit_black_page(c, is_right=False)` has already run.
+    """
+    snap_name = entry.get("filename") or os.path.splitext(os.path.basename(entry.get("image", "")))[0]
+    meta = _load_image_meta(entry.get("image"))
+    pipeline = _pipeline_from_meta(meta)
+    palette_path = _palette_image_for_entry(entry.get("image"), meta)
+
+    body = entry.get("text", "")
+    new_meta_line = _metadata_line_from_meta(meta)
+    if new_meta_line:
+        body = _strip_legacy_metadata_line(body)
+
+    _draw_text_page(c, entry.get("title", ""),
+                    body, is_right=False,
+                    filename=snap_name, job_id=entry.get("job_id", ""),
+                    pipeline=pipeline, palette_path=palette_path,
+                    meta_line=new_meta_line,
+                    fonts=fonts, sizes=sizes, colors=colors, gaps=gaps)
+
+
+def _render_entry_recto(c, entry):
+    """Draw the image side (recto) for one config entry on the current page.
+    Assumes `_emit_black_page(c, is_right=True)` has already run.
+    """
+    img_path = entry.get("image")
+    if img_path and os.path.exists(img_path):
+        reader, size = _load_image_rgb(img_path)
+        _draw_image_cover(c, reader, size,
+                          0, 0, CONTENT_GROSS_W, CONTENT_GROSS_H)
+
+
+def generate_content_pdf(output_path, pages_config,
+                         fonts=None, sizes=None, colors=None, gaps=None):
+    """Generate the full content pages PDF.
 
     Each page is CONTENT_GROSS_W x CONTENT_GROSS_H (293 x 296 mm).
     Bleed of 3 mm on top, bottom, and outer edge; 0 on binding edge.
     TrimBox alternates for recto (right) / verso (left) pages.
     Page count padded to a multiple of 4.
     """
+    fonts = fonts or resolve_fonts()
+    sizes = sizes or DEFAULT_SIZES
+    colors = colors or DEFAULT_COLORS
+    gaps = gaps or DEFAULT_GAPS
     c = canvas.Canvas(str(output_path),
                       pagesize=(CONTENT_GROSS_W, CONTENT_GROSS_H))
     c.setTitle("PolyPaint - Content Pages")
@@ -659,67 +920,80 @@ def generate_content_pdf(output_path, pages_config):
     n_pages = n_content + (4 - n_content % 4) % 4
     n_pages = max(4, n_pages)
 
-    def _emit_page(is_right):
-        if is_right:
-            c.setTrimBox((
-                0, BLEED_3, CONTENT_NET, BLEED_3 + CONTENT_NET,
-            ))
-        else:
-            c.setTrimBox((
-                BLEED_3, BLEED_3, BLEED_3 + CONTENT_NET, BLEED_3 + CONTENT_NET,
-            ))
-        c.setFillColorRGB(0, 0, 0)
-        c.rect(0, 0, CONTENT_GROSS_W, CONTENT_GROSS_H, fill=1, stroke=0)
-
     page_num = 0
 
     # Page 1: blank recto
-    _emit_page(is_right=True)
+    _emit_black_page(c, is_right=True)
     c.showPage()
     page_num += 1
 
     # Each config entry: verso (text) + recto (image)
     for entry in pages_config:
-        # Verso (left page): text
-        _emit_page(is_right=False)
-        snap_name = entry.get("filename") or os.path.splitext(os.path.basename(entry.get("image", "")))[0]
-        meta = _load_image_meta(entry.get("image"))
-        pipeline = _pipeline_from_meta(meta)
-        palette_path = _palette_image_for_entry(entry.get("image"), meta)
-
-        body = entry.get("text", "")
-        new_meta_line = _metadata_line_from_meta(meta)
-        if new_meta_line:
-            cleaned = _strip_legacy_metadata_line(body)
-            body = (cleaned + "\n\n" if cleaned else "") + new_meta_line
-
-        _draw_text_page(c, entry.get("title", ""),
-                        body, is_right=False,
-                        filename=snap_name, job_id=entry.get("job_id", ""),
-                        pipeline=pipeline, palette_path=palette_path)
+        _emit_black_page(c, is_right=False)
+        _render_entry_verso(c, entry, fonts, sizes, colors, gaps)
         c.showPage()
         page_num += 1
 
-        # Recto (right page): image
-        _emit_page(is_right=True)
-        img_path = entry.get("image")
-        if img_path and os.path.exists(img_path):
-            reader, size = _load_image_rgb(img_path)
-            _draw_image_cover(c, reader, size,
-                              0, 0, CONTENT_GROSS_W, CONTENT_GROSS_H)
+        _emit_black_page(c, is_right=True)
+        _render_entry_recto(c, entry)
         c.showPage()
         page_num += 1
 
     # Pad remaining pages to reach n_pages
     while page_num < n_pages:
         is_right = (page_num % 2 == 0)
-        _emit_page(is_right)
+        _emit_black_page(c, is_right)
         c.showPage()
         page_num += 1
 
     c.save()
     print(f"  Content PDF: {output_path}  ({n_pages} pages, "
           f"{CONTENT_GROSS_W/mm:.0f} x {CONTENT_GROSS_H/mm:.0f} mm gross)")
+
+
+def generate_spread_pdf(output_path, pages_config, spread_index,
+                        fonts=None, sizes=None, colors=None, gaps=None):
+    """Render ONE spread (verso text + recto image) as a 2-page PDF for
+    fast layout/font experimentation. `spread_index` is 1-based into
+    pages_config.
+    """
+    fonts = fonts or resolve_fonts()
+    sizes = sizes or DEFAULT_SIZES
+    colors = colors or DEFAULT_COLORS
+    gaps = gaps or DEFAULT_GAPS
+    if not pages_config:
+        raise ValueError("pages_config is empty")
+    if spread_index < 1 or spread_index > len(pages_config):
+        raise ValueError(
+            f"spread index {spread_index} out of range 1..{len(pages_config)}")
+    entry = pages_config[spread_index - 1]
+
+    c = canvas.Canvas(str(output_path),
+                      pagesize=(CONTENT_GROSS_W, CONTENT_GROSS_H))
+    c.setTitle(f"PolyPaint - Spread {spread_index}")
+    c.setAuthor("make_book.py")
+
+    # Verso (text)
+    _emit_black_page(c, is_right=False)
+    _render_entry_verso(c, entry, fonts, sizes, colors, gaps)
+    c.showPage()
+
+    # Recto (image)
+    _emit_black_page(c, is_right=True)
+    _render_entry_recto(c, entry)
+    c.showPage()
+
+    c.save()
+    title = entry.get("title", "") or "(untitled)"
+    print(f"  Spread PDF:  {output_path}  "
+          f"(spread {spread_index}/{len(pages_config)} — {title!r})")
+    print(f"    fonts:  title={fonts.title}  body={fonts.body}  mono={fonts.mono}")
+    print(f"    sizes:  title={sizes.title}pt  body={sizes.body}pt  mono={sizes.mono}pt")
+    print(f"    colors: text=#{int(colors.text[0]*255):02X}{int(colors.text[1]*255):02X}{int(colors.text[2]*255):02X}  "
+          f"mono=#{int(colors.mono[0]*255):02X}{int(colors.mono[1]*255):02X}{int(colors.mono[2]*255):02X}")
+    print(f"    gaps (line units): title-pipeline={gaps.title_pipeline} "
+          f"pipeline-body={gaps.pipeline_body} body-meta={gaps.body_meta} "
+          f"meta-palette={gaps.meta_palette}")
 
 
 # ── Cover PDF ─────────────────────────────────────────────────────────
@@ -755,8 +1029,9 @@ def generate_cover_pdf(output_path, title="Polynomiography", subtitle="",
     front_cx = front_left + PANEL_W / 2
     front_cy = COVER_GROSS_H / 2
 
-    # Warm white for display typography — very slightly warm, still reads as white
-    warm_white = (0.98, 0.96, 0.93)
+    # Warm off-white for display typography (#F2EEE6) — reads as white but
+    # softer than pure 1,1,1 on a black cover.
+    warm_white = LETTER_COLOR
     # Slightly open tracking for the display title (point-space char spacing).
     title_char_space = 2.0  # ~55 units at 36pt — "slightly open, not too much"
     title_font_size = 36
@@ -820,13 +1095,8 @@ def generate_cover_pdf(output_path, title="Polynomiography", subtitle="",
             if sp_side > 0:
                 sp_x = spine_cx - sp_side / 2
                 sp_y = COVER_BLEED + 15 * mm
-                c.saveState()
-                c.setStrokeColorRGB(1, 1, 1)
-                c.setLineWidth(0.25)
-                c.rect(sp_x, sp_y, sp_side, sp_side, fill=0, stroke=1)
                 _draw_image_contain(c, spine_palette_reader, spine_palette_size,
                                     sp_x, sp_y, sp_side, sp_side)
-                c.restoreState()
 
     # ── Back cover (left panel) ──
     # Vertically center the block: image + gap + description + gap + title
@@ -1064,7 +1334,64 @@ def main():
                         help="Snaps directory for --init (default: snaps)")
     parser.add_argument("--cover-only", action="store_true",
                         help="Regenerate only the cover PDF (skip content)")
+    parser.add_argument("--spread", type=int, metavar="N",
+                        help="Render ONLY spread N (1-based) to <prefix>_spread<N>.pdf "
+                             "for quick layout/font experiments")
+    parser.add_argument("--list-fonts", action="store_true",
+                        help="List registered fonts (by key) and exit")
+
+    # Font selection — keys from FONT_REGISTRY
+    font_keys = sorted(FONT_REGISTRY.keys())
+    parser.add_argument("--title-font", choices=font_keys, default=None,
+                        help=f"Title font key (default: {DEFAULT_TITLE_FONT_KEY})")
+    parser.add_argument("--body-font", choices=font_keys, default=None,
+                        help=f"Descriptive body copy font key (default: {DEFAULT_BODY_FONT_KEY})")
+    parser.add_argument("--mono-font", choices=font_keys, default=None,
+                        help=f"Monospace/technical font key (default: {DEFAULT_MONO_FONT_KEY})")
+
+    # Font sizes (points)
+    parser.add_argument("--title-size", type=float, default=DEFAULT_SIZES.title,
+                        metavar="PT", help=f"Title point size (default: {DEFAULT_SIZES.title})")
+    parser.add_argument("--body-size", type=float, default=DEFAULT_SIZES.body,
+                        metavar="PT", help=f"Body point size (default: {DEFAULT_SIZES.body})")
+    parser.add_argument("--mono-size", type=float, default=DEFAULT_SIZES.mono,
+                        metavar="PT", help=f"Mono (pipeline) point size; artifact-id is mono-size - 1 "
+                                            f"(default: {DEFAULT_SIZES.mono})")
+
+    # Colors (CSS hex: #RRGGBB or RRGGBB)
+    def _color_hex(default):
+        return f"#{int(default[0]*255):02X}{int(default[1]*255):02X}{int(default[2]*255):02X}"
+    parser.add_argument("--text-color", default=None, metavar="HEX",
+                        help=f"Hex color for title + body + metadata line "
+                             f"(default: {_color_hex(DEFAULT_COLORS.text)})")
+    parser.add_argument("--mono-color", default=None, metavar="HEX",
+                        help=f"Hex color for pipeline + artifact-id lines "
+                             f"(default: {_color_hex(DEFAULT_COLORS.mono)})")
+
+    # Gap control — all in LINE UNITS (1 unit == body_leading == 16pt)
+    parser.add_argument("--gap-title-pipeline", type=int, default=DEFAULT_GAPS.title_pipeline,
+                        metavar="N", help="Line-unit gap from title baseline to pipeline baseline "
+                                           f"(default: {DEFAULT_GAPS.title_pipeline})")
+    parser.add_argument("--gap-pipeline-body", type=int, default=DEFAULT_GAPS.pipeline_body,
+                        metavar="N", help="Line-unit gap from pipeline baseline to first body baseline "
+                                           f"(default: {DEFAULT_GAPS.pipeline_body})")
+    parser.add_argument("--gap-body-meta", type=int, default=DEFAULT_GAPS.body_meta,
+                        metavar="N", help="Line-unit gap from last body baseline to metadata-line baseline "
+                                           f"(default: {DEFAULT_GAPS.body_meta})")
+    parser.add_argument("--gap-meta-palette", type=int, default=DEFAULT_GAPS.meta_palette,
+                        metavar="N", help="Line-unit gap from metadata-line baseline to palette-square top "
+                                           f"(default: {DEFAULT_GAPS.meta_palette})")
+
     args = parser.parse_args()
+
+    if args.list_fonts:
+        print("Registered fonts (key -> reportlab name):")
+        for key in sorted(FONT_REGISTRY.keys()):
+            print(f"  {key:20s} -> {FONT_REGISTRY[key]}")
+        print()
+        print(f"Defaults: title={DEFAULT_TITLE_FONT_KEY} "
+              f"body={DEFAULT_BODY_FONT_KEY} mono={DEFAULT_MONO_FONT_KEY}")
+        return
 
     if args.init:
         init_config(args.config, args.snaps_dir)
@@ -1093,11 +1420,40 @@ def main():
     imprint = config.get("imprint")
     spine_palette_image = config.get("spine_palette_image")
 
+    fonts = resolve_fonts(title_key=args.title_font,
+                          body_key=args.body_font,
+                          mono_key=args.mono_font)
+    sizes = SizeSet(title=args.title_size,
+                    body=args.body_size,
+                    mono=args.mono_size)
+    try:
+        text_color = parse_hex_color(args.text_color) if args.text_color else DEFAULT_COLORS.text
+        mono_color = parse_hex_color(args.mono_color) if args.mono_color else DEFAULT_COLORS.mono
+    except ValueError as e:
+        print(f"ERROR: bad color: {e}")
+        sys.exit(2)
+    colors = ColorSet(text=text_color, mono=mono_color)
+    gaps = GapSet(title_pipeline=args.gap_title_pipeline,
+                  pipeline_body=args.gap_pipeline_body,
+                  body_meta=args.gap_body_meta,
+                  meta_palette=args.gap_meta_palette)
+
+    # Single-spread experiment mode — skip cover + book-wide content, just
+    # render one 2-page PDF with the chosen fonts and gaps.
+    if args.spread is not None:
+        spread_path = f"{args.output_prefix}_spread{args.spread}.pdf"
+        print(f"Generating single spread {args.spread}/{len(pages)}...")
+        print()
+        generate_spread_pdf(spread_path, pages, args.spread,
+                            fonts=fonts, sizes=sizes, colors=colors, gaps=gaps)
+        return
+
     print(f"Generating WhiteWall PDFs: '{title}'")
     n_content = 1 + len(pages) * 2
     n_padded = n_content + (4 - n_content % 4) % 4
     n_padded = max(4, n_padded)
     print(f"  {len(pages)} spread(s) -> {n_padded} content pages")
+    print(f"  fonts: title={fonts.title} body={fonts.body} mono={fonts.mono}")
     print()
 
     cover_path = f"{args.output_prefix}_cover.pdf"
@@ -1107,12 +1463,14 @@ def main():
                        back_image, description, author,
                        imprint=imprint, spine_palette_image=spine_palette_image)
     if not args.cover_only:
-        generate_content_pdf(content_path, pages)
+        generate_content_pdf(content_path, pages,
+                             fonts=fonts, sizes=sizes, colors=colors, gaps=gaps)
 
     print()
     print("Done! Upload to WhiteWall:")
     print(f"  Cover:   {cover_path}")
-    print(f"  Content: {content_path}")
+    if not args.cover_only:
+        print(f"  Content: {content_path}")
 
 
 if __name__ == "__main__":

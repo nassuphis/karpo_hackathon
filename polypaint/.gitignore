@@ -1,6 +1,8 @@
 # Compiled C binaries built at deploy time (not tracked)
 # These are rebuilt by deploy.sh from source .c files.
 # Tracked binaries (ARM64 ELF committed to git) are NOT listed here.
+gemini_key.txt
+
 lambda/sweep
 lambda/sweep_test
 lambda/sweep_cli

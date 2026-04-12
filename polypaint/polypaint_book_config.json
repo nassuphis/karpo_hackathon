@@ -295,6 +295,13 @@
       "text": "A vortex of pale rose, white, and slate dust whirls around a dark central pinwheel of fine spiraling spokes, the whole figure spinning like a galaxy caught mid-rotation. Ten roots per solve are pushed through the roots6 parameter transform with no coefficient transform to soften the raw chaos. The clusteriness score at a tight 0.1% clip lights up zones where the nearest neighbors crowd most densely, and the blue-white-red palette paints the dense bands in pale rose and the sparse zones in steel blue. An autolevels pass pulls the faint outermost arms out of the shadows. The same p11b3 polynomial family as Red Turbine and Magenta Tempest, but recolored by structural density rather than root index.\n\np11b3 \u00b7 degree 10 \u00b7 5000\u00d75000 \u00b7 clusteriness \u00b7 bwred \u00b7 autolevels",
       "filename": "autolevels_1775834651178_zqb1cl",
       "job_id": "compute_mn4mbz8j"
+    },
+    {
+      "image": "snaps/compute_mnro9goh_resize_1775941905536_703php.jpeg",
+      "title": "Shattered Chrysanthemum",
+      "text": "Two interleaving complex exponential spirals \u2014 one tracing the sum of the parameters, the other their product \u2014 weave a field of degree-ten polynomials whose coefficients orbit the unit circle. The companion matrix eigenvalue transform then shatters each smooth spiral into algebraic fragments, scattering roots outward in a halo of lavender shards. Roots that cluster near the unit circle glow gold; those flung into the periphery cool to ink and violet. The result reads as a detonating flower: a molten chrysanthemum whose petals have been torn free and flung into the dark, trailing filaments of gold dust, while at the center a single bright point remains \u2014 the quiet eye of a mathematical storm.",
+      "filename": "resize_1775941905536_703php",
+      "job_id": "compute_mnro9goh"
     }
   ]
 }

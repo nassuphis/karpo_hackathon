@@ -22,6 +22,7 @@ import mimetypes
 import os
 import sys
 import textwrap
+from io import BytesIO
 from pathlib import Path
 
 try:
@@ -37,6 +38,8 @@ DEFAULT_EXAMPLE_COUNT = 4
 DEFAULT_STYLE_CONFIG = "polypaint_book_config.json"
 DEFAULT_KEY_FILE = "gemini_key.txt"
 META_SUFFIX = "_meta.json"
+DEFAULT_MAX_SIDE = 2048
+DEFAULT_JPEG_QUALITY = 90
 
 
 def _guess_mime_type(path: Path) -> str:
@@ -184,8 +187,9 @@ def _build_instruction(args: argparse.Namespace, examples_text: str) -> str:
     - Do not mention chatbots, AI, prompts, or "the model".
     - Do not invent technical facts not supported by the provided code/context.
     - Avoid empty artspeak and generic adjectives.
-    - The title should be 2 to 6 words, vivid, and non-generic.
+    - The title should be 2 to 3 words, vivid, and non-generic.
     - The description should be one compact paragraph, usually 90 to 180 words.
+    - The language should be intuitive, visual, and erudite.
     - If the code contains named transforms, metrics, palettes, or solver details,
       you may use them, but only if they genuinely help explain the image.
     - Prefer explaining what the image looks like first, then how the code likely
@@ -257,34 +261,125 @@ def _import_genai():
     return genai, types
 
 
+def _import_pil_image():
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError(
+            "Pillow is not installed in this environment. "
+            "Install it in the repo venv before running the Gemini scripts."
+        ) from exc
+    return Image
+
+
+def _prepare_image_for_model(image_path: Path, max_side: int, jpeg_quality: int) -> tuple[bytes, str, dict]:
+    original_bytes = image_path.read_bytes()
+    original_mime = _guess_mime_type(image_path)
+    info = {
+        "original_name": image_path.name,
+        "original_mime": original_mime,
+        "original_size_bytes": len(original_bytes),
+        "prepared_mime": original_mime,
+        "prepared_size_bytes": len(original_bytes),
+        "transformed": False,
+    }
+    if max_side <= 0:
+        return original_bytes, original_mime, info
+
+    Image = _import_pil_image()
+    with Image.open(image_path) as img:
+        info["original_width"] = img.width
+        info["original_height"] = img.height
+        needs_resize = max(img.width, img.height) > max_side
+        needs_reencode = original_mime != "image/jpeg" or len(original_bytes) > 8 * 1024 * 1024
+        if not needs_resize and not needs_reencode:
+            info["prepared_width"] = img.width
+            info["prepared_height"] = img.height
+            return original_bytes, original_mime, info
+
+        work = img.copy()
+        if work.mode not in ("RGB", "L"):
+            work = work.convert("RGB")
+        elif work.mode == "L":
+            work = work.convert("RGB")
+        if needs_resize:
+            work.thumbnail((max_side, max_side))
+        buf = BytesIO()
+        work.save(buf, format="JPEG", quality=jpeg_quality, optimize=True)
+        prepared = buf.getvalue()
+        info.update(
+            {
+                "prepared_mime": "image/jpeg",
+                "prepared_size_bytes": len(prepared),
+                "prepared_width": work.width,
+                "prepared_height": work.height,
+                "transformed": True,
+            }
+        )
+        return prepared, "image/jpeg", info
+
+
 def call_gemini(args: argparse.Namespace, prompt_text: str, image_path: Path) -> dict[str, str]:
     genai, types = _import_genai()
     client = genai.Client(api_key=_resolve_api_key(args))
-    image_bytes = image_path.read_bytes()
-    response = client.models.generate_content(
-        model=args.model,
-        contents=[
-            prompt_text,
-            types.Part.from_bytes(data=image_bytes, mime_type=_guess_mime_type(image_path)),
-        ],
-        config={
-            "temperature": args.temperature,
-            "response_mime_type": "application/json",
-            "response_json_schema": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "Short vivid art title, 2 to 6 words."},
-                    "description": {"type": "string", "description": "One polished descriptive paragraph."},
-                },
-                "required": ["title", "description"],
-                "additionalProperties": False,
-            },
-        },
+    image_bytes, mime_type, image_info = _prepare_image_for_model(
+        image_path,
+        args.max_side,
+        args.jpeg_quality,
     )
+    try:
+        response = client.models.generate_content(
+            model=args.model,
+            contents=[
+                prompt_text,
+                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+            ],
+            config={
+                "temperature": args.temperature,
+                "response_mime_type": "application/json",
+                "response_json_schema": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Short vivid art title, 2 to 6 words."},
+                        "description": {"type": "string", "description": "One polished descriptive paragraph."},
+                    },
+                    "required": ["title", "description"],
+                    "additionalProperties": False,
+                },
+            },
+        )
+    except Exception as exc:
+        msg = str(exc)
+        if "Deadline expired" in msg or "503" in msg:
+            detail = (
+                f"Gemini timed out on the image request. "
+                f"original={image_info.get('original_width')}x{image_info.get('original_height')} "
+                f"{image_info.get('original_mime')} {image_info.get('original_size_bytes')}B, "
+                f"prepared={image_info.get('prepared_width', image_info.get('original_width'))}x"
+                f"{image_info.get('prepared_height', image_info.get('original_height'))} "
+                f"{image_info.get('prepared_mime')} {image_info.get('prepared_size_bytes')}B. "
+                f"Try a smaller --max-side or rerun."
+            )
+            raise RuntimeError(detail) from exc
+        raise
     text = getattr(response, "text", None)
     if not text:
         raise RuntimeError("Gemini returned no text output")
     return parse_model_json_text(text)
+
+
+def build_generation_context(args: argparse.Namespace) -> tuple[Path, str]:
+    image_path = Path(args.image)
+    code_blocks = _read_code_sources(args.code, args.code_max_chars, args.symbol, args.coeff_catalog)
+    examples = _load_style_examples(Path(args.examples_config), args.examples)
+    examples_text = _build_examples_text(examples)
+    prompt_text = _build_prompt_text(image_path, code_blocks, args, examples_text)
+    return image_path, prompt_text
+
+
+def generate_result(args: argparse.Namespace) -> dict[str, str]:
+    image_path, prompt_text = build_generation_context(args)
+    return call_gemini(args, prompt_text, image_path)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -302,6 +397,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Gemini model. Default: {DEFAULT_MODEL}")
     parser.add_argument("--temperature", type=float, default=0.4, help="Generation temperature.")
+    parser.add_argument("--max-side", type=int, default=DEFAULT_MAX_SIDE, help=f"Downscale larger images to this max side before upload. Default: {DEFAULT_MAX_SIDE}")
+    parser.add_argument("--jpeg-quality", type=int, default=DEFAULT_JPEG_QUALITY, help=f"JPEG quality for preprocessed uploads. Default: {DEFAULT_JPEG_QUALITY}")
     parser.add_argument("--examples-config", default=DEFAULT_STYLE_CONFIG)
     parser.add_argument("--examples", type=int, default=DEFAULT_EXAMPLE_COUNT)
     parser.add_argument("--code-max-chars", type=int, default=DEFAULT_CODE_MAX_CHARS)
@@ -360,11 +457,7 @@ def normalize_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = normalize_args(parser.parse_args(argv), parser)
-    image_path = Path(args.image)
-    code_blocks = _read_code_sources(args.code, args.code_max_chars, args.symbol, args.coeff_catalog)
-    examples = _load_style_examples(Path(args.examples_config), args.examples)
-    examples_text = _build_examples_text(examples)
-    prompt_text = _build_prompt_text(image_path, code_blocks, args, examples_text)
+    image_path, prompt_text = build_generation_context(args)
 
     if args.dry_run:
         out_text = json.dumps(
@@ -374,6 +467,8 @@ def main(argv: list[str] | None = None) -> int:
                 "resolved_image": args.image,
                 "code_sources": args.code,
                 "symbol": args.symbol,
+                "max_side": args.max_side,
+                "jpeg_quality": args.jpeg_quality,
                 "examples_config": args.examples_config,
                 "examples_count": args.examples,
                 "prompt_preview": prompt_text[:700],
@@ -382,7 +477,7 @@ def main(argv: list[str] | None = None) -> int:
         ) + "\n"
     else:
         try:
-            result = call_gemini(args, prompt_text, image_path)
+            result = generate_result(args)
         except (ValueError, RuntimeError) as exc:
             parser.error(str(exc))
         out_text = format_result_text(result)

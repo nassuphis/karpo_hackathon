@@ -325,6 +325,7 @@
                 "degree.$": "$.plan.calc.degree",
                 "metric.$": "$.plan.solve_score.metric",
                 "palette.$": "$.plan.params.palette",
+                "solve_score_chain.$": "$.plan.solve_score.chain",
                 "solve_score_quantile.$": "$.plan.solve_score.quantile",
                 "solve_score_omega.$": "$.plan.solve_score.omega",
                 "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
@@ -390,6 +391,7 @@
                 "associated_palette_preview_key.$": "$.plan.attach.preview_key",
                 "associated_palette_palette.$": "$.plan.attach.palette",
                 "associated_palette_metric.$": "$.plan.attach.metric",
+                "associated_palette_score_chain.$": "$.plan.attach.score_chain",
                 "associated_palette_quantile.$": "$.plan.attach.quantile",
                 "associated_palette_omega.$": "$.plan.attach.omega",
                 "associated_palette_omega_enabled.$": "$.plan.attach.omega_enabled"

@@ -55,6 +55,7 @@ def handler(event, context):
     quantile = contract_param(params, "associated_palette_quantile", "", contract_warnings)
     omega = contract_param(params, "associated_palette_omega", "", contract_warnings)
     omega_enabled = _parse_boolish(contract_param(params, "associated_palette_omega_enabled", True, contract_warnings), True)
+    score_chain = contract_param(params, "associated_palette_score_chain", "", contract_warnings)
 
     if mode not in ("generated", "dependency"):
         raise RuntimeError(f"associated_palette_mode must be 'generated' or 'dependency', got {mode!r}")
@@ -87,6 +88,7 @@ def handler(event, context):
             quantile=quantile,
             omega=omega,
             omega_enabled=omega_enabled,
+            score_chain=score_chain,
         )
         existing_overlay = load_color_artifact_meta_overlay(s3, BUCKET, job_id, artifact_id)
         merged_meta = merge_metadata(existing_overlay, assoc_meta)

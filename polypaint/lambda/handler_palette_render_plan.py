@@ -14,15 +14,17 @@ import boto3
 from color_artifact_meta import load_color_artifact_head, parse_root_transforms
 from palette_names import VALID_PALETTE_NAMES
 from shared import BUCKET, parse_body, ok_response
+from solve_score_chain import (
+    VALID_SOLVE_SCORE_METRICS,
+    compile_solve_score_chain_or_legacy,
+    emit_solve_score_metadata,
+    read_solve_score_metadata,
+)
 
 s3 = boto3.client("s3")
 
 MAX_PLAN_BYTES = 200 * 1024  # fail fast before 256KB Step Functions limit
-VALID_METRICS = {
-    "proximity", "crowding", "spread", "anisotropy", "area",
-    "clusteriness", "shelliness", "outlierness", "nn_variation", "real_axis_proximity",
-    "centroid_re", "centroid_im", "centroid_dist", "dist_unit_circle", "asymmetry_re",
-}
+VALID_METRICS = VALID_SOLVE_SCORE_METRICS
 
 
 def _validate_threads(value, default=1):
@@ -262,7 +264,22 @@ def _build_chunk_items(calc):
     return chunk_items
 
 
-def _base_extract_plan(job_id, run_id, task_id, selected, palette_id, display_name, image_key, preview_key, metric, palette, q, omega, omega_enabled):
+def _base_extract_plan(
+    job_id,
+    run_id,
+    task_id,
+    selected,
+    palette_id,
+    display_name,
+    image_key,
+    preview_key,
+    metric,
+    palette,
+    q,
+    omega,
+    omega_enabled,
+    score_chain,
+):
     return {
         "job_id": job_id,
         "run_id": run_id,
@@ -284,6 +301,7 @@ def _base_extract_plan(job_id, run_id, task_id, selected, palette_id, display_na
             "quantile": q,
             "omega": omega,
             "omega_enabled": omega_enabled,
+            "score_chain": score_chain,
         },
         "outputs": {
             "image_key": image_key,
@@ -316,6 +334,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
     selected, source, source_kind = _resolve_color_lineage(job_id, artifact_id)
 
     if selected.get("associated_palette_mode") and selected.get("associated_palette_id"):
+        assoc_selected = read_solve_score_metadata("associated_palette", selected, default_metric="proximity")
         palette_id = str(selected.get("associated_palette_id"))
         image_key = str(selected.get("associated_palette_image_key") or f"renders/{job_id}/palettes/{palette_id}/image.jpeg")
         preview_key = str(selected.get("associated_palette_preview_key") or f"renders/{job_id}/palettes/{palette_id}/preview.png")
@@ -325,11 +344,12 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
             display_name=str(selected.get("associated_palette_display_name") or ""),
             image_key=image_key,
             preview_key=preview_key,
-            metric=str(selected.get("associated_palette_metric") or ""),
+            metric=assoc_selected["metric"],
             palette=str(selected.get("associated_palette_palette") or ""),
-            q=_artifact_meta_quantile(selected, "associated_palette_quantile"),
-            omega=_artifact_meta_quantile(selected, "associated_palette_omega"),
-            omega_enabled=_validate_omega_enabled(selected.get("associated_palette_omega_enabled", True)),
+            q=assoc_selected["quantile"],
+            omega=assoc_selected["omega"],
+            omega_enabled=assoc_selected["omega_enabled"],
+            score_chain=assoc_selected["chain"],
         )
         plan["params"].update(execution)
         plan["extract"] = {"action": "done", "reason": "already_associated", "source_artifact_id": selected["artifact_id"]}
@@ -337,6 +357,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         return plan
 
     if source_kind == "associated":
+        assoc_source = read_solve_score_metadata("associated_palette", source, default_metric="proximity")
         palette_id = str(source.get("associated_palette_id"))
         image_key = str(source.get("associated_palette_image_key") or f"renders/{job_id}/palettes/{palette_id}/image.jpeg")
         preview_key = str(source.get("associated_palette_preview_key") or f"renders/{job_id}/palettes/{palette_id}/preview.png")
@@ -346,11 +367,12 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
             display_name=str(source.get("associated_palette_display_name") or ""),
             image_key=image_key,
             preview_key=preview_key,
-            metric=str(source.get("associated_palette_metric") or ""),
+            metric=assoc_source["metric"],
             palette=str(source.get("associated_palette_palette") or ""),
-            q=_artifact_meta_quantile(source, "associated_palette_quantile"),
-            omega=_artifact_meta_quantile(source, "associated_palette_omega"),
-            omega_enabled=_validate_omega_enabled(source.get("associated_palette_omega_enabled", True)),
+            q=assoc_source["quantile"],
+            omega=assoc_source["omega"],
+            omega_enabled=assoc_source["omega_enabled"],
+            score_chain=assoc_source["chain"],
         )
         plan["params"].update(execution)
         plan["extract"] = {"action": "attach", "reason": "inherit_existing_association", "source_artifact_id": source["artifact_id"]}
@@ -362,41 +384,39 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         if not palette_id:
             raise RuntimeError(f"Saved-palette Color artifact {source['artifact_id']} is missing palette_source_id")
         palette_meta = _load_palette_meta(job_id, palette_id)
-        source_omega_enabled = _artifact_meta_omega_enabled(source, "palette_source_omega_enabled")
+        source_score = read_solve_score_metadata(
+            "palette_source",
+            source,
+            default_metric=palette_meta.get("metric") or "proximity",
+        )
         plan = _base_extract_plan(
             job_id, run_id, task_id, selected,
             palette_id=palette_id,
             display_name=str(source.get("palette_source_display_name") or palette_meta.get("display_name") or ""),
             image_key=str(palette_meta.get("image_key") or f"renders/{job_id}/palettes/{palette_id}/image.jpeg"),
             preview_key=str(palette_meta.get("preview_key") or f"renders/{job_id}/palettes/{palette_id}/preview.png"),
-            metric=str(source.get("palette_source_metric") or palette_meta.get("metric") or ""),
+            metric=source_score["metric"],
             palette=str(source.get("palette_source_palette") or palette_meta.get("palette") or ""),
-            q=_artifact_meta_quantile(source, "palette_source_quantile"),
-            omega=_artifact_meta_quantile(source, "palette_source_omega"),
-            omega_enabled=source_omega_enabled
-            if source_omega_enabled is not None
-            else _validate_omega_enabled(palette_meta.get("solve_score_omega_enabled", True)),
+            q=source_score["quantile"],
+            omega=source_score["omega"],
+            omega_enabled=source_score["omega_enabled"],
+            score_chain=source_score["chain"],
         )
         plan["params"].update(execution)
         plan["extract"] = {"action": "attach", "reason": "saved_palette_dependency", "source_artifact_id": source["artifact_id"]}
         plan["attach"]["mode"] = "dependency"
         return plan
 
-    metric = str(source.get("solve_metric") or "").strip()
-    if not metric:
-        raise RuntimeError(f"Solve-score Color artifact {source['artifact_id']} is missing solve_metric")
+    source_score = read_solve_score_metadata("solve", source, default_metric="proximity")
+    metric = source_score["metric"]
     palette = str(source.get("palette") or "").strip()
     if palette not in VALID_PALETTE_NAMES:
         raise RuntimeError(f"Solve-score Color artifact {source['artifact_id']} has invalid palette {palette!r}")
     q = _artifact_meta_quantile(source, "solve_score_quantile")
     if q is None:
         raise RuntimeError(f"Solve-score Color artifact {source['artifact_id']} is missing solve_score_quantile")
-    omega = _artifact_meta_quantile(source, "solve_score_omega")
-    if omega is None:
-        omega = 1.0
-    omega_enabled = _artifact_meta_omega_enabled(source, "solve_score_omega_enabled")
-    if omega_enabled is None:
-        omega_enabled = True
+    omega = source_score["omega"]
+    omega_enabled = source_score["omega_enabled"]
     root_transforms = list(source.get("root_transforms") or [])
 
     calc = _load_calc(job_id)
@@ -429,11 +449,13 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         q=q,
         omega=omega,
         omega_enabled=omega_enabled,
+        score_chain=source_score["chain"],
     )
     plan["mode"] = "extract_palette"
     plan["params"] = {
         "metric": metric,
         "palette": palette,
+        "solve_score_chain": source_score["chain"],
         "solve_score_quantile": q,
         "solve_score_omega": omega,
         "solve_score_omega_enabled": omega_enabled,
@@ -461,6 +483,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "quantile": q,
         "omega": omega,
         "omega_enabled": omega_enabled,
+        "chain": source_score["chain"],
         "cleanup_scratch": not scratch_ok,
         "clip_key": clip_key if scratch_ok else prefix + f"solve_score/{metric}_clip.json",
         "hist_prefix": solve_prefix,
@@ -496,7 +519,14 @@ def handler(event, context):
     pp = dict(params.get("params", {}))
 
     execution = _execution_params(pp)
-    metric = pp.get("metric", "proximity")
+    compiled_score = compile_solve_score_chain_or_legacy(
+        pp.get("solve_score_chain", ""),
+        pp.get("metric", "proximity"),
+        pp.get("solve_score_omega", 1.0),
+        pp.get("solve_score_omega_enabled", True),
+        default_metric="proximity",
+    )
+    metric = compiled_score["metric"]
     palette = pp.get("palette", "inferno")
     root_transforms = pp.get("root_transforms", [])
     try:
@@ -509,8 +539,8 @@ def handler(event, context):
         raise RuntimeError(f"Invalid palette: {palette}")
     if not (0.001 <= q <= 0.05):
         raise RuntimeError(f"solve_score_quantile must be in [0.001, 0.05], got {q}")
-    omega = _validate_omega(pp.get("solve_score_omega", 1.0))
-    omega_enabled = _validate_omega_enabled(pp.get("solve_score_omega_enabled", True))
+    omega = compiled_score["omega"]
+    omega_enabled = compiled_score["omega_enabled"]
 
     calc = _load_calc(job_id)
     degree = calc.get("degree")
@@ -543,6 +573,7 @@ def handler(event, context):
         "params": {
             "metric": metric,
             "palette": palette,
+            "solve_score_chain": compiled_score["chain"],
             "solve_score_quantile": q,
             "solve_score_omega": omega,
             "solve_score_omega_enabled": omega_enabled,
@@ -569,6 +600,7 @@ def handler(event, context):
             "quantile": "",
             "omega": "",
             "omega_enabled": True,
+            "score_chain": "",
         },
         "prefix": prefix,
         "calc": {
@@ -585,6 +617,7 @@ def handler(event, context):
             "quantile": q,
             "omega": omega,
             "omega_enabled": omega_enabled,
+            "chain": compiled_score["chain"],
             "cleanup_scratch": True,
             "clip_key": prefix + f"solve_score/{metric}_clip.json",
             "hist_prefix": solve_prefix,

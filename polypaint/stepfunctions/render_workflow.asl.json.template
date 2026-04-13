@@ -351,6 +351,7 @@
                 "degree.$": "$.plan.calc.degree",
                 "metric.$": "$.plan.associated_palette.metric",
                 "palette.$": "$.plan.associated_palette.palette",
+                "solve_score_chain.$": "$.plan.associated_palette.score_chain",
                 "solve_score_quantile.$": "$.plan.associated_palette.quantile",
                 "solve_score_omega.$": "$.plan.associated_palette.omega",
                 "solve_score_omega_enabled.$": "$.plan.associated_palette.omega_enabled",

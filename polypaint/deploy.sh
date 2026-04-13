@@ -750,7 +750,7 @@ echo "  Viewport: $(du -h /tmp/polypaint-viewport.zip | cut -f1)  (pure Python)"
 STORAGE_DIR=/tmp/polypaint-storage
 rm -rf "$STORAGE_DIR"
 mkdir -p "$STORAGE_DIR"
-cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py "$STORAGE_DIR/"
+cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$STORAGE_DIR/"
 cd "$STORAGE_DIR" && zip -r9 /tmp/polypaint-storage.zip . -q && cd "$SCRIPT_DIR"
 echo "  Storage:  $(du -h /tmp/polypaint-storage.zip | cut -f1)  (pure Python)"
 
@@ -873,7 +873,7 @@ echo "  RndPrev: $(du -h /tmp/polypaint-render-preview.zip | cut -f1)  (vipsthum
 AUTOLEVELS_DIR=/tmp/polypaint-autolevels
 rm -rf "$AUTOLEVELS_DIR"
 mkdir -p "$AUTOLEVELS_DIR"
-cp lambda/handler_autolevels.py lambda/shared.py lambda/color_artifact_meta.py "$AUTOLEVELS_DIR/"
+cp lambda/handler_autolevels.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$AUTOLEVELS_DIR/"
 cp lambda/autolevels_render "$AUTOLEVELS_DIR/"
 chmod +x "$AUTOLEVELS_DIR"/autolevels_render
 cd "$AUTOLEVELS_DIR" && zip -r9 /tmp/polypaint-autolevels.zip . -q && cd "$SCRIPT_DIR"
@@ -883,7 +883,7 @@ echo "  AutoLvl: $(du -h /tmp/polypaint-autolevels.zip | cut -f1)  (autolevels_r
 RESIZE_ARTIFACT_DIR=/tmp/polypaint-resize-artifact
 rm -rf "$RESIZE_ARTIFACT_DIR"
 mkdir -p "$RESIZE_ARTIFACT_DIR"
-cp lambda/handler_resize_artifact.py lambda/shared.py lambda/color_artifact_meta.py "$RESIZE_ARTIFACT_DIR/"
+cp lambda/handler_resize_artifact.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$RESIZE_ARTIFACT_DIR/"
 cd "$RESIZE_ARTIFACT_DIR" && zip -r9 /tmp/polypaint-resize-artifact.zip . -q && cd "$SCRIPT_DIR"
 echo "  Resize:  $(du -h /tmp/polypaint-resize-artifact.zip | cut -f1)  (resize artifact + libvips layer)"
 
@@ -913,7 +913,7 @@ echo "  ClrRePal: $(du -h /tmp/polypaint-color-repalette.zip | cut -f1)  (pixel_
 PDF_ARTIFACT_DIR=/tmp/polypaint-pdf-artifact
 rm -rf "$PDF_ARTIFACT_DIR"
 mkdir -p "$PDF_ARTIFACT_DIR"
-cp lambda/handler_pdf_artifact.py lambda/shared.py lambda/color_artifact_meta.py lambda/spread_pdf.py "$PDF_ARTIFACT_DIR/"
+cp lambda/handler_pdf_artifact.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/spread_pdf.py "$PDF_ARTIFACT_DIR/"
 cd "$PDF_ARTIFACT_DIR" && zip -r9 /tmp/polypaint-pdf-artifact.zip . -q && cd "$SCRIPT_DIR"
 echo "  PDFArt:  $(du -h /tmp/polypaint-pdf-artifact.zip | cut -f1)  (spread builder + python pdf layer)"
 
@@ -974,6 +974,7 @@ rm -rf "$PAL_PLAN_DIR"
 mkdir -p "$PAL_PLAN_DIR"
 cp lambda/handler_palette_render_plan.py lambda/shared.py \
    lambda/color_artifact_meta.py \
+   lambda/solve_score_chain.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PAL_PLAN_DIR/"
 cd "$PAL_PLAN_DIR" && zip -r9 /tmp/polypaint-palette-render-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalPlan: $(du -h /tmp/polypaint-palette-render-plan.zip | cut -f1)  (plan builder)"
@@ -993,7 +994,7 @@ echo "  PalChnk: $(du -h /tmp/polypaint-palette-chunk.zip | cut -f1)  (chunk sco
 PAL_FINAL_DIR=/tmp/polypaint-palette-finalize
 rm -rf "$PAL_FINAL_DIR"
 mkdir -p "$PAL_FINAL_DIR"
-cp lambda/handler_palette_finalize.py lambda/shared.py "$PAL_FINAL_DIR/"
+cp lambda/handler_palette_finalize.py lambda/shared.py lambda/solve_score_chain.py "$PAL_FINAL_DIR/"
 cp lambda/palette_bins_render lambda/raw2jpeg "$PAL_FINAL_DIR/"
 chmod +x "$PAL_FINAL_DIR"/palette_bins_render "$PAL_FINAL_DIR"/raw2jpeg
 cd "$PAL_FINAL_DIR" && zip -r9 /tmp/polypaint-palette-finalize.zip . -q && cd "$SCRIPT_DIR"
@@ -1003,7 +1004,7 @@ echo "  PalFin:  $(du -h /tmp/polypaint-palette-finalize.zip | cut -f1)  (finali
 ATTACH_PAL_DIR=/tmp/polypaint-attach-palette-to-color
 rm -rf "$ATTACH_PAL_DIR"
 mkdir -p "$ATTACH_PAL_DIR"
-cp lambda/handler_attach_palette_to_color.py lambda/shared.py lambda/color_artifact_meta.py "$ATTACH_PAL_DIR/"
+cp lambda/handler_attach_palette_to_color.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$ATTACH_PAL_DIR/"
 cd "$ATTACH_PAL_DIR" && zip -r9 /tmp/polypaint-attach-palette-to-color.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalAtt:  $(du -h /tmp/polypaint-attach-palette-to-color.zip | cut -f1)  (attach associated palette metadata)"
 
@@ -1020,6 +1021,7 @@ PLAN_DIR=/tmp/polypaint-render-plan
 rm -rf "$PLAN_DIR"
 mkdir -p "$PLAN_DIR"
 cp lambda/handler_render_plan.py lambda/shared.py \
+   lambda/solve_score_chain.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PLAN_DIR/"
 cd "$PLAN_DIR" && zip -r9 /tmp/polypaint-render-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  RndPlan: $(du -h /tmp/polypaint-render-plan.zip | cut -f1)  (plan builder)"

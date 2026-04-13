@@ -16,6 +16,11 @@ import boto3
 
 from palette_names import VALID_PALETTE_NAMES
 from shared import BUCKET, parse_body, ok_response
+from solve_score_chain import (
+    VALID_SOLVE_SCORE_METRICS,
+    compile_solve_score_chain_or_legacy,
+    emit_solve_score_metadata,
+)
 
 s3 = boto3.client("s3")
 lambda_client = boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1"))
@@ -264,6 +269,7 @@ def handler(event, context):
         "solve_score_merge_workers": 16,
         "finalize_workers": 16,
         "solve_metric": "proximity",
+        "solve_score_chain": "",
         "solve_score_quantile": 0.001,
         "solve_score_omega": 1.0,
         "solve_score_omega_enabled": True,
@@ -333,10 +339,12 @@ def handler(event, context):
             rp["solve_metric"] = "proximity"
 
     solve_metric = rp.get("solve_metric", "proximity")
+    solve_score_chain = rp.get("solve_score_chain", "")
     solve_score_quantile = rp.get("solve_score_quantile", 0.001)
     solve_score_omega = rp.get("solve_score_omega", 1.0)
     solve_score_omega_enabled = rp.get("solve_score_omega_enabled", True)
     palette = rp.get("palette", "inferno")
+    solve_score_compiled = None
     saved_palette_meta = {}
     saved_palette = {
         "enabled": False,
@@ -347,6 +355,7 @@ def handler(event, context):
         "quantile": None,
         "omega": 1.0,
         "omega_enabled": True,
+        "score_chain": "",
         "chunk_bins_prefix": "",
         "data_layout": "",
     }
@@ -382,10 +391,18 @@ def handler(event, context):
         palette = requested_palette or source_palette or palette
         if palette not in VALID_PALETTE_NAMES:
             raise RuntimeError(f"Invalid palette: {palette}")
-        solve_metric = source_meta.get("metric", solve_metric)
+        source_compiled = compile_solve_score_chain_or_legacy(
+            source_meta.get("solve_score_chain", ""),
+            source_meta.get("metric", solve_metric),
+            source_meta.get("solve_score_omega", solve_score_omega),
+            source_meta.get("solve_score_omega_enabled", True),
+            default_metric=source_meta.get("metric", solve_metric) or "proximity",
+        )
+        solve_metric = source_compiled["metric"]
         solve_score_quantile = float(source_meta.get("solve_score_quantile", solve_score_quantile))
-        solve_score_omega = _validate_omega(source_meta.get("solve_score_omega", solve_score_omega))
-        solve_score_omega_enabled = _validate_omega_enabled(source_meta.get("solve_score_omega_enabled", True))
+        solve_score_omega = source_compiled["omega"]
+        solve_score_omega_enabled = source_compiled["omega_enabled"]
+        solve_score_chain = source_compiled["chain"]
         rp["palette"] = palette
         rp["root_transforms"] = list(source_meta.get("root_transforms") or [])
         saved_palette = {
@@ -397,6 +414,7 @@ def handler(event, context):
             "quantile": solve_score_quantile,
             "omega": solve_score_omega,
             "omega_enabled": solve_score_omega_enabled,
+            "score_chain": source_compiled["chain"],
             "chunk_bins_prefix": source_meta.get("chunk_bins_prefix", f"renders/{job_id}/palettes/{saved_palette_id}/chunks/palette_bins_chunk_"),
             "data_layout": source_meta.get("data_layout", ""),
         }
@@ -411,13 +429,36 @@ def handler(event, context):
             raise RuntimeError(f"solve_score_quantile must be numeric, got {solve_score_quantile!r}")
         if not (0.001 <= solve_score_quantile <= 0.05):
             raise RuntimeError(f"solve_score_quantile must be in [0.001, 0.05], got {solve_score_quantile}")
-        solve_score_omega = _validate_omega(solve_score_omega)
-        solve_score_omega_enabled = _validate_omega_enabled(solve_score_omega_enabled)
+        solve_score_compiled = compile_solve_score_chain_or_legacy(
+            solve_score_chain,
+            solve_metric,
+            solve_score_omega,
+            solve_score_omega_enabled,
+            default_metric="proximity",
+        )
+        solve_metric = solve_score_compiled["metric"]
+        solve_score_omega = solve_score_compiled["omega"]
+        solve_score_omega_enabled = solve_score_compiled["omega_enabled"]
+        solve_score_chain = solve_score_compiled["chain"]
+        rp["solve_score_chain"] = solve_score_chain
+    elif color_mode == "saved_palette":
+        solve_score_compiled = compile_solve_score_chain_or_legacy(
+            saved_palette["score_chain"],
+            saved_palette["metric"],
+            saved_palette["omega"],
+            saved_palette["omega_enabled"],
+            default_metric=saved_palette["metric"] or "proximity",
+        )
+        solve_score_chain = solve_score_compiled["chain"]
+        rp["solve_score_chain"] = solve_score_chain
     else:
+        if solve_metric and solve_metric not in VALID_SOLVE_SCORE_METRICS:
+            raise RuntimeError(f"Invalid solve-score metric: {solve_metric!r}")
         solve_score_omega = _validate_omega(solve_score_omega)
         solve_score_omega_enabled = _validate_omega_enabled(solve_score_omega_enabled)
     rp["solve_score_omega"] = solve_score_omega
     rp["solve_score_omega_enabled"] = solve_score_omega_enabled
+    rp["solve_metric"] = solve_metric
 
     solve_score = {
         "enabled": solve_score_enabled,
@@ -427,6 +468,7 @@ def handler(event, context):
         "quantile": solve_score_quantile,
         "omega": solve_score_omega,
         "omega_enabled": solve_score_omega_enabled,
+        "chain": solve_score_chain,
         "hist_input_mode": rp["solve_score_hist_input_mode"] if solve_score_enabled else "tmpfile",
         "hist_retries": rp["solve_score_hist_retries"] if solve_score_enabled else 0,
         "clip_key": f"renders/{job_id}/solve_scores/{solve_metric}_clip.json",
@@ -499,6 +541,7 @@ def handler(event, context):
         "quantile": None,
         "omega": None,
         "omega_enabled": True,
+        "score_chain": "",
     }
     if mode == "color" and rp["save_associated_palette"]:
         if color_mode == "saved_palette":
@@ -519,6 +562,7 @@ def handler(event, context):
                 "quantile": saved_palette["quantile"],
                 "omega": saved_palette["omega"],
                 "omega_enabled": saved_palette["omega_enabled"],
+                "score_chain": saved_palette["score_chain"],
             }
         elif solve_score_enabled:
             if not full_n:
@@ -555,6 +599,7 @@ def handler(event, context):
                 "quantile": solve_score_quantile,
                 "omega": solve_score_omega,
                 "omega_enabled": solve_score_omega_enabled,
+                "score_chain": solve_score_chain,
                 "chunk_threads": rp["palette_chunk_threads"],
                 "chunk_input_mode": rp["palette_chunk_input_mode"],
                 "chunk_retries": rp["palette_chunk_retries"],
@@ -598,10 +643,6 @@ def handler(event, context):
             "match_mode": rp.get("match_mode", "none"),
             "palette": palette,
             "constant_color": rp.get("constant_color", "ffffff"),
-            "solve_metric": solve_metric if solve_score_enabled else "",
-            "solve_score_quantile": str(solve_score_quantile if solve_score_enabled else ""),
-            "solve_score_omega": str(solve_score_omega if solve_score_enabled else ""),
-            "solve_score_omega_enabled": ("true" if solve_score_omega_enabled else "false") if solve_score_enabled else "",
             "background_color": DEFAULT_BACKGROUND_COLOR,
             "background_threshold": str(DEFAULT_BACKGROUND_THRESHOLD),
             "repalette_capable": "true" if color_repalette_capable else "false",
@@ -609,6 +650,17 @@ def handler(event, context):
             "pixel_bins_empty": "255" if color_repalette_capable else "",
             "pixel_bins_layout": "tile_u8_v1" if color_repalette_capable else "",
         })
+        if solve_score_enabled:
+            outputs["metadata"].update(
+                emit_solve_score_metadata(
+                    "solve",
+                    metric=solve_metric,
+                    quantile=solve_score_quantile,
+                    omega=solve_score_omega,
+                    omega_enabled=solve_score_omega_enabled,
+                    chain=solve_score_chain,
+                )
+            )
         if associated_palette["enabled"]:
             outputs["metadata"].update({
                 "associated_palette_mode": associated_palette["mode"],
@@ -617,29 +669,43 @@ def handler(event, context):
                 "associated_palette_image_key": associated_palette["image_key"],
                 "associated_palette_preview_key": associated_palette["preview_key"],
                 "associated_palette_palette": str(associated_palette["palette"]),
-                "associated_palette_metric": str(associated_palette["metric"]),
-                "associated_palette_quantile": (
-                    str(associated_palette["quantile"]) if associated_palette["quantile"] not in ("", None) else ""
-                ),
-                "associated_palette_omega": (
-                    str(associated_palette["omega"]) if associated_palette["omega"] not in ("", None) else ""
-                ),
-                "associated_palette_omega_enabled": "true" if associated_palette["omega_enabled"] else "false",
             })
+            outputs["metadata"].update(
+                emit_solve_score_metadata(
+                    "associated_palette",
+                    metric=associated_palette["metric"],
+                    quantile=associated_palette["quantile"],
+                    omega=associated_palette["omega"],
+                    omega_enabled=associated_palette["omega_enabled"],
+                    chain=associated_palette["score_chain"],
+                )
+            )
         if color_mode == "saved_palette":
             outputs["metadata"].update({
-                "solve_metric": str(solve_metric),
-                "solve_score_quantile": str(solve_score_quantile),
-                "solve_score_omega": str(solve_score_omega),
-                "solve_score_omega_enabled": "true" if solve_score_omega_enabled else "false",
                 "palette_source_id": saved_palette["palette_id"],
                 "palette_source_display_name": saved_palette["display_name"],
                 "palette_source_palette": str(saved_palette["palette"]),
-                "palette_source_metric": str(saved_palette["metric"]),
-                "palette_source_quantile": str(saved_palette["quantile"]),
-                "palette_source_omega": str(saved_palette["omega"]),
-                "palette_source_omega_enabled": "true" if saved_palette["omega_enabled"] else "false",
             })
+            outputs["metadata"].update(
+                emit_solve_score_metadata(
+                    "solve",
+                    metric=solve_metric,
+                    quantile=solve_score_quantile,
+                    omega=solve_score_omega,
+                    omega_enabled=solve_score_omega_enabled,
+                    chain=solve_score_chain,
+                )
+            )
+            outputs["metadata"].update(
+                emit_solve_score_metadata(
+                    "palette_source",
+                    metric=saved_palette["metric"],
+                    quantile=saved_palette["quantile"],
+                    omega=saved_palette["omega"],
+                    omega_enabled=saved_palette["omega_enabled"],
+                    chain=saved_palette["score_chain"],
+                )
+            )
     elif mode == "bilevel":
         outputs["metadata"].update({
             "format": "tif",

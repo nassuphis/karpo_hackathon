@@ -9,6 +9,7 @@ import time
 
 import boto3
 
+from solve_score_chain import emit_solve_score_metadata
 from shared import (
     BUCKET,
     attach_contract_warnings,
@@ -87,6 +88,7 @@ def handler(event, context):
     q = contract_param(params, "solve_score_quantile", 0.001, contract_warnings)
     omega = float(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
     omega_enabled = _parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
+    solve_score_chain = contract_param(params, "solve_score_chain", "", contract_warnings)
     root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
     image_key = params["image_key"]
     preview_key = params["preview_key"]
@@ -198,17 +200,23 @@ def handler(event, context):
         metadata = {
             "width": str(full_n),
             "height": str(full_n),
-            "metric": metric,
             "palette": palette,
-            "solve_score_quantile": str(q),
-            "solve_score_omega": str(omega),
-            "solve_score_omega_enabled": "true" if omega_enabled else "false",
             "full_n": str(full_n),
             "times": str(times),
             "using_pass": "0",
             "clip_lo": str(bins_meta.get("clip_lo", "")),
             "clip_hi": str(bins_meta.get("clip_hi", "")),
         }
+        metadata.update(
+            emit_solve_score_metadata(
+                "solve",
+                metric=metric,
+                quantile=q,
+                omega=omega,
+                omega_enabled=omega_enabled,
+                chain=solve_score_chain,
+            )
+        )
         with open(_TMP_JPEG, "rb") as fh:
             s3.upload_fileobj(fh, BUCKET, image_key, ExtraArgs={"ContentType": "image/jpeg", "Metadata": metadata})
         with open(_TMP_PREVIEW, "rb") as pf:
@@ -220,11 +228,7 @@ def handler(event, context):
             "palette_id": palette_id,
             "created_at": created_at,
             "display_name": f"{metric} q={(float(q) * 100):.1f}% {_omega_display(omega_enabled, omega)} {palette} {created_at}",
-            "metric": metric,
             "palette": palette,
-            "solve_score_quantile": float(q),
-            "solve_score_omega": omega,
-            "solve_score_omega_enabled": omega_enabled,
             "root_transforms": root_transforms or [],
             "degree": degree,
             "N": full_n,
@@ -248,6 +252,24 @@ def handler(event, context):
             "chunk_bins_prefix": chunk_bins_prefix,
             "chunk_meta_prefix": chunk_meta_prefix,
         }
+        meta_body.update(
+            {
+                "metric": metric,
+                "solve_score_quantile": float(q),
+                "solve_score_omega": omega,
+                "solve_score_omega_enabled": omega_enabled,
+                "solve_score_chain": json.loads(
+                    emit_solve_score_metadata(
+                        "solve",
+                        metric=metric,
+                        quantile=q,
+                        omega=omega,
+                        omega_enabled=omega_enabled,
+                        chain=solve_score_chain,
+                    )["solve_score_chain"]
+                ),
+            }
+        )
         if source_color_artifact_id:
             meta_body["derived_from_color_artifact_id"] = source_color_artifact_id
             meta_body["derivation_kind"] = "extract_palette"

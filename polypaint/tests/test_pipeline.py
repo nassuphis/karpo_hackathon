@@ -1766,10 +1766,10 @@ class TestPreviewHandler(unittest.TestCase):
     @patch("handler_preview.s3")
     def test_preview_png_valid(self, mock_s3):
         """Verify grayscale PNG output is structurally valid."""
-        from handler_preview import _encode_png_gray
+        from shared import encode_png_gray
         gray = bytearray(4 * 4)  # 4x4 black image
         gray[0] = 255  # white pixel at (0,0)
-        png = _encode_png_gray(4, 4, gray)
+        png = encode_png_gray(4, 4, gray)
         self.assertTrue(png.startswith(b'\x89PNG\r\n\x1a\n'))
         # IHDR chunk follows
         self.assertEqual(png[12:16], b'IHDR')
@@ -1904,7 +1904,7 @@ class TestRenderSummary(unittest.TestCase):
             key = kwargs["Key"]
             if key == "renders/j/color/color_run_ss/image.jpeg":
                 return {"ContentLength": 1234, "ContentType": "image/jpeg",
-                        "Metadata": {"width": "4096", "height": "4096", "artifact_id": "color_run_ss", "created_at": "2026-03-31T10:00:00Z", "family": "color", "color_mode": "solve_score", "format": "jpeg", "root_transforms": "[]", "view_mode": "auto", "quantile": "0.01", "shim": "0.07", "rotation": "0", "match_mode": "greedy", "solve_metric": "anisotropy", "solve_score_quantile": "0.02", "solve_score_omega": "6"}}
+                        "Metadata": {"width": "4096", "height": "4096", "artifact_id": "color_run_ss", "created_at": "2026-03-31T10:00:00Z", "family": "color", "color_mode": "solve_score", "format": "jpeg", "root_transforms": "[]", "view_mode": "auto", "quantile": "0.01", "shim": "0.07", "rotation": "0", "match_mode": "greedy", "solve_metric": "anisotropy", "solve_score_chain": '["anisotropy",["omega_cosine","6"]]', "solve_score_quantile": "0.02", "solve_score_omega": "6"}}
             if key == "renders/j/color/color_run_ss/preview.png":
                 return {"ContentLength": 500, "ContentType": "image/png", "Metadata": {}}
             raise Exception("NoSuchKey")
@@ -1917,6 +1917,7 @@ class TestRenderSummary(unittest.TestCase):
         body = json.loads(result["body"])
         cj = body["families"]["color"][0]
         self.assertEqual(cj["solve_metric"], "anisotropy")
+        self.assertEqual(cj["solve_score_chain"], ["anisotropy", ["omega_cosine", "6"]])
         self.assertAlmostEqual(cj["solve_score_quantile"], 0.02)
         self.assertAlmostEqual(cj["solve_score_omega"], 6.0)
 
@@ -1962,6 +1963,7 @@ class TestRenderSummary(unittest.TestCase):
                         "associated_palette_preview_key": "renders/j/palettes/pal_color_run_assoc/preview.png",
                         "associated_palette_palette": "inferno",
                         "associated_palette_metric": "crowding",
+                        "associated_palette_score_chain": '["crowding"]',
                         "associated_palette_quantile": "0.01",
                         "associated_palette_omega": "4",
                         "associated_palette_omega_enabled": "false",
@@ -1982,6 +1984,7 @@ class TestRenderSummary(unittest.TestCase):
         self.assertEqual(art["associated_palette_id"], "pal_color_run_assoc")
         self.assertEqual(art["associated_palette_image_key"], "renders/j/palettes/pal_color_run_assoc/image.jpeg")
         self.assertEqual(art["associated_palette_metric"], "crowding")
+        self.assertEqual(art["associated_palette_score_chain"], ["crowding"])
         self.assertAlmostEqual(art["associated_palette_quantile"], 0.01)
         self.assertAlmostEqual(art["associated_palette_omega"], 4.0)
         self.assertFalse(art["associated_palette_omega_enabled"])
@@ -2034,6 +2037,7 @@ class TestRenderSummary(unittest.TestCase):
                     "associated_palette_id": "pal_sidecar",
                     "associated_palette_image_key": "renders/j/palettes/pal_sidecar/image.jpeg",
                     "associated_palette_metric": "spread",
+                    "associated_palette_score_chain": "[\"spread\"]",
                     "associated_palette_quantile": "0.02",
                     "associated_palette_omega": "6",
                     "associated_palette_omega_enabled": "false",
@@ -2051,9 +2055,72 @@ class TestRenderSummary(unittest.TestCase):
         self.assertEqual(art["associated_palette_id"], "pal_sidecar")
         self.assertEqual(art["associated_palette_image_key"], "renders/j/palettes/pal_sidecar/image.jpeg")
         self.assertEqual(art["associated_palette_metric"], "spread")
+        self.assertEqual(art["associated_palette_score_chain"], ["spread"])
         self.assertAlmostEqual(art["associated_palette_quantile"], 0.02)
         self.assertAlmostEqual(art["associated_palette_omega"], 6.0)
         self.assertFalse(art["associated_palette_omega_enabled"])
+
+    @patch("handler_storage.s3")
+    def test_render_summary_exposes_palette_source_score_chain(self, mock_s3):
+        from handler_storage import handle_render_summary
+
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+
+        def paginate_side_effect(**kwargs):
+            prefix = kwargs.get("Prefix", "")
+            if prefix == "renders/j/color/":
+                return [{"CommonPrefixes": [{"Prefix": "renders/j/color/color_saved/"}]}]
+            return [{"CommonPrefixes": []}]
+
+        mock_paginator.paginate.side_effect = paginate_side_effect
+
+        def mock_head(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/color/color_saved/image.jpeg":
+                return {
+                    "ContentLength": 1234,
+                    "ContentType": "image/jpeg",
+                    "Metadata": {
+                        "width": "4096",
+                        "height": "4096",
+                        "artifact_id": "color_saved",
+                        "created_at": "2026-04-10T10:00:00Z",
+                        "family": "color",
+                        "color_mode": "saved_palette",
+                        "format": "jpeg",
+                        "root_transforms": "[]",
+                        "view_mode": "auto",
+                        "quantile": "0.01",
+                        "shim": "0.07",
+                        "rotation": "0",
+                        "match_mode": "none",
+                        "palette_source_id": "pal_src",
+                        "palette_source_display_name": "crowding q=1.0% w=off magma",
+                        "palette_source_palette": "magma",
+                        "palette_source_metric": "crowding",
+                        "palette_source_score_chain": '["crowding"]',
+                        "palette_source_quantile": "0.01",
+                        "palette_source_omega": "6",
+                        "palette_source_omega_enabled": "false",
+                    },
+                }
+            if key == "renders/j/color/color_saved/preview.png":
+                return {"ContentLength": 500, "ContentType": "image/png", "Metadata": {}}
+            raise Exception("NoSuchKey")
+
+        mock_s3.head_object.side_effect = mock_head
+        mock_s3.get_object.side_effect = Exception("NoSuchKey")
+        mock_s3.generate_presigned_url.return_value = "https://signed"
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+        art = body["families"]["color"][0]
+        self.assertEqual(art["palette_source_id"], "pal_src")
+        self.assertEqual(art["palette_source_metric"], "crowding")
+        self.assertEqual(art["palette_source_score_chain"], ["crowding"])
+        self.assertAlmostEqual(art["palette_source_omega"], 6.0)
+        self.assertFalse(art["palette_source_omega_enabled"])
 
     @patch("handler_storage.s3")
     def test_render_summary_reads_resize_metadata_from_color_sidecar_overlay(self, mock_s3):

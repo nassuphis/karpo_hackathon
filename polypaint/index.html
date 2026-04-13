@@ -697,31 +697,15 @@ button {
                 <div class="color-row">
                     <span class="color-dot" data-mode="solve_score" onclick="setColorMode('solve_score')"></span>
                     <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('solve_score')">Solve score</span>
-                    <select id="render-solve-score" onchange="setSolveMetric(this.value)" style="font-size:10px; margin-left:6px; width:108px">
-                        <option value="proximity">Proximity</option>
-                        <option value="crowding">Crowding</option>
-                        <option value="spread">Spread</option>
-                        <option value="anisotropy">Anisotropy</option>
-                        <option value="area">Area</option>
-                        <option value="clusteriness">Clusteriness</option>
-                        <option value="shelliness">Shelliness</option>
-                        <option value="outlierness">Outlierness</option>
-                        <option value="nn_variation">NN variation</option>
-                        <option value="real_axis_proximity">Real-axis proximity</option>
-                        <option value="centroid_re">Centroid Re</option>
-                        <option value="centroid_im">Centroid Im</option>
-                        <option value="centroid_dist">Centroid Dist</option>
-                        <option value="dist_unit_circle">Dist unit circle</option>
-                        <option value="asymmetry_re">Asymmetry Re</option>
+                    <div id="ss-chips" class="chip-container" style="margin-left:6px"></div>
+                    <select id="ss-add" onchange="addChip('ss',this.value);this.value='';" style="width:120px; font-size:10px; margin-left:6px">
+                        <option value="">+ add...</option>
                     </select>
                     <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:6px"></div>
-                    <label style="color:#888; font-size:10px; margin-left:8px; display:inline-flex; align-items:center; gap:4px">
-                        <input type="checkbox" id="render-solve-score-omega-enabled" checked onchange="_syncSolveScoreOmegaUi('render')">
-                        <span>Omega</span>
-                    </label>
-                    <span id="render-solve-score-omega-val" style="font-size:10px; display:inline-block; width:1.5em; text-align:right">1</span>
-                    <input type="range" id="render-solve-score-omega" min="1" max="10" step="1" value="1" style="width:92px; margin-left:4px"
-                        oninput="document.getElementById('render-solve-score-omega-val').textContent=parseInt(this.value, 10)">
+                    <input type="hidden" id="render-solve-score" value="proximity">
+                    <input type="hidden" id="render-solve-score-omega" value="1">
+                    <input type="hidden" id="render-solve-score-omega-enabled" value="true">
+                    <span id="render-solve-score-omega-val" style="display:none">1</span>
                 </div>
                 <div class="color-row" style="padding-left:18px">
                     <label style="color:#888; font-size:10px; min-width:70px">Score clip q:</label>
@@ -804,31 +788,15 @@ button {
                 <div class="color-title">Solve Score Palette</div>
                 <div class="color-row">
                     <span style="color:#888; min-width:45px; text-transform:uppercase; letter-spacing:0.06em">Metric</span>
-                    <select id="palette-solve-score" onchange="setPaletteMetric(this.value)" style="font-size:10px; width:120px">
-                        <option value="proximity">Proximity</option>
-                        <option value="crowding">Crowding</option>
-                        <option value="spread">Spread</option>
-                        <option value="anisotropy">Anisotropy</option>
-                        <option value="area">Area</option>
-                        <option value="clusteriness">Clusteriness</option>
-                        <option value="shelliness">Shelliness</option>
-                        <option value="outlierness">Outlierness</option>
-                        <option value="nn_variation">NN variation</option>
-                        <option value="real_axis_proximity">Real-axis proximity</option>
-                        <option value="centroid_re">Centroid Re</option>
-                        <option value="centroid_im">Centroid Im</option>
-                        <option value="centroid_dist">Centroid Dist</option>
-                        <option value="dist_unit_circle">Dist unit circle</option>
-                        <option value="asymmetry_re">Asymmetry Re</option>
+                    <div id="palette-ss-chips" class="chip-container" style="margin-left:6px"></div>
+                    <select id="palette-ss-add" onchange="addChip('palette-ss',this.value);this.value='';" style="width:120px; font-size:10px; margin-left:6px">
+                        <option value="">+ add...</option>
                     </select>
                     <div id="palette-circles-palette-tab" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:8px"></div>
-                    <label style="color:#888; font-size:10px; margin-left:8px; display:inline-flex; align-items:center; gap:4px">
-                        <input type="checkbox" id="palette-solve-score-omega-enabled" checked onchange="_syncSolveScoreOmegaUi('palette')">
-                        <span>Omega</span>
-                    </label>
-                    <span id="palette-solve-score-omega-val" style="font-size:10px; display:inline-block; width:1.5em; text-align:right">1</span>
-                    <input type="range" id="palette-solve-score-omega" min="1" max="10" step="1" value="1" style="width:92px; margin-left:4px"
-                        oninput="document.getElementById('palette-solve-score-omega-val').textContent=parseInt(this.value, 10)">
+                    <input type="hidden" id="palette-solve-score" value="proximity">
+                    <input type="hidden" id="palette-solve-score-omega" value="1">
+                    <input type="hidden" id="palette-solve-score-omega-enabled" value="true">
+                    <span id="palette-solve-score-omega-val" style="display:none">1</span>
                 </div>
                 <div class="color-row" style="padding-left:0">
                     <label style="color:#888; font-size:10px; min-width:70px">Score clip q:</label>
@@ -3133,6 +3101,7 @@ function _escapeHtml(value) {
 function _catalogForChain(which) {
     if (which === 'pt') return _ptCatalog;
     if (which === 'ct') return _ctCatalog;
+    if (which === 'ss' || which === 'palette-ss') return _ssCatalog;
     return _rtCatalog;
 }
 
@@ -3140,6 +3109,8 @@ function _chainForWhich(which) {
     if (which === 'pt') return _ptChain;
     if (which === 'rt') return _rtChain;
     if (which === 'palette-rt') return _paletteRtChain;
+    if (which === 'ss') return _renderScoreChain;
+    if (which === 'palette-ss') return _paletteScoreChain;
     return _ctChain;
 }
 
@@ -3152,6 +3123,192 @@ function _serializeNamedChain(chain) {
     return (Array.isArray(chain) ? chain : []).map(item =>
         item && item.params && item.params.length ? [item.name, ...item.params] : item.name
     );
+}
+
+function _solveScorePrefixForWhich(which) {
+    return which === 'palette-ss' ? 'palette' : 'render';
+}
+
+function _solveScoreWhichForPrefix(prefix) {
+    return prefix === 'palette' ? 'palette-ss' : 'ss';
+}
+
+function _defaultSolveScoreChain(metric = 'proximity', omega = 1, omegaEnabled = false) {
+    const nextMetric = _solveScoreMetricSet.has(metric) ? metric : 'proximity';
+    const chain = [{ name: nextMetric, params: [] }];
+    if (omegaEnabled) chain.push({ name: 'omega_cosine', params: [String(omega)] });
+    return chain;
+}
+
+function _normalizeSolveScoreChain(chain, fallbackMetric = 'proximity') {
+    const rows = Array.isArray(chain) ? chain : [];
+    const normalized = [];
+    rows.forEach((item) => {
+        let name = '';
+        let params = [];
+        if (Array.isArray(item) && item.length) {
+            name = String(item[0] || '').trim();
+            params = item.slice(1).map(v => String(v));
+        } else if (typeof item === 'string') {
+            name = String(item).trim();
+        } else if (item && typeof item === 'object') {
+            name = String(item.name || '').trim();
+            params = Array.isArray(item.params) ? item.params.map(v => String(v)) : [];
+        }
+        if (!name) return;
+        if (!_ssCatalog[name]) return;
+        normalized.push({ name, params });
+    });
+    return normalized;
+}
+
+function _serializeSolveScoreChain(chain, fallbackMetric = 'proximity') {
+    return _normalizeSolveScoreChain(chain, fallbackMetric).map(item =>
+        item.params && item.params.length ? [item.name, ...item.params] : [item.name]
+    );
+}
+
+function _compileSolveScoreChain(chain, fallbackMetric = 'proximity') {
+    const normalized = _normalizeSolveScoreChain(chain, fallbackMetric);
+    if (!normalized.length) {
+        throw new Error('Solve score chain must contain exactly one metric chip');
+    }
+    const metrics = normalized.filter(item => _solveScoreMetricSet.has(item.name));
+    const transfers = normalized.filter(item => item.name === 'omega_cosine');
+    const invalid = normalized.filter(item => !_solveScoreMetricSet.has(item.name) && item.name !== 'omega_cosine');
+    if (invalid.length) {
+        throw new Error(`Invalid solve-score chip(s): ${invalid.map(item => item.name).join(', ')}`);
+    }
+    if (metrics.length !== 1) {
+        throw new Error('Solve score chain must contain exactly one metric chip');
+    }
+    if (transfers.length > 1) {
+        throw new Error('Solve score chain may contain at most one transfer chip');
+    }
+    if (transfers.length && normalized[normalized.length - 1].name !== 'omega_cosine') {
+        throw new Error('Transfer chip must be the final solve-score chip');
+    }
+    if (normalized.length !== metrics.length + transfers.length) {
+        throw new Error('Solve score chain contains unsupported chip ordering');
+    }
+    const metric = metrics[0].name;
+    let omega = 1;
+    let omegaEnabled = false;
+    if (transfers.length) {
+        const rawOmega = Number(transfers[0].params[0]);
+        if (!Number.isFinite(rawOmega)) throw new Error('omega_cosine requires one numeric parameter');
+        omega = rawOmega;
+        omegaEnabled = true;
+    }
+    return {
+        metric,
+        omega,
+        omega_enabled: omegaEnabled,
+        chain: _serializeSolveScoreChain(normalized, fallbackMetric),
+    };
+}
+
+function _setSolveScoreLegacyField(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.value = String(value);
+}
+
+function _legacySolveScoreState(prefix) {
+    const metricEl = document.getElementById(`${prefix}-solve-score`);
+    const omegaEl = document.getElementById(`${prefix}-solve-score-omega`);
+    const enabledEl = document.getElementById(`${prefix}-solve-score-omega-enabled`);
+    const fallbackMetric = prefix === 'palette' ? paletteTabMetric : renderSolveMetric;
+    const domMetric = String((metricEl && metricEl.value) || '').trim();
+    const metric = _solveScoreMetricSet.has(fallbackMetric) && fallbackMetric !== domMetric
+        ? fallbackMetric
+        : String(domMetric || fallbackMetric || 'proximity').trim();
+    const omega = Number(omegaEl && omegaEl.value);
+    const omegaEnabled = String((enabledEl && enabledEl.value) || '').trim().toLowerCase() === 'true';
+    return {
+        metric,
+        omega: Number.isFinite(omega) ? omega : 1,
+        omega_enabled: omegaEnabled,
+        chain: _solveScoreMetricSet.has(metric) ? _serializeSolveScoreChain(_defaultSolveScoreChain(metric, omega, omegaEnabled), metric) : [],
+    };
+}
+
+function _resolveSolveScoreState(prefix, options = {}) {
+    const requireChain = !!options.requireChain;
+    const fallbackMetric = prefix === 'palette' ? paletteTabMetric : renderSolveMetric;
+    const legacy = _legacySolveScoreState(prefix);
+    let compiled = null;
+    try {
+        compiled = _compileSolveScoreChain(_chainForWhich(_solveScoreWhichForPrefix(prefix)), fallbackMetric);
+    } catch (e) {
+        if (legacy.chain.length) return legacy;
+        if (requireChain) throw e;
+        return legacy;
+    }
+    const legacyValid = legacy.chain.length > 0;
+    const diverged = legacyValid && (
+        legacy.metric !== compiled.metric ||
+        legacy.omega !== compiled.omega ||
+        legacy.omega_enabled !== compiled.omega_enabled
+    );
+    if (diverged) return legacy;
+    return compiled;
+}
+
+function _syncSolveScoreLegacyInputs(prefix) {
+    const compiled = _compileSolveScoreChain(
+        _chainForWhich(_solveScoreWhichForPrefix(prefix)),
+        prefix === 'palette' ? paletteTabMetric : renderSolveMetric
+    );
+    _setSolveScoreLegacyField(`${prefix}-solve-score`, compiled.metric);
+    _setSolveScoreLegacyField(`${prefix}-solve-score-omega`, compiled.omega);
+    _setSolveScoreLegacyField(`${prefix}-solve-score-omega-enabled`, compiled.omega_enabled ? 'true' : 'false');
+    const omegaValEl = document.getElementById(`${prefix}-solve-score-omega-val`);
+    if (omegaValEl) omegaValEl.textContent = String(compiled.omega);
+    if (prefix === 'palette') paletteTabMetric = compiled.metric;
+    else renderSolveMetric = compiled.metric;
+    return compiled;
+}
+
+function _setSolveScoreChainFromLegacy(prefix, metric, omega = 1, omegaEnabled = false) {
+    const which = _solveScoreWhichForPrefix(prefix);
+    const chain = _chainForWhich(which);
+    const next = _defaultSolveScoreChain(metric, omega, omegaEnabled);
+    chain.splice(0, chain.length, ...next);
+    _renderChips(which);
+    return _syncSolveScoreLegacyInputs(prefix);
+}
+
+function _solveScoreAllowedAdditions(which) {
+    const chain = _normalizeSolveScoreChain(_chainForWhich(which));
+    const hasMetric = chain.some(item => _solveScoreMetricSet.has(item.name));
+    const hasTransfer = chain.some(item => item.name === 'omega_cosine');
+    if (!hasMetric) return _solveScoreMetricNames.slice();
+    if (!hasTransfer) return ['omega_cosine'];
+    return [];
+}
+
+function _syncSolveScoreAddOptions(which) {
+    const sel = document.getElementById(which + '-add');
+    if (!sel) return;
+    const allowed = _solveScoreAllowedAdditions(which);
+    const options = ['<option value="">+ add...</option>'].concat(
+        allowed.map(name => {
+            const spec = _ssCatalog[name] || {};
+            const label = spec.label || name;
+            return `<option value="${_escapeHtml(name)}">${_escapeHtml(label)}</option>`;
+        })
+    );
+    sel.innerHTML = options.join('');
+    sel.disabled = allowed.length === 0;
+}
+
+function _ensureSolveScoreChainDefaults() {
+    if (!_normalizeSolveScoreChain(_renderScoreChain).length) {
+        _renderScoreChain.splice(0, _renderScoreChain.length, ..._defaultSolveScoreChain(renderSolveMetric || 'proximity'));
+    }
+    if (!_normalizeSolveScoreChain(_paletteScoreChain).length) {
+        _paletteScoreChain.splice(0, _paletteScoreChain.length, ..._defaultSolveScoreChain(paletteTabMetric || 'proximity'));
+    }
 }
 
 function _displayCoeffTransforms() {
@@ -3693,22 +3850,35 @@ function _renderAllPaletteRows() {
 }
 
 function _solveScoreOmegaEnabled(prefix) {
-    const cb = document.getElementById(`${prefix}-solve-score-omega-enabled`);
-    return cb ? !!cb.checked : true;
+    const which = _solveScoreWhichForPrefix(prefix);
+    try {
+        return !!_compileSolveScoreChain(_chainForWhich(which), prefix === 'palette' ? paletteTabMetric : renderSolveMetric).omega_enabled;
+    } catch (e) {
+        const el = document.getElementById(`${prefix}-solve-score-omega-enabled`);
+        return el ? String(el.value || '').trim().toLowerCase() !== 'false' : false;
+    }
 }
 
 function _setSolveScoreOmegaEnabled(prefix, enabled) {
-    const cb = document.getElementById(`${prefix}-solve-score-omega-enabled`);
-    if (cb) cb.checked = !!enabled;
-    _syncSolveScoreOmegaUi(prefix);
+    const which = _solveScoreWhichForPrefix(prefix);
+    const chain = _normalizeSolveScoreChain(_chainForWhich(which), prefix === 'palette' ? paletteTabMetric : renderSolveMetric);
+    const next = chain.filter(item => item.name !== 'omega_cosine');
+    if (enabled) {
+        const omegaEl = document.getElementById(`${prefix}-solve-score-omega`);
+        const omega = Number(omegaEl && omegaEl.value);
+        next.push({ name: 'omega_cosine', params: [String(Number.isFinite(omega) ? omega : 1)] });
+    }
+    const target = _chainForWhich(which);
+    target.splice(0, target.length, ...next);
+    _renderChips(which);
 }
 
 function _syncSolveScoreOmegaUi(prefix) {
-    const enabled = _solveScoreOmegaEnabled(prefix);
-    const slider = document.getElementById(`${prefix}-solve-score-omega`);
-    const val = document.getElementById(`${prefix}-solve-score-omega-val`);
-    if (slider) slider.disabled = !enabled;
-    if (val) val.style.opacity = enabled ? '1' : '0.45';
+    try {
+        _syncSolveScoreLegacyInputs(prefix);
+    } catch (e) {
+        // no-op; invalid chains are prevented at add-time
+    }
 }
 
 function _omegaSummaryLabel(enabled, omega) {
@@ -3729,11 +3899,24 @@ let _lastCalcHasLores = false;  // set by renderArtifactPanel when calc is loade
 function _updateSolveScoreButtons() {
     const isSolve = renderColorMode === 'solve_score';
     const hasJob = !!(document.getElementById('render-results-dir')?.value?.trim());
-    const enabled = isSolve && hasJob && _lastCalcHasLores;
+    let chainValid = true;
+    try { _compileSolveScoreChain(_chainForWhich('ss'), renderSolveMetric); }
+    catch (e) { chainValid = false; }
+    const enabled = isSolve && hasJob && _lastCalcHasLores && chainValid;
     const palBtn = document.getElementById('btn-render-generate');
     const histBtn = document.getElementById('btn-solve-histogram');
     if (palBtn && _renderActiveFamily === 'palette') { palBtn.disabled = !enabled; palBtn.style.opacity = enabled ? '' : '0.4'; }
     if (histBtn) { histBtn.disabled = !enabled; histBtn.style.opacity = enabled ? '' : '0.4'; }
+}
+
+function _updatePaletteCreateButton() {
+    const btn = document.getElementById('btn-palette-create');
+    if (!btn) return;
+    let enabled = true;
+    try { _compileSolveScoreChain(_chainForWhich('palette-ss'), paletteTabMetric); }
+    catch (e) { enabled = false; }
+    btn.disabled = !enabled || !!_activePaletteRun;
+    btn.style.opacity = enabled ? '' : '0.4';
 }
 
 function setMatch(mode) {
@@ -3771,22 +3954,16 @@ function _activeRenderPalette() {
 }
 
 function setSolveMetric(name) {
-    const valid = ['proximity', 'crowding', 'spread', 'anisotropy', 'area',
-                   'clusteriness', 'shelliness', 'outlierness', 'nn_variation', 'real_axis_proximity',
-                   'centroid_re', 'centroid_im', 'centroid_dist', 'dist_unit_circle', 'asymmetry_re'];
-    if (valid.includes(name)) {
-        renderSolveMetric = name;
-        setColorMode('solve_score');
-    }
+    if (!_solveScoreMetricSet.has(name)) return;
+    const legacy = _legacySolveScoreState('render');
+    _setSolveScoreChainFromLegacy('render', name, legacy.omega, legacy.omega_enabled);
+    setColorMode('solve_score');
 }
 
 function setPaletteMetric(name) {
-    const valid = ['proximity', 'crowding', 'spread', 'anisotropy', 'area',
-                   'clusteriness', 'shelliness', 'outlierness', 'nn_variation', 'real_axis_proximity',
-                   'centroid_re', 'centroid_im', 'centroid_dist', 'dist_unit_circle', 'asymmetry_re'];
-    if (valid.includes(name)) {
-        paletteTabMetric = name;
-    }
+    if (!_solveScoreMetricSet.has(name)) return;
+    const legacy = _legacySolveScoreState('palette');
+    _setSolveScoreChainFromLegacy('palette', name, legacy.omega, legacy.omega_enabled);
 }
 
 function _setTriPaletteForMode(mode, triName, activate = true) {
@@ -6778,6 +6955,38 @@ const _rtCatalog = {
     pull_towards_center: { params: [{ph:'alpha', def:'1'}, {ph:'sigma', def:'0.75'}] },
 };
 
+const _solveScoreMetricNames = [
+    'proximity',
+    'crowding',
+    'spread',
+    'anisotropy',
+    'area',
+    'clusteriness',
+    'shelliness',
+    'outlierness',
+    'nn_variation',
+    'real_axis_proximity',
+    'centroid_re',
+    'centroid_im',
+    'centroid_dist',
+    'dist_unit_circle',
+    'asymmetry_re',
+];
+const _solveScoreMetricSet = new Set(_solveScoreMetricNames);
+const _ssCatalog = (() => {
+    const catalog = {};
+    _solveScoreMetricNames.forEach(name => {
+        catalog[name] = { label: name, chip_kind: 'metric' };
+    });
+    catalog.omega_cosine = {
+        label: 'omega_cosine',
+        chip_kind: 'transfer',
+        params: [{ ph: 'w', def: '1' }],
+        tooltip: 'g(u)=0.5*(cos(omega*2*pi*u)+1)',
+    };
+    return catalog;
+})();
+
 const _ctCatalog = {
     rev: {}, conj: {}, normalize: {}, deriv: {}, scale100: {}, safe: {},
     negate_odd: {}, max2one: {}, swirler: {}, sort_mod_keep_angle: {},
@@ -6802,6 +7011,8 @@ let _ctChain = [];  // coefficient transform chain (array of {name, params: [str
 let _cfpv = [];     // coefficient function parameter vector (array of doubles)
 let _rtChain = [];  // root transform chain (array of {name, params: [str,...]})
 let _paletteRtChain = [];  // palette-tab root transform chain
+let _renderScoreChain = [];
+let _paletteScoreChain = [];
 
 function _getCatalogEntry(name) {
     const cat = window._coeffFuncCatalog || [];
@@ -6983,7 +7194,10 @@ function updateCfpvRow() {
 function addChip(which, name) {
     if (!name) return;
     const chain = _chainForWhich(which);
-    if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt') {
+    if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
+        if ((which === 'ss' || which === 'palette-ss') && !_solveScoreAllowedAdditions(which).includes(name)) {
+            return;
+        }
         const catalog = _catalogForChain(which);
         const spec = catalog[name] || {};
         const p = spec.params || [];
@@ -7072,6 +7286,11 @@ function _ctUnaryFormulaChip(which, i, fnName) {
 function _renderRtChipHtml(item, i, which, catalog) {
     const spec = catalog[item.name] || {};
     const pDefs = spec.params || [];
+    if ((which === 'ss' || which === 'palette-ss') && item.name === 'omega_cosine') {
+        const omega = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
+        const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
+        return `<span class="chip"${tooltip}><span class="chip-formula"><span>ω-cos(</span><span>${omega}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
     if (which === 'ct' && item.name === 'exp') {
         const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
         const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
@@ -7145,13 +7364,24 @@ function _renderChips(which) {
     const chain = _chainForWhich(which);
     const el = document.getElementById(which + '-chips');
     if (!el) return;
-    if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt') {
+    if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
         const catalog = _catalogForChain(which);
         el.innerHTML = chain.map((item, i) => _renderRtChipHtml(item, i, which, catalog)).join('');
     } else {
         el.innerHTML = chain.map((name, i) =>
             `<span class="chip">${_escapeHtml(name)}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`
         ).join('');
+    }
+    if (which === 'ss' || which === 'palette-ss') {
+        const prefix = _solveScorePrefixForWhich(which);
+        _syncSolveScoreAddOptions(which);
+        try {
+            _syncSolveScoreLegacyInputs(prefix);
+        } catch (e) {
+            // Invalid chains are allowed transiently while replacing the metric chip.
+        }
+        if (prefix === 'render') _updateSolveScoreButtons();
+        if (prefix === 'palette') _updatePaletteCreateButton();
     }
 }
 _renderChips('palette-rt');
@@ -7170,9 +7400,10 @@ function selectViewMode(mode) {
 
 
 
-function _renderCommonParams() {
+function _renderCommonParams(options = {}) {
     const jobId = document.getElementById('render-results-dir').value.trim();
     if (!jobId) throw new Error('No results dir — run Calculate first');
+    const solveScore = _resolveSolveScoreState('render', { requireChain: !!options.requireSolveScore });
     return {
         jobId,
         pix: parseInt(document.getElementById('render-pix').value),
@@ -7185,8 +7416,10 @@ function _renderCommonParams() {
         squareExtent: parseFloat(document.getElementById('render-square-extent').value) || 2.0,
         constantColor: document.getElementById('render-constant-color').value.replace('#', ''),
         solveScoreQuantile: parseFloat(document.getElementById('render-solve-score-quantile').value) / 100,
-        solveScoreOmega: parseFloat(document.getElementById('render-solve-score-omega').value) || 1,
-        solveScoreOmegaEnabled: _solveScoreOmegaEnabled('render'),
+        solveScoreMetric: solveScore.metric,
+        solveScoreOmega: solveScore.omega,
+        solveScoreOmegaEnabled: solveScore.omega_enabled,
+        solveScoreChain: solveScore.chain,
         tileSize: parseInt(document.getElementById('sparse-tile-size').value),
         rotation: (() => {
             const turns = parseFloat(document.getElementById('render-rotation').value) || 0;
@@ -7225,6 +7458,10 @@ let _palettePhaseTracker = null;
 const PALETTE_NO_ROW_STALE_MS = 120000;
 const PALETTE_WARN_STALE_MS = 300000;
 const PALETTE_HARD_STALE_MS = 900000;
+
+_ensureSolveScoreChainDefaults();
+_renderChips('ss');
+_renderChips('palette-ss');
 
 function _clearPaletteCanvas(msg) {
     const canvas = document.getElementById('palette-canvas');
@@ -7405,8 +7642,7 @@ async function runPaletteArtifact() {
         log('Palette artifact: starting...', '', 'palette-log');
 
         const q = parseFloat(document.getElementById('palette-solve-score-quantile').value) / 100;
-        const omega = parseFloat(document.getElementById('palette-solve-score-omega').value) || 1;
-        const omegaEnabled = _solveScoreOmegaEnabled('palette');
+        const score = _resolveSolveScoreState('palette', { requireChain: true });
         const runId = _generateRunId();
         const taskId = 'palette_run_' + runId;
         const orchPayload = {
@@ -7414,11 +7650,12 @@ async function runPaletteArtifact() {
             run_id: runId,
             task_id: taskId,
             params: {
-                metric: paletteTabMetric,
+                metric: score.metric,
                 palette: paletteTabPalette,
                 solve_score_quantile: q,
-                solve_score_omega: omega,
-                solve_score_omega_enabled: omegaEnabled,
+                solve_score_omega: score.omega,
+                solve_score_omega_enabled: score.omega_enabled,
+                solve_score_chain: score.chain,
                 root_transforms: _paletteRootTransforms(),
             },
         };
@@ -7936,10 +8173,10 @@ function _loadActiveRun() {
 }
 
 async function _launchRenderOrchestrator(mode, paramsPatch = null) {
-    const p = _renderCommonParams();
     const runId = _generateRunId();
     const taskId = 'render_run_' + mode + '_' + runId;
     const effectiveColorMode = paramsPatch && paramsPatch.color_mode ? paramsPatch.color_mode : renderColorMode;
+    const p = _renderCommonParams({ requireSolveScore: effectiveColorMode === 'solve_score' });
     const solveScoreHistInputMode = effectiveColorMode === 'solve_score'
         ? _normalizeSolveScoreHistInputMode(
             (paramsPatch && paramsPatch.solve_score_hist_input_mode)
@@ -7965,10 +8202,11 @@ async function _launchRenderOrchestrator(mode, paramsPatch = null) {
             rotation: p.rotation,
             constant_color: p.constantColor,
             color_mode: effectiveColorMode,
-            solve_metric: effectiveColorMode === 'solve_score' ? renderSolveMetric : undefined,
+            solve_metric: effectiveColorMode === 'solve_score' ? p.solveScoreMetric : undefined,
             solve_score_quantile: effectiveColorMode === 'solve_score' ? p.solveScoreQuantile : undefined,
             solve_score_omega: effectiveColorMode === 'solve_score' ? p.solveScoreOmega : undefined,
             solve_score_omega_enabled: effectiveColorMode === 'solve_score' ? p.solveScoreOmegaEnabled : undefined,
+            solve_score_chain: effectiveColorMode === 'solve_score' ? p.solveScoreChain : undefined,
             solve_score_hist_input_mode: solveScoreHistInputMode,
             match_mode: renderMatchMode,
             palette: _activeRenderPalette() || 'inferno',
@@ -8181,12 +8419,12 @@ async function runSolveScoreHistogramDebug() {
 
         // Build payload from current UI state
         const q = parseFloat(document.getElementById('render-solve-score-quantile').value) / 100;
-        const p = _renderCommonParams();
+        const p = _renderCommonParams({ requireSolveScore: true });
         const payload = {
             phase: 'summary',
             job_id: jobId,
             degree: degree,
-            metric: renderSolveMetric,
+            metric: p.solveScoreMetric,
             solve_score_quantile: q,
             solve_score_omega: p.solveScoreOmega,
             solve_score_omega_enabled: p.solveScoreOmegaEnabled,
@@ -8290,7 +8528,7 @@ async function runRenderPaletteArtifact() {
         log('Palette artifact: starting...', '', 'render-log');
 
         const q = parseFloat(document.getElementById('render-solve-score-quantile').value) / 100;
-        const p = _renderCommonParams();
+        const p = _renderCommonParams({ requireSolveScore: true });
         const runId = _generateRunId();
         const taskId = 'palette_run_' + runId;
         const orchPayload = {
@@ -8298,11 +8536,12 @@ async function runRenderPaletteArtifact() {
             run_id: runId,
             task_id: taskId,
             params: {
-                metric: renderSolveMetric,
+                metric: p.solveScoreMetric,
                 palette: _activeRenderPalette() || 'inferno',
                 solve_score_quantile: q,
                 solve_score_omega: p.solveScoreOmega,
                 solve_score_omega_enabled: p.solveScoreOmegaEnabled,
+                solve_score_chain: p.solveScoreChain,
                 root_transforms: p.rootTransforms || [],
             },
         };
@@ -9145,6 +9384,17 @@ function _setRenderRootTransforms(transforms) {
     _renderChips('rt');
 }
 
+function _setSolveScoreChainFromArtifact(prefix, chain, metric, omega, omegaEnabled) {
+    const normalized = _normalizeSolveScoreChain(chain, metric || 'proximity');
+    if (normalized.length) {
+        const target = _chainForWhich(_solveScoreWhichForPrefix(prefix));
+        target.splice(0, target.length, ...normalized);
+        _renderChips(_solveScoreWhichForPrefix(prefix));
+        return;
+    }
+    _setSolveScoreChainFromLegacy(prefix, metric || 'proximity', Number.isFinite(Number(omega)) ? Number(omega) : 1, omegaEnabled !== false);
+}
+
 function populateSelectedRenderArtifact() {
     const art = _renderSelectedArtifactEntry();
     if (!art) return;
@@ -9179,10 +9429,14 @@ function populateSelectedRenderArtifact() {
 
     if (_renderActiveFamily === 'palette') {
         setColorMode('solve_score');
-        if (art.metric) {
-            const metricEl = document.getElementById('render-solve-score');
-            if (metricEl) metricEl.value = art.metric;
-            setSolveMetric(art.metric);
+        if ((Array.isArray(art.solve_score_chain) && art.solve_score_chain.length) || art.metric) {
+            _setSolveScoreChainFromArtifact(
+                'render',
+                art.solve_score_chain,
+                art.metric,
+                art.solve_score_omega,
+                art.solve_score_omega_enabled
+            );
         } else {
             warnings.push('solve-score metric');
         }
@@ -9191,10 +9445,7 @@ function populateSelectedRenderArtifact() {
         } else {
             warnings.push('solve-score q');
         }
-        if (Number.isFinite(art.solve_score_omega)) {
-            _setRenderSliderValue('render-solve-score-omega', 'render-solve-score-omega-val', art.solve_score_omega, 0);
-            _setSolveScoreOmegaEnabled('render', art.solve_score_omega_enabled !== false);
-        } else {
+        if (!Number.isFinite(art.solve_score_omega) && !(Array.isArray(art.solve_score_chain) && art.solve_score_chain.length)) {
             warnings.push('solve-score omega');
         }
         if (art.palette) setPaletteForMode('solve_score', art.palette);
@@ -9247,20 +9498,23 @@ function populateSelectedRenderArtifact() {
 
     if (art.color_mode === 'solve_score') {
         setColorMode('solve_score');
-        if (art.solve_metric) {
-            const metricEl = document.getElementById('render-solve-score');
-            if (metricEl) metricEl.value = art.solve_metric;
-            setSolveMetric(art.solve_metric);
+        if ((Array.isArray(art.solve_score_chain) && art.solve_score_chain.length) || art.solve_metric) {
+            _setSolveScoreChainFromArtifact(
+                'render',
+                art.solve_score_chain,
+                art.solve_metric,
+                art.solve_score_omega,
+                art.solve_score_omega_enabled
+            );
+        } else {
+            warnings.push('solve-score metric');
         }
         if (Number.isFinite(art.solve_score_quantile)) {
             _setRenderSliderValue('render-solve-score-quantile', 'render-solve-score-quantile-val', art.solve_score_quantile * 100, 1);
         } else {
             warnings.push('solve-score q');
         }
-        if (Number.isFinite(art.solve_score_omega)) {
-            _setRenderSliderValue('render-solve-score-omega', 'render-solve-score-omega-val', art.solve_score_omega, 0);
-            _setSolveScoreOmegaEnabled('render', art.solve_score_omega_enabled !== false);
-        } else {
+        if (!Number.isFinite(art.solve_score_omega) && !(Array.isArray(art.solve_score_chain) && art.solve_score_chain.length)) {
             warnings.push('solve-score omega');
         }
         if (art.palette) setPaletteForMode('solve_score', art.palette);
@@ -9268,23 +9522,27 @@ function populateSelectedRenderArtifact() {
         setColorMode('solve_score');
         const metric = art.palette_source_metric || art.solve_metric;
         if (metric) {
-            const metricEl = document.getElementById('render-solve-score');
-            if (metricEl) metricEl.value = metric;
-            setSolveMetric(metric);
+            _setSolveScoreChainFromArtifact(
+                'render',
+                art.palette_source_score_chain,
+                metric,
+                Number.isFinite(art.palette_source_omega) ? art.palette_source_omega : art.solve_score_omega,
+                (art.palette_source_omega_enabled !== undefined ? art.palette_source_omega_enabled : art.solve_score_omega_enabled) !== false
+            );
         } else {
             warnings.push('saved-palette metric');
         }
         const srcQ = Number.isFinite(art.palette_source_quantile) ? art.palette_source_quantile : art.solve_score_quantile;
-        const srcOmega = Number.isFinite(art.palette_source_omega) ? art.palette_source_omega : art.solve_score_omega;
         if (Number.isFinite(srcQ)) {
             _setRenderSliderValue('render-solve-score-quantile', 'render-solve-score-quantile-val', srcQ * 100, 1);
         } else {
             warnings.push('saved-palette q');
         }
-        if (Number.isFinite(srcOmega)) {
-            _setRenderSliderValue('render-solve-score-omega', 'render-solve-score-omega-val', srcOmega, 0);
-            _setSolveScoreOmegaEnabled('render', (art.palette_source_omega_enabled !== undefined ? art.palette_source_omega_enabled : art.solve_score_omega_enabled) !== false);
-        } else {
+        if (
+            !Number.isFinite(art.palette_source_omega) &&
+            !Number.isFinite(art.solve_score_omega) &&
+            !(Array.isArray(art.palette_source_score_chain) && art.palette_source_score_chain.length)
+        ) {
             warnings.push('saved-palette omega');
         }
         if (art.palette) setPaletteForMode('solve_score', art.palette);

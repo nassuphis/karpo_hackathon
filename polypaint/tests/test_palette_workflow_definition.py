@@ -74,6 +74,7 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
 
     def test_finalize_task_preserves_omega_enabled(self):
         payload = self.states["PaletteFinalizeTask"]["Parameters"]["Payload"]
+        self.assertEqual(payload["solve_score_chain.$"], "$.plan.solve_score.chain")
         self.assertEqual(payload["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(
             payload["solve_score_omega_enabled.$"],
@@ -146,6 +147,7 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(attach["associated_palette_preview_key.$"], "$.plan.attach.preview_key")
         self.assertEqual(attach["associated_palette_palette.$"], "$.plan.attach.palette")
         self.assertEqual(attach["associated_palette_metric.$"], "$.plan.attach.metric")
+        self.assertEqual(attach["associated_palette_score_chain.$"], "$.plan.attach.score_chain")
         self.assertEqual(attach["associated_palette_quantile.$"], "$.plan.attach.quantile")
         self.assertEqual(attach["associated_palette_omega.$"], "$.plan.attach.omega")
         self.assertEqual(attach["associated_palette_omega_enabled.$"], "$.plan.attach.omega_enabled")

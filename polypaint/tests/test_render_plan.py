@@ -156,6 +156,10 @@ class TestRenderPlan(unittest.TestCase):
 
         assert plan["solve_score"]["enabled"] is True
         assert plan["solve_score"]["metric"] == "crowding"
+        assert plan["solve_score"]["chain"] == [
+            {"name": "crowding", "params": []},
+            {"name": "omega_cosine", "params": ["4"]},
+        ]
         assert plan["solve_score"]["quantile"] == 0.01
         assert plan["solve_score"]["omega"] == 4.0
         assert plan["solve_score"]["omega_enabled"] is True
@@ -168,6 +172,10 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["outputs"]["metadata"]["view_mode"] == "square"
         assert plan["outputs"]["metadata"]["square_extent"] == "2.0"
         assert plan["outputs"]["metadata"]["rotation"] == "0"
+        assert json.loads(plan["outputs"]["metadata"]["solve_score_chain"]) == [
+            "crowding",
+            ["omega_cosine", "4"],
+        ]
         assert plan["outputs"]["metadata"]["solve_score_omega"] == "4.0"
         assert plan["outputs"]["metadata"]["solve_score_omega_enabled"] == "true"
         assert plan["outputs"]["metadata"]["background_color"] == "000000"
@@ -187,6 +195,35 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["raster"]["function_name"] == "polypaint-raster"
         assert plan["raster"]["eligible"] is True
         assert plan["raster"]["reason"] == "solve_score"
+
+    @patch("handler_render_plan._storage_call")
+    def test_solve_score_chain_input_compiles_to_scalar_contract(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="spread",
+            solve_score_omega=9,
+            solve_score_chain=["clusteriness", ["omega_cosine", "5"]],
+        ), None)
+        plan = json.loads(result["body"])
+
+        assert plan["solve_score"]["metric"] == "clusteriness"
+        assert plan["solve_score"]["omega"] == 5.0
+        assert plan["solve_score"]["omega_enabled"] is True
+        assert plan["solve_score"]["chain"] == [
+            {"name": "clusteriness", "params": []},
+            {"name": "omega_cosine", "params": ["5"]},
+        ]
+        assert json.loads(plan["outputs"]["metadata"]["solve_score_chain"]) == [
+            "clusteriness",
+            ["omega_cosine", "5"],
+        ]
+        assert plan["outputs"]["metadata"]["solve_metric"] == "clusteriness"
+        assert plan["outputs"]["metadata"]["solve_score_omega"] == "5.0"
 
     @patch("handler_render_plan._storage_call")
     def test_mt_request_carries_requested_threads(self, mock_storage):
@@ -452,6 +489,7 @@ class TestRenderPlan(unittest.TestCase):
             "display_name": "crowding q=1.0% w=3 reef",
             "metric": "crowding",
             "palette": "reef",
+            "solve_score_chain": ["crowding"],
             "solve_score_quantile": 0.01,
             "solve_score_omega": 3.0,
             "solve_score_omega_enabled": False,
@@ -471,11 +509,14 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["saved_palette"]["enabled"] is True
         assert plan["saved_palette"]["palette_id"] == "pal_src"
         assert plan["saved_palette"]["chunk_bins_prefix"] == "renders/j/palettes/pal_src/chunks/palette_bins_chunk_"
+        assert plan["solve_score"]["chain"] == [{"name": "crowding", "params": []}]
         assert plan["outputs"]["repalette_capable"] is True
         assert plan["outputs"]["metadata"]["color_mode"] == "saved_palette"
         assert plan["outputs"]["metadata"]["palette"] == "inferno"
         assert plan["outputs"]["metadata"]["palette_source_id"] == "pal_src"
         assert plan["outputs"]["metadata"]["palette_source_palette"] == "reef"
+        assert json.loads(plan["outputs"]["metadata"]["solve_score_chain"]) == ["crowding"]
+        assert json.loads(plan["outputs"]["metadata"]["palette_source_score_chain"]) == ["crowding"]
         assert plan["outputs"]["metadata"]["solve_metric"] == "crowding"
         assert plan["outputs"]["metadata"]["solve_score_quantile"] == "0.01"
         assert plan["outputs"]["metadata"]["solve_score_omega"] == "3.0"
@@ -502,6 +543,7 @@ class TestRenderPlan(unittest.TestCase):
             "display_name": "crowding q=1.0% w=3 reef",
             "metric": "crowding",
             "palette": "reef",
+            "solve_score_chain": ["crowding"],
             "solve_score_quantile": 0.01,
             "solve_score_omega": 3.0,
             "solve_score_omega_enabled": False,
@@ -528,9 +570,11 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["associated_palette"]["mode"] == "dependency"
         assert plan["associated_palette"]["palette_id"] == "pal_src"
         assert plan["associated_palette"]["image_key"] == "renders/j/palettes/pal_src/image.jpeg"
+        assert plan["associated_palette"]["score_chain"] == [{"name": "crowding", "params": []}]
         assert plan["outputs"]["metadata"]["associated_palette_mode"] == "dependency"
         assert plan["outputs"]["metadata"]["associated_palette_id"] == "pal_src"
         assert plan["outputs"]["metadata"]["associated_palette_image_key"] == "renders/j/palettes/pal_src/image.jpeg"
+        assert json.loads(plan["outputs"]["metadata"]["associated_palette_score_chain"]) == ["crowding"]
         assert plan["outputs"]["metadata"]["associated_palette_omega_enabled"] == "false"
 
     @patch("handler_render_plan._storage_call")
@@ -575,6 +619,10 @@ class TestRenderPlan(unittest.TestCase):
         assert assoc["palette_id"] == "pal_color_run_t"
         assert assoc["image_key"] == "renders/j/palettes/pal_color_run_t/image.jpeg"
         assert assoc["chunk_bins_prefix"] == "renders/j/palettes/pal_color_run_t/chunks/palette_bins_chunk_"
+        assert assoc["score_chain"] == [
+            {"name": "crowding", "params": []},
+            {"name": "omega_cosine", "params": ["4"]},
+        ]
         assert assoc["chunk_threads"] == 4
         assert assoc["chunk_input_mode"] == "sectioned"
         assert assoc["chunk_retries"] == 2
@@ -584,6 +632,10 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["outputs"]["metadata"]["associated_palette_mode"] == "generated"
         assert plan["outputs"]["metadata"]["associated_palette_id"] == "pal_color_run_t"
         assert plan["outputs"]["metadata"]["associated_palette_image_key"] == "renders/j/palettes/pal_color_run_t/image.jpeg"
+        assert json.loads(plan["outputs"]["metadata"]["associated_palette_score_chain"]) == [
+            "crowding",
+            ["omega_cosine", "4"],
+        ]
         assert plan["outputs"]["metadata"]["associated_palette_omega_enabled"] == "true"
 
     @patch("handler_render_plan._storage_call")

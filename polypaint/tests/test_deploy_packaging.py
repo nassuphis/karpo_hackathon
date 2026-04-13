@@ -178,8 +178,10 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("palette_names.py", packaged["handler_render_plan.py"])
         self.assertIn("tri_palette_names_generated.py", packaged["handler_render_plan.py"])
         self.assertIn("long_palette_names_generated.py", packaged["handler_render_plan.py"])
+        self.assertIn("solve_score_chain.py", packaged["handler_render_plan.py"])
         self.assertIn("handler_palette_render_plan.py", packaged)
         self.assertIn("color_artifact_meta.py", packaged["handler_palette_render_plan.py"])
+        self.assertIn("solve_score_chain.py", packaged["handler_palette_render_plan.py"])
 
         self.assertIn("handler_solve_proximity.py", packaged)
         self.assertIn("solve_proximity_stats", packaged["handler_solve_proximity.py"])
@@ -224,6 +226,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('ensure_route "POST /delete-favorite" "$STORAGE_INT"', DEPLOY_TEXT)
         self.assertIn("handler_storage.py", packaged)
         self.assertIn("color_artifact_meta.py", packaged["handler_storage.py"])
+        self.assertIn("solve_score_chain.py", packaged["handler_storage.py"])
         self.assertIn("handler_palette_chunk.py", packaged)
         self.assertIn("solve_palette_chunk", packaged["handler_palette_chunk.py"])
         self.assertIn("solve_palette_chunk_mt", packaged["handler_palette_chunk.py"])
@@ -236,10 +239,12 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("handler_autolevels.py", packaged)
         self.assertIn("autolevels_render", packaged["handler_autolevels.py"])
         self.assertIn("color_artifact_meta.py", packaged["handler_autolevels.py"])
+        self.assertIn("solve_score_chain.py", packaged["handler_autolevels.py"])
 
         self.assertIn("handler_resize_artifact.py", packaged)
         self.assertIn("shared.py", packaged["handler_resize_artifact.py"])
         self.assertIn("color_artifact_meta.py", packaged["handler_resize_artifact.py"])
+        self.assertIn("solve_score_chain.py", packaged["handler_resize_artifact.py"])
         self.assertIn('create_lambda "$RESIZE_ARTIFACT_NAME" "handler_resize_artifact.handler" "/tmp/polypaint-resize-artifact.zip"', DEPLOY_TEXT)
         self.assertIn('update_lambda "$RESIZE_ARTIFACT_NAME" "handler_resize_artifact.handler" "/tmp/polypaint-resize-artifact.zip"', DEPLOY_TEXT)
         self.assertIn('RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME', DEPLOY_TEXT)
@@ -254,6 +259,8 @@ class TestDeployPackaging(unittest.TestCase):
 
         self.assertIn("handler_finalize.py", packaged)
         self.assertIn("pixbinassemble", packaged["handler_finalize.py"])
+        self.assertIn("handler_palette_finalize.py", packaged)
+        self.assertIn("solve_score_chain.py", packaged["handler_palette_finalize.py"])
 
         self.assertIn("handler_coeffgen.py", packaged)
         self.assertIn("sweep_coeffgen", packaged["handler_coeffgen.py"])
@@ -281,6 +288,7 @@ class TestDeployPackaging(unittest.TestCase):
 
         self.assertIn("handler_attach_palette_to_color.py", packaged)
         self.assertIn("color_artifact_meta.py", packaged["handler_attach_palette_to_color.py"])
+        self.assertIn("solve_score_chain.py", packaged["handler_attach_palette_to_color.py"])
         self.assertIn('create_lambda "$ATTACH_PALETTE_NAME" "handler_attach_palette_to_color.handler" "/tmp/polypaint-attach-palette-to-color.zip"', DEPLOY_TEXT)
         self.assertIn('update_lambda "$ATTACH_PALETTE_NAME" "handler_attach_palette_to_color.handler" "/tmp/polypaint-attach-palette-to-color.zip"', DEPLOY_TEXT)
 
@@ -299,6 +307,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("handler_pdf_artifact.py", packaged)
         self.assertIn("spread_pdf.py", packaged["handler_pdf_artifact.py"])
         self.assertIn("color_artifact_meta.py", packaged["handler_pdf_artifact.py"])
+        self.assertIn("solve_score_chain.py", packaged["handler_pdf_artifact.py"])
         self.assertIn("PDF_PY_LAYER_NAME", DEPLOY_TEXT)
         self.assertIn("build-pdf-python-layer.sh", DEPLOY_TEXT)
         self.assertIn('create_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip"', DEPLOY_TEXT)

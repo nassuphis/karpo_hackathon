@@ -176,20 +176,20 @@ TEST_POINTS = [
 
 
 def test_poly_16():
-    return compare_poly("poly_16", poly_16, TEST_POINTS)
+    assert compare_poly("poly_16", poly_16, TEST_POINTS)
 
 
 def test_poly_17():
-    return compare_poly("poly_17", poly_17, TEST_POINTS)
+    assert compare_poly("poly_17", poly_17, TEST_POINTS)
 
 
 def test_poly_29():
-    return compare_poly("poly_29", poly_29, TEST_POINTS)
+    assert compare_poly("poly_29", poly_29, TEST_POINTS)
 
 
 if __name__ == "__main__":
     ok = True
-    ok = test_poly_16() and ok
-    ok = test_poly_17() and ok
-    ok = test_poly_29() and ok
+    ok = compare_poly("poly_16", poly_16, TEST_POINTS) and ok
+    ok = compare_poly("poly_17", poly_17, TEST_POINTS) and ok
+    ok = compare_poly("poly_29", poly_29, TEST_POINTS) and ok
     sys.exit(0 if ok else 1)

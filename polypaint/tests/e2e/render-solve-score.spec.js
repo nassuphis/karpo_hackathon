@@ -95,6 +95,12 @@ async function chooseLongPalette(page, mode, name) {
   await row.click();
 }
 
+async function chooseSolveMetric(page, metric) {
+  await page.evaluate((name) => {
+    setSolveMetric(name);
+  }, metric);
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('http://localhost:8765/index.html');
   await page.waitForLoadState('domcontentloaded');
@@ -294,15 +300,42 @@ test.describe('Solve Score UI', () => {
     await page.locator('#long-popup-close').click();
   });
 
-  test('Solve score dropdown has exact 5 metric options', async ({ page }) => {
+  test('Solve score chip adder shows metrics only when chain is empty, then omega transfer', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    const dropdown = page.locator('#render-solve-score');
-    await expect(dropdown).toBeVisible();
-    const options = await dropdown.locator('option').allTextContents();
-    expect(options).toEqual([
-      'Proximity', 'Crowding', 'Spread', 'Anisotropy', 'Area',
-      'Clusteriness', 'Shelliness', 'Outlierness', 'NN variation', 'Real-axis proximity',
-      'Centroid Re', 'Centroid Im', 'Centroid Dist', 'Dist unit circle', 'Asymmetry Re',
+    const state = await page.evaluate(() => {
+      _renderScoreChain.splice(0, _renderScoreChain.length);
+      _renderChips('ss');
+      return Array.from(document.querySelectorAll('#ss-add option')).map(o => ({
+        text: o.textContent.trim(),
+        value: o.value,
+      }));
+    });
+    expect(state).toEqual([
+      { text: '+ add...', value: '' },
+      { text: 'proximity', value: 'proximity' },
+      { text: 'crowding', value: 'crowding' },
+      { text: 'spread', value: 'spread' },
+      { text: 'anisotropy', value: 'anisotropy' },
+      { text: 'area', value: 'area' },
+      { text: 'clusteriness', value: 'clusteriness' },
+      { text: 'shelliness', value: 'shelliness' },
+      { text: 'outlierness', value: 'outlierness' },
+      { text: 'nn_variation', value: 'nn_variation' },
+      { text: 'real_axis_proximity', value: 'real_axis_proximity' },
+      { text: 'centroid_re', value: 'centroid_re' },
+      { text: 'centroid_im', value: 'centroid_im' },
+      { text: 'centroid_dist', value: 'centroid_dist' },
+      { text: 'dist_unit_circle', value: 'dist_unit_circle' },
+      { text: 'asymmetry_re', value: 'asymmetry_re' },
+    ]);
+
+    await chooseSolveMetric(page, 'crowding');
+    const afterMetric = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#ss-add option')).map(o => ({ text: o.textContent.trim(), value: o.value }))
+    );
+    expect(afterMetric).toEqual([
+      { text: '+ add...', value: '' },
+      { text: 'omega_cosine', value: 'omega_cosine' },
     ]);
   });
 
@@ -315,17 +348,13 @@ test.describe('Solve Score UI', () => {
     await expect(dot).toHaveClass(/active/);
   });
 
-  test('selecting dropdown value updates renderSolveMetric', async ({ page }) => {
+  test('choosing solve-score metric updates renderSolveMetric', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    // Activate solve_score mode first
-    await page.locator('.color-dot[data-mode="solve_score"]').click();
-
-    const dropdown = page.locator('#render-solve-score');
-    await dropdown.selectOption('crowding');
+    await chooseSolveMetric(page, 'crowding');
     const metric = await page.evaluate(() => renderSolveMetric);
     expect(metric).toBe('crowding');
 
-    await dropdown.selectOption('area');
+    await chooseSolveMetric(page, 'area');
     const metric2 = await page.evaluate(() => renderSolveMetric);
     expect(metric2).toBe('area');
   });
@@ -334,8 +363,7 @@ test.describe('Solve Score UI', () => {
     await page.click('.tab-btn:text("Render")');
     await page.locator('.color-dot[data-mode="solve_score"]').click();
 
-    // Select a specific metric
-    await page.locator('#render-solve-score').selectOption('spread');
+    await chooseSolveMetric(page, 'spread');
 
     await page.evaluate(() => {
       window._orchPayload = null;
@@ -399,8 +427,7 @@ test.describe('Solve Score UI', () => {
 
   test('clusteriness dispatch sends correct solve_metric', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    await page.locator('.color-dot[data-mode="solve_score"]').click();
-    await page.locator('#render-solve-score').selectOption('clusteriness');
+    await chooseSolveMetric(page, 'clusteriness');
 
     await page.evaluate(() => {
       window._orchPayload = null;
@@ -502,8 +529,7 @@ test.describe('Solve Score UI', () => {
 
   test('real_axis_proximity dispatch sends correct solve_metric', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    await page.locator('.color-dot[data-mode="solve_score"]').click();
-    await page.locator('#render-solve-score').selectOption('real_axis_proximity');
+    await chooseSolveMetric(page, 'real_axis_proximity');
 
     await page.evaluate(() => {
       window._orchPayload = null;

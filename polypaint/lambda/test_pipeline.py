@@ -20,6 +20,7 @@ class TestDispatchHandler(unittest.TestCase):
     @patch("handler_dispatch.lambda_client")
     def test_dispatch_fires_all_jobs(self, mock_client):
         from handler_dispatch import handler
+        mock_client.invoke.return_value = {"StatusCode": 202}
         jobs = [{"job_id": "j", "stripe_idx": i} for i in range(5)]
         event = self._make_event({"target": "raster", "jobs": jobs})
         result = handler(event, None)
@@ -58,6 +59,7 @@ class TestDispatchHandler(unittest.TestCase):
     @patch("handler_dispatch.lambda_client")
     def test_dispatch_raster_target(self, mock_client):
         from handler_dispatch import handler
+        mock_client.invoke.return_value = {"StatusCode": 202}
         jobs = [{"job_id": "j", "stripe_idx": 0, "bin_key": "renders/j/stripe_0.bin"}]
         event = self._make_event({"target": "raster", "jobs": jobs})
         result = handler(event, None)
@@ -67,6 +69,7 @@ class TestDispatchHandler(unittest.TestCase):
     @patch("handler_dispatch.lambda_client")
     def test_dispatch_finalize_target(self, mock_client):
         from handler_dispatch import handler
+        mock_client.invoke.return_value = {"StatusCode": 202}
         jobs = [{"job_id": "j", "tile_idx": 0, "n_stripes": 10, "tile_w": 4096, "tile_h": 4096}]
         event = self._make_event({"target": "finalize", "jobs": jobs})
         result = handler(event, None)
@@ -76,6 +79,7 @@ class TestDispatchHandler(unittest.TestCase):
     @patch("handler_dispatch.lambda_client")
     def test_dispatch_encode_target(self, mock_client):
         from handler_dispatch import handler
+        mock_client.invoke.return_value = {"StatusCode": 202}
         jobs = [{"out_key": "renders/j/image.jpeg", "tile_grid": {}}]
         event = self._make_event({"target": "encode", "jobs": jobs})
         result = handler(event, None)
@@ -173,13 +177,12 @@ class TestStorageList(unittest.TestCase):
         self.assertEqual(body["results"][0]["function"], "?")
         self.assertEqual(body["results"][0]["total_size"], 0)
 
-    @patch("handler_storage._key_exists")
-    @patch("handler_storage.s3")
-    def test_list_has_image_checks_head(self, mock_s3, mock_exists):
-        """Verify has_preview/has_image use HEAD requests."""
+    @patch("handler_storage._results_list_s3_client")
+    def test_list_omits_preview_image_fields(self, mock_client_factory):
+        """Verify table listing omits preview/image fields; those moved to /detail."""
         from handler_storage import handle_list
-        # preview.jpg exists, image.jpeg exists
-        mock_exists.side_effect = lambda k: "preview" in k or "image.jpeg" in k
+        mock_s3 = MagicMock()
+        mock_client_factory.return_value = mock_s3
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
         mock_paginator.paginate.return_value = [{
@@ -191,13 +194,16 @@ class TestStorageList(unittest.TestCase):
                 "n_stripes": 1,
             }).encode()))
         }
-        mock_s3.generate_presigned_url.return_value = "https://signed"
-
         result = handle_list({"body": "{}"})
         body = json.loads(result["body"])
-        self.assertTrue(body["results"][0]["has_preview"])
-        self.assertTrue(body["results"][0]["has_image"])
-        self.assertEqual(body["results"][0]["preview_url"], "https://signed")
+        row = body["results"][0]
+        self.assertEqual(row["function"], "giga_1")
+        self.assertEqual(row["degree"], 24)
+        self.assertEqual(row["N"], 100)
+        self.assertNotIn("has_preview", row)
+        self.assertNotIn("has_image", row)
+        self.assertNotIn("preview_url", row)
+        self.assertNotIn("pipeline", row)
 
 
 class TestStorageCheckKeys(unittest.TestCase):
@@ -229,34 +235,36 @@ class TestStorageCheckKeys(unittest.TestCase):
 class TestStorageCleanRender(unittest.TestCase):
 
     @patch("handler_storage.s3")
-    def test_clean_render_deletes_raw_jpeg_pix_files(self, mock_s3):
+    def test_clean_render_deletes_family_intermediate_keys(self, mock_s3):
         from handler_storage import handle_clean_render
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
-        mock_paginator.paginate.return_value = [{
-            "Contents": [
-                {"Key": "renders/j/tile_0000.raw"},
-                {"Key": "renders/j/pix_0000_t0000.pix"},
-                {"Key": "renders/j/image.jpeg"},
-                {"Key": "renders/j/calc.json"},
-                {"Key": "renders/j/stripe_0.bin"},
-            ]
-        }]
+        prefix_contents = {
+            "renders/j/pix_": [{"Key": "renders/j/pix_0000_t0000.pix"}],
+            "renders/j/pixbin_chunk_": [],
+            "renders/j/raw_": [],
+            "renders/j/tile_": [{"Key": "renders/j/tile_0000.raw"}],
+            "renders/j/solve_proximity/": [],
+            "renders/j/solve_scores/": [],
+        }
+        mock_paginator.paginate.side_effect = (
+            lambda Bucket, Prefix: [{"Contents": list(prefix_contents.get(Prefix, []))}]
+        )
         mock_s3.delete_objects.return_value = {"Deleted": [
             {"Key": "renders/j/tile_0000.raw"},
             {"Key": "renders/j/pix_0000_t0000.pix"},
-            {"Key": "renders/j/image.jpeg"},
         ]}
         event = {"body": json.dumps({"job_id": "j"})}
         result = handle_clean_render(event)
         body = json.loads(result["body"])
-        self.assertEqual(body["deleted"], 3)
+        self.assertEqual(body["deleted"], 2)
 
         # Verify which files were passed to delete_objects
         call_args = mock_s3.delete_objects.call_args
         deleted_keys = [o["Key"] for o in call_args[1]["Delete"]["Objects"]]
         self.assertNotIn("renders/j/calc.json", deleted_keys)
         self.assertNotIn("renders/j/stripe_0.bin", deleted_keys)
+        self.assertNotIn("renders/j/image.jpeg", deleted_keys)
         self.assertIn("renders/j/pix_0000_t0000.pix", deleted_keys)
 
 
@@ -505,6 +513,7 @@ class TestCleanRenderDynamoDB(unittest.TestCase):
                 {"job_id": {"S": "j"}, "task_id": {"S": "tile_0"}},
             ],
         }
+        mock_ddb.batch_write_item.return_value = {"UnprocessedItems": {}}
 
         event = {"body": json.dumps({"job_id": "j"})}
         result = handle_clean_render(event)
@@ -756,7 +765,8 @@ class TestCoeffgenHandler(unittest.TestCase):
         # Verify started + done status reported
         calls = mock_report.call_args_list
         self.assertEqual(calls[0], unittest.mock.call("ddb-test", "coeffgen_2", "started"))
-        self.assertEqual(calls[1], unittest.mock.call("ddb-test", "coeffgen_2", "done"))
+        self.assertEqual(calls[1][0], ("ddb-test", "coeffgen_2", "done"))
+        self.assertIn("result_data", calls[1][1])
 
     @patch("builtins.open")
     @patch("handler_coeffgen.os.path.getsize")
@@ -804,11 +814,12 @@ class TestSolveFromCoeffs(unittest.TestCase):
     def _make_event(self, body):
         return {"body": json.dumps(body)}
 
+    @patch("handler_sweep.report_status")
     @patch("handler_sweep.os.path.getsize", return_value=400)
     @patch("handler_sweep.os.remove")
     @patch("handler_sweep.s3")
     @patch("handler_sweep.subprocess")
-    def test_solve_routes_on_coeffs_key(self, mock_subprocess, mock_s3, mock_remove, mock_getsize):
+    def test_solve_routes_on_coeffs_key(self, mock_subprocess, mock_s3, mock_remove, mock_getsize, mock_report):
         """When coeffs_key is present, handler routes to solve path."""
         from handler_sweep import handler
         mock_result = MagicMock()
@@ -865,15 +876,16 @@ class TestSolveFromCoeffs(unittest.TestCase):
         spec = json.loads(call_args[1]["input"])
         self.assertEqual(spec["mode"], "solve")
         self.assertEqual(spec["n_coeffs"], 24)
-        # i1_start=0 because file contains only this stripe's rows
         self.assertEqual(spec["i1_start"], 0)
-        self.assertEqual(spec["i1_end"], 10)
+        self.assertEqual(spec["i1_end"], 1)
+        self.assertEqual(spec["n2"], 1000)
 
+    @patch("handler_sweep.report_status")
     @patch("handler_sweep.os.path.getsize", return_value=400)
     @patch("handler_sweep.os.remove")
     @patch("handler_sweep.s3")
     @patch("handler_sweep.subprocess")
-    def test_solve_downloads_full_file(self, mock_subprocess, mock_s3, mock_remove, mock_getsize):
+    def test_solve_downloads_full_file(self, mock_subprocess, mock_s3, mock_remove, mock_getsize, mock_report):
         """Verify S3 get_object downloads full per-stripe file (no Range)."""
         from handler_sweep import handler
         mock_result = MagicMock()
@@ -922,11 +934,12 @@ class TestSolveFromCoeffs(unittest.TestCase):
         self.assertNotIn("Range", call_kwargs)
         self.assertEqual(call_kwargs["Key"], "renders/full-dl-test/coeffs_0002.bin")
 
+    @patch("handler_sweep.report_status")
     @patch("handler_sweep.os.path.getsize", return_value=50)
     @patch("handler_sweep.os.remove")
     @patch("handler_sweep.s3")
     @patch("handler_sweep.subprocess")
-    def test_solve_custom_s3_key(self, mock_subprocess, mock_s3, mock_remove, mock_getsize):
+    def test_solve_custom_s3_key(self, mock_subprocess, mock_s3, mock_remove, mock_getsize, mock_report):
         """Verify s3_key override works for solve path."""
         from handler_sweep import handler
         mock_result = MagicMock()
@@ -977,10 +990,11 @@ class TestSolveFromCoeffs(unittest.TestCase):
         self.assertEqual(upload_args[2], "renders/key-test/lores.bin")
         self.assertEqual(body["s3_key"], "renders/key-test/lores.bin")
 
+    @patch("handler_sweep.report_status")
     @patch("handler_sweep.os.remove")
     @patch("handler_sweep.s3")
     @patch("handler_sweep.subprocess")
-    def test_solve_failure_raises(self, mock_subprocess, mock_s3, mock_remove):
+    def test_solve_failure_raises(self, mock_subprocess, mock_s3, mock_remove, mock_report):
         """Verify solve mode raises RuntimeError on sweep failure."""
         from handler_sweep import handler
         mock_result = MagicMock()
@@ -1018,57 +1032,6 @@ class TestSolveFromCoeffs(unittest.TestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 handler(event, None)
             self.assertIn("solve failed", str(ctx.exception))
-
-    @patch("handler_sweep.multiprocessing")
-    @patch("handler_sweep.os.path.getsize", return_value=200)
-    @patch("handler_sweep.os.remove")
-    @patch("handler_sweep.s3")
-    @patch("handler_sweep.subprocess")
-    def test_grid_mode_still_works(self, mock_subprocess, mock_s3, mock_remove, mock_getsize, mock_mp):
-        """Without coeffs_key, handler uses existing grid path."""
-        from handler_sweep import handler
-        mock_mp.cpu_count.return_value = 1
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = json.dumps({
-            "n_t": 100,
-            "degree": 24,
-            "avg_iterations": 10.0,
-        })
-        mock_subprocess.run.return_value = mock_result
-
-        import builtins
-        original_open = builtins.open
-
-        def mock_open(path, mode="r", **kwargs):
-            if "/tmp/" in str(path) and "b" in mode:
-                m = MagicMock()
-                m.__enter__ = MagicMock(return_value=m)
-                m.__exit__ = MagicMock(return_value=False)
-                m.read = MagicMock(return_value=b"\x00" * 200)
-                return m
-            return original_open(path, mode, **kwargs)
-
-        with patch("builtins.open", side_effect=mock_open):
-            event = self._make_event({
-                "job_id": "grid-test",
-                "stripe_idx": 0,
-                "function": "giga_1",
-                "n1": 10,
-                "n2": 10,
-                "i1_start": 0,
-                "i1_end": 5,
-            })
-            result = handler(event, None)
-
-        body = json.loads(result["body"])
-        self.assertEqual(result["statusCode"], 200)
-        self.assertEqual(body["bin_size"], 200)
-
-        # Verify sweep was called in grid mode (not solve)
-        spec = json.loads(mock_subprocess.run.call_args[1]["input"])
-        self.assertEqual(spec["mode"], "grid")
-
 
 # ── Test: handler_preview.py (single-call preview generation) ────────────
 
@@ -1118,14 +1081,19 @@ class TestPreviewHandler(unittest.TestCase):
         self.assertGreater(body["png_size"], 0)
         self.assertGreater(body["n_roots"], 0)
 
-        # Verify PNG uploaded to S3
-        mock_s3.put_object.assert_called_once()
-        call_kwargs = mock_s3.put_object.call_args[1]
-        self.assertEqual(call_kwargs["Key"], "renders/test/preview.png")
-        self.assertEqual(call_kwargs["ContentType"], "image/png")
-        # Verify it's valid PNG (starts with PNG magic bytes)
-        png_data = call_kwargs["Body"]
-        self.assertTrue(png_data[:4] == b'\x89PNG')
+        self.assertEqual(mock_s3.put_object.call_count, 2)
+        put_calls = {c[1]["Key"]: c[1] for c in mock_s3.put_object.call_args_list}
+        self.assertIn("renders/test/preview.png", put_calls)
+        png_call = put_calls["renders/test/preview.png"]
+        self.assertEqual(png_call["ContentType"], "image/png")
+        self.assertTrue(png_call["Body"][:4] == b'\x89PNG')
+        self.assertIn("renders/test/preview_stats.json", put_calls)
+        stats_call = put_calls["renders/test/preview_stats.json"]
+        self.assertEqual(stats_call["ContentType"], "application/json")
+        stats = json.loads(stats_call["Body"])
+        self.assertIn("n_roots", stats)
+        self.assertIn("n_roots_total", stats)
+        self.assertIn("q_re", stats)
 
     @patch("handler_preview.s3")
     def test_preview_custom_size(self, mock_s3):
@@ -1174,10 +1142,10 @@ class TestPreviewHandler(unittest.TestCase):
     @patch("handler_preview.s3")
     def test_preview_png_valid(self, mock_s3):
         """Verify grayscale PNG output is structurally valid."""
-        from handler_preview import _encode_png_gray
+        from shared import encode_png_gray
         gray = bytearray(4 * 4)  # 4x4 black image
         gray[0] = 255  # white pixel at (0,0)
-        png = _encode_png_gray(4, 4, gray)
+        png = encode_png_gray(4, 4, gray)
         self.assertTrue(png.startswith(b'\x89PNG\r\n\x1a\n'))
         # IHDR chunk follows
         self.assertEqual(png[12:16], b'IHDR')

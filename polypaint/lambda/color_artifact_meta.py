@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from typing import Dict
 
+from solve_score_chain import emit_solve_score_metadata
+
 
 COLOR_IMAGE_CANDIDATES = ("image.jpeg", "image.png")
 LEGACY_COLOR_IMAGE_CANDIDATES = ("image.jpeg", "image.png")
@@ -140,19 +142,27 @@ def associated_palette_metadata(
     quantile,
     omega,
     omega_enabled: bool,
+    score_chain=None,
 ) -> Dict[str, str]:
-    return {
+    meta = {
         "associated_palette_mode": str(mode or ""),
         "associated_palette_id": str(palette_id or ""),
         "associated_palette_display_name": str(display_name or ""),
         "associated_palette_image_key": str(image_key or ""),
         "associated_palette_preview_key": str(preview_key or ""),
         "associated_palette_palette": str(palette or ""),
-        "associated_palette_metric": str(metric or ""),
-        "associated_palette_quantile": "" if quantile in ("", None) else str(quantile),
-        "associated_palette_omega": "" if omega in ("", None) else str(omega),
-        "associated_palette_omega_enabled": "true" if bool(omega_enabled) else "false",
     }
+    meta.update(
+        emit_solve_score_metadata(
+            "associated_palette",
+            metric=metric,
+            quantile=quantile,
+            omega=omega,
+            omega_enabled=omega_enabled,
+            chain=score_chain,
+        )
+    )
+    return meta
 
 
 def inherit_associated_palette_metadata(source_meta: Dict[str, str]) -> Dict[str, str]:
@@ -171,6 +181,7 @@ def inherit_associated_palette_metadata(source_meta: Dict[str, str]) -> Dict[str
         quantile=(source_meta or {}).get("associated_palette_quantile", ""),
         omega=(source_meta or {}).get("associated_palette_omega", ""),
         omega_enabled=_parse_boolish((source_meta or {}).get("associated_palette_omega_enabled", True), True),
+        score_chain=(source_meta or {}).get("associated_palette_score_chain", ""),
     )
 
 

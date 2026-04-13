@@ -4,10 +4,13 @@ Test that transpiled C poly functions match the Python originals.
 Run: cd polypaint/lambda && uv run python test_poly_accuracy.py
 """
 import json
+import os
 import struct
 import subprocess
 import sys
 import numpy as np
+
+_LAMBDA_DIR = os.path.dirname(__file__)
 
 
 def poly_16(t1, t2):
@@ -37,7 +40,7 @@ def poly_17(t1, t2):
     return cf.astype(np.complex128)
 
 
-SWEEP = "./sweep_test"
+SWEEP = os.path.join(_LAMBDA_DIR, "sweep_test")
 
 def run_c_coeffgen(func_name, t1r, t1i, t2r, t2i):
     """Run the C binary for a single grid point and return coefficients."""
@@ -154,15 +157,15 @@ TEST_POINTS = [
 
 
 def test_poly_16():
-    return compare_poly("poly_16", poly_16, TEST_POINTS)
+    assert compare_poly("poly_16", poly_16, TEST_POINTS)
 
 
 def test_poly_17():
-    return compare_poly("poly_17", poly_17, TEST_POINTS)
+    assert compare_poly("poly_17", poly_17, TEST_POINTS)
 
 
 if __name__ == "__main__":
     ok = True
-    ok = test_poly_16() and ok
-    ok = test_poly_17() and ok
+    ok = compare_poly("poly_16", poly_16, TEST_POINTS) and ok
+    ok = compare_poly("poly_17", poly_17, TEST_POINTS) and ok
     sys.exit(0 if ok else 1)

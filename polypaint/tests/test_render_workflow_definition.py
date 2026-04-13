@@ -259,6 +259,13 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(assoc_selector["bin_key.$"], "$$.Map.Item.Value.bin_key")
         self.assertEqual(assoc_selector["bin_size.$"], "$$.Map.Item.Value.bin_size")
 
+    def test_associated_palette_finalize_forwards_solve_score_chain(self):
+        finalize = self.states["ColorAssociatedPaletteFinalizeTask"]["Parameters"]["Payload"]
+        self.assertEqual(finalize["solve_score_chain.$"], "$.plan.associated_palette.score_chain")
+        self.assertEqual(finalize["solve_score_quantile.$"], "$.plan.associated_palette.quantile")
+        self.assertEqual(finalize["solve_score_omega.$"], "$.plan.associated_palette.omega")
+        self.assertEqual(finalize["solve_score_omega_enabled.$"], "$.plan.associated_palette.omega_enabled")
+
     def test_solve_score_tasks_carry_thread_count(self):
         clip_payload = self.states["ColorSolveScoreClipTask"]["Parameters"]["Payload"]
         self.assertEqual(clip_payload["solve_score_threads.$"], "$.plan.solve_score.threads")

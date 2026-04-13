@@ -353,6 +353,14 @@ static int ct_arg_int(const CtEntry *e, int idx, int fallback) {
     return (int)v;
 }
 
+static double ct_arg_double(const CtEntry *e, int idx, double fallback) {
+    if (!e || idx < 0 || idx >= e->nArgs) return fallback;
+    char *end = NULL;
+    double v = strtod(e->args[idx], &end);
+    if (end == e->args[idx]) return fallback;
+    return v;
+}
+
 static int ct_arg_pad_lo(const CtEntry *e, int idx, int fallbackLo) {
     if (!e || idx < 0 || idx >= e->nArgs) return fallbackLo;
     const char *arg = e->args[idx];
@@ -2192,13 +2200,90 @@ static inline void c_div(double ar, double ai, double br, double bi, double *rr,
     *rr = (ar*br + ai*bi) / d;
     *ri = (ai*br - ar*bi) / d;
 }
+static inline double c_scale_safe(double scale, double factor) {
+    if (!isfinite(scale)) {
+        if (fabs(factor) < 1e-300) return 0.0;
+        return copysign(INFINITY, factor);
+    }
+    return scale * factor;
+}
 static inline void c_sin(double ar, double ai, double *rr, double *ri) {
+    double ay = fabs(ai);
+    if (ay > 350.0) {
+        double scale = 0.5 * exp(ay);
+        *rr = c_scale_safe(scale, sin(ar));
+        *ri = c_scale_safe(scale, ai >= 0.0 ? cos(ar) : -cos(ar));
+        return;
+    }
     *rr = sin(ar) * cosh(ai);
     *ri = cos(ar) * sinh(ai);
 }
 static inline void c_cos(double ar, double ai, double *rr, double *ri) {
+    double ay = fabs(ai);
+    if (ay > 350.0) {
+        double scale = 0.5 * exp(ay);
+        *rr = c_scale_safe(scale, cos(ar));
+        *ri = c_scale_safe(scale, ai >= 0.0 ? -sin(ar) : sin(ar));
+        return;
+    }
     *rr = cos(ar) * cosh(ai);
     *ri = -sin(ar) * sinh(ai);
+}
+static inline void c_tan(double ar, double ai, double *rr, double *ri) {
+    double x2 = 2.0 * ar, y2 = 2.0 * ai;
+    double ay2 = fabs(y2);
+    if (ay2 > 350.0) {
+        *rr = 0.0;
+        *ri = copysign(1.0, ai);
+        return;
+    }
+    double denom = cos(x2) + cosh(y2);
+    if (fabs(denom) < 1e-300) {
+        *rr = 0.0;
+        *ri = 0.0;
+        return;
+    }
+    *rr = sin(x2) / denom;
+    *ri = sinh(y2) / denom;
+}
+static inline void c_sinh(double ar, double ai, double *rr, double *ri) {
+    double ax = fabs(ar);
+    if (ax > 350.0) {
+        double scale = 0.5 * exp(ax);
+        *rr = c_scale_safe(scale, ar >= 0.0 ? cos(ai) : -cos(ai));
+        *ri = c_scale_safe(scale, sin(ai));
+        return;
+    }
+    *rr = sinh(ar) * cos(ai);
+    *ri = cosh(ar) * sin(ai);
+}
+static inline void c_cosh(double ar, double ai, double *rr, double *ri) {
+    double ax = fabs(ar);
+    if (ax > 350.0) {
+        double scale = 0.5 * exp(ax);
+        *rr = c_scale_safe(scale, cos(ai));
+        *ri = c_scale_safe(scale, ar >= 0.0 ? sin(ai) : -sin(ai));
+        return;
+    }
+    *rr = cosh(ar) * cos(ai);
+    *ri = sinh(ar) * sin(ai);
+}
+static inline void c_tanh(double ar, double ai, double *rr, double *ri) {
+    double x2 = 2.0 * ar, y2 = 2.0 * ai;
+    double ax2 = fabs(x2);
+    if (ax2 > 350.0) {
+        *rr = copysign(1.0, ar);
+        *ri = 0.0;
+        return;
+    }
+    double denom = cosh(x2) + cos(y2);
+    if (fabs(denom) < 1e-300) {
+        *rr = 0.0;
+        *ri = 0.0;
+        return;
+    }
+    *rr = sinh(x2) / denom;
+    *ri = sin(y2) / denom;
 }
 static inline void c_log(double ar, double ai, double *rr, double *ri) {
     double m2 = ar*ar + ai*ai;
@@ -2560,6 +2645,24 @@ static void ct_cumsum(double *cRe, double *cIm, int *nCoeffs) {
     for (int k = 1; k < *nCoeffs; k++) { cRe[k] += cRe[k-1]; cIm[k] += cIm[k-1]; }
 }
 
+/* cummax: running maximum by coefficient magnitude, preserving the winning value. */
+static void ct_cummax(double *cRe, double *cIm, int *nCoeffs) {
+    int n = *nCoeffs;
+    if (n <= 0) return;
+    double bestRe = cRe[0], bestIm = cIm[0];
+    double bestMag2 = bestRe * bestRe + bestIm * bestIm;
+    for (int k = 0; k < n; k++) {
+        double mag2 = cRe[k] * cRe[k] + cIm[k] * cIm[k];
+        if (mag2 >= bestMag2) {
+            bestRe = cRe[k];
+            bestIm = cIm[k];
+            bestMag2 = mag2;
+        }
+        cRe[k] = bestRe;
+        cIm[k] = bestIm;
+    }
+}
+
 /* sort_cumsum: reorder coefficients by ascending magnitude of cumulative sum. */
 static void ct_sort_cumsum(double *cRe, double *cIm, int *nCoeffs) {
     int n = *nCoeffs;
@@ -2607,6 +2710,78 @@ static void ct_power(double *cRe, double *cIm, int *nCoeffs, int power) {
         if (!isfinite(cRe[i]) || !isfinite(cIm[i])) {
             cRe[i] = 0.0;
             cIm[i] = 0.0;
+        }
+    }
+}
+
+static void ct_exp_affine(double *cRe, double *cIm, int *nCoeffs, double a, double b) {
+    int n = *nCoeffs;
+    for (int i = 0; i < n; i++) {
+        double mr, mi;
+        c_mul(cRe[i], cIm[i], a, b, &mr, &mi);
+        c_exp2(mr, mi, &cRe[i], &cIm[i]);
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) {
+            cRe[i] = 0.0;
+            cIm[i] = 0.0;
+        }
+    }
+}
+
+static void ct_apply_unary_complex(double *cRe, double *cIm, int *nCoeffs,
+                                   void (*fn)(double, double, double *, double *)) {
+    int n = *nCoeffs;
+    for (int i = 0; i < n; i++) {
+        double rr, ri;
+        fn(cRe[i], cIm[i], &rr, &ri);
+        if (!isfinite(rr) || !isfinite(ri)) {
+            cRe[i] = 0.0;
+            cIm[i] = 0.0;
+        } else {
+            cRe[i] = rr;
+            cIm[i] = ri;
+        }
+    }
+}
+
+static void ct_cos_apply(double *cRe, double *cIm, int *nCoeffs)  { ct_apply_unary_complex(cRe, cIm, nCoeffs, c_cos); }
+static void ct_sin_apply(double *cRe, double *cIm, int *nCoeffs)  { ct_apply_unary_complex(cRe, cIm, nCoeffs, c_sin); }
+static void ct_tan_apply(double *cRe, double *cIm, int *nCoeffs)  { ct_apply_unary_complex(cRe, cIm, nCoeffs, c_tan); }
+static void ct_cosh_apply(double *cRe, double *cIm, int *nCoeffs) { ct_apply_unary_complex(cRe, cIm, nCoeffs, c_cosh); }
+static void ct_sinh_apply(double *cRe, double *cIm, int *nCoeffs) { ct_apply_unary_complex(cRe, cIm, nCoeffs, c_sinh); }
+static void ct_tanh_apply(double *cRe, double *cIm, int *nCoeffs) { ct_apply_unary_complex(cRe, cIm, nCoeffs, c_tanh); }
+
+static void ct_round_affine(double *cRe, double *cIm, int *nCoeffs, double a, double b) {
+    int n = *nCoeffs;
+    for (int i = 0; i < n; i++) {
+        double mr, mi;
+        c_mul(cRe[i], cIm[i], a, b, &mr, &mi);
+        cRe[i] = round(mr);
+        cIm[i] = round(mi);
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) {
+            cRe[i] = 0.0;
+            cIm[i] = 0.0;
+        }
+    }
+}
+
+static void ct_pow_affine(double *cRe, double *cIm, int *nCoeffs,
+                          double a, double b, double pr, double pi) {
+    int n = *nCoeffs;
+    for (int i = 0; i < n; i++) {
+        double br, bi, rr, ri;
+        c_mul(cRe[i], cIm[i], a, b, &br, &bi);
+        if (br * br + bi * bi < 1e-60) {
+            rr = 0.0;
+            ri = 0.0;
+        } else {
+            c_powc(br, bi, pr, pi, &rr, &ri);
+        }
+        if (!isfinite(rr) || !isfinite(ri)) {
+            cRe[i] = 0.0;
+            cIm[i] = 0.0;
+        } else {
+            cRe[i] = rr;
+            cIm[i] = ri;
         }
     }
 }
@@ -2756,7 +2931,14 @@ static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "sort_mod_keep_angle") == 0)  return ct_sort_mod;
     if (strcmp(name, "sort_abs") == 0)  return ct_sort_abs;
     if (strcmp(name, "cumsum") == 0)   return ct_cumsum;
+    if (strcmp(name, "cummax") == 0)   return ct_cummax;
     if (strcmp(name, "sort_cumsum") == 0) return ct_sort_cumsum;
+    if (strcmp(name, "cos") == 0)      return ct_cos_apply;
+    if (strcmp(name, "sin") == 0)      return ct_sin_apply;
+    if (strcmp(name, "tan") == 0)      return ct_tan_apply;
+    if (strcmp(name, "cosh") == 0)     return ct_cosh_apply;
+    if (strcmp(name, "sinh") == 0)     return ct_sinh_apply;
+    if (strcmp(name, "tanh") == 0)     return ct_tanh_apply;
     return NULL;
 }
 
@@ -2774,6 +2956,26 @@ static int dispatchCt(const CtEntry *e, double *cRe, double *cIm, int *nCoeffs) 
     if (strcmp(e->name, "invpower") == 0) {
         int k = ct_arg_int(e, 0, 4);
         ct_invpower(cRe, cIm, nCoeffs, k);
+        return 0;
+    }
+    if (strcmp(e->name, "exp") == 0) {
+        double a = ct_arg_double(e, 0, 1.0);
+        double b = ct_arg_double(e, 1, 0.0);
+        ct_exp_affine(cRe, cIm, nCoeffs, a, b);
+        return 0;
+    }
+    if (strcmp(e->name, "round") == 0) {
+        double a = ct_arg_double(e, 0, 1.0);
+        double b = ct_arg_double(e, 1, 0.0);
+        ct_round_affine(cRe, cIm, nCoeffs, a, b);
+        return 0;
+    }
+    if (strcmp(e->name, "pow") == 0) {
+        double a = ct_arg_double(e, 0, 1.0);
+        double b = ct_arg_double(e, 1, 0.0);
+        double pr = ct_arg_double(e, 2, 1.0);
+        double pi = ct_arg_double(e, 3, 0.0);
+        ct_pow_affine(cRe, cIm, nCoeffs, a, b, pr, pi);
         return 0;
     }
     if (strcmp(e->name, "roots") == 0) {

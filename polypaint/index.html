@@ -473,7 +473,17 @@ button {
                     <option value="sort_mod_keep_angle">sort_mod_keep_angle</option>
                     <option value="sort_abs">sort_abs</option>
                     <option value="cumsum">cumsum</option>
+                    <option value="cummax">cummax</option>
                     <option value="sort_cumsum">sort_cumsum</option>
+                    <option value="exp">exp</option>
+                    <option value="cos">cos</option>
+                    <option value="sin">sin</option>
+                    <option value="tan">tan</option>
+                    <option value="cosh">cosh</option>
+                    <option value="sinh">sinh</option>
+                    <option value="tanh">tanh</option>
+                    <option value="round">round</option>
+                    <option value="pow">pow</option>
                     <option value="power">power</option>
                     <option value="invpower">invpower</option>
                     <option value="roots_cm">roots_cm</option>
@@ -6771,7 +6781,16 @@ const _rtCatalog = {
 const _ctCatalog = {
     rev: {}, conj: {}, normalize: {}, deriv: {}, scale100: {}, safe: {},
     negate_odd: {}, max2one: {}, swirler: {}, sort_mod_keep_angle: {},
-    sort_abs: {}, cumsum: {}, sort_cumsum: {},
+    sort_abs: {}, cumsum: {}, cummax: {}, sort_cumsum: {},
+    exp: { params: [{ph:'a', def:'1'}, {ph:'b', def:'0'}], label: 'exp' },
+    cos: { label: 'cos' },
+    sin: { label: 'sin' },
+    tan: { label: 'tan' },
+    cosh: { label: 'cosh' },
+    sinh: { label: 'sinh' },
+    tanh: { label: 'tanh' },
+    round: { params: [{ph:'a', def:'1'}, {ph:'b', def:'0'}], label: 'round' },
+    pow: { params: [{ph:'a', def:'1'}, {ph:'b', def:'0'}, {ph:'c', def:'1'}, {ph:'d', def:'0'}], label: 'pow' },
     power: { params: [{ph:'k', def:'8'}], label: 'p' },
     invpower: { params: [{ph:'k', def:'4'}], label: 'invp' },
     roots_cm: { params: [{ph:'hi|lo', def:'hi', choices: ['hi', 'lo']}] },
@@ -7046,9 +7065,36 @@ function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef) {
     return `<input class="chip-input" type="text" inputmode="${im}" value="${_escapeHtml(value)}" placeholder="${_escapeHtml(pd.ph || '')}" onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">`;
 }
 
+function _ctUnaryFormulaChip(which, i, fnName) {
+    return `<span class="chip"><span class="chip-formula"><span>${_escapeHtml(fnName)}(z)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+}
+
 function _renderRtChipHtml(item, i, which, catalog) {
     const spec = catalog[item.name] || {};
     const pDefs = spec.params || [];
+    if (which === 'ct' && item.name === 'exp') {
+        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
+        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
+        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>exp(z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>))</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
+    if (which === 'ct' && item.name === 'cos') return _ctUnaryFormulaChip(which, i, 'cos');
+    if (which === 'ct' && item.name === 'sin') return _ctUnaryFormulaChip(which, i, 'sin');
+    if (which === 'ct' && item.name === 'tan') return _ctUnaryFormulaChip(which, i, 'tan');
+    if (which === 'ct' && item.name === 'cosh') return _ctUnaryFormulaChip(which, i, 'cosh');
+    if (which === 'ct' && item.name === 'sinh') return _ctUnaryFormulaChip(which, i, 'sinh');
+    if (which === 'ct' && item.name === 'tanh') return _ctUnaryFormulaChip(which, i, 'tanh');
+    if (which === 'ct' && item.name === 'round') {
+        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
+        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
+        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>round(z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>))</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
+    if (which === 'ct' && item.name === 'pow') {
+        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
+        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
+        const c = _chipInputHtml(which, i, 2, item.params[2] || '', pDefs[2]);
+        const d = _chipInputHtml(which, i, 3, item.params[3] || '', pDefs[3]);
+        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>pow(z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>),</span><span>${c}</span><span class="chip-op">+i</span><span>${d}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
     if (which === 'ct' && item.name === 'power') {
         const k = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
         return `<span class="chip"><span class="chip-formula"><span>p(</span><span>${k}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;

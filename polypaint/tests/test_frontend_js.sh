@@ -53,6 +53,9 @@ grep -q 'id="btn-render-resize"' "$HTML" || { echo "FATAL: color Resize button m
 grep -q 'id="resize-popup-overlay"' "$HTML" || { echo "FATAL: resize popup missing from index.html"; exit 1; }
 grep -q 'id="btn-png-export"' "$HTML" || { echo "FATAL: bilevel PNG export button missing from index.html"; exit 1; }
 grep -q 'id="btn-tiff-compat"' "$HTML" || { echo "FATAL: bilevel TIFF compat button missing from index.html"; exit 1; }
+for ct_name in cummax exp cos sin tan cosh sinh tanh round pow; do
+    grep -q "<option value=\"$ct_name\">$ct_name</option>" "$HTML" || { echo "FATAL: coeff transform option $ct_name missing from index.html"; exit 1; }
+done
 grep -q 'onclick="loadLambdaConfig()" class="btn-secondary" style="margin:0; padding:4px 12px"' "$HTML" || { echo "FATAL: Config Load button should override global button margin"; exit 1; }
 grep -q 'onclick="renderResultsTable()" style="margin:0; padding:3px 8px; font-size:10px"' "$HTML" || { echo "FATAL: Results Filter button should override global button margin"; exit 1; }
 grep -q 'id="btn-solve-histogram" onclick="runSolveScoreHistogramDebug()" style="margin:0 0 0 8px; font-size:10px; padding:1px 8px"' "$HTML" || { echo "FATAL: Solve histogram button should override global button margin"; exit 1; }
@@ -1719,6 +1722,119 @@ async function testPipeline(name, call) {
         }
         vm.runInContext(`_ptChain = []; _renderChips('pt');`, ctx);
         console.log('  inv_t_plus_2 param transform chip renders formula + serializes: OK');
+    }
+
+    {
+        try {
+            vm.runInContext(`
+                _ctChain = [];
+                addChip('ct', 'exp');
+                updateChipParam(0, 0, '1.5', 'ct');
+                updateChipParam(0, 1, '-0.25', 'ct');
+            `, ctx);
+        } catch (e) { console.error('FATAL: addChip(exp ct): ' + e.message); process.exit(1); }
+        const coeffExpInfo = vm.runInContext(`(() => {
+            const chips = document.getElementById('ct-chips');
+            const html = chips ? chips.innerHTML : '';
+            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
+            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            return { html, inputs, wire };
+        })()`, ctx);
+        if (!coeffExpInfo.html.includes('exp(z*(') || coeffExpInfo.inputs !== 2) {
+            console.error('FATAL: exp coeff transform chip should render exp(z*(a+ib)) with two inputs');
+            process.exit(1);
+        }
+        if (coeffExpInfo.wire !== '[[\"exp\",\"1.5\",\"-0.25\"]]') {
+            console.error('FATAL: exp coeff transform should serialize as [[\"exp\",\"1.5\",\"-0.25\"]], got ' + coeffExpInfo.wire);
+            process.exit(1);
+        }
+        vm.runInContext(`_ctChain = []; _renderChips('ct');`, ctx);
+        console.log('  exp coeff transform chip renders formula + serializes: OK');
+    }
+
+    {
+        try {
+            vm.runInContext(`
+                _ctChain = [];
+                addChip('ct', 'round');
+                updateChipParam(0, 0, '0.8', 'ct');
+                updateChipParam(0, 1, '0.3', 'ct');
+            `, ctx);
+        } catch (e) { console.error('FATAL: addChip(round ct): ' + e.message); process.exit(1); }
+        const coeffRoundInfo = vm.runInContext(`(() => {
+            const chips = document.getElementById('ct-chips');
+            const html = chips ? chips.innerHTML : '';
+            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
+            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            return { html, inputs, wire };
+        })()`, ctx);
+        if (!coeffRoundInfo.html.includes('round(z*(') || coeffRoundInfo.inputs !== 2) {
+            console.error('FATAL: round coeff transform chip should render round(z*(a+ib)) with two inputs');
+            process.exit(1);
+        }
+        if (coeffRoundInfo.wire !== '[[\"round\",\"0.8\",\"0.3\"]]') {
+            console.error('FATAL: round coeff transform should serialize as [[\"round\",\"0.8\",\"0.3\"]], got ' + coeffRoundInfo.wire);
+            process.exit(1);
+        }
+        vm.runInContext(`_ctChain = []; _renderChips('ct');`, ctx);
+        console.log('  round coeff transform chip renders formula + serializes: OK');
+    }
+
+    {
+        try {
+            vm.runInContext(`
+                _ctChain = [];
+                addChip('ct', 'pow');
+                updateChipParam(0, 0, '1.1', 'ct');
+                updateChipParam(0, 1, '-0.2', 'ct');
+                updateChipParam(0, 2, '0.5', 'ct');
+                updateChipParam(0, 3, '0.75', 'ct');
+            `, ctx);
+        } catch (e) { console.error('FATAL: addChip(pow ct): ' + e.message); process.exit(1); }
+        const coeffPowInfo = vm.runInContext(`(() => {
+            const chips = document.getElementById('ct-chips');
+            const html = chips ? chips.innerHTML : '';
+            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
+            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            return { html, inputs, wire };
+        })()`, ctx);
+        if (!coeffPowInfo.html.includes('pow(z*(') || coeffPowInfo.inputs !== 4) {
+            console.error('FATAL: pow coeff transform chip should render pow(z*(a+ib),c+id) with four inputs');
+            process.exit(1);
+        }
+        if (coeffPowInfo.wire !== '[[\"pow\",\"1.1\",\"-0.2\",\"0.5\",\"0.75\"]]') {
+            console.error('FATAL: pow coeff transform should serialize as [[\"pow\",\"1.1\",\"-0.2\",\"0.5\",\"0.75\"]], got ' + coeffPowInfo.wire);
+            process.exit(1);
+        }
+        vm.runInContext(`_ctChain = []; _renderChips('ct');`, ctx);
+        console.log('  pow coeff transform chip renders formula + serializes: OK');
+    }
+
+    {
+        try {
+            vm.runInContext(`
+                _ctChain = [];
+                addChip('ct', 'cos');
+                addChip('ct', 'tanh');
+                addChip('ct', 'cummax');
+            `, ctx);
+        } catch (e) { console.error('FATAL: addChip(cos/tanh/cummax ct): ' + e.message); process.exit(1); }
+        const coeffUnaryInfo = vm.runInContext(`(() => {
+            const chips = document.getElementById('ct-chips');
+            const html = chips ? chips.innerHTML : '';
+            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            return { html, wire };
+        })()`, ctx);
+        if (!coeffUnaryInfo.html.includes('cos(z)') || !coeffUnaryInfo.html.includes('tanh(z)') || !coeffUnaryInfo.html.includes('cummax')) {
+            console.error('FATAL: unary coeff transform chips should render formulas/labels for cos, tanh, cummax');
+            process.exit(1);
+        }
+        if (coeffUnaryInfo.wire !== '[\"cos\",\"tanh\",\"cummax\"]') {
+            console.error('FATAL: unary coeff transforms should serialize cleanly, got ' + coeffUnaryInfo.wire);
+            process.exit(1);
+        }
+        vm.runInContext(`_ctChain = []; _renderChips('ct');`, ctx);
+        console.log('  unary coeff transform chips render + serialize: OK');
     }
 
     {

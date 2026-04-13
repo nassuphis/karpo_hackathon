@@ -301,15 +301,12 @@ def _read_coeffs(path, n_coeffs):
     floats = struct.unpack(f'<{n_floats}f', data)
     stride = n_coeffs * 2
     n_steps = n_floats // stride
-    coeffs = []
+    coeffs = np.empty((n_steps, n_coeffs), dtype=np.complex128)
     for s in range(n_steps):
-        step_coeffs = []
         for k in range(n_coeffs):
-            re = floats[s * stride + k * 2]
-            im = floats[s * stride + k * 2 + 1]
-            step_coeffs.append(complex(re, im))
-        coeffs.append(step_coeffs)
-    return np.array(coeffs)
+            coeffs.real[s, k] = floats[s * stride + k * 2]
+            coeffs.imag[s, k] = floats[s * stride + k * 2 + 1]
+    return coeffs
 
 
 def _eval_poly(coeffs, z):
@@ -492,6 +489,30 @@ class TestCoeffTransforms(unittest.TestCase):
             "i1_start": 0, "i1_end": 3,
         }, out_path)
 
+    def _coeffgen_chunked_plain(self, params_out_path, coeff_out_path):
+        _run_sweep({
+            "mode": "param_gen",
+            "n1": 3, "n2": 3,
+            "times": 1,
+            "param_transforms": [["unit_circle"]],
+        }, params_out_path)
+        return _run_sweep({
+            "mode": "coeffgen_chunked",
+            "function": "giga_30",
+            "params_file": params_out_path,
+            "step_start": 0,
+            "step_count": 9,
+            "coeff_transforms": [],
+        }, coeff_out_path)
+
+    @staticmethod
+    def _as_written_complex64(values):
+        arr = np.asarray(values, dtype=np.complex128).copy()
+        bad = ~np.isfinite(arr.real) | ~np.isfinite(arr.imag)
+        arr.real[bad] = 0.0
+        arr.imag[bad] = 0.0
+        return arr.astype(np.complex64).astype(np.complex128)
+
     def test_rev_reverses(self):
         """ct_rev reverses the coefficient order."""
         meta_plain = self._coeffgen([], "/tmp/test_ct_plain.bin")
@@ -602,6 +623,102 @@ class TestCoeffTransforms(unittest.TestCase):
             expected[s] = np.where(np.abs(acc) > 1.0, 1.0 / acc, 1.0 + 0.0j)
 
         np.testing.assert_allclose(invpowered, expected, rtol=1e-5, atol=1e-5)
+
+    def test_exp_matches_python_formula(self):
+        """exp(a,b) should match exp(z*(a+ib)) elementwise."""
+        meta_plain = self._coeffgen_chunked_plain("/tmp/test_ct_exp_params.bin", "/tmp/test_ct_plain_exp.bin")
+        meta_exp = self._coeffgen([["exp", "0.75", "-0.5"]], "/tmp/test_ct_exp.bin")
+
+        n = meta_plain["n_coeffs"]
+        plain = _read_coeffs("/tmp/test_ct_plain_exp.bin", n)
+        transformed = _read_coeffs("/tmp/test_ct_exp.bin", n)
+        expected = self._as_written_complex64(np.exp(plain * (0.75 - 0.5j)))
+
+        np.testing.assert_allclose(transformed, expected, rtol=1e-5, atol=1e-5)
+
+    def test_trig_transforms_match_numpy(self):
+        """cos/sin/tan should match NumPy complex trig elementwise."""
+        meta_plain = self._coeffgen([], "/tmp/test_ct_plain_trig.bin")
+        n = meta_plain["n_coeffs"]
+        plain = _read_coeffs("/tmp/test_ct_plain_trig.bin", n)
+
+        cases = [
+            ("cos", np.cos, "/tmp/test_ct_cos.bin"),
+            ("sin", np.sin, "/tmp/test_ct_sin.bin"),
+            ("tan", np.tan, "/tmp/test_ct_tan.bin"),
+        ]
+        for name, fn, path in cases:
+            self._coeffgen([name], path)
+            actual = _read_coeffs(path, n)
+            expected = self._as_written_complex64(fn(plain))
+            np.testing.assert_allclose(actual, expected, rtol=5e-5, atol=5e-5, err_msg=name)
+
+    def test_hyperbolic_transforms_match_numpy(self):
+        """cosh/sinh/tanh should match NumPy complex hyperbolic functions."""
+        meta_plain = self._coeffgen([], "/tmp/test_ct_plain_hyper.bin")
+        n = meta_plain["n_coeffs"]
+        plain = _read_coeffs("/tmp/test_ct_plain_hyper.bin", n)
+
+        cases = [
+            ("cosh", np.cosh, "/tmp/test_ct_cosh.bin"),
+            ("sinh", np.sinh, "/tmp/test_ct_sinh.bin"),
+            ("tanh", np.tanh, "/tmp/test_ct_tanh.bin"),
+        ]
+        for name, fn, path in cases:
+            self._coeffgen([name], path)
+            actual = _read_coeffs(path, n)
+            expected = self._as_written_complex64(fn(plain))
+            np.testing.assert_allclose(actual, expected, rtol=5e-5, atol=5e-5, err_msg=name)
+
+    def test_cummax_tracks_running_maximum_by_magnitude(self):
+        """cummax should keep the running maximum coefficient by magnitude."""
+        meta_plain = self._coeffgen([], "/tmp/test_ct_plain_cummax.bin")
+        meta_cummax = self._coeffgen(["cummax"], "/tmp/test_ct_cummax.bin")
+
+        n = meta_plain["n_coeffs"]
+        plain = _read_coeffs("/tmp/test_ct_plain_cummax.bin", n)
+        actual = _read_coeffs("/tmp/test_ct_cummax.bin", n)
+
+        expected = np.zeros_like(plain, dtype=np.complex128)
+        for s in range(len(plain)):
+            best = plain[s, 0]
+            best_mag = abs(best)
+            for k in range(n):
+                if abs(plain[s, k]) >= best_mag:
+                    best = plain[s, k]
+                    best_mag = abs(best)
+                expected[s, k] = best
+
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
+
+    def test_round_matches_componentwise_complex_round(self):
+        """round(a,b) should round the real and imaginary parts after affine scaling."""
+        meta_plain = self._coeffgen_chunked_plain("/tmp/test_ct_round_params.bin", "/tmp/test_ct_plain_round.bin")
+        meta_round = self._coeffgen([["round", "1.234", "-0.567"]], "/tmp/test_ct_round.bin")
+
+        n = meta_plain["n_coeffs"]
+        plain = _read_coeffs("/tmp/test_ct_plain_round.bin", n)
+        actual = _read_coeffs("/tmp/test_ct_round.bin", n)
+        expected = self._as_written_complex64(np.round(plain * (1.234 - 0.567j)))
+
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
+
+    def test_pow_matches_python_formula_with_zero_guard(self):
+        """pow(a,b,c,d) should match pow(z*(a+ib), c+id), mapping zero base to zero."""
+        meta_plain = self._coeffgen_chunked_plain("/tmp/test_ct_pow_params.bin", "/tmp/test_ct_plain_pow.bin")
+        meta_pow = self._coeffgen([["pow", "0.8", "0.3", "1.2", "-0.4"]], "/tmp/test_ct_pow.bin")
+
+        n = meta_plain["n_coeffs"]
+        plain = _read_coeffs("/tmp/test_ct_plain_pow.bin", n)
+        actual = _read_coeffs("/tmp/test_ct_pow.bin", n)
+
+        base = plain * (0.8 + 0.3j)
+        expected = np.zeros_like(base, dtype=np.complex128)
+        mask = np.abs(base) > 1e-30
+        expected[mask] = np.power(base[mask], 1.2 - 0.4j)
+        expected = self._as_written_complex64(expected)
+
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
 
     def test_roots_hi_lo_only_change_zero_padding_side(self):
         """roots(k,hi|lo) should compute the same roots and only move the padding zero."""

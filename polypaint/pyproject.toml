@@ -5,5 +5,7 @@ description = "Polypaint tooling scripts"
 requires-python = ">=3.13"
 dependencies = [
     "google-genai>=1.72.0",
+    "numpy>=2.4.4",
     "pillow>=12.2.0",
+    "pytest>=9.0.3",
 ]

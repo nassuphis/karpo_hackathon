@@ -315,7 +315,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("lambda/gen_parity_results.py", DEPLOY_TEXT)
 
     def test_deploy_regenerates_parity_overlay_before_js_catalog(self):
-        build_idx = DEPLOY_TEXT.index('cc -O2 -o lambda/sweep_test lambda/sweep_cli.c -lm')
+        build_idx = DEPLOY_TEXT.index('cc -O2 -pthread -o lambda/sweep_test lambda/sweep_cli.c -lm')
         parity_idx = DEPLOY_TEXT.index('lambda/gen_parity_results.py')
         js_idx = DEPLOY_TEXT.index('from gen_catalog import load_catalog, load_metrics, generate_js, JS_OUT')
         self.assertLess(build_idx, parity_idx)

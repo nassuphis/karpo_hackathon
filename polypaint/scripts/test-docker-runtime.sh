@@ -11,7 +11,7 @@ LIBVIPS_BUILD="$ROOT/lambda/layer-build"
 echo "=== Docker Runtime Regression Test ==="
 
 # Verify binaries exist
-for BIN in "$ROOT/lambda/sweep" "$ROOT/lambda/sweep_mt" "$ROOT/lambda/sweep_cm" "$ROOT/lambda/solve_palette_chunk_mt"; do
+for BIN in "$ROOT/lambda/sweep" "$ROOT/lambda/sweep_mt" "$ROOT/lambda/sweep_cm" "$ROOT/lambda/sweep_coeffgen" "$ROOT/lambda/solve_palette_chunk_mt"; do
     if [ ! -f "$BIN" ]; then
         echo "FATAL: $BIN not found. Run deploy.sh to compile."
         exit 1

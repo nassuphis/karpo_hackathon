@@ -1467,6 +1467,53 @@ button {
     </div>
 </div>
 
+<div id="compute-mt-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="compute-mt-popup-title">
+        <div class="tri-popup-head">
+            <div id="compute-mt-popup-title" class="tri-popup-title">Calculate-AE-MT</div>
+            <button id="compute-mt-popup-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div id="compute-mt-popup-summary" class="autolevel-popup-summary"></div>
+        <div style="padding:0 14px 8px 14px">
+            <div class="autolevel-stage-text">Choose local native thread counts for each compute stage. Coeffgen chunk fan-out stays unchanged; these knobs control threading inside each Lambda worker.</div>
+            <table style="width:100%; border-collapse:collapse; margin-top:10px">
+                <thead>
+                    <tr style="border-bottom:1px solid #333">
+                        <th style="text-align:left; padding:6px 8px">Stage</th>
+                        <th style="text-align:left; padding:6px 8px">Threads</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid #222">
+                        <td style="padding:8px">Param gen</td>
+                        <td style="padding:8px"><input id="compute-mt-param-gen-threads" type="number" min="1" max="16" step="1" value="4"></td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #222">
+                        <td style="padding:8px">Coeffgen</td>
+                        <td style="padding:8px"><input id="compute-mt-coeffgen-threads" type="number" min="1" max="16" step="1" value="4"></td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #222">
+                        <td style="padding:8px">Lores param gen</td>
+                        <td style="padding:8px"><input id="compute-mt-lores-param-gen-threads" type="number" min="1" max="16" step="1" value="1"></td>
+                    </tr>
+                    <tr>
+                        <td style="padding:8px">Lores coeffgen</td>
+                        <td style="padding:8px"><input id="compute-mt-lores-coeffgen-threads" type="number" min="1" max="16" step="1" value="1"></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="autolevel-popup-help">This changes local native threading for `param_gen` and `coeffgen_chunked`. The existing compute chunk fan-out stays the same.</div>
+        <div class="autolevel-popup-actions">
+            <div></div>
+            <div style="display:flex; gap:8px">
+                <button id="compute-mt-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+                <button id="compute-mt-popup-run" type="button" class="btn-primary" style="padding:6px 12px">Execute</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div id="generate-from-palette-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
     <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="generate-from-palette-popup-title">
         <div class="tri-popup-head">
@@ -3832,6 +3879,13 @@ let _renderMtPopupState = {
     finalizeWorkers: 16,
     saveAssociatedPalette: false,
 };
+let _computeMtPopupState = {
+    open: false,
+    paramGenThreads: 4,
+    coeffgenThreads: 4,
+    loresParamGenThreads: 1,
+    loresCoeffgenThreads: 1,
+};
 let _generateFromPalettePopupState = {
     open: false,
     filter: '',
@@ -5463,6 +5517,69 @@ function openRenderMtPopup() {
     if (threadsEl && typeof threadsEl.focus === 'function') threadsEl.focus();
 }
 
+function _closeComputeMtPopup() {
+    _computeMtPopupState = {
+        open: false,
+        paramGenThreads: _clampRenderMtThreads(_computeMtPopupState.paramGenThreads),
+        coeffgenThreads: _clampRenderMtThreads(_computeMtPopupState.coeffgenThreads),
+        loresParamGenThreads: _clampRenderMtThreads(_computeMtPopupState.loresParamGenThreads),
+        loresCoeffgenThreads: _clampRenderMtThreads(_computeMtPopupState.loresCoeffgenThreads),
+    };
+    const overlay = document.getElementById('compute-mt-popup-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+}
+
+function _renderComputeMtPopup() {
+    const overlay = document.getElementById('compute-mt-popup-overlay');
+    const summaryEl = document.getElementById('compute-mt-popup-summary');
+    const paramThreadsEl = document.getElementById('compute-mt-param-gen-threads');
+    const coeffThreadsEl = document.getElementById('compute-mt-coeffgen-threads');
+    const loresThreadsEl = document.getElementById('compute-mt-lores-param-gen-threads');
+    const loresCoeffThreadsEl = document.getElementById('compute-mt-lores-coeffgen-threads');
+    const runBtn = document.getElementById('compute-mt-popup-run');
+    if (!overlay || !summaryEl || !paramThreadsEl || !coeffThreadsEl || !loresThreadsEl || !loresCoeffThreadsEl) return;
+    if (!_computeMtPopupState.open) {
+        _closeComputeMtPopup();
+        return;
+    }
+    const paramGenThreads = _clampRenderMtThreads(_computeMtPopupState.paramGenThreads);
+    const coeffgenThreads = _clampRenderMtThreads(_computeMtPopupState.coeffgenThreads);
+    const loresParamGenThreads = _clampRenderMtThreads(_computeMtPopupState.loresParamGenThreads);
+    const loresCoeffgenThreads = _clampRenderMtThreads(_computeMtPopupState.loresCoeffgenThreads);
+    _computeMtPopupState.paramGenThreads = paramGenThreads;
+    _computeMtPopupState.coeffgenThreads = coeffgenThreads;
+    _computeMtPopupState.loresParamGenThreads = loresParamGenThreads;
+    _computeMtPopupState.loresCoeffgenThreads = loresCoeffgenThreads;
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    paramThreadsEl.value = String(paramGenThreads);
+    coeffThreadsEl.value = String(coeffgenThreads);
+    loresThreadsEl.value = String(loresParamGenThreads);
+    loresCoeffThreadsEl.value = String(loresCoeffgenThreads);
+    const funcName = document.getElementById('render-function')?.value || '?';
+    const n = parseInt(document.getElementById('render-n')?.value, 10) || 0;
+    const nChunks = Math.max(1, parseInt(document.getElementById('render-stripes')?.value, 10) || 10);
+    const times = Math.max(1, parseInt(document.getElementById('render-times')?.value, 10) || 1);
+    summaryEl.textContent = `Function: ${funcName} • N=${n || '?'} • chunks=${nChunks} • times=${times}`;
+    if (runBtn) runBtn.disabled = !!document.getElementById('btn-calculate-mt')?.disabled;
+}
+
+function openComputeMtPopup() {
+    _computeMtPopupState = {
+        open: true,
+        paramGenThreads: _clampRenderMtThreads(_computeMtPopupState.paramGenThreads || 4),
+        coeffgenThreads: _clampRenderMtThreads(_computeMtPopupState.coeffgenThreads || 4),
+        loresParamGenThreads: _clampRenderMtThreads(_computeMtPopupState.loresParamGenThreads || 1),
+        loresCoeffgenThreads: _clampRenderMtThreads(_computeMtPopupState.loresCoeffgenThreads || 1),
+    };
+    _renderComputeMtPopup();
+    const inputEl = document.getElementById('compute-mt-param-gen-threads');
+    if (inputEl && typeof inputEl.focus === 'function') inputEl.focus();
+}
+
 function _visibleGenerateFromPaletteCatalog() {
     const filter = (_generateFromPalettePopupState.filter || '').trim().toLowerCase();
     const items = _reusablePaletteArtifacts();
@@ -6028,6 +6145,91 @@ function _initRenderMtPopup() {
             _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
             _closeRenderMtPopup();
             runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, mergeWorkers, finalizeWorkers, saveAssociatedPalette });
+        }
+    });
+}
+
+function _initComputeMtPopup() {
+    const overlay = document.getElementById('compute-mt-popup-overlay');
+    const closeBtn = document.getElementById('compute-mt-popup-close');
+    const cancelBtn = document.getElementById('compute-mt-popup-cancel');
+    const runBtn = document.getElementById('compute-mt-popup-run');
+    const paramThreadsEl = document.getElementById('compute-mt-param-gen-threads');
+    const coeffThreadsEl = document.getElementById('compute-mt-coeffgen-threads');
+    const loresThreadsEl = document.getElementById('compute-mt-lores-param-gen-threads');
+    const loresCoeffThreadsEl = document.getElementById('compute-mt-lores-coeffgen-threads');
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) _closeComputeMtPopup();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', _closeComputeMtPopup);
+    if (cancelBtn) cancelBtn.addEventListener('click', _closeComputeMtPopup);
+    if (paramThreadsEl) {
+        paramThreadsEl.addEventListener('input', (ev) => {
+            _computeMtPopupState.paramGenThreads = _clampRenderMtThreads(ev.target.value);
+            _renderComputeMtPopup();
+        });
+    }
+    if (coeffThreadsEl) {
+        coeffThreadsEl.addEventListener('input', (ev) => {
+            _computeMtPopupState.coeffgenThreads = _clampRenderMtThreads(ev.target.value);
+            _renderComputeMtPopup();
+        });
+    }
+    if (loresThreadsEl) {
+        loresThreadsEl.addEventListener('input', (ev) => {
+            _computeMtPopupState.loresParamGenThreads = _clampRenderMtThreads(ev.target.value);
+            _renderComputeMtPopup();
+        });
+    }
+    if (loresCoeffThreadsEl) {
+        loresCoeffThreadsEl.addEventListener('input', (ev) => {
+            _computeMtPopupState.loresCoeffgenThreads = _clampRenderMtThreads(ev.target.value);
+            _renderComputeMtPopup();
+        });
+    }
+    if (runBtn) {
+        runBtn.addEventListener('click', async () => {
+            const btnText = runBtn.textContent;
+            try {
+                runBtn.disabled = true;
+                runBtn.textContent = 'Executing...';
+                const paramGenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-param-gen-threads').value);
+                const coeffgenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-coeffgen-threads').value);
+                const loresParamGenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-lores-param-gen-threads').value);
+                const loresCoeffgenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-lores-coeffgen-threads').value);
+                _computeMtPopupState.paramGenThreads = paramGenThreads;
+                _computeMtPopupState.coeffgenThreads = coeffgenThreads;
+                _computeMtPopupState.loresParamGenThreads = loresParamGenThreads;
+                _computeMtPopupState.loresCoeffgenThreads = loresCoeffgenThreads;
+                _closeComputeMtPopup();
+                await runCalculateWithSolver('aberth_mt', { paramGenThreads, coeffgenThreads, loresParamGenThreads, loresCoeffgenThreads });
+            } finally {
+                runBtn.disabled = false;
+                runBtn.textContent = btnText;
+            }
+        });
+    }
+    document.addEventListener('keydown', (ev) => {
+        if (!_computeMtPopupState.open) return;
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            _closeComputeMtPopup();
+            return;
+        }
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            const paramGenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-param-gen-threads').value);
+            const coeffgenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-coeffgen-threads').value);
+            const loresParamGenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-lores-param-gen-threads').value);
+            const loresCoeffgenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-lores-coeffgen-threads').value);
+            _computeMtPopupState.paramGenThreads = paramGenThreads;
+            _computeMtPopupState.coeffgenThreads = coeffgenThreads;
+            _computeMtPopupState.loresParamGenThreads = loresParamGenThreads;
+            _computeMtPopupState.loresCoeffgenThreads = loresCoeffgenThreads;
+            _closeComputeMtPopup();
+            runCalculateWithSolver('aberth_mt', { paramGenThreads, coeffgenThreads, loresParamGenThreads, loresCoeffgenThreads });
         }
     });
 }
@@ -7224,6 +7426,7 @@ _initColorRepalettePopup();
 _initResultsRefreshPopup();
 _initRenderGeneratePopup();
 _initRenderMtPopup();
+_initComputeMtPopup();
 _initGenerateFromPalettePopup();
 _initExtractPalettePopup();
 _initPdfColorSpreadPopup();
@@ -11076,15 +11279,26 @@ async function runParamDebug() {
 }
 
 async function runCalculate() { return runCalculateWithSolver('aberth'); }
-async function runCalculateAEMT() { return runCalculateWithSolver('aberth_mt'); }
+async function runCalculateAEMT() { openComputeMtPopup(); }
 async function runCalculateCM() { return runCalculateWithSolver('companion_matrix'); }
 function _aggregateComputeParamGenPerf(results) {
     const row = Array.isArray(results) && results.length ? results[0] : null;
     if (!row) return null;
+    const threads = Math.max(1, Number(row.threads) || 1);
+    const dataBytes = Number(row.data_bytes) || 0;
+    const uploadedBytesRaw = Number(row.uploaded_bytes);
+    const uploadedBytes = Number.isFinite(uploadedBytesRaw) ? Math.max(0, Math.min(dataBytes || uploadedBytesRaw, uploadedBytesRaw)) : dataBytes;
+    const uploadedStepsRaw = Number(row.uploaded_steps_est);
+    const totalSteps = Number(row.n_steps) || 0;
+    const uploadedSteps = Number.isFinite(uploadedStepsRaw) ? Math.max(0, Math.min(totalSteps || uploadedStepsRaw, uploadedStepsRaw)) : totalSteps;
     return {
         elapsed_us: Number(row.elapsed_us) || 0,
-        n_steps: Number(row.n_steps) || 0,
-        data_bytes: Number(row.data_bytes) || 0,
+        n_steps: totalSteps,
+        data_bytes: dataBytes,
+        threads,
+        uploaded_bytes: uploadedBytes,
+        uploaded_steps_est: uploadedSteps,
+        progress: Number.isFinite(Number(row.progress)) ? Number(row.progress) : ((dataBytes > 0) ? (uploadedBytes / dataBytes) : 1),
     };
 }
 
@@ -11095,9 +11309,10 @@ function _aggregateComputeCoeffgenPerf(results) {
         acc.tasks += 1;
         acc.elapsed_us += Number(row.elapsed_us) || 0;
         acc.coeffs_size += Number(row.coeffs_size) || 0;
+        acc.threads = Math.max(acc.threads, Number(row.threads) || 0);
         if (!acc.degree && row.degree != null) acc.degree = Number(row.degree) || 0;
         return acc;
-    }, { tasks: 0, elapsed_us: 0, coeffs_size: 0, degree: 0 });
+    }, { tasks: 0, elapsed_us: 0, coeffs_size: 0, degree: 0, threads: 0 });
 }
 
 function _aggregateComputeSolvePerf(results) {
@@ -11119,12 +11334,27 @@ function _computePhasePerfSummary(phase, results, wallMs) {
     if (phase === 'param_gen' || phase === 'lores_param_gen') {
         const perf = _aggregateComputeParamGenPerf(results);
         if (!perf) return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
-        return `wall=${_fmtSecondsMs(wallMs)} total=gen ${_fmtSecondsUs(perf.elapsed_us)} · ${perf.n_steps} steps · ${(perf.data_bytes/1e6).toFixed(1)}MB`;
+        let msg = `wall=${_fmtSecondsMs(wallMs)} total=gen ${_fmtSecondsUs(perf.elapsed_us)}`;
+        if (perf.threads > 0) msg += ` · threads=${perf.threads}`;
+        const stepsDone = Math.max(0, perf.uploaded_steps_est || 0);
+        const bytesDone = Math.max(0, perf.uploaded_bytes || 0);
+        const totalSteps = Math.max(0, perf.n_steps || 0);
+        const totalBytes = Math.max(0, perf.data_bytes || 0);
+        const isInFlight = totalBytes > 0 && bytesDone < totalBytes;
+        if (isInFlight) {
+            msg += ` · steps ${(stepsDone / 1e6).toFixed(1)}M/${(totalSteps / 1e6).toFixed(1)}M`;
+            msg += ` · size ${(bytesDone / 1e6).toFixed(1)}/${(totalBytes / 1e6).toFixed(1)}MB`;
+            msg += ` · ${(Math.max(0, Math.min(1, perf.progress || 0)) * 100).toFixed(1)}%`;
+        } else {
+            msg += ` · ${totalSteps} steps · ${(totalBytes / 1e6).toFixed(1)}MB`;
+        }
+        return msg;
     }
     if (phase === 'coeffgen' || phase === 'lores_coeffgen') {
         const perf = _aggregateComputeCoeffgenPerf(results);
         if (!perf) return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=gen ${_fmtSecondsUs(perf.elapsed_us)} · size ${(perf.coeffs_size/1e6).toFixed(1)}MB`;
+        if (perf.threads > 0) msg += ` · threads=${perf.threads}`;
         if (perf.degree > 0) msg += ` · degree=${perf.degree}`;
         if (perf.tasks > 1) msg += ` · chunks=${perf.tasks}`;
         return msg;
@@ -11174,12 +11404,20 @@ async function _logComputePhaseCompletion(jobId, tracker) {
     }
 }
 
-async function runCalculateWithSolver(solverMode) {
+async function runCalculateWithSolver(solverMode, computeMtOptions) {
     const funcName = document.getElementById('render-function').value;
     const n = parseInt(document.getElementById('render-n').value);
     const nChunks = Math.max(1, parseInt(document.getElementById('render-stripes').value) || 10);
     const times = Math.max(1, parseInt(document.getElementById('render-times').value) || 1);
     const jobId = 'compute_' + Date.now().toString(36);
+    const hasParamGenThreadOverride = solverMode === 'aberth_mt' && computeMtOptions && computeMtOptions.paramGenThreads != null;
+    const hasCoeffgenThreadOverride = solverMode === 'aberth_mt' && computeMtOptions && computeMtOptions.coeffgenThreads != null;
+    const hasLoresParamGenThreadOverride = solverMode === 'aberth_mt' && computeMtOptions && computeMtOptions.loresParamGenThreads != null;
+    const hasLoresCoeffgenThreadOverride = solverMode === 'aberth_mt' && computeMtOptions && computeMtOptions.loresCoeffgenThreads != null;
+    const paramGenThreads = hasParamGenThreadOverride ? _clampRenderMtThreads(computeMtOptions.paramGenThreads) : null;
+    const coeffgenThreads = hasCoeffgenThreadOverride ? _clampRenderMtThreads(computeMtOptions.coeffgenThreads) : null;
+    const loresParamGenThreads = hasLoresParamGenThreadOverride ? _clampRenderMtThreads(computeMtOptions.loresParamGenThreads) : null;
+    const loresCoeffgenThreads = hasLoresCoeffgenThreadOverride ? _clampRenderMtThreads(computeMtOptions.loresCoeffgenThreads) : null;
 
     const paramTransforms = _serializeParamTransforms();
     const coeffTransforms = _serializeNamedChain(_ctChain);
@@ -11220,7 +11458,14 @@ async function runCalculateWithSolver(solverMode) {
     document.getElementById('compute-status').textContent = `Computing ${pipelineStr} N=${n}...`;
     document.getElementById('compute-status').className = 'status';
     const solverTag = _solverTag(solverMode);
-    log(`Compute-${solverTag}: ${pipelineStr} N=${n}, chunks=${nChunks}${times > 1 ? ', times=' + times : ''}...`);
+    let computeMsg = `Compute-${solverTag}: ${pipelineStr} N=${n}, chunks=${nChunks}`;
+    if (times > 1) computeMsg += `, times=${times}`;
+    if (paramGenThreads != null) computeMsg += `, param threads=${paramGenThreads}`;
+    if (coeffgenThreads != null) computeMsg += `, coeffgen threads=${coeffgenThreads}`;
+    if (loresParamGenThreads != null) computeMsg += `, lores param threads=${loresParamGenThreads}`;
+    if (loresCoeffgenThreads != null) computeMsg += `, lores coeffgen threads=${loresCoeffgenThreads}`;
+    computeMsg += '...';
+    log(computeMsg);
     try {
         const runId = _generateRunId();
         const taskId = `compute_run_${solverMode}_${runId}`;
@@ -11239,6 +11484,10 @@ async function runCalculateWithSolver(solverMode) {
                 cfpv: cfpv || [],
             },
         };
+        if (paramGenThreads != null) orchPayload.params.param_gen_threads = paramGenThreads;
+        if (coeffgenThreads != null) orchPayload.params.coeffgen_threads = coeffgenThreads;
+        if (loresParamGenThreads != null) orchPayload.params.lores_param_gen_threads = loresParamGenThreads;
+        if (loresCoeffgenThreads != null) orchPayload.params.lores_coeffgen_threads = loresCoeffgenThreads;
 
         document.getElementById('compute-status').textContent = 'Dispatching compute orchestrator...';
         const dispResult = await lambdaPost('dispatch', {
@@ -11331,7 +11580,11 @@ async function runCalculateWithSolver(solverMode) {
             );
             const perfText = _computePhasePerfSummary(phase, subResults || [], phaseWallMs);
             const phaseLogLabel = _computePhaseLogLabel(phaseLabel, phase, rd.solver_mode || solverMode);
-            const phaseLogKey = `${phase}|${done}|${expected}`;
+            const perfRow = Array.isArray(subResults) && subResults.length ? subResults[0] : {};
+            const perfProgressKey = (phase === 'param_gen' || phase === 'lores_param_gen')
+                ? `${Number(perfRow.uploaded_bytes) || 0}|${Number(perfRow.uploaded_steps_est) || 0}|${Number(perfRow.threads) || 1}`
+                : '';
+            const phaseLogKey = `${phase}|${done}|${expected}|${perfProgressKey}`;
             if (phaseLogKey !== lastPhaseLogKey) {
                 lastPhaseLogKey = phaseLogKey;
                 let logMsg = phaseLogLabel;

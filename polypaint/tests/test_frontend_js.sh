@@ -35,6 +35,11 @@ grep -q 'id="render-mt-merge-workers"' "$HTML" || { echo "FATAL: render MT merge
 grep -q 'id="render-mt-finalize-workers"' "$HTML" || { echo "FATAL: render MT finalize workers input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-hist-retries"' "$HTML" || { echo "FATAL: render MT hist retries input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-raster-retries"' "$HTML" || { echo "FATAL: render MT raster retries input missing from index.html"; exit 1; }
+grep -q 'id="compute-mt-popup-overlay"' "$HTML" || { echo "FATAL: compute MT popup missing from index.html"; exit 1; }
+grep -q 'id="compute-mt-param-gen-threads"' "$HTML" || { echo "FATAL: compute MT param thread input missing from index.html"; exit 1; }
+grep -q 'id="compute-mt-coeffgen-threads"' "$HTML" || { echo "FATAL: compute MT coeffgen thread input missing from index.html"; exit 1; }
+grep -q 'id="compute-mt-lores-param-gen-threads"' "$HTML" || { echo "FATAL: compute MT lores param thread input missing from index.html"; exit 1; }
+grep -q 'id="compute-mt-lores-coeffgen-threads"' "$HTML" || { echo "FATAL: compute MT lores coeffgen thread input missing from index.html"; exit 1; }
 grep -q 'id="render-generate-save-associated-palette"' "$HTML" || { echo "FATAL: render generate associated palette checkbox missing from index.html"; exit 1; }
 grep -q 'id="render-mt-save-associated-palette"' "$HTML" || { echo "FATAL: render MT associated palette checkbox missing from index.html"; exit 1; }
 grep -q 'id="generate-from-palette-raster-threads"' "$HTML" || { echo "FATAL: GenerateFromPalette raster threads input missing from index.html"; exit 1; }
@@ -4512,6 +4517,123 @@ async function testPipeline(name, call) {
         console.log('  12d2 compute dispatches orchestrator only: OK');
     }
 
+    // 12d2a: Calculate-AE-MT opens popup and MT dispatch forwards param-gen thread knobs
+    {
+        vm.runInContext(`
+            var _computeMtOrchDispatched = null;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch' && body.target === 'compute_orchestrator') {
+                    _computeMtOrchDispatched = body.jobs[0];
+                    return { fired: 1, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: true,
+                        results: [{
+                            phase: 'done',
+                            phase_label: 'Done',
+                            solver_mode: 'aberth_mt',
+                            run_started_at_ms: 1000,
+                            updated_at_ms: 6000
+                        }]
+                    };
+                }
+                if (name === 'storage' && path === '/detail') {
+                    return {
+                        calc: {
+                            N: 64,
+                            degree: 5,
+                            n_chunks: 4,
+                            total_coeffs_size: 1600,
+                            lores: { bin_size: 512 },
+                            chunks: [
+                                { bin_size: 80, compute_us: 1000, n_t: 10, avg_iterations: 3.0 },
+                                { bin_size: 88, compute_us: 1100, n_t: 10, avg_iterations: 3.0 },
+                                { bin_size: 96, compute_us: 1200, n_t: 10, avg_iterations: 3.0 },
+                                { bin_size: 104, compute_us: 1300, n_t: 10, avg_iterations: 3.0 }
+                            ]
+                        }
+                    };
+                }
+                return {};
+            };
+        `, ctx);
+        ctx._elements['btn-calculate-mt'] = ctx._elements['btn-calculate-mt'] || ctx._mkEl();
+        ctx._elements['compute-status'] = ctx._elements['compute-status'] || { ...ctx._mkEl(), textContent: '' };
+        ctx._elements['compute-log'] = ctx._elements['compute-log'] || ctx._mkEl();
+        ctx._elements['results-dir'] = ctx._elements['results-dir'] || { ...ctx._mkEl(), value: '' };
+        ctx._elements['render-results-dir'] = ctx._elements['render-results-dir'] || { ...ctx._mkEl(), value: '' };
+        ctx._elements['render-function'] = ctx._elements['render-function'] || { ...ctx._mkEl(), value: 'g1' };
+        ctx._elements['render-n'] = ctx._elements['render-n'] || { ...ctx._mkEl(), value: '64' };
+        ctx._elements['render-stripes'] = ctx._elements['render-stripes'] || { ...ctx._mkEl(), value: '4' };
+        ctx._elements['render-times'] = ctx._elements['render-times'] || { ...ctx._mkEl(), value: '2' };
+        await vm.runInContext(`
+            (async()=>{
+                document.getElementById('render-function').value = 'g1';
+                document.getElementById('render-n').value = '64';
+                document.getElementById('render-stripes').value = '4';
+                document.getElementById('render-times').value = '2';
+                _ptChain = [];
+                _ctChain = [];
+                _cfpv = [];
+                await runCalculateAEMT();
+            })()
+        `, ctx);
+        const overlayDisplay = ctx._elements['compute-mt-popup-overlay'].style.display || '';
+        const summaryText = ctx._elements['compute-mt-popup-summary'].textContent || '';
+        if (overlayDisplay !== 'flex') {
+            console.error('FATAL: Calculate-AE-MT should open compute MT popup, got display=' + overlayDisplay);
+            process.exit(1);
+        }
+        if (!summaryText.includes('Function: g1') || !summaryText.includes('N=64') || !summaryText.includes('chunks=4') || !summaryText.includes('times=2')) {
+            console.error('FATAL: compute MT popup summary missing current compute settings, got ' + summaryText);
+            process.exit(1);
+        }
+        if (String(ctx._elements['compute-mt-param-gen-threads'].value) !== '4' || String(ctx._elements['compute-mt-coeffgen-threads'].value) !== '4' || String(ctx._elements['compute-mt-lores-param-gen-threads'].value) !== '1' || String(ctx._elements['compute-mt-lores-coeffgen-threads'].value) !== '1') {
+            console.error('FATAL: compute MT popup defaults should be param=4 coeffgen=4 lores_param=1 lores_coeffgen=1, got ' + ctx._elements['compute-mt-param-gen-threads'].value + '/' + ctx._elements['compute-mt-coeffgen-threads'].value + '/' + ctx._elements['compute-mt-lores-param-gen-threads'].value + '/' + ctx._elements['compute-mt-lores-coeffgen-threads'].value);
+            process.exit(1);
+        }
+
+        await vm.runInContext(`
+            (async()=>{
+                await runCalculateWithSolver('aberth_mt', { paramGenThreads: 7, coeffgenThreads: 5, loresParamGenThreads: 3, loresCoeffgenThreads: 2 });
+            })()
+        `, ctx);
+        const orch = vm.runInContext('_computeMtOrchDispatched', ctx);
+        if (!orch) { console.error('FATAL: AE-MT compute dispatch missing'); process.exit(1); }
+        if (orch.params.solver_mode !== 'aberth_mt') {
+            console.error('FATAL: AE-MT compute dispatch should keep solver_mode=aberth_mt, got ' + orch.params.solver_mode);
+            process.exit(1);
+        }
+        if (orch.params.param_gen_threads !== 7 || orch.params.coeffgen_threads !== 5 || orch.params.lores_param_gen_threads !== 3 || orch.params.lores_coeffgen_threads !== 2) {
+            console.error('FATAL: AE-MT compute dispatch should forward compute thread knobs, got ' + JSON.stringify(orch.params));
+            process.exit(1);
+        }
+        console.log('  12d2a Calculate-AE-MT popup + MT dispatch knobs: OK');
+    }
+
+    // 12d2b: param-gen phase summary shows threads and in-flight progress
+    {
+        const summary = vm.runInContext(`
+            _computePhasePerfSummary('param_gen', [{
+                elapsed_us: 12000000,
+                n_steps: 100000000,
+                data_bytes: 1600000000,
+                threads: 4,
+                uploaded_bytes: 800000000,
+                uploaded_steps_est: 50000000,
+                progress: 0.5
+            }], 15000)
+        `, ctx);
+        if (!String(summary).includes('threads=4') || !String(summary).includes('steps 50.0M/100.0M') || !String(summary).includes('size 800.0/1600.0MB') || !String(summary).includes('50.0%')) {
+            console.error('FATAL: param-gen perf summary should expose threads and progress, got ' + summary);
+            process.exit(1);
+        }
+        console.log('  12d2b param-gen perf summary includes threads + progress: OK');
+    }
+
     // 12d3: compute progress logs should show coeffgen/solve DDB progress, not just completions
     {
         vm.runInContext(`
@@ -4532,7 +4654,7 @@ async function testPipeline(name, call) {
                                 errors: 0,
                                 done: 2,
                                 expected: 4,
-                                results: [{ elapsed_us: 2000000, coeffs_size: 4000000, degree: 10 }],
+                                results: [{ elapsed_us: 2000000, coeffs_size: 4000000, degree: 10, threads: 5 }],
                                 latest_update_ms: 3000
                             };
                         }
@@ -4540,7 +4662,7 @@ async function testPipeline(name, call) {
                             errors: 0,
                             done: 4,
                             expected: 4,
-                            results: [{ elapsed_us: 8000000, coeffs_size: 12000000, degree: 10 }],
+                            results: [{ elapsed_us: 8000000, coeffs_size: 12000000, degree: 10, threads: 5 }],
                             latest_done_ms: 5000,
                             latest_update_ms: 5000
                         };
@@ -4657,6 +4779,10 @@ async function testPipeline(name, call) {
             console.error('FATAL: compute log should show coeffgen DDB progress, got:\\n' + progressTexts);
             process.exit(1);
         }
+        if (!progressTexts.includes('threads=5')) {
+            console.error('FATAL: compute log should show coeffgen thread count, got:\\n' + progressTexts);
+            process.exit(1);
+        }
         if (!progressTexts.includes('Solve (CM) 3/4')) {
             console.error('FATAL: compute log should show solve progress with solver tag, got:\\n' + progressTexts);
             process.exit(1);
@@ -4670,6 +4796,121 @@ async function testPipeline(name, call) {
             process.exit(1);
         }
         console.log('  12d3 compute logs DDB progress increments: OK');
+    }
+
+    // 12d3a: param-gen progress updates should not be deduped away while done/expected stays 0/1
+    {
+        vm.runInContext(`
+            var _paramProgressTopChecks = 0;
+            var _paramProgressSubchecks = 0;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch' && body.target === 'compute_orchestrator') {
+                    return { fired: 1, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    if (body.task_prefix === 'param_prog_') {
+                        _paramProgressSubchecks++;
+                        if (_paramProgressSubchecks === 1) {
+                            return {
+                                errors: 0,
+                                done: 0,
+                                expected: 1,
+                                results: [{
+                                    elapsed_us: 2000000,
+                                    n_steps: 100000000,
+                                    data_bytes: 1600000000,
+                                    threads: 4,
+                                    uploaded_bytes: 800000000,
+                                    uploaded_steps_est: 50000000,
+                                    progress: 0.5
+                                }],
+                                latest_update_ms: 3000
+                            };
+                        }
+                        return {
+                            errors: 0,
+                            done: 1,
+                            expected: 1,
+                            results: [{
+                                elapsed_us: 4000000,
+                                n_steps: 100000000,
+                                data_bytes: 1600000000,
+                                threads: 4
+                            }],
+                            latest_done_ms: 5000,
+                            latest_update_ms: 5000
+                        };
+                    }
+                    _paramProgressTopChecks++;
+                    if (_paramProgressTopChecks === 1) {
+                        return {
+                            errors: 0,
+                            done: 0,
+                            complete: false,
+                            results: [{
+                                phase: 'param_gen',
+                                phase_label: 'Param gen',
+                                solver_mode: 'aberth_mt',
+                                expected: 1,
+                                subtask_prefix: 'param_prog_',
+                                run_started_at_ms: 1000,
+                                started_at_ms: 1200,
+                                updated_at_ms: 2200
+                            }]
+                        };
+                    }
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: true,
+                        results: [{
+                            phase: 'done',
+                            phase_label: 'Done',
+                            solver_mode: 'aberth_mt',
+                            run_started_at_ms: 1000,
+                            updated_at_ms: 6000
+                        }]
+                    };
+                }
+                if (name === 'storage' && path === '/detail') {
+                    return {
+                        calc: {
+                            N: 64,
+                            degree: 5,
+                            n_chunks: 4,
+                            total_coeffs_size: 1600,
+                            lores: { bin_size: 512 },
+                            chunks: [
+                                { bin_size: 80, compute_us: 1000, n_t: 10, avg_iterations: 3.0 },
+                                { bin_size: 88, compute_us: 1100, n_t: 10, avg_iterations: 3.0 },
+                                { bin_size: 96, compute_us: 1200, n_t: 10, avg_iterations: 3.0 },
+                                { bin_size: 104, compute_us: 1300, n_t: 10, avg_iterations: 3.0 }
+                            ]
+                        }
+                    };
+                }
+                return {};
+            };
+            document.getElementById('render-function').value = 'g1';
+            document.getElementById('render-n').value = '64';
+            document.getElementById('render-stripes').value = '4';
+            document.getElementById('render-times').value = '1';
+            _ptChain = [];
+            _ctChain = [];
+            _cfpv = [];
+        `, ctx);
+        ctx._elements['btn-calculate-mt'] = ctx._elements['btn-calculate-mt'] || ctx._mkEl();
+        ctx._elements['compute-status'] = ctx._elements['compute-status'] || { ...ctx._mkEl(), textContent: '' };
+        ctx._elements['compute-log'] = ctx._mkEl();
+        ctx._elements['results-dir'] = ctx._elements['results-dir'] || { ...ctx._mkEl(), value: '' };
+        ctx._elements['render-results-dir'] = ctx._elements['render-results-dir'] || { ...ctx._mkEl(), value: '' };
+        await vm.runInContext('(async()=>{ await runCalculateWithSolver("aberth_mt", { paramGenThreads: 4, loresParamGenThreads: 1 }); })()', ctx);
+        const progressTexts = ctx._elements['compute-log'].textContent || '';
+        if (!progressTexts.includes('Param gen 0/1') || !progressTexts.includes('steps 50.0M/100.0M') || !progressTexts.includes('size 800.0/1600.0MB') || !progressTexts.includes('50.0%')) {
+            console.error('FATAL: param-gen compute log should show in-flight byte progress, got:\\n' + progressTexts);
+            process.exit(1);
+        }
+        console.log('  12d3a param-gen progress logs uploaded byte progress: OK');
     }
 
     // 12e: active run record written to localStorage

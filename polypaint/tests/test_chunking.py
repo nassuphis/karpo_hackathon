@@ -58,6 +58,32 @@ def test_param_gen_deterministic():
     print("  PASS")
 
 
+def test_param_gen_threaded_matches_single_thread_for_deterministic_chain():
+    """Threaded param_gen preserves output for deterministic transform chains."""
+    print("test_param_gen_threaded_matches_single_thread_for_deterministic_chain...")
+    spec_single = {
+        "mode": "param_gen", "n1": 12, "n2": 12, "times": 3,
+        "param_transforms": [["unit_circle"], ["square"]],
+        "n_threads": 1,
+    }
+    spec_mt = {
+        "mode": "param_gen", "n1": 12, "n2": 12, "times": 3,
+        "param_transforms": [["unit_circle"], ["square"]],
+        "n_threads": 4,
+    }
+    run_mode(spec_single, "/tmp/pg_mt_single.bin")
+    meta_mt = run_mode(spec_mt, "/tmp/pg_mt_four.bin")
+    with open("/tmp/pg_mt_single.bin", "rb") as f:
+        d1 = f.read()
+    with open("/tmp/pg_mt_four.bin", "rb") as f:
+        d2 = f.read()
+    assert d1 == d2, "threaded param_gen changed deterministic output"
+    assert meta_mt["threads"] == 4
+    os.remove("/tmp/pg_mt_single.bin")
+    os.remove("/tmp/pg_mt_four.bin")
+    print("  PASS")
+
+
 def test_coeffgen_chunked_matches_monolithic():
     """Chunked coeffgen output matches monolithic (within float32 quantization)."""
     print("test_coeffgen_chunked_matches_monolithic...")
@@ -247,6 +273,7 @@ def test_param_gen_with_dither():
 if __name__ == "__main__":
     test_param_gen_size()
     test_param_gen_deterministic()
+    test_param_gen_threaded_matches_single_thread_for_deterministic_chain()
     test_coeffgen_chunked_matches_monolithic()
     test_chunk_planner_coverage()
     test_chunks_greater_than_n()

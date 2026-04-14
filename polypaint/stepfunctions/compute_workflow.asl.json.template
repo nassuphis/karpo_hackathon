@@ -95,6 +95,7 @@
                 "N.$": "$.plan.compute.N",
                 "times.$": "$.plan.compute.times",
                 "param_transforms.$": "$.plan.pipeline.param_transforms",
+                "n_threads.$": "$.plan.compute.param_gen_threads",
                 "task_id.$": "$.plan.param_gen.task_id",
                 "params_key.$": "$.plan.param_gen.params_key"
               }
@@ -140,6 +141,7 @@
               "params_key.$": "$.plan.compute.params_key",
               "step_start.$": "$$.Map.Item.Value.step_start",
               "step_count.$": "$$.Map.Item.Value.step_count",
+              "n_threads.$": "$.plan.compute.coeffgen_threads",
               "function.$": "$.plan.pipeline.function",
               "coeff_transforms.$": "$.plan.pipeline.coeff_transforms",
               "cfpv.$": "$.plan.pipeline.cfpv",
@@ -257,6 +259,7 @@
                 "gridN.$": "$.plan.compute.N",
                 "times.$": "$.plan.compute.times",
                 "param_transforms.$": "$.plan.pipeline.param_transforms",
+                "n_threads.$": "$.plan.compute.lores_param_gen_threads",
                 "task_id.$": "$.post.lores.param_task_id",
                 "params_key.$": "$.post.lores.params_key"
               }
@@ -303,6 +306,7 @@
                 "params_key.$": "$.post.lores.params_key",
                 "step_start": 0,
                 "step_count.$": "$.post.lores.n_steps",
+                "n_threads.$": "$.post.lores.coeffgen_threads",
                 "function.$": "$.plan.pipeline.function",
                 "coeff_transforms.$": "$.plan.pipeline.coeff_transforms",
                 "cfpv.$": "$.plan.pipeline.cfpv",

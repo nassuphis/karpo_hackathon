@@ -47,8 +47,6 @@ def handle_param_gen(params):
     contract_warnings = []
 
     try:
-        report_status(job_id, task_id, "started", result_data=attach_contract_warnings({"phase": "param_gen"}, contract_warnings))
-
         grid_n = params.get("N", params.get("n1"))
         times = contract_param(params, "times", 1, contract_warnings)
         params_key = params.get("params_key", f"renders/{job_id}/params.bin")
@@ -56,6 +54,7 @@ def handle_param_gen(params):
 
         # gridN: override for dither scaling (lores uses full N, not loresN)
         grid_n_override = params.get("gridN")
+        raw_threads = params.get("n_threads")
         spec = {
             "mode": "param_gen",
             "n1": grid_n,
@@ -65,6 +64,30 @@ def handle_param_gen(params):
         }
         if grid_n_override:
             spec["gridN"] = grid_n_override
+        if raw_threads not in (None, ""):
+            try:
+                n_threads = int(raw_threads)
+            except (TypeError, ValueError):
+                raise RuntimeError(f"n_threads must be an integer, got {raw_threads!r}")
+            if n_threads < 1:
+                raise RuntimeError(f"n_threads must be >= 1, got {n_threads}")
+            spec["n_threads"] = n_threads
+        threads = int(spec.get("n_threads", 1) or 1)
+        expected_steps = int(grid_n) * int(grid_n) * int(times)
+        expected_bytes = expected_steps * 16
+        phase_meta = {
+            "phase": "param_gen",
+            "phase_label": "Param gen",
+            "params_key": params_key,
+            "n_steps": expected_steps,
+            "data_bytes": expected_bytes,
+            "threads": threads,
+            "elapsed_us": 0,
+            "uploaded_bytes": 0,
+            "uploaded_steps_est": 0,
+            "progress": 0.0,
+        }
+        report_status(job_id, task_id, "started", result_data=attach_contract_warnings(dict(phase_meta), contract_warnings))
 
         # Launch sweep with "-" as output path → binary goes to stdout
         proc = subprocess.Popen(
@@ -87,6 +110,21 @@ def handle_param_gen(params):
         part_num = 0
         total_bytes = 0
         buf = b""
+        last_progress_report_at = t0
+
+        def _report_progress():
+            elapsed_us = int((time.time() - t0) * 1e6)
+            uploaded_steps_est = int(total_bytes // 16)
+            progress = float(total_bytes / expected_bytes) if expected_bytes > 0 else 1.0
+            progress = max(0.0, min(1.0, progress))
+            progress_data = dict(phase_meta)
+            progress_data.update({
+                "elapsed_us": elapsed_us,
+                "uploaded_bytes": total_bytes,
+                "uploaded_steps_est": uploaded_steps_est,
+                "progress": progress,
+            })
+            report_status(job_id, task_id, "started", result_data=attach_contract_warnings(progress_data, contract_warnings))
 
         try:
             while True:
@@ -104,6 +142,10 @@ def handle_param_gen(params):
                         Body=part_data)
                     parts.append({"ETag": resp["ETag"], "PartNumber": part_num})
                     total_bytes += len(part_data)
+                    now = time.time()
+                    if now - last_progress_report_at >= 2.0:
+                        _report_progress()
+                        last_progress_report_at = now
 
             # Upload remaining buffer
             if buf:
@@ -114,6 +156,10 @@ def handle_param_gen(params):
                     Body=buf)
                 parts.append({"ETag": resp["ETag"], "PartNumber": part_num})
                 total_bytes += len(buf)
+                now = time.time()
+                if now - last_progress_report_at >= 2.0:
+                    _report_progress()
+                    last_progress_report_at = now
 
             s3.complete_multipart_upload(
                 Bucket=BUCKET, Key=params_key,
@@ -138,9 +184,12 @@ def handle_param_gen(params):
                 f"params.bin size mismatch: expected {meta['data_bytes']}, uploaded {total_bytes}")
 
         result_data = {
+            "phase": "param_gen",
+            "phase_label": "Param gen",
             "params_key": params_key,
             "n_steps": meta["n_steps"],
             "data_bytes": meta["data_bytes"],
+            "threads": int(meta.get("threads", 1) or 1),
             "elapsed_us": int((time.time() - t0) * 1e6),
         }
         report_status(job_id, task_id, "done", result_data=attach_contract_warnings(result_data, contract_warnings))
@@ -160,9 +209,23 @@ def handle_coeffgen_chunked(params):
     params_key = params["params_key"]
     task_id = params.get("task_id", f"coeffgen_{chunk_idx}")
     contract_warnings = []
+    raw_threads = params.get("n_threads")
 
     try:
-        report_status(job_id, task_id, "started", result_data=attach_contract_warnings({"phase": "coeffgen_chunked", "chunk_idx": chunk_idx}, contract_warnings))
+        coeffgen_threads = 1
+        if raw_threads not in (None, ""):
+            try:
+                coeffgen_threads = int(raw_threads)
+            except (TypeError, ValueError):
+                raise RuntimeError(f"n_threads must be an integer, got {raw_threads!r}")
+            if coeffgen_threads < 1:
+                raise RuntimeError(f"n_threads must be >= 1, got {coeffgen_threads}")
+
+        report_status(job_id, task_id, "started", result_data=attach_contract_warnings({
+            "phase": "coeffgen_chunked",
+            "chunk_idx": chunk_idx,
+            "threads": coeffgen_threads,
+        }, contract_warnings))
 
         # Range-read our slice of params.bin from S3
         record_bytes = 16  # 4 × float32
@@ -188,6 +251,7 @@ def handle_coeffgen_chunked(params):
             "params_file": params_file,
             "step_start": 0,  # file contains only our slice
             "step_count": step_count,
+            "n_threads": coeffgen_threads,
         }
         if params.get("cfpv"):
             spec["cfpv"] = params["cfpv"]
@@ -227,6 +291,7 @@ def handle_coeffgen_chunked(params):
             "coeffs_size": meta["data_bytes"],
             "n_coeffs": meta["n_coeffs"],
             "degree": meta["degree"],
+            "threads": int(meta.get("threads", coeffgen_threads) or coeffgen_threads),
             "elapsed_us": int((time.time() - t0) * 1e6),
         }
         report_status(job_id, task_id, "done", result_data=attach_contract_warnings(result_data, contract_warnings))
@@ -235,6 +300,7 @@ def handle_coeffgen_chunked(params):
             "coeffs_size": meta["data_bytes"],
             "n_coeffs": meta["n_coeffs"],
             "degree": meta["degree"],
+            "threads": int(meta.get("threads", coeffgen_threads) or coeffgen_threads),
         })
 
     except Exception as e:

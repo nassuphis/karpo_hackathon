@@ -126,11 +126,13 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         param_gen = self.states["ParamGenTask"]["Parameters"]["Payload"]
         self.assertEqual(param_gen["times.$"], "$.plan.compute.times")
         self.assertEqual(param_gen["param_transforms.$"], "$.plan.pipeline.param_transforms")
+        self.assertEqual(param_gen["n_threads.$"], "$.plan.compute.param_gen_threads")
 
         lores_param_gen = self.states["LoresParamGenTask"]["Parameters"]["Payload"]
         self.assertEqual(lores_param_gen["times.$"], "$.plan.compute.times")
         self.assertEqual(lores_param_gen["param_transforms.$"], "$.plan.pipeline.param_transforms")
         self.assertEqual(lores_param_gen["gridN.$"], "$.plan.compute.N")
+        self.assertEqual(lores_param_gen["n_threads.$"], "$.plan.compute.lores_param_gen_threads")
 
     def test_coeffgen_tasks_forward_pipeline_fields(self):
         coeffgen = self.states["CoeffgenMap"]["ItemSelector"]
@@ -138,11 +140,13 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         self.assertEqual(coeffgen["coeff_transforms.$"], "$.plan.pipeline.coeff_transforms")
         self.assertEqual(coeffgen["cfpv.$"], "$.plan.pipeline.cfpv")
         self.assertEqual(coeffgen["params_key.$"], "$.plan.compute.params_key")
+        self.assertEqual(coeffgen["n_threads.$"], "$.plan.compute.coeffgen_threads")
 
         lores_coeffgen = self.states["LoresCoeffgenTask"]["Parameters"]["Payload"]
         self.assertEqual(lores_coeffgen["function.$"], "$.plan.pipeline.function")
         self.assertEqual(lores_coeffgen["coeff_transforms.$"], "$.plan.pipeline.coeff_transforms")
         self.assertEqual(lores_coeffgen["cfpv.$"], "$.plan.pipeline.cfpv")
+        self.assertEqual(lores_coeffgen["n_threads.$"], "$.post.lores.coeffgen_threads")
 
     def test_solve_tasks_forward_chunk_and_solver_fields(self):
         lores_solve = self.states["LoresSolveTask"]["Parameters"]

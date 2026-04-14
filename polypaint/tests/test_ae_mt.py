@@ -19,7 +19,7 @@ def _compile():
         return False, "cc not found"
 
     ae = subprocess.run(
-        ["cc", "-O3", str(AE_SRC), "-lm", "-o", str(AE_BIN)],
+        ["cc", "-O3", "-pthread", str(AE_SRC), "-lm", "-o", str(AE_BIN)],
         capture_output=True,
         text=True,
     )

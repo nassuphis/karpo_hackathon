@@ -26,6 +26,7 @@ MAX_N = 50000
 MAX_TIMES = 1000
 MAX_CHUNKS = 5000
 MAX_TOTAL_STEPS = 2_500_000_000
+MAX_PARAM_GEN_THREADS = 64
 
 
 def _get_ddb():
@@ -57,6 +58,26 @@ def handle_build_plan(params):
     n = _validate_positive_int(run_params.get("N"), "N", max_value=MAX_N)
     times = _validate_positive_int(run_params.get("times", 1), "times", max_value=MAX_TIMES)
     requested_chunks = _validate_positive_int(run_params.get("n_chunks", 10), "n_chunks", max_value=MAX_CHUNKS)
+    param_gen_threads = _validate_positive_int(
+        run_params.get("param_gen_threads", 1),
+        "param_gen_threads",
+        max_value=MAX_PARAM_GEN_THREADS,
+    )
+    coeffgen_threads = _validate_positive_int(
+        run_params.get("coeffgen_threads", param_gen_threads),
+        "coeffgen_threads",
+        max_value=MAX_PARAM_GEN_THREADS,
+    )
+    lores_param_gen_threads = _validate_positive_int(
+        run_params.get("lores_param_gen_threads", param_gen_threads),
+        "lores_param_gen_threads",
+        max_value=MAX_PARAM_GEN_THREADS,
+    )
+    lores_coeffgen_threads = _validate_positive_int(
+        run_params.get("lores_coeffgen_threads", coeffgen_threads),
+        "lores_coeffgen_threads",
+        max_value=MAX_PARAM_GEN_THREADS,
+    )
     function_name = str(run_params.get("function", "")).strip()
     if not function_name:
         raise RuntimeError("function is required")
@@ -119,14 +140,20 @@ def handle_build_plan(params):
             "n_chunks": len(chunk_items),
             "n_steps": total_steps,
             "params_key": f"renders/{job_id}/params.bin",
+            "param_gen_threads": param_gen_threads,
+            "coeffgen_threads": coeffgen_threads,
+            "lores_param_gen_threads": lores_param_gen_threads,
+            "lores_coeffgen_threads": lores_coeffgen_threads,
         },
         "param_gen": {
             "task_id": f"compute_{run_id}_param_gen",
             "task_prefix": f"compute_{run_id}_param_gen",
             "params_key": f"renders/{job_id}/params.bin",
+            "threads": param_gen_threads,
         },
         "coeffgen": {
             "task_prefix": f"compute_{run_id}_coeffgen_",
+            "threads": coeffgen_threads,
         },
         "solve": {
             "mode": solver_mode,
@@ -181,6 +208,8 @@ def handle_post_coeffgen(params):
             "params_key": f"renders/{job_id}/lores_params.bin",
             "coeffs_key": f"renders/{job_id}/lores_coeffs.bin",
             "bin_key": f"renders/{job_id}/lores.bin",
+            "param_gen_threads": int(plan["compute"].get("lores_param_gen_threads", 1) or 1),
+            "coeffgen_threads": int(plan["compute"].get("lores_coeffgen_threads", 1) or 1),
             "param_task_id": f"compute_{run_id}_lores_param_gen",
             "coeff_task_id": f"compute_{run_id}_lores_coeffgen",
             "solve_task_id": f"compute_{run_id}_lores_solve",
@@ -296,6 +325,10 @@ def handle_finalize_metadata(params):
         "n_chunks": int(plan["compute"]["n_chunks"]),
         "n_steps": int(plan["compute"]["n_steps"]),
         "params_key": plan["compute"]["params_key"],
+        "param_gen_threads": int(plan["compute"].get("param_gen_threads", 1) or 1),
+        "coeffgen_threads": int(plan["compute"].get("coeffgen_threads", 1) or 1),
+        "lores_param_gen_threads": int(plan["compute"].get("lores_param_gen_threads", 1) or 1),
+        "lores_coeffgen_threads": int(plan["compute"].get("lores_coeffgen_threads", 1) or 1),
         "times": int(plan["compute"]["times"]),
         "degree": int(post["degree"]),
         "n_coeffs": int(post["n_coeffs"]),
@@ -305,6 +338,8 @@ def handle_finalize_metadata(params):
             "bin_key": lores_solve.get("s3_key") or post["lores"]["bin_key"],
             "coeffs_key": post["lores"]["coeffs_key"],
             "params_key": post["lores"].get("params_key") or f'renders/{plan["job_id"]}/lores_params.bin',
+            "param_gen_threads": int(post["lores"].get("param_gen_threads", 1) or 1),
+            "coeffgen_threads": int(post["lores"].get("coeffgen_threads", 1) or 1),
             "N": int(post["lores"]["N"]),
             "n_steps": int(post["lores"]["n_steps"]),
             "bin_size": int(lores_solve.get("bin_size", 0) or 0),

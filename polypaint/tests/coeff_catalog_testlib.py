@@ -14,7 +14,7 @@ def ensure_generated_coeff_catalog():
         return
 
     subprocess.run(
-        ["cc", "-O2", "-o", str(LAMBDA_DIR / "sweep_test"), str(LAMBDA_DIR / "sweep_cli.c"), "-lm"],
+        ["cc", "-O2", "-pthread", "-o", str(LAMBDA_DIR / "sweep_test"), str(LAMBDA_DIR / "sweep_cli.c"), "-lm"],
         cwd=ROOT,
         check=True,
     )

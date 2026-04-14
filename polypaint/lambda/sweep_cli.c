@@ -6,8 +6,8 @@
  * Writes packed f32 binary (root positions) to a file path given as argv[1].
  * Writes metadata JSON to stdout.
  *
- * Build: aarch64-linux-musl-gcc -O3 -static -o sweep sweep_cli.c -lm
- * Local: cc -O3 -o sweep sweep_cli.c -lm
+ * Build: aarch64-linux-musl-gcc -O3 -static -pthread -o sweep sweep_cli.c -lm
+ * Local: cc -O3 -pthread -o sweep sweep_cli.c -lm
  */
 
 #include <stdio.h>
@@ -17,6 +17,8 @@
 #include <time.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include "companion_solver.h"
 
 #define MAX_DEGREE 255
@@ -28,6 +30,12 @@
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
+#endif
+
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+#define PP_THREAD_LOCAL _Thread_local
+#else
+#define PP_THREAD_LOCAL __thread
 #endif
 
 /* ---- qsort comparator for doubles ---- */
@@ -2996,7 +3004,7 @@ static int dispatchCt(const CtEntry *e, double *cRe, double *cIm, int *nCoeffs) 
 
 /* ==== Fast xorshift64 RNG for dithering ==== */
 
-static uint64_t _rng_state = 0x123456789abcdef0ULL;
+static PP_THREAD_LOCAL uint64_t _rng_state = 0x123456789abcdef0ULL;
 static inline uint64_t xorshift64(void) {
     uint64_t x = _rng_state;
     x ^= x << 13; x ^= x >> 7; x ^= x << 17;
@@ -3005,6 +3013,14 @@ static inline uint64_t xorshift64(void) {
 }
 static inline double rng_uniform(void) {
     return (xorshift64() >> 11) * (1.0 / 9007199254740992.0);
+}
+
+static inline uint64_t paramGenRowSeed(long globalRow, int i1, int pass) {
+    uint64_t seed = 0x123456789abcdef0ULL;
+    seed ^= ((uint64_t)(pass + 1) * 0x9e3779b97f4a7c15ULL);
+    seed ^= ((uint64_t)(i1 + 1) * 0xbf58476d1ce4e5b9ULL);
+    seed ^= ((uint64_t)(globalRow + 1) * 0x94d049bb133111ebULL);
+    return seed ? seed : 1ULL;
 }
 
 /* sdith(d): square dither — adds uniform noise to both re and im.
@@ -4861,36 +4877,93 @@ static int runCoeffGen(const char *buf, const char *outPath) {
 /* ==== Param-gen mode: generate full unrolled parameter stream ==== */
 /* Output: N*N*times records of (t1r, t1i, t2r, t2i) as float32.
  * Order: pass-major, i1 ascending, serpentine i2. Matches coeffgen traversal exactly. */
-static int runParamGen(const char *buf, const char *outPath) {
-    int n1 = 100, n2 = 100;
-    const char *cp = findKey(buf, "n1"); if (cp) n1 = (int)parseNum(&cp);
-    cp = findKey(buf, "n2"); if (cp) n2 = (int)parseNum(&cp);
+typedef struct {
+    int rowIndex;
+    int ready;
+    int inUse;
+    float *data;
+} ParamGenRowSlot;
 
-    /* gridN: override for dither/transform scaling. If not set, defaults to n1.
-     * Used by lores preview to match hires dither amplitude. */
-    int gridN = n1;
-    cp = findKey(buf, "gridN"); if (cp) gridN = (int)parseNum(&cp);
+typedef struct {
+    int n1;
+    int n2;
+    int gridN;
+    int nPt;
+    int slotCount;
+    const PtEntry *ptEntries;
+    long totalRows;
+    long nextRow;
+    ParamGenRowSlot *slots;
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+} ParamGenThreadCtx;
 
-    int times = 1;
-    cp = findKey(buf, "times"); if (cp) times = (int)parseNum(&cp);
-    if (times < 1) times = 1;
+typedef struct {
+    ParamGenThreadCtx *ctx;
+} ParamGenWorkerArg;
 
-    PtEntry ptEntries[MAX_CHAIN];
-    int nPt = 0;
-    cp = findKey(buf, "param_transforms");
-    if (cp) nPt = parsePtChain(cp, ptEntries, MAX_CHAIN);
+static void computeParamGenRow(long globalRow, int n1, int n2, int gridN,
+                               const PtEntry *ptEntries, int nPt, float *outRow) {
+    int pass = (int)(globalRow / n1);
+    int i1 = (int)(globalRow % n1);
+    double x1 = (double)i1 / (double)n1;
+    _rng_state = paramGenRowSeed(globalRow, i1, pass);
+    for (int j = 0; j < n2; j++) {
+        int i2 = (i1 & 1) ? (n2 - 1 - j) : j;
+        double x2 = (double)i2 / (double)n2;
+        double z1r = x1, z1i = 0.0, z2r = x2, z2i = 0.0;
+        for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, gridN);
+        outRow[j * 4] = (float)z1r;
+        outRow[j * 4 + 1] = (float)z1i;
+        outRow[j * 4 + 2] = (float)z2r;
+        outRow[j * 4 + 3] = (float)z2i;
+    }
+}
 
-    /* outPath "-" means write binary data to stdout (for streaming to S3).
-     * Metadata JSON goes to stderr in that case. */
-    int streamMode = (strcmp(outPath, "-") == 0);
-    FILE *fout = streamMode ? stdout : fopen(outPath, "wb");
-    if (!fout) { fprintf(stderr, "Cannot open %s\n", outPath); return 1; }
+static void *paramGenWorkerMain(void *vp) {
+    ParamGenWorkerArg *arg = (ParamGenWorkerArg *)vp;
+    ParamGenThreadCtx *ctx = arg->ctx;
+    while (1) {
+        long row = -1;
+        int slotIdx = -1;
+        pthread_mutex_lock(&ctx->mutex);
+        for (;;) {
+            if (ctx->nextRow >= ctx->totalRows) {
+                pthread_mutex_unlock(&ctx->mutex);
+                return NULL;
+            }
+            row = ctx->nextRow;
+            slotIdx = (int)(row % ctx->slotCount);
+            if (!ctx->slots[slotIdx].inUse) {
+                ctx->slots[slotIdx].inUse = 1;
+                ctx->slots[slotIdx].ready = 0;
+                ctx->slots[slotIdx].rowIndex = (int)row;
+                ctx->nextRow++;
+                break;
+            }
+            pthread_cond_wait(&ctx->cond, &ctx->mutex);
+        }
+        pthread_mutex_unlock(&ctx->mutex);
 
-    long nSteps = (long)n1 * n2 * times;
+        computeParamGenRow(
+            row,
+            ctx->n1,
+            ctx->n2,
+            ctx->gridN,
+            ctx->ptEntries,
+            ctx->nPt,
+            ctx->slots[slotIdx].data
+        );
 
-    struct timespec t0, t1;
-    clock_gettime(CLOCK_MONOTONIC, &t0);
+        pthread_mutex_lock(&ctx->mutex);
+        ctx->slots[slotIdx].ready = 1;
+        pthread_cond_broadcast(&ctx->cond);
+        pthread_mutex_unlock(&ctx->mutex);
+    }
+}
 
+static int runParamGenSerial(FILE *fout, int n1, int n2, int gridN, int times,
+                             const PtEntry *ptEntries, int nPt) {
     for (int pass = 0; pass < times; pass++) {
         /* Seed RNG per pass — matches coeffgen exactly */
         _rng_state = 0x123456789abcdef0ULL ^ ((uint64_t)pass * 2654435761ULL);
@@ -4909,6 +4982,154 @@ static int runParamGen(const char *buf, const char *outPath) {
             }
         }
     }
+    return 0;
+}
+
+static int runParamGenThreaded(FILE *fout, int n1, int n2, int gridN, int times,
+                               const PtEntry *ptEntries, int nPt, int nThreads) {
+    long totalRows = (long)n1 * (long)times;
+    size_t rowValueCount = (size_t)n2 * 4u;
+    int slotCount = nThreads * 2;
+    if (slotCount < 2) slotCount = 2;
+    if ((long)slotCount > totalRows) slotCount = (int)totalRows;
+    if (slotCount < 1) slotCount = 1;
+
+    ParamGenRowSlot *slots = (ParamGenRowSlot *)calloc((size_t)slotCount, sizeof(ParamGenRowSlot));
+    pthread_t *threads = (pthread_t *)calloc((size_t)nThreads, sizeof(pthread_t));
+    ParamGenWorkerArg *args = (ParamGenWorkerArg *)calloc((size_t)nThreads, sizeof(ParamGenWorkerArg));
+    if (!slots || !threads || !args) {
+        free(slots);
+        free(threads);
+        free(args);
+        fprintf(stderr, "param_gen threaded alloc failed\n");
+        return 1;
+    }
+    for (int i = 0; i < slotCount; i++) {
+        slots[i].rowIndex = -1;
+        slots[i].data = (float *)malloc(rowValueCount * sizeof(float));
+        if (!slots[i].data) {
+            for (int j = 0; j < i; j++) free(slots[j].data);
+            free(slots);
+            free(threads);
+            free(args);
+            fprintf(stderr, "param_gen threaded row buffer alloc failed\n");
+            return 1;
+        }
+    }
+
+    ParamGenThreadCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.n1 = n1;
+    ctx.n2 = n2;
+    ctx.gridN = gridN;
+    ctx.nPt = nPt;
+    ctx.slotCount = slotCount;
+    ctx.ptEntries = ptEntries;
+    ctx.totalRows = totalRows;
+    ctx.nextRow = 0;
+    ctx.slots = slots;
+    pthread_mutex_init(&ctx.mutex, NULL);
+    pthread_cond_init(&ctx.cond, NULL);
+
+    int created = 0;
+    for (int i = 0; i < nThreads; i++) {
+        args[i].ctx = &ctx;
+        if (pthread_create(&threads[i], NULL, paramGenWorkerMain, &args[i]) != 0) {
+            fprintf(stderr, "param_gen pthread_create failed for worker %d\n", i);
+            pthread_mutex_lock(&ctx.mutex);
+            ctx.nextRow = ctx.totalRows;
+            pthread_cond_broadcast(&ctx.cond);
+            pthread_mutex_unlock(&ctx.mutex);
+            for (int j = 0; j < created; j++) pthread_join(threads[j], NULL);
+            pthread_cond_destroy(&ctx.cond);
+            pthread_mutex_destroy(&ctx.mutex);
+            for (int j = 0; j < slotCount; j++) free(slots[j].data);
+            free(slots);
+            free(threads);
+            free(args);
+            return 1;
+        }
+        created++;
+    }
+
+    for (long row = 0; row < totalRows; row++) {
+        int slotIdx = (int)(row % slotCount);
+        pthread_mutex_lock(&ctx.mutex);
+        while (!(slots[slotIdx].inUse && slots[slotIdx].rowIndex == (int)row && slots[slotIdx].ready)) {
+            pthread_cond_wait(&ctx.cond, &ctx.mutex);
+        }
+        pthread_mutex_unlock(&ctx.mutex);
+
+        fwrite(slots[slotIdx].data, sizeof(float), rowValueCount, fout);
+
+        pthread_mutex_lock(&ctx.mutex);
+        slots[slotIdx].inUse = 0;
+        slots[slotIdx].ready = 0;
+        slots[slotIdx].rowIndex = -1;
+        pthread_cond_broadcast(&ctx.cond);
+        pthread_mutex_unlock(&ctx.mutex);
+    }
+
+    for (int i = 0; i < created; i++) pthread_join(threads[i], NULL);
+    pthread_cond_destroy(&ctx.cond);
+    pthread_mutex_destroy(&ctx.mutex);
+    for (int i = 0; i < slotCount; i++) free(slots[i].data);
+    free(slots);
+    free(threads);
+    free(args);
+    return 0;
+}
+
+static int runParamGen(const char *buf, const char *outPath) {
+    int n1 = 100, n2 = 100;
+    const char *cp = findKey(buf, "n1"); if (cp) n1 = (int)parseNum(&cp);
+    cp = findKey(buf, "n2"); if (cp) n2 = (int)parseNum(&cp);
+
+    /* gridN: override for dither/transform scaling. If not set, defaults to n1.
+     * Used by lores preview to match hires dither amplitude. */
+    int gridN = n1;
+    cp = findKey(buf, "gridN"); if (cp) gridN = (int)parseNum(&cp);
+
+    int times = 1;
+    cp = findKey(buf, "times"); if (cp) times = (int)parseNum(&cp);
+    if (times < 1) times = 1;
+
+    int requestedThreads = 1;
+    cp = findKey(buf, "n_threads"); if (cp) requestedThreads = (int)parseNum(&cp);
+    if (requestedThreads < 1) requestedThreads = 1;
+
+    PtEntry ptEntries[MAX_CHAIN];
+    int nPt = 0;
+    cp = findKey(buf, "param_transforms");
+    if (cp) nPt = parsePtChain(cp, ptEntries, MAX_CHAIN);
+
+    /* outPath "-" means write binary data to stdout (for streaming to S3).
+     * Metadata JSON goes to stderr in that case. */
+    int streamMode = (strcmp(outPath, "-") == 0);
+    FILE *fout = streamMode ? stdout : fopen(outPath, "wb");
+    if (!fout) { fprintf(stderr, "Cannot open %s\n", outPath); return 1; }
+
+    long nSteps = (long)n1 * n2 * times;
+
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+
+    int threadsUsed = requestedThreads;
+    if (threadsUsed > n1 * times) threadsUsed = n1 * times;
+    if (threadsUsed < 1) threadsUsed = 1;
+
+    int rc = 0;
+    if (threadsUsed <= 1) {
+        threadsUsed = 1;
+        rc = runParamGenSerial(fout, n1, n2, gridN, times, ptEntries, nPt);
+    } else {
+        rc = runParamGenThreaded(fout, n1, n2, gridN, times, ptEntries, nPt, threadsUsed);
+    }
+    if (rc != 0) {
+        if (!streamMode) fclose(fout);
+        else fflush(stdout);
+        return rc;
+    }
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
     long elapsed_us = (t1.tv_sec - t0.tv_sec) * 1000000L +
@@ -4920,14 +5141,109 @@ static int runParamGen(const char *buf, const char *outPath) {
     /* In stream mode, metadata goes to stderr (stdout is binary data) */
     FILE *metaOut = streamMode ? stderr : stdout;
     fprintf(metaOut, "{\"mode\":\"param_gen\",\"n1\":%d,\"n2\":%d,\"times\":%d,"
-           "\"n_steps\":%ld,\"data_bytes\":%ld,\"elapsed_us\":%ld}\n",
-           n1, n2, times, nSteps, dataBytes, elapsed_us);
+           "\"n_steps\":%ld,\"data_bytes\":%ld,\"threads\":%d,\"elapsed_us\":%ld}\n",
+           n1, n2, times, nSteps, dataBytes, threadsUsed, elapsed_us);
     return 0;
 }
 
 /* ==== Coeffgen-chunked mode: read params slice, generate coefficients ==== */
 /* Reads step_count records from params_file starting at step_start,
  * runs coefficient function + coeff transforms on each, writes coefficient output. */
+typedef struct {
+    int paramsFd;
+    int outFd;
+    long paramBaseOffset;
+    long globalStepStart;
+    int nCoeffsOut;
+    long outRowBytes;
+    CoeffFuncC coeffFunc;
+    const CtEntry *ctEntries;
+    int nCt;
+    const double *cfpv;
+    int n_cfpv;
+    pthread_mutex_t mutex;
+    int failed;
+    char error[256];
+} CoeffGenThreadCtx;
+
+typedef struct {
+    CoeffGenThreadCtx *ctx;
+    long stepLo;
+    long stepHi;
+} CoeffGenWorkerArg;
+
+static void coeffGenSetThreadError(CoeffGenThreadCtx *ctx, const char *msg) {
+    pthread_mutex_lock(&ctx->mutex);
+    if (!ctx->failed) {
+        ctx->failed = 1;
+        snprintf(ctx->error, sizeof(ctx->error), "%s", msg);
+    }
+    pthread_mutex_unlock(&ctx->mutex);
+}
+
+static void *coeffGenWorkerMain(void *vp) {
+    CoeffGenWorkerArg *arg = (CoeffGenWorkerArg *)vp;
+    CoeffGenThreadCtx *ctx = arg->ctx;
+    float params[4];
+    double cRe[MAX_COEFFS], cIm[MAX_COEFFS];
+    float *stepBuf = (float *)malloc((size_t)ctx->outRowBytes);
+    if (!stepBuf) {
+        coeffGenSetThreadError(ctx, "coeffgen threaded step buffer alloc failed");
+        return NULL;
+    }
+
+    for (long s = arg->stepLo; s < arg->stepHi; s++) {
+        if (ctx->failed) break;
+
+        off_t paramOff = (off_t)(ctx->paramBaseOffset + s * (long)(4 * sizeof(float)));
+        ssize_t got = pread(ctx->paramsFd, params, sizeof(params), paramOff);
+        if (got != (ssize_t)sizeof(params)) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Short read at step %ld", ctx->globalStepStart + s);
+            coeffGenSetThreadError(ctx, msg);
+            break;
+        }
+
+        int nCoeffs = 0;
+        ctx->coeffFunc((double)params[0], (double)params[1],
+                       (double)params[2], (double)params[3],
+                       ctx->cfpv, ctx->n_cfpv, cRe, cIm, &nCoeffs);
+        for (int t = 0; t < ctx->nCt; t++) {
+            if (dispatchCt(&ctx->ctEntries[t], cRe, cIm, &nCoeffs) != 0) {
+                coeffGenSetThreadError(ctx, "coeffgen threaded coeff transform failed");
+                break;
+            }
+        }
+        if (ctx->failed) break;
+
+        if (nCoeffs != ctx->nCoeffsOut) {
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "nCoeffs mismatch: probe returned %d but step %ld returned %d",
+                     ctx->nCoeffsOut, ctx->globalStepStart + s, nCoeffs);
+            coeffGenSetThreadError(ctx, msg);
+            break;
+        }
+
+        for (int k = 0; k < ctx->nCoeffsOut; k++) {
+            stepBuf[k * 2]     = (float)cRe[k];
+            stepBuf[k * 2 + 1] = (float)cIm[k];
+        }
+
+        off_t outOff = (off_t)(s * ctx->outRowBytes);
+        ssize_t wrote = pwrite(ctx->outFd, stepBuf, (size_t)ctx->outRowBytes, outOff);
+        if (wrote != (ssize_t)ctx->outRowBytes) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Short write at step %ld", ctx->globalStepStart + s);
+            coeffGenSetThreadError(ctx, msg);
+            break;
+        }
+    }
+
+    free(stepBuf);
+    return NULL;
+}
+
 static int runCoeffGenChunked(const char *buf, const char *outPath) {
     char funcName[64] = "";
     const char *cp = findKey(buf, "function");
@@ -4940,6 +5256,9 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
     long stepStart = 0, stepCount = 0;
     cp = findKey(buf, "step_start"); if (cp) stepStart = (long)parseNum(&cp);
     cp = findKey(buf, "step_count"); if (cp) stepCount = (long)parseNum(&cp);
+    int requestedThreads = 1;
+    cp = findKey(buf, "n_threads"); if (cp) requestedThreads = (int)parseNum(&cp);
+    if (requestedThreads < 1) requestedThreads = 1;
 
     if (stepCount <= 0) {
         fprintf(stderr, "Empty chunk: step_count=%ld\n", stepCount);
@@ -4978,23 +5297,21 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
         n_cfpv = spec->n_params;
     }
 
-    /* Open params file and seek to our slice */
-    FILE *fin = fopen(paramsFile, "rb");
-    if (!fin) {
+    /* Open params file and probe first record. */
+    int paramsFd = open(paramsFile, O_RDONLY);
+    if (paramsFd < 0) {
         fprintf(stderr, "Cannot open params file: %s\n", paramsFile);
         return 1;
     }
     long recordBytes = 4 * sizeof(float);  /* t1r, t1i, t2r, t2i */
-    fseek(fin, stepStart * recordBytes, SEEK_SET);
 
     /* Probe degree from first record */
     float probe[4];
-    if (fread(probe, sizeof(float), 4, fin) != 4) {
+    if (pread(paramsFd, probe, sizeof(probe), (off_t)(stepStart * recordBytes)) != (ssize_t)sizeof(probe)) {
         fprintf(stderr, "Cannot read probe record\n");
-        fclose(fin);
+        close(paramsFd);
         return 1;
     }
-    fseek(fin, stepStart * recordBytes, SEEK_SET);  /* rewind */
 
     double probeRe[MAX_COEFFS], probeIm[MAX_COEFFS];
     int probeN;
@@ -5003,77 +5320,151 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
               cfpv, n_cfpv, probeRe, probeIm, &probeN);
     for (int t = 0; t < nCt; t++) {
         if (dispatchCt(&ctEntries[t], probeRe, probeIm, &probeN) != 0) {
-            fclose(fin);
+            close(paramsFd);
             return 1;
         }
     }
     int nCoeffsOut = probeN;
     int degree = nCoeffsOut - 1;
+    int threadsUsed = requestedThreads;
+    if (threadsUsed > stepCount) threadsUsed = (int)stepCount;
+    if (threadsUsed < 1) threadsUsed = 1;
+    long outRowBytes = (long)nCoeffsOut * 2 * (long)sizeof(float);
 
-    /* Process all steps */
-    FILE *fout = fopen(outPath, "wb");
-    if (!fout) { fprintf(stderr, "Cannot open %s\n", outPath); fclose(fin); return 1; }
-
-    float *stepBuf = malloc(nCoeffsOut * 2 * sizeof(float));
+    int outFd = open(outPath, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+    if (outFd < 0) {
+        fprintf(stderr, "Cannot open %s\n", outPath);
+        close(paramsFd);
+        return 1;
+    }
+    if (ftruncate(outFd, (off_t)(stepCount * outRowBytes)) != 0) {
+        fprintf(stderr, "Cannot size %s\n", outPath);
+        close(paramsFd);
+        close(outFd);
+        return 1;
+    }
 
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
-
-    for (long s = 0; s < stepCount; s++) {
-        float params[4];
-        if (fread(params, sizeof(float), 4, fin) != 4) {
-            fprintf(stderr, "Short read at step %ld\n", stepStart + s);
-            break;
+    int rc = 0;
+    if (threadsUsed <= 1) {
+        float *stepBuf = (float *)malloc((size_t)outRowBytes);
+        if (!stepBuf) {
+            fprintf(stderr, "coeffgen step buffer alloc failed\n");
+            close(paramsFd);
+            close(outFd);
+            return 1;
         }
+        for (long s = 0; s < stepCount; s++) {
+            float params[4];
+            if (pread(paramsFd, params, sizeof(params), (off_t)(stepStart * recordBytes + s * recordBytes)) != (ssize_t)sizeof(params)) {
+                fprintf(stderr, "Short read at step %ld\n", stepStart + s);
+                rc = 1;
+                break;
+            }
 
-        double cRe[MAX_COEFFS], cIm[MAX_COEFFS];
-        int nCoeffs;
-        coeffFunc((double)params[0], (double)params[1],
-                  (double)params[2], (double)params[3],
-                  cfpv, n_cfpv, cRe, cIm, &nCoeffs);
-        for (int t = 0; t < nCt; t++) {
-            if (dispatchCt(&ctEntries[t], cRe, cIm, &nCoeffs) != 0) {
-                fclose(fin);
-                fclose(fout);
-                free(stepBuf);
-                return 1;
+            double cRe[MAX_COEFFS], cIm[MAX_COEFFS];
+            int nCoeffs;
+            coeffFunc((double)params[0], (double)params[1],
+                      (double)params[2], (double)params[3],
+                      cfpv, n_cfpv, cRe, cIm, &nCoeffs);
+            for (int t = 0; t < nCt; t++) {
+                if (dispatchCt(&ctEntries[t], cRe, cIm, &nCoeffs) != 0) {
+                    rc = 1;
+                    break;
+                }
+            }
+            if (rc != 0) break;
+
+            if (nCoeffs != nCoeffsOut) {
+                fprintf(stderr, "nCoeffs mismatch: probe returned %d but step %ld returned %d\n",
+                        nCoeffsOut, stepStart + s, nCoeffs);
+                rc = 1;
+                break;
+            }
+
+            for (int k = 0; k < nCoeffsOut; k++) {
+                stepBuf[k * 2]     = (float)cRe[k];
+                stepBuf[k * 2 + 1] = (float)cIm[k];
+            }
+            if (pwrite(outFd, stepBuf, (size_t)outRowBytes, (off_t)(s * outRowBytes)) != (ssize_t)outRowBytes) {
+                fprintf(stderr, "Short write at step %ld\n", stepStart + s);
+                rc = 1;
+                break;
             }
         }
+        free(stepBuf);
+    } else {
+        CoeffGenThreadCtx ctx;
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.paramsFd = paramsFd;
+        ctx.outFd = outFd;
+        ctx.paramBaseOffset = stepStart * recordBytes;
+        ctx.globalStepStart = stepStart;
+        ctx.nCoeffsOut = nCoeffsOut;
+        ctx.outRowBytes = outRowBytes;
+        ctx.coeffFunc = coeffFunc;
+        ctx.ctEntries = ctEntries;
+        ctx.nCt = nCt;
+        ctx.cfpv = cfpv;
+        ctx.n_cfpv = n_cfpv;
+        pthread_mutex_init(&ctx.mutex, NULL);
 
-        if (nCoeffs != nCoeffsOut) {
-            fprintf(stderr, "nCoeffs mismatch: probe returned %d but step %ld returned %d\n",
-                    nCoeffsOut, stepStart + s, nCoeffs);
-            fclose(fin);
-            fclose(fout);
-            free(stepBuf);
+        pthread_t *threads = (pthread_t *)calloc((size_t)threadsUsed, sizeof(pthread_t));
+        CoeffGenWorkerArg *args = (CoeffGenWorkerArg *)calloc((size_t)threadsUsed, sizeof(CoeffGenWorkerArg));
+        if (!threads || !args) {
+            fprintf(stderr, "coeffgen threaded alloc failed\n");
+            free(threads);
+            free(args);
+            pthread_mutex_destroy(&ctx.mutex);
+            close(paramsFd);
+            close(outFd);
             return 1;
         }
 
-        for (int k = nCoeffs; k < nCoeffsOut; k++) { cRe[k] = 0; cIm[k] = 0; }
-
-        for (int k = 0; k < nCoeffsOut; k++) {
-            stepBuf[k * 2]     = (float)cRe[k];
-            stepBuf[k * 2 + 1] = (float)cIm[k];
+        long baseSteps = stepCount / threadsUsed;
+        long remSteps = stepCount % threadsUsed;
+        long cursor = 0;
+        int created = 0;
+        for (int i = 0; i < threadsUsed; i++) {
+            long len = baseSteps + (i < remSteps ? 1 : 0);
+            args[i].ctx = &ctx;
+            args[i].stepLo = cursor;
+            args[i].stepHi = cursor + len;
+            cursor += len;
+            if (pthread_create(&threads[i], NULL, coeffGenWorkerMain, &args[i]) != 0) {
+                coeffGenSetThreadError(&ctx, "coeffgen pthread_create failed");
+                rc = 1;
+                break;
+            }
+            created++;
         }
-        fwrite(stepBuf, sizeof(float), nCoeffsOut * 2, fout);
+        for (int i = 0; i < created; i++) pthread_join(threads[i], NULL);
+        if (ctx.failed) {
+            fprintf(stderr, "%s\n", ctx.error[0] ? ctx.error : "coeffgen threaded failure");
+            rc = 1;
+        }
+        free(threads);
+        free(args);
+        pthread_mutex_destroy(&ctx.mutex);
     }
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
     long elapsed_us = (t1.tv_sec - t0.tv_sec) * 1000000L +
                       (t1.tv_nsec - t0.tv_nsec) / 1000L;
-    fclose(fin);
-    fclose(fout);
-    free(stepBuf);
+    close(paramsFd);
+    close(outFd);
+    if (rc != 0) return rc;
 
     long dataBytes = stepCount * nCoeffsOut * 2 * (long)sizeof(float);
     printf("{\"mode\":\"coeffgen_chunked\",\"function\":\"%s\","
            "\"n_coeffs\":%d,\"degree\":%d,"
            "\"step_start\":%ld,\"step_count\":%ld,"
-           "\"n_t\":%ld,\"data_bytes\":%ld,"
+           "\"n_t\":%ld,\"data_bytes\":%ld,\"threads\":%d,"
            "\"elapsed_us\":%ld}\n",
            funcName, nCoeffsOut, degree,
            stepStart, stepCount,
-           stepCount, dataBytes, elapsed_us);
+           stepCount, dataBytes, threadsUsed, elapsed_us);
     return 0;
 }
 

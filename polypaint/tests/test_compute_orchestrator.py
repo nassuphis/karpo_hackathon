@@ -35,7 +35,7 @@ class TestComputeStarterLambda(unittest.TestCase):
         event = _make_event({
             "job_id": "j",
             "run_id": "run_abc",
-            "params": {"solver_mode": "aberth", "N": 100, "n_chunks": 10, "function": "g1"},
+            "params": {"solver_mode": "aberth", "N": 100, "n_chunks": 10, "function": "g1", "param_gen_threads": 6, "coeffgen_threads": 5, "lores_param_gen_threads": 2, "lores_coeffgen_threads": 3},
         })
         result = handler(event, None)
         body = json.loads(result["body"])
@@ -46,6 +46,10 @@ class TestComputeStarterLambda(unittest.TestCase):
         sfn_input = json.loads(call_kwargs["input"])
         self.assertEqual(sfn_input["job_id"], "j")
         self.assertEqual(sfn_input["params"]["solver_mode"], "aberth")
+        self.assertEqual(sfn_input["params"]["param_gen_threads"], 6)
+        self.assertEqual(sfn_input["params"]["coeffgen_threads"], 5)
+        self.assertEqual(sfn_input["params"]["lores_param_gen_threads"], 2)
+        self.assertEqual(sfn_input["params"]["lores_coeffgen_threads"], 3)
         self.assertEqual(body["run_id"], "run_abc")
 
     @patch("handler_compute_orchestrator.report_status")

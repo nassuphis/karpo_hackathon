@@ -24,6 +24,10 @@ class TestComputePlan(unittest.TestCase):
                 "N": 100,
                 "times": 1,
                 "n_chunks": 4,
+                "param_gen_threads": 6,
+                "coeffgen_threads": 5,
+                "lores_param_gen_threads": 2,
+                "lores_coeffgen_threads": 3,
                 "function": "g1",
                 "param_transforms": [],
                 "coeff_transforms": [],
@@ -32,6 +36,12 @@ class TestComputePlan(unittest.TestCase):
         })
         plan = json.loads(result["body"])
         self.assertEqual(plan["compute"]["n_chunks"], 4)
+        self.assertEqual(plan["compute"]["param_gen_threads"], 6)
+        self.assertEqual(plan["compute"]["coeffgen_threads"], 5)
+        self.assertEqual(plan["compute"]["lores_param_gen_threads"], 2)
+        self.assertEqual(plan["compute"]["lores_coeffgen_threads"], 3)
+        self.assertEqual(plan["param_gen"]["threads"], 6)
+        self.assertEqual(plan["coeffgen"]["threads"], 5)
         self.assertEqual(len(plan["chunk_items"]), 4)
         first = plan["chunk_items"][0]
         self.assertEqual(first["solve_task_id"], "compute_run_abc_solve_0")
@@ -148,7 +158,7 @@ class TestComputePlan(unittest.TestCase):
                 "coeff_transforms": [],
                 "cfpv": [],
             },
-            "compute": {"N": 100, "times": 1, "n_chunks": 1, "n_steps": 10000, "params_key": "renders/compute_j/params.bin"},
+            "compute": {"N": 100, "times": 1, "n_chunks": 1, "n_steps": 10000, "params_key": "renders/compute_j/params.bin", "param_gen_threads": 5, "coeffgen_threads": 4, "lores_param_gen_threads": 2, "lores_coeffgen_threads": 3},
             "solve": {"mode": "aberth"},
             "chunk_items": [{"coeffs_key": "renders/compute_j/coeffs_0000.bin"}],
         }
@@ -161,6 +171,8 @@ class TestComputePlan(unittest.TestCase):
                 "n_steps": 2500,
                 "bin_key": "renders/compute_j/lores.bin",
                 "coeffs_key": "renders/compute_j/lores_coeffs.bin",
+                "param_gen_threads": 2,
+                "coeffgen_threads": 3,
             },
         }
         lores_solve = {"s3_key": "renders/compute_j/lores.bin", "bin_size": 1234}
@@ -177,6 +189,12 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(body["lores"]["bin_key"], "renders/compute_j/lores.bin")
         self.assertEqual(body["lores"]["coeffs_key"], "renders/compute_j/lores_coeffs.bin")
         self.assertEqual(body["lores"]["params_key"], "renders/compute_j/lores_params.bin")
+        self.assertEqual(body["param_gen_threads"], 5)
+        self.assertEqual(body["coeffgen_threads"], 4)
+        self.assertEqual(body["lores_param_gen_threads"], 2)
+        self.assertEqual(body["lores_coeffgen_threads"], 3)
+        self.assertEqual(body["lores"]["param_gen_threads"], 2)
+        self.assertEqual(body["lores"]["coeffgen_threads"], 3)
 
 
 if __name__ == "__main__":

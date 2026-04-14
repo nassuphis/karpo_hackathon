@@ -99,4 +99,35 @@ test.describe('Compute UI', () => {
     await expect(page.locator('#function-popup-overlay')).toBeHidden();
     await expect(page.locator('#render-function-picker')).toContainText('poly_795');
   });
+
+  test('Calculate-AE-MT opens popup and forwards compute thread settings', async ({ page }) => {
+    await page.click('.tab-btn:text("Compute")');
+    await page.evaluate(() => {
+      window._computeMtCalls = [];
+      window.runCalculateWithSolver = async function (solverMode, computeMtOptions) {
+        window._computeMtCalls.push({ solverMode, computeMtOptions });
+      };
+    });
+
+    await page.click('#btn-calculate-mt');
+    await expect(page.locator('#compute-mt-popup-overlay')).toBeVisible();
+    await expect(page.locator('#compute-mt-popup-summary')).toContainText('Function:');
+    await page.fill('#compute-mt-param-gen-threads', '7');
+    await page.fill('#compute-mt-coeffgen-threads', '5');
+    await page.fill('#compute-mt-lores-param-gen-threads', '3');
+    await page.fill('#compute-mt-lores-coeffgen-threads', '2');
+    await page.click('#compute-mt-popup-run');
+
+    await expect(page.locator('#compute-mt-popup-overlay')).toBeHidden();
+    const call = await page.evaluate(() => window._computeMtCalls[0]);
+    expect(call).toMatchObject({
+      solverMode: 'aberth_mt',
+      computeMtOptions: {
+        paramGenThreads: 7,
+        coeffgenThreads: 5,
+        loresParamGenThreads: 3,
+        loresCoeffgenThreads: 2,
+      },
+    });
+  });
 });

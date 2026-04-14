@@ -46,7 +46,7 @@ RASTER_MEMORY=1769    # 1 vCPU, roots2pix (no canvas allocation)
 RASTER_MT_MEMORY=4096 # higher CPU tier for native pthread raster
 RASTER_MT_THREADS=4   # default per-Lambda worker count for color raster MT
 FINALIZE_MEMORY=1769  # 1 vCPU, pixassemble (64 MB tile buffer for 4096²)
-COEFFGEN_MEMORY=1769  # 1 vCPU, coefficient generation (no solver, striped)
+COEFFGEN_MEMORY=10240 # 6 vCPUs for coeffgen + threaded param_gen
 PREVIEW_MEMORY=1024   # pure Python, PNG encoding via zlib (512 OOMs on large lores)
 COMPUTE_PREVIEW_MEMORY=4096  # sync coeffgen+solve+PNG preview, needs LAPACK for roots_cm/CM
 BILEVEL_MEMORY=1769   # 1 vCPU, bilevel raster + merge
@@ -378,7 +378,7 @@ print(f'  coeff_func_lookup.h: {len(catalog)} entries')
 
 # Step 2: Build host binary (now uses fresh lookup header)
 echo "Building sweep_test (host, for probing)..."
-cc -O2 -o lambda/sweep_test lambda/sweep_cli.c -lm
+cc -O2 -pthread -o lambda/sweep_test lambda/sweep_cli.c -lm
 
 # Step 3: Regenerate parity overlay from pytest-backed hand parity suites
 echo "Generating parity overlay from pytest..."
@@ -406,7 +406,7 @@ bash "$SCRIPT_DIR/tests/test_frontend_js.sh" || { echo "FATAL: Frontend JS test 
 echo "Compiling binaries..."
 
 echo "  sweep (static, ARM64)..."
-aarch64-linux-musl-gcc -O3 -static -o lambda/sweep lambda/sweep_cli.c -lm
+aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/sweep lambda/sweep_cli.c -lm
 
 echo "  sweep_mt (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/sweep_mt lambda/sweep_mt.c -lm
@@ -665,7 +665,7 @@ docker run --rm --platform linux/arm64 \
         set -euo pipefail
         dnf install -y gcc 2>&1 | tail -1
         export LD_LIBRARY_PATH=/opt/lib
-        gcc -O3 -DHAVE_LAPACK_COMPANION -o /src/sweep_coeffgen /src/sweep_cli.c \
+        gcc -O3 -pthread -DHAVE_LAPACK_COMPANION -o /src/sweep_coeffgen /src/sweep_cli.c \
             -L/opt/lib -llapack -lopenblas -lm -Wl,-rpath,/opt/lib
         echo "  sweep_coeffgen compiled: $(file /src/sweep_coeffgen)"
         gcc -O3 -o /src/sweep_cm /src/sweep_cm.c \

@@ -338,6 +338,124 @@ def test_cfpv_coeffgen():
     print("=== CFPV coeffgen tests PASSED ===")
 
 
+def test_param_gen_threaded_runtime():
+    print("\n--- Param-gen threaded runtime ---")
+
+    single_path = "/tmp/param_gen_single.bin"
+    mt_path = "/tmp/param_gen_mt.bin"
+    spec_base = {
+        "mode": "param_gen",
+        "n1": 12,
+        "n2": 12,
+        "times": 3,
+        "param_transforms": [["unit_circle"], ["square"]],
+    }
+
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", single_path],
+        input=json.dumps({**spec_base, "n_threads": 1}),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "param_gen single-thread failed: " + r.stderr[:200]
+    meta_single = json.loads(r.stdout)
+    assert meta_single["threads"] == 1, "param_gen single-thread metadata missing threads=1"
+
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", mt_path],
+        input=json.dumps({**spec_base, "n_threads": 4}),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "param_gen multi-thread failed: " + r.stderr[:200]
+    meta_mt = json.loads(r.stdout)
+    assert meta_mt["threads"] == 4, "param_gen multi-thread metadata missing threads=4"
+
+    with open(single_path, "rb") as f:
+        single_bytes = f.read()
+    with open(mt_path, "rb") as f:
+        mt_bytes = f.read()
+
+    assert single_bytes == mt_bytes, "param_gen threaded output diverged for deterministic transforms"
+    assert len(single_bytes) == meta_single["data_bytes"], "param_gen single-thread byte count mismatch"
+    assert len(mt_bytes) == meta_mt["data_bytes"], "param_gen multi-thread byte count mismatch"
+    print("  sweep_coeffgen param_gen n_threads=1 vs 4: OK (%d bytes)" % len(mt_bytes))
+
+    cleanup(single_path, mt_path)
+    print("=== Param-gen threaded runtime PASSED ===")
+
+
+def test_coeffgen_chunked_threaded_runtime():
+    print("\n--- Coeffgen-chunked threaded runtime ---")
+
+    params_path = "/tmp/coeffgen_params.bin"
+    single_path = "/tmp/coeffgen_chunk_single.bin"
+    mt_path = "/tmp/coeffgen_chunk_mt.bin"
+
+    param_spec = {
+        "mode": "param_gen",
+        "n1": 10,
+        "n2": 10,
+        "times": 2,
+        "param_transforms": [["unit_circle"]],
+        "n_threads": 1,
+    }
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", params_path],
+        input=json.dumps(param_spec),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen runtime param_gen failed: " + r.stderr[:200]
+
+    spec_base = {
+        "mode": "coeffgen_chunked",
+        "function": "g1",
+        "coeff_transforms": [["exp", "0.3", "-0.2"]],
+        "params_file": params_path,
+        "step_start": 0,
+        "step_count": 200,
+    }
+
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", single_path],
+        input=json.dumps({**spec_base, "n_threads": 1}),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen_chunked single-thread failed: " + r.stderr[:200]
+    meta_single = json.loads(r.stdout)
+    assert meta_single["threads"] == 1, "coeffgen_chunked single-thread metadata missing threads=1"
+
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", mt_path],
+        input=json.dumps({**spec_base, "n_threads": 4}),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen_chunked multi-thread failed: " + r.stderr[:200]
+    meta_mt = json.loads(r.stdout)
+    assert meta_mt["threads"] == 4, "coeffgen_chunked multi-thread metadata missing threads=4"
+
+    with open(single_path, "rb") as f:
+        single_bytes = f.read()
+    with open(mt_path, "rb") as f:
+        mt_bytes = f.read()
+
+    assert single_bytes == mt_bytes, "coeffgen_chunked threaded output diverged for deterministic inputs"
+    assert len(single_bytes) == meta_single["data_bytes"], "coeffgen_chunked single-thread byte count mismatch"
+    assert len(mt_bytes) == meta_mt["data_bytes"], "coeffgen_chunked multi-thread byte count mismatch"
+    print("  sweep_coeffgen coeffgen_chunked n_threads=1 vs 4: OK (%d bytes)" % len(mt_bytes))
+
+    cleanup(params_path, single_path, mt_path)
+    print("=== Coeffgen-chunked threaded runtime PASSED ===")
+
+
 def test_compute_preview_runtime_combo():
     print("\n--- Compute preview runtime combo ---")
 
@@ -944,6 +1062,8 @@ if __name__ == "__main__":
     print("--- Generating test fixtures ---")
     test_ae_cm_solvers()
     test_cfpv_coeffgen()
+    test_param_gen_threaded_runtime()
+    test_coeffgen_chunked_threaded_runtime()
     test_compute_preview_runtime_combo()
     test_palette_chunk_mt_runtime()
     test_palette_chunk_mt_param_sectioned_runtime()

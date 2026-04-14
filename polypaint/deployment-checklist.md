@@ -3,6 +3,10 @@
 > This is not optional. Fukin do it.
 >
 > If a change touches native binaries, shared libraries, layers, `LD_LIBRARY_PATH`, Docker-built artifacts, or Lambda runtime packaging, the relevant Docker/runtime test is a hard gate. Do not claim the feature is ready until that Docker check passes and actually covers the changed binary/path.
+>
+> If a change touches source for a deployed native binary, rebuild that deploy
+> artifact first. Do not run the Docker/runtime gate against stale binaries in
+> `lambda/` and then "discover" they were outdated.
 
 This is the minimum readiness checklist for any new PolyPaint feature.
 
@@ -90,10 +94,17 @@ This must be enforced by:
 If the feature depends on native binaries, shared libraries, libvips, LAPACK, or other layer/runtime details:
 
 - do not assume packaging implies runtime availability
+- rebuild the affected deploy binaries in `lambda/` before running the Docker gate
 - add or update a real runtime regression in:
   - [tests/docker_runtime_regression.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/docker_runtime_regression.py)
 - run:
   - `bash scripts/test-docker-runtime.sh`
+
+Explicit rule:
+
+- source changed, binary shipped, Docker test needed
+- therefore rebuild first, test second
+- testing a stale mounted binary does not count as verification
 
 This is required when a feature introduces:
 
@@ -209,6 +220,17 @@ bash scripts/test-docker-runtime.sh
 ```
 
 Not every feature needs every command, but any skipped item must be called out explicitly.
+
+When the touched code produces a deploy binary, insert one step before the
+Docker gate:
+
+```bash
+# rebuild affected deploy binary/binaries first
+...
+bash scripts/test-docker-runtime.sh
+```
+
+The Docker gate is only valid if it exercised freshly rebuilt artifacts.
 
 ## 19. Post-Deploy Reality
 

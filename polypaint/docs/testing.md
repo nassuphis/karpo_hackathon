@@ -28,6 +28,35 @@ The rule of thumb is:
 - **Handler/workflow tests** prove the backend contract is still coherent.
 - **Native tests** prove the math/runtime layer is still correct.
 
+## Hard Rule: Rebuild Deploy Binaries Before Docker Tests
+
+If a change touches C/C++ code or build flags for a binary that is shipped in
+`lambda/`, do not run the Docker runtime gate against stale artifacts.
+
+Required order:
+
+1. rebuild the affected deploy binary or binaries in `lambda/`
+2. then run `bash scripts/test-docker-runtime.sh`
+
+Do not rely on the Docker test to tell you the mounted binary is stale. That is
+operator error, not a meaningful regression.
+
+Examples:
+
+- change [lambda/sweep_cli.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/sweep_cli.c)
+  - rebuild at least:
+    - `lambda/sweep`
+    - `lambda/sweep_coeffgen`
+- change [lambda/solve_proximity_stats.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_proximity_stats.c)
+  - rebuild `lambda/solve_proximity_stats`
+- change [lambda/solve_palette_chunk_mt.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_palette_chunk_mt.c)
+  - rebuild `lambda/solve_palette_chunk_mt`
+
+If the binary is built through the Docker/LAPACK/libvips path in
+[deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh), use that
+same path before the Docker gate so the runtime test exercises the current
+artifact.
+
 ## Test Location
 
 All tests live in `polypaint/tests/`.
@@ -205,6 +234,12 @@ The packaging test is permanent and checks the specific PDF-layer regression poi
 - the PDF artifact Lambda is wired into `deploy.sh`
 
 If the real layer build is not run after changing the script, the deploy path is not considered verified.
+
+The same rule applies to deploy binaries:
+
+- if `lambda/<binary>` is what the Docker gate mounts, rebuild `lambda/<binary>`
+  before the gate
+- do not run the gate first and then rebuild only after it fails on stale output
 
 ### Predeploy contract gate
 

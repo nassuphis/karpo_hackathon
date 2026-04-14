@@ -326,6 +326,176 @@ class TestPaletteChunkHandler(unittest.TestCase):
             statuses = [c.args[2] for c in mock_report.call_args_list]
             self.assertEqual(statuses, ["started", "bin_downloaded", "computed", "done"])
 
+    @patch("handler_palette_chunk.report_status")
+    @patch("handler_palette_chunk.s3")
+    @patch("handler_palette_chunk.subprocess.run")
+    def test_v2_mixed_source_sectioned_bins_pass_coeff_url_cli_flags(self, mock_run, mock_s3, mock_report):
+        import handler_palette_chunk as mod
+
+        with tempfile.TemporaryDirectory() as td, \
+             patch.object(mod, "_TMP_INPUT", os.path.join(td, "input.bin")), \
+             patch.object(mod, "_TMP_SCORES", os.path.join(td, "scores.bin")), \
+             patch.object(mod, "_TMP_BINS", os.path.join(td, "bins.bin")), \
+             patch.object(mod, "_TMP_XFORMS", os.path.join(td, "xforms.json")), \
+             patch.object(mod, "_sectioned_input_size_limit", return_value=10_000_000):
+
+            bins_meta = {
+                "family": "solve_score",
+                "version": 2,
+                "metric": "spread",
+                "clip_quantile": 0.02,
+                "omega": 1.0,
+                "omega_enabled": False,
+                "clip_lo": 0.0,
+                "clip_hi": 1.0,
+                "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                "program": "m0;m1;max",
+                "metrics": [
+                    {"slot": 0, "metric": "spread", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                    {"slot": 1, "metric": "spread", "source": "cf", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                ],
+            }
+
+            def get_object(**kwargs):
+                key = kwargs["Key"]
+                if key == "renders/j/palettes/p1/solve_score/crowding_bins.json":
+                    return {"Body": MagicMock(read=lambda: json.dumps(bins_meta).encode())}
+                raise AssertionError(f"unexpected get_object key: {key}")
+
+            mock_s3.get_object.side_effect = get_object
+            mock_s3.generate_presigned_url.side_effect = [
+                "https://example.com/chunk_3.bin",
+                "https://example.com/coeffs_3.bin",
+            ]
+            mock_s3.upload_fileobj.side_effect = lambda *args, **kwargs: None
+
+            def run_side_effect(cmd, capture_output, text, timeout):
+                self.assertEqual(cmd[0], mod.BINARY_MT)
+                self.assertIn("--input_mode=sectioned", cmd)
+                self.assertIn("--url=https://example.com/chunk_3.bin", cmd)
+                self.assertIn("--score_sources=slv,cf", cmd)
+                self.assertIn("--score_program=m0;m1;max", cmd)
+                self.assertIn("--score_coeffs_url=https://example.com/coeffs_3.bin", cmd)
+                self.assertIn("--score_coeff_input_size=112", cmd)
+                self.assertIn("--score_coeff_degree=7", cmd)
+                scores = array("f", [1.0, 2.0, 3.0, 4.0])
+                with open(mod._TMP_SCORES, "wb") as f:
+                    scores.tofile(f)
+                with open(mod._TMP_BINS, "wb") as f:
+                    f.write(bytes([0, 1, 2, 3]))
+                return MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({
+                        "min_score": 1.0,
+                        "max_score": 4.0,
+                        "threads": 4,
+                        "input_mode": "sectioned",
+                        "retries": 2,
+                    }),
+                    stderr="",
+                )
+
+            mock_run.side_effect = run_side_effect
+
+            mod.handler(_event(
+                metric="spread",
+                solve_score_quantile=0.02,
+                palette_chunk_input_mode="sectioned",
+                bin_size=160,
+                coeffs_key="renders/j/coeffs_0003.bin",
+                coeffs_bin_size=112,
+                n_coeffs=7,
+            ), None)
+
+            statuses = [c.args[2] for c in mock_report.call_args_list]
+            self.assertEqual(statuses, ["started", "bin_downloaded", "computed", "done"])
+
+    @patch("handler_palette_chunk.report_status")
+    @patch("handler_palette_chunk.s3")
+    @patch("handler_palette_chunk.subprocess.run")
+    def test_v2_param_source_sectioned_bins_pass_params_file_cli_flags(self, mock_run, mock_s3, mock_report):
+        import handler_palette_chunk as mod
+
+        with tempfile.TemporaryDirectory() as td, \
+             patch.object(mod, "_TMP_INPUT", os.path.join(td, "input.bin")), \
+             patch.object(mod, "_TMP_SCORES", os.path.join(td, "scores.bin")), \
+             patch.object(mod, "_TMP_BINS", os.path.join(td, "bins.bin")), \
+             patch.object(mod, "_TMP_XFORMS", os.path.join(td, "xforms.json")), \
+             patch.object(mod, "_TMP_SCORE_PARAMS", os.path.join(td, "params.bin")), \
+             patch.object(mod, "_sectioned_input_size_limit", return_value=10_000_000):
+
+            bins_meta = {
+                "family": "solve_score",
+                "version": 2,
+                "metric": "t1_abs",
+                "clip_quantile": 0.02,
+                "omega": 1.0,
+                "omega_enabled": False,
+                "clip_lo": 0.0,
+                "clip_hi": 1.0,
+                "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                "program": "m0;m1;max",
+                "metrics": [
+                    {"slot": 0, "metric": "t1_abs", "source": "pm", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                    {"slot": 1, "metric": "spread", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                ],
+            }
+
+            def get_object(**kwargs):
+                key = kwargs["Key"]
+                if key == "renders/j/palettes/p1/solve_score/param_bins.json":
+                    return {"Body": MagicMock(read=lambda: json.dumps(bins_meta).encode())}
+                if key == "renders/j/params.bin":
+                    self.assertEqual(kwargs["Range"], "bytes=160-223")
+                    return {"Body": MagicMock(iter_chunks=lambda chunk_size=1024 * 1024: [b"\x33" * 64])}
+                raise AssertionError(f"unexpected get_object key: {key}")
+
+            mock_s3.get_object.side_effect = get_object
+            mock_s3.generate_presigned_url.side_effect = [
+                "https://example.com/chunk_3.bin",
+            ]
+            mock_s3.upload_fileobj.side_effect = lambda *args, **kwargs: None
+
+            def run_side_effect(cmd, capture_output, text, timeout):
+                self.assertEqual(cmd[0], mod.BINARY_MT)
+                self.assertIn("--input_mode=sectioned", cmd)
+                self.assertIn("--url=https://example.com/chunk_3.bin", cmd)
+                self.assertIn("--score_sources=pm,slv", cmd)
+                self.assertIn("--score_program=m0;m1;max", cmd)
+                self.assertIn(f"--score_params_file={mod._TMP_SCORE_PARAMS}", cmd)
+                scores = array("f", [1.0, 2.0, 3.0, 4.0])
+                with open(mod._TMP_SCORES, "wb") as f:
+                    scores.tofile(f)
+                with open(mod._TMP_BINS, "wb") as f:
+                    f.write(bytes([0, 1, 2, 3]))
+                return MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({
+                        "min_score": 1.0,
+                        "max_score": 4.0,
+                        "threads": 4,
+                        "input_mode": "sectioned",
+                        "retries": 2,
+                    }),
+                    stderr="",
+                )
+
+            mock_run.side_effect = run_side_effect
+
+            mod.handler(_event(
+                metric="t1_abs",
+                solve_score_quantile=0.02,
+                solve_score_bins_key="renders/j/palettes/p1/solve_score/param_bins.json",
+                palette_chunk_input_mode="sectioned",
+                bin_size=160,
+                params_key="renders/j/params.bin",
+                step_start=10,
+                step_count=4,
+            ), None)
+
+            statuses = [c.args[2] for c in mock_report.call_args_list]
+            self.assertEqual(statuses, ["started", "bin_downloaded", "computed", "done"])
+
 
 if __name__ == "__main__":
     unittest.main()

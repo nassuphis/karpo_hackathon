@@ -32,8 +32,33 @@ VALID_SOLVE_SCORE_METRICS = {
     "centroid_dist",
     "dist_unit_circle",
     "asymmetry_re",
+    "min_mod",
+    "max_mod",
+    "min_angular_separation",
+    "t1_re",
+    "t1_im",
+    "t1_abs",
+    "t1_phase",
+    "t2_re",
+    "t2_im",
+    "t2_abs",
+    "t2_phase",
 }
-VALID_SOLVE_SCORE_SOURCES = {"slv", "cf"}
+VALID_SOLVE_SCORE_SOURCES = {"slv", "cf", "pm"}
+PARAM_SOLVE_SCORE_METRICS = {
+    "t1_re",
+    "t1_im",
+    "t1_abs",
+    "t1_phase",
+    "t2_re",
+    "t2_im",
+    "t2_abs",
+    "t2_phase",
+}
+_METRIC_ALLOWED_SOURCES = {
+    **{metric: {"slv", "cf"} for metric in VALID_SOLVE_SCORE_METRICS - PARAM_SOLVE_SCORE_METRICS},
+    **{metric: {"pm"} for metric in PARAM_SOLVE_SCORE_METRICS},
+}
 TRANSFER_CHIP_NAME = "omega_cosine"
 UNARY_CHIPS = {
     TRANSFER_CHIP_NAME: {"arity": 1, "params": 2},
@@ -106,10 +131,27 @@ def _validate_metric(value):
     return metric
 
 
+def _metric_allowed_sources(metric):
+    metric_name = _validate_metric(metric)
+    return _METRIC_ALLOWED_SOURCES[metric_name]
+
+
+def _validate_metric_source_for_metric(metric, source):
+    metric_name = _validate_metric(metric)
+    source_name = _validate_metric_source(source)
+    allowed = _metric_allowed_sources(metric_name)
+    if source_name not in allowed:
+        allowed_text = ", ".join(sorted(allowed))
+        raise RuntimeError(
+            f"solve-score metric {metric_name} only supports source(s) {allowed_text}, got {source_name!r}"
+        )
+    return source_name
+
+
 def _validate_metric_source(value):
     source = str(value or "").strip().lower()
     if source not in VALID_SOLVE_SCORE_SOURCES:
-        raise RuntimeError(f"solve-score metric source must be one of cf, slv, got {value!r}")
+        raise RuntimeError(f"solve-score metric source must be one of cf, pm, slv, got {value!r}")
     return source
 
 
@@ -221,7 +263,7 @@ def serialize_solve_score_chain(chain):
 def _metric_item(metric, quantile, source="slv"):
     metric_name = _validate_metric(metric)
     q = _validate_quantile_fraction(quantile)
-    source_name = _validate_metric_source(source)
+    source_name = _validate_metric_source_for_metric(metric_name, source)
     return {"name": metric_name, "params": [source_name, _format_quantile_percent(q * 100.0)]}
 
 
@@ -264,10 +306,10 @@ def _metric_items_with_fallback(chain, legacy_quantile):
                     f"Metric chip {item['name']} with source {source} requires q in percent, e.g. "
                     f"{item['name']}({source},0.1)"
                 )
-            params = [source, _format_quantile_percent(fallback * 100.0)]
+            params = [_validate_metric_source_for_metric(item["name"], source), _format_quantile_percent(fallback * 100.0)]
         elif len(params) != 2:
             raise RuntimeError(f"Metric chip {item['name']} requires source and q parameters")
-        source = _validate_metric_source(params[0])
+        source = _validate_metric_source_for_metric(item["name"], params[0])
         q_pct = _validate_quantile_percent(params[1])
         normalized = {"name": item["name"], "params": [source, _format_quantile_percent(q_pct)]}
         items.append((normalized, source, q_pct / 100.0))
@@ -366,6 +408,14 @@ def solve_score_program_cli_payload(compiled_or_metrics):
     if any(_validate_metric_source(metric.get("source", "slv")) != "slv" for metric in metrics):
         payload["score_sources"] = _metrics_csv(metrics, "source")
     return payload
+
+
+def solve_score_uses_source(compiled_or_metrics, source):
+    metrics = compiled_or_metrics.get("metrics") if isinstance(compiled_or_metrics, dict) else compiled_or_metrics
+    if not isinstance(metrics, list):
+        return False
+    wanted = _validate_metric_source(source)
+    return any(_validate_metric_source(metric.get("source", "slv")) == wanted for metric in metrics)
 
 
 def solve_score_uses_non_solve_sources(compiled_or_metrics):

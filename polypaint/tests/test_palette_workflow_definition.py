@@ -88,6 +88,7 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(clip["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
         self.assertEqual(clip["solve_score_threads.$"], "$.plan.params.solve_score_threads")
         self.assertEqual(clip["root_transforms.$"], "$.plan.params.root_transforms")
+        self.assertEqual(clip["lores_params_key.$"], "$.plan.calc.lores_params_key")
 
         hist = self.states["SolveScoreHistMap"]["ItemSelector"]
         self.assertEqual(hist["solve_score_quantile.$"], "$.plan.solve_score.quantile")
@@ -97,6 +98,9 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(hist["solve_score_hist_input_mode.$"], "$.plan.params.solve_score_hist_input_mode")
         self.assertEqual(hist["solve_score_hist_retries.$"], "$.plan.params.solve_score_hist_retries")
         self.assertEqual(hist["root_transforms.$"], "$.plan.params.root_transforms")
+        self.assertEqual(hist["params_key.$"], "$.plan.calc.params_key")
+        self.assertEqual(hist["step_start.$"], "$$.Map.Item.Value.step_start")
+        self.assertEqual(hist["step_count.$"], "$$.Map.Item.Value.step_count")
 
         merge = self.states["SolveScoreMergeTask"]["Parameters"]["Payload"]
         self.assertEqual(merge["solve_score_quantile.$"], "$.plan.solve_score.quantile")
@@ -116,6 +120,9 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(chunk["palette_chunk_retries.$"], "$.plan.params.palette_chunk_retries")
         self.assertEqual(chunk["palette_chunk_workers.$"], "$.plan.params.palette_chunk_workers")
         self.assertEqual(chunk["bin_size.$"], "$$.Map.Item.Value.bin_size")
+        self.assertEqual(chunk["params_key.$"], "$.plan.calc.params_key")
+        self.assertEqual(chunk["step_start.$"], "$$.Map.Item.Value.step_start")
+        self.assertEqual(chunk["step_count.$"], "$$.Map.Item.Value.step_count")
 
         finalize = self.states["PaletteFinalizeTask"]["Parameters"]["Payload"]
         self.assertEqual(finalize["times.$"], "$.plan.calc.times")

@@ -83,9 +83,33 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(
             plan["chunk_items"],
             [
-                {"chunk_idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_start": 0, "step_count": 5, "bin_size": 5 * 5 * 2 * 4},
-                {"chunk_idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_start": 5, "step_count": 17, "bin_size": 17 * 5 * 2 * 4},
-                {"chunk_idx": 2, "bin_key": "renders/j/chunk_2.bin", "step_start": 22, "step_count": 10, "bin_size": 10 * 5 * 2 * 4},
+                {
+                    "chunk_idx": 0,
+                    "bin_key": "renders/j/chunk_0.bin",
+                    "coeffs_key": "renders/j/coeffs_0000.bin",
+                    "step_start": 0,
+                    "step_count": 5,
+                    "bin_size": 5 * 5 * 2 * 4,
+                    "coeffs_bin_size": 5 * 6 * 2 * 4,
+                },
+                {
+                    "chunk_idx": 1,
+                    "bin_key": "renders/j/chunk_1.bin",
+                    "coeffs_key": "renders/j/coeffs_0001.bin",
+                    "step_start": 5,
+                    "step_count": 17,
+                    "bin_size": 17 * 5 * 2 * 4,
+                    "coeffs_bin_size": 17 * 6 * 2 * 4,
+                },
+                {
+                    "chunk_idx": 2,
+                    "bin_key": "renders/j/chunk_2.bin",
+                    "coeffs_key": "renders/j/coeffs_0002.bin",
+                    "step_start": 22,
+                    "step_count": 10,
+                    "bin_size": 10 * 5 * 2 * 4,
+                    "coeffs_bin_size": 10 * 6 * 2 * 4,
+                },
             ],
         )
         self.assertNotIn("palette_items", plan)
@@ -193,7 +217,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
         )
 
     @patch("handler_palette_render_plan.s3")
-    def test_palette_plan_rejects_mixed_source_chain(self, mock_s3):
+    def test_palette_plan_accepts_mixed_source_chain(self, mock_s3):
         from handler_palette_render_plan import handler
 
         calc = {
@@ -206,15 +230,45 @@ class TestPaletteRenderPlan(unittest.TestCase):
         }
         mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(calc).encode())}
 
-        with self.assertRaises(RuntimeError) as ctx:
-            handler(_event(params={
-                "metric": "spread",
-                "palette": "reef",
-                "solve_score_chain": [["spread", "slv", "1"], ["spread", "cf", "1"], ["avg"]],
-                "solve_score_quantile": 0.01,
-                "root_transforms": [],
-            }), None)
-        self.assertIn("histogram-debug only", str(ctx.exception))
+        result = handler(_event(params={
+            "metric": "spread",
+            "palette": "reef",
+            "solve_score_chain": [["spread", "slv", "1"], ["spread", "cf", "1"], ["avg"]],
+            "solve_score_quantile": 0.01,
+            "root_transforms": [],
+        }), None)
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["calc"]["lores_coeffs_key"], "renders/j/lores_coeffs.bin")
+        self.assertEqual(plan["calc"]["n_coeffs"], 7)
+        self.assertEqual(plan["solve_score"]["metrics"][0]["source"], "slv")
+        self.assertEqual(plan["solve_score"]["metrics"][1]["source"], "cf")
+
+    @patch("handler_palette_render_plan.s3")
+    def test_palette_plan_accepts_param_source_chain(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        calc = {
+            "degree": 5,
+            "N": 4,
+            "times": 1,
+            "params_key": "renders/j/params.bin",
+            "lores": {"bin_key": "renders/j/lores.bin", "params_key": "renders/j/lores_params.bin"},
+            "chunks": [{"idx": 0, "bin_key": "renders/j/chunk_0.bin", "n_t": 16}],
+        }
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(calc).encode())}
+
+        result = handler(_event(params={
+            "metric": "t1_abs",
+            "palette": "reef",
+            "solve_score_chain": [["t1_abs", "pm", "1"], ["spread", "1"], ["avg"]],
+            "solve_score_quantile": 0.01,
+            "root_transforms": [],
+        }), None)
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["calc"]["lores_params_key"], "renders/j/lores_params.bin")
+        self.assertEqual(plan["calc"]["params_key"], "renders/j/params.bin")
+        self.assertEqual(plan["solve_score"]["metrics"][0]["source"], "pm")
+        self.assertEqual(plan["solve_score"]["metrics"][0]["metric"], "t1_abs")
 
     @patch("handler_palette_render_plan.s3")
     def test_invalid_palette_rejected(self, mock_s3):

@@ -24,6 +24,13 @@
  *   centroid_dist    — distance of centroid from origin
  *   dist_unit_circle — mean distance of roots from the unit circle
  *   asymmetry_re     — left/right imbalance across the imaginary axis
+ *   min_mod          — minimum non-zero modulus (0 if all roots are zero)
+ *   max_mod          — maximum modulus
+ *   min_angular_separation — smallest wrapped angular gap between non-zero roots
+ *
+ * Metrics (v4, parameter-row metrics; source=pm only):
+ *   t1_re, t1_im, t1_abs, t1_phase
+ *   t2_re, t2_im, t2_abs, t2_phase
  */
 
 #ifndef SOLVE_SCORE_H
@@ -61,6 +68,17 @@ enum SolveMetric {
     SOLVE_METRIC_CENTROID_DIST = 12,
     SOLVE_METRIC_DIST_UNIT_CIRCLE = 13,
     SOLVE_METRIC_ASYMMETRY_RE = 14,
+    SOLVE_METRIC_MIN_MOD = 15,
+    SOLVE_METRIC_MAX_MOD = 16,
+    SOLVE_METRIC_MIN_ANGULAR_SEPARATION = 17,
+    SOLVE_METRIC_T1_RE = 18,
+    SOLVE_METRIC_T1_IM = 19,
+    SOLVE_METRIC_T1_ABS = 20,
+    SOLVE_METRIC_T1_PHASE = 21,
+    SOLVE_METRIC_T2_RE = 22,
+    SOLVE_METRIC_T2_IM = 23,
+    SOLVE_METRIC_T2_ABS = 24,
+    SOLVE_METRIC_T2_PHASE = 25,
 };
 
 /* ── Parser ───────────────────────────────────────────────────────────── */
@@ -82,6 +100,17 @@ static int parse_solve_metric(const char *s, enum SolveMetric *out) {
     if (strcmp(s, "centroid_dist") == 0)        { *out = SOLVE_METRIC_CENTROID_DIST; return 1; }
     if (strcmp(s, "dist_unit_circle") == 0)     { *out = SOLVE_METRIC_DIST_UNIT_CIRCLE; return 1; }
     if (strcmp(s, "asymmetry_re") == 0)         { *out = SOLVE_METRIC_ASYMMETRY_RE; return 1; }
+    if (strcmp(s, "min_mod") == 0)              { *out = SOLVE_METRIC_MIN_MOD; return 1; }
+    if (strcmp(s, "max_mod") == 0)              { *out = SOLVE_METRIC_MAX_MOD; return 1; }
+    if (strcmp(s, "min_angular_separation") == 0) { *out = SOLVE_METRIC_MIN_ANGULAR_SEPARATION; return 1; }
+    if (strcmp(s, "t1_re") == 0)                { *out = SOLVE_METRIC_T1_RE; return 1; }
+    if (strcmp(s, "t1_im") == 0)                { *out = SOLVE_METRIC_T1_IM; return 1; }
+    if (strcmp(s, "t1_abs") == 0)               { *out = SOLVE_METRIC_T1_ABS; return 1; }
+    if (strcmp(s, "t1_phase") == 0)             { *out = SOLVE_METRIC_T1_PHASE; return 1; }
+    if (strcmp(s, "t2_re") == 0)                { *out = SOLVE_METRIC_T2_RE; return 1; }
+    if (strcmp(s, "t2_im") == 0)                { *out = SOLVE_METRIC_T2_IM; return 1; }
+    if (strcmp(s, "t2_abs") == 0)               { *out = SOLVE_METRIC_T2_ABS; return 1; }
+    if (strcmp(s, "t2_phase") == 0)             { *out = SOLVE_METRIC_T2_PHASE; return 1; }
     return 0;
 }
 
@@ -104,8 +133,35 @@ static const char *solve_metric_name(enum SolveMetric m) {
         case SOLVE_METRIC_CENTROID_DIST:        return "centroid_dist";
         case SOLVE_METRIC_DIST_UNIT_CIRCLE:     return "dist_unit_circle";
         case SOLVE_METRIC_ASYMMETRY_RE:         return "asymmetry_re";
+        case SOLVE_METRIC_MIN_MOD:              return "min_mod";
+        case SOLVE_METRIC_MAX_MOD:              return "max_mod";
+        case SOLVE_METRIC_MIN_ANGULAR_SEPARATION: return "min_angular_separation";
+        case SOLVE_METRIC_T1_RE:                return "t1_re";
+        case SOLVE_METRIC_T1_IM:                return "t1_im";
+        case SOLVE_METRIC_T1_ABS:               return "t1_abs";
+        case SOLVE_METRIC_T1_PHASE:             return "t1_phase";
+        case SOLVE_METRIC_T2_RE:                return "t2_re";
+        case SOLVE_METRIC_T2_IM:                return "t2_im";
+        case SOLVE_METRIC_T2_ABS:               return "t2_abs";
+        case SOLVE_METRIC_T2_PHASE:             return "t2_phase";
     }
     return "unknown";
+}
+
+static int solve_metric_is_param_metric(enum SolveMetric metric) {
+    switch (metric) {
+        case SOLVE_METRIC_T1_RE:
+        case SOLVE_METRIC_T1_IM:
+        case SOLVE_METRIC_T1_ABS:
+        case SOLVE_METRIC_T1_PHASE:
+        case SOLVE_METRIC_T2_RE:
+        case SOLVE_METRIC_T2_IM:
+        case SOLVE_METRIC_T2_ABS:
+        case SOLVE_METRIC_T2_PHASE:
+            return 1;
+        default:
+            return 0;
+    }
 }
 
 /* ── Low-level math helpers ───────────────────────────────────────────── */
@@ -141,9 +197,13 @@ static int solve_metric_min_roots(enum SolveMetric metric) {
         case SOLVE_METRIC_CENTROID_DIST:
         case SOLVE_METRIC_DIST_UNIT_CIRCLE:
         case SOLVE_METRIC_ASYMMETRY_RE:
+        case SOLVE_METRIC_MIN_MOD:
+        case SOLVE_METRIC_MAX_MOD:
             return 1;
         case SOLVE_METRIC_AREA:
             return 3;
+        case SOLVE_METRIC_MIN_ANGULAR_SEPARATION:
+            return 2;
         default:
             return 2;
     }
@@ -197,6 +257,14 @@ static double stddev_of(const double *values, int n, double mean) {
     return sqrt(sum / n);
 }
 
+static double wrapped_angle_0_2pi(double re, double im) {
+    double angle = atan2(im, re);
+    if (angle < 0.0) angle += 2.0 * M_PI;
+    return angle;
+}
+
+static double compute_param_metric_score(const float *params, int paramDegree, enum SolveMetric metric);
+
 /* Compute centroid of interleaved roots. */
 static void compute_centroid(const float *roots, int degree, double *mean_re, double *mean_im) {
     double sr = 0, si = 0;
@@ -247,6 +315,13 @@ static void compute_nearest_neighbor_scores(const float *roots, int degree, doub
  */
 static double compute_solve_metric_score(const float *roots, int degree, enum SolveMetric metric) {
     if (degree <= 0) return 0.0;
+    if (solve_metric_is_param_metric(metric)) {
+        if (!roots) return 0.0;
+        for (int i = 0; i < degree * 2 && i < 4; i++) {
+            if (!isfinite((double)roots[i])) return 0.0;
+        }
+        return compute_param_metric_score(roots, degree, metric);
+    }
     int minRoots = solve_metric_min_roots(metric);
     int finiteDegree = degree;
     const float *useRoots = roots;
@@ -397,6 +472,67 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
         return result;
     }
 
+    if (metric == SOLVE_METRIC_MIN_MOD) {
+        double min_mod = 0.0;
+        int found_nonzero = 0;
+        for (int i = 0; i < degree; i++) {
+            double re = roots[i * 2];
+            double im = roots[i * 2 + 1];
+            if (re == 0.0 && im == 0.0) continue;
+            double mod = hypot(re, im);
+            if (!found_nonzero || mod < min_mod) {
+                min_mod = mod;
+                found_nonzero = 1;
+            }
+        }
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return found_nonzero ? min_mod : 0.0;
+    }
+
+    if (metric == SOLVE_METRIC_MAX_MOD) {
+        double max_mod = 0.0;
+        for (int i = 0; i < degree; i++) {
+            double re = roots[i * 2];
+            double im = roots[i * 2 + 1];
+            double mod = hypot(re, im);
+            if (mod > max_mod) max_mod = mod;
+        }
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return max_mod;
+    }
+
+    if (metric == SOLVE_METRIC_MIN_ANGULAR_SEPARATION) {
+        double angle_stack[1024];
+        double *angles = degree <= 1024 ? angle_stack : (double *)malloc((size_t)degree * sizeof(double));
+        if (!angles) {
+            if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+            return 0.0;
+        }
+        int angle_count = 0;
+        for (int i = 0; i < degree; i++) {
+            double re = roots[i * 2];
+            double im = roots[i * 2 + 1];
+            if (re == 0.0 && im == 0.0) continue;
+            angles[angle_count++] = wrapped_angle_0_2pi(re, im);
+        }
+        if (angle_count < 2) {
+            if (angles != angle_stack) free(angles);
+            if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+            return 0.0;
+        }
+        qsort(angles, (size_t)angle_count, sizeof(double), _ss_dbl_cmp);
+        double min_gap = 2.0 * M_PI;
+        for (int i = 1; i < angle_count; i++) {
+            double gap = angles[i] - angles[i - 1];
+            if (gap < min_gap) min_gap = gap;
+        }
+        double wrap_gap = 2.0 * M_PI - angles[angle_count - 1] + angles[0];
+        if (wrap_gap < min_gap) min_gap = wrap_gap;
+        if (angles != angle_stack) free(angles);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return min_gap;
+    }
+
     /* ── spread: 0.5*log10(RMS_radius^2) ── */
     if (metric == SOLVE_METRIC_SPREAD) {
         if (degree < 2) return 0.0;
@@ -505,7 +641,15 @@ enum SolveScoreProgramOp {
 enum SolveScoreMetricSource {
     SOLVE_SCORE_SOURCE_SOLVE = 0,
     SOLVE_SCORE_SOURCE_COEFF = 1,
+    SOLVE_SCORE_SOURCE_PARAM = 2,
 };
+
+static int solve_metric_supports_source(enum SolveMetric metric, enum SolveScoreMetricSource source) {
+    if (solve_metric_is_param_metric(metric)) {
+        return source == SOLVE_SCORE_SOURCE_PARAM;
+    }
+    return source == SOLVE_SCORE_SOURCE_SOLVE || source == SOLVE_SCORE_SOURCE_COEFF;
+}
 
 typedef struct {
     enum SolveScoreProgramOp op;
@@ -586,6 +730,7 @@ static int parse_solve_score_source_csv(const char *s, enum SolveScoreMetricSour
         }
         if (strcmp(tok, "slv") == 0) out[n] = SOLVE_SCORE_SOURCE_SOLVE;
         else if (strcmp(tok, "cf") == 0) out[n] = SOLVE_SCORE_SOURCE_COEFF;
+        else if (strcmp(tok, "pm") == 0) out[n] = SOLVE_SCORE_SOURCE_PARAM;
         else {
             snprintf(err, errCap, "invalid score source '%s'", tok);
             free(copy);
@@ -802,6 +947,17 @@ static int parse_solve_score_program_args_ex(const char *metricsCsv, const char 
         return 0;
     }
     for (int i = 0; i < metricCount; i++) {
+        if (!solve_metric_supports_source(out->metrics[i], out->metricSources[i])) {
+            snprintf(
+                err, errCap, "metric %s does not support source %s",
+                solve_metric_name(out->metrics[i]),
+                out->metricSources[i] == SOLVE_SCORE_SOURCE_PARAM ? "pm"
+                    : (out->metricSources[i] == SOLVE_SCORE_SOURCE_COEFF ? "cf" : "slv")
+            );
+            return 0;
+        }
+    }
+    for (int i = 0; i < metricCount; i++) {
         if (!(out->clipHi[i] - out->clipLo[i] >= 1e-12)) {
             snprintf(err, errCap, "invalid clip range for metric slot %d", i);
             return 0;
@@ -842,20 +998,45 @@ static void solve_score_program_from_legacy(enum SolveMetric metric, double clip
     }
 }
 
+static double compute_param_metric_score(const float *params, int paramDegree, enum SolveMetric metric) {
+    if (!params || paramDegree < 1) return 0.0;
+    double t1_re = (paramDegree >= 1) ? params[0] : 0.0;
+    double t1_im = (paramDegree >= 1) ? params[1] : 0.0;
+    double t2_re = (paramDegree >= 2) ? params[2] : 0.0;
+    double t2_im = (paramDegree >= 2) ? params[3] : 0.0;
+    switch (metric) {
+        case SOLVE_METRIC_T1_RE: return t1_re;
+        case SOLVE_METRIC_T1_IM: return t1_im;
+        case SOLVE_METRIC_T1_ABS: return hypot(t1_re, t1_im);
+        case SOLVE_METRIC_T1_PHASE: return wrapped_angle_0_2pi(t1_re, t1_im);
+        case SOLVE_METRIC_T2_RE: return t2_re;
+        case SOLVE_METRIC_T2_IM: return t2_im;
+        case SOLVE_METRIC_T2_ABS: return hypot(t2_re, t2_im);
+        case SOLVE_METRIC_T2_PHASE: return wrapped_angle_0_2pi(t2_re, t2_im);
+        default: return 0.0;
+    }
+}
+
 static double solve_score_eval_program_with_sources(const float *roots, int degree,
                                                     const float *coeffRoots, int coeffDegree,
+                                                    const float *paramValues, int paramDegree,
                                                     const SolveScoreProgram *program) {
     double metricVals[SOLVE_SCORE_MAX_METRIC_SLOTS];
     for (int i = 0; i < program->metricCount; i++) {
-        const float *metricRoots = roots;
-        int metricDegree = degree;
-        if (program->metricSources[i] == SOLVE_SCORE_SOURCE_COEFF) {
-            metricRoots = coeffRoots;
-            metricDegree = coeffDegree;
+        double score = 0.0;
+        if (program->metricSources[i] == SOLVE_SCORE_SOURCE_PARAM) {
+            score = compute_param_metric_score(paramValues, paramDegree, program->metrics[i]);
+        } else {
+            const float *metricRoots = roots;
+            int metricDegree = degree;
+            if (program->metricSources[i] == SOLVE_SCORE_SOURCE_COEFF) {
+                metricRoots = coeffRoots;
+                metricDegree = coeffDegree;
+            }
+            score = (!metricRoots || metricDegree <= 0)
+                ? 0.0
+                : compute_solve_metric_score(metricRoots, metricDegree, program->metrics[i]);
         }
-        double score = (!metricRoots || metricDegree <= 0)
-            ? 0.0
-            : compute_solve_metric_score(metricRoots, metricDegree, program->metrics[i]);
         double range = program->clipHi[i] - program->clipLo[i];
         double u = (score - program->clipLo[i]) / range;
         metricVals[i] = solve_score_clamp_unit(u);
@@ -931,7 +1112,7 @@ static double solve_score_eval_program_with_sources(const float *roots, int degr
 }
 
 static double solve_score_eval_program(const float *roots, int degree, const SolveScoreProgram *program) {
-    return solve_score_eval_program_with_sources(roots, degree, NULL, 0, program);
+    return solve_score_eval_program_with_sources(roots, degree, NULL, 0, NULL, 0, program);
 }
 
 #endif /* SOLVE_SCORE_H */

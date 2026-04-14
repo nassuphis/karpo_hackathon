@@ -3951,6 +3951,28 @@ async function testPipeline(name, call) {
         console.log('  setSolveMetric v3: OK (centroid_dist, dist_unit_circle)');
     }
 
+    // 11e2c: setSolveMetric / setPaletteMetric with new v4 metrics
+    {
+        vm.runInContext("setSolveMetric('min_angular_separation')", ctx);
+        const m1 = vm.runInContext('renderSolveMetric', ctx);
+        if (m1 !== 'min_angular_separation') { console.error('FATAL: metric should be min_angular_separation, got ' + m1); process.exit(1); }
+        vm.runInContext("setPaletteMetric('max_mod')", ctx);
+        const m2 = vm.runInContext('paletteTabMetric', ctx);
+        if (m2 !== 'max_mod') { console.error('FATAL: palette metric should be max_mod, got ' + m2); process.exit(1); }
+        console.log('  setSolveMetric v4: OK (min_angular_separation, max_mod)');
+    }
+
+    // 11e2d: setSolveMetric / setPaletteMetric with param metrics
+    {
+        vm.runInContext("setSolveMetric('t1_abs')", ctx);
+        const m1 = vm.runInContext('renderSolveMetric', ctx);
+        if (m1 !== 't1_abs') { console.error('FATAL: metric should be t1_abs, got ' + m1); process.exit(1); }
+        vm.runInContext("setPaletteMetric('t2_phase')", ctx);
+        const m2 = vm.runInContext('paletteTabMetric', ctx);
+        if (m2 !== 't2_phase') { console.error('FATAL: palette metric should be t2_phase, got ' + m2); process.exit(1); }
+        console.log('  setSolveMetric v5: OK (t1_abs, t2_phase)');
+    }
+
     // 11e3: orchestrator dispatch with new metric carries it unchanged
     {
         vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'nn_variation';", ctx);
@@ -4010,6 +4032,37 @@ async function testPipeline(name, call) {
             process.exit(1);
         }
         console.log('  orchestrator dispatch v3: OK (solve_metric=asymmetry_re)');
+        vm.runInContext("renderColorMode = 'rainbow';", ctx);
+    }
+
+    // 11e5: orchestrator dispatch with v4 metric carries it unchanged
+    {
+        vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'min_mod';", ctx);
+        vm.runInContext(`
+            var _v4OrchPayload = null;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch' && body.target === 'render_orchestrator') {
+                    _v4OrchPayload = body.jobs[0];
+                    return { fired: 1, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: 1, complete: true, results: [{ phase: 'done' }] };
+                }
+                return {};
+            };
+            refreshRenderArtifacts = async function() {};
+        `, ctx);
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_v4' };
+        ctx._elements['render-status'].textContent = '';
+        ctx._elements['btn-raster-all'] = ctx._mkEl();
+        vm.runInContext("_viewMode = 'square'; _rtChain = [];", ctx);
+        try { await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx); } catch(e) {}
+        const v4Payload = vm.runInContext('_v4OrchPayload', ctx);
+        if (!v4Payload || v4Payload.params.solve_metric !== 'min_mod') {
+            console.error('FATAL: min_mod dispatch failed: ' + JSON.stringify(v4Payload && v4Payload.params));
+            process.exit(1);
+        }
+        console.log('  orchestrator dispatch v4: OK (solve_metric=min_mod)');
         vm.runInContext("renderColorMode = 'rainbow';", ctx);
     }
 
@@ -5137,7 +5190,7 @@ async function testPipeline(name, call) {
         console.log('  13e log shows raw + final bin tables, has extremes + finite diagnostics: OK');
     }
 
-    // 13f: mixed-source histogram sends coeff lores metadata and render launch rejects it
+    // 13f: mixed-source histogram sends coeff lores metadata and render launch dispatches runtime path
     {
         vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'spread'; _activeRenderRun = null;", ctx);
         vm.runInContext(`
@@ -5155,8 +5208,15 @@ async function testPipeline(name, call) {
         vm.runInContext(`
             var _mixedHistBody = null;
             var _mixedDispatchCalled = false;
+            var _mixedDispatchJob = null;
             lambdaPost = async function lambdaPost(name, body, path) {
-                if (name === 'dispatch') { _mixedDispatchCalled = true; return { fired: 1, total: 1 }; }
+                if (name === 'dispatch') {
+                    _mixedDispatchCalled = true;
+                    if (body && body.target === 'render_orchestrator' && Array.isArray(body.jobs) && body.jobs.length) {
+                        _mixedDispatchJob = body.jobs[0];
+                    }
+                    return { fired: 1, total: 1, errors: [] };
+                }
                 if (name === 'solve_proximity') {
                     _mixedHistBody = body;
                     return {
@@ -5208,16 +5268,25 @@ async function testPipeline(name, call) {
             process.exit(1);
         }
         try { await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx); } catch(e) {}
-        const mixedStatus = ctx._elements['render-status'].textContent || '';
-        if (!mixedStatus.includes('Mixed-source solve score is histogram-debug only for now')) {
-            console.error('FATAL: render launch should reject mixed-source solve score, got status ' + mixedStatus);
+        const mixedDispatchJob = vm.runInContext('_mixedDispatchJob', ctx);
+        if (!vm.runInContext('_mixedDispatchCalled', ctx)) {
+            console.error('FATAL: mixed-source render launch should dispatch orchestrator');
             process.exit(1);
         }
-        if (vm.runInContext('_mixedDispatchCalled', ctx)) {
-            console.error('FATAL: mixed-source render launch must not dispatch orchestrator');
+        if (!mixedDispatchJob || mixedDispatchJob.mode !== 'color') {
+            console.error('FATAL: mixed-source render launch should capture render job, got ' + JSON.stringify(mixedDispatchJob));
             process.exit(1);
         }
-        console.log('  13f mixed-source histogram uses coeff lores metadata and render launch rejects runtime path: OK');
+        const mixedParams = mixedDispatchJob.params || {};
+        if (mixedParams.raster_engine !== 'single') {
+            console.error('FATAL: mixed-source render launch should use single raster engine by default, got ' + mixedParams.raster_engine);
+            process.exit(1);
+        }
+        if (JSON.stringify(mixedParams.solve_score_chain) !== JSON.stringify([['spread','1'], ['spread','cf','2'], ['avg']])) {
+            console.error('FATAL: mixed-source render launch should forward source-aware solve_score_chain, got ' + JSON.stringify(mixedParams.solve_score_chain));
+            process.exit(1);
+        }
+        console.log('  13f mixed-source histogram uses coeff lores metadata and render launch dispatches runtime path: OK');
     }
 
     // Step 14: Render palette family generation

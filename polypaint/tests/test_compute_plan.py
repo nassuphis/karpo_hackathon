@@ -176,6 +176,7 @@ class TestComputePlan(unittest.TestCase):
         body = json.loads(mock_s3.put_object.call_args.kwargs["Body"])
         self.assertEqual(body["lores"]["bin_key"], "renders/compute_j/lores.bin")
         self.assertEqual(body["lores"]["coeffs_key"], "renders/compute_j/lores_coeffs.bin")
+        self.assertEqual(body["lores"]["params_key"], "renders/compute_j/lores_params.bin")
 
 
 if __name__ == "__main__":

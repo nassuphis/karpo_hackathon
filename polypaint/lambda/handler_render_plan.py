@@ -22,6 +22,7 @@ from solve_score_chain import (
     compile_solve_score_chain_or_legacy,
     emit_solve_score_metadata,
     format_solve_score_chain_display,
+    solve_score_uses_source,
     solve_score_uses_non_solve_sources,
     solve_score_chain_id,
 )
@@ -39,10 +40,46 @@ DEFAULT_BACKGROUND_COLOR = "000000"
 DEFAULT_BACKGROUND_THRESHOLD = 4
 
 
+def _fallback_lores_coeffs_key(job_id, calc):
+    lores = calc.get("lores", {}) or {}
+    key = str(lores.get("coeffs_key") or "").strip()
+    if key:
+        return key
+    job = str(job_id or "").strip()
+    return f"renders/{job}/lores_coeffs.bin" if job else ""
+
+
+def _fallback_lores_params_key(job_id, calc):
+    lores = calc.get("lores", {}) or {}
+    key = str(lores.get("params_key") or "").strip()
+    if key:
+        return key
+    job = str(job_id or "").strip()
+    return f"renders/{job}/lores_params.bin" if job else ""
+
+
+def _fallback_params_key(job_id, calc):
+    key = str(calc.get("params_key") or "").strip()
+    if key:
+        return key
+    job = str(job_id or "").strip()
+    return f"renders/{job}/params.bin" if job else ""
+
+
+def _chunk_coeffs_key(calc, job_id, chunk_idx):
+    coeffs_keys = list(calc.get("coeffs_keys") or [])
+    if 0 <= int(chunk_idx) < len(coeffs_keys):
+        key = str(coeffs_keys[int(chunk_idx)] or "").strip()
+        if key:
+            return key
+    return f"renders/{job_id}/coeffs_{int(chunk_idx):04d}.bin"
+
+
 def _build_chunk_items(calc, job_id):
     chunks = list(calc.get("chunks", calc.get("stripes", [])) or [])
     if chunks:
         degree = int(calc.get("degree", 1) or 1)
+        n_coeffs = int(calc.get("n_coeffs", degree + 1) or (degree + 1))
         record_bytes = degree * 2 * 4
         chunk_items = []
         step_start = 0
@@ -55,7 +92,11 @@ def _build_chunk_items(calc, job_id):
             bin_key = raw.get("bin_key", raw.get("s3_key"))
             if idx is None or not bin_key:
                 raise RuntimeError(f"Invalid chunk metadata: idx={idx} bin_key={bin_key!r}")
-            item = {"chunk_idx": int(idx), "bin_key": str(bin_key)}
+            item = {
+                "chunk_idx": int(idx),
+                "bin_key": str(bin_key),
+                "coeffs_key": _chunk_coeffs_key(calc, job_id, int(idx)),
+            }
             bin_size = raw.get("bin_size")
             step_count = raw.get("step_count", raw.get("n_t"))
             if step_count in ("", None):
@@ -68,6 +109,7 @@ def _build_chunk_items(calc, job_id):
                 item["step_start"] = step_start
                 item["step_count"] = step_count
                 item["bin_size"] = int(bin_size) if bin_size not in ("", None) else int(step_count) * record_bytes
+                item["coeffs_bin_size"] = int(step_count) * n_coeffs * 2 * 4
                 step_start += step_count
             elif bin_size not in ("", None):
                 item["bin_size"] = int(bin_size)
@@ -75,7 +117,14 @@ def _build_chunk_items(calc, job_id):
         return chunk_items
 
     n_chunks = calc.get("n_chunks", calc.get("n_stripes", 10))
-    return [{"chunk_idx": c, "bin_key": f"renders/{job_id}/chunk_{c}.bin"} for c in range(n_chunks)]
+    return [
+        {
+            "chunk_idx": c,
+            "bin_key": f"renders/{job_id}/chunk_{c}.bin",
+            "coeffs_key": _chunk_coeffs_key(calc, job_id, c),
+        }
+        for c in range(n_chunks)
+    ]
 
 
 def _validate_omega(value):
@@ -467,7 +516,23 @@ def handler(event, context):
         solve_score_chain = solve_score_compiled["chain"]
         rp["solve_score_chain"] = solve_score_chain
         if solve_score_uses_non_solve_sources(solve_score_compiled):
-            raise RuntimeError("Mixed-source solve score is histogram-debug only for now")
+            if solve_score_uses_source(solve_score_compiled, "cf"):
+                lores_coeffs_key = _fallback_lores_coeffs_key(job_id, calc)
+                if not lores_coeffs_key:
+                    raise RuntimeError("Mixed-source solve score requires lores.coeffs_key")
+                try:
+                    n_coeffs = int(calc.get("n_coeffs"))
+                except (TypeError, ValueError):
+                    raise RuntimeError(f"Mixed-source solve score requires numeric n_coeffs, got {calc.get('n_coeffs')!r}")
+                if n_coeffs < 1:
+                    raise RuntimeError(f"Mixed-source solve score requires n_coeffs >= 1, got {n_coeffs}")
+            if solve_score_uses_source(solve_score_compiled, "pm"):
+                lores_params_key = _fallback_lores_params_key(job_id, calc)
+                params_key = _fallback_params_key(job_id, calc)
+                if not lores_params_key:
+                    raise RuntimeError("Param-source solve score requires lores.params_key")
+                if not params_key:
+                    raise RuntimeError("Param-source solve score requires params_key")
     elif color_mode == "saved_palette":
         solve_score_compiled = compile_solve_score_chain_or_legacy(
             saved_palette["score_chain"],
@@ -774,6 +839,9 @@ def handler(event, context):
             "times": times,
             "n_chunks": n_chunks,
             "lores_bin_key": calc.get("lores", {}).get("bin_key", ""),
+            "lores_coeffs_key": _fallback_lores_coeffs_key(job_id, calc),
+            "lores_params_key": _fallback_lores_params_key(job_id, calc),
+            "params_key": _fallback_params_key(job_id, calc),
             "coeffs_keys": calc.get("coeffs_keys", []),
             "n_coeffs": calc.get("n_coeffs", degree + 1),
         },

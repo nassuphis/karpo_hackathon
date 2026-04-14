@@ -258,6 +258,9 @@ class TestWorkflowDefinition(unittest.TestCase):
         assoc_selector = self.states["ColorAssociatedPaletteMap"]["ItemSelector"]
         self.assertEqual(assoc_selector["bin_key.$"], "$$.Map.Item.Value.bin_key")
         self.assertEqual(assoc_selector["bin_size.$"], "$$.Map.Item.Value.bin_size")
+        self.assertEqual(assoc_selector["coeffs_key.$"], "$$.Map.Item.Value.coeffs_key")
+        self.assertEqual(assoc_selector["coeffs_bin_size.$"], "$$.Map.Item.Value.coeffs_bin_size")
+        self.assertEqual(assoc_selector["n_coeffs.$"], "$.plan.calc.n_coeffs")
 
     def test_associated_palette_finalize_forwards_solve_score_chain(self):
         finalize = self.states["ColorAssociatedPaletteFinalizeTask"]["Parameters"]["Payload"]
@@ -298,12 +301,16 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(clip["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(clip["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
         self.assertEqual(clip["root_transforms.$"], "$.plan.params.root_transforms")
+        self.assertEqual(clip["lores_params_key.$"], "$.plan.calc.lores_params_key")
 
         hist = self.states["ColorSolveScoreHistMap"]["ItemSelector"]
         self.assertEqual(hist["solve_score_quantile.$"], "$.plan.solve_score.quantile")
         self.assertEqual(hist["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(hist["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
         self.assertEqual(hist["root_transforms.$"], "$.plan.params.root_transforms")
+        self.assertEqual(hist["params_key.$"], "$.plan.calc.params_key")
+        self.assertEqual(hist["step_start.$"], "$$.Map.Item.Value.step_start")
+        self.assertEqual(hist["step_count.$"], "$$.Map.Item.Value.step_count")
 
         merge = self.states["ColorSolveScoreMergeTask"]["Parameters"]["Payload"]
         self.assertEqual(merge["solve_score_quantile.$"], "$.plan.solve_score.quantile")
@@ -315,6 +322,9 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(raster["solve_score_quantile.$"], "$.plan.solve_score.quantile")
         self.assertEqual(raster["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(raster["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+        self.assertEqual(raster["params_key.$"], "$.plan.calc.params_key")
+        self.assertEqual(raster["step_start.$"], "$$.Map.Item.Value.step_start")
+        self.assertEqual(raster["step_count.$"], "$$.Map.Item.Value.step_count")
 
         assoc_choice = self.states["ColorAssociatedPaletteChoice"]
         self.assertEqual(
@@ -329,6 +339,10 @@ class TestWorkflowDefinition(unittest.TestCase):
         assoc_map = self.states["ColorAssociatedPaletteMap"]["ItemSelector"]
         self.assertEqual(assoc_map["step_start.$"], "$$.Map.Item.Value.step_start")
         self.assertEqual(assoc_map["step_count.$"], "$$.Map.Item.Value.step_count")
+        self.assertEqual(assoc_map["coeffs_key.$"], "$$.Map.Item.Value.coeffs_key")
+        self.assertEqual(assoc_map["coeffs_bin_size.$"], "$$.Map.Item.Value.coeffs_bin_size")
+        self.assertEqual(assoc_map["params_key.$"], "$.plan.calc.params_key")
+        self.assertEqual(assoc_map["n_coeffs.$"], "$.plan.calc.n_coeffs")
         self.assertEqual(assoc_map["metric.$"], "$.plan.associated_palette.metric")
         self.assertEqual(assoc_map["solve_score_quantile.$"], "$.plan.associated_palette.quantile")
         self.assertEqual(assoc_map["solve_score_omega.$"], "$.plan.associated_palette.omega")

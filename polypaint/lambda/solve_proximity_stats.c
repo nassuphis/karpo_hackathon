@@ -4,7 +4,8 @@
  * Supports multiple metrics via --metric (default: proximity).
  * Metrics: proximity, crowding, spread, anisotropy, area,
  *          clusteriness, shelliness, outlierness, nn_variation, real_axis_proximity,
- *          centroid_re, centroid_im, centroid_dist, dist_unit_circle, asymmetry_re.
+ *          centroid_re, centroid_im, centroid_dist, dist_unit_circle, asymmetry_re,
+ *          min_mod, max_mod, min_angular_separation.
  *
  * Three modes:
  *   --mode=clip      Compute score array, sort, emit clip bounds (quantiles).
@@ -227,6 +228,7 @@ static double score_program_xformed(const float *roots, int degree, const SolveS
 
 static double score_program_xformed_with_coeffs(const float *roots, int degree,
                                                 const float *coeffRoots, int coeffDegree,
+                                                const float *paramValues, int paramDegree,
                                                 const SolveScoreProgram *program,
                                                 RootXformEntry *rtChain, int nRt,
                                                 float *wkRe, float *wkIm) {
@@ -240,13 +242,23 @@ static double score_program_xformed_with_coeffs(const float *roots, int degree,
         xformed[k * 2] = wkRe[k];
         xformed[k * 2 + 1] = wkIm[k];
     }
-    return solve_score_eval_program_with_sources(xformed, degree, coeffRoots, coeffDegree, program);
+    return solve_score_eval_program_with_sources(
+        xformed, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program
+    );
 }
 
 static int solve_score_program_uses_coeff_sources(const SolveScoreProgram *program) {
     if (!program) return 0;
     for (int i = 0; i < program->metricCount; i++) {
         if (program->metricSources[i] == SOLVE_SCORE_SOURCE_COEFF) return 1;
+    }
+    return 0;
+}
+
+static int solve_score_program_uses_param_sources(const SolveScoreProgram *program) {
+    if (!program) return 0;
+    for (int i = 0; i < program->metricCount; i++) {
+        if (program->metricSources[i] == SOLVE_SCORE_SOURCE_PARAM) return 1;
     }
     return 0;
 }
@@ -265,17 +277,21 @@ static double eval_score_or_program(const float *roots, int degree,
 
 static double eval_score_or_program_with_sources(const float *roots, int degree,
                                                  const float *coeffRoots, int coeffDegree,
+                                                 const float *paramValues, int paramDegree,
                                                  enum SolveMetric metric, const SolveScoreProgram *program,
                                                  RootXformEntry *rtChain, int nRt,
                                                  float *wkRe, float *wkIm) {
     if (program) {
-        if (solve_score_program_uses_coeff_sources(program)) {
+        if (solve_score_program_uses_coeff_sources(program) || solve_score_program_uses_param_sources(program)) {
             if (nRt > 0) {
                 return score_program_xformed_with_coeffs(
-                    roots, degree, coeffRoots, coeffDegree, program, rtChain, nRt, wkRe, wkIm
+                    roots, degree, coeffRoots, coeffDegree, paramValues, paramDegree,
+                    program, rtChain, nRt, wkRe, wkIm
                 );
             }
-            return solve_score_eval_program_with_sources(roots, degree, coeffRoots, coeffDegree, program);
+            return solve_score_eval_program_with_sources(
+                roots, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program
+            );
         }
         return eval_score_or_program(roots, degree, metric, program, rtChain, nRt, wkRe, wkIm);
     }
@@ -319,12 +335,15 @@ static int clamp_threads(int requested, long n_items) {
 typedef struct {
     const float *buf;
     const float *coeffBuf;
+    const float *paramBuf;
     long start;
     long end;
     int stride;
     int coeffStride;
+    int paramStride;
     int degree;
     int coeffDegree;
+    int paramDegree;
     enum SolveMetric metric;
     const SolveScoreProgram *program;
     RootXformEntry *rtChain;
@@ -352,6 +371,9 @@ static void *score_worker_main(void *arg_) {
         const float *coeffRoots = (arg->coeffBuf && arg->coeffDegree > 0)
             ? (arg->coeffBuf + s * arg->coeffStride)
             : NULL;
+        const float *paramValues = (arg->paramBuf && arg->paramDegree > 0)
+            ? (arg->paramBuf + s * arg->paramStride)
+            : NULL;
         if (arg->collect_stats) {
             int finiteRoots = count_finite_roots_in_solve(roots, arg->degree);
             int zeroRoots = count_exact_zero_roots_in_solve(roots, arg->degree);
@@ -367,7 +389,7 @@ static void *score_worker_main(void *arg_) {
             if (finiteRoots > arg->maxFiniteRootsPerSolve) arg->maxFiniteRootsPerSolve = finiteRoots;
         }
         arg->scores[s] = eval_score_or_program_with_sources(
-            roots, arg->degree, coeffRoots, arg->coeffDegree,
+            roots, arg->degree, coeffRoots, arg->coeffDegree, paramValues, arg->paramDegree,
             arg->metric, arg->program, arg->rtChain, arg->nRt, wkRe, wkIm
         );
     }
@@ -377,11 +399,14 @@ static void *score_worker_main(void *arg_) {
 static void compute_scores_parallel(
     const float *buf,
     const float *coeffBuf,
+    const float *paramBuf,
     long nSolves,
     int stride,
     int coeffStride,
+    int paramStride,
     int degree,
     int coeffDegree,
+    int paramDegree,
     enum SolveMetric metric,
     const SolveScoreProgram *program,
     RootXformEntry *rtChain,
@@ -420,12 +445,15 @@ static void compute_scores_parallel(
         long width = base + (i < extra ? 1 : 0);
         args[i].buf = buf;
         args[i].coeffBuf = coeffBuf;
+        args[i].paramBuf = paramBuf;
         args[i].start = start;
         args[i].end = start + width;
         args[i].stride = stride;
         args[i].coeffStride = coeffStride;
+        args[i].paramStride = paramStride;
         args[i].degree = degree;
         args[i].coeffDegree = coeffDegree;
+        args[i].paramDegree = paramDegree;
         args[i].metric = metric;
         args[i].program = program;
         args[i].rtChain = rtChain;
@@ -483,10 +511,16 @@ static void compute_scores_parallel(
 
 typedef struct {
     const float *buf;
+    const float *coeffBuf;
+    const float *paramBuf;
     long start;
     long end;
     int stride;
+    int coeffStride;
+    int paramStride;
     int degree;
+    int coeffDegree;
+    int paramDegree;
     enum SolveMetric metric;
     const SolveScoreProgram *program;
     RootXformEntry *rtChain;
@@ -505,10 +539,17 @@ static void *hist_worker_main(void *arg_) {
     double range = arg->clipHi - arg->clipLo;
     for (long s = arg->start; s < arg->end; s++) {
         const float *roots = arg->buf + s * arg->stride;
+        const float *coeffRoots = (arg->coeffBuf && arg->coeffDegree > 0)
+            ? (arg->coeffBuf + s * arg->coeffStride)
+            : NULL;
+        const float *paramValues = (arg->paramBuf && arg->paramDegree > 0)
+            ? (arg->paramBuf + s * arg->paramStride)
+            : NULL;
         double u;
         if (arg->program) {
-            u = eval_score_or_program(
-                roots, arg->degree, arg->metric, arg->program, arg->rtChain, arg->nRt, wkRe, wkIm
+            u = eval_score_or_program_with_sources(
+                roots, arg->degree, coeffRoots, arg->coeffDegree, paramValues, arg->paramDegree,
+                arg->metric, arg->program, arg->rtChain, arg->nRt, wkRe, wkIm
             );
         } else {
             double score = eval_score_or_program(
@@ -528,9 +569,15 @@ static void *hist_worker_main(void *arg_) {
 
 static void compute_hist_parallel(
     const float *buf,
+    const float *coeffBuf,
+    const float *paramBuf,
     long nSolves,
     int stride,
+    int coeffStride,
+    int paramStride,
     int degree,
+    int coeffDegree,
+    int paramDegree,
     enum SolveMetric metric,
     const SolveScoreProgram *program,
     RootXformEntry *rtChain,
@@ -561,10 +608,16 @@ static void compute_hist_parallel(
     for (int i = 0; i < threads; i++) {
         long width = base + (i < extra ? 1 : 0);
         args[i].buf = buf;
+        args[i].coeffBuf = coeffBuf;
+        args[i].paramBuf = paramBuf;
         args[i].start = start;
         args[i].end = start + width;
         args[i].stride = stride;
+        args[i].coeffStride = coeffStride;
+        args[i].paramStride = paramStride;
         args[i].degree = degree;
+        args[i].coeffDegree = coeffDegree;
+        args[i].paramDegree = paramDegree;
         args[i].metric = metric;
         args[i].program = program;
         args[i].rtChain = rtChain;
@@ -598,7 +651,7 @@ static void compute_hist_parallel(
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "Usage: solve_proximity_stats input.bin| - --mode=clip|hist|summary --degree=D "
-                "[--metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re] [options]\n");
+                "[--metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation] [options]\n");
         return 1;
     }
 
@@ -616,6 +669,7 @@ int main(int argc, char **argv) {
     const char *scoreClipHisCsv = getArgStr(argc, argv, "--score_clip_his", NULL);
     const char *scoreProgramSpec = getArgStr(argc, argv, "--score_program", NULL);
     const char *scoreCoeffsFile = getArgStr(argc, argv, "--score_coeffs_file", NULL);
+    const char *scoreParamsFile = getArgStr(argc, argv, "--score_params_file", NULL);
     int scoreCoeffDegree = getArgInt(argc, argv, "--score_coeff_degree", 0);
 
     if (degree < 1 || degree > MAXDEG) {
@@ -625,7 +679,7 @@ int main(int argc, char **argv) {
 
     enum SolveMetric metric;
     if (!parse_solve_metric(metricStr, &metric)) {
-        fprintf(stderr, "Invalid metric: %s (use proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re)\n", metricStr);
+        fprintf(stderr, "Invalid metric: %s (use proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation)\n", metricStr);
         return 1;
     }
 
@@ -658,6 +712,7 @@ int main(int argc, char **argv) {
     SolveScoreProgram scoreProgram;
     int useScoreProgram = 0;
     int programUsesCoeffSource = 0;
+    int programUsesParamSource = 0;
     if (scoreMetricsCsv || scoreClipLosCsv || scoreClipHisCsv || scoreProgramSpec) {
         char scoreErr[256] = {0};
         if (!scoreMetricsCsv || !scoreClipLosCsv || !scoreClipHisCsv || !scoreProgramSpec) {
@@ -674,6 +729,7 @@ int main(int argc, char **argv) {
         }
         useScoreProgram = 1;
         programUsesCoeffSource = solve_score_program_uses_coeff_sources(&scoreProgram);
+        programUsesParamSource = solve_score_program_uses_param_sources(&scoreProgram);
     }
 
     float *coeffBuf = NULL;
@@ -707,6 +763,33 @@ int main(int argc, char **argv) {
         }
     }
 
+    float *paramBuf = NULL;
+    long paramFileSize = 0;
+    int paramStride = 4;
+    long paramNSolves = 0;
+    int paramDegree = 2;
+    if (programUsesParamSource) {
+        if (!scoreParamsFile || !*scoreParamsFile) {
+            fprintf(stderr, "score program with param sources requires --score_params_file\n");
+            free(coeffBuf);
+            free(buf);
+            return 1;
+        }
+        if (read_input(scoreParamsFile, -1, &paramBuf, &paramFileSize) != 0) {
+            free(coeffBuf);
+            free(buf);
+            return 1;
+        }
+        paramNSolves = paramFileSize / (paramStride * (long)sizeof(float));
+        if (paramNSolves != nSolves) {
+            fprintf(stderr, "solve / param row count mismatch: solves=%ld params=%ld\n", nSolves, paramNSolves);
+            free(paramBuf);
+            free(coeffBuf);
+            free(buf);
+            return 1;
+        }
+    }
+
     const char *metricName = solve_metric_name(metric);
 
     if (strcmp(mode, "clip") == 0) {
@@ -715,11 +798,19 @@ int main(int argc, char **argv) {
         double quantileHi = getArgDouble(argc, argv, "--quantile_hi", 0.999);
 
         double *scores = malloc(nSolves * sizeof(double));
-        if (!scores) { fprintf(stderr, "Out of memory for scores\n"); free(buf); return 1; }
+        if (!scores) {
+            fprintf(stderr, "Out of memory for scores\n");
+            free(paramBuf);
+            free(coeffBuf);
+            free(buf);
+            return 1;
+        }
 
         int threadsUsed = 1;
         compute_scores_parallel(
-            buf, NULL, nSolves, stride, 0, degree, 0, metric, NULL, rtChain, nRt, scores,
+            buf, coeffBuf, paramBuf,
+            nSolves, stride, coeffStride, paramStride, degree, coeffDegree, paramDegree,
+            metric, useScoreProgram ? &scoreProgram : NULL, rtChain, nRt, scores,
             requestedThreads, 0, 0,
             NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, &threadsUsed
         );
@@ -766,21 +857,33 @@ int main(int argc, char **argv) {
 
         if (clipHi - clipLo < 1e-12) {
             fprintf(stderr, "Invalid clip range: lo=%.15g hi=%.15g\n", clipLo, clipHi);
+            free(paramBuf);
+            free(coeffBuf);
             free(buf);
             return 1;
         }
         if (histBins < 1 || histBins > 10000) {
             fprintf(stderr, "Invalid hist_bins: %d\n", histBins);
+            free(paramBuf);
+            free(coeffBuf);
             free(buf);
             return 1;
         }
 
         long *hist = calloc(histBins, sizeof(long));
-        if (!hist) { fprintf(stderr, "Out of memory for histogram\n"); free(buf); return 1; }
+        if (!hist) {
+            fprintf(stderr, "Out of memory for histogram\n");
+            free(paramBuf);
+            free(coeffBuf);
+            free(buf);
+            return 1;
+        }
 
         int threadsUsed = 1;
         compute_hist_parallel(
-            buf, nSolves, stride, degree, metric, useScoreProgram ? &scoreProgram : NULL, rtChain, nRt,
+            buf, coeffBuf, paramBuf,
+            nSolves, stride, coeffStride, paramStride, degree, coeffDegree, paramDegree,
+            metric, useScoreProgram ? &scoreProgram : NULL, rtChain, nRt,
             clipLo, clipHi, histBins, omega, omegaEnabled, requestedThreads,
             hist, &threadsUsed
         );
@@ -802,7 +905,13 @@ int main(int argc, char **argv) {
         double quantileHi = getArgDouble(argc, argv, "--quantile_hi", 0.999);
 
         double *scores = malloc(nSolves * sizeof(double));
-        if (!scores) { fprintf(stderr, "Out of memory for scores\n"); free(buf); return 1; }
+        if (!scores) {
+            fprintf(stderr, "Out of memory for scores\n");
+            free(paramBuf);
+            free(coeffBuf);
+            free(buf);
+            return 1;
+        }
 
         long totalRootSlots = nSolves * (long)degree;
         long finiteRootCount = 0;
@@ -819,7 +928,8 @@ int main(int argc, char **argv) {
 
         int threadsUsed = 1;
         compute_scores_parallel(
-            buf, coeffBuf, nSolves, stride, coeffStride, degree, coeffDegree,
+            buf, coeffBuf, paramBuf,
+            nSolves, stride, coeffStride, paramStride, degree, coeffDegree, paramDegree,
             metric, useScoreProgram ? &scoreProgram : NULL, rtChain, nRt, scores,
             requestedThreads, 1, minFiniteRootsRequired,
             &finiteRootCount, &fullyFiniteSolveCount, &partialFiniteSolveCount,
@@ -867,7 +977,14 @@ int main(int argc, char **argv) {
         }
         double rawHistRange = rawHistHi - rawHistLo;
         long *rawHist = calloc(rawHistBins, sizeof(long));
-        if (!rawHist) { fprintf(stderr, "Out of memory for raw histogram\n"); free(scores); free(buf); return 1; }
+        if (!rawHist) {
+            fprintf(stderr, "Out of memory for raw histogram\n");
+            free(scores);
+            free(paramBuf);
+            free(coeffBuf);
+            free(buf);
+            return 1;
+        }
         for (long s = 0; s < nSolves; s++) {
             double raw = useScoreProgram ? solve_score_clamp_unit(scores[s]) : scores[s];
             double u = (raw - rawHistLo) / rawHistRange;
@@ -923,7 +1040,15 @@ int main(int argc, char **argv) {
         /* ---- 100-bin intermediate histogram over clipped range (mirrors real pipeline) ---- */
         int intBins = 100;
         long *intHist = calloc(intBins, sizeof(long));
-        if (!intHist) { fprintf(stderr, "Out of memory\n"); free(rawHist); free(scores); free(buf); return 1; }
+        if (!intHist) {
+            fprintf(stderr, "Out of memory\n");
+            free(rawHist);
+            free(scores);
+            free(paramBuf);
+            free(coeffBuf);
+            free(buf);
+            return 1;
+        }
         for (long s = 0; s < nSolves; s++) {
             if (!useScoreProgram && (scores[s] < clipLo || scores[s] > clipHi)) continue;
             double u = useScoreProgram ? solve_score_clamp_unit(scores[s]) : (scores[s] - clipLo) / clipRange;
@@ -1059,11 +1184,13 @@ int main(int argc, char **argv) {
 
     } else {
         fprintf(stderr, "Unknown mode: %s (use clip, hist, or summary)\n", mode);
+        free(paramBuf);
         free(coeffBuf);
         free(buf);
         return 1;
     }
 
+    free(paramBuf);
     free(coeffBuf);
     free(buf);
     return 0;

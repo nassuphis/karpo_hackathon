@@ -253,6 +253,9 @@ def handle_finalize_metadata(params):
 
     solve_results.sort(key=lambda row: int(row.get("chunk_idx", row.get("stripe_idx", 0)) or 0))
     coeffs_keys = [item["coeffs_key"] for item in plan["chunk_items"]]
+    chunk_plan_by_idx = {}
+    for fallback_idx, item in enumerate(plan["chunk_items"]):
+        chunk_plan_by_idx[int(item.get("chunk_idx", fallback_idx))] = item
     total_bin_size = 0
     total_roots = 0
     chunks = []
@@ -260,14 +263,20 @@ def handle_finalize_metadata(params):
         bin_size = int(row.get("bin_size", 0) or 0)
         total_bin_size += bin_size
         total_roots += bin_size // 8
+        chunk_idx = int(row.get("chunk_idx", row.get("stripe_idx", 0)) or 0)
+        plan_item = chunk_plan_by_idx.get(chunk_idx, {})
         chunk_entry = {
-            "idx": int(row.get("chunk_idx", row.get("stripe_idx", 0)) or 0),
+            "idx": chunk_idx,
             "bin_key": row.get("s3_key"),
             "bin_size": bin_size,
             "compute_us": int(row.get("compute_us", 0) or 0),
             "n_t": int(row.get("n_t", 0) or 0),
             "avg_iterations": float(row.get("avg_iterations", 0) or 0),
         }
+        if "step_start" in plan_item:
+            chunk_entry["step_start"] = int(plan_item["step_start"])
+        if "step_count" in plan_item:
+            chunk_entry["step_count"] = int(plan_item["step_count"])
         if "skipped_overflow" in row:
             chunk_entry["skipped_overflow"] = int(row.get("skipped_overflow", 0) or 0)
         chunks.append(chunk_entry)
@@ -295,6 +304,7 @@ def handle_finalize_metadata(params):
         "lores": {
             "bin_key": lores_solve.get("s3_key") or post["lores"]["bin_key"],
             "coeffs_key": post["lores"]["coeffs_key"],
+            "params_key": post["lores"].get("params_key") or f'renders/{plan["job_id"]}/lores_params.bin',
             "N": int(post["lores"]["N"]),
             "n_steps": int(post["lores"]["n_steps"]),
             "bin_size": int(lores_solve.get("bin_size", 0) or 0),

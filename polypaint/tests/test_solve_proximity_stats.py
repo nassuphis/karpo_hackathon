@@ -9,6 +9,7 @@ Validates the algorithmic contract using the Docker runtime (deploy binary):
 - area: ranking test — large 2D cloud > small 2D cloud
 - centroid_re / centroid_im / centroid_dist ranking tests
 - dist_unit_circle and asymmetry_re ranking tests
+- min_mod / max_mod / min_angular_separation ranking tests
 - hist for non-proximity metric (spread)
 - invalid metric rejection
 - root-transform metric test
@@ -28,6 +29,7 @@ LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 LAPACK_BUILD = os.path.join(LAMBDA_DIR, "layer-build-lapack")
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 SOLVE_PROX_SRC = os.path.join(LAMBDA_DIR, "solve_proximity_stats.c")
+SOLVE_SCORE_HDR = os.path.join(LAMBDA_DIR, "solve_score.h")
 SOLVE_PROX_BIN = os.path.join(LAMBDA_DIR, "solve_proximity_stats")
 _ENSURED_BINARY = False
 
@@ -36,8 +38,9 @@ def _ensure_solve_proximity_binary():
     global _ENSURED_BINARY
     if _ENSURED_BINARY:
         return
+    newest_source_mtime = max(os.path.getmtime(SOLVE_PROX_SRC), os.path.getmtime(SOLVE_SCORE_HDR))
     if (os.path.exists(SOLVE_PROX_BIN)
-            and os.path.getmtime(SOLVE_PROX_BIN) >= os.path.getmtime(SOLVE_PROX_SRC)):
+            and os.path.getmtime(SOLVE_PROX_BIN) >= newest_source_mtime):
         _ENSURED_BINARY = True
         return
     cc = shutil.which("aarch64-linux-musl-gcc")
@@ -693,6 +696,74 @@ def test_asymmetry_re_ranking():
         os.remove(p)
 
 
+def test_min_mod_ignores_zeros_and_ranking():
+    """min_mod ignores exact zeros and returns the smallest non-zero modulus."""
+    near = [(0.0, 0.0), (0.25, 0.0), (2.0, 0.0), (0.0, 3.0)]
+    far = [(0.0, 0.0), (2.0, 0.0), (3.0, 0.0), (0.0, 4.0)]
+    path_n = "/tmp/sp_test_min_mod_near.bin"
+    path_f = "/tmp/sp_test_min_mod_far.bin"
+    write_bin(path_n, [near], 4)
+    write_bin(path_f, [far], 4)
+    r_n, err = run_clip(path_n, 4, metric="min_mod")
+    assert r_n is not None, f"near min_mod failed: {err}"
+    r_f, err = run_clip(path_f, 4, metric="min_mod")
+    assert r_f is not None, f"far min_mod failed: {err}"
+    assert abs(r_n["min_score"] - 0.25) < 1e-6
+    assert abs(r_f["min_score"] - 2.0) < 1e-6
+    assert r_f["min_score"] > r_n["min_score"]
+    for p in [path_n, path_f]:
+        os.remove(p)
+
+
+def test_min_mod_all_zero_returns_zero():
+    """min_mod returns 0 when every root is exactly zero."""
+    zeros = [(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)]
+    path = "/tmp/sp_test_min_mod_all_zero.bin"
+    write_bin(path, [zeros], 3)
+    r, err = run_clip(path, 3, metric="min_mod")
+    assert r is not None, f"all-zero min_mod failed: {err}"
+    assert r["metric"] == "min_mod"
+    assert r["min_score"] == 0.0
+    os.remove(path)
+
+
+def test_max_mod_ranking():
+    """Cloud with farther root should have higher max_mod."""
+    small = [(0.0, 0.0), (1.0, 0.0), (0.0, 2.0), (-1.0, 0.0)]
+    large = [(0.0, 0.0), (1.0, 0.0), (0.0, 5.0), (-1.0, 0.0)]
+    path_s = "/tmp/sp_test_max_mod_small.bin"
+    path_l = "/tmp/sp_test_max_mod_large.bin"
+    write_bin(path_s, [small], 4)
+    write_bin(path_l, [large], 4)
+    r_s, err = run_clip(path_s, 4, metric="max_mod")
+    assert r_s is not None, f"small max_mod failed: {err}"
+    r_l, err = run_clip(path_l, 4, metric="max_mod")
+    assert r_l is not None, f"large max_mod failed: {err}"
+    assert abs(r_s["min_score"] - 2.0) < 1e-6
+    assert abs(r_l["min_score"] - 5.0) < 1e-6
+    assert r_l["min_score"] > r_s["min_score"]
+    for p in [path_s, path_l]:
+        os.remove(p)
+
+
+def test_min_angular_separation_ranking():
+    """Evenly spaced angles should have higher min_angular_separation than clustered ones."""
+    even = [(1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)]
+    clustered = [(1.0, 0.0), (math.cos(0.02), math.sin(0.02)), (-1.0, 0.0), (0.0, -1.0)]
+    path_e = "/tmp/sp_test_min_ang_even.bin"
+    path_c = "/tmp/sp_test_min_ang_clustered.bin"
+    write_bin(path_e, [even], 4)
+    write_bin(path_c, [clustered], 4)
+    r_e, err = run_clip(path_e, 4, metric="min_angular_separation")
+    assert r_e is not None, f"even min_angular_separation failed: {err}"
+    r_c, err = run_clip(path_c, 4, metric="min_angular_separation")
+    assert r_c is not None, f"clustered min_angular_separation failed: {err}"
+    assert r_e["min_score"] > r_c["min_score"]
+    assert abs(r_e["min_score"] - (math.pi / 2.0)) < 1e-6
+    for p in [path_e, path_c]:
+        os.remove(p)
+
+
 # ================================================================
 # 11. Hist for clusteriness
 # ================================================================
@@ -989,6 +1060,22 @@ def test_summary_dist_unit_circle_smoke():
     os.remove(path)
 
 
+def test_summary_min_angular_separation_smoke():
+    """Summary mode works for min_angular_separation."""
+    path = "/tmp/sp_test_summary_min_ang.bin"
+    solves = [
+        [(1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)],
+        [(1.0, 0.0), (math.cos(0.05), math.sin(0.05)), (-1.0, 0.0), (0.0, -1.0)],
+    ]
+    write_bin(path, solves, 4)
+    result, err = run_summary(path, 4, metric="min_angular_separation")
+    assert result is not None, f"min_angular_separation summary failed: {err}"
+    assert result["metric"] == "min_angular_separation"
+    assert result["n_solves"] == 2
+    assert result["max_score"] > result["min_score"]
+    os.remove(path)
+
+
 def test_summary_quantiles_monotone():
     """Quantiles are monotone: min <= q05 <= ... <= q95 <= max."""
     path = "/tmp/sp_test_summary_mono.bin"
@@ -1231,6 +1318,10 @@ if __name__ == "__main__":
         ("centroid_dist ranking", test_centroid_dist_ranking),
         ("dist_unit_circle ranking", test_dist_unit_circle_ranking),
         ("asymmetry_re ranking", test_asymmetry_re_ranking),
+        ("min_mod ranking", test_min_mod_ignores_zeros_and_ranking),
+        ("min_mod all zero", test_min_mod_all_zero_returns_zero),
+        ("max_mod ranking", test_max_mod_ranking),
+        ("min_angular_separation ranking", test_min_angular_separation_ranking),
         # Non-proximity hist
         ("hist clusteriness metric", test_hist_clusteriness),
         ("hist centroid_dist metric", test_hist_centroid_dist),
@@ -1242,6 +1333,7 @@ if __name__ == "__main__":
         ("summary mixed-source coeff vectors", test_summary_mixed_source_program_uses_coeff_vectors),
         ("summary centroid_re smoke", test_summary_centroid_re_smoke),
         ("summary dist_unit_circle smoke", test_summary_dist_unit_circle_smoke),
+        ("summary min_angular_separation smoke", test_summary_min_angular_separation_smoke),
         ("summary quantiles monotone", test_summary_quantiles_monotone),
         ("summary final bins sum to inrange", test_summary_final_bins_sum_to_inrange),
         ("summary occupancy sum", test_summary_occupancy_sum),

@@ -3211,16 +3211,25 @@ function _solveScoreQuantilePctText(value, fallback = '0.1') {
 
 function _normalizeSolveScoreMetricSource(value, fallback = 'slv') {
     const source = String(value == null ? '' : value).trim().toLowerCase();
-    return (source === 'slv' || source === 'cf') ? source : fallback;
+    return (source === 'slv' || source === 'cf' || source === 'pm') ? source : fallback;
 }
 
-function _solveScoreMetricsUseCoeffSource(metrics) {
-    return Array.isArray(metrics) && metrics.some(row => _normalizeSolveScoreMetricSource(row && row.source, 'slv') === 'cf');
+function _solveScoreMetricsUseSource(metrics, wantedSource) {
+    const wanted = _normalizeSolveScoreMetricSource(wantedSource, '');
+    return !!wanted && Array.isArray(metrics) && metrics.some(row => _normalizeSolveScoreMetricSource(row && row.source, 'slv') === wanted);
+}
+
+function _solveScoreMetricsUseNonSolveSource(metrics) {
+    return Array.isArray(metrics) && metrics.some(row => _normalizeSolveScoreMetricSource(row && row.source, 'slv') !== 'slv');
+}
+
+function _solveScoreMetricAllowedSources(name) {
+    return _solveScoreParamMetricSet.has(name) ? ['pm'] : ['slv', 'cf'];
 }
 
 function _solveScoreMetricSummary(rows) {
     if (!Array.isArray(rows)) return '';
-    const showAllSources = _solveScoreMetricsUseCoeffSource(rows);
+    const showAllSources = _solveScoreMetricsUseNonSolveSource(rows);
     return rows.map((row) => {
         const source = _normalizeSolveScoreMetricSource(row && row.source, 'slv');
         const qPct = (Number(row && row.quantile_pct) || (Number(row && row.quantile) * 100) || 0)
@@ -3239,9 +3248,18 @@ function _fallbackLoresCoeffsKey(jobId, loresBinKey) {
     return job ? `renders/${job}/lores_coeffs.bin` : '';
 }
 
+function _fallbackLoresParamsKey(jobId, loresBinKey) {
+    const key = String(loresBinKey || '').trim();
+    if (key.endsWith('/lores.bin')) return key.slice(0, -'/lores.bin'.length) + '/lores_params.bin';
+    const job = String(jobId || '').trim();
+    return job ? `renders/${job}/lores_params.bin` : '';
+}
+
 function _defaultSolveScoreChain(metric = 'proximity', quantilePct = '0.1', omega = 1, omegaEnabled = false, phase = 0, source = 'slv') {
     const nextMetric = _solveScoreMetricSet.has(metric) ? metric : 'proximity';
-    const chain = [{ name: nextMetric, params: [_normalizeSolveScoreMetricSource(source), _solveScoreQuantilePctText(quantilePct)] }];
+    const allowedSources = _solveScoreMetricAllowedSources(nextMetric);
+    const normalizedSource = _normalizeSolveScoreMetricSource(source, allowedSources[0]);
+    const chain = [{ name: nextMetric, params: [allowedSources.includes(normalizedSource) ? normalizedSource : allowedSources[0], _solveScoreQuantilePctText(quantilePct)] }];
     if (omegaEnabled) chain.push({ name: 'omega_cosine', params: [String(omega), String(phase)] });
     return chain;
 }
@@ -3270,16 +3288,22 @@ function _normalizeSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQu
         if (!name) return;
         if (!_ssCatalog[name]) return;
         if (_solveScoreMetricSet.has(name)) {
+            const defaultSource = _solveScoreParamMetricSet.has(name) ? 'pm' : 'slv';
             if (params.length === 0) {
-                params = ['slv', _solveScoreQuantilePctText(legacyQuantilePct)];
+                params = [defaultSource, _solveScoreQuantilePctText(legacyQuantilePct)];
             } else if (params.length === 1) {
                 const maybeSource = _normalizeSolveScoreMetricSource(params[0], '');
+                const allowedSources = _solveScoreMetricAllowedSources(name);
                 params = maybeSource
-                    ? [maybeSource, _solveScoreQuantilePctText(legacyQuantilePct)]
-                    : ['slv', _solveScoreQuantilePctText(params[0], legacyQuantilePct)];
+                    ? [allowedSources.includes(maybeSource) ? maybeSource : defaultSource, _solveScoreQuantilePctText(legacyQuantilePct)]
+                    : [defaultSource, _solveScoreQuantilePctText(params[0], legacyQuantilePct)];
             } else {
                 params = [
-                    _normalizeSolveScoreMetricSource(params[0]),
+                    (() => {
+                        const source = _normalizeSolveScoreMetricSource(params[0], defaultSource);
+                        const allowedSources = _solveScoreMetricAllowedSources(name);
+                        return allowedSources.includes(source) ? source : defaultSource;
+                    })(),
                     _solveScoreQuantilePctText(params[1], legacyQuantilePct),
                 ];
             }
@@ -3351,7 +3375,10 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
         if (_solveScoreMetricSet.has(item.name)) {
             if (item.params.length !== 2) throw new Error(`${item.name} requires source and q parameters`);
             const source = _normalizeSolveScoreMetricSource(item.params[0], '');
-            if (!source) throw new Error(`${item.name} source must be slv or cf`);
+            const allowedSources = _solveScoreMetricAllowedSources(item.name);
+            if (!source || !allowedSources.includes(source)) {
+                throw new Error(`${item.name} source must be one of ${allowedSources.join(', ')}`);
+            }
             const qPct = Number(item.params[1]);
             if (!Number.isFinite(qPct) || qPct < 0.1 || qPct > 5.0) {
                 throw new Error(`${item.name} q must be in [0.1, 5.0]%`);
@@ -3419,12 +3446,15 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
     const metric = metrics[0].metric;
     const quantile = metrics[0].quantile;
     const programSpec = _buildSolveScoreProgramSpec(program);
-    const usesCoeffSource = _solveScoreMetricsUseCoeffSource(metrics);
+    const usesCoeffSource = _solveScoreMetricsUseSource(metrics, 'cf');
+    const usesParamSource = _solveScoreMetricsUseSource(metrics, 'pm');
     return {
         metric,
         quantile,
         metrics,
         uses_coeff_source: usesCoeffSource,
+        uses_param_source: usesParamSource,
+        uses_non_solve_source: usesCoeffSource || usesParamSource,
         omega,
         omega_phase: omegaPhase,
         omega_enabled: omegaEnabled,
@@ -3433,10 +3463,10 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
         program_spec: programSpec,
         display: normalized.map(item => _displaySolveScoreEntry(item)).join(' '),
         legacy_compatible:
-            !usesCoeffSource &&
+            !(usesCoeffSource || usesParamSource) &&
             (program.length === 1 && program[0].kind === 'metric') ||
             (
-                !usesCoeffSource &&
+                !(usesCoeffSource || usesParamSource) &&
                 program.length === 2 &&
                 program[0].kind === 'metric' &&
                 program[1].kind === 'omega_cosine' &&
@@ -3487,6 +3517,8 @@ function _legacySolveScoreState(prefix) {
         chain,
         metrics: compiled ? compiled.metrics : [],
         uses_coeff_source: compiled ? compiled.uses_coeff_source : false,
+        uses_param_source: compiled ? compiled.uses_param_source : false,
+        uses_non_solve_source: compiled ? compiled.uses_non_solve_source : false,
         program_spec: compiled ? compiled.program_spec : '',
         display: compiled ? compiled.display : '',
     };
@@ -4218,8 +4250,7 @@ function _updatePaletteCreateButton() {
     if (!btn) return;
     let enabled = true;
     try {
-        const compiled = _compileSolveScoreChain(_chainForWhich('palette-ss'), paletteTabMetric);
-        if (compiled.uses_coeff_source) enabled = false;
+        _compileSolveScoreChain(_chainForWhich('palette-ss'), paletteTabMetric);
     }
     catch (e) { enabled = false; }
     btn.disabled = !enabled || !!_activePaletteRun;
@@ -7278,9 +7309,31 @@ const _solveScoreMetricNames = [
     'centroid_dist',
     'dist_unit_circle',
     'asymmetry_re',
+    'min_mod',
+    'max_mod',
+    'min_angular_separation',
+    't1_re',
+    't1_im',
+    't1_abs',
+    't1_phase',
+    't2_re',
+    't2_im',
+    't2_abs',
+    't2_phase',
+];
+const _solveScoreParamMetricNames = [
+    't1_re',
+    't1_im',
+    't1_abs',
+    't1_phase',
+    't2_re',
+    't2_im',
+    't2_abs',
+    't2_phase',
 ];
 const _solveScoreMetricSet = new Set(_solveScoreMetricNames);
-const _solveScoreSourceChoices = ['slv', 'cf'];
+const _solveScoreParamMetricSet = new Set(_solveScoreParamMetricNames);
+const _solveScoreSourceChoices = ['slv', 'cf', 'pm'];
 const _solveScoreUnarySpecs = {
     omega_cosine: { arity: 1, params: [{ ph: 'w', def: '1' }, { ph: 'phase', def: '0' }], tooltip: 'unary stack op: g(u)=0.5*(cos(omega*2*pi*u+phase)+1)' },
     sawtooth: { arity: 1, params: [{ ph: 'mult', def: '10' }], tooltip: 'unary stack op: frac(score*mult)' },
@@ -7301,8 +7354,8 @@ const _ssCatalog = (() => {
         catalog[name] = {
             label: name,
             chip_kind: 'metric',
-            params: [{ ph: 'src', def: 'slv', choices: _solveScoreSourceChoices }, { ph: 'q%', def: '0.1' }],
-            tooltip: `${name}(slv,q=0.1%)`,
+            params: [{ ph: 'src', def: _solveScoreParamMetricSet.has(name) ? 'pm' : 'slv', choices: _solveScoreMetricAllowedSources(name) }, { ph: 'q%', def: '0.1' }],
+            tooltip: _solveScoreParamMetricSet.has(name) ? `${name}(pm,q=0.1%)` : `${name}(slv,q=0.1%)`,
         };
     });
     Object.entries(_solveScoreCombineSpecs).forEach(([name, spec]) => {
@@ -7794,7 +7847,9 @@ function _renderCommonParams(options = {}) {
         solveScoreProgramSpec: solveScore.program_spec,
         solveScoreDisplay: solveScore.display,
         solveScoreMetrics: solveScore.metrics,
-        solveScoreMixedSource: !!solveScore.uses_coeff_source,
+        solveScoreUsesCoeffSource: !!solveScore.uses_coeff_source,
+        solveScoreUsesParamSource: !!solveScore.uses_param_source,
+        solveScoreUsesNonSolveSource: !!solveScore.uses_non_solve_source,
         tileSize: parseInt(document.getElementById('sparse-tile-size').value),
         rotation: (() => {
             const turns = parseFloat(document.getElementById('render-rotation').value) || 0;
@@ -8551,9 +8606,6 @@ async function _launchRenderOrchestrator(mode, paramsPatch = null) {
     const taskId = 'render_run_' + mode + '_' + runId;
     const effectiveColorMode = paramsPatch && paramsPatch.color_mode ? paramsPatch.color_mode : renderColorMode;
     const p = _renderCommonParams({ requireSolveScore: effectiveColorMode === 'solve_score' });
-    if (effectiveColorMode === 'solve_score' && p.solveScoreMixedSource) {
-        throw new Error('Mixed-source solve score is histogram-debug only for now');
-    }
     const solveScoreHistInputMode = effectiveColorMode === 'solve_score'
         ? _normalizeSolveScoreHistInputMode(
             (paramsPatch && paramsPatch.solve_score_hist_input_mode)
@@ -8791,6 +8843,7 @@ async function runSolveScoreHistogramDebug() {
         const degree = calc.degree;
         const loresKey = calc.lores && calc.lores.bin_key;
         const loresCoeffsKey = (calc.lores && calc.lores.coeffs_key) || _fallbackLoresCoeffsKey(jobId, loresKey);
+        const loresParamsKey = (calc.lores && calc.lores.params_key) || _fallbackLoresParamsKey(jobId, loresKey);
         const nCoeffs = Number(calc.n_coeffs);
         if (!degree || !loresKey) {
             throw new Error('calc.json missing degree or lores.bin_key');
@@ -8798,9 +8851,12 @@ async function runSolveScoreHistogramDebug() {
 
         // Build payload from current UI state
         const p = _renderCommonParams({ requireSolveScore: true });
-        if (p.solveScoreMixedSource) {
+        if (p.solveScoreUsesCoeffSource) {
             if (!loresCoeffsKey) throw new Error('calc.json missing lores.coeffs_key for coeff-source solve-score debug');
             if (!Number.isFinite(nCoeffs) || nCoeffs < 1) throw new Error('calc.json missing n_coeffs for coeff-source solve-score debug');
+        }
+        if (p.solveScoreUsesParamSource && !loresParamsKey) {
+            throw new Error('calc.json missing lores.params_key for param-source solve-score debug');
         }
         const payload = {
             phase: 'summary',
@@ -8813,7 +8869,8 @@ async function runSolveScoreHistogramDebug() {
             solve_score_omega_enabled: p.solveScoreOmegaEnabled,
             solve_score_chain: p.solveScoreChain,
             lores_bin_key: loresKey,
-            lores_coeffs_key: p.solveScoreMixedSource ? loresCoeffsKey : undefined,
+            lores_coeffs_key: p.solveScoreUsesCoeffSource ? loresCoeffsKey : undefined,
+            lores_params_key: p.solveScoreUsesParamSource ? loresParamsKey : undefined,
             root_transforms: p.rootTransforms || [],
         };
         const chainSummary = _formatErrorChain(p.solveScoreChain);
@@ -8963,9 +9020,6 @@ async function runRenderPaletteArtifact() {
         log('Palette artifact: starting...', '', 'render-log');
 
         const p = _renderCommonParams({ requireSolveScore: true });
-        if (p.solveScoreMixedSource) {
-            throw new Error('Mixed-source solve score is histogram-debug only for now');
-        }
         const runId = _generateRunId();
         const taskId = 'palette_run_' + runId;
         const orchPayload = {

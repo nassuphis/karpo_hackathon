@@ -93,11 +93,22 @@ typedef struct {
     uint32_t constRGB;
     int emitPixelBins;
     const float *roots;
+    const float *scoreCoeffRows;
+    const float *scoreParamRows;
+    int scoreCoeffDegree;
+    int scoreCoeffStride;
+    int scoreParamDegree;
+    int scoreParamStride;
     const char *url;
+    const char *scoreCoeffsUrl;
     long solveBytes;
+    long scoreCoeffSolveBytes;
     size_t sectionBytes;
+    size_t scoreCoeffSectionBytes;
     unsigned long long byteStart;
     unsigned long long byteEnd;
+    unsigned long long scoreCoeffByteStart;
+    unsigned long long scoreCoeffByteEnd;
     const uint8_t *solveBins;
     RootXformEntry *rtChain;
     int nRt;
@@ -353,7 +364,9 @@ static void *worker_main(void *arg_) {
     float wkRe[MAXDEG];
     float wkIm[MAXDEG];
     unsigned char *sectionBuf = NULL;
+    unsigned char *coeffSectionBuf = NULL;
     const float *sectionRoots = NULL;
+    const float *sectionCoeffRoots = NULL;
     long localSolves = arg->end - arg->start;
     long long nativeStartUs = 0;
     int nativeStarted = 0;
@@ -372,6 +385,21 @@ static void *worker_main(void *arg_) {
                                   arg->error_msg, sizeof(arg->error_msg))) {
                 arg->error = 1;
                 goto cleanup;
+            }
+            if (arg->scoreCoeffsUrl && arg->scoreCoeffSectionBytes > 0) {
+                coeffSectionBuf = malloc(arg->scoreCoeffSectionBytes);
+                if (!coeffSectionBuf) {
+                    worker_fail(arg, "score coeff section buffer alloc failed");
+                    goto cleanup;
+                }
+                if (!download_section(arg->scoreCoeffsUrl, arg->scoreCoeffByteStart, arg->scoreCoeffByteEnd,
+                                      coeffSectionBuf, arg->scoreCoeffSectionBytes,
+                                      arg->retries,
+                                      arg->error_msg, sizeof(arg->error_msg))) {
+                    arg->error = 1;
+                    goto cleanup;
+                }
+                sectionCoeffRoots = (const float *)(const void *)coeffSectionBuf;
             }
             arg->downloadUs = (long)(monotonic_us() - dlStartUs);
             sectionRoots = (const float *)(const void *)sectionBuf;
@@ -393,6 +421,24 @@ static void *worker_main(void *arg_) {
             rawStep = arg->roots + p * arg->stride;
         }
         const float *step = prepare_step(rawStep, arg->degree, arg->rtChain, arg->nRt, stepBuf, wkRe, wkIm);
+        const float *coeffStep = NULL;
+        const float *paramStep = NULL;
+        if (arg->scoreCoeffDegree > 0) {
+            if (arg->inputMode == INPUT_SECTIONED) {
+                long localIdx = p - arg->start;
+                coeffStep = sectionCoeffRoots ? (sectionCoeffRoots + localIdx * arg->scoreCoeffStride) : NULL;
+            } else {
+                coeffStep = arg->scoreCoeffRows ? (arg->scoreCoeffRows + p * arg->scoreCoeffStride) : NULL;
+            }
+        }
+        if (arg->scoreParamDegree > 0) {
+            if (arg->inputMode == INPUT_SECTIONED) {
+                long localIdx = p - arg->start;
+                paramStep = arg->scoreParamRows ? (arg->scoreParamRows + localIdx * arg->scoreParamStride) : NULL;
+            } else {
+                paramStep = arg->scoreParamRows ? (arg->scoreParamRows + p * arg->scoreParamStride) : NULL;
+            }
+        }
 
         uint32_t solveRGB = 0;
         uint8_t solveBin = 255;
@@ -400,7 +446,10 @@ static void *worker_main(void *arg_) {
         if (arg->colorMode == COLOR_SOLVE_SCORE) {
             double u;
             if (arg->useScoreProgram) {
-                u = solve_score_eval_program(step, arg->degree, &arg->solveScoreProgram);
+                u = solve_score_eval_program_with_sources(
+                    step, arg->degree, coeffStep, arg->scoreCoeffDegree, paramStep, arg->scoreParamDegree,
+                    &arg->solveScoreProgram
+                );
             } else {
                 double score = compute_solve_metric_score(step, arg->degree, arg->solveMetric);
                 double ssRange = arg->solveScoreClipHi - arg->solveScoreClipLo;
@@ -485,6 +534,7 @@ static void *worker_main(void *arg_) {
     }
 cleanup:
     if (nativeStarted) arg->nativeUs = (long)(monotonic_us() - nativeStartUs);
+    free(coeffSectionBuf);
     free(sectionBuf);
     return NULL;
 }
@@ -497,7 +547,7 @@ int main(int argc, char **argv) {
                 "[--input_mode=tmpfile|sectioned] [--url=URL] [--input_size=BYTES] [--retries=N] "
                 "[--threads=N] [--color=rainbow|solve_score|saved_palette|constant] "
                 "[--match=none] [--palette=<name>] [--constant_color=RRGGBB] "
-                "[--solve_metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re] "
+                "[--solve_metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation] "
                 "[--solve_score_clip_lo=X --solve_score_clip_hi=Y --solve_score_cuts=c1,...,c9] "
                 "[--solve_score_omega=W] [--solve_score_omega_enabled=0|1] "
                 "[--solve_bins_file=file.bin] [--pixel_bin_prefix=/tmp/pixbin] [--root_xforms=file.json]\n");
@@ -586,9 +636,15 @@ int main(int argc, char **argv) {
         return 1;
     }
     const char *scoreMetricsCsv = getArgStr(argc, argv, "--score_metrics", NULL);
+    const char *scoreSourcesCsv = getArgStr(argc, argv, "--score_sources", NULL);
     const char *scoreClipLosCsv = getArgStr(argc, argv, "--score_clip_los", NULL);
     const char *scoreClipHisCsv = getArgStr(argc, argv, "--score_clip_his", NULL);
     const char *scoreProgramSpec = getArgStr(argc, argv, "--score_program", NULL);
+    const char *scoreCoeffsFile = getArgStr(argc, argv, "--score_coeffs_file", NULL);
+    const char *scoreCoeffsUrl = getArgStr(argc, argv, "--score_coeffs_url", NULL);
+    const char *scoreParamsFile = getArgStr(argc, argv, "--score_params_file", NULL);
+    long long scoreCoeffInputSize = getArgLongLong(argc, argv, "--score_coeff_input_size", -1);
+    int scoreCoeffDegree = getArgInt(argc, argv, "--score_coeff_degree", 0);
 
     double solveScoreClipLo = getArgDouble(argc, argv, "--solve_score_clip_lo",
                                getArgDouble(argc, argv, "--solve_prox_clip_lo", 0));
@@ -620,8 +676,8 @@ int main(int argc, char **argv) {
             fprintf(stderr, "solve_score program requires --score_metrics, --score_clip_los, --score_clip_his, and --score_program together\n");
             return 1;
         }
-        if (!parse_solve_score_program_args(
-                scoreMetricsCsv, scoreClipLosCsv, scoreClipHisCsv, scoreProgramSpec,
+        if (!parse_solve_score_program_args_ex(
+                scoreMetricsCsv, scoreSourcesCsv, scoreClipLosCsv, scoreClipHisCsv, scoreProgramSpec,
                 &solveScoreProgram, scoreErr, sizeof(scoreErr))) {
             fprintf(stderr, "Invalid solve_score program: %s\n", scoreErr[0] ? scoreErr : "unknown error");
             return 1;
@@ -651,6 +707,11 @@ int main(int argc, char **argv) {
     long fileSize = 0;
     long nPoints = 0;
     float *roots = NULL;
+    int scoreProgramUsesCoeffSources = 0;
+    int scoreProgramUsesParamSources = 0;
+    float *scoreCoeffRows = NULL;
+    int scoreCoeffStride = scoreCoeffDegree * 2;
+    long scoreCoeffSolveBytes = scoreCoeffStride * (long)sizeof(float);
 
     if (inputMode == INPUT_TMPFILE) {
         FILE *fin = fopen(binPath, "rb");
@@ -699,6 +760,125 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Empty sectioned input\n");
             return 1;
         }
+    }
+
+    for (int i = 0; i < solveScoreProgram.metricCount; i++) {
+        if (solveScoreProgram.metricSources[i] == SOLVE_SCORE_SOURCE_COEFF) {
+            scoreProgramUsesCoeffSources = 1;
+        }
+        if (solveScoreProgram.metricSources[i] == SOLVE_SCORE_SOURCE_PARAM) {
+            scoreProgramUsesParamSources = 1;
+        }
+    }
+    if (scoreProgramUsesCoeffSources) {
+        if (scoreCoeffDegree < 1 || scoreCoeffDegree > MAXDEG) {
+            fprintf(stderr, "Invalid score_coeff_degree: %d (must be 1-%d)\n", scoreCoeffDegree, MAXDEG);
+            free(roots);
+            return 1;
+        }
+        if (inputMode == INPUT_TMPFILE) {
+            if (!scoreCoeffsFile || !*scoreCoeffsFile) {
+                fprintf(stderr, "solve_score program with coeff sources requires --score_coeffs_file\n");
+                free(roots);
+                return 1;
+            }
+            FILE *fc = fopen(scoreCoeffsFile, "rb");
+            if (!fc) {
+                fprintf(stderr, "Cannot open %s\n", scoreCoeffsFile);
+                free(roots);
+                return 1;
+            }
+            fseek(fc, 0, SEEK_END);
+            long coeffFileSize = ftell(fc);
+            fseek(fc, 0, SEEK_SET);
+            long coeffPoints = coeffFileSize / scoreCoeffSolveBytes;
+            if (coeffPoints != nPoints) {
+                fprintf(stderr, "score coeffs size mismatch: got %ld solves expected %ld\n", coeffPoints, nPoints);
+                fclose(fc);
+                free(roots);
+                return 1;
+            }
+            scoreCoeffRows = malloc((size_t)coeffFileSize);
+            if (!scoreCoeffRows) {
+                fprintf(stderr, "Cannot allocate %ld bytes for score coeffs\n", coeffFileSize);
+                fclose(fc);
+                free(roots);
+                return 1;
+            }
+            if ((long)fread(scoreCoeffRows, 1, (size_t)coeffFileSize, fc) != coeffFileSize) {
+                fprintf(stderr, "Short read from %s\n", scoreCoeffsFile);
+                fclose(fc);
+                free(scoreCoeffRows);
+                free(roots);
+                return 1;
+            }
+            fclose(fc);
+        } else {
+            if (!scoreCoeffsUrl || !*scoreCoeffsUrl) {
+                fprintf(stderr, "sectioned solve_score program with coeff sources requires --score_coeffs_url\n");
+                free(roots);
+                return 1;
+            }
+            if (scoreCoeffInputSize <= 0) {
+                fprintf(stderr, "sectioned solve_score program with coeff sources requires --score_coeff_input_size\n");
+                free(roots);
+                return 1;
+            }
+            if ((scoreCoeffInputSize % scoreCoeffSolveBytes) != 0) {
+                fprintf(stderr, "Invalid score_coeff_input_size %lld for coeff_degree=%d (solve_bytes=%ld)\n",
+                        scoreCoeffInputSize, scoreCoeffDegree, scoreCoeffSolveBytes);
+                free(roots);
+                return 1;
+            }
+            long coeffPoints = (long)(scoreCoeffInputSize / scoreCoeffSolveBytes);
+            if (coeffPoints != nPoints) {
+                fprintf(stderr, "sectioned score coeff solve count mismatch: got %ld expected %ld\n", coeffPoints, nPoints);
+                free(roots);
+                return 1;
+            }
+        }
+    }
+    float *scoreParamRows = NULL;
+    int scoreParamStride = 4;
+    int scoreParamDegree = 2;
+    if (scoreProgramUsesParamSources) {
+        if (!scoreParamsFile || !*scoreParamsFile) {
+            fprintf(stderr, "solve_score program with param sources requires --score_params_file\n");
+            free(roots);
+            return 1;
+        }
+        FILE *fp = fopen(scoreParamsFile, "rb");
+        if (!fp) {
+            fprintf(stderr, "Cannot open %s\n", scoreParamsFile);
+            free(roots);
+            return 1;
+        }
+        fseek(fp, 0, SEEK_END);
+        long paramFileSize = ftell(fp);
+        fseek(fp, 0, SEEK_SET);
+        long paramSolveBytes = (long)scoreParamStride * (long)sizeof(float);
+        long paramPoints = paramFileSize / paramSolveBytes;
+        if (paramPoints != nPoints) {
+            fprintf(stderr, "score params size mismatch: got %ld solves expected %ld\n", paramPoints, nPoints);
+            fclose(fp);
+            free(roots);
+            return 1;
+        }
+        scoreParamRows = malloc((size_t)paramFileSize);
+        if (!scoreParamRows) {
+            fprintf(stderr, "Cannot allocate %ld bytes for score params\n", paramFileSize);
+            fclose(fp);
+            free(roots);
+            return 1;
+        }
+        if ((long)fread(scoreParamRows, 1, (size_t)paramFileSize, fp) != paramFileSize) {
+            fprintf(stderr, "Short read from %s\n", scoreParamsFile);
+            fclose(fp);
+            free(scoreParamRows);
+            free(roots);
+            return 1;
+        }
+        fclose(fp);
     }
 
     uint8_t *solveBins = NULL;
@@ -847,14 +1027,27 @@ int main(int argc, char **argv) {
         args[i].constRGB = constRGB;
         args[i].emitPixelBins = emitPixelBins;
         args[i].roots = roots;
+        args[i].scoreCoeffRows = scoreCoeffRows;
+        args[i].scoreParamRows = scoreParamRows;
+        args[i].scoreCoeffDegree = scoreProgramUsesCoeffSources ? scoreCoeffDegree : 0;
+        args[i].scoreCoeffStride = scoreCoeffStride;
+        args[i].scoreParamDegree = scoreProgramUsesParamSources ? scoreParamDegree : 0;
+        args[i].scoreParamStride = scoreParamStride;
         args[i].url = url;
+        args[i].scoreCoeffsUrl = scoreProgramUsesCoeffSources ? scoreCoeffsUrl : NULL;
         args[i].retries = retries;
         args[i].solveBytes = solveBytes;
+        args[i].scoreCoeffSolveBytes = scoreCoeffSolveBytes;
         args[i].sectionBytes = (size_t)width * (size_t)solveBytes;
+        args[i].scoreCoeffSectionBytes = (size_t)width * (size_t)scoreCoeffSolveBytes;
         args[i].byteStart = (unsigned long long)start * (unsigned long long)solveBytes;
         args[i].byteEnd = args[i].sectionBytes > 0
             ? args[i].byteStart + (unsigned long long)args[i].sectionBytes - 1ULL
             : args[i].byteStart;
+        args[i].scoreCoeffByteStart = (unsigned long long)start * (unsigned long long)scoreCoeffSolveBytes;
+        args[i].scoreCoeffByteEnd = args[i].scoreCoeffSectionBytes > 0
+            ? args[i].scoreCoeffByteStart + (unsigned long long)args[i].scoreCoeffSectionBytes - 1ULL
+            : args[i].scoreCoeffByteStart;
         args[i].solveBins = solveBins;
         args[i].rtChain = rtChain;
         args[i].nRt = nRt;
@@ -977,6 +1170,8 @@ cleanup:
     free(workers);
     free(args);
     free(solveBins);
+    free(scoreCoeffRows);
+    free(scoreParamRows);
     free(roots);
     if (curlInitialized) curl_global_cleanup();
     return exitCode;

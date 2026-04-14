@@ -17,6 +17,8 @@ from shared import BUCKET, attach_contract_warnings, contract_param, parse_body,
 
 s3 = boto3.client("s3")
 ROOTS2PIX = os.path.join(os.path.dirname(__file__), "roots2pix")
+_TMP_SCORE_COEFFS = "/tmp/score_coeffs.bin"
+_TMP_SCORE_PARAMS = "/tmp/score_params.bin"
 
 
 def _parse_boolish(value, default=True):
@@ -34,12 +36,22 @@ def _solve_score_program_args(ss_data):
         "metrics": ss_data.get("metrics") or [],
         "program_spec": str(ss_data.get("program") or ""),
     })
-    return [
+    args = [
         f"--score_metrics={payload['score_metrics']}",
         f"--score_clip_los={payload['score_clip_los']}",
         f"--score_clip_his={payload['score_clip_his']}",
         f"--score_program={payload['score_program']}",
     ]
+    if payload.get("score_sources"):
+        args.append(f"--score_sources={payload['score_sources']}")
+    return args
+
+
+def _solve_score_bins_uses_source(ss_data, source):
+    for metric in (ss_data.get("metrics") or []):
+        if str(metric.get("source", "slv")).strip().lower() == source:
+            return True
+    return False
 
 
 def handler(event, context):
@@ -142,6 +154,55 @@ def handler(event, context):
                 if not ss_data.get("program") or not isinstance(ss_data.get("metrics"), list) or not ss_data.get("metrics"):
                     raise RuntimeError("v2 solve-score bins artifact is missing program or metrics")
                 cmd.extend(_solve_score_program_args(ss_data))
+                if _solve_score_bins_uses_source(ss_data, "cf"):
+                    coeffs_key = str(params.get("coeffs_key") or "").strip()
+                    n_coeffs = params.get("n_coeffs")
+                    if not coeffs_key:
+                        raise RuntimeError("mixed-source solve-score render requires coeffs_key")
+                    try:
+                        n_coeffs = int(n_coeffs)
+                    except (TypeError, ValueError):
+                        raise RuntimeError(f"mixed-source solve-score render requires numeric n_coeffs, got {n_coeffs!r}")
+                    if n_coeffs < 1:
+                        raise RuntimeError(f"mixed-source solve-score render requires n_coeffs >= 1, got {n_coeffs}")
+                    try:
+                        coeffs_obj = s3.get_object(Bucket=BUCKET, Key=coeffs_key)
+                    except Exception as e:
+                        raise RuntimeError(f"Failed to download coeff chunk s3://{BUCKET}/{coeffs_key}: {e}") from e
+                    with open(_TMP_SCORE_COEFFS, "wb") as cf:
+                        cf.write(coeffs_obj["Body"].read())
+                    cmd.extend([
+                        f"--score_coeffs_file={_TMP_SCORE_COEFFS}",
+                        f"--score_coeff_degree={n_coeffs}",
+                    ])
+                if _solve_score_bins_uses_source(ss_data, "pm"):
+                    params_key = str(params.get("params_key") or "").strip()
+                    step_start = params.get("step_start")
+                    step_count = params.get("step_count")
+                    if not params_key:
+                        raise RuntimeError("param-source solve-score render requires params_key")
+                    try:
+                        step_start = int(step_start)
+                        step_count = int(step_count)
+                    except (TypeError, ValueError):
+                        raise RuntimeError(
+                            f"param-source solve-score render requires numeric step_start/step_count, got {step_start!r}/{step_count!r}"
+                        )
+                    if step_start < 0 or step_count < 1:
+                        raise RuntimeError(
+                            f"param-source solve-score render requires step_start >= 0 and step_count >= 1, got {step_start}/{step_count}"
+                        )
+                    try:
+                        params_obj = s3.get_object(
+                            Bucket=BUCKET,
+                            Key=params_key,
+                            Range=f"bytes={step_start * 16}-{step_start * 16 + step_count * 16 - 1}",
+                        )
+                    except Exception as e:
+                        raise RuntimeError(f"Failed to download param slice s3://{BUCKET}/{params_key}: {e}") from e
+                    with open(_TMP_SCORE_PARAMS, "wb") as pf:
+                        pf.write(params_obj["Body"].read())
+                    cmd.append(f"--score_params_file={_TMP_SCORE_PARAMS}")
             else:
                 req_metric = contract_param(params, "solve_metric", "proximity", contract_warnings)
                 if ss_data.get("metric") != req_metric:
@@ -231,7 +292,7 @@ def handler(event, context):
         report_status(job_id, task_id, "error", str(e), result_data=attach_contract_warnings({"phase": "raster", "chunk_idx": chunk_idx}, contract_warnings))
         raise
     finally:
-        for tmp_path in ("/tmp/stripe.bin", "/tmp/palette_bins_chunk.bin", "/tmp/root_xforms.json"):
+        for tmp_path in ("/tmp/stripe.bin", "/tmp/palette_bins_chunk.bin", "/tmp/root_xforms.json", _TMP_SCORE_COEFFS):
             try:
                 os.remove(tmp_path)
             except OSError:

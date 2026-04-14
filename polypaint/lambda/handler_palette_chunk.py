@@ -23,14 +23,37 @@ _TMP_INPUT = "/tmp/palette_chunk_input.bin"
 _TMP_SCORES = "/tmp/palette_chunk_scores.bin"
 _TMP_BINS = "/tmp/palette_chunk_bins.bin"
 _TMP_XFORMS = "/tmp/palette_chunk_xforms.json"
+_TMP_SCORE_COEFFS = "/tmp/palette_chunk_coeffs.bin"
+_TMP_SCORE_PARAMS = "/tmp/palette_chunk_params.bin"
 
 
 def _cleanup():
-    for p in (_TMP_INPUT, _TMP_SCORES, _TMP_BINS, _TMP_XFORMS):
+    for p in (_TMP_INPUT, _TMP_SCORES, _TMP_BINS, _TMP_XFORMS, _TMP_SCORE_COEFFS, _TMP_SCORE_PARAMS):
         try:
             os.remove(p)
         except OSError:
             pass
+
+
+def _download_range(key, path, start, length):
+    if length <= 0:
+        raise RuntimeError(f"Invalid range length for s3://{BUCKET}/{key}: {length}")
+    end = int(start) + int(length) - 1
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key, Range=f"bytes={int(start)}-{end}")
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to download range bytes={int(start)}-{end} from s3://{BUCKET}/{key}: {e}"
+        ) from e
+    with open(path, "wb") as f:
+        for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
+            f.write(chunk)
+    size = os.path.getsize(path)
+    if size != int(length):
+        raise RuntimeError(
+            f"Short ranged download from s3://{BUCKET}/{key}: expected {int(length)} bytes, got {size}"
+        )
+    return size
 
 
 def _parse_boolish(value, default=True):
@@ -103,12 +126,22 @@ def _solve_score_program_args(bins_data):
         "metrics": bins_data.get("metrics") or [],
         "program_spec": str(bins_data.get("program") or ""),
     })
-    return [
+    args = [
         f"--score_metrics={payload['score_metrics']}",
         f"--score_clip_los={payload['score_clip_los']}",
         f"--score_clip_his={payload['score_clip_his']}",
         f"--score_program={payload['score_program']}",
     ]
+    if payload.get("score_sources"):
+        args.append(f"--score_sources={payload['score_sources']}")
+    return args
+
+
+def _solve_score_bins_uses_source(bins_data, source):
+    for metric in (bins_data.get("metrics") or []):
+        if str(metric.get("source", "slv")).strip().lower() == source:
+            return True
+    return False
 
 
 def handler(event, context):
@@ -131,6 +164,10 @@ def handler(event, context):
     input_mode = _validate_input_mode(contract_param(params, "palette_chunk_input_mode", "tmpfile", contract_warnings))
     retries = _validate_retries(contract_param(params, "palette_chunk_retries", 2, contract_warnings))
     workers = _validate_workers(contract_param(params, "palette_chunk_workers", 1, contract_warnings))
+    coeffs_key = str(params.get("coeffs_key") or "").strip()
+    coeffs_bin_size = params.get("coeffs_bin_size")
+    params_key = str(params.get("params_key") or "").strip()
+    n_coeffs = params.get("n_coeffs")
     score_key = params["score_key"]
     palette_bins_key = params["palette_bins_key"]
     meta_key = params["meta_key"]
@@ -198,6 +235,18 @@ def handler(event, context):
         if is_v2_bins:
             if not bins_data.get("program") or not isinstance(bins_data.get("metrics"), list) or not bins_data.get("metrics"):
                 raise RuntimeError("v2 solve-score bins artifact is missing program or metrics")
+            if _solve_score_bins_uses_source(bins_data, "cf"):
+                try:
+                    n_coeffs = int(n_coeffs)
+                except (TypeError, ValueError):
+                    raise RuntimeError(f"mixed-source palette chunk requires numeric n_coeffs, got {n_coeffs!r}")
+                if n_coeffs < 1:
+                    raise RuntimeError(f"mixed-source palette chunk requires n_coeffs >= 1, got {n_coeffs}")
+                if not coeffs_key:
+                    raise RuntimeError("mixed-source palette chunk requires coeffs_key")
+            if _solve_score_bins_uses_source(bins_data, "pm"):
+                if not params_key:
+                    raise RuntimeError("param-source palette chunk requires params_key")
         else:
             if bins_data.get("metric") != metric:
                 raise RuntimeError(f"Bins metric mismatch: expected {metric}, got {bins_data.get('metric')}")
@@ -222,6 +271,44 @@ def handler(event, context):
         ]
         if is_v2_bins:
             cmd.extend(_solve_score_program_args(bins_data))
+            if _solve_score_bins_uses_source(bins_data, "cf"):
+                if input_mode == "sectioned":
+                    coeff_input_size = int(coeffs_bin_size or 0)
+                    if coeff_input_size <= 0:
+                        head = s3.head_object(Bucket=BUCKET, Key=coeffs_key)
+                        coeff_input_size = int(head.get("ContentLength") or 0)
+                    if coeff_input_size <= 0:
+                        raise RuntimeError(f"Failed to determine coeff chunk size for s3://{BUCKET}/{coeffs_key}")
+                    coeff_url = s3.generate_presigned_url(
+                        "get_object",
+                        Params={"Bucket": BUCKET, "Key": coeffs_key},
+                        ExpiresIn=900,
+                    )
+                    progress["source_coeffs_size"] = coeff_input_size
+                    cmd.extend([
+                        f"--score_coeffs_url={coeff_url}",
+                        f"--score_coeff_input_size={coeff_input_size}",
+                        f"--score_coeff_degree={n_coeffs}",
+                    ])
+                else:
+                    coeff_obj = s3.get_object(Bucket=BUCKET, Key=coeffs_key)
+                    with open(_TMP_SCORE_COEFFS, "wb") as cf:
+                        for chunk in coeff_obj["Body"].iter_chunks(chunk_size=1024 * 1024):
+                            cf.write(chunk)
+                    progress["source_coeffs_size"] = os.path.getsize(_TMP_SCORE_COEFFS)
+                    cmd.extend([
+                        f"--score_coeffs_file={_TMP_SCORE_COEFFS}",
+                        f"--score_coeff_degree={n_coeffs}",
+                    ])
+            if _solve_score_bins_uses_source(bins_data, "pm"):
+                param_size = _download_range(
+                    params_key,
+                    _TMP_SCORE_PARAMS,
+                    int(step_start) * 4 * 4,
+                    int(step_count) * 4 * 4,
+                )
+                progress["source_params_size"] = param_size
+                cmd.append(f"--score_params_file={_TMP_SCORE_PARAMS}")
         else:
             cmd.extend([
                 f"--metric={metric}",

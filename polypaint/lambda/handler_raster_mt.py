@@ -19,6 +19,8 @@ s3 = boto3.client("s3")
 ROOTS2PIX_MT = os.path.join(os.path.dirname(__file__), "roots2pix_mt")
 DEFAULT_THREADS = int(os.environ.get("RASTER_MT_THREADS", "4") or "4")
 VALID_RASTER_INPUT_MODES = {"tmpfile", "sectioned"}
+_TMP_SCORE_COEFFS = "/tmp/score_coeffs.bin"
+_TMP_SCORE_PARAMS = "/tmp/score_params.bin"
 
 
 def _validate_threads(value):
@@ -76,6 +78,8 @@ def _cleanup_tmp():
         "/tmp/pixbin_t*.pbx",
         "/tmp/stripe.bin",
         "/tmp/palette_bins_chunk.bin",
+        _TMP_SCORE_COEFFS,
+        _TMP_SCORE_PARAMS,
         "/tmp/root_xforms.json",
     ):
         for stale in glob.glob(pattern):
@@ -90,12 +94,22 @@ def _solve_score_program_args(ss_data):
         "metrics": ss_data.get("metrics") or [],
         "program_spec": str(ss_data.get("program") or ""),
     })
-    return [
+    args = [
         f"--score_metrics={payload['score_metrics']}",
         f"--score_clip_los={payload['score_clip_los']}",
         f"--score_clip_his={payload['score_clip_his']}",
         f"--score_program={payload['score_program']}",
     ]
+    if payload.get("score_sources"):
+        args.append(f"--score_sources={payload['score_sources']}")
+    return args
+
+
+def _solve_score_bins_uses_source(ss_data, source):
+    for metric in (ss_data.get("metrics") or []):
+        if str(metric.get("source", "slv")).strip().lower() == source:
+            return True
+    return False
 
 
 def _build_cmd(params, bin_path, saved_bins_path=None):
@@ -145,6 +159,37 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
             if not ss_data.get("program") or not isinstance(ss_data.get("metrics"), list) or not ss_data.get("metrics"):
                 raise RuntimeError("v2 solve-score bins artifact is missing program or metrics")
             cmd.extend(_solve_score_program_args(ss_data))
+            if _solve_score_bins_uses_source(ss_data, "cf"):
+                n_coeffs = params.get("n_coeffs")
+                try:
+                    n_coeffs = int(n_coeffs)
+                except (TypeError, ValueError):
+                    raise RuntimeError(f"mixed-source solve-score render requires numeric n_coeffs, got {n_coeffs!r}")
+                if n_coeffs < 1:
+                    raise RuntimeError(f"mixed-source solve-score render requires n_coeffs >= 1, got {n_coeffs}")
+                if params.get("raster_input_mode") == "sectioned":
+                    coeffs_url = str(params.get("sectioned_score_coeffs_url") or "").strip()
+                    coeff_input_size = int(params.get("sectioned_score_coeffs_input_size") or 0)
+                    if not coeffs_url or coeff_input_size <= 0:
+                        raise RuntimeError("mixed-source sectioned raster requires coeff presign URL and size")
+                    cmd.extend([
+                        f"--score_coeffs_url={coeffs_url}",
+                        f"--score_coeff_input_size={coeff_input_size}",
+                        f"--score_coeff_degree={n_coeffs}",
+                    ])
+                else:
+                    coeffs_path = str(params.get("solve_score_coeffs_path") or "").strip()
+                    if not coeffs_path:
+                        raise RuntimeError("mixed-source tmpfile raster requires solve_score_coeffs_path")
+                    cmd.extend([
+                        f"--score_coeffs_file={coeffs_path}",
+                        f"--score_coeff_degree={n_coeffs}",
+                    ])
+            if _solve_score_bins_uses_source(ss_data, "pm"):
+                params_path = str(params.get("solve_score_params_path") or "").strip()
+                if not params_path:
+                    raise RuntimeError("param-source raster requires solve_score_params_path")
+                cmd.append(f"--score_params_file={params_path}")
         else:
             req_metric = params.get("solve_metric", "proximity")
             if ss_data.get("metric") != req_metric:
@@ -251,6 +296,37 @@ def handler(event, context):
         elif ss_bins_key and color in ("solve_score", "solve_proximity"):
             ss_obj = s3.get_object(Bucket=BUCKET, Key=ss_bins_key)
             params["solve_score_bins_data"] = json.loads(ss_obj["Body"].read())
+            if _solve_score_bins_uses_source(params["solve_score_bins_data"], "cf"):
+                coeffs_key = str(params.get("coeffs_key") or "").strip()
+                n_coeffs = params.get("n_coeffs")
+                if not coeffs_key:
+                    raise RuntimeError("mixed-source solve-score render requires coeffs_key")
+                try:
+                    n_coeffs = int(n_coeffs)
+                except (TypeError, ValueError):
+                    raise RuntimeError(f"mixed-source solve-score render requires numeric n_coeffs, got {n_coeffs!r}")
+                if n_coeffs < 1:
+                    raise RuntimeError(f"mixed-source solve-score render requires n_coeffs >= 1, got {n_coeffs}")
+                params["n_coeffs"] = n_coeffs
+            if _solve_score_bins_uses_source(params["solve_score_bins_data"], "pm"):
+                params_key = str(params.get("params_key") or "").strip()
+                step_start = params.get("step_start")
+                step_count = params.get("step_count")
+                if not params_key:
+                    raise RuntimeError("param-source solve-score render requires params_key")
+                try:
+                    step_start = int(step_start)
+                    step_count = int(step_count)
+                except (TypeError, ValueError):
+                    raise RuntimeError(
+                        f"param-source solve-score render requires numeric step_start/step_count, got {step_start!r}/{step_count!r}"
+                    )
+                if step_start < 0 or step_count < 1:
+                    raise RuntimeError(
+                        f"param-source solve-score render requires step_start >= 0 and step_count >= 1, got {step_start}/{step_count}"
+                    )
+                params["step_start"] = step_start
+                params["step_count"] = step_count
 
         if raster_input_mode == "sectioned":
             input_size = int(params.get("bin_size") or 0)
@@ -271,12 +347,56 @@ def handler(event, context):
                 Params={"Bucket": BUCKET, "Key": bin_key},
                 ExpiresIn=900,
             )
+            if _solve_score_bins_uses_source(params.get("solve_score_bins_data") or {}, "cf"):
+                coeff_input_size = int(params.get("coeffs_bin_size") or 0)
+                coeffs_key = str(params.get("coeffs_key") or "").strip()
+                if coeff_input_size <= 0:
+                    head = s3.head_object(Bucket=BUCKET, Key=coeffs_key)
+                    coeff_input_size = int(head.get("ContentLength") or 0)
+                if coeff_input_size <= 0:
+                    raise RuntimeError(f"Failed to determine coeff chunk size for s3://{BUCKET}/{coeffs_key}")
+                params["sectioned_score_coeffs_input_size"] = coeff_input_size
+                params["sectioned_score_coeffs_url"] = s3.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": BUCKET, "Key": coeffs_key},
+                    ExpiresIn=900,
+                )
+            if _solve_score_bins_uses_source(params.get("solve_score_bins_data") or {}, "pm"):
+                params_key = str(params.get("params_key") or "").strip()
+                step_start = int(params["step_start"])
+                step_count = int(params["step_count"])
+                params_obj = s3.get_object(
+                    Bucket=BUCKET,
+                    Key=params_key,
+                    Range=f"bytes={step_start * 16}-{step_start * 16 + step_count * 16 - 1}",
+                )
+                with open(_TMP_SCORE_PARAMS, "wb") as pf:
+                    pf.write(params_obj["Body"].read())
+                params["solve_score_params_path"] = _TMP_SCORE_PARAMS
         else:
             t_dl = time.perf_counter()
             obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
             with open(bin_path, "wb") as f:
                 f.write(obj["Body"].read())
             perf["download_us"] = int((time.perf_counter() - t_dl) * 1e6)
+            if _solve_score_bins_uses_source(params.get("solve_score_bins_data") or {}, "cf"):
+                coeffs_key = str(params.get("coeffs_key") or "").strip()
+                coeff_obj = s3.get_object(Bucket=BUCKET, Key=coeffs_key)
+                with open(_TMP_SCORE_COEFFS, "wb") as cf:
+                    cf.write(coeff_obj["Body"].read())
+                params["solve_score_coeffs_path"] = _TMP_SCORE_COEFFS
+            if _solve_score_bins_uses_source(params.get("solve_score_bins_data") or {}, "pm"):
+                params_key = str(params.get("params_key") or "").strip()
+                step_start = int(params["step_start"])
+                step_count = int(params["step_count"])
+                params_obj = s3.get_object(
+                    Bucket=BUCKET,
+                    Key=params_key,
+                    Range=f"bytes={step_start * 16}-{step_start * 16 + step_count * 16 - 1}",
+                )
+                with open(_TMP_SCORE_PARAMS, "wb") as pf:
+                    pf.write(params_obj["Body"].read())
+                params["solve_score_params_path"] = _TMP_SCORE_PARAMS
 
         report_status(job_id, task_id, "bin_downloaded")
 

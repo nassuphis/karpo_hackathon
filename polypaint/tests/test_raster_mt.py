@@ -348,6 +348,152 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(body["threads"], 2)
         self.assertEqual(body["engine"], "mt")
 
+    @patch.dict(os.environ, {"RASTER_MT_THREADS": "2", "AWS_LAMBDA_FUNCTION_MEMORY_SIZE": "10240"}, clear=False)
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.run")
+    @patch("handler_raster_mt.s3")
+    def test_v2_mixed_source_sectioned_bins_pass_coeff_url_cli_flags(self, mock_s3, mock_run, mock_report):
+        import handler_raster_mt as mod
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/solve_scores/crowding_bins.json":
+                payload = {
+                    "family": "solve_score",
+                    "version": 2,
+                    "metric": "spread",
+                    "clip_quantile": 0.02,
+                    "omega": 1.0,
+                    "omega_enabled": False,
+                    "clip_lo": 0.0,
+                    "clip_hi": 1.0,
+                    "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                    "program": "m0;m1;max",
+                    "metrics": [
+                        {"slot": 0, "metric": "spread", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                        {"slot": 1, "metric": "spread", "source": "cf", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                    ],
+                }
+                return {"Body": MagicMock(read=lambda: json.dumps(payload).encode())}
+            raise AssertionError(f"unexpected get_object key: {key}")
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.generate_presigned_url.side_effect = [
+            "https://example.com/input.bin?sig=1",
+            "https://example.com/coeffs.bin?sig=2",
+        ]
+        mock_s3.upload_fileobj.side_effect = lambda fileobj, bucket, key: None
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None):
+            self.assertIn("--input_mode=sectioned", cmd)
+            self.assertIn("--url=https://example.com/input.bin?sig=1", cmd)
+            self.assertIn("--score_sources=slv,cf", cmd)
+            self.assertIn("--score_program=m0;m1;max", cmd)
+            self.assertIn("--score_coeffs_url=https://example.com/coeffs.bin?sig=2", cmd)
+            self.assertIn("--score_coeff_input_size=112", cmd)
+            self.assertIn("--score_coeff_degree=7", cmd)
+            with open("/tmp/pix_t0000.pix", "wb") as fh:
+                fh.write(b"Q" * 8)
+            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
+                fh.write(b"q" * 8)
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({"threads": 2, "roots_plotted": 11, "roots_clipped": 1}),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler(_event(
+            solve_metric="spread",
+            solve_score_quantile=0.02,
+            solve_score_bins_key="renders/j/solve_scores/crowding_bins.json",
+            raster_input_mode="sectioned",
+            bin_size=160,
+            coeffs_key="renders/j/coeffs_0000.bin",
+            coeffs_bin_size=112,
+            n_coeffs=7,
+        ), None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["threads"], 2)
+        self.assertEqual(body["input_mode"], "sectioned")
+        statuses = [call.args[2] for call in mock_report.call_args_list]
+        self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
+
+    @patch.dict(os.environ, {"RASTER_MT_THREADS": "2", "AWS_LAMBDA_FUNCTION_MEMORY_SIZE": "10240"}, clear=False)
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.run")
+    @patch("handler_raster_mt.s3")
+    def test_v2_param_source_sectioned_bins_pass_param_file_cli_flags(self, mock_s3, mock_run, mock_report):
+        import handler_raster_mt as mod
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/solve_scores/param_bins.json":
+                payload = {
+                    "family": "solve_score",
+                    "version": 2,
+                    "metric": "t1_abs",
+                    "clip_quantile": 0.02,
+                    "omega": 1.0,
+                    "omega_enabled": False,
+                    "clip_lo": 0.0,
+                    "clip_hi": 1.0,
+                    "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                    "program": "m0;m1;max",
+                    "metrics": [
+                        {"slot": 0, "metric": "t1_abs", "source": "pm", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                        {"slot": 1, "metric": "spread", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                    ],
+                }
+                return {"Body": MagicMock(read=lambda: json.dumps(payload).encode())}
+            if key == "renders/j/params.bin":
+                self.assertEqual(kwargs["Range"], "bytes=64-127")
+                return {"Body": MagicMock(read=lambda: b"\x22" * 64)}
+            raise AssertionError(f"unexpected get_object key: {key}")
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.generate_presigned_url.side_effect = [
+            "https://example.com/input.bin?sig=1",
+        ]
+        mock_s3.upload_fileobj.side_effect = lambda fileobj, bucket, key: None
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None):
+            self.assertIn("--input_mode=sectioned", cmd)
+            self.assertIn("--url=https://example.com/input.bin?sig=1", cmd)
+            self.assertIn("--score_sources=pm,slv", cmd)
+            self.assertIn("--score_program=m0;m1;max", cmd)
+            self.assertIn("--score_params_file=/tmp/score_params.bin", cmd)
+            with open("/tmp/pix_t0000.pix", "wb") as fh:
+                fh.write(b"Q" * 8)
+            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
+                fh.write(b"q" * 8)
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({"threads": 2, "roots_plotted": 11, "roots_clipped": 1}),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler(_event(
+            solve_metric="t1_abs",
+            solve_score_quantile=0.02,
+            solve_score_bins_key="renders/j/solve_scores/param_bins.json",
+            raster_input_mode="sectioned",
+            bin_size=160,
+            params_key="renders/j/params.bin",
+            step_start=4,
+            step_count=4,
+        ), None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["threads"], 2)
+        self.assertEqual(body["input_mode"], "sectioned")
+        statuses = [call.args[2] for call in mock_report.call_args_list]
+        self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,9 +16,11 @@ import boto3
 from botocore.config import Config
 
 from solve_score_chain import (
+    VALID_SOLVE_SCORE_METRICS,
     compile_solve_score_chain_or_legacy,
     serialize_solve_score_chain,
     solve_score_program_cli_payload,
+    solve_score_uses_source,
     solve_score_uses_non_solve_sources,
 )
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
@@ -27,20 +29,19 @@ s3 = boto3.client("s3")
 BINARY = os.path.join(os.path.dirname(__file__), "solve_proximity_stats")
 SECTIONED_HIST_BINARY = os.path.join(os.path.dirname(__file__), "solve_proximity_hist_sectioned")
 
-VALID_METRICS = {"proximity", "crowding", "spread", "anisotropy", "area",
-                 "clusteriness", "shelliness", "outlierness", "nn_variation", "real_axis_proximity",
-                 "centroid_re", "centroid_im", "centroid_dist", "dist_unit_circle", "asymmetry_re"}
+VALID_METRICS = set(VALID_SOLVE_SCORE_METRICS)
 VALID_HIST_INPUT_MODES = {"tmpfile", "stdin", "sectioned"}
 
 _TMP_INPUT = "/tmp/solve_prox_input.bin"
 _TMP_COEFF_INPUT = "/tmp/solve_prox_coeff_input.bin"
+_TMP_PARAM_INPUT = "/tmp/solve_prox_param_input.bin"
 _TMP_XFORMS = "/tmp/solve_prox_root_xforms.json"
 _TMP_CLIP = "/tmp/solve_prox_clip.json"
 _TMP_HIST = "/tmp/solve_prox_hist.json"
 
 
 def _cleanup_tmp():
-    for p in [_TMP_INPUT, _TMP_COEFF_INPUT, _TMP_XFORMS, _TMP_CLIP, _TMP_HIST]:
+    for p in [_TMP_INPUT, _TMP_COEFF_INPUT, _TMP_PARAM_INPUT, _TMP_XFORMS, _TMP_CLIP, _TMP_HIST]:
         try:
             os.remove(p)
         except OSError:
@@ -56,6 +57,27 @@ def _download(key, path):
         for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
             f.write(chunk)
     return os.path.getsize(path)
+
+
+def _download_range(key, path, start, length):
+    if length <= 0:
+        raise RuntimeError(f"Invalid range length for s3://{BUCKET}/{key}: {length}")
+    end = int(start) + int(length) - 1
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key, Range=f"bytes={int(start)}-{end}")
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to download range bytes={int(start)}-{end} from s3://{BUCKET}/{key}: {e}"
+        ) from e
+    with open(path, "wb") as f:
+        for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
+            f.write(chunk)
+    size = os.path.getsize(path)
+    if size != int(length):
+        raise RuntimeError(
+            f"Short ranged download from s3://{BUCKET}/{key}: expected {int(length)} bytes, got {size}"
+        )
+    return size
 
 
 def _write_xforms(root_transforms):
@@ -150,6 +172,11 @@ def _validate_clip_artifact(clip_data, compiled, solve_score_quantile, solve_sco
                 raise RuntimeError(
                     f"Clip metric slot {expected['slot']} mismatch: expected {expected['metric']}, got {actual.get('metric')}"
                 )
+            if actual.get("source", "slv") != expected.get("source", "slv"):
+                raise RuntimeError(
+                    f"Clip source slot {expected['slot']} mismatch: expected {expected.get('source', 'slv')}, "
+                    f"got {actual.get('source', 'slv')}"
+                )
             if float(actual.get("quantile", -1)) != float(expected["quantile"]):
                 raise RuntimeError(
                     f"Clip quantile slot {expected['slot']} mismatch: expected {expected['quantile']}, got {actual.get('quantile')}"
@@ -234,6 +261,16 @@ def _fallback_lores_coeffs_key(job_id, lores_bin_key):
     return ""
 
 
+def _fallback_lores_params_key(job_id, lores_bin_key):
+    key = str(lores_bin_key or "").strip()
+    if key.endswith("/lores.bin"):
+        return key[:-len("/lores.bin")] + "/lores_params.bin"
+    job = str(job_id or "").strip()
+    if job:
+        return f"renders/{job}/lores_params.bin"
+    return ""
+
+
 def _summary_error_response(params, exc):
     payload = {
         "error": "solve histogram summary failed",
@@ -243,6 +280,7 @@ def _summary_error_response(params, exc):
         "degree": params.get("degree"),
         "lores_bin_key": params.get("lores_bin_key"),
         "lores_coeffs_key": params.get("lores_coeffs_key"),
+        "lores_params_key": params.get("lores_params_key"),
     }
     try:
         compiled = compile_solve_score_chain_or_legacy(
@@ -482,6 +520,9 @@ def handle_clip(params):
     solve_score_chain = contract_param(params, "solve_score_chain", "", contract_warnings)
     solve_score_threads = _validate_threads(contract_param(params, "solve_score_threads", 1, contract_warnings), default=1)
     lores_bin_key = params["lores_bin_key"]
+    lores_coeffs_key = str(params.get("lores_coeffs_key", "") or "").strip()
+    lores_params_key = str(params.get("lores_params_key", "") or "").strip()
+    n_coeffs = params.get("n_coeffs")
     root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
     out_key = params["out_key"]
     compiled = compile_solve_score_chain_or_legacy(
@@ -496,12 +537,30 @@ def handle_clip(params):
     solve_score_quantile = compiled["quantile"]
     solve_score_omega = compiled["omega"]
     solve_score_omega_enabled = compiled["omega_enabled"]
+    uses_coeff_source = solve_score_uses_source(compiled, "cf")
+    uses_param_source = solve_score_uses_source(compiled, "pm")
+    if uses_coeff_source:
+        lores_coeffs_key = lores_coeffs_key or _fallback_lores_coeffs_key(job_id, lores_bin_key)
+        if not lores_coeffs_key:
+            raise RuntimeError("mixed-source solve score clip requires lores_coeffs_key")
+        try:
+            n_coeffs = int(n_coeffs)
+        except (TypeError, ValueError):
+            raise RuntimeError(f"mixed-source solve score clip requires numeric n_coeffs, got {n_coeffs!r}")
+        if n_coeffs < 1:
+            raise RuntimeError(f"mixed-source solve score clip requires n_coeffs >= 1, got {n_coeffs}")
+    if uses_param_source:
+        lores_params_key = lores_params_key or _fallback_lores_params_key(job_id, lores_bin_key)
+        if not lores_params_key:
+            raise RuntimeError("param-source solve score clip requires lores_params_key")
     progress = attach_contract_warnings(
         {
             "phase": "clip",
             "metric": metric,
             "metric_count": compiled["metric_count"],
             "source_key": lores_bin_key,
+            "source_coeffs_key": lores_coeffs_key,
+            "source_params_key": lores_params_key,
             "omega": solve_score_omega,
             "omega_enabled": solve_score_omega_enabled,
             "threads": solve_score_threads,
@@ -515,9 +574,19 @@ def handle_clip(params):
 
         t0 = time.time()
         size = _download(lores_bin_key, _TMP_INPUT)
+        coeff_size = 0
+        param_size = 0
+        if uses_coeff_source:
+            coeff_size = _download(lores_coeffs_key, _TMP_COEFF_INPUT)
+        if uses_param_source:
+            param_size = _download(lores_params_key, _TMP_PARAM_INPUT)
         dl_ms = int((time.time() - t0) * 1000)
         progress["dl_ms"] = dl_ms
         progress["source_size"] = size
+        if uses_coeff_source:
+            progress["source_coeffs_size"] = coeff_size
+        if uses_param_source:
+            progress["source_params_size"] = param_size
 
         report_status(job_id, task_id, "bin_downloaded", result_data=progress)
 
@@ -525,17 +594,19 @@ def handle_clip(params):
         metric_clips = []
         clip_threads = solve_score_threads
         for slot, metric_row in enumerate(compiled["metrics"]):
+            source = metric_row.get("source", "slv")
             slot_clip = _clip_metric_slot(
                 metric_row["metric"],
                 metric_row["quantile"],
-                degree,
+                degree if source == "slv" else (n_coeffs if source == "cf" else 2),
                 solve_score_omega,
                 solve_score_omega_enabled,
                 solve_score_threads,
-                root_transforms,
-                _TMP_INPUT,
+                root_transforms if source == "slv" else None,
+                _TMP_INPUT if source == "slv" else (_TMP_COEFF_INPUT if source == "cf" else _TMP_PARAM_INPUT),
             )
             slot_clip["slot"] = slot
+            slot_clip["source"] = source
             metric_clips.append(slot_clip)
             clip_threads = max(clip_threads, int(slot_clip.get("threads", solve_score_threads)))
         compute_ms = int((time.time() - t1) * 1000)
@@ -572,6 +643,11 @@ def handle_clip(params):
             "lores_bin_key": lores_bin_key,
             "root_transforms": root_transforms or [],
         }
+        if uses_coeff_source:
+            artifact["lores_coeffs_key"] = lores_coeffs_key
+            artifact["n_coeffs"] = n_coeffs
+        if uses_param_source:
+            artifact["lores_params_key"] = lores_params_key
         if compiled["legacy_compatible"]:
             artifact["chain"] = json.loads(serialize_solve_score_chain(compiled["chain"]))
         else:
@@ -620,6 +696,12 @@ def handle_hist(params):
         "solve_score_hist_retries",
     )
     bin_key = params["bin_key"]
+    coeffs_key = str(params.get("coeffs_key", "") or "").strip()
+    coeffs_bin_size = params.get("coeffs_bin_size")
+    params_key = str(params.get("params_key", "") or "").strip()
+    n_coeffs = params.get("n_coeffs")
+    step_start = params.get("step_start")
+    step_count = params.get("step_count")
     degree = params["degree"]
     clip_key = params["clip_key"]
     hist_bins = params.get("hist_bins", 100)
@@ -637,6 +719,31 @@ def handle_hist(params):
     solve_score_quantile = compiled["quantile"]
     solve_score_omega = compiled["omega"]
     solve_score_omega_enabled = compiled["omega_enabled"]
+    uses_coeff_source = solve_score_uses_source(compiled, "cf")
+    uses_param_source = solve_score_uses_source(compiled, "pm")
+    if uses_coeff_source:
+        coeffs_key = coeffs_key or f"renders/{job_id}/coeffs_{int(chunk_idx):04d}.bin"
+        try:
+            n_coeffs = int(n_coeffs)
+        except (TypeError, ValueError):
+            raise RuntimeError(f"mixed-source solve score hist requires numeric n_coeffs, got {n_coeffs!r}")
+        if n_coeffs < 1:
+            raise RuntimeError(f"mixed-source solve score hist requires n_coeffs >= 1, got {n_coeffs}")
+    if uses_param_source:
+        params_key = str(params_key).strip()
+        if not params_key:
+            raise RuntimeError("param-source solve score hist requires params_key")
+        try:
+            step_start = int(step_start)
+            step_count = int(step_count)
+        except (TypeError, ValueError):
+            raise RuntimeError(
+                f"param-source solve score hist requires numeric step_start/step_count, got {step_start!r}/{step_count!r}"
+            )
+        if step_start < 0 or step_count < 1:
+            raise RuntimeError(
+                f"param-source solve score hist requires step_start >= 0 and step_count >= 1, got {step_start}/{step_count}"
+            )
     progress = attach_contract_warnings({
         "phase": "hist",
         "metric": metric,
@@ -649,6 +756,8 @@ def handle_hist(params):
         "retries": solve_score_hist_retries,
         "source_bucket": BUCKET,
         "source_key": bin_key,
+        "source_coeffs_key": coeffs_key,
+        "source_params_key": params_key,
         "clip_key": clip_key,
     }, contract_warnings)
     progress.update(_solve_score_error_fields(compiled))
@@ -688,6 +797,33 @@ def handle_hist(params):
                     f"{input_size} bytes > safe limit {size_limit} bytes"
                 )
             progress["source_size"] = input_size
+            coeff_input_size = 0
+            coeff_presigned_url = None
+            param_size = 0
+            if uses_coeff_source:
+                try:
+                    coeff_input_size = int(coeffs_bin_size)
+                except (TypeError, ValueError):
+                    coeff_input_size = 0
+                if coeff_input_size <= 0:
+                    coeff_head = s3.head_object(Bucket=BUCKET, Key=coeffs_key)
+                    coeff_input_size = int(coeff_head.get("ContentLength") or 0)
+                if coeff_input_size <= 0:
+                    raise RuntimeError(f"Failed to determine size for s3://{BUCKET}/{coeffs_key}")
+                coeff_presigned_url = s3.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": BUCKET, "Key": coeffs_key},
+                    ExpiresIn=900,
+                )
+                progress["source_coeffs_size"] = coeff_input_size
+            if uses_param_source:
+                param_size = _download_range(
+                    params_key,
+                    _TMP_PARAM_INPUT,
+                    int(step_start) * 4 * 4,
+                    int(step_count) * 4 * 4,
+                )
+                progress["source_params_size"] = param_size
             presigned_url = s3.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": BUCKET, "Key": bin_key},
@@ -704,6 +840,14 @@ def handle_hist(params):
             ]
             if program_args:
                 cmd.extend(program_args)
+                if uses_coeff_source:
+                    cmd.extend([
+                        f"--score_coeffs_url={coeff_presigned_url}",
+                        f"--score_coeff_input_size={coeff_input_size}",
+                        f"--score_coeff_degree={n_coeffs}",
+                    ])
+                if uses_param_source:
+                    cmd.append(f"--score_params_file={_TMP_PARAM_INPUT}")
             else:
                 cmd.extend([
                     f"--metric={metric}",
@@ -744,6 +888,22 @@ def handle_hist(params):
             ]
             if program_args:
                 cmd.extend(program_args)
+                if uses_coeff_source:
+                    coeff_size = _download(coeffs_key, _TMP_COEFF_INPUT)
+                    progress["source_coeffs_size"] = coeff_size
+                    cmd.extend([
+                        f"--score_coeffs_file={_TMP_COEFF_INPUT}",
+                        f"--score_coeff_degree={n_coeffs}",
+                    ])
+                if uses_param_source:
+                    param_size = _download_range(
+                        params_key,
+                        _TMP_PARAM_INPUT,
+                        int(step_start) * 4 * 4,
+                        int(step_count) * 4 * 4,
+                    )
+                    progress["source_params_size"] = param_size
+                    cmd.append(f"--score_params_file={_TMP_PARAM_INPUT}")
             else:
                 cmd.extend([
                     f"--metric={metric}",
@@ -774,6 +934,22 @@ def handle_hist(params):
             ]
             if program_args:
                 cmd.extend(program_args)
+                if uses_coeff_source:
+                    coeff_size = _download(coeffs_key, _TMP_COEFF_INPUT)
+                    progress["source_coeffs_size"] = coeff_size
+                    cmd.extend([
+                        f"--score_coeffs_file={_TMP_COEFF_INPUT}",
+                        f"--score_coeff_degree={n_coeffs}",
+                    ])
+                if uses_param_source:
+                    param_size = _download_range(
+                        params_key,
+                        _TMP_PARAM_INPUT,
+                        int(step_start) * 4 * 4,
+                        int(step_count) * 4 * 4,
+                    )
+                    progress["source_params_size"] = param_size
+                    cmd.append(f"--score_params_file={_TMP_PARAM_INPUT}")
             else:
                 cmd.extend([
                     f"--metric={metric}",
@@ -831,6 +1007,12 @@ def handle_hist(params):
                 "metrics": metrics_with_clips,
                 "metric_count": len(metrics_with_clips),
             })
+            if uses_coeff_source:
+                artifact["n_coeffs"] = n_coeffs
+            if uses_param_source:
+                artifact["params_key"] = params_key
+                artifact["step_start"] = step_start
+                artifact["step_count"] = step_count
 
         s3.put_object(Bucket=BUCKET, Key=out_key,
                       Body=json.dumps(artifact),
@@ -1015,6 +1197,7 @@ def handle_summary(params):
     solve_score_threads = _validate_threads(params.get("solve_score_threads", 1), default=1)
     lores_bin_key = params["lores_bin_key"]
     lores_coeffs_key = params.get("lores_coeffs_key", "")
+    lores_params_key = params.get("lores_params_key", "")
     n_coeffs = params.get("n_coeffs")
     root_transforms = params.get("root_transforms")
     compiled = compile_solve_score_chain_or_legacy(
@@ -1025,7 +1208,8 @@ def handle_summary(params):
         solve_score_omega_enabled,
         default_metric="proximity",
     )
-    uses_coeff_source = solve_score_uses_non_solve_sources(compiled)
+    uses_coeff_source = solve_score_uses_source(compiled, "cf")
+    uses_param_source = solve_score_uses_source(compiled, "pm")
     if uses_coeff_source:
         lores_coeffs_key = str(
             lores_coeffs_key or _fallback_lores_coeffs_key(params.get("job_id"), lores_bin_key)
@@ -1038,6 +1222,12 @@ def handle_summary(params):
             raise RuntimeError(f"mixed-source solve-score summary requires numeric n_coeffs, got {n_coeffs!r}")
         if n_coeffs < 1:
             raise RuntimeError(f"mixed-source solve-score summary requires n_coeffs >= 1, got {n_coeffs}")
+    if uses_param_source:
+        lores_params_key = str(
+            lores_params_key or _fallback_lores_params_key(params.get("job_id"), lores_bin_key)
+        ).strip()
+        if not lores_params_key:
+            raise RuntimeError("param-source solve-score summary requires lores_params_key")
 
     try:
         _cleanup_tmp()
@@ -1045,8 +1235,11 @@ def handle_summary(params):
         t0 = time.time()
         size = _download(lores_bin_key, _TMP_INPUT)
         coeff_size = 0
+        param_size = 0
         if uses_coeff_source:
             coeff_size = _download(lores_coeffs_key, _TMP_COEFF_INPUT)
+        if uses_param_source:
+            param_size = _download(lores_params_key, _TMP_PARAM_INPUT)
         dl_ms = int((time.time() - t0) * 1000)
 
         if compiled["legacy_compatible"]:
@@ -1071,12 +1264,12 @@ def handle_summary(params):
                 slot_clip = _clip_metric_slot(
                     metric_row["metric"],
                     metric_row["quantile"],
-                    degree if source == "slv" else n_coeffs,
+                    degree if source == "slv" else (n_coeffs if source == "cf" else 2),
                     compiled["omega"],
                     compiled["omega_enabled"],
                     solve_score_threads,
                     root_transforms if source == "slv" else None,
-                    _TMP_INPUT if source == "slv" else _TMP_COEFF_INPUT,
+                    _TMP_INPUT if source == "slv" else (_TMP_COEFF_INPUT if source == "cf" else _TMP_PARAM_INPUT),
                 )
                 slot_clip["slot"] = slot
                 slot_clip["source"] = source
@@ -1094,6 +1287,8 @@ def handle_summary(params):
                     f"--score_coeffs_file={_TMP_COEFF_INPUT}",
                     f"--score_coeff_degree={n_coeffs}",
                 ])
+            if uses_param_source:
+                cmd.append(f"--score_params_file={_TMP_PARAM_INPUT}")
         xf_path = _write_xforms(root_transforms)
         if xf_path:
             cmd.append(f"--root_xforms={xf_path}")
@@ -1116,6 +1311,9 @@ def handle_summary(params):
             summary["source_coeffs_size"] = coeff_size
             summary["lores_coeffs_key"] = lores_coeffs_key
             summary["n_coeffs"] = n_coeffs
+        if uses_param_source:
+            summary["source_params_size"] = param_size
+            summary["lores_params_key"] = lores_params_key
         summary["threads"] = int(summary.get("threads", solve_score_threads))
         summary["metric"] = compiled["metric"]
         summary["metric_count"] = compiled["metric_count"]

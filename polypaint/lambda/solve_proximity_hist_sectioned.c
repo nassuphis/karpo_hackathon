@@ -103,6 +103,43 @@ static double score_program_xformed(const float *roots, int degree, const SolveS
     return solve_score_eval_program(xformed, degree, program);
 }
 
+static double score_program_xformed_with_sources(const float *roots, int degree,
+                                                const float *coeffRoots, int coeffDegree,
+                                                const float *paramValues, int paramDegree,
+                                                const SolveScoreProgram *program,
+                                                RootXformEntry *rtChain, int nRt,
+                                                float *wkRe, float *wkIm) {
+    for (int k = 0; k < degree; k++) {
+        wkRe[k] = roots[k * 2];
+        wkIm[k] = roots[k * 2 + 1];
+    }
+    apply_root_xforms(rtChain, nRt, wkRe, wkIm, degree);
+    float xformed[MAXDEG * 2];
+    for (int k = 0; k < degree; k++) {
+        xformed[k * 2] = wkRe[k];
+        xformed[k * 2 + 1] = wkIm[k];
+    }
+    return solve_score_eval_program_with_sources(
+        xformed, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program
+    );
+}
+
+static int solve_score_program_uses_coeff_sources(const SolveScoreProgram *program) {
+    if (!program) return 0;
+    for (int i = 0; i < program->metricCount; i++) {
+        if (program->metricSources[i] == SOLVE_SCORE_SOURCE_COEFF) return 1;
+    }
+    return 0;
+}
+
+static int solve_score_program_uses_param_sources(const SolveScoreProgram *program) {
+    if (!program) return 0;
+    for (int i = 0; i < program->metricCount; i++) {
+        if (program->metricSources[i] == SOLVE_SCORE_SOURCE_PARAM) return 1;
+    }
+    return 0;
+}
+
 static double eval_score_or_program(const float *roots, int degree,
                                     enum SolveMetric metric, const SolveScoreProgram *program,
                                     RootXformEntry *rtChain, int nRt,
@@ -115,6 +152,25 @@ static double eval_score_or_program(const float *roots, int degree,
     return compute_solve_metric_score(roots, degree, metric);
 }
 
+static double eval_score_or_program_with_sources(const float *roots, int degree,
+                                                 const float *coeffRoots, int coeffDegree,
+                                                 const float *paramValues, int paramDegree,
+                                                 enum SolveMetric metric, const SolveScoreProgram *program,
+                                                 RootXformEntry *rtChain, int nRt,
+                                                 float *wkRe, float *wkIm) {
+    if (program && (solve_score_program_uses_coeff_sources(program) || solve_score_program_uses_param_sources(program))) {
+        if (nRt > 0) {
+            return score_program_xformed_with_sources(
+                roots, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program, rtChain, nRt, wkRe, wkIm
+            );
+        }
+        return solve_score_eval_program_with_sources(
+            roots, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program
+        );
+    }
+    return eval_score_or_program(roots, degree, metric, program, rtChain, nRt, wkRe, wkIm);
+}
+
 typedef struct {
     unsigned char *data;
     size_t expected;
@@ -124,13 +180,21 @@ typedef struct {
 
 typedef struct {
     const char *url;
+    const char *scoreCoeffsUrl;
+    const float *scoreParamRows;
     int degree;
+    int scoreCoeffDegree;
+    int scoreParamDegree;
     long startSolve;
     long solveCount;
     long solveBytes;
+    long scoreCoeffSolveBytes;
     size_t sectionBytes;
+    size_t scoreCoeffSectionBytes;
     unsigned long long byteStart;
     unsigned long long byteEnd;
+    unsigned long long scoreCoeffByteStart;
+    unsigned long long scoreCoeffByteEnd;
     enum SolveMetric metric;
     const SolveScoreProgram *program;
     RootXformEntry *rtChain;
@@ -185,9 +249,13 @@ static size_t write_section_cb(char *ptr, size_t size, size_t nmemb, void *userd
 static void *hist_section_worker_main(void *arg_) {
     HistSectionArgs *arg = (HistSectionArgs *)arg_;
     DownloadBuffer dl = {0};
+    DownloadBuffer coeffDl = {0};
     CURL *curl = NULL;
+    CURL *coeffCurl = NULL;
     char rangeBuf[96];
+    char coeffRangeBuf[96];
     char curlErr[CURL_ERROR_SIZE] = {0};
+    char coeffCurlErr[CURL_ERROR_SIZE] = {0};
 
     dl.expected = arg->sectionBytes;
     dl.data = malloc(dl.expected > 0 ? dl.expected : 1);
@@ -219,9 +287,44 @@ static void *hist_section_worker_main(void *arg_) {
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "identity");
     curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
 
+    if (arg->scoreCoeffsUrl && arg->scoreCoeffSectionBytes > 0) {
+        coeffDl.expected = arg->scoreCoeffSectionBytes;
+        coeffDl.data = malloc(coeffDl.expected > 0 ? coeffDl.expected : 1);
+        if (!coeffDl.data) {
+            snprintf(arg->error, sizeof(arg->error), "Out of memory for coeff section buffer (%zu bytes)", coeffDl.expected);
+            arg->failed = 1;
+            curl_easy_cleanup(curl);
+            free(dl.data);
+            return NULL;
+        }
+        coeffCurl = curl_easy_init();
+        if (!coeffCurl) {
+            snprintf(arg->error, sizeof(arg->error), "curl_easy_init failed for coeff section");
+            arg->failed = 1;
+            curl_easy_cleanup(curl);
+            free(coeffDl.data);
+            free(dl.data);
+            return NULL;
+        }
+        snprintf(coeffRangeBuf, sizeof(coeffRangeBuf), "%llu-%llu",
+                 (unsigned long long)arg->scoreCoeffByteStart, (unsigned long long)arg->scoreCoeffByteEnd);
+        curl_easy_setopt(coeffCurl, CURLOPT_URL, arg->scoreCoeffsUrl);
+        curl_easy_setopt(coeffCurl, CURLOPT_RANGE, coeffRangeBuf);
+        curl_easy_setopt(coeffCurl, CURLOPT_WRITEFUNCTION, write_section_cb);
+        curl_easy_setopt(coeffCurl, CURLOPT_WRITEDATA, &coeffDl);
+        curl_easy_setopt(coeffCurl, CURLOPT_ERRORBUFFER, coeffCurlErr);
+        curl_easy_setopt(coeffCurl, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(coeffCurl, CURLOPT_FAILONERROR, 1L);
+        curl_easy_setopt(coeffCurl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(coeffCurl, CURLOPT_ACCEPT_ENCODING, "identity");
+        curl_easy_setopt(coeffCurl, CURLOPT_TCP_KEEPALIVE, 1L);
+    }
+
     int attempts = arg->retries + 1;
     long dlStart = monotonic_ms();
     CURLcode rc = CURLE_OK;
+    CURLcode coeffRc = CURLE_OK;
+    long coeffHttpStatus = 0;
     for (int attempt = 0; attempt < attempts; attempt++) {
         dl.size = 0;
         dl.overflow = 0;
@@ -229,13 +332,31 @@ static void *hist_section_worker_main(void *arg_) {
         arg->httpStatus = 0;
         rc = curl_easy_perform(curl);
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &arg->httpStatus);
+        int coeffOk = 1;
+        if (coeffCurl) {
+            coeffDl.size = 0;
+            coeffDl.overflow = 0;
+            coeffCurlErr[0] = '\0';
+            coeffHttpStatus = 0;
+            coeffRc = curl_easy_perform(coeffCurl);
+            curl_easy_getinfo(coeffCurl, CURLINFO_RESPONSE_CODE, &coeffHttpStatus);
+            coeffOk = (
+                coeffRc == CURLE_OK &&
+                (coeffHttpStatus == 206L || coeffHttpStatus == 200L) &&
+                !coeffDl.overflow &&
+                coeffDl.size == coeffDl.expected
+            );
+        }
         if (rc == CURLE_OK &&
             (arg->httpStatus == 206L || arg->httpStatus == 200L) &&
             !dl.overflow &&
-            dl.size == dl.expected) {
+            dl.size == dl.expected &&
+            coeffOk) {
             break;
         }
-        if (attempt + 1 >= attempts || !retryable_range_failure(rc, arg->httpStatus)) {
+        int rootRetryable = retryable_range_failure(rc, arg->httpStatus);
+        int coeffRetryable = coeffCurl ? retryable_range_failure(coeffRc, coeffHttpStatus) : 0;
+        if (attempt + 1 >= attempts || (!rootRetryable && !coeffRetryable)) {
             break;
         }
         sleep_ms(150L * (attempt + 1));
@@ -247,6 +368,8 @@ static void *hist_section_worker_main(void *arg_) {
                  curlErr[0] ? curlErr : curl_easy_strerror(rc));
         arg->failed = 1;
         curl_easy_cleanup(curl);
+        if (coeffCurl) curl_easy_cleanup(coeffCurl);
+        free(coeffDl.data);
         free(dl.data);
         return NULL;
     }
@@ -255,6 +378,8 @@ static void *hist_section_worker_main(void *arg_) {
                  arg->httpStatus, rangeBuf, attempts, attempts == 1 ? "" : "s");
         arg->failed = 1;
         curl_easy_cleanup(curl);
+        if (coeffCurl) curl_easy_cleanup(coeffCurl);
+        free(coeffDl.data);
         free(dl.data);
         return NULL;
     }
@@ -263,6 +388,8 @@ static void *hist_section_worker_main(void *arg_) {
                  rangeBuf, attempts, attempts == 1 ? "" : "s");
         arg->failed = 1;
         curl_easy_cleanup(curl);
+        if (coeffCurl) curl_easy_cleanup(coeffCurl);
+        free(coeffDl.data);
         free(dl.data);
         return NULL;
     }
@@ -271,19 +398,50 @@ static void *hist_section_worker_main(void *arg_) {
                  rangeBuf, attempts, attempts == 1 ? "" : "s", dl.size, dl.expected);
         arg->failed = 1;
         curl_easy_cleanup(curl);
+        if (coeffCurl) curl_easy_cleanup(coeffCurl);
+        free(coeffDl.data);
         free(dl.data);
         return NULL;
     }
-    arg->bytesDownloaded = (long)dl.size;
+    if (coeffCurl && coeffRc != CURLE_OK) {
+        snprintf(arg->error, sizeof(arg->error), "coeff range GET failed for bytes %s after %d attempt%s: %s",
+                 coeffRangeBuf, attempts, attempts == 1 ? "" : "s",
+                 coeffCurlErr[0] ? coeffCurlErr : curl_easy_strerror(coeffRc));
+        arg->failed = 1;
+        curl_easy_cleanup(coeffCurl);
+        curl_easy_cleanup(curl);
+        free(coeffDl.data);
+        free(dl.data);
+        return NULL;
+    }
+    if (coeffCurl && coeffDl.size != coeffDl.expected) {
+        snprintf(arg->error, sizeof(arg->error),
+                 "short coeff range GET for bytes %s after %d attempt%s: got %zu of %zu bytes",
+                 coeffRangeBuf, attempts, attempts == 1 ? "" : "s", coeffDl.size, coeffDl.expected);
+        arg->failed = 1;
+        curl_easy_cleanup(coeffCurl);
+        curl_easy_cleanup(curl);
+        free(coeffDl.data);
+        free(dl.data);
+        return NULL;
+    }
+    arg->bytesDownloaded = (long)dl.size + (long)coeffDl.size;
 
     float wkRe[MAXDEG], wkIm[MAXDEG];
     long computeStart = monotonic_ms();
     for (long s = 0; s < arg->solveCount; s++) {
         const float *roots = (const float *)(void *)(dl.data + (size_t)s * (size_t)arg->solveBytes);
+        const float *coeffRoots = coeffCurl
+            ? (const float *)(void *)(coeffDl.data + (size_t)s * (size_t)arg->scoreCoeffSolveBytes)
+            : NULL;
+        const float *paramValues = arg->scoreParamRows
+            ? (arg->scoreParamRows + (size_t)s * 4u)
+            : NULL;
         double u;
         if (arg->program) {
-            u = eval_score_or_program(
-                roots, arg->degree, arg->metric, arg->program, arg->rtChain, arg->nRt, wkRe, wkIm
+            u = eval_score_or_program_with_sources(
+                roots, arg->degree, coeffRoots, arg->scoreCoeffDegree, paramValues, arg->scoreParamDegree,
+                arg->metric, arg->program, arg->rtChain, arg->nRt, wkRe, wkIm
             );
         } else {
             const double range = arg->clipHi - arg->clipLo;
@@ -301,7 +459,9 @@ static void *hist_section_worker_main(void *arg_) {
     }
     arg->computeMs = monotonic_ms() - computeStart;
 
+    if (coeffCurl) curl_easy_cleanup(coeffCurl);
     curl_easy_cleanup(curl);
+    free(coeffDl.data);
     free(dl.data);
     return NULL;
 }
@@ -309,7 +469,7 @@ static void *hist_section_worker_main(void *arg_) {
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Usage: solve_proximity_hist_sectioned --url=URL --input_size=BYTES --degree=D "
-                "[--metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re] "
+                "[--metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation] "
                 "--clip_lo=X --clip_hi=Y [--hist_bins=100] [--omega=1] [--threads=2] [--root_xforms=file.json]\n");
         return 1;
     }
@@ -326,9 +486,14 @@ int main(int argc, char **argv) {
     int requestedThreads = getArgInt(argc, argv, "--threads", 2);
     int retries = getArgInt(argc, argv, "--retries", 2);
     const char *scoreMetricsCsv = getArgStr(argc, argv, "--score_metrics", NULL);
+    const char *scoreSourcesCsv = getArgStr(argc, argv, "--score_sources", NULL);
     const char *scoreClipLosCsv = getArgStr(argc, argv, "--score_clip_los", NULL);
     const char *scoreClipHisCsv = getArgStr(argc, argv, "--score_clip_his", NULL);
     const char *scoreProgramSpec = getArgStr(argc, argv, "--score_program", NULL);
+    const char *scoreCoeffsUrl = getArgStr(argc, argv, "--score_coeffs_url", NULL);
+    const char *scoreParamsFile = getArgStr(argc, argv, "--score_params_file", NULL);
+    long long scoreCoeffInputSize = getArgLongLong(argc, argv, "--score_coeff_input_size", -1);
+    int scoreCoeffDegree = getArgInt(argc, argv, "--score_coeff_degree", 0);
 
     if (!url || !*url) {
         fprintf(stderr, "Missing --url\n");
@@ -357,7 +522,7 @@ int main(int argc, char **argv) {
 
     enum SolveMetric metric;
     if (!parse_solve_metric(metricStr, &metric)) {
-        fprintf(stderr, "Invalid metric: %s (use proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re)\n", metricStr);
+        fprintf(stderr, "Invalid metric: %s (use proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation)\n", metricStr);
         return 1;
     }
 
@@ -391,13 +556,77 @@ int main(int argc, char **argv) {
             fprintf(stderr, "score program requires --score_metrics, --score_clip_los, --score_clip_his, and --score_program together\n");
             return 1;
         }
-        if (!parse_solve_score_program_args(
-                scoreMetricsCsv, scoreClipLosCsv, scoreClipHisCsv, scoreProgramSpec,
+        if (!parse_solve_score_program_args_ex(
+                scoreMetricsCsv, scoreSourcesCsv, scoreClipLosCsv, scoreClipHisCsv, scoreProgramSpec,
                 &scoreProgram, scoreErr, sizeof(scoreErr))) {
             fprintf(stderr, "Invalid score program: %s\n", scoreErr[0] ? scoreErr : "unknown error");
             return 1;
         }
         useScoreProgram = 1;
+    }
+    int scoreProgramUsesCoeffSources = solve_score_program_uses_coeff_sources(useScoreProgram ? &scoreProgram : NULL);
+    int scoreProgramUsesParamSources = solve_score_program_uses_param_sources(useScoreProgram ? &scoreProgram : NULL);
+    long scoreCoeffSolveBytes = (long)(scoreCoeffDegree * 2) * (long)sizeof(float);
+    if (scoreProgramUsesCoeffSources) {
+        if (!scoreCoeffsUrl || !*scoreCoeffsUrl) {
+            fprintf(stderr, "score program with coeff sources requires --score_coeffs_url\n");
+            return 1;
+        }
+        if (scoreCoeffDegree < 1 || scoreCoeffDegree > MAXDEG) {
+            fprintf(stderr, "Invalid score_coeff_degree: %d (must be 1-%d)\n", scoreCoeffDegree, MAXDEG);
+            return 1;
+        }
+        if (scoreCoeffInputSize <= 0) {
+            fprintf(stderr, "score program with coeff sources requires --score_coeff_input_size\n");
+            return 1;
+        }
+        if ((scoreCoeffInputSize % scoreCoeffSolveBytes) != 0) {
+            fprintf(stderr, "Invalid score_coeff_input_size %lld for coeff_degree=%d (solve_bytes=%ld)\n",
+                    scoreCoeffInputSize, scoreCoeffDegree, scoreCoeffSolveBytes);
+            return 1;
+        }
+        long coeffPoints = (long)(scoreCoeffInputSize / scoreCoeffSolveBytes);
+        if (coeffPoints != nSolves) {
+            fprintf(stderr, "score coeff solve count mismatch: got %ld expected %ld\n", coeffPoints, nSolves);
+            return 1;
+        }
+    }
+    int scoreParamStride = 4;
+    int scoreParamDegree = 2;
+    long scoreParamSolveBytes = (long)scoreParamStride * (long)sizeof(float);
+    float *scoreParamRows = NULL;
+    if (scoreProgramUsesParamSources) {
+        if (!scoreParamsFile || !*scoreParamsFile) {
+            fprintf(stderr, "score program with param sources requires --score_params_file\n");
+            return 1;
+        }
+        FILE *fp = fopen(scoreParamsFile, "rb");
+        if (!fp) {
+            fprintf(stderr, "Cannot open %s\n", scoreParamsFile);
+            return 1;
+        }
+        fseek(fp, 0, SEEK_END);
+        long paramFileSize = ftell(fp);
+        fseek(fp, 0, SEEK_SET);
+        long paramPoints = paramFileSize / scoreParamSolveBytes;
+        if (paramPoints != nSolves) {
+            fprintf(stderr, "score params size mismatch: got %ld solves expected %ld\n", paramPoints, nSolves);
+            fclose(fp);
+            return 1;
+        }
+        scoreParamRows = malloc((size_t)paramFileSize);
+        if (!scoreParamRows) {
+            fprintf(stderr, "Out of memory for score params\n");
+            fclose(fp);
+            return 1;
+        }
+        if ((long)fread(scoreParamRows, 1, (size_t)paramFileSize, fp) != paramFileSize) {
+            fprintf(stderr, "Short read from %s\n", scoreParamsFile);
+            fclose(fp);
+            free(scoreParamRows);
+            return 1;
+        }
+        fclose(fp);
     }
 
     int threads = clamp_threads(requestedThreads, nSolves);
@@ -421,13 +650,23 @@ int main(int argc, char **argv) {
     for (int i = 0; i < threads; i++) {
         long solveCount = base + (i < extra ? 1 : 0);
         args[i].url = url;
+        args[i].scoreCoeffsUrl = scoreProgramUsesCoeffSources ? scoreCoeffsUrl : NULL;
+        args[i].scoreParamRows = scoreProgramUsesParamSources
+            ? (scoreParamRows + (size_t)startSolve * (size_t)scoreParamStride)
+            : NULL;
         args[i].degree = degree;
+        args[i].scoreCoeffDegree = scoreProgramUsesCoeffSources ? scoreCoeffDegree : 0;
+        args[i].scoreParamDegree = scoreProgramUsesParamSources ? scoreParamDegree : 0;
         args[i].startSolve = startSolve;
         args[i].solveCount = solveCount;
         args[i].solveBytes = solveBytes;
+        args[i].scoreCoeffSolveBytes = scoreCoeffSolveBytes;
         args[i].sectionBytes = (size_t)solveCount * (size_t)solveBytes;
+        args[i].scoreCoeffSectionBytes = (size_t)solveCount * (size_t)scoreCoeffSolveBytes;
         args[i].byteStart = (unsigned long long)startSolve * (unsigned long long)solveBytes;
         args[i].byteEnd = args[i].byteStart + (unsigned long long)args[i].sectionBytes - 1ULL;
+        args[i].scoreCoeffByteStart = (unsigned long long)startSolve * (unsigned long long)scoreCoeffSolveBytes;
+        args[i].scoreCoeffByteEnd = args[i].scoreCoeffByteStart + (unsigned long long)args[i].scoreCoeffSectionBytes - 1ULL;
         args[i].metric = metric;
         args[i].program = useScoreProgram ? &scoreProgram : NULL;
         args[i].rtChain = rtChain;
@@ -477,6 +716,7 @@ int main(int argc, char **argv) {
 
     if (failed) {
         fprintf(stderr, "%s\n", errorMsg);
+        free(scoreParamRows);
         free(args);
         free(workers);
         free(hist);
@@ -497,6 +737,7 @@ int main(int argc, char **argv) {
     }
     printf("]}\n");
 
+    free(scoreParamRows);
     free(args);
     free(workers);
     free(hist);

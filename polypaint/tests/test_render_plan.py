@@ -57,7 +57,11 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["calc"]["degree"] == 5
         assert plan["calc"]["n_chunks"] == 3
         assert len(plan["chunk_items"]) == 3
-        assert plan["chunk_items"][0] == {"chunk_idx": 0, "bin_key": "renders/j/chunk_0.bin"}
+        assert plan["chunk_items"][0] == {
+            "chunk_idx": 0,
+            "bin_key": "renders/j/chunk_0.bin",
+            "coeffs_key": "renders/j/coeffs_0000.bin",
+        }
 
     @patch("handler_render_plan._storage_call")
     def test_color_plan_uses_calc_chunk_bin_keys_when_present(self, mock_storage):
@@ -76,9 +80,9 @@ class TestRenderPlan(unittest.TestCase):
 
         assert plan["calc"]["n_chunks"] == 3
         assert plan["chunk_items"] == [
-            {"chunk_idx": 0, "bin_key": "renders/j/custom/chunk_zero.bin"},
-            {"chunk_idx": 1, "bin_key": "renders/j/custom/chunk_one.bin"},
-            {"chunk_idx": 2, "bin_key": "renders/j/custom/chunk_two.bin"},
+            {"chunk_idx": 0, "bin_key": "renders/j/custom/chunk_zero.bin", "coeffs_key": "renders/j/coeffs_0000.bin"},
+            {"chunk_idx": 1, "bin_key": "renders/j/custom/chunk_one.bin", "coeffs_key": "renders/j/coeffs_0001.bin"},
+            {"chunk_idx": 2, "bin_key": "renders/j/custom/chunk_two.bin", "coeffs_key": "renders/j/coeffs_0002.bin"},
         ]
 
     @patch("handler_render_plan._storage_call")
@@ -94,8 +98,24 @@ class TestRenderPlan(unittest.TestCase):
         result = handler(_make_event(), None)
         plan = json.loads(result["body"])
         assert plan["chunk_items"] == [
-            {"chunk_idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_start": 0, "step_count": 10, "bin_size": 10 * 5 * 2 * 4},
-            {"chunk_idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_start": 10, "step_count": 20, "bin_size": 20 * 5 * 2 * 4},
+            {
+                "chunk_idx": 0,
+                "bin_key": "renders/j/chunk_0.bin",
+                "coeffs_key": "renders/j/coeffs_0000.bin",
+                "step_start": 0,
+                "step_count": 10,
+                "bin_size": 10 * 5 * 2 * 4,
+                "coeffs_bin_size": 10 * 6 * 2 * 4,
+            },
+            {
+                "chunk_idx": 1,
+                "bin_key": "renders/j/chunk_1.bin",
+                "coeffs_key": "renders/j/coeffs_0001.bin",
+                "step_start": 10,
+                "step_count": 20,
+                "bin_size": 20 * 5 * 2 * 4,
+                "coeffs_bin_size": 20 * 6 * 2 * 4,
+            },
         ]
 
     @patch("handler_render_plan._invoke_sync")
@@ -226,20 +246,23 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["outputs"]["metadata"]["solve_score_omega"] == "5.0"
 
     @patch("handler_render_plan._storage_call")
-    def test_solve_score_render_rejects_mixed_source_chain(self, mock_storage):
+    def test_solve_score_render_accepts_mixed_source_chain(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail({
             "degree": 5, "n_chunks": 2,
             "lores": {"bin_key": "renders/j/lores.bin", "coeffs_key": "renders/j/lores_coeffs.bin"},
             "n_coeffs": 7,
         })
         from handler_render_plan import handler
-        with self.assertRaises(RuntimeError) as ctx:
-            handler(_make_event(
-                color_mode="solve_score",
-                solve_metric="spread",
-                solve_score_chain=[["spread", "slv", "1"], ["spread", "cf", "1"], ["avg"]],
-            ), None)
-        self.assertIn("histogram-debug only", str(ctx.exception))
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="spread",
+            solve_score_chain=[["spread", "slv", "1"], ["spread", "cf", "1"], ["avg"]],
+        ), None)
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["calc"]["lores_coeffs_key"], "renders/j/lores_coeffs.bin")
+        self.assertEqual(plan["calc"]["n_coeffs"], 7)
+        self.assertEqual(plan["solve_score"]["metrics"][0]["source"], "slv")
+        self.assertEqual(plan["solve_score"]["metrics"][1]["source"], "cf")
 
     @patch("handler_render_plan._storage_call")
     def test_mt_request_carries_requested_threads(self, mock_storage):
@@ -653,6 +676,80 @@ class TestRenderPlan(unittest.TestCase):
             ["omega_cosine", "4"],
         ]
         assert plan["outputs"]["metadata"]["associated_palette_omega_enabled"] == "true"
+
+    @patch("handler_render_plan._storage_call")
+    def test_mixed_source_solve_score_associated_palette_preserves_calc_coeff_metadata(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5,
+            "n_coeffs": 7,
+            "N": 100,
+            "times": 1,
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_count": 6000},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_count": 4000},
+            ],
+            "lores": {"bin_key": "renders/j/lores.bin", "coeffs_key": "renders/j/lores_coeffs.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="spread",
+            solve_score_quantile=0.01,
+            solve_score_chain=[["spread", "cf", "1"], ["shelliness", "cf", "1"], ["max"]],
+            save_associated_palette=True,
+        ), None)
+        plan = json.loads(result["body"])
+        assert plan["calc"]["n_coeffs"] == 7
+        assert plan["calc"]["lores_coeffs_key"] == "renders/j/lores_coeffs.bin"
+        assert plan["chunk_items"][0]["coeffs_key"] == "renders/j/coeffs_0000.bin"
+        assert plan["chunk_items"][1]["coeffs_key"] == "renders/j/coeffs_0001.bin"
+        assert plan["chunk_items"][0]["coeffs_bin_size"] == 6000 * 7 * 2 * 4
+        assert plan["chunk_items"][1]["coeffs_bin_size"] == 4000 * 7 * 2 * 4
+        assoc = plan["associated_palette"]
+        assert assoc["enabled"] is True
+        assert assoc["mode"] == "generated"
+        assert json.loads(plan["outputs"]["metadata"]["associated_palette_score_chain"]) == [
+            ["spread", "cf", "1"],
+            ["shelliness", "cf", "1"],
+            "max",
+        ]
+
+    @patch("handler_render_plan._storage_call")
+    def test_param_source_solve_score_preserves_calc_param_metadata(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5,
+            "n_coeffs": 7,
+            "N": 100,
+            "times": 1,
+            "params_key": "renders/j/params.bin",
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_count": 6000},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_count": 4000},
+            ],
+            "lores": {
+                "bin_key": "renders/j/lores.bin",
+                "params_key": "renders/j/lores_params.bin",
+            },
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="t1_abs",
+            solve_score_quantile=0.01,
+            solve_score_chain=[["t1_abs", "pm", "1"], ["spread", "slv", "1"], ["avg"]],
+        ), None)
+        plan = json.loads(result["body"])
+        assert plan["calc"]["lores_params_key"] == "renders/j/lores_params.bin"
+        assert plan["calc"]["params_key"] == "renders/j/params.bin"
+        assert plan["chunk_items"][0]["step_start"] == 0
+        assert plan["chunk_items"][0]["step_count"] == 6000
+        assert plan["chunk_items"][1]["step_start"] == 6000
+        assert plan["chunk_items"][1]["step_count"] == 4000
+        assert json.loads(plan["outputs"]["metadata"]["solve_score_chain"]) == [
+            ["t1_abs", "pm", "1"],
+            ["spread", "1"],
+            "avg",
+        ]
 
     @patch("handler_render_plan._storage_call")
     def test_associated_palette_chunk_defaults_follow_mt_raster_settings_when_present(self, mock_storage):

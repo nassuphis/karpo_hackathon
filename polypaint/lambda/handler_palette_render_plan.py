@@ -21,6 +21,7 @@ from solve_score_chain import (
     format_solve_score_chain_display,
     read_solve_score_metadata,
     solve_score_chain_from_scalars,
+    solve_score_uses_source,
     solve_score_uses_non_solve_sources,
     solve_score_chain_id,
 )
@@ -255,12 +256,13 @@ def _scratch_matches(job_id, chain, metric, quantile, omega, omega_enabled, root
     return True, clip_key, bins_key
 
 
-def _build_chunk_items(calc):
+def _build_chunk_items(calc, job_id):
     chunks = list(calc.get("chunks", calc.get("stripes", [])) or [])
     if not chunks:
         raise RuntimeError("calc.json missing chunk metadata")
     chunks.sort(key=lambda c: c.get("idx", c.get("chunk_idx", c.get("stripe_idx", 0))))
     degree = int(calc["degree"])
+    n_coeffs = int(calc.get("n_coeffs", degree + 1) or (degree + 1))
     record_bytes = degree * 2 * 4
     chunk_items = []
     step_start = 0
@@ -276,12 +278,20 @@ def _build_chunk_items(calc):
         step_count = int(step_count)
         if idx is None or not bin_key or step_count <= 0:
             raise RuntimeError(f"Invalid chunk metadata: idx={idx} bin_key={bin_key!r} step_count={step_count}")
+        coeffs_keys = list(calc.get("coeffs_keys") or [])
+        coeffs_key = ""
+        if 0 <= int(idx) < len(coeffs_keys):
+            coeffs_key = str(coeffs_keys[int(idx)] or "").strip()
+        if not coeffs_key:
+            coeffs_key = f"renders/{job_id}/coeffs_{int(idx):04d}.bin"
         chunk_items.append({
             "chunk_idx": int(idx),
             "bin_key": bin_key,
+            "coeffs_key": coeffs_key,
             "step_start": step_start,
             "step_count": step_count,
             "bin_size": int(raw.get("bin_size")) if raw.get("bin_size") not in ("", None) else int(step_count) * record_bytes,
+            "coeffs_bin_size": int(step_count) * n_coeffs * 2 * 4,
         })
         step_start += step_count
     return chunk_items
@@ -350,6 +360,32 @@ def _execution_params(raw_params):
         "palette_chunk_retries": _validate_sectioned_retries(pp.get("palette_chunk_retries", 2)),
         "palette_chunk_workers": _validate_palette_chunk_workers(pp.get("palette_chunk_workers", 16), default=16),
     }
+
+
+def _fallback_lores_coeffs_key(job_id, calc):
+    lores = calc.get("lores", {}) or {}
+    key = str(lores.get("coeffs_key") or "").strip()
+    if key:
+        return key
+    job = str(job_id or "").strip()
+    return f"renders/{job}/lores_coeffs.bin" if job else ""
+
+
+def _fallback_lores_params_key(job_id, calc):
+    lores = calc.get("lores", {}) or {}
+    key = str(lores.get("params_key") or "").strip()
+    if key:
+        return key
+    job = str(job_id or "").strip()
+    return f"renders/{job}/lores_params.bin" if job else ""
+
+
+def _fallback_params_key(job_id, calc):
+    key = str(calc.get("params_key") or "").strip()
+    if key:
+        return key
+    job = str(job_id or "").strip()
+    return f"renders/{job}/params.bin" if job else ""
 
 
 def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
@@ -449,7 +485,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
     lores_bin_key = (calc.get("lores") or {}).get("bin_key", "")
     if not degree or not full_n or not lores_bin_key:
         raise RuntimeError(f"calc.json missing degree, N, or lores.bin_key for {job_id}")
-    chunk_items = _build_chunk_items(calc)
+    chunk_items = _build_chunk_items(calc, job_id)
     pass0_steps = int(full_n) * int(full_n)
     if sum(int(item["step_count"]) for item in chunk_items) < pass0_steps:
         raise RuntimeError("calc.json chunk metadata is too small for pass-0 palette extraction")
@@ -494,6 +530,14 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "target_artifact_id": selected["artifact_id"],
     }
     plan["attach"]["mode"] = "generated"
+    if solve_score_uses_non_solve_sources(source_score):
+        if solve_score_uses_source(source_score, "cf") and not _fallback_lores_coeffs_key(job_id, calc):
+            raise RuntimeError("Mixed-source solve score requires lores.coeffs_key")
+        if solve_score_uses_source(source_score, "pm"):
+            if not _fallback_lores_params_key(job_id, calc):
+                raise RuntimeError("Param-source solve score requires lores.params_key")
+            if not _fallback_params_key(job_id, calc):
+                raise RuntimeError("Param-source solve score requires params_key")
     plan["calc"] = {
         "degree": degree,
         "N": full_n,
@@ -501,6 +545,10 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "n_chunks": len(chunk_items),
         "pass0_steps": pass0_steps,
         "lores_bin_key": lores_bin_key,
+        "lores_coeffs_key": _fallback_lores_coeffs_key(job_id, calc),
+        "lores_params_key": _fallback_lores_params_key(job_id, calc),
+        "params_key": _fallback_params_key(job_id, calc),
+        "n_coeffs": int(calc.get("n_coeffs", degree + 1) or (degree + 1)),
     }
     plan["chunk_items"] = chunk_items
     plan["solve_score"] = {
@@ -552,8 +600,6 @@ def handler(event, context):
         pp.get("solve_score_omega_enabled", True),
         default_metric="proximity",
     )
-    if solve_score_uses_non_solve_sources(compiled_score):
-        raise RuntimeError("Mixed-source solve score is histogram-debug only for now")
     metric = compiled_score["metric"]
     palette = pp.get("palette", "inferno")
     root_transforms = pp.get("root_transforms", [])
@@ -572,9 +618,27 @@ def handler(event, context):
     lores_bin_key = (calc.get("lores") or {}).get("bin_key", "")
     if not degree or not full_n or not lores_bin_key:
         raise RuntimeError(f"calc.json missing degree, N, or lores.bin_key for {job_id}")
+    if solve_score_uses_non_solve_sources(compiled_score):
+        if solve_score_uses_source(compiled_score, "cf"):
+            lores_coeffs_key = _fallback_lores_coeffs_key(job_id, calc)
+            if not lores_coeffs_key:
+                raise RuntimeError("Mixed-source solve score requires lores.coeffs_key")
+            try:
+                n_coeffs = int(calc.get("n_coeffs"))
+            except (TypeError, ValueError):
+                raise RuntimeError(f"Mixed-source solve score requires numeric n_coeffs, got {calc.get('n_coeffs')!r}")
+            if n_coeffs < 1:
+                raise RuntimeError(f"Mixed-source solve score requires n_coeffs >= 1, got {n_coeffs}")
+        if solve_score_uses_source(compiled_score, "pm"):
+            lores_params_key = _fallback_lores_params_key(job_id, calc)
+            params_key = _fallback_params_key(job_id, calc)
+            if not lores_params_key:
+                raise RuntimeError("Param-source solve score requires lores.params_key")
+            if not params_key:
+                raise RuntimeError("Param-source solve score requires params_key")
 
     pass0_steps = full_n * full_n
-    chunk_items = _build_chunk_items(calc)
+    chunk_items = _build_chunk_items(calc, job_id)
     step_start = sum(int(item["step_count"]) for item in chunk_items)
 
     if step_start < pass0_steps:
@@ -641,6 +705,10 @@ def handler(event, context):
             "n_chunks": len(chunk_items),
             "pass0_steps": pass0_steps,
             "lores_bin_key": lores_bin_key,
+            "lores_coeffs_key": _fallback_lores_coeffs_key(job_id, calc),
+            "lores_params_key": _fallback_lores_params_key(job_id, calc),
+            "params_key": _fallback_params_key(job_id, calc),
+            "n_coeffs": int(calc.get("n_coeffs", degree + 1) or (degree + 1)),
         },
         "chunk_items": chunk_items,
         "solve_score": {

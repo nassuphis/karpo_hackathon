@@ -344,7 +344,7 @@ int main(int argc, char **argv) {
                 "[--color=rainbow|proximity|solve_score|solve_proximity|saved_palette|constant] "
                 "[--match=none|greedy|hungarian] [--palette=<name>] "
                 "[--constant_color=RRGGBB] "
-                "[--solve_metric=proximity|crowding|spread|anisotropy|area] "
+                "[--solve_metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation] "
                 "[--solve_score_clip_lo=X --solve_score_clip_hi=Y --solve_score_cuts=c1,...,c9] [--solve_score_omega=W] [--solve_score_omega_enabled=0|1] "
                 "[--solve_bins_file=file.bin] "
                 "[--pixel_bin_prefix=/tmp/pixbin] "
@@ -404,9 +404,13 @@ int main(int argc, char **argv) {
         return 1;
     }
     const char *scoreMetricsCsv = getArgStr(argc, argv, "--score_metrics", NULL);
+    const char *scoreSourcesCsv = getArgStr(argc, argv, "--score_sources", NULL);
     const char *scoreClipLosCsv = getArgStr(argc, argv, "--score_clip_los", NULL);
     const char *scoreClipHisCsv = getArgStr(argc, argv, "--score_clip_his", NULL);
     const char *scoreProgramSpec = getArgStr(argc, argv, "--score_program", NULL);
+    const char *scoreCoeffsFile = getArgStr(argc, argv, "--score_coeffs_file", NULL);
+    const char *scoreParamsFile = getArgStr(argc, argv, "--score_params_file", NULL);
+    int scoreCoeffDegree = getArgInt(argc, argv, "--score_coeff_degree", 0);
 
     double solveScoreClipLo = getArgDouble(argc, argv, "--solve_score_clip_lo",
                                getArgDouble(argc, argv, "--solve_prox_clip_lo", 0));
@@ -438,8 +442,8 @@ int main(int argc, char **argv) {
             fprintf(stderr, "solve_score program requires --score_metrics, --score_clip_los, --score_clip_his, and --score_program together\n");
             return 1;
         }
-        if (!parse_solve_score_program_args(
-                scoreMetricsCsv, scoreClipLosCsv, scoreClipHisCsv, scoreProgramSpec,
+        if (!parse_solve_score_program_args_ex(
+                scoreMetricsCsv, scoreSourcesCsv, scoreClipLosCsv, scoreClipHisCsv, scoreProgramSpec,
                 &solveScoreProgram, scoreErr, sizeof(scoreErr))) {
             fprintf(stderr, "Invalid solve_score program: %s\n", scoreErr[0] ? scoreErr : "unknown error");
             return 1;
@@ -543,6 +547,110 @@ int main(int argc, char **argv) {
     if (!roots) { fprintf(stderr, "Cannot allocate %ld bytes\n", fileSize); fclose(fin); return 1; }
     fread(roots, 1, fileSize, fin);
     fclose(fin);
+
+    int scoreProgramUsesCoeffSources = 0;
+    int scoreProgramUsesParamSources = 0;
+    for (int i = 0; i < solveScoreProgram.metricCount; i++) {
+        if (solveScoreProgram.metricSources[i] == SOLVE_SCORE_SOURCE_COEFF) {
+            scoreProgramUsesCoeffSources = 1;
+        }
+        if (solveScoreProgram.metricSources[i] == SOLVE_SCORE_SOURCE_PARAM) {
+            scoreProgramUsesParamSources = 1;
+        }
+    }
+    float *scoreCoeffRows = NULL;
+    int scoreCoeffStride = scoreCoeffDegree * 2;
+    if (scoreProgramUsesCoeffSources) {
+        if (!scoreCoeffsFile || !*scoreCoeffsFile) {
+            fprintf(stderr, "solve_score program with coeff sources requires --score_coeffs_file\n");
+            free(roots);
+            return 1;
+        }
+        if (scoreCoeffDegree < 1 || scoreCoeffDegree > MAXDEG) {
+            fprintf(stderr, "Invalid score_coeff_degree: %d (must be 1-%d)\n", scoreCoeffDegree, MAXDEG);
+            free(roots);
+            return 1;
+        }
+        FILE *fc = fopen(scoreCoeffsFile, "rb");
+        if (!fc) {
+            fprintf(stderr, "Cannot open %s\n", scoreCoeffsFile);
+            free(roots);
+            return 1;
+        }
+        fseek(fc, 0, SEEK_END);
+        long coeffFileSize = ftell(fc);
+        fseek(fc, 0, SEEK_SET);
+        long coeffSolveBytes = scoreCoeffStride * (long)sizeof(float);
+        long coeffPoints = coeffFileSize / coeffSolveBytes;
+        if (coeffPoints != nPoints) {
+            fprintf(stderr, "score coeffs size mismatch: got %ld solves expected %ld\n", coeffPoints, nPoints);
+            fclose(fc);
+            free(roots);
+            return 1;
+        }
+        scoreCoeffRows = malloc(coeffFileSize);
+        if (!scoreCoeffRows) {
+            fprintf(stderr, "Cannot allocate %ld bytes for score coeffs\n", coeffFileSize);
+            fclose(fc);
+            free(roots);
+            return 1;
+        }
+        if ((long)fread(scoreCoeffRows, 1, coeffFileSize, fc) != coeffFileSize) {
+            fprintf(stderr, "Short read from %s\n", scoreCoeffsFile);
+            fclose(fc);
+            free(scoreCoeffRows);
+            free(roots);
+            return 1;
+        }
+        fclose(fc);
+    }
+    float *scoreParamRows = NULL;
+    int scoreParamStride = 4;
+    int scoreParamDegree = 2;
+    if (scoreProgramUsesParamSources) {
+        if (!scoreParamsFile || !*scoreParamsFile) {
+            fprintf(stderr, "solve_score program with param sources requires --score_params_file\n");
+            free(scoreCoeffRows);
+            free(roots);
+            return 1;
+        }
+        FILE *fp = fopen(scoreParamsFile, "rb");
+        if (!fp) {
+            fprintf(stderr, "Cannot open %s\n", scoreParamsFile);
+            free(scoreCoeffRows);
+            free(roots);
+            return 1;
+        }
+        fseek(fp, 0, SEEK_END);
+        long paramFileSize = ftell(fp);
+        fseek(fp, 0, SEEK_SET);
+        long paramSolveBytes = scoreParamStride * (long)sizeof(float);
+        long paramPoints = paramFileSize / paramSolveBytes;
+        if (paramPoints != nPoints) {
+            fprintf(stderr, "score params size mismatch: got %ld solves expected %ld\n", paramPoints, nPoints);
+            fclose(fp);
+            free(scoreCoeffRows);
+            free(roots);
+            return 1;
+        }
+        scoreParamRows = malloc(paramFileSize);
+        if (!scoreParamRows) {
+            fprintf(stderr, "Cannot allocate %ld bytes for score params\n", paramFileSize);
+            fclose(fp);
+            free(scoreCoeffRows);
+            free(roots);
+            return 1;
+        }
+        if ((long)fread(scoreParamRows, 1, paramFileSize, fp) != paramFileSize) {
+            fprintf(stderr, "Short read from %s\n", scoreParamsFile);
+            fclose(fp);
+            free(scoreParamRows);
+            free(scoreCoeffRows);
+            free(roots);
+            return 1;
+        }
+        fclose(fp);
+    }
 
     uint8_t *solveBins = NULL;
     if (colorMode == COLOR_SAVED_PALETTE) {
@@ -717,9 +825,13 @@ int main(int argc, char **argv) {
         }
         for (long p = 0; p < nPoints; p++) {
             float *step = roots + p * stride;
+            const float *coeffStep = scoreCoeffRows ? (scoreCoeffRows + p * scoreCoeffStride) : NULL;
+            const float *paramStep = scoreParamRows ? (scoreParamRows + p * scoreParamStride) : NULL;
             double u;
             if (useScoreProgram) {
-                u = solve_score_eval_program(step, degree, &solveScoreProgram);
+                u = solve_score_eval_program_with_sources(
+                    step, degree, coeffStep, scoreCoeffDegree, paramStep, scoreParamDegree, &solveScoreProgram
+                );
             } else {
                 double score = compute_solve_metric_score(step, degree, solveMetric);
                 double ssRange = solveScoreClipHi - solveScoreClipLo;
@@ -773,6 +885,8 @@ int main(int argc, char **argv) {
             if (bin > 9) {
                 fprintf(stderr, "saved_palette bin out of range at solve %ld: %u\n", p, (unsigned)bin);
                 free(solveBins);
+                free(scoreParamRows);
+                free(scoreCoeffRows);
                 free(roots);
                 return 1;
             }
@@ -930,6 +1044,8 @@ int main(int argc, char **argv) {
         free(tileBinBuf[t]);
     }
 
+    free(scoreParamRows);
+    free(scoreCoeffRows);
     free(roots);
     free(solveBins);
 

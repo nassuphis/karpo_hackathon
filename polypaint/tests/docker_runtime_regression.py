@@ -662,6 +662,23 @@ def test_solve_proximity_stats():
     assert rap["n_solves"] == 3
     print("  real_axis_proximity clip: OK (lo=%.2f, hi=%.2f)" % (rap["clip_lo"], rap["clip_hi"]))
 
+    # 5b. New v4 metrics
+    r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=min_mod"],
+                       capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "min_mod clip failed: " + r.stderr[:200]
+    min_mod = json.loads(r.stdout)
+    assert min_mod["metric"] == "min_mod"
+    assert min_mod["n_solves"] == 3
+    print("  min_mod clip: OK (lo=%.2f, hi=%.2f)" % (min_mod["clip_lo"], min_mod["clip_hi"]))
+
+    r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=min_angular_separation"],
+                       capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "min_angular_separation clip failed: " + r.stderr[:200]
+    min_ang = json.loads(r.stdout)
+    assert min_ang["metric"] == "min_angular_separation"
+    assert min_ang["n_solves"] == 3
+    print("  min_angular_separation clip: OK (lo=%.2f, hi=%.2f)" % (min_ang["clip_lo"], min_ang["clip_hi"]))
+
     # 6. Non-default quantile clip (q=0.05)
     _write_sps_bin(sps_bin)
     r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=proximity",
@@ -728,6 +745,23 @@ def test_roots2pix_solve_score():
     assert r.returncode == 0, "roots2pix solve_score clusteriness failed: " + r.stderr[:200]
     meta2 = json.loads(r.stdout)
     print("  roots2pix --solve_metric=clusteriness: OK (plotted=%d)" % meta2["roots_plotted"])
+
+    # Smoke for max_mod (v4 metric)
+    r = subprocess.run([
+        r2p_path, sps_bin, "/tmp/r2p_ss_pix",
+        "--width=4", "--height=4", "--tile_size=4",
+        "--n_tile_cols=1", "--n_tile_rows=1",
+        "--center_re=0.5", "--center_im=0",
+        "--scale=2", "--degree=2",
+        "--color=solve_score",
+        "--solve_metric=max_mod",
+        "--solve_score_clip_lo=0.0",
+        "--solve_score_clip_hi=2.0",
+        "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
+    ], capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "roots2pix solve_score max_mod failed: " + r.stderr[:200]
+    meta3 = json.loads(r.stdout)
+    print("  roots2pix --solve_metric=max_mod: OK (plotted=%d)" % meta3["roots_plotted"])
 
     # Clean up any .pix files
     import glob

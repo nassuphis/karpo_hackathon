@@ -157,7 +157,7 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["solve_score"]["enabled"] is True
         assert plan["solve_score"]["metric"] == "crowding"
         assert plan["solve_score"]["chain"] == [
-            {"name": "crowding", "params": []},
+            {"name": "crowding", "params": ["slv", "1"]},
             {"name": "omega_cosine", "params": ["4"]},
         ]
         assert plan["solve_score"]["quantile"] == 0.01
@@ -173,7 +173,7 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["outputs"]["metadata"]["square_extent"] == "2.0"
         assert plan["outputs"]["metadata"]["rotation"] == "0"
         assert json.loads(plan["outputs"]["metadata"]["solve_score_chain"]) == [
-            "crowding",
+            ["crowding", "1"],
             ["omega_cosine", "4"],
         ]
         assert plan["outputs"]["metadata"]["solve_score_omega"] == "4.0"
@@ -215,15 +215,31 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["solve_score"]["omega"] == 5.0
         assert plan["solve_score"]["omega_enabled"] is True
         assert plan["solve_score"]["chain"] == [
-            {"name": "clusteriness", "params": []},
+            {"name": "clusteriness", "params": ["slv", "0.1"]},
             {"name": "omega_cosine", "params": ["5"]},
         ]
         assert json.loads(plan["outputs"]["metadata"]["solve_score_chain"]) == [
-            "clusteriness",
+            ["clusteriness", "0.1"],
             ["omega_cosine", "5"],
         ]
         assert plan["outputs"]["metadata"]["solve_metric"] == "clusteriness"
         assert plan["outputs"]["metadata"]["solve_score_omega"] == "5.0"
+
+    @patch("handler_render_plan._storage_call")
+    def test_solve_score_render_rejects_mixed_source_chain(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin", "coeffs_key": "renders/j/lores_coeffs.bin"},
+            "n_coeffs": 7,
+        })
+        from handler_render_plan import handler
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_make_event(
+                color_mode="solve_score",
+                solve_metric="spread",
+                solve_score_chain=[["spread", "slv", "1"], ["spread", "cf", "1"], ["avg"]],
+            ), None)
+        self.assertIn("histogram-debug only", str(ctx.exception))
 
     @patch("handler_render_plan._storage_call")
     def test_mt_request_carries_requested_threads(self, mock_storage):
@@ -509,14 +525,14 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["saved_palette"]["enabled"] is True
         assert plan["saved_palette"]["palette_id"] == "pal_src"
         assert plan["saved_palette"]["chunk_bins_prefix"] == "renders/j/palettes/pal_src/chunks/palette_bins_chunk_"
-        assert plan["solve_score"]["chain"] == [{"name": "crowding", "params": []}]
+        assert plan["solve_score"]["chain"] == [{"name": "crowding", "params": ["slv", "1"]}]
         assert plan["outputs"]["repalette_capable"] is True
         assert plan["outputs"]["metadata"]["color_mode"] == "saved_palette"
         assert plan["outputs"]["metadata"]["palette"] == "inferno"
         assert plan["outputs"]["metadata"]["palette_source_id"] == "pal_src"
         assert plan["outputs"]["metadata"]["palette_source_palette"] == "reef"
-        assert json.loads(plan["outputs"]["metadata"]["solve_score_chain"]) == ["crowding"]
-        assert json.loads(plan["outputs"]["metadata"]["palette_source_score_chain"]) == ["crowding"]
+        assert json.loads(plan["outputs"]["metadata"]["solve_score_chain"]) == [["crowding", "1"]]
+        assert json.loads(plan["outputs"]["metadata"]["palette_source_score_chain"]) == [["crowding", "1"]]
         assert plan["outputs"]["metadata"]["solve_metric"] == "crowding"
         assert plan["outputs"]["metadata"]["solve_score_quantile"] == "0.01"
         assert plan["outputs"]["metadata"]["solve_score_omega"] == "3.0"
@@ -570,11 +586,11 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["associated_palette"]["mode"] == "dependency"
         assert plan["associated_palette"]["palette_id"] == "pal_src"
         assert plan["associated_palette"]["image_key"] == "renders/j/palettes/pal_src/image.jpeg"
-        assert plan["associated_palette"]["score_chain"] == [{"name": "crowding", "params": []}]
+        assert plan["associated_palette"]["score_chain"] == [{"name": "crowding", "params": ["slv", "1"]}]
         assert plan["outputs"]["metadata"]["associated_palette_mode"] == "dependency"
         assert plan["outputs"]["metadata"]["associated_palette_id"] == "pal_src"
         assert plan["outputs"]["metadata"]["associated_palette_image_key"] == "renders/j/palettes/pal_src/image.jpeg"
-        assert json.loads(plan["outputs"]["metadata"]["associated_palette_score_chain"]) == ["crowding"]
+        assert json.loads(plan["outputs"]["metadata"]["associated_palette_score_chain"]) == [["crowding", "1"]]
         assert plan["outputs"]["metadata"]["associated_palette_omega_enabled"] == "false"
 
     @patch("handler_render_plan._storage_call")
@@ -620,7 +636,7 @@ class TestRenderPlan(unittest.TestCase):
         assert assoc["image_key"] == "renders/j/palettes/pal_color_run_t/image.jpeg"
         assert assoc["chunk_bins_prefix"] == "renders/j/palettes/pal_color_run_t/chunks/palette_bins_chunk_"
         assert assoc["score_chain"] == [
-            {"name": "crowding", "params": []},
+            {"name": "crowding", "params": ["slv", "1"]},
             {"name": "omega_cosine", "params": ["4"]},
         ]
         assert assoc["chunk_threads"] == 4
@@ -633,7 +649,7 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["outputs"]["metadata"]["associated_palette_id"] == "pal_color_run_t"
         assert plan["outputs"]["metadata"]["associated_palette_image_key"] == "renders/j/palettes/pal_color_run_t/image.jpeg"
         assert json.loads(plan["outputs"]["metadata"]["associated_palette_score_chain"]) == [
-            "crowding",
+            ["crowding", "1"],
             ["omega_cosine", "4"],
         ]
         assert plan["outputs"]["metadata"]["associated_palette_omega_enabled"] == "true"

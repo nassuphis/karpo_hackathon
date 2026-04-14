@@ -294,6 +294,7 @@ def handle_finalize_metadata(params):
         "total_coeffs_size": int(post["total_coeffs_size"]),
         "lores": {
             "bin_key": lores_solve.get("s3_key") or post["lores"]["bin_key"],
+            "coeffs_key": post["lores"]["coeffs_key"],
             "N": int(post["lores"]["N"]),
             "n_steps": int(post["lores"]["n_steps"]),
             "bin_size": int(lores_solve.get("bin_size", 0) or 0),

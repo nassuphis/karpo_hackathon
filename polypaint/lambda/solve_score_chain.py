@@ -1,17 +1,18 @@
 """
 Shared solve-score chain helpers.
 
-V1 supports a very small grammar:
+Canonical model:
 
-- exactly one metric chip
-- optional final omega_cosine transfer chip
+- metric chips own their quantile parameter, e.g. spread(q=5.0%)
+- binary combine chips operate on normalized score maps in postfix/RPN order
+- omega_cosine is a unary postfix op and may appear anywhere the stack depth is >= 1
 
-The backend still consumes scalar solve-score fields, so this module compiles
-the chain down to the existing metric / omega / omega_enabled contract while
-also emitting canonical chain metadata.
+The backend still carries legacy scalar fields for compatibility, but the chain
+is now the canonical source of truth.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 
 
@@ -32,7 +33,24 @@ VALID_SOLVE_SCORE_METRICS = {
     "dist_unit_circle",
     "asymmetry_re",
 }
+VALID_SOLVE_SCORE_SOURCES = {"slv", "cf"}
 TRANSFER_CHIP_NAME = "omega_cosine"
+UNARY_CHIPS = {
+    TRANSFER_CHIP_NAME: {"arity": 1, "params": 2},
+    "sawtooth": {"arity": 1, "params": 1},
+    "flip": {"arity": 1, "params": 0},
+}
+COMBINE_CHIPS = {
+    "avg": {"arity": 2, "params": 0},
+    "min": {"arity": 2, "params": 0},
+    "max": {"arity": 2, "params": 0},
+    "mul": {"arity": 2, "params": 0},
+    "weighted_sum": {"arity": 2, "params": 2},
+    "abs_diff": {"arity": 2, "params": 0},
+    "geometric_mean": {"arity": 2, "params": 0},
+}
+MAX_METRIC_SLOTS = 16
+MAX_PROGRAM_TOKENS = 32
 
 _FIELD_MAP = {
     "solve": {
@@ -88,6 +106,13 @@ def _validate_metric(value):
     return metric
 
 
+def _validate_metric_source(value):
+    source = str(value or "").strip().lower()
+    if source not in VALID_SOLVE_SCORE_SOURCES:
+        raise RuntimeError(f"solve-score metric source must be one of cf, slv, got {value!r}")
+    return source
+
+
 def _validate_omega(value):
     try:
         omega = float(value)
@@ -98,11 +123,49 @@ def _validate_omega(value):
     return omega
 
 
+def _validate_omega_phase(value):
+    try:
+        phase = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"solve_score_omega_phase must be numeric, got {value!r}")
+    if not (phase == phase and abs(phase) != float("inf")):
+        raise RuntimeError(f"solve_score_omega_phase must be finite, got {value!r}")
+    return phase
+
+
+def _validate_quantile_fraction(value):
+    try:
+        quantile = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"solve_score_quantile must be numeric, got {value!r}")
+    if not (0.001 <= quantile <= 0.05):
+        raise RuntimeError(f"solve_score_quantile must be in [0.001, 0.05], got {quantile}")
+    return quantile
+
+
+def _validate_quantile_percent(value):
+    try:
+        pct = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"solve-score metric q must be numeric percent, got {value!r}")
+    if not (0.1 <= pct <= 5.0):
+        raise RuntimeError(f"solve-score metric q must be in [0.1, 5.0] percent, got {pct}")
+    return pct
+
+
 def _format_number(value):
     num = float(value)
     if num.is_integer():
         return str(int(num))
     return f"{num:g}"
+
+
+def _format_quantile_percent(value):
+    return _format_number(_validate_quantile_percent(value))
+
+
+def _quantile_percent_to_fraction(value):
+    return _validate_quantile_percent(value) / 100.0
 
 
 def _normalize_chain_item(item):
@@ -142,67 +205,334 @@ def normalize_solve_score_chain(raw_chain):
 
 
 def serialize_solve_score_chain(chain):
+    def _serialize_item(item):
+        name = item["name"]
+        params = list(item.get("params") or [])
+        if name in VALID_SOLVE_SCORE_METRICS and len(params) == 2 and params[0] == "slv":
+            params = [params[1]]
+        return [name, *params] if params else name
+
     return json.dumps(
-        [
-            ([item["name"], *item["params"]] if item.get("params") else item["name"])
-            for item in normalize_solve_score_chain(chain)
-        ],
+        [_serialize_item(item) for item in normalize_solve_score_chain(chain)],
         separators=(",", ":"),
     )
 
 
-def solve_score_chain_from_scalars(metric, omega=1.0, omega_enabled=True):
+def _metric_item(metric, quantile, source="slv"):
     metric_name = _validate_metric(metric)
-    chain = [{"name": metric_name, "params": []}]
+    q = _validate_quantile_fraction(quantile)
+    source_name = _validate_metric_source(source)
+    return {"name": metric_name, "params": [source_name, _format_quantile_percent(q * 100.0)]}
+
+
+def solve_score_chain_from_scalars(metric, quantile=0.001, omega=1.0, omega_enabled=True):
+    chain = [_metric_item(metric, quantile)]
     if _parse_boolish(omega_enabled, True):
         chain.append({"name": TRANSFER_CHIP_NAME, "params": [_format_number(_validate_omega(omega))]})
     return chain
 
 
-def compile_solve_score_chain(raw_chain):
-    chain = normalize_solve_score_chain(raw_chain)
-    if not chain:
-        raise RuntimeError("solve_score_chain must contain exactly one metric chip")
-    if len(chain) > 2:
-        raise RuntimeError("solve_score_chain v1 allows exactly one metric chip and at most one final transfer chip")
+def _metric_items_with_fallback(chain, legacy_quantile):
+    fallback = None if legacy_quantile in ("", None) else _validate_quantile_fraction(legacy_quantile)
+    total_metric_chips = sum(1 for item in chain if item["name"] in VALID_SOLVE_SCORE_METRICS)
+    if fallback is None and total_metric_chips == 1:
+        fallback = 0.001
+    items = []
+    for item in chain:
+        if item["name"] not in VALID_SOLVE_SCORE_METRICS:
+            items.append((item, None, None))
+            continue
+        params = list(item.get("params") or [])
+        if not params:
+            if fallback is None or total_metric_chips != 1:
+                raise RuntimeError(
+                    f"Metric chip {item['name']} requires q in percent, e.g. "
+                    f"{item['name']}(slv,0.1)"
+                )
+            params = ["slv", _format_quantile_percent(fallback * 100.0)]
+        elif len(params) == 1:
+            try:
+                source = _validate_metric_source(params[0])
+            except RuntimeError:
+                source = "slv"
+                q_pct = _validate_quantile_percent(params[0])
+                normalized = {"name": item["name"], "params": [source, _format_quantile_percent(q_pct)]}
+                items.append((normalized, source, q_pct / 100.0))
+                continue
+            if fallback is None or total_metric_chips != 1:
+                raise RuntimeError(
+                    f"Metric chip {item['name']} with source {source} requires q in percent, e.g. "
+                    f"{item['name']}({source},0.1)"
+                )
+            params = [source, _format_quantile_percent(fallback * 100.0)]
+        elif len(params) != 2:
+            raise RuntimeError(f"Metric chip {item['name']} requires source and q parameters")
+        source = _validate_metric_source(params[0])
+        q_pct = _validate_quantile_percent(params[1])
+        normalized = {"name": item["name"], "params": [source, _format_quantile_percent(q_pct)]}
+        items.append((normalized, source, q_pct / 100.0))
+    return items
 
-    metric_item = chain[0]
-    if metric_item["name"] not in VALID_SOLVE_SCORE_METRICS:
-        raise RuntimeError("solve_score_chain must start with a metric chip")
-    if metric_item.get("params"):
-        raise RuntimeError("metric chips do not take parameters in solve_score_chain v1")
-    metric = _validate_metric(metric_item["name"])
 
+def _build_program_spec(program_tokens):
+    parts = []
+    for token in program_tokens:
+        kind = token["kind"]
+        if kind == "metric":
+            parts.append(f"m{int(token['slot'])}")
+        elif kind == "weighted_sum":
+            parts.append(f"weighted_sum:{_format_number(token['a'])}:{_format_number(token['b'])}")
+        elif kind == TRANSFER_CHIP_NAME:
+            phase = float(token.get("phase", 0.0))
+            if abs(phase) < 1e-12:
+                parts.append(f"{TRANSFER_CHIP_NAME}:{_format_number(token['omega'])}")
+            else:
+                parts.append(
+                    f"{TRANSFER_CHIP_NAME}:{_format_number(token['omega'])}:{_format_number(phase)}"
+                )
+        elif kind == "sawtooth":
+            parts.append(f"sawtooth:{_format_number(token['mult'])}")
+        else:
+            parts.append(kind)
+    return ";".join(parts)
+
+
+def _metrics_csv(metrics, field):
+    values = []
+    for metric in metrics:
+        if field == "metric":
+            values.append(str(metric["metric"]))
+            continue
+        if field == "source":
+            values.append(_validate_metric_source(metric.get("source", "slv")))
+            continue
+        value = metric.get(field)
+        if value in ("", None):
+            raise RuntimeError(f"solve-score metric slot {metric.get('slot')} is missing {field}")
+        values.append(_format_number(value))
+    return ",".join(values)
+
+
+def _token_display(item):
+    name = item["name"]
+    params = item.get("params") or []
+    if name in VALID_SOLVE_SCORE_METRICS:
+        source = params[0] if len(params) > 0 else "slv"
+        q = params[1] if len(params) > 1 else (params[0] if params else "?")
+        if source == "slv":
+            return f"{name}(q={q}%)"
+        return f"{name}({source},q={q}%)"
+    if name == TRANSFER_CHIP_NAME:
+        omega = params[0] if len(params) > 0 else "?"
+        phase = params[1] if len(params) > 1 else "0"
+        try:
+            phase_value = float(phase)
+        except (TypeError, ValueError):
+            phase_value = None
+        if phase_value is not None and abs(phase_value) < 1e-12:
+            return f"ω-cos({omega})"
+        return f"ω-cos({omega},{phase})"
+    if name == "sawtooth":
+        return f"sawtooth({params[0] if params else '?'})"
+    if name == "weighted_sum":
+        a = params[0] if len(params) > 0 else "?"
+        b = params[1] if len(params) > 1 else "?"
+        return f"weighted_sum({a},{b})"
+    return f"{name}({','.join(params)})" if params else name
+
+
+def format_solve_score_chain_display(chain, legacy_quantile=None):
+    compiled = compile_solve_score_chain(chain, legacy_quantile=legacy_quantile)
+    return compiled["display"]
+
+
+def solve_score_chain_id(chain, legacy_quantile=None):
+    compiled = compile_solve_score_chain(chain, legacy_quantile=legacy_quantile)
+    return hashlib.sha1(serialize_solve_score_chain(compiled["chain"]).encode("utf-8")).hexdigest()[:12]
+
+
+def solve_score_program_cli_payload(compiled_or_metrics):
+    if isinstance(compiled_or_metrics, dict) and "metrics" in compiled_or_metrics:
+        metrics = compiled_or_metrics["metrics"]
+        program_spec = compiled_or_metrics["program_spec"]
+    else:
+        raise RuntimeError("solve_score_program_cli_payload expects a compiled solve-score chain")
+    payload = {
+        "score_metrics": _metrics_csv(metrics, "metric"),
+        "score_clip_los": _metrics_csv(metrics, "clip_lo"),
+        "score_clip_his": _metrics_csv(metrics, "clip_hi"),
+        "score_program": program_spec,
+    }
+    if any(_validate_metric_source(metric.get("source", "slv")) != "slv" for metric in metrics):
+        payload["score_sources"] = _metrics_csv(metrics, "source")
+    return payload
+
+
+def solve_score_uses_non_solve_sources(compiled_or_metrics):
+    metrics = compiled_or_metrics.get("metrics") if isinstance(compiled_or_metrics, dict) else compiled_or_metrics
+    if not isinstance(metrics, list):
+        return False
+    return any(_validate_metric_source(metric.get("source", "slv")) != "slv" for metric in metrics)
+
+
+def compile_solve_score_chain(raw_chain, legacy_quantile=None):
+    raw_items = normalize_solve_score_chain(raw_chain)
+    if not raw_items:
+        raise RuntimeError("solve_score_chain must contain at least one metric chip")
+
+    normalized_with_metrics = _metric_items_with_fallback(raw_items, legacy_quantile)
+    chain = [item for item, _, _ in normalized_with_metrics]
+    metrics = []
+    program_tokens = []
+    stack_depth = 0
     omega = 1.0
+    omega_phase = 0.0
     omega_enabled = False
-    if len(chain) == 2:
-        transfer = chain[1]
-        if transfer["name"] != TRANSFER_CHIP_NAME:
-            raise RuntimeError(f"solve_score_chain final chip must be {TRANSFER_CHIP_NAME}")
-        if len(transfer["params"]) != 1:
-            raise RuntimeError(f"{TRANSFER_CHIP_NAME} requires exactly one omega parameter")
-        omega = _validate_omega(transfer["params"][0])
-        omega_enabled = True
 
+    for item, metric_source, metric_quantile in normalized_with_metrics:
+        name = item["name"]
+        params = item.get("params") or []
+        if name in VALID_SOLVE_SCORE_METRICS:
+            slot = len(metrics)
+            if slot >= MAX_METRIC_SLOTS:
+                raise RuntimeError(f"solve_score_chain supports at most {MAX_METRIC_SLOTS} metric chips")
+            metric_name = _validate_metric(name)
+            q = _validate_quantile_fraction(metric_quantile)
+            metrics.append(
+                {
+                    "slot": slot,
+                    "source": metric_source,
+                    "metric": metric_name,
+                    "quantile": q,
+                    "quantile_pct": q * 100.0,
+                    "clip_lo": None,
+                    "clip_hi": None,
+                }
+            )
+            program_tokens.append({"kind": "metric", "slot": slot, "metric": metric_name})
+            stack_depth += 1
+            continue
+
+        if name == TRANSFER_CHIP_NAME:
+            if stack_depth < 1:
+                raise RuntimeError(f"{TRANSFER_CHIP_NAME} requires one score value on the stack")
+            if len(params) == 1:
+                params = [params[0], "0"]
+            if len(params) != 2:
+                raise RuntimeError(f"{TRANSFER_CHIP_NAME} requires exactly two parameters: omega and phase")
+            omega = _validate_omega(params[0])
+            omega_phase = _validate_omega_phase(params[1])
+            program_tokens.append({"kind": TRANSFER_CHIP_NAME, "omega": omega, "phase": omega_phase})
+            omega_enabled = True
+            continue
+        if name == "sawtooth":
+            if stack_depth < 1:
+                raise RuntimeError("sawtooth requires one score value on the stack")
+            if len(params) != 1:
+                raise RuntimeError("sawtooth requires exactly one multiplier parameter")
+            try:
+                mult = float(params[0])
+            except (TypeError, ValueError):
+                raise RuntimeError("sawtooth requires one numeric multiplier")
+            if not (mult == mult and abs(mult) != float("inf")):
+                raise RuntimeError("sawtooth requires one finite numeric multiplier")
+            program_tokens.append({"kind": "sawtooth", "mult": mult})
+            continue
+        if name == "flip":
+            if stack_depth < 1:
+                raise RuntimeError("flip requires one score value on the stack")
+            if len(params) != 0:
+                raise RuntimeError("flip takes no parameters")
+            program_tokens.append({"kind": "flip"})
+            continue
+
+        spec = COMBINE_CHIPS.get(name)
+        if not spec:
+            raise RuntimeError(f"Invalid solve-score chip: {name!r}")
+        if stack_depth < spec["arity"]:
+            raise RuntimeError(f"{name} requires {spec['arity']} inputs but the current stack depth is {stack_depth}")
+        if len(params) != spec["params"]:
+            raise RuntimeError(f"{name} requires exactly {spec['params']} parameter(s)")
+        token = {"kind": name}
+        if name == "weighted_sum":
+            try:
+                a = float(params[0])
+                b = float(params[1])
+            except (TypeError, ValueError):
+                raise RuntimeError(f"{name} requires two numeric weights")
+            if not (abs(a) > 0 or abs(b) > 0):
+                raise RuntimeError(f"{name} requires at least one non-zero weight")
+            token["a"] = a
+            token["b"] = b
+        program_tokens.append(token)
+        stack_depth -= spec["arity"] - 1
+
+    if not metrics:
+        raise RuntimeError("solve_score_chain must contain at least one metric chip")
+    if stack_depth != 1:
+        raise RuntimeError(f"solve_score_chain must end with stack depth 1, got {stack_depth}")
+    if len(program_tokens) > MAX_PROGRAM_TOKENS:
+        raise RuntimeError(f"solve_score_chain supports at most {MAX_PROGRAM_TOKENS} program tokens")
+
+    primary_metric = metrics[0]["metric"]
+    primary_quantile = metrics[0]["quantile"]
+    display = " ".join(_token_display(item) for item in chain)
+    program_spec = _build_program_spec(program_tokens)
+    all_solve_sources = all(metric.get("source", "slv") == "slv" for metric in metrics)
+    legacy_compatible = all_solve_sources and (
+        (
+            len(program_tokens) == 1
+            and program_tokens[0]["kind"] == "metric"
+        ) or (
+            len(program_tokens) == 2
+            and program_tokens[0]["kind"] == "metric"
+            and program_tokens[1]["kind"] == TRANSFER_CHIP_NAME
+            and abs(program_tokens[1]["phase"]) < 1e-12
+        )
+    )
     return {
         "chain": chain,
-        "metric": metric,
+        "metrics": metrics,
+        "metric_count": len(metrics),
+        "metric": primary_metric,
+        "quantile": primary_quantile,
         "omega": omega,
+        "omega_phase": omega_phase,
         "omega_enabled": omega_enabled,
-        "display": f"{metric} {'w=' + _format_number(omega) if omega_enabled else 'w=off'}",
+        "program_tokens": program_tokens,
+        "program_spec": program_spec,
+        "program_id": hashlib.sha1(program_spec.encode("utf-8")).hexdigest()[:12],
+        "legacy_compatible": legacy_compatible,
+        "display": display,
     }
 
 
-def compile_solve_score_chain_or_legacy(raw_chain, metric, omega, omega_enabled, default_metric=None):
-    omega_enabled_value = _parse_boolish(omega_enabled, True)
-    legacy_omega = 1.0 if omega in ("", None) else _validate_omega(omega)
+def compile_solve_score_chain_or_legacy(
+    raw_chain,
+    metric,
+    quantile=None,
+    omega=None,
+    omega_enabled=None,
+    default_metric=None,
+):
+    # Backward-compatible call shape:
+    #   (raw_chain, metric, omega, omega_enabled, default_metric=...)
+    if omega_enabled is None:
+        legacy_quantile = 0.001
+        legacy_omega_input = quantile
+        legacy_omega_enabled_input = omega
+    else:
+        legacy_quantile = _validate_quantile_fraction(quantile if quantile not in ("", None) else 0.001)
+        legacy_omega_input = omega
+        legacy_omega_enabled_input = omega_enabled
+    omega_enabled_value = _parse_boolish(legacy_omega_enabled_input, True)
+    legacy_omega = 1.0 if legacy_omega_input in ("", None) else _validate_omega(legacy_omega_input)
     if raw_chain not in ("", None, []):
-        compiled = compile_solve_score_chain(raw_chain)
+        compiled = compile_solve_score_chain(raw_chain, legacy_quantile=legacy_quantile)
         if not compiled["omega_enabled"] and not omega_enabled_value:
             compiled = {
                 **compiled,
                 "omega": legacy_omega,
-                "display": f"{compiled['metric']} w=off",
             }
         return compiled
     metric_value = str(metric or default_metric or "").strip()
@@ -210,6 +540,7 @@ def compile_solve_score_chain_or_legacy(raw_chain, metric, omega, omega_enabled,
         raise RuntimeError("solve-score metadata is missing a metric")
     compiled_chain = solve_score_chain_from_scalars(
         metric_value,
+        legacy_quantile,
         legacy_omega,
         omega_enabled_value,
     )
@@ -218,7 +549,6 @@ def compile_solve_score_chain_or_legacy(raw_chain, metric, omega, omega_enabled,
         compiled = {
             **compiled,
             "omega": legacy_omega,
-            "display": f"{compiled['metric']} w=off",
         }
     return compiled
 
@@ -228,6 +558,7 @@ def emit_solve_score_metadata(scope, metric, quantile, omega, omega_enabled, cha
     compiled = compile_solve_score_chain_or_legacy(
         chain,
         metric,
+        quantile,
         omega,
         omega_enabled,
         default_metric=metric,
@@ -235,7 +566,7 @@ def emit_solve_score_metadata(scope, metric, quantile, omega, omega_enabled, cha
     metadata = {
         fields["chain"]: serialize_solve_score_chain(compiled["chain"]),
         fields["metric"]: compiled["metric"],
-        fields["quantile"]: "" if quantile in ("", None) else str(quantile),
+        fields["quantile"]: "" if compiled["quantile"] in ("", None) else str(compiled["quantile"]),
         fields["omega"]: str(compiled["omega"]),
         fields["omega_enabled"]: "true" if compiled["omega_enabled"] else "false",
     }
@@ -247,18 +578,21 @@ def read_solve_score_metadata(scope, meta, default_metric=None, default_omega_en
     compiled = compile_solve_score_chain_or_legacy(
         (meta or {}).get(fields["chain"], ""),
         (meta or {}).get(fields["metric"], default_metric or ""),
+        (meta or {}).get(fields["quantile"], ""),
         (meta or {}).get(fields["omega"], 1.0),
         (meta or {}).get(fields["omega_enabled"], default_omega_enabled),
         default_metric=default_metric,
     )
-    quantile_raw = (meta or {}).get(fields["quantile"], "")
-    quantile = None if quantile_raw in ("", None) else float(quantile_raw)
+    quantile = compiled["quantile"]
     return {
         "chain": compiled["chain"],
         "chain_json": serialize_solve_score_chain(compiled["chain"]),
         "metric": compiled["metric"],
+        "metrics": compiled["metrics"],
         "quantile": quantile,
         "omega": compiled["omega"],
+        "omega_phase": compiled["omega_phase"],
         "omega_enabled": compiled["omega_enabled"],
+        "program_spec": compiled["program_spec"],
         "display": compiled["display"],
     }

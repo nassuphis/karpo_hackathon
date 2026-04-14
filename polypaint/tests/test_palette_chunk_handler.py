@@ -250,6 +250,82 @@ class TestPaletteChunkHandler(unittest.TestCase):
             self.assertEqual(done_kwargs["result_data"]["dl_ms"], 11)
             self.assertEqual(done_kwargs["result_data"]["compute_ms"], 22)
 
+    @patch("handler_palette_chunk.report_status")
+    @patch("handler_palette_chunk.s3")
+    @patch("handler_palette_chunk.subprocess.run")
+    def test_v2_bins_use_program_cli_flags(self, mock_run, mock_s3, mock_report):
+        import handler_palette_chunk as mod
+
+        with tempfile.TemporaryDirectory() as td, \
+             patch.object(mod, "_TMP_INPUT", os.path.join(td, "input.bin")), \
+             patch.object(mod, "_TMP_SCORES", os.path.join(td, "scores.bin")), \
+             patch.object(mod, "_TMP_BINS", os.path.join(td, "bins.bin")), \
+             patch.object(mod, "_TMP_XFORMS", os.path.join(td, "xforms.json")):
+
+            chunk_bytes = b"\x00" * (5 * 2 * 4 * 4)
+            bins_meta = {
+                "family": "solve_score",
+                "version": 2,
+                "metric": "spread",
+                "clip_quantile": 0.02,
+                "omega": 5.0,
+                "omega_enabled": True,
+                "clip_lo": -1.5,
+                "clip_hi": 2.5,
+                "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                "program": "m0;m1;weighted_sum:0.7:0.3;omega_cosine:5",
+                "metrics": [
+                    {"slot": 0, "metric": "spread", "quantile": 0.02, "clip_lo": -1.5, "clip_hi": 2.5},
+                    {"slot": 1, "metric": "shelliness", "quantile": 0.03, "clip_lo": -0.75, "clip_hi": 1.75},
+                ],
+            }
+
+            def get_object(**kwargs):
+                key = kwargs["Key"]
+                if key == "renders/j/chunk_3.bin":
+                    body = MagicMock()
+                    body.iter_chunks.return_value = [chunk_bytes]
+                    return {"Body": body}
+                if key == "renders/j/palettes/p1/solve_score/crowding_bins.json":
+                    return {"Body": MagicMock(read=lambda: json.dumps(bins_meta).encode())}
+                raise AssertionError(f"unexpected get_object key: {key}")
+
+            mock_s3.get_object.side_effect = get_object
+            mock_s3.upload_fileobj.side_effect = lambda *args, **kwargs: None
+
+            def run_side_effect(cmd, capture_output, text, timeout):
+                self.assertIn("--score_metrics=spread,shelliness", cmd)
+                self.assertIn("--score_clip_los=-1.5,-0.75", cmd)
+                self.assertIn("--score_clip_his=2.5,1.75", cmd)
+                self.assertIn("--score_program=m0;m1;weighted_sum:0.7:0.3;omega_cosine:5", cmd)
+                self.assertFalse(any(a.startswith("--metric=") for a in cmd))
+                self.assertFalse(any(a.startswith("--clip_lo=") for a in cmd))
+                self.assertFalse(any(a.startswith("--clip_hi=") for a in cmd))
+                scores = array("f", [1.25, 2.25, 3.25, 4.25])
+                with open(mod._TMP_SCORES, "wb") as f:
+                    scores.tofile(f)
+                with open(mod._TMP_BINS, "wb") as f:
+                    f.write(bytes([1, 3, 5, 7]))
+                return MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({"min_score": 1.25, "max_score": 4.25}),
+                    stderr="",
+                )
+
+            mock_run.side_effect = run_side_effect
+
+            result = mod.handler(_event(
+                metric="spread",
+                solve_score_quantile=0.02,
+                solve_score_omega=5.0,
+                solve_score_omega_enabled=True,
+            ), None)
+            body = json.loads(result["body"])
+
+            self.assertEqual(body["chunk_idx"], 3)
+            statuses = [c.args[2] for c in mock_report.call_args_list]
+            self.assertEqual(statuses, ["started", "bin_downloaded", "computed", "done"])
+
 
 if __name__ == "__main__":
     unittest.main()

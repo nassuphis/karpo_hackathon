@@ -82,6 +82,8 @@ typedef struct {
     enum ColorMode colorMode;
     enum InputMode inputMode;
     enum SolveMetric solveMetric;
+    SolveScoreProgram solveScoreProgram;
+    int useScoreProgram;
     double solveScoreClipLo;
     double solveScoreClipHi;
     double solveScoreOmega;
@@ -350,7 +352,6 @@ static void *worker_main(void *arg_) {
     float stepBuf[MAXDEG * 2];
     float wkRe[MAXDEG];
     float wkIm[MAXDEG];
-    double ssRange = arg->solveScoreClipHi - arg->solveScoreClipLo;
     unsigned char *sectionBuf = NULL;
     const float *sectionRoots = NULL;
     long localSolves = arg->end - arg->start;
@@ -397,11 +398,17 @@ static void *worker_main(void *arg_) {
         uint8_t solveBin = 255;
 
         if (arg->colorMode == COLOR_SOLVE_SCORE) {
-            double score = compute_solve_metric_score(step, arg->degree, arg->solveMetric);
-            double u = (score - arg->solveScoreClipLo) / ssRange;
-            if (u < 0) u = 0;
-            if (u > 1) u = 1;
-            u = apply_solve_score_transfer(u, arg->solveScoreOmegaEnabled, arg->solveScoreOmega);
+            double u;
+            if (arg->useScoreProgram) {
+                u = solve_score_eval_program(step, arg->degree, &arg->solveScoreProgram);
+            } else {
+                double score = compute_solve_metric_score(step, arg->degree, arg->solveMetric);
+                double ssRange = arg->solveScoreClipHi - arg->solveScoreClipLo;
+                u = (score - arg->solveScoreClipLo) / ssRange;
+                if (u < 0) u = 0;
+                if (u > 1) u = 1;
+                u = apply_solve_score_transfer(u, arg->solveScoreOmegaEnabled, arg->solveScoreOmega);
+            }
             int bin = 9;
             for (int c = 0; c < arg->nSolveScoreCuts; c++) {
                 if (u <= arg->solveScoreCuts[c]) { bin = c; break; }
@@ -578,6 +585,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "ERROR: unknown solve_metric '%s'\n", solveMetricStr);
         return 1;
     }
+    const char *scoreMetricsCsv = getArgStr(argc, argv, "--score_metrics", NULL);
+    const char *scoreClipLosCsv = getArgStr(argc, argv, "--score_clip_los", NULL);
+    const char *scoreClipHisCsv = getArgStr(argc, argv, "--score_clip_his", NULL);
+    const char *scoreProgramSpec = getArgStr(argc, argv, "--score_program", NULL);
 
     double solveScoreClipLo = getArgDouble(argc, argv, "--solve_score_clip_lo",
                                getArgDouble(argc, argv, "--solve_prox_clip_lo", 0));
@@ -585,6 +596,8 @@ int main(int argc, char **argv) {
                                getArgDouble(argc, argv, "--solve_prox_clip_hi", 0));
     double solveScoreOmega = getArgDouble(argc, argv, "--solve_score_omega", 1.0);
     int solveScoreOmegaEnabled = getArgInt(argc, argv, "--solve_score_omega_enabled", 1);
+    SolveScoreProgram solveScoreProgram;
+    int useScoreProgram = 0;
     double solveScoreCuts[9] = {0};
     int nSolveScoreCuts = 0;
     {
@@ -601,12 +614,27 @@ int main(int argc, char **argv) {
             }
         }
     }
+    if (scoreMetricsCsv || scoreClipLosCsv || scoreClipHisCsv || scoreProgramSpec) {
+        char scoreErr[256] = {0};
+        if (!scoreMetricsCsv || !scoreClipLosCsv || !scoreClipHisCsv || !scoreProgramSpec) {
+            fprintf(stderr, "solve_score program requires --score_metrics, --score_clip_los, --score_clip_his, and --score_program together\n");
+            return 1;
+        }
+        if (!parse_solve_score_program_args(
+                scoreMetricsCsv, scoreClipLosCsv, scoreClipHisCsv, scoreProgramSpec,
+                &solveScoreProgram, scoreErr, sizeof(scoreErr))) {
+            fprintf(stderr, "Invalid solve_score program: %s\n", scoreErr[0] ? scoreErr : "unknown error");
+            return 1;
+        }
+        solveMetric = solveScoreProgram.metrics[0];
+        useScoreProgram = 1;
+    }
     if (colorMode == COLOR_SOLVE_SCORE) {
         if (nSolveScoreCuts != 9) {
             fprintf(stderr, "solve_score requires exactly 9 cuts (got %d)\n", nSolveScoreCuts);
             return 1;
         }
-        if (solveScoreClipHi - solveScoreClipLo < 1e-12) {
+        if (!useScoreProgram && solveScoreClipHi - solveScoreClipLo < 1e-12) {
             fprintf(stderr, "solve_score requires valid clip range\n");
             return 1;
         }
@@ -808,6 +836,8 @@ int main(int argc, char **argv) {
         args[i].colorMode = colorMode;
         args[i].inputMode = inputMode;
         args[i].solveMetric = solveMetric;
+        args[i].useScoreProgram = useScoreProgram;
+        args[i].solveScoreProgram = solveScoreProgram;
         args[i].solveScoreClipLo = solveScoreClipLo;
         args[i].solveScoreClipHi = solveScoreClipHi;
         args[i].solveScoreOmega = solveScoreOmega;

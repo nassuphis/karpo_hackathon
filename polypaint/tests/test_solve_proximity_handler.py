@@ -131,7 +131,7 @@ def test_hist_tmpfile_mode_runs_binary_with_tmp_input():
 
     mock_s3 = _make_hist_mock_s3(
         b"\x00" * 32,
-        {"clip_lo": 0.0, "clip_hi": 1.0, "family": "solve_score", "metric": "proximity"},
+        {"clip_lo": 0.0, "clip_hi": 1.0, "family": "solve_score", "metric": "proximity", "clip_quantile": 0.001, "omega": 1.0, "omega_enabled": True},
     )
     mock_run = mock.MagicMock(return_value=mock.MagicMock(
         returncode=0,
@@ -177,7 +177,7 @@ def test_hist_stdin_mode_streams_input_and_passes_input_size():
 
     mock_s3 = _make_hist_mock_s3(
         b"\x01" * 48,
-        {"clip_lo": -1.0, "clip_hi": 2.0, "family": "solve_score", "metric": "centroid_re"},
+        {"clip_lo": -1.0, "clip_hi": 2.0, "family": "solve_score", "metric": "centroid_re", "clip_quantile": 0.001, "omega": 1.0, "omega_enabled": True},
     )
     mock_stream = mock.MagicMock(return_value=(0, json.dumps({"threads": 5, "n_solves": 3, "hist": [1, 1, 1]}), "", 12, 34))
     orig_s3, orig_report, orig_stream = hsp.s3, hsp.report_status, hsp._run_binary_with_streamed_input
@@ -236,7 +236,7 @@ def test_hist_sectioned_mode_uses_presigned_url_and_sectioned_binary():
 
     mock_s3 = _make_hist_mock_s3(
         b"\x02" * 64,
-        {"clip_lo": -2.0, "clip_hi": 3.0, "family": "solve_score", "metric": "centroid_re"},
+        {"clip_lo": -2.0, "clip_hi": 3.0, "family": "solve_score", "metric": "centroid_re", "clip_quantile": 0.001, "omega": 1.0, "omega_enabled": True},
     )
     mock_run = mock.MagicMock(return_value=mock.MagicMock(
         returncode=0,
@@ -291,7 +291,7 @@ def test_hist_sectioned_failure_includes_object_context():
 
     mock_s3 = _make_hist_mock_s3(
         b"\x02" * 64,
-        {"clip_lo": -2.0, "clip_hi": 3.0, "family": "solve_score", "metric": "centroid_re"},
+        {"clip_lo": -2.0, "clip_hi": 3.0, "family": "solve_score", "metric": "centroid_re", "clip_quantile": 0.001, "omega": 1.0, "omega_enabled": True},
     )
     mock_run = mock.MagicMock(return_value=mock.MagicMock(
         returncode=1,
@@ -325,6 +325,129 @@ def test_hist_sectioned_failure_includes_object_context():
             assert "chunk=7" in msg
             assert "threads=6" in msg
             assert "range GET failed for bytes 16-31" in msg
+    finally:
+        hsp.s3 = orig_s3
+        hsp.report_status = orig_report
+        hsp.subprocess.run = orig_run
+
+
+def test_hist_v2_clip_uses_program_cli_flags():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = _make_hist_mock_s3(
+        b"\x03" * 64,
+        {
+            "family": "solve_score",
+            "version": 2,
+            "metric": "spread",
+            "clip_quantile": 0.02,
+            "omega": 5.0,
+            "omega_enabled": True,
+            "clip_lo": -1.0,
+            "clip_hi": 2.0,
+            "program": "m0;m1;weighted_sum:0.7:0.3;omega_cosine:5",
+            "metrics": [
+                {"slot": 0, "metric": "spread", "quantile": 0.02, "clip_lo": -1.0, "clip_hi": 2.0},
+                {"slot": 1, "metric": "shelliness", "quantile": 0.03, "clip_lo": -0.5, "clip_hi": 1.5},
+            ],
+        },
+    )
+    mock_run = mock.MagicMock(return_value=mock.MagicMock(
+        returncode=0,
+        stdout=json.dumps({"threads": 2, "n_solves": 4, "hist": [1, 1, 1, 1]}),
+        stderr="",
+    ))
+    orig_s3, orig_report, orig_run = hsp.s3, hsp.report_status, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.report_status = mock.MagicMock()
+    hsp.subprocess.run = mock_run
+    try:
+        result = hsp.handle_hist({
+            "job_id": "test",
+            "task_id": "hist_test",
+            "chunk_idx": 0,
+            "metric": "spread",
+            "solve_score_quantile": 0.02,
+            "solve_score_omega": 5.0,
+            "solve_score_omega_enabled": True,
+            "solve_score_chain": [["spread", "2"], ["shelliness", "3"], ["weighted_sum", "0.7", "0.3"], ["omega_cosine", "5"]],
+            "bin_key": "renders/test/chunk_0.bin",
+            "degree": 4,
+            "clip_key": "renders/test/solve_scores/clip.json",
+            "hist_bins": 4,
+            "out_key": "renders/test/solve_scores/chunk_0_hist.json",
+        })
+        body = json.loads(result["body"])
+        assert body["metric"] == "spread"
+        cmd = mock_run.call_args.args[0]
+        assert any(arg == "--score_metrics=spread,shelliness" for arg in cmd)
+        assert any(arg == "--score_clip_los=-1,-0.5" for arg in cmd)
+        assert any(arg == "--score_clip_his=2,1.5" for arg in cmd)
+        assert any(arg == "--score_program=m0;m1;weighted_sum:0.7:0.3;omega_cosine:5" for arg in cmd)
+        assert not any(arg.startswith("--metric=") for arg in cmd)
+        assert not any(arg.startswith("--clip_lo=") for arg in cmd)
+        assert not any(arg.startswith("--clip_hi=") for arg in cmd)
+        written = json.loads(hsp.s3.put_object.call_args.kwargs["Body"])
+        assert written["version"] == 2
+        assert written["program"] == "m0;m1;weighted_sum:0.7:0.3;omega_cosine:5"
+        assert written["metric_count"] == 2
+    finally:
+        hsp.s3 = orig_s3
+        hsp.report_status = orig_report
+        hsp.subprocess.run = orig_run
+
+
+def test_hist_v2_clip_preserves_omega_phase_in_program_cli():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = _make_hist_mock_s3(
+        b"\x03" * 64,
+        {
+            "family": "solve_score",
+            "version": 2,
+            "metric": "spread",
+            "clip_quantile": 0.02,
+            "omega": 5.0,
+            "omega_enabled": True,
+            "clip_lo": -1.0,
+            "clip_hi": 2.0,
+            "program": "m0;omega_cosine:5:1.25",
+            "metrics": [
+                {"slot": 0, "metric": "spread", "quantile": 0.02, "clip_lo": -1.0, "clip_hi": 2.0},
+            ],
+        },
+    )
+    mock_run = mock.MagicMock(return_value=mock.MagicMock(
+        returncode=0,
+        stdout=json.dumps({"threads": 2, "n_solves": 4, "hist": [1, 1, 1, 1]}),
+        stderr="",
+    ))
+    orig_s3, orig_report, orig_run = hsp.s3, hsp.report_status, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.report_status = mock.MagicMock()
+    hsp.subprocess.run = mock_run
+    try:
+        result = hsp.handle_hist({
+            "job_id": "test",
+            "task_id": "hist_test_phase",
+            "chunk_idx": 0,
+            "metric": "spread",
+            "solve_score_quantile": 0.02,
+            "solve_score_omega": 5.0,
+            "solve_score_omega_enabled": True,
+            "solve_score_chain": [["spread", "2"], ["omega_cosine", "5", "1.25"]],
+            "bin_key": "renders/test/chunk_0.bin",
+            "degree": 4,
+            "clip_key": "renders/test/solve_scores/clip.json",
+            "hist_bins": 4,
+            "out_key": "renders/test/solve_scores/chunk_0_hist.json",
+        })
+        body = json.loads(result["body"])
+        assert body["metric"] == "spread"
+        cmd = mock_run.call_args.args[0]
+        assert any(arg == "--score_program=m0;omega_cosine:5:1.25" for arg in cmd)
+        written = json.loads(hsp.s3.put_object.call_args.kwargs["Body"])
+        assert written["program"] == "m0;omega_cosine:5:1.25"
     finally:
         hsp.s3 = orig_s3
         hsp.report_status = orig_report
@@ -678,6 +801,173 @@ def test_summary_validates_quantile():
         assert False, "should have raised"
     except RuntimeError as e:
         assert "0.001" in str(e) or "0.05" in str(e)
+
+
+def test_summary_handler_returns_structured_500_with_program_details():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = mock.MagicMock()
+    mock_s3.get_object = mock.MagicMock(return_value={"Body": _ChunkBody(b"\x00" * 64)})
+    mock_run = mock.MagicMock(return_value=mock.MagicMock(
+        returncode=1,
+        stdout="",
+        stderr="Invalid score program: invalid metric slot token 'mul'",
+    ))
+    orig_s3, orig_run = hsp.s3, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.subprocess.run = mock_run
+    try:
+        result = hsp.handler({
+            "body": {
+                "phase": "summary",
+                "job_id": "job123",
+                "degree": 4,
+                "metric": "centroid_im",
+                "solve_score_quantile": 0.05,
+                "solve_score_chain": [["centroid_im", "5"], ["anisotropy", "5"], ["mul"]],
+                "lores_bin_key": "renders/test/lores.bin",
+            }
+        }, None)
+        assert result["statusCode"] == 500
+        body = json.loads(result["body"])
+        assert body["error"] == "solve histogram summary failed"
+        assert body["phase"] == "summary"
+        assert body["metric"] == "centroid_im"
+        assert body["metric_count"] == 2
+        assert body["program"] == "m0;m1;mul"
+        assert body["score_metrics"] == ["centroid_im", "anisotropy"]
+        assert body["score_sources"] == ["slv", "slv"]
+        assert "mul" in body["solve_score_display"]
+        assert body["solve_score_chain"] == [["centroid_im", "5"], ["anisotropy", "5"], "mul"]
+        assert "invalid metric slot token 'mul'" in body["detail"]
+    finally:
+        hsp.s3 = orig_s3
+        hsp.subprocess.run = orig_run
+
+
+def test_summary_mixed_source_requires_n_coeffs_metadata():
+    import handler_solve_proximity as hsp
+
+    try:
+        hsp.handle_summary({
+            "degree": 5,
+            "metric": "spread",
+            "solve_score_quantile": 0.001,
+            "solve_score_chain": [["spread", "slv", "1"], ["spread", "cf", "1"], ["avg"]],
+            "lores_bin_key": "renders/test/lores.bin",
+        })
+        assert False, "should have raised"
+    except RuntimeError as e:
+        assert "n_coeffs" in str(e)
+
+
+def test_summary_mixed_source_forwards_coeff_cli_args():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = mock.MagicMock()
+
+    def mock_get(**kwargs):
+        key = kwargs.get("Key", "")
+        if key == "renders/test/lores.bin":
+            return {"Body": _ChunkBody(b"\x00" * 64)}
+        if key == "renders/test/lores_coeffs.bin":
+            return {"Body": _ChunkBody(b"\x00" * 80)}
+        raise AssertionError(f"unexpected get_object key: {key}")
+
+    mock_s3.get_object = mock_get
+    clip_stdout = [
+        json.dumps({"clip_lo": 0.0, "clip_hi": 1.0, "min_score": 0.0, "max_score": 1.0, "n_solves": 4, "threads": 1}),
+        json.dumps({"clip_lo": -2.0, "clip_hi": 3.0, "min_score": -2.0, "max_score": 3.0, "n_solves": 4, "threads": 1}),
+    ]
+    summary_stdout = json.dumps({"n_solves": 4, "degree": 4, "threads": 1})
+
+    calls = []
+
+    def mock_run(cmd, capture_output, text, timeout):
+        calls.append(list(cmd))
+        if "--mode=clip" in cmd:
+            return mock.MagicMock(returncode=0, stdout=clip_stdout.pop(0), stderr="")
+        if "--mode=summary" in cmd:
+            return mock.MagicMock(returncode=0, stdout=summary_stdout, stderr="")
+        raise AssertionError(f"unexpected subprocess command: {cmd}")
+
+    orig_s3, orig_run = hsp.s3, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.subprocess.run = mock_run
+    try:
+        result = hsp.handle_summary({
+            "degree": 4,
+            "n_coeffs": 5,
+            "metric": "spread",
+            "solve_score_quantile": 0.001,
+            "solve_score_chain": [["spread", "slv", "1"], ["spread", "cf", "1"], ["avg"]],
+            "lores_bin_key": "renders/test/lores.bin",
+            "lores_coeffs_key": "renders/test/lores_coeffs.bin",
+        })
+        body = json.loads(result["body"])
+        assert body["score_sources"] == ["slv", "cf"]
+        assert body["lores_coeffs_key"] == "renders/test/lores_coeffs.bin"
+        assert body["n_coeffs"] == 5
+        summary_cmd = next(cmd for cmd in calls if "--mode=summary" in cmd)
+        assert "--score_sources=slv,cf" in summary_cmd
+        assert "--score_coeffs_file=/tmp/solve_prox_coeff_input.bin" in summary_cmd
+        assert "--score_coeff_degree=5" in summary_cmd
+    finally:
+        hsp.s3 = orig_s3
+        hsp.subprocess.run = orig_run
+
+
+def test_summary_mixed_source_falls_back_to_canonical_coeff_key():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = mock.MagicMock()
+
+    def mock_get(**kwargs):
+        key = kwargs.get("Key", "")
+        if key == "renders/test/lores.bin":
+            return {"Body": _ChunkBody(b"\x00" * 64)}
+        if key == "renders/test/lores_coeffs.bin":
+            return {"Body": _ChunkBody(b"\x00" * 80)}
+        raise AssertionError(f"unexpected get_object key: {key}")
+
+    mock_s3.get_object = mock_get
+    clip_stdout = [
+        json.dumps({"clip_lo": 0.0, "clip_hi": 1.0, "min_score": 0.0, "max_score": 1.0, "n_solves": 4, "threads": 1}),
+        json.dumps({"clip_lo": -2.0, "clip_hi": 3.0, "min_score": -2.0, "max_score": 3.0, "n_solves": 4, "threads": 1}),
+    ]
+    summary_stdout = json.dumps({"n_solves": 4, "degree": 4, "threads": 1})
+
+    calls = []
+
+    def mock_run(cmd, capture_output, text, timeout):
+        calls.append(list(cmd))
+        if "--mode=clip" in cmd:
+            return mock.MagicMock(returncode=0, stdout=clip_stdout.pop(0), stderr="")
+        if "--mode=summary" in cmd:
+            return mock.MagicMock(returncode=0, stdout=summary_stdout, stderr="")
+        raise AssertionError(f"unexpected subprocess command: {cmd}")
+
+    orig_s3, orig_run = hsp.s3, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.subprocess.run = mock_run
+    try:
+        result = hsp.handle_summary({
+            "job_id": "test",
+            "degree": 4,
+            "n_coeffs": 5,
+            "metric": "spread",
+            "solve_score_quantile": 0.001,
+            "solve_score_chain": [["spread", "slv", "1"], ["spread", "cf", "1"], ["avg"]],
+            "lores_bin_key": "renders/test/lores.bin",
+        })
+        body = json.loads(result["body"])
+        assert body["lores_coeffs_key"] == "renders/test/lores_coeffs.bin"
+        summary_cmd = next(cmd for cmd in calls if "--mode=summary" in cmd)
+        assert "--score_coeffs_file=/tmp/solve_prox_coeff_input.bin" in summary_cmd
+        assert "--score_coeff_degree=5" in summary_cmd
+    finally:
+        hsp.s3 = orig_s3
+        hsp.subprocess.run = orig_run
 
 
 def test_summary_does_not_report_status():

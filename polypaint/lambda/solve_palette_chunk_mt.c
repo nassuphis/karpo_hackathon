@@ -133,6 +133,8 @@ typedef struct {
     unsigned long long byteStart;
     unsigned long long byteEnd;
     enum SolveMetric metric;
+    SolveScoreProgram program;
+    int useProgram;
     RootXformEntry *rtChain;
     int nRt;
     double clipLo;
@@ -179,6 +181,22 @@ static double score_xformed(const float *roots, int degree, enum SolveMetric met
     return compute_solve_metric_score(xformed, degree, metric);
 }
 
+static double score_program_xformed(const float *roots, int degree, const SolveScoreProgram *program,
+                                    RootXformEntry *rtChain, int nRt,
+                                    float *wkRe, float *wkIm) {
+    float xformed[MAXDEG * 2];
+    for (int k = 0; k < degree; k++) {
+        wkRe[k] = roots[k * 2];
+        wkIm[k] = roots[k * 2 + 1];
+    }
+    apply_root_xforms(rtChain, nRt, wkRe, wkIm, degree);
+    for (int k = 0; k < degree; k++) {
+        xformed[k * 2] = wkRe[k];
+        xformed[k * 2 + 1] = wkIm[k];
+    }
+    return solve_score_eval_program(xformed, degree, program);
+}
+
 static unsigned char score_to_bin(double score, double clipLo, double clipHi,
                                   double omega, int omegaEnabled, const double cuts[9]) {
     double range = clipHi - clipLo;
@@ -196,6 +214,19 @@ static unsigned char score_to_bin(double score, double clipLo, double clipHi,
     return bin;
 }
 
+static unsigned char u_to_bin(double u, const double cuts[9]) {
+    if (u < 0) u = 0;
+    if (u > 1) u = 1;
+    unsigned char bin = 9;
+    for (int c = 0; c < 9; c++) {
+        if (u <= cuts[c]) {
+            bin = (unsigned char)c;
+            break;
+        }
+    }
+    return bin;
+}
+
 static void compute_scores_for_roots(const float *roots, long solveCount, long solveStart,
                                      ChunkWorkerArgs *arg) {
     float wkRe[MAXDEG], wkIm[MAXDEG];
@@ -203,12 +234,21 @@ static void compute_scores_for_roots(const float *roots, long solveCount, long s
     long computeStart = monotonic_ms();
     for (long s = 0; s < solveCount; s++) {
         const float *solveRoots = roots + s * stride;
-        double score = (arg->nRt > 0)
-            ? score_xformed(solveRoots, arg->degree, arg->metric, arg->rtChain, arg->nRt, wkRe, wkIm)
-            : compute_solve_metric_score(solveRoots, arg->degree, arg->metric);
+        double score;
+        if (arg->useProgram) {
+            score = (arg->nRt > 0)
+                ? score_program_xformed(solveRoots, arg->degree, &arg->program, arg->rtChain, arg->nRt, wkRe, wkIm)
+                : solve_score_eval_program(solveRoots, arg->degree, &arg->program);
+        } else {
+            score = (arg->nRt > 0)
+                ? score_xformed(solveRoots, arg->degree, arg->metric, arg->rtChain, arg->nRt, wkRe, wkIm)
+                : compute_solve_metric_score(solveRoots, arg->degree, arg->metric);
+        }
         long outIdx = solveStart + s;
         arg->scoresOut[outIdx] = (float)score;
-        arg->binsOut[outIdx] = score_to_bin(score, arg->clipLo, arg->clipHi, arg->omega, arg->omegaEnabled, arg->cuts);
+        arg->binsOut[outIdx] = arg->useProgram
+            ? u_to_bin(score, arg->cuts)
+            : score_to_bin(score, arg->clipLo, arg->clipHi, arg->omega, arg->omegaEnabled, arg->cuts);
     }
     arg->computeMs = monotonic_ms() - computeStart;
 }
@@ -337,6 +377,10 @@ int main(int argc, char **argv) {
     const char *inPath = argv[1];
     int degree = getArgInt(argc, argv, "--degree", 0);
     const char *metricStr = getArgStr(argc, argv, "--metric", "proximity");
+    const char *scoreMetricsCsv = getArgStr(argc, argv, "--score_metrics", NULL);
+    const char *scoreClipLosCsv = getArgStr(argc, argv, "--score_clip_los", NULL);
+    const char *scoreClipHisCsv = getArgStr(argc, argv, "--score_clip_his", NULL);
+    const char *scoreProgramSpec = getArgStr(argc, argv, "--score_program", NULL);
     double clipLo = getArgDouble(argc, argv, "--clip_lo", 0.0);
     double clipHi = getArgDouble(argc, argv, "--clip_hi", 0.0);
     double omega = getArgDouble(argc, argv, "--omega", 1.0);
@@ -360,7 +404,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Missing --scores_out or --bins_out\n");
         return 1;
     }
-    if (clipHi - clipLo < 1e-12) {
+    if (!scoreProgramSpec && clipHi - clipLo < 1e-12) {
         fprintf(stderr, "Invalid clip range: lo=%.6g hi=%.6g\n", clipLo, clipHi);
         return 1;
     }
@@ -377,6 +421,23 @@ int main(int argc, char **argv) {
     if (!parse_solve_metric(metricStr, &metric)) {
         fprintf(stderr, "Invalid metric: %s\n", metricStr);
         return 1;
+    }
+    SolveScoreProgram scoreProgram;
+    int useScoreProgram = 0;
+    if (scoreMetricsCsv || scoreClipLosCsv || scoreClipHisCsv || scoreProgramSpec) {
+        char scoreErr[256] = {0};
+        if (!scoreMetricsCsv || !scoreClipLosCsv || !scoreClipHisCsv || !scoreProgramSpec) {
+            fprintf(stderr, "score program requires --score_metrics, --score_clip_los, --score_clip_his, and --score_program together\n");
+            return 1;
+        }
+        if (!parse_solve_score_program_args(
+                scoreMetricsCsv, scoreClipLosCsv, scoreClipHisCsv, scoreProgramSpec,
+                &scoreProgram, scoreErr, sizeof(scoreErr))) {
+            fprintf(stderr, "Invalid score program: %s\n", scoreErr[0] ? scoreErr : "unknown error");
+            return 1;
+        }
+        metric = scoreProgram.metrics[0];
+        useScoreProgram = 1;
     }
 
     double cuts[9];
@@ -507,6 +568,8 @@ int main(int argc, char **argv) {
         arg->byteStart = (unsigned long long)solveStart * (unsigned long long)solveBytes;
         arg->byteEnd = arg->byteStart + (unsigned long long)arg->sectionBytes - 1ULL;
         arg->metric = metric;
+        arg->program = scoreProgram;
+        arg->useProgram = useScoreProgram;
         arg->rtChain = rtChain;
         arg->nRt = nRt;
         arg->clipLo = clipLo;

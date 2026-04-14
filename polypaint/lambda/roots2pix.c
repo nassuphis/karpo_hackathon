@@ -403,6 +403,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "ERROR: unknown solve_metric '%s'\n", solveMetricStr);
         return 1;
     }
+    const char *scoreMetricsCsv = getArgStr(argc, argv, "--score_metrics", NULL);
+    const char *scoreClipLosCsv = getArgStr(argc, argv, "--score_clip_los", NULL);
+    const char *scoreClipHisCsv = getArgStr(argc, argv, "--score_clip_his", NULL);
+    const char *scoreProgramSpec = getArgStr(argc, argv, "--score_program", NULL);
 
     double solveScoreClipLo = getArgDouble(argc, argv, "--solve_score_clip_lo",
                                getArgDouble(argc, argv, "--solve_prox_clip_lo", 0));
@@ -410,6 +414,8 @@ int main(int argc, char **argv) {
                                getArgDouble(argc, argv, "--solve_prox_clip_hi", 0));
     double solveScoreOmega = getArgDouble(argc, argv, "--solve_score_omega", 1.0);
     int solveScoreOmegaEnabled = getArgInt(argc, argv, "--solve_score_omega_enabled", 1);
+    SolveScoreProgram solveScoreProgram;
+    int useScoreProgram = 0;
     double solveScoreCuts[9] = {0};
     int nSolveScoreCuts = 0;
     {
@@ -425,6 +431,21 @@ int main(int argc, char **argv) {
                 tok = strtok(NULL, ",");
             }
         }
+    }
+    if (scoreMetricsCsv || scoreClipLosCsv || scoreClipHisCsv || scoreProgramSpec) {
+        char scoreErr[256] = {0};
+        if (!scoreMetricsCsv || !scoreClipLosCsv || !scoreClipHisCsv || !scoreProgramSpec) {
+            fprintf(stderr, "solve_score program requires --score_metrics, --score_clip_los, --score_clip_his, and --score_program together\n");
+            return 1;
+        }
+        if (!parse_solve_score_program_args(
+                scoreMetricsCsv, scoreClipLosCsv, scoreClipHisCsv, scoreProgramSpec,
+                &solveScoreProgram, scoreErr, sizeof(scoreErr))) {
+            fprintf(stderr, "Invalid solve_score program: %s\n", scoreErr[0] ? scoreErr : "unknown error");
+            return 1;
+        }
+        solveMetric = solveScoreProgram.metrics[0];
+        useScoreProgram = 1;
     }
 
     enum MatchMode matchMode = MATCH_NONE;
@@ -685,7 +706,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "solve_score requires exactly 9 cuts (got %d)\n", nSolveScoreCuts);
             return 1;
         }
-        if (solveScoreClipHi - solveScoreClipLo < 1e-12) {
+        if (!useScoreProgram && solveScoreClipHi - solveScoreClipLo < 1e-12) {
             fprintf(stderr, "solve_score requires valid clip range (lo=%.6g hi=%.6g)\n",
                     solveScoreClipLo, solveScoreClipHi);
             return 1;
@@ -694,15 +715,18 @@ int main(int argc, char **argv) {
         for (int b = 0; b < 10; b++) {
             paletteRGB(proxPal, (b + 0.5) / 10.0, &ssPalR[b], &ssPalG[b], &ssPalB[b]);
         }
-        double ssRange = solveScoreClipHi - solveScoreClipLo;
-
         for (long p = 0; p < nPoints; p++) {
             float *step = roots + p * stride;
-
-            double score = compute_solve_metric_score(step, degree, solveMetric);
-            double u = (score - solveScoreClipLo) / ssRange;
-            if (u < 0) u = 0; if (u > 1) u = 1;
-            u = apply_solve_score_transfer(u, solveScoreOmegaEnabled, solveScoreOmega);
+            double u;
+            if (useScoreProgram) {
+                u = solve_score_eval_program(step, degree, &solveScoreProgram);
+            } else {
+                double score = compute_solve_metric_score(step, degree, solveMetric);
+                double ssRange = solveScoreClipHi - solveScoreClipLo;
+                u = (score - solveScoreClipLo) / ssRange;
+                if (u < 0) u = 0; if (u > 1) u = 1;
+                u = apply_solve_score_transfer(u, solveScoreOmegaEnabled, solveScoreOmega);
+            }
 
             int bin = 9;
             for (int c = 0; c < nSolveScoreCuts; c++) {

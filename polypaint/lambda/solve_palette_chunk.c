@@ -79,6 +79,10 @@ int main(int argc, char **argv) {
     const char *inPath = argv[1];
     int degree = getArgInt(argc, argv, "--degree", 0);
     const char *metricStr = getArgStr(argc, argv, "--metric", "proximity");
+    const char *scoreMetricsCsv = getArgStr(argc, argv, "--score_metrics", NULL);
+    const char *scoreClipLosCsv = getArgStr(argc, argv, "--score_clip_los", NULL);
+    const char *scoreClipHisCsv = getArgStr(argc, argv, "--score_clip_his", NULL);
+    const char *scoreProgramSpec = getArgStr(argc, argv, "--score_program", NULL);
     double clipLo = getArgDouble(argc, argv, "--clip_lo", 0.0);
     double clipHi = getArgDouble(argc, argv, "--clip_hi", 0.0);
     double omega = getArgDouble(argc, argv, "--omega", 1.0);
@@ -97,7 +101,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Missing --scores_out or --bins_out\n");
         return 1;
     }
-    if (clipHi - clipLo < 1e-12) {
+    if (!scoreProgramSpec && clipHi - clipLo < 1e-12) {
         fprintf(stderr, "Invalid clip range: lo=%.6g hi=%.6g\n", clipLo, clipHi);
         return 1;
     }
@@ -106,6 +110,23 @@ int main(int argc, char **argv) {
     if (!parse_solve_metric(metricStr, &metric)) {
         fprintf(stderr, "Invalid metric: %s\n", metricStr);
         return 1;
+    }
+    SolveScoreProgram scoreProgram;
+    int useScoreProgram = 0;
+    if (scoreMetricsCsv || scoreClipLosCsv || scoreClipHisCsv || scoreProgramSpec) {
+        char scoreErr[256] = {0};
+        if (!scoreMetricsCsv || !scoreClipLosCsv || !scoreClipHisCsv || !scoreProgramSpec) {
+            fprintf(stderr, "score program requires --score_metrics, --score_clip_los, --score_clip_his, and --score_program together\n");
+            return 1;
+        }
+        if (!parse_solve_score_program_args(
+                scoreMetricsCsv, scoreClipLosCsv, scoreClipHisCsv, scoreProgramSpec,
+                &scoreProgram, scoreErr, sizeof(scoreErr))) {
+            fprintf(stderr, "Invalid score program: %s\n", scoreErr[0] ? scoreErr : "unknown error");
+            return 1;
+        }
+        metric = scoreProgram.metrics[0];
+        useScoreProgram = 1;
     }
 
     double cuts[9];
@@ -174,7 +195,6 @@ int main(int argc, char **argv) {
     }
 
     float wkRe[MAXDEG], wkIm[MAXDEG];
-    double range = clipHi - clipLo;
     double minScore = 0.0, maxScore = 0.0;
 
     for (int s = 0; s < stepCount; s++) {
@@ -191,9 +211,11 @@ int main(int argc, char **argv) {
                 xf[k * 2] = wkRe[k];
                 xf[k * 2 + 1] = wkIm[k];
             }
-            score = compute_solve_metric_score(xf, degree, metric);
+            score = useScoreProgram ? solve_score_eval_program(xf, degree, &scoreProgram)
+                                    : compute_solve_metric_score(xf, degree, metric);
         } else {
-            score = compute_solve_metric_score(roots, degree, metric);
+            score = useScoreProgram ? solve_score_eval_program(roots, degree, &scoreProgram)
+                                    : compute_solve_metric_score(roots, degree, metric);
         }
 
         if (s == 0) {
@@ -203,10 +225,16 @@ int main(int argc, char **argv) {
             if (score > maxScore) maxScore = score;
         }
 
-        double u = (score - clipLo) / range;
-        if (u < 0) u = 0;
-        if (u > 1) u = 1;
-        u = apply_solve_score_transfer(u, omegaEnabled, omega);
+        double u;
+        if (useScoreProgram) {
+            u = score;
+        } else {
+            double range = clipHi - clipLo;
+            u = (score - clipLo) / range;
+            if (u < 0) u = 0;
+            if (u > 1) u = 1;
+            u = apply_solve_score_transfer(u, omegaEnabled, omega);
+        }
 
         uint8_t bin = 9;
         for (int c = 0; c < 9; c++) {

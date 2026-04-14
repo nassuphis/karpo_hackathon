@@ -10,6 +10,7 @@ Called once per render execution as the BuildPlan step.
 import json
 import math
 import os
+import hashlib
 from datetime import datetime, timezone
 
 import boto3
@@ -20,6 +21,9 @@ from solve_score_chain import (
     VALID_SOLVE_SCORE_METRICS,
     compile_solve_score_chain_or_legacy,
     emit_solve_score_metadata,
+    format_solve_score_chain_display,
+    solve_score_uses_non_solve_sources,
+    solve_score_chain_id,
 )
 
 s3 = boto3.client("s3")
@@ -118,20 +122,38 @@ def _omega_display(enabled, omega):
     return f"w={omega:g}" if enabled else "w=off"
 
 
-def _associated_palette_display_name(metric, palette, quantile, omega, omega_enabled):
-    parts = []
-    if metric:
-        parts.append(str(metric))
-    if quantile not in ("", None):
-        try:
-            parts.append(f"q={float(quantile) * 100:.1f}%")
-        except Exception:
-            parts.append(f"q={quantile}")
-    if omega not in ("", None):
-        parts.append(_omega_display(omega_enabled, float(omega)))
+def _associated_palette_display_name(chain, metric, quantile, omega, omega_enabled, palette):
+    label = format_solve_score_chain_display(chain, legacy_quantile=quantile)
+    parts = [label] if label else [str(metric or "").strip()]
     if palette:
         parts.append(str(palette))
     return " ".join(part for part in parts if part)
+
+
+def _solve_score_scratch_keys(job_id, chain, quantile, root_transforms, metric="proximity", omega=1.0, omega_enabled=False):
+    rt_json = json.dumps(root_transforms or [], separators=(",", ":"))
+    rt_hash = hashlib.sha1(rt_json.encode("utf-8")).hexdigest()[:8]
+    if chain:
+        compiled = compile_solve_score_chain_or_legacy(
+            chain,
+            metric,
+            quantile,
+            omega,
+            omega_enabled,
+            default_metric=metric or "proximity",
+        )
+    else:
+        compiled = None
+    if compiled:
+        metric_slug = str(compiled["metric"] or "score").replace(" ", "_")
+        if compiled["legacy_compatible"]:
+            prefix = f"renders/{job_id}/solve_scores/{metric_slug}_rt{rt_hash}/"
+        else:
+            chain_id = solve_score_chain_id(compiled["chain"], legacy_quantile=compiled["quantile"])
+            prefix = f"renders/{job_id}/solve_scores/{metric_slug}_{chain_id}_rt{rt_hash}/"
+    else:
+        prefix = f"renders/{job_id}/solve_scores/inactive_rt{rt_hash}/"
+    return prefix + "clip.json", prefix + "hist/", prefix + "bins.json"
 
 
 def _validate_raster_engine(value):
@@ -394,6 +416,7 @@ def handler(event, context):
         source_compiled = compile_solve_score_chain_or_legacy(
             source_meta.get("solve_score_chain", ""),
             source_meta.get("metric", solve_metric),
+            source_meta.get("solve_score_quantile", solve_score_quantile),
             source_meta.get("solve_score_omega", solve_score_omega),
             source_meta.get("solve_score_omega_enabled", True),
             default_metric=source_meta.get("metric", solve_metric) or "proximity",
@@ -432,19 +455,24 @@ def handler(event, context):
         solve_score_compiled = compile_solve_score_chain_or_legacy(
             solve_score_chain,
             solve_metric,
+            solve_score_quantile,
             solve_score_omega,
             solve_score_omega_enabled,
             default_metric="proximity",
         )
         solve_metric = solve_score_compiled["metric"]
+        solve_score_quantile = solve_score_compiled["quantile"]
         solve_score_omega = solve_score_compiled["omega"]
         solve_score_omega_enabled = solve_score_compiled["omega_enabled"]
         solve_score_chain = solve_score_compiled["chain"]
         rp["solve_score_chain"] = solve_score_chain
+        if solve_score_uses_non_solve_sources(solve_score_compiled):
+            raise RuntimeError("Mixed-source solve score is histogram-debug only for now")
     elif color_mode == "saved_palette":
         solve_score_compiled = compile_solve_score_chain_or_legacy(
             saved_palette["score_chain"],
             saved_palette["metric"],
+            saved_palette["quantile"],
             saved_palette["omega"],
             saved_palette["omega_enabled"],
             default_metric=saved_palette["metric"] or "proximity",
@@ -459,7 +487,17 @@ def handler(event, context):
     rp["solve_score_omega"] = solve_score_omega
     rp["solve_score_omega_enabled"] = solve_score_omega_enabled
     rp["solve_metric"] = solve_metric
+    rp["solve_score_quantile"] = solve_score_quantile
 
+    solve_score_clip_key, solve_score_hist_prefix, solve_score_bins_key = _solve_score_scratch_keys(
+        job_id,
+        solve_score_chain,
+        solve_score_quantile,
+        rp.get("root_transforms", []),
+        solve_metric,
+        solve_score_omega,
+        solve_score_omega_enabled,
+    )
     solve_score = {
         "enabled": solve_score_enabled,
         "threads": rp["solve_score_threads"] if solve_score_enabled else 1,
@@ -469,11 +507,14 @@ def handler(event, context):
         "omega": solve_score_omega,
         "omega_enabled": solve_score_omega_enabled,
         "chain": solve_score_chain,
+        "metrics": solve_score_compiled["metrics"] if solve_score_compiled else [],
+        "program": solve_score_compiled["program_spec"] if solve_score_compiled else "",
+        "display": solve_score_compiled["display"] if solve_score_compiled else "",
         "hist_input_mode": rp["solve_score_hist_input_mode"] if solve_score_enabled else "tmpfile",
         "hist_retries": rp["solve_score_hist_retries"] if solve_score_enabled else 0,
-        "clip_key": f"renders/{job_id}/solve_scores/{solve_metric}_clip.json",
-        "hist_prefix": f"renders/{job_id}/solve_scores/{solve_metric}/",
-        "bins_key": f"renders/{job_id}/solve_scores/{solve_metric}_bins.json",
+        "clip_key": solve_score_clip_key,
+        "hist_prefix": solve_score_hist_prefix,
+        "bins_key": solve_score_bins_key,
     }
     finalize = {
         "workers": rp["finalize_workers"],
@@ -581,11 +622,12 @@ def handler(event, context):
                 "mode": "generated",
                 "palette_id": assoc_palette_id,
                 "display_name": _associated_palette_display_name(
+                    solve_score_chain,
                     solve_metric,
-                    palette,
                     solve_score_quantile,
                     solve_score_omega,
                     solve_score_omega_enabled,
+                    palette,
                 ),
                 "image_key": assoc_prefix + "image.jpeg",
                 "preview_key": assoc_prefix + "preview.png",
@@ -600,6 +642,8 @@ def handler(event, context):
                 "omega": solve_score_omega,
                 "omega_enabled": solve_score_omega_enabled,
                 "score_chain": solve_score_chain,
+                "score_metrics": solve_score_compiled["metrics"] if solve_score_compiled else [],
+                "score_program": solve_score_compiled["program_spec"] if solve_score_compiled else "",
                 "chunk_threads": rp["palette_chunk_threads"],
                 "chunk_input_mode": rp["palette_chunk_input_mode"],
                 "chunk_retries": rp["palette_chunk_retries"],

@@ -704,14 +704,16 @@ button {
                     <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:6px"></div>
                     <input type="hidden" id="render-solve-score" value="proximity">
                     <input type="hidden" id="render-solve-score-omega" value="1">
+                    <input type="hidden" id="render-solve-score-omega-phase" value="0">
                     <input type="hidden" id="render-solve-score-omega-enabled" value="true">
                     <span id="render-solve-score-omega-val" style="display:none">1</span>
                 </div>
                 <div class="color-row" style="padding-left:18px">
-                    <label style="color:#888; font-size:10px; min-width:70px">Score clip q:</label>
-                    <span id="render-solve-score-quantile-val" style="font-size:10px; display:inline-block; width:2.5em; text-align:right">0.1</span><span style="font-size:10px">%</span>
-                    <input type="range" id="render-solve-score-quantile" min="0.1" max="5.0" step="0.1" value="0.1" style="width:120px; margin-left:4px"
-                        oninput="document.getElementById('render-solve-score-quantile-val').textContent=parseFloat(this.value).toFixed(1)">
+                    <label style="color:#888; font-size:10px; min-width:70px">Stack:</label>
+                    <span id="ss-stack" style="display:inline-flex; gap:3px; align-items:flex-end; min-height:16px"></span>
+                    <span id="ss-stack-label" style="font-size:10px; color:#888; min-width:80px; margin-left:6px"></span>
+                    <input type="hidden" id="render-solve-score-quantile" value="0.1">
+                    <span id="render-solve-score-quantile-val" style="display:none">0.1</span>
                     <button id="btn-solve-histogram" onclick="runSolveScoreHistogramDebug()" style="margin:0 0 0 8px; font-size:10px; padding:1px 8px">Histogram</button>
                 </div>
                 <div class="color-row">
@@ -795,14 +797,16 @@ button {
                     <div id="palette-circles-palette-tab" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:8px"></div>
                     <input type="hidden" id="palette-solve-score" value="proximity">
                     <input type="hidden" id="palette-solve-score-omega" value="1">
+                    <input type="hidden" id="palette-solve-score-omega-phase" value="0">
                     <input type="hidden" id="palette-solve-score-omega-enabled" value="true">
                     <span id="palette-solve-score-omega-val" style="display:none">1</span>
                 </div>
                 <div class="color-row" style="padding-left:0">
-                    <label style="color:#888; font-size:10px; min-width:70px">Score clip q:</label>
-                    <span id="palette-solve-score-quantile-val" style="font-size:10px; display:inline-block; width:2.5em; text-align:right">0.1</span><span style="font-size:10px">%</span>
-                    <input type="range" id="palette-solve-score-quantile" min="0.1" max="5.0" step="0.1" value="0.1" style="width:120px; margin-left:4px"
-                        oninput="document.getElementById('palette-solve-score-quantile-val').textContent=parseFloat(this.value).toFixed(1)">
+                    <label style="color:#888; font-size:10px; min-width:70px">Stack:</label>
+                    <span id="palette-ss-stack" style="display:inline-flex; gap:3px; align-items:flex-end; min-height:16px"></span>
+                    <span id="palette-ss-stack-label" style="font-size:10px; color:#888; min-width:80px; margin-left:6px"></span>
+                    <input type="hidden" id="palette-solve-score-quantile" value="0.1">
+                    <span id="palette-solve-score-quantile-val" style="display:none">0.1</span>
                     <button id="btn-palette-create" onclick="runPaletteArtifact()" style="margin:0 0 0 8px; font-size:10px; padding:1px 8px">Palette</button>
                 </div>
             </div>
@@ -2999,6 +3003,40 @@ function _formatErrorChain(chain) {
     }).join(',');
 }
 
+function _parseLambdaErrorPayload(text) {
+    if (!text) return null;
+    try {
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === 'object' && typeof parsed.body === 'string') {
+            try { return JSON.parse(parsed.body); } catch (e) { return parsed; }
+        }
+        return parsed;
+    } catch (e) {
+        return null;
+    }
+}
+
+function _summarizeLambdaErrorPayload(body) {
+    if (!body || typeof body !== 'object') return '';
+    const parts = [];
+    const push = (label, value, maxLen = 220) => {
+        if (value == null || value === '') return;
+        parts.push(`${label}=${_clipErrorText(value, maxLen)}`);
+    };
+    if (body.error) parts.push(_clipErrorText(body.error, 180));
+    push('phase', body.phase, 80);
+    push('metric', body.metric, 80);
+    push('program', body.program, 200);
+    if (Array.isArray(body.score_metrics) && body.score_metrics.length) {
+        push('score_metrics', body.score_metrics.join(','), 180);
+    }
+    const chain = _formatErrorChain(body.solve_score_chain || body.chain);
+    if (chain) push('chain', chain, 220);
+    push('detail', body.detail, 320);
+    push('compile_error', body.compile_error, 220);
+    return parts.join(' | ');
+}
+
 function _summarizeLambdaBody(body) {
     if (body == null) return '';
     if (typeof body !== 'object') return _clipErrorText(body, 160);
@@ -3036,8 +3074,10 @@ function _summarizeLambdaBody(body) {
     push('lores_bin_key', body.lores_bin_key);
     const coeffChain = _formatErrorChain(body.coeff_transforms);
     const paramChain = _formatErrorChain(body.param_transforms);
+    const solveScoreChain = _formatErrorChain(body.solve_score_chain);
     if (coeffChain) push('coeff', coeffChain);
     if (paramChain) push('param', paramChain);
+    if (solveScoreChain) push('score', solveScoreChain);
     return parts.join(', ');
 }
 
@@ -3078,7 +3118,11 @@ async function lambdaPost(name, body, path) {
         if (!resp.ok) {
             const text = await resp.text().catch(() => '');
             const ctxSuffix = requestCtx ? ` (${requestCtx})` : '';
-            throw new Error(`${endpoint} request failed${ctxSuffix}: HTTP ${resp.status}${text ? `: ${_clipErrorText(text, 320)}` : ''}`);
+            const errorPayload = _parseLambdaErrorPayload(text);
+            const errorDetail = errorPayload
+                ? _summarizeLambdaErrorPayload(errorPayload)
+                : _clipErrorText(text, 320);
+            throw new Error(`${endpoint} request failed${ctxSuffix}: HTTP ${resp.status}${errorDetail ? `: ${errorDetail}` : ''}`);
         }
         const raw = await resp.json();
         return typeof raw.body === 'string' ? JSON.parse(raw.body) : raw;
@@ -3119,6 +3163,32 @@ function _displayTransformEntry(item) {
     return item.params && item.params.length ? `${item.name}(${item.params.join(',')})` : item.name;
 }
 
+function _displaySolveScoreEntry(item) {
+    if (!item || !item.name) return '';
+    const params = Array.isArray(item.params) ? item.params : [];
+    if (_solveScoreMetricSet.has(item.name)) {
+        const hasExplicitSource = params.length >= 2;
+        const source = _normalizeSolveScoreMetricSource(hasExplicitSource ? params[0] : 'slv', 'slv');
+        const q = hasExplicitSource ? (params[1] || '?') : (params[0] || '?');
+        return source === 'slv'
+            ? `${item.name}(q=${q}%)`
+            : `${item.name}(${source},q=${q}%)`;
+    }
+    if (item.name === 'omega_cosine') {
+        const phase = Number(params[1] || '0');
+        return Number.isFinite(phase) && Math.abs(phase) < 1e-12
+            ? `ω-cos(${params[0] || '?'})`
+            : `ω-cos(${params[0] || '?'},${params[1] || '0'})`;
+    }
+    if (item.name === 'sawtooth') {
+        return `sawtooth(${params[0] || '?'})`;
+    }
+    if (item.name === 'weighted_sum') {
+        return `weighted_sum(${params[0] || '?'},${params[1] || '?'})`;
+    }
+    return _displayTransformEntry(item);
+}
+
 function _serializeNamedChain(chain) {
     return (Array.isArray(chain) ? chain : []).map(item =>
         item && item.params && item.params.length ? [item.name, ...item.params] : item.name
@@ -3133,14 +3203,56 @@ function _solveScoreWhichForPrefix(prefix) {
     return prefix === 'palette' ? 'palette-ss' : 'ss';
 }
 
-function _defaultSolveScoreChain(metric = 'proximity', omega = 1, omegaEnabled = false) {
+function _solveScoreQuantilePctText(value, fallback = '0.1') {
+    const q = Number(value);
+    if (!Number.isFinite(q)) return String(fallback);
+    return q.toFixed(1).replace(/\.0$/, '');
+}
+
+function _normalizeSolveScoreMetricSource(value, fallback = 'slv') {
+    const source = String(value == null ? '' : value).trim().toLowerCase();
+    return (source === 'slv' || source === 'cf') ? source : fallback;
+}
+
+function _solveScoreMetricsUseCoeffSource(metrics) {
+    return Array.isArray(metrics) && metrics.some(row => _normalizeSolveScoreMetricSource(row && row.source, 'slv') === 'cf');
+}
+
+function _solveScoreMetricSummary(rows) {
+    if (!Array.isArray(rows)) return '';
+    const showAllSources = _solveScoreMetricsUseCoeffSource(rows);
+    return rows.map((row) => {
+        const source = _normalizeSolveScoreMetricSource(row && row.source, 'slv');
+        const qPct = (Number(row && row.quantile_pct) || (Number(row && row.quantile) * 100) || 0)
+            .toFixed(1)
+            .replace(/\.0$/, '');
+        return (source === 'slv' && !showAllSources)
+            ? `${row.metric}(q=${qPct}%)`
+            : `${row.metric}(${source},q=${qPct}%)`;
+    }).join(', ');
+}
+
+function _fallbackLoresCoeffsKey(jobId, loresBinKey) {
+    const key = String(loresBinKey || '').trim();
+    if (key.endsWith('/lores.bin')) return key.slice(0, -'/lores.bin'.length) + '/lores_coeffs.bin';
+    const job = String(jobId || '').trim();
+    return job ? `renders/${job}/lores_coeffs.bin` : '';
+}
+
+function _defaultSolveScoreChain(metric = 'proximity', quantilePct = '0.1', omega = 1, omegaEnabled = false, phase = 0, source = 'slv') {
     const nextMetric = _solveScoreMetricSet.has(metric) ? metric : 'proximity';
-    const chain = [{ name: nextMetric, params: [] }];
-    if (omegaEnabled) chain.push({ name: 'omega_cosine', params: [String(omega)] });
+    const chain = [{ name: nextMetric, params: [_normalizeSolveScoreMetricSource(source), _solveScoreQuantilePctText(quantilePct)] }];
+    if (omegaEnabled) chain.push({ name: 'omega_cosine', params: [String(omega), String(phase)] });
     return chain;
 }
 
-function _normalizeSolveScoreChain(chain, fallbackMetric = 'proximity') {
+function _legacySolveScoreQuantilePct(prefix) {
+    const qEl = document.getElementById(`${prefix}-solve-score-quantile`);
+    const q = Number(qEl && qEl.value);
+    return Number.isFinite(q) ? q : 0.1;
+}
+
+function _normalizeSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuantilePct = '0.1') {
     const rows = Array.isArray(chain) ? chain : [];
     const normalized = [];
     rows.forEach((item) => {
@@ -3157,54 +3269,179 @@ function _normalizeSolveScoreChain(chain, fallbackMetric = 'proximity') {
         }
         if (!name) return;
         if (!_ssCatalog[name]) return;
+        if (_solveScoreMetricSet.has(name)) {
+            if (params.length === 0) {
+                params = ['slv', _solveScoreQuantilePctText(legacyQuantilePct)];
+            } else if (params.length === 1) {
+                const maybeSource = _normalizeSolveScoreMetricSource(params[0], '');
+                params = maybeSource
+                    ? [maybeSource, _solveScoreQuantilePctText(legacyQuantilePct)]
+                    : ['slv', _solveScoreQuantilePctText(params[0], legacyQuantilePct)];
+            } else {
+                params = [
+                    _normalizeSolveScoreMetricSource(params[0]),
+                    _solveScoreQuantilePctText(params[1], legacyQuantilePct),
+                ];
+            }
+        }
         normalized.push({ name, params });
     });
     return normalized;
 }
 
-function _serializeSolveScoreChain(chain, fallbackMetric = 'proximity') {
-    return _normalizeSolveScoreChain(chain, fallbackMetric).map(item =>
-        item.params && item.params.length ? [item.name, ...item.params] : [item.name]
-    );
+function _serializeSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuantilePct = '0.1') {
+    return _normalizeSolveScoreChain(chain, fallbackMetric, legacyQuantilePct).map((item) => {
+        if (_solveScoreMetricSet.has(item.name)) {
+            const source = _normalizeSolveScoreMetricSource(item.params[0], 'slv');
+            const q = item.params[1];
+            return source === 'slv' ? [item.name, q] : [item.name, source, q];
+        }
+        return item.params && item.params.length ? [item.name, ...item.params] : [item.name];
+    });
 }
 
-function _compileSolveScoreChain(chain, fallbackMetric = 'proximity') {
-    const normalized = _normalizeSolveScoreChain(chain, fallbackMetric);
+function _buildSolveScoreProgramSpec(program) {
+    return (Array.isArray(program) ? program : []).map((token) => {
+        if (!token || !token.kind) return '';
+        if (token.kind === 'metric') return `m${token.slot}`;
+        if (token.kind === 'omega_cosine') {
+            return Math.abs(Number(token.phase) || 0) < 1e-12
+                ? `omega_cosine:${String(token.omega)}`
+                : `omega_cosine:${String(token.omega)}:${String(token.phase)}`;
+        }
+        if (token.kind === 'sawtooth') return `sawtooth:${String(token.mult)}`;
+        if (token.kind === 'weighted_sum') return `weighted_sum:${String(token.a)}:${String(token.b)}`;
+        return token.kind;
+    }).filter(Boolean).join(';');
+}
+
+function _solveScoreDraftState(chain, fallbackMetric = 'proximity', legacyQuantilePct = '0.1') {
+    const normalized = _normalizeSolveScoreChain(chain, fallbackMetric, legacyQuantilePct);
+    let stackDepth = 0;
+    let metricCount = 0;
+    normalized.forEach((item) => {
+        if (_solveScoreMetricSet.has(item.name)) {
+            metricCount += 1;
+            stackDepth += 1;
+            return;
+        }
+        if (_solveScoreUnarySpecs[item.name]) {
+            return;
+        }
+        const spec = _solveScoreCombineSpecs[item.name];
+        if (!spec) return;
+        if (stackDepth >= spec.arity) stackDepth -= spec.arity - 1;
+        else stackDepth = 0;
+    });
+    return { normalized, stackDepth, metricCount };
+}
+
+function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuantilePct = '0.1') {
+    const normalized = _normalizeSolveScoreChain(chain, fallbackMetric, legacyQuantilePct);
     if (!normalized.length) {
-        throw new Error('Solve score chain must contain exactly one metric chip');
+        throw new Error('Solve score chain must contain at least one metric chip');
     }
-    const metrics = normalized.filter(item => _solveScoreMetricSet.has(item.name));
-    const transfers = normalized.filter(item => item.name === 'omega_cosine');
-    const invalid = normalized.filter(item => !_solveScoreMetricSet.has(item.name) && item.name !== 'omega_cosine');
-    if (invalid.length) {
-        throw new Error(`Invalid solve-score chip(s): ${invalid.map(item => item.name).join(', ')}`);
-    }
-    if (metrics.length !== 1) {
-        throw new Error('Solve score chain must contain exactly one metric chip');
-    }
-    if (transfers.length > 1) {
-        throw new Error('Solve score chain may contain at most one transfer chip');
-    }
-    if (transfers.length && normalized[normalized.length - 1].name !== 'omega_cosine') {
-        throw new Error('Transfer chip must be the final solve-score chip');
-    }
-    if (normalized.length !== metrics.length + transfers.length) {
-        throw new Error('Solve score chain contains unsupported chip ordering');
-    }
-    const metric = metrics[0].name;
+    const metrics = [];
+    let stackDepth = 0;
     let omega = 1;
+    let omegaPhase = 0;
     let omegaEnabled = false;
-    if (transfers.length) {
-        const rawOmega = Number(transfers[0].params[0]);
-        if (!Number.isFinite(rawOmega)) throw new Error('omega_cosine requires one numeric parameter');
-        omega = rawOmega;
-        omegaEnabled = true;
-    }
+    const program = [];
+    normalized.forEach((item) => {
+        if (_solveScoreMetricSet.has(item.name)) {
+            if (item.params.length !== 2) throw new Error(`${item.name} requires source and q parameters`);
+            const source = _normalizeSolveScoreMetricSource(item.params[0], '');
+            if (!source) throw new Error(`${item.name} source must be slv or cf`);
+            const qPct = Number(item.params[1]);
+            if (!Number.isFinite(qPct) || qPct < 0.1 || qPct > 5.0) {
+                throw new Error(`${item.name} q must be in [0.1, 5.0]%`);
+            }
+            metrics.push({ slot: metrics.length, source, metric: item.name, quantile_pct: qPct, quantile: qPct / 100 });
+            program.push({ kind: 'metric', slot: metrics.length - 1 });
+            stackDepth += 1;
+            return;
+        }
+        if (item.name === 'omega_cosine') {
+            if (stackDepth < 1) throw new Error('omega_cosine requires one score value on the stack');
+            if (item.params.length !== 1 && item.params.length !== 2) {
+                throw new Error('omega_cosine requires one omega parameter and an optional phase parameter');
+            }
+            const rawOmega = Number(item.params[0]);
+            const rawPhase = item.params.length > 1 ? Number(item.params[1]) : 0;
+            if (!Number.isFinite(rawOmega) || rawOmega < 1 || rawOmega > 10) {
+                throw new Error('omega_cosine requires one numeric omega in [1, 10]');
+            }
+            if (!Number.isFinite(rawPhase)) {
+                throw new Error('omega_cosine requires one numeric phase');
+            }
+            omega = rawOmega;
+            omegaPhase = rawPhase;
+            omegaEnabled = true;
+            program.push({ kind: 'omega_cosine', omega, phase: omegaPhase });
+            return;
+        }
+        if (item.name === 'sawtooth') {
+            if (stackDepth < 1) throw new Error('sawtooth requires one score value on the stack');
+            if (item.params.length !== 1) throw new Error('sawtooth requires exactly one multiplier parameter');
+            const rawMult = Number(item.params[0]);
+            if (!Number.isFinite(rawMult)) {
+                throw new Error('sawtooth requires one numeric multiplier');
+            }
+            program.push({ kind: 'sawtooth', mult: rawMult });
+            return;
+        }
+        if (item.name === 'flip') {
+            if (stackDepth < 1) throw new Error('flip requires one score value on the stack');
+            if (item.params.length !== 0) throw new Error('flip takes no parameters');
+            program.push({ kind: 'flip' });
+            return;
+        }
+        const spec = _solveScoreCombineSpecs[item.name];
+        if (!spec) throw new Error(`Invalid solve-score chip: ${item.name}`);
+        if (stackDepth < spec.arity) throw new Error(`${item.name} requires ${spec.arity} inputs`);
+        if ((item.params || []).length !== spec.params.length) {
+            throw new Error(`${item.name} requires exactly ${spec.params.length} parameter(s)`);
+        }
+        const token = { kind: item.name };
+        if (item.name === 'weighted_sum') {
+            const a = Number(item.params[0]);
+            const b = Number(item.params[1]);
+            if (!Number.isFinite(a) || !Number.isFinite(b)) throw new Error('weighted_sum requires two numeric weights');
+            if (!(Math.abs(a) > 0 || Math.abs(b) > 0)) throw new Error('weighted_sum requires at least one non-zero weight');
+            token.a = a;
+            token.b = b;
+        }
+        program.push(token);
+        stackDepth -= spec.arity - 1;
+    });
+    if (!metrics.length) throw new Error('Solve score chain must contain at least one metric chip');
+    if (stackDepth !== 1) throw new Error(`Solve score chain must end with stack depth 1, got ${stackDepth}`);
+    const metric = metrics[0].metric;
+    const quantile = metrics[0].quantile;
+    const programSpec = _buildSolveScoreProgramSpec(program);
+    const usesCoeffSource = _solveScoreMetricsUseCoeffSource(metrics);
     return {
         metric,
+        quantile,
+        metrics,
+        uses_coeff_source: usesCoeffSource,
         omega,
+        omega_phase: omegaPhase,
         omega_enabled: omegaEnabled,
-        chain: _serializeSolveScoreChain(normalized, fallbackMetric),
+        stack_depth: stackDepth,
+        chain: _serializeSolveScoreChain(normalized, fallbackMetric, legacyQuantilePct),
+        program_spec: programSpec,
+        display: normalized.map(item => _displaySolveScoreEntry(item)).join(' '),
+        legacy_compatible:
+            !usesCoeffSource &&
+            (program.length === 1 && program[0].kind === 'metric') ||
+            (
+                !usesCoeffSource &&
+                program.length === 2 &&
+                program[0].kind === 'metric' &&
+                program[1].kind === 'omega_cosine' &&
+                Math.abs(Number(program[1].phase) || 0) < 1e-12
+            ),
     };
 }
 
@@ -3215,20 +3452,43 @@ function _setSolveScoreLegacyField(id, value) {
 
 function _legacySolveScoreState(prefix) {
     const metricEl = document.getElementById(`${prefix}-solve-score`);
+    const qEl = document.getElementById(`${prefix}-solve-score-quantile`);
     const omegaEl = document.getElementById(`${prefix}-solve-score-omega`);
+    const phaseEl = document.getElementById(`${prefix}-solve-score-omega-phase`);
     const enabledEl = document.getElementById(`${prefix}-solve-score-omega-enabled`);
     const fallbackMetric = prefix === 'palette' ? paletteTabMetric : renderSolveMetric;
     const domMetric = String((metricEl && metricEl.value) || '').trim();
     const metric = _solveScoreMetricSet.has(fallbackMetric) && fallbackMetric !== domMetric
         ? fallbackMetric
         : String(domMetric || fallbackMetric || 'proximity').trim();
+    const qPct = Number(qEl && qEl.value);
     const omega = Number(omegaEl && omegaEl.value);
+    const omegaPhase = Number(phaseEl && phaseEl.value);
     const omegaEnabled = String((enabledEl && enabledEl.value) || '').trim().toLowerCase() === 'true';
+    const chain = _solveScoreMetricSet.has(metric)
+        ? _serializeSolveScoreChain(
+            _defaultSolveScoreChain(
+                metric,
+                Number.isFinite(qPct) ? qPct : 0.1,
+                omega,
+                omegaEnabled,
+                Number.isFinite(omegaPhase) ? omegaPhase : 0
+            ),
+            metric
+        )
+        : [];
+    const compiled = chain.length ? _compileSolveScoreChain(chain, metric, Number.isFinite(qPct) ? qPct : 0.1) : null;
     return {
         metric,
+        quantile: Number.isFinite(qPct) ? qPct / 100 : 0.001,
         omega: Number.isFinite(omega) ? omega : 1,
+        omega_phase: Number.isFinite(omegaPhase) ? omegaPhase : 0,
         omega_enabled: omegaEnabled,
-        chain: _solveScoreMetricSet.has(metric) ? _serializeSolveScoreChain(_defaultSolveScoreChain(metric, omega, omegaEnabled), metric) : [],
+        chain,
+        metrics: compiled ? compiled.metrics : [],
+        uses_coeff_source: compiled ? compiled.uses_coeff_source : false,
+        program_spec: compiled ? compiled.program_spec : '',
+        display: compiled ? compiled.display : '',
     };
 }
 
@@ -3247,7 +3507,9 @@ function _resolveSolveScoreState(prefix, options = {}) {
     const legacyValid = legacy.chain.length > 0;
     const diverged = legacyValid && (
         legacy.metric !== compiled.metric ||
+        legacy.quantile !== compiled.quantile ||
         legacy.omega !== compiled.omega ||
+        legacy.omega_phase !== compiled.omega_phase ||
         legacy.omega_enabled !== compiled.omega_enabled
     );
     if (diverged) return legacy;
@@ -3257,11 +3519,16 @@ function _resolveSolveScoreState(prefix, options = {}) {
 function _syncSolveScoreLegacyInputs(prefix) {
     const compiled = _compileSolveScoreChain(
         _chainForWhich(_solveScoreWhichForPrefix(prefix)),
-        prefix === 'palette' ? paletteTabMetric : renderSolveMetric
+        prefix === 'palette' ? paletteTabMetric : renderSolveMetric,
+        _legacySolveScoreQuantilePct(prefix)
     );
     _setSolveScoreLegacyField(`${prefix}-solve-score`, compiled.metric);
+    _setSolveScoreLegacyField(`${prefix}-solve-score-quantile`, _solveScoreQuantilePctText(compiled.quantile * 100));
     _setSolveScoreLegacyField(`${prefix}-solve-score-omega`, compiled.omega);
+    _setSolveScoreLegacyField(`${prefix}-solve-score-omega-phase`, compiled.omega_phase);
     _setSolveScoreLegacyField(`${prefix}-solve-score-omega-enabled`, compiled.omega_enabled ? 'true' : 'false');
+    const qValEl = document.getElementById(`${prefix}-solve-score-quantile-val`);
+    if (qValEl) qValEl.textContent = _solveScoreQuantilePctText(compiled.quantile * 100);
     const omegaValEl = document.getElementById(`${prefix}-solve-score-omega-val`);
     if (omegaValEl) omegaValEl.textContent = String(compiled.omega);
     if (prefix === 'palette') paletteTabMetric = compiled.metric;
@@ -3269,22 +3536,29 @@ function _syncSolveScoreLegacyInputs(prefix) {
     return compiled;
 }
 
-function _setSolveScoreChainFromLegacy(prefix, metric, omega = 1, omegaEnabled = false) {
+function _setSolveScoreChainFromLegacy(prefix, metric, quantilePct = 0.1, omega = 1, omegaEnabled = false, omegaPhase = 0) {
     const which = _solveScoreWhichForPrefix(prefix);
     const chain = _chainForWhich(which);
-    const next = _defaultSolveScoreChain(metric, omega, omegaEnabled);
+    const next = _defaultSolveScoreChain(metric, quantilePct, omega, omegaEnabled, omegaPhase);
     chain.splice(0, chain.length, ...next);
     _renderChips(which);
     return _syncSolveScoreLegacyInputs(prefix);
 }
 
 function _solveScoreAllowedAdditions(which) {
-    const chain = _normalizeSolveScoreChain(_chainForWhich(which));
-    const hasMetric = chain.some(item => _solveScoreMetricSet.has(item.name));
-    const hasTransfer = chain.some(item => item.name === 'omega_cosine');
-    if (!hasMetric) return _solveScoreMetricNames.slice();
-    if (!hasTransfer) return ['omega_cosine'];
-    return [];
+    const prefix = _solveScorePrefixForWhich(which);
+    const draft = _solveScoreDraftState(
+        _chainForWhich(which),
+        prefix === 'palette' ? paletteTabMetric : renderSolveMetric,
+        _legacySolveScoreQuantilePct(prefix)
+    );
+    const allowed = [];
+    if (draft.metricCount < 16) allowed.push(..._solveScoreMetricNames);
+    Object.entries(_solveScoreCombineSpecs).forEach(([name, spec]) => {
+        if (draft.stackDepth >= spec.arity) allowed.push(name);
+    });
+    if (draft.stackDepth >= 1) allowed.push(...Object.keys(_solveScoreUnarySpecs));
+    return allowed;
 }
 
 function _syncSolveScoreAddOptions(which) {
@@ -3300,6 +3574,24 @@ function _syncSolveScoreAddOptions(which) {
     );
     sel.innerHTML = options.join('');
     sel.disabled = allowed.length === 0;
+}
+
+function _updateSolveScoreStackUi(which) {
+    const prefix = _solveScorePrefixForWhich(which);
+    const stackEl = document.getElementById(which === 'palette-ss' ? 'palette-ss-stack' : 'ss-stack');
+    const labelEl = document.getElementById(which === 'palette-ss' ? 'palette-ss-stack-label' : 'ss-stack-label');
+    if (!stackEl || !labelEl) return;
+    const draft = _solveScoreDraftState(
+        _chainForWhich(which),
+        prefix === 'palette' ? paletteTabMetric : renderSolveMetric,
+        _legacySolveScoreQuantilePct(prefix)
+    );
+    const blocks = [];
+    for (let i = 0; i < Math.max(0, draft.stackDepth); i++) {
+        blocks.push(`<span style="display:inline-block; width:8px; height:${10 + i * 2}px; background:#6c8; border:1px solid #385; border-radius:2px"></span>`);
+    }
+    stackEl.innerHTML = blocks.join('');
+    labelEl.textContent = `depth ${draft.stackDepth} · metrics ${draft.metricCount}`;
 }
 
 function _ensureSolveScoreChainDefaults() {
@@ -3862,11 +4154,23 @@ function _solveScoreOmegaEnabled(prefix) {
 function _setSolveScoreOmegaEnabled(prefix, enabled) {
     const which = _solveScoreWhichForPrefix(prefix);
     const chain = _normalizeSolveScoreChain(_chainForWhich(which), prefix === 'palette' ? paletteTabMetric : renderSolveMetric);
+    const removedOmega = [...chain].reverse().find(item => item.name === 'omega_cosine');
     const next = chain.filter(item => item.name !== 'omega_cosine');
     if (enabled) {
         const omegaEl = document.getElementById(`${prefix}-solve-score-omega`);
+        const phaseEl = document.getElementById(`${prefix}-solve-score-omega-phase`);
         const omega = Number(omegaEl && omegaEl.value);
-        next.push({ name: 'omega_cosine', params: [String(Number.isFinite(omega) ? omega : 1)] });
+        const phase = Number(phaseEl && phaseEl.value);
+        const preservedPhase = removedOmega && removedOmega.params && removedOmega.params.length > 1
+            ? Number(removedOmega.params[1])
+            : phase;
+        next.push({
+            name: 'omega_cosine',
+            params: [
+                String(Number.isFinite(omega) ? omega : 1),
+                String(Number.isFinite(preservedPhase) ? preservedPhase : 0),
+            ],
+        });
     }
     const target = _chainForWhich(which);
     target.splice(0, target.length, ...next);
@@ -3913,7 +4217,10 @@ function _updatePaletteCreateButton() {
     const btn = document.getElementById('btn-palette-create');
     if (!btn) return;
     let enabled = true;
-    try { _compileSolveScoreChain(_chainForWhich('palette-ss'), paletteTabMetric); }
+    try {
+        const compiled = _compileSolveScoreChain(_chainForWhich('palette-ss'), paletteTabMetric);
+        if (compiled.uses_coeff_source) enabled = false;
+    }
     catch (e) { enabled = false; }
     btn.disabled = !enabled || !!_activePaletteRun;
     btn.style.opacity = enabled ? '' : '0.4';
@@ -3956,14 +4263,14 @@ function _activeRenderPalette() {
 function setSolveMetric(name) {
     if (!_solveScoreMetricSet.has(name)) return;
     const legacy = _legacySolveScoreState('render');
-    _setSolveScoreChainFromLegacy('render', name, legacy.omega, legacy.omega_enabled);
+    _setSolveScoreChainFromLegacy('render', name, legacy.quantile * 100, legacy.omega, legacy.omega_enabled, legacy.omega_phase);
     setColorMode('solve_score');
 }
 
 function setPaletteMetric(name) {
     if (!_solveScoreMetricSet.has(name)) return;
     const legacy = _legacySolveScoreState('palette');
-    _setSolveScoreChainFromLegacy('palette', name, legacy.omega, legacy.omega_enabled);
+    _setSolveScoreChainFromLegacy('palette', name, legacy.quantile * 100, legacy.omega, legacy.omega_enabled, legacy.omega_phase);
 }
 
 function _setTriPaletteForMode(mode, triName, activate = true) {
@@ -6973,17 +7280,47 @@ const _solveScoreMetricNames = [
     'asymmetry_re',
 ];
 const _solveScoreMetricSet = new Set(_solveScoreMetricNames);
+const _solveScoreSourceChoices = ['slv', 'cf'];
+const _solveScoreUnarySpecs = {
+    omega_cosine: { arity: 1, params: [{ ph: 'w', def: '1' }, { ph: 'phase', def: '0' }], tooltip: 'unary stack op: g(u)=0.5*(cos(omega*2*pi*u+phase)+1)' },
+    sawtooth: { arity: 1, params: [{ ph: 'mult', def: '10' }], tooltip: 'unary stack op: frac(score*mult)' },
+    flip: { arity: 1, params: [], tooltip: 'unary stack op: 1-score' },
+};
+const _solveScoreCombineSpecs = {
+    avg: { arity: 2, params: [] },
+    min: { arity: 2, params: [] },
+    max: { arity: 2, params: [] },
+    mul: { arity: 2, params: [] },
+    weighted_sum: { arity: 2, params: [{ ph: 'a', def: '0.5' }, { ph: 'b', def: '0.5' }] },
+    abs_diff: { arity: 2, params: [] },
+    geometric_mean: { arity: 2, params: [] },
+};
 const _ssCatalog = (() => {
     const catalog = {};
     _solveScoreMetricNames.forEach(name => {
-        catalog[name] = { label: name, chip_kind: 'metric' };
+        catalog[name] = {
+            label: name,
+            chip_kind: 'metric',
+            params: [{ ph: 'src', def: 'slv', choices: _solveScoreSourceChoices }, { ph: 'q%', def: '0.1' }],
+            tooltip: `${name}(slv,q=0.1%)`,
+        };
     });
-    catalog.omega_cosine = {
-        label: 'omega_cosine',
-        chip_kind: 'transfer',
-        params: [{ ph: 'w', def: '1' }],
-        tooltip: 'g(u)=0.5*(cos(omega*2*pi*u)+1)',
-    };
+    Object.entries(_solveScoreCombineSpecs).forEach(([name, spec]) => {
+        catalog[name] = {
+            label: name,
+            chip_kind: 'combine',
+            params: spec.params || [],
+            tooltip: `stack ${spec.arity} -> 1`,
+        };
+    });
+    Object.entries(_solveScoreUnarySpecs).forEach(([name, spec]) => {
+        catalog[name] = {
+            label: name,
+            chip_kind: 'unary',
+            params: spec.params || [],
+            tooltip: spec.tooltip || `stack ${spec.arity} -> ${spec.arity}`,
+        };
+    });
     return catalog;
 })();
 
@@ -7275,6 +7612,14 @@ function updateChipParam(chipIdx, paramIdx, value, which) {
 
 function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef) {
     const pd = paramDef || {};
+    if (Array.isArray(pd.choices) && pd.choices.length) {
+        const normalizedValue = String(value == null ? '' : value).trim().toLowerCase();
+        const options = pd.choices.map(choice => {
+            const selected = normalizedValue === choice ? ' selected' : '';
+            return `<option value="${_escapeHtml(choice)}"${selected}>${_escapeHtml(choice)}</option>`;
+        }).join('');
+        return `<select class="chip-input" onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
+    }
     const im = (pd.target || pd.choices) ? 'text' : 'decimal';
     return `<input class="chip-input" type="text" inputmode="${im}" value="${_escapeHtml(value)}" placeholder="${_escapeHtml(pd.ph || '')}" onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">`;
 }
@@ -7286,10 +7631,34 @@ function _ctUnaryFormulaChip(which, i, fnName) {
 function _renderRtChipHtml(item, i, which, catalog) {
     const spec = catalog[item.name] || {};
     const pDefs = spec.params || [];
+    if ((which === 'ss' || which === 'palette-ss') && _solveScoreMetricSet.has(item.name)) {
+        const source = _chipInputHtml(which, i, 0, item.params[0] || 'slv', pDefs[0]);
+        const q = _chipInputHtml(which, i, 1, item.params[1] || item.params[0] || '', pDefs[1]);
+        return `<span class="chip"><span class="chip-formula"><span>${_escapeHtml(item.name)}(</span><span>${source}</span><span class="chip-op">,</span><span>q=</span><span>${q}</span><span>%)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
     if ((which === 'ss' || which === 'palette-ss') && item.name === 'omega_cosine') {
         const omega = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
+        const phase = _chipInputHtml(which, i, 1, item.params[1] || '0', pDefs[1]);
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
-        return `<span class="chip"${tooltip}><span class="chip-formula"><span>ω-cos(</span><span>${omega}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        return `<span class="chip"${tooltip}><span class="chip-formula"><span>ω-cos(</span><span>${omega}</span><span class="chip-op">,</span><span>${phase}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
+    if ((which === 'ss' || which === 'palette-ss') && item.name === 'sawtooth') {
+        const mult = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
+        const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
+        return `<span class="chip"${tooltip}><span class="chip-formula"><span>sawtooth(</span><span>${mult}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
+    if ((which === 'ss' || which === 'palette-ss') && item.name === 'weighted_sum') {
+        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
+        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
+        return `<span class="chip"><span class="chip-formula"><span>weighted_sum(</span><span>${a}</span><span class="chip-op">,</span><span>${b}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
+    if ((which === 'ss' || which === 'palette-ss') && item.name === 'flip') {
+        const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
+        return `<span class="chip"${tooltip}><span class="chip-formula"><span>flip</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
+    if ((which === 'ss' || which === 'palette-ss') && _solveScoreCombineSpecs[item.name]) {
+        const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
+        return `<span class="chip"${tooltip}><span class="chip-formula"><span>${_escapeHtml(item.name)}</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
     if (which === 'ct' && item.name === 'exp') {
         const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
@@ -7375,6 +7744,7 @@ function _renderChips(which) {
     if (which === 'ss' || which === 'palette-ss') {
         const prefix = _solveScorePrefixForWhich(which);
         _syncSolveScoreAddOptions(which);
+        _updateSolveScoreStackUi(which);
         try {
             _syncSolveScoreLegacyInputs(prefix);
         } catch (e) {
@@ -7415,11 +7785,16 @@ function _renderCommonParams(options = {}) {
         shim: parseFloat(document.getElementById('render-shim').value) / 100,
         squareExtent: parseFloat(document.getElementById('render-square-extent').value) || 2.0,
         constantColor: document.getElementById('render-constant-color').value.replace('#', ''),
-        solveScoreQuantile: parseFloat(document.getElementById('render-solve-score-quantile').value) / 100,
+        solveScoreQuantile: solveScore.quantile,
         solveScoreMetric: solveScore.metric,
         solveScoreOmega: solveScore.omega,
+        solveScoreOmegaPhase: solveScore.omega_phase,
         solveScoreOmegaEnabled: solveScore.omega_enabled,
         solveScoreChain: solveScore.chain,
+        solveScoreProgramSpec: solveScore.program_spec,
+        solveScoreDisplay: solveScore.display,
+        solveScoreMetrics: solveScore.metrics,
+        solveScoreMixedSource: !!solveScore.uses_coeff_source,
         tileSize: parseInt(document.getElementById('sparse-tile-size').value),
         rotation: (() => {
             const turns = parseFloat(document.getElementById('render-rotation').value) || 0;
@@ -7641,7 +8016,6 @@ async function runPaletteArtifact() {
         statusEl.className = 'status';
         log('Palette artifact: starting...', '', 'palette-log');
 
-        const q = parseFloat(document.getElementById('palette-solve-score-quantile').value) / 100;
         const score = _resolveSolveScoreState('palette', { requireChain: true });
         const runId = _generateRunId();
         const taskId = 'palette_run_' + runId;
@@ -7652,7 +8026,7 @@ async function runPaletteArtifact() {
             params: {
                 metric: score.metric,
                 palette: paletteTabPalette,
-                solve_score_quantile: q,
+                solve_score_quantile: score.quantile,
                 solve_score_omega: score.omega,
                 solve_score_omega_enabled: score.omega_enabled,
                 solve_score_chain: score.chain,
@@ -8177,6 +8551,9 @@ async function _launchRenderOrchestrator(mode, paramsPatch = null) {
     const taskId = 'render_run_' + mode + '_' + runId;
     const effectiveColorMode = paramsPatch && paramsPatch.color_mode ? paramsPatch.color_mode : renderColorMode;
     const p = _renderCommonParams({ requireSolveScore: effectiveColorMode === 'solve_score' });
+    if (effectiveColorMode === 'solve_score' && p.solveScoreMixedSource) {
+        throw new Error('Mixed-source solve score is histogram-debug only for now');
+    }
     const solveScoreHistInputMode = effectiveColorMode === 'solve_score'
         ? _normalizeSolveScoreHistInputMode(
             (paramsPatch && paramsPatch.solve_score_hist_input_mode)
@@ -8413,24 +8790,39 @@ async function runSolveScoreHistogramDebug() {
         const calc = detail.calc || {};
         const degree = calc.degree;
         const loresKey = calc.lores && calc.lores.bin_key;
+        const loresCoeffsKey = (calc.lores && calc.lores.coeffs_key) || _fallbackLoresCoeffsKey(jobId, loresKey);
+        const nCoeffs = Number(calc.n_coeffs);
         if (!degree || !loresKey) {
             throw new Error('calc.json missing degree or lores.bin_key');
         }
 
         // Build payload from current UI state
-        const q = parseFloat(document.getElementById('render-solve-score-quantile').value) / 100;
         const p = _renderCommonParams({ requireSolveScore: true });
+        if (p.solveScoreMixedSource) {
+            if (!loresCoeffsKey) throw new Error('calc.json missing lores.coeffs_key for coeff-source solve-score debug');
+            if (!Number.isFinite(nCoeffs) || nCoeffs < 1) throw new Error('calc.json missing n_coeffs for coeff-source solve-score debug');
+        }
         const payload = {
             phase: 'summary',
             job_id: jobId,
             degree: degree,
+            n_coeffs: Number.isFinite(nCoeffs) ? nCoeffs : undefined,
             metric: p.solveScoreMetric,
-            solve_score_quantile: q,
+            solve_score_quantile: p.solveScoreQuantile,
             solve_score_omega: p.solveScoreOmega,
             solve_score_omega_enabled: p.solveScoreOmegaEnabled,
+            solve_score_chain: p.solveScoreChain,
             lores_bin_key: loresKey,
+            lores_coeffs_key: p.solveScoreMixedSource ? loresCoeffsKey : undefined,
             root_transforms: p.rootTransforms || [],
         };
+        const chainSummary = _formatErrorChain(p.solveScoreChain);
+        const metricsSummary = _solveScoreMetricSummary(p.solveScoreMetrics);
+        log(
+            `Solve histogram: request program=${p.solveScoreProgramSpec || 'm0'} · ${chainSummary ? `chain=${chainSummary} · ` : ''}${metricsSummary ? `metrics=${metricsSummary} · ` : ''}${_omegaSummaryLabel(p.solveScoreOmegaEnabled, p.solveScoreOmega)}`,
+            '',
+            'render-log'
+        );
 
         const summary = await lambdaPost('solve_proximity', payload);
 
@@ -8442,11 +8834,27 @@ async function runSolveScoreHistogramDebug() {
         // Build the full log block as a <pre> for fixed-width alignment
         const lines = [];
         const omegaUsed = Number.isFinite(Number(s.omega)) ? Number(s.omega) : p.solveScoreOmega;
+        const phaseUsed = Number.isFinite(Number(s.omega_phase)) ? Number(s.omega_phase) : p.solveScoreOmegaPhase;
         const omegaEnabled = s.omega_enabled !== undefined ? !!s.omega_enabled : p.solveScoreOmegaEnabled;
-        lines.push(`Solve histogram: metric=${s.metric}, q=${(q*100).toFixed(1)}%, ${_omegaSummaryLabel(omegaEnabled, omegaUsed)}, n=${s.n_solves}, degree=${s.degree}`);
-        lines.push(`  lores-only debug; mirrors actual 10 solve-score color bins`);
+        const summaryProgram = String(s.program || p.solveScoreProgramSpec || 'm0');
+        const summaryMetrics = Array.isArray(s.score_metrics) && Array.isArray(s.score_quantiles)
+            ? (() => {
+                const showAllSources = Array.isArray(s.score_sources) && s.score_sources.some(src => _normalizeSolveScoreMetricSource(src, 'slv') !== 'slv');
+                return s.score_metrics.map((name, idx) => {
+                const source = Array.isArray(s.score_sources) ? s.score_sources[idx] : 'slv';
+                const qPct = ((Number(s.score_quantiles[idx]) || 0) * 100).toFixed(1).replace(/\.0$/, '');
+                return (source === 'slv' && !showAllSources)
+                    ? `${name}(q=${qPct}%)`
+                    : `${name}(${source},q=${qPct}%)`;
+            }).join(', ');
+            })()
+            : metricsSummary;
+        lines.push(`Solve histogram: program=${summaryProgram}, n=${s.n_solves}, degree=${s.degree}`);
+        if (summaryMetrics) lines.push(`  metrics: ${summaryMetrics}`);
+        if (s.solve_score_display) lines.push(`  chain: ${s.solve_score_display}`);
+        lines.push(`  lores-only debug; raw score bins are pre-clip, final color bins mirror the actual 10 solve-score bins`);
         if (omegaEnabled) {
-            lines.push(`  transfer: cosine omega=${omegaUsed.toFixed(0)} (non-monotone; score-space bin ranges are only approximate)`);
+            lines.push(`  transfer: cosine omega=${omegaUsed.toFixed(0)} phase=${Number(phaseUsed).toFixed(3)} (non-monotone; score-space bin ranges are only approximate)`);
         } else {
             lines.push(`  transfer: identity (omega off)`);
         }
@@ -8456,9 +8864,36 @@ async function runSolveScoreHistogramDebug() {
         lines.push(`  occupancy: below=${s.clip_below_count} (${pct(s.clip_below_frac)})  in=${s.clip_inrange_count} (${pct(s.clip_inrange_frac)})  above=${s.clip_above_count} (${pct(s.clip_above_frac)})`);
         lines.push(`  fallback: ${s.clip_fallback ? s.clip_fallback_reason : 'none'}`);
         if (s.fully_finite_solve_count !== undefined) {
+            lines.push(`  lores rows: total=${s.n_solves}  all_finite=${s.fully_finite_solve_count} (${pct(s.fully_finite_solve_frac)})  partial=${s.partial_finite_solve_count} (${pct(s.partial_finite_solve_frac)})  no_finite=${s.zero_finite_solve_count} (${pct(s.zero_finite_solve_frac)})`);
             lines.push(`  finite diagnostics: full=${s.fully_finite_solve_count} (${pct(s.fully_finite_solve_frac)})  partial=${s.partial_finite_solve_count} (${pct(s.partial_finite_solve_frac)})  zero=${s.zero_finite_solve_count} (${pct(s.zero_finite_solve_frac)})`);
             lines.push(`  finite roots: ${s.finite_root_count}/${s.total_root_slots} (${pct(s.finite_root_frac)})  per solve=${fmt(s.mean_finite_roots_per_solve)}  min=${s.min_finite_roots_per_solve}  max=${s.max_finite_roots_per_solve}`);
+            if (s.rows_with_any_exact_zero_root_count !== undefined) {
+                lines.push(`  exact zeros: roots=${s.exact_zero_root_count}/${s.total_root_slots} (${pct(s.exact_zero_root_frac)})  rows_any=${s.rows_with_any_exact_zero_root_count} (${pct(s.rows_with_any_exact_zero_root_frac)})  rows_all=${s.rows_all_exact_zero_roots_count} (${pct(s.rows_all_exact_zero_roots_frac)})`);
+            }
             lines.push(`  scoring policy: ${s.metric_validity_policy || 'finite_only_min_roots'} (min finite roots=${s.metric_min_finite_roots ?? 0})  usable=${s.usable_solve_count} (${pct(s.usable_solve_frac)})  forced_zero=${s.forced_zero_score_count}`);
+        }
+
+        // Raw score histogram before clip/transfer/final color binning
+        const rawBins = Array.isArray(s.raw_bin_counts) ? s.raw_bin_counts : [];
+        const rawHistBins = Number.isFinite(Number(s.raw_hist_bins)) ? Number(s.raw_hist_bins) : rawBins.length;
+        const rawHistLo = Number(s.raw_hist_lo);
+        const rawHistHi = Number(s.raw_hist_hi);
+        const rawHistRange = Number.isFinite(Number(s.raw_hist_range)) ? Number(s.raw_hist_range) : (rawHistHi - rawHistLo);
+        if (rawHistBins > 0 && rawBins.length === rawHistBins && Number.isFinite(rawHistLo) && Number.isFinite(rawHistHi)) {
+            const maxRawBin = Math.max(...rawBins);
+            const rawBarW = 24;
+            let rawLabel = 'raw metric space';
+            if (s.raw_hist_space === 'program_output') rawLabel = 'program output before final bins';
+            lines.push(`  raw score bins (${rawHistBins}, ${rawLabel}${s.raw_hist_expanded ? ', range expanded' : ''}):`);
+            for (let b = 0; b < rawHistBins; b++) {
+                const lo = rawHistLo + (rawHistRange * b) / rawHistBins;
+                const hi = rawHistLo + (rawHistRange * (b + 1)) / rawHistBins;
+                const bracket = b === (rawHistBins - 1) ? ']' : ')';
+                const cnt = String(rawBins[b]).padStart(6);
+                const frac = s.n_solves > 0 ? ((rawBins[b] / s.n_solves) * 100).toFixed(1) : '0.0';
+                const bar = maxRawBin > 0 ? '#'.repeat(Math.round(rawBins[b] / maxRawBin * rawBarW)) : '';
+                lines.push(`    r${String(b).padStart(2, '0')} [${fmt(lo)} .. ${fmt(hi)}${bracket} ${cnt}  ${frac.padStart(5)}%  |${bar}`);
+            }
         }
 
         // 10-bin final color table
@@ -8527,8 +8962,10 @@ async function runRenderPaletteArtifact() {
         statusEl.className = 'status';
         log('Palette artifact: starting...', '', 'render-log');
 
-        const q = parseFloat(document.getElementById('render-solve-score-quantile').value) / 100;
         const p = _renderCommonParams({ requireSolveScore: true });
+        if (p.solveScoreMixedSource) {
+            throw new Error('Mixed-source solve score is histogram-debug only for now');
+        }
         const runId = _generateRunId();
         const taskId = 'palette_run_' + runId;
         const orchPayload = {
@@ -8538,7 +8975,7 @@ async function runRenderPaletteArtifact() {
             params: {
                 metric: p.solveScoreMetric,
                 palette: _activeRenderPalette() || 'inferno',
-                solve_score_quantile: q,
+                solve_score_quantile: p.solveScoreQuantile,
                 solve_score_omega: p.solveScoreOmega,
                 solve_score_omega_enabled: p.solveScoreOmegaEnabled,
                 solve_score_chain: p.solveScoreChain,
@@ -9384,15 +9821,25 @@ function _setRenderRootTransforms(transforms) {
     _renderChips('rt');
 }
 
-function _setSolveScoreChainFromArtifact(prefix, chain, metric, omega, omegaEnabled) {
-    const normalized = _normalizeSolveScoreChain(chain, metric || 'proximity');
+function _setSolveScoreChainFromArtifact(prefix, chain, metric, quantile, omega, omegaEnabled) {
+    const normalized = _normalizeSolveScoreChain(
+        chain,
+        metric || 'proximity',
+        Number.isFinite(Number(quantile)) ? Number(quantile) * 100 : _legacySolveScoreQuantilePct(prefix)
+    );
     if (normalized.length) {
         const target = _chainForWhich(_solveScoreWhichForPrefix(prefix));
         target.splice(0, target.length, ...normalized);
         _renderChips(_solveScoreWhichForPrefix(prefix));
         return;
     }
-    _setSolveScoreChainFromLegacy(prefix, metric || 'proximity', Number.isFinite(Number(omega)) ? Number(omega) : 1, omegaEnabled !== false);
+    _setSolveScoreChainFromLegacy(
+        prefix,
+        metric || 'proximity',
+        Number.isFinite(Number(quantile)) ? Number(quantile) * 100 : _legacySolveScoreQuantilePct(prefix),
+        Number.isFinite(Number(omega)) ? Number(omega) : 1,
+        omegaEnabled !== false
+    );
 }
 
 function populateSelectedRenderArtifact() {
@@ -9434,15 +9881,14 @@ function populateSelectedRenderArtifact() {
                 'render',
                 art.solve_score_chain,
                 art.metric,
+                art.solve_score_quantile,
                 art.solve_score_omega,
                 art.solve_score_omega_enabled
             );
         } else {
             warnings.push('solve-score metric');
         }
-        if (Number.isFinite(art.solve_score_quantile)) {
-            _setRenderSliderValue('render-solve-score-quantile', 'render-solve-score-quantile-val', art.solve_score_quantile * 100, 1);
-        } else {
+        if (!Number.isFinite(art.solve_score_quantile)) {
             warnings.push('solve-score q');
         }
         if (!Number.isFinite(art.solve_score_omega) && !(Array.isArray(art.solve_score_chain) && art.solve_score_chain.length)) {
@@ -9503,15 +9949,14 @@ function populateSelectedRenderArtifact() {
                 'render',
                 art.solve_score_chain,
                 art.solve_metric,
+                art.solve_score_quantile,
                 art.solve_score_omega,
                 art.solve_score_omega_enabled
             );
         } else {
             warnings.push('solve-score metric');
         }
-        if (Number.isFinite(art.solve_score_quantile)) {
-            _setRenderSliderValue('render-solve-score-quantile', 'render-solve-score-quantile-val', art.solve_score_quantile * 100, 1);
-        } else {
+        if (!Number.isFinite(art.solve_score_quantile)) {
             warnings.push('solve-score q');
         }
         if (!Number.isFinite(art.solve_score_omega) && !(Array.isArray(art.solve_score_chain) && art.solve_score_chain.length)) {
@@ -9526,6 +9971,7 @@ function populateSelectedRenderArtifact() {
                 'render',
                 art.palette_source_score_chain,
                 metric,
+                Number.isFinite(art.palette_source_quantile) ? art.palette_source_quantile : art.solve_score_quantile,
                 Number.isFinite(art.palette_source_omega) ? art.palette_source_omega : art.solve_score_omega,
                 (art.palette_source_omega_enabled !== undefined ? art.palette_source_omega_enabled : art.solve_score_omega_enabled) !== false
             );
@@ -9533,9 +9979,7 @@ function populateSelectedRenderArtifact() {
             warnings.push('saved-palette metric');
         }
         const srcQ = Number.isFinite(art.palette_source_quantile) ? art.palette_source_quantile : art.solve_score_quantile;
-        if (Number.isFinite(srcQ)) {
-            _setRenderSliderValue('render-solve-score-quantile', 'render-solve-score-quantile-val', srcQ * 100, 1);
-        } else {
+        if (!Number.isFinite(srcQ)) {
             warnings.push('saved-palette q');
         }
         if (

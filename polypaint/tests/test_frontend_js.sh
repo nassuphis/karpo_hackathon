@@ -372,6 +372,7 @@ const renderEls = {
     'render-solve-score-quantile': { value: '0.1' },
     'render-solve-score-quantile-val': {},
     'render-solve-score-omega': { value: '1' },
+    'render-solve-score-omega-phase': { value: '0' },
     'render-solve-score-omega-val': {},
     'btn-solve-histogram': {},
     'btn-populate-result': {},
@@ -497,6 +498,7 @@ const renderEls = {
     'palette-solve-score-quantile': { value: '0.1' },
     'palette-solve-score-quantile-val': {},
     'palette-solve-score-omega': { value: '1' },
+    'palette-solve-score-omega-phase': { value: '0' },
     'palette-solve-score-omega-val': {},
     'palette-status': {},
     'palette-info': {},
@@ -763,6 +765,49 @@ async function testPipeline(name, call) {
             process.exit(1);
         }
         console.log('  lambdaPost retry errors keep endpoint/context/history: OK');
+    }
+
+    {
+        await vm.runInContext(`
+            _lambdaUrls = { solve_proximity: 'https://api.example' };
+            fetch = async function(url, opts) {
+                return {
+                    ok: false,
+                    status: 500,
+                    text: async function() {
+                        return JSON.stringify({
+                            error: 'solve histogram summary failed',
+                            phase: 'summary',
+                            metric: 'centroid_im',
+                            program: 'm0;m1;mul',
+                            score_metrics: ['centroid_im', 'anisotropy'],
+                            solve_score_chain: [['centroid_im', '5'], ['anisotropy', '5'], ['mul']],
+                            detail: "solve_proximity_stats summary failed (rc=1): Invalid score program: invalid metric slot token 'mul'"
+                        });
+                    }
+                };
+            };
+        `, ctx);
+        const detailErr = await vm.runInContext(`(async()=>{ try { await _realLambdaPost('solve_proximity', {
+                phase: 'summary',
+                job_id: 'compute_hist',
+                metric: 'centroid_im',
+                solve_score_chain: [['centroid_im', '5'], ['anisotropy', '5'], ['mul']],
+                lores_bin_key: 'renders/compute_hist/lores.bin'
+            }); return ''; } catch (e) { return String((e && e.message) || e || ''); } })()`, ctx);
+        if (!detailErr.includes('phase=summary') || !detailErr.includes('metric=centroid_im')) {
+            console.error('FATAL: lambdaPost 500 error should include request context, got ' + detailErr);
+            process.exit(1);
+        }
+        if (!detailErr.includes('program=m0;m1;mul') || !detailErr.includes('score_metrics=centroid_im,anisotropy')) {
+            console.error('FATAL: lambdaPost 500 error should include structured program details, got ' + detailErr);
+            process.exit(1);
+        }
+        if (!detailErr.includes('chain=centroid_im(5),anisotropy(5),mul') || !detailErr.includes("invalid metric slot token 'mul'")) {
+            console.error('FATAL: lambdaPost 500 error should include structured chain/detail, got ' + detailErr);
+            process.exit(1);
+        }
+        console.log('  lambdaPost 500 errors surface structured histogram details: OK');
     }
 
     {
@@ -4081,6 +4126,10 @@ async function testPipeline(name, call) {
             console.error('FATAL: solve_score_omega should be 6, got ' + qp.params.solve_score_omega);
             process.exit(1);
         }
+        if (Math.abs(qp.solveScoreOmegaPhase - 0) > 0.001) {
+            console.error('FATAL: solveScoreOmegaPhase should default to 0, got ' + qp.solveScoreOmegaPhase);
+            process.exit(1);
+        }
         console.log('  solve_score_quantile in payload: OK (0.03)');
         // Now test rainbow mode — should NOT have solve_score_quantile
         vm.runInContext("renderColorMode = 'rainbow';", ctx);
@@ -4111,6 +4160,93 @@ async function testPipeline(name, call) {
         console.log('  viewport q and solve-score q independent: OK');
         ctx._elements['render-quantile'].value = '0';
         ctx._elements['render-solve-score-quantile'].value = '0.1';
+    }
+
+    // 11l: omega_cosine can appear mid-program and does not freeze add options
+    {
+        const midProgram = vm.runInContext(`(()=>_compileSolveScoreChain([
+            { name:'proximity', params:['slv','1'] },
+            { name:'omega_cosine', params:['3','1.25'] },
+            { name:'clusteriness', params:['slv','2'] },
+            { name:'avg', params:[] }
+        ], 'proximity'))()`, ctx);
+        if (midProgram.display !== 'proximity(q=1%) ω-cos(3,1.25) clusteriness(q=2%) avg') {
+            console.error('FATAL: internal omega display wrong: ' + midProgram.display);
+            process.exit(1);
+        }
+        if (midProgram.legacy_compatible) {
+            console.error('FATAL: internal omega chain must not be legacy compatible');
+            process.exit(1);
+        }
+        vm.runInContext(`
+            _renderScoreChain = [
+                { name:'proximity', params:['slv','1'] },
+                { name:'omega_cosine', params:['3','1.25'] }
+            ];
+        `, ctx);
+        const allowedAfterOmega = vm.runInContext(`(()=>_solveScoreAllowedAdditions('ss'))()`, ctx);
+        if (!Array.isArray(allowedAfterOmega) || !allowedAfterOmega.includes('clusteriness')) {
+            console.error('FATAL: solve-score add menu should allow metric chips after omega_cosine, got ' + JSON.stringify(allowedAfterOmega));
+            process.exit(1);
+        }
+        vm.runInContext(`
+            _renderScoreChain = [
+                { name:'proximity', params:['slv','1'] },
+                { name:'omega_cosine', params:['3','1.25'] },
+                { name:'clusteriness', params:['slv','2'] }
+            ];
+        `, ctx);
+        const allowedAfterSecondMetric = vm.runInContext(`(()=>_solveScoreAllowedAdditions('ss'))()`, ctx);
+        if (!Array.isArray(allowedAfterSecondMetric) || !allowedAfterSecondMetric.includes('avg')) {
+            console.error('FATAL: solve-score add menu should allow combine chips after internal omega + second metric, got ' + JSON.stringify(allowedAfterSecondMetric));
+            process.exit(1);
+        }
+        console.log('  omega_cosine allowed mid-program and add menu stays live: OK');
+    }
+
+    // 11m: sawtooth and flip behave like unary solve-score stack ops
+    {
+        const unaryProgram = vm.runInContext(`(()=>_compileSolveScoreChain([
+            { name:'proximity', params:['slv','1'] },
+            { name:'sawtooth', params:['10'] },
+            { name:'flip', params:[] }
+        ], 'proximity'))()`, ctx);
+        if (unaryProgram.display !== 'proximity(q=1%) sawtooth(10) flip') {
+            console.error('FATAL: sawtooth/flip display wrong: ' + unaryProgram.display);
+            process.exit(1);
+        }
+        if (unaryProgram.legacy_compatible) {
+            console.error('FATAL: sawtooth/flip chain must not be legacy compatible');
+            process.exit(1);
+        }
+        const unaryInfo = vm.runInContext(`(()=>{
+            _renderScoreChain = [
+                { name:'proximity', params:['slv','1'] },
+                { name:'sawtooth', params:['10'] },
+                { name:'flip', params:[] }
+            ];
+            const html = _renderRtChipHtml(_renderScoreChain[1], 1, 'ss', _ssCatalog) + _renderRtChipHtml(_renderScoreChain[2], 2, 'ss', _ssCatalog);
+            const allowed = _solveScoreAllowedAdditions('ss');
+            _renderScoreChain.push({ name:'clusteriness', params:['slv','2'] });
+            return {
+                allowed,
+                allowedAfterSecondMetric: _solveScoreAllowedAdditions('ss'),
+                html
+            };
+        })()`, ctx);
+        if (!Array.isArray(unaryInfo.allowed) || !unaryInfo.allowed.includes('clusteriness') || unaryInfo.allowed.includes('avg')) {
+            console.error('FATAL: solve-score add menu should stay live after sawtooth/flip, got ' + JSON.stringify(unaryInfo.allowed));
+            process.exit(1);
+        }
+        if (!Array.isArray(unaryInfo.allowedAfterSecondMetric) || !unaryInfo.allowedAfterSecondMetric.includes('avg')) {
+            console.error('FATAL: solve-score add menu should allow combine chips after sawtooth/flip + second metric, got ' + JSON.stringify(unaryInfo.allowedAfterSecondMetric));
+            process.exit(1);
+        }
+        if (!unaryInfo.html.includes('sawtooth(') || !unaryInfo.html.includes('flip')) {
+            console.error('FATAL: sawtooth/flip chips should render expected labels, got ' + unaryInfo.html);
+            process.exit(1);
+        }
+        console.log('  sawtooth and flip work as unary solve-score ops: OK');
     }
 
     // Step 12: Orchestrator launch + observer tests (spec section 20.3)
@@ -4915,6 +5051,11 @@ async function testPipeline(name, call) {
                     _histBody = body;
                     return {
                         mode: 'summary', metric: 'crowding', n_solves: 50, degree: 5,
+                        program: 'm0',
+                        score_metrics: ['crowding'],
+                        score_sources: ['slv'],
+                        score_quantiles: [0.02],
+                        solve_score_display: 'crowding(q=2%)',
                         min_score: -1, max_score: 2, mean_score: 0.5, stddev_score: 0.3,
                         q05: -0.5, q10: -0.3, q25: 0.1, q50: 0.5, q75: 0.9, q90: 1.2, q95: 1.5,
                         omega: 8,
@@ -4927,8 +5068,20 @@ async function testPipeline(name, call) {
                         total_root_slots: 250, finite_root_count: 210,
                         fully_finite_solve_count: 40, partial_finite_solve_count: 8, zero_finite_solve_count: 2,
                         usable_solve_count: 45, forced_zero_score_count: 5,
+                        exact_zero_root_count: 12,
+                        rows_with_any_exact_zero_root_count: 6,
+                        rows_all_exact_zero_roots_count: 1,
                         finite_root_frac: 0.84, fully_finite_solve_frac: 0.8, partial_finite_solve_frac: 0.16, zero_finite_solve_frac: 0.04, usable_solve_frac: 0.9,
+                        exact_zero_root_frac: 0.048, rows_with_any_exact_zero_root_frac: 0.12, rows_all_exact_zero_roots_frac: 0.02,
                         mean_finite_roots_per_solve: 4.2, min_finite_roots_per_solve: 0, max_finite_roots_per_solve: 5,
+                        raw_hist_bins: 32,
+                        raw_hist_lo: -1,
+                        raw_hist_hi: 2,
+                        raw_hist_range: 3,
+                        raw_hist_space: 'metric_raw',
+                        raw_hist_expanded: false,
+                        raw_bin_counts: [2,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,1,1],
+                        raw_bin_fracs: Array(32).fill(1/50),
                         intermediate_hist_bins: 100, final_bins: 10,
                         cuts_norm: [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9],
                         cuts_score: [-0.3,-0.1,0.1,0.3,0.5,0.7,0.9,1.1,1.3],
@@ -4962,18 +5115,109 @@ async function testPipeline(name, call) {
         // Verify log output contains the 10-bin table, not 32-bin full range
         const logHtml = ctx._elements['render-log'].innerHTML || '';
         const logText = ctx._elements['render-log'].textContent || '';
+        if (!logText.includes('request program=m0')) { console.error('FATAL: request log should show compiled program, got ' + logText); process.exit(1); }
+        if (!logText.includes('metrics=crowding(q=2%)')) { console.error('FATAL: request log should show score metrics, got ' + logText); process.exit(1); }
+        if (!logText.includes('Solve histogram: program=m0, n=50, degree=5')) { console.error('FATAL: summary log should show compiled program header, got ' + logText); process.exit(1); }
+        if (!logText.includes('chain: crowding(q=2%)')) { console.error('FATAL: summary log should show solve-score display chain, got ' + logText); process.exit(1); }
+        if (!logText.includes('raw score bins (32, raw metric space):')) { console.error('FATAL: log should show raw score bin table header, got ' + logText); process.exit(1); }
+        if (!logText.includes('r00')) { console.error('FATAL: log should show r00 row'); process.exit(1); }
+        if (!logText.includes('r31')) { console.error('FATAL: log should show r31 row'); process.exit(1); }
         if (!logText.includes('final color bins (10')) { console.error('FATAL: log should show final color bins (10)'); process.exit(1); }
         if (!logText.includes('b0')) { console.error('FATAL: log should show b0 row'); process.exit(1); }
         if (!logText.includes('b9')) { console.error('FATAL: log should show b9 row'); process.exit(1); }
-        if (!logText.includes('w=8')) { console.error('FATAL: log should show omega'); process.exit(1); }
-        if (logText.includes('32 bins')) { console.error('FATAL: log must not show 32 bins'); process.exit(1); }
+        if (!logText.includes('transfer: cosine omega=8 phase=0.000')) { console.error('FATAL: log should show omega transfer line'); process.exit(1); }
         if (logText.includes('full range')) { console.error('FATAL: log must not show full range'); process.exit(1); }
+        if (!logText.includes('lores rows: total=50  all_finite=40 (80.0%)  partial=8 (16.0%)  no_finite=2 (4.0%)')) { console.error('FATAL: log should show lores row diagnostics, got ' + logText); process.exit(1); }
+        if (!logText.includes('exact zeros: roots=12/250 (4.8%)  rows_any=6 (12.0%)  rows_all=1 (2.0%)')) { console.error('FATAL: log should show exact zero diagnostics, got ' + logText); process.exit(1); }
         if (!logText.includes('extremes:')) { console.error('FATAL: log should show outlier extremes'); process.exit(1); }
         if (!logText.includes('max_count=3')) { console.error('FATAL: log should show max_count=3'); process.exit(1); }
         if (!logText.includes('finite diagnostics: full=40')) { console.error('FATAL: log should show finite diagnostics, got ' + logText); process.exit(1); }
         if (!logText.includes('scoring policy: finite_only_min_roots (min finite roots=2)  usable=45 (90.0%)  forced_zero=5')) { console.error('FATAL: log should show finite-only policy, got ' + logText); process.exit(1); }
         console.log('  13d correct payload, no dispatch, no activeRun: OK');
-        console.log('  13e log shows 10-bin table, no 32-bin, has extremes + finite diagnostics: OK');
+        console.log('  13e log shows raw + final bin tables, has extremes + finite diagnostics: OK');
+    }
+
+    // 13f: mixed-source histogram sends coeff lores metadata and render launch rejects it
+    {
+        vm.runInContext("renderColorMode = 'solve_score'; renderSolveMetric = 'spread'; _activeRenderRun = null;", ctx);
+        vm.runInContext(`
+            _renderScoreChain = [
+                { name:'spread', params:['slv','1'] },
+                { name:'spread', params:['cf','2'] },
+                { name:'avg', params:[] }
+            ];
+            _syncSolveScoreLegacyInputs('render');
+        `, ctx);
+        ctx._elements['render-results-dir'] = { ...ctx._mkEl(), value: 'test_hist_job_mixed' };
+        ctx._elements['render-status'] = ctx._mkEl();
+        ctx._elements['render-log'] = ctx._mkEl();
+        ctx._elements['btn-solve-histogram'] = ctx._mkEl();
+        vm.runInContext(`
+            var _mixedHistBody = null;
+            var _mixedDispatchCalled = false;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'dispatch') { _mixedDispatchCalled = true; return { fired: 1, total: 1 }; }
+                if (name === 'solve_proximity') {
+                    _mixedHistBody = body;
+                    return {
+                        mode: 'summary', metric: 'spread', n_solves: 16, degree: 5,
+                        program: 'm0;m1;avg',
+                        score_metrics: ['spread', 'spread'],
+                        score_sources: ['slv', 'cf'],
+                        score_quantiles: [0.01, 0.02],
+                        solve_score_display: 'spread(q=1%) spread(cf,q=2%) avg',
+                        min_score: 0, max_score: 1, mean_score: 0.5, stddev_score: 0.2,
+                        q05: 0.1, q10: 0.15, q25: 0.25, q50: 0.5, q75: 0.75, q90: 0.9, q95: 0.95,
+                        omega: 1, clip_quantile: 0.01, clip_lo: 0, clip_hi: 1, full_range: 1, clip_range: 1,
+                        clip_below_count: 0, clip_inrange_count: 16, clip_above_count: 0,
+                        clip_below_frac: 0, clip_inrange_frac: 1, clip_above_frac: 0,
+                        clip_fallback: false, clip_fallback_reason: null,
+                        metric_validity_policy: 'finite_only_min_roots', metric_min_finite_roots: 2,
+                        total_root_slots: 80, finite_root_count: 80, fully_finite_solve_count: 16, partial_finite_solve_count: 0, zero_finite_solve_count: 0,
+                        usable_solve_count: 16, forced_zero_score_count: 0,
+                        exact_zero_root_count: 0, rows_with_any_exact_zero_root_count: 0, rows_all_exact_zero_roots_count: 0,
+                        finite_root_frac: 1, fully_finite_solve_frac: 1, partial_finite_solve_frac: 0, zero_finite_solve_frac: 0, usable_solve_frac: 1,
+                        exact_zero_root_frac: 0, rows_with_any_exact_zero_root_frac: 0, rows_all_exact_zero_roots_frac: 0,
+                        mean_finite_roots_per_solve: 5, min_finite_roots_per_solve: 5, max_finite_roots_per_solve: 5,
+                        raw_hist_bins: 32, raw_hist_lo: 0, raw_hist_hi: 1, raw_hist_range: 1, raw_hist_space: 'program_output', raw_hist_expanded: false,
+                        raw_bin_counts: Array(32).fill(0), raw_bin_fracs: Array(32).fill(0),
+                        intermediate_hist_bins: 100, final_bins: 10,
+                        cuts_norm: [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9],
+                        cuts_score: [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9],
+                        final_bin_counts: [1,1,1,1,2,2,2,2,2,2],
+                        final_bin_fracs: [0.0625,0.0625,0.0625,0.0625,0.125,0.125,0.125,0.125,0.125,0.125],
+                        min_score_count: 1, max_score_count: 1, clip_lo_count: 0, clip_hi_count: 0,
+                        n_unique_scores: 16, dl_ms: 4, compute_ms: 2
+                    };
+                }
+                if (name === 'storage' && path === '/detail') {
+                    return { calc: { degree: 5, n_coeffs: 7, lores: { bin_key: 'renders/test_hist_job_mixed/lores.bin' } } };
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await runSolveScoreHistogramDebug(); })()', ctx); } catch(e) {}
+        const mixedBody = vm.runInContext('_mixedHistBody', ctx);
+        const mixedLogText = ctx._elements['render-log'].textContent || '';
+        if (!mixedBody || mixedBody.lores_coeffs_key !== 'renders/test_hist_job_mixed/lores_coeffs.bin' || mixedBody.n_coeffs !== 7) {
+            console.error('FATAL: mixed-source histogram should fall back to canonical coeff lores metadata, got ' + JSON.stringify(mixedBody));
+            process.exit(1);
+        }
+        if (!mixedLogText.includes('metrics=spread(slv,q=1%), spread(cf,q=2%)')) {
+            console.error('FATAL: mixed-source histogram log should show source-aware metrics, got ' + mixedLogText);
+            process.exit(1);
+        }
+        try { await vm.runInContext('(async()=>{ await runRasterPipeline(); })()', ctx); } catch(e) {}
+        const mixedStatus = ctx._elements['render-status'].textContent || '';
+        if (!mixedStatus.includes('Mixed-source solve score is histogram-debug only for now')) {
+            console.error('FATAL: render launch should reject mixed-source solve score, got status ' + mixedStatus);
+            process.exit(1);
+        }
+        if (vm.runInContext('_mixedDispatchCalled', ctx)) {
+            console.error('FATAL: mixed-source render launch must not dispatch orchestrator');
+            process.exit(1);
+        }
+        console.log('  13f mixed-source histogram uses coeff lores metadata and render launch rejects runtime path: OK');
     }
 
     // Step 14: Render palette family generation

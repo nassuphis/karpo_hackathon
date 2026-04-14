@@ -18,6 +18,7 @@ Run: cd polypaint && uv run python tests/test_solve_proximity_stats.py
 import json
 import math
 import os
+import shlex
 import struct
 import subprocess
 import sys
@@ -93,7 +94,7 @@ def run_clip(bin_path, degree, metric="proximity", **kwargs):
     try:
         args = f"/src/solve_proximity_stats {docker_bin} --mode=clip --degree={degree} --metric={metric}"
         for k, v in kwargs.items():
-            args += f" --{k}={v}"
+            args += f" --{k}={shlex.quote(str(v))}"
         r = _docker_run(args)
         if r.returncode != 0:
             return None, r.stderr
@@ -122,7 +123,7 @@ def run_clip_stdin(bin_path, degree, metric="proximity", **kwargs):
             f"--degree={degree} --metric={metric} < {docker_bin}"
         )
         for k, v in kwargs.items():
-            args += f" --{k}={v}"
+            args += f" --{k}={shlex.quote(str(v))}"
         r = _docker_run(args)
         if r.returncode != 0:
             return None, r.stderr
@@ -144,7 +145,7 @@ def run_hist(bin_path, degree, clip_lo, clip_hi, hist_bins=100, metric="proximit
                 f"--degree={degree} --clip_lo={clip_lo} --clip_hi={clip_hi} "
                 f"--hist_bins={hist_bins} --metric={metric}")
         for k, v in kwargs.items():
-            args += f" --{k}={v}"
+            args += f" --{k}={shlex.quote(str(v))}"
         r = _docker_run(args)
         if r.returncode != 0:
             return None, r.stderr
@@ -168,7 +169,7 @@ def run_hist_stdin(bin_path, degree, clip_lo, clip_hi, hist_bins=100, metric="pr
             f"--hist_bins={hist_bins} --metric={metric} < /src/_test_input.bin"
         )
         for k, v in kwargs.items():
-            args += f" --{k}={v}"
+            args += f" --{k}={shlex.quote(str(v))}"
         r = _docker_run(args)
         if r.returncode != 0:
             return None, r.stderr
@@ -739,13 +740,20 @@ def run_summary(bin_path, degree, metric="proximity", quantile_lo="0.001", quant
     """Run summary mode via Docker."""
     import shutil
     host_bin = os.path.join(LAMBDA_DIR, "_test_input.bin")
+    host_coeff_bin = os.path.join(LAMBDA_DIR, "_test_coeff_input.bin")
     shutil.copy(bin_path, host_bin)
+    coeff_local = kwargs.pop("_coeffs_local", None)
+    coeff_degree = kwargs.pop("_coeff_degree", None)
+    if coeff_local:
+        shutil.copy(coeff_local, host_coeff_bin)
     try:
         args = (f"/src/solve_proximity_stats /src/_test_input.bin --mode=summary "
                 f"--degree={degree} --metric={metric} "
                 f"--quantile_lo={quantile_lo} --quantile_hi={quantile_hi}")
+        if coeff_local:
+            args += f" --score_coeffs_file=/src/_test_coeff_input.bin --score_coeff_degree={int(coeff_degree)}"
         for k, v in kwargs.items():
-            args += f" --{k}={v}"
+            args += f" --{k}={shlex.quote(str(v))}"
         r = _docker_run(args)
         if r.returncode != 0:
             return None, r.stderr
@@ -755,6 +763,11 @@ def run_summary(bin_path, degree, metric="proximity", quantile_lo="0.001", quant
             os.remove(host_bin)
         except OSError:
             pass
+        if coeff_local:
+            try:
+                os.remove(host_coeff_bin)
+            except OSError:
+                pass
 
 
 def test_summary_all_fields():
@@ -782,12 +795,24 @@ def test_summary_all_fields():
                   "fully_finite_solve_count", "partial_finite_solve_count", "zero_finite_solve_count",
                   "usable_solve_count", "forced_zero_score_count", "finite_root_frac",
                   "fully_finite_solve_frac", "partial_finite_solve_frac", "zero_finite_solve_frac", "usable_solve_frac",
+                  "exact_zero_root_count", "rows_with_any_exact_zero_root_count", "rows_all_exact_zero_roots_count",
+                  "exact_zero_root_frac", "rows_with_any_exact_zero_root_frac", "rows_all_exact_zero_roots_frac",
                   "mean_finite_roots_per_solve", "min_finite_roots_per_solve", "max_finite_roots_per_solve",
+                  "raw_hist_bins", "raw_hist_lo", "raw_hist_hi", "raw_hist_range", "raw_hist_space", "raw_hist_expanded",
+                  "raw_bin_counts", "raw_bin_fracs",
                   "intermediate_hist_bins", "final_bins",
                   "cuts_norm", "cuts_score", "final_bin_counts", "final_bin_fracs",
                   "min_score_count", "max_score_count", "clip_lo_count", "clip_hi_count",
                   "n_unique_scores"]:
         assert field in result, f"missing field: {field}"
+    assert result["raw_hist_bins"] == 32
+    assert result["raw_hist_space"] == "metric_raw"
+    assert len(result["raw_bin_counts"]) == 32
+    assert len(result["raw_bin_fracs"]) == 32
+    assert sum(result["raw_bin_counts"]) == result["n_solves"], \
+        f"raw bin sum {sum(result['raw_bin_counts'])} != n_solves {result['n_solves']}"
+    assert 0 <= result["rows_with_any_exact_zero_root_count"] <= result["n_solves"]
+    assert 0 <= result["rows_all_exact_zero_roots_count"] <= result["n_solves"]
     assert result["intermediate_hist_bins"] == 100
     assert result["final_bins"] == 10
     assert len(result["cuts_norm"]) == 9
@@ -838,6 +863,61 @@ def test_summary_reports_finite_root_diagnostics():
     assert r["min_finite_roots_per_solve"] == 0
     assert r["max_finite_roots_per_solve"] == 4
     os.remove(path)
+
+
+def test_summary_reports_exact_zero_root_diagnostics():
+    """Summary exposes exact-zero root and row counts for placeholder visibility."""
+    path = "/tmp/sp_test_summary_zero_roots.bin"
+    degree = 4
+    solves = [
+        [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0)],
+        [(0.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 0.0)],
+        [(float("inf"), 0.0), (0.0, 0.0), (1.0, 0.0), (2.0, 0.0)],
+    ]
+    write_bin(path, solves, degree)
+    r, err = run_summary(path, degree, metric="proximity")
+    assert r is not None, f"summary failed: {err}"
+    assert r["exact_zero_root_count"] == 6
+    assert r["rows_with_any_exact_zero_root_count"] == 3
+    assert r["rows_all_exact_zero_roots_count"] == 1
+    assert abs(r["exact_zero_root_frac"] - (6.0 / 12.0)) < 1e-6
+    assert abs(r["rows_with_any_exact_zero_root_frac"] - 1.0) < 1e-6
+    assert abs(r["rows_all_exact_zero_roots_frac"] - (1.0 / 3.0)) < 1e-6
+    os.remove(path)
+
+
+def test_summary_mixed_source_program_uses_coeff_vectors():
+    solve_path = "/tmp/sp_test_summary_mixed_source_solves.bin"
+    coeff_path = "/tmp/sp_test_summary_mixed_source_coeffs.bin"
+    solve_rows = [
+        [(0.0, 0.0), (1.0, 0.0)],
+        [(0.0, 0.0), (1.0, 0.0)],
+    ]
+    coeff_rows = [
+        [(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)],
+        [(-1.0, 0.0), (0.0, 0.0), (1.0, 0.0)],
+    ]
+    write_bin(solve_path, solve_rows, 2)
+    write_bin(coeff_path, coeff_rows, 3)
+    result, err = run_summary(
+        solve_path,
+        2,
+        metric="spread",
+        score_metrics="spread,spread",
+        score_sources="slv,cf",
+        score_clip_los="-0.5,-150",
+        score_clip_his="0,0",
+        score_program="m0;m1;avg",
+        _coeffs_local=coeff_path,
+        _coeff_degree=3,
+    )
+    assert result is not None, f"mixed-source summary failed: {err}"
+    assert result["raw_hist_space"] == "program_output"
+    assert result["n_solves"] == 2
+    assert 0.15 <= result["min_score"] <= 0.25, result["min_score"]
+    assert 0.65 <= result["max_score"] <= 0.75, result["max_score"]
+    os.remove(solve_path)
+    os.remove(coeff_path)
 
 
 def test_clip_centroid_re_uses_only_finite_roots():
@@ -1158,6 +1238,8 @@ if __name__ == "__main__":
         # Summary mode
         ("summary all fields", test_summary_all_fields),
         ("summary threads passthrough", test_summary_reports_requested_threads),
+        ("summary exact zero root diagnostics", test_summary_reports_exact_zero_root_diagnostics),
+        ("summary mixed-source coeff vectors", test_summary_mixed_source_program_uses_coeff_vectors),
         ("summary centroid_re smoke", test_summary_centroid_re_smoke),
         ("summary dist_unit_circle smoke", test_summary_dist_unit_circle_smoke),
         ("summary quantiles monotone", test_summary_quantiles_monotone),

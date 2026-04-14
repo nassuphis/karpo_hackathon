@@ -11,6 +11,7 @@ import time
 
 import boto3
 
+from solve_score_chain import solve_score_program_cli_payload
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
 s3 = boto3.client("s3")
@@ -97,6 +98,19 @@ def _sectioned_input_size_limit():
     return (memory_mb * 1024 * 1024) // 2
 
 
+def _solve_score_program_args(bins_data):
+    payload = solve_score_program_cli_payload({
+        "metrics": bins_data.get("metrics") or [],
+        "program_spec": str(bins_data.get("program") or ""),
+    })
+    return [
+        f"--score_metrics={payload['score_metrics']}",
+        f"--score_clip_los={payload['score_clip_los']}",
+        f"--score_clip_his={payload['score_clip_his']}",
+        f"--score_program={payload['score_program']}",
+    ]
+
+
 def handler(event, context):
     params = parse_body(event)
     contract_warnings = []
@@ -177,17 +191,22 @@ def handler(event, context):
         bins_data = json.loads(bins_obj["Body"].read())
         if bins_data.get("family") != "solve_score":
             raise RuntimeError(f"Bins artifact missing or wrong family: {bins_data.get('family')}")
-        if bins_data.get("metric") != metric:
-            raise RuntimeError(f"Bins metric mismatch: expected {metric}, got {bins_data.get('metric')}")
-        if bins_data.get("clip_quantile") != q:
-            raise RuntimeError(f"Bins quantile mismatch: expected {q}, got {bins_data.get('clip_quantile')}")
-        if float(bins_data.get("omega", 1.0)) != omega:
-            raise RuntimeError(f"Bins omega mismatch: expected {omega}, got {bins_data.get('omega')}")
-        if _parse_boolish(bins_data.get("omega_enabled", True), True) != omega_enabled:
-            raise RuntimeError(f"Bins omega_enabled mismatch: expected {omega_enabled}, got {bins_data.get('omega_enabled')}")
         cuts = bins_data.get("cuts_norm", [])
         if len(cuts) != 9:
             raise RuntimeError(f"Bins artifact must contain 9 cuts, got {len(cuts)}")
+        is_v2_bins = int(bins_data.get("version", 1) or 1) >= 2
+        if is_v2_bins:
+            if not bins_data.get("program") or not isinstance(bins_data.get("metrics"), list) or not bins_data.get("metrics"):
+                raise RuntimeError("v2 solve-score bins artifact is missing program or metrics")
+        else:
+            if bins_data.get("metric") != metric:
+                raise RuntimeError(f"Bins metric mismatch: expected {metric}, got {bins_data.get('metric')}")
+            if bins_data.get("clip_quantile") != q:
+                raise RuntimeError(f"Bins quantile mismatch: expected {q}, got {bins_data.get('clip_quantile')}")
+            if float(bins_data.get("omega", 1.0)) != omega:
+                raise RuntimeError(f"Bins omega mismatch: expected {omega}, got {bins_data.get('omega')}")
+            if _parse_boolish(bins_data.get("omega_enabled", True), True) != omega_enabled:
+                raise RuntimeError(f"Bins omega_enabled mismatch: expected {omega_enabled}, got {bins_data.get('omega_enabled')}")
 
         report_status(job_id, task_id, "bin_downloaded", result_data=progress)
 
@@ -196,16 +215,21 @@ def handler(event, context):
             BINARY if use_legacy_binary else BINARY_MT,
             _TMP_INPUT,
             f"--degree={degree}",
-            f"--metric={metric}",
-            f"--clip_lo={bins_data['clip_lo']}",
-            f"--clip_hi={bins_data['clip_hi']}",
             f"--cuts={','.join(str(c) for c in cuts)}",
-            f"--omega={omega}",
-            f"--omega_enabled={1 if omega_enabled else 0}",
             f"--step_count={step_count}",
             f"--scores_out={_TMP_SCORES}",
             f"--bins_out={_TMP_BINS}",
         ]
+        if is_v2_bins:
+            cmd.extend(_solve_score_program_args(bins_data))
+        else:
+            cmd.extend([
+                f"--metric={metric}",
+                f"--clip_lo={bins_data['clip_lo']}",
+                f"--clip_hi={bins_data['clip_hi']}",
+                f"--omega={omega}",
+                f"--omega_enabled={1 if omega_enabled else 0}",
+            ])
         if not use_legacy_binary:
             cmd.extend([
                 f"--threads={threads}",
@@ -270,14 +294,17 @@ def handler(event, context):
             "metric": metric,
             "omega": omega,
             "omega_enabled": omega_enabled,
-            "clip_lo": bins_data["clip_lo"],
-            "clip_hi": bins_data["clip_hi"],
+            "clip_lo": bins_data.get("clip_lo"),
+            "clip_hi": bins_data.get("clip_hi"),
             "cuts_norm": cuts,
             "score_key": score_key,
             "palette_bins_key": palette_bins_key,
             "min_score": meta.get("min_score"),
             "max_score": meta.get("max_score"),
         }
+        if is_v2_bins:
+            chunk_meta["program"] = bins_data.get("program")
+            chunk_meta["metrics"] = bins_data.get("metrics")
         s3.put_object(Bucket=BUCKET, Key=meta_key, Body=json.dumps(chunk_meta), ContentType="application/json")
 
         result_data = attach_contract_warnings({

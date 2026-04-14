@@ -282,6 +282,72 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(done_kwargs["result_data"]["input_mode"], "sectioned")
         self.assertEqual(done_kwargs["result_data"]["download_us"], 1200)
 
+    @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.run")
+    @patch("handler_raster_mt.s3")
+    def test_v2_solve_score_bins_use_program_cli_flags(self, mock_s3, mock_run, mock_report):
+        import handler_raster_mt as mod
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/chunk_0.bin":
+                return {"Body": MagicMock(read=lambda: b"\x00" * 160)}
+            if key == "renders/j/solve_scores/crowding_bins.json":
+                payload = {
+                    "family": "solve_score",
+                    "version": 2,
+                    "metric": "spread",
+                    "clip_quantile": 0.02,
+                    "omega": 5.0,
+                    "omega_enabled": True,
+                    "clip_lo": -1.0,
+                    "clip_hi": 2.0,
+                    "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                    "program": "m0;m1;weighted_sum:0.7:0.3;omega_cosine:5",
+                    "metrics": [
+                        {"slot": 0, "metric": "spread", "quantile": 0.02, "clip_lo": -1.0, "clip_hi": 2.0},
+                        {"slot": 1, "metric": "shelliness", "quantile": 0.03, "clip_lo": -0.5, "clip_hi": 1.5},
+                    ],
+                }
+                return {"Body": MagicMock(read=lambda: json.dumps(payload).encode())}
+            raise AssertionError(f"unexpected get_object key: {key}")
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.upload_fileobj.side_effect = lambda fileobj, bucket, key: None
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None):
+            self.assertIn("--color=solve_score", cmd)
+            self.assertIn("--score_metrics=spread,shelliness", cmd)
+            self.assertIn("--score_clip_los=-1,-0.5", cmd)
+            self.assertIn("--score_clip_his=2,1.5", cmd)
+            self.assertIn("--score_program=m0;m1;weighted_sum:0.7:0.3;omega_cosine:5", cmd)
+            self.assertFalse(any(arg.startswith("--solve_metric=") for arg in cmd))
+            self.assertFalse(any(arg.startswith("--solve_score_clip_lo=") for arg in cmd))
+            self.assertFalse(any(arg.startswith("--solve_score_omega=") for arg in cmd))
+            with open("/tmp/pix_t0000.pix", "wb") as fh:
+                fh.write(b"V" * 8)
+            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
+                fh.write(b"v" * 8)
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({"threads": 2, "roots_plotted": 24, "roots_clipped": 3}),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler(_event(
+            solve_metric="spread",
+            solve_score_quantile=0.02,
+            solve_score_omega=5.0,
+            solve_score_omega_enabled=True,
+        ), None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["threads"], 2)
+        self.assertEqual(body["engine"], "mt")
+
 
 if __name__ == "__main__":
     unittest.main()

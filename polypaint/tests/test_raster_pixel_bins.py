@@ -98,6 +98,72 @@ class TestRasterPixelBins(unittest.TestCase):
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
 
+    @patch("handler_raster.report_status")
+    @patch("handler_raster.subprocess.run")
+    @patch("handler_raster.s3")
+    def test_v2_solve_score_bins_use_program_cli_flags(self, mock_s3, mock_run, mock_report):
+        import handler_raster as mod
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/chunk_0.bin":
+                return {"Body": MagicMock(read=lambda: b"\x00" * 80)}
+            if key == "renders/j/solve_scores/crowding_bins.json":
+                payload = {
+                    "family": "solve_score",
+                    "version": 2,
+                    "metric": "spread",
+                    "clip_quantile": 0.02,
+                    "omega": 5.0,
+                    "omega_enabled": True,
+                    "clip_lo": -1.0,
+                    "clip_hi": 2.0,
+                    "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                    "program": "m0;m1;weighted_sum:0.7:0.3;omega_cosine:5",
+                    "metrics": [
+                        {"slot": 0, "metric": "spread", "quantile": 0.02, "clip_lo": -1.0, "clip_hi": 2.0},
+                        {"slot": 1, "metric": "shelliness", "quantile": 0.03, "clip_lo": -0.5, "clip_hi": 1.5},
+                    ],
+                }
+                return {"Body": MagicMock(read=lambda: json.dumps(payload).encode())}
+            raise AssertionError(f"unexpected get_object key: {key}")
+
+        mock_s3.get_object.side_effect = get_object
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None):
+            self.assertIn("--color=solve_score", cmd)
+            self.assertIn("--score_metrics=spread,shelliness", cmd)
+            self.assertIn("--score_clip_los=-1,-0.5", cmd)
+            self.assertIn("--score_clip_his=2,1.5", cmd)
+            self.assertIn("--score_program=m0;m1;weighted_sum:0.7:0.3;omega_cosine:5", cmd)
+            self.assertFalse(any(arg.startswith("--solve_metric=") for arg in cmd))
+            self.assertFalse(any(arg.startswith("--solve_score_clip_lo=") for arg in cmd))
+            self.assertFalse(any(arg.startswith("--solve_score_omega=") for arg in cmd))
+            with open("/tmp/pix_t0000.pix", "wb") as fh:
+                fh.write(b"\x01" * 8)
+            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
+                fh.write(b"\x02" * 8)
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({"roots_plotted": 20, "roots_clipped": 1}),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        with patch("glob.glob", return_value=[]):
+            result = mod.handler(_event(
+                solve_metric="spread",
+                solve_score_quantile=0.02,
+                solve_score_omega=5.0,
+                solve_score_omega_enabled=True,
+            ), None)
+
+        body = json.loads(result["body"])
+        self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
+        statuses = [call.args[2] for call in mock_report.call_args_list]
+        self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
+
 
 if __name__ == "__main__":
     unittest.main()

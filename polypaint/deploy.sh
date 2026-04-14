@@ -762,21 +762,21 @@ cp lambda/handler_dispatch.py lambda/shared.py "$DISPATCH_DIR/"
 cd "$DISPATCH_DIR" && zip -r9 /tmp/polypaint-dispatch.zip . -q && cd "$SCRIPT_DIR"
 echo "  Dispatch: $(du -h /tmp/polypaint-dispatch.zip | cut -f1)  (pure Python)"
 
-# Raster: handler_raster.py + shared.py + roots2pix
+# Raster: handler_raster.py + shared.py + solve_score_chain.py + roots2pix
 RASTER_DIR=/tmp/polypaint-raster
 rm -rf "$RASTER_DIR"
 mkdir -p "$RASTER_DIR"
-cp lambda/handler_raster.py lambda/shared.py "$RASTER_DIR/"
+cp lambda/handler_raster.py lambda/shared.py lambda/solve_score_chain.py "$RASTER_DIR/"
 cp lambda/roots2pix "$RASTER_DIR/"
 chmod +x "$RASTER_DIR"/roots2pix
 cd "$RASTER_DIR" && zip -r9 /tmp/polypaint-raster.zip . -q && cd "$SCRIPT_DIR"
 echo "  Raster:   $(du -h /tmp/polypaint-raster.zip | cut -f1)  (roots2pix)"
 
-# Raster-MT: handler_raster_mt.py + shared.py + roots2pix_mt
+# Raster-MT: handler_raster_mt.py + shared.py + solve_score_chain.py + roots2pix_mt
 RASTER_MT_DIR=/tmp/polypaint-raster-mt
 rm -rf "$RASTER_MT_DIR"
 mkdir -p "$RASTER_MT_DIR/lib"
-cp lambda/handler_raster_mt.py lambda/shared.py "$RASTER_MT_DIR/"
+cp lambda/handler_raster_mt.py lambda/shared.py lambda/solve_score_chain.py "$RASTER_MT_DIR/"
 cp lambda/roots2pix_mt "$RASTER_MT_DIR/"
 cp lambda/roots2pix_mt_lib/* "$RASTER_MT_DIR/lib/" 2>/dev/null || true
 chmod +x "$RASTER_MT_DIR"/roots2pix_mt
@@ -927,11 +927,11 @@ chmod +x "$DZ_EXPORT_DIR"/dz_export
 cd "$DZ_EXPORT_DIR" && zip -r9 /tmp/polypaint-deepzoom-export.zip . -q && cd "$SCRIPT_DIR"
 echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_export + libvips layer)"
 
-# Solve Proximity: handler_solve_proximity.py + shared.py + solve_proximity_stats binary
+# Solve Proximity: handler_solve_proximity.py + shared.py + solve_score_chain.py + solve_proximity_stats binary
 SP_DIR=/tmp/polypaint-solve-proximity
 rm -rf "$SP_DIR"
 mkdir -p "$SP_DIR/lib"
-cp lambda/handler_solve_proximity.py lambda/shared.py "$SP_DIR/"
+cp lambda/handler_solve_proximity.py lambda/shared.py lambda/solve_score_chain.py "$SP_DIR/"
 cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SP_DIR/"
 cp lambda/solve_proximity_hist_sectioned_lib/* "$SP_DIR/lib/" 2>/dev/null || true
 chmod +x "$SP_DIR"/solve_proximity_stats "$SP_DIR"/solve_proximity_hist_sectioned
@@ -942,7 +942,7 @@ echo "  SolvPrx: $(du -h /tmp/polypaint-solve-proximity.zip | cut -f1)  (solve_p
 SP_BENCH_DIR=/tmp/polypaint-solve-proximity-bench
 rm -rf "$SP_BENCH_DIR"
 mkdir -p "$SP_BENCH_DIR/lib"
-cp lambda/handler_solve_proximity_bench.py lambda/handler_solve_proximity.py lambda/shared.py "$SP_BENCH_DIR/"
+cp lambda/handler_solve_proximity_bench.py lambda/handler_solve_proximity.py lambda/shared.py lambda/solve_score_chain.py "$SP_BENCH_DIR/"
 cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SP_BENCH_DIR/"
 cp lambda/solve_proximity_hist_sectioned_lib/* "$SP_BENCH_DIR/lib/" 2>/dev/null || true
 chmod +x "$SP_BENCH_DIR"/solve_proximity_stats "$SP_BENCH_DIR"/solve_proximity_hist_sectioned
@@ -979,11 +979,11 @@ cp lambda/handler_palette_render_plan.py lambda/shared.py \
 cd "$PAL_PLAN_DIR" && zip -r9 /tmp/polypaint-palette-render-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalPlan: $(du -h /tmp/polypaint-palette-render-plan.zip | cut -f1)  (plan builder)"
 
-# Palette Chunk: handler_palette_chunk.py + shared.py + solve_palette_chunk + solve_palette_chunk_mt
+# Palette Chunk: handler_palette_chunk.py + shared.py + solve_score_chain.py + solve_palette_chunk + solve_palette_chunk_mt
 PAL_CHUNK_DIR=/tmp/polypaint-palette-chunk
 rm -rf "$PAL_CHUNK_DIR"
 mkdir -p "$PAL_CHUNK_DIR/lib"
-cp lambda/handler_palette_chunk.py lambda/shared.py "$PAL_CHUNK_DIR/"
+cp lambda/handler_palette_chunk.py lambda/shared.py lambda/solve_score_chain.py "$PAL_CHUNK_DIR/"
 cp lambda/solve_palette_chunk lambda/solve_palette_chunk_mt "$PAL_CHUNK_DIR/"
 cp lambda/solve_palette_chunk_mt_lib/* "$PAL_CHUNK_DIR/lib/" 2>/dev/null || true
 chmod +x "$PAL_CHUNK_DIR"/solve_palette_chunk "$PAL_CHUNK_DIR"/solve_palette_chunk_mt

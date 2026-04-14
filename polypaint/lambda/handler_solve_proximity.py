@@ -15,6 +15,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 from botocore.config import Config
 
+from solve_score_chain import (
+    compile_solve_score_chain_or_legacy,
+    serialize_solve_score_chain,
+    solve_score_program_cli_payload,
+    solve_score_uses_non_solve_sources,
+)
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
 s3 = boto3.client("s3")
@@ -27,13 +33,14 @@ VALID_METRICS = {"proximity", "crowding", "spread", "anisotropy", "area",
 VALID_HIST_INPUT_MODES = {"tmpfile", "stdin", "sectioned"}
 
 _TMP_INPUT = "/tmp/solve_prox_input.bin"
+_TMP_COEFF_INPUT = "/tmp/solve_prox_coeff_input.bin"
 _TMP_XFORMS = "/tmp/solve_prox_root_xforms.json"
 _TMP_CLIP = "/tmp/solve_prox_clip.json"
 _TMP_HIST = "/tmp/solve_prox_hist.json"
 
 
 def _cleanup_tmp():
-    for p in [_TMP_INPUT, _TMP_XFORMS, _TMP_CLIP, _TMP_HIST]:
+    for p in [_TMP_INPUT, _TMP_COEFF_INPUT, _TMP_XFORMS, _TMP_CLIP, _TMP_HIST]:
         try:
             os.remove(p)
         except OSError:
@@ -64,19 +71,215 @@ def _validate_metric(metric):
         raise RuntimeError(f"Invalid metric: {metric} (valid: {', '.join(sorted(VALID_METRICS))})")
 
 
+def _clone_metric_clips(metrics):
+    return [dict(item) for item in (metrics or [])]
+
+
+def _clip_metric_slot(metric_name, quantile, degree, solve_score_omega, solve_score_omega_enabled, solve_score_threads, root_transforms, input_path):
+    quantile_lo = quantile
+    quantile_hi = 1.0 - quantile
+    cmd = [
+        BINARY,
+        input_path,
+        "--mode=clip",
+        f"--degree={degree}",
+        f"--metric={metric_name}",
+        f"--quantile_lo={quantile_lo}",
+        f"--quantile_hi={quantile_hi}",
+        f"--omega={solve_score_omega}",
+        f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
+        f"--threads={solve_score_threads}",
+    ]
+    xf_path = _write_xforms(root_transforms)
+    if xf_path:
+        cmd.append(f"--root_xforms={xf_path}")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        raise RuntimeError(f"solve_proximity_stats clip failed for {metric_name}: {result.stderr.strip()}")
+    data = json.loads(result.stdout)
+    return {
+        "metric": metric_name,
+        "quantile": quantile,
+        "quantile_pct": quantile * 100.0,
+        "clip_lo": data["clip_lo"],
+        "clip_hi": data["clip_hi"],
+        "min_score": data["min_score"],
+        "max_score": data["max_score"],
+        "n_solves": data["n_solves"],
+        "threads": int(data.get("threads", solve_score_threads)),
+    }
+
+
+def _legacy_metric_clips(metric, quantile, clip_lo, clip_hi):
+    return [{
+        "slot": 0,
+        "metric": metric,
+        "quantile": float(quantile),
+        "quantile_pct": float(quantile) * 100.0,
+        "clip_lo": float(clip_lo),
+        "clip_hi": float(clip_hi),
+    }]
+
+
+def _clip_artifact_metrics(clip_data, compiled, fallback_quantile):
+    metrics = clip_data.get("metrics")
+    if isinstance(metrics, list) and metrics:
+        return _clone_metric_clips(metrics)
+    return _legacy_metric_clips(
+        clip_data.get("metric", compiled["metric"]),
+        fallback_quantile,
+        clip_data.get("clip_lo"),
+        clip_data.get("clip_hi"),
+    )
+
+
+def _validate_clip_artifact(clip_data, compiled, solve_score_quantile, solve_score_omega, solve_score_omega_enabled):
+    if clip_data.get("family") != "solve_score":
+        raise RuntimeError(f"Clip artifact missing or wrong family: {clip_data.get('family')}")
+    if clip_data.get("version", 1) >= 2:
+        clip_program = str(clip_data.get("program") or "")
+        if clip_program != compiled["program_spec"]:
+            raise RuntimeError(f"Clip program mismatch: expected {compiled['program_spec']}, got {clip_program!r}")
+        clip_metrics = _clip_artifact_metrics(clip_data, compiled, solve_score_quantile)
+        if len(clip_metrics) != compiled["metric_count"]:
+            raise RuntimeError(
+                f"Clip metric slot count mismatch: expected {compiled['metric_count']}, got {len(clip_metrics)}"
+            )
+        for expected, actual in zip(compiled["metrics"], clip_metrics):
+            if actual.get("metric") != expected["metric"]:
+                raise RuntimeError(
+                    f"Clip metric slot {expected['slot']} mismatch: expected {expected['metric']}, got {actual.get('metric')}"
+                )
+            if float(actual.get("quantile", -1)) != float(expected["quantile"]):
+                raise RuntimeError(
+                    f"Clip quantile slot {expected['slot']} mismatch: expected {expected['quantile']}, got {actual.get('quantile')}"
+                )
+        return clip_metrics
+
+    if clip_data.get("metric") != compiled["metric"]:
+        raise RuntimeError(f"Clip metric mismatch: expected {compiled['metric']}, got {clip_data.get('metric')}")
+    if float(clip_data.get("clip_quantile", -1)) != float(solve_score_quantile):
+        raise RuntimeError(f"Clip quantile mismatch: expected {solve_score_quantile}, got {clip_data.get('clip_quantile')}")
+    if float(clip_data.get("omega", 1.0)) != solve_score_omega:
+        raise RuntimeError(f"Clip omega mismatch: expected {solve_score_omega}, got {clip_data.get('omega')}")
+    if _validate_omega_enabled(clip_data.get("omega_enabled", True)) != solve_score_omega_enabled:
+        raise RuntimeError(
+            f"Clip omega_enabled mismatch: expected {solve_score_omega_enabled}, got {clip_data.get('omega_enabled')}"
+        )
+    return _legacy_metric_clips(compiled["metric"], solve_score_quantile, clip_data.get("clip_lo"), clip_data.get("clip_hi"))
+
+
+def _build_program_cmd_args(compiled, metrics_with_clips):
+    hydrated = []
+    for slot, metric in enumerate(metrics_with_clips):
+        row = dict(metric)
+        row["slot"] = slot
+        hydrated.append(row)
+    payload = solve_score_program_cli_payload({"metrics": hydrated, "program_spec": compiled["program_spec"]})
+    return [
+        f"--score_metrics={payload['score_metrics']}",
+        f"--score_clip_los={payload['score_clip_los']}",
+        f"--score_clip_his={payload['score_clip_his']}",
+        f"--score_program={payload['score_program']}",
+    ] + ([f"--score_sources={payload['score_sources']}"] if payload.get("score_sources") else [])
+
+
+def _json_response(status_code, body):
+    return {
+        "statusCode": int(status_code),
+        "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
+        "body": json.dumps(body),
+    }
+
+
+def _solve_score_error_fields(compiled):
+    return {
+        "metric": compiled["metric"],
+        "metric_count": compiled["metric_count"],
+        "program": compiled["program_spec"],
+        "program_id": compiled["program_id"],
+        "score_metrics": [row["metric"] for row in compiled["metrics"]],
+        "score_sources": [row.get("source", "slv") for row in compiled["metrics"]],
+        "score_quantiles": [row["quantile"] for row in compiled["metrics"]],
+        "solve_score_chain": json.loads(serialize_solve_score_chain(compiled["chain"])),
+        "solve_score_display": compiled["display"],
+        "clip_quantile": compiled["quantile"],
+        "omega": compiled["omega"],
+        "omega_enabled": compiled["omega_enabled"],
+    }
+
+
+def _score_program_error_suffix(compiled, metrics_with_clips=None):
+    if compiled.get("legacy_compatible"):
+        return ""
+    metric_names = [row["metric"] for row in (metrics_with_clips or compiled.get("metrics") or [])]
+    metric_sources = [row.get("source", "slv") for row in (metrics_with_clips or compiled.get("metrics") or [])]
+    parts = [
+        f"program={compiled['program_spec']}",
+        f"score_metrics={','.join(metric_names)}" if metric_names else "",
+        f"score_sources={','.join(metric_sources)}" if metric_sources else "",
+        f"display={compiled['display']}",
+    ]
+    parts = [part for part in parts if part]
+    return f", {'; '.join(parts)}" if parts else ""
+
+
+def _fallback_lores_coeffs_key(job_id, lores_bin_key):
+    key = str(lores_bin_key or "").strip()
+    if key.endswith("/lores.bin"):
+        return key[:-len("/lores.bin")] + "/lores_coeffs.bin"
+    job = str(job_id or "").strip()
+    if job:
+        return f"renders/{job}/lores_coeffs.bin"
+    return ""
+
+
+def _summary_error_response(params, exc):
+    payload = {
+        "error": "solve histogram summary failed",
+        "detail": str(exc),
+        "phase": "summary",
+        "job_id": params.get("job_id"),
+        "degree": params.get("degree"),
+        "lores_bin_key": params.get("lores_bin_key"),
+        "lores_coeffs_key": params.get("lores_coeffs_key"),
+    }
+    try:
+        compiled = compile_solve_score_chain_or_legacy(
+            params.get("solve_score_chain", ""),
+            params.get("metric", "proximity"),
+            params.get("solve_score_quantile", 0.001),
+            params.get("solve_score_omega", 1.0),
+            params.get("solve_score_omega_enabled", True),
+            default_metric="proximity",
+        )
+        payload.update(_solve_score_error_fields(compiled))
+    except Exception as compile_exc:
+        payload["compile_error"] = str(compile_exc)
+        raw_chain = params.get("solve_score_chain")
+        if raw_chain not in ("", None, []):
+            payload["solve_score_chain"] = raw_chain
+    return _json_response(500, payload)
+
+
 def handler(event, context):
     params = parse_body(event)
     phase = params["phase"]
-    if phase == "clip":
-        return handle_clip(params)
-    elif phase == "hist":
-        return handle_hist(params)
-    elif phase == "merge":
-        return handle_merge(params)
-    elif phase == "summary":
-        return handle_summary(params)
-    else:
-        raise RuntimeError(f"Unknown phase: {phase}")
+    try:
+        if phase == "clip":
+            return handle_clip(params)
+        elif phase == "hist":
+            return handle_hist(params)
+        elif phase == "merge":
+            return handle_merge(params)
+        elif phase == "summary":
+            return handle_summary(params)
+        else:
+            raise RuntimeError(f"Unknown phase: {phase}")
+    except Exception as exc:
+        if phase == "summary":
+            return _summary_error_response(params, exc)
+        raise
 
 
 def _validate_quantile(q):
@@ -220,7 +423,7 @@ def _load_json_body(obj):
     return json.loads(data)
 
 
-def _load_merge_histogram_artifact(client, hist_prefix, chunk_idx, metric, solve_score_quantile,
+def _load_merge_histogram_artifact(client, hist_prefix, chunk_idx, compiled, solve_score_quantile,
                                    solve_score_omega, solve_score_omega_enabled, hist_bins):
     key = f"{hist_prefix}chunk_{chunk_idx}_hist.json"
     try:
@@ -234,14 +437,25 @@ def _load_merge_histogram_artifact(client, hist_prefix, chunk_idx, metric, solve
     except client.exceptions.NoSuchKey:
         raise RuntimeError(f"Missing histogram: {key}")
 
-    if data.get("family") == "solve_score" and data.get("metric") != metric:
-        raise RuntimeError(f"Chunk {chunk_idx} metric mismatch: expected {metric}, got {data.get('metric')}")
-    if data.get("family") == "solve_score" and data.get("clip_quantile") != solve_score_quantile:
-        raise RuntimeError(f"Chunk {chunk_idx} quantile mismatch: expected {solve_score_quantile}, got {data.get('clip_quantile')}")
-    if data.get("family") == "solve_score" and float(data.get("omega", 1.0)) != solve_score_omega:
-        raise RuntimeError(f"Chunk {chunk_idx} omega mismatch: expected {solve_score_omega}, got {data.get('omega')}")
-    if data.get("family") == "solve_score" and _validate_omega_enabled(data.get("omega_enabled", True)) != solve_score_omega_enabled:
-        raise RuntimeError(f"Chunk {chunk_idx} omega_enabled mismatch: expected {solve_score_omega_enabled}, got {data.get('omega_enabled')}")
+    if data.get("family") == "solve_score" and data.get("version", 1) >= 2:
+        if str(data.get("program") or "") != compiled["program_spec"]:
+            raise RuntimeError(
+                f"Chunk {chunk_idx} program mismatch: expected {compiled['program_spec']}, got {data.get('program')!r}"
+            )
+        hist_metrics = _clip_artifact_metrics(data, compiled, solve_score_quantile)
+        if len(hist_metrics) != compiled["metric_count"]:
+            raise RuntimeError(
+                f"Chunk {chunk_idx} metric slot count mismatch: expected {compiled['metric_count']}, got {len(hist_metrics)}"
+            )
+    else:
+        if data.get("family") == "solve_score" and data.get("metric") != compiled["metric"]:
+            raise RuntimeError(f"Chunk {chunk_idx} metric mismatch: expected {compiled['metric']}, got {data.get('metric')}")
+        if data.get("family") == "solve_score" and data.get("clip_quantile") != solve_score_quantile:
+            raise RuntimeError(f"Chunk {chunk_idx} quantile mismatch: expected {solve_score_quantile}, got {data.get('clip_quantile')}")
+        if data.get("family") == "solve_score" and float(data.get("omega", 1.0)) != solve_score_omega:
+            raise RuntimeError(f"Chunk {chunk_idx} omega mismatch: expected {solve_score_omega}, got {data.get('omega')}")
+        if data.get("family") == "solve_score" and _validate_omega_enabled(data.get("omega_enabled", True)) != solve_score_omega_enabled:
+            raise RuntimeError(f"Chunk {chunk_idx} omega_enabled mismatch: expected {solve_score_omega_enabled}, got {data.get('omega_enabled')}")
 
     chunk_hist = data["hist"]
     if len(chunk_hist) != hist_bins:
@@ -265,11 +479,35 @@ def handle_clip(params):
     solve_score_quantile = _validate_quantile(contract_param(params, "solve_score_quantile", 0.001, contract_warnings))
     solve_score_omega = _validate_omega(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
     solve_score_omega_enabled = _validate_omega_enabled(contract_param(params, "solve_score_omega_enabled", True, contract_warnings))
+    solve_score_chain = contract_param(params, "solve_score_chain", "", contract_warnings)
     solve_score_threads = _validate_threads(contract_param(params, "solve_score_threads", 1, contract_warnings), default=1)
     lores_bin_key = params["lores_bin_key"]
     root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
     out_key = params["out_key"]
-    progress = attach_contract_warnings({"phase": "clip", "metric": metric, "source_key": lores_bin_key, "omega": solve_score_omega, "omega_enabled": solve_score_omega_enabled, "threads": solve_score_threads}, contract_warnings)
+    compiled = compile_solve_score_chain_or_legacy(
+        solve_score_chain,
+        metric,
+        solve_score_quantile,
+        solve_score_omega,
+        solve_score_omega_enabled,
+        default_metric="proximity",
+    )
+    metric = compiled["metric"]
+    solve_score_quantile = compiled["quantile"]
+    solve_score_omega = compiled["omega"]
+    solve_score_omega_enabled = compiled["omega_enabled"]
+    progress = attach_contract_warnings(
+        {
+            "phase": "clip",
+            "metric": metric,
+            "metric_count": compiled["metric_count"],
+            "source_key": lores_bin_key,
+            "omega": solve_score_omega,
+            "omega_enabled": solve_score_omega_enabled,
+            "threads": solve_score_threads,
+        },
+        contract_warnings,
+    )
 
     try:
         _cleanup_tmp()
@@ -283,46 +521,68 @@ def handle_clip(params):
 
         report_status(job_id, task_id, "bin_downloaded", result_data=progress)
 
-        quantile_lo = solve_score_quantile
-        quantile_hi = 1.0 - solve_score_quantile
-        cmd = [BINARY, _TMP_INPUT, "--mode=clip", f"--degree={degree}",
-               f"--metric={metric}", f"--quantile_lo={quantile_lo}", f"--quantile_hi={quantile_hi}",
-               f"--omega={solve_score_omega}", f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
-               f"--threads={solve_score_threads}"]
-        xf_path = _write_xforms(root_transforms)
-        if xf_path:
-            cmd.append(f"--root_xforms={xf_path}")
-
         t1 = time.time()
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        metric_clips = []
+        clip_threads = solve_score_threads
+        for slot, metric_row in enumerate(compiled["metrics"]):
+            slot_clip = _clip_metric_slot(
+                metric_row["metric"],
+                metric_row["quantile"],
+                degree,
+                solve_score_omega,
+                solve_score_omega_enabled,
+                solve_score_threads,
+                root_transforms,
+                _TMP_INPUT,
+            )
+            slot_clip["slot"] = slot
+            metric_clips.append(slot_clip)
+            clip_threads = max(clip_threads, int(slot_clip.get("threads", solve_score_threads)))
         compute_ms = int((time.time() - t1) * 1000)
-        if result.returncode != 0:
-            raise RuntimeError(f"solve_proximity_stats clip failed: {result.stderr.strip()}")
-
-        clip_data = json.loads(result.stdout)
         progress["compute_ms"] = compute_ms
-        progress["threads"] = int(clip_data.get("threads", solve_score_threads))
-        progress["n_solves"] = clip_data["n_solves"]
-        progress["clip_lo"] = clip_data["clip_lo"]
-        progress["clip_hi"] = clip_data["clip_hi"]
+        progress["threads"] = clip_threads
+        progress["n_solves"] = metric_clips[0]["n_solves"] if metric_clips else 0
+        progress["clip_lo"] = metric_clips[0]["clip_lo"] if metric_clips else 0.0
+        progress["clip_hi"] = metric_clips[0]["clip_hi"] if metric_clips else 1.0
+        progress["metrics"] = [
+            {
+                "metric": row["metric"],
+                "q": row["quantile"],
+                "clip_lo": row["clip_lo"],
+                "clip_hi": row["clip_hi"],
+            }
+            for row in metric_clips
+        ]
 
         report_status(job_id, task_id, "computed", result_data=progress)
 
+        artifact_version = 1 if compiled["legacy_compatible"] else 2
         artifact = {
             "family": "solve_score",
-            "version": 1,
+            "version": artifact_version,
             "job_id": job_id,
             "metric": metric,
             "clip_quantile": solve_score_quantile,
             "omega": solve_score_omega,
             "omega_enabled": solve_score_omega_enabled,
-            "clip_lo": clip_data["clip_lo"],
-            "clip_hi": clip_data["clip_hi"],
-            "n_solves": clip_data["n_solves"],
+            "clip_lo": metric_clips[0]["clip_lo"],
+            "clip_hi": metric_clips[0]["clip_hi"],
+            "n_solves": metric_clips[0]["n_solves"],
             "degree": degree,
             "lores_bin_key": lores_bin_key,
             "root_transforms": root_transforms or [],
         }
+        if compiled["legacy_compatible"]:
+            artifact["chain"] = json.loads(serialize_solve_score_chain(compiled["chain"]))
+        else:
+            artifact.update(
+                {
+                    "chain": json.loads(serialize_solve_score_chain(compiled["chain"])),
+                    "program": compiled["program_spec"],
+                    "metrics": metric_clips,
+                    "metric_count": len(metric_clips),
+                }
+            )
 
         s3.put_object(Bucket=BUCKET, Key=out_key,
                       Body=json.dumps(artifact),
@@ -352,6 +612,7 @@ def handle_hist(params):
     solve_score_quantile = _validate_quantile(contract_param(params, "solve_score_quantile", 0.001, contract_warnings))
     solve_score_omega = _validate_omega(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
     solve_score_omega_enabled = _validate_omega_enabled(contract_param(params, "solve_score_omega_enabled", True, contract_warnings))
+    solve_score_chain = contract_param(params, "solve_score_chain", "", contract_warnings)
     solve_score_threads = _validate_threads(contract_param(params, "solve_score_threads", 1, contract_warnings), default=1)
     solve_score_hist_input_mode = _validate_hist_input_mode(contract_param(params, "solve_score_hist_input_mode", "tmpfile", contract_warnings))
     solve_score_hist_retries = _validate_sectioned_retries(
@@ -364,9 +625,22 @@ def handle_hist(params):
     hist_bins = params.get("hist_bins", 100)
     root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
     out_key = params["out_key"]
+    compiled = compile_solve_score_chain_or_legacy(
+        solve_score_chain,
+        metric,
+        solve_score_quantile,
+        solve_score_omega,
+        solve_score_omega_enabled,
+        default_metric="proximity",
+    )
+    metric = compiled["metric"]
+    solve_score_quantile = compiled["quantile"]
+    solve_score_omega = compiled["omega"]
+    solve_score_omega_enabled = compiled["omega_enabled"]
     progress = attach_contract_warnings({
         "phase": "hist",
         "metric": metric,
+        "metric_count": compiled["metric_count"],
         "chunk_idx": chunk_idx,
         "omega": solve_score_omega,
         "omega_enabled": solve_score_omega_enabled,
@@ -377,6 +651,7 @@ def handle_hist(params):
         "source_key": bin_key,
         "clip_key": clip_key,
     }, contract_warnings)
+    progress.update(_solve_score_error_fields(compiled))
 
     try:
         _cleanup_tmp()
@@ -385,6 +660,15 @@ def handle_hist(params):
         t0 = time.time()
         clip_obj = s3.get_object(Bucket=BUCKET, Key=clip_key)
         clip_data = json.loads(clip_obj["Body"].read())
+        metrics_with_clips = _validate_clip_artifact(
+            clip_data,
+            compiled,
+            solve_score_quantile,
+            solve_score_omega,
+            solve_score_omega_enabled,
+        )
+        program_args = _build_program_cmd_args(compiled, metrics_with_clips) if clip_data.get("version", 1) >= 2 else []
+        program_suffix = _score_program_error_suffix(compiled, metrics_with_clips)
 
         xf_path = _write_xforms(root_transforms)
         hist_stdout = None
@@ -414,15 +698,20 @@ def handle_hist(params):
                 f"--url={presigned_url}",
                 f"--input_size={input_size}",
                 f"--degree={degree}",
-                f"--metric={metric}",
-                f"--clip_lo={clip_data['clip_lo']}",
-                f"--clip_hi={clip_data['clip_hi']}",
                 f"--hist_bins={hist_bins}",
-                f"--omega={solve_score_omega}",
-                f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
                 f"--threads={solve_score_threads}",
                 f"--retries={solve_score_hist_retries}",
             ]
+            if program_args:
+                cmd.extend(program_args)
+            else:
+                cmd.extend([
+                    f"--metric={metric}",
+                    f"--clip_lo={clip_data['clip_lo']}",
+                    f"--clip_hi={clip_data['clip_hi']}",
+                    f"--omega={solve_score_omega}",
+                    f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
+                ])
             if xf_path:
                 cmd.append(f"--root_xforms={xf_path}")
             pre_native_ms = int((time.time() - t0) * 1000)
@@ -437,7 +726,7 @@ def handle_hist(params):
                     f"s3://{BUCKET}/{bin_key} "
                     f"(clip=s3://{BUCKET}/{clip_key}, job={job_id}, task={task_id}, "
                     f"chunk={chunk_idx}, input=sectioned, size={input_size}, "
-                    f"threads={solve_score_threads}, retries={solve_score_hist_retries}, metric={metric}): {stderr_summary}"
+                    f"threads={solve_score_threads}, retries={solve_score_hist_retries}, metric={metric}{program_suffix}): {stderr_summary}"
                 )
             hist_data = json.loads(hist_stdout)
             progress["dl_ms"] = pre_native_ms + int(hist_data.get("download_ms", 0))
@@ -450,14 +739,19 @@ def handle_hist(params):
                 "-",
                 "--mode=hist",
                 f"--degree={degree}",
-                f"--metric={metric}",
-                f"--clip_lo={clip_data['clip_lo']}",
-                f"--clip_hi={clip_data['clip_hi']}",
                 f"--hist_bins={hist_bins}",
-                f"--omega={solve_score_omega}",
-                f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
                 f"--threads={solve_score_threads}",
             ]
+            if program_args:
+                cmd.extend(program_args)
+            else:
+                cmd.extend([
+                    f"--metric={metric}",
+                    f"--clip_lo={clip_data['clip_lo']}",
+                    f"--clip_hi={clip_data['clip_hi']}",
+                    f"--omega={solve_score_omega}",
+                    f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
+                ])
             if xf_path:
                 cmd.append(f"--root_xforms={xf_path}")
             bin_obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
@@ -475,14 +769,19 @@ def handle_hist(params):
                 _TMP_INPUT,
                 "--mode=hist",
                 f"--degree={degree}",
-                f"--metric={metric}",
-                f"--clip_lo={clip_data['clip_lo']}",
-                f"--clip_hi={clip_data['clip_hi']}",
                 f"--hist_bins={hist_bins}",
-                f"--omega={solve_score_omega}",
-                f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
                 f"--threads={solve_score_threads}",
             ]
+            if program_args:
+                cmd.extend(program_args)
+            else:
+                cmd.extend([
+                    f"--metric={metric}",
+                    f"--clip_lo={clip_data['clip_lo']}",
+                    f"--clip_hi={clip_data['clip_hi']}",
+                    f"--omega={solve_score_omega}",
+                    f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
+                ])
             if xf_path:
                 cmd.append(f"--root_xforms={xf_path}")
             size = _download(bin_key, _TMP_INPUT)
@@ -497,7 +796,12 @@ def handle_hist(params):
             hist_stderr = result.stderr
 
         if hist_rc != 0:
-            raise RuntimeError(f"solve_proximity_stats hist failed: {(hist_stderr or '').strip()}")
+            stderr_summary = (hist_stderr or "").strip() or "unknown error"
+            raise RuntimeError(
+                "solve_proximity_stats hist failed "
+                f"(job={job_id}, task={task_id}, chunk={chunk_idx}, input={solve_score_hist_input_mode}, "
+                f"metric={metric}, source=s3://{BUCKET}/{bin_key}{program_suffix}): {stderr_summary}"
+            )
 
         hist_data = json.loads(hist_stdout)
         if solve_score_hist_input_mode != "sectioned":
@@ -507,7 +811,7 @@ def handle_hist(params):
 
         artifact = {
             "family": "solve_score",
-            "version": 1,
+            "version": 2 if program_args else 1,
             "job_id": job_id,
             "metric": metric,
             "clip_quantile": solve_score_quantile,
@@ -520,6 +824,13 @@ def handle_hist(params):
             "n_solves": hist_data["n_solves"],
             "hist": hist_data["hist"],
         }
+        if program_args:
+            artifact.update({
+                "chain": json.loads(serialize_solve_score_chain(compiled["chain"])),
+                "program": compiled["program_spec"],
+                "metrics": metrics_with_clips,
+                "metric_count": len(metrics_with_clips),
+            })
 
         s3.put_object(Bucket=BUCKET, Key=out_key,
                       Body=json.dumps(artifact),
@@ -546,6 +857,7 @@ def handle_merge(params):
     solve_score_quantile = _validate_quantile(contract_param(params, "solve_score_quantile", 0.001, contract_warnings))
     solve_score_omega = _validate_omega(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
     solve_score_omega_enabled = _validate_omega_enabled(contract_param(params, "solve_score_omega_enabled", True, contract_warnings))
+    solve_score_chain = contract_param(params, "solve_score_chain", "", contract_warnings)
     solve_score_threads = _validate_threads(contract_param(params, "solve_score_threads", 1, contract_warnings), default=1)
     n_chunks = params.get("n_chunks", params.get("n_stripes"))
     if n_chunks is None:
@@ -555,9 +867,22 @@ def handle_merge(params):
     hist_prefix = params["hist_prefix"]
     clip_key = params["clip_key"]
     out_key = params["out_key"]
+    compiled = compile_solve_score_chain_or_legacy(
+        solve_score_chain,
+        metric,
+        solve_score_quantile,
+        solve_score_omega,
+        solve_score_omega_enabled,
+        default_metric="proximity",
+    )
+    metric = compiled["metric"]
+    solve_score_quantile = compiled["quantile"]
+    solve_score_omega = compiled["omega"]
+    solve_score_omega_enabled = compiled["omega_enabled"]
     progress = attach_contract_warnings({
         "phase": "merge",
         "metric": metric,
+        "metric_count": compiled["metric_count"],
         "n_chunks": n_chunks,
         "omega": solve_score_omega,
         "omega_enabled": solve_score_omega_enabled,
@@ -574,14 +899,13 @@ def handle_merge(params):
         # Load and validate clip data
         clip_obj = merge_s3.get_object(Bucket=BUCKET, Key=clip_key)
         clip_data = _load_json_body(clip_obj)
-        if clip_data.get("family") == "solve_score" and clip_data.get("metric") != metric:
-            raise RuntimeError(f"Clip metric mismatch: expected {metric}, got {clip_data.get('metric')}")
-        if clip_data.get("family") == "solve_score" and clip_data.get("clip_quantile") != solve_score_quantile:
-            raise RuntimeError(f"Clip quantile mismatch: expected {solve_score_quantile}, got {clip_data.get('clip_quantile')}")
-        if clip_data.get("family") == "solve_score" and float(clip_data.get("omega", 1.0)) != solve_score_omega:
-            raise RuntimeError(f"Clip omega mismatch: expected {solve_score_omega}, got {clip_data.get('omega')}")
-        if clip_data.get("family") == "solve_score" and _validate_omega_enabled(clip_data.get("omega_enabled", True)) != solve_score_omega_enabled:
-            raise RuntimeError(f"Clip omega_enabled mismatch: expected {solve_score_omega_enabled}, got {clip_data.get('omega_enabled')}")
+        metrics_with_clips = _validate_clip_artifact(
+            clip_data,
+            compiled,
+            solve_score_quantile,
+            solve_score_omega,
+            solve_score_omega_enabled,
+        )
         hist_bins = 100
 
         total_hist = [0] * hist_bins
@@ -593,7 +917,7 @@ def handle_merge(params):
                     merge_s3,
                     hist_prefix,
                     c,
-                    metric,
+                    compiled,
                     solve_score_quantile,
                     solve_score_omega,
                     solve_score_omega_enabled,
@@ -639,7 +963,7 @@ def handle_merge(params):
 
         artifact = {
             "family": "solve_score",
-            "version": 1,
+            "version": 2 if clip_data.get("version", 1) >= 2 else 1,
             "job_id": job_id,
             "metric": metric,
             "clip_quantile": solve_score_quantile,
@@ -653,6 +977,13 @@ def handle_merge(params):
             "n_solves_total": total_solves,
             "root_transforms": clip_data.get("root_transforms", []),
         }
+        if clip_data.get("version", 1) >= 2:
+            artifact.update({
+                "chain": json.loads(serialize_solve_score_chain(compiled["chain"])),
+                "program": compiled["program_spec"],
+                "metrics": metrics_with_clips,
+                "metric_count": len(metrics_with_clips),
+            })
 
         s3.put_object(Bucket=BUCKET, Key=out_key,
                       Body=json.dumps(artifact),
@@ -680,24 +1011,89 @@ def handle_summary(params):
     solve_score_quantile = _validate_quantile(params.get("solve_score_quantile", 0.001))
     solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
     solve_score_omega_enabled = _validate_omega_enabled(params.get("solve_score_omega_enabled", True))
+    solve_score_chain = params.get("solve_score_chain", "")
     solve_score_threads = _validate_threads(params.get("solve_score_threads", 1), default=1)
     lores_bin_key = params["lores_bin_key"]
+    lores_coeffs_key = params.get("lores_coeffs_key", "")
+    n_coeffs = params.get("n_coeffs")
     root_transforms = params.get("root_transforms")
+    compiled = compile_solve_score_chain_or_legacy(
+        solve_score_chain,
+        metric,
+        solve_score_quantile,
+        solve_score_omega,
+        solve_score_omega_enabled,
+        default_metric="proximity",
+    )
+    uses_coeff_source = solve_score_uses_non_solve_sources(compiled)
+    if uses_coeff_source:
+        lores_coeffs_key = str(
+            lores_coeffs_key or _fallback_lores_coeffs_key(params.get("job_id"), lores_bin_key)
+        ).strip()
+        if not lores_coeffs_key:
+            raise RuntimeError("mixed-source solve-score summary requires lores_coeffs_key")
+        try:
+            n_coeffs = int(n_coeffs)
+        except (TypeError, ValueError):
+            raise RuntimeError(f"mixed-source solve-score summary requires numeric n_coeffs, got {n_coeffs!r}")
+        if n_coeffs < 1:
+            raise RuntimeError(f"mixed-source solve-score summary requires n_coeffs >= 1, got {n_coeffs}")
 
     try:
         _cleanup_tmp()
 
         t0 = time.time()
         size = _download(lores_bin_key, _TMP_INPUT)
+        coeff_size = 0
+        if uses_coeff_source:
+            coeff_size = _download(lores_coeffs_key, _TMP_COEFF_INPUT)
         dl_ms = int((time.time() - t0) * 1000)
 
-        quantile_lo = solve_score_quantile
-        quantile_hi = 1.0 - solve_score_quantile
-        cmd = [BINARY, _TMP_INPUT, "--mode=summary", f"--degree={degree}",
-               f"--metric={metric}",
-               f"--quantile_lo={quantile_lo}", f"--quantile_hi={quantile_hi}",
-               f"--omega={solve_score_omega}", f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
-               f"--threads={solve_score_threads}"]
+        if compiled["legacy_compatible"]:
+            quantile_lo = compiled["quantile"]
+            quantile_hi = 1.0 - compiled["quantile"]
+            cmd = [
+                BINARY,
+                _TMP_INPUT,
+                "--mode=summary",
+                f"--degree={degree}",
+                f"--metric={compiled['metric']}",
+                f"--quantile_lo={quantile_lo}",
+                f"--quantile_hi={quantile_hi}",
+                f"--omega={compiled['omega']}",
+                f"--omega_enabled={1 if compiled['omega_enabled'] else 0}",
+                f"--threads={solve_score_threads}",
+            ]
+        else:
+            metric_clips = []
+            for slot, metric_row in enumerate(compiled["metrics"]):
+                source = metric_row.get("source", "slv")
+                slot_clip = _clip_metric_slot(
+                    metric_row["metric"],
+                    metric_row["quantile"],
+                    degree if source == "slv" else n_coeffs,
+                    compiled["omega"],
+                    compiled["omega_enabled"],
+                    solve_score_threads,
+                    root_transforms if source == "slv" else None,
+                    _TMP_INPUT if source == "slv" else _TMP_COEFF_INPUT,
+                )
+                slot_clip["slot"] = slot
+                slot_clip["source"] = source
+                metric_clips.append(slot_clip)
+            cmd = [
+                BINARY,
+                _TMP_INPUT,
+                "--mode=summary",
+                f"--degree={degree}",
+                f"--threads={solve_score_threads}",
+                *_build_program_cmd_args(compiled, metric_clips),
+            ]
+            if uses_coeff_source:
+                cmd.extend([
+                    f"--score_coeffs_file={_TMP_COEFF_INPUT}",
+                    f"--score_coeff_degree={n_coeffs}",
+                ])
         xf_path = _write_xforms(root_transforms)
         if xf_path:
             cmd.append(f"--root_xforms={xf_path}")
@@ -705,15 +1101,34 @@ def handle_summary(params):
         t1 = time.time()
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         compute_ms = int((time.time() - t1) * 1000)
-        print(f"solve_prox_summary rc={result.returncode} stdout={repr(result.stdout[:300])} stderr={repr(result.stderr[:500])}")
         if result.returncode != 0:
-            raise RuntimeError(f"solve_proximity_stats summary failed (rc={result.returncode}): {result.stderr.strip()}")
+            raise RuntimeError(
+                "solve_proximity_stats summary failed "
+                f"(rc={result.returncode}, metric={compiled['metric']}{_score_program_error_suffix(compiled)}): "
+                f"{result.stderr.strip()}"
+            )
 
         summary = json.loads(result.stdout)
         summary["dl_ms"] = dl_ms
         summary["compute_ms"] = compute_ms
         summary["source_size"] = size
+        if uses_coeff_source:
+            summary["source_coeffs_size"] = coeff_size
+            summary["lores_coeffs_key"] = lores_coeffs_key
+            summary["n_coeffs"] = n_coeffs
         summary["threads"] = int(summary.get("threads", solve_score_threads))
+        summary["metric"] = compiled["metric"]
+        summary["metric_count"] = compiled["metric_count"]
+        summary["program"] = compiled["program_spec"]
+        summary["program_id"] = compiled["program_id"]
+        summary["score_metrics"] = [row["metric"] for row in compiled["metrics"]]
+        summary["score_sources"] = [row.get("source", "slv") for row in compiled["metrics"]]
+        summary["score_quantiles"] = [row["quantile"] for row in compiled["metrics"]]
+        summary["solve_score_display"] = compiled["display"]
+        summary["solve_score_chain"] = json.loads(serialize_solve_score_chain(compiled["chain"]))
+        summary["clip_quantile"] = compiled["quantile"]
+        summary["omega"] = compiled["omega"]
+        summary["omega_enabled"] = compiled["omega_enabled"]
 
         return ok_response(summary)
 

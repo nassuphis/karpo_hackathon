@@ -12,6 +12,7 @@ import time
 
 import boto3
 
+from solve_score_chain import solve_score_program_cli_payload
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
 s3 = boto3.client("s3")
@@ -26,6 +27,19 @@ def _parse_boolish(value, default=True):
     if isinstance(value, (int, float)):
         return bool(value)
     return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _solve_score_program_args(ss_data):
+    payload = solve_score_program_cli_payload({
+        "metrics": ss_data.get("metrics") or [],
+        "program_spec": str(ss_data.get("program") or ""),
+    })
+    return [
+        f"--score_metrics={payload['score_metrics']}",
+        f"--score_clip_los={payload['score_clip_los']}",
+        f"--score_clip_his={payload['score_clip_his']}",
+        f"--score_program={payload['score_program']}",
+    ]
 
 
 def handler(event, context):
@@ -122,30 +136,35 @@ def handler(event, context):
             # Validate bins artifact — must have family and matching metric
             if ss_data.get("family") != "solve_score":
                 raise RuntimeError(f"Bins artifact missing or wrong family: {ss_data.get('family')}")
-            req_metric = contract_param(params, "solve_metric", "proximity", contract_warnings)
-            if ss_data.get("metric") != req_metric:
-                raise RuntimeError(f"Bins metric mismatch: expected {req_metric}, got {ss_data.get('metric')}")
-            req_q = contract_param(params, "solve_score_quantile", 0.001, contract_warnings)
-            if "clip_quantile" not in ss_data:
-                raise RuntimeError("Bins artifact missing clip_quantile")
-            if ss_data["clip_quantile"] != req_q:
-                raise RuntimeError(f"Bins quantile mismatch: expected {req_q}, got {ss_data['clip_quantile']}")
-            req_omega = float(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
-            bins_omega = float(ss_data.get("omega", 1.0))
-            if bins_omega != req_omega:
-                raise RuntimeError(f"Bins omega mismatch: expected {req_omega}, got {bins_omega}")
-            req_omega_enabled = _parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
-            bins_omega_enabled = _parse_boolish(ss_data.get("omega_enabled", True), True)
-            if bins_omega_enabled != req_omega_enabled:
-                raise RuntimeError(f"Bins omega_enabled mismatch: expected {req_omega_enabled}, got {bins_omega_enabled}")
-            ss_metric = ss_data.get("metric", params.get("solve_metric", "proximity"))
             cmd.append(f"--color=solve_score")
-            cmd.append(f"--solve_metric={ss_metric}")
-            cmd.append(f"--solve_score_clip_lo={ss_data['clip_lo']}")
-            cmd.append(f"--solve_score_clip_hi={ss_data['clip_hi']}")
             cmd.append(f"--solve_score_cuts={','.join(str(c) for c in ss_data['cuts_norm'])}")
-            cmd.append(f"--solve_score_omega={bins_omega}")
-            cmd.append(f"--solve_score_omega_enabled={1 if bins_omega_enabled else 0}")
+            if int(ss_data.get("version", 1) or 1) >= 2:
+                if not ss_data.get("program") or not isinstance(ss_data.get("metrics"), list) or not ss_data.get("metrics"):
+                    raise RuntimeError("v2 solve-score bins artifact is missing program or metrics")
+                cmd.extend(_solve_score_program_args(ss_data))
+            else:
+                req_metric = contract_param(params, "solve_metric", "proximity", contract_warnings)
+                if ss_data.get("metric") != req_metric:
+                    raise RuntimeError(f"Bins metric mismatch: expected {req_metric}, got {ss_data.get('metric')}")
+                req_q = contract_param(params, "solve_score_quantile", 0.001, contract_warnings)
+                if "clip_quantile" not in ss_data:
+                    raise RuntimeError("Bins artifact missing clip_quantile")
+                if ss_data["clip_quantile"] != req_q:
+                    raise RuntimeError(f"Bins quantile mismatch: expected {req_q}, got {ss_data['clip_quantile']}")
+                req_omega = float(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
+                bins_omega = float(ss_data.get("omega", 1.0))
+                if bins_omega != req_omega:
+                    raise RuntimeError(f"Bins omega mismatch: expected {req_omega}, got {bins_omega}")
+                req_omega_enabled = _parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
+                bins_omega_enabled = _parse_boolish(ss_data.get("omega_enabled", True), True)
+                if bins_omega_enabled != req_omega_enabled:
+                    raise RuntimeError(f"Bins omega_enabled mismatch: expected {req_omega_enabled}, got {bins_omega_enabled}")
+                ss_metric = ss_data.get("metric", params.get("solve_metric", "proximity"))
+                cmd.append(f"--solve_metric={ss_metric}")
+                cmd.append(f"--solve_score_clip_lo={ss_data['clip_lo']}")
+                cmd.append(f"--solve_score_clip_hi={ss_data['clip_hi']}")
+                cmd.append(f"--solve_score_omega={bins_omega}")
+                cmd.append(f"--solve_score_omega_enabled={1 if bins_omega_enabled else 0}")
             # Override the color arg already in cmd (was set to "solve_proximity" or "solve_score")
             cmd = [a for a in cmd if not a.startswith("--color=") or a == f"--color=solve_score"]
         download_us = int((time.perf_counter() - t_dl) * 1e6)

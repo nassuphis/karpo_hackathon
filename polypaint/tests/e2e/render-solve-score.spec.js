@@ -300,7 +300,7 @@ test.describe('Solve Score UI', () => {
     await page.locator('#long-popup-close').click();
   });
 
-  test('Solve score chip adder shows metrics only when chain is empty, then omega transfer', async ({ page }) => {
+  test('Solve score chip adder shows metrics when empty, then metrics plus unary ops after one metric chip', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     const state = await page.evaluate(() => {
       _renderScoreChain.splice(0, _renderScoreChain.length);
@@ -335,7 +335,24 @@ test.describe('Solve Score UI', () => {
     );
     expect(afterMetric).toEqual([
       { text: '+ add...', value: '' },
+      { text: 'proximity', value: 'proximity' },
+      { text: 'crowding', value: 'crowding' },
+      { text: 'spread', value: 'spread' },
+      { text: 'anisotropy', value: 'anisotropy' },
+      { text: 'area', value: 'area' },
+      { text: 'clusteriness', value: 'clusteriness' },
+      { text: 'shelliness', value: 'shelliness' },
+      { text: 'outlierness', value: 'outlierness' },
+      { text: 'nn_variation', value: 'nn_variation' },
+      { text: 'real_axis_proximity', value: 'real_axis_proximity' },
+      { text: 'centroid_re', value: 'centroid_re' },
+      { text: 'centroid_im', value: 'centroid_im' },
+      { text: 'centroid_dist', value: 'centroid_dist' },
+      { text: 'dist_unit_circle', value: 'dist_unit_circle' },
+      { text: 'asymmetry_re', value: 'asymmetry_re' },
       { text: 'omega_cosine', value: 'omega_cosine' },
+      { text: 'sawtooth', value: 'sawtooth' },
+      { text: 'flip', value: 'flip' },
     ]);
   });
 
@@ -458,32 +475,36 @@ test.describe('Solve Score UI', () => {
     expect(payload.params.solve_metric).toBe('clusteriness');
   });
 
-  test('solve-score quantile slider present with 0.1% default', async ({ page }) => {
+  test('solve-score metric chip shows source+q controls and syncs the hidden compatibility field', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    const slider = page.locator('#render-solve-score-quantile');
-    await expect(slider).toBeVisible();
-    const val = await slider.inputValue();
-    expect(val).toBe('0.1');
-    const text = await page.locator('#render-solve-score-quantile-val').textContent();
-    expect(text.trim()).toBe('0.1');
+    const chipSource = page.locator('#ss-chips select').first();
+    const chipQ = page.locator('#ss-chips input').first();
+    await expect(chipSource).toBeVisible();
+    await expect(chipQ).toBeVisible();
+    expect(await chipSource.inputValue()).toBe('slv');
+    expect(await chipQ.inputValue()).toBe('0.1');
+    expect(await page.locator('#render-solve-score-quantile').inputValue()).toBe('0.1');
+    await expect(page.locator('#render-solve-score-quantile-val')).toHaveText('0.1');
   });
 
-  test('changing solve-score quantile slider updates displayed text', async ({ page }) => {
+  test('changing solve-score metric q updates the hidden compatibility field and displayed text', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(() => {
-      const s = document.getElementById('render-solve-score-quantile');
-      s.value = '3.0';
-      s.dispatchEvent(new Event('input'));
+      const input = document.querySelector('#ss-chips input');
+      input.value = '3.0';
+      input.dispatchEvent(new Event('change'));
     });
-    const text = await page.locator('#render-solve-score-quantile-val').textContent();
-    expect(text.trim()).toBe('3.0');
+    expect(await page.locator('#render-solve-score-quantile').inputValue()).toBe('3');
+    await expect(page.locator('#render-solve-score-quantile-val')).toHaveText('3');
   });
 
   test('dispatch payload includes solve_score_quantile', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.locator('.color-dot[data-mode="solve_score"]').click();
     await page.evaluate(() => {
-      document.getElementById('render-solve-score-quantile').value = '2.0';
+      const input = document.querySelector('#ss-chips input');
+      input.value = '2.0';
+      input.dispatchEvent(new Event('change'));
     });
 
     await page.evaluate(() => {
@@ -516,10 +537,12 @@ test.describe('Solve Score UI', () => {
 
   test('viewport quantile and solve-score quantile are independent', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    // Set viewport quantile to 2.0, solve-score quantile to 4.0
+    // Set viewport quantile to 2.0, solve-score metric q to 4.0
     await page.evaluate(() => {
       document.getElementById('render-quantile').value = '2.0';
-      document.getElementById('render-solve-score-quantile').value = '4.0';
+      const input = document.querySelector('#ss-chips input');
+      input.value = '4.0';
+      input.dispatchEvent(new Event('change'));
     });
     const vq = await page.locator('#render-quantile').inputValue();
     const sq = await page.locator('#render-solve-score-quantile').inputValue();
@@ -593,6 +616,25 @@ test.describe('Solve Score UI', () => {
             clip_below_count: 5, clip_inrange_count: 90, clip_above_count: 5,
             clip_below_frac: 0.05, clip_inrange_frac: 0.9, clip_above_frac: 0.05,
             clip_fallback: false, clip_fallback_reason: null,
+            fully_finite_solve_count: 80, partial_finite_solve_count: 15, zero_finite_solve_count: 5,
+            usable_solve_count: 90, forced_zero_score_count: 10,
+            finite_root_frac: 0.92, fully_finite_solve_frac: 0.8, partial_finite_solve_frac: 0.15, zero_finite_solve_frac: 0.05, usable_solve_frac: 0.9,
+            exact_zero_root_count: 18,
+            rows_with_any_exact_zero_root_count: 12,
+            rows_all_exact_zero_roots_count: 2,
+            exact_zero_root_frac: 0.036, rows_with_any_exact_zero_root_frac: 0.12, rows_all_exact_zero_roots_frac: 0.02,
+            mean_finite_roots_per_solve: 4.6, min_finite_roots_per_solve: 0, max_finite_roots_per_solve: 5,
+            metric_validity_policy: 'finite_only_min_roots',
+            metric_min_finite_roots: 2,
+            total_root_slots: 500, finite_root_count: 460,
+            raw_hist_bins: 32,
+            raw_hist_lo: -1,
+            raw_hist_hi: 2,
+            raw_hist_range: 3,
+            raw_hist_space: 'metric_raw',
+            raw_hist_expanded: false,
+            raw_bin_counts: [4,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,6],
+            raw_bin_fracs: Array(32).fill(1 / 32),
             intermediate_hist_bins: 100, final_bins: 10,
             cuts_norm: [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9],
             cuts_score: [-0.3,-0.1,0.1,0.3,0.5,0.7,0.9,1.1,1.3],
@@ -625,12 +667,15 @@ test.describe('Solve Score UI', () => {
     // Check log output contains 10-bin table
     const logText = await page.locator('#render-log').textContent();
     expect(logText).toContain('Solve histogram');
+    expect(logText).toContain('raw score bins (32');
+    expect(logText).toContain('r00');
+    expect(logText).toContain('r31');
+    expect(logText).toContain('lores rows: total=100  all_finite=80 (80.0%)  partial=15 (15.0%)  no_finite=5 (5.0%)');
+    expect(logText).toContain('exact zeros: roots=18/500 (3.6%)  rows_any=12 (12.0%)  rows_all=2 (2.0%)');
     expect(logText).toContain('final color bins (10');
     expect(logText).toContain('b0');
     expect(logText).toContain('b9');
     expect(logText).toContain('clip');
-    // Must NOT contain the old 32-bin full-range header
-    expect(logText).not.toContain('32 bins');
     expect(logText).not.toContain('full range');
   });
 

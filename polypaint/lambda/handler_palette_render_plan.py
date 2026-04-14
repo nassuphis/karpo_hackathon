@@ -18,7 +18,11 @@ from solve_score_chain import (
     VALID_SOLVE_SCORE_METRICS,
     compile_solve_score_chain_or_legacy,
     emit_solve_score_metadata,
+    format_solve_score_chain_display,
     read_solve_score_metadata,
+    solve_score_chain_from_scalars,
+    solve_score_uses_non_solve_sources,
+    solve_score_chain_id,
 )
 
 s3 = boto3.client("s3")
@@ -132,22 +136,41 @@ def _validate_omega_enabled(value):
     raise RuntimeError(f"solve_score_omega_enabled must be boolean-like, got {value!r}")
 
 
-def _palette_variant_id(metric, palette, q, omega, omega_enabled, root_transforms):
-    q_label = f"{q * 100:.1f}".replace(".", "p")
-    omega_label = (
-        f"{omega:.0f}" if float(omega).is_integer() else str(omega).replace(".", "p")
-    ) if omega_enabled else "off"
+def _palette_variant_id(chain, metric, q, omega, omega_enabled, palette, root_transforms):
+    score_id = solve_score_chain_id(chain, legacy_quantile=q)
     rt_json = json.dumps(root_transforms or [], separators=(",", ":"))
     rt_hash = hashlib.sha1(rt_json.encode("utf-8")).hexdigest()[:8]
-    return f"pal_{int(time.time() * 1000)}_{metric}_{palette}_q{q_label}_w{omega_label}_rt{rt_hash}"
+    metric_part = str(metric or "score").replace(" ", "_")
+    return f"pal_{int(time.time() * 1000)}_{metric_part}_{score_id}_{palette}_rt{rt_hash}"
 
 
 def _omega_display(enabled, omega):
     return f"w={float(omega):g}" if enabled else "w=off"
 
 
-def _palette_display_name(metric, palette, q, omega, omega_enabled):
-    return f"{metric} q={(float(q) * 100):.1f}% {_omega_display(omega_enabled, omega)} {palette}"
+def _palette_display_name(chain, metric, q, omega, omega_enabled, palette):
+    label = format_solve_score_chain_display(chain, legacy_quantile=q)
+    return " ".join(part for part in (label or metric, palette) if part)
+
+
+def _solve_score_scratch_keys(job_id, chain, quantile, root_transforms, metric="proximity", omega=1.0, omega_enabled=False):
+    rt_json = json.dumps(root_transforms or [], separators=(",", ":"))
+    rt_hash = hashlib.sha1(rt_json.encode("utf-8")).hexdigest()[:8]
+    compiled = compile_solve_score_chain_or_legacy(
+        chain,
+        metric,
+        quantile,
+        omega,
+        omega_enabled,
+        default_metric=metric or "proximity",
+    )
+    metric_slug = str(compiled["metric"] or "score").replace(" ", "_")
+    if compiled["legacy_compatible"]:
+        prefix = f"renders/{job_id}/solve_scores/{metric_slug}_rt{rt_hash}/"
+    else:
+        chain_id = solve_score_chain_id(compiled["chain"], legacy_quantile=compiled["quantile"])
+        prefix = f"renders/{job_id}/solve_scores/{metric_slug}_{chain_id}_rt{rt_hash}/"
+    return prefix + "clip.json", prefix + "hist/", prefix + "bins.json"
 
 
 def _load_calc(job_id):
@@ -207,9 +230,9 @@ def _load_color_artifact(job_id, artifact_id):
     return meta
 
 
-def _scratch_matches(job_id, metric, quantile, omega, omega_enabled, root_transforms):
-    clip_key = f"renders/{job_id}/solve_scores/{metric}_clip.json"
-    bins_key = f"renders/{job_id}/solve_scores/{metric}_bins.json"
+def _scratch_matches(job_id, chain, metric, quantile, omega, omega_enabled, root_transforms):
+    chain = chain or solve_score_chain_from_scalars(metric, quantile, omega, omega_enabled)
+    clip_key, _, bins_key = _solve_score_scratch_keys(job_id, chain, quantile, root_transforms, metric, omega, omega_enabled)
     try:
         clip = json.loads(s3.get_object(Bucket=BUCKET, Key=clip_key)["Body"].read())
         bins = json.loads(s3.get_object(Bucket=BUCKET, Key=bins_key)["Body"].read())
@@ -431,12 +454,14 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
     if sum(int(item["step_count"]) for item in chunk_items) < pass0_steps:
         raise RuntimeError("calc.json chunk metadata is too small for pass-0 palette extraction")
 
-    scratch_ok, clip_key, bins_key = _scratch_matches(job_id, metric, q, omega, omega_enabled, root_transforms)
-    palette_id = _palette_variant_id(metric, palette, q, omega, omega_enabled, root_transforms)
+    scratch_ok, clip_key, bins_key = _scratch_matches(job_id, source_score["chain"], metric, q, omega, omega_enabled, root_transforms)
+    palette_id = _palette_variant_id(source_score["chain"], metric, q, omega, omega_enabled, palette, root_transforms)
     prefix = f"renders/{job_id}/palettes/{palette_id}/"
     solve_prefix = prefix + "solve_score/"
     chunks_prefix = prefix + "chunks/"
-    display_name = source.get("associated_palette_display_name") or _palette_display_name(metric, palette, q, omega, omega_enabled)
+    display_name = source.get("associated_palette_display_name") or _palette_display_name(
+        source_score["chain"], metric, q, omega, omega_enabled, palette
+    )
 
     plan = _base_extract_plan(
         job_id, run_id, task_id, selected,
@@ -522,23 +547,21 @@ def handler(event, context):
     compiled_score = compile_solve_score_chain_or_legacy(
         pp.get("solve_score_chain", ""),
         pp.get("metric", "proximity"),
+        pp.get("solve_score_quantile", 0.001),
         pp.get("solve_score_omega", 1.0),
         pp.get("solve_score_omega_enabled", True),
         default_metric="proximity",
     )
+    if solve_score_uses_non_solve_sources(compiled_score):
+        raise RuntimeError("Mixed-source solve score is histogram-debug only for now")
     metric = compiled_score["metric"]
     palette = pp.get("palette", "inferno")
     root_transforms = pp.get("root_transforms", [])
-    try:
-        q = float(pp.get("solve_score_quantile", 0.001))
-    except (TypeError, ValueError):
-        raise RuntimeError(f"solve_score_quantile must be numeric, got {pp.get('solve_score_quantile')!r}")
     if metric not in VALID_METRICS:
         raise RuntimeError(f"Invalid metric: {metric}")
     if palette not in VALID_PALETTE_NAMES:
         raise RuntimeError(f"Invalid palette: {palette}")
-    if not (0.001 <= q <= 0.05):
-        raise RuntimeError(f"solve_score_quantile must be in [0.001, 0.05], got {q}")
+    q = compiled_score["quantile"]
     omega = compiled_score["omega"]
     omega_enabled = compiled_score["omega_enabled"]
 
@@ -557,9 +580,17 @@ def handler(event, context):
     if step_start < pass0_steps:
         raise RuntimeError(f"Full solve metadata too small: only {step_start} solves, expected at least {pass0_steps}")
 
-    palette_id = _palette_variant_id(metric, palette, q, omega, omega_enabled, root_transforms)
+    palette_id = _palette_variant_id(compiled_score["chain"], metric, q, omega, omega_enabled, palette, root_transforms)
     prefix = f"renders/{job_id}/palettes/{palette_id}/"
-    solve_prefix = prefix + "solve_score/"
+    clip_key, solve_prefix, bins_key = _solve_score_scratch_keys(
+        job_id,
+        compiled_score["chain"],
+        q,
+        root_transforms,
+        metric,
+        omega,
+        omega_enabled,
+    )
     chunks_prefix = prefix + "chunks/"
     chunk_scores_prefix = chunks_prefix + "score_chunk_"
     chunk_bins_prefix = chunks_prefix + "palette_bins_chunk_"
@@ -618,10 +649,12 @@ def handler(event, context):
             "omega": omega,
             "omega_enabled": omega_enabled,
             "chain": compiled_score["chain"],
+            "metrics": compiled_score["metrics"],
+            "program": compiled_score["program_spec"],
             "cleanup_scratch": True,
-            "clip_key": prefix + f"solve_score/{metric}_clip.json",
+            "clip_key": clip_key,
             "hist_prefix": solve_prefix,
-            "bins_key": prefix + f"solve_score/{metric}_bins.json",
+            "bins_key": bins_key,
         },
         "outputs": {
             "image_key": prefix + "image.jpeg",

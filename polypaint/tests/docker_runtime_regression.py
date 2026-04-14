@@ -601,6 +601,49 @@ def test_solve_proximity_stats():
     assert spread["n_solves"] == 3
     print("  spread clip: OK (lo=%.2f, hi=%.2f)" % (spread["clip_lo"], spread["clip_hi"]))
 
+    # 3b. Score program ops, including m* binary ops and unary post-process ops, must parse and run.
+    for program in ["m0;m1;mul", "m0;m1;max"]:
+        r = subprocess.run(
+            [
+                sps_path,
+                sps_bin,
+                "--mode=summary",
+                "--degree=2",
+                "--score_metrics=proximity,spread",
+                "--score_clip_los=" + str(clip["clip_lo"]) + "," + str(spread["clip_lo"]),
+                "--score_clip_his=" + str(clip["clip_hi"]) + "," + str(spread["clip_hi"]),
+                "--score_program=" + program,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert r.returncode == 0, f"{program} summary failed: " + r.stderr[:200]
+        summary = json.loads(r.stdout)
+        assert summary["n_solves"] == 3
+        print(f"  score program {program}: OK")
+
+    for program in ["m0;flip", "m0;sawtooth:10", "m0;omega_cosine:3:1.57079632679"]:
+        r = subprocess.run(
+            [
+                sps_path,
+                sps_bin,
+                "--mode=summary",
+                "--degree=2",
+                "--score_metrics=proximity",
+                "--score_clip_los=" + str(clip["clip_lo"]),
+                "--score_clip_his=" + str(clip["clip_hi"]),
+                "--score_program=" + program,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert r.returncode == 0, f"{program} summary failed: " + r.stderr[:200]
+        summary = json.loads(r.stdout)
+        assert summary["n_solves"] == 3
+        print(f"  score program {program}: OK")
+
     # 4. Clusteriness clip (v2 metric)
     r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=clusteriness"],
                        capture_output=True, text=True, timeout=10)

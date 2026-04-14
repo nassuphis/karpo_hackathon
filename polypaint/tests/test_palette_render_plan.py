@@ -57,7 +57,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(
             plan["solve_score"]["chain"],
             [
-                {"name": "crowding", "params": []},
+                {"name": "crowding", "params": ["slv", "1"]},
                 {"name": "omega_cosine", "params": ["3"]},
             ],
         )
@@ -66,7 +66,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(
             plan["params"]["solve_score_chain"],
             [
-                {"name": "crowding", "params": []},
+                {"name": "crowding", "params": ["slv", "1"]},
                 {"name": "omega_cosine", "params": ["3"]},
             ],
         )
@@ -180,17 +180,41 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(
             plan["solve_score"]["chain"],
             [
-                {"name": "spread", "params": []},
+                {"name": "spread", "params": ["slv", "1"]},
                 {"name": "omega_cosine", "params": ["5"]},
             ],
         )
         self.assertEqual(
             plan["params"]["solve_score_chain"],
             [
-                {"name": "spread", "params": []},
+                {"name": "spread", "params": ["slv", "1"]},
                 {"name": "omega_cosine", "params": ["5"]},
             ],
         )
+
+    @patch("handler_palette_render_plan.s3")
+    def test_palette_plan_rejects_mixed_source_chain(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        calc = {
+            "degree": 5,
+            "N": 4,
+            "times": 1,
+            "n_coeffs": 7,
+            "lores": {"bin_key": "renders/j/lores.bin", "coeffs_key": "renders/j/lores_coeffs.bin"},
+            "chunks": [{"idx": 0, "bin_key": "renders/j/chunk_0.bin", "n_t": 16}],
+        }
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(calc).encode())}
+
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_event(params={
+                "metric": "spread",
+                "palette": "reef",
+                "solve_score_chain": [["spread", "slv", "1"], ["spread", "cf", "1"], ["avg"]],
+                "solve_score_quantile": 0.01,
+                "root_transforms": [],
+            }), None)
+        self.assertIn("histogram-debug only", str(ctx.exception))
 
     @patch("handler_palette_render_plan.s3")
     def test_invalid_palette_rejected(self, mock_s3):
@@ -357,7 +381,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(plan["attach"]["mode"], "dependency")
         self.assertEqual(plan["palette_id"], "pal_src")
         self.assertEqual(plan["attach"]["palette"], "magma")
-        self.assertEqual(plan["attach"]["score_chain"], [{"name": "crowding", "params": []}])
+        self.assertEqual(plan["attach"]["score_chain"], [{"name": "crowding", "params": ["slv", "1"]}])
         self.assertFalse(plan["attach"]["omega_enabled"])
 
     @patch("handler_palette_render_plan.s3")
@@ -401,7 +425,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
                     "lores": {"bin_key": "renders/j/lores.bin"},
                     "chunks": [{"idx": 0, "bin_key": "renders/j/chunk_0.bin", "n_t": 16}],
                 },
-                "renders/j/solve_scores/spread_clip.json": {
+                "renders/j/solve_scores/spread_rt97d170e1/clip.json": {
                     "family": "solve_score",
                     "metric": "spread",
                     "clip_quantile": 0.02,
@@ -409,7 +433,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
                     "omega_enabled": True,
                     "root_transforms": [],
                 },
-                "renders/j/solve_scores/spread_bins.json": {
+                "renders/j/solve_scores/spread_rt97d170e1/bins.json": {
                     "family": "solve_score",
                     "metric": "spread",
                     "clip_quantile": 0.02,
@@ -432,8 +456,8 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(plan["extract"]["source_artifact_id"], "color_src")
         self.assertEqual(plan["attach"]["artifact_id"], "color_child")
         self.assertFalse(plan["solve_score"]["cleanup_scratch"])
-        self.assertEqual(plan["solve_score"]["clip_key"], "renders/j/solve_scores/spread_clip.json")
-        self.assertEqual(plan["solve_score"]["bins_key"], "renders/j/solve_scores/spread_bins.json")
+        self.assertEqual(plan["solve_score"]["clip_key"], "renders/j/solve_scores/spread_rt97d170e1/clip.json")
+        self.assertEqual(plan["solve_score"]["bins_key"], "renders/j/solve_scores/spread_rt97d170e1/bins.json")
 
     @patch("handler_palette_render_plan.s3")
     def test_extract_plan_attaches_inherited_associated_palette_from_parent(self, mock_s3):
@@ -484,7 +508,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(plan["attach"]["palette_id"], "pal_src")
         self.assertEqual(plan["attach"]["image_key"], "renders/j/palettes/pal_src/image.jpeg")
         self.assertEqual(plan["attach"]["preview_key"], "renders/j/palettes/pal_src/preview.png")
-        self.assertEqual(plan["attach"]["score_chain"], [{"name": "spread", "params": []}])
+        self.assertEqual(plan["attach"]["score_chain"], [{"name": "spread", "params": ["slv", "1"]}])
         self.assertFalse(plan["attach"]["omega_enabled"])
 
     @patch("handler_palette_render_plan.s3")
@@ -532,7 +556,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(
             plan["solve_score"]["chain"],
             [
-                {"name": "clusteriness", "params": []},
+                {"name": "clusteriness", "params": ["slv", "1"]},
                 {"name": "omega_cosine", "params": ["3"]},
             ],
         )

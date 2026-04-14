@@ -153,14 +153,15 @@ static const char *solve_metric_validity_policy_name(void) {
     return "finite_only_min_roots";
 }
 
-static double apply_solve_score_omega(double u, double omega) {
+static double apply_solve_score_omega(double u, double omega, double phase) {
     if (!isfinite(u)) return 0.0;
     if (u < 0.0) u = 0.0;
     if (u > 1.0) u = 1.0;
     if (!isfinite(omega)) omega = 1.0;
     if (omega < 1.0) omega = 1.0;
     if (omega > 10.0) omega = 10.0;
-    return 0.5 * (cos(omega * 2.0 * M_PI * u) + 1.0);
+    if (!isfinite(phase)) phase = 0.0;
+    return 0.5 * (cos(omega * 2.0 * M_PI * u + phase) + 1.0);
 }
 
 static double apply_solve_score_transfer(double u, int omegaEnabled, double omega) {
@@ -168,7 +169,7 @@ static double apply_solve_score_transfer(double u, int omegaEnabled, double omeg
     if (u < 0.0) u = 0.0;
     if (u > 1.0) u = 1.0;
     if (!omegaEnabled) return u;
-    return apply_solve_score_omega(u, omega);
+    return apply_solve_score_omega(u, omega, 0.0);
 }
 
 /* Exact median: sort + middle element(s). Modifies values[] in-place. */
@@ -480,6 +481,457 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
 
     if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
     return 0.0;
+}
+
+/* ── Solve-score RPN program helpers ──────────────────────────────────── */
+
+#define SOLVE_SCORE_MAX_METRIC_SLOTS 16
+#define SOLVE_SCORE_MAX_PROGRAM_TOKENS 32
+
+enum SolveScoreProgramOp {
+    SOLVE_SCORE_OP_PUSH_METRIC = 1,
+    SOLVE_SCORE_OP_AVG = 2,
+    SOLVE_SCORE_OP_MIN = 3,
+    SOLVE_SCORE_OP_MAX = 4,
+    SOLVE_SCORE_OP_MUL = 5,
+    SOLVE_SCORE_OP_WEIGHTED_SUM = 6,
+    SOLVE_SCORE_OP_ABS_DIFF = 7,
+    SOLVE_SCORE_OP_GEOMETRIC_MEAN = 8,
+    SOLVE_SCORE_OP_OMEGA_COSINE = 9,
+    SOLVE_SCORE_OP_SAWTOOTH = 10,
+    SOLVE_SCORE_OP_FLIP = 11,
+};
+
+enum SolveScoreMetricSource {
+    SOLVE_SCORE_SOURCE_SOLVE = 0,
+    SOLVE_SCORE_SOURCE_COEFF = 1,
+};
+
+typedef struct {
+    enum SolveScoreProgramOp op;
+    int metricSlot;
+    double a;
+    double b;
+} SolveScoreProgramToken;
+
+typedef struct {
+    int metricCount;
+    enum SolveMetric metrics[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    enum SolveScoreMetricSource metricSources[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    double clipLo[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    double clipHi[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    int tokenCount;
+    SolveScoreProgramToken tokens[SOLVE_SCORE_MAX_PROGRAM_TOKENS];
+} SolveScoreProgram;
+
+static double solve_score_clamp_unit(double v) {
+    if (!isfinite(v)) return 0.0;
+    if (v < 0.0) return 0.0;
+    if (v > 1.0) return 1.0;
+    return v;
+}
+
+static int parse_solve_score_metric_csv(const char *s, enum SolveMetric *out, int maxMetrics,
+                                        char *err, size_t errCap) {
+    if (!s || !*s) {
+        snprintf(err, errCap, "missing score metrics");
+        return 0;
+    }
+    char *copy = strdup(s);
+    if (!copy) {
+        snprintf(err, errCap, "out of memory parsing score metrics");
+        return 0;
+    }
+    int n = 0;
+    char *save = NULL;
+    for (char *tok = strtok_r(copy, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
+        if (n >= maxMetrics) {
+            snprintf(err, errCap, "too many score metrics (max %d)", maxMetrics);
+            free(copy);
+            return 0;
+        }
+        if (!parse_solve_metric(tok, &out[n])) {
+            snprintf(err, errCap, "invalid score metric '%s'", tok);
+            free(copy);
+            return 0;
+        }
+        n++;
+    }
+    free(copy);
+    if (n <= 0) {
+        snprintf(err, errCap, "missing score metrics");
+        return 0;
+    }
+    return n;
+}
+
+static int parse_solve_score_source_csv(const char *s, enum SolveScoreMetricSource *out, int expectedCount,
+                                        char *err, size_t errCap) {
+    if (!s || !*s) {
+        for (int i = 0; i < expectedCount; i++) out[i] = SOLVE_SCORE_SOURCE_SOLVE;
+        return expectedCount;
+    }
+    char *copy = strdup(s);
+    if (!copy) {
+        snprintf(err, errCap, "out of memory parsing score sources");
+        return 0;
+    }
+    int n = 0;
+    char *save = NULL;
+    for (char *tok = strtok_r(copy, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
+        if (n >= expectedCount) {
+            snprintf(err, errCap, "too many score sources");
+            free(copy);
+            return 0;
+        }
+        if (strcmp(tok, "slv") == 0) out[n] = SOLVE_SCORE_SOURCE_SOLVE;
+        else if (strcmp(tok, "cf") == 0) out[n] = SOLVE_SCORE_SOURCE_COEFF;
+        else {
+            snprintf(err, errCap, "invalid score source '%s'", tok);
+            free(copy);
+            return 0;
+        }
+        n++;
+    }
+    free(copy);
+    if (n != expectedCount) {
+        snprintf(err, errCap, "score metric / source list length mismatch");
+        return 0;
+    }
+    return n;
+}
+
+static int parse_solve_score_double_csv(const char *s, double *out, int maxValues,
+                                        char *err, size_t errCap) {
+    if (!s || !*s) {
+        snprintf(err, errCap, "missing score numeric list");
+        return 0;
+    }
+    char *copy = strdup(s);
+    if (!copy) {
+        snprintf(err, errCap, "out of memory parsing numeric list");
+        return 0;
+    }
+    int n = 0;
+    char *save = NULL;
+    for (char *tok = strtok_r(copy, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
+        if (n >= maxValues) {
+            snprintf(err, errCap, "too many numeric values (max %d)", maxValues);
+            free(copy);
+            return 0;
+        }
+        char *end = NULL;
+        double v = strtod(tok, &end);
+        if (!end || *end != '\0' || !isfinite(v)) {
+            snprintf(err, errCap, "invalid numeric value '%s'", tok);
+            free(copy);
+            return 0;
+        }
+        out[n++] = v;
+    }
+    free(copy);
+    if (n <= 0) {
+        snprintf(err, errCap, "missing numeric values");
+        return 0;
+    }
+    return n;
+}
+
+static int parse_solve_score_program_spec(const char *spec, int metricCount,
+                                          SolveScoreProgramToken *tokens, int maxTokens,
+                                          char *err, size_t errCap) {
+    if (!spec || !*spec) {
+        snprintf(err, errCap, "missing score program");
+        return 0;
+    }
+    char *copy = strdup(spec);
+    if (!copy) {
+        snprintf(err, errCap, "out of memory parsing score program");
+        return 0;
+    }
+    int n = 0;
+    int stackDepth = 0;
+    char *save = NULL;
+    for (char *tok = strtok_r(copy, ";", &save); tok; tok = strtok_r(NULL, ";", &save)) {
+        if (n >= maxTokens) {
+            snprintf(err, errCap, "too many program tokens (max %d)", maxTokens);
+            free(copy);
+            return 0;
+        }
+        SolveScoreProgramToken token;
+        memset(&token, 0, sizeof(token));
+        if (strcmp(tok, "avg") == 0) {
+            token.op = SOLVE_SCORE_OP_AVG;
+            stackDepth -= 1;
+        } else if (strcmp(tok, "min") == 0) {
+            token.op = SOLVE_SCORE_OP_MIN;
+            stackDepth -= 1;
+        } else if (strcmp(tok, "max") == 0) {
+            token.op = SOLVE_SCORE_OP_MAX;
+            stackDepth -= 1;
+        } else if (strcmp(tok, "mul") == 0) {
+            token.op = SOLVE_SCORE_OP_MUL;
+            stackDepth -= 1;
+        } else if (strcmp(tok, "abs_diff") == 0) {
+            token.op = SOLVE_SCORE_OP_ABS_DIFF;
+            stackDepth -= 1;
+        } else if (strcmp(tok, "geometric_mean") == 0) {
+            token.op = SOLVE_SCORE_OP_GEOMETRIC_MEAN;
+            stackDepth -= 1;
+        } else if (strncmp(tok, "weighted_sum:", 13) == 0) {
+            char *params = tok + 13;
+            char *mid = strchr(params, ':');
+            if (!mid) {
+                snprintf(err, errCap, "weighted_sum requires two weights");
+                free(copy);
+                return 0;
+            }
+            *mid = '\0';
+            char *endA = NULL;
+            char *endB = NULL;
+            double a = strtod(params, &endA);
+            double b = strtod(mid + 1, &endB);
+            if (!endA || *endA != '\0' || !endB || *endB != '\0' || !isfinite(a) || !isfinite(b)) {
+                snprintf(err, errCap, "weighted_sum requires two numeric weights");
+                free(copy);
+                return 0;
+            }
+            if (!(fabs(a) > 0.0 || fabs(b) > 0.0)) {
+                snprintf(err, errCap, "weighted_sum requires at least one non-zero weight");
+                free(copy);
+                return 0;
+            }
+            token.op = SOLVE_SCORE_OP_WEIGHTED_SUM;
+            token.a = a;
+            token.b = b;
+            stackDepth -= 1;
+        } else if (strncmp(tok, "omega_cosine:", 13) == 0) {
+            char *params = tok + 13;
+            char *mid = strchr(params, ':');
+            char *endOmega = NULL;
+            char *endPhase = NULL;
+            double omega = 0.0;
+            double phase = 0.0;
+            if (mid) {
+                *mid = '\0';
+                omega = strtod(params, &endOmega);
+                phase = strtod(mid + 1, &endPhase);
+                if (!endOmega || *endOmega != '\0' || !endPhase || *endPhase != '\0' || !isfinite(omega) || !isfinite(phase)) {
+                    snprintf(err, errCap, "omega_cosine requires numeric omega and phase parameters");
+                    free(copy);
+                    return 0;
+                }
+            } else {
+                omega = strtod(params, &endOmega);
+                if (!endOmega || *endOmega != '\0' || !isfinite(omega)) {
+                    snprintf(err, errCap, "omega_cosine requires a numeric omega parameter");
+                    free(copy);
+                    return 0;
+                }
+            }
+            if (omega < 1.0 || omega > 10.0) {
+                snprintf(err, errCap, "omega_cosine omega must be in [1, 10]");
+                free(copy);
+                return 0;
+            }
+            token.op = SOLVE_SCORE_OP_OMEGA_COSINE;
+            token.a = omega;
+            token.b = phase;
+        } else if (strncmp(tok, "sawtooth:", 9) == 0) {
+            char *end = NULL;
+            double mult = strtod(tok + 9, &end);
+            if (!end || *end != '\0' || !isfinite(mult)) {
+                snprintf(err, errCap, "sawtooth requires one numeric multiplier");
+                free(copy);
+                return 0;
+            }
+            token.op = SOLVE_SCORE_OP_SAWTOOTH;
+            token.a = mult;
+        } else if (strcmp(tok, "flip") == 0) {
+            token.op = SOLVE_SCORE_OP_FLIP;
+        } else if (tok[0] == 'm' && tok[1] != '\0') {
+            char *end = NULL;
+            long slot = strtol(tok + 1, &end, 10);
+            if (!end || *end != '\0' || slot < 0 || slot >= metricCount) {
+                snprintf(err, errCap, "invalid metric slot token '%s'", tok);
+                free(copy);
+                return 0;
+            }
+            token.op = SOLVE_SCORE_OP_PUSH_METRIC;
+            token.metricSlot = (int)slot;
+            stackDepth += 1;
+        } else {
+            snprintf(err, errCap, "invalid score program token '%s'", tok);
+            free(copy);
+            return 0;
+        }
+        if (token.op != SOLVE_SCORE_OP_PUSH_METRIC && stackDepth < 1) {
+            snprintf(err, errCap, "invalid stack underflow at token '%s'", tok);
+            free(copy);
+            return 0;
+        }
+        tokens[n++] = token;
+    }
+    free(copy);
+    if (n <= 0) {
+        snprintf(err, errCap, "missing score program tokens");
+        return 0;
+    }
+    if (stackDepth != 1) {
+        snprintf(err, errCap, "score program must end with stack depth 1");
+        return 0;
+    }
+    return n;
+}
+
+static int parse_solve_score_program_args_ex(const char *metricsCsv, const char *sourcesCsv,
+                                             const char *clipLoCsv, const char *clipHiCsv,
+                                             const char *programSpec,
+                                             SolveScoreProgram *out, char *err, size_t errCap) {
+    memset(out, 0, sizeof(*out));
+    int metricCount = parse_solve_score_metric_csv(metricsCsv, out->metrics, SOLVE_SCORE_MAX_METRIC_SLOTS, err, errCap);
+    if (metricCount <= 0) return 0;
+    int sourceCount = parse_solve_score_source_csv(sourcesCsv, out->metricSources, metricCount, err, errCap);
+    if (sourceCount <= 0) return 0;
+    int loCount = parse_solve_score_double_csv(clipLoCsv, out->clipLo, SOLVE_SCORE_MAX_METRIC_SLOTS, err, errCap);
+    if (loCount <= 0) return 0;
+    int hiCount = parse_solve_score_double_csv(clipHiCsv, out->clipHi, SOLVE_SCORE_MAX_METRIC_SLOTS, err, errCap);
+    if (hiCount <= 0) return 0;
+    if (loCount != metricCount || hiCount != metricCount) {
+        snprintf(err, errCap, "score metric / clip list length mismatch");
+        return 0;
+    }
+    for (int i = 0; i < metricCount; i++) {
+        if (!(out->clipHi[i] - out->clipLo[i] >= 1e-12)) {
+            snprintf(err, errCap, "invalid clip range for metric slot %d", i);
+            return 0;
+        }
+    }
+    int tokenCount = parse_solve_score_program_spec(
+        programSpec, metricCount, out->tokens, SOLVE_SCORE_MAX_PROGRAM_TOKENS, err, errCap
+    );
+    if (tokenCount <= 0) return 0;
+    out->metricCount = metricCount;
+    out->tokenCount = tokenCount;
+    return 1;
+}
+
+static int parse_solve_score_program_args(const char *metricsCsv, const char *clipLoCsv,
+                                          const char *clipHiCsv, const char *programSpec,
+                                          SolveScoreProgram *out, char *err, size_t errCap) {
+    return parse_solve_score_program_args_ex(
+        metricsCsv, NULL, clipLoCsv, clipHiCsv, programSpec, out, err, errCap
+    );
+}
+
+static void solve_score_program_from_legacy(enum SolveMetric metric, double clipLo, double clipHi,
+                                            double omega, int omegaEnabled, SolveScoreProgram *out) {
+    memset(out, 0, sizeof(*out));
+    out->metricCount = 1;
+    out->metrics[0] = metric;
+    out->metricSources[0] = SOLVE_SCORE_SOURCE_SOLVE;
+    out->clipLo[0] = clipLo;
+    out->clipHi[0] = clipHi;
+    out->tokenCount = omegaEnabled ? 2 : 1;
+    out->tokens[0].op = SOLVE_SCORE_OP_PUSH_METRIC;
+    out->tokens[0].metricSlot = 0;
+    if (omegaEnabled) {
+        out->tokens[1].op = SOLVE_SCORE_OP_OMEGA_COSINE;
+        out->tokens[1].a = omega;
+        out->tokens[1].b = 0.0;
+    }
+}
+
+static double solve_score_eval_program_with_sources(const float *roots, int degree,
+                                                    const float *coeffRoots, int coeffDegree,
+                                                    const SolveScoreProgram *program) {
+    double metricVals[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    for (int i = 0; i < program->metricCount; i++) {
+        const float *metricRoots = roots;
+        int metricDegree = degree;
+        if (program->metricSources[i] == SOLVE_SCORE_SOURCE_COEFF) {
+            metricRoots = coeffRoots;
+            metricDegree = coeffDegree;
+        }
+        double score = (!metricRoots || metricDegree <= 0)
+            ? 0.0
+            : compute_solve_metric_score(metricRoots, metricDegree, program->metrics[i]);
+        double range = program->clipHi[i] - program->clipLo[i];
+        double u = (score - program->clipLo[i]) / range;
+        metricVals[i] = solve_score_clamp_unit(u);
+    }
+
+    double stack[SOLVE_SCORE_MAX_PROGRAM_TOKENS];
+    int sp = 0;
+    for (int i = 0; i < program->tokenCount; i++) {
+        const SolveScoreProgramToken *token = &program->tokens[i];
+        switch (token->op) {
+            case SOLVE_SCORE_OP_PUSH_METRIC:
+                stack[sp++] = metricVals[token->metricSlot];
+                break;
+            case SOLVE_SCORE_OP_AVG: {
+                double b = stack[--sp];
+                double a = stack[sp - 1];
+                stack[sp - 1] = solve_score_clamp_unit(0.5 * (a + b));
+                break;
+            }
+            case SOLVE_SCORE_OP_MIN: {
+                double b = stack[--sp];
+                double a = stack[sp - 1];
+                stack[sp - 1] = a < b ? a : b;
+                break;
+            }
+            case SOLVE_SCORE_OP_MAX: {
+                double b = stack[--sp];
+                double a = stack[sp - 1];
+                stack[sp - 1] = a > b ? a : b;
+                break;
+            }
+            case SOLVE_SCORE_OP_MUL: {
+                double b = stack[--sp];
+                double a = stack[sp - 1];
+                stack[sp - 1] = solve_score_clamp_unit(a * b);
+                break;
+            }
+            case SOLVE_SCORE_OP_WEIGHTED_SUM: {
+                double b = stack[--sp];
+                double a = stack[sp - 1];
+                stack[sp - 1] = solve_score_clamp_unit(token->a * a + token->b * b);
+                break;
+            }
+            case SOLVE_SCORE_OP_ABS_DIFF: {
+                double b = stack[--sp];
+                double a = stack[sp - 1];
+                stack[sp - 1] = solve_score_clamp_unit(fabs(a - b));
+                break;
+            }
+            case SOLVE_SCORE_OP_GEOMETRIC_MEAN: {
+                double b = stack[--sp];
+                double a = stack[sp - 1];
+                stack[sp - 1] = solve_score_clamp_unit(sqrt(solve_score_clamp_unit(a) * solve_score_clamp_unit(b)));
+                break;
+            }
+            case SOLVE_SCORE_OP_OMEGA_COSINE:
+                stack[sp - 1] = apply_solve_score_omega(stack[sp - 1], token->a, token->b);
+                break;
+            case SOLVE_SCORE_OP_SAWTOOTH: {
+                double x = stack[sp - 1] * token->a;
+                stack[sp - 1] = solve_score_clamp_unit(x - floor(x));
+                break;
+            }
+            case SOLVE_SCORE_OP_FLIP:
+                stack[sp - 1] = solve_score_clamp_unit(1.0 - stack[sp - 1]);
+                break;
+            default:
+                return 0.0;
+        }
+    }
+    if (sp != 1) return 0.0;
+    return solve_score_clamp_unit(stack[0]);
+}
+
+static double solve_score_eval_program(const float *roots, int degree, const SolveScoreProgram *program) {
+    return solve_score_eval_program_with_sources(roots, degree, NULL, 0, program);
 }
 
 #endif /* SOLVE_SCORE_H */

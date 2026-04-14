@@ -134,6 +134,49 @@ class TestComputePlan(unittest.TestCase):
         body = result["body"]
         self.assertLess(len(body.encode("utf-8")), 4096)
 
+    @patch("handler_compute_plan.s3")
+    def test_finalize_metadata_persists_lores_coeffs_key(self, mock_s3):
+        import handler_compute_plan as mod
+
+        plan = {
+            "job_id": "compute_j",
+            "run_id": "run_abc",
+            "pipeline": {
+                "function": "g1",
+                "param_transforms": [],
+                "param_transforms_display": [],
+                "coeff_transforms": [],
+                "cfpv": [],
+            },
+            "compute": {"N": 100, "times": 1, "n_chunks": 1, "n_steps": 10000, "params_key": "renders/compute_j/params.bin"},
+            "solve": {"mode": "aberth"},
+            "chunk_items": [{"coeffs_key": "renders/compute_j/coeffs_0000.bin"}],
+        }
+        post = {
+            "degree": 10,
+            "n_coeffs": 11,
+            "total_coeffs_size": 4000,
+            "lores": {
+                "N": 50,
+                "n_steps": 2500,
+                "bin_key": "renders/compute_j/lores.bin",
+                "coeffs_key": "renders/compute_j/lores_coeffs.bin",
+            },
+        }
+        lores_solve = {"s3_key": "renders/compute_j/lores.bin", "bin_size": 1234}
+        solve_results = [{"chunk_idx": 0, "s3_key": "renders/compute_j/chunk_0.bin", "bin_size": 5678, "compute_us": 111, "n_t": 10, "avg_iterations": 7.5}]
+
+        mod.handle_finalize_metadata({
+            "plan": plan,
+            "post": post,
+            "lores_solve": lores_solve,
+            "solve_results": solve_results,
+        })
+
+        body = json.loads(mock_s3.put_object.call_args.kwargs["Body"])
+        self.assertEqual(body["lores"]["bin_key"], "renders/compute_j/lores.bin")
+        self.assertEqual(body["lores"]["coeffs_key"], "renders/compute_j/lores_coeffs.bin")
+
 
 if __name__ == "__main__":
     unittest.main()

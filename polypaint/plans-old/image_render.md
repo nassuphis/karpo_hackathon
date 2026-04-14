@@ -1,6 +1,6 @@
 # Bilevel PNG Render Review
 
-Status: historical review note. It analyzes an older stripe-named RGB/bilevel path. Current render storage is chunk-based and the current immutable family-catalog UI is described in [render_refactor.md](/Users/nicknassuphis/karpo_hackathon/polypaint/render_refactor.md) and [docs/s3results.md](/Users/nicknassuphis/karpo_hackathon/polypaint/docs/s3results.md).
+Status: legacy archive. Historical review note preserved for reference; it analyzes an older stripe-named RGB/bilevel path. Current render storage is chunk-based and the current immutable family-catalog UI is described in [render_refactor.md](/Users/nicknassuphis/karpo_hackathon/polypaint/render_refactor.md) and [docs/s3results.md](/Users/nicknassuphis/karpo_hackathon/polypaint/docs/s3results.md).
 
 This document describes the exact path from saved root stripes to `image_bilevel.png`, with the memory and `/tmp` costs that matter if you want to render `50,000 x 50,000`.
 

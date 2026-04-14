@@ -1,6 +1,6 @@
 # Render Step Functions Migration Spec
 
-Status: historical migration spec. Render now uses Step Functions and this file preserves migration constraints and rationale. Some examples still use legacy `stripe_*` / `stripe_items` terminology; current runtime planning is chunk-based and the current UI model is documented in [render_refactor.md](/Users/nicknassuphis/karpo_hackathon/polypaint/render_refactor.md).
+Status: legacy archive. Historical migration spec preserved for reference; Render now uses Step Functions. Some examples still use legacy `stripe_*` / `stripe_items` terminology; current runtime planning is chunk-based and the current UI model is documented in [render_refactor.md](/Users/nicknassuphis/karpo_hackathon/polypaint/render_refactor.md).
 
 This document is the migration spec for replacing the current self-reinvoking render orchestrator Lambda with an AWS Step Functions Standard workflow.
 

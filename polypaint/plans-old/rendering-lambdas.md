@@ -1,6 +1,6 @@
 # Code Review: Rendering Lambdas
 
-Status: historical review snapshot. Some findings still reference pre-refactor route usage and older render artifact behavior. Use [docs/lambdas.md](/Users/nicknassuphis/karpo_hackathon/polypaint/docs/lambdas.md) for the current handler/reference view.
+Status: legacy archive. Historical review snapshot preserved for reference; some findings still reference pre-refactor route usage and older render artifact behavior. Use [docs/lambdas.md](/Users/nicknassuphis/karpo_hackathon/polypaint/docs/lambdas.md) for the current handler/reference view.
 
 ## Findings
 

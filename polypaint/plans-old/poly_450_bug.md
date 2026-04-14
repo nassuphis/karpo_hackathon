@@ -1,6 +1,6 @@
 # poly_450 sweep_cm Bug Investigation
 
-Status: historical bug-investigation note. Kept for debugging history; it still references intermediate rename details and migration-era hypotheses that are not current render/storage guidance.
+Status: legacy archive. Historical bug-investigation note preserved for debugging history; it still references migration-era hypotheses that are not current render/storage guidance.
 
 ## 1. Symptom
 

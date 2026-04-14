@@ -1,6 +1,6 @@
 # Solve Proximity Spec
 
-Status: historical implementation spec. The current user-facing mode is `solve_score`, and the histogram artifacts are chunk-based (`chunk_*_hist.json`), not stripe-based. This file is retained as background on the original pre-generalization design.
+Status: legacy archive. Historical implementation spec preserved for reference; the current user-facing mode is `solve_score`, and histogram artifacts are chunk-based (`chunk_*_hist.json`), not stripe-based.
 
 This document is the implementation spec for a new Render color mode named `solve_proximity`.
 

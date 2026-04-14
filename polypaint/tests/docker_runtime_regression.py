@@ -11,9 +11,12 @@ Invoked by scripts/test-docker-runtime.sh — not run directly.
 import json
 import math
 import os
+import http.server
+import socketserver
 import struct
 import subprocess
 import sys
+import threading
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -71,6 +74,45 @@ def cleanup(*paths):
             os.remove(p)
         except OSError:
             pass
+
+
+class _RangeHandler(http.server.BaseHTTPRequestHandler):
+    file_bytes = b""
+
+    def do_GET(self):
+        if self.path != "/input.bin":
+            self.send_response(404)
+            self.end_headers()
+            return
+        data = type(self).file_bytes
+        start = 0
+        end = len(data) - 1
+        range_hdr = self.headers.get("Range")
+        if range_hdr and range_hdr.startswith("bytes="):
+            raw = range_hdr[len("bytes="):]
+            if "-" not in raw:
+                self.send_response(416)
+                self.end_headers()
+                return
+            lo, hi = raw.split("-", 1)
+            start = int(lo) if lo else 0
+            end = int(hi) if hi else len(data) - 1
+            if start < 0 or end < start or end >= len(data):
+                self.send_response(416)
+                self.end_headers()
+                return
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {start}-{end}/{len(data)}")
+        else:
+            self.send_response(200)
+        chunk = data[start:end + 1]
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(chunk)))
+        self.end_headers()
+        self.wfile.write(chunk)
+
+    def log_message(self, fmt, *args):
+        return
 
 
 def read_f32_array(path):
@@ -405,6 +447,86 @@ def test_palette_chunk_mt_runtime():
 
     cleanup(roots_path, scores_path, bins_path)
     print("=== solve_palette_chunk_mt runtime PASSED ===")
+
+
+def test_palette_chunk_mt_param_sectioned_runtime():
+    print("\n--- solve_palette_chunk_mt param-source sectioned runtime ---")
+
+    bin_path = "/src/solve_palette_chunk_mt"
+    roots_path = "/tmp/palette_chunk_mt_param_roots.bin"
+    params_path = "/tmp/palette_chunk_mt_param_rows.bin"
+    scores_path = "/tmp/palette_chunk_mt_param_scores.bin"
+    bins_path = "/tmp/palette_chunk_mt_param_bins.bin"
+
+    with open(roots_path, "wb") as f:
+        solves = [
+            [(0.0, 0.0), (1.0, 0.0)],
+            [(0.0, 0.0), (1.0, 0.0)],
+            [(0.0, 0.0), (1.0, 0.0)],
+            [(0.0, 0.0), (1.0, 0.0)],
+        ]
+        for roots in solves:
+            for re_val, im_val in roots:
+                f.write(struct.pack("<ff", re_val, im_val))
+
+    with open(params_path, "wb") as f:
+        for row in [
+            (0.10, 0.20, 0.0, 0.0),
+            (0.25, 0.15, 0.0, 0.0),
+            (0.40, 0.50, 0.0, 0.0),
+            (0.75, 0.80, 0.0, 0.0),
+        ]:
+            f.write(struct.pack("<ffff", *row))
+
+    _RangeHandler.file_bytes = open(roots_path, "rb").read()
+    with socketserver.TCPServer(("127.0.0.1", 0), _RangeHandler) as httpd:
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            r = subprocess.run([
+                bin_path, roots_path,
+                "--degree=2",
+                "--metric=t1_re",
+                "--cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
+                "--step_count=4",
+                "--threads=2",
+                "--input_mode=sectioned",
+                "--url=http://127.0.0.1:%d/input.bin" % port,
+                "--input_size=%d" % os.path.getsize(roots_path),
+                "--retries=2",
+                "--score_metrics=t1_re,t1_im",
+                "--score_sources=pm,pm",
+                "--score_clip_los=0,0",
+                "--score_clip_his=1,1",
+                "--score_program=m0;m1;mul",
+                "--score_params_file=%s" % params_path,
+                "--scores_out=" + scores_path,
+                "--bins_out=" + bins_path,
+            ], capture_output=True, text=True, timeout=10)
+            assert r.returncode == 0, "solve_palette_chunk_mt param sectioned failed: " + r.stderr[:200]
+            meta = json.loads(r.stdout)
+            assert meta["threads"] == 2, "solve_palette_chunk_mt param sectioned did not report thread count"
+            assert meta["input_mode"] == "sectioned", "solve_palette_chunk_mt param sectioned did not report input_mode"
+
+            scores = read_f32_array(scores_path)
+            with open(bins_path, "rb") as f:
+                bins = list(f.read())
+
+            expected_scores = [0.02, 0.0375, 0.2, 0.6]
+            for got, want in zip(scores, expected_scores):
+                assert abs(got - want) < 1e-6, "unexpected param-sectioned score %.6f != %.6f" % (got, want)
+            assert len(set(bins)) >= 3, "param-sectioned bins unexpectedly collapsed: %r" % bins
+            assert bins[0] == bins[1] == 0, "expected the two smallest param products to share the first bin, got %r" % bins
+            assert bins[2] > bins[1], "expected the third param product to advance to a higher bin, got %r" % bins
+            assert bins[3] > bins[2], "expected the largest param product to land in the highest bin of the set, got %r" % bins
+            print("  solve_palette_chunk_mt param sectioned: OK (scores=%s)" % (",".join("%.4f" % s for s in scores)))
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+
+    cleanup(roots_path, params_path, scores_path, bins_path)
+    print("=== solve_palette_chunk_mt param-source sectioned runtime PASSED ===")
 
 
 # ── Render Preview (vipsthumbnail) Tests ─────────────────────────────────
@@ -824,6 +946,7 @@ if __name__ == "__main__":
     test_cfpv_coeffgen()
     test_compute_preview_runtime_combo()
     test_palette_chunk_mt_runtime()
+    test_palette_chunk_mt_param_sectioned_runtime()
     test_render_preview()
     test_resize_runtime()
     test_solve_proximity_stats()

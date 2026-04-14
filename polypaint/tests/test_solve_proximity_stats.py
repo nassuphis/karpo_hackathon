@@ -991,6 +991,62 @@ def test_summary_mixed_source_program_uses_coeff_vectors():
     os.remove(coeff_path)
 
 
+def test_hist_param_program_does_not_require_legacy_clip_range():
+    solve_path = "/tmp/sp_test_hist_param_program.bin"
+    params_path = os.path.join(LAMBDA_DIR, "_test_param_input.bin")
+    solve_rows = [
+        [(0.0, 0.0), (1.0, 0.0)],
+        [(0.0, 0.0), (1.0, 0.0)],
+        [(0.0, 0.0), (1.0, 0.0)],
+        [(0.0, 0.0), (1.0, 0.0)],
+    ]
+    param_rows = [
+        (0.10, 0.20, 0.0, 0.0),
+        (0.25, 0.15, 0.0, 0.0),
+        (0.40, 0.50, 0.0, 0.0),
+        (0.75, 0.80, 0.0, 0.0),
+    ]
+    write_bin(solve_path, solve_rows, 2)
+    with open(params_path, "wb") as f:
+        for row in param_rows:
+            f.write(struct.pack("<ffff", *row))
+    try:
+        host_bin = os.path.join(LAMBDA_DIR, "_test_input.bin")
+        shutil.copy(solve_path, host_bin)
+        try:
+            args = (
+                "/src/solve_proximity_stats /src/_test_input.bin --mode=hist "
+                "--degree=2 --hist_bins=8 --metric=t1_re "
+                "--score_metrics=t1_re,t1_im "
+                "--score_sources=pm,pm "
+                "--score_clip_los=0,0 "
+                "--score_clip_his=1,1 "
+                f"--score_program={shlex.quote('m0;m1;mul')} "
+                "--score_params_file=/src/_test_param_input.bin"
+            )
+            r = _docker_run(args)
+            assert r.returncode == 0, r.stderr
+            result = json.loads(r.stdout)
+            assert result["metric"] == "t1_re"
+            assert result["clip_lo"] == 0.0
+            assert result["clip_hi"] == 1.0
+            assert sum(result["hist"]) == 4
+        finally:
+            try:
+                os.remove(host_bin)
+            except OSError:
+                pass
+    finally:
+        try:
+            os.remove(solve_path)
+        except OSError:
+            pass
+        try:
+            os.remove(params_path)
+        except OSError:
+            pass
+
+
 def test_clip_centroid_re_uses_only_finite_roots():
     """Centroid metrics should score partial-invalid solves from their finite roots."""
     path = "/tmp/sp_test_clip_centroid_partial.bin"

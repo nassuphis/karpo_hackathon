@@ -1,6 +1,6 @@
 # Solve Scores Phase 2 Spec
 
-Status: historical draft superseded by the implemented solve-score pipeline and newer docs such as [solve_scores.md](/Users/nicknassuphis/karpo_hackathon/polypaint/solve_scores.md) and [render_refactor.md](/Users/nicknassuphis/karpo_hackathon/polypaint/render_refactor.md).
+Status: legacy archive. Historical draft superseded by the implemented solve-score pipeline and newer docs such as [solve_scores.md](/Users/nicknassuphis/karpo_hackathon/polypaint/solve_scores.md) and [render_refactor.md](/Users/nicknassuphis/karpo_hackathon/polypaint/render_refactor.md).
 
 This document is the phase-2 extension spec for the existing solve-score system implemented from [solve_scores.md](/Users/nicknassuphis/karpo_hackathon/polypaint/solve_scores.md).
 

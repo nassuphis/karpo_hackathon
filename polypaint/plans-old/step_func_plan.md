@@ -1,6 +1,6 @@
 # Step Functions Migration Plan
 
-Status: historical planning note. The Render workflow has already migrated to Step Functions, and newer docs use chunk-based naming plus immutable artifact-family catalogs. Read this as design history, not current API or payload shape.
+Status: legacy archive. Historical planning note preserved for reference; the Render workflow has already migrated to Step Functions, and newer docs use chunk-based naming plus immutable artifact-family catalogs.
 
 ## 1. Problem
 

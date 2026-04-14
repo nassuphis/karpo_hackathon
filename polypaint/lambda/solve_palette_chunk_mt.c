@@ -498,7 +498,16 @@ static void *chunk_worker_main(void *arg_) {
         }
         arg->bytesDownloaded = (long)dl.size + (long)coeffDl.size;
         const float *coeffRoots = coeffCurl ? (const float *)(void *)coeffDl.data : NULL;
-        compute_scores_for_roots((const float *)(void *)dl.data, coeffRoots, NULL, arg->solveCount, arg->solveStart, arg);
+        const float *paramValues = arg->sharedParamBuf;
+        if (paramValues) paramValues += arg->solveStart * arg->scoreParamStride;
+        compute_scores_for_roots(
+            (const float *)(void *)dl.data,
+            coeffRoots,
+            paramValues,
+            arg->solveCount,
+            arg->solveStart,
+            arg
+        );
         if (coeffCurl) curl_easy_cleanup(coeffCurl);
         curl_easy_cleanup(curl);
         free(coeffDl.data);

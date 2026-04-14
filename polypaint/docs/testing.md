@@ -57,7 +57,7 @@ All tests live in `polypaint/tests/`.
 | `test_dispatch_resilience.py` | Dispatch resilience: return_ids, head-keys, wave dispatch, missing-task detection | Python mocks only |
 | `test_tri_palette_generation.py` | TRI palette generator + generated catalog consistency | Python only |
 | `test_companion_matrix.py` | sweep_cm binary: exact roots, degenerate cases, overflow handling, AE vs CM comparison | Docker ARM64 + LAPACK |
-| `test_solve_proximity_stats.py` | solve_proximity_stats binary: 10 metrics, summary mode, quantile clipping | Docker ARM64 |
+| `test_solve_proximity_stats.py` | solve_proximity_stats binary: solve-score metrics, summary/hist modes, score-program parsing, mixed-source (`slv`/`cf`/`pm`) clipping, quantile clipping | Docker ARM64 |
 | `test_solve_palette_debug.py` | solve_palette_debug binary: serpentine, expansion, palette selection, quantile | Docker ARM64 |
 | `test_palette_debug_handler.py` | Palette debug Lambda handler: validation, S3 upload, stale preview deletion | Python mocks only |
 | `test_render_workflow_definition.py` | Step Functions ASL template: required states, Map concurrency, retry policies | JSON parsing only |
@@ -340,6 +340,44 @@ The deploy-style ARM64 smoke suite in `scripts/test-docker-runtime.sh` now cover
 - `solve_proximity_stats`
 - `roots2pix`
 
+### Native solve-score program changes
+
+If you change any of these:
+
+- `lambda/solve_score.h`
+- `lambda/solve_proximity_stats.c`
+- `lambda/solve_proximity_hist_sectioned.c`
+- `lambda/roots2pix.c`
+- `lambda/roots2pix_mt.c`
+- `lambda/solve_palette_chunk.c`
+- `lambda/solve_palette_chunk_mt.c`
+- score-program compilation or serialization in `index.html` or `lambda/solve_score_chain.py`
+
+do **not** treat handler tests as sufficient. The common failure mode here is that Python wiring passes while the deployed native binary rejects or misinterprets the exact CLI/runtime shape.
+
+Minimum expectation:
+
+1. Add or update a regression in `tests/test_solve_proximity_stats.py` and/or `tests/docker_runtime_regression.py` for the exact program shape that changed.
+2. Run the focused Docker-backed binary suite:
+   ```bash
+   uv run python -m pytest -q tests/test_solve_proximity_stats.py
+   ```
+3. Run the deploy-style runtime gate:
+   ```bash
+   bash scripts/test-docker-runtime.sh
+   ```
+
+The regression should match the real execution shape as closely as possible:
+
+- the exact binary mode: `summary`, `hist`, `tmpfile`, or `sectioned`
+- the exact source mix: `slv`, `cf`, `pm`, or mixed-source
+- the exact operator shape: unary, binary, chained transfer, `omega_cosine`, `sawtooth`, etc.
+- any legacy/v2 contract boundary, for example:
+  - program mode must not require legacy `clip_lo/clip_hi`
+  - param/coeff-source programs must require the matching sidecar file and row-alignment metadata
+
+When building Docker command strings for these tests, quote `--score_program` with `shlex.quote(...)`. Unquoted semicolons will be interpreted by the shell and invalidate the test.
+
 ### Visual comparison tests (slow, ~5 min per batch)
 
 ```bash
@@ -475,6 +513,15 @@ Before running `deploy.sh update`:
    ```
 4. **Cross-compile:** `aarch64-linux-musl-gcc -O3 -static -o sweep sweep_cli.c -lm`
 5. **JS syntax check:** `deploy.sh` does this automatically
+
+If the change touches solve-score native/runtime behavior, also run:
+
+```bash
+uv run python -m pytest -q tests/test_solve_proximity_stats.py
+bash scripts/test-docker-runtime.sh
+```
+
+The second command is mandatory for anything that changes the deployed binary path.
 
 ### test_chunking.py
 

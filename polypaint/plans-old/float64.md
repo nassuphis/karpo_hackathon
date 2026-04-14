@@ -1,6 +1,6 @@
 **Float64 Plan**
 
-Status: historical numeric-design note. Some examples and field names still reference older stripe-era metadata such as `stripe_keys`.
+Status: legacy archive. Historical numeric-design note preserved for reference; some examples and field names still reference older stripe-era metadata such as `stripe_keys`.
 
 `Solve64` is feasible, but it should not be implemented as a hand-maintained second solver.
 

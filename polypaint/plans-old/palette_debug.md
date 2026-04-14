@@ -1,6 +1,6 @@
 # Palette Debug
 
-Status: legacy helper, not the main UI workflow.
+Status: legacy archive. Legacy helper, not the main UI workflow.
 
 This file records the current role of the older palette-debug path.
 

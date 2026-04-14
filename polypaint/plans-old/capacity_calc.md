@@ -1,6 +1,6 @@
 **Capacity Calc**
 
-Status: historical sizing note. It preserves earlier stripe-oriented capacity calculations. Current compute and render naming is chunk-based; treat `stripes` here as the older term for parallel subdivisions.
+Status: legacy archive. Historical sizing note preserved for reference; current compute and render naming is chunk-based, and `stripes` here is older terminology.
 
 This note describes how to estimate whether a compute job will fit within Lambda storage and memory constraints before dispatch.
 

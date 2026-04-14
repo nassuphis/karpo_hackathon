@@ -855,7 +855,10 @@ int main(int argc, char **argv) {
         double clipHi = getArgDouble(argc, argv, "--clip_hi", 0);
         int histBins = getArgInt(argc, argv, "--hist_bins", 100);
 
-        if (clipHi - clipLo < 1e-12) {
+        if (useScoreProgram) {
+            clipLo = 0.0;
+            clipHi = 1.0;
+        } else if (clipHi - clipLo < 1e-12) {
             fprintf(stderr, "Invalid clip range: lo=%.15g hi=%.15g\n", clipLo, clipHi);
             free(paramBuf);
             free(coeffBuf);

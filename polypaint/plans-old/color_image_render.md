@@ -1,6 +1,6 @@
 # Color Image Render Notes
 
-Status: historical optimization note. The recommendations are still directionally useful, but the document uses older stripe-era naming. Read `stripe` as `chunk` when comparing to the current implementation.
+Status: legacy archive. Historical optimization note preserved for reference; it uses older stripe-era naming, so read `stripe` as `chunk` when comparing to the current implementation.
 
 This document summarizes practical suggestions for improving the **color** rendering path, based on the current pipeline in:
 

@@ -1,6 +1,6 @@
 # Chunking Refactor
 
-Status: historical refactor note. The chunk migration described here has largely landed; remaining `stripe_*` mentions in this file are legacy terminology from the migration period, not the preferred current naming.
+Status: legacy archive. Historical refactor note preserved for reference; remaining `stripe_*` mentions reflect migration-era terminology, not the preferred current naming.
 
 ## Problem
 

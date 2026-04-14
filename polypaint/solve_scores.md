@@ -642,7 +642,7 @@ Required changes:
 
 Add a superseded note to:
 
-- [solve_proximity.md](/Users/nicknassuphis/karpo_hackathon/polypaint/solve_proximity.md)
+- [solve_proximity.md](/Users/nicknassuphis/karpo_hackathon/polypaint/plans-old/solve_proximity.md)
 
 The note must say:
 

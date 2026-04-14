@@ -1,6 +1,6 @@
 # Render Background Resilience Spec
 
-Status: historical design note. Background-safe rendering is now owned by Step Functions plus DynamoDB status rows; this document still contains earlier migration-stage payload examples with `n_stripes` and similar legacy names.
+Status: legacy archive. Historical design note preserved for reference; background-safe rendering is now owned by Step Functions plus DynamoDB status rows, and this file still contains migration-stage payload examples with `n_stripes` and similar legacy names.
 
 This document is the implementation spec for making Render progress resilient to browser background-tab throttling and page suspension.
 

@@ -361,11 +361,74 @@ static int ct_arg_int(const CtEntry *e, int idx, int fallback) {
     return (int)v;
 }
 
+static int ct_parse_double_expr(const char *raw, double *out) {
+    if (!raw || !out) return 0;
+    const char *p = raw;
+    double total = 0.0;
+    int saw = 0;
+    for (;;) {
+        p = skip(p);
+        if (!*p) break;
+        char *end = NULL;
+        double v = strtod(p, &end);
+        if (end == p) return 0;
+        total += v;
+        if (!isfinite(total)) return 0;
+        saw = 1;
+        p = skip(end);
+        if (!*p) break;
+        if (*p != '+' && *p != '-') return 0;
+    }
+    if (!saw) return 0;
+    *out = total;
+    return 1;
+}
+
+static int ct_parse_complex_literal(const char *raw, double *outRe, double *outIm) {
+    if (!raw || !outRe || !outIm) return 0;
+    char buf[128];
+    int n = 0;
+    for (const char *p = raw; *p && n < (int)sizeof(buf) - 1; p++) {
+        if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') continue;
+        buf[n++] = (*p == 'i' || *p == 'I') ? 'j' : *p;
+    }
+    buf[n] = '\0';
+    if (n <= 0 || buf[n - 1] != 'j') return 0;
+    buf[n - 1] = '\0';
+    int sep = -1;
+    for (int i = 1; buf[i]; i++) {
+        if ((buf[i] == '+' || buf[i] == '-') && buf[i - 1] != 'e' && buf[i - 1] != 'E') sep = i;
+    }
+    char reBuf[128], imBuf[128];
+    if (sep >= 0) {
+        int reLen = sep < (int)sizeof(reBuf) - 1 ? sep : (int)sizeof(reBuf) - 1;
+        memcpy(reBuf, buf, (size_t)reLen);
+        reBuf[reLen] = '\0';
+        snprintf(imBuf, sizeof(imBuf), "%s", buf + sep);
+    } else {
+        snprintf(reBuf, sizeof(reBuf), "0");
+        snprintf(imBuf, sizeof(imBuf), "%s", buf);
+    }
+    if (strcmp(imBuf, "+") == 0) snprintf(imBuf, sizeof(imBuf), "1");
+    if (strcmp(imBuf, "-") == 0) snprintf(imBuf, sizeof(imBuf), "-1");
+    double rr, ri;
+    if (!ct_parse_double_expr(reBuf, &rr)) return 0;
+    if (!ct_parse_double_expr(imBuf, &ri)) return 0;
+    *outRe = rr;
+    *outIm = ri;
+    return 1;
+}
+
+static int ct_arg_has_complex_unit(const CtEntry *e, int idx) {
+    if (!e || idx < 0 || idx >= e->nArgs) return 0;
+    return strchr(e->args[idx], 'j') || strchr(e->args[idx], 'J') ||
+           strchr(e->args[idx], 'i') || strchr(e->args[idx], 'I');
+}
+
 static double ct_arg_double(const CtEntry *e, int idx, double fallback) {
     if (!e || idx < 0 || idx >= e->nArgs) return fallback;
-    char *end = NULL;
-    double v = strtod(e->args[idx], &end);
-    if (end == e->args[idx]) return fallback;
+    double v = fallback;
+    if (!ct_parse_double_expr(e->args[idx], &v)) return fallback;
     return v;
 }
 
@@ -376,6 +439,25 @@ static int ct_arg_pad_lo(const CtEntry *e, int idx, int fallbackLo) {
     if (strcmp(arg, "hi") == 0) return 0;
     fprintf(stderr, "Invalid roots pad mode: %s (expected hi or lo)\n", arg);
     return -1;
+}
+
+static int ct_base_arg_count(const char *name) {
+    if (strcmp(name, "scale100") == 0) return 4;
+    if (strcmp(name, "power") == 0) return 1;
+    if (strcmp(name, "invpower") == 0) return 1;
+    if (strcmp(name, "exp") == 0) return 2;
+    if (strcmp(name, "round") == 0) return 2;
+    if (strcmp(name, "pow") == 0) return 4;
+    if (strcmp(name, "roots_cm") == 0) return 1;
+    if (strcmp(name, "roots") == 0) return 2;
+    return 0;
+}
+
+static double ct_arg_andy(const CtEntry *e) {
+    if (!e) return 0.0;
+    int idx = ct_base_arg_count(e->name);
+    if (idx < 0 || idx >= e->nArgs) return 0.0;
+    return ct_arg_double(e, idx, 0.0);
 }
 
 static int parseStringArray(const char *p, char names[][64], int maxCount) {
@@ -2524,6 +2606,18 @@ static ParamTransform lookupParamTransform(const char *name) {
 
 typedef void (*CoeffTransform)(double *cRe, double *cIm, int *nCoeffs);
 
+static void ct_blend_with_original(double *cRe, double *cIm, int *nCoeffs,
+                                   const double *origRe, const double *origIm,
+                                   int origN, double andy) {
+    if (!isfinite(andy) || andy == 0.0) return;
+    int n = *nCoeffs < origN ? *nCoeffs : origN;
+    double fWeight = 1.0 - andy;
+    for (int k = 0; k < n; k++) {
+        cRe[k] = cRe[k] * fWeight + origRe[k] * andy;
+        cIm[k] = cIm[k] * fWeight + origIm[k] * andy;
+    }
+}
+
 static void ct_none(double *cRe, double *cIm, int *nCoeffs) {
     (void)cRe; (void)cIm; (void)nCoeffs;
 }
@@ -2567,6 +2661,20 @@ static void ct_deriv(double *cRe, double *cIm, int *nCoeffs) {
 
 static void ct_scale100(double *cRe, double *cIm, int *nCoeffs) {
     for (int k = 0; k < *nCoeffs; k++) { cRe[k] *= 100.0; cIm[k] *= 100.0; }
+}
+
+static void ct_linear_affine(double *cRe, double *cIm, int *nCoeffs,
+                             double x, double y, double w, double u) {
+    int n = *nCoeffs;
+    for (int k = 0; k < n; k++) {
+        double zr = cRe[k], zi = cIm[k];
+        cRe[k] = zr * x - zi * y + w;
+        cIm[k] = zr * y + zi * x + u;
+        if (!isfinite(cRe[k]) || !isfinite(cIm[k])) {
+            cRe[k] = 0.0;
+            cIm[k] = 0.0;
+        }
+    }
 }
 
 static void ct_safe(double *cRe, double *cIm, int *nCoeffs) {
@@ -2931,7 +3039,6 @@ static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "conj") == 0)        return ct_conj;
     if (strcmp(name, "normalize") == 0)   return ct_normalize;
     if (strcmp(name, "deriv") == 0)       return ct_deriv;
-    if (strcmp(name, "scale100") == 0)    return ct_scale100;
     if (strcmp(name, "safe") == 0)        return ct_safe;
     if (strcmp(name, "negate_odd") == 0)  return ct_negate_odd;
     if (strcmp(name, "max2one") == 0)    return ct_max2one;
@@ -2951,32 +3058,66 @@ static CoeffTransform lookupCoeffTransform(const char *name) {
 }
 
 static int dispatchCt(const CtEntry *e, double *cRe, double *cIm, int *nCoeffs) {
+    double origRe[MAX_COEFFS], origIm[MAX_COEFFS];
+    int origN = *nCoeffs;
+    double andy = ct_arg_andy(e);
+    if (isfinite(andy) && andy != 0.0) {
+        for (int i = 0; i < origN && i < MAX_COEFFS; i++) {
+            origRe[i] = cRe[i];
+            origIm[i] = cIm[i];
+        }
+    }
+    int rc = 0;
+    if (strcmp(e->name, "scale100") == 0) {
+        double x = 100.0, y = 0.0, w = 0.0, u = 0.0;
+        if (ct_arg_has_complex_unit(e, 0)) {
+            if (!ct_parse_complex_literal(e->args[0], &x, &y)) {
+                fprintf(stderr, "Invalid scale100 multiplier: %s\n", e->args[0]);
+                return 1;
+            }
+        } else {
+            x = ct_arg_double(e, 0, 100.0);
+            y = ct_arg_double(e, 1, 0.0);
+        }
+        if (ct_arg_has_complex_unit(e, 2)) {
+            if (!ct_parse_complex_literal(e->args[2], &w, &u)) {
+                fprintf(stderr, "Invalid scale100 offset: %s\n", e->args[2]);
+                return 1;
+            }
+        } else {
+            w = ct_arg_double(e, 2, 0.0);
+            u = ct_arg_double(e, 3, 0.0);
+        }
+        ct_linear_affine(cRe, cIm, nCoeffs, x, y, w, u);
+        goto done;
+    }
     if (strcmp(e->name, "roots_cm") == 0) {
         int padLo = ct_arg_pad_lo(e, 0, 0);
         if (padLo < 0) return 1;
-        return ct_roots_cm(cRe, cIm, nCoeffs, padLo);
+        rc = ct_roots_cm(cRe, cIm, nCoeffs, padLo);
+        goto done;
     }
     if (strcmp(e->name, "power") == 0) {
         int k = ct_arg_int(e, 0, 8);
         ct_power(cRe, cIm, nCoeffs, k);
-        return 0;
+        goto done;
     }
     if (strcmp(e->name, "invpower") == 0) {
         int k = ct_arg_int(e, 0, 4);
         ct_invpower(cRe, cIm, nCoeffs, k);
-        return 0;
+        goto done;
     }
     if (strcmp(e->name, "exp") == 0) {
         double a = ct_arg_double(e, 0, 1.0);
         double b = ct_arg_double(e, 1, 0.0);
         ct_exp_affine(cRe, cIm, nCoeffs, a, b);
-        return 0;
+        goto done;
     }
     if (strcmp(e->name, "round") == 0) {
         double a = ct_arg_double(e, 0, 1.0);
         double b = ct_arg_double(e, 1, 0.0);
         ct_round_affine(cRe, cIm, nCoeffs, a, b);
-        return 0;
+        goto done;
     }
     if (strcmp(e->name, "pow") == 0) {
         double a = ct_arg_double(e, 0, 1.0);
@@ -2984,14 +3125,14 @@ static int dispatchCt(const CtEntry *e, double *cRe, double *cIm, int *nCoeffs) 
         double pr = ct_arg_double(e, 2, 1.0);
         double pi = ct_arg_double(e, 3, 0.0);
         ct_pow_affine(cRe, cIm, nCoeffs, a, b, pr, pi);
-        return 0;
+        goto done;
     }
     if (strcmp(e->name, "roots") == 0) {
         int k = ct_arg_int(e, 0, 8);
         int padLo = ct_arg_pad_lo(e, 1, 0);
         if (padLo < 0) return 1;
         ct_roots(cRe, cIm, nCoeffs, k, padLo);
-        return 0;
+        goto done;
     }
     CoeffTransform fn = lookupCoeffTransform(e->name);
     if (!fn) {
@@ -2999,7 +3140,9 @@ static int dispatchCt(const CtEntry *e, double *cRe, double *cIm, int *nCoeffs) 
         return 1;
     }
     fn(cRe, cIm, nCoeffs);
-    return 0;
+done:
+    if (rc == 0) ct_blend_with_original(cRe, cIm, nCoeffs, origRe, origIm, origN, andy);
+    return rc;
 }
 
 /* ==== Fast xorshift64 RNG for dithering ==== */

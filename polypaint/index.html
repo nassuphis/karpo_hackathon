@@ -96,6 +96,10 @@ button {
     background: #1a1a2e; border: 1px solid #0f3460; border-radius: 3px;
     color: #e0e0e0; font-size: 11px; text-align: center;
 }
+.chip .chip-input-andy {
+    width: 74px;
+    text-align: left;
+}
 .chip .chip-formula {
     display: inline-flex; align-items: center; gap: 3px; margin-left: 2px;
 }
@@ -540,39 +544,43 @@ button {
                 <label style="min-width:90px">Func params:</label>
                 <div id="cfpv-inputs" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap"></div>
             </div>
-            <div class="anim-row" style="flex-wrap:wrap">
+                <div class="anim-row" style="flex-wrap:wrap">
                 <label style="min-width:90px">Coeff transforms:</label>
                 <div id="ct-chips" class="chip-container"></div>
-                <select id="ct-add" onchange="addChip('ct',this.value);this.value='';" style="width:100px; font-size:12px">
-                    <option value="">+ add...</option>
-                    <option value="rev">rev</option>
-                    <option value="conj">conj</option>
-                    <option value="normalize">normalize</option>
-                    <option value="deriv">deriv</option>
-                    <option value="scale100">scale100</option>
-                    <option value="safe">safe</option>
-                    <option value="negate_odd">negate_odd</option>
-                    <option value="max2one">max2one</option>
-                    <option value="swirler">swirler</option>
-                    <option value="sort_mod_keep_angle">sort_mod_keep_angle</option>
-                    <option value="sort_abs">sort_abs</option>
-                    <option value="cumsum">cumsum</option>
-                    <option value="cummax">cummax</option>
-                    <option value="sort_cumsum">sort_cumsum</option>
-                    <option value="exp">exp</option>
-                    <option value="cos">cos</option>
-                    <option value="sin">sin</option>
-                    <option value="tan">tan</option>
-                    <option value="cosh">cosh</option>
-                    <option value="sinh">sinh</option>
-                    <option value="tanh">tanh</option>
-                    <option value="round">round</option>
-                    <option value="pow">pow</option>
-                    <option value="power">power</option>
-                    <option value="invpower">invpower</option>
-                    <option value="roots_cm">roots_cm</option>
-                    <option value="roots">roots</option>
-                </select>
+                <div class="score-chip-add-wrap">
+                    <button id="ct-add-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleCoeffTransformPicker(event)">+ coeff transform</button>
+                    <div id="ct-add-popup" class="score-chip-picker" aria-hidden="true"></div>
+                    <select id="ct-add" onchange="addChip('ct',this.value);this.value='';" style="display:none">
+                        <option value="">+ add...</option>
+                        <option value="rev">rev</option>
+                        <option value="conj">conj</option>
+                        <option value="normalize">normalize</option>
+                        <option value="deriv">deriv</option>
+                        <option value="scale100">linear</option>
+                        <option value="safe">safe</option>
+                        <option value="negate_odd">negate_odd</option>
+                        <option value="max2one">max2one</option>
+                        <option value="swirler">swirler</option>
+                        <option value="sort_mod_keep_angle">sort_mod_keep_angle</option>
+                        <option value="sort_abs">sort_abs</option>
+                        <option value="cumsum">cumsum</option>
+                        <option value="cummax">cummax</option>
+                        <option value="sort_cumsum">sort_cumsum</option>
+                        <option value="exp">exp</option>
+                        <option value="cos">cos</option>
+                        <option value="sin">sin</option>
+                        <option value="tan">tan</option>
+                        <option value="cosh">cosh</option>
+                        <option value="sinh">sinh</option>
+                        <option value="tanh">tanh</option>
+                        <option value="round">round</option>
+                        <option value="pow">pow</option>
+                        <option value="power">power</option>
+                        <option value="invpower">invpower</option>
+                        <option value="roots_cm">roots_cm</option>
+                        <option value="roots">roots</option>
+                    </select>
+                </div>
             </div>
             <div class="color-box" style="margin-top:10px">
                 <div class="color-title">Compute Preview</div>
@@ -2852,7 +2860,7 @@ function _computePreviewSignatureNow() {
         function: document.getElementById('render-function')?.value || '',
         cfpv: _cfpv.length ? [..._cfpv] : [],
         param_transforms: _serializeParamTransforms(),
-        coeff_transforms: _serializeNamedChain(_ctChain),
+        coeff_transforms: _serializeCoeffTransforms(),
     });
 }
 
@@ -2939,7 +2947,7 @@ async function runComputePreview() {
     const quantile = Math.max(0, parseFloat(document.getElementById('compute-preview-quantile').value) || 0) / 100;
     const shim = Math.max(0, parseFloat(document.getElementById('compute-preview-shim').value) || 5) / 100;
     const paramTransforms = _serializeParamTransforms();
-    const coeffTransforms = _serializeNamedChain(_ctChain);
+    const coeffTransforms = _serializeCoeffTransforms();
     const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];
     const coeffTransformsDisplay = _displayCoeffTransforms();
     const ptDisplay = _displayParamTransforms().map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(',');
@@ -4059,10 +4067,18 @@ document.addEventListener('click', function(e) {
         if (_elementContains(popup, target) || _elementContains(btn, target)) return;
         _setSolveScorePickerOpen(which, false);
     });
+    const ctPopup = document.getElementById('ct-add-popup');
+    const ctBtn = document.getElementById('ct-add-btn');
+    if (ctPopup && ctPopup._open && !_elementContains(ctPopup, target) && !_elementContains(ctBtn, target)) {
+        _setCoeffTransformPickerOpen(false);
+    }
 });
 
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') _closeSolveScorePickers();
+    if (e.key === 'Escape') {
+        _closeSolveScorePickers();
+        _setCoeffTransformPickerOpen(false);
+    }
 });
 
 /* ---- Color controls ---- */
@@ -7882,24 +7898,229 @@ const _ssCatalog = (() => {
     return catalog;
 })();
 
-const _ctCatalog = {
-    rev: {}, conj: {}, normalize: {}, deriv: {}, scale100: {}, safe: {},
-    negate_odd: {}, max2one: {}, swirler: {}, sort_mod_keep_angle: {},
-    sort_abs: {}, cumsum: {}, cummax: {}, sort_cumsum: {},
-    exp: { params: [{ph:'a', def:'1'}, {ph:'b', def:'0'}], label: 'exp' },
-    cos: { label: 'cos' },
-    sin: { label: 'sin' },
-    tan: { label: 'tan' },
-    cosh: { label: 'cosh' },
-    sinh: { label: 'sinh' },
-    tanh: { label: 'tanh' },
-    round: { params: [{ph:'a', def:'1'}, {ph:'b', def:'0'}], label: 'round' },
-    pow: { params: [{ph:'a', def:'1'}, {ph:'b', def:'0'}, {ph:'c', def:'1'}, {ph:'d', def:'0'}], label: 'pow' },
-    power: { params: [{ph:'k', def:'8'}], label: 'p' },
-    invpower: { params: [{ph:'k', def:'4'}], label: 'invp' },
-    roots_cm: { params: [{ph:'hi|lo', def:'hi', choices: ['hi', 'lo']}] },
-    roots: { params: [{ph:'k', def:'8'}, {ph:'hi|lo', def:'hi', choices: ['hi', 'lo']}], label: 'roots' },
+const _ctAndyParam = { ph: 'andy', def: '0' };
+const _ctCategoryMeta = {
+    structural: { title: 'Structural', help: 'reorder, normalize, sanitize, or resize the coefficient vector' },
+    accumulation: { title: 'Ordering + accumulation', help: 'sort or accumulate coefficients across the vector' },
+    elementwise: { title: 'Elementwise functions', help: 'apply a complex function to each coefficient independently' },
+    roots: { title: 'Root-derived', help: 'replace coefficients with roots computed from the current coefficient vector' },
 };
+const _ctCatalog = (() => {
+    const catalog = {
+        rev: { category: 'structural', desc: 'reverse coefficient order' },
+        conj: { category: 'structural', desc: 'complex conjugate every coefficient' },
+        normalize: { category: 'structural', desc: 'divide by the leading coefficient' },
+        deriv: { category: 'structural', desc: 'differentiate the polynomial coefficients' },
+        scale100: {
+            params: [
+                { ph: 'x', def: '100', complexPairNext: true },
+                { ph: 'y', def: '0' },
+                { ph: 'w', def: '0', complexPairNext: true },
+                { ph: 'u', def: '0' },
+            ],
+            label: 'linear',
+            category: 'elementwise',
+            desc: 'z*(x+i*y)+(w+i*u); defaults to old scale100',
+        },
+        safe: { category: 'structural', desc: 'replace non-finite components with zero' },
+        negate_odd: { category: 'structural', desc: 'negate odd-indexed coefficients' },
+        max2one: { category: 'structural', desc: 'set the largest-magnitude coefficient to 1' },
+        sort_mod_keep_angle: { category: 'accumulation', desc: 'sort magnitudes while keeping original angles' },
+        sort_abs: { category: 'accumulation', desc: 'sort coefficients by magnitude' },
+        cumsum: { category: 'accumulation', desc: 'running complex cumulative sum' },
+        cummax: { category: 'accumulation', desc: 'running maximum by coefficient magnitude' },
+        sort_cumsum: { category: 'accumulation', desc: 'sort coefficients by cumulative-sum magnitude' },
+        swirler: { category: 'elementwise', desc: 'multiply each coefficient by a modulus-driven complex swirl' },
+        exp: { params: [{ ph: 'a', def: '1' }, { ph: 'b', def: '0' }], label: 'exp', category: 'elementwise', desc: 'exp(z*(a+i*b))' },
+        cos: { label: 'cos', category: 'elementwise', desc: 'complex cosine of each coefficient' },
+        sin: { label: 'sin', category: 'elementwise', desc: 'complex sine of each coefficient' },
+        tan: { label: 'tan', category: 'elementwise', desc: 'complex tangent of each coefficient' },
+        cosh: { label: 'cosh', category: 'elementwise', desc: 'complex hyperbolic cosine' },
+        sinh: { label: 'sinh', category: 'elementwise', desc: 'complex hyperbolic sine' },
+        tanh: { label: 'tanh', category: 'elementwise', desc: 'complex hyperbolic tangent' },
+        round: { params: [{ ph: 'a', def: '1' }, { ph: 'b', def: '0' }], label: 'round', category: 'elementwise', desc: 'round(z*(a+i*b)) componentwise' },
+        pow: { params: [{ ph: 'a', def: '1' }, { ph: 'b', def: '0' }, { ph: 'c', def: '1' }, { ph: 'd', def: '0' }], label: 'pow', category: 'elementwise', desc: 'pow(z*(a+i*b), c+i*d)' },
+        power: { params: [{ ph: 'k', def: '8' }], label: 'p', category: 'elementwise', desc: '(i+1) times a geometric series through z^k' },
+        invpower: { params: [{ ph: 'k', def: '4' }], label: 'invp', category: 'elementwise', desc: 'reciprocal-threshold variant of power(k)' },
+        roots_cm: { params: [{ ph: 'hi|lo', def: 'hi', choices: ['hi', 'lo'] }], category: 'roots', desc: 'companion-matrix roots padded into coefficient slots' },
+        roots: { params: [{ ph: 'k', def: '8' }, { ph: 'hi|lo', def: 'hi', choices: ['hi', 'lo'] }], label: 'roots', category: 'roots', desc: 'Aberth roots after k iterations, padded hi or lo' },
+    };
+    Object.values(catalog).forEach(spec => {
+        spec.params = [...(spec.params || []), { ..._ctAndyParam }];
+    });
+    return catalog;
+})();
+
+function _ctParamValue(item, idx, pDefs) {
+    const raw = item && Array.isArray(item.params) ? item.params[idx] : undefined;
+    if (raw !== undefined && raw !== null && raw !== '') return String(raw);
+    const def = pDefs && pDefs[idx] ? pDefs[idx].def : '';
+    return def == null ? '' : String(def);
+}
+
+function _ctAndyIndex(pDefs) {
+    return Math.max(0, (pDefs || []).length - 1);
+}
+
+function _ctAndyHtml(which, chipIdx, item, pDefs) {
+    const idx = _ctAndyIndex(pDefs);
+    return `<span class="chip-op">andy=</span>${_chipInputHtml(which, chipIdx, idx, _ctParamValue(item, idx, pDefs), pDefs[idx] || _ctAndyParam)}`;
+}
+
+function _formatCtConstant(value) {
+    if (!Number.isFinite(value)) return null;
+    return Number(value.toPrecision(15)).toString();
+}
+
+function _parseCtRealConstant(value) {
+    const s = String(value == null ? '' : value).replace(/\s+/g, '');
+    if (!s) return null;
+    let idx = 0;
+    let total = 0;
+    let saw = false;
+    const numberRe = /^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?/;
+    while (idx < s.length) {
+        const rest = s.slice(idx);
+        const match = rest.match(numberRe);
+        if (!match) return null;
+        total += Number(match[0]);
+        if (!Number.isFinite(total)) return null;
+        saw = true;
+        idx += match[0].length;
+        if (idx >= s.length) break;
+        const ch = s[idx];
+        if (ch !== '+' && ch !== '-') return null;
+    }
+    return saw ? total : null;
+}
+
+function _hasCtExpressionOperator(value) {
+    const s = String(value == null ? '' : value).replace(/\s+/g, '');
+    for (let i = 1; i < s.length; i++) {
+        if ((s[i] === '+' || s[i] === '-') && s[i - 1] !== 'e' && s[i - 1] !== 'E') return true;
+    }
+    return false;
+}
+
+function _normalizeCtRealInput(value) {
+    const raw = String(value == null ? '' : value).trim();
+    if (!raw) return raw;
+    const parsed = _parseCtRealConstant(raw);
+    if (parsed == null) return null;
+    return _hasCtExpressionOperator(raw) ? _formatCtConstant(parsed) : raw;
+}
+
+function _splitCtComplexInput(value) {
+    const s = String(value == null ? '' : value).replace(/\s+/g, '').replace(/i/gi, 'j');
+    if (!/[jJ]$/.test(s)) return null;
+    const body = s.slice(0, -1);
+    if (!body) return null;
+    let sep = -1;
+    for (let i = 1; i < body.length; i++) {
+        if ((body[i] === '+' || body[i] === '-') && body[i - 1] !== 'e' && body[i - 1] !== 'E') sep = i;
+    }
+    let reText = '0';
+    let imText = body;
+    if (sep >= 0) {
+        reText = body.slice(0, sep);
+        imText = body.slice(sep);
+    }
+    if (imText === '+') imText = '1';
+    if (imText === '-') imText = '-1';
+    const re = _parseCtRealConstant(reText);
+    const im = _parseCtRealConstant(imText);
+    if (re == null || im == null) return null;
+    return { re: _formatCtConstant(re), im: _formatCtConstant(im) };
+}
+
+function _ctAndyIsDefault(value) {
+    const v = Number(value);
+    return Number.isFinite(v) && Math.abs(v) < 1e-15;
+}
+
+function _serializeCoeffTransforms() {
+    return _ctChain.map(item => {
+        if (!item || !item.name) return null;
+        const spec = _ctCatalog[item.name] || {};
+        const pDefs = spec.params || [];
+        const values = pDefs.map((pDef, idx) => _ctParamValue(item, idx, pDefs));
+        if (!values.length) return item.name;
+        let last = values.length - 1;
+        if (_ctAndyIsDefault(values[last])) last--;
+        if (last < 0) return item.name;
+        return [item.name, ...values.slice(0, last + 1)];
+    }).filter(Boolean);
+}
+
+function _ctCategoryGroups() {
+    const grouped = {};
+    Object.keys(_ctCategoryMeta).forEach(key => { grouped[key] = []; });
+    Object.keys(_ctCatalog).forEach(name => {
+        const spec = _ctCatalog[name] || {};
+        const key = grouped[spec.category] ? spec.category : 'elementwise';
+        grouped[key].push(name);
+    });
+    return Object.keys(_ctCategoryMeta).map(key => ({
+        key,
+        ..._ctCategoryMeta[key],
+        items: grouped[key] || [],
+    }));
+}
+
+function _renderCoeffTransformAddPopup() {
+    const popup = document.getElementById('ct-add-popup');
+    if (!popup) return;
+    const head = `<div class="score-chip-picker-head"><span class="score-chip-picker-title">Add coeff transform</span><span class="score-chip-picker-state">andy blends f(z) with original z</span></div>`;
+    const body = _ctCategoryGroups().map(group => {
+        const items = group.items.map(name => {
+            const spec = _ctCatalog[name] || {};
+            const label = spec.label || name;
+            const paramCount = Math.max(0, (spec.params || []).length - 1);
+            const params = paramCount ? ` · ${paramCount} param${paramCount === 1 ? '' : 's'} + andy` : ' · andy';
+            return `<button type="button" class="score-chip-option score-chip-option-${_escapeHtml(group.key)}" onclick="selectCoeffTransformChip('${_escapeHtml(name)}',event)" title="${_escapeHtml(spec.desc || label)}"><span class="score-chip-option-name">${_escapeHtml(label)}</span><span class="score-chip-option-meta">${_escapeHtml((spec.desc || '') + params)}</span></button>`;
+        }).join('');
+        return `<div class="score-chip-category"><div class="score-chip-category-title">${_escapeHtml(group.title)}</div><div class="score-chip-category-help">${_escapeHtml(group.help)}</div><div class="score-chip-options">${items}</div></div>`;
+    }).join('');
+    popup.innerHTML = head + body;
+}
+
+function _setCoeffTransformPickerOpen(open) {
+    const popup = document.getElementById('ct-add-popup');
+    const btn = document.getElementById('ct-add-btn');
+    if (!popup) return;
+    if (open) _renderCoeffTransformAddPopup();
+    popup._open = !!open;
+    popup.style.display = open ? 'block' : 'none';
+    if (popup.classList && popup.classList.toggle) popup.classList.toggle('active', !!open);
+    if (popup.setAttribute) popup.setAttribute('aria-hidden', open ? 'false' : 'true');
+    if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function toggleCoeffTransformPicker(eventObj) {
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    const popup = document.getElementById('ct-add-popup');
+    _setCoeffTransformPickerOpen(!(popup && popup._open));
+}
+
+function selectCoeffTransformChip(name, eventObj) {
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    addChip('ct', name);
+    _setCoeffTransformPickerOpen(false);
+}
+
+function _syncCoeffTransformAddOptions() {
+    const sel = document.getElementById('ct-add');
+    if (sel) {
+        const options = ['<option value="">+ add...</option>'].concat(
+            Object.keys(_ctCatalog).map(name => {
+                const spec = _ctCatalog[name] || {};
+                return `<option value="${_escapeHtml(name)}">${_escapeHtml(spec.label || name)}</option>`;
+            })
+        );
+        sel.innerHTML = options.join('');
+    }
+    _renderCoeffTransformAddPopup();
+}
 
 let _ptChain = [];  // parameter transform chain (array of {name, params: [str,...]})
 let _ctChain = [];  // coefficient transform chain (array of {name, params: [str,...]})
@@ -8172,6 +8393,23 @@ function updateChipParam(chipIdx, paramIdx, value, which) {
                 return;
             }
             chain[chipIdx].params[paramIdx] = norm;
+        } else if (which === 'ct' && pDef) {
+            if (pDef.complexPairNext) {
+                const complex = _splitCtComplexInput(value);
+                if (complex) {
+                    chain[chipIdx].params[paramIdx] = complex.re;
+                    if (paramIdx + 1 < chain[chipIdx].params.length) chain[chipIdx].params[paramIdx + 1] = complex.im;
+                    _renderChips(which);
+                    _markComputePreviewStale();
+                    return;
+                }
+            }
+            const norm = _normalizeCtRealInput(value);
+            if (norm == null) {
+                alert(`Invalid ${pDef.ph || 'value'}: "${value}". Use a number, scientific notation, or a simple +/- constant expression.`);
+                return;
+            }
+            chain[chipIdx].params[paramIdx] = norm;
         } else {
             chain[chipIdx].params[paramIdx] = value;
         }
@@ -8190,12 +8428,13 @@ function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef) {
         }).join('');
         return `<select class="chip-input" onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
     }
-    const im = (pd.target || pd.choices) ? 'text' : 'decimal';
-    return `<input class="chip-input" type="text" inputmode="${im}" value="${_escapeHtml(value)}" placeholder="${_escapeHtml(pd.ph || '')}" onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">`;
+    const im = (pd.target || pd.choices || pd.complexPairNext || pd.ph === 'andy') ? 'text' : 'decimal';
+    const cls = pd.ph === 'andy' ? 'chip-input chip-input-andy' : 'chip-input';
+    return `<input class="${cls}" type="text" inputmode="${im}" value="${_escapeHtml(value)}" placeholder="${_escapeHtml(pd.ph || '')}" onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">`;
 }
 
-function _ctUnaryFormulaChip(which, i, fnName) {
-    return `<span class="chip"><span class="chip-formula"><span>${_escapeHtml(fnName)}(z)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+function _ctUnaryFormulaChip(which, i, item, fnName, pDefs) {
+    return `<span class="chip"><span class="chip-formula"><span>${_escapeHtml(fnName)}(z)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
 }
 
 function _solveScoreChipShell(which, i, bodyHtml, tooltipAttr = '') {
@@ -8239,44 +8478,51 @@ function _renderRtChipHtml(item, i, which, catalog) {
         return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}</span></span>`, tooltip);
     }
     if (which === 'ct' && item.name === 'exp') {
-        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
-        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>exp(z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>))</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        const a = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
+        const b = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
+        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>exp(z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>))</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
-    if (which === 'ct' && item.name === 'cos') return _ctUnaryFormulaChip(which, i, 'cos');
-    if (which === 'ct' && item.name === 'sin') return _ctUnaryFormulaChip(which, i, 'sin');
-    if (which === 'ct' && item.name === 'tan') return _ctUnaryFormulaChip(which, i, 'tan');
-    if (which === 'ct' && item.name === 'cosh') return _ctUnaryFormulaChip(which, i, 'cosh');
-    if (which === 'ct' && item.name === 'sinh') return _ctUnaryFormulaChip(which, i, 'sinh');
-    if (which === 'ct' && item.name === 'tanh') return _ctUnaryFormulaChip(which, i, 'tanh');
+    if (which === 'ct' && item.name === 'scale100') {
+        const x = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
+        const y = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
+        const w = _chipInputHtml(which, i, 2, _ctParamValue(item, 2, pDefs), pDefs[2]);
+        const u = _chipInputHtml(which, i, 3, _ctParamValue(item, 3, pDefs), pDefs[3]);
+        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>z*(</span><span>${x}</span><span class="chip-op">+i</span><span>${y}</span><span>)+(</span><span>${w}</span><span class="chip-op">+i</span><span>${u}</span><span>)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
+    if (which === 'ct' && item.name === 'cos') return _ctUnaryFormulaChip(which, i, item, 'cos', pDefs);
+    if (which === 'ct' && item.name === 'sin') return _ctUnaryFormulaChip(which, i, item, 'sin', pDefs);
+    if (which === 'ct' && item.name === 'tan') return _ctUnaryFormulaChip(which, i, item, 'tan', pDefs);
+    if (which === 'ct' && item.name === 'cosh') return _ctUnaryFormulaChip(which, i, item, 'cosh', pDefs);
+    if (which === 'ct' && item.name === 'sinh') return _ctUnaryFormulaChip(which, i, item, 'sinh', pDefs);
+    if (which === 'ct' && item.name === 'tanh') return _ctUnaryFormulaChip(which, i, item, 'tanh', pDefs);
     if (which === 'ct' && item.name === 'round') {
-        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
-        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>round(z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>))</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        const a = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
+        const b = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
+        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>round(z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>))</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
     if (which === 'ct' && item.name === 'pow') {
-        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
-        const c = _chipInputHtml(which, i, 2, item.params[2] || '', pDefs[2]);
-        const d = _chipInputHtml(which, i, 3, item.params[3] || '', pDefs[3]);
-        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>pow(z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>),</span><span>${c}</span><span class="chip-op">+i</span><span>${d}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        const a = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
+        const b = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
+        const c = _chipInputHtml(which, i, 2, _ctParamValue(item, 2, pDefs), pDefs[2]);
+        const d = _chipInputHtml(which, i, 3, _ctParamValue(item, 3, pDefs), pDefs[3]);
+        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>pow(z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>),</span><span>${c}</span><span class="chip-op">+i</span><span>${d}</span><span>)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
     if (which === 'ct' && item.name === 'power') {
-        const k = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        return `<span class="chip"><span class="chip-formula"><span>p(</span><span>${k}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        const k = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
+        return `<span class="chip"><span class="chip-formula"><span>p(</span><span>${k}</span><span>)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
     if (which === 'ct' && item.name === 'invpower') {
-        const k = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        return `<span class="chip"><span class="chip-formula"><span>invp(</span><span>${k}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        const k = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
+        return `<span class="chip"><span class="chip-formula"><span>invp(</span><span>${k}</span><span>)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
     if (which === 'ct' && item.name === 'roots') {
-        const k = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        const pad = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
-        return `<span class="chip"><span class="chip-formula"><span>roots(</span><span>${k}</span><span class="chip-op">,</span><span>${pad}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        const k = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
+        const pad = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
+        return `<span class="chip"><span class="chip-formula"><span>roots(</span><span>${k}</span><span class="chip-op">,</span><span>${pad}</span><span>)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
     if (which === 'ct' && item.name === 'roots_cm') {
-        const pad = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        return `<span class="chip"><span class="chip-formula"><span>roots_cm(</span><span>${pad}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        const pad = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
+        return `<span class="chip"><span class="chip-formula"><span>roots_cm(</span><span>${pad}</span><span>)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
     if (item.name === 'moebius') {
         const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
@@ -8302,8 +8548,14 @@ function _renderRtChipHtml(item, i, which, catalog) {
         const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
         return `<span class="chip"><span class="chip-formula"><span>z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
-    const inputsHtml = item.params.map((val, pi) => _chipInputHtml(which, i, pi, val, pDefs[pi] || {})).join('');
     const label = _escapeHtml(spec.label || item.name);
+    if (which === 'ct') {
+        const baseInputsHtml = pDefs.slice(0, -1).map((pDef, pi) =>
+            _chipInputHtml(which, i, pi, _ctParamValue(item, pi, pDefs), pDef || {})
+        ).join('');
+        return `<span class="chip">${label}${baseInputsHtml}<span class="chip-formula"><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
+    const inputsHtml = item.params.map((val, pi) => _chipInputHtml(which, i, pi, val, pDefs[pi] || {})).join('');
     return `<span class="chip">${label}${inputsHtml}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
 }
 
@@ -8331,6 +8583,7 @@ function _renderChips(which) {
         if (prefix === 'render') _updateSolveScoreButtons();
         if (prefix === 'palette') _updatePaletteCreateButton();
     }
+    if (which === 'ct') _syncCoeffTransformAddOptions();
 }
 _renderChips('palette-rt');
 
@@ -12086,7 +12339,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
     const loresCoeffgenThreads = hasLoresCoeffgenThreadOverride ? _clampRenderMtThreads(computeMtOptions.loresCoeffgenThreads) : null;
 
     const paramTransforms = _serializeParamTransforms();
-    const coeffTransforms = _serializeNamedChain(_ctChain);
+    const coeffTransforms = _serializeCoeffTransforms();
     const cfpv = _cfpv.length > 0 ? [..._cfpv] : null;
     // Build human-readable cfpv display from catalog params
     let cfpvDisplay = '';

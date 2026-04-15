@@ -70,6 +70,8 @@ grep -q 'id="btn-palette-create" onclick="runPaletteArtifact()" style="margin:0 
 grep -q 'id="ss-add-btn"' "$HTML" || { echo "FATAL: solve-score add popup button missing"; exit 1; }
 grep -q 'id="palette-ss-add-btn"' "$HTML" || { echo "FATAL: palette solve-score add popup button missing"; exit 1; }
 grep -q 'Score functions' "$HTML" || { echo "FATAL: solve-score picker category labels missing"; exit 1; }
+grep -q 'id="ct-add-btn"' "$HTML" || { echo "FATAL: coeff transform add popup button missing"; exit 1; }
+grep -q 'andy' "$HTML" || { echo "FATAL: coeff transform andy parameter missing"; exit 1; }
 grep -q 'Image + Meta' "$HTML" || { echo "FATAL: Favorites download menu missing Image + Meta"; exit 1; }
 grep -q 'Select Dir…' "$HTML" || { echo "FATAL: Favorites download menu missing Select Dir…"; exit 1; }
 
@@ -1746,7 +1748,7 @@ async function testPipeline(name, call) {
         const moebiusInfo = vm.runInContext(`(() => {
             const chips = document.getElementById('rt-chips');
             const html = chips ? chips.innerHTML : '';
-            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
+            const inputs = (html.match(/class=\"[^\"]*chip-input/g) || []).length;
             const rt = JSON.stringify(_rtChain);
             return { html, inputs, rt };
         })()`, ctx);
@@ -1776,7 +1778,7 @@ async function testPipeline(name, call) {
         const invTInfo = vm.runInContext(`(() => {
             const chips = document.getElementById('pt-chips');
             const html = chips ? chips.innerHTML : '';
-            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
+            const inputs = (html.match(/class=\"[^\"]*chip-input/g) || []).length;
             const wire = JSON.stringify(_serializeParamTransforms());
             return { html, inputs, wire };
         })()`, ctx);
@@ -1793,6 +1795,78 @@ async function testPipeline(name, call) {
     }
 
     {
+        const ctPickerInfo = vm.runInContext(`(() => {
+            _ctChain = [];
+            _renderChips('ct');
+            toggleCoeffTransformPicker({ stopPropagation(){} });
+            const groups = _ctCategoryGroups().map(g => ({ key:g.key, items:g.items.slice(0) }));
+            const popup = document.getElementById('ct-add-popup').innerHTML;
+            _setCoeffTransformPickerOpen(false);
+            return { groups, popup };
+        })()`, ctx);
+        const structural = ctPickerInfo.groups.find(g => g.key === 'structural');
+        const elementwise = ctPickerInfo.groups.find(g => g.key === 'elementwise');
+        const roots = ctPickerInfo.groups.find(g => g.key === 'roots');
+        if (!structural || !structural.items.includes('rev') || !structural.items.includes('deriv')) {
+            console.error('FATAL: coeff transform popup structural category missing expected transforms, got ' + JSON.stringify(ctPickerInfo.groups));
+            process.exit(1);
+        }
+        if (!elementwise || !elementwise.items.includes('scale100') || !elementwise.items.includes('exp') || !elementwise.items.includes('pow')) {
+            console.error('FATAL: coeff transform popup elementwise category missing expected transforms, got ' + JSON.stringify(ctPickerInfo.groups));
+            process.exit(1);
+        }
+        if (!roots || !roots.items.includes('roots') || !roots.items.includes('roots_cm')) {
+            console.error('FATAL: coeff transform popup roots category missing expected transforms, got ' + JSON.stringify(ctPickerInfo.groups));
+            process.exit(1);
+        }
+        if (!ctPickerInfo.popup.includes('Add coeff transform') || !ctPickerInfo.popup.includes('andy blends') || !ctPickerInfo.popup.includes('reverse coefficient order')) {
+            console.error('FATAL: coeff transform popup should render descriptions and andy help, got ' + ctPickerInfo.popup);
+            process.exit(1);
+        }
+        console.log('  coeff transform categorized picker renders descriptions: OK');
+    }
+
+    {
+        try {
+            vm.runInContext(`
+                _ctChain = [];
+                addChip('ct', 'scale100');
+                updateChipParam(0, 0, '1+3j', 'ct');
+                updateChipParam(0, 2, '1-1e-5', 'ct');
+                updateChipParam(0, 3, '-2', 'ct');
+            `, ctx);
+        } catch (e) { console.error('FATAL: addChip(scale100 ct): ' + e.message); process.exit(1); }
+        const coeffLinearInfo = vm.runInContext(`(() => {
+            const chips = document.getElementById('ct-chips');
+            const html = chips ? chips.innerHTML : '';
+            const inputs = (html.match(/class=\"[^\"]*chip-input/g) || []).length;
+            const wire = JSON.stringify(_serializeCoeffTransforms());
+            const params = _ctChain[0].params.slice(0);
+            return { html, inputs, wire, params };
+        })()`, ctx);
+        if (!coeffLinearInfo.html.includes('z*(') || !coeffLinearInfo.html.includes(')+(</span>') || !coeffLinearInfo.html.includes('andy=') || coeffLinearInfo.inputs !== 5) {
+            console.error('FATAL: linear coeff transform chip should render z*(x+i*y)+(w+i*u) with four inputs plus andy');
+            process.exit(1);
+        }
+        if (JSON.stringify(coeffLinearInfo.params.slice(0, 4)) !== '[\"1\",\"3\",\"0.99999\",\"-2\"]') {
+            console.error('FATAL: linear coeff transform should split complex and evaluate simple expressions, got ' + JSON.stringify(coeffLinearInfo.params));
+            process.exit(1);
+        }
+        if (coeffLinearInfo.wire !== '[[\"scale100\",\"1\",\"3\",\"0.99999\",\"-2\"]]') {
+            console.error('FATAL: linear coeff transform should serialize x,y,w,u, got ' + coeffLinearInfo.wire);
+            process.exit(1);
+        }
+        vm.runInContext(`updateChipParam(0, 4, '1e-5', 'ct');`, ctx);
+        const coeffLinearAndyWire = vm.runInContext(`JSON.stringify(_serializeCoeffTransforms())`, ctx);
+        if (coeffLinearAndyWire !== '[[\"scale100\",\"1\",\"3\",\"0.99999\",\"-2\",\"1e-5\"]]') {
+            console.error('FATAL: linear coeff transform should serialize non-default andy, got ' + coeffLinearAndyWire);
+            process.exit(1);
+        }
+        vm.runInContext(`_ctChain = []; _renderChips('ct');`, ctx);
+        console.log('  linear coeff transform chip parses complex/expression constants + serializes: OK');
+    }
+
+    {
         try {
             vm.runInContext(`
                 _ctChain = [];
@@ -1804,16 +1878,22 @@ async function testPipeline(name, call) {
         const coeffExpInfo = vm.runInContext(`(() => {
             const chips = document.getElementById('ct-chips');
             const html = chips ? chips.innerHTML : '';
-            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
-            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            const inputs = (html.match(/class=\"[^\"]*chip-input/g) || []).length;
+            const wire = JSON.stringify(_serializeCoeffTransforms());
             return { html, inputs, wire };
         })()`, ctx);
-        if (!coeffExpInfo.html.includes('exp(z*(') || coeffExpInfo.inputs !== 2) {
-            console.error('FATAL: exp coeff transform chip should render exp(z*(a+ib)) with two inputs');
+        if (!coeffExpInfo.html.includes('exp(z*(') || !coeffExpInfo.html.includes('andy=') || coeffExpInfo.inputs !== 3) {
+            console.error('FATAL: exp coeff transform chip should render exp(z*(a+ib)) with two inputs plus andy');
             process.exit(1);
         }
         if (coeffExpInfo.wire !== '[[\"exp\",\"1.5\",\"-0.25\"]]') {
             console.error('FATAL: exp coeff transform should serialize as [[\"exp\",\"1.5\",\"-0.25\"]], got ' + coeffExpInfo.wire);
+            process.exit(1);
+        }
+        vm.runInContext(`updateChipParam(0, 2, '1e-5', 'ct');`, ctx);
+        const coeffExpAndyWire = vm.runInContext(`JSON.stringify(_serializeCoeffTransforms())`, ctx);
+        if (coeffExpAndyWire !== '[[\"exp\",\"1.5\",\"-0.25\",\"1e-5\"]]') {
+            console.error('FATAL: exp coeff transform should serialize scientific-notation andy, got ' + coeffExpAndyWire);
             process.exit(1);
         }
         vm.runInContext(`_ctChain = []; _renderChips('ct');`, ctx);
@@ -1832,12 +1912,12 @@ async function testPipeline(name, call) {
         const coeffRoundInfo = vm.runInContext(`(() => {
             const chips = document.getElementById('ct-chips');
             const html = chips ? chips.innerHTML : '';
-            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
-            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            const inputs = (html.match(/class=\"[^\"]*chip-input/g) || []).length;
+            const wire = JSON.stringify(_serializeCoeffTransforms());
             return { html, inputs, wire };
         })()`, ctx);
-        if (!coeffRoundInfo.html.includes('round(z*(') || coeffRoundInfo.inputs !== 2) {
-            console.error('FATAL: round coeff transform chip should render round(z*(a+ib)) with two inputs');
+        if (!coeffRoundInfo.html.includes('round(z*(') || !coeffRoundInfo.html.includes('andy=') || coeffRoundInfo.inputs !== 3) {
+            console.error('FATAL: round coeff transform chip should render round(z*(a+ib)) with two inputs plus andy');
             process.exit(1);
         }
         if (coeffRoundInfo.wire !== '[[\"round\",\"0.8\",\"0.3\"]]') {
@@ -1862,12 +1942,12 @@ async function testPipeline(name, call) {
         const coeffPowInfo = vm.runInContext(`(() => {
             const chips = document.getElementById('ct-chips');
             const html = chips ? chips.innerHTML : '';
-            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
-            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            const inputs = (html.match(/class=\"[^\"]*chip-input/g) || []).length;
+            const wire = JSON.stringify(_serializeCoeffTransforms());
             return { html, inputs, wire };
         })()`, ctx);
-        if (!coeffPowInfo.html.includes('pow(z*(') || coeffPowInfo.inputs !== 4) {
-            console.error('FATAL: pow coeff transform chip should render pow(z*(a+ib),c+id) with four inputs');
+        if (!coeffPowInfo.html.includes('pow(z*(') || !coeffPowInfo.html.includes('andy=') || coeffPowInfo.inputs !== 5) {
+            console.error('FATAL: pow coeff transform chip should render pow(z*(a+ib),c+id) with four inputs plus andy');
             process.exit(1);
         }
         if (coeffPowInfo.wire !== '[[\"pow\",\"1.1\",\"-0.2\",\"0.5\",\"0.75\"]]') {
@@ -1890,7 +1970,7 @@ async function testPipeline(name, call) {
         const coeffUnaryInfo = vm.runInContext(`(() => {
             const chips = document.getElementById('ct-chips');
             const html = chips ? chips.innerHTML : '';
-            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            const wire = JSON.stringify(_serializeCoeffTransforms());
             return { html, wire };
         })()`, ctx);
         if (!coeffUnaryInfo.html.includes('cos(z)') || !coeffUnaryInfo.html.includes('tanh(z)') || !coeffUnaryInfo.html.includes('cummax')) {
@@ -1917,12 +1997,12 @@ async function testPipeline(name, call) {
         const coeffRootsInfo = vm.runInContext(`(() => {
             const chips = document.getElementById('ct-chips');
             const html = chips ? chips.innerHTML : '';
-            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
-            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            const inputs = (html.match(/class=\"[^\"]*chip-input/g) || []).length;
+            const wire = JSON.stringify(_serializeCoeffTransforms());
             return { html, inputs, wire };
         })()`, ctx);
-        if (!coeffRootsInfo.html.includes('roots(') || coeffRootsInfo.inputs !== 2) {
-            console.error('FATAL: roots coeff transform chip should render k and hi|lo inputs');
+        if (!coeffRootsInfo.html.includes('roots(') || !coeffRootsInfo.html.includes('andy=') || coeffRootsInfo.inputs !== 3) {
+            console.error('FATAL: roots coeff transform chip should render k, hi|lo, and andy inputs');
             process.exit(1);
         }
         if (!coeffRootsInfo.wire.includes('[\"roots\",\"5\",\"lo\"]')) {
@@ -1944,12 +2024,12 @@ async function testPipeline(name, call) {
         const coeffPowerInfo = vm.runInContext(`(() => {
             const chips = document.getElementById('ct-chips');
             const html = chips ? chips.innerHTML : '';
-            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
-            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            const inputs = (html.match(/class=\"[^\"]*chip-input/g) || []).length;
+            const wire = JSON.stringify(_serializeCoeffTransforms());
             return { html, inputs, wire };
         })()`, ctx);
-        if (!coeffPowerInfo.html.includes('p(') || coeffPowerInfo.inputs !== 1) {
-            console.error('FATAL: power coeff transform chip should render p(k) with one visible input');
+        if (!coeffPowerInfo.html.includes('p(') || !coeffPowerInfo.html.includes('andy=') || coeffPowerInfo.inputs !== 2) {
+            console.error('FATAL: power coeff transform chip should render p(k) with k and andy inputs');
             process.exit(1);
         }
         if (!coeffPowerInfo.wire.includes('[\"power\",\"7\"]')) {
@@ -1971,12 +2051,12 @@ async function testPipeline(name, call) {
         const coeffInvPowerInfo = vm.runInContext(`(() => {
             const chips = document.getElementById('ct-chips');
             const html = chips ? chips.innerHTML : '';
-            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
-            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            const inputs = (html.match(/class=\"[^\"]*chip-input/g) || []).length;
+            const wire = JSON.stringify(_serializeCoeffTransforms());
             return { html, inputs, wire };
         })()`, ctx);
-        if (!coeffInvPowerInfo.html.includes('invp(') || coeffInvPowerInfo.inputs !== 1) {
-            console.error('FATAL: invpower coeff transform chip should render invp(k) with one visible input');
+        if (!coeffInvPowerInfo.html.includes('invp(') || !coeffInvPowerInfo.html.includes('andy=') || coeffInvPowerInfo.inputs !== 2) {
+            console.error('FATAL: invpower coeff transform chip should render invp(k) with k and andy inputs');
             process.exit(1);
         }
         if (!coeffInvPowerInfo.wire.includes('[\"invpower\",\"4\"]')) {
@@ -1998,12 +2078,12 @@ async function testPipeline(name, call) {
         const coeffRootsCmInfo = vm.runInContext(`(() => {
             const chips = document.getElementById('ct-chips');
             const html = chips ? chips.innerHTML : '';
-            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
-            const wire = JSON.stringify(_serializeNamedChain(_ctChain));
+            const inputs = (html.match(/class=\"[^\"]*chip-input/g) || []).length;
+            const wire = JSON.stringify(_serializeCoeffTransforms());
             return { html, inputs, wire };
         })()`, ctx);
-        if (!coeffRootsCmInfo.html.includes('roots_cm(') || coeffRootsCmInfo.inputs !== 1) {
-            console.error('FATAL: roots_cm coeff transform chip should render with one hi|lo input');
+        if (!coeffRootsCmInfo.html.includes('roots_cm(') || !coeffRootsCmInfo.html.includes('andy=') || coeffRootsCmInfo.inputs !== 2) {
+            console.error('FATAL: roots_cm coeff transform chip should render with hi|lo and andy inputs');
             process.exit(1);
         }
         if (coeffRootsCmInfo.wire !== '[[\"roots_cm\",\"lo\"]]') {
@@ -2026,7 +2106,7 @@ async function testPipeline(name, call) {
         const simpleRtInfo = vm.runInContext(`(() => {
             const chips = document.getElementById('rt-chips');
             const html = chips ? chips.innerHTML : '';
-            const inputs = (html.match(/class=\"chip-input\"/g) || []).length;
+            const inputs = (html.match(/class=\"[^\"]*chip-input/g) || []).length;
             const rt = JSON.stringify(_rtChain);
             return { html, inputs, rt };
         })()`, ctx);

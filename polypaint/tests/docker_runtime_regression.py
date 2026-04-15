@@ -428,6 +428,8 @@ def test_coeffgen_chunked_threaded_runtime():
     params_path = "/tmp/coeffgen_params.bin"
     single_path = "/tmp/coeffgen_chunk_single.bin"
     mt_path = "/tmp/coeffgen_chunk_mt.bin"
+    plain_path = "/tmp/coeffgen_chunk_plain.bin"
+    andy_path = "/tmp/coeffgen_chunk_andy.bin"
 
     param_spec = {
         "mode": "param_gen",
@@ -487,7 +489,42 @@ def test_coeffgen_chunked_threaded_runtime():
     assert len(mt_bytes) == meta_mt["data_bytes"], "coeffgen_chunked multi-thread byte count mismatch"
     print("  sweep_coeffgen coeffgen_chunked n_threads=1 vs 4: OK (%d bytes)" % len(mt_bytes))
 
-    cleanup(params_path, single_path, mt_path)
+    plain_spec = {
+        "mode": "coeffgen_chunked",
+        "function": "g1",
+        "coeff_transforms": [],
+        "params_file": params_path,
+        "step_start": 0,
+        "step_count": 200,
+        "n_threads": 1,
+    }
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", plain_path],
+        input=json.dumps(plain_spec),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen_chunked plain failed: " + r.stderr[:200]
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", andy_path],
+        input=json.dumps({**plain_spec, "coeff_transforms": [["scale100", "100", "0", "0", "0", "1e-5"]]}),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen_chunked andy blend failed: " + r.stderr[:200]
+    plain_vals = read_f32_array(plain_path)
+    andy_vals = read_f32_array(andy_path)
+    assert len(plain_vals) == len(andy_vals), "andy blend output length mismatch"
+    factor = 100.0 * (1.0 - 1e-5) + 1e-5
+    for idx, (base, got) in enumerate(zip(plain_vals, andy_vals)):
+        expected = base * factor
+        tol = max(2e-4, abs(expected) * 2e-5)
+        assert abs(got - expected) <= tol, "andy blend mismatch at float %d: got %.9g expected %.9g" % (idx, got, expected)
+    print("  coeff transform andy blend: OK (scale100 andy=1e-5)")
+
+    cleanup(params_path, single_path, mt_path, plain_path, andy_path)
     print("=== Coeffgen-chunked threaded runtime PASSED ===")
 
 

@@ -567,6 +567,36 @@ class TestCoeffTransforms(unittest.TestCase):
                 scaled[s], plain[s] * 100, rtol=1e-5,
                 err_msg=f"Step {s}: scale100 did not multiply by 100")
 
+    def test_scale100_linear_affine(self):
+        """scale100 is now the affine transform z*(x+i*y)+(w+i*u)."""
+        meta_plain = self._coeffgen([], "/tmp/test_ct_plain_linear.bin")
+        meta_linear = self._coeffgen(
+            [["scale100", "1+3j", "0", "1-1e-5", "-2"]],
+            "/tmp/test_ct_scale100_linear.bin",
+        )
+
+        n = meta_plain["n_coeffs"]
+        self.assertEqual(n, meta_linear["n_coeffs"])
+        plain = _read_coeffs("/tmp/test_ct_plain_linear.bin", n)
+        linear = _read_coeffs("/tmp/test_ct_scale100_linear.bin", n)
+
+        expected = self._as_written_complex64(plain * (1.0 + 3.0j) + (1.0 - 1e-5 - 2.0j))
+        np.testing.assert_allclose(linear, expected, rtol=2e-5, atol=2e-5)
+
+    def test_coeff_transform_andy_blends_with_original(self):
+        """Final andy parameter blends f(z) back toward the original coefficients."""
+        meta_plain = self._coeffgen([], "/tmp/test_ct_plain_andy.bin")
+        meta_blend = self._coeffgen([["scale100", "100", "0", "0", "0", "1e-5"]], "/tmp/test_ct_scale100_andy.bin")
+
+        n = meta_plain["n_coeffs"]
+        self.assertEqual(n, meta_blend["n_coeffs"])
+        plain = _read_coeffs("/tmp/test_ct_plain_andy.bin", n)
+        blended = _read_coeffs("/tmp/test_ct_scale100_andy.bin", n)
+
+        andy = 1e-5
+        expected = self._as_written_complex64((plain * 100.0) * (1.0 - andy) + plain * andy)
+        np.testing.assert_allclose(blended, expected, rtol=1e-5, atol=1e-5)
+
     def test_negate_odd(self):
         """ct_negate_odd negates odd-indexed coefficients."""
         meta_plain = self._coeffgen([], "/tmp/test_ct_plain5.bin")
@@ -603,6 +633,33 @@ class TestCoeffTransforms(unittest.TestCase):
             expected[s] = acc * idx
 
         np.testing.assert_allclose(powered, expected, rtol=1e-5, atol=1e-5)
+
+    def test_power_andy_is_linear_blend(self):
+        """power(k, andy) linearly blends with the original coefficients."""
+        meta_plain = self._coeffgen([], "/tmp/test_ct_plain_power_andy.bin")
+        meta_near_original = self._coeffgen(
+            [["power", "6", "0.99999"]],
+            "/tmp/test_ct_power6_andy099999.bin",
+        )
+
+        n = meta_plain["n_coeffs"]
+        self.assertEqual(n, meta_near_original["n_coeffs"])
+        plain = _read_coeffs("/tmp/test_ct_plain_power_andy.bin", n)
+        near_original = _read_coeffs("/tmp/test_ct_power6_andy099999.bin", n)
+
+        idx = np.arange(1, n + 1, dtype=np.complex128)
+        transformed = np.zeros_like(plain, dtype=np.complex128)
+        for s in range(len(plain)):
+            geom = np.ones(n, dtype=np.complex128)
+            acc = np.ones(n, dtype=np.complex128)
+            for _ in range(6):
+                geom = geom * plain[s]
+                acc = acc + geom
+            transformed[s] = acc * idx
+
+        andy = 0.99999
+        expected = self._as_written_complex64(transformed * (1.0 - andy) + plain * andy)
+        np.testing.assert_allclose(near_original, expected, rtol=2e-5, atol=1e-5)
 
     def test_invpower_matches_python_formula(self):
         """ct_invpower(k) matches the intended reciprocal-threshold formula."""

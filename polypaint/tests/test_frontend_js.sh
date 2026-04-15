@@ -67,6 +67,9 @@ grep -q 'onclick="loadLambdaConfig()" class="btn-secondary" style="margin:0; pad
 grep -q 'onclick="renderResultsTable()" style="margin:0; padding:3px 8px; font-size:10px"' "$HTML" || { echo "FATAL: Results Filter button should override global button margin"; exit 1; }
 grep -q 'id="btn-solve-histogram" onclick="runSolveScoreHistogramDebug()" style="margin:0 0 0 8px; font-size:10px; padding:1px 8px"' "$HTML" || { echo "FATAL: Solve histogram button should override global button margin"; exit 1; }
 grep -q 'id="btn-palette-create" onclick="runPaletteArtifact()" style="margin:0 0 0 8px; font-size:10px; padding:1px 8px"' "$HTML" || { echo "FATAL: Palette create button should override global button margin"; exit 1; }
+grep -q 'id="ss-add-btn"' "$HTML" || { echo "FATAL: solve-score add popup button missing"; exit 1; }
+grep -q 'id="palette-ss-add-btn"' "$HTML" || { echo "FATAL: palette solve-score add popup button missing"; exit 1; }
+grep -q 'Score functions' "$HTML" || { echo "FATAL: solve-score picker category labels missing"; exit 1; }
 grep -q 'Image + Meta' "$HTML" || { echo "FATAL: Favorites download menu missing Image + Meta"; exit 1; }
 grep -q 'Select Dir…' "$HTML" || { echo "FATAL: Favorites download menu missing Select Dir…"; exit 1; }
 
@@ -4320,6 +4323,81 @@ async function testPipeline(name, call) {
             process.exit(1);
         }
         console.log('  sawtooth and flip work as unary solve-score ops: OK');
+    }
+
+    // 11n: solve-score editor uses categorized picker and movable chips
+    {
+        const editorInfo = vm.runInContext(`(()=>{
+            _renderScoreChain = [{ name:'spread', params:['slv','0.1'] }];
+            _renderChips('ss');
+            toggleSolveScorePicker('ss', { stopPropagation(){} });
+            const groupsOne = _solveScorePickerGroups('ss').map(g => ({ kind:g.kind, items:g.items.slice(0) }));
+            const popupOne = document.getElementById('ss-add-popup').innerHTML;
+            const chipOne = document.getElementById('ss-chips').innerHTML;
+            _renderScoreChain = [
+                { name:'spread', params:['slv','0.1'] },
+                { name:'clusteriness', params:['slv','0.1'] }
+            ];
+            const groupsTwo = _solveScorePickerGroups('ss').map(g => ({ kind:g.kind, items:g.items.slice(0) }));
+            _renderScoreChain = [
+                { name:'spread', params:['slv','0.1'] },
+                { name:'clusteriness', params:['slv','0.1'] },
+                { name:'avg', params:[] }
+            ];
+            _renderChips('ss');
+            moveChip('ss', 1, -1);
+            const movedNames = _renderScoreChain.map(item => item.name);
+            return {
+                groupsOne,
+                groupsTwo,
+                popupOne,
+                chipOne,
+                movedNames,
+                addButtonText: document.getElementById('ss-add-btn').textContent,
+            };
+        })()`, ctx);
+        const metricGroup = editorInfo.groupsOne.find(g => g.kind === 'metric');
+        const transformGroup = editorInfo.groupsOne.find(g => g.kind === 'unary');
+        const combineGroupOne = editorInfo.groupsOne.find(g => g.kind === 'combine');
+        const combineGroupTwo = editorInfo.groupsTwo.find(g => g.kind === 'combine');
+        if (!metricGroup || !metricGroup.items.includes('clusteriness')) {
+            console.error('FATAL: score functions category should include metric chips, got ' + JSON.stringify(editorInfo.groupsOne));
+            process.exit(1);
+        }
+        if (!transformGroup || !transformGroup.items.includes('flip') || !transformGroup.items.includes('sawtooth')) {
+            console.error('FATAL: score transforms category should include unary chips, got ' + JSON.stringify(editorInfo.groupsOne));
+            process.exit(1);
+        }
+        if (!combineGroupOne || combineGroupOne.items.includes('avg')) {
+            console.error('FATAL: score combinations should be hidden until stack has two values, got ' + JSON.stringify(editorInfo.groupsOne));
+            process.exit(1);
+        }
+        if (!combineGroupTwo || !combineGroupTwo.items.includes('avg') || !combineGroupTwo.items.includes('max')) {
+            console.error('FATAL: score combinations category should include binary ops at stack depth two, got ' + JSON.stringify(editorInfo.groupsTwo));
+            process.exit(1);
+        }
+        if (!editorInfo.popupOne.includes('Score functions') || !editorInfo.popupOne.includes('Score transforms') || !editorInfo.popupOne.includes('Score combinations')) {
+            console.error('FATAL: solve-score add popup should render category headers, got ' + editorInfo.popupOne);
+            process.exit(1);
+        }
+        if (!editorInfo.chipOne.includes('class="chip-move"') || !editorInfo.chipOne.includes('Move right')) {
+            console.error('FATAL: solve-score chips should render move controls, got ' + editorInfo.chipOne);
+            process.exit(1);
+        }
+        if (editorInfo.movedNames.join(',') !== 'clusteriness,spread,avg') {
+            console.error('FATAL: moveChip should reorder solve-score chips, got ' + editorInfo.movedNames.join(','));
+            process.exit(1);
+        }
+        if (editorInfo.addButtonText !== '+ score chip') {
+            console.error('FATAL: solve-score add button text wrong: ' + editorInfo.addButtonText);
+            process.exit(1);
+        }
+        vm.runInContext(`
+            renderSolveMetric = 'proximity';
+            _renderScoreChain = _defaultSolveScoreChain('proximity', '0.1', 1, true, 0);
+            _renderChips('ss');
+        `, ctx);
+        console.log('  solve-score categorized picker and chip movement: OK');
     }
 
     // Step 12: Orchestrator launch + observer tests (spec section 20.3)

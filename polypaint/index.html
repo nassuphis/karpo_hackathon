@@ -105,6 +105,90 @@ button {
 .chip .chip-equals {
     color: #9ab; margin-right: 1px;
 }
+.score-chip {
+    gap: 2px;
+}
+.score-chip .chip-actions {
+    display: inline-flex; align-items: center; gap: 1px;
+    margin-right: 3px;
+}
+.chip-move {
+    width: 14px; height: 14px; line-height: 12px; padding: 0; margin: 0;
+    border: 1px solid rgba(255,255,255,0.16); border-radius: 50%;
+    background: rgba(255,255,255,0.06); color: #b8c7dd;
+    font-size: 10px; cursor: pointer;
+}
+.chip-move:hover:not(:disabled) {
+    background: rgba(233,69,96,0.35); color: #fff; border-color: rgba(233,69,96,0.7);
+}
+.chip-move:disabled {
+    opacity: 0.25; cursor: not-allowed;
+}
+.score-chip-add-wrap {
+    position: relative; display: inline-flex; align-items: center; margin-left: 6px;
+}
+.score-chip-add-btn {
+    margin: 0; padding: 2px 9px; font-size: 10px;
+    border-radius: 999px; border: 1px solid #285080;
+}
+.score-chip-add-btn:disabled {
+    opacity: 0.55; cursor: not-allowed;
+}
+.score-chip-picker {
+    display: none; position: absolute; top: calc(100% + 5px); left: 0;
+    z-index: 220; width: min(560px, 88vw); max-height: 380px; overflow-y: auto;
+    padding: 9px; background: #10182d; border: 1px solid #2b4d78;
+    border-radius: 8px; box-shadow: 0 14px 34px rgba(0,0,0,0.45);
+}
+.score-chip-picker.active {
+    display: block;
+}
+.score-chip-picker-head {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+    padding: 2px 2px 8px; border-bottom: 1px solid rgba(255,255,255,0.08);
+    margin-bottom: 8px;
+}
+.score-chip-picker-title {
+    color: #e0e7f5; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+}
+.score-chip-picker-state {
+    color: #8192aa; font-size: 10px;
+}
+.score-chip-category {
+    padding: 8px 0; border-top: 1px solid rgba(255,255,255,0.06);
+}
+.score-chip-category:first-of-type {
+    border-top: 0;
+}
+.score-chip-category-title {
+    color: #e94560; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+}
+.score-chip-category-help {
+    margin: 2px 0 6px; color: #7f8ba0; font-size: 10px;
+}
+.score-chip-options {
+    display: flex; flex-wrap: wrap; gap: 5px;
+}
+.score-chip-option {
+    display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px;
+    max-width: 170px; padding: 5px 8px; margin: 0;
+    background: #0f3460; color: #e0e0e0; border: 1px solid #285080;
+    border-radius: 7px; cursor: pointer; font-size: 10px; text-align: left;
+}
+.score-chip-option:hover {
+    background: #16477e; border-color: #e94560;
+}
+.score-chip-option-name {
+    font-weight: 700; color: #f0f4ff;
+}
+.score-chip-option-meta {
+    color: #9fb0c8; font-size: 9px;
+}
+.score-chip-empty {
+    color: #66768f; font-size: 10px; font-style: italic;
+}
 
 .color-dot {
     width: 10px; height: 10px; border-radius: 50%; display: inline-block;
@@ -698,9 +782,13 @@ button {
                     <span class="color-dot" data-mode="solve_score" onclick="setColorMode('solve_score')"></span>
                     <span style="color:#888; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('solve_score')">Solve score</span>
                     <div id="ss-chips" class="chip-container" style="margin-left:6px"></div>
-                    <select id="ss-add" onchange="addChip('ss',this.value);this.value='';" style="width:120px; font-size:10px; margin-left:6px">
-                        <option value="">+ add...</option>
-                    </select>
+                    <div class="score-chip-add-wrap">
+                        <button id="ss-add-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('ss',event)">+ score chip</button>
+                        <div id="ss-add-popup" class="score-chip-picker" aria-hidden="true"></div>
+                        <select id="ss-add" onchange="addChip('ss',this.value);this.value='';" style="display:none">
+                            <option value="">+ add...</option>
+                        </select>
+                    </div>
                     <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:6px"></div>
                     <input type="hidden" id="render-solve-score" value="proximity">
                     <input type="hidden" id="render-solve-score-omega" value="1">
@@ -791,9 +879,13 @@ button {
                 <div class="color-row">
                     <span style="color:#888; min-width:45px; text-transform:uppercase; letter-spacing:0.06em">Metric</span>
                     <div id="palette-ss-chips" class="chip-container" style="margin-left:6px"></div>
-                    <select id="palette-ss-add" onchange="addChip('palette-ss',this.value);this.value='';" style="width:120px; font-size:10px; margin-left:6px">
-                        <option value="">+ add...</option>
-                    </select>
+                    <div class="score-chip-add-wrap">
+                        <button id="palette-ss-add-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('palette-ss',event)">+ score chip</button>
+                        <div id="palette-ss-add-popup" class="score-chip-picker" aria-hidden="true"></div>
+                        <select id="palette-ss-add" onchange="addChip('palette-ss',this.value);this.value='';" style="display:none">
+                            <option value="">+ add...</option>
+                        </select>
+                    </div>
                     <div id="palette-circles-palette-tab" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:8px"></div>
                     <input type="hidden" id="palette-solve-score" value="proximity">
                     <input type="hidden" id="palette-solve-score-omega" value="1">
@@ -3649,19 +3741,147 @@ function _solveScoreAllowedAdditions(which) {
     return allowed;
 }
 
+function _solveScoreCategoryForName(name) {
+    const kind = (_ssCatalog[name] && _ssCatalog[name].chip_kind) || '';
+    if (kind === 'metric') return 'metric';
+    if (kind === 'unary') return 'unary';
+    if (kind === 'combine') return 'combine';
+    return 'other';
+}
+
+function _solveScoreCategoryMeta(kind) {
+    if (kind === 'metric') {
+        return {
+            title: 'Score functions',
+            help: 'take slv/cf/pm input and produce one normalized score',
+            empty: 'no score function can be added',
+        };
+    }
+    if (kind === 'unary') {
+        return {
+            title: 'Score transforms',
+            help: 'take one score from the stack and transform it',
+            empty: 'add a score first',
+        };
+    }
+    if (kind === 'combine') {
+        return {
+            title: 'Score combinations',
+            help: 'take two scores from the stack and combine them',
+            empty: 'need two scores on the stack',
+        };
+    }
+    return { title: 'Other', help: '', empty: 'none available' };
+}
+
+function _solveScoreChipHint(name) {
+    if (_solveScoreMetricSet.has(name)) {
+        const sources = _solveScoreMetricAllowedSources(name);
+        return `${sources.join('/')} -> score`;
+    }
+    if (_solveScoreUnarySpecs[name]) return 'score -> score';
+    const spec = _solveScoreCombineSpecs[name];
+    if (spec) return `${spec.arity} scores -> score`;
+    return '';
+}
+
+function _solveScorePickerGroups(which) {
+    const byKind = { metric: [], unary: [], combine: [] };
+    _solveScoreAllowedAdditions(which).forEach(name => {
+        const kind = _solveScoreCategoryForName(name);
+        if (byKind[kind]) byKind[kind].push(name);
+    });
+    return ['metric', 'unary', 'combine'].map(kind => ({
+        kind,
+        ..._solveScoreCategoryMeta(kind),
+        items: byKind[kind],
+    }));
+}
+
+function _scoreChipPickerStateLabel(which) {
+    const prefix = _solveScorePrefixForWhich(which);
+    const draft = _solveScoreDraftState(
+        _chainForWhich(which),
+        prefix === 'palette' ? paletteTabMetric : renderSolveMetric,
+        _legacySolveScoreQuantilePct(prefix)
+    );
+    return `stack ${draft.stackDepth} · metrics ${draft.metricCount}`;
+}
+
+function _renderSolveScoreAddPopup(which) {
+    const popup = document.getElementById(which + '-add-popup');
+    if (!popup) return;
+    const groups = _solveScorePickerGroups(which);
+    const head = `<div class="score-chip-picker-head"><span class="score-chip-picker-title">Add score chip</span><span class="score-chip-picker-state">${_escapeHtml(_scoreChipPickerStateLabel(which))}</span></div>`;
+    const body = groups.map(group => {
+        const items = group.items.length
+            ? `<div class="score-chip-options">${group.items.map(name => {
+                const spec = _ssCatalog[name] || {};
+                const label = spec.label || name;
+                const hint = _solveScoreChipHint(name);
+                const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
+                return `<button type="button" class="score-chip-option score-chip-option-${group.kind}" onclick="selectSolveScoreChip('${which}','${_escapeHtml(name)}',event)"${tooltip}><span class="score-chip-option-name">${_escapeHtml(label)}</span><span class="score-chip-option-meta">${_escapeHtml(hint)}</span></button>`;
+            }).join('')}</div>`
+            : `<div class="score-chip-empty">${_escapeHtml(group.empty)}</div>`;
+        return `<div class="score-chip-category"><div class="score-chip-category-title">${_escapeHtml(group.title)}</div><div class="score-chip-category-help">${_escapeHtml(group.help)}</div>${items}</div>`;
+    }).join('');
+    popup.innerHTML = head + body;
+}
+
+function _closeSolveScorePickers(exceptWhich = '') {
+    ['ss', 'palette-ss'].forEach(which => {
+        if (which !== exceptWhich) _setSolveScorePickerOpen(which, false);
+    });
+}
+
+function _setSolveScorePickerOpen(which, open) {
+    const popup = document.getElementById(which + '-add-popup');
+    const btn = document.getElementById(which + '-add-btn');
+    if (!popup) return;
+    if (open) {
+        _closeSolveScorePickers(which);
+        _renderSolveScoreAddPopup(which);
+    }
+    popup._open = !!open;
+    popup.style.display = open ? 'block' : 'none';
+    if (popup.classList && popup.classList.toggle) popup.classList.toggle('active', !!open);
+    if (popup.setAttribute) popup.setAttribute('aria-hidden', open ? 'false' : 'true');
+    if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function toggleSolveScorePicker(which, eventObj) {
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    const popup = document.getElementById(which + '-add-popup');
+    _setSolveScorePickerOpen(which, !(popup && popup._open));
+}
+
+function selectSolveScoreChip(which, name, eventObj) {
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    addChip(which, name);
+    _setSolveScorePickerOpen(which, false);
+}
+
 function _syncSolveScoreAddOptions(which) {
     const sel = document.getElementById(which + '-add');
-    if (!sel) return;
     const allowed = _solveScoreAllowedAdditions(which);
-    const options = ['<option value="">+ add...</option>'].concat(
-        allowed.map(name => {
-            const spec = _ssCatalog[name] || {};
-            const label = spec.label || name;
-            return `<option value="${_escapeHtml(name)}">${_escapeHtml(label)}</option>`;
-        })
-    );
-    sel.innerHTML = options.join('');
-    sel.disabled = allowed.length === 0;
+    if (sel) {
+        const options = ['<option value="">+ add...</option>'].concat(
+            allowed.map(name => {
+                const spec = _ssCatalog[name] || {};
+                const label = spec.label || name;
+                return `<option value="${_escapeHtml(name)}">${_escapeHtml(label)}</option>`;
+            })
+        );
+        sel.innerHTML = options.join('');
+        sel.disabled = allowed.length === 0;
+    }
+    const btn = document.getElementById(which + '-add-btn');
+    if (btn) {
+        btn.disabled = allowed.length === 0;
+        btn.textContent = allowed.length ? '+ score chip' : '+ blocked';
+        btn.title = allowed.length ? 'Add a score function, transform, or combination' : 'Current stack cannot accept another chip';
+    }
+    _renderSolveScoreAddPopup(which);
 }
 
 function _updateSolveScoreStackUi(which) {
@@ -3824,6 +4044,25 @@ document.addEventListener('click', function(e) {
 
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') _setConfigPopupOpen(false);
+});
+
+function _elementContains(el, target) {
+    return !!(el && typeof el.contains === 'function' && el.contains(target));
+}
+
+document.addEventListener('click', function(e) {
+    const target = e.target;
+    ['ss', 'palette-ss'].forEach(which => {
+        const popup = document.getElementById(which + '-add-popup');
+        const btn = document.getElementById(which + '-add-btn');
+        if (!popup || !popup._open) return;
+        if (_elementContains(popup, target) || _elementContains(btn, target)) return;
+        _setSolveScorePickerOpen(which, false);
+    });
+});
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') _closeSolveScorePickers();
 });
 
 /* ---- Color controls ---- */
@@ -7872,6 +8111,18 @@ function removeChip(which, idx) {
     if (which === 'pt' || which === 'ct') _markComputePreviewStale();
 }
 
+function moveChip(which, idx, delta) {
+    const chain = _chainForWhich(which);
+    const from = Number(idx);
+    const to = from + Number(delta);
+    if (!Number.isInteger(from) || !Number.isInteger(to)) return;
+    if (from < 0 || from >= chain.length || to < 0 || to >= chain.length) return;
+    const [item] = chain.splice(from, 1);
+    chain.splice(to, 0, item);
+    _renderChips(which);
+    if (which === 'pt' || which === 'ct') _markComputePreviewStale();
+}
+
 function _normalizeTarget(value) {
     const v = value.trim().toLowerCase();
     if (v === 't1' || v === '0') return 't1';
@@ -7947,37 +8198,45 @@ function _ctUnaryFormulaChip(which, i, fnName) {
     return `<span class="chip"><span class="chip-formula"><span>${_escapeHtml(fnName)}(z)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
 }
 
+function _solveScoreChipShell(which, i, bodyHtml, tooltipAttr = '') {
+    const count = _chainForWhich(which).length;
+    const leftDisabled = i <= 0 ? ' disabled' : '';
+    const rightDisabled = i >= count - 1 ? ' disabled' : '';
+    const moves = `<span class="chip-actions"><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('${which}',${i},-1)" title="Move left"${leftDisabled}>&lt;</button><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('${which}',${i},1)" title="Move right"${rightDisabled}>&gt;</button></span>`;
+    return `<span class="chip score-chip"${tooltipAttr}>${moves}${bodyHtml}<span class="chip-x" onclick="event.stopPropagation();removeChip('${which}',${i})">x</span></span>`;
+}
+
 function _renderRtChipHtml(item, i, which, catalog) {
     const spec = catalog[item.name] || {};
     const pDefs = spec.params || [];
     if ((which === 'ss' || which === 'palette-ss') && _solveScoreMetricSet.has(item.name)) {
         const source = _chipInputHtml(which, i, 0, item.params[0] || 'slv', pDefs[0]);
         const q = _chipInputHtml(which, i, 1, item.params[1] || item.params[0] || '', pDefs[1]);
-        return `<span class="chip"><span class="chip-formula"><span>${_escapeHtml(item.name)}(</span><span>${source}</span><span class="chip-op">,</span><span>q=</span><span>${q}</span><span>%)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}(</span><span>${source}</span><span class="chip-op">,</span><span>q=</span><span>${q}</span><span>%)</span></span>`);
     }
     if ((which === 'ss' || which === 'palette-ss') && item.name === 'omega_cosine') {
         const omega = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
         const phase = _chipInputHtml(which, i, 1, item.params[1] || '0', pDefs[1]);
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
-        return `<span class="chip"${tooltip}><span class="chip-formula"><span>ω-cos(</span><span>${omega}</span><span class="chip-op">,</span><span>${phase}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>ω-cos(</span><span>${omega}</span><span class="chip-op">,</span><span>${phase}</span><span>)</span></span>`, tooltip);
     }
     if ((which === 'ss' || which === 'palette-ss') && item.name === 'sawtooth') {
         const mult = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
-        return `<span class="chip"${tooltip}><span class="chip-formula"><span>sawtooth(</span><span>${mult}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>sawtooth(</span><span>${mult}</span><span>)</span></span>`, tooltip);
     }
     if ((which === 'ss' || which === 'palette-ss') && item.name === 'weighted_sum') {
         const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
         const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
-        return `<span class="chip"><span class="chip-formula"><span>weighted_sum(</span><span>${a}</span><span class="chip-op">,</span><span>${b}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>weighted_sum(</span><span>${a}</span><span class="chip-op">,</span><span>${b}</span><span>)</span></span>`);
     }
     if ((which === 'ss' || which === 'palette-ss') && item.name === 'flip') {
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
-        return `<span class="chip"${tooltip}><span class="chip-formula"><span>flip</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>flip</span></span>`, tooltip);
     }
     if ((which === 'ss' || which === 'palette-ss') && _solveScoreCombineSpecs[item.name]) {
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
-        return `<span class="chip"${tooltip}><span class="chip-formula"><span>${_escapeHtml(item.name)}</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}</span></span>`, tooltip);
     }
     if (which === 'ct' && item.name === 'exp') {
         const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);

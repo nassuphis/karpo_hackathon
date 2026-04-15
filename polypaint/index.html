@@ -1434,6 +1434,15 @@ button {
                 <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
                 <input id="render-mt-raster-retries" type="number" min="0" max="10" step="1" value="2">
 
+                <div class="render-mt-matrix-stage">Bins</div>
+                <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+                <select id="render-mt-pixel-bin-fragment-mode">
+                    <option value="sparse_chunks">sparse chunks</option>
+                    <option value="dense_grouped">dense grouped</option>
+                </select>
+                <input id="render-mt-raster-bin-group-size" type="number" min="1" max="1000" step="1" placeholder="chunks/group">
+                <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
+
                 <div class="render-mt-matrix-stage">Merge</div>
                 <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
                 <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
@@ -3875,6 +3884,8 @@ let _renderMtPopupState = {
     histRetries: 2,
     rasterInputMode: 'tmpfile',
     rasterRetries: 2,
+    pixelBinFragmentMode: 'sparse_chunks',
+    rasterBinGroupSize: '',
     mergeWorkers: 16,
     finalizeWorkers: 16,
     saveAssociatedPalette: false,
@@ -5339,6 +5350,20 @@ function _normalizeRasterInputMode(value) {
     return 'tmpfile';
 }
 
+function _normalizePixelBinFragmentMode(value) {
+    const mode = String(value || 'sparse_chunks').trim().toLowerCase();
+    if (mode === 'dense_grouped' || mode === 'dense-grouped' || mode === 'grouped_dense') return 'dense_grouped';
+    return 'sparse_chunks';
+}
+
+function _normalizeRasterBinGroupSize(value) {
+    const raw = String(value ?? '').trim();
+    if (!raw) return '';
+    let n = parseInt(raw, 10);
+    if (!Number.isFinite(n)) return '';
+    return Math.max(1, Math.min(1000, n));
+}
+
 function _closeRenderGeneratePopup() {
     _renderGeneratePopupState = {
         open: false,
@@ -5417,6 +5442,8 @@ function _closeRenderMtPopup() {
         histRetries: _clampRenderMtRetries(_renderMtPopupState.histRetries),
         rasterInputMode: _normalizeRasterInputMode(_renderMtPopupState.rasterInputMode),
         rasterRetries: _clampRenderMtRetries(_renderMtPopupState.rasterRetries),
+        pixelBinFragmentMode: _normalizePixelBinFragmentMode(_renderMtPopupState.pixelBinFragmentMode),
+        rasterBinGroupSize: _normalizeRasterBinGroupSize(_renderMtPopupState.rasterBinGroupSize),
         mergeWorkers: _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers),
         finalizeWorkers: _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers),
         saveAssociatedPalette: !!_renderMtPopupState.saveAssociatedPalette,
@@ -5437,12 +5464,14 @@ function _renderRenderMtPopup() {
     const histRetriesEl = document.getElementById('render-mt-hist-retries');
     const rasterInputModeEl = document.getElementById('render-mt-raster-input-mode');
     const rasterRetriesEl = document.getElementById('render-mt-raster-retries');
+    const pixelBinFragmentModeEl = document.getElementById('render-mt-pixel-bin-fragment-mode');
+    const rasterBinGroupSizeEl = document.getElementById('render-mt-raster-bin-group-size');
     const mergeWorkersEl = document.getElementById('render-mt-merge-workers');
     const finalizeWorkersEl = document.getElementById('render-mt-finalize-workers');
     const assocRowEl = document.getElementById('render-mt-associated-row');
     const assocEl = document.getElementById('render-mt-save-associated-palette');
     const runBtn = document.getElementById('render-mt-popup-run');
-    if (!overlay || !summaryEl || !threadsEl || !solveScoreThreadsEl || !histInputModeEl || !histRetriesEl || !rasterInputModeEl || !rasterRetriesEl || !mergeWorkersEl || !finalizeWorkersEl) return;
+    if (!overlay || !summaryEl || !threadsEl || !solveScoreThreadsEl || !histInputModeEl || !histRetriesEl || !rasterInputModeEl || !rasterRetriesEl || !pixelBinFragmentModeEl || !rasterBinGroupSizeEl || !mergeWorkersEl || !finalizeWorkersEl) return;
     if (!_renderMtPopupState.open) {
         _closeRenderMtPopup();
         return;
@@ -5453,6 +5482,8 @@ function _renderRenderMtPopup() {
     const histRetries = _clampRenderMtRetries(_renderMtPopupState.histRetries);
     const rasterInputMode = _normalizeRasterInputMode(_renderMtPopupState.rasterInputMode);
     const rasterRetries = _clampRenderMtRetries(_renderMtPopupState.rasterRetries);
+    const pixelBinFragmentMode = _normalizePixelBinFragmentMode(_renderMtPopupState.pixelBinFragmentMode);
+    const rasterBinGroupSize = _normalizeRasterBinGroupSize(_renderMtPopupState.rasterBinGroupSize);
     const mergeWorkers = _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers);
     const finalizeWorkers = _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers);
     const saveAssociatedPalette = !!_renderMtPopupState.saveAssociatedPalette;
@@ -5464,6 +5495,8 @@ function _renderRenderMtPopup() {
     _renderMtPopupState.histRetries = histRetries;
     _renderMtPopupState.rasterInputMode = rasterInputMode;
     _renderMtPopupState.rasterRetries = rasterRetries;
+    _renderMtPopupState.pixelBinFragmentMode = pixelBinFragmentMode;
+    _renderMtPopupState.rasterBinGroupSize = rasterBinGroupSize;
     _renderMtPopupState.mergeWorkers = mergeWorkers;
     _renderMtPopupState.finalizeWorkers = finalizeWorkers;
     _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
@@ -5475,6 +5508,8 @@ function _renderRenderMtPopup() {
     histRetriesEl.value = String(histRetries);
     rasterInputModeEl.value = rasterInputMode;
     rasterRetriesEl.value = String(rasterRetries);
+    pixelBinFragmentModeEl.value = pixelBinFragmentMode;
+    rasterBinGroupSizeEl.value = rasterBinGroupSize === '' ? '' : String(rasterBinGroupSize);
     mergeWorkersEl.value = String(mergeWorkers);
     finalizeWorkersEl.value = String(finalizeWorkers);
     solveScoreThreadsEl.disabled = !solveScoreRelevant;
@@ -5483,6 +5518,7 @@ function _renderRenderMtPopup() {
     mergeWorkersEl.disabled = !solveScoreRelevant;
     finalizeWorkersEl.disabled = false;
     rasterRetriesEl.disabled = rasterInputMode !== 'sectioned';
+    rasterBinGroupSizeEl.disabled = pixelBinFragmentMode !== 'dense_grouped';
     if (assocRowEl) assocRowEl.style.display = assocAllowed ? '' : 'none';
     if (assocEl) {
         assocEl.checked = saveAssociatedPalette;
@@ -5492,9 +5528,12 @@ function _renderRenderMtPopup() {
         ? `Rainbow (${renderMatchMode})`
         : renderColorMode.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
     const assocLabel = assocAllowed ? (saveAssociatedPalette ? 'yes' : 'no') : 'n/a';
+    const binsLabel = pixelBinFragmentMode === 'dense_grouped'
+        ? `dense grouped${rasterBinGroupSize === '' ? '' : ` group=${rasterBinGroupSize}`}`
+        : 'sparse chunks';
     summaryEl.textContent = solveScoreRelevant
-        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • hist threads=${solveScoreThreads} • hist input=${histInputMode} • hist retries=${histRetries} • merge workers=${mergeWorkers} • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • finalize workers=${finalizeWorkers} • associated palette=${assocLabel}`
-        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • finalize workers=${finalizeWorkers} • hist unused • merge unused • associated palette=${assocLabel}`;
+        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • hist threads=${solveScoreThreads} • hist input=${histInputMode} • hist retries=${histRetries} • merge workers=${mergeWorkers} • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • bins=${binsLabel} • finalize workers=${finalizeWorkers} • associated palette=${assocLabel}`
+        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • bins=${binsLabel} • finalize workers=${finalizeWorkers} • hist unused • merge unused • associated palette=${assocLabel}`;
     if (runBtn) runBtn.disabled = !_renderColorMtEligible() || !!_activeRenderRun;
 }
 
@@ -5508,6 +5547,8 @@ function openRenderMtPopup() {
         histRetries: _clampRenderMtRetries(_renderMtPopupState.histRetries ?? 2),
         rasterInputMode: _normalizeRasterInputMode(_renderMtPopupState.rasterInputMode || 'tmpfile'),
         rasterRetries: _clampRenderMtRetries(_renderMtPopupState.rasterRetries ?? 2),
+        pixelBinFragmentMode: _normalizePixelBinFragmentMode(_renderMtPopupState.pixelBinFragmentMode || 'sparse_chunks'),
+        rasterBinGroupSize: _normalizeRasterBinGroupSize(_renderMtPopupState.rasterBinGroupSize),
         mergeWorkers: _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers || 16),
         finalizeWorkers: _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers || 16),
         saveAssociatedPalette: !!_renderMtPopupState.saveAssociatedPalette,
@@ -6020,6 +6061,8 @@ function _initRenderMtPopup() {
     const histRetriesEl = document.getElementById('render-mt-hist-retries');
     const rasterInputModeEl = document.getElementById('render-mt-raster-input-mode');
     const rasterRetriesEl = document.getElementById('render-mt-raster-retries');
+    const pixelBinFragmentModeEl = document.getElementById('render-mt-pixel-bin-fragment-mode');
+    const rasterBinGroupSizeEl = document.getElementById('render-mt-raster-bin-group-size');
     const mergeWorkersEl = document.getElementById('render-mt-merge-workers');
     const finalizeWorkersEl = document.getElementById('render-mt-finalize-workers');
     const assocEl = document.getElementById('render-mt-save-associated-palette');
@@ -6066,6 +6109,18 @@ function _initRenderMtPopup() {
             _renderRenderMtPopup();
         });
     }
+    if (pixelBinFragmentModeEl) {
+        pixelBinFragmentModeEl.addEventListener('change', (ev) => {
+            _renderMtPopupState.pixelBinFragmentMode = _normalizePixelBinFragmentMode(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
+    if (rasterBinGroupSizeEl) {
+        rasterBinGroupSizeEl.addEventListener('input', (ev) => {
+            _renderMtPopupState.rasterBinGroupSize = _normalizeRasterBinGroupSize(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
     if (mergeWorkersEl) {
         mergeWorkersEl.addEventListener('input', (ev) => {
             _renderMtPopupState.mergeWorkers = _clampRenderMtMergeWorkers(ev.target.value);
@@ -6096,6 +6151,8 @@ function _initRenderMtPopup() {
                 const histRetries = _clampRenderMtRetries(document.getElementById('render-mt-hist-retries').value);
                 const rasterInputMode = _normalizeRasterInputMode(document.getElementById('render-mt-raster-input-mode').value);
                 const rasterRetries = _clampRenderMtRetries(document.getElementById('render-mt-raster-retries').value);
+                const pixelBinFragmentMode = _normalizePixelBinFragmentMode(document.getElementById('render-mt-pixel-bin-fragment-mode').value);
+                const rasterBinGroupSize = _normalizeRasterBinGroupSize(document.getElementById('render-mt-raster-bin-group-size').value);
                 const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('render-mt-merge-workers').value);
                 const finalizeWorkers = _clampRenderMtFinalizeWorkers(document.getElementById('render-mt-finalize-workers').value);
                 const saveAssociatedPalette = !!document.getElementById('render-mt-save-associated-palette').checked;
@@ -6105,11 +6162,13 @@ function _initRenderMtPopup() {
                 _renderMtPopupState.histRetries = histRetries;
                 _renderMtPopupState.rasterInputMode = rasterInputMode;
                 _renderMtPopupState.rasterRetries = rasterRetries;
+                _renderMtPopupState.pixelBinFragmentMode = pixelBinFragmentMode;
+                _renderMtPopupState.rasterBinGroupSize = rasterBinGroupSize;
                 _renderMtPopupState.mergeWorkers = mergeWorkers;
                 _renderMtPopupState.finalizeWorkers = finalizeWorkers;
                 _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
                 _closeRenderMtPopup();
-                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, mergeWorkers, finalizeWorkers, saveAssociatedPalette });
+                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, pixelBinFragmentMode, rasterBinGroupSize, mergeWorkers, finalizeWorkers, saveAssociatedPalette });
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = btnText;
@@ -6131,6 +6190,8 @@ function _initRenderMtPopup() {
             const histRetries = _clampRenderMtRetries(document.getElementById('render-mt-hist-retries').value);
             const rasterInputMode = _normalizeRasterInputMode(document.getElementById('render-mt-raster-input-mode').value);
             const rasterRetries = _clampRenderMtRetries(document.getElementById('render-mt-raster-retries').value);
+            const pixelBinFragmentMode = _normalizePixelBinFragmentMode(document.getElementById('render-mt-pixel-bin-fragment-mode').value);
+            const rasterBinGroupSize = _normalizeRasterBinGroupSize(document.getElementById('render-mt-raster-bin-group-size').value);
             const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('render-mt-merge-workers').value);
             const finalizeWorkers = _clampRenderMtFinalizeWorkers(document.getElementById('render-mt-finalize-workers').value);
             const saveAssociatedPalette = !!document.getElementById('render-mt-save-associated-palette').checked;
@@ -6140,11 +6201,13 @@ function _initRenderMtPopup() {
             _renderMtPopupState.histRetries = histRetries;
             _renderMtPopupState.rasterInputMode = rasterInputMode;
             _renderMtPopupState.rasterRetries = rasterRetries;
+            _renderMtPopupState.pixelBinFragmentMode = pixelBinFragmentMode;
+            _renderMtPopupState.rasterBinGroupSize = rasterBinGroupSize;
             _renderMtPopupState.mergeWorkers = mergeWorkers;
             _renderMtPopupState.finalizeWorkers = finalizeWorkers;
             _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
             _closeRenderMtPopup();
-            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, mergeWorkers, finalizeWorkers, saveAssociatedPalette });
+            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, pixelBinFragmentMode, rasterBinGroupSize, mergeWorkers, finalizeWorkers, saveAssociatedPalette });
         }
     });
 }
@@ -8947,6 +9010,16 @@ async function runRasterPipelineMT(threadConfig = null) {
                 ? threadConfig.rasterRetries
                 : _renderMtPopupState.rasterRetries
         );
+        const pixelBinFragmentMode = _normalizePixelBinFragmentMode(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.pixelBinFragmentMode != null
+                ? threadConfig.pixelBinFragmentMode
+                : _renderMtPopupState.pixelBinFragmentMode
+        );
+        const rasterBinGroupSize = _normalizeRasterBinGroupSize(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.rasterBinGroupSize != null
+                ? threadConfig.rasterBinGroupSize
+                : _renderMtPopupState.rasterBinGroupSize
+        );
         const mergeWorkers = _clampRenderMtMergeWorkers(
             threadConfig && typeof threadConfig === 'object' && threadConfig.mergeWorkers != null
                 ? threadConfig.mergeWorkers
@@ -8964,15 +9037,20 @@ async function runRasterPipelineMT(threadConfig = null) {
         );
         const relevantSolveScoreThreads = renderColorMode === 'solve_score' ? solveScoreThreads : 1;
         const relevantMergeWorkers = renderColorMode === 'solve_score' ? mergeWorkers : 1;
+        const binsLabel = pixelBinFragmentMode === 'dense_grouped'
+            ? `dense_grouped${rasterBinGroupSize === '' ? '' : ` group=${rasterBinGroupSize}`}`
+            : 'sparse_chunks';
         const mtMsg = renderColorMode === 'solve_score'
-            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, hist retries=${histRetries}, merge workers=${relevantMergeWorkers}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}...`
-            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}...`;
+            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, hist retries=${histRetries}, merge workers=${relevantMergeWorkers}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, bin fragments=${binsLabel}, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}...`
+            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, bin fragments=${binsLabel}, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}...`;
         log(mtMsg, 'ok', 'render-log');
         await _launchRenderOrchestrator('color', {
             raster_engine: 'mt',
             raster_mt_threads: rasterThreads,
             raster_input_mode: rasterInputMode,
             raster_sectioned_retries: rasterRetries,
+            pixel_bin_fragment_mode: pixelBinFragmentMode,
+            raster_bin_group_size: rasterBinGroupSize,
             solve_score_threads: relevantSolveScoreThreads,
             solve_score_hist_input_mode: histInputMode,
             solve_score_hist_retries: histRetries,
@@ -9402,6 +9480,57 @@ function _aggregateRasterPerf(results) {
         acc.roots_clipped += Number(row.roots_clipped) || 0;
         acc.tiles_uploaded += Number(row.tiles_uploaded) || 0;
         acc.pixel_bin_tiles_uploaded += Number(row.pixel_bin_tiles_uploaded) || 0;
+        const rowPixelBinBytes = Number(row.pixel_bin_bytes_uploaded) || 0;
+        acc.pixel_bin_bytes_uploaded += rowPixelBinBytes;
+        if (!acc.pixel_bin_fragment_mode && row.pixel_bin_fragment_mode) acc.pixel_bin_fragment_mode = String(row.pixel_bin_fragment_mode);
+        const rowSparseBytesIn = Number(row.pixel_bin_sparse_bytes_in) || 0;
+        acc.pixel_bin_sparse_bytes_in += rowSparseBytesIn;
+        acc.pixel_bin_sparse_files_in += Number(row.pixel_bin_sparse_files_in) || 0;
+        acc.pixel_bin_dense_bytes_if_full_tiles += Number(row.pixel_bin_dense_bytes_if_full_tiles) || 0;
+        const tileBytes = _normalizePixelBinTileBytes(row.pixel_bin_tile_bytes);
+        if (tileBytes.length) {
+            if (rowPixelBinBytes <= 0) {
+                acc.pixel_bin_bytes_uploaded += tileBytes.reduce((sum, item) => sum + (Number(item.bytes) || 0), 0);
+            }
+            const chunkIdxRaw = row.chunk_idx != null ? row.chunk_idx : row.stripe_idx;
+            const chunkIdx = Number.isFinite(Number(chunkIdxRaw)) ? Number(chunkIdxRaw) : acc.chunks - 1;
+            acc.pixel_bin_chunks.push({ chunk_idx: chunkIdx, tiles: tileBytes });
+            const denseGroupedRow = String(row.pixel_bin_fragment_mode || '').toLowerCase() === 'dense_grouped';
+            for (const item of tileBytes) {
+                const tileIdx = Number(item.tile_idx);
+                const sparseBytes = denseGroupedRow ? (Number(item.sparse_bytes_in) || 0) : (Number(item.bytes) || 0);
+                const denseBytes = denseGroupedRow ? (Number(item.bytes) || Number(item.dense_bytes) || 0) : (Number(item.dense_bytes) || 0);
+                if (denseGroupedRow && sparseBytes > 0 && rowSparseBytesIn <= 0) {
+                    acc.pixel_bin_sparse_bytes_in += sparseBytes;
+                }
+                if (!acc.pixel_bin_tiles[tileIdx]) {
+                    acc.pixel_bin_tiles[tileIdx] = {
+                        tile_idx: tileIdx,
+                        files: 0,
+                        sparse_bytes: 0,
+                        dense_bytes: denseBytes,
+                        max_sparse_bytes: 0,
+                        max_chunk_idx: chunkIdx,
+                    };
+                }
+                const tile = acc.pixel_bin_tiles[tileIdx];
+                tile.files += 1;
+                tile.sparse_bytes += sparseBytes;
+                if (denseBytes > 0) tile.dense_bytes = denseBytes;
+                if (sparseBytes > tile.max_sparse_bytes) {
+                    tile.max_sparse_bytes = sparseBytes;
+                    tile.max_chunk_idx = chunkIdx;
+                }
+                if (sparseBytes > acc.pixel_bin_max_file_bytes) {
+                    acc.pixel_bin_max_file_bytes = sparseBytes;
+                    acc.pixel_bin_max_file = { chunk_idx: chunkIdx, tile_idx: tileIdx, bytes: sparseBytes };
+                }
+            }
+        }
+        acc.pix_tiles_skipped += Number(row.pix_tiles_skipped) || 0;
+        if (!acc.rgb_source && row.rgb_source) acc.rgb_source = String(row.rgb_source);
+        if (row.pixel_bins_drive_rgb === true || String(row.pixel_bins_drive_rgb || '').toLowerCase() === 'true') acc.pixel_bins_drive_rgb = true;
+        if (!acc.pixel_bin_fragment_mode && row.pixel_bin_fragment_mode) acc.pixel_bin_fragment_mode = String(row.pixel_bin_fragment_mode);
         return acc;
     }, {
         engine: '',
@@ -9416,7 +9545,98 @@ function _aggregateRasterPerf(results) {
         roots_clipped: 0,
         tiles_uploaded: 0,
         pixel_bin_tiles_uploaded: 0,
+        pixel_bin_bytes_uploaded: 0,
+        pixel_bin_dense_bytes_if_full_tiles: 0,
+        pixel_bin_fragment_mode: '',
+        pixel_bin_sparse_bytes_in: 0,
+        pixel_bin_sparse_files_in: 0,
+        pixel_bin_chunks: [],
+        pixel_bin_tiles: {},
+        pixel_bin_max_file_bytes: 0,
+        pixel_bin_max_file: null,
+        pix_tiles_skipped: 0,
+        rgb_source: '',
+        pixel_bins_drive_rgb: false,
     });
+}
+
+function _normalizePixelBinTileBytes(value) {
+    if (!Array.isArray(value)) return [];
+    const out = [];
+    for (const item of value) {
+        if (Array.isArray(item)) {
+            if (item.length >= 2) {
+                out.push({
+                    tile_idx: Number(item[0]),
+                    bytes: Number(item[1]) || 0,
+                    dense_bytes: Number(item[2]) || 0,
+                    sparse_bytes_in: Number(item[3]) || 0,
+                });
+            }
+        } else if (item && typeof item === 'object') {
+            out.push({
+                tile_idx: Number(item.tile_idx),
+                bytes: Number(item.bytes) || 0,
+                dense_bytes: Number(item.dense_bytes) || 0,
+                sparse_bytes_in: Number(item.sparse_bytes_in) || 0,
+            });
+        }
+    }
+    return out.filter(item => Number.isFinite(item.tile_idx) && item.tile_idx >= 0 && item.bytes > 0);
+}
+
+function _estimatePixelBinGrouping(perf, groupSizes = [5, 10, 25]) {
+    if (!perf || !Array.isArray(perf.pixel_bin_chunks) || !perf.pixel_bin_chunks.length) return [];
+    const chunks = perf.pixel_bin_chunks
+        .slice()
+        .sort((a, b) => (Number(a.chunk_idx) || 0) - (Number(b.chunk_idx) || 0));
+    const estimates = [];
+    for (const groupSize of groupSizes) {
+        const size = Math.max(1, Number(groupSize) || 1);
+        let groupedSparseFiles = 0;
+        let groupedSparseBytes = 0;
+        let groupedDenseFiles = 0;
+        let groupedDenseBytes = 0;
+        for (let start = 0; start < chunks.length; start += size) {
+            const tileMap = new Map();
+            for (const chunk of chunks.slice(start, start + size)) {
+                for (const tile of chunk.tiles || []) {
+                    const tileIdx = Number(tile.tile_idx);
+                    if (!Number.isFinite(tileIdx)) continue;
+                    const current = tileMap.get(tileIdx) || { sparse_bytes: 0, dense_bytes: 0 };
+                    current.sparse_bytes += Number(tile.bytes) || 0;
+                    current.dense_bytes = Math.max(current.dense_bytes, Number(tile.dense_bytes) || 0);
+                    tileMap.set(tileIdx, current);
+                }
+            }
+            groupedSparseFiles += tileMap.size;
+            groupedDenseFiles += tileMap.size;
+            for (const tile of tileMap.values()) {
+                groupedSparseBytes += tile.sparse_bytes;
+                groupedDenseBytes += tile.dense_bytes;
+            }
+        }
+        estimates.push({
+            group_size: size,
+            group_count: Math.ceil(chunks.length / size),
+            sparse_files: groupedSparseFiles,
+            sparse_bytes: groupedSparseBytes,
+            dense_files: groupedDenseFiles,
+            dense_bytes: groupedDenseBytes,
+        });
+    }
+    return estimates;
+}
+
+function _formatPixelBinTileSummary(perf, maxTiles = 12) {
+    const tiles = Object.values((perf && perf.pixel_bin_tiles) || {})
+        .sort((a, b) => Number(a.tile_idx) - Number(b.tile_idx));
+    if (!tiles.length) return '';
+    const parts = tiles.slice(0, maxTiles).map(tile => {
+        return `t${String(tile.tile_idx).padStart(2, '0')}=${_fmtSize(tile.sparse_bytes)}/${tile.files}`;
+    });
+    if (tiles.length > maxTiles) parts.push(`+${tiles.length - maxTiles} more`);
+    return parts.join(' ');
 }
 
 function _aggregateSolveScorePhasePerf(results) {
@@ -9435,17 +9655,64 @@ function _aggregateSolveScorePhasePerf(results) {
 }
 
 function _aggregateFinalizePerf(results) {
-    const rows = Array.isArray(results) ? results.filter(r => r && (r.read_ms != null || r.assemble_ms != null || r.upload_ms != null)) : [];
+    const rows = Array.isArray(results) ? results.filter(r => r && (
+        r.read_ms != null || r.read_progress_ms != null || r.assemble_ms != null || r.upload_ms != null ||
+        r.pix_bytes != null || r.pix_files_piped != null || r.raw_expected_size != null || r.workers != null
+    )) : [];
     if (!rows.length) return null;
     return rows.reduce((acc, row) => {
         acc.tasks += 1;
-        acc.read_ms += Number(row.read_ms) || 0;
+        acc.read_ms += Number(row.read_ms != null ? row.read_ms : row.read_progress_ms) || 0;
         acc.assemble_ms += Number(row.assemble_ms) || 0;
         acc.upload_ms += Number(row.upload_ms) || 0;
-        acc.pix_files += Number(row.pix_files) || 0;
+        acc.workers = Math.max(acc.workers, Number(row.workers) || 0);
+        if (!acc.rgb_source && row.rgb_source) acc.rgb_source = String(row.rgb_source);
+        if (row.pixel_bins_drive_rgb === true || String(row.pixel_bins_drive_rgb || '').toLowerCase() === 'true') acc.pixel_bins_drive_rgb = true;
+        if (!acc.access_mode && row.access_mode) acc.access_mode = String(row.access_mode);
+        if (!acc.assemble_mode && row.assemble_mode) acc.assemble_mode = String(row.assemble_mode);
+        if (row.tile_w != null && row.tile_h != null) acc.tile_shape = `${row.tile_w}x${row.tile_h}`;
+        acc.tile_pixels += Number(row.tile_pixels) || 0;
+        acc.raw_expected_size += Number(row.raw_expected_size) || 0;
+        acc.raw_size += Number(row.raw_size) || 0;
+        acc.n_chunks += Number(row.n_chunks) || 0;
+        acc.pix_files += Number(row.pix_files != null ? row.pix_files : row.pix_files_piped) || 0;
+        acc.pix_files_seen += Number(row.pix_files_seen) || 0;
+        acc.pix_files_missing += Number(row.pix_files_missing != null ? row.pix_files_missing : row.missing_pix_files) || 0;
+        acc.pix_bytes += Number(row.pix_bytes) || 0;
         acc.pixel_bins_ms += Number(row.pixel_bins_ms) || 0;
+        acc.pixel_bin_files += Number(row.pixel_bin_files != null ? row.pixel_bin_files : row.pixel_bin_files_piped) || 0;
+        acc.pixel_bin_files_seen += Number(row.pixel_bin_files_seen) || 0;
+        acc.pixel_bin_files_missing += Number(row.pixel_bin_files_missing) || 0;
+        acc.pixel_bin_bytes += Number(row.pixel_bin_bytes) || 0;
+        acc.pixel_bin_size += Number(row.pixel_bin_size) || 0;
         return acc;
-    }, { tasks: 0, read_ms: 0, assemble_ms: 0, upload_ms: 0, pix_files: 0, pixel_bins_ms: 0 });
+    }, {
+        tasks: 0,
+        read_ms: 0,
+        assemble_ms: 0,
+        upload_ms: 0,
+        workers: 0,
+        rgb_source: '',
+        pixel_bins_drive_rgb: false,
+        pixel_bin_fragment_mode: '',
+        access_mode: '',
+        assemble_mode: '',
+        tile_shape: '',
+        tile_pixels: 0,
+        raw_expected_size: 0,
+        raw_size: 0,
+        n_chunks: 0,
+        pix_files: 0,
+        pix_files_seen: 0,
+        pix_files_missing: 0,
+        pix_bytes: 0,
+        pixel_bins_ms: 0,
+        pixel_bin_files: 0,
+        pixel_bin_files_seen: 0,
+        pixel_bin_files_missing: 0,
+        pixel_bin_bytes: 0,
+        pixel_bin_size: 0,
+    });
 }
 
 function _aggregateEncodePerf(results) {
@@ -9485,6 +9752,9 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsUs(perf.download_us)} + native ${_fmtSecondsUs(perf.native_us)} + up ${_fmtSecondsUs(perf.upload_us)} · threads=${perf.threads}`;
         if (perf.input_mode) msg += ` · input=${perf.input_mode}`;
         if (perf.input_mode === 'sectioned') msg += ` · retries=${perf.retries}`;
+        if (perf.rgb_source) msg += ` · rgb=${perf.rgb_source}`;
+        if (perf.pix_tiles_skipped > 0) msg += ` · skipped_pix=${perf.pix_tiles_skipped}`;
+        if (perf.pixel_bin_bytes_uploaded > 0) msg += ` · pbx=${_fmtSize(perf.pixel_bin_bytes_uploaded)}`;
         return msg;
     }
     if (phase === 'associated_palette_chunk') {
@@ -9514,6 +9784,23 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         if (!perf) return `wall=${_fmtSecondsMs(wallMs)}`;
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=read ${_fmtSecondsMs(perf.read_ms)} + assemble ${_fmtSecondsMs(perf.assemble_ms)} + up ${_fmtSecondsMs(perf.upload_ms)}`;
         if (perf.pixel_bins_ms > 0) msg += ` + pbx ${_fmtSecondsMs(perf.pixel_bins_ms)}`;
+        if (perf.workers > 0) msg += ` · workers=${perf.workers}`;
+        if (perf.rgb_source) msg += ` · rgb=${perf.rgb_source}`;
+        if (perf.pixel_bin_fragment_mode) msg += ` · bins=${perf.pixel_bin_fragment_mode}`;
+        if (perf.access_mode) msg += ` · access=${perf.access_mode}`;
+        if (perf.assemble_mode) msg += ` · assemble=${perf.assemble_mode}`;
+        if (perf.tile_shape) msg += ` · tile=${perf.tile_shape}`;
+        const fragmentCount = perf.pixel_bins_drive_rgb
+            ? (perf.pixel_bin_files || perf.pixel_bin_files_seen)
+            : (perf.pix_files || perf.pix_files_seen);
+        if (perf.n_chunks > 0) msg += ` · fragments=${fragmentCount}/${perf.n_chunks}`;
+        if (perf.pix_files_missing > 0) msg += ` missing=${perf.pix_files_missing}`;
+        if (perf.pix_bytes > 0) msg += ` · pix=${_fmtSize(perf.pix_bytes)}`;
+        const rawBytes = perf.raw_size || perf.raw_expected_size;
+        if (rawBytes > 0) msg += ` · raw=${_fmtSize(rawBytes)}`;
+        if (perf.pixel_bin_bytes > 0 || perf.pixel_bin_size > 0) {
+            msg += ` · pbx=${_fmtSize(perf.pixel_bin_bytes || perf.pixel_bin_size)}`;
+        }
         return msg;
     }
     if (phase === 'encode') {
@@ -9529,6 +9816,21 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         return msg;
     }
     return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
+}
+
+function _renderPhaseProgressSignature(phase, results) {
+    if (phase !== 'finalize') return '';
+    const perf = _aggregateFinalizePerf(results);
+    if (!perf) return '';
+    return [
+        perf.pix_files || perf.pix_files_seen || 0,
+        perf.pix_bytes || 0,
+        perf.pixel_bin_files || perf.pixel_bin_files_seen || 0,
+        perf.pixel_bin_bytes || 0,
+        perf.raw_size || 0,
+        perf.assemble_ms || 0,
+        perf.upload_ms || 0,
+    ].join(':');
 }
 
 function _updateRenderPhaseTracker(run, rd) {
@@ -9605,6 +9907,47 @@ async function _logRenderRasterPerf(run) {
         ];
         if (perf.pixel_bin_tiles_uploaded > 0) {
             lines.push(`  Pixel-bin files uploaded: ${perf.pixel_bin_tiles_uploaded}`);
+        }
+        if (perf.pixel_bin_bytes_uploaded > 0) {
+            const avgBytes = perf.pixel_bin_tiles_uploaded > 0 ? perf.pixel_bin_bytes_uploaded / perf.pixel_bin_tiles_uploaded : 0;
+            const maxFile = perf.pixel_bin_max_file || {};
+            const denseGrouped = String(perf.pixel_bin_fragment_mode || '').toLowerCase() === 'dense_grouped';
+            if (denseGrouped) {
+                lines.push(
+                    `  Pixel-bin dense group bytes uploaded: ${_fmtSize(perf.pixel_bin_bytes_uploaded)}`
+                    + ` (avg/file ${_fmtSize(avgBytes)}`
+                    + `)`
+                );
+                if (perf.pixel_bin_sparse_bytes_in > 0) {
+                    lines.push(`  Pixel-bin sparse bytes consumed before grouping: ${_fmtSize(perf.pixel_bin_sparse_bytes_in)}${perf.pixel_bin_sparse_files_in > 0 ? ` across ${perf.pixel_bin_sparse_files_in} files` : ''}`);
+                }
+            } else {
+                lines.push(
+                    `  Pixel-bin sparse bytes uploaded: ${_fmtSize(perf.pixel_bin_bytes_uploaded)}`
+                    + ` (avg/file ${_fmtSize(avgBytes)}`
+                    + (maxFile.bytes ? `, max chunk ${maxFile.chunk_idx} tile ${maxFile.tile_idx}: ${_fmtSize(maxFile.bytes)}` : '')
+                    + `)`
+                );
+            }
+            const tileSummary = _formatPixelBinTileSummary(perf);
+            if (tileSummary) {
+                lines.push(`  Pixel-bin ${denseGrouped ? 'sparse input bytes by tile' : 'sparse bytes by tile'}: ${tileSummary}`);
+            }
+            const estimates = _estimatePixelBinGrouping(perf);
+            if (!denseGrouped && estimates.length) {
+                lines.push(`  Pixel-bin grouping estimates (from current sparse .pbx output):`);
+                for (const est of estimates) {
+                    const denseRatio = perf.pixel_bin_bytes_uploaded > 0 ? est.dense_bytes / perf.pixel_bin_bytes_uploaded : 0;
+                    lines.push(
+                        `    group=${est.group_size}: sparse ${est.sparse_files} files / ${_fmtSize(est.sparse_bytes)}`
+                        + `; dense ${est.dense_files} files / ${_fmtSize(est.dense_bytes)}`
+                        + (denseRatio > 0 ? ` (${denseRatio.toFixed(2)}x current sparse bytes)` : '')
+                    );
+                }
+            }
+        }
+        if (perf.rgb_source || perf.pix_tiles_skipped > 0) {
+            lines.push(`  RGB source: ${perf.rgb_source || 'pix'}${perf.pix_tiles_skipped > 0 ? `; skipped .pix uploads: ${perf.pix_tiles_skipped}` : ''}`);
         }
         const msg = lines.join('\n');
         log(msg, '', 'render-log');
@@ -9853,7 +10196,8 @@ async function _pollActiveRenderRun() {
         }
 
         // Log phase transitions once
-        const phaseKey = String(phase) + '_' + done;
+        const progressSignature = _renderPhaseProgressSignature(phaseCode, subResults);
+        const phaseKey = String(phase) + '_' + done + (progressSignature ? '_' + progressSignature : '');
         if (phaseKey !== _lastLoggedPhase) {
             _lastLoggedPhase = phaseKey;
             let logMsg = phase;

@@ -35,6 +35,8 @@ grep -q 'id="render-mt-merge-workers"' "$HTML" || { echo "FATAL: render MT merge
 grep -q 'id="render-mt-finalize-workers"' "$HTML" || { echo "FATAL: render MT finalize workers input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-hist-retries"' "$HTML" || { echo "FATAL: render MT hist retries input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-raster-retries"' "$HTML" || { echo "FATAL: render MT raster retries input missing from index.html"; exit 1; }
+grep -q 'id="render-mt-pixel-bin-fragment-mode"' "$HTML" || { echo "FATAL: render MT pixel-bin fragment mode selector missing from index.html"; exit 1; }
+grep -q 'id="render-mt-raster-bin-group-size"' "$HTML" || { echo "FATAL: render MT raster bin group-size input missing from index.html"; exit 1; }
 grep -q 'id="compute-mt-popup-overlay"' "$HTML" || { echo "FATAL: compute MT popup missing from index.html"; exit 1; }
 grep -q 'id="compute-mt-param-gen-threads"' "$HTML" || { echo "FATAL: compute MT param thread input missing from index.html"; exit 1; }
 grep -q 'id="compute-mt-coeffgen-threads"' "$HTML" || { echo "FATAL: compute MT coeffgen thread input missing from index.html"; exit 1; }
@@ -413,6 +415,8 @@ const renderEls = {
     'render-mt-hist-retries': { value: '2' },
     'render-mt-raster-input-mode': { value: 'tmpfile' },
     'render-mt-raster-retries': { value: '2' },
+    'render-mt-pixel-bin-fragment-mode': { value: 'sparse_chunks' },
+    'render-mt-raster-bin-group-size': { value: '' },
     'render-mt-merge-workers': { value: '16' },
     'render-mt-finalize-workers': { value: '16' },
     'render-mt-associated-row': {},
@@ -949,7 +953,7 @@ async function testPipeline(name, call) {
     {
         const logs = vm.runInContext('_pipelineDispatchLogs', ctx);
         const payloads = vm.runInContext('_renderOrchestratorPayloads', ctx);
-        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, hist retries=4, merge workers=12, raster input=tmpfile, raster retries=5, raster threads=6, finalize workers=18, associated palette=no')) : null;
+        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, hist retries=4, merge workers=12, raster input=tmpfile, raster retries=5, raster threads=6, bin fragments=sparse_chunks, finalize workers=18, associated palette=no')) : null;
         const orchHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render: dispatching color orchestrator')) : null;
         const mtPayload = Array.isArray(payloads) ? payloads.find((row) => row && row.params && row.params.raster_engine === 'mt') : null;
         if (!mtHit || mtHit.cls !== 'ok' || !orchHit || orchHit.cls !== 'ok' || !mtPayload ||
@@ -959,6 +963,8 @@ async function testPipeline(name, call) {
             mtPayload.params.solve_score_merge_workers !== 12 ||
             mtPayload.params.raster_input_mode !== 'tmpfile' ||
             mtPayload.params.raster_sectioned_retries !== 5 ||
+            mtPayload.params.pixel_bin_fragment_mode !== 'sparse_chunks' ||
+            mtPayload.params.raster_bin_group_size !== '' ||
             mtPayload.params.finalize_workers !== 18 ||
             mtPayload.params.save_associated_palette !== false) {
             console.error('FATAL: runRasterPipelineMT should log green MT + orchestrator dispatch and pass thread counts, got logs=' + JSON.stringify(logs) + ' payloads=' + JSON.stringify(payloads));
@@ -981,6 +987,7 @@ async function testPipeline(name, call) {
     if (!(ctx._elements['render-mt-popup-summary'].textContent || '').includes('hist retries=')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('raster retries=')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('merge workers=')
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('bins=sparse chunks')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('finalize workers=')) {
         console.error('FATAL: Generate-MT popup should show thread summary');
         process.exit(1);
@@ -1007,6 +1014,14 @@ async function testPipeline(name, call) {
     }
     if (ctx._elements['render-mt-raster-retries'].disabled !== true) {
         console.error('FATAL: Generate-MT popup should disable raster retries when raster input is tmpfile');
+        process.exit(1);
+    }
+    if (ctx._elements['render-mt-pixel-bin-fragment-mode'].disabled === true) {
+        console.error('FATAL: Generate-MT popup should allow selecting pixel-bin fragment mode');
+        process.exit(1);
+    }
+    if (ctx._elements['render-mt-raster-bin-group-size'].disabled !== true) {
+        console.error('FATAL: Generate-MT popup should disable bin group size until dense grouped mode is selected');
         process.exit(1);
     }
     if (ctx._elements['render-mt-associated-row'].style.display === 'none') {
@@ -4363,7 +4378,7 @@ async function testPipeline(name, call) {
             refreshRenderArtifacts = async function() {};
         `, ctx);
         ctx._elements['btn-render-generate-mt'] = ctx._mkEl();
-        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", histRetries: 4, rasterInputMode: "sectioned", rasterRetries: 7, mergeWorkers: 14, finalizeWorkers: 22, saveAssociatedPalette: true }); })()', ctx);
+        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", histRetries: 4, rasterInputMode: "sectioned", rasterRetries: 7, pixelBinFragmentMode: "dense_grouped", rasterBinGroupSize: 5, mergeWorkers: 14, finalizeWorkers: 22, saveAssociatedPalette: true }); })()', ctx);
         orchDispatched = vm.runInContext('_orchDispatched', ctx);
         if (!orchDispatched) { console.error('FATAL: runRasterPipelineMT did not dispatch orchestrator'); process.exit(1); }
         if (orchDispatched.params.raster_engine !== 'mt') { console.error('FATAL: runRasterPipelineMT should request mt raster engine, got ' + orchDispatched.params.raster_engine); process.exit(1); }
@@ -4375,9 +4390,11 @@ async function testPipeline(name, call) {
         if (orchDispatched.params.finalize_workers !== 22) { console.error('FATAL: runRasterPipelineMT should pass finalize_workers=22, got ' + orchDispatched.params.finalize_workers); process.exit(1); }
         if (orchDispatched.params.raster_input_mode !== 'sectioned') { console.error('FATAL: runRasterPipelineMT should pass raster_input_mode=sectioned, got ' + orchDispatched.params.raster_input_mode); process.exit(1); }
         if (orchDispatched.params.raster_sectioned_retries !== 7) { console.error('FATAL: runRasterPipelineMT should pass raster_sectioned_retries=7, got ' + orchDispatched.params.raster_sectioned_retries); process.exit(1); }
+        if (orchDispatched.params.pixel_bin_fragment_mode !== 'dense_grouped') { console.error('FATAL: runRasterPipelineMT should pass pixel_bin_fragment_mode=dense_grouped, got ' + orchDispatched.params.pixel_bin_fragment_mode); process.exit(1); }
+        if (orchDispatched.params.raster_bin_group_size !== 5) { console.error('FATAL: runRasterPipelineMT should pass raster_bin_group_size=5, got ' + orchDispatched.params.raster_bin_group_size); process.exit(1); }
         if (orchDispatched.params.save_associated_palette !== true) { console.error('FATAL: runRasterPipelineMT should pass save_associated_palette=true when selected, got ' + orchDispatched.params.save_associated_palette); process.exit(1); }
         if (orchDispatched.mode !== 'color') { console.error('FATAL: mode should be color, got ' + orchDispatched.mode); process.exit(1); }
-        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, hist=sectioned, hist_retries=4, merge=14, finalize=22, raster_input=sectioned, raster_retries=7, raster=6, associated_palette=yes)');
+        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, hist=sectioned, hist_retries=4, merge=14, finalize=22, raster_input=sectioned, raster_retries=7, raster=6, bins=dense_grouped/5, associated_palette=yes)');
     }
 
     // 12b: runBilevelPipeline dispatches one render_orchestrator job
@@ -5170,6 +5187,39 @@ async function testPipeline(name, call) {
         vm.runInContext('_activeRenderRun = null; _renderPhaseTracker = null;', ctx);
     }
 
+    // 12l2: finalize progress summary exposes work size, access mode, workers, and bytes
+    {
+	        const summary = vm.runInContext(`_renderPhasePerfSummary('finalize', [{
+	            read_progress_ms: 2200,
+	            workers: 16,
+	            rgb_source: 'pixel_bins',
+	            pixel_bins_drive_rgb: true,
+	            access_mode: 's3_prefetch_stdin',
+	            assemble_mode: 'pixel_bins_render',
+	            tile_w: 4096,
+	            tile_h: 4096,
+	            n_chunks: 100,
+	            raw_expected_size: 50331660,
+	            pixel_bin_files_piped: 40,
+	            pixel_bin_bytes: 123000000
+	        }], 5000)`, ctx);
+	        if (!summary.includes('workers=16') || !summary.includes('rgb=pixel_bins') || !summary.includes('access=s3_prefetch_stdin') || !summary.includes('assemble=pixel_bins_render')) {
+	            console.error('FATAL: finalize summary should include workers/access/assemble mode, got ' + summary);
+	            process.exit(1);
+	        }
+	        if (!summary.includes('tile=4096x4096') || !summary.includes('fragments=40/100') || summary.includes('pix=') || !summary.includes('raw=') || !summary.includes('pbx=')) {
+	            console.error('FATAL: finalize summary should include tile/fragments/byte sizes, got ' + summary);
+	            process.exit(1);
+	        }
+        const sigA = vm.runInContext(`_renderPhaseProgressSignature('finalize', [{pix_files_piped: 1, pix_bytes: 8}])`, ctx);
+        const sigB = vm.runInContext(`_renderPhaseProgressSignature('finalize', [{pix_files_piped: 2, pix_bytes: 16}])`, ctx);
+        if (sigA === sigB) {
+            console.error('FATAL: finalize progress signature should change when read progress advances');
+            process.exit(1);
+        }
+        console.log('  12l2 finalize progress logs workers/access/work sizes: OK');
+    }
+
     // 12m: color completion logs raster perf summary with engine + threads in seconds
     {
         ctx._elements['render-log'] = ctx._mkEl();
@@ -5196,10 +5246,10 @@ async function testPipeline(name, call) {
                         done: 2,
                         complete: false,
                         results: [
-                            { engine: 'mt', threads: 2, input_mode: 'sectioned', download_us: 1200, native_us: 3400, upload_us: 800, roots_plotted: 50, roots_clipped: 2, tiles_uploaded: 3, pixel_bin_tiles_uploaded: 3 },
-                            { engine: 'mt', threads: 2, input_mode: 'sectioned', download_us: 1400, native_us: 3600, upload_us: 900, roots_plotted: 60, roots_clipped: 1, tiles_uploaded: 4, pixel_bin_tiles_uploaded: 4 }
-                        ]
-                    };
+	                            { engine: 'mt', threads: 2, input_mode: 'sectioned', download_us: 1200, native_us: 3400, upload_us: 800, roots_plotted: 50, roots_clipped: 2, tiles_uploaded: 0, pixel_bin_tiles_uploaded: 3, pixel_bin_bytes_uploaded: 6000, pixel_bin_tile_bytes: [{tile_idx:0, bytes:1000, dense_bytes:262144}, {tile_idx:1, bytes:2000, dense_bytes:262144}, {tile_idx:2, bytes:3000, dense_bytes:262144}], pixel_bins_drive_rgb: true, rgb_source: 'pixel_bins', pix_tiles_skipped: 3, chunk_idx: 0 },
+	                            { engine: 'mt', threads: 2, input_mode: 'sectioned', download_us: 1400, native_us: 3600, upload_us: 900, roots_plotted: 60, roots_clipped: 1, tiles_uploaded: 0, pixel_bin_tiles_uploaded: 4, pixel_bin_bytes_uploaded: 11500, pixel_bin_tile_bytes: [{tile_idx:0, bytes:1500, dense_bytes:262144}, {tile_idx:1, bytes:2500, dense_bytes:262144}, {tile_idx:2, bytes:3000, dense_bytes:262144}, {tile_idx:3, bytes:4500, dense_bytes:262144}], pixel_bins_drive_rgb: true, rgb_source: 'pixel_bins', pix_tiles_skipped: 4, chunk_idx: 1 }
+	                        ]
+	                    };
                 }
                 return {};
             };
@@ -5209,7 +5259,9 @@ async function testPipeline(name, call) {
         if (!logText.includes('Raster performance: engine=mt threads=2 input=sectioned chunks=2')) { console.error('FATAL: color completion should log raster perf engine/threads/input/chunks, got ' + logText); process.exit(1); }
         if (!logText.includes('wall=')) { console.error('FATAL: raster perf log should include wall time in seconds, got ' + logText); process.exit(1); }
         if (!logText.includes('Download time: 0.0s') || !logText.includes('Native raster time: 0.0s') || !logText.includes('Upload time: 0.0s')) { console.error('FATAL: raster perf log should spell out timing labels, got ' + logText); process.exit(1); }
-        if (!logText.includes('Emitted root hits: 110') || !logText.includes('Clipped roots: 3') || !logText.includes('Tile files uploaded: 7') || !logText.includes('Pixel-bin files uploaded: 7')) { console.error('FATAL: raster perf log should aggregate worker metrics with full labels, got ' + logText); process.exit(1); }
+	        if (!logText.includes('Emitted root hits: 110') || !logText.includes('Clipped roots: 3') || !logText.includes('Tile files uploaded: 0') || !logText.includes('Pixel-bin files uploaded: 7')) { console.error('FATAL: raster perf log should aggregate worker metrics with full labels, got ' + logText); process.exit(1); }
+	        if (!logText.includes('Pixel-bin sparse bytes uploaded: 17 KB') || !logText.includes('Pixel-bin sparse bytes by tile:') || !logText.includes('Pixel-bin grouping estimates') || !logText.includes('group=5: sparse 4 files / 17 KB; dense 4 files / 1.0 MB')) { console.error('FATAL: raster perf log should include pixel-bin byte/grouping diagnostics, got ' + logText); process.exit(1); }
+	        if (!logText.includes('RGB source: pixel_bins; skipped .pix uploads: 7')) { console.error('FATAL: raster perf log should show bin-first RGB source and skipped .pix uploads, got ' + logText); process.exit(1); }
         if (!logText.includes('Render complete: color_perf (')) { console.error('FATAL: render completion log should include elapsed seconds, got ' + logText); process.exit(1); }
         console.log('  12m color completion logs raster perf summary: OK');
         vm.runInContext('_activeRenderRun = null; _renderPhaseTracker = null;', ctx);

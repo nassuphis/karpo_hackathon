@@ -1,5 +1,6 @@
 import json
 import os
+import struct
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
@@ -36,6 +37,39 @@ def _event(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+class _InPipe:
+    def __init__(self):
+        self.data = bytearray()
+
+    def write(self, chunk):
+        self.data.extend(chunk)
+
+    def close(self):
+        return None
+
+
+class _FakePixbinAssemblerProc:
+    def __init__(self, cmd):
+        self.cmd = cmd
+        self.stdin = _InPipe()
+        self.stderr = MagicMock(read=lambda: b"")
+
+    def wait(self, timeout=None):
+        out_arg = next(arg for arg in self.cmd if arg.startswith("--output="))
+        tile_w = int(next(arg for arg in self.cmd if arg.startswith("--tile_w=")).split("=", 1)[1])
+        tile_h = int(next(arg for arg in self.cmd if arg.startswith("--tile_h=")).split("=", 1)[1])
+        empty = int(next(arg for arg in self.cmd if arg.startswith("--empty=")).split("=", 1)[1])
+        tile = bytearray([empty] * (tile_w * tile_h))
+        data = bytes(self.stdin.data)
+        self.test_case.assertEqual(len(data) % 8, 0)
+        for pix_idx, bin_idx in struct.iter_unpack("<II", data):
+            if pix_idx < len(tile):
+                tile[pix_idx] = bin_idx if bin_idx <= 255 else empty
+        with open(out_arg.split("=", 1)[1], "wb") as fh:
+            fh.write(tile)
+        return 0
 
 
 class TestRasterMT(unittest.TestCase):
@@ -104,21 +138,95 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(body["input_mode"], "tmpfile")
         self.assertEqual(body["tiles_uploaded"], 1)
         self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
+        self.assertEqual(body["pixel_bin_bytes_uploaded"], 8)
+        self.assertEqual(body["pixel_bin_tile_bytes"], [{"tile_idx": 0, "bytes": 8, "dense_bytes": 512 * 512}])
+        self.assertEqual(body["pixel_bin_dense_bytes_if_full_tiles"], 512 * 512)
         self.assertEqual(body["roots_plotted"], 24)
         self.assertEqual(body["roots_clipped"], 3)
         self.assertEqual(mock_run.call_count, 1)
         self.assertEqual(uploads["renders/j/pix_chunk_0000_t0000.pix"], b"A" * 8)
         self.assertEqual(uploads["renders/j/pixbin_chunk_0000_t0000.pbx"], b"a" * 8)
         statuses = [call.args[2] for call in mock_report.call_args_list]
-        self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
+        self.assertEqual(statuses, ["started", "bin_downloaded_1/1", "rasterized_1/1", "rasterized", "done"])
         done_kwargs = mock_report.call_args_list[-1].kwargs
         self.assertEqual(done_kwargs["result_data"]["engine"], "mt")
         self.assertEqual(done_kwargs["result_data"]["threads"], 2)
         self.assertEqual(done_kwargs["result_data"]["input_mode"], "tmpfile")
+        self.assertEqual(done_kwargs["result_data"]["pixel_bin_bytes_uploaded"], 8)
         warned = {w["param"] for w in done_kwargs["result_data"]["contract_warnings"]}
         self.assertIn("raster_mt_threads", warned)
         self.assertIn("raster_input_mode", warned)
         self.assertIn("raster_sectioned_retries", warned)
+
+    @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.run")
+    @patch("handler_raster_mt.s3")
+    def test_pixel_bins_drive_rgb_mt_skips_pix_upload_and_requests_native_skip(self, mock_s3, mock_run, mock_report):
+        import handler_raster_mt as mod
+
+        uploads = {}
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/chunk_0.bin":
+                return {"Body": MagicMock(read=lambda: b"\x00" * 160)}
+            if key == "renders/j/solve_scores/crowding_bins.json":
+                payload = {
+                    "family": "solve_score",
+                    "metric": "crowding",
+                    "clip_quantile": 0.01,
+                    "omega": 4.0,
+                    "omega_enabled": False,
+                    "clip_lo": -1.0,
+                    "clip_hi": 2.0,
+                    "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                }
+                return {"Body": MagicMock(read=lambda: json.dumps(payload).encode())}
+            raise AssertionError(f"unexpected get_object key: {key}")
+
+        def upload_fileobj(fileobj, bucket, key):
+            uploads[key] = fileobj.read()
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.upload_fileobj.side_effect = upload_fileobj
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None):
+            self.assertIn("--pixel_bin_prefix=/tmp/pixbin", cmd)
+            self.assertIn("--skip_pix_output=1", cmd)
+            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
+                fh.write(b"b" * 8)
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({
+                    "threads": 2,
+                    "roots_plotted": 24,
+                    "roots_clipped": 3,
+                    "tiles_with_data": 1,
+                    "skip_pix_output": True,
+                }),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler(_event(pixel_bins_drive_rgb=True), None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["tiles_uploaded"], 0)
+        self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
+        self.assertEqual(body["pixel_bin_bytes_uploaded"], 8)
+        self.assertEqual(body["pixel_bin_tile_bytes"], [{"tile_idx": 0, "bytes": 8, "dense_bytes": 512 * 512}])
+        self.assertTrue(body["pixel_bins_drive_rgb"])
+        self.assertEqual(body["rgb_source"], "pixel_bins")
+        self.assertEqual(body["pix_tiles_skipped"], 1)
+        self.assertNotIn("renders/j/pix_chunk_0000_t0000.pix", uploads)
+        self.assertEqual(uploads["renders/j/pixbin_chunk_0000_t0000.pbx"], b"b" * 8)
+        done_data = mock_report.call_args_list[-1].kwargs["result_data"]
+        self.assertEqual(done_data["tiles_uploaded"], 0)
+        self.assertEqual(done_data["pix_tiles_skipped"], 1)
+        self.assertEqual(done_data["rgb_source"], "pixel_bins")
+        self.assertEqual(done_data["pixel_bin_bytes_uploaded"], 8)
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")
@@ -216,7 +324,7 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(seen_bins, [bytes([9, 8, 7, 6])])
         self.assertEqual(mock_run.call_count, 1)
         statuses = [call.args[2] for call in mock_report.call_args_list]
-        self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
+        self.assertEqual(statuses, ["started", "bin_downloaded_1/1", "rasterized_1/1", "rasterized", "done"])
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2", "AWS_LAMBDA_FUNCTION_MEMORY_SIZE": "10240"}, clear=False)
     @patch("handler_raster_mt.report_status")
@@ -277,7 +385,7 @@ class TestRasterMT(unittest.TestCase):
         mock_s3.head_object.assert_called_once_with(Bucket="polypaint", Key="renders/j/chunk_0.bin")
         mock_s3.generate_presigned_url.assert_called_once()
         statuses = [call.args[2] for call in mock_report.call_args_list]
-        self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
+        self.assertEqual(statuses, ["started", "bin_downloaded_1/1", "rasterized_1/1", "rasterized", "done"])
         done_kwargs = mock_report.call_args_list[-1].kwargs
         self.assertEqual(done_kwargs["result_data"]["input_mode"], "sectioned")
         self.assertEqual(done_kwargs["result_data"]["download_us"], 1200)
@@ -419,7 +527,7 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(body["threads"], 2)
         self.assertEqual(body["input_mode"], "sectioned")
         statuses = [call.args[2] for call in mock_report.call_args_list]
-        self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
+        self.assertEqual(statuses, ["started", "bin_downloaded_1/1", "rasterized_1/1", "rasterized", "done"])
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2", "AWS_LAMBDA_FUNCTION_MEMORY_SIZE": "10240"}, clear=False)
     @patch("handler_raster_mt.report_status")
@@ -492,7 +600,116 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(body["threads"], 2)
         self.assertEqual(body["input_mode"], "sectioned")
         statuses = [call.args[2] for call in mock_report.call_args_list]
-        self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
+        self.assertEqual(statuses, ["started", "bin_downloaded_1/1", "rasterized_1/1", "rasterized", "done"])
+
+    @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.Popen")
+    @patch("handler_raster_mt.subprocess.run")
+    @patch("handler_raster_mt.s3")
+    def test_dense_grouped_pixel_bins_runs_all_chunks_and_uploads_dense_group_tiles(self, mock_s3, mock_run, mock_popen, mock_report):
+        import handler_raster_mt as mod
+
+        uploads = {}
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key in ("renders/j/chunk_0.bin", "renders/j/chunk_1.bin"):
+                return {"Body": MagicMock(read=lambda: b"\x00" * 160)}
+            if key == "renders/j/solve_scores/crowding_bins.json":
+                payload = {
+                    "family": "solve_score",
+                    "metric": "crowding",
+                    "clip_quantile": 0.01,
+                    "omega": 4.0,
+                    "omega_enabled": False,
+                    "clip_lo": -1.0,
+                    "clip_hi": 2.0,
+                    "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                }
+                return {"Body": MagicMock(read=lambda: json.dumps(payload).encode())}
+            raise AssertionError(f"unexpected get_object key: {key}")
+
+        def upload_fileobj(fileobj, bucket, key):
+            uploads[key] = fileobj.read()
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None):
+            self.assertIn("--skip_pix_output=1", cmd)
+            bin_path = cmd[1]
+            with open(bin_path, "rb") as fh:
+                chunk_bytes = fh.read()
+            if chunk_bytes == b"\x00" * 160:
+                call_idx = len(mock_run.call_args_list)
+            else:
+                raise AssertionError("unexpected chunk bytes")
+            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
+                if call_idx == 1:
+                    fh.write(struct.pack("<II", 0, 2))
+                    fh.write(struct.pack("<II", 3, 4))
+                else:
+                    fh.write(struct.pack("<II", 1, 6))
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({"threads": 2, "roots_plotted": 10, "roots_clipped": 1, "tiles_with_data": 1}),
+                stderr="",
+            )
+
+        def fake_popen(cmd, stdin=None, stderr=None):
+            self.assertEqual(os.path.basename(cmd[0]), "pixbinassemble")
+            proc = _FakePixbinAssemblerProc(cmd)
+            proc.test_case = self
+            return proc
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.upload_fileobj.side_effect = upload_fileobj
+        mock_run.side_effect = fake_run
+        mock_popen.side_effect = fake_popen
+
+        result = mod.handler(_event(
+            pixel_bins_drive_rgb=True,
+            pixel_bin_fragment_mode="dense_grouped",
+            group_idx=0,
+            chunk_indices=[0, 1],
+            chunks=[
+                {
+                    "chunk_idx": 0,
+                    "bin_key": "renders/j/chunk_0.bin",
+                    "coeffs_key": "renders/j/coeffs_0000.bin",
+                    "coeffs_bin_size": 0,
+                    "step_start": 0,
+                    "step_count": 0,
+                    "bin_size": 160,
+                },
+                {
+                    "chunk_idx": 1,
+                    "bin_key": "renders/j/chunk_1.bin",
+                    "coeffs_key": "renders/j/coeffs_0001.bin",
+                    "coeffs_bin_size": 0,
+                    "step_start": 0,
+                    "step_count": 0,
+                    "bin_size": 160,
+                },
+            ],
+            width=2,
+            height=2,
+            tile_size=2,
+        ), None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertEqual(body["pixel_bin_fragment_mode"], "dense_grouped")
+        self.assertEqual(body["group_idx"], 0)
+        self.assertEqual(body["chunk_indices"], [0, 1])
+        self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
+        self.assertEqual(body["pixel_bin_bytes_uploaded"], 4)
+        self.assertEqual(body["pixel_bin_sparse_files_in"], 2)
+        self.assertEqual(body["pixel_bin_sparse_bytes_in"], 24)
+        self.assertEqual(uploads["renders/j/pixbin_group_0000_t0000.u8"], bytes([2, 6, 255, 4]))
+        self.assertNotIn("renders/j/pixbin_chunk_0000_t0000.pbx", uploads)
+        self.assertNotIn("renders/j/pix_chunk_0000_t0000.pix", uploads)
+        done_data = mock_report.call_args_list[-1].kwargs["result_data"]
+        self.assertEqual(done_data["pixel_bin_fragment_mode"], "dense_grouped")
+        self.assertEqual(done_data["pixel_bin_sparse_files_in"], 2)
 
 
 if __name__ == "__main__":

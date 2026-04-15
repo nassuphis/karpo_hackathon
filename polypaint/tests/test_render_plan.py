@@ -189,6 +189,7 @@ class TestRenderPlan(unittest.TestCase):
         assert "crowding" in plan["solve_score"]["clip_key"]
         assert "crowding" in plan["solve_score"]["bins_key"]
         assert plan["outputs"]["repalette_capable"] is True
+        assert plan["outputs"]["pixel_bins_drive_rgb"] is True
         assert plan["outputs"]["metadata"]["view_mode"] == "square"
         assert plan["outputs"]["metadata"]["square_extent"] == "2.0"
         assert plan["outputs"]["metadata"]["rotation"] == "0"
@@ -201,20 +202,74 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["outputs"]["metadata"]["background_color"] == "000000"
         assert plan["outputs"]["metadata"]["background_threshold"] == "4"
         assert plan["outputs"]["metadata"]["repalette_capable"] == "true"
+        assert plan["outputs"]["metadata"]["pixel_bins_drive_rgb"] == "true"
+        assert plan["outputs"]["metadata"]["rgb_source"] == "pixel_bins"
         assert plan["outputs"]["metadata"]["pixel_bins_prefix"] == "renders/j/color/color_run_t/pixel_bins/tile_"
         assert plan["outputs"]["metadata"]["pixel_bins_layout"] == "tile_u8_v1"
         assert plan["grid"]["pixel_bin_tile_keys"][0] == "renders/j/color/color_run_t/pixel_bins/tile_0000.bin"
         assert plan["raster"]["requested_engine"] == "single"
-        assert plan["raster"]["engine"] == "single"
+        assert plan["raster"]["pixel_bin_fragment_mode"] == "sparse_chunks"
+        assert plan["raster"]["raster_bin_group_size"] == ""
+
+    @patch("handler_render_plan._storage_call")
+    def test_render_plan_carries_selected_pixel_bin_fragment_options(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 50,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="spread",
+            raster_engine="mt",
+            pixel_bin_fragment_mode="dense_grouped",
+            raster_bin_group_size=7,
+        ), None)
+        plan = json.loads(result["body"])
+
+        assert plan["params"]["pixel_bin_fragment_mode"] == "dense_grouped"
+        assert plan["params"]["raster_bin_group_size"] == 7
+        assert plan["raster"]["pixel_bin_fragment_mode"] == "dense_grouped"
+        assert plan["raster"]["raster_bin_group_size"] == 7
+        assert plan["raster"]["item_count"] == 8
+        assert len(plan["raster_items"]) == 8
+        assert plan["raster_items"][0]["group_idx"] == 0
+        assert plan["raster_items"][0]["chunk_indices"] == [0, 1, 2, 3, 4, 5, 6]
+        assert [item["chunk_idx"] for item in plan["raster_items"][0]["chunks"]] == [0, 1, 2, 3, 4, 5, 6]
+        assert plan["raster_items"][-1]["chunk_indices"] == [49]
+        assert plan["raster"]["engine"] == "mt"
         assert plan["raster"]["requested_threads"] == 4
         assert plan["raster"]["requested_input_mode"] == "tmpfile"
         assert plan["raster"]["requested_sectioned_retries"] == 2
         assert plan["raster"]["input_mode"] == "tmpfile"
-        assert plan["raster"]["sectioned_retries"] == 0
-        assert plan["raster"]["threads"] == 1
-        assert plan["raster"]["function_name"] == "polypaint-raster"
+        assert plan["raster"]["sectioned_retries"] == 2
+        assert plan["raster"]["threads"] == 4
+        assert plan["raster"]["function_name"] == "polypaint-raster-mt"
         assert plan["raster"]["eligible"] is True
         assert plan["raster"]["reason"] == "solve_score"
+
+    @patch("handler_render_plan._storage_call")
+    def test_raster_bin_group_size_one_keeps_sparse_chunk_runtime(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 3,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="spread",
+            raster_engine="mt",
+            pixel_bin_fragment_mode="dense_grouped",
+            raster_bin_group_size=1,
+        ), None)
+        plan = json.loads(result["body"])
+
+        assert plan["params"]["pixel_bin_fragment_mode"] == "dense_grouped"
+        assert plan["params"]["raster_bin_group_size"] == 1
+        assert plan["raster"]["pixel_bin_fragment_mode"] == "sparse_chunks"
+        assert plan["raster"]["raster_bin_group_size"] == ""
+        assert plan["raster"]["item_count"] == 3
+        assert [item["chunk_indices"] for item in plan["raster_items"]] == [[0], [1], [2]]
 
     @patch("handler_render_plan._storage_call")
     def test_solve_score_chain_input_compiles_to_scalar_contract(self, mock_storage):
@@ -550,6 +605,7 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["saved_palette"]["chunk_bins_prefix"] == "renders/j/palettes/pal_src/chunks/palette_bins_chunk_"
         assert plan["solve_score"]["chain"] == [{"name": "crowding", "params": ["slv", "1"]}]
         assert plan["outputs"]["repalette_capable"] is True
+        assert plan["outputs"]["pixel_bins_drive_rgb"] is True
         assert plan["outputs"]["metadata"]["color_mode"] == "saved_palette"
         assert plan["outputs"]["metadata"]["palette"] == "inferno"
         assert plan["outputs"]["metadata"]["palette_source_id"] == "pal_src"
@@ -562,6 +618,8 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["outputs"]["metadata"]["solve_score_omega_enabled"] == "false"
         assert plan["outputs"]["metadata"]["palette_source_omega_enabled"] == "false"
         assert plan["outputs"]["metadata"]["repalette_capable"] == "true"
+        assert plan["outputs"]["metadata"]["pixel_bins_drive_rgb"] == "true"
+        assert plan["outputs"]["metadata"]["rgb_source"] == "pixel_bins"
         assert plan["outputs"]["metadata"]["pixel_bins_prefix"] == "renders/j/color/color_run_t/pixel_bins/tile_"
         assert plan["params"]["palette"] == "inferno"
         assert plan["params"]["root_transforms"] == [["rotate_roots", "0.25"]]

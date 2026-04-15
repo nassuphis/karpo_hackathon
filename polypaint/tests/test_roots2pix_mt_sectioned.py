@@ -82,6 +82,57 @@ class _RangeHandler(http.server.BaseHTTPRequestHandler):
 
 
 class TestRoots2PixMTSectioned(unittest.TestCase):
+    def test_skip_pix_output_writes_only_pixel_bins(self):
+        _ensure_binary()
+        solves = [
+            [(-1.0, -1.0), (1.0, 1.0)],
+            [(-1.0, 1.0), (1.0, -1.0)],
+        ]
+        with tempfile.TemporaryDirectory(prefix="roots2pix_mt_skip_pix_") as tmpdir:
+            tmpdir = pathlib.Path(tmpdir)
+            input_path = tmpdir / "input.bin"
+            bins_path = tmpdir / "solve_bins.bin"
+            pix_prefix = tmpdir / "out" / "pix"
+            pbx_prefix = tmpdir / "out" / "pixbin"
+            pix_prefix.parent.mkdir(parents=True, exist_ok=True)
+
+            _write_bin(input_path, solves, 2)
+            bins_path.write_bytes(bytes([0, 9]))
+
+            run = subprocess.run(
+                [
+                    str(BIN),
+                    str(input_path),
+                    str(pix_prefix),
+                    "--width=64",
+                    "--height=64",
+                    "--center_re=0",
+                    "--center_im=0",
+                    "--scale=8",
+                    "--degree=2",
+                    "--tile_size=64",
+                    "--n_tile_cols=1",
+                    "--n_tile_rows=1",
+                    "--threads=2",
+                    "--color=saved_palette",
+                    "--palette=inferno",
+                    f"--solve_bins_file={bins_path}",
+                    "--input_mode=tmpfile",
+                    f"--pixel_bin_prefix={pbx_prefix}",
+                    "--skip_pix_output=1",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+
+            self.assertEqual(run.returncode, 0, run.stderr)
+            meta = json.loads(run.stdout)
+            self.assertTrue(meta["skip_pix_output"])
+            self.assertFalse((pix_prefix.parent / "pix_t0000.pix").exists())
+            self.assertTrue((pix_prefix.parent / "pixbin_t0000.pbx").exists())
+            self.assertGreater((pix_prefix.parent / "pixbin_t0000.pbx").stat().st_size, 0)
+
     def test_sectioned_matches_tmpfile_for_saved_palette_fixture(self):
         _ensure_binary()
         solves = [

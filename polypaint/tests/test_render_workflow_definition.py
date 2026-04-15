@@ -294,6 +294,8 @@ class TestWorkflowDefinition(unittest.TestCase):
 
         color_raster_selector = self.states["ColorRasterMap"]["ItemSelector"]
         self.assertEqual(color_raster_selector["raster_sectioned_retries.$"], "$.plan.raster.sectioned_retries")
+        self.assertEqual(self.states["ColorRasterPhase"]["Parameters"]["Payload"]["expected.$"], "$.plan.raster.item_count")
+        self.assertEqual(self.states["ColorRasterMap"]["ItemsPath"], "$.plan.raster_items")
 
     def test_color_solve_score_tasks_forward_critical_fields(self):
         clip = self.states["ColorSolveScoreClipTask"]["Parameters"]["Payload"]
@@ -319,9 +321,16 @@ class TestWorkflowDefinition(unittest.TestCase):
 
         raster = self.states["ColorRasterMap"]["ItemSelector"]
         self.assertEqual(raster["root_transforms.$"], "$.plan.params.root_transforms")
+        self.assertEqual(raster["group_idx.$"], "$$.Map.Item.Value.group_idx")
+        self.assertEqual(raster["chunks.$"], "$$.Map.Item.Value.chunks")
+        self.assertEqual(raster["chunk_indices.$"], "$$.Map.Item.Value.chunk_indices")
+        self.assertEqual(raster["pixel_bins_drive_rgb.$"], "$.plan.outputs.pixel_bins_drive_rgb")
         self.assertEqual(raster["solve_score_quantile.$"], "$.plan.solve_score.quantile")
         self.assertEqual(raster["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(raster["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+        self.assertEqual(raster["pixel_bin_fragment_mode.$"], "$.plan.raster.pixel_bin_fragment_mode")
+        self.assertEqual(raster["raster_bin_group_size.$"], "$.plan.raster.raster_bin_group_size")
+        self.assertEqual(raster["saved_palette_bins_prefix.$"], "$.plan.saved_palette.chunk_bins_prefix")
         self.assertEqual(raster["params_key.$"], "$.plan.calc.params_key")
         self.assertEqual(raster["step_start.$"], "$$.Map.Item.Value.step_start")
         self.assertEqual(raster["step_count.$"], "$$.Map.Item.Value.step_count")
@@ -360,7 +369,13 @@ class TestWorkflowDefinition(unittest.TestCase):
     def test_color_finalize_and_encode_forward_critical_fields(self):
         finalize = self.states["ColorFinalizeMap"]["ItemSelector"]
         self.assertEqual(finalize["emit_pixel_bins.$"], "$.plan.outputs.repalette_capable")
+        self.assertEqual(finalize["pixel_bins_drive_rgb.$"], "$.plan.outputs.pixel_bins_drive_rgb")
+        self.assertEqual(finalize["pixel_bin_fragment_mode.$"], "$.plan.raster.pixel_bin_fragment_mode")
+        self.assertEqual(finalize["raster_item_count.$"], "$.plan.raster.item_count")
         self.assertEqual(finalize["pixel_bins_out_key.$"], "States.ArrayGetItem($.plan.grid.pixel_bin_tile_keys, $$.Map.Item.Value.tile_idx)")
+        self.assertEqual(finalize["palette.$"], "$.plan.params.palette")
+        self.assertEqual(finalize["background_color.$"], "$.plan.outputs.metadata.background_color")
+        self.assertEqual(finalize["pixel_bins_empty.$"], "$.plan.outputs.metadata.pixel_bins_empty")
         self.assertEqual(finalize["finalize_workers.$"], "$.plan.finalize.workers")
 
         encode = self.states["ColorEncodeTask"]["Parameters"]["Payload"]

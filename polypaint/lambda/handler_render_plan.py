@@ -127,6 +127,47 @@ def _build_chunk_items(calc, job_id):
     ]
 
 
+def _raster_chunk_item_for_asl(item):
+    out = {
+        "chunk_idx": int(item["chunk_idx"]),
+        "bin_key": str(item["bin_key"]),
+        "coeffs_key": str(item.get("coeffs_key") or ""),
+        "coeffs_bin_size": int(item.get("coeffs_bin_size") or 0),
+        "step_start": int(item.get("step_start") or 0),
+        "step_count": int(item.get("step_count") or 0),
+        "bin_size": int(item.get("bin_size") or 0),
+    }
+    return out
+
+
+def _build_raster_items(chunk_items, pixel_bin_fragment_mode, raster_bin_group_size):
+    normalized_chunks = [_raster_chunk_item_for_asl(item) for item in chunk_items]
+    if pixel_bin_fragment_mode != "dense_grouped":
+        return [
+            {
+                **item,
+                "group_idx": int(item["chunk_idx"]),
+                "chunk_indices": [int(item["chunk_idx"])],
+                "chunks": [item],
+            }
+            for item in normalized_chunks
+        ]
+
+    group_size = int(raster_bin_group_size)
+    raster_items = []
+    for group_idx, start in enumerate(range(0, len(normalized_chunks), group_size)):
+        group = normalized_chunks[start:start + group_size]
+        first = dict(group[0])
+        first.update({
+            "group_idx": group_idx,
+            "chunk_idx": int(group[0]["chunk_idx"]),
+            "chunk_indices": [int(item["chunk_idx"]) for item in group],
+            "chunks": group,
+        })
+        raster_items.append(first)
+    return raster_items
+
+
 def _validate_omega(value):
     try:
         omega = float(value)
@@ -255,6 +296,25 @@ def _validate_raster_input_mode(value):
     return mode
 
 
+def _validate_pixel_bin_fragment_mode(value):
+    mode = str(value or "sparse_chunks").strip().lower()
+    if mode not in ("sparse_chunks", "dense_grouped"):
+        raise RuntimeError(f"pixel_bin_fragment_mode must be 'sparse_chunks' or 'dense_grouped', got {value!r}")
+    return mode
+
+
+def _validate_raster_bin_group_size(value):
+    if value in (None, ""):
+        return ""
+    try:
+        group_size = int(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"raster_bin_group_size must be an integer, got {value!r}")
+    if not (1 <= group_size <= 1000):
+        raise RuntimeError(f"raster_bin_group_size must be in [1, 1000], got {group_size}")
+    return group_size
+
+
 def _validate_hist_input_mode(value):
     mode = str(value or "tmpfile").strip().lower()
     if mode not in ("tmpfile", "stdin", "sectioned"):
@@ -336,6 +396,8 @@ def handler(event, context):
         "raster_mt_threads": 4,
         "raster_input_mode": "tmpfile",
         "raster_sectioned_retries": 2,
+        "pixel_bin_fragment_mode": "sparse_chunks",
+        "raster_bin_group_size": "",
         "solve_score_threads": "",
         "solve_score_merge_workers": 16,
         "finalize_workers": 16,
@@ -362,6 +424,8 @@ def handler(event, context):
         rp.get("raster_sectioned_retries", 2),
         "raster_sectioned_retries",
     )
+    rp["pixel_bin_fragment_mode"] = _validate_pixel_bin_fragment_mode(rp.get("pixel_bin_fragment_mode", "sparse_chunks"))
+    rp["raster_bin_group_size"] = _validate_raster_bin_group_size(rp.get("raster_bin_group_size", ""))
     solve_score_threads_value = rp.get("solve_score_threads", "")
     if solve_score_threads_value in (None, ""):
         solve_score_threads_value = rp["raster_mt_threads"] if rp["raster_engine"] == "mt" else 1
@@ -593,6 +657,11 @@ def handler(event, context):
         "requested_threads": requested_raster_threads,
         "requested_input_mode": rp.get("raster_input_mode", "tmpfile"),
         "requested_sectioned_retries": rp.get("raster_sectioned_retries", 2),
+        "requested_pixel_bin_fragment_mode": rp.get("pixel_bin_fragment_mode", "sparse_chunks"),
+        "requested_raster_bin_group_size": rp.get("raster_bin_group_size", ""),
+        "pixel_bin_fragment_mode": "sparse_chunks",
+        "raster_bin_group_size": "",
+        "item_count": n_chunks,
         "threads": 1,
         "engine": "single",
         "input_mode": "tmpfile",
@@ -623,6 +692,28 @@ def handler(event, context):
                 raster["function_name"] = RASTER_MT_FUNCTION
         elif requested_raster_engine == "mt" and raster["reason"]:
             raster["reason"] = f"mt_requested_but_{raster['reason']}"
+
+    requested_fragment_mode = rp.get("pixel_bin_fragment_mode", "sparse_chunks")
+    requested_group_size = rp.get("raster_bin_group_size", "")
+    dense_grouping_enabled = (
+        mode == "color"
+        and color_repalette_capable
+        and raster["engine"] == "mt"
+        and requested_fragment_mode == "dense_grouped"
+        and requested_group_size not in ("", None)
+        and int(requested_group_size) > 1
+    )
+    if dense_grouping_enabled:
+        raster["pixel_bin_fragment_mode"] = "dense_grouped"
+        raster["raster_bin_group_size"] = int(requested_group_size)
+
+    raster_items = _build_raster_items(
+        chunk_items,
+        raster["pixel_bin_fragment_mode"],
+        raster["raster_bin_group_size"] or 1,
+    )
+    raster["item_count"] = len(raster_items)
+    raster["chunk_count"] = n_chunks
 
     # Immutable artifact outputs
     artifact_family = "coeffs" if mode == "coeff_bilevel" else mode
@@ -743,8 +834,10 @@ def handler(event, context):
         "coeff_bilevel_key": artifact_prefix + "image.tif",
         "metadata": artifact_meta,
         "repalette_capable": color_repalette_capable if mode == "color" else False,
+        "pixel_bins_drive_rgb": color_repalette_capable if mode == "color" else False,
     }
     if mode == "color":
+        pixel_bins_drive_rgb = bool(outputs["pixel_bins_drive_rgb"])
         outputs["metadata"].update({
             "format": ext,
             "quality": str(rp.get("quality", 90)),
@@ -755,6 +848,8 @@ def handler(event, context):
             "background_color": DEFAULT_BACKGROUND_COLOR,
             "background_threshold": str(DEFAULT_BACKGROUND_THRESHOLD),
             "repalette_capable": "true" if color_repalette_capable else "false",
+            "pixel_bins_drive_rgb": "true" if pixel_bins_drive_rgb else "false",
+            "rgb_source": "pixel_bins" if pixel_bins_drive_rgb else "pix",
             "pixel_bins_prefix": artifact_prefix + "pixel_bins/tile_" if color_repalette_capable else "",
             "pixel_bins_empty": "255" if color_repalette_capable else "",
             "pixel_bins_layout": "tile_u8_v1" if color_repalette_capable else "",
@@ -857,6 +952,7 @@ def handler(event, context):
             ] if color_repalette_capable else ["" for _ in range(n_tiles)],
         },
         "chunk_items": chunk_items,
+        "raster_items": raster_items,
         "tile_items": tile_items,
         "solve_score": solve_score,
         "finalize": finalize,

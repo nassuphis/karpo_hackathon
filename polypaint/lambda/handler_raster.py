@@ -21,6 +21,19 @@ _TMP_SCORE_COEFFS = "/tmp/score_coeffs.bin"
 _TMP_SCORE_PARAMS = "/tmp/score_params.bin"
 
 
+def _tile_dense_bytes(tile_idx, width, height, tile_size, n_tile_cols):
+    tile_idx = int(tile_idx)
+    tile_size = int(tile_size)
+    width = int(width)
+    height = int(height)
+    n_tile_cols = int(n_tile_cols)
+    col = tile_idx % n_tile_cols
+    row = tile_idx // n_tile_cols
+    tile_w = max(0, min(tile_size, width - col * tile_size))
+    tile_h = max(0, min(tile_size, height - row * tile_size))
+    return tile_w * tile_h
+
+
 def _parse_boolish(value, default=True):
     if value in (None, ""):
         return default
@@ -117,9 +130,12 @@ def handler(event, context):
             with open(rt_path, "w") as rtf:
                 rtf.write(json.dumps(rt_chain))
             cmd.append(f"--root_xforms={rt_path}")
-        emit_pixel_bins = bool(params.get("emit_pixel_bins"))
+        emit_pixel_bins = _parse_boolish(params.get("emit_pixel_bins"), False)
+        pixel_bins_drive_rgb = emit_pixel_bins and _parse_boolish(params.get("pixel_bins_drive_rgb"), False)
         if emit_pixel_bins:
             cmd.append("--pixel_bin_prefix=/tmp/pixbin")
+        if pixel_bins_drive_rgb:
+            cmd.append("--skip_pix_output=1")
 
         # Solve-score bins: download JSON, parse, pass as CLI args
         color = contract_param(params, "color", "rainbow", contract_warnings)
@@ -246,22 +262,37 @@ def handler(event, context):
         t_up = time.perf_counter()
         uploaded = 0
         uploaded_pixel_bins = 0
+        uploaded_pixel_bin_bytes = 0
+        pixel_bin_tile_bytes = []
+        skipped_pix_tiles = 0
         for t in range(n_tiles):
             pix_path = f"/tmp/pix_t{t:04d}.pix"
             if os.path.exists(pix_path) and os.path.getsize(pix_path) > 0:
-                s3_key = f"renders/{job_id}/pix_chunk_{chunk_idx:04d}_t{t:04d}.pix"
-                with open(pix_path, "rb") as fh:
-                    s3.upload_fileobj(fh, BUCKET, s3_key)
+                if pixel_bins_drive_rgb:
+                    skipped_pix_tiles += 1
+                else:
+                    s3_key = f"renders/{job_id}/pix_chunk_{chunk_idx:04d}_t{t:04d}.pix"
+                    with open(pix_path, "rb") as fh:
+                        s3.upload_fileobj(fh, BUCKET, s3_key)
+                    uploaded += 1
                 os.remove(pix_path)
-                uploaded += 1
             pbx_path = f"/tmp/pixbin_t{t:04d}.pbx"
             if emit_pixel_bins and os.path.exists(pbx_path):
-                if os.path.getsize(pbx_path) > 0:
+                pbx_size = os.path.getsize(pbx_path)
+                if pbx_size > 0:
                     pbx_key = f"renders/{job_id}/pixbin_chunk_{chunk_idx:04d}_t{t:04d}.pbx"
                     with open(pbx_path, "rb") as fh:
                         s3.upload_fileobj(fh, BUCKET, pbx_key)
                     uploaded_pixel_bins += 1
+                    uploaded_pixel_bin_bytes += pbx_size
+                    pixel_bin_tile_bytes.append({
+                        "tile_idx": t,
+                        "bytes": pbx_size,
+                        "dense_bytes": _tile_dense_bytes(t, params["width"], params["height"], params["tile_size"], n_tile_cols),
+                    })
                 os.remove(pbx_path)
+        if pixel_bins_drive_rgb:
+            skipped_pix_tiles = max(skipped_pix_tiles, int(raster_meta.get("tiles_with_data", 0) or 0))
         upload_us = int((time.perf_counter() - t_up) * 1e6)
 
         result_data = attach_contract_warnings({
@@ -272,6 +303,12 @@ def handler(event, context):
             "upload_us": upload_us,
             "tiles_uploaded": uploaded,
             "pixel_bin_tiles_uploaded": uploaded_pixel_bins,
+            "pixel_bin_bytes_uploaded": uploaded_pixel_bin_bytes,
+            "pixel_bin_tile_bytes": pixel_bin_tile_bytes,
+            "pixel_bin_dense_bytes_if_full_tiles": sum(item["dense_bytes"] for item in pixel_bin_tile_bytes),
+            "pixel_bins_drive_rgb": pixel_bins_drive_rgb,
+            "rgb_source": "pixel_bins" if pixel_bins_drive_rgb else "pix",
+            "pix_tiles_skipped": skipped_pix_tiles,
             "roots_plotted": raster_meta["roots_plotted"],
             "roots_clipped": raster_meta["roots_clipped"],
         }, contract_warnings)
@@ -281,6 +318,12 @@ def handler(event, context):
             "stripe_idx": chunk_idx,
             "tiles_uploaded": uploaded,
             "pixel_bin_tiles_uploaded": uploaded_pixel_bins,
+            "pixel_bin_bytes_uploaded": uploaded_pixel_bin_bytes,
+            "pixel_bin_tile_bytes": pixel_bin_tile_bytes,
+            "pixel_bin_dense_bytes_if_full_tiles": sum(item["dense_bytes"] for item in pixel_bin_tile_bytes),
+            "pixel_bins_drive_rgb": pixel_bins_drive_rgb,
+            "rgb_source": "pixel_bins" if pixel_bins_drive_rgb else "pix",
+            "pix_tiles_skipped": skipped_pix_tiles,
             "raster_us": raster_us,
             "roots_plotted": raster_meta["roots_plotted"],
             "roots_clipped": raster_meta["roots_clipped"],

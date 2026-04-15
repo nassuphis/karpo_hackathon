@@ -772,26 +772,26 @@ chmod +x "$RASTER_DIR"/roots2pix
 cd "$RASTER_DIR" && zip -r9 /tmp/polypaint-raster.zip . -q && cd "$SCRIPT_DIR"
 echo "  Raster:   $(du -h /tmp/polypaint-raster.zip | cut -f1)  (roots2pix)"
 
-# Raster-MT: handler_raster_mt.py + shared.py + solve_score_chain.py + roots2pix_mt
+# Raster-MT: handler_raster_mt.py + shared.py + solve_score_chain.py + roots2pix_mt + pixbinassemble
 RASTER_MT_DIR=/tmp/polypaint-raster-mt
 rm -rf "$RASTER_MT_DIR"
 mkdir -p "$RASTER_MT_DIR/lib"
 cp lambda/handler_raster_mt.py lambda/shared.py lambda/solve_score_chain.py "$RASTER_MT_DIR/"
-cp lambda/roots2pix_mt "$RASTER_MT_DIR/"
+cp lambda/roots2pix_mt lambda/pixbinassemble "$RASTER_MT_DIR/"
 cp lambda/roots2pix_mt_lib/* "$RASTER_MT_DIR/lib/" 2>/dev/null || true
-chmod +x "$RASTER_MT_DIR"/roots2pix_mt
+chmod +x "$RASTER_MT_DIR"/roots2pix_mt "$RASTER_MT_DIR"/pixbinassemble
 cd "$RASTER_MT_DIR" && zip -r9 /tmp/polypaint-raster-mt.zip . -q && cd "$SCRIPT_DIR"
-echo "  RastMT:   $(du -h /tmp/polypaint-raster-mt.zip | cut -f1)  (roots2pix_mt)"
+echo "  RastMT:   $(du -h /tmp/polypaint-raster-mt.zip | cut -f1)  (roots2pix_mt + pixbinassemble)"
 
-# Finalize: handler_finalize.py + shared.py + pixassemble + pixbinassemble
+# Finalize: handler_finalize.py + shared.py + pixassemble + pixbinassemble + pixel_bins_render
 FINALIZE_DIR=/tmp/polypaint-finalize
 rm -rf "$FINALIZE_DIR"
 mkdir -p "$FINALIZE_DIR"
 cp lambda/handler_finalize.py lambda/shared.py "$FINALIZE_DIR/"
-cp lambda/pixassemble lambda/pixbinassemble "$FINALIZE_DIR/"
-chmod +x "$FINALIZE_DIR"/pixassemble "$FINALIZE_DIR"/pixbinassemble
+cp lambda/pixassemble lambda/pixbinassemble lambda/pixel_bins_render "$FINALIZE_DIR/"
+chmod +x "$FINALIZE_DIR"/pixassemble "$FINALIZE_DIR"/pixbinassemble "$FINALIZE_DIR"/pixel_bins_render
 cd "$FINALIZE_DIR" && zip -r9 /tmp/polypaint-finalize.zip . -q && cd "$SCRIPT_DIR"
-echo "  Finalize: $(du -h /tmp/polypaint-finalize.zip | cut -f1)  (pixassemble + pixbinassemble)"
+echo "  Finalize: $(du -h /tmp/polypaint-finalize.zip | cut -f1)  (pixassemble + pixbinassemble + pixel_bins_render)"
 
 # Preview: handler_preview.py + shared.py (pure Python, PNG via zlib)
 PREVIEW_DIR=/tmp/polypaint-preview

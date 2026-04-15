@@ -405,7 +405,7 @@
                 "mode.$": "$.mode",
                 "phase": "raster",
                 "phase_label": "Raster",
-                "expected.$": "$.plan.calc.n_chunks",
+                "expected.$": "$.plan.raster.item_count",
                 "subtask_prefix.$": "States.Format('render_{}_raster_', $.run_id)"
               }
             },
@@ -416,12 +416,15 @@
 
           "ColorRasterMap": {
             "Type": "Map",
-            "ItemsPath": "$.plan.chunk_items",
+            "ItemsPath": "$.plan.raster_items",
             "MaxConcurrency": 10,
             "ItemSelector": {
               "job_id.$": "$.job_id",
+              "group_idx.$": "$$.Map.Item.Value.group_idx",
               "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
-              "task_id.$": "States.Format('render_{}_raster_{}', $.run_id, $$.Map.Item.Value.chunk_idx)",
+              "task_id.$": "States.Format('render_{}_raster_{}', $.run_id, $$.Map.Item.Value.group_idx)",
+              "chunks.$": "$$.Map.Item.Value.chunks",
+              "chunk_indices.$": "$$.Map.Item.Value.chunk_indices",
               "bin_key.$": "$$.Map.Item.Value.bin_key",
               "coeffs_key.$": "$$.Map.Item.Value.coeffs_key",
               "coeffs_bin_size.$": "$$.Map.Item.Value.coeffs_bin_size",
@@ -445,7 +448,9 @@
               "constant_color.$": "$.plan.params.constant_color",
               "root_transforms.$": "$.plan.params.root_transforms",
               "emit_pixel_bins.$": "$.plan.outputs.repalette_capable",
+              "pixel_bins_drive_rgb.$": "$.plan.outputs.pixel_bins_drive_rgb",
               "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
+              "saved_palette_bins_prefix.$": "$.plan.saved_palette.chunk_bins_prefix",
               "saved_palette_bins_key.$": "States.Format('{}{}.bin', $.plan.saved_palette.chunk_bins_prefix, $$.Map.Item.Value.chunk_idx)",
               "solve_metric.$": "$.plan.solve_score.metric",
               "solve_score_chain.$": "$.plan.solve_score.chain",
@@ -455,7 +460,9 @@
               "raster_function_name.$": "$.plan.raster.function_name",
               "raster_mt_threads.$": "$.plan.raster.threads",
               "raster_input_mode.$": "$.plan.raster.input_mode",
-              "raster_sectioned_retries.$": "$.plan.raster.sectioned_retries"
+              "raster_sectioned_retries.$": "$.plan.raster.sectioned_retries",
+              "pixel_bin_fragment_mode.$": "$.plan.raster.pixel_bin_fragment_mode",
+              "raster_bin_group_size.$": "$.plan.raster.raster_bin_group_size"
             },
             "ItemProcessor": {
               "ProcessorConfig": {"Mode": "INLINE"},
@@ -514,7 +521,13 @@
               "n_tile_cols.$": "$.plan.grid.n_tile_cols",
               "n_tile_rows.$": "$.plan.grid.n_tile_rows",
               "emit_pixel_bins.$": "$.plan.outputs.repalette_capable",
+              "pixel_bins_drive_rgb.$": "$.plan.outputs.pixel_bins_drive_rgb",
+              "pixel_bin_fragment_mode.$": "$.plan.raster.pixel_bin_fragment_mode",
+              "raster_item_count.$": "$.plan.raster.item_count",
               "pixel_bins_out_key.$": "States.ArrayGetItem($.plan.grid.pixel_bin_tile_keys, $$.Map.Item.Value.tile_idx)",
+              "palette.$": "$.plan.params.palette",
+              "background_color.$": "$.plan.outputs.metadata.background_color",
+              "pixel_bins_empty.$": "$.plan.outputs.metadata.pixel_bins_empty",
               "finalize_workers.$": "$.plan.finalize.workers"
             },
             "ItemProcessor": {

@@ -197,11 +197,12 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("roots2pix", packaged["handler_raster.py"])
         self.assertIn("handler_raster_mt.py", packaged)
         self.assertIn("roots2pix_mt", packaged["handler_raster_mt.py"])
+        self.assertIn("pixbinassemble", packaged["handler_raster_mt.py"])
         self.assertIn('create_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', DEPLOY_TEXT)
         self.assertIn('update_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', DEPLOY_TEXT)
         self.assertIn("RASTER_MT_THREADS", DEPLOY_TEXT)
         self.assertIn('gcc -O3 -pthread -o /src/roots2pix_mt /src/roots2pix_mt.c', DEPLOY_TEXT)
-        self.assertIn('cp lambda/roots2pix_mt "$RASTER_MT_DIR/"', DEPLOY_TEXT)
+        self.assertIn('cp lambda/roots2pix_mt lambda/pixbinassemble "$RASTER_MT_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/roots2pix_mt_lib/* "$RASTER_MT_DIR/lib/"', DEPLOY_TEXT)
         self.assertIn('LD_LIBRARY_PATH=/var/task/lib', DEPLOY_TEXT)
         self.assertIn("aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/solve_proximity_stats lambda/solve_proximity_stats.c -lm", DEPLOY_TEXT)
@@ -259,6 +260,7 @@ class TestDeployPackaging(unittest.TestCase):
 
         self.assertIn("handler_finalize.py", packaged)
         self.assertIn("pixbinassemble", packaged["handler_finalize.py"])
+        self.assertIn("pixel_bins_render", packaged["handler_finalize.py"])
         self.assertIn("handler_palette_finalize.py", packaged)
         self.assertIn("solve_score_chain.py", packaged["handler_palette_finalize.py"])
 

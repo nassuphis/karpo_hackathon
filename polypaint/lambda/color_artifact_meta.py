@@ -170,7 +170,7 @@ def inherit_associated_palette_metadata(source_meta: Dict[str, str]) -> Dict[str
     palette_id = str((source_meta or {}).get("associated_palette_id") or "").strip()
     if mode not in ("generated", "dependency") or not palette_id:
         return {}
-    return associated_palette_metadata(
+    meta = associated_palette_metadata(
         mode=mode,
         palette_id=palette_id,
         display_name=(source_meta or {}).get("associated_palette_display_name", ""),
@@ -183,6 +183,16 @@ def inherit_associated_palette_metadata(source_meta: Dict[str, str]) -> Dict[str
         omega_enabled=_parse_boolish((source_meta or {}).get("associated_palette_omega_enabled", True), True),
         score_chain=(source_meta or {}).get("associated_palette_score_chain", ""),
     )
+    for key in (
+        "associated_palette_score_chain",
+        "associated_palette_metric",
+        "associated_palette_quantile",
+        "associated_palette_omega",
+        "associated_palette_omega_enabled",
+    ):
+        if (source_meta or {}).get(key) not in ("", None):
+            meta.update(stringify_color_metadata({key: (source_meta or {}).get(key)}))
+    return meta
 
 
 def merge_metadata(existing_meta: Dict[str, str], assoc_meta: Dict[str, str]) -> Dict[str, str]:

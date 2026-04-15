@@ -1003,10 +1003,35 @@ def test_roots2pix_solve_score():
     meta3 = json.loads(r.stdout)
     print("  roots2pix --solve_metric=max_mod: OK (plotted=%d)" % meta3["roots_plotted"])
 
+    # Bin-first color path: when pixel bins drive RGB, native raster should avoid .pix output.
+    cleanup("/tmp/r2p_ss_skip_t0000.pix")
+    cleanup("/tmp/r2p_ss_skipbin_t0000.pbx")
+    r = subprocess.run([
+        r2p_path, sps_bin, "/tmp/r2p_ss_skip",
+        "--width=4", "--height=4", "--tile_size=4",
+        "--n_tile_cols=1", "--n_tile_rows=1",
+        "--center_re=0.5", "--center_im=0",
+        "--scale=2", "--degree=2",
+        "--color=solve_score",
+        "--solve_metric=proximity",
+        "--solve_score_clip_lo=0.0",
+        "--solve_score_clip_hi=2.0",
+        "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
+        "--pixel_bin_prefix=/tmp/r2p_ss_skipbin",
+        "--skip_pix_output=1",
+    ], capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "roots2pix skip_pix_output failed: " + r.stderr[:200]
+    meta4 = json.loads(r.stdout)
+    assert meta4["skip_pix_output"] is True
+    assert not os.path.exists("/tmp/r2p_ss_skip_t0000.pix"), "skip_pix_output wrote .pix"
+    assert os.path.exists("/tmp/r2p_ss_skipbin_t0000.pbx"), "skip_pix_output did not write .pbx"
+    print("  roots2pix --skip_pix_output: OK")
+
     # Clean up any .pix files
     import glob
     for f in glob.glob("/tmp/r2p_ss_pix*.pix"):
         cleanup(f)
+    cleanup("/tmp/r2p_ss_skipbin_t0000.pbx")
     cleanup(sps_bin)
     print("=== roots2pix solve_score smoke PASSED ===")
 
@@ -1050,11 +1075,45 @@ def test_catalog_degrees():
     print("=== Catalog degree verification PASSED ===")
 
 
+def test_pixbinassemble_dense_layers():
+    print("\n--- pixbinassemble dense layers ---")
+
+    bin_path = "/src/pixbinassemble"
+    if not os.path.exists(bin_path):
+        print("  SKIP: %s not found (not yet compiled)" % bin_path)
+        return
+
+    out_path = "/tmp/pixbin_dense_layers.bin"
+    payload = bytes([255, 1, 255, 3]) + bytes([2, 255, 4, 255])
+    r = subprocess.run(
+        [
+            bin_path,
+            "--tile_w=2",
+            "--tile_h=2",
+            "--empty=255",
+            "--output=" + out_path,
+            "--input_format=dense_layers",
+        ],
+        input=payload,
+        capture_output=True,
+        timeout=10,
+    )
+    assert r.returncode == 0, "pixbinassemble dense_layers failed: " + r.stderr.decode("utf-8", "replace")[:200]
+    with open(out_path, "rb") as f:
+        data = f.read()
+    assert data == bytes([2, 1, 4, 3]), "pixbinassemble dense merge mismatch: %r" % (data,)
+    meta = json.loads(r.stdout.decode("utf-8"))
+    assert meta["layers"] == 2
+    assert meta["input_format"] == "dense_layers"
+    cleanup(out_path)
+    print("  dense layers: OK")
+
+
 # ── Main ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     print("--- Binary validation ---")
-    for bin_path in ["/src/sweep", "/src/sweep_mt", "/src/sweep_cm", "/src/sweep_coeffgen", "/src/solve_palette_chunk_mt"]:
+    for bin_path in ["/src/sweep", "/src/sweep_mt", "/src/sweep_cm", "/src/sweep_coeffgen", "/src/solve_palette_chunk_mt", "/src/pixbinassemble"]:
         magic = open(bin_path, "rb").read(4)
         assert magic == b"\x7fELF", "%s is not an ELF binary" % bin_path
         print("  %s: ELF OK" % bin_path)
@@ -1071,6 +1130,7 @@ if __name__ == "__main__":
     test_resize_runtime()
     test_solve_proximity_stats()
     test_roots2pix_solve_score()
+    test_pixbinassemble_dense_layers()
     test_catalog_degrees()
 
     print("\n=== All Docker runtime tests PASSED ===")

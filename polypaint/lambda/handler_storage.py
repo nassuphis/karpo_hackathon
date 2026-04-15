@@ -1112,7 +1112,7 @@ def handle_check_status(event):
 # Canonical ownership mapping: each family owns its own intermediates, previews, and stale siblings
 ARTIFACT_FAMILIES = {
     "color": {
-        "intermediate_prefixes": ["pix_", "pixbin_chunk_", "raw_", "tile_", "solve_proximity/", "solve_scores/"],
+        "intermediate_prefixes": ["pix_", "pixbin_chunk_", "pixbin_group_", "raw_", "tile_", "solve_proximity/", "solve_scores/"],
         "intermediate_keys": ["solve_proximity_clip.json", "solve_proximity_bins.json"],
         "preview": [],
         "same_family_stale": [],

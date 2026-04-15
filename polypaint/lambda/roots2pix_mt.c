@@ -92,6 +92,7 @@ typedef struct {
     int nSolveScoreCuts;
     uint32_t constRGB;
     int emitPixelBins;
+    int skipPixOutput;
     const float *roots;
     const float *scoreCoeffRows;
     const float *scoreParamRows;
@@ -519,9 +520,11 @@ static void *worker_main(void *arg_) {
                        arg->rbPalB[r];
             }
 
-            if (!vec_push2(&arg->pixVecs[tileId], pixIdx, rgb)) {
-                worker_fail(arg, "pix vec alloc failed");
-                goto cleanup;
+            if (!arg->skipPixOutput) {
+                if (!vec_push2(&arg->pixVecs[tileId], pixIdx, rgb)) {
+                    worker_fail(arg, "pix vec alloc failed");
+                    goto cleanup;
+                }
             }
             if (arg->emitPixelBins && (arg->colorMode == COLOR_SOLVE_SCORE || arg->colorMode == COLOR_SAVED_PALETTE)) {
                 if (!vec_push2(&arg->pbxVecs[tileId], pixIdx, (uint32_t)solveBin)) {
@@ -550,7 +553,7 @@ int main(int argc, char **argv) {
                 "[--solve_metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation] "
                 "[--solve_score_clip_lo=X --solve_score_clip_hi=Y --solve_score_cuts=c1,...,c9] "
                 "[--solve_score_omega=W] [--solve_score_omega_enabled=0|1] "
-                "[--solve_bins_file=file.bin] [--pixel_bin_prefix=/tmp/pixbin] [--root_xforms=file.json]\n");
+                "[--solve_bins_file=file.bin] [--pixel_bin_prefix=/tmp/pixbin] [--skip_pix_output=0|1] [--root_xforms=file.json]\n");
         return 1;
     }
 
@@ -577,6 +580,7 @@ int main(int argc, char **argv) {
     const char *palName = getArgStr(argc, argv, "--palette", "inferno");
     const char *solveBinsPath = getArgStr(argc, argv, "--solve_bins_file", NULL);
     const char *pixelBinPrefix = getArgStr(argc, argv, "--pixel_bin_prefix", NULL);
+    int skipPixOutput = getArgInt(argc, argv, "--skip_pix_output", 0);
     const char *constColorStr = getArgStr(argc, argv, "--constant_color", "ffffff");
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
     enum InputMode inputMode = INPUT_TMPFILE;
@@ -928,6 +932,10 @@ int main(int argc, char **argv) {
     unsigned char ssPalR[10] = {0}, ssPalG[10] = {0}, ssPalB[10] = {0};
     int emitPixelBins = pixelBinPrefix &&
         (colorMode == COLOR_SOLVE_SCORE || colorMode == COLOR_SAVED_PALETTE);
+    if (skipPixOutput && !emitPixelBins) {
+        fprintf(stderr, "--skip_pix_output requires --pixel_bin_prefix in solve_score/saved_palette mode\n");
+        return 1;
+    }
     int threads = clamp_threads(requestedThreads, nPoints);
     WorkerArgs *args = NULL;
     pthread_t *workers = NULL;
@@ -1026,6 +1034,7 @@ int main(int argc, char **argv) {
         args[i].nSolveScoreCuts = nSolveScoreCuts;
         args[i].constRGB = constRGB;
         args[i].emitPixelBins = emitPixelBins;
+        args[i].skipPixOutput = skipPixOutput;
         args[i].roots = roots;
         args[i].scoreCoeffRows = scoreCoeffRows;
         args[i].scoreParamRows = scoreParamRows;
@@ -1053,7 +1062,7 @@ int main(int argc, char **argv) {
         args[i].nRt = nRt;
         args[i].tileBits = tileBits;
         args[i].tileW = tileW;
-        args[i].pixVecs = calloc((size_t)nTiles, sizeof(U32Vec));
+        args[i].pixVecs = skipPixOutput ? NULL : calloc((size_t)nTiles, sizeof(U32Vec));
         args[i].pbxVecs = emitPixelBins ? calloc((size_t)nTiles, sizeof(U32Vec)) : NULL;
         memcpy(args[i].rbPalR, rbPalR, sizeof(rbPalR));
         memcpy(args[i].rbPalG, rbPalG, sizeof(rbPalG));
@@ -1061,7 +1070,7 @@ int main(int argc, char **argv) {
         memcpy(args[i].ssPalR, ssPalR, sizeof(ssPalR));
         memcpy(args[i].ssPalG, ssPalG, sizeof(ssPalG));
         memcpy(args[i].ssPalB, ssPalB, sizeof(ssPalB));
-        if (!args[i].pixVecs || (emitPixelBins && !args[i].pbxVecs)) {
+        if ((!skipPixOutput && !args[i].pixVecs) || (emitPixelBins && !args[i].pbxVecs)) {
             fprintf(stderr, "Out of memory for worker vectors\n");
             goto cleanup;
         }
@@ -1102,7 +1111,7 @@ int main(int argc, char **argv) {
         size_t tilePixU32 = 0;
         size_t tilePbxU32 = 0;
         for (int i = 0; i < threads; i++) {
-            tilePixU32 += args[i].pixVecs[t].len;
+            if (!skipPixOutput) tilePixU32 += args[i].pixVecs[t].len;
             if (emitPixelBins) tilePbxU32 += args[i].pbxVecs[t].len;
         }
         if (tilePixU32 > 0) {
@@ -1134,6 +1143,10 @@ int main(int argc, char **argv) {
                 }
             }
             fclose(fb);
+            if (skipPixOutput) {
+                tilesWithData++;
+                totalEntries += (long)(tilePbxU32 / 2u);
+            }
         }
     }
 
@@ -1158,6 +1171,7 @@ int main(int argc, char **argv) {
     } else if (colorMode == COLOR_CONSTANT) {
         printf(",\"constant_color\":\"%s\"", constColorStr);
     }
+    printf(",\"skip_pix_output\":%s", skipPixOutput ? "true" : "false");
     printf("}\n");
     exitCode = 0;
 

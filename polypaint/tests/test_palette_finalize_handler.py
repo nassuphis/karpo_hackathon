@@ -67,6 +67,7 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             chunk_meta_keys = [
                 "renders/j/palettes/pal_1/chunks/meta_chunk_0.json",
                 "renders/j/palettes/pal_1/chunks/meta_chunk_1.json",
+                "renders/j/palettes/pal_1/chunks/meta_chunk_2.json",
             ]
             solve_keys = [
                 "renders/j/palettes/pal_1/solve_score/chunk_0_hist.json",
@@ -96,6 +97,13 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
                 "score_key": "renders/j/palettes/pal_1/chunks/score_chunk_1.bin",
                 "palette_bins_key": "renders/j/palettes/pal_1/chunks/palette_bins_chunk_1.bin",
             }
+            meta2 = {
+                "chunk_idx": 2,
+                "step_start": 20,
+                "step_count": 12,
+                "score_key": "renders/j/palettes/pal_1/chunks/score_chunk_2.bin",
+                "palette_bins_key": "renders/j/palettes/pal_1/chunks/palette_bins_chunk_2.bin",
+            }
             bins0 = bytes([0, 1, 2, 3, 4, 5])
             # first 10 values complete pass0 (g=6..15), remaining 4 belong to pass1 and must be ignored for image assembly
             bins1 = bytes([6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 8, 8, 8, 8])
@@ -106,12 +114,14 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
                 "omega": 3.0,
             }
             clip_meta = {"clip_fallback": False, "clip_fallback_reason": None}
+            requested_bins = []
 
             def get_object(**kwargs):
                 key = kwargs["Key"]
                 mapping = {
                     "renders/j/palettes/pal_1/chunks/meta_chunk_0.json": json.dumps(meta0).encode(),
                     "renders/j/palettes/pal_1/chunks/meta_chunk_1.json": json.dumps(meta1).encode(),
+                    "renders/j/palettes/pal_1/chunks/meta_chunk_2.json": json.dumps(meta2).encode(),
                     "renders/j/palettes/pal_1/chunks/palette_bins_chunk_0.bin": bins0,
                     "renders/j/palettes/pal_1/chunks/palette_bins_chunk_1.bin": bins1,
                     "renders/j/palettes/pal_1/solve_score/crowding_bins.json": json.dumps(bins_meta).encode(),
@@ -119,7 +129,16 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
                 }
                 if key not in mapping:
                     raise AssertionError(f"unexpected get_object key: {key}")
-                return {"Body": MagicMock(read=lambda data=mapping[key]: data)}
+                data = mapping[key]
+                if "palette_bins_chunk_" in key:
+                    requested_bins.append((key, kwargs.get("Range")))
+                range_header = kwargs.get("Range")
+                if range_header:
+                    prefix = "bytes=0-"
+                    if not range_header.startswith(prefix):
+                        raise AssertionError(f"unexpected range header: {range_header}")
+                    data = data[:int(range_header[len(prefix):]) + 1]
+                return {"Body": MagicMock(read=lambda data=data: data)}
 
             mock_s3.get_object.side_effect = get_object
             uploads = {}
@@ -132,6 +151,11 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             def run_side_effect(cmd, capture_output, text, timeout, env=None):
                 exe = os.path.basename(cmd[0])
                 if exe == "palette_bins_render":
+                    with open(mod._TMP_BINS, "rb") as bf:
+                        self.assertEqual(
+                            bf.read(),
+                            bytes([0, 1, 2, 3, 7, 6, 5, 4, 8, 9, 0, 1, 5, 4, 3, 2]),
+                        )
                     with open(mod._TMP_RAW, "wb") as f:
                         f.write((4).to_bytes(4, "little"))
                         f.write((4).to_bytes(4, "little"))
@@ -154,6 +178,15 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             body = json.loads(result["body"])
 
             self.assertEqual(body["palette_id"], "pal_1")
+            self.assertEqual(body["pass0_chunks_read"], 2)
+            self.assertEqual(body["pass0_chunks_skipped"], 1)
+            self.assertEqual(body["pass0_chunk_count"], 3)
+            self.assertEqual(body["pass0_bytes_read"], 16)
+            self.assertIn(("renders/j/palettes/pal_1/chunks/palette_bins_chunk_0.bin", None), requested_bins)
+            self.assertIn(("renders/j/palettes/pal_1/chunks/palette_bins_chunk_1.bin", "bytes=0-9"), requested_bins)
+            self.assertFalse(
+                any(key == "renders/j/palettes/pal_1/chunks/palette_bins_chunk_2.bin" for key, _ in requested_bins)
+            )
             self.assertEqual(body["image_key"], "renders/j/palettes/pal_1/image.jpeg")
             self.assertIn("renders/j/palettes/pal_1/image.jpeg", uploads)
             self.assertIn("renders/j/palettes/pal_1/preview.png", uploads)
@@ -168,7 +201,7 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             self.assertEqual(meta["data_layout"], "chunk_all_pass_v1")
             self.assertTrue(meta["render_reusable"])
             self.assertEqual(meta["base_grid_solves"], 16)
-            self.assertEqual(meta["total_solves"], 20)
+            self.assertEqual(meta["total_solves"], 32)
             self.assertEqual(meta["chunk_scores_prefix"], "renders/j/palettes/pal_1/chunks/score_chunk_")
             self.assertEqual(meta["chunk_bins_prefix"], "renders/j/palettes/pal_1/chunks/palette_bins_chunk_")
             self.assertEqual(meta["chunk_meta_prefix"], "renders/j/palettes/pal_1/chunks/meta_chunk_")

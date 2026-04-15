@@ -74,6 +74,48 @@ def _list_keys(prefix):
     return keys
 
 
+def _read_palette_bin_prefix(key, n_bytes):
+    kwargs = {"Bucket": BUCKET, "Key": key}
+    if n_bytes is not None:
+        if n_bytes < 1:
+            return b""
+        kwargs["Range"] = f"bytes=0-{n_bytes - 1}"
+    obj = s3.get_object(**kwargs)
+    return obj["Body"].read()
+
+
+def _copy_pass0_chunk_rows(dst, src, *, full_n, step_start):
+    """Copy a contiguous pass-0 chunk into the serpentine image buffer."""
+    src_len = len(src)
+    if src_len == 0:
+        return 0
+    if step_start < 0:
+        raise RuntimeError(f"Chunk writes negative solve index at {step_start}")
+
+    g = step_start
+    src_pos = 0
+    end = step_start + src_len
+    while g < end:
+        row = g // full_n
+        row_start = row * full_n
+        row_end = row_start + full_n
+        seg_end = min(end, row_end)
+        seg_len = seg_end - g
+        j0 = g - row_start
+        j1 = j0 + seg_len
+        segment = src[src_pos:src_pos + seg_len]
+        if row % 2 == 0:
+            dst0 = row_start + j0
+            dst[dst0:dst0 + seg_len] = segment
+        else:
+            dst0 = row_start + (full_n - j1)
+            dst1 = row_start + (full_n - j0)
+            dst[dst0:dst1] = segment[::-1]
+        src_pos += seg_len
+        g = seg_end
+    return src_len
+
+
 def handler(event, context):
     params = parse_body(event)
     contract_warnings = []
@@ -126,26 +168,30 @@ def handler(event, context):
         bins = bytearray(pass0_steps)
 
         filled = 0
+        pass0_chunks_read = 0
+        pass0_chunks_skipped = 0
+        pass0_bytes_read = 0
         for meta in chunk_meta:
             step_start = int(meta["step_start"])
             step_count = int(meta["step_count"])
-            bin_obj = s3.get_object(Bucket=BUCKET, Key=meta["palette_bins_key"])
-            bin_bytes = bin_obj["Body"].read()
-            if len(bin_bytes) != step_count:
-                raise RuntimeError(f"Chunk {meta.get('chunk_idx')} bin length {len(bin_bytes)} != {step_count}")
+            if step_start < 0:
+                raise RuntimeError(f"Chunk {meta.get('chunk_idx')} writes negative solve index at {step_start}")
+            pass0_count = max(0, min(step_count, pass0_steps - step_start))
+            if pass0_count <= 0:
+                pass0_chunks_skipped += 1
+                continue
+            bin_key = meta["palette_bins_key"]
+            range_count = pass0_count if pass0_count < step_count else None
+            bin_bytes = _read_palette_bin_prefix(bin_key, range_count)
+            expected_len = pass0_count if range_count is not None else step_count
+            if len(bin_bytes) != expected_len:
+                raise RuntimeError(f"Chunk {meta.get('chunk_idx')} bin length {len(bin_bytes)} != {expected_len}")
+            if range_count is None:
+                bin_bytes = bin_bytes[:pass0_count]
 
-            for off in range(step_count):
-                g = step_start + off
-                if g < 0:
-                    raise RuntimeError(f"Chunk {meta.get('chunk_idx')} writes negative solve index at {g}")
-                if g >= pass0_steps:
-                    continue
-                row = g // full_n
-                j = g % full_n
-                col = j if (row % 2 == 0) else (full_n - 1 - j)
-                idx = row * full_n + col
-                bins[idx] = bin_bytes[off]
-                filled += 1
+            filled += _copy_pass0_chunk_rows(bins, bin_bytes, full_n=full_n, step_start=step_start)
+            pass0_chunks_read += 1
+            pass0_bytes_read += len(bin_bytes)
 
         if filled != pass0_steps:
             raise RuntimeError(f"Palette finalize filled {filled} samples, expected {pass0_steps}")
@@ -162,11 +208,18 @@ def handler(event, context):
         if _parse_boolish(bins_meta.get("omega_enabled", True), True) != omega_enabled:
             raise RuntimeError(f"Solve-score bins omega_enabled mismatch: expected {omega_enabled}, got {bins_meta.get('omega_enabled')}")
         assemble_ms = int((time.time() - t0) * 1000)
+        assemble_stats = {
+            "assemble_ms": assemble_ms,
+            "pass0_chunks_read": pass0_chunks_read,
+            "pass0_chunks_skipped": pass0_chunks_skipped,
+            "pass0_chunk_count": len(chunk_meta),
+            "pass0_bytes_read": pass0_bytes_read,
+        }
         report_status(
             job_id,
             task_id,
             "assembled",
-            result_data=attach_contract_warnings({**progress, "assemble_ms": assemble_ms}, contract_warnings),
+            result_data=attach_contract_warnings({**progress, **assemble_stats}, contract_warnings),
         )
 
         t1 = time.time()
@@ -284,7 +337,7 @@ def handler(event, context):
             "image_key": image_key,
             "preview_key": preview_key,
             "file_size": file_size,
-            "assemble_ms": assemble_ms,
+            **assemble_stats,
             "render_ms": render_ms,
             "encode_ms": encode_ms,
         }, contract_warnings)

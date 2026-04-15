@@ -8476,8 +8476,12 @@ function _aggregatePaletteFinalizePerf(results) {
         acc.render_ms += Number(row.render_ms) || 0;
         acc.encode_ms += Number(row.encode_ms) || 0;
         acc.file_size += Number(row.file_size) || 0;
+        acc.pass0_chunks_read += Number(row.pass0_chunks_read) || 0;
+        acc.pass0_chunks_skipped += Number(row.pass0_chunks_skipped) || 0;
+        acc.pass0_chunk_count += Number(row.pass0_chunk_count) || 0;
+        acc.pass0_bytes_read += Number(row.pass0_bytes_read) || 0;
         return acc;
-    }, { tasks: 0, assemble_ms: 0, render_ms: 0, encode_ms: 0, file_size: 0 });
+    }, { tasks: 0, assemble_ms: 0, render_ms: 0, encode_ms: 0, file_size: 0, pass0_chunks_read: 0, pass0_chunks_skipped: 0, pass0_chunk_count: 0, pass0_bytes_read: 0 });
 }
 
 function _palettePhaseSubtaskInfo(run, rd) {
@@ -8532,6 +8536,9 @@ function _palettePhasePerfSummary(phase, results, wallMs) {
         const perf = _aggregatePaletteFinalizePerf(results);
         if (!perf) return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=assemble ${_fmtSecondsMs(perf.assemble_ms)} + render ${_fmtSecondsMs(perf.render_ms)} + encode ${_fmtSecondsMs(perf.encode_ms)}`;
+        if (perf.pass0_chunk_count > 0) msg += ` · pass0=${perf.pass0_chunks_read}/${perf.pass0_chunk_count}`;
+        if (perf.pass0_chunks_skipped > 0) msg += ` skipped=${perf.pass0_chunks_skipped}`;
+        if (perf.pass0_bytes_read > 0) msg += ` · bins=${_fmtSize(perf.pass0_bytes_read)}`;
         if (perf.file_size > 0) msg += ` · size ${(perf.file_size / 1e6).toFixed(1)}MB`;
         return msg;
     }
@@ -8794,6 +8801,9 @@ let _renderObserverTimer = null;
 let _lastLoggedPhase = null;
 let _lastWarnState = null;  // null, 'warn', 'hard'
 let _renderPhaseTracker = null;
+let _renderCompletionRunId = null;
+let _renderLoggedPhaseCompletions = new Set();
+let _renderObserverPollActive = false;
 const RENDER_NO_ROW_STALE_MS = 120000;
 const RENDER_WARN_STALE_MS = 300000;
 const RENDER_HARD_STALE_MS = 900000;
@@ -8805,6 +8815,10 @@ function _generateRunId() {
 }
 
 function _saveActiveRun(record) {
+    if (!_activeRenderRun || _activeRenderRun.run_id !== record.run_id) {
+        _renderCompletionRunId = null;
+        _renderLoggedPhaseCompletions = new Set();
+    }
     _activeRenderRun = record;
     try { localStorage.setItem('polypaint_active_render_run', JSON.stringify(record)); } catch(e) {}
 }
@@ -9812,6 +9826,9 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         const perf = _aggregatePaletteFinalizePerf(results);
         if (!perf) return `wall=${_fmtSecondsMs(wallMs)}`;
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=assemble ${_fmtSecondsMs(perf.assemble_ms)} + render ${_fmtSecondsMs(perf.render_ms)} + encode ${_fmtSecondsMs(perf.encode_ms)}`;
+        if (perf.pass0_chunk_count > 0) msg += ` · pass0=${perf.pass0_chunks_read}/${perf.pass0_chunk_count}`;
+        if (perf.pass0_chunks_skipped > 0) msg += ` skipped=${perf.pass0_chunks_skipped}`;
+        if (perf.pass0_bytes_read > 0) msg += ` · bins=${_fmtSize(perf.pass0_bytes_read)}`;
         if (perf.file_size > 0) msg += ` · size ${(perf.file_size / 1e6).toFixed(1)}MB`;
         return msg;
     }
@@ -9855,6 +9872,9 @@ function _updateRenderPhaseTracker(run, rd) {
 
 async function _logRenderPhaseCompletion(run, tracker) {
     if (!run || !tracker || !tracker.prefix) return;
+    const completionKey = `${run.run_id || run.task_id || ''}:${tracker.phase || tracker.phase_label || tracker.prefix}`;
+    if (_renderLoggedPhaseCompletions.has(completionKey)) return;
+    _renderLoggedPhaseCompletions.add(completionKey);
     try {
         const subcheck = await lambdaPost('storage', {
             job_id: run.job_id,
@@ -9870,9 +9890,39 @@ async function _logRenderPhaseCompletion(run, tracker) {
             )
         );
         const perfText = _renderPhasePerfSummary(tracker.phase, subcheck.results || [], wallMs);
-        if (perfText) log(`${tracker.phase_label} complete · ${perfText}`, '', 'render-log');
+        if (perfText) {
+            log(`${tracker.phase_label} complete · ${perfText}`, '', 'render-log');
+        } else {
+            _renderLoggedPhaseCompletions.delete(completionKey);
+        }
     } catch (e) {
+        _renderLoggedPhaseCompletions.delete(completionKey);
         // best effort only
+    }
+}
+
+async function _logRenderTerminalPhaseCatchup(run) {
+    if (!run || run.mode !== 'color') return;
+    const phases = [
+        {
+            phase: 'finalize',
+            phase_label: 'Finalize',
+            prefix: `render_${run.run_id}_tile_`,
+            expected: 1000000,
+            started_at_ms: null,
+            last_server_update_ms: null,
+        },
+        {
+            phase: 'encode',
+            phase_label: 'Encode',
+            prefix: `render_${run.run_id}_encode`,
+            expected: 1,
+            started_at_ms: null,
+            last_server_update_ms: null,
+        },
+    ];
+    for (const tracker of phases) {
+        await _logRenderPhaseCompletion(run, tracker);
     }
 }
 
@@ -10006,6 +10056,11 @@ function _renderRunCompleteLog(run, rd) {
 }
 
 async function _handleRenderRunCompletion(run, rd) {
+    const runKey = run && (run.run_id || run.task_id || '');
+    if (runKey && _renderCompletionRunId === runKey) return;
+    _renderCompletionRunId = runKey;
+    stopActiveRenderObserver();
+
     const statusEl = document.getElementById('render-status');
     const label = _renderRunCompleteLabel(run);
     if (statusEl) {
@@ -10015,6 +10070,7 @@ async function _handleRenderRunCompletion(run, rd) {
     if (_renderPhaseTracker) {
         await _logRenderPhaseCompletion(run, _renderPhaseTracker);
     }
+    await _logRenderTerminalPhaseCatchup(run);
     await _logRenderRasterPerf(run);
     log(_renderRunCompleteLog(run, rd), 'ok', 'render-log');
     const autoDbg = _fmtAutolevelDebugLine(rd);
@@ -10023,7 +10079,6 @@ async function _handleRenderRunCompletion(run, rd) {
     if (resizeDbg) log('  resize: ' + resizeDbg, '', 'render-log');
 
     _clearActiveRun();
-    stopActiveRenderObserver();
 
     const family = rd.family || (run.mode === 'coeff_bilevel' ? 'coeffs' : (run.mode === 'repalette' ? 'palette' : (run.mode === 'color_repalette' ? 'color' : run.mode)));
     const artifactId = rd.artifact_id || rd.palette_id || null;
@@ -10041,8 +10096,14 @@ async function _handleRenderRunCompletion(run, rd) {
 }
 
 async function _pollActiveRenderRun() {
+    if (_renderObserverPollActive) return;
+    _renderObserverPollActive = true;
     const run = _activeRenderRun || _loadActiveRun();
-    if (!run) { stopActiveRenderObserver(); return; }
+    if (!run) {
+        _renderObserverPollActive = false;
+        stopActiveRenderObserver();
+        return;
+    }
     const statusEl = document.getElementById('render-status');
 
     try {
@@ -10208,6 +10269,8 @@ async function _pollActiveRenderRun() {
 
     } catch (e) {
         // Poll error — keep trying
+    } finally {
+        _renderObserverPollActive = false;
     }
 }
 

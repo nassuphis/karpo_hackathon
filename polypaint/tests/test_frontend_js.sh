@@ -5267,6 +5267,53 @@ async function testPipeline(name, call) {
         vm.runInContext('_activeRenderRun = null; _renderPhaseTracker = null;', ctx);
     }
 
+    // 12m2: concurrent phase-completion attempts log once
+    {
+        ctx._elements['render-log'] = ctx._mkEl();
+        vm.runInContext(`
+            _renderLoggedPhaseCompletions = new Set();
+            var _phaseCompletionFetches = 0;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/check-status' && body.task_prefix === 'render_r_dedupe_raster_') {
+                    _phaseCompletionFetches++;
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: true,
+                        latest_done_ms: 2000,
+                        results: [
+                            { engine: 'mt', threads: 4, input_mode: 'sectioned', download_us: 1000, native_us: 2000, upload_us: 3000, roots_plotted: 10, roots_clipped: 0, tiles_uploaded: 0 }
+                        ]
+                    };
+                }
+                return {};
+            };
+        `, ctx);
+        await vm.runInContext(`(async()=>{
+            const run = { job_id: 'j', mode: 'color', run_id: 'r_dedupe' };
+            const tracker = {
+                phase: 'raster',
+                phase_label: 'Raster',
+                started_at_ms: 1000,
+                last_server_update_ms: 1000,
+                prefix: 'render_r_dedupe_raster_',
+                expected: 1
+            };
+            await Promise.all([
+                _logRenderPhaseCompletion(run, tracker),
+                _logRenderPhaseCompletion(run, tracker)
+            ]);
+        })()`, ctx);
+        const fetches = vm.runInContext('_phaseCompletionFetches', ctx);
+        const logText = ctx._elements['render-log'].textContent || '';
+        const completionCount = (logText.match(/Raster complete/g) || []).length;
+        if (fetches !== 1 || completionCount !== 1) {
+            console.error('FATAL: concurrent phase completion should fetch/log once, fetches=' + fetches + ', completions=' + completionCount + ', log=' + logText);
+            process.exit(1);
+        }
+        console.log('  12m2 concurrent phase completion dedupe: OK');
+    }
+
     // 12n: render wall timing uses server timestamps, not browser Date.now()
     {
         ctx._elements['render-log'] = ctx._mkEl();

@@ -5,6 +5,7 @@ matches expected values for various transform chains.
 Run: cd polypaint/tests && uv run python test_param_dump.py
 """
 import json
+import cmath
 import math
 import os
 import struct
@@ -152,6 +153,28 @@ def test_inv_t_plus_2_parametric():
     assert abs(z1i - exp1i) < 1e-6
     assert abs(z2r - exp2r) < 1e-6
     assert abs(z2i - exp2i) < 1e-6
+    print("  PASS")
+
+
+def test_roots2_quadratic():
+    """roots2: roots of (9/64)z^2 + t1*z + t2."""
+    print("test_roots2_quadratic...")
+    transforms = [["t1iadd", "0.2"], ["t2iadd", "-0.1"], ["roots2"]]
+    data, n = run_param_dump(10, transforms)
+    z1r, z1i, z2r, z2i = get_point(data, n, 3, 7)
+
+    a = 9.0 / 64.0
+    t1 = complex(0.3, 0.2)
+    t2 = complex(0.7, -0.1)
+    disc = t1 * t1 - 4.0 * a * t2
+    expected = [(-t1 + cmath.sqrt(disc)) / (2.0 * a), (-t1 - cmath.sqrt(disc)) / (2.0 * a)]
+    got = [complex(z1r, z1i), complex(z2r, z2i)]
+
+    # Root order is not semantically important; np.roots/eigensolvers do not
+    # guarantee a stable order across implementations.
+    err_a = abs(got[0] - expected[0]) + abs(got[1] - expected[1])
+    err_b = abs(got[0] - expected[1]) + abs(got[1] - expected[0])
+    assert min(err_a, err_b) < 1e-5, f"roots2 got={got}, expected={expected}"
     print("  PASS")
 
 
@@ -561,6 +584,8 @@ if __name__ == "__main__":
     test_chain()
     test_t1radd()
     test_t2iadd()
+    test_inv_t_plus_2_parametric()
+    test_roots2_quadratic()
     test_output_size()
     test_crd_t1()
     test_crd_t2()

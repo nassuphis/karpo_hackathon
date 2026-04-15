@@ -31,6 +31,7 @@ MAX_PREVIEW_N = 1024
 MAX_PREVIEW_PIX = 4096
 MAX_COEFFS_EST = 256
 TMP_HEADROOM = 0.8
+ROOTS_CM_SYNC_MAX_N = int(os.environ.get("COMPUTE_PREVIEW_ROOTS_CM_MAX_N", "128"))
 
 
 def _json_response(status_code, body):
@@ -64,6 +65,28 @@ def _preview_context(*, solver_mode, n_preview, function_name, coeff_transforms,
         f"solver={_solver_tag(solver_mode)}, N_preview={n_preview}, function={function_name}, "
         f"param={_format_chain(param_transforms)}, coeff={_format_chain(coeff_transforms)}"
     )
+
+
+def _chain_has_transform(chain, name):
+    if not isinstance(chain, list):
+        return False
+    needle = str(name)
+    for item in chain:
+        if isinstance(item, list) and item and str(item[0]) == needle:
+            return True
+        if isinstance(item, str) and item == needle:
+            return True
+    return False
+
+
+def _sync_preview_budget_error(*, n_preview, coeff_transforms):
+    if _chain_has_transform(coeff_transforms, "roots_cm") and n_preview > ROOTS_CM_SYNC_MAX_N:
+        return (
+            "compute preview refused before coeffgen: roots_cm coefficient transform is too slow "
+            f"for the synchronous HTTP preview at N-preview={n_preview}; "
+            f"use N-preview <= {ROOTS_CM_SYNC_MAX_N}, remove roots_cm, or run the full Compute pipeline"
+        )
+    return None
 
 
 def _opt_lib_env():
@@ -233,6 +256,9 @@ def handler(event, context):
             coeff_transforms=coeff_transforms,
             param_transforms=param_transforms,
         )
+        budget_error = _sync_preview_budget_error(n_preview=n_preview, coeff_transforms=coeff_transforms)
+        if budget_error:
+            return _json_response(400, {"message": f"{budget_error} ({ctx})"})
         n_steps = n_preview * n_preview
         _cleanup_tmp()
         _preflight_tmp_capacity(n_preview)

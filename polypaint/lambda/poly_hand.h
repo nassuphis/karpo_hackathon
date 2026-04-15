@@ -5763,3 +5763,39 @@ static void poly_814_hand(double x1r, double x1i, double x2r, double x2i,
     for (int i = 0; i < 24; i++) sum += poly_hand_z(cRe[i], cIm[i]);
     poly_hand_store_z(cabs(t1 - t2) + sum, cRe, cIm, 24);
 }
+
+static void old_379_hand(double x1r, double x1i, double x2r, double x2i,
+                         const double *cfpv, int n_cfpv,
+                         double *cRe, double *cIm, int *nCoeffs) {
+    (void)cfpv; (void)n_cfpv;
+    *nCoeffs = 35;
+    poly_hand_zero(cRe, cIm, 35);
+
+    double complex t1 = poly_hand_z(x1r, x1i);
+    double complex t2 = poly_hand_z(x2r, x2i);
+    double abs_t1 = cabs(t1);
+    double abs_t2 = cabs(t2);
+    double arg_t1 = carg(t1);
+    double arg_t2 = carg(t2);
+
+    for (int j = 1; j <= 35; j++) {
+        double jd = (double)j;
+        double magnitude = log(abs_t1 + abs_t2 + jd)
+                         * (pow(abs_t1, sin(jd)) + pow(abs_t2, cos(jd)));
+        double angle = arg_t1 * jd - arg_t2 * (35.0 - jd) + sin(jd) * cos(jd);
+        cRe[j - 1] = magnitude * cos(angle);
+        cIm[j - 1] = magnitude * sin(angle);
+    }
+
+    double complex t2_pow = 1.0;
+    for (int k = 1; k <= 35; k++) {
+        t2_pow *= t2;
+        double complex z = poly_hand_z(cRe[k - 1], cIm[k - 1])
+                         + conj(t1) * t2_pow / (double)(k + 1);
+        poly_hand_store_z(z, cRe, cIm, k - 1);
+    }
+
+    double special = 50.0 * (x1r - x2i);
+    const int special_indices[] = {4, 9, 14, 19, 24, 29};
+    for (int i = 0; i < 6; i++) cIm[special_indices[i]] += special;
+}

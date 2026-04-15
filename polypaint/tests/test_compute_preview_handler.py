@@ -125,6 +125,30 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertIn("function=g1", body["message"])
         self.assertIn("coeff=roots_cm(lo)", body["message"])
 
+    @patch("handler_compute_preview.subprocess.run")
+    def test_compute_preview_refuses_large_roots_cm_before_coeffgen(self, mock_run):
+        import handler_compute_preview as mod
+
+        result = mod.handler(
+            {
+                "body": json.dumps(
+                    _event(
+                        N_preview=256,
+                        coeff_transforms=[["power", "8"], ["roots_cm", "hi"]],
+                    )
+                )
+            },
+            None,
+        )
+        body = json.loads(result["body"])
+
+        self.assertEqual(result["statusCode"], 400)
+        self.assertIn("roots_cm coefficient transform is too slow", body["message"])
+        self.assertIn("N-preview=256", body["message"])
+        self.assertIn("N-preview <= 128", body["message"])
+        self.assertIn("coeff=power(8),roots_cm(hi)", body["message"])
+        mock_run.assert_not_called()
+
     def test_compute_preview_rejects_invalid_quantile_and_shim(self):
         import handler_compute_preview as mod
 

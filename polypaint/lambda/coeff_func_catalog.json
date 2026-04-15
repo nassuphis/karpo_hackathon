@@ -3672,6 +3672,12 @@
     "kind": "transpiled"
   },
   {
+    "name": "old_379",
+    "c_symbol": "old_379_hand",
+    "source": "poly_hand.h",
+    "kind": "hand"
+  },
+  {
     "name": "poly_380",
     "c_symbol": "poly_380_c",
     "source": "poly400.py",

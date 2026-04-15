@@ -2742,6 +2742,25 @@ static void ct_sort_mod(double *cRe, double *cIm, int *nCoeffs) {
     }
 }
 
+/* sort_angle_keep_mod: sort angles ascending, keep original moduli.
+ * cf[k] = |cf[k]| * exp(i * sorted_angles[k]). */
+static void ct_sort_angle_keep_mod(double *cRe, double *cIm, int *nCoeffs) {
+    int n = *nCoeffs;
+    double angles[MAX_COEFFS];
+    for (int k = 0; k < n; k++) angles[k] = atan2(cIm[k], cRe[k]);
+    for (int i = 1; i < n; i++) {
+        double key = angles[i];
+        int j = i - 1;
+        while (j >= 0 && angles[j] > key) { angles[j+1] = angles[j]; j--; }
+        angles[j+1] = key;
+    }
+    for (int k = 0; k < n; k++) {
+        double mod = sqrt(cRe[k]*cRe[k] + cIm[k]*cIm[k]);
+        cRe[k] = mod * cos(angles[k]);
+        cIm[k] = mod * sin(angles[k]);
+    }
+}
+
 /* sort_abs: reorder coefficients by ascending magnitude. */
 static void ct_sort_abs(double *cRe, double *cIm, int *nCoeffs) {
     int n = *nCoeffs;
@@ -3044,6 +3063,7 @@ static CoeffTransform lookupCoeffTransform(const char *name) {
     if (strcmp(name, "max2one") == 0)    return ct_max2one;
     if (strcmp(name, "swirler") == 0)   return ct_swirler;
     if (strcmp(name, "sort_mod_keep_angle") == 0)  return ct_sort_mod;
+    if (strcmp(name, "sort_angle_keep_mod") == 0)  return ct_sort_angle_keep_mod;
     if (strcmp(name, "sort_abs") == 0)  return ct_sort_abs;
     if (strcmp(name, "cumsum") == 0)   return ct_cumsum;
     if (strcmp(name, "cummax") == 0)   return ct_cummax;
@@ -3452,6 +3472,24 @@ static void pt_sum_prod(double *z1r, double *z1i, double *z2r, double *z2i) {
     double sr = *z1r + *z2r, si = *z1i + *z2i;
     double pr, pi; c_mul(*z1r, *z1i, *z2r, *z2i, &pr, &pi);
     *z1r = sr; *z1i = si; *z2r = pr; *z2i = pi;
+}
+
+/* roots2: quadratic root param transform. Solves (9/64)z^2 + t1*z + t2 = 0. */
+static void pt_roots2(double *z1r, double *z1i, double *z2r, double *z2i) {
+    double rr[2], ri[2];
+    int n = _solve_quadratic(9.0 / 64.0, 0.0, *z1r, *z1i, *z2r, *z2i, rr, ri);
+    if (n > 1) {
+        *z1r = rr[0]; *z1i = ri[0];
+        *z2r = rr[1]; *z2i = ri[1];
+    } else if (n == 1) {
+        *z1r = rr[0]; *z1i = ri[0];
+        *z2r = rr[0]; *z2i = ri[0];
+    } else {
+        *z1r = 0.0; *z1i = 0.0;
+        *z2r = 0.0; *z2i = 0.0;
+    }
+    if (!isfinite(*z1r) || !isfinite(*z1i)) { *z1r = 0.0; *z1i = 0.0; }
+    if (!isfinite(*z2r) || !isfinite(*z2i)) { *z2r = 0.0; *z2i = 0.0; }
 }
 
 /* roots3: cubic root param transform. a=t1+t2, b=1, c=1, d=t1*t2. */
@@ -3875,6 +3913,10 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
     }
     if (strcmp(e->name, "sum_prod") == 0) {
         pt_sum_prod(z1r, z1i, z2r, z2i);
+        return 0;
+    }
+    if (strcmp(e->name, "roots2") == 0) {
+        pt_roots2(z1r, z1i, z2r, z2i);
         return 0;
     }
     if (strcmp(e->name, "roots3") == 0) {

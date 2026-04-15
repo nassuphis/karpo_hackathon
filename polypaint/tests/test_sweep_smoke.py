@@ -35,6 +35,58 @@ def _run_sweep(spec, out_path):
 class TestCoeffgenSmoke(unittest.TestCase):
     """Test the coeffgen mode produces correct output."""
 
+    def test_old_379_hand_matches_python_reference(self):
+        """old_379 is manually wired into the catalog and matches the Python formula."""
+        params_path = "/tmp/test_old_379_params.bin"
+        coeffs_path = "/tmp/test_old_379_coeffs.bin"
+        param_spec = {
+            "mode": "param_dump",
+            "param_transforms": [["unit_circle"]],
+            "n1": 3, "n2": 3,
+            "i1_start": 0, "i1_end": 3,
+        }
+        _run_sweep(param_spec, params_path)
+        dumped_pairs = _read_param_pairs(params_path)
+        param_pairs = []
+        for i1 in range(3):
+            row = dumped_pairs[i1 * 3:(i1 + 1) * 3]
+            param_pairs.extend(reversed(row) if (i1 & 1) else row)
+
+        meta = _run_sweep({
+            "mode": "coeffgen",
+            "function": "old_379",
+            "param_transforms": [["unit_circle"]],
+            "coeff_transforms": [],
+            "n1": 3, "n2": 3,
+            "i1_start": 0, "i1_end": 3,
+        }, coeffs_path)
+
+        self.assertEqual(meta["n_coeffs"], 35)
+        self.assertEqual(meta["degree"], 34)
+        got = _read_coeffs(coeffs_path, 35)
+
+        expected = []
+        for t1, t2 in param_pairs:
+            cf = np.zeros(35, dtype=np.complex128)
+            for j in range(1, 36):
+                magnitude = np.log(np.abs(t1) + np.abs(t2) + j) * (
+                    (np.abs(t1) ** np.sin(j)) + (np.abs(t2) ** np.cos(j))
+                )
+                angle = (
+                    np.angle(t1) * j
+                    - np.angle(t2) * (35 - j)
+                    + np.sin(j) * np.cos(j)
+                )
+                cf[j - 1] = magnitude * (np.cos(angle) + 1j * np.sin(angle))
+            for k in range(1, 36):
+                cf[k - 1] += t1.conjugate() * (t2 ** k) / (k + 1)
+            for idx in [4, 9, 14, 19, 24, 29]:
+                cf[idx] += 50 * (t1.real - t2.imag) * 1j
+            expected.append(cf)
+        expected = np.asarray(expected, dtype=np.complex128).astype(np.complex64).astype(np.complex128)
+
+        np.testing.assert_allclose(got, expected, rtol=2e-5, atol=2e-5)
+
     def test_coeffgen_basic(self):
         """Coeffgen outputs correct metadata and file size."""
         out = "/tmp/test_cg_basic.bin"
@@ -307,6 +359,16 @@ def _read_coeffs(path, n_coeffs):
             coeffs.real[s, k] = floats[s * stride + k * 2]
             coeffs.imag[s, k] = floats[s * stride + k * 2 + 1]
     return coeffs
+
+
+def _read_param_pairs(path):
+    data = open(path, "rb").read()
+    n_floats = len(data) // 4
+    floats = struct.unpack(f'<{n_floats}f', data)
+    pairs = []
+    for i in range(0, n_floats, 4):
+        pairs.append((complex(floats[i], floats[i + 1]), complex(floats[i + 2], floats[i + 3])))
+    return pairs
 
 
 def _eval_poly(coeffs, z):
@@ -612,6 +674,25 @@ class TestCoeffTransforms(unittest.TestCase):
                     self.assertAlmostEqual(abs(neg[s, k] - plain[s, k]), 0, places=5)
                 else:
                     self.assertAlmostEqual(abs(neg[s, k] + plain[s, k]), 0, places=5)
+
+    def test_sort_angle_keep_mod(self):
+        """sort_angle_keep_mod sorts coefficient angles while preserving slot magnitudes."""
+        meta_plain = self._coeffgen([], "/tmp/test_ct_plain_sort_angle.bin")
+        meta_sorted = self._coeffgen(["sort_angle_keep_mod"], "/tmp/test_ct_sort_angle.bin")
+
+        n = meta_plain["n_coeffs"]
+        self.assertEqual(n, meta_sorted["n_coeffs"])
+        plain = _read_coeffs("/tmp/test_ct_plain_sort_angle.bin", n)
+        sorted_angle = _read_coeffs("/tmp/test_ct_sort_angle.bin", n)
+
+        expected = np.zeros_like(plain, dtype=np.complex128)
+        for s in range(len(plain)):
+            mods = np.abs(plain[s])
+            angles = np.sort(np.angle(plain[s]))
+            expected[s] = mods * (np.cos(angles) + 1j * np.sin(angles))
+        expected = self._as_written_complex64(expected)
+
+        np.testing.assert_allclose(sorted_angle, expected, rtol=2e-5, atol=2e-5)
 
     def test_power_matches_python_formula(self):
         """ct_power(k) matches the intended elementwise geometric-series formula."""

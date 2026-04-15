@@ -70,6 +70,7 @@ grep -q 'id="btn-palette-create" onclick="runPaletteArtifact()" style="margin:0 
 grep -q 'id="ss-add-btn"' "$HTML" || { echo "FATAL: solve-score add popup button missing"; exit 1; }
 grep -q 'id="palette-ss-add-btn"' "$HTML" || { echo "FATAL: palette solve-score add popup button missing"; exit 1; }
 grep -q 'Score functions' "$HTML" || { echo "FATAL: solve-score picker category labels missing"; exit 1; }
+grep -q 'id="pt-add-btn"' "$HTML" || { echo "FATAL: param transform add popup button missing"; exit 1; }
 grep -q 'id="ct-add-btn"' "$HTML" || { echo "FATAL: coeff transform add popup button missing"; exit 1; }
 grep -q 'andy' "$HTML" || { echo "FATAL: coeff transform andy parameter missing"; exit 1; }
 grep -q 'Image + Meta' "$HTML" || { echo "FATAL: Favorites download menu missing Image + Meta"; exit 1; }
@@ -195,6 +196,12 @@ const catalogCode = fs.readFileSync(process.argv[2], 'utf8');
 vm.runInContext(catalogCode, ctx, { filename: 'coeff_func_catalog_js.js' });
 const catLen = (ctx._coeffFuncCatalog || []).length;
 console.log('  catalog loaded: ' + catLen + ' functions');
+const old379Entry = (ctx._coeffFuncCatalog || []).find(e => e.name === 'old_379');
+if (!old379Entry || old379Entry.kind !== 'hand' || old379Entry.source !== 'poly_hand.h' || old379Entry.degree !== 34) {
+    console.error('FATAL: old_379 should be exposed as a hand catalog entry with degree 34, got ' + JSON.stringify(old379Entry));
+    process.exit(1);
+}
+console.log('  old_379 catalog entry: OK');
 
 // Step 1b: Load tri-palette catalog JS
 const triCatalogCode = fs.readFileSync(process.argv[3], 'utf8');
@@ -903,6 +910,59 @@ async function testPipeline(name, call) {
             console.log('  compute preview call + stale invalidation: OK');
         } catch (e) {
             console.error('FATAL: compute preview flow: ' + e.message);
+            process.exit(1);
+        }
+    }
+
+    {
+        ctx._elements['compute-preview-n'].value = '256';
+        vm.runInContext(`
+            _ctChain = [{ name: 'roots_cm', params: ['hi'] }];
+            _ptChain = [];
+            _cfpv = [];
+            var _computePreviewClampPrevLambdaPost = lambdaPost;
+            var _computePreviewClampPayload = null;
+            lambdaPost = async function(name, body, path) {
+                if (name !== 'compute-preview') throw new Error('unexpected preview service ' + name);
+                _computePreviewClampPayload = body;
+                return {
+                    solver_mode: body.solver_mode,
+                    N_preview: body.N_preview,
+                    preview_size: body.preview_size,
+                    quantile: body.quantile,
+                    shim: body.shim,
+                    degree: 10,
+                    n_roots_total: 16384,
+                    n_roots_in_view: 1024,
+                    coeffgen_ms: 12,
+                    solve_ms: 34,
+                    viewport_ms: 2,
+                    raster_ms: 5,
+                    encode_ms: 1,
+                    total_ms: 54,
+                    coeffs_size: 4096,
+                    roots_size: 8192,
+                    image_width: 128,
+                    image_height: 128,
+                    image_png_base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z0ioAAAAASUVORK5CYII='
+                };
+            };
+        `, ctx);
+        try {
+            await vm.runInContext('(async()=>{ await runComputePreview(); })()', ctx);
+            const payload = vm.runInContext('_computePreviewClampPayload', ctx);
+            if (!payload || payload.N_preview !== 128 || JSON.stringify(payload.coeff_transforms) !== '[[\"roots_cm\",\"hi\"]]') {
+                console.error('FATAL: roots_cm compute preview should clamp N-preview and keep coeff chain, got ' + JSON.stringify(payload));
+                process.exit(1);
+            }
+            if (ctx._elements['compute-preview-n'].value !== '128') {
+                console.error('FATAL: roots_cm compute preview should update N input to clamp value, got ' + ctx._elements['compute-preview-n'].value);
+                process.exit(1);
+            }
+            vm.runInContext('lambdaPost = _computePreviewClampPrevLambdaPost;', ctx);
+            console.log('  compute preview clamps roots_cm N to sync-safe size: OK');
+        } catch (e) {
+            console.error('FATAL: compute preview roots_cm clamp: ' + e.message);
             process.exit(1);
         }
     }
@@ -1795,6 +1855,86 @@ async function testPipeline(name, call) {
     }
 
     {
+        try {
+            vm.runInContext(`
+                _ptChain = [];
+                addChip('pt', 'roots2');
+            `, ctx);
+        } catch (e) { console.error('FATAL: addChip(roots2 pt): ' + e.message); process.exit(1); }
+        const roots2Info = vm.runInContext(`(() => {
+            const chips = document.getElementById('pt-chips');
+            const html = chips ? chips.innerHTML : '';
+            const wire = JSON.stringify(_serializeParamTransforms());
+            return { html, wire };
+        })()`, ctx);
+        if (!roots2Info.html.includes('9/64*z^2+t1*z+t2')) {
+            console.error('FATAL: roots2 param transform chip should render quadratic formula, got ' + roots2Info.html);
+            process.exit(1);
+        }
+        if (roots2Info.wire !== '[[\"roots2\"]]') {
+            console.error('FATAL: roots2 param transform should serialize with no args, got ' + roots2Info.wire);
+            process.exit(1);
+        }
+        vm.runInContext(`_ptChain = []; _renderChips('pt');`, ctx);
+        console.log('  roots2 param transform chip renders formula + serializes: OK');
+    }
+
+    {
+        const ptPickerInfo = vm.runInContext(`(() => {
+            _ptChain = [];
+            _renderChips('pt');
+            toggleParamTransformPicker({ stopPropagation(){} });
+            const groups = _ptCategoryGroups().map(g => ({ key:g.key, items:g.items.slice(0) }));
+            const popup = document.getElementById('pt-add-popup').innerHTML;
+            _setParamTransformPickerOpen(false);
+            return { groups, popup };
+        })()`, ctx);
+        const maps = ptPickerInfo.groups.find(g => g.key === 'maps');
+        const arithmetic = ptPickerInfo.groups.find(g => g.key === 'arithmetic');
+        const shapes = ptPickerInfo.groups.find(g => g.key === 'shapes');
+        const roots = ptPickerInfo.groups.find(g => g.key === 'roots');
+        const dither = ptPickerInfo.groups.find(g => g.key === 'dither');
+        const legacy = ptPickerInfo.groups.find(g => g.key === 'legacy');
+        if (!maps || !maps.items.includes('unit_circle') || !maps.items.includes('rtheta')) {
+            console.error('FATAL: param transform popup maps category missing expected transforms, got ' + JSON.stringify(ptPickerInfo.groups));
+            process.exit(1);
+        }
+        if (!arithmetic || !arithmetic.items.includes('inv_t_plus_2') || !arithmetic.items.includes('sum_prod')) {
+            console.error('FATAL: param transform popup arithmetic category missing expected transforms, got ' + JSON.stringify(ptPickerInfo.groups));
+            process.exit(1);
+        }
+        if (!shapes || !shapes.items.includes('crd') || !shapes.items.includes('rrect')) {
+            console.error('FATAL: param transform popup shapes category missing expected transforms, got ' + JSON.stringify(ptPickerInfo.groups));
+            process.exit(1);
+        }
+        if (!roots || !roots.items.includes('roots2') || !roots.items.includes('roots6')) {
+            console.error('FATAL: param transform popup roots category missing expected transforms, got ' + JSON.stringify(ptPickerInfo.groups));
+            process.exit(1);
+        }
+        if (!dither || !dither.items.includes('ddith') || !dither.items.includes('ndith')) {
+            console.error('FATAL: param transform popup dither category missing expected transforms, got ' + JSON.stringify(ptPickerInfo.groups));
+            process.exit(1);
+        }
+        if (!legacy || !legacy.items.includes('coeff2') || !legacy.items.includes('coeff12')) {
+            console.error('FATAL: param transform popup legacy category missing expected transforms, got ' + JSON.stringify(ptPickerInfo.groups));
+            process.exit(1);
+        }
+        if (!ptPickerInfo.popup.includes('Add param transform') || !ptPickerInfo.popup.includes('Transforms t1/t2') || !ptPickerInfo.popup.includes('quadratic roots')) {
+            console.error('FATAL: param transform popup should render descriptions and heading, got ' + ptPickerInfo.popup);
+            process.exit(1);
+        }
+        vm.runInContext(`selectParamTransformChip('roots2',{ stopPropagation(){} });`, ctx);
+        const selectedWire = vm.runInContext(`JSON.stringify(_serializeParamTransforms())`, ctx);
+        const selectedOpen = vm.runInContext(`!!document.getElementById('pt-add-popup')._open`, ctx);
+        if (selectedWire !== '[[\"roots2\"]]' || selectedOpen) {
+            console.error('FATAL: param transform popup selection should add chip and close, got wire=' + selectedWire + ' open=' + selectedOpen);
+            process.exit(1);
+        }
+        vm.runInContext(`_ptChain = []; _renderChips('pt');`, ctx);
+        console.log('  param transform categorized picker renders descriptions: OK');
+    }
+
+    {
         const ctPickerInfo = vm.runInContext(`(() => {
             _ctChain = [];
             _renderChips('ct');
@@ -1805,10 +1945,15 @@ async function testPipeline(name, call) {
             return { groups, popup };
         })()`, ctx);
         const structural = ctPickerInfo.groups.find(g => g.key === 'structural');
+        const accumulation = ctPickerInfo.groups.find(g => g.key === 'accumulation');
         const elementwise = ctPickerInfo.groups.find(g => g.key === 'elementwise');
         const roots = ctPickerInfo.groups.find(g => g.key === 'roots');
         if (!structural || !structural.items.includes('rev') || !structural.items.includes('deriv')) {
             console.error('FATAL: coeff transform popup structural category missing expected transforms, got ' + JSON.stringify(ctPickerInfo.groups));
+            process.exit(1);
+        }
+        if (!accumulation || !accumulation.items.includes('sort_mod_keep_angle') || !accumulation.items.includes('sort_angle_keep_mod')) {
+            console.error('FATAL: coeff transform popup accumulation category missing sort transforms, got ' + JSON.stringify(ctPickerInfo.groups));
             process.exit(1);
         }
         if (!elementwise || !elementwise.items.includes('scale100') || !elementwise.items.includes('exp') || !elementwise.items.includes('pow')) {

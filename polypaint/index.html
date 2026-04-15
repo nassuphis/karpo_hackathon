@@ -530,9 +530,13 @@ button {
             <div class="anim-row" style="flex-wrap:wrap">
                 <label style="min-width:90px">Param transforms:</label>
                 <div id="pt-chips" class="chip-container"></div>
-                <select id="pt-add" onchange="addChip('pt',this.value);this.value='';" style="width:100px; font-size:12px">
-                    <option value="">+ add...</option>
-                </select>
+                <div class="score-chip-add-wrap">
+                    <button id="pt-add-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleParamTransformPicker(event)">+ param transform</button>
+                    <div id="pt-add-popup" class="score-chip-picker" aria-hidden="true"></div>
+                    <select id="pt-add" onchange="addChip('pt',this.value);this.value='';" style="display:none">
+                        <option value="">+ add...</option>
+                    </select>
+                </div>
             </div>
             <div class="anim-row">
                 <label style="min-width:90px">Function:</label>
@@ -562,6 +566,7 @@ button {
                         <option value="max2one">max2one</option>
                         <option value="swirler">swirler</option>
                         <option value="sort_mod_keep_angle">sort_mod_keep_angle</option>
+                        <option value="sort_angle_keep_mod">sort_angle_keep_mod</option>
                         <option value="sort_abs">sort_abs</option>
                         <option value="cumsum">cumsum</option>
                         <option value="cummax">cummax</option>
@@ -2941,7 +2946,7 @@ async function runComputePreview() {
     const btn = document.getElementById('btn-compute-preview');
     const statusEl = _computePreviewStatusEl();
     const funcName = document.getElementById('render-function').value;
-    const nPreview = Math.max(8, parseInt(document.getElementById('compute-preview-n').value) || 256);
+    let nPreview = Math.max(8, parseInt(document.getElementById('compute-preview-n').value) || 256);
     const previewSize = Math.max(64, parseInt(document.getElementById('compute-preview-size').value) || 1000);
     const solverMode = document.getElementById('compute-preview-solver').value || 'aberth';
     const quantile = Math.max(0, parseFloat(document.getElementById('compute-preview-quantile').value) || 0) / 100;
@@ -2951,6 +2956,14 @@ async function runComputePreview() {
     const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];
     const coeffTransformsDisplay = _displayCoeffTransforms();
     const ptDisplay = _displayParamTransforms().map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(',');
+    const rootsCmSyncMaxN = 128;
+    if (_chainHasTransformName(coeffTransforms, 'roots_cm') && nPreview > rootsCmSyncMaxN) {
+        const requestedN = nPreview;
+        nPreview = rootsCmSyncMaxN;
+        const nInput = document.getElementById('compute-preview-n');
+        if (nInput) nInput.value = String(nPreview);
+        log(`Compute preview: roots_cm is expensive; reduced N-preview from ${requestedN} to ${nPreview} to stay inside the synchronous preview timeout.`, 'warn', 'compute-log');
+    }
 
     btn.disabled = true;
     if (statusEl) {
@@ -3923,6 +3936,14 @@ function _displayCoeffTransforms() {
     return _chainForWhich('ct').map(_displayTransformEntry);
 }
 
+function _chainHasTransformName(chain, name) {
+    if (!Array.isArray(chain)) return false;
+    return chain.some(item => {
+        if (Array.isArray(item)) return item[0] === name;
+        return item === name;
+    });
+}
+
 function _safeHttpUrl(value) {
     const s = value == null ? '' : String(value).trim();
     if (!s) return '';
@@ -4067,6 +4088,11 @@ document.addEventListener('click', function(e) {
         if (_elementContains(popup, target) || _elementContains(btn, target)) return;
         _setSolveScorePickerOpen(which, false);
     });
+    const ptPopup = document.getElementById('pt-add-popup');
+    const ptBtn = document.getElementById('pt-add-btn');
+    if (ptPopup && ptPopup._open && !_elementContains(ptPopup, target) && !_elementContains(ptBtn, target)) {
+        _setParamTransformPickerOpen(false);
+    }
     const ctPopup = document.getElementById('ct-add-popup');
     const ctBtn = document.getElementById('ct-add-btn');
     if (ctPopup && ctPopup._open && !_elementContains(ctPopup, target) && !_elementContains(ctBtn, target)) {
@@ -4077,6 +4103,7 @@ document.addEventListener('click', function(e) {
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         _closeSolveScorePickers();
+        _setParamTransformPickerOpen(false);
         _setCoeffTransformPickerOpen(false);
     }
 });
@@ -7782,6 +7809,7 @@ const _ptCatalog = {
     dlt:    { params: [{ph:'t1|t2|both', def:'t1', target: true}, {ph:'R', def:'1'}] },
     z01: {},
     sum_prod: {},
+    roots2: {},
     roots3: {},
     roots5: {},
     roots6: {},
@@ -7801,6 +7829,91 @@ const _ptCatalog = {
     coeff6: {}, coeff7: {}, coeff8: {},
     coeff9: {}, coeff10: {}, coeff11: {}, coeff12: {},
 };
+
+const _ptCategoryMeta = {
+    maps: { title: 'Maps', help: 'direct complex maps applied to t1/t2' },
+    arithmetic: { title: 'Arithmetic', help: 'offset, scale, invert, or remix parameter values' },
+    shapes: { title: 'Curves + shapes', help: 'replace selected parameters with points on analytic curves' },
+    roots: { title: 'Root-derived', help: 'derive t1/t2 from roots of small polynomials' },
+    dither: { title: 'Dither', help: 'jitter parameters before coefficient generation' },
+    legacy: { title: 'Legacy coefficient maps', help: 'older named parameter recipes kept for compatibility' },
+};
+
+const _ptInfo = {
+    unit_circle: { category: 'maps', desc: 'map real t to exp(2*pi*i*t)' },
+    rtheta: { category: 'maps', desc: 'polar disk map using t1/t2 as radius and angle' },
+    square: { category: 'maps', desc: 'square both complex parameters' },
+    cube: { category: 'maps', desc: 'cube both complex parameters' },
+    reciprocal: { category: 'maps', desc: 'replace each parameter with 1/t' },
+    conjugate: { category: 'maps', desc: 'complex conjugate t1 and t2' },
+    swap: { category: 'maps', desc: 'swap t1 and t2' },
+    add_sub: { category: 'arithmetic', desc: 'emit t1+t2 and t1-t2' },
+    mul_div: { category: 'arithmetic', desc: 'emit t1*t2 and t1/t2' },
+    moebius: { category: 'maps', desc: 'fixed Mobius-style reciprocal map' },
+    negate: { category: 'maps', desc: 'negate t1 and t2' },
+    exp: { category: 'maps', desc: 'complex exponential of each parameter' },
+    xim: { category: 'maps', desc: 'move real part into the imaginary axis' },
+    zzold: { category: 'arithmetic', desc: 'legacy t1+i*t2 remix into both slots' },
+    zz1: { category: 'arithmetic', desc: 't1+i*t2 and t1*t2+i*(t1+t2)' },
+    zz2: { category: 'arithmetic', desc: 't1+i*t2 and t1-i*t2' },
+    zz3: { category: 'arithmetic', desc: 'cross-imaginary remix of t1 and t2' },
+    inv_t_plus_2: { category: 'arithmetic', desc: 't1=1/(t1+a), t2=1/(t2+b)' },
+    t1radd: { category: 'arithmetic', desc: 'add to real part of t1 only' },
+    t1iadd: { category: 'arithmetic', desc: 'add to imaginary part of t1 only' },
+    t2radd: { category: 'arithmetic', desc: 'add to real part of t2 only' },
+    t2iadd: { category: 'arithmetic', desc: 'add to imaginary part of t2 only' },
+    radd: { category: 'arithmetic', desc: 'add to real parts of both parameters' },
+    iadd: { category: 'arithmetic', desc: 'add to imaginary parts of both parameters' },
+    add: { category: 'arithmetic', desc: 'add the same value to all components' },
+    cadd: { category: 'arithmetic', desc: 'add a complex constant to t1 and t2' },
+    rscale: { category: 'arithmetic', desc: 'scale real parts only' },
+    iscale: { category: 'arithmetic', desc: 'scale imaginary parts only' },
+    scale: { category: 'arithmetic', desc: 'scale all components' },
+    crd: { category: 'shapes', desc: 'cardioid curve' },
+    hrt: { category: 'shapes', desc: 'heart curve' },
+    spdl: { category: 'shapes', desc: 'spindle curve' },
+    lmc: { category: 'shapes', desc: 'limacon curve' },
+    rsc: { category: 'shapes', desc: 'rose curve' },
+    lss: { category: 'shapes', desc: 'Lissajous curve' },
+    ast: { category: 'shapes', desc: 'astroid curve' },
+    asp: { category: 'shapes', desc: 'Archimedean spiral' },
+    lsp: { category: 'shapes', desc: 'log spiral' },
+    dlt: { category: 'shapes', desc: 'deltoid curve' },
+    rply: { category: 'shapes', desc: 'regular polygon perimeter' },
+    star: { category: 'shapes', desc: 'star polygon perimeter' },
+    rect: { category: 'shapes', desc: 'rectangle perimeter' },
+    rrect: { category: 'shapes', desc: 'rounded rectangle / superellipse' },
+    z01: { category: 'arithmetic', desc: 'real-part mirror remix' },
+    sum_prod: { category: 'arithmetic', desc: 'emit t1+t2 and t1*t2' },
+    roots2: { category: 'roots', desc: 'quadratic roots of (9/64)z^2+t1*z+t2' },
+    roots3: { category: 'roots', desc: 'cubic roots from t1+t2, 1, 1, t1*t2' },
+    roots5: { category: 'roots', desc: 'cubic roots from trig/i*t parameters' },
+    roots6: { category: 'roots', desc: 'quartic roots from mixed t1/t2 polynomial' },
+    sdith: { category: 'dither', desc: 'square uniform jitter' },
+    ddith: { category: 'dither', desc: 'disk jitter' },
+    adth: { category: 'dither', desc: 'annulus jitter' },
+    ldth: { category: 'dither', desc: 'line-segment jitter' },
+    crdth: { category: 'dither', desc: 'cross-shaped jitter' },
+    scdth: { category: 'dither', desc: 'sector jitter' },
+    ndith: { category: 'dither', desc: 'normal/Gaussian jitter' },
+    coeff2: { category: 'legacy', desc: 'legacy t1+t2 and t1*t2 map' },
+    coeff3: { category: 'legacy', desc: 'legacy 1/(t+2) map' },
+    coeff3a: { category: 'legacy', desc: 'legacy 1/(t+1) map' },
+    coeff4: { category: 'legacy', desc: 'legacy cos(t1), sin(t2)' },
+    coeff5: { category: 'legacy', desc: 'legacy reciprocal cross map' },
+    coeff5a: { category: 'legacy', desc: 'legacy reciprocal self map' },
+    coeff6: { category: 'legacy', desc: 'legacy cubic fractional map' },
+    coeff7: { category: 'legacy', desc: 'legacy trig fractional map' },
+    coeff8: { category: 'legacy', desc: 'legacy cross trig map' },
+    coeff9: { category: 'legacy', desc: 'legacy squared fractional map' },
+    coeff10: { category: 'legacy', desc: 'legacy fourth-power fractional map' },
+    coeff11: { category: 'legacy', desc: 'legacy log fourth-power map' },
+    coeff12: { category: 'legacy', desc: 'legacy mixed polynomial map' },
+};
+
+Object.entries(_ptInfo).forEach(([name, info]) => {
+    if (_ptCatalog[name]) Object.assign(_ptCatalog[name], info);
+});
 
 const _rtCatalog = {
     rotate_roots:     { params: [{ph:'turns', def:'0'}] },
@@ -7926,6 +8039,7 @@ const _ctCatalog = (() => {
         negate_odd: { category: 'structural', desc: 'negate odd-indexed coefficients' },
         max2one: { category: 'structural', desc: 'set the largest-magnitude coefficient to 1' },
         sort_mod_keep_angle: { category: 'accumulation', desc: 'sort magnitudes while keeping original angles' },
+        sort_angle_keep_mod: { category: 'accumulation', desc: 'sort angles while keeping original magnitudes' },
         sort_abs: { category: 'accumulation', desc: 'sort coefficients by magnitude' },
         cumsum: { category: 'accumulation', desc: 'running complex cumulative sum' },
         cummax: { category: 'accumulation', desc: 'running maximum by coefficient magnitude' },
@@ -8366,6 +8480,78 @@ function _displayParamTransforms() {
     });
 }
 
+function _ptCategoryGroups() {
+    const grouped = {};
+    Object.keys(_ptCategoryMeta).forEach(key => { grouped[key] = []; });
+    Object.keys(_ptCatalog).forEach(name => {
+        const spec = _ptCatalog[name] || {};
+        const key = grouped[spec.category] ? spec.category : 'maps';
+        grouped[key].push(name);
+    });
+    return Object.keys(_ptCategoryMeta).map(key => ({
+        key,
+        ..._ptCategoryMeta[key],
+        items: grouped[key] || [],
+    }));
+}
+
+function _renderParamTransformAddPopup() {
+    const popup = document.getElementById('pt-add-popup');
+    if (!popup) return;
+    const head = `<div class="score-chip-picker-head"><span class="score-chip-picker-title">Add param transform</span><span class="score-chip-picker-state">Transforms t1/t2 before coefficient generation</span></div>`;
+    const body = _ptCategoryGroups().map(group => {
+        const items = group.items.length
+            ? group.items.map(name => {
+                const spec = _ptCatalog[name] || {};
+                const label = spec.label || name;
+                const paramCount = (spec.params || []).length;
+                const params = paramCount ? ` · ${paramCount} param${paramCount === 1 ? '' : 's'}` : '';
+                return `<button type="button" class="score-chip-option score-chip-option-${_escapeHtml(group.key)}" onclick="selectParamTransformChip('${_escapeHtml(name)}',event)" title="${_escapeHtml(spec.desc || label)}"><span class="score-chip-option-name">${_escapeHtml(label)}</span><span class="score-chip-option-meta">${_escapeHtml((spec.desc || '') + params)}</span></button>`;
+            }).join('')
+            : '<span class="score-chip-empty">No transforms</span>';
+        return `<div class="score-chip-category"><div class="score-chip-category-title">${_escapeHtml(group.title)}</div><div class="score-chip-category-help">${_escapeHtml(group.help)}</div><div class="score-chip-options">${items}</div></div>`;
+    }).join('');
+    popup.innerHTML = head + body;
+}
+
+function _setParamTransformPickerOpen(open) {
+    const popup = document.getElementById('pt-add-popup');
+    const btn = document.getElementById('pt-add-btn');
+    if (!popup) return;
+    if (open) _renderParamTransformAddPopup();
+    popup._open = !!open;
+    popup.style.display = open ? 'block' : 'none';
+    if (popup.classList && popup.classList.toggle) popup.classList.toggle('active', !!open);
+    if (popup.setAttribute) popup.setAttribute('aria-hidden', open ? 'false' : 'true');
+    if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function toggleParamTransformPicker(eventObj) {
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    const popup = document.getElementById('pt-add-popup');
+    _setParamTransformPickerOpen(!(popup && popup._open));
+}
+
+function selectParamTransformChip(name, eventObj) {
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    addChip('pt', name);
+    _setParamTransformPickerOpen(false);
+}
+
+function _syncParamTransformAddOptions() {
+    const sel = document.getElementById('pt-add');
+    if (sel) {
+        const options = ['<option value="">+ add...</option>'].concat(
+            Object.keys(_ptCatalog).map(name => {
+                const spec = _ptCatalog[name] || {};
+                return `<option value="${_escapeHtml(name)}">${_escapeHtml(spec.label || name)}</option>`;
+            })
+        );
+        sel.innerHTML = options.join('');
+    }
+    _renderParamTransformAddPopup();
+}
+
 function _serializeParamTransforms() {
     return _ptChain.map(item => {
         if (!item.params || !item.params.length) return [item.name];
@@ -8542,6 +8728,9 @@ function _renderRtChipHtml(item, i, which, catalog) {
         const re2 = _chipInputHtml(which, i, 2, item.params[2] || '', pDefs[2]);
         const im2 = _chipInputHtml(which, i, 3, item.params[3] || '', pDefs[3]);
         return `<span class="chip"><span class="chip-formula"><span>t1=1/(t1+</span><span>${re1}</span><span class="chip-op">+i*</span><span>${im1}</span><span>), t2=1/(t2+</span><span>${re2}</span><span class="chip-op">+i*</span><span>${im2}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    }
+    if (which === 'pt' && item.name === 'roots2') {
+        return `<span class="chip"><span class="chip-formula"><span>(t1,t2)=roots(</span><span>9/64*z^2+t1*z+t2</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
     if (item.name === 'mul_complex') {
         const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
@@ -12562,48 +12751,9 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
 }
 
 
-// Populate param-transform dropdown from _ptCatalog (single source of truth)
-{
-    const _ptLabels = {
-        unit_circle: 'unit_circle', rtheta: 'rtheta (r·e^iθ disk)',
-        square: 'square', cube: 'cube', reciprocal: 'reciprocal',
-        conjugate: 'conjugate', swap: 'swap', add_sub: 'add_sub',
-        mul_div: 'mul_div', moebius: 'moebius', negate: 'negate',
-        exp: 'exp', xim: 'xim (Re→Im)',
-        zzold: 'zzold (t1+i·t2 → both)',
-        zz1: 'zz1 (t1+i·t2, t1·t2+i·sum)', zz2: 'zz2 (t1+i·t2, t1-i·t2)',
-        zz3: 'zz3 (t1+i·t2, t2+i·t1)',
-        radd: 'radd (real +v)', iadd: 'iadd (imag +v)', add: 'add (both +v)',
-        cadd: 'cadd (complex +re,im)',
-        rscale: 'rscale (real ×v)', iscale: 'iscale (imag ×v)', scale: 'scale (both ×v)',
-        crd: 'crd (cardioid)', hrt: 'hrt (heart)',
-        spdl: 'spdl (spindle)', lmc: 'lmc (limaçon)', rsc: 'rsc (rose)',
-        lss: 'lss (Lissajous)', ast: 'ast (astroid)',
-        asp: 'asp (Archimedes spiral)', lsp: 'lsp (log spiral)', dlt: 'dlt (deltoid)',
-        z01: 'z01 (Re mirror remix)',
-        sum_prod: 'sum_prod (t1+t2, t1*t2)',
-        roots3: 'roots3 (cubic t1+t2,1,1,t1t2)',
-        roots5: 'roots5 (cubic roots)',
-        roots6: 'roots6 (quartic roots)',
-        rply: 'rply (polygon)', star: 'star', rect: 'rect', rrect: 'rrect (rounded rect)',
-        sdith: 'sdith (square dither)', ddith: 'ddith (disk dither)', ndith: 'ndith (normal dither)',
-        adth: 'adth (annulus dither)', ldth: 'ldth (line dither)', crdth: 'crdth (cross dither)', scdth: 'scdth (sector dither)',
-        coeff2: 'coeff2 (t1+t2, t1·t2)', coeff3: 'coeff3 (1/(t+2))',
-        coeff3a: 'coeff3a (1/(t+1))', coeff4: 'coeff4 (cos,sin)',
-        coeff5: 'coeff5 (t+1/t cross)', coeff5a: 'coeff5a (t+1/t)',
-        coeff6: 'coeff6 ((t³+i)/(t³-i))', coeff7: 'coeff7 ((t+sin)/(t+cos))',
-        coeff8: 'coeff8 (cross sin/cos)', coeff9: 'coeff9 ((t²+it)/(t²-it))',
-        coeff10: 'coeff10 ((t⁴-t)/(t⁴+t))', coeff11: 'coeff11 (log(t⁴+2))',
-        coeff12: 'coeff12 (mixed poly)',
-    };
-    const sel = document.getElementById('pt-add');
-    for (const name of Object.keys(_ptCatalog)) {
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = _ptLabels[name] || name;
-        sel.appendChild(opt);
-    }
-}
+// Populate hidden fallback selects and render transform picker popups.
+_syncParamTransformAddOptions();
+_syncCoeffTransformAddOptions();
 
 // Populate function dropdown from generated catalog
 populateDropdown();

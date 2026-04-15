@@ -84,6 +84,44 @@ def test_param_gen_threaded_matches_single_thread_for_deterministic_chain():
     print("  PASS")
 
 
+def test_param_gen_range_matches_full_for_deterministic_chain():
+    """Chunked param_gen emits the exact requested record slice."""
+    print("test_param_gen_range_matches_full_for_deterministic_chain...")
+    spec = {
+        "mode": "param_gen",
+        "n1": 12,
+        "n2": 12,
+        "times": 3,
+        "param_transforms": [["unit_circle"], ["square"]],
+    }
+    full = run_mode({**spec, "n_threads": 1}, "/tmp/pg_range_full.bin")
+    start, count = 17, 41
+    single = run_mode(
+        {**spec, "n_threads": 1, "step_start": start, "step_count": count},
+        "/tmp/pg_range_single.bin",
+    )
+    mt = run_mode(
+        {**spec, "n_threads": 4, "step_start": start, "step_count": count},
+        "/tmp/pg_range_mt.bin",
+    )
+    with open("/tmp/pg_range_full.bin", "rb") as f:
+        full_bytes = f.read()
+    with open("/tmp/pg_range_single.bin", "rb") as f:
+        single_bytes = f.read()
+    with open("/tmp/pg_range_mt.bin", "rb") as f:
+        mt_bytes = f.read()
+    expected = full_bytes[start * 16:(start + count) * 16]
+    assert single["n_steps"] == count
+    assert single["total_steps"] == full["n_steps"]
+    assert single["step_start"] == start
+    assert single["step_count"] == count
+    assert single_bytes == expected
+    assert mt_bytes == expected
+    for path in ("/tmp/pg_range_full.bin", "/tmp/pg_range_single.bin", "/tmp/pg_range_mt.bin"):
+        os.remove(path)
+    print("  PASS")
+
+
 def test_coeffgen_chunked_matches_monolithic():
     """Chunked coeffgen output matches monolithic (within float32 quantization)."""
     print("test_coeffgen_chunked_matches_monolithic...")
@@ -274,6 +312,7 @@ if __name__ == "__main__":
     test_param_gen_size()
     test_param_gen_deterministic()
     test_param_gen_threaded_matches_single_thread_for_deterministic_chain()
+    test_param_gen_range_matches_full_for_deterministic_chain()
     test_coeffgen_chunked_matches_monolithic()
     test_chunk_planner_coverage()
     test_chunks_greater_than_n()

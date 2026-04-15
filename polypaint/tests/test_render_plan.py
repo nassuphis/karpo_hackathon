@@ -104,6 +104,10 @@ class TestRenderPlan(unittest.TestCase):
                 "coeffs_key": "renders/j/coeffs_0000.bin",
                 "step_start": 0,
                 "step_count": 10,
+                "params_key": "renders/j/params.bin",
+                "params_step_start": 0,
+                "params_step_count": 10,
+                "params_bin_size": 10 * 16,
                 "bin_size": 10 * 5 * 2 * 4,
                 "coeffs_bin_size": 10 * 6 * 2 * 4,
             },
@@ -113,6 +117,10 @@ class TestRenderPlan(unittest.TestCase):
                 "coeffs_key": "renders/j/coeffs_0001.bin",
                 "step_start": 10,
                 "step_count": 20,
+                "params_key": "renders/j/params.bin",
+                "params_step_start": 10,
+                "params_step_count": 20,
+                "params_bin_size": 20 * 16,
                 "bin_size": 20 * 5 * 2 * 4,
                 "coeffs_bin_size": 20 * 6 * 2 * 4,
             },
@@ -801,13 +809,68 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["calc"]["params_key"] == "renders/j/params.bin"
         assert plan["chunk_items"][0]["step_start"] == 0
         assert plan["chunk_items"][0]["step_count"] == 6000
+        assert plan["chunk_items"][0]["params_key"] == "renders/j/params.bin"
+        assert plan["chunk_items"][0]["params_step_start"] == 0
+        assert plan["chunk_items"][0]["params_step_count"] == 6000
         assert plan["chunk_items"][1]["step_start"] == 6000
         assert plan["chunk_items"][1]["step_count"] == 4000
+        assert plan["chunk_items"][1]["params_key"] == "renders/j/params.bin"
+        assert plan["chunk_items"][1]["params_step_start"] == 6000
+        assert plan["chunk_items"][1]["params_step_count"] == 4000
         assert json.loads(plan["outputs"]["metadata"]["solve_score_chain"]) == [
             ["t1_abs", "pm", "1"],
             ["spread", "1"],
             "avg",
         ]
+
+    @patch("handler_render_plan._storage_call")
+    def test_param_source_solve_score_accepts_chunked_param_metadata(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5,
+            "n_coeffs": 7,
+            "N": 100,
+            "times": 1,
+            "param_storage_mode": "chunked",
+            "params_key": "",
+            "chunks": [
+                {
+                    "idx": 0,
+                    "bin_key": "renders/j/chunk_0.bin",
+                    "step_count": 6000,
+                    "params_key": "renders/j/params_0000.bin",
+                    "params_step_start": 0,
+                    "params_step_count": 6000,
+                    "params_bin_size": 6000 * 16,
+                },
+                {
+                    "idx": 1,
+                    "bin_key": "renders/j/chunk_1.bin",
+                    "step_count": 4000,
+                    "params_key": "renders/j/params_0001.bin",
+                    "params_step_start": 0,
+                    "params_step_count": 4000,
+                    "params_bin_size": 4000 * 16,
+                },
+            ],
+            "lores": {
+                "bin_key": "renders/j/lores.bin",
+                "params_key": "renders/j/lores_params.bin",
+            },
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="t1_abs",
+            solve_score_quantile=0.01,
+            solve_score_chain=[["t1_abs", "pm", "1"], ["spread", "slv", "1"], ["avg"]],
+        ), None)
+        plan = json.loads(result["body"])
+        assert plan["calc"]["params_key"] == ""
+        assert plan["calc"]["param_storage_mode"] == "chunked"
+        assert plan["chunk_items"][0]["params_key"] == "renders/j/params_0000.bin"
+        assert plan["chunk_items"][0]["params_step_start"] == 0
+        assert plan["chunk_items"][1]["params_key"] == "renders/j/params_0001.bin"
+        assert plan["chunk_items"][1]["params_step_start"] == 0
 
     @patch("handler_render_plan._storage_call")
     def test_associated_palette_chunk_defaults_follow_mt_raster_settings_when_present(self, mock_storage):

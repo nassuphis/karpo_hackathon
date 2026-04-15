@@ -73,13 +73,40 @@ def handle_param_gen(params):
                 raise RuntimeError(f"n_threads must be >= 1, got {n_threads}")
             spec["n_threads"] = n_threads
         threads = int(spec.get("n_threads", 1) or 1)
-        expected_steps = int(grid_n) * int(grid_n) * int(times)
+        total_steps = int(grid_n) * int(grid_n) * int(times)
+        raw_step_start = params.get("step_start")
+        raw_step_count = params.get("step_count")
+        step_start = 0
+        step_count = total_steps
+        if raw_step_start not in (None, ""):
+            try:
+                step_start = int(raw_step_start)
+            except (TypeError, ValueError):
+                raise RuntimeError(f"step_start must be an integer, got {raw_step_start!r}")
+            spec["step_start"] = step_start
+        if raw_step_count not in (None, ""):
+            try:
+                step_count = int(raw_step_count)
+            except (TypeError, ValueError):
+                raise RuntimeError(f"step_count must be an integer, got {raw_step_count!r}")
+            spec["step_count"] = step_count
+        elif raw_step_start not in (None, ""):
+            step_count = total_steps - step_start
+            spec["step_count"] = step_count
+        if step_start < 0 or step_count < 1 or step_start > total_steps or step_count > total_steps - step_start:
+            raise RuntimeError(
+                f"invalid param_gen range: step_start={step_start} step_count={step_count} total_steps={total_steps}"
+            )
+        expected_steps = step_count
         expected_bytes = expected_steps * 16
         phase_meta = {
             "phase": "param_gen",
             "phase_label": "Param gen",
             "params_key": params_key,
             "n_steps": expected_steps,
+            "total_steps": total_steps,
+            "step_start": step_start,
+            "step_count": step_count,
             "data_bytes": expected_bytes,
             "threads": threads,
             "elapsed_us": 0,
@@ -181,13 +208,16 @@ def handle_param_gen(params):
 
         if total_bytes != meta["data_bytes"]:
             raise RuntimeError(
-                f"params.bin size mismatch: expected {meta['data_bytes']}, uploaded {total_bytes}")
+                f"params output size mismatch for {params_key}: expected {meta['data_bytes']}, uploaded {total_bytes}")
 
         result_data = {
             "phase": "param_gen",
             "phase_label": "Param gen",
             "params_key": params_key,
             "n_steps": meta["n_steps"],
+            "total_steps": int(meta.get("total_steps", total_steps) or total_steps),
+            "step_start": int(meta.get("step_start", step_start) or 0),
+            "step_count": int(meta.get("step_count", step_count) or step_count),
             "data_bytes": meta["data_bytes"],
             "threads": int(meta.get("threads", 1) or 1),
             "elapsed_us": int((time.time() - t0) * 1e6),
@@ -207,11 +237,25 @@ def handle_coeffgen_chunked(params):
     step_start = params["step_start"]
     step_count = params["step_count"]
     params_key = params["params_key"]
+    params_step_start = params.get("params_step_start", step_start)
+    params_step_count = params.get("params_step_count", step_count)
     task_id = params.get("task_id", f"coeffgen_{chunk_idx}")
     contract_warnings = []
     raw_threads = params.get("n_threads")
 
     try:
+        step_start = int(step_start)
+        step_count = int(step_count)
+        params_step_start = int(params_step_start)
+        params_step_count = int(params_step_count)
+        if step_start < 0 or step_count < 1:
+            raise RuntimeError(f"step_start/step_count must be valid, got {step_start}/{step_count}")
+        if params_step_start < 0 or params_step_count < 1:
+            raise RuntimeError(f"params_step_start/params_step_count must be valid, got {params_step_start}/{params_step_count}")
+        if params_step_count != step_count:
+            raise RuntimeError(
+                f"params_step_count must match step_count for coeffgen_chunked, got {params_step_count}/{step_count}"
+            )
         coeffgen_threads = 1
         if raw_threads not in (None, ""):
             try:
@@ -225,12 +269,15 @@ def handle_coeffgen_chunked(params):
             "phase": "coeffgen_chunked",
             "chunk_idx": chunk_idx,
             "threads": coeffgen_threads,
+            "params_key": params_key,
+            "params_step_start": params_step_start,
+            "params_step_count": params_step_count,
         }, contract_warnings))
 
         # Range-read our slice of params.bin from S3
         record_bytes = 16  # 4 × float32
-        byte_start = step_start * record_bytes
-        byte_end = (step_start + step_count) * record_bytes - 1
+        byte_start = params_step_start * record_bytes
+        byte_end = (params_step_start + params_step_count) * record_bytes - 1
         t0 = time.time()
 
         resp = s3.get_object(
@@ -288,6 +335,9 @@ def handle_coeffgen_chunked(params):
             "job_id": job_id,
             "chunk_idx": chunk_idx,
             "coeffs_key": coeffs_key,
+            "params_key": params_key,
+            "params_step_start": params_step_start,
+            "params_step_count": params_step_count,
             "coeffs_size": meta["data_bytes"],
             "n_coeffs": meta["n_coeffs"],
             "degree": meta["degree"],

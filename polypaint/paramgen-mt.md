@@ -1,6 +1,11 @@
 # ParamGen / CoeffGen MT + Chunked Params Plan
 
-Status: design note only.
+Status: Phase 1 through Phase 3 are implemented for the compute/render/palette
+paths. Full-res param generation is now Step Functions fan-out by chunk and
+writes chunk-local `params_0000.bin` style objects. `lores_params.bin` remains
+global. Legacy global full-res `params.bin` metadata is still supported as a
+fallback for old jobs, but new compute jobs do not assemble a redundant global
+full-res params object.
 
 This plan covers two related questions:
 
@@ -38,7 +43,7 @@ For large full-res runs, the right medium-term target is:
 - do not spend time assembling a redundant full-res `params.bin`
 - hide the storage shape behind helper/adaptor code in the plan/handler layer
 
-The safe order is:
+The rollout order was:
 
 1. add UI controls for param-gen and coeffgen MT
 2. add internal MT to the native `param_gen` C path
@@ -54,26 +59,38 @@ The safe order is:
 
 ### UI
 
-`Calculate-AE-MT` is currently a direct button with no popup:
+`Calculate-AE-MT` now opens a popup with a compact compute-stage table:
 
 - [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html)
-  - `runCalculateAEMT()` at the current compute button path
+  - `compute-mt-popup-overlay`
+  - `compute-mt-param-gen-threads`
+  - `compute-mt-coeffgen-threads`
+  - `compute-mt-lores-param-gen-threads`
+  - `compute-mt-lores-coeffgen-threads`
 
-By contrast, `Render -> Color -> Generate-MT` already has a dedicated popup
-matrix with thread and mode controls:
+The popup dispatches:
 
-- [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html)
-  - `render-mt-popup-overlay`
-  - `_initRenderMtPopup()`
+- `param_gen_threads`
+- `coeffgen_threads`
+- `lores_param_gen_threads`
+- `lores_coeffgen_threads`
+
+Defaults are currently:
+
+- full param gen: `4`
+- full coeffgen: `4`
+- lores param gen: `1`
+- lores coeffgen: `1`
 
 ### Workflow
 
 The compute workflow currently has:
 
-- one full `ParamGenTask`
+- `ParamGenMap` fan-out over `plan.chunk_items`
 - chunked coeffgen fan-out
 - one lores param gen
 - one lores coeffgen
+- thread counts passed through all four stages
 
 References:
 
@@ -82,12 +99,17 @@ References:
 
 ### Execution path
 
-`param_gen` today is:
+Full-res `param_gen` today is:
 
-- one Lambda invocation
+- one Lambda invocation per compute chunk
 - thin Python wrapper
 - one C subprocess
-- single-threaded native loop
+- local native pthread workers when `n_threads > 1`
+- one chunk-local S3 object output per chunk:
+  - `renders/<job>/params_0000.bin`
+  - `renders/<job>/params_0001.bin`
+  - ...
+- native `param_gen` accepts `step_start` and `step_count`
 
 References:
 
@@ -99,7 +121,9 @@ References:
 - one Lambda invocation per chunk
 - thin Python wrapper
 - one C subprocess
-- no local native threading inside the coeffgen chunk worker
+- local native pthread workers when `n_threads > 1`
+- sectioned local param reads with `pread`
+- fixed-offset coefficient writes with `pwrite`
 
 References:
 
@@ -110,25 +134,39 @@ References:
 
 Full compute path:
 
-- global params object:
-  - `renders/<job>/params.bin`
+- chunked params objects:
+  - `renders/<job>/params_0000.bin`
+  - `renders/<job>/params_0001.bin`
+  - ...
+- chunked coeff objects:
+  - `renders/<job>/coeffs_0000.bin`
+  - `renders/<job>/coeffs_0001.bin`
+  - ...
 
 Lores path:
 
 - global lores params object:
   - `renders/<job>/lores_params.bin`
 
-Coeffgen already reads ranges from the global params object:
+Coeffgen reads chunk-local params when chunk metadata has `params_key`.
+Legacy jobs without per-chunk params metadata still fall back to global
+`params.bin` range reads:
 
 - [lambda/handler_coeffgen.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_coeffgen.py)
   - `handle_coeffgen_chunked()`
 
-Render/palette/solve-score param-source consumers also range-read the global
-params object using:
+Render/palette/solve-score param-source consumers use the same per-chunk
+source tuple:
 
 - `params_key`
-- `step_start`
-- `step_count`
+- `params_step_start`
+- `params_step_count`
+
+Legacy fallback maps that tuple to:
+
+- global `params_key`
+- `params_step_start = step_start`
+- `params_step_count = step_count`
 
 References:
 
@@ -137,8 +175,38 @@ References:
 - [lambda/handler_palette_chunk.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_palette_chunk.py)
 - [lambda/handler_solve_proximity.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_solve_proximity.py)
 
-This is why changing the layout requires an adaptor rather than making every
-consumer parse storage details directly.
+The shared storage adaptor is:
+
+- [lambda/param_source.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/param_source.py)
+
+### Implemented Checklist
+
+- [x] `Calculate-AE-MT` popup exists.
+- [x] Popup exposes thread counts for full param gen, full coeffgen, lores
+  param gen, and lores coeffgen.
+- [x] Compute plan validates and stores all four thread counts.
+- [x] Compute Step Function forwards thread counts to param-gen and coeffgen
+  tasks.
+- [x] `handler_coeffgen.py` forwards `n_threads` to native `param_gen`.
+- [x] `handler_coeffgen.py` forwards `n_threads` to native
+  `coeffgen_chunked`.
+- [x] Native `param_gen` supports pthread workers.
+- [x] Native `coeffgen_chunked` supports pthread workers with sectioned
+  local file reads/writes.
+- [x] Status/logging reports thread counts and param-gen upload progress.
+- [x] Full-res param fan-out.
+- [x] `params_0000.bin` / `params_0001.bin` chunk objects.
+- [x] Param-source adaptor helpers for global-vs-chunked layout.
+- [x] Per-chunk `params_key`, `params_step_start`, and
+  `params_step_count` metadata.
+- [x] Coeffgen uses chunk-local params when present.
+- [x] Render MT and single-thread raster paths use chunk-local params when
+  present.
+- [x] Solve histogram and associated-palette / palette-chunk paths use
+  chunk-local params when present.
+- [x] `lores_params.bin` remains global.
+- [x] Legacy global `params.bin` fallback remains available for old
+  `calc.json` files.
 
 ## Important Constraint
 
@@ -156,7 +224,8 @@ Param-source solve-score chips already exist and work:
 Those compile to `pm` metric slots and already depend on:
 
 - `lores_params_key` for clip/summary
-- `params_key + step_start + step_count` for full hist/render/palette chunk
+- `params_key + params_step_start + params_step_count` for full
+  hist/render/palette chunks
 
 References:
 
@@ -253,24 +322,34 @@ avoidable assembly cost.
 
 ## Recommendation
 
-Recommended rollout:
+Implemented rollout:
 
-### Phase 1
+### Phase 1: Implemented
 
 - add the `Calculate-AE-MT` popup
 - add internal MT to native `param_gen`
 - add internal MT to native `coeffgen_chunked`
-- keep global params layout unchanged
+- initially keep global params layout unchanged
 
-### Phase 2
+Runtime shape after Phase 1 was:
 
-- if profiling still shows param handling as a bottleneck, move full-res params
-  to chunked artifacts
+- full param gen is still a single Lambda
+- full param gen writes one global `params.bin`
+- lores param gen writes one global `lores_params.bin`
+- coeffgen still fans out by chunk
+- each coeffgen chunk Lambda can use local native threads
+- logs expose thread counts and param-gen byte/step progress
+
+### Phase 2: Implemented
+
+- full-res params moved to chunked artifacts
 - keep only `lores_params.bin` global
 - add an adaptor/helper layer so chunk consumers no longer assume a global
   `params.bin`
+- do not assemble a redundant full-res `params.bin` just to preserve an old
+  storage shape
 
-### Phase 3
+### Phase 3: Implemented
 
 - migrate all full-res param consumers to chunk-local params reads:
   - coeffgen
@@ -279,8 +358,8 @@ Recommended rollout:
   - palette chunk / associated palette paths
 - keep legacy fallback for old jobs that still expose global `params.bin`
 
-This is the cautious path that improves performance without wasting time on a
-redundant full-res params assembly step.
+This keeps the performance improvement while avoiding a full-res params
+assembly step.
 
 ## Adaptor Requirement
 
@@ -290,10 +369,9 @@ Do not make each call site open-code:
 
 - "if chunked use params_0007.bin else range-read params.bin"
 
-Add one shared abstraction, for example:
+The shared abstraction is implemented in:
 
-- `resolve_fullres_params_source(calc_meta, chunk_item)`
-- `fetch_params_slice(...)`
+- [lambda/param_source.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/param_source.py)
 
 That helper should return enough information for the caller to stay simple:
 
@@ -311,7 +389,7 @@ Expected behavior:
 - new chunked layout:
   - `source_key = params_0007.bin`
   - `local_step_start = 0`
-  - `step_count = chunk step count`
+  - `step_count = chunk step_count`
 
 This keeps chips and runtime logic focused on score semantics rather than S3
 layout trivia.
@@ -359,6 +437,8 @@ popup must correspond to a real compute-stage runtime choice.
 
 ### First popup fields
 
+Status: implemented.
+
 Phase 1 should keep this minimal but complete for the native compute hot path:
 
 - `Param gen` row → `Threads`
@@ -392,6 +472,8 @@ controls.
 
 ### Payload
 
+Status: implemented.
+
 `runCalculateAEMT()` should no longer call `runCalculateWithSolver('aberth_mt')`
 blindly.
 
@@ -405,12 +487,12 @@ Instead:
   - `coeffgen_threads`
   - `lores_coeffgen_threads`
 
-Potentially:
-
-- if `lores_param_gen_threads` is omitted, backend uses full param-gen threads
-  or defaults to `1`
+The backend also validates all four fields in `handler_compute_plan.py`.
 
 ## Native Param-Gen MT Plan
+
+Status: implemented for both legacy global params and ranged chunk-local
+params.
 
 ### Core observation
 
@@ -423,7 +505,7 @@ Each step is independent after its base coordinates are known.
 
 That means the work is structurally parallelizable by step range.
 
-### Safe threading model
+### Implemented threading model
 
 Use fixed disjoint step ranges:
 
@@ -433,16 +515,18 @@ Use fixed disjoint step ranges:
 
 Each worker computes rows for its block only.
 
-Preferred write model:
+Current write model:
 
-- worker-local buffers
-- one ordered writer thread or ordered flush phase
+- worker-local output slots
+- coordinator writes completed slots to stdout in order
+- Python streams stdout directly to S3 multipart upload
 
-Alternative:
-
-- direct fixed-offset writes into a preallocated local file
+This preserves the global artifact contract while allowing the expensive row
+generation loop to use local Lambda cores.
 
 ## Native CoeffGen MT Plan
+
+Status: implemented for chunk-local coeffgen workers.
 
 ### Core observation
 
@@ -470,6 +554,8 @@ buffer.
 
 ### Local I/O model
 
+Status: implemented.
+
 The native coeffgen worker should use sectioned local reads/writes:
 
 - each thread reads only its assigned param rows from the local params slice
@@ -496,11 +582,8 @@ Preferred implementation primitives:
 - `pread`/`pwrite`, or
 - equivalent fixed-offset sectioned file access
 
-Do not implement coeffgen MT as:
-
-- all threads filling one giant heap buffer, then one final flush
-
-That is the wrong memory shape for large chunks.
+The current native implementation uses `pread` for each thread's param rows
+and `pwrite` for fixed-offset coefficient rows.
 
 ### Non-determinism
 
@@ -518,6 +601,8 @@ The real requirement is:
 - no cross-thread corruption
 
 ### Payload / metadata
+
+Status: implemented.
 
 The compute workflow should thread these knobs explicitly:
 
@@ -572,12 +657,18 @@ That is acceptable if we document it explicitly.
 
 ### Metadata
 
+Status: partially implemented.
+
 Add perf metadata for observability:
 
 - `threads`
+- `elapsed_us`
+
+Potential future additions:
+
 - `block_count`
-- `compute_us`
-- maybe `write_us`
+- native `compute_us`
+- native `write_us`
 
 Do not remove current fields like:
 
@@ -631,28 +722,35 @@ That is exactly the class of breakage we want to avoid.
 
 ### Safe chunking rule
 
-If we add chunked params, we must dual-write.
+If we add chunked params, do not require a new full-res global `params.bin`
+assembly step.
 
-That means:
+New jobs should be allowed to use:
 
-- keep canonical global:
-  - `params.bin`
-- also write chunk-local:
-  - `params_0000.bin`, ...
-- and keep canonical lores:
+- chunk-local full-res params:
+  - `params_0000.bin`
+  - `params_0001.bin`
+  - ...
+- canonical global lores params:
   - `lores_params.bin`
 
-This gives:
+Old jobs should continue to work through fallback support for:
 
-- fast local chunk reads where useful
-- zero breakage for existing global-param readers
+- legacy global full-res params:
+  - `params.bin`
 
-## Required Metadata Changes For Dual-Write
+The compatibility layer is the adaptor, not a redundant assembly phase.
+Materializing a full global `params.bin` for new chunked-param jobs is only
+acceptable as a temporary migration/debug switch, not as the steady-state
+design.
+
+## Required Metadata Changes For Chunked Params
 
 If chunked params are introduced, add per-chunk metadata:
 
 - `chunk_items[].params_key`
 - `chunk_items[].params_bin_size`
+- `calc.param_storage_mode`, for example `global` or `chunked`
 
 Keep existing fields:
 
@@ -661,11 +759,18 @@ Keep existing fields:
 - `chunk_items[].step_start`
 - `chunk_items[].step_count`
 
-This is the compatibility contract.
+For old jobs:
 
-Do not replace the existing fields in place.
+- `calc.params_key` remains the fallback source.
 
-Additive schema only.
+For new chunked jobs:
+
+- `calc.params_key` may be empty, absent, or explicitly marked legacy-only
+  depending on the final schema.
+- consumers should not dereference it directly without the adaptor.
+
+Do not replace consumer logic in place with open-coded storage checks.
+Add the helper first, then move call sites onto it.
 
 ## Consumer Migration Rules
 
@@ -681,6 +786,8 @@ Future:
 
 - if `chunk params_key` exists, download that object directly
 - otherwise fall back to the current global `params_key` + range read
+- this should go through the shared adaptor, not bespoke code inside the
+  coeffgen handler
 
 ### Solve-score param render/palette workers
 
@@ -736,14 +843,19 @@ Any chunked-param migration that leaks into chip syntax is a design failure.
 
 ## Phase 1: UI + internal MT, no storage change
 
+Status: implemented.
+
 Deliverables:
 
 - compute MT popup in `index.html`
 - payload fields:
   - `param_gen_threads`
   - `lores_param_gen_threads`
+  - `coeffgen_threads`
+  - `lores_coeffgen_threads`
 - `handler_coeffgen.py` forwards thread counts into native `param_gen`
 - native `sweep_cli.c` gets a threaded `param_gen` implementation
+- native `sweep_cli.c` gets a threaded `coeffgen_chunked` implementation
 - output artifacts unchanged:
   - `params.bin`
   - `lores_params.bin`
@@ -754,21 +866,26 @@ Success criteria:
 - no changes needed in solve-score param chips
 - compute time for param-gen meaningfully drops on larger jobs
 
-## Phase 2: optional dual-write chunked params
+## Phase 2: optional chunked params fan-out
+
+Status: implemented.
 
 Deliverables:
 
-- `param_gen` writes global params and chunk-local params
+- `param_gen` fan-out writes chunk-local params
 - `chunk_items[].params_key` metadata
 - coeffgen chunk workers prefer chunk-local params
+- shared param-source adaptor exists before consumers migrate
 
 Success criteria:
 
-- compute still produces canonical global params
 - coeffgen no longer depends on global range reads when chunk params exist
 - old jobs and old calc metadata still work
+- new jobs do not spend time assembling a redundant full-res `params.bin`
 
 ## Phase 3: careful consumer adoption
+
+Status: implemented.
 
 Deliverables:
 
@@ -784,12 +901,16 @@ Success criteria:
 
 ### UI / plan tests
 
+Status: implemented for Phase 1.
+
 Add tests for:
 
 - popup opens from `Calculate-AE-MT`
 - thread fields are clamped/sanitized
 - payload includes `param_gen_threads`
 - payload includes `lores_param_gen_threads`
+- payload includes `coeffgen_threads`
+- payload includes `lores_coeffgen_threads`
 
 Targets:
 
@@ -797,6 +918,8 @@ Targets:
 - Playwright only if the popup interaction is non-trivial
 
 ### Workflow / plan tests
+
+Status: implemented for Phase 1 thread propagation.
 
 Add/update:
 
@@ -810,6 +933,8 @@ Verify:
 - no existing compute fields regress
 
 ### Native param-gen tests
+
+Status: implemented for handler/native contract and runtime smoke coverage.
 
 Add native tests for:
 
@@ -825,9 +950,15 @@ Do require exact equality for deterministic transform sets.
 
 ### Coeffgen compatibility tests
 
-If chunked params are introduced:
+Status: implemented for chunked param generation and handler/workflow
+contracts.
 
-- coeffgen from chunk params matches coeffgen from global range slice
+Coverage includes:
+
+- deterministic ranged `param_gen` output equals the corresponding full-stream
+  byte slice
+- ranged single-thread and ranged multi-thread output match
+- `coeffgen_chunked` receives per-chunk params source metadata
 
 Targets:
 
@@ -859,6 +990,11 @@ If the native binary changes:
 
 - `bash scripts/test-docker-runtime.sh` is mandatory
 
+Current rule: if `lambda/sweep_cli.c`, `lambda/roots2pix*.c`,
+`lambda/pixbinassemble.c`, or any other deployed native source changes, rebuild
+the corresponding deploy binary before running the Docker/runtime gate. Do not
+wait for the test to fail because the packaged binary is stale.
+
 ## Rollback / Safety
 
 The safest rollback path is:
@@ -883,16 +1019,17 @@ params artifact.
 
 ## Recommendation Summary
 
-Do this:
+Current recommendation:
 
-1. add a `Calculate-AE-MT` popup with param-gen thread controls
-2. thread the C `param_gen` implementation
-3. keep writing global `params.bin`
+1. keep using chunk-local full-res params for new compute jobs
+2. keep `lores_params.bin` global
+3. keep the legacy global `params.bin` fallback for old jobs
 4. preserve all existing param-source solve-score contracts
 
-Do not do this first:
+Do not add:
 
-- replace global params with chunked params only
+- a full-res params assembly step
+- solve-score chip syntax that exposes storage layout
 - rewrite solve-score param chips to know about storage layout
 - let storage refactors leak into chip syntax
 

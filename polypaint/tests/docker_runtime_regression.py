@@ -383,7 +383,42 @@ def test_param_gen_threaded_runtime():
     assert len(mt_bytes) == meta_mt["data_bytes"], "param_gen multi-thread byte count mismatch"
     print("  sweep_coeffgen param_gen n_threads=1 vs 4: OK (%d bytes)" % len(mt_bytes))
 
-    cleanup(single_path, mt_path)
+    range_single_path = "/tmp/param_gen_range_single.bin"
+    range_mt_path = "/tmp/param_gen_range_mt.bin"
+    start, count = 17, 41
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", range_single_path],
+        input=json.dumps({**spec_base, "n_threads": 1, "step_start": start, "step_count": count}),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "param_gen range single-thread failed: " + r.stderr[:200]
+    meta_range_single = json.loads(r.stdout)
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", range_mt_path],
+        input=json.dumps({**spec_base, "n_threads": 4, "step_start": start, "step_count": count}),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "param_gen range multi-thread failed: " + r.stderr[:200]
+    meta_range_mt = json.loads(r.stdout)
+    with open(range_single_path, "rb") as f:
+        range_single_bytes = f.read()
+    with open(range_mt_path, "rb") as f:
+        range_mt_bytes = f.read()
+    expected_range = single_bytes[start * 16:(start + count) * 16]
+    assert meta_range_single["n_steps"] == count, "param_gen range metadata n_steps mismatch"
+    assert meta_range_single["total_steps"] == meta_single["n_steps"], "param_gen range total_steps mismatch"
+    assert meta_range_single["step_start"] == start, "param_gen range step_start mismatch"
+    assert meta_range_single["step_count"] == count, "param_gen range step_count mismatch"
+    assert meta_range_mt["threads"] == 4, "param_gen range threaded metadata missing threads=4"
+    assert range_single_bytes == expected_range, "param_gen range single-thread output mismatch"
+    assert range_mt_bytes == expected_range, "param_gen range multi-thread output mismatch"
+    print("  sweep_coeffgen param_gen ranged chunks: OK (%d bytes)" % len(range_mt_bytes))
+
+    cleanup(single_path, mt_path, range_single_path, range_mt_path)
     print("=== Param-gen threaded runtime PASSED ===")
 
 

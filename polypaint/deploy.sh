@@ -973,6 +973,7 @@ PAL_PLAN_DIR=/tmp/polypaint-palette-render-plan
 rm -rf "$PAL_PLAN_DIR"
 mkdir -p "$PAL_PLAN_DIR"
 cp lambda/handler_palette_render_plan.py lambda/shared.py \
+   lambda/param_source.py \
    lambda/color_artifact_meta.py \
    lambda/solve_score_chain.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PAL_PLAN_DIR/"
@@ -1021,6 +1022,7 @@ PLAN_DIR=/tmp/polypaint-render-plan
 rm -rf "$PLAN_DIR"
 mkdir -p "$PLAN_DIR"
 cp lambda/handler_render_plan.py lambda/shared.py \
+   lambda/param_source.py \
    lambda/solve_score_chain.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PLAN_DIR/"
 cd "$PLAN_DIR" && zip -r9 /tmp/polypaint-render-plan.zip . -q && cd "$SCRIPT_DIR"

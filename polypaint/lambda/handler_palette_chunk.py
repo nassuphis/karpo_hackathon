@@ -167,6 +167,8 @@ def handler(event, context):
     coeffs_key = str(params.get("coeffs_key") or "").strip()
     coeffs_bin_size = params.get("coeffs_bin_size")
     params_key = str(params.get("params_key") or "").strip()
+    params_step_start = params.get("params_step_start", step_start)
+    params_step_count = params.get("params_step_count", step_count)
     n_coeffs = params.get("n_coeffs")
     score_key = params["score_key"]
     palette_bins_key = params["palette_bins_key"]
@@ -247,6 +249,23 @@ def handler(event, context):
             if _solve_score_bins_uses_source(bins_data, "pm"):
                 if not params_key:
                     raise RuntimeError("param-source palette chunk requires params_key")
+                try:
+                    params_step_start = int(params_step_start)
+                    params_step_count = int(params_step_count)
+                except (TypeError, ValueError):
+                    raise RuntimeError(
+                        "param-source palette chunk requires numeric "
+                        f"params_step_start/params_step_count, got {params_step_start!r}/{params_step_count!r}"
+                    )
+                if params_step_start < 0 or params_step_count < 1:
+                    raise RuntimeError(
+                        "param-source palette chunk requires params_step_start >= 0 and "
+                        f"params_step_count >= 1, got {params_step_start}/{params_step_count}"
+                    )
+                if params_step_count != step_count:
+                    raise RuntimeError(
+                        f"param-source palette chunk requires params_step_count == step_count, got {params_step_count}/{step_count}"
+                    )
         else:
             if bins_data.get("metric") != metric:
                 raise RuntimeError(f"Bins metric mismatch: expected {metric}, got {bins_data.get('metric')}")
@@ -304,8 +323,8 @@ def handler(event, context):
                 param_size = _download_range(
                     params_key,
                     _TMP_SCORE_PARAMS,
-                    int(step_start) * 4 * 4,
-                    int(step_count) * 4 * 4,
+                    int(params_step_start) * 4 * 4,
+                    int(params_step_count) * 4 * 4,
                 )
                 progress["source_params_size"] = param_size
                 cmd.append(f"--score_params_file={_TMP_SCORE_PARAMS}")

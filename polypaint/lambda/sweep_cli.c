@@ -4878,7 +4878,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
 /* Output: N*N*times records of (t1r, t1i, t2r, t2i) as float32.
  * Order: pass-major, i1 ascending, serpentine i2. Matches coeffgen traversal exactly. */
 typedef struct {
-    int rowIndex;
+    long rowIndex;
     int ready;
     int inUse;
     float *data;
@@ -4893,6 +4893,8 @@ typedef struct {
     const PtEntry *ptEntries;
     long totalRows;
     long nextRow;
+    long stepStart;
+    long stepEnd;
     ParamGenRowSlot *slots;
     pthread_mutex_t mutex;
     pthread_cond_t cond;
@@ -4937,7 +4939,7 @@ static void *paramGenWorkerMain(void *vp) {
             if (!ctx->slots[slotIdx].inUse) {
                 ctx->slots[slotIdx].inUse = 1;
                 ctx->slots[slotIdx].ready = 0;
-                ctx->slots[slotIdx].rowIndex = (int)row;
+                ctx->slots[slotIdx].rowIndex = row;
                 ctx->nextRow++;
                 break;
             }
@@ -4960,6 +4962,43 @@ static void *paramGenWorkerMain(void *vp) {
         pthread_cond_broadcast(&ctx->cond);
         pthread_mutex_unlock(&ctx->mutex);
     }
+}
+
+static int writeParamGenRowSlice(FILE *fout, const float *rowData, long row, int n2,
+                                 long stepStart, long stepEnd) {
+    long rowFirstStep = row * (long)n2;
+    long rowEndStep = rowFirstStep + (long)n2;
+    long overlapStart = rowFirstStep > stepStart ? rowFirstStep : stepStart;
+    long overlapEnd = rowEndStep < stepEnd ? rowEndStep : stepEnd;
+    if (overlapEnd <= overlapStart) return 0;
+    size_t j0 = (size_t)(overlapStart - rowFirstStep);
+    size_t count = (size_t)(overlapEnd - overlapStart);
+    size_t wrote = fwrite(rowData + j0 * 4u, sizeof(float), count * 4u, fout);
+    return wrote == count * 4u ? 0 : 1;
+}
+
+static int runParamGenRangeSerial(FILE *fout, int n1, int n2, int gridN,
+                                  const PtEntry *ptEntries, int nPt,
+                                  long stepStart, long stepCount) {
+    long stepEnd = stepStart + stepCount;
+    long rowStart = stepStart / (long)n2;
+    long rowEnd = (stepEnd + (long)n2 - 1L) / (long)n2;
+    size_t rowValueCount = (size_t)n2 * 4u;
+    float *rowData = (float *)malloc(rowValueCount * sizeof(float));
+    if (!rowData) {
+        fprintf(stderr, "param_gen range row buffer alloc failed\n");
+        return 1;
+    }
+    for (long row = rowStart; row < rowEnd; row++) {
+        computeParamGenRow(row, n1, n2, gridN, ptEntries, nPt, rowData);
+        if (writeParamGenRowSlice(fout, rowData, row, n2, stepStart, stepEnd) != 0) {
+            free(rowData);
+            fprintf(stderr, "param_gen range write failed\n");
+            return 1;
+        }
+    }
+    free(rowData);
+    return 0;
 }
 
 static int runParamGenSerial(FILE *fout, int n1, int n2, int gridN, int times,
@@ -4985,13 +5024,18 @@ static int runParamGenSerial(FILE *fout, int n1, int n2, int gridN, int times,
     return 0;
 }
 
-static int runParamGenThreaded(FILE *fout, int n1, int n2, int gridN, int times,
-                               const PtEntry *ptEntries, int nPt, int nThreads) {
-    long totalRows = (long)n1 * (long)times;
+static int runParamGenThreadedRange(FILE *fout, int n1, int n2, int gridN,
+                                    const PtEntry *ptEntries, int nPt, int nThreads,
+                                    long stepStart, long stepCount) {
+    long stepEnd = stepStart + stepCount;
+    long rowStart = stepStart / (long)n2;
+    long rowEnd = (stepEnd + (long)n2 - 1L) / (long)n2;
+    long totalRows = rowEnd;
+    long rowCount = rowEnd - rowStart;
     size_t rowValueCount = (size_t)n2 * 4u;
     int slotCount = nThreads * 2;
     if (slotCount < 2) slotCount = 2;
-    if ((long)slotCount > totalRows) slotCount = (int)totalRows;
+    if ((long)slotCount > rowCount) slotCount = (int)rowCount;
     if (slotCount < 1) slotCount = 1;
 
     ParamGenRowSlot *slots = (ParamGenRowSlot *)calloc((size_t)slotCount, sizeof(ParamGenRowSlot));
@@ -5026,7 +5070,9 @@ static int runParamGenThreaded(FILE *fout, int n1, int n2, int gridN, int times,
     ctx.slotCount = slotCount;
     ctx.ptEntries = ptEntries;
     ctx.totalRows = totalRows;
-    ctx.nextRow = 0;
+    ctx.nextRow = rowStart;
+    ctx.stepStart = stepStart;
+    ctx.stepEnd = stepEnd;
     ctx.slots = slots;
     pthread_mutex_init(&ctx.mutex, NULL);
     pthread_cond_init(&ctx.cond, NULL);
@@ -5052,15 +5098,32 @@ static int runParamGenThreaded(FILE *fout, int n1, int n2, int gridN, int times,
         created++;
     }
 
-    for (long row = 0; row < totalRows; row++) {
+    for (long row = rowStart; row < rowEnd; row++) {
         int slotIdx = (int)(row % slotCount);
         pthread_mutex_lock(&ctx.mutex);
-        while (!(slots[slotIdx].inUse && slots[slotIdx].rowIndex == (int)row && slots[slotIdx].ready)) {
+        while (!(slots[slotIdx].inUse && slots[slotIdx].rowIndex == row && slots[slotIdx].ready)) {
             pthread_cond_wait(&ctx.cond, &ctx.mutex);
         }
         pthread_mutex_unlock(&ctx.mutex);
 
-        fwrite(slots[slotIdx].data, sizeof(float), rowValueCount, fout);
+        if (writeParamGenRowSlice(fout, slots[slotIdx].data, row, n2, stepStart, stepEnd) != 0) {
+            pthread_mutex_lock(&ctx.mutex);
+            ctx.nextRow = ctx.totalRows;
+            slots[slotIdx].inUse = 0;
+            slots[slotIdx].ready = 0;
+            slots[slotIdx].rowIndex = -1;
+            pthread_cond_broadcast(&ctx.cond);
+            pthread_mutex_unlock(&ctx.mutex);
+            for (int i = 0; i < created; i++) pthread_join(threads[i], NULL);
+            pthread_cond_destroy(&ctx.cond);
+            pthread_mutex_destroy(&ctx.mutex);
+            for (int i = 0; i < slotCount; i++) free(slots[i].data);
+            free(slots);
+            free(threads);
+            free(args);
+            fprintf(stderr, "param_gen threaded write failed\n");
+            return 1;
+        }
 
         pthread_mutex_lock(&ctx.mutex);
         slots[slotIdx].inUse = 0;
@@ -5078,6 +5141,12 @@ static int runParamGenThreaded(FILE *fout, int n1, int n2, int gridN, int times,
     free(threads);
     free(args);
     return 0;
+}
+
+static int runParamGenThreaded(FILE *fout, int n1, int n2, int gridN, int times,
+                               const PtEntry *ptEntries, int nPt, int nThreads) {
+    long totalSteps = (long)n1 * (long)n2 * (long)times;
+    return runParamGenThreadedRange(fout, n1, n2, gridN, ptEntries, nPt, nThreads, 0, totalSteps);
 }
 
 static int runParamGen(const char *buf, const char *outPath) {
@@ -5109,21 +5178,49 @@ static int runParamGen(const char *buf, const char *outPath) {
     FILE *fout = streamMode ? stdout : fopen(outPath, "wb");
     if (!fout) { fprintf(stderr, "Cannot open %s\n", outPath); return 1; }
 
-    long nSteps = (long)n1 * n2 * times;
+    long totalSteps = (long)n1 * (long)n2 * (long)times;
+    long stepStart = 0;
+    long stepCount = totalSteps;
+    int isRange = 0;
+    cp = findKey(buf, "step_start");
+    if (cp) {
+        stepStart = (long)parseNum(&cp);
+        isRange = 1;
+    }
+    cp = findKey(buf, "step_count");
+    if (cp) {
+        stepCount = (long)parseNum(&cp);
+        isRange = 1;
+    } else if (isRange) {
+        stepCount = totalSteps - stepStart;
+    }
+    if (stepStart < 0 || stepCount < 1 || stepStart > totalSteps || stepCount > totalSteps - stepStart) {
+        fprintf(stderr, "invalid param_gen range: step_start=%ld step_count=%ld total_steps=%ld\n",
+                stepStart, stepCount, totalSteps);
+        if (!streamMode) fclose(fout);
+        return 1;
+    }
 
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
     int threadsUsed = requestedThreads;
-    if (threadsUsed > n1 * times) threadsUsed = n1 * times;
+    long rowStart = stepStart / (long)n2;
+    long rowEnd = (stepStart + stepCount + (long)n2 - 1L) / (long)n2;
+    long rowCount = rowEnd - rowStart;
+    if (threadsUsed > rowCount) threadsUsed = (int)rowCount;
     if (threadsUsed < 1) threadsUsed = 1;
 
     int rc = 0;
     if (threadsUsed <= 1) {
         threadsUsed = 1;
-        rc = runParamGenSerial(fout, n1, n2, gridN, times, ptEntries, nPt);
+        if (isRange) {
+            rc = runParamGenRangeSerial(fout, n1, n2, gridN, ptEntries, nPt, stepStart, stepCount);
+        } else {
+            rc = runParamGenSerial(fout, n1, n2, gridN, times, ptEntries, nPt);
+        }
     } else {
-        rc = runParamGenThreaded(fout, n1, n2, gridN, times, ptEntries, nPt, threadsUsed);
+        rc = runParamGenThreadedRange(fout, n1, n2, gridN, ptEntries, nPt, threadsUsed, stepStart, stepCount);
     }
     if (rc != 0) {
         if (!streamMode) fclose(fout);
@@ -5137,12 +5234,13 @@ static int runParamGen(const char *buf, const char *outPath) {
     if (!streamMode) fclose(fout);
     else fflush(stdout);
 
-    long dataBytes = nSteps * 4 * (long)sizeof(float);
+    long dataBytes = stepCount * 4 * (long)sizeof(float);
     /* In stream mode, metadata goes to stderr (stdout is binary data) */
     FILE *metaOut = streamMode ? stderr : stdout;
     fprintf(metaOut, "{\"mode\":\"param_gen\",\"n1\":%d,\"n2\":%d,\"times\":%d,"
-           "\"n_steps\":%ld,\"data_bytes\":%ld,\"threads\":%d,\"elapsed_us\":%ld}\n",
-           n1, n2, times, nSteps, dataBytes, threadsUsed, elapsed_us);
+           "\"n_steps\":%ld,\"total_steps\":%ld,\"step_start\":%ld,\"step_count\":%ld,"
+           "\"data_bytes\":%ld,\"threads\":%d,\"elapsed_us\":%ld}\n",
+           n1, n2, times, stepCount, totalSteps, stepStart, stepCount, dataBytes, threadsUsed, elapsed_us);
     return 0;
 }
 

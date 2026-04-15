@@ -75,33 +75,46 @@
                 "solver_mode.$": "$.plan.solve.mode",
                 "phase": "param_gen",
                 "phase_label": "Param gen",
-                "expected": 1,
+                "expected.$": "$.plan.compute.n_chunks",
                 "subtask_prefix.$": "$.plan.param_gen.task_prefix"
               }
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ParamGenTask"
+            "Next": "ParamGenMap"
           },
 
-          "ParamGenTask": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Parameters": {
-              "FunctionName": "${CoeffgenFunctionArn}",
-              "Payload": {
-                "phase": "param_gen",
-                "job_id.$": "$.job_id",
-                "N.$": "$.plan.compute.N",
-                "times.$": "$.plan.compute.times",
-                "param_transforms.$": "$.plan.pipeline.param_transforms",
-                "n_threads.$": "$.plan.compute.param_gen_threads",
-                "task_id.$": "$.plan.param_gen.task_id",
-                "params_key.$": "$.plan.param_gen.params_key"
+          "ParamGenMap": {
+            "Type": "Map",
+            "ItemsPath": "$.plan.chunk_items",
+            "MaxConcurrency": 50,
+            "ItemSelector": {
+              "phase": "param_gen",
+              "job_id.$": "$.job_id",
+              "N.$": "$.plan.compute.N",
+              "times.$": "$.plan.compute.times",
+              "param_transforms.$": "$.plan.pipeline.param_transforms",
+              "n_threads.$": "$.plan.compute.param_gen_threads",
+              "task_id.$": "$$.Map.Item.Value.paramgen_task_id",
+              "params_key.$": "$$.Map.Item.Value.params_key",
+              "step_start.$": "$$.Map.Item.Value.step_start",
+              "step_count.$": "$$.Map.Item.Value.step_count"
+            },
+            "ItemProcessor": {
+              "ProcessorConfig": {"Mode": "INLINE"},
+              "StartAt": "ParamGenWorker",
+              "States": {
+                "ParamGenWorker": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": { "FunctionName": "${CoeffgenFunctionArn}", "Payload.$": "$" },
+                  "ResultPath": null,
+                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+                  "End": true
+                }
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "CoeffgenPhase"
           },
 
@@ -138,7 +151,9 @@
               "job_id.$": "$.job_id",
               "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
               "task_id.$": "$$.Map.Item.Value.coeffgen_task_id",
-              "params_key.$": "$.plan.compute.params_key",
+              "params_key.$": "$$.Map.Item.Value.params_key",
+              "params_step_start.$": "$$.Map.Item.Value.params_step_start",
+              "params_step_count.$": "$$.Map.Item.Value.params_step_count",
               "step_start.$": "$$.Map.Item.Value.step_start",
               "step_count.$": "$$.Map.Item.Value.step_count",
               "n_threads.$": "$.plan.compute.coeffgen_threads",

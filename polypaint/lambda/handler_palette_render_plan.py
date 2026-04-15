@@ -13,6 +13,7 @@ import boto3
 
 from color_artifact_meta import load_color_artifact_head, parse_root_transforms
 from palette_names import VALID_PALETTE_NAMES
+from param_source import chunk_items_have_params, enrich_chunk_item_with_params, fallback_params_key
 from shared import BUCKET, parse_body, ok_response
 from solve_score_chain import (
     VALID_SOLVE_SCORE_METRICS,
@@ -293,6 +294,7 @@ def _build_chunk_items(calc, job_id):
             "bin_size": int(raw.get("bin_size")) if raw.get("bin_size") not in ("", None) else int(step_count) * record_bytes,
             "coeffs_bin_size": int(step_count) * n_coeffs * 2 * 4,
         })
+        enrich_chunk_item_with_params(chunk_items[-1], raw, calc, job_id)
         step_start += step_count
     return chunk_items
 
@@ -381,11 +383,7 @@ def _fallback_lores_params_key(job_id, calc):
 
 
 def _fallback_params_key(job_id, calc):
-    key = str(calc.get("params_key") or "").strip()
-    if key:
-        return key
-    job = str(job_id or "").strip()
-    return f"renders/{job}/params.bin" if job else ""
+    return fallback_params_key(job_id, calc)
 
 
 def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
@@ -536,8 +534,8 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         if solve_score_uses_source(source_score, "pm"):
             if not _fallback_lores_params_key(job_id, calc):
                 raise RuntimeError("Param-source solve score requires lores.params_key")
-            if not _fallback_params_key(job_id, calc):
-                raise RuntimeError("Param-source solve score requires params_key")
+            if not chunk_items_have_params(chunk_items):
+                raise RuntimeError("Param-source solve score requires full-res params metadata on every chunk")
     plan["calc"] = {
         "degree": degree,
         "N": full_n,
@@ -548,6 +546,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "lores_coeffs_key": _fallback_lores_coeffs_key(job_id, calc),
         "lores_params_key": _fallback_lores_params_key(job_id, calc),
         "params_key": _fallback_params_key(job_id, calc),
+        "param_storage_mode": str(calc.get("param_storage_mode") or ("chunked" if not _fallback_params_key(job_id, calc) else "global")),
         "n_coeffs": int(calc.get("n_coeffs", degree + 1) or (degree + 1)),
     }
     plan["chunk_items"] = chunk_items
@@ -631,11 +630,8 @@ def handler(event, context):
                 raise RuntimeError(f"Mixed-source solve score requires n_coeffs >= 1, got {n_coeffs}")
         if solve_score_uses_source(compiled_score, "pm"):
             lores_params_key = _fallback_lores_params_key(job_id, calc)
-            params_key = _fallback_params_key(job_id, calc)
             if not lores_params_key:
                 raise RuntimeError("Param-source solve score requires lores.params_key")
-            if not params_key:
-                raise RuntimeError("Param-source solve score requires params_key")
 
     pass0_steps = full_n * full_n
     chunk_items = _build_chunk_items(calc, job_id)
@@ -643,6 +639,8 @@ def handler(event, context):
 
     if step_start < pass0_steps:
         raise RuntimeError(f"Full solve metadata too small: only {step_start} solves, expected at least {pass0_steps}")
+    if solve_score_uses_source(compiled_score, "pm") and not chunk_items_have_params(chunk_items):
+        raise RuntimeError("Param-source solve score requires full-res params metadata on every chunk")
 
     palette_id = _palette_variant_id(compiled_score["chain"], metric, q, omega, omega_enabled, palette, root_transforms)
     prefix = f"renders/{job_id}/palettes/{palette_id}/"
@@ -708,6 +706,7 @@ def handler(event, context):
             "lores_coeffs_key": _fallback_lores_coeffs_key(job_id, calc),
             "lores_params_key": _fallback_lores_params_key(job_id, calc),
             "params_key": _fallback_params_key(job_id, calc),
+            "param_storage_mode": str(calc.get("param_storage_mode") or ("chunked" if not _fallback_params_key(job_id, calc) else "global")),
             "n_coeffs": int(calc.get("n_coeffs", degree + 1) or (degree + 1)),
         },
         "chunk_items": chunk_items,

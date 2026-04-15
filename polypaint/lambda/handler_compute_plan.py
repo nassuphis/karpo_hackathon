@@ -98,6 +98,11 @@ def handle_build_plan(params):
             "chunk_idx": chunk_idx,
             "step_start": step_start,
             "step_count": step_count,
+            "params_key": f"renders/{job_id}/params_{chunk_idx:04d}.bin",
+            "params_bin_size": int(step_count) * 16,
+            "params_step_start": 0,
+            "params_step_count": step_count,
+            "paramgen_task_id": f"compute_{run_id}_param_gen_{chunk_idx}",
             "coeffs_key": f"renders/{job_id}/coeffs_{chunk_idx:04d}.bin",
             "coeffgen_task_id": f"compute_{run_id}_coeffgen_{chunk_idx}",
             "solve_task_id": f"compute_{run_id}_solve_{chunk_idx}",
@@ -139,7 +144,8 @@ def handle_build_plan(params):
             "times": times,
             "n_chunks": len(chunk_items),
             "n_steps": total_steps,
-            "params_key": f"renders/{job_id}/params.bin",
+            "param_storage_mode": "chunked",
+            "params_key": "",
             "param_gen_threads": param_gen_threads,
             "coeffgen_threads": coeffgen_threads,
             "lores_param_gen_threads": lores_param_gen_threads,
@@ -147,8 +153,9 @@ def handle_build_plan(params):
         },
         "param_gen": {
             "task_id": f"compute_{run_id}_param_gen",
-            "task_prefix": f"compute_{run_id}_param_gen",
-            "params_key": f"renders/{job_id}/params.bin",
+            "task_prefix": f"compute_{run_id}_param_gen_",
+            "storage_mode": "chunked",
+            "params_key": "",
             "threads": param_gen_threads,
         },
         "coeffgen": {
@@ -306,6 +313,14 @@ def handle_finalize_metadata(params):
             chunk_entry["step_start"] = int(plan_item["step_start"])
         if "step_count" in plan_item:
             chunk_entry["step_count"] = int(plan_item["step_count"])
+        if "params_key" in plan_item:
+            chunk_entry["params_key"] = str(plan_item.get("params_key") or "")
+        if "params_bin_size" in plan_item:
+            chunk_entry["params_bin_size"] = int(plan_item.get("params_bin_size") or 0)
+        if "params_step_start" in plan_item:
+            chunk_entry["params_step_start"] = int(plan_item.get("params_step_start") or 0)
+        if "params_step_count" in plan_item:
+            chunk_entry["params_step_count"] = int(plan_item.get("params_step_count") or 0)
         if "skipped_overflow" in row:
             chunk_entry["skipped_overflow"] = int(row.get("skipped_overflow", 0) or 0)
         chunks.append(chunk_entry)
@@ -324,7 +339,8 @@ def handle_finalize_metadata(params):
         "solver": plan["solve"]["mode"],
         "n_chunks": int(plan["compute"]["n_chunks"]),
         "n_steps": int(plan["compute"]["n_steps"]),
-        "params_key": plan["compute"]["params_key"],
+        "param_storage_mode": str(plan["compute"].get("param_storage_mode") or "global"),
+        "params_key": str(plan["compute"].get("params_key") or ""),
         "param_gen_threads": int(plan["compute"].get("param_gen_threads", 1) or 1),
         "coeffgen_threads": int(plan["compute"].get("coeffgen_threads", 1) or 1),
         "lores_param_gen_threads": int(plan["compute"].get("lores_param_gen_threads", 1) or 1),

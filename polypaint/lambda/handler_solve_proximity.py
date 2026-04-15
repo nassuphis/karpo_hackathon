@@ -702,6 +702,8 @@ def handle_hist(params):
     n_coeffs = params.get("n_coeffs")
     step_start = params.get("step_start")
     step_count = params.get("step_count")
+    params_step_start = params.get("params_step_start", step_start)
+    params_step_count = params.get("params_step_count", step_count)
     degree = params["degree"]
     clip_key = params["clip_key"]
     hist_bins = params.get("hist_bins", 100)
@@ -734,15 +736,22 @@ def handle_hist(params):
         if not params_key:
             raise RuntimeError("param-source solve score hist requires params_key")
         try:
-            step_start = int(step_start)
+            params_step_start = int(params_step_start)
+            params_step_count = int(params_step_count)
             step_count = int(step_count)
         except (TypeError, ValueError):
             raise RuntimeError(
-                f"param-source solve score hist requires numeric step_start/step_count, got {step_start!r}/{step_count!r}"
+                "param-source solve score hist requires numeric "
+                f"params_step_start/params_step_count/step_count, got {params_step_start!r}/{params_step_count!r}/{step_count!r}"
             )
-        if step_start < 0 or step_count < 1:
+        if params_step_start < 0 or params_step_count < 1 or step_count < 1:
             raise RuntimeError(
-                f"param-source solve score hist requires step_start >= 0 and step_count >= 1, got {step_start}/{step_count}"
+                "param-source solve score hist requires params_step_start >= 0 and "
+                f"params_step_count/step_count >= 1, got {params_step_start}/{params_step_count}/{step_count}"
+            )
+        if params_step_count != step_count:
+            raise RuntimeError(
+                f"param-source solve score hist requires params_step_count == step_count, got {params_step_count}/{step_count}"
             )
     progress = attach_contract_warnings({
         "phase": "hist",
@@ -758,6 +767,8 @@ def handle_hist(params):
         "source_key": bin_key,
         "source_coeffs_key": coeffs_key,
         "source_params_key": params_key,
+        "source_params_step_start": params_step_start if uses_param_source else "",
+        "source_params_step_count": params_step_count if uses_param_source else "",
         "clip_key": clip_key,
     }, contract_warnings)
     progress.update(_solve_score_error_fields(compiled))
@@ -820,8 +831,8 @@ def handle_hist(params):
                 param_size = _download_range(
                     params_key,
                     _TMP_PARAM_INPUT,
-                    int(step_start) * 4 * 4,
-                    int(step_count) * 4 * 4,
+                    int(params_step_start) * 4 * 4,
+                    int(params_step_count) * 4 * 4,
                 )
                 progress["source_params_size"] = param_size
             presigned_url = s3.generate_presigned_url(
@@ -899,8 +910,8 @@ def handle_hist(params):
                     param_size = _download_range(
                         params_key,
                         _TMP_PARAM_INPUT,
-                        int(step_start) * 4 * 4,
-                        int(step_count) * 4 * 4,
+                        int(params_step_start) * 4 * 4,
+                        int(params_step_count) * 4 * 4,
                     )
                     progress["source_params_size"] = param_size
                     cmd.append(f"--score_params_file={_TMP_PARAM_INPUT}")
@@ -945,8 +956,8 @@ def handle_hist(params):
                     param_size = _download_range(
                         params_key,
                         _TMP_PARAM_INPUT,
-                        int(step_start) * 4 * 4,
-                        int(step_count) * 4 * 4,
+                        int(params_step_start) * 4 * 4,
+                        int(params_step_count) * 4 * 4,
                     )
                     progress["source_params_size"] = param_size
                     cmd.append(f"--score_params_file={_TMP_PARAM_INPUT}")

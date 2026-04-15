@@ -98,7 +98,9 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(hist["solve_score_hist_input_mode.$"], "$.plan.params.solve_score_hist_input_mode")
         self.assertEqual(hist["solve_score_hist_retries.$"], "$.plan.params.solve_score_hist_retries")
         self.assertEqual(hist["root_transforms.$"], "$.plan.params.root_transforms")
-        self.assertEqual(hist["params_key.$"], "$.plan.calc.params_key")
+        self.assertEqual(hist["params_key.$"], "$$.Map.Item.Value.params_key")
+        self.assertEqual(hist["params_step_start.$"], "$$.Map.Item.Value.params_step_start")
+        self.assertEqual(hist["params_step_count.$"], "$$.Map.Item.Value.params_step_count")
         self.assertEqual(hist["step_start.$"], "$$.Map.Item.Value.step_start")
         self.assertEqual(hist["step_count.$"], "$$.Map.Item.Value.step_count")
 
@@ -120,7 +122,9 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(chunk["palette_chunk_retries.$"], "$.plan.params.palette_chunk_retries")
         self.assertEqual(chunk["palette_chunk_workers.$"], "$.plan.params.palette_chunk_workers")
         self.assertEqual(chunk["bin_size.$"], "$$.Map.Item.Value.bin_size")
-        self.assertEqual(chunk["params_key.$"], "$.plan.calc.params_key")
+        self.assertEqual(chunk["params_key.$"], "$$.Map.Item.Value.params_key")
+        self.assertEqual(chunk["params_step_start.$"], "$$.Map.Item.Value.params_step_start")
+        self.assertEqual(chunk["params_step_count.$"], "$$.Map.Item.Value.params_step_count")
         self.assertEqual(chunk["step_start.$"], "$$.Map.Item.Value.step_start")
         self.assertEqual(chunk["step_count.$"], "$$.Map.Item.Value.step_count")
 

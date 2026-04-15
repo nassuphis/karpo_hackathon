@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import boto3
 
 from palette_names import VALID_PALETTE_NAMES
+from param_source import chunk_items_have_params, enrich_chunk_item_with_params, fallback_params_key
 from shared import BUCKET, parse_body, ok_response
 from solve_score_chain import (
     VALID_SOLVE_SCORE_METRICS,
@@ -59,11 +60,7 @@ def _fallback_lores_params_key(job_id, calc):
 
 
 def _fallback_params_key(job_id, calc):
-    key = str(calc.get("params_key") or "").strip()
-    if key:
-        return key
-    job = str(job_id or "").strip()
-    return f"renders/{job}/params.bin" if job else ""
+    return fallback_params_key(job_id, calc)
 
 
 def _chunk_coeffs_key(calc, job_id, chunk_idx):
@@ -110,6 +107,7 @@ def _build_chunk_items(calc, job_id):
                 item["step_count"] = step_count
                 item["bin_size"] = int(bin_size) if bin_size not in ("", None) else int(step_count) * record_bytes
                 item["coeffs_bin_size"] = int(step_count) * n_coeffs * 2 * 4
+                enrich_chunk_item_with_params(item, raw, calc, job_id)
                 step_start += step_count
             elif bin_size not in ("", None):
                 item["bin_size"] = int(bin_size)
@@ -133,6 +131,10 @@ def _raster_chunk_item_for_asl(item):
         "bin_key": str(item["bin_key"]),
         "coeffs_key": str(item.get("coeffs_key") or ""),
         "coeffs_bin_size": int(item.get("coeffs_bin_size") or 0),
+        "params_key": str(item.get("params_key") or ""),
+        "params_bin_size": int(item.get("params_bin_size") or 0),
+        "params_step_start": int(item.get("params_step_start", item.get("step_start") or 0) or 0),
+        "params_step_count": int(item.get("params_step_count", item.get("step_count") or 0) or 0),
         "step_start": int(item.get("step_start") or 0),
         "step_count": int(item.get("step_count") or 0),
         "bin_size": int(item.get("bin_size") or 0),
@@ -592,11 +594,10 @@ def handler(event, context):
                     raise RuntimeError(f"Mixed-source solve score requires n_coeffs >= 1, got {n_coeffs}")
             if solve_score_uses_source(solve_score_compiled, "pm"):
                 lores_params_key = _fallback_lores_params_key(job_id, calc)
-                params_key = _fallback_params_key(job_id, calc)
                 if not lores_params_key:
                     raise RuntimeError("Param-source solve score requires lores.params_key")
-                if not params_key:
-                    raise RuntimeError("Param-source solve score requires params_key")
+                if not chunk_items_have_params(chunk_items):
+                    raise RuntimeError("Param-source solve score requires full-res params metadata on every chunk")
     elif color_mode == "saved_palette":
         solve_score_compiled = compile_solve_score_chain_or_legacy(
             saved_palette["score_chain"],
@@ -937,6 +938,7 @@ def handler(event, context):
             "lores_coeffs_key": _fallback_lores_coeffs_key(job_id, calc),
             "lores_params_key": _fallback_lores_params_key(job_id, calc),
             "params_key": _fallback_params_key(job_id, calc),
+            "param_storage_mode": str(calc.get("param_storage_mode") or ("chunked" if not _fallback_params_key(job_id, calc) else "global")),
             "coeffs_keys": calc.get("coeffs_keys", []),
             "n_coeffs": calc.get("n_coeffs", degree + 1),
         },

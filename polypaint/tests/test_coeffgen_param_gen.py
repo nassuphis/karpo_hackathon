@@ -54,10 +54,13 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
             b"\x00" * 64,
             json.dumps({
                 "mode": "param_gen",
-                "n1": 2,
-                "n2": 2,
+                "n1": 4,
+                "n2": 4,
                 "times": 1,
                 "n_steps": 4,
+                "total_steps": 16,
+                "step_start": 4,
+                "step_count": 4,
                 "data_bytes": 64,
                 "threads": 6,
                 "elapsed_us": 1234,
@@ -70,11 +73,13 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
         result = mod.handle_param_gen({
             "job_id": "compute_j",
             "task_id": "compute_run_mt_param_gen",
-            "N": 2,
+            "N": 4,
             "times": 1,
             "param_transforms": [["unit_circle"]],
             "n_threads": 6,
             "params_key": "renders/compute_j/params.bin",
+            "step_start": 4,
+            "step_count": 4,
         })
 
         body = json.loads(result["body"])
@@ -85,6 +90,8 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
         self.assertEqual(spec["mode"], "param_gen")
         self.assertEqual(spec["n_threads"], 6)
         self.assertEqual(spec["param_transforms"], [["unit_circle"]])
+        self.assertEqual(spec["step_start"], 4)
+        self.assertEqual(spec["step_count"], 4)
 
         started_call = mock_report.call_args_list[0]
         self.assertEqual(started_call.args[:3], ("compute_j", "compute_run_mt_param_gen", "started"))
@@ -190,6 +197,8 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
             "step_start": 10,
             "step_count": 4,
             "params_key": "renders/compute_j/params.bin",
+            "params_step_start": 0,
+            "params_step_count": 4,
             "task_id": "compute_run_coeffgen_2",
             "function": "g1",
             "coeff_transforms": [],
@@ -199,6 +208,8 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
 
         body = json.loads(result["body"])
         self.assertEqual(body["threads"], 5)
+        get_kwargs = mock_s3.get_object.call_args.kwargs
+        self.assertEqual(get_kwargs["Range"], "bytes=0-63")
         spec = json.loads(mock_run.call_args.kwargs["input"])
         self.assertEqual(spec["n_threads"], 5)
         started_call = mock_report.call_args_list[0]

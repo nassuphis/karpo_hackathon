@@ -193,26 +193,34 @@ def handler(event, context):
                     ])
                 if _solve_score_bins_uses_source(ss_data, "pm"):
                     params_key = str(params.get("params_key") or "").strip()
-                    step_start = params.get("step_start")
+                    params_step_start = params.get("params_step_start", params.get("step_start"))
+                    params_step_count = params.get("params_step_count", params.get("step_count"))
                     step_count = params.get("step_count")
                     if not params_key:
                         raise RuntimeError("param-source solve-score render requires params_key")
                     try:
-                        step_start = int(step_start)
+                        params_step_start = int(params_step_start)
+                        params_step_count = int(params_step_count)
                         step_count = int(step_count)
                     except (TypeError, ValueError):
                         raise RuntimeError(
-                            f"param-source solve-score render requires numeric step_start/step_count, got {step_start!r}/{step_count!r}"
+                            "param-source solve-score render requires numeric "
+                            f"params_step_start/params_step_count/step_count, got {params_step_start!r}/{params_step_count!r}/{step_count!r}"
                         )
-                    if step_start < 0 or step_count < 1:
+                    if params_step_start < 0 or params_step_count < 1 or step_count < 1:
                         raise RuntimeError(
-                            f"param-source solve-score render requires step_start >= 0 and step_count >= 1, got {step_start}/{step_count}"
+                            "param-source solve-score render requires params_step_start >= 0 and "
+                            f"params_step_count/step_count >= 1, got {params_step_start}/{params_step_count}/{step_count}"
+                        )
+                    if params_step_count != step_count:
+                        raise RuntimeError(
+                            f"param-source solve-score render requires params_step_count == step_count, got {params_step_count}/{step_count}"
                         )
                     try:
                         params_obj = s3.get_object(
                             Bucket=BUCKET,
                             Key=params_key,
-                            Range=f"bytes={step_start * 16}-{step_start * 16 + step_count * 16 - 1}",
+                            Range=f"bytes={params_step_start * 16}-{params_step_start * 16 + params_step_count * 16 - 1}",
                         )
                     except Exception as e:
                         raise RuntimeError(f"Failed to download param slice s3://{BUCKET}/{params_key}: {e}") from e

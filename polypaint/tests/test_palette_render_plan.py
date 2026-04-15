@@ -89,6 +89,10 @@ class TestPaletteRenderPlan(unittest.TestCase):
                     "coeffs_key": "renders/j/coeffs_0000.bin",
                     "step_start": 0,
                     "step_count": 5,
+                    "params_key": "renders/j/params.bin",
+                    "params_step_start": 0,
+                    "params_step_count": 5,
+                    "params_bin_size": 5 * 16,
                     "bin_size": 5 * 5 * 2 * 4,
                     "coeffs_bin_size": 5 * 6 * 2 * 4,
                 },
@@ -98,6 +102,10 @@ class TestPaletteRenderPlan(unittest.TestCase):
                     "coeffs_key": "renders/j/coeffs_0001.bin",
                     "step_start": 5,
                     "step_count": 17,
+                    "params_key": "renders/j/params.bin",
+                    "params_step_start": 5,
+                    "params_step_count": 17,
+                    "params_bin_size": 17 * 16,
                     "bin_size": 17 * 5 * 2 * 4,
                     "coeffs_bin_size": 17 * 6 * 2 * 4,
                 },
@@ -107,6 +115,10 @@ class TestPaletteRenderPlan(unittest.TestCase):
                     "coeffs_key": "renders/j/coeffs_0002.bin",
                     "step_start": 22,
                     "step_count": 10,
+                    "params_key": "renders/j/params.bin",
+                    "params_step_start": 22,
+                    "params_step_count": 10,
+                    "params_bin_size": 10 * 16,
                     "bin_size": 10 * 5 * 2 * 4,
                     "coeffs_bin_size": 10 * 6 * 2 * 4,
                 },
@@ -267,8 +279,46 @@ class TestPaletteRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
         self.assertEqual(plan["calc"]["lores_params_key"], "renders/j/lores_params.bin")
         self.assertEqual(plan["calc"]["params_key"], "renders/j/params.bin")
+        self.assertEqual(plan["chunk_items"][0]["params_key"], "renders/j/params.bin")
+        self.assertEqual(plan["chunk_items"][0]["params_step_start"], 0)
+        self.assertEqual(plan["chunk_items"][0]["params_step_count"], 16)
         self.assertEqual(plan["solve_score"]["metrics"][0]["source"], "pm")
         self.assertEqual(plan["solve_score"]["metrics"][0]["metric"], "t1_abs")
+
+    @patch("handler_palette_render_plan.s3")
+    def test_palette_plan_accepts_chunked_param_source_chain(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        calc = {
+            "degree": 5,
+            "N": 4,
+            "times": 1,
+            "param_storage_mode": "chunked",
+            "params_key": "",
+            "lores": {"bin_key": "renders/j/lores.bin", "params_key": "renders/j/lores_params.bin"},
+            "chunks": [{
+                "idx": 0,
+                "bin_key": "renders/j/chunk_0.bin",
+                "n_t": 16,
+                "params_key": "renders/j/params_0000.bin",
+                "params_step_start": 0,
+                "params_step_count": 16,
+            }],
+        }
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(calc).encode())}
+
+        result = handler(_event(params={
+            "metric": "t1_abs",
+            "palette": "reef",
+            "solve_score_chain": [["t1_abs", "pm", "1"], ["spread", "1"], ["avg"]],
+            "solve_score_quantile": 0.01,
+            "root_transforms": [],
+        }), None)
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["calc"]["params_key"], "")
+        self.assertEqual(plan["calc"]["param_storage_mode"], "chunked")
+        self.assertEqual(plan["chunk_items"][0]["params_key"], "renders/j/params_0000.bin")
+        self.assertEqual(plan["chunk_items"][0]["params_step_start"], 0)
 
     @patch("handler_palette_render_plan.s3")
     def test_invalid_palette_rejected(self, mock_s3):

@@ -179,9 +179,11 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("tri_palette_names_generated.py", packaged["handler_render_plan.py"])
         self.assertIn("long_palette_names_generated.py", packaged["handler_render_plan.py"])
         self.assertIn("solve_score_chain.py", packaged["handler_render_plan.py"])
+        self.assertIn("param_source.py", packaged["handler_render_plan.py"])
         self.assertIn("handler_palette_render_plan.py", packaged)
         self.assertIn("color_artifact_meta.py", packaged["handler_palette_render_plan.py"])
         self.assertIn("solve_score_chain.py", packaged["handler_palette_render_plan.py"])
+        self.assertIn("param_source.py", packaged["handler_palette_render_plan.py"])
 
         self.assertIn("handler_solve_proximity.py", packaged)
         self.assertIn("solve_proximity_stats", packaged["handler_solve_proximity.py"])

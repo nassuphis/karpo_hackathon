@@ -259,6 +259,10 @@ def _normal_chunk_item(item):
         "bin_key": str(item["bin_key"]),
         "coeffs_key": str(item.get("coeffs_key") or ""),
         "coeffs_bin_size": int(item.get("coeffs_bin_size") or 0),
+        "params_key": str(item.get("params_key") or ""),
+        "params_bin_size": int(item.get("params_bin_size") or 0),
+        "params_step_start": int(item.get("params_step_start", item.get("step_start") or 0) or 0),
+        "params_step_count": int(item.get("params_step_count", item.get("step_count") or 0) or 0),
         "step_start": int(item.get("step_start") or 0),
         "step_count": int(item.get("step_count") or 0),
         "bin_size": int(item.get("bin_size") or 0),
@@ -276,6 +280,10 @@ def _chunk_items_from_params(params, dense_grouped):
         "bin_key": params.get("bin_key"),
         "coeffs_key": params.get("coeffs_key", ""),
         "coeffs_bin_size": params.get("coeffs_bin_size", 0),
+        "params_key": params.get("params_key", ""),
+        "params_bin_size": params.get("params_bin_size", 0),
+        "params_step_start": params.get("params_step_start", params.get("step_start", 0)),
+        "params_step_count": params.get("params_step_count", params.get("step_count", 0)),
         "step_start": params.get("step_start", 0),
         "step_count": params.get("step_count", 0),
         "bin_size": params.get("bin_size", 0),
@@ -329,22 +337,31 @@ def _prepare_chunk_inputs(chunk_params, *, bin_path, saved_bins_path, perf):
         chunk_params["n_coeffs"] = n_coeffs
     if color in ("solve_score", "solve_proximity") and _solve_score_bins_uses_source(ss_data, "pm"):
         params_key = str(chunk_params.get("params_key") or "").strip()
-        step_start = chunk_params.get("step_start")
+        params_step_start = chunk_params.get("params_step_start", chunk_params.get("step_start"))
+        params_step_count = chunk_params.get("params_step_count", chunk_params.get("step_count"))
         step_count = chunk_params.get("step_count")
         if not params_key:
             raise RuntimeError("param-source solve-score render requires params_key")
         try:
-            step_start = int(step_start)
+            params_step_start = int(params_step_start)
+            params_step_count = int(params_step_count)
             step_count = int(step_count)
         except (TypeError, ValueError):
             raise RuntimeError(
-                f"param-source solve-score render requires numeric step_start/step_count, got {step_start!r}/{step_count!r}"
+                "param-source solve-score render requires numeric "
+                f"params_step_start/params_step_count/step_count, got {params_step_start!r}/{params_step_count!r}/{step_count!r}"
             )
-        if step_start < 0 or step_count < 1:
+        if params_step_start < 0 or params_step_count < 1 or step_count < 1:
             raise RuntimeError(
-                f"param-source solve-score render requires step_start >= 0 and step_count >= 1, got {step_start}/{step_count}"
+                "param-source solve-score render requires params_step_start >= 0 and "
+                f"params_step_count/step_count >= 1, got {params_step_start}/{params_step_count}/{step_count}"
             )
-        chunk_params["step_start"] = step_start
+        if params_step_count != step_count:
+            raise RuntimeError(
+                f"param-source solve-score render requires params_step_count == step_count, got {params_step_count}/{step_count}"
+            )
+        chunk_params["params_step_start"] = params_step_start
+        chunk_params["params_step_count"] = params_step_count
         chunk_params["step_count"] = step_count
 
     if raster_input_mode == "sectioned":
@@ -382,12 +399,12 @@ def _prepare_chunk_inputs(chunk_params, *, bin_path, saved_bins_path, perf):
             )
         if _solve_score_bins_uses_source(ss_data, "pm"):
             params_key = str(chunk_params.get("params_key") or "").strip()
-            step_start = int(chunk_params["step_start"])
-            step_count = int(chunk_params["step_count"])
+            params_step_start = int(chunk_params["params_step_start"])
+            params_step_count = int(chunk_params["params_step_count"])
             params_obj = s3.get_object(
                 Bucket=BUCKET,
                 Key=params_key,
-                Range=f"bytes={step_start * 16}-{step_start * 16 + step_count * 16 - 1}",
+                Range=f"bytes={params_step_start * 16}-{params_step_start * 16 + params_step_count * 16 - 1}",
             )
             with open(_TMP_SCORE_PARAMS, "wb") as pf:
                 pf.write(params_obj["Body"].read())
@@ -405,12 +422,12 @@ def _prepare_chunk_inputs(chunk_params, *, bin_path, saved_bins_path, perf):
             chunk_params["solve_score_coeffs_path"] = _TMP_SCORE_COEFFS
         if _solve_score_bins_uses_source(ss_data, "pm"):
             params_key = str(chunk_params.get("params_key") or "").strip()
-            step_start = int(chunk_params["step_start"])
-            step_count = int(chunk_params["step_count"])
+            params_step_start = int(chunk_params["params_step_start"])
+            params_step_count = int(chunk_params["params_step_count"])
             params_obj = s3.get_object(
                 Bucket=BUCKET,
                 Key=params_key,
-                Range=f"bytes={step_start * 16}-{step_start * 16 + step_count * 16 - 1}",
+                Range=f"bytes={params_step_start * 16}-{params_step_start * 16 + params_step_count * 16 - 1}",
             )
             with open(_TMP_SCORE_PARAMS, "wb") as pf:
                 pf.write(params_obj["Body"].read())

@@ -36,7 +36,7 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
     def test_required_states_exist(self):
         for name in [
             "PlanPhase", "BuildPlan", "ParsePlan",
-            "ParamGenPhase", "ParamGenTask",
+            "ParamGenPhase", "ParamGenMap",
             "CoeffgenPhase", "CoeffgenMap",
             "PostCoeffgenPhase", "PostCoeffgen", "ParsePostCoeffgen",
             "LoresParamGenPhase", "LoresParamGenTask",
@@ -51,10 +51,12 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
             self.assertIn(name, self.top_states, f"missing top-level state: {name}")
 
     def test_required_map_states(self):
+        self.assertEqual(self.states["ParamGenMap"]["Type"], "Map")
         self.assertEqual(self.states["CoeffgenMap"]["Type"], "Map")
         self.assertEqual(self.states["SolveMap"]["Type"], "Map")
 
     def test_map_concurrency_matches_current_compute_shape(self):
+        self.assertEqual(self.states["ParamGenMap"]["MaxConcurrency"], 50)
         self.assertEqual(self.states["CoeffgenMap"]["MaxConcurrency"], 50)
         self.assertEqual(self.states["SolveMap"]["MaxConcurrency"], 500)
 
@@ -123,10 +125,15 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         self.assertEqual(post_phase["Parameters"]["Payload"]["phase_label"], "Post coeffgen")
 
     def test_param_gen_tasks_forward_times_and_param_transforms(self):
-        param_gen = self.states["ParamGenTask"]["Parameters"]["Payload"]
+        self.assertEqual(self.states["ParamGenPhase"]["Parameters"]["Payload"]["expected.$"], "$.plan.compute.n_chunks")
+        param_gen = self.states["ParamGenMap"]["ItemSelector"]
         self.assertEqual(param_gen["times.$"], "$.plan.compute.times")
         self.assertEqual(param_gen["param_transforms.$"], "$.plan.pipeline.param_transforms")
         self.assertEqual(param_gen["n_threads.$"], "$.plan.compute.param_gen_threads")
+        self.assertEqual(param_gen["task_id.$"], "$$.Map.Item.Value.paramgen_task_id")
+        self.assertEqual(param_gen["params_key.$"], "$$.Map.Item.Value.params_key")
+        self.assertEqual(param_gen["step_start.$"], "$$.Map.Item.Value.step_start")
+        self.assertEqual(param_gen["step_count.$"], "$$.Map.Item.Value.step_count")
 
         lores_param_gen = self.states["LoresParamGenTask"]["Parameters"]["Payload"]
         self.assertEqual(lores_param_gen["times.$"], "$.plan.compute.times")
@@ -139,7 +146,9 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         self.assertEqual(coeffgen["function.$"], "$.plan.pipeline.function")
         self.assertEqual(coeffgen["coeff_transforms.$"], "$.plan.pipeline.coeff_transforms")
         self.assertEqual(coeffgen["cfpv.$"], "$.plan.pipeline.cfpv")
-        self.assertEqual(coeffgen["params_key.$"], "$.plan.compute.params_key")
+        self.assertEqual(coeffgen["params_key.$"], "$$.Map.Item.Value.params_key")
+        self.assertEqual(coeffgen["params_step_start.$"], "$$.Map.Item.Value.params_step_start")
+        self.assertEqual(coeffgen["params_step_count.$"], "$$.Map.Item.Value.params_step_count")
         self.assertEqual(coeffgen["n_threads.$"], "$.plan.compute.coeffgen_threads")
 
         lores_coeffgen = self.states["LoresCoeffgenTask"]["Parameters"]["Payload"]

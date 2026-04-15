@@ -40,10 +40,19 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(plan["compute"]["coeffgen_threads"], 5)
         self.assertEqual(plan["compute"]["lores_param_gen_threads"], 2)
         self.assertEqual(plan["compute"]["lores_coeffgen_threads"], 3)
+        self.assertEqual(plan["compute"]["param_storage_mode"], "chunked")
+        self.assertEqual(plan["compute"]["params_key"], "")
         self.assertEqual(plan["param_gen"]["threads"], 6)
+        self.assertEqual(plan["param_gen"]["storage_mode"], "chunked")
+        self.assertEqual(plan["param_gen"]["task_prefix"], "compute_run_abc_param_gen_")
         self.assertEqual(plan["coeffgen"]["threads"], 5)
         self.assertEqual(len(plan["chunk_items"]), 4)
         first = plan["chunk_items"][0]
+        self.assertEqual(first["paramgen_task_id"], "compute_run_abc_param_gen_0")
+        self.assertEqual(first["params_key"], "renders/compute_j/params_0000.bin")
+        self.assertEqual(first["params_step_start"], 0)
+        self.assertEqual(first["params_step_count"], first["step_count"])
+        self.assertEqual(first["params_bin_size"], first["step_count"] * 16)
         self.assertEqual(first["solve_task_id"], "compute_run_abc_solve_0")
         self.assertEqual(first["bin_key"], "renders/compute_j/chunk_0.bin")
 
@@ -158,9 +167,16 @@ class TestComputePlan(unittest.TestCase):
                 "coeff_transforms": [],
                 "cfpv": [],
             },
-            "compute": {"N": 100, "times": 1, "n_chunks": 1, "n_steps": 10000, "params_key": "renders/compute_j/params.bin", "param_gen_threads": 5, "coeffgen_threads": 4, "lores_param_gen_threads": 2, "lores_coeffgen_threads": 3},
+            "compute": {"N": 100, "times": 1, "n_chunks": 1, "n_steps": 10000, "param_storage_mode": "chunked", "params_key": "", "param_gen_threads": 5, "coeffgen_threads": 4, "lores_param_gen_threads": 2, "lores_coeffgen_threads": 3},
             "solve": {"mode": "aberth"},
-            "chunk_items": [{"coeffs_key": "renders/compute_j/coeffs_0000.bin"}],
+            "chunk_items": [{
+                "chunk_idx": 0,
+                "coeffs_key": "renders/compute_j/coeffs_0000.bin",
+                "params_key": "renders/compute_j/params_0000.bin",
+                "params_bin_size": 160,
+                "params_step_start": 0,
+                "params_step_count": 10,
+            }],
         }
         post = {
             "degree": 10,
@@ -195,6 +211,11 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(body["lores_coeffgen_threads"], 3)
         self.assertEqual(body["lores"]["param_gen_threads"], 2)
         self.assertEqual(body["lores"]["coeffgen_threads"], 3)
+        self.assertEqual(body["param_storage_mode"], "chunked")
+        self.assertEqual(body["params_key"], "")
+        self.assertEqual(body["chunks"][0]["params_key"], "renders/compute_j/params_0000.bin")
+        self.assertEqual(body["chunks"][0]["params_step_start"], 0)
+        self.assertEqual(body["chunks"][0]["params_step_count"], 10)
 
 
 if __name__ == "__main__":

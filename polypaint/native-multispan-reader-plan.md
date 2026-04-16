@@ -981,7 +981,7 @@ Phase 4 required tests:
      - logical coeff size
      - logical params size
      - per-phase `min safe sections`
-   - `Raster sections` is absent until raster adopts the reader
+   - `Raster sections` is present once raster adopts the reader
    - if a phase supports native multi-span, `sectioned` remains valid for
      logical sections
    - logs/status text for render phases refers to sections, not chunks

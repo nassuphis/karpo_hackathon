@@ -33,6 +33,7 @@ grep -q '<option value="sectioned">sectioned native</option>' "$HTML" || { echo 
 grep -q 'id="render-mt-raster-input-mode"' "$HTML" || { echo "FATAL: render MT raster input selector missing from index.html"; exit 1; }
 grep -q 'id="render-mt-merge-workers"' "$HTML" || { echo "FATAL: render MT merge workers input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-finalize-workers"' "$HTML" || { echo "FATAL: render MT finalize workers input missing from index.html"; exit 1; }
+! grep -q 'Finalize sections' "$HTML" || { echo "FATAL: render MT should not expose Finalize sections"; exit 1; }
 grep -q 'id="render-mt-hist-retries"' "$HTML" || { echo "FATAL: render MT hist retries input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-raster-retries"' "$HTML" || { echo "FATAL: render MT raster retries input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-pixel-bin-fragment-mode"' "$HTML" || { echo "FATAL: render MT pixel-bin fragment mode selector missing from index.html"; exit 1; }
@@ -1094,6 +1095,7 @@ async function testPipeline(name, call) {
             representative_param_chunk_size: 200000000,
             solve_hist_memory_mb: 4096,
             palette_chunk_memory_mb: 1769,
+            raster_memory_mb: 1769,
             auto_usable_fraction: 0.40,
             auto_fixed_overhead_mb: 96,
             auto_per_thread_overhead_mb: 8
@@ -1116,10 +1118,20 @@ async function testPipeline(name, call) {
         console.error('FATAL: Generate-MT popup should show thread summary');
         process.exit(1);
     }
-    if (!(ctx._elements['render-mt-job-size'].textContent || '').includes('Job size: chunks=50')
+    if (!(ctx._elements['render-mt-job-size'].textContent || '').includes('Logical solve data: solves=25,000,000')
+        || !(ctx._elements['render-mt-job-size'].textContent || '').includes('roots=')
+        || !(ctx._elements['render-mt-job-size'].textContent || '').includes('coeff=')
+        || !(ctx._elements['render-mt-job-size'].textContent || '').includes('params=')
+        || (ctx._elements['render-mt-job-size'].textContent || '').includes('chunks=')
         || !(ctx._elements['render-mt-hist-section-summary'].textContent || '').includes('min safe sections=')
+        || !(ctx._elements['render-mt-hist-section-summary'].textContent || '').includes('sources=')
         || !(ctx._elements['render-mt-palette-section-summary'].textContent || '').includes('auto unavailable')) {
         console.error('FATAL: Generate-MT popup should show job-size + section summaries');
+        process.exit(1);
+    }
+    if (!(ctx._elements['render-mt-raster-section-summary'].textContent || '').includes('min safe sections=')
+        || !(ctx._elements['render-mt-raster-section-summary'].textContent || '').includes('sources=')) {
+        console.error('FATAL: Generate-MT popup should show raster section sizing once raster supports logical sections');
         process.exit(1);
     }
     if (ctx._elements['render-mt-solve-score-threads'].disabled !== false) {
@@ -1223,6 +1235,7 @@ async function testPipeline(name, call) {
                             representative_param_chunk_size: 200000000,
                             solve_hist_memory_mb: 4096,
                             palette_chunk_memory_mb: 1769,
+                            raster_memory_mb: 1769,
                             auto_usable_fraction: 0.40,
                             auto_fixed_overhead_mb: 96,
                             auto_per_thread_overhead_mb: 8
@@ -1235,7 +1248,7 @@ async function testPipeline(name, call) {
             await openRenderMtPopup();
             lambdaPost = origLambdaPost;
         })()`, ctx);
-        if (!(ctx._elements['render-mt-job-size'].textContent || '').includes('Job size: chunks=14')
+        if (!(ctx._elements['render-mt-job-size'].textContent || '').includes('Logical solve data: solves=25,000,000')
             || !(ctx._elements['render-mt-hist-section-summary'].textContent || '').includes('min safe sections=')) {
             console.error('FATAL: Generate-MT popup should refresh render summary before auto section sizing'
                 + ' jobSize=' + JSON.stringify(ctx._elements['render-mt-job-size'].textContent || '')
@@ -1247,6 +1260,73 @@ async function testPipeline(name, call) {
     }
     console.log('  Generate-MT popup refreshes render summary before auto section sizing: OK');
     vm.runInContext('_closeRenderMtPopup()', ctx);
+
+    {
+        const sectionSummary = vm.runInContext(`_summarizeLambdaBody({
+            phase: 'hist',
+            job_id: 'j',
+            task_id: 't',
+            section_idx: 3,
+            chunk_idx: 3,
+            metric: 'spread'
+        })`, ctx);
+        const errorCtx = vm.runInContext(`_formatTaskErrorContext({
+            task_id: 'render_t',
+            result_data: {
+                phase: 'raster',
+                section_idx: 2,
+                chunk_idx: 2,
+                input_mode: 'multispan_sectioned'
+            }
+        })`, ctx);
+        if (!sectionSummary.includes('section=3') || sectionSummary.includes('chunk=3')
+            || !errorCtx.includes('section=2') || errorCtx.includes('chunk=2')) {
+            console.error('FATAL: render status formatting should prefer section wording, got summary='
+                + JSON.stringify(sectionSummary) + ' errorCtx=' + JSON.stringify(errorCtx));
+            process.exit(1);
+        }
+    }
+    console.log('  render status formatting prefers section wording: OK');
+
+    {
+        const renderHistPerf = vm.runInContext(`_renderPhasePerfSummary('solve_score_hist', [{
+            dl_ms: 1200,
+            compute_ms: 800,
+            threads: 4,
+            requested_input_mode: 'sectioned',
+            input_mode: 'multispan_sectioned',
+            retries: 2
+        }], 5000)`, ctx);
+        const renderRasterPerf = vm.runInContext(`_renderPhasePerfSummary('raster', [{
+            engine: 'mt',
+            threads: 4,
+            requested_input_mode: 'sectioned',
+            input_mode: 'multispan_sectioned',
+            retries: 3,
+            download_us: 1200,
+            native_us: 3400,
+            upload_us: 800
+        }], 6000)`, ctx);
+        const paletteChunkPerf = vm.runInContext(`_palettePhasePerfSummary('palette_chunk', [{
+            dl_ms: 1200,
+            compute_ms: 900,
+            upload_ms: 300,
+            threads: 4,
+            requested_input_mode: 'sectioned',
+            input_mode: 'multispan_sectioned',
+            retries: 2,
+            workers: 16,
+            step_count: 1000
+        }], 4000)`, ctx);
+        if (!renderHistPerf.includes('input=sectioned→multispan_sectioned')
+            || !renderRasterPerf.includes('input=sectioned→multispan_sectioned')
+            || !paletteChunkPerf.includes('input=sectioned→multispan_sectioned')) {
+            console.error('FATAL: live phase summaries should show requested→effective input modes when they differ, got '
+                + JSON.stringify({ renderHistPerf, renderRasterPerf, paletteChunkPerf }));
+            process.exit(1);
+        }
+    }
+    console.log('  live phase summaries show requested→effective input modes: OK');
 
     // Step 8: Direct _bilevelDispatchAndPoll tests
     console.log('');
@@ -4844,6 +4924,7 @@ async function testPipeline(name, call) {
                 representative_param_chunk_size: 200000000,
                 solve_hist_memory_mb: 4096,
                 palette_chunk_memory_mb: 1769,
+                raster_memory_mb: 1769,
                 auto_usable_fraction: 0.40,
                 auto_fixed_overhead_mb: 96,
                 auto_per_thread_overhead_mb: 8

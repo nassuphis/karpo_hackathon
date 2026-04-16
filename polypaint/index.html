@@ -3386,9 +3386,10 @@ function _summarizeLambdaBody(body) {
     push('job', body.job_id);
     push('task', body.task_id);
     push('task_prefix', body.task_prefix);
-    if (body.chunk_idx != null) push('chunk', body.chunk_idx);
+    if (body.section_idx != null) push('section', body.section_idx);
+    else if (body.chunk_idx != null) push('chunk', body.chunk_idx);
     if (body.tile_idx != null) push('tile', body.tile_idx);
-    if (body.chunk_idx == null && body.stripe_idx != null) push('chunk', body.stripe_idx);
+    if (body.section_idx == null && body.chunk_idx == null && body.stripe_idx != null) push('section', body.stripe_idx);
     push('function', body.function);
     push('metric', body.metric);
     push('solver', body.solver);
@@ -5921,6 +5922,14 @@ function _renderMtSectionEstimate(kind, threads) {
     };
 }
 
+function _renderMtSectionSourceLabel(estimate) {
+    if (!estimate) return 'slv';
+    const parts = ['slv'];
+    if (estimate.usesCoeff) parts.push('cf');
+    if (estimate.usesParam) parts.push('pm');
+    return parts.join('+');
+}
+
 function _renderMtAssociatedPaletteChunkRelevant(mode, saveAssociatedPalette) {
     return mode === 'solve_score' && !!saveAssociatedPalette;
 }
@@ -6182,23 +6191,24 @@ function _renderRenderMtPopup() {
     rasterSectionCountEl.min = rasterEstimate.available ? String(rasterEstimate.minSafeSections) : '1';
     paletteSectionCountEl.min = paletteEstimate.available ? String(paletteEstimate.minSafeSections) : '1';
     const jobSize = _renderMtJobSizeData();
-    const chunkCount = jobSize && Number.isFinite(Number(jobSize.chunk_count)) ? Number(jobSize.chunk_count) : null;
-    const chunkLabel = chunkCount != null ? `chunks=${chunkCount}` : 'chunks=?';
-    const rootSizeLabel = jobSize ? (_fmtSize(Number(jobSize.representative_root_chunk_size) || 0) || '?') : '?';
-    const coeffSizeLabel = jobSize ? (_fmtSize(Number(jobSize.representative_coeff_chunk_size) || 0) || '?') : '?';
-    const paramSizeLabel = jobSize ? (_fmtSize(Number(jobSize.representative_param_chunk_size) || 0) || '?') : '?';
+    const totalSolvesLabel = jobSize && Number.isFinite(Number(jobSize.total_solves))
+        ? Number(jobSize.total_solves).toLocaleString()
+        : '?';
+    const rootSizeLabel = jobSize ? (_fmtSize(Number(jobSize.total_root_bytes) || 0) || '?') : '?';
+    const coeffSizeLabel = jobSize ? (_fmtSize(Number(jobSize.total_coeff_bytes) || 0) || '?') : '?';
+    const paramSizeLabel = jobSize ? (_fmtSize(Number(jobSize.total_param_bytes) || 0) || '?') : '?';
     const histBudgetLabel = histEstimate.available ? `${_fmtSize(histEstimate.budgetBytes)} budget @ ${histEstimate.memoryMb}MB` : `auto unavailable (${histEstimate.reason})`;
     const rasterBudgetLabel = rasterEstimate.available ? `${_fmtSize(rasterEstimate.budgetBytes)} budget @ ${rasterEstimate.memoryMb}MB` : `auto unavailable (${rasterEstimate.reason})`;
     const paletteBudgetLabel = paletteEstimate.available ? `${_fmtSize(paletteEstimate.budgetBytes)} budget @ ${paletteEstimate.memoryMb}MB` : `auto unavailable (${paletteEstimate.reason})`;
-    jobSizeEl.textContent = `Job size: ${chunkLabel} • root≈${rootSizeLabel} • coeff≈${coeffSizeLabel} • params≈${paramSizeLabel}\nHist auto: ${histBudgetLabel}\nRaster auto: ${rasterBudgetLabel}\nPalette auto: ${paletteBudgetLabel}`;
+    jobSizeEl.textContent = `Logical solve data: solves=${totalSolvesLabel} • roots=${rootSizeLabel} • coeff=${coeffSizeLabel} • params=${paramSizeLabel}\nHist auto: ${histBudgetLabel}\nRaster auto: ${rasterBudgetLabel}\nPalette auto: ${paletteBudgetLabel}`;
     histSectionSummaryEl.textContent = histEstimate.available
-        ? `min safe sections=${histEstimate.minSafeSections} • max solves/section=${histEstimate.maxSolvesPerSection.toLocaleString()} • est source=${_fmtSize(histEstimate.estimatedSectionBytes)}`
+        ? `sources=${_renderMtSectionSourceLabel(histEstimate)} • min safe sections=${histEstimate.minSafeSections} • max solves/section=${histEstimate.maxSolvesPerSection.toLocaleString()} • est section=${_fmtSize(histEstimate.estimatedSectionBytes)}`
         : `auto unavailable: ${histEstimate.reason}`;
     rasterSectionSummaryEl.textContent = rasterEstimate.available
-        ? `min safe sections=${rasterEstimate.minSafeSections} • max solves/section=${rasterEstimate.maxSolvesPerSection.toLocaleString()} • est source=${_fmtSize(rasterEstimate.estimatedSectionBytes)}`
+        ? `sources=${_renderMtSectionSourceLabel(rasterEstimate)} • min safe sections=${rasterEstimate.minSafeSections} • max solves/section=${rasterEstimate.maxSolvesPerSection.toLocaleString()} • est section=${_fmtSize(rasterEstimate.estimatedSectionBytes)}`
         : `auto unavailable: ${rasterEstimate.reason}`;
     paletteSectionSummaryEl.textContent = paletteEstimate.available
-        ? `min safe sections=${paletteEstimate.minSafeSections} • max solves/section=${paletteEstimate.maxSolvesPerSection.toLocaleString()} • est source=${_fmtSize(paletteEstimate.estimatedSectionBytes)}`
+        ? `sources=${_renderMtSectionSourceLabel(paletteEstimate)} • min safe sections=${paletteEstimate.minSafeSections} • max solves/section=${paletteEstimate.maxSolvesPerSection.toLocaleString()} • est section=${_fmtSize(paletteEstimate.estimatedSectionBytes)}`
         : `auto unavailable: ${paletteEstimate.reason}`;
     const modeLabel = renderColorMode === 'rainbow'
         ? `Rainbow (${renderMatchMode})`
@@ -9908,12 +9918,13 @@ function _aggregatePaletteChunkPerf(results) {
         acc.upload_ms += Number(row.upload_ms) || 0;
         acc.step_count += Number(row.step_count) || 0;
         acc.threads = Math.max(acc.threads, Number(row.threads) || 1);
+        if (!acc.requested_input_mode && row.requested_input_mode) acc.requested_input_mode = String(row.requested_input_mode);
         if (!acc.input_mode && row.input_mode) acc.input_mode = String(row.input_mode);
         acc.retries = Math.max(acc.retries, Number(row.retries) || 0);
         acc.source_size += Number(row.source_size) || 0;
         acc.workers = Math.max(acc.workers, Number(row.workers) || 0);
         return acc;
-    }, { tasks: 0, dl_ms: 0, compute_ms: 0, upload_ms: 0, step_count: 0, threads: 1, input_mode: '', retries: 0, source_size: 0, workers: 0 });
+    }, { tasks: 0, dl_ms: 0, compute_ms: 0, upload_ms: 0, step_count: 0, threads: 1, requested_input_mode: '', input_mode: '', retries: 0, source_size: 0, workers: 0 });
 }
 
 function _aggregatePaletteFinalizePerf(results) {
@@ -9961,9 +9972,10 @@ function _palettePhasePerfSummary(phase, results, wallMs) {
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsMs(perf.dl_ms)} + compute ${_fmtSecondsMs(perf.compute_ms)}`;
         if (perf.upload_ms > 0) msg += ` + up ${_fmtSecondsMs(perf.upload_ms)}`;
         msg += ` · threads=${perf.threads}`;
-        if (phase === 'solve_score_hist' && perf.input_mode) {
-            msg += ` · input=${perf.input_mode}`;
-            if (perf.input_mode === 'sectioned') msg += ` · retries=${perf.retries}`;
+        if (phase === 'solve_score_hist') {
+            const inputLabel = _formatRequestedEffectiveInputMode(perf);
+            if (inputLabel) msg += ` · input=${inputLabel}`;
+            if (perf.input_mode === 'sectioned' || perf.input_mode === 'multispan_sectioned') msg += ` · retries=${perf.retries}`;
         }
         if (phase === 'solve_score_merge' && perf.threads > 0) {
             msg += ` · workers=${perf.threads}`;
@@ -9975,8 +9987,9 @@ function _palettePhasePerfSummary(phase, results, wallMs) {
         if (!perf) return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsMs(perf.dl_ms)} + native ${_fmtSecondsMs(perf.compute_ms)} + up ${_fmtSecondsMs(perf.upload_ms)}`;
         msg += ` · threads=${perf.threads}`;
-        if (perf.input_mode) msg += ` · input=${perf.input_mode}`;
-        if (perf.input_mode === 'sectioned') msg += ` · retries=${perf.retries}`;
+        const inputLabel = _formatRequestedEffectiveInputMode(perf);
+        if (inputLabel) msg += ` · input=${inputLabel}`;
+        if (perf.input_mode === 'sectioned' || perf.input_mode === 'multispan_sectioned') msg += ` · retries=${perf.retries}`;
         if (perf.workers > 0) msg += ` · workers=${perf.workers}`;
         if (perf.step_count > 0) msg += ` · solves=${perf.step_count}`;
         return msg;
@@ -11020,6 +11033,7 @@ function _aggregateRasterPerf(results) {
     return rows.reduce((acc, row) => {
         acc.engine = acc.engine || row.engine || 'single';
         acc.threads = Math.max(acc.threads, Number(row.threads) || 1);
+        if (!acc.requested_input_mode && row.requested_input_mode) acc.requested_input_mode = String(row.requested_input_mode);
         if (!acc.input_mode && row.input_mode) acc.input_mode = String(row.input_mode);
         acc.retries = Math.max(acc.retries, Number(row.retries) || 0);
         acc.chunks += 1;
@@ -11085,6 +11099,7 @@ function _aggregateRasterPerf(results) {
     }, {
         engine: '',
         threads: 1,
+        requested_input_mode: '',
         input_mode: '',
         retries: 0,
         chunks: 0,
@@ -11198,10 +11213,19 @@ function _aggregateSolveScorePhasePerf(results) {
         acc.compute_ms += Number(row.compute_ms) || 0;
         acc.upload_ms += Number(row.upload_ms) || 0;
         acc.threads = Math.max(acc.threads, Number(row.threads) || 1);
+        if (!acc.requested_input_mode && row.requested_input_mode) acc.requested_input_mode = String(row.requested_input_mode);
         if (!acc.input_mode && row.input_mode) acc.input_mode = String(row.input_mode);
         acc.retries = Math.max(acc.retries, Number(row.retries) || 0);
         return acc;
-    }, { tasks: 0, dl_ms: 0, compute_ms: 0, upload_ms: 0, threads: 1, input_mode: '', retries: 0 });
+    }, { tasks: 0, dl_ms: 0, compute_ms: 0, upload_ms: 0, threads: 1, requested_input_mode: '', input_mode: '', retries: 0 });
+}
+
+function _formatRequestedEffectiveInputMode(perf) {
+    if (!perf) return '';
+    const requested = String(perf.requested_input_mode || '').trim();
+    const effective = String(perf.input_mode || '').trim();
+    if (requested && effective && requested !== effective) return `${requested}\u2192${effective}`;
+    return effective || requested || '';
 }
 
 function _aggregateFinalizePerf(results) {
@@ -11300,8 +11324,9 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         const perf = _aggregateRasterPerf(results);
         if (!perf) return '';
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsUs(perf.download_us)} + native ${_fmtSecondsUs(perf.native_us)} + up ${_fmtSecondsUs(perf.upload_us)} · threads=${perf.threads}`;
-        if (perf.input_mode) msg += ` · input=${perf.input_mode}`;
-        if (perf.input_mode === 'sectioned') msg += ` · retries=${perf.retries}`;
+        const inputLabel = _formatRequestedEffectiveInputMode(perf);
+        if (inputLabel) msg += ` · input=${inputLabel}`;
+        if (perf.input_mode === 'sectioned' || perf.input_mode === 'multispan_sectioned') msg += ` · retries=${perf.retries}`;
         if (perf.rgb_source) msg += ` · rgb=${perf.rgb_source}`;
         if (perf.pix_tiles_skipped > 0) msg += ` · skipped_pix=${perf.pix_tiles_skipped}`;
         if (perf.pixel_bin_bytes_uploaded > 0) msg += ` · pbx=${_fmtSize(perf.pixel_bin_bytes_uploaded)}`;
@@ -11311,8 +11336,9 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         const perf = _aggregatePaletteChunkPerf(results);
         if (!perf) return `wall=${_fmtSecondsMs(wallMs)}`;
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsMs(perf.dl_ms)} + native ${_fmtSecondsMs(perf.compute_ms)} + up ${_fmtSecondsMs(perf.upload_ms)} · threads=${perf.threads}`;
-        if (perf.input_mode) msg += ` · input=${perf.input_mode}`;
-        if (perf.input_mode === 'sectioned') msg += ` · retries=${perf.retries}`;
+        const inputLabel = _formatRequestedEffectiveInputMode(perf);
+        if (inputLabel) msg += ` · input=${inputLabel}`;
+        if (perf.input_mode === 'sectioned' || perf.input_mode === 'multispan_sectioned') msg += ` · retries=${perf.retries}`;
         if (perf.workers > 0) msg += ` · workers=${perf.workers}`;
         if (perf.step_count > 0) msg += ` · solves=${perf.step_count}`;
         return msg;
@@ -11323,9 +11349,10 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsMs(perf.dl_ms)} + compute ${_fmtSecondsMs(perf.compute_ms)}`;
         if (perf.upload_ms > 0) msg += ` + up ${_fmtSecondsMs(perf.upload_ms)}`;
         msg += ` · threads=${perf.threads}`;
-        if (phase === 'solve_score_hist' && perf.input_mode) {
-            msg += ` · input=${perf.input_mode}`;
-            if (perf.input_mode === 'sectioned') msg += ` · retries=${perf.retries}`;
+        if (phase === 'solve_score_hist') {
+            const inputLabel = _formatRequestedEffectiveInputMode(perf);
+            if (inputLabel) msg += ` · input=${inputLabel}`;
+            if (perf.input_mode === 'sectioned' || perf.input_mode === 'multispan_sectioned') msg += ` · retries=${perf.retries}`;
         }
         return msg;
     }
@@ -11511,7 +11538,7 @@ async function _logRenderRasterPerf(run) {
                 lines.push(
                     `  Pixel-bin sparse bytes uploaded: ${_fmtSize(perf.pixel_bin_bytes_uploaded)}`
                     + ` (avg/file ${_fmtSize(avgBytes)}`
-                    + (maxFile.bytes ? `, max chunk ${maxFile.chunk_idx} tile ${maxFile.tile_idx}: ${_fmtSize(maxFile.bytes)}` : '')
+                    + (maxFile.bytes ? `, max section ${maxFile.chunk_idx} tile ${maxFile.tile_idx}: ${_fmtSize(maxFile.bytes)}` : '')
                     + `)`
                 );
             }
@@ -11558,7 +11585,8 @@ function _formatTaskErrorContext(detail) {
     const parts = [];
     if (detail.task_id) parts.push(`task=${detail.task_id}`);
     if (rd.phase) parts.push(`phase=${rd.phase}`);
-    if (rd.chunk_idx !== undefined && rd.chunk_idx !== null) parts.push(`chunk=${rd.chunk_idx}`);
+    if (rd.section_idx !== undefined && rd.section_idx !== null) parts.push(`section=${rd.section_idx}`);
+    else if (rd.chunk_idx !== undefined && rd.chunk_idx !== null) parts.push(`chunk=${rd.chunk_idx}`);
     if (rd.metric) parts.push(`metric=${rd.metric}`);
     if (rd.engine) parts.push(`engine=${rd.engine}`);
     if (rd.target_size !== undefined && rd.target_size !== null) parts.push(`target=${rd.target_size}`);

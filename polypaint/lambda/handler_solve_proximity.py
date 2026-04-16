@@ -1124,7 +1124,7 @@ def handle_hist(params):
                     "solve_proximity_hist_sectioned failed for "
                     f"s3://{BUCKET}/{bin_key} "
                     f"(clip=s3://{BUCKET}/{clip_key}, job={job_id}, task={task_id}, "
-                    f"chunk={chunk_idx}, section={section_idx}, input=sectioned, size={input_size}, "
+                    f"section={section_idx}, input=sectioned, size={input_size}, "
                     f"threads={solve_score_threads}, retries={solve_score_hist_retries}, metric={metric}{program_suffix}): {stderr_summary}"
                 )
             hist_data = json.loads(hist_stdout)
@@ -1232,7 +1232,7 @@ def handle_hist(params):
             stderr_summary = (hist_stderr or "").strip() or "unknown error"
             raise RuntimeError(
                 "solve_proximity_stats hist failed "
-                f"(job={job_id}, task={task_id}, chunk={chunk_idx}, section={section_idx}, input={effective_input_mode}, "
+                f"(job={job_id}, task={task_id}, section={section_idx}, input={effective_input_mode}, "
                 f"metric={metric}, source=s3://{BUCKET}/{bin_key}{program_suffix}): {stderr_summary}"
             )
 

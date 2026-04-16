@@ -504,7 +504,7 @@ def handler(event, context):
         if result.returncode != 0:
             source_ctx = (
                 f"s3://{BUCKET}/{bin_key} "
-                f"(job={job_id}, task={task_id}, chunk={chunk_idx}, section={section_idx}, input={effective_input_mode}, "
+                f"(job={job_id}, task={task_id}, section={section_idx}, input={effective_input_mode}, "
                 f"size={source_size}, threads={threads}, retries={retries})"
             )
             stderr = (result.stderr or "").strip()

@@ -323,7 +323,7 @@ def test_hist_sectioned_failure_includes_object_context():
             msg = str(e)
             assert "s3://polypaint/renders/test/chunk_7.bin" in msg
             assert "clip=s3://polypaint/renders/test/solve_scores/clip.json" in msg
-            assert "chunk=7" in msg
+            assert "section=7" in msg
             assert "threads=6" in msg
             assert "range GET failed for bytes 16-31" in msg
     finally:

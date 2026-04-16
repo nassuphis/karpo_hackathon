@@ -388,25 +388,43 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(solve_score["section_mode"], "logical_sections")
         self.assertEqual(solve_score["section_count"], 3)
         self.assertEqual(solve_score["item_count"], 3)
+        self.assertTrue(solve_score["logical_section"])
         first = solve_score["section_items"][0]
+        from logical_sections import build_logical_section_spans
+
         self.assertEqual(first["step_start"], 0)
         self.assertEqual(first["step_count"], 34)
         self.assertEqual(first["bin_size"], 34 * 5 * 2 * 4)
-        self.assertEqual(len(first["root_spans"]), 2)
-        self.assertEqual(first["root_spans"][0]["key"], "renders/j/chunk_0.bin")
-        self.assertEqual(first["root_spans"][0]["byte_start"], 0)
-        self.assertEqual(first["root_spans"][0]["byte_length"], 25 * 5 * 2 * 4)
-        self.assertEqual(first["root_spans"][1]["key"], "renders/j/chunk_1.bin")
-        self.assertEqual(first["root_spans"][1]["byte_start"], 0)
-        self.assertEqual(first["root_spans"][1]["byte_length"], 9 * 5 * 2 * 4)
-        self.assertEqual(len(first["coeff_spans"]), 2)
-        self.assertEqual(first["coeff_spans"][0]["byte_length"], 25 * 7 * 2 * 4)
-        self.assertEqual(first["coeff_spans"][1]["byte_length"], 9 * 7 * 2 * 4)
-        self.assertEqual(len(first["param_spans"]), 2)
-        self.assertEqual(first["param_spans"][0]["byte_start"], 0)
-        self.assertEqual(first["param_spans"][0]["byte_length"], 25 * 16)
-        self.assertEqual(first["param_spans"][1]["byte_start"], 25 * 16)
-        self.assertEqual(first["param_spans"][1]["byte_length"], 9 * 16)
+        self.assertNotIn("root_spans", first)
+        self.assertNotIn("coeff_spans", first)
+        self.assertNotIn("param_spans", first)
+        self.assertEqual(first["bin_key"], "renders/j/chunk_0.bin")
+        self.assertEqual(first["coeffs_key"], "renders/j/coeffs_0000.bin")
+        self.assertEqual(first["params_key"], "renders/j/params.bin")
+        spans = build_logical_section_spans(
+            plan["chunk_items"],
+            solve_start=first["step_start"],
+            solve_count=first["step_count"],
+            degree=5,
+            n_coeffs=7,
+            include_coeff=True,
+            include_param=True,
+        )
+        self.assertEqual(len(spans["root_spans"]), 2)
+        self.assertEqual(spans["root_spans"][0]["key"], "renders/j/chunk_0.bin")
+        self.assertEqual(spans["root_spans"][0]["byte_start"], 0)
+        self.assertEqual(spans["root_spans"][0]["byte_length"], 25 * 5 * 2 * 4)
+        self.assertEqual(spans["root_spans"][1]["key"], "renders/j/chunk_1.bin")
+        self.assertEqual(spans["root_spans"][1]["byte_start"], 0)
+        self.assertEqual(spans["root_spans"][1]["byte_length"], 9 * 5 * 2 * 4)
+        self.assertEqual(len(spans["coeff_spans"]), 2)
+        self.assertEqual(spans["coeff_spans"][0]["byte_length"], 25 * 7 * 2 * 4)
+        self.assertEqual(spans["coeff_spans"][1]["byte_length"], 9 * 7 * 2 * 4)
+        self.assertEqual(len(spans["param_spans"]), 2)
+        self.assertEqual(spans["param_spans"][0]["byte_start"], 0)
+        self.assertEqual(spans["param_spans"][0]["byte_length"], 25 * 16)
+        self.assertEqual(spans["param_spans"][1]["byte_start"], 25 * 16)
+        self.assertEqual(spans["param_spans"][1]["byte_length"], 9 * 16)
 
     @patch("handler_render_plan._storage_call")
     def test_auto_solve_score_logical_sections_uses_computed_safe_count(self, mock_storage):
@@ -968,12 +986,26 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(assoc["section_mode"], "logical_sections")
         self.assertEqual(assoc["section_count"], 3)
         self.assertEqual(assoc["item_count"], 3)
+        self.assertTrue(assoc["logical_section"])
         first = assoc["section_items"][0]
+        from logical_sections import build_logical_section_spans
+
         self.assertEqual(first["step_count"], 34)
-        self.assertEqual(len(first["root_spans"]), 2)
-        self.assertEqual(len(first["coeff_spans"]), 2)
-        self.assertEqual(first["root_spans"][1]["key"], "renders/j/chunk_1.bin")
-        self.assertEqual(first["coeff_spans"][1]["byte_length"], 9 * 7 * 2 * 4)
+        self.assertNotIn("root_spans", first)
+        self.assertNotIn("coeff_spans", first)
+        spans = build_logical_section_spans(
+            plan["chunk_items"],
+            solve_start=first["step_start"],
+            solve_count=first["step_count"],
+            degree=5,
+            n_coeffs=7,
+            include_coeff=True,
+            include_param=False,
+        )
+        self.assertEqual(len(spans["root_spans"]), 2)
+        self.assertEqual(len(spans["coeff_spans"]), 2)
+        self.assertEqual(spans["root_spans"][1]["key"], "renders/j/chunk_1.bin")
+        self.assertEqual(spans["coeff_spans"][1]["byte_length"], 9 * 7 * 2 * 4)
 
     @patch("handler_render_plan._storage_call")
     def test_mixed_source_solve_score_associated_palette_preserves_calc_coeff_metadata(self, mock_storage):

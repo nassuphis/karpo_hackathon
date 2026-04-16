@@ -413,6 +413,116 @@ class TestPaletteChunkHandler(unittest.TestCase):
     @patch("handler_palette_chunk.report_status")
     @patch("handler_palette_chunk.s3")
     @patch("handler_palette_chunk.subprocess.run")
+    def test_v2_logical_section_rebuilds_spans_from_chunk_manifest(self, mock_run, mock_s3, mock_report):
+        import handler_palette_chunk as mod
+
+        with tempfile.TemporaryDirectory() as td, \
+             patch.object(mod, "_TMP_INPUT", os.path.join(td, "input.bin")), \
+             patch.object(mod, "_TMP_SCORES", os.path.join(td, "scores.bin")), \
+             patch.object(mod, "_TMP_BINS", os.path.join(td, "bins.bin")), \
+             patch.object(mod, "_TMP_SCORE_COEFFS", os.path.join(td, "coeffs.bin")):
+
+            bins_meta = {
+                "family": "solve_score",
+                "version": 2,
+                "metric": "spread",
+                "clip_quantile": 0.02,
+                "omega": 1.0,
+                "omega_enabled": False,
+                "clip_lo": 0.0,
+                "clip_hi": 1.0,
+                "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                "program": "m0;m1;max",
+                "metrics": [
+                    {"slot": 0, "metric": "spread", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                    {"slot": 1, "metric": "spread", "source": "cf", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                ],
+            }
+
+            def get_object(**kwargs):
+                key = kwargs["Key"]
+                rng = kwargs.get("Range")
+                if key == "renders/j/palettes/p1/solve_score/crowding_bins.json":
+                    return {"Body": MagicMock(read=lambda: json.dumps(bins_meta).encode())}
+                expected_ranges = {
+                    ("renders/j/chunk_0.bin", "bytes=0-47"): b"\x11" * 48,
+                    ("renders/j/chunk_1.bin", "bytes=0-31"): b"\x22" * 32,
+                    ("renders/j/coeffs_0000.bin", "bytes=0-71"): b"\x33" * 72,
+                    ("renders/j/coeffs_0001.bin", "bytes=0-47"): b"\x44" * 48,
+                }
+                data = expected_ranges.get((key, rng))
+                if data is None:
+                    raise AssertionError(f"unexpected get_object key/range: {key} {rng}")
+                return {"Body": MagicMock(iter_chunks=lambda chunk_size=1024 * 1024, d=data: [d])}
+
+            mock_s3.get_object.side_effect = get_object
+            uploads = {}
+            mock_s3.upload_fileobj.side_effect = lambda fileobj, bucket, key, ExtraArgs=None: uploads.setdefault(key, fileobj.read())
+
+            def run_side_effect(cmd, capture_output, text, timeout):
+                self.assertEqual(cmd[0], mod.BINARY_MT)
+                self.assertIn(f"--score_coeffs_file={mod._TMP_SCORE_COEFFS}", cmd)
+                scores = array("f", [1.0, 2.0, 3.0, 4.0, 5.0])
+                with open(mod._TMP_SCORES, "wb") as f:
+                    scores.tofile(f)
+                with open(mod._TMP_BINS, "wb") as f:
+                    f.write(bytes([0, 1, 2, 3, 4]))
+                return MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({
+                        "min_score": 1.0,
+                        "max_score": 5.0,
+                        "threads": 2,
+                        "input_mode": "tmpfile",
+                        "retries": 2,
+                    }),
+                    stderr="",
+                )
+
+            mock_run.side_effect = run_side_effect
+
+            mod.handler(_event(
+                metric="spread",
+                solve_score_quantile=0.02,
+                logical_section=True,
+                chunk_manifest=[
+                    {
+                        "chunk_idx": 0,
+                        "bin_key": "renders/j/chunk_0.bin",
+                        "coeffs_key": "renders/j/coeffs_0000.bin",
+                        "step_start": 0,
+                        "step_count": 3,
+                    },
+                    {
+                        "chunk_idx": 1,
+                        "bin_key": "renders/j/chunk_1.bin",
+                        "coeffs_key": "renders/j/coeffs_0001.bin",
+                        "step_start": 3,
+                        "step_count": 3,
+                    },
+                ],
+                step_start=0,
+                step_count=5,
+                degree=2,
+                n_coeffs=3,
+                palette_chunk_threads=2,
+                bin_key="",
+                coeffs_key="",
+            ), None)
+
+            statuses = [c.args[2] for c in mock_report.call_args_list]
+            self.assertEqual(statuses, ["started", "bin_downloaded", "computed", "done"])
+            computed_kwargs = mock_report.call_args_list[-2].kwargs
+            done_kwargs = mock_report.call_args_list[-1].kwargs
+            self.assertEqual(computed_kwargs["result_data"]["source_size"], 80)
+            self.assertEqual(computed_kwargs["result_data"]["source_coeffs_size"], 120)
+            self.assertEqual(done_kwargs["result_data"]["source_size"], 80)
+            self.assertIn("renders/j/palettes/p1/chunks/score_chunk_3.bin", uploads)
+            self.assertIn("renders/j/palettes/p1/chunks/palette_bins_chunk_3.bin", uploads)
+
+    @patch("handler_palette_chunk.report_status")
+    @patch("handler_palette_chunk.s3")
+    @patch("handler_palette_chunk.subprocess.run")
     def test_v2_param_source_sectioned_bins_pass_params_file_cli_flags(self, mock_run, mock_s3, mock_report):
         import handler_palette_chunk as mod
 

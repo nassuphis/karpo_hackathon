@@ -11,7 +11,7 @@ import time
 
 import boto3
 
-from logical_sections import stitch_spans_to_file
+from logical_sections import build_logical_section_spans, stitch_spans_to_file
 from solve_score_chain import solve_score_program_cli_payload
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
@@ -176,7 +176,8 @@ def handler(event, context):
     root_spans = list(params.get("root_spans") or [])
     coeff_spans = list(params.get("coeff_spans") or [])
     param_spans = list(params.get("param_spans") or [])
-    logical_section = bool(root_spans)
+    logical_section = _parse_boolish(params.get("logical_section"), bool(root_spans))
+    chunk_manifest = list(params.get("chunk_manifest") or [])
     score_key = params["score_key"]
     palette_bins_key = params["palette_bins_key"]
     meta_key = params["meta_key"]
@@ -204,6 +205,21 @@ def handler(event, context):
         sectioned_url = None
         source_size = int(params.get("bin_size") or 0)
         effective_input_mode = input_mode
+        if logical_section and not root_spans:
+            if not chunk_manifest:
+                raise RuntimeError("logical palette chunk requires chunk_manifest")
+            spans = build_logical_section_spans(
+                chunk_manifest,
+                solve_start=step_start,
+                solve_count=step_count,
+                degree=int(degree),
+                n_coeffs=0,
+                include_coeff=False,
+                include_param=False,
+            )
+            root_spans = list(spans["root_spans"])
+            if root_spans and not bin_key:
+                bin_key = str(root_spans[0]["key"])
         if logical_section:
             t0 = time.time()
             source_size = stitch_spans_to_file(s3, BUCKET, root_spans, _TMP_INPUT)
@@ -250,20 +266,22 @@ def handler(event, context):
         if len(cuts) != 9:
             raise RuntimeError(f"Bins artifact must contain 9 cuts, got {len(cuts)}")
         is_v2_bins = int(bins_data.get("version", 1) or 1) >= 2
+        uses_coeff_source = is_v2_bins and _solve_score_bins_uses_source(bins_data, "cf")
+        uses_param_source = is_v2_bins and _solve_score_bins_uses_source(bins_data, "pm")
         if is_v2_bins:
             if not bins_data.get("program") or not isinstance(bins_data.get("metrics"), list) or not bins_data.get("metrics"):
                 raise RuntimeError("v2 solve-score bins artifact is missing program or metrics")
-            if _solve_score_bins_uses_source(bins_data, "cf"):
+            if uses_coeff_source:
                 try:
                     n_coeffs = int(n_coeffs)
                 except (TypeError, ValueError):
                     raise RuntimeError(f"mixed-source palette chunk requires numeric n_coeffs, got {n_coeffs!r}")
                 if n_coeffs < 1:
                     raise RuntimeError(f"mixed-source palette chunk requires n_coeffs >= 1, got {n_coeffs}")
-                if not coeffs_key:
+                if not coeffs_key and not logical_section:
                     raise RuntimeError("mixed-source palette chunk requires coeffs_key")
-            if _solve_score_bins_uses_source(bins_data, "pm"):
-                if not params_key:
+            if uses_param_source:
+                if not params_key and not logical_section:
                     raise RuntimeError("param-source palette chunk requires params_key")
                 try:
                     params_step_start = int(params_step_start)
@@ -282,6 +300,25 @@ def handler(event, context):
                     raise RuntimeError(
                         f"param-source palette chunk requires params_step_count == step_count, got {params_step_count}/{step_count}"
                     )
+            if logical_section and (uses_coeff_source or uses_param_source) and not (coeff_spans or param_spans):
+                spans = build_logical_section_spans(
+                    chunk_manifest,
+                    solve_start=step_start,
+                    solve_count=step_count,
+                    degree=int(degree),
+                    n_coeffs=int(n_coeffs or 0),
+                    include_coeff=uses_coeff_source,
+                    include_param=uses_param_source,
+                )
+                root_spans = list(spans["root_spans"])
+                coeff_spans = list(spans["coeff_spans"])
+                param_spans = list(spans["param_spans"])
+                if root_spans and not bin_key:
+                    bin_key = str(root_spans[0]["key"])
+                if coeff_spans and not coeffs_key:
+                    coeffs_key = str(coeff_spans[0]["key"])
+                if param_spans and not params_key:
+                    params_key = str(param_spans[0]["key"])
         else:
             if bins_data.get("metric") != metric:
                 raise RuntimeError(f"Bins metric mismatch: expected {metric}, got {bins_data.get('metric')}")
@@ -306,7 +343,7 @@ def handler(event, context):
         ]
         if is_v2_bins:
             cmd.extend(_solve_score_program_args(bins_data))
-            if _solve_score_bins_uses_source(bins_data, "cf"):
+            if uses_coeff_source:
                 if logical_section and coeff_spans:
                     progress["source_coeffs_size"] = stitch_spans_to_file(s3, BUCKET, coeff_spans, _TMP_SCORE_COEFFS)
                     cmd.extend([
@@ -341,7 +378,7 @@ def handler(event, context):
                         f"--score_coeffs_file={_TMP_SCORE_COEFFS}",
                         f"--score_coeff_degree={n_coeffs}",
                     ])
-            if _solve_score_bins_uses_source(bins_data, "pm"):
+            if uses_param_source:
                 if logical_section and param_spans:
                     param_size = stitch_spans_to_file(s3, BUCKET, param_spans, _TMP_SCORE_PARAMS)
                 else:

@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 from botocore.config import Config
 
-from logical_sections import stitch_spans_to_file
+from logical_sections import build_logical_section_spans, stitch_spans_to_file
 from solve_score_chain import (
     VALID_SOLVE_SCORE_METRICS,
     compile_solve_score_chain_or_legacy,
@@ -79,6 +79,21 @@ def _download_range(key, path, start, length):
             f"Short ranged download from s3://{BUCKET}/{key}: expected {int(length)} bytes, got {size}"
         )
     return size
+
+
+def _parse_boolish(value, default=False):
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    return default
 
 
 def _write_xforms(root_transforms):
@@ -698,7 +713,7 @@ def handle_hist(params):
         contract_param(params, "solve_score_hist_retries", 2, contract_warnings),
         "solve_score_hist_retries",
     )
-    bin_key = params["bin_key"]
+    bin_key = str(params.get("bin_key") or "").strip()
     coeffs_key = str(params.get("coeffs_key", "") or "").strip()
     coeffs_bin_size = params.get("coeffs_bin_size")
     params_key = str(params.get("params_key", "") or "").strip()
@@ -710,7 +725,8 @@ def handle_hist(params):
     root_spans = list(params.get("root_spans") or [])
     coeff_spans = list(params.get("coeff_spans") or [])
     param_spans = list(params.get("param_spans") or [])
-    logical_section = bool(root_spans)
+    logical_section = _parse_boolish(params.get("logical_section"), bool(root_spans))
+    chunk_manifest = list(params.get("chunk_manifest") or [])
     degree = params["degree"]
     clip_key = params["clip_key"]
     hist_bins = params.get("hist_bins", 100)
@@ -738,6 +754,38 @@ def handle_hist(params):
             raise RuntimeError(f"mixed-source solve score hist requires numeric n_coeffs, got {n_coeffs!r}")
         if n_coeffs < 1:
             raise RuntimeError(f"mixed-source solve score hist requires n_coeffs >= 1, got {n_coeffs}")
+    if logical_section and not root_spans:
+        try:
+            step_start = int(step_start)
+            step_count = int(step_count)
+            degree = int(degree)
+        except (TypeError, ValueError):
+            raise RuntimeError(
+                "logical solve score hist requires numeric step_start/step_count/degree, "
+                f"got {step_start!r}/{step_count!r}/{degree!r}"
+            )
+        if step_count < 1:
+            raise RuntimeError(f"logical solve score hist requires step_count >= 1, got {step_count}")
+        if not chunk_manifest:
+            raise RuntimeError("logical solve score hist requires chunk_manifest")
+        spans = build_logical_section_spans(
+            chunk_manifest,
+            solve_start=step_start,
+            solve_count=step_count,
+            degree=degree,
+            n_coeffs=int(n_coeffs or 0),
+            include_coeff=uses_coeff_source,
+            include_param=uses_param_source,
+        )
+        root_spans = list(spans["root_spans"])
+        coeff_spans = list(spans["coeff_spans"])
+        param_spans = list(spans["param_spans"])
+        if root_spans and not bin_key:
+            bin_key = str(root_spans[0]["key"])
+        if coeff_spans and not coeffs_key:
+            coeffs_key = str(coeff_spans[0]["key"])
+        if param_spans and not params_key:
+            params_key = str(param_spans[0]["key"])
     if uses_param_source:
         params_key = str(params_key).strip()
         if not params_key:

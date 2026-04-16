@@ -12,6 +12,7 @@ Run: cd polypaint && uv run python tests/test_solve_proximity_handler.py
 import json
 import os
 import sys
+import tempfile
 import unittest.mock as mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
@@ -588,6 +589,117 @@ def test_hist_v2_mixed_source_sectioned_passes_coeff_url_cli_flags():
         assert "--score_coeffs_url=https://example.com/coeffs.bin" in cmd
         assert "--score_coeff_input_size=80" in cmd
         assert "--score_coeff_degree=5" in cmd
+    finally:
+        hsp.s3 = orig_s3
+        hsp.report_status = orig_report
+        hsp.subprocess.run = orig_run
+
+
+def test_hist_v2_logical_section_rebuilds_spans_from_chunk_manifest():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = mock.MagicMock()
+
+    def mock_get(**kwargs):
+        key = kwargs.get("Key", "")
+        rng = kwargs.get("Range")
+        if key == "renders/test/solve_scores/clip.json":
+            clip_data = {
+                "family": "solve_score",
+                "version": 2,
+                "metric": "spread",
+                "clip_quantile": 0.02,
+                "omega": 1.0,
+                "omega_enabled": False,
+                "clip_lo": 0.0,
+                "clip_hi": 1.0,
+                "program": "m0;m1;max",
+                "metrics": [
+                    {"slot": 0, "metric": "spread", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                    {"slot": 1, "metric": "spread", "source": "cf", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                ],
+            }
+            return {"Body": _ChunkBody(json.dumps(clip_data).encode())}
+        expected_ranges = {
+            ("renders/test/chunk_0.bin", "bytes=0-47"): b"\x11" * 48,
+            ("renders/test/chunk_1.bin", "bytes=0-31"): b"\x22" * 32,
+            ("renders/test/coeffs_0000.bin", "bytes=0-71"): b"\x33" * 72,
+            ("renders/test/coeffs_0001.bin", "bytes=0-47"): b"\x44" * 48,
+        }
+        data = expected_ranges.get((key, rng))
+        if data is None:
+            raise AssertionError(f"unexpected get_object key/range: {key} {rng}")
+        return {"Body": _ChunkBody(data)}
+
+    mock_s3.get_object = mock_get
+    mock_s3.put_object = mock.MagicMock()
+    mock_s3.exceptions = type('Exc', (), {'NoSuchKey': type('NoSuchKey', (Exception,), {})})()
+
+    mock_run = mock.MagicMock(return_value=mock.MagicMock(
+        returncode=0,
+        stdout=json.dumps({
+            "threads": 4,
+            "n_solves": 5,
+            "download_ms": 12,
+            "compute_ms": 34,
+            "wall_ms": 56,
+            "hist": [2, 1, 1, 1],
+        }),
+        stderr="",
+    ))
+    orig_s3, orig_report, orig_run = hsp.s3, hsp.report_status, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.report_status = mock.MagicMock()
+    hsp.subprocess.run = mock_run
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            tmp_input = os.path.join(td, "input.bin")
+            tmp_coeff = os.path.join(td, "coeff.bin")
+            with mock.patch.object(hsp, "_TMP_INPUT", tmp_input), \
+                 mock.patch.object(hsp, "_TMP_COEFF_INPUT", tmp_coeff):
+                result = hsp.handle_hist({
+                    "job_id": "test",
+                    "task_id": "hist_test",
+                    "chunk_idx": 0,
+                    "section_idx": 0,
+                    "section_count": 2,
+                    "logical_section": True,
+                    "chunk_manifest": [
+                        {
+                            "chunk_idx": 0,
+                            "bin_key": "renders/test/chunk_0.bin",
+                            "coeffs_key": "renders/test/coeffs_0000.bin",
+                            "step_start": 0,
+                            "step_count": 3,
+                        },
+                        {
+                            "chunk_idx": 1,
+                            "bin_key": "renders/test/chunk_1.bin",
+                            "coeffs_key": "renders/test/coeffs_0001.bin",
+                            "step_start": 3,
+                            "step_count": 3,
+                        },
+                    ],
+                    "metric": "spread",
+                    "solve_score_quantile": 0.02,
+                    "solve_score_chain": [["spread", "slv", "2"], ["spread", "cf", "2"], ["max"]],
+                    "degree": 2,
+                    "n_coeffs": 3,
+                    "step_start": 0,
+                    "step_count": 5,
+                    "clip_key": "renders/test/solve_scores/clip.json",
+                    "hist_bins": 4,
+                    "out_key": "renders/test/solve_scores/chunk_0_hist.json",
+                    "solve_score_threads": 4,
+                })
+        body = json.loads(result["body"])
+        assert body["logical_section"] is True
+        cmd = mock_run.call_args.args[0]
+        assert cmd[0] == hsp.BINARY
+        assert f"--score_coeffs_file={tmp_coeff}" in cmd
+        done_kwargs = hsp.report_status.call_args_list[-1].kwargs
+        assert done_kwargs["result_data"]["source_size"] == 80
+        assert done_kwargs["result_data"]["source_coeffs_size"] == 120
     finally:
         hsp.s3 = orig_s3
         hsp.report_status = orig_report

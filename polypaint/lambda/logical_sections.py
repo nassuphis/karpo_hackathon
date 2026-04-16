@@ -171,6 +171,12 @@ def _partition_sizes(total_solves, section_count):
     return [base + (1 if idx < rem else 0) for idx in range(section_count)]
 
 
+def _sorted_chunk_items(chunk_items):
+    items = [dict(item) for item in (chunk_items or [])]
+    items.sort(key=lambda item: (int(item.get("step_start") or 0), int(item.get("chunk_idx") or 0)))
+    return items
+
+
 def _chunk_overlap_spans(chunk_items, solve_start, solve_count, *, source_key_name, row_bytes_value, step_start_name="step_start", step_count_name="step_count", source_start_solve_name=None):
     section_end = int(solve_start) + int(solve_count)
     spans = []
@@ -199,13 +205,51 @@ def _chunk_overlap_spans(chunk_items, solve_start, solve_count, *, source_key_na
     return spans
 
 
+def build_logical_section_spans(chunk_items, *, solve_start, solve_count, degree, n_coeffs, include_coeff=False, include_param=False):
+    items = _sorted_chunk_items(chunk_items)
+    if not items:
+        return {"root_spans": [], "coeff_spans": [], "param_spans": []}
+    if not all(int(item.get("step_count") or 0) > 0 for item in items):
+        raise RuntimeError("logical sectioning requires step_count on every chunk item")
+    root_spans = _chunk_overlap_spans(
+        items,
+        solve_start,
+        solve_count,
+        source_key_name="bin_key",
+        row_bytes_value=root_row_bytes(degree),
+    )
+    coeff_spans = []
+    param_spans = []
+    if include_coeff:
+        coeff_spans = _chunk_overlap_spans(
+            items,
+            solve_start,
+            solve_count,
+            source_key_name="coeffs_key",
+            row_bytes_value=coeff_row_bytes(n_coeffs),
+        )
+    if include_param:
+        param_spans = _chunk_overlap_spans(
+            items,
+            solve_start,
+            solve_count,
+            source_key_name="params_key",
+            row_bytes_value=param_row_bytes(),
+            source_start_solve_name="params_step_start",
+        )
+    return {
+        "root_spans": root_spans,
+        "coeff_spans": coeff_spans,
+        "param_spans": param_spans,
+    }
+
+
 def build_logical_section_items(chunk_items, *, section_count, degree, n_coeffs, include_coeff=False, include_param=False):
-    items = [dict(item) for item in (chunk_items or [])]
+    items = _sorted_chunk_items(chunk_items)
     if not items:
         return []
     if not all(int(item.get("step_count") or 0) > 0 for item in items):
         raise RuntimeError("logical sectioning requires step_count on every chunk item")
-    items.sort(key=lambda item: (int(item.get("step_start") or 0), int(item.get("chunk_idx") or 0)))
     total_solves = sum(int(item.get("step_count") or 0) for item in items)
     if total_solves < 1:
         return []
@@ -219,6 +263,15 @@ def build_logical_section_items(chunk_items, *, section_count, degree, n_coeffs,
     for section_idx, solve_count in enumerate(section_sizes):
         if solve_count <= 0:
             continue
+        spans = build_logical_section_spans(
+            items,
+            solve_start=cursor,
+            solve_count=solve_count,
+            degree=degree,
+            n_coeffs=n_coeffs,
+            include_coeff=include_coeff,
+            include_param=include_param,
+        )
         section = {
             "chunk_idx": section_idx,
             "section_idx": section_idx,
@@ -231,39 +284,15 @@ def build_logical_section_items(chunk_items, *, section_count, degree, n_coeffs,
             "bin_size": solve_count * root_bytes,
             "coeffs_bin_size": solve_count * coeff_bytes if include_coeff else 0,
             "params_bin_size": solve_count * param_bytes if include_param else 0,
-            "root_spans": _chunk_overlap_spans(
-                items,
-                cursor,
-                solve_count,
-                source_key_name="bin_key",
-                row_bytes_value=root_bytes,
-            ),
+            "params_step_start": 0,
+            "params_step_count": solve_count if include_param else 0,
         }
-        if include_coeff:
-            section["coeff_spans"] = _chunk_overlap_spans(
-                items,
-                cursor,
-                solve_count,
-                source_key_name="coeffs_key",
-                row_bytes_value=coeff_bytes,
-            )
-            if section["coeff_spans"]:
-                section["coeffs_key"] = section["coeff_spans"][0]["key"]
-        if include_param:
-            section["param_spans"] = _chunk_overlap_spans(
-                items,
-                cursor,
-                solve_count,
-                source_key_name="params_key",
-                row_bytes_value=param_bytes,
-                source_start_solve_name="params_step_start",
-            )
-            if section["param_spans"]:
-                section["params_key"] = section["param_spans"][0]["key"]
-            section["params_step_start"] = 0
-            section["params_step_count"] = solve_count
-        if section["root_spans"]:
-            section["bin_key"] = section["root_spans"][0]["key"]
+        if spans["root_spans"]:
+            section["bin_key"] = spans["root_spans"][0]["key"]
+        if include_coeff and spans["coeff_spans"]:
+            section["coeffs_key"] = spans["coeff_spans"][0]["key"]
+        if include_param and spans["param_spans"]:
+            section["params_key"] = spans["param_spans"][0]["key"]
         out.append(section)
         cursor += solve_count
     return out

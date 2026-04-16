@@ -163,6 +163,18 @@ class TestWorkflowDefinition(unittest.TestCase):
             "$.plan.associated_palette.chunk_workers",
         )
 
+    def test_logical_section_workers_receive_chunk_manifest_not_inline_spans(self):
+        hist_selector = self.states["ColorSolveScoreHistMap"]["ItemSelector"]
+        palette_selector = self.states["ColorAssociatedPaletteMap"]["ItemSelector"]
+        self.assertEqual(hist_selector["chunk_manifest.$"], "$.plan.chunk_items")
+        self.assertEqual(palette_selector["chunk_manifest.$"], "$.plan.chunk_items")
+        self.assertNotIn("root_spans.$", hist_selector)
+        self.assertNotIn("coeff_spans.$", hist_selector)
+        self.assertNotIn("param_spans.$", hist_selector)
+        self.assertNotIn("root_spans.$", palette_selector)
+        self.assertNotIn("coeff_spans.$", palette_selector)
+        self.assertNotIn("param_spans.$", palette_selector)
+
     def test_tile_maps_concurrency_32(self):
         """Tile-based maps must have MaxConcurrency=32."""
         for name in ["ColorFinalizeMap", "BilevelMergeMap", "CoeffMergeMap"]:

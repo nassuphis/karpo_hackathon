@@ -718,6 +718,7 @@ def handler(event, context):
     solve_score["section_budget_bytes"] = solve_score_section_auto["budget_bytes"]
     solve_score["section_memory_mb"] = solve_score_section_auto["memory_mb"]
     solve_score["section_min_safe_count"] = solve_score_section_auto["min_safe_sections"]
+    solve_score["logical_section"] = False
     solve_score["item_count"] = n_chunks
     solve_score["section_items"] = chunk_items
     if solve_score_enabled and solve_score["section_mode"] != "physical_chunks":
@@ -742,6 +743,7 @@ def handler(event, context):
             include_coeff=solve_score_uses_coeff,
             include_param=solve_score_uses_param,
         )
+        solve_score["logical_section"] = True
         solve_score["item_count"] = len(solve_score["section_items"])
     rp["solve_score_section_count"] = solve_score["section_count"]
     finalize = {
@@ -844,6 +846,7 @@ def handler(event, context):
         "section_budget_bytes": 0,
         "section_memory_mb": DEFAULT_PALETTE_CHUNK_MEMORY_MB,
         "section_min_safe_count": 1,
+        "logical_section": False,
         "section_items": chunk_items,
         "item_count": n_chunks,
     }
@@ -949,6 +952,7 @@ def handler(event, context):
                     include_coeff=solve_score_uses_coeff,
                     include_param=solve_score_uses_param,
                 )
+                associated_palette["logical_section"] = True
                 associated_palette["item_count"] = len(associated_palette["section_items"])
             rp["palette_section_count_auto"] = associated_palette["section_count_auto"]
             rp["palette_section_count"] = associated_palette["section_count"]

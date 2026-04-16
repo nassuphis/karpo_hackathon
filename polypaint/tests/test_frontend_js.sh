@@ -37,6 +37,10 @@ grep -q 'id="render-mt-hist-retries"' "$HTML" || { echo "FATAL: render MT hist r
 grep -q 'id="render-mt-raster-retries"' "$HTML" || { echo "FATAL: render MT raster retries input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-pixel-bin-fragment-mode"' "$HTML" || { echo "FATAL: render MT pixel-bin fragment mode selector missing from index.html"; exit 1; }
 grep -q 'id="render-mt-raster-bin-group-size"' "$HTML" || { echo "FATAL: render MT raster bin group-size input missing from index.html"; exit 1; }
+grep -q 'id="render-mt-palette-chunk-threads"' "$HTML" || { echo "FATAL: render MT palette chunk threads input missing from index.html"; exit 1; }
+grep -q 'id="render-mt-palette-chunk-input-mode"' "$HTML" || { echo "FATAL: render MT palette chunk input selector missing from index.html"; exit 1; }
+grep -q 'id="render-mt-palette-chunk-workers"' "$HTML" || { echo "FATAL: render MT palette chunk workers input missing from index.html"; exit 1; }
+grep -q 'id="render-mt-palette-chunk-retries"' "$HTML" || { echo "FATAL: render MT palette chunk retries input missing from index.html"; exit 1; }
 grep -q 'id="compute-mt-popup-overlay"' "$HTML" || { echo "FATAL: compute MT popup missing from index.html"; exit 1; }
 grep -q 'id="compute-mt-param-gen-threads"' "$HTML" || { echo "FATAL: compute MT param thread input missing from index.html"; exit 1; }
 grep -q 'id="compute-mt-coeffgen-threads"' "$HTML" || { echo "FATAL: compute MT coeffgen thread input missing from index.html"; exit 1; }
@@ -431,6 +435,10 @@ const renderEls = {
     'render-mt-raster-bin-group-size': { value: '' },
     'render-mt-merge-workers': { value: '16' },
     'render-mt-finalize-workers': { value: '16' },
+    'render-mt-palette-chunk-threads': { value: '4' },
+    'render-mt-palette-chunk-input-mode': { value: 'sectioned' },
+    'render-mt-palette-chunk-workers': { value: '16' },
+    'render-mt-palette-chunk-retries': { value: '2' },
     'render-mt-associated-row': {},
     'render-mt-save-associated-palette': { checked: false },
     'generate-from-palette-popup-overlay': {},
@@ -1018,7 +1026,7 @@ async function testPipeline(name, call) {
     {
         const logs = vm.runInContext('_pipelineDispatchLogs', ctx);
         const payloads = vm.runInContext('_renderOrchestratorPayloads', ctx);
-        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, hist retries=4, merge workers=12, raster input=tmpfile, raster retries=5, raster threads=6, bin fragments=sparse_chunks, finalize workers=18, associated palette=no')) : null;
+        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, hist retries=4, merge workers=12, raster input=tmpfile, raster retries=5, raster threads=6, bin fragments=sparse_chunks, finalize workers=18, associated palette=no, palette chunk unused')) : null;
         const orchHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render: dispatching color orchestrator')) : null;
         const mtPayload = Array.isArray(payloads) ? payloads.find((row) => row && row.params && row.params.raster_engine === 'mt') : null;
         if (!mtHit || mtHit.cls !== 'ok' || !orchHit || orchHit.cls !== 'ok' || !mtPayload ||
@@ -1031,6 +1039,10 @@ async function testPipeline(name, call) {
             mtPayload.params.pixel_bin_fragment_mode !== 'sparse_chunks' ||
             mtPayload.params.raster_bin_group_size !== '' ||
             mtPayload.params.finalize_workers !== 18 ||
+            mtPayload.params.palette_chunk_threads !== 4 ||
+            mtPayload.params.palette_chunk_input_mode !== 'sectioned' ||
+            mtPayload.params.palette_chunk_retries !== 2 ||
+            mtPayload.params.palette_chunk_workers !== 16 ||
             mtPayload.params.save_associated_palette !== false) {
             console.error('FATAL: runRasterPipelineMT should log green MT + orchestrator dispatch and pass thread counts, got logs=' + JSON.stringify(logs) + ' payloads=' + JSON.stringify(payloads));
             process.exit(1);
@@ -1053,7 +1065,8 @@ async function testPipeline(name, call) {
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('raster retries=')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('merge workers=')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('bins=sparse chunks')
-        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('finalize workers=')) {
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('finalize workers=')
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('palette chunk unused')) {
         console.error('FATAL: Generate-MT popup should show thread summary');
         process.exit(1);
     }
@@ -1089,11 +1102,35 @@ async function testPipeline(name, call) {
         console.error('FATAL: Generate-MT popup should disable bin group size until dense grouped mode is selected');
         process.exit(1);
     }
+    if (ctx._elements['render-mt-palette-chunk-threads'].disabled !== true
+        || ctx._elements['render-mt-palette-chunk-input-mode'].disabled !== true
+        || ctx._elements['render-mt-palette-chunk-workers'].disabled !== true
+        || ctx._elements['render-mt-palette-chunk-retries'].disabled !== true) {
+        console.error('FATAL: Generate-MT popup should disable palette chunk controls until solve_score + associated palette are both enabled');
+        process.exit(1);
+    }
     if (ctx._elements['render-mt-associated-row'].style.display === 'none') {
         console.error('FATAL: Generate-MT popup should show associated palette checkbox');
         process.exit(1);
     }
     console.log('  Generate-MT popup opens with solve-score + raster thread summary: OK');
+    vm.runInContext('_closeRenderMtPopup()', ctx);
+    vm.runInContext(`
+        renderColorMode = 'solve_score';
+        _activeRenderRun = null;
+        _renderMtPopupState.saveAssociatedPalette = true;
+        _renderMtPopupState.paletteChunkInputMode = 'sectioned';
+        openRenderMtPopup();
+    `, ctx);
+    if (ctx._elements['render-mt-palette-chunk-threads'].disabled !== false
+        || ctx._elements['render-mt-palette-chunk-input-mode'].disabled !== false
+        || ctx._elements['render-mt-palette-chunk-workers'].disabled !== false
+        || ctx._elements['render-mt-palette-chunk-retries'].disabled !== false
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('palette chunk threads=')) {
+        console.error('FATAL: Generate-MT popup should enable palette chunk controls when solve_score + associated palette are enabled');
+        process.exit(1);
+    }
+    console.log('  Generate-MT popup enables palette chunk controls when associated palette is on: OK');
     vm.runInContext('_closeRenderMtPopup()', ctx);
 
     // Step 8: Direct _bilevelDispatchAndPoll tests
@@ -1711,6 +1748,24 @@ async function testPipeline(name, call) {
                         shim: 0.12,
                         rotation: -Math.PI / 2,
                         root_transforms: [['rotate_roots', '0.25'], ['roots_toline']],
+                        render_execution: {
+                            raster_engine: 'mt',
+                            raster_mt_threads: 6,
+                            solve_score_threads: 3,
+                            solve_score_hist_input_mode: 'sectioned',
+                            solve_score_hist_retries: 4,
+                            raster_input_mode: 'sectioned',
+                            raster_sectioned_retries: 5,
+                            pixel_bin_fragment_mode: 'dense_grouped',
+                            raster_bin_group_size: 2,
+                            solve_score_merge_workers: 12,
+                            finalize_workers: 18,
+                            save_associated_palette: true,
+                            palette_chunk_threads: 7,
+                            palette_chunk_input_mode: 'tmpfile',
+                            palette_chunk_retries: 6,
+                            palette_chunk_workers: 22,
+                        },
                     }
                 ],
                 bilevel: [],
@@ -1758,6 +1813,7 @@ async function testPipeline(name, call) {
         const fmt = vm.runInContext("document.getElementById('render-format').value", ctx);
         const quality = vm.runInContext("document.getElementById('render-quality').value", ctx);
         const rt = vm.runInContext('JSON.stringify(_rtChain)', ctx);
+        const renderExec = vm.runInContext('JSON.stringify(_renderMtPopupState)', ctx);
         if (mode !== 'solve_score') { console.error('FATAL: populate should set solve_score mode, got ' + mode); process.exit(1); }
         if (metric !== 'anisotropy') { console.error('FATAL: populate should set anisotropy metric, got ' + metric); process.exit(1); }
         if (palette !== 'tri_redgold') { console.error('FATAL: populate should set palette tri_redgold, got ' + palette); process.exit(1); }
@@ -1772,6 +1828,10 @@ async function testPipeline(name, call) {
         if (fmt !== 'png') { console.error('FATAL: populate should set format to png, got ' + fmt); process.exit(1); }
         if (quality !== '82') { console.error('FATAL: populate should set quality to 82, got ' + quality); process.exit(1); }
         if (!rt.includes('rotate_roots') || !rt.includes('roots_toline')) { console.error('FATAL: populate should restore root transforms, got ' + rt); process.exit(1); }
+        if (!renderExec.includes('"rasterThreads":6') || !renderExec.includes('"histInputMode":"sectioned"') || !renderExec.includes('"paletteChunkWorkers":22') || !renderExec.includes('"saveAssociatedPalette":true')) {
+            console.error('FATAL: populate should restore render MT execution settings, got ' + renderExec);
+            process.exit(1);
+        }
         vm.runInContext(`
             renderColorMode = 'rainbow';
             renderSolveMetric = 'proximity';
@@ -2299,6 +2359,24 @@ async function testPipeline(name, call) {
                         solve_score_quantile: 0.05,
                         solve_score_omega: 4,
                         root_transforms: [['rotate_roots', '0.125']],
+                        render_execution: {
+                            raster_engine: 'mt',
+                            raster_mt_threads: 5,
+                            solve_score_threads: 4,
+                            solve_score_hist_input_mode: 'tmpfile',
+                            solve_score_hist_retries: 3,
+                            raster_input_mode: 'sectioned',
+                            raster_sectioned_retries: 2,
+                            pixel_bin_fragment_mode: 'dense_grouped',
+                            raster_bin_group_size: 5,
+                            solve_score_merge_workers: 11,
+                            finalize_workers: 19,
+                            save_associated_palette: true,
+                            palette_chunk_threads: 6,
+                            palette_chunk_input_mode: 'sectioned',
+                            palette_chunk_retries: 4,
+                            palette_chunk_workers: 32,
+                        },
                     }
                 ],
             },
@@ -2329,6 +2407,7 @@ async function testPipeline(name, call) {
         const pix = vm.runInContext("document.getElementById('render-pix').value", ctx);
         const fmt = vm.runInContext("document.getElementById('render-format').value", ctx);
         const rt = vm.runInContext('JSON.stringify(_rtChain)', ctx);
+        const renderExec = vm.runInContext('JSON.stringify(_renderMtPopupState)', ctx);
         if (family !== 'color') { console.error('FATAL: palette populate should switch active family to color, got ' + family); process.exit(1); }
         if (mode !== 'solve_score') { console.error('FATAL: palette populate should set solve_score mode, got ' + mode); process.exit(1); }
         if (metric !== 'crowding') { console.error('FATAL: palette populate should set crowding metric, got ' + metric); process.exit(1); }
@@ -2338,6 +2417,10 @@ async function testPipeline(name, call) {
         if (pix !== '4000') { console.error('FATAL: palette populate should set pix to 4000, got ' + pix); process.exit(1); }
         if (fmt !== 'jpeg') { console.error('FATAL: palette populate should set format to jpeg, got ' + fmt); process.exit(1); }
         if (!rt.includes('rotate_roots') || !rt.includes('0.125')) { console.error('FATAL: palette populate should restore root transforms, got ' + rt); process.exit(1); }
+        if (!renderExec.includes('"rasterThreads":5') || !renderExec.includes('"rasterBinGroupSize":5') || !renderExec.includes('"paletteChunkInputMode":"sectioned"') || !renderExec.includes('"paletteChunkWorkers":32')) {
+            console.error('FATAL: palette populate should restore render MT execution settings, got ' + renderExec);
+            process.exit(1);
+        }
         vm.runInContext(`
             _renderActiveFamily = 'color';
             renderColorMode = 'rainbow';
@@ -4681,7 +4764,7 @@ async function testPipeline(name, call) {
             refreshRenderArtifacts = async function() {};
         `, ctx);
         ctx._elements['btn-render-generate-mt'] = ctx._mkEl();
-        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", histRetries: 4, rasterInputMode: "sectioned", rasterRetries: 7, pixelBinFragmentMode: "dense_grouped", rasterBinGroupSize: 5, mergeWorkers: 14, finalizeWorkers: 22, saveAssociatedPalette: true }); })()', ctx);
+        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", histRetries: 4, rasterInputMode: "sectioned", rasterRetries: 7, pixelBinFragmentMode: "dense_grouped", rasterBinGroupSize: 5, mergeWorkers: 14, finalizeWorkers: 22, paletteChunkThreads: 8, paletteChunkInputMode: "tmpfile", paletteChunkRetries: 9, paletteChunkWorkers: 24, saveAssociatedPalette: true }); })()', ctx);
         orchDispatched = vm.runInContext('_orchDispatched', ctx);
         if (!orchDispatched) { console.error('FATAL: runRasterPipelineMT did not dispatch orchestrator'); process.exit(1); }
         if (orchDispatched.params.raster_engine !== 'mt') { console.error('FATAL: runRasterPipelineMT should request mt raster engine, got ' + orchDispatched.params.raster_engine); process.exit(1); }
@@ -4695,9 +4778,13 @@ async function testPipeline(name, call) {
         if (orchDispatched.params.raster_sectioned_retries !== 7) { console.error('FATAL: runRasterPipelineMT should pass raster_sectioned_retries=7, got ' + orchDispatched.params.raster_sectioned_retries); process.exit(1); }
         if (orchDispatched.params.pixel_bin_fragment_mode !== 'dense_grouped') { console.error('FATAL: runRasterPipelineMT should pass pixel_bin_fragment_mode=dense_grouped, got ' + orchDispatched.params.pixel_bin_fragment_mode); process.exit(1); }
         if (orchDispatched.params.raster_bin_group_size !== 5) { console.error('FATAL: runRasterPipelineMT should pass raster_bin_group_size=5, got ' + orchDispatched.params.raster_bin_group_size); process.exit(1); }
+        if (orchDispatched.params.palette_chunk_threads !== 8) { console.error('FATAL: runRasterPipelineMT should pass palette_chunk_threads=8, got ' + orchDispatched.params.palette_chunk_threads); process.exit(1); }
+        if (orchDispatched.params.palette_chunk_input_mode !== 'tmpfile') { console.error('FATAL: runRasterPipelineMT should pass palette_chunk_input_mode=tmpfile, got ' + orchDispatched.params.palette_chunk_input_mode); process.exit(1); }
+        if (orchDispatched.params.palette_chunk_retries !== 9) { console.error('FATAL: runRasterPipelineMT should pass palette_chunk_retries=9, got ' + orchDispatched.params.palette_chunk_retries); process.exit(1); }
+        if (orchDispatched.params.palette_chunk_workers !== 24) { console.error('FATAL: runRasterPipelineMT should pass palette_chunk_workers=24, got ' + orchDispatched.params.palette_chunk_workers); process.exit(1); }
         if (orchDispatched.params.save_associated_palette !== true) { console.error('FATAL: runRasterPipelineMT should pass save_associated_palette=true when selected, got ' + orchDispatched.params.save_associated_palette); process.exit(1); }
         if (orchDispatched.mode !== 'color') { console.error('FATAL: mode should be color, got ' + orchDispatched.mode); process.exit(1); }
-        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, hist=sectioned, hist_retries=4, merge=14, finalize=22, raster_input=sectioned, raster_retries=7, raster=6, bins=dense_grouped/5, associated_palette=yes)');
+        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, hist=sectioned, hist_retries=4, merge=14, finalize=22, raster_input=sectioned, raster_retries=7, raster=6, bins=dense_grouped/5, palette_chunk=8/tmpfile/9/24, associated_palette=yes)');
     }
 
     // 12b: runBilevelPipeline dispatches one render_orchestrator job

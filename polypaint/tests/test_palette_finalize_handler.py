@@ -174,7 +174,27 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
 
             mock_run.side_effect = run_side_effect
 
-            result = mod.handler(_event(source_color_artifact_id="color_src"), None)
+            result = mod.handler(_event(
+                source_color_artifact_id="color_src",
+                render_execution={
+                    "raster_engine": "mt",
+                    "raster_mt_threads": 6,
+                    "solve_score_threads": 3,
+                    "solve_score_hist_input_mode": "sectioned",
+                    "solve_score_hist_retries": 4,
+                    "raster_input_mode": "sectioned",
+                    "raster_sectioned_retries": 5,
+                    "pixel_bin_fragment_mode": "dense_grouped",
+                    "raster_bin_group_size": 2,
+                    "solve_score_merge_workers": 12,
+                    "finalize_workers": 18,
+                    "save_associated_palette": True,
+                    "palette_chunk_threads": 7,
+                    "palette_chunk_input_mode": "tmpfile",
+                    "palette_chunk_retries": 6,
+                    "palette_chunk_workers": 22,
+                },
+            ), None)
             body = json.loads(result["body"])
 
             self.assertEqual(body["palette_id"], "pal_1")
@@ -207,6 +227,8 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             self.assertEqual(meta["chunk_meta_prefix"], "renders/j/palettes/pal_1/chunks/meta_chunk_")
             self.assertEqual(meta["derived_from_color_artifact_id"], "color_src")
             self.assertEqual(meta["derivation_kind"], "extract_palette")
+            self.assertEqual(meta["render_execution"]["raster_engine"], "mt")
+            self.assertEqual(meta["render_execution"]["palette_chunk_workers"], 22)
             self.assertNotIn("score_key", meta)
             self.assertNotIn("palette_bins_key", meta)
 

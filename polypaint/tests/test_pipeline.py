@@ -2907,6 +2907,39 @@ class TestPaletteInventory(unittest.TestCase):
         self.assertIn("image_url", body["palettes"][0])
         self.assertIn("preview_url", body["palettes"][0])
 
+    def test_render_artifact_entry_parses_render_execution_json(self):
+        from handler_storage import _render_artifact_entry
+
+        image_info = {
+            "key": "renders/job_a/color/color_run_1/image.jpeg",
+            "url": "https://example.com/image.jpeg",
+            "modified_at": "2026-03-25T10:00:00Z",
+            "width": 1024,
+            "height": 1024,
+            "size": 12345,
+            "type": "image/jpeg",
+            "user_meta": {
+                "artifact_id": "color_run_1",
+                "color_mode": "solve_score",
+                "render_execution": json.dumps({
+                    "raster_engine": "mt",
+                    "raster_mt_threads": 6,
+                    "solve_score_threads": 3,
+                    "solve_score_hist_input_mode": "sectioned",
+                    "palette_chunk_input_mode": "tmpfile",
+                    "palette_chunk_workers": 22,
+                }),
+            },
+        }
+
+        entry = _render_artifact_entry("color", "color_run_1", image_info)
+
+        self.assertEqual(entry["render_execution"]["raster_engine"], "mt")
+        self.assertEqual(entry["render_execution"]["raster_mt_threads"], 6)
+        self.assertEqual(entry["render_execution"]["solve_score_hist_input_mode"], "sectioned")
+        self.assertEqual(entry["render_execution"]["palette_chunk_input_mode"], "tmpfile")
+        self.assertEqual(entry["render_execution"]["palette_chunk_workers"], 22)
+
     @patch("handler_storage.s3")
     def test_delete_palette_deletes_prefix(self, mock_s3):
         from handler_storage import handle_delete_palette

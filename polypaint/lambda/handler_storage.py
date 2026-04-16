@@ -580,6 +580,8 @@ def _parse_bool(value, default=False):
 def _parse_json(value):
     if value in ("", None):
         return None
+    if isinstance(value, (dict, list)):
+        return value
     try:
         return json.loads(value)
     except Exception:
@@ -679,6 +681,7 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
             meta.get("associated_palette_omega_enabled"),
             bool(entry["associated_palette_mode"]),
         )
+        entry["render_execution"] = _parse_json(meta.get("render_execution"))
         entry["derived_from_artifact_id"] = meta.get("derived_from_artifact_id", "")
         entry["derivation_kind"] = meta.get("derivation_kind", "")
         entry["postprocess_kind"] = meta.get("postprocess_kind", "")

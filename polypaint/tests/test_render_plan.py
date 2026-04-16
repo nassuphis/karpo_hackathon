@@ -280,6 +280,70 @@ class TestRenderPlan(unittest.TestCase):
         assert [item["chunk_indices"] for item in plan["raster_items"]] == [[0], [1], [2]]
 
     @patch("handler_render_plan._storage_call")
+    def test_render_plan_persists_full_render_execution_config(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5,
+            "n_chunks": 4,
+            "N": 100,
+            "times": 1,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_count": 25},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_count": 25},
+                {"idx": 2, "bin_key": "renders/j/chunk_2.bin", "step_count": 25},
+                {"idx": 3, "bin_key": "renders/j/chunk_3.bin", "step_count": 25},
+            ],
+        })
+        from handler_render_plan import handler
+
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="spread",
+            raster_engine="mt",
+            raster_mt_threads=6,
+            solve_score_threads=3,
+            solve_score_hist_input_mode="sectioned",
+            solve_score_hist_retries=4,
+            raster_input_mode="sectioned",
+            raster_sectioned_retries=5,
+            pixel_bin_fragment_mode="dense_grouped",
+            raster_bin_group_size=2,
+            solve_score_merge_workers=12,
+            finalize_workers=18,
+            save_associated_palette=True,
+            palette_chunk_threads=7,
+            palette_chunk_input_mode="tmpfile",
+            palette_chunk_retries=6,
+            palette_chunk_workers=22,
+        ), None)
+        plan = json.loads(result["body"])
+
+        render_execution = plan["render_execution"]
+        assert render_execution["raster_engine"] == "mt"
+        assert render_execution["raster_mt_threads"] == 6
+        assert render_execution["solve_score_threads"] == 3
+        assert render_execution["solve_score_hist_input_mode"] == "sectioned"
+        assert render_execution["solve_score_hist_retries"] == 4
+        assert render_execution["raster_input_mode"] == "sectioned"
+        assert render_execution["raster_sectioned_retries"] == 5
+        assert render_execution["pixel_bin_fragment_mode"] == "dense_grouped"
+        assert render_execution["raster_bin_group_size"] == 2
+        assert render_execution["solve_score_merge_workers"] == 12
+        assert render_execution["finalize_workers"] == 18
+        assert render_execution["save_associated_palette"] is True
+        assert render_execution["palette_chunk_threads"] == 7
+        assert render_execution["palette_chunk_input_mode"] == "tmpfile"
+        assert render_execution["palette_chunk_retries"] == 6
+        assert render_execution["palette_chunk_workers"] == 22
+
+        metadata_exec = json.loads(plan["outputs"]["metadata"]["render_execution"])
+        assert metadata_exec == render_execution
+        assert plan["associated_palette"]["chunk_threads"] == 7
+        assert plan["associated_palette"]["chunk_input_mode"] == "tmpfile"
+        assert plan["associated_palette"]["chunk_retries"] == 6
+        assert plan["associated_palette"]["chunk_workers"] == 22
+
+    @patch("handler_render_plan._storage_call")
     def test_solve_score_chain_input_compiles_to_scalar_contract(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail({
             "degree": 5, "n_chunks": 2,

@@ -268,6 +268,7 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(finalize["solve_score_quantile.$"], "$.plan.associated_palette.quantile")
         self.assertEqual(finalize["solve_score_omega.$"], "$.plan.associated_palette.omega")
         self.assertEqual(finalize["solve_score_omega_enabled.$"], "$.plan.associated_palette.omega_enabled")
+        self.assertEqual(finalize["render_execution.$"], "$.plan.render_execution")
 
     def test_solve_score_tasks_carry_thread_count(self):
         clip_payload = self.states["ColorSolveScoreClipTask"]["Parameters"]["Payload"]

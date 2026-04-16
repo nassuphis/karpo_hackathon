@@ -317,6 +317,27 @@ def _validate_raster_bin_group_size(value):
     return group_size
 
 
+def _render_execution_config(rp):
+    return {
+        "raster_engine": str(rp.get("raster_engine", "single") or "single"),
+        "save_associated_palette": bool(rp.get("save_associated_palette", False)),
+        "solve_score_hist_input_mode": str(rp.get("solve_score_hist_input_mode", "tmpfile") or "tmpfile"),
+        "raster_mt_threads": int(rp.get("raster_mt_threads", 4) or 4),
+        "solve_score_threads": int(rp.get("solve_score_threads", 1) or 1),
+        "solve_score_hist_retries": int(rp.get("solve_score_hist_retries", 2) or 0),
+        "raster_input_mode": str(rp.get("raster_input_mode", "tmpfile") or "tmpfile"),
+        "raster_sectioned_retries": int(rp.get("raster_sectioned_retries", 2) or 0),
+        "pixel_bin_fragment_mode": str(rp.get("pixel_bin_fragment_mode", "sparse_chunks") or "sparse_chunks"),
+        "raster_bin_group_size": rp.get("raster_bin_group_size", ""),
+        "solve_score_merge_workers": int(rp.get("solve_score_merge_workers", 16) or 16),
+        "finalize_workers": int(rp.get("finalize_workers", 16) or 16),
+        "palette_chunk_threads": int(rp.get("palette_chunk_threads", 4) or 4),
+        "palette_chunk_input_mode": str(rp.get("palette_chunk_input_mode", "sectioned") or "sectioned"),
+        "palette_chunk_retries": int(rp.get("palette_chunk_retries", 2) or 0),
+        "palette_chunk_workers": int(rp.get("palette_chunk_workers", 16) or 16),
+    }
+
+
 def _validate_hist_input_mode(value):
     mode = str(value or "tmpfile").strip().lower()
     if mode not in ("tmpfile", "stdin", "sectioned"):
@@ -721,6 +742,7 @@ def handler(event, context):
     artifact_id = f"{artifact_family}_{run_id}"
     artifact_prefix = f"renders/{job_id}/{artifact_family}/{artifact_id}/"
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    render_execution = _render_execution_config(rp)
 
     associated_palette = {
         "enabled": False,
@@ -820,6 +842,7 @@ def handler(event, context):
         "square_extent": str(rp.get("square_extent", 2.0)),
         "rotation": str(rp.get("rotation", 0.0)),
         "root_transforms": json.dumps(rp.get("root_transforms", [])),
+        "render_execution": json.dumps(render_execution, separators=(",", ":")),
     }
 
     fmt = rp.get("fmt", "jpeg")
@@ -961,6 +984,7 @@ def handler(event, context):
         "raster": raster,
         "saved_palette": saved_palette,
         "associated_palette": associated_palette,
+        "render_execution": render_execution,
         "outputs": outputs,
     }
 

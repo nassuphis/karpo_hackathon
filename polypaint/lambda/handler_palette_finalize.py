@@ -131,6 +131,7 @@ def handler(event, context):
     omega = float(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
     omega_enabled = _parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
     solve_score_chain = contract_param(params, "solve_score_chain", "", contract_warnings)
+    render_execution = contract_param(params, "render_execution", None, contract_warnings)
     root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
     image_key = params["image_key"]
     preview_key = params["preview_key"]
@@ -260,6 +261,8 @@ def handler(event, context):
             "clip_lo": str(bins_meta.get("clip_lo", "")),
             "clip_hi": str(bins_meta.get("clip_hi", "")),
         }
+        if isinstance(render_execution, (dict, list)):
+            metadata["render_execution"] = json.dumps(render_execution, separators=(",", ":"))
         metadata.update(
             emit_solve_score_metadata(
                 "solve",
@@ -305,6 +308,8 @@ def handler(event, context):
             "chunk_bins_prefix": chunk_bins_prefix,
             "chunk_meta_prefix": chunk_meta_prefix,
         }
+        if isinstance(render_execution, dict):
+            meta_body["render_execution"] = render_execution
         meta_body.update(
             {
                 "metric": metric,

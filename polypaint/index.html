@@ -1559,6 +1559,15 @@ button {
                 <div class="render-mt-matrix-empty" aria-hidden="true">-</div>
                 <input id="render-mt-finalize-workers" type="number" min="1" max="64" step="1" value="16">
                 <div class="render-mt-matrix-empty" aria-hidden="true">sdk</div>
+
+                <div class="render-mt-matrix-stage">Palette chunk</div>
+                <input id="render-mt-palette-chunk-threads" type="number" min="1" max="16" step="1" value="4">
+                <select id="render-mt-palette-chunk-input-mode">
+                    <option value="tmpfile">tmp file</option>
+                    <option value="sectioned">sectioned native</option>
+                </select>
+                <input id="render-mt-palette-chunk-workers" type="number" min="1" max="64" step="1" value="16">
+                <input id="render-mt-palette-chunk-retries" type="number" min="0" max="10" step="1" value="2">
             </div>
             <div id="render-mt-associated-row" class="autolevel-stage-row" style="align-items:center; margin-top:10px">
                 <div class="autolevel-stage-text">Attach the palette artifact used for this Color render.</div>
@@ -1570,7 +1579,7 @@ button {
                 </div>
             </div>
         </div>
-        <div class="autolevel-popup-help">Use this to compare the native multithreaded path against normal Generate. Raster MT supports Solve score, Saved palette, Constant, and Rainbow with match=none. Hist controls and merge workers only matter for Solve score mode. Finalize workers apply to all MT color renders. Retries only apply to the native sectioned libcurl readers in Hist and Raster; Merge and Finalize already use SDK-managed S3 retries.</div>
+        <div class="autolevel-popup-help">Use this to compare the native multithreaded path against normal Generate. Raster MT supports Solve score, Saved palette, Constant, and Rainbow with match=none. Hist controls and merge workers only matter for Solve score mode. Palette chunk controls only matter for Solve score renders when Save Associated Palette is enabled. Finalize workers apply to all MT color renders. Retries only apply to the native sectioned libcurl readers in Hist, Raster, and Palette chunk; Merge and Finalize already use SDK-managed S3 retries.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -4170,6 +4179,10 @@ let _renderMtPopupState = {
     rasterBinGroupSize: '',
     mergeWorkers: 16,
     finalizeWorkers: 16,
+    paletteChunkThreads: 4,
+    paletteChunkInputMode: 'sectioned',
+    paletteChunkRetries: 2,
+    paletteChunkWorkers: 16,
     saveAssociatedPalette: false,
 };
 let _computeMtPopupState = {
@@ -5646,6 +5659,10 @@ function _normalizeRasterBinGroupSize(value) {
     return Math.max(1, Math.min(1000, n));
 }
 
+function _renderMtAssociatedPaletteChunkRelevant(mode, saveAssociatedPalette) {
+    return mode === 'solve_score' && !!saveAssociatedPalette;
+}
+
 function _closeRenderGeneratePopup() {
     _renderGeneratePopupState = {
         open: false,
@@ -5728,6 +5745,10 @@ function _closeRenderMtPopup() {
         rasterBinGroupSize: _normalizeRasterBinGroupSize(_renderMtPopupState.rasterBinGroupSize),
         mergeWorkers: _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers),
         finalizeWorkers: _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers),
+        paletteChunkThreads: _clampRenderMtThreads(_renderMtPopupState.paletteChunkThreads),
+        paletteChunkInputMode: _normalizeRasterInputMode(_renderMtPopupState.paletteChunkInputMode),
+        paletteChunkRetries: _clampRenderMtRetries(_renderMtPopupState.paletteChunkRetries),
+        paletteChunkWorkers: _clampRenderMtWorkerCount(_renderMtPopupState.paletteChunkWorkers),
         saveAssociatedPalette: !!_renderMtPopupState.saveAssociatedPalette,
     };
     const overlay = document.getElementById('render-mt-popup-overlay');
@@ -5750,10 +5771,14 @@ function _renderRenderMtPopup() {
     const rasterBinGroupSizeEl = document.getElementById('render-mt-raster-bin-group-size');
     const mergeWorkersEl = document.getElementById('render-mt-merge-workers');
     const finalizeWorkersEl = document.getElementById('render-mt-finalize-workers');
+    const paletteChunkThreadsEl = document.getElementById('render-mt-palette-chunk-threads');
+    const paletteChunkInputModeEl = document.getElementById('render-mt-palette-chunk-input-mode');
+    const paletteChunkWorkersEl = document.getElementById('render-mt-palette-chunk-workers');
+    const paletteChunkRetriesEl = document.getElementById('render-mt-palette-chunk-retries');
     const assocRowEl = document.getElementById('render-mt-associated-row');
     const assocEl = document.getElementById('render-mt-save-associated-palette');
     const runBtn = document.getElementById('render-mt-popup-run');
-    if (!overlay || !summaryEl || !threadsEl || !solveScoreThreadsEl || !histInputModeEl || !histRetriesEl || !rasterInputModeEl || !rasterRetriesEl || !pixelBinFragmentModeEl || !rasterBinGroupSizeEl || !mergeWorkersEl || !finalizeWorkersEl) return;
+    if (!overlay || !summaryEl || !threadsEl || !solveScoreThreadsEl || !histInputModeEl || !histRetriesEl || !rasterInputModeEl || !rasterRetriesEl || !pixelBinFragmentModeEl || !rasterBinGroupSizeEl || !mergeWorkersEl || !finalizeWorkersEl || !paletteChunkThreadsEl || !paletteChunkInputModeEl || !paletteChunkWorkersEl || !paletteChunkRetriesEl) return;
     if (!_renderMtPopupState.open) {
         _closeRenderMtPopup();
         return;
@@ -5768,9 +5793,14 @@ function _renderRenderMtPopup() {
     const rasterBinGroupSize = _normalizeRasterBinGroupSize(_renderMtPopupState.rasterBinGroupSize);
     const mergeWorkers = _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers);
     const finalizeWorkers = _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers);
+    const paletteChunkThreads = _clampRenderMtThreads(_renderMtPopupState.paletteChunkThreads);
+    const paletteChunkInputMode = _normalizeRasterInputMode(_renderMtPopupState.paletteChunkInputMode);
+    const paletteChunkRetries = _clampRenderMtRetries(_renderMtPopupState.paletteChunkRetries);
+    const paletteChunkWorkers = _clampRenderMtWorkerCount(_renderMtPopupState.paletteChunkWorkers);
     const saveAssociatedPalette = !!_renderMtPopupState.saveAssociatedPalette;
     const solveScoreRelevant = renderColorMode === 'solve_score';
     const assocAllowed = _associatedPaletteAllowedForColorMode(renderColorMode);
+    const assocChunkRelevant = _renderMtAssociatedPaletteChunkRelevant(renderColorMode, saveAssociatedPalette);
     _renderMtPopupState.rasterThreads = threads;
     _renderMtPopupState.solveScoreThreads = solveScoreThreads;
     _renderMtPopupState.histInputMode = histInputMode;
@@ -5781,6 +5811,10 @@ function _renderRenderMtPopup() {
     _renderMtPopupState.rasterBinGroupSize = rasterBinGroupSize;
     _renderMtPopupState.mergeWorkers = mergeWorkers;
     _renderMtPopupState.finalizeWorkers = finalizeWorkers;
+    _renderMtPopupState.paletteChunkThreads = paletteChunkThreads;
+    _renderMtPopupState.paletteChunkInputMode = paletteChunkInputMode;
+    _renderMtPopupState.paletteChunkRetries = paletteChunkRetries;
+    _renderMtPopupState.paletteChunkWorkers = paletteChunkWorkers;
     _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
@@ -5794,6 +5828,10 @@ function _renderRenderMtPopup() {
     rasterBinGroupSizeEl.value = rasterBinGroupSize === '' ? '' : String(rasterBinGroupSize);
     mergeWorkersEl.value = String(mergeWorkers);
     finalizeWorkersEl.value = String(finalizeWorkers);
+    paletteChunkThreadsEl.value = String(paletteChunkThreads);
+    paletteChunkInputModeEl.value = paletteChunkInputMode;
+    paletteChunkWorkersEl.value = String(paletteChunkWorkers);
+    paletteChunkRetriesEl.value = String(paletteChunkRetries);
     solveScoreThreadsEl.disabled = !solveScoreRelevant;
     histInputModeEl.disabled = !solveScoreRelevant;
     histRetriesEl.disabled = !solveScoreRelevant || histInputMode !== 'sectioned';
@@ -5801,6 +5839,10 @@ function _renderRenderMtPopup() {
     finalizeWorkersEl.disabled = false;
     rasterRetriesEl.disabled = rasterInputMode !== 'sectioned';
     rasterBinGroupSizeEl.disabled = pixelBinFragmentMode !== 'dense_grouped';
+    paletteChunkThreadsEl.disabled = !assocChunkRelevant;
+    paletteChunkInputModeEl.disabled = !assocChunkRelevant;
+    paletteChunkWorkersEl.disabled = !assocChunkRelevant;
+    paletteChunkRetriesEl.disabled = !assocChunkRelevant || paletteChunkInputMode !== 'sectioned';
     if (assocRowEl) assocRowEl.style.display = assocAllowed ? '' : 'none';
     if (assocEl) {
         assocEl.checked = saveAssociatedPalette;
@@ -5813,9 +5855,12 @@ function _renderRenderMtPopup() {
     const binsLabel = pixelBinFragmentMode === 'dense_grouped'
         ? `dense grouped${rasterBinGroupSize === '' ? '' : ` group=${rasterBinGroupSize}`}`
         : 'sparse chunks';
+    const paletteChunkLabel = assocChunkRelevant
+        ? `palette chunk threads=${paletteChunkThreads} • palette chunk input=${paletteChunkInputMode} • palette chunk retries=${paletteChunkRetries} • palette chunk workers=${paletteChunkWorkers}`
+        : 'palette chunk unused';
     summaryEl.textContent = solveScoreRelevant
-        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • hist threads=${solveScoreThreads} • hist input=${histInputMode} • hist retries=${histRetries} • merge workers=${mergeWorkers} • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • bins=${binsLabel} • finalize workers=${finalizeWorkers} • associated palette=${assocLabel}`
-        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • bins=${binsLabel} • finalize workers=${finalizeWorkers} • hist unused • merge unused • associated palette=${assocLabel}`;
+        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • hist threads=${solveScoreThreads} • hist input=${histInputMode} • hist retries=${histRetries} • merge workers=${mergeWorkers} • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • bins=${binsLabel} • finalize workers=${finalizeWorkers} • associated palette=${assocLabel} • ${paletteChunkLabel}`
+        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • bins=${binsLabel} • finalize workers=${finalizeWorkers} • hist unused • merge unused • associated palette=${assocLabel} • ${paletteChunkLabel}`;
     if (runBtn) runBtn.disabled = !_renderColorMtEligible() || !!_activeRenderRun;
 }
 
@@ -5833,6 +5878,10 @@ function openRenderMtPopup() {
         rasterBinGroupSize: _normalizeRasterBinGroupSize(_renderMtPopupState.rasterBinGroupSize),
         mergeWorkers: _clampRenderMtMergeWorkers(_renderMtPopupState.mergeWorkers || 16),
         finalizeWorkers: _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers || 16),
+        paletteChunkThreads: _clampRenderMtThreads(_renderMtPopupState.paletteChunkThreads || 4),
+        paletteChunkInputMode: _normalizeRasterInputMode(_renderMtPopupState.paletteChunkInputMode || 'sectioned'),
+        paletteChunkRetries: _clampRenderMtRetries(_renderMtPopupState.paletteChunkRetries ?? 2),
+        paletteChunkWorkers: _clampRenderMtWorkerCount(_renderMtPopupState.paletteChunkWorkers || 16),
         saveAssociatedPalette: !!_renderMtPopupState.saveAssociatedPalette,
     };
     _renderRenderMtPopup();
@@ -6347,6 +6396,10 @@ function _initRenderMtPopup() {
     const rasterBinGroupSizeEl = document.getElementById('render-mt-raster-bin-group-size');
     const mergeWorkersEl = document.getElementById('render-mt-merge-workers');
     const finalizeWorkersEl = document.getElementById('render-mt-finalize-workers');
+    const paletteChunkThreadsEl = document.getElementById('render-mt-palette-chunk-threads');
+    const paletteChunkInputModeEl = document.getElementById('render-mt-palette-chunk-input-mode');
+    const paletteChunkWorkersEl = document.getElementById('render-mt-palette-chunk-workers');
+    const paletteChunkRetriesEl = document.getElementById('render-mt-palette-chunk-retries');
     const assocEl = document.getElementById('render-mt-save-associated-palette');
     if (overlay) {
         overlay.addEventListener('click', (ev) => {
@@ -6415,6 +6468,30 @@ function _initRenderMtPopup() {
             _renderRenderMtPopup();
         });
     }
+    if (paletteChunkThreadsEl) {
+        paletteChunkThreadsEl.addEventListener('input', (ev) => {
+            _renderMtPopupState.paletteChunkThreads = _clampRenderMtThreads(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
+    if (paletteChunkInputModeEl) {
+        paletteChunkInputModeEl.addEventListener('change', (ev) => {
+            _renderMtPopupState.paletteChunkInputMode = _normalizeRasterInputMode(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
+    if (paletteChunkWorkersEl) {
+        paletteChunkWorkersEl.addEventListener('input', (ev) => {
+            _renderMtPopupState.paletteChunkWorkers = _clampRenderMtWorkerCount(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
+    if (paletteChunkRetriesEl) {
+        paletteChunkRetriesEl.addEventListener('input', (ev) => {
+            _renderMtPopupState.paletteChunkRetries = _clampRenderMtRetries(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
     if (assocEl) {
         assocEl.addEventListener('change', (ev) => {
             _renderMtPopupState.saveAssociatedPalette = !!ev.target.checked;
@@ -6437,6 +6514,10 @@ function _initRenderMtPopup() {
                 const rasterBinGroupSize = _normalizeRasterBinGroupSize(document.getElementById('render-mt-raster-bin-group-size').value);
                 const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('render-mt-merge-workers').value);
                 const finalizeWorkers = _clampRenderMtFinalizeWorkers(document.getElementById('render-mt-finalize-workers').value);
+                const paletteChunkThreads = _clampRenderMtThreads(document.getElementById('render-mt-palette-chunk-threads').value);
+                const paletteChunkInputMode = _normalizeRasterInputMode(document.getElementById('render-mt-palette-chunk-input-mode').value);
+                const paletteChunkWorkers = _clampRenderMtWorkerCount(document.getElementById('render-mt-palette-chunk-workers').value);
+                const paletteChunkRetries = _clampRenderMtRetries(document.getElementById('render-mt-palette-chunk-retries').value);
                 const saveAssociatedPalette = !!document.getElementById('render-mt-save-associated-palette').checked;
                 _renderMtPopupState.rasterThreads = rasterThreads;
                 _renderMtPopupState.solveScoreThreads = solveScoreThreads;
@@ -6448,9 +6529,13 @@ function _initRenderMtPopup() {
                 _renderMtPopupState.rasterBinGroupSize = rasterBinGroupSize;
                 _renderMtPopupState.mergeWorkers = mergeWorkers;
                 _renderMtPopupState.finalizeWorkers = finalizeWorkers;
+                _renderMtPopupState.paletteChunkThreads = paletteChunkThreads;
+                _renderMtPopupState.paletteChunkInputMode = paletteChunkInputMode;
+                _renderMtPopupState.paletteChunkWorkers = paletteChunkWorkers;
+                _renderMtPopupState.paletteChunkRetries = paletteChunkRetries;
                 _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
                 _closeRenderMtPopup();
-                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, pixelBinFragmentMode, rasterBinGroupSize, mergeWorkers, finalizeWorkers, saveAssociatedPalette });
+                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, pixelBinFragmentMode, rasterBinGroupSize, mergeWorkers, finalizeWorkers, paletteChunkThreads, paletteChunkInputMode, paletteChunkRetries, paletteChunkWorkers, saveAssociatedPalette });
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = btnText;
@@ -6476,6 +6561,10 @@ function _initRenderMtPopup() {
             const rasterBinGroupSize = _normalizeRasterBinGroupSize(document.getElementById('render-mt-raster-bin-group-size').value);
             const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('render-mt-merge-workers').value);
             const finalizeWorkers = _clampRenderMtFinalizeWorkers(document.getElementById('render-mt-finalize-workers').value);
+            const paletteChunkThreads = _clampRenderMtThreads(document.getElementById('render-mt-palette-chunk-threads').value);
+            const paletteChunkInputMode = _normalizeRasterInputMode(document.getElementById('render-mt-palette-chunk-input-mode').value);
+            const paletteChunkWorkers = _clampRenderMtWorkerCount(document.getElementById('render-mt-palette-chunk-workers').value);
+            const paletteChunkRetries = _clampRenderMtRetries(document.getElementById('render-mt-palette-chunk-retries').value);
             const saveAssociatedPalette = !!document.getElementById('render-mt-save-associated-palette').checked;
             _renderMtPopupState.rasterThreads = rasterThreads;
             _renderMtPopupState.solveScoreThreads = solveScoreThreads;
@@ -6487,9 +6576,13 @@ function _initRenderMtPopup() {
             _renderMtPopupState.rasterBinGroupSize = rasterBinGroupSize;
             _renderMtPopupState.mergeWorkers = mergeWorkers;
             _renderMtPopupState.finalizeWorkers = finalizeWorkers;
+            _renderMtPopupState.paletteChunkThreads = paletteChunkThreads;
+            _renderMtPopupState.paletteChunkInputMode = paletteChunkInputMode;
+            _renderMtPopupState.paletteChunkWorkers = paletteChunkWorkers;
+            _renderMtPopupState.paletteChunkRetries = paletteChunkRetries;
             _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
             _closeRenderMtPopup();
-            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, pixelBinFragmentMode, rasterBinGroupSize, mergeWorkers, finalizeWorkers, saveAssociatedPalette });
+            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, rasterInputMode, rasterRetries, pixelBinFragmentMode, rasterBinGroupSize, mergeWorkers, finalizeWorkers, paletteChunkThreads, paletteChunkInputMode, paletteChunkRetries, paletteChunkWorkers, saveAssociatedPalette });
         }
     });
 }
@@ -9745,6 +9838,26 @@ async function runRasterPipelineMT(threadConfig = null) {
                 ? threadConfig.finalizeWorkers
                 : _renderMtPopupState.finalizeWorkers
         );
+        const paletteChunkThreads = _clampRenderMtThreads(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.paletteChunkThreads != null
+                ? threadConfig.paletteChunkThreads
+                : _renderMtPopupState.paletteChunkThreads
+        );
+        const paletteChunkInputMode = _normalizeRasterInputMode(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.paletteChunkInputMode != null
+                ? threadConfig.paletteChunkInputMode
+                : _renderMtPopupState.paletteChunkInputMode
+        );
+        const paletteChunkRetries = _clampRenderMtRetries(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.paletteChunkRetries != null
+                ? threadConfig.paletteChunkRetries
+                : _renderMtPopupState.paletteChunkRetries
+        );
+        const paletteChunkWorkers = _clampRenderMtWorkerCount(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.paletteChunkWorkers != null
+                ? threadConfig.paletteChunkWorkers
+                : _renderMtPopupState.paletteChunkWorkers
+        );
         const saveAssociatedPalette = !!(
             threadConfig && typeof threadConfig === 'object' && threadConfig.saveAssociatedPalette != null
                 ? threadConfig.saveAssociatedPalette
@@ -9752,12 +9865,16 @@ async function runRasterPipelineMT(threadConfig = null) {
         );
         const relevantSolveScoreThreads = renderColorMode === 'solve_score' ? solveScoreThreads : 1;
         const relevantMergeWorkers = renderColorMode === 'solve_score' ? mergeWorkers : 1;
+        const relevantPaletteChunk = _renderMtAssociatedPaletteChunkRelevant(renderColorMode, saveAssociatedPalette);
         const binsLabel = pixelBinFragmentMode === 'dense_grouped'
             ? `dense_grouped${rasterBinGroupSize === '' ? '' : ` group=${rasterBinGroupSize}`}`
             : 'sparse_chunks';
+        const paletteChunkLabel = relevantPaletteChunk
+            ? `, palette chunk threads=${paletteChunkThreads}, palette chunk input=${paletteChunkInputMode}, palette chunk retries=${paletteChunkRetries}, palette chunk workers=${paletteChunkWorkers}`
+            : ', palette chunk unused';
         const mtMsg = renderColorMode === 'solve_score'
-            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, hist retries=${histRetries}, merge workers=${relevantMergeWorkers}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, bin fragments=${binsLabel}, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}...`
-            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, bin fragments=${binsLabel}, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}...`;
+            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, hist retries=${histRetries}, merge workers=${relevantMergeWorkers}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, bin fragments=${binsLabel}, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}${paletteChunkLabel}...`
+            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, bin fragments=${binsLabel}, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}${paletteChunkLabel}...`;
         log(mtMsg, 'ok', 'render-log');
         await _launchRenderOrchestrator('color', {
             raster_engine: 'mt',
@@ -9772,6 +9889,10 @@ async function runRasterPipelineMT(threadConfig = null) {
             solve_score_merge_workers: relevantMergeWorkers,
             finalize_workers: finalizeWorkers,
             save_associated_palette: saveAssociatedPalette,
+            palette_chunk_threads: paletteChunkThreads,
+            palette_chunk_input_mode: paletteChunkInputMode,
+            palette_chunk_retries: paletteChunkRetries,
+            palette_chunk_workers: paletteChunkWorkers,
         });
     } catch (e) {
         document.getElementById('render-status').textContent = 'Render-MT error: ' + e.message;
@@ -11207,6 +11328,35 @@ function _setSolveScoreChainFromArtifact(prefix, chain, metric, quantile, omega,
     );
 }
 
+function _restoreRenderExecutionState(entry) {
+    const cfg = entry && entry.render_execution && typeof entry.render_execution === 'object'
+        ? entry.render_execution
+        : null;
+    if (!cfg) return;
+    if (cfg.solve_score_hist_input_mode != null) {
+        _renderGeneratePopupState.histInputMode = _normalizeSolveScoreHistInputMode(cfg.solve_score_hist_input_mode);
+    }
+    if (cfg.save_associated_palette != null) {
+        const saveAssociatedPalette = !!cfg.save_associated_palette;
+        _renderGeneratePopupState.saveAssociatedPalette = saveAssociatedPalette;
+        _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
+    }
+    if (cfg.raster_mt_threads != null) _renderMtPopupState.rasterThreads = _clampRenderMtThreads(cfg.raster_mt_threads);
+    if (cfg.solve_score_threads != null) _renderMtPopupState.solveScoreThreads = _clampRenderMtThreads(cfg.solve_score_threads);
+    if (cfg.solve_score_hist_input_mode != null) _renderMtPopupState.histInputMode = _normalizeSolveScoreHistInputMode(cfg.solve_score_hist_input_mode);
+    if (cfg.solve_score_hist_retries != null) _renderMtPopupState.histRetries = _clampRenderMtRetries(cfg.solve_score_hist_retries);
+    if (cfg.raster_input_mode != null) _renderMtPopupState.rasterInputMode = _normalizeRasterInputMode(cfg.raster_input_mode);
+    if (cfg.raster_sectioned_retries != null) _renderMtPopupState.rasterRetries = _clampRenderMtRetries(cfg.raster_sectioned_retries);
+    if (cfg.pixel_bin_fragment_mode != null) _renderMtPopupState.pixelBinFragmentMode = _normalizePixelBinFragmentMode(cfg.pixel_bin_fragment_mode);
+    if (cfg.raster_bin_group_size != null) _renderMtPopupState.rasterBinGroupSize = _normalizeRasterBinGroupSize(cfg.raster_bin_group_size);
+    if (cfg.solve_score_merge_workers != null) _renderMtPopupState.mergeWorkers = _clampRenderMtMergeWorkers(cfg.solve_score_merge_workers);
+    if (cfg.finalize_workers != null) _renderMtPopupState.finalizeWorkers = _clampRenderMtFinalizeWorkers(cfg.finalize_workers);
+    if (cfg.palette_chunk_threads != null) _renderMtPopupState.paletteChunkThreads = _clampRenderMtThreads(cfg.palette_chunk_threads);
+    if (cfg.palette_chunk_input_mode != null) _renderMtPopupState.paletteChunkInputMode = _normalizeRasterInputMode(cfg.palette_chunk_input_mode);
+    if (cfg.palette_chunk_retries != null) _renderMtPopupState.paletteChunkRetries = _clampRenderMtRetries(cfg.palette_chunk_retries);
+    if (cfg.palette_chunk_workers != null) _renderMtPopupState.paletteChunkWorkers = _clampRenderMtWorkerCount(cfg.palette_chunk_workers);
+}
+
 function populateSelectedRenderArtifact() {
     const art = _renderSelectedArtifactEntry();
     if (!art) return;
@@ -11241,6 +11391,7 @@ function populateSelectedRenderArtifact() {
 
     if (_renderActiveFamily === 'palette') {
         setColorMode('solve_score');
+        _restoreRenderExecutionState(art);
         if ((Array.isArray(art.solve_score_chain) && art.solve_score_chain.length) || art.metric) {
             _setSolveScoreChainFromArtifact(
                 'render',
@@ -11300,6 +11451,7 @@ function populateSelectedRenderArtifact() {
     else warnings.push('rotation');
 
     restoreRenderOutputFields(art);
+    _restoreRenderExecutionState(art);
 
     if (Array.isArray(art.root_transforms) && art.root_transforms.length) {
         _setRenderRootTransforms(art.root_transforms);
@@ -11751,7 +11903,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread path. In Solve score and Saved palette modes it opens a popup where you choose histogram input or save the associated palette. Generate-MT opens a popup where you choose hist threads, hist input, merge workers, raster input tmp file vs sectioned native, raster retries, and raster threads for Solve score, Saved palette, Constant, and Rainbow with match=none so you can compare perf. GenerateFromPalette opens a saved-palette execution popup with raster/finalize controls and reuses a saved palette artifact’s persisted bins to color roots directly. ExtractPalette opens a popup with solve-score prepass controls plus real palette chunk controls: chunk threads, chunk input tmp file vs sectioned native, chunk retries, and chunk workers. [P id] in Color summaries means the artifact has a palette link; [C id] in Palette summaries means the palette knows which Color artifact it came from. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form. Autolevels derives a new immutable color artifact from the selected image. Resize derives a new immutable Color artifact using libvips resize/thumbnail operations.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the current Color settings on the single-thread path. In Solve score and Saved palette modes it opens a popup where you choose histogram input or save the associated palette. Generate-MT opens a popup where you choose hist threads, hist input, merge workers, raster input tmp file vs sectioned native, raster retries, raster threads, bin grouping, finalize workers, and associated-palette chunk controls so you can compare perf without hidden defaults. GenerateFromPalette opens a saved-palette execution popup with raster/finalize controls and reuses a saved palette artifact’s persisted bins to color roots directly. ExtractPalette opens a popup with solve-score prepass controls plus real palette chunk controls: chunk threads, chunk input tmp file vs sectioned native, chunk retries, and chunk workers. [P id] in Color summaries means the artifact has a palette link; [C id] in Palette summaries means the palette knows which Color artifact it came from. RePalette reuses a saved solve-score image’s persisted winner-per-pixel bins and only changes the palette lookup. Populate restores the selected color artifact settings into the form, including saved render execution settings when present. Autolevels derives a new immutable color artifact from the selected image. Resize derives a new immutable Color artifact using libvips resize/thumbnail operations.</span>';
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color. [C id] means this palette is linked back to a Color artifact.</span>';
     } else if (_renderActiveFamily === 'pdf') {

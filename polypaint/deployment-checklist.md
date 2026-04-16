@@ -53,6 +53,18 @@ When claiming a feature is ready, explicitly report:
 ## 5. Deploy Packaging
 
 - The handler package includes all required local Python modules.
+- If a deployed handler gains a new local import from `lambda/*.py`, update the
+  corresponding `cp ... "$DIR/"` packaging block in
+  [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh) in the
+  same change.
+- Do not assume "tests passed locally" means deploy packaging is correct.
+  Importing a new helper like `logical_sections.py`, `param_source.py`, or any
+  other repo-local module changes the Lambda zip contract and must be reflected
+  in `deploy.sh`.
+- Check every affected package block explicitly:
+  - the handler's own zip
+  - any sibling/bench zip that bundles that handler too
+  - any duplicated create/update packaging path if present
 - The handler package includes all required native binaries.
 - Every included native binary has `chmod +x` in deploy packaging.
 - Required layers are attached.
@@ -70,6 +82,21 @@ When claiming a feature is ready, explicitly report:
 This must be enforced by:
 
 - [tests/test_deploy_packaging.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_deploy_packaging.py)
+- [scripts/predeploy_check.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/scripts/predeploy_check.sh)
+
+Packaging-specific hard rule:
+
+- if you add or change any local dependency imported by a deployed handler,
+  run at minimum:
+
+```bash
+../.venv/bin/python -m pytest tests/test_deploy_packaging.py -q
+bash scripts/predeploy_check.sh
+```
+
+- Do not wait for `./deploy.sh update` to discover the mismatch.
+- The feature is not ready if `deploy.sh` has stale file lists, even if the
+  handler works in direct local tests.
 
 ## 6. Resource Budget
 
@@ -214,6 +241,8 @@ Before saying “ready”, run the relevant subset of:
 ```bash
 python3 api_manifest.py --check
 bash -n deploy.sh
+../.venv/bin/python -m pytest tests/test_deploy_packaging.py -q
+bash scripts/predeploy_check.sh
 bash tests/test_frontend_js.sh
 ../.venv/bin/python -m pytest -q <targeted tests>
 bash scripts/test-docker-runtime.sh

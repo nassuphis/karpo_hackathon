@@ -746,11 +746,12 @@ cp lambda/handler_viewport.py lambda/shared.py "$VIEWPORT_DIR/"
 cd "$VIEWPORT_DIR" && zip -r9 /tmp/polypaint-viewport.zip . -q && cd "$SCRIPT_DIR"
 echo "  Viewport: $(du -h /tmp/polypaint-viewport.zip | cut -f1)  (pure Python)"
 
-# Storage: handler_storage.py + shared.py + color artifact metadata (pure Python)
+# Storage: handler_storage.py + shared.py + color artifact metadata + logical section helpers (pure Python)
 STORAGE_DIR=/tmp/polypaint-storage
 rm -rf "$STORAGE_DIR"
 mkdir -p "$STORAGE_DIR"
-cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$STORAGE_DIR/"
+cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
+   lambda/logical_sections.py "$STORAGE_DIR/"
 cd "$STORAGE_DIR" && zip -r9 /tmp/polypaint-storage.zip . -q && cd "$SCRIPT_DIR"
 echo "  Storage:  $(du -h /tmp/polypaint-storage.zip | cut -f1)  (pure Python)"
 
@@ -927,22 +928,24 @@ chmod +x "$DZ_EXPORT_DIR"/dz_export
 cd "$DZ_EXPORT_DIR" && zip -r9 /tmp/polypaint-deepzoom-export.zip . -q && cd "$SCRIPT_DIR"
 echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_export + libvips layer)"
 
-# Solve Proximity: handler_solve_proximity.py + shared.py + solve_score_chain.py + solve_proximity_stats binary
+# Solve Proximity: handler_solve_proximity.py + shared.py + solve_score_chain.py + logical section helpers + solve_proximity_stats binary
 SP_DIR=/tmp/polypaint-solve-proximity
 rm -rf "$SP_DIR"
 mkdir -p "$SP_DIR/lib"
-cp lambda/handler_solve_proximity.py lambda/shared.py lambda/solve_score_chain.py "$SP_DIR/"
+cp lambda/handler_solve_proximity.py lambda/shared.py lambda/solve_score_chain.py \
+   lambda/logical_sections.py "$SP_DIR/"
 cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SP_DIR/"
 cp lambda/solve_proximity_hist_sectioned_lib/* "$SP_DIR/lib/" 2>/dev/null || true
 chmod +x "$SP_DIR"/solve_proximity_stats "$SP_DIR"/solve_proximity_hist_sectioned
 cd "$SP_DIR" && zip -r9 /tmp/polypaint-solve-proximity.zip . -q && cd "$SCRIPT_DIR"
 echo "  SolvPrx: $(du -h /tmp/polypaint-solve-proximity.zip | cut -f1)  (solve_proximity_stats + sectioned hist)"
 
-# Solve Proximity Bench: benchmark handler + solve proximity helpers + solve_proximity_stats binary
+# Solve Proximity Bench: benchmark handler + solve proximity helpers + logical section helpers + solve_proximity_stats binary
 SP_BENCH_DIR=/tmp/polypaint-solve-proximity-bench
 rm -rf "$SP_BENCH_DIR"
 mkdir -p "$SP_BENCH_DIR/lib"
-cp lambda/handler_solve_proximity_bench.py lambda/handler_solve_proximity.py lambda/shared.py lambda/solve_score_chain.py "$SP_BENCH_DIR/"
+cp lambda/handler_solve_proximity_bench.py lambda/handler_solve_proximity.py lambda/shared.py \
+   lambda/solve_score_chain.py lambda/logical_sections.py "$SP_BENCH_DIR/"
 cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SP_BENCH_DIR/"
 cp lambda/solve_proximity_hist_sectioned_lib/* "$SP_BENCH_DIR/lib/" 2>/dev/null || true
 chmod +x "$SP_BENCH_DIR"/solve_proximity_stats "$SP_BENCH_DIR"/solve_proximity_hist_sectioned
@@ -980,11 +983,12 @@ cp lambda/handler_palette_render_plan.py lambda/shared.py \
 cd "$PAL_PLAN_DIR" && zip -r9 /tmp/polypaint-palette-render-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalPlan: $(du -h /tmp/polypaint-palette-render-plan.zip | cut -f1)  (plan builder)"
 
-# Palette Chunk: handler_palette_chunk.py + shared.py + solve_score_chain.py + solve_palette_chunk + solve_palette_chunk_mt
+# Palette Chunk: handler_palette_chunk.py + shared.py + solve_score_chain.py + logical section helpers + solve_palette_chunk + solve_palette_chunk_mt
 PAL_CHUNK_DIR=/tmp/polypaint-palette-chunk
 rm -rf "$PAL_CHUNK_DIR"
 mkdir -p "$PAL_CHUNK_DIR/lib"
-cp lambda/handler_palette_chunk.py lambda/shared.py lambda/solve_score_chain.py "$PAL_CHUNK_DIR/"
+cp lambda/handler_palette_chunk.py lambda/shared.py lambda/solve_score_chain.py \
+   lambda/logical_sections.py "$PAL_CHUNK_DIR/"
 cp lambda/solve_palette_chunk lambda/solve_palette_chunk_mt "$PAL_CHUNK_DIR/"
 cp lambda/solve_palette_chunk_mt_lib/* "$PAL_CHUNK_DIR/lib/" 2>/dev/null || true
 chmod +x "$PAL_CHUNK_DIR"/solve_palette_chunk "$PAL_CHUNK_DIR"/solve_palette_chunk_mt
@@ -1017,11 +1021,12 @@ cp lambda/handler_render_orchestrator.py lambda/shared.py "$ORCH_DIR/"
 cd "$ORCH_DIR" && zip -r9 /tmp/polypaint-render-orchestrator.zip . -q && cd "$SCRIPT_DIR"
 echo "  RndOrch: $(du -h /tmp/polypaint-render-orchestrator.zip | cut -f1)  (starter only)"
 
-# Render Plan: handler_render_plan.py + shared.py
+# Render Plan: handler_render_plan.py + shared.py + logical section helpers
 PLAN_DIR=/tmp/polypaint-render-plan
 rm -rf "$PLAN_DIR"
 mkdir -p "$PLAN_DIR"
 cp lambda/handler_render_plan.py lambda/shared.py \
+   lambda/logical_sections.py \
    lambda/param_source.py \
    lambda/solve_score_chain.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PLAN_DIR/"

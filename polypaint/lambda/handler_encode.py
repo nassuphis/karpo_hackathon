@@ -2,7 +2,7 @@
 Encode Lambda handler — converts raw pixel buffer to JPEG/PNG via raw2jpeg.
 
 Single operation: download .raw from S3, encode, upload, return presigned URL.
-Supports tile_keys: array of tile .raw keys to concatenate before encoding.
+Supports either explicit tile_keys or a tile_prefix used to derive tile paths.
 """
 import json
 import os
@@ -39,6 +39,8 @@ def handler(event, context):
         tile_grid = params["tile_grid"]
         n_cols = tile_grid["n_cols"]
         n_rows = tile_grid["n_rows"]
+        tile_keys = tile_grid.get("tile_keys") or []
+        tile_prefix = str(tile_grid.get("tile_prefix") or "").strip()
         total_w = params["width"]
         total_h = params["height"]
 
@@ -53,7 +55,12 @@ def handler(event, context):
                 row_tiles = []
                 for tc in range(n_cols):
                     tile_id = tr * n_cols + tc
-                    key = tile_grid["tile_keys"][tile_id]
+                    if tile_keys:
+                        key = tile_keys[tile_id]
+                    elif tile_prefix:
+                        key = f"{tile_prefix}{tile_id:04d}.raw"
+                    else:
+                        raise RuntimeError("tile_grid requires tile_keys or tile_prefix")
                     data = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
                     tw, th, tb = struct.unpack("<III", data[:12])
                     row_tiles.append((tw, th, data[12:]))

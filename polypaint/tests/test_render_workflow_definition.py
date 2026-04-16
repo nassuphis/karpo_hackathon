@@ -63,7 +63,7 @@ class TestWorkflowDefinition(unittest.TestCase):
             "ColorAssociatedPaletteChoice",
             "ColorAssociatedPalettePhase", "ColorAssociatedPaletteMap",
             "ColorAssociatedPaletteFinalizePhase", "ColorAssociatedPaletteFinalizeTask",
-            "ColorRasterPhase", "ColorRasterMap",
+            "ColorRasterPhase", "ColorRasterItemsChoice", "ColorRasterMapSparse", "ColorRasterMapDense",
             "ColorFinalizePhase", "ColorFinalizeMap",
             "ColorEncodePhase", "ColorEncodeTask",
             "ColorPreviewTask",
@@ -93,7 +93,7 @@ class TestWorkflowDefinition(unittest.TestCase):
     def test_required_map_states(self):
         """All expected Map states are actually Map type."""
         map_names = [
-            "ColorSolveScoreHistMap", "ColorAssociatedPaletteMap", "ColorRasterMap", "ColorFinalizeMap",
+            "ColorSolveScoreHistMap", "ColorAssociatedPaletteMap", "ColorRasterMapSparse", "ColorRasterMapDense", "ColorFinalizeMap",
             "BilevelRasterMap", "BilevelMergeMap",
             "CoeffRasterMap", "CoeffMergeMap",
         ]
@@ -154,7 +154,7 @@ class TestWorkflowDefinition(unittest.TestCase):
 
     def test_stripe_maps_concurrency_10(self):
         """Stripe-based maps must have MaxConcurrency=10."""
-        for name in ["ColorRasterMap", "ColorSolveScoreHistMap",
+        for name in ["ColorRasterMapSparse", "ColorRasterMapDense", "ColorSolveScoreHistMap",
                       "BilevelRasterMap", "CoeffRasterMap"]:
             mc = self.states[name].get("MaxConcurrency", 0)
             assert mc == 10, f"{name} MaxConcurrency={mc}, expected 10"
@@ -250,18 +250,23 @@ class TestWorkflowDefinition(unittest.TestCase):
         assert "placeholder-SolveProximityFunctionArn" in asl_str
 
     def test_color_raster_worker_uses_dynamic_function_name(self):
-        color_map = self.states["ColorRasterMap"]
-        selector = color_map["ItemSelector"]
-        self.assertEqual(selector["raster_function_name.$"], "$.plan.raster.function_name")
-        self.assertEqual(selector["raster_input_mode.$"], "$.plan.raster.input_mode")
-        worker = color_map["ItemProcessor"]["States"]["RasterWorker"]
-        self.assertEqual(worker["Parameters"]["FunctionName.$"], "$.raster_function_name")
+        worker_names = {
+            "ColorRasterMapSparse": "RasterWorkerSparse",
+            "ColorRasterMapDense": "RasterWorkerDense",
+        }
+        for name, worker_name in worker_names.items():
+            color_map = self.states[name]
+            selector = color_map["ItemSelector"]
+            self.assertEqual(selector["raster_function_name.$"], "$.plan.raster.function_name")
+            self.assertEqual(selector["raster_input_mode.$"], "$.plan.raster.input_mode")
+            worker = color_map["ItemProcessor"]["States"][worker_name]
+            self.assertEqual(worker["Parameters"]["FunctionName.$"], "$.raster_function_name")
 
     def test_chunked_workers_use_chunk_item_bin_keys(self):
         hist_selector = self.states["ColorSolveScoreHistMap"]["ItemSelector"]
         self.assertEqual(hist_selector["bin_key.$"], "$$.Map.Item.Value.bin_key")
 
-        color_raster_selector = self.states["ColorRasterMap"]["ItemSelector"]
+        color_raster_selector = self.states["ColorRasterMapSparse"]["ItemSelector"]
         self.assertEqual(color_raster_selector["bin_key.$"], "$$.Map.Item.Value.bin_key")
 
         bilevel_selector = self.states["BilevelRasterMap"]["ItemSelector"]
@@ -305,10 +310,12 @@ class TestWorkflowDefinition(unittest.TestCase):
         finalize_selector = self.states["ColorFinalizeMap"]["ItemSelector"]
         self.assertEqual(finalize_selector["finalize_workers.$"], "$.plan.finalize.workers")
 
-        color_raster_selector = self.states["ColorRasterMap"]["ItemSelector"]
+        color_raster_selector = self.states["ColorRasterMapSparse"]["ItemSelector"]
         self.assertEqual(color_raster_selector["raster_sectioned_retries.$"], "$.plan.raster.sectioned_retries")
         self.assertEqual(self.states["ColorRasterPhase"]["Parameters"]["Payload"]["expected.$"], "$.plan.raster.item_count")
-        self.assertEqual(self.states["ColorRasterMap"]["ItemsPath"], "$.plan.raster_items")
+        self.assertEqual(self.states["ColorRasterItemsChoice"]["Default"], "ColorRasterMapSparse")
+        self.assertEqual(self.states["ColorRasterMapSparse"]["ItemsPath"], "$.plan.chunk_items")
+        self.assertEqual(self.states["ColorRasterMapDense"]["ItemsPath"], "$.plan.raster_items")
 
     def test_color_solve_score_tasks_forward_critical_fields(self):
         clip = self.states["ColorSolveScoreClipTask"]["Parameters"]["Payload"]
@@ -334,23 +341,25 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(merge["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(merge["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
 
-        raster = self.states["ColorRasterMap"]["ItemSelector"]
-        self.assertEqual(raster["root_transforms.$"], "$.plan.params.root_transforms")
-        self.assertEqual(raster["group_idx.$"], "$$.Map.Item.Value.group_idx")
-        self.assertEqual(raster["chunks.$"], "$$.Map.Item.Value.chunks")
-        self.assertEqual(raster["chunk_indices.$"], "$$.Map.Item.Value.chunk_indices")
-        self.assertEqual(raster["pixel_bins_drive_rgb.$"], "$.plan.outputs.pixel_bins_drive_rgb")
-        self.assertEqual(raster["solve_score_quantile.$"], "$.plan.solve_score.quantile")
-        self.assertEqual(raster["solve_score_omega.$"], "$.plan.solve_score.omega")
-        self.assertEqual(raster["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
-        self.assertEqual(raster["pixel_bin_fragment_mode.$"], "$.plan.raster.pixel_bin_fragment_mode")
-        self.assertEqual(raster["raster_bin_group_size.$"], "$.plan.raster.raster_bin_group_size")
-        self.assertEqual(raster["saved_palette_bins_prefix.$"], "$.plan.saved_palette.chunk_bins_prefix")
-        self.assertEqual(raster["params_key.$"], "$$.Map.Item.Value.params_key")
-        self.assertEqual(raster["params_step_start.$"], "$$.Map.Item.Value.params_step_start")
-        self.assertEqual(raster["params_step_count.$"], "$$.Map.Item.Value.params_step_count")
-        self.assertEqual(raster["step_start.$"], "$$.Map.Item.Value.step_start")
-        self.assertEqual(raster["step_count.$"], "$$.Map.Item.Value.step_count")
+        raster_sparse = self.states["ColorRasterMapSparse"]["ItemSelector"]
+        self.assertEqual(raster_sparse["root_transforms.$"], "$.plan.params.root_transforms")
+        self.assertEqual(raster_sparse["pixel_bins_drive_rgb.$"], "$.plan.outputs.pixel_bins_drive_rgb")
+        self.assertEqual(raster_sparse["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(raster_sparse["solve_score_omega.$"], "$.plan.solve_score.omega")
+        self.assertEqual(raster_sparse["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+        self.assertEqual(raster_sparse["pixel_bin_fragment_mode.$"], "$.plan.raster.pixel_bin_fragment_mode")
+        self.assertEqual(raster_sparse["raster_bin_group_size.$"], "$.plan.raster.raster_bin_group_size")
+        self.assertEqual(raster_sparse["saved_palette_bins_prefix.$"], "$.plan.saved_palette.chunk_bins_prefix")
+        self.assertEqual(raster_sparse["params_key.$"], "$$.Map.Item.Value.params_key")
+        self.assertEqual(raster_sparse["params_step_start.$"], "$$.Map.Item.Value.params_step_start")
+        self.assertEqual(raster_sparse["params_step_count.$"], "$$.Map.Item.Value.params_step_count")
+        self.assertEqual(raster_sparse["step_start.$"], "$$.Map.Item.Value.step_start")
+        self.assertEqual(raster_sparse["step_count.$"], "$$.Map.Item.Value.step_count")
+
+        raster_dense = self.states["ColorRasterMapDense"]["ItemSelector"]
+        self.assertEqual(raster_dense["group_idx.$"], "$$.Map.Item.Value.group_idx")
+        self.assertEqual(raster_dense["chunks.$"], "$$.Map.Item.Value.chunks")
+        self.assertEqual(raster_dense["chunk_indices.$"], "$$.Map.Item.Value.chunk_indices")
 
         assoc_choice = self.states["ColorAssociatedPaletteChoice"]
         self.assertEqual(
@@ -391,15 +400,19 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(finalize["pixel_bins_drive_rgb.$"], "$.plan.outputs.pixel_bins_drive_rgb")
         self.assertEqual(finalize["pixel_bin_fragment_mode.$"], "$.plan.raster.pixel_bin_fragment_mode")
         self.assertEqual(finalize["raster_item_count.$"], "$.plan.raster.item_count")
-        self.assertEqual(finalize["pixel_bins_out_key.$"], "States.ArrayGetItem($.plan.grid.pixel_bin_tile_keys, $$.Map.Item.Value.tile_idx)")
+        self.assertEqual(finalize["pixel_bins_out_prefix.$"], "$.plan.grid.pixel_bin_tile_prefix")
         self.assertEqual(finalize["palette.$"], "$.plan.params.palette")
         self.assertEqual(finalize["background_color.$"], "$.plan.outputs.metadata.background_color")
         self.assertEqual(finalize["pixel_bins_empty.$"], "$.plan.outputs.metadata.pixel_bins_empty")
         self.assertEqual(finalize["finalize_workers.$"], "$.plan.finalize.workers")
+        self.assertEqual(finalize["width.$"], "$.plan.grid.pix")
+        self.assertEqual(finalize["height.$"], "$.plan.grid.pix")
+        self.assertEqual(finalize["tile_size.$"], "$.plan.grid.tile_size")
 
         encode = self.states["ColorEncodeTask"]["Parameters"]["Payload"]
         self.assertEqual(encode["metadata.$"], "$.plan.outputs.metadata")
         self.assertEqual(encode["out_key.$"], "$.plan.outputs.image_key")
+        self.assertEqual(encode["tile_grid"]["tile_prefix.$"], "$.plan.grid.raw_tile_prefix")
 
     def test_bilevel_and_coeff_pipeline_forward_critical_fields(self):
         bilevel_raster = self.states["BilevelRasterMap"]["ItemSelector"]

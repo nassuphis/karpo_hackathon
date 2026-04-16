@@ -425,10 +425,85 @@
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ColorRasterMap"
+            "Next": "ColorRasterItemsChoice"
           },
 
-          "ColorRasterMap": {
+          "ColorRasterItemsChoice": {
+            "Type": "Choice",
+            "Choices": [
+              {"Variable": "$.plan.raster.pixel_bin_fragment_mode", "StringEquals": "dense_grouped", "Next": "ColorRasterMapDense"}
+            ],
+            "Default": "ColorRasterMapSparse"
+          },
+
+          "ColorRasterMapSparse": {
+            "Type": "Map",
+            "ItemsPath": "$.plan.chunk_items",
+            "MaxConcurrency": 10,
+            "ItemSelector": {
+              "job_id.$": "$.job_id",
+              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
+              "task_id.$": "States.Format('render_{}_raster_{}', $.run_id, $$.Map.Item.Value.chunk_idx)",
+              "bin_key.$": "$$.Map.Item.Value.bin_key",
+              "coeffs_key.$": "$$.Map.Item.Value.coeffs_key",
+              "coeffs_bin_size.$": "$$.Map.Item.Value.coeffs_bin_size",
+              "params_key.$": "$$.Map.Item.Value.params_key",
+              "params_step_start.$": "$$.Map.Item.Value.params_step_start",
+              "params_step_count.$": "$$.Map.Item.Value.params_step_count",
+              "step_start.$": "$$.Map.Item.Value.step_start",
+              "step_count.$": "$$.Map.Item.Value.step_count",
+              "n_coeffs.$": "$.plan.calc.n_coeffs",
+              "width.$": "$.plan.grid.pix",
+              "height.$": "$.plan.grid.pix",
+              "tile_size.$": "$.plan.grid.tile_size",
+              "n_tile_cols.$": "$.plan.grid.n_tile_cols",
+              "n_tile_rows.$": "$.plan.grid.n_tile_rows",
+              "center_re.$": "$.plan.viewport.center_re",
+              "center_im.$": "$.plan.viewport.center_im",
+              "scale.$": "$.plan.viewport.scale",
+              "rotation.$": "$.plan.params.rotation",
+              "degree.$": "$.plan.calc.degree",
+              "color.$": "$.plan.params.color_mode",
+              "match.$": "$.plan.params.match_mode",
+              "palette.$": "$.plan.params.palette",
+              "constant_color.$": "$.plan.params.constant_color",
+              "root_transforms.$": "$.plan.params.root_transforms",
+              "emit_pixel_bins.$": "$.plan.outputs.repalette_capable",
+              "pixel_bins_drive_rgb.$": "$.plan.outputs.pixel_bins_drive_rgb",
+              "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
+              "saved_palette_bins_prefix.$": "$.plan.saved_palette.chunk_bins_prefix",
+              "saved_palette_bins_key.$": "States.Format('{}{}.bin', $.plan.saved_palette.chunk_bins_prefix, $$.Map.Item.Value.chunk_idx)",
+              "solve_metric.$": "$.plan.solve_score.metric",
+              "solve_score_chain.$": "$.plan.solve_score.chain",
+              "solve_score_quantile.$": "$.plan.solve_score.quantile",
+              "solve_score_omega.$": "$.plan.solve_score.omega",
+              "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
+              "raster_function_name.$": "$.plan.raster.function_name",
+              "raster_mt_threads.$": "$.plan.raster.threads",
+              "raster_input_mode.$": "$.plan.raster.input_mode",
+              "raster_sectioned_retries.$": "$.plan.raster.sectioned_retries",
+              "pixel_bin_fragment_mode.$": "$.plan.raster.pixel_bin_fragment_mode",
+              "raster_bin_group_size.$": "$.plan.raster.raster_bin_group_size"
+            },
+            "ItemProcessor": {
+              "ProcessorConfig": {"Mode": "INLINE"},
+              "StartAt": "RasterWorkerSparse",
+              "States": {
+                "RasterWorkerSparse": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": { "FunctionName.$": "$.raster_function_name", "Payload.$": "$" },
+                  "ResultPath": null,
+                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+                  "End": true
+                }
+              }
+            },
+            "ResultPath": null,
+            "Next": "ColorFinalizePhase"
+          },
+
+          "ColorRasterMapDense": {
             "Type": "Map",
             "ItemsPath": "$.plan.raster_items",
             "MaxConcurrency": 10,
@@ -482,9 +557,9 @@
             },
             "ItemProcessor": {
               "ProcessorConfig": {"Mode": "INLINE"},
-              "StartAt": "RasterWorker",
+              "StartAt": "RasterWorkerDense",
               "States": {
-                "RasterWorker": {
+                "RasterWorkerDense": {
                   "Type": "Task",
                   "Resource": "arn:aws:states:::lambda:invoke",
                   "Parameters": { "FunctionName.$": "$.raster_function_name", "Payload.$": "$" },
@@ -529,18 +604,17 @@
               "job_id.$": "$.job_id",
               "tile_idx.$": "$$.Map.Item.Value.tile_idx",
               "task_id.$": "States.Format('render_{}_tile_{}', $.run_id, $$.Map.Item.Value.tile_idx)",
-              "tile_row.$": "$$.Map.Item.Value.tile_row",
-              "tile_col.$": "$$.Map.Item.Value.tile_col",
               "n_chunks.$": "$.plan.calc.n_chunks",
-              "tile_w.$": "$$.Map.Item.Value.tile_w",
-              "tile_h.$": "$$.Map.Item.Value.tile_h",
+              "width.$": "$.plan.grid.pix",
+              "height.$": "$.plan.grid.pix",
+              "tile_size.$": "$.plan.grid.tile_size",
               "n_tile_cols.$": "$.plan.grid.n_tile_cols",
               "n_tile_rows.$": "$.plan.grid.n_tile_rows",
               "emit_pixel_bins.$": "$.plan.outputs.repalette_capable",
               "pixel_bins_drive_rgb.$": "$.plan.outputs.pixel_bins_drive_rgb",
               "pixel_bin_fragment_mode.$": "$.plan.raster.pixel_bin_fragment_mode",
               "raster_item_count.$": "$.plan.raster.item_count",
-              "pixel_bins_out_key.$": "States.ArrayGetItem($.plan.grid.pixel_bin_tile_keys, $$.Map.Item.Value.tile_idx)",
+              "pixel_bins_out_prefix.$": "$.plan.grid.pixel_bin_tile_prefix",
               "palette.$": "$.plan.params.palette",
               "background_color.$": "$.plan.outputs.metadata.background_color",
               "pixel_bins_empty.$": "$.plan.outputs.metadata.pixel_bins_empty",
@@ -604,7 +678,7 @@
                 "tile_grid": {
                   "n_cols.$": "$.plan.grid.n_tile_cols",
                   "n_rows.$": "$.plan.grid.n_tile_rows",
-                  "tile_keys.$": "$.plan.grid.tile_keys"
+                  "tile_prefix.$": "$.plan.grid.raw_tile_prefix"
                 }
               }
             },
@@ -693,8 +767,6 @@
               "phase": "merge", "job_id.$": "$.job_id",
               "tile_idx.$": "$$.Map.Item.Value.tile_idx",
               "task_id.$": "States.Format('render_{}_bilevel_merge_{}', $.run_id, $$.Map.Item.Value.tile_idx)",
-              "tile_row.$": "$$.Map.Item.Value.tile_row", "tile_col.$": "$$.Map.Item.Value.tile_col",
-              "tile_w.$": "$$.Map.Item.Value.tile_w", "tile_h.$": "$$.Map.Item.Value.tile_h",
               "n_chunks.$": "$.plan.calc.n_chunks", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows",
               "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix", "tile_size.$": "$.plan.grid.tile_size"
             },
@@ -806,8 +878,6 @@
               "phase": "merge", "job_id.$": "$.job_id",
               "tile_idx.$": "$$.Map.Item.Value.tile_idx",
               "task_id.$": "States.Format('render_{}_coeff_bilevel_merge_{}', $.run_id, $$.Map.Item.Value.tile_idx)",
-              "tile_row.$": "$$.Map.Item.Value.tile_row", "tile_col.$": "$$.Map.Item.Value.tile_col",
-              "tile_w.$": "$$.Map.Item.Value.tile_w", "tile_h.$": "$$.Map.Item.Value.tile_h",
               "n_chunks.$": "$.plan.calc.n_chunks", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows",
               "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix", "tile_size.$": "$.plan.grid.tile_size",
               "bits_prefix": "coeff_bits", "tile_prefix": "coeff", "task_prefix": "coeff_bilevel_merge"

@@ -481,12 +481,7 @@ def _load_merge_histogram_artifact(client, hist_prefix, chunk_idx, compiled, sol
                                    solve_score_omega, solve_score_omega_enabled, hist_bins):
     key = f"{hist_prefix}chunk_{chunk_idx}_hist.json"
     try:
-        try:
-            obj = client.get_object(Bucket=BUCKET, Key=key)
-        except client.exceptions.NoSuchKey:
-            legacy_key = f"{hist_prefix}stripe_{chunk_idx}_hist.json"
-            obj = client.get_object(Bucket=BUCKET, Key=legacy_key)
-            key = legacy_key
+        obj = client.get_object(Bucket=BUCKET, Key=key)
         data = _load_json_body(obj)
     except client.exceptions.NoSuchKey:
         raise RuntimeError(f"Missing histogram: {key}")

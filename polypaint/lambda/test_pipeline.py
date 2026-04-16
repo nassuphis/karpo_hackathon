@@ -566,6 +566,7 @@ class TestCoeffgenHandler(unittest.TestCase):
         mock_subprocess.run.return_value = mock_result
 
         event = self._make_event({
+            "phase": "legacy_coeffgen",
             "job_id": "test-job",
             "stripe_idx": 3,
             "function": "giga_1",
@@ -615,6 +616,7 @@ class TestCoeffgenHandler(unittest.TestCase):
         mock_subprocess.run.return_value = mock_result
 
         event = self._make_event({
+            "phase": "legacy_coeffgen",
             "job_id": "t-job",
             "stripe_idx": 0,
             "function": "giga_5",
@@ -654,6 +656,7 @@ class TestCoeffgenHandler(unittest.TestCase):
         mock_subprocess.run.return_value = mock_result
 
         event = self._make_event({
+            "phase": "legacy_coeffgen",
             "job_id": "upload-test",
             "stripe_idx": 7,
             "function": "giga_1",
@@ -681,6 +684,7 @@ class TestCoeffgenHandler(unittest.TestCase):
         mock_subprocess.run.return_value = mock_result
 
         event = self._make_event({
+            "phase": "legacy_coeffgen",
             "job_id": "fail-test",
             "stripe_idx": 0,
             "function": "bad_func",
@@ -717,6 +721,7 @@ class TestCoeffgenHandler(unittest.TestCase):
         mock_subprocess.run.return_value = mock_result
 
         event = self._make_event({
+            "phase": "legacy_coeffgen",
             "job_id": "j",
             "stripe_idx": 0,
             "function": "giga_1",
@@ -752,6 +757,7 @@ class TestCoeffgenHandler(unittest.TestCase):
         mock_subprocess.run.return_value = mock_result
 
         event = self._make_event({
+            "phase": "legacy_coeffgen",
             "job_id": "ddb-test",
             "stripe_idx": 2,
             "function": "giga_1",
@@ -789,6 +795,7 @@ class TestCoeffgenHandler(unittest.TestCase):
         mock_subprocess.run.return_value = mock_result
 
         event = self._make_event({
+            "phase": "legacy_coeffgen",
             "job_id": "lores-test",
             "stripe_idx": 9999,
             "function": "giga_1",
@@ -804,6 +811,34 @@ class TestCoeffgenHandler(unittest.TestCase):
         self.assertEqual(body["coeffs_key"], "renders/lores-test/lores_coeffs.bin")
         call_kwargs = mock_s3.put_object.call_args[1]
         self.assertEqual(call_kwargs["Key"], "renders/lores-test/lores_coeffs.bin")
+
+    def test_coeffgen_requires_explicit_phase(self):
+        from handler_coeffgen import handler
+
+        event = self._make_event({
+            "job_id": "missing-phase",
+            "stripe_idx": 0,
+            "function": "giga_1",
+            "n1": 5,
+            "n2": 5,
+            "i1_start": 0,
+            "i1_end": 5,
+        })
+        with self.assertRaises(ValueError) as ctx:
+            handler(event, None)
+        self.assertIn("Unknown coeffgen phase", str(ctx.exception))
+
+    def test_coeffgen_rejects_unknown_phase(self):
+        from handler_coeffgen import handler
+
+        event = self._make_event({
+            "phase": "coeffgen",
+            "job_id": "bad-phase",
+            "function": "giga_1",
+        })
+        with self.assertRaises(ValueError) as ctx:
+            handler(event, None)
+        self.assertIn("Unknown coeffgen phase", str(ctx.exception))
 
 
 # ── Test: handler_sweep.py (solve-from-coefficients path) ────────────────

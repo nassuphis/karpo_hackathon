@@ -353,6 +353,24 @@ def _render_execution_config(rp):
     }
 
 
+def _plan_size_error_message(plan, plan_size):
+    grid = dict(plan.get("grid") or {})
+    solve_score = dict(plan.get("solve_score") or {})
+    associated_palette = dict(plan.get("associated_palette") or {})
+    raster = dict(plan.get("raster") or {})
+    calc = dict(plan.get("calc") or {})
+    return (
+        f"Plan too large: {plan_size} bytes > {MAX_PLAN_BYTES} limit. "
+        f"Counts: chunks={int(calc.get('n_chunks') or 0)}, "
+        f"raster_items={int(raster.get('item_count') or 0)}, "
+        f"tiles={int(grid.get('n_tiles') or 0)}, "
+        f"solve_score_items={int(solve_score.get('item_count') or 0)}, "
+        f"palette_items={int(associated_palette.get('item_count') or 0)}. "
+        f"Controls: reduce pix, increase tile_size, or lower logical section counts. "
+        f"Obsolete hint removed: there is no stripe_count control in the current UI."
+    )
+
+
 def _validate_hist_input_mode(value):
     mode = str(value or "tmpfile").strip().lower()
     if mode not in ("tmpfile", "stdin", "sectioned"):
@@ -405,20 +423,8 @@ def handler(event, context):
     n_tile_rows = math.ceil(pix / tile_size)
     n_tiles = n_tile_cols * n_tile_rows
 
-    # Precompute tile keys for encode
-    tile_keys = [f"renders/{job_id}/tile_{t:04d}.raw" for t in range(n_tiles)]
-
-    # Compact tile items (precompute tile_w/tile_h to avoid ASL arithmetic)
-    tile_items = []
-    for t in range(n_tiles):
-        t_row = t // n_tile_cols
-        t_col = t % n_tile_cols
-        tw = min(tile_size, pix - t_col * tile_size)
-        th = min(tile_size, pix - t_row * tile_size)
-        tile_items.append({
-            "tile_idx": t, "tile_row": t_row, "tile_col": t_col,
-            "tile_w": tw, "tile_h": th,
-        })
+    raw_tile_prefix = f"renders/{job_id}/tile_"
+    tile_items = [{"tile_idx": t} for t in range(n_tiles)]
 
     # Ensure ALL fields referenced by ASL JSONPaths exist in params.
     # ASL crashes with States.Runtime on missing paths — no null fallback.
@@ -808,12 +814,15 @@ def handler(event, context):
         raster["pixel_bin_fragment_mode"] = "dense_grouped"
         raster["raster_bin_group_size"] = int(requested_group_size)
 
-    raster_items = _build_raster_items(
-        chunk_items,
-        raster["pixel_bin_fragment_mode"],
-        raster["raster_bin_group_size"] or 1,
-    )
-    raster["item_count"] = len(raster_items)
+    if raster["pixel_bin_fragment_mode"] == "dense_grouped":
+        raster_items = _build_raster_items(
+            chunk_items,
+            raster["pixel_bin_fragment_mode"],
+            raster["raster_bin_group_size"] or 1,
+        )
+    else:
+        raster_items = []
+    raster["item_count"] = len(raster_items) if raster_items else n_chunks
     raster["chunk_count"] = n_chunks
 
     # Immutable artifact outputs
@@ -1101,10 +1110,8 @@ def handler(event, context):
             "n_tile_cols": n_tile_cols,
             "n_tile_rows": n_tile_rows,
             "n_tiles": n_tiles,
-            "tile_keys": tile_keys,
-            "pixel_bin_tile_keys": [
-                artifact_prefix + f"pixel_bins/tile_{t:04d}.bin" for t in range(n_tiles)
-            ] if color_repalette_capable else ["" for _ in range(n_tiles)],
+            "raw_tile_prefix": raw_tile_prefix,
+            "pixel_bin_tile_prefix": artifact_prefix + "pixel_bins/tile_" if color_repalette_capable else "",
         },
         "chunk_items": chunk_items,
         "raster_items": raster_items,
@@ -1121,10 +1128,7 @@ def handler(event, context):
     # Compactness check
     plan_json = json.dumps(plan)
     if len(plan_json) > MAX_PLAN_BYTES:
-        raise RuntimeError(
-            f"Plan too large: {len(plan_json)} bytes > {MAX_PLAN_BYTES} limit. "
-            f"Reduce tile count or stripe count."
-        )
+        raise RuntimeError(_plan_size_error_message(plan, len(plan_json)))
 
     return ok_response(plan)
 

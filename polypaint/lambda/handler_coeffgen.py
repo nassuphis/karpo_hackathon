@@ -3,13 +3,14 @@ Coeffgen Lambda handler — generates coefficient vectors.
 
 Three modes, routed by 'phase' parameter:
 
-  phase=param_gen (or absent with params_key absent):
-    Old-style stripe coeffgen or new param_gen stage.
+  phase=param_gen:
+    Generate and upload the parameter stream.
 
   phase=coeffgen_chunked:
     Reads a slice of params.bin from S3, generates coefficients for that chunk.
 
-  Default (no phase, no params_key): legacy stripe coeffgen.
+  phase=legacy_coeffgen:
+    Legacy chunkless coeffgen path for old callers only.
 """
 import json
 import os
@@ -26,14 +27,17 @@ SWEEP = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
 
 def handler(event, context):
     params = parse_body(event)
-    phase = params.get("phase", "")
+    phase = str(params.get("phase", "") or "").strip()
 
     if phase == "param_gen":
         return handle_param_gen(params)
-    elif phase == "coeffgen_chunked":
+    if phase == "coeffgen_chunked":
         return handle_coeffgen_chunked(params)
-    else:
+    if phase == "legacy_coeffgen":
         return handle_legacy_coeffgen(params)
+    raise ValueError(
+        "Unknown coeffgen phase. Expected one of: param_gen, coeffgen_chunked, legacy_coeffgen"
+    )
 
 
 def handle_param_gen(params):

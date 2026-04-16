@@ -23,6 +23,19 @@ COEFFS_BILEVEL_RASTER = os.path.join(os.path.dirname(__file__), "coeffs_bilevel_
 BILEVEL_MERGE = os.path.join(os.path.dirname(__file__), "bilevel_merge")
 
 
+def _tile_shape(tile_idx, width, height, tile_size, n_tile_cols):
+    tile_idx = int(tile_idx)
+    width = int(width)
+    height = int(height)
+    tile_size = int(tile_size)
+    n_tile_cols = int(n_tile_cols)
+    row = tile_idx // n_tile_cols
+    col = tile_idx % n_tile_cols
+    tile_w = max(0, min(tile_size, width - col * tile_size))
+    tile_h = max(0, min(tile_size, height - row * tile_size))
+    return tile_w, tile_h
+
+
 def handler(event, context):
     params = parse_body(event)
     phase = params["phase"]
@@ -225,8 +238,16 @@ def handle_merge(params):
     """OR per-chunk bitsets for one tile → tile TIFF. One Lambda per tile."""
     job_id = params["job_id"]
     tile_idx = params["tile_idx"]
-    tile_w = params["tile_w"]
-    tile_h = params["tile_h"]
+    tile_w = params.get("tile_w")
+    tile_h = params.get("tile_h")
+    if tile_w in (None, "") or tile_h in (None, ""):
+        tile_w, tile_h = _tile_shape(
+            tile_idx,
+            params["width"],
+            params["height"],
+            params["tile_size"],
+            params["n_tile_cols"],
+        )
     n_chunks = params.get("n_chunks", params.get("n_stripes"))
     if n_chunks is None:
         raise RuntimeError("bilevel merge requires n_chunks")
@@ -245,14 +266,7 @@ def handle_merge(params):
             bits_key = f"renders/{job_id}/{bits_prefix}_chunk_{c:04d}_t{tile_idx:04d}.bits"
             local_path = f"/tmp/bits_chunk_{c}.bits"
             try:
-                try:
-                    obj = s3.get_object(Bucket=BUCKET, Key=bits_key)
-                except ClientError as e:
-                    if e.response['Error']['Code'] != 'NoSuchKey':
-                        raise
-                    legacy_bits_key = f"renders/{job_id}/{bits_prefix}_s{c:04d}_t{tile_idx:04d}.bits"
-                    obj = s3.get_object(Bucket=BUCKET, Key=legacy_bits_key)
-                    bits_key = legacy_bits_key
+                obj = s3.get_object(Bucket=BUCKET, Key=bits_key)
                 with open(local_path, "wb") as f:
                     f.write(obj["Body"].read())
                 bits_paths.append(local_path)

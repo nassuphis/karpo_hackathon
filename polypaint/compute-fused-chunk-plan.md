@@ -7,9 +7,12 @@ Not implemented.
 
 This plan covers a compute-pipeline refactor:
 
-- move `lores` to the front as the probe step
-- derive `degree` / `n_coeffs` before full-res dispatch
-- replace the current full-res three-stage chunk pipeline
+- add a tiny dedicated `degree_probe` step first
+- derive `degree` / `n_coeffs` before any full-res dispatch
+- use that probe result to size `lores` and validate hires chunking
+- keep the current compute pipeline intact as `classic_chunk_pipeline`
+- add a second independent `fused_chunk_pipeline`
+- replace the current full-res three-stage chunk pipeline in the fused branch
   - `param_gen`
   - `coeffgen_chunked`
   - `solve`
@@ -24,10 +27,10 @@ artifact contract.
 
 This must be introduced as an A/B-comparable rollout:
 
-- the current compute pipeline and the fused pipeline both need to remain
-  selectable from the UI while the fused path is being validated
-- the user needs to be able to run the same compute job through both methods
-  and compare wall time, per-phase timings, and output contract
+- the current compute pipeline and the fused pipeline both remain selectable
+  from the UI while the fused path is validated
+- the user can run the same compute job through both methods and compare wall
+  time, per-phase timings, and output contract
 
 The current full-res pipeline fans out by chunk three separate times, with S3
 handoff between stages. That creates avoidable cost in:
@@ -38,20 +41,21 @@ handoff between stages. That creates avoidable cost in:
 - repeated local materialization of data that was just produced by the
   previous step
 
-The target shape is:
+The target fused shape is:
 
-1. run `lores` first
-2. use `lores coeffgen` metadata to discover `degree` / `n_coeffs`
+1. run a tiny `degree_probe`
+2. use that probe to discover `degree` / `n_coeffs`
 3. compute a safe minimum hires chunk count from solver mode, Lambda memory,
-   threads, and row sizes
-4. fan out one fused hires worker per chunk
-5. each fused worker does:
+   fused worker thread count, and row sizes
+4. size and run `lores`
+5. fan out one fused hires worker per chunk
+6. each fused worker does:
    - param gen
    - coeffgen
    - solve
    - uploads stage outputs
-   - frees previous stage data before continuing
-6. finalize `calc.json` as today
+   - frees previous stage memory / local files before continuing
+7. finalize `calc.json` as today
 
 
 Short Answer
@@ -59,28 +63,32 @@ Short Answer
 
 Yes, this architecture is coherent.
 
-The correct order is:
+The correct order for the fused path is:
 
-1. `lores param_gen`
-2. `lores coeffgen`
-3. `lores solve`
-4. extract `degree` / `n_coeffs`
-5. compute safe hires chunking
-6. dispatch fused hires chunk workers
-7. finalize metadata
+1. `degree_probe param_gen`
+2. `degree_probe coeffgen`
+3. extract `degree` / `n_coeffs`
+4. compute safe hires chunking
+5. choose `lores N`
+6. `lores param_gen`
+7. `lores coeffgen`
+8. `lores solve`
+9. dispatch fused hires chunk workers
+10. finalize metadata
 
-That works because `lores` and `hires` are expected to produce the same
-coefficient shape:
+That works because the probe, `lores`, and `hires` are expected to produce the
+same coefficient shape:
 
 - same `degree`
 - same `n_coeffs`
 
-The important design choice is:
+The important design choices are:
 
-- v1 should fuse the worker at the Lambda orchestration level while still
-  reusing the existing native binaries
+- v1 fuses the worker at the Lambda orchestration level while still reusing
+  the existing native binaries
 - do not start with a new combined native binary
 - do not require all three stage outputs to remain in RAM at the same time
+- do not mutate the classic branch while fused is being introduced
 
 The win comes mainly from removing cross-Lambda S3 handoff, not from doing
 everything in one in-memory buffer.
@@ -119,8 +127,8 @@ That means the same chunk is processed by three different Lambdas with two S3
 handoffs between them.
 
 
-Core Rule
----------
+Core Rules
+----------
 
 No hidden unsafe chunk sizing.
 
@@ -132,39 +140,81 @@ compute and expose:
 - the expected per-chunk coeffs size
 - the expected per-chunk roots size
 - the assumed memory budget
-- the solver mode and thread count used in the calculation
+- the solver mode and fused worker thread count used in the calculation
 
 The UI must not allow a chunk count below the computed minimum.
 
-Rollout rule:
+Rollout rules:
 
 - do not remove the old compute path before the new one can be selected and
   measured side by side from the UI
+- do not quietly mutate the classic path while bringing up fused
+- `classic_chunk_pipeline` remains the current workflow shape
+- `fused_chunk_pipeline` is added as a second independent branch
 
 
 Proposed Architecture
 ---------------------
 
-## 1. Lores-first probe
+## 1. Degree probe first
 
-Move lores ahead of full-res fan-out.
+Add a tiny dedicated probe ahead of everything else.
+
+Goal:
+
+- determine `degree`
+- determine `n_coeffs`
+- do it cheaply enough that the UI can use the same logic for validation
+
+Recommended shape:
+
+- separate small Lambda route, conceptually similar to compute preview
+- use a fixed tiny grid such as `N=5`, `times=1`
+- run only:
+  - param gen
+  - coeffgen
+- no solve required
+
+Reason:
+
+- the UI needs `degree` / `n_coeffs` before it can validate minimum hires
+  chunks for the fused path
+- `lores N` itself should depend on `degree`, so `lores` cannot be the first
+  thing if the sizing model is to stay honest
+
+Probe outputs:
+
+- `degree`
+- `n_coeffs`
+- `probe_N`
+- `probe_step_count`
+- `param_gen_us`
+- `coeffgen_us`
+- optional:
+  - `params_size`
+  - `coeffs_size`
+
+The probe result should be cached in compute metadata for the run so the popup
+and orchestrator use the same discovered values.
+
+## 2. Lores after probe
+
+Run `lores` only after the degree probe is known.
 
 Flow:
 
-1. lores param gen
-2. lores coeffgen
-3. lores solve
-4. read lores coeffgen metadata
-5. derive:
-   - `degree`
-   - `n_coeffs`
+1. choose `lores N` from the probed `degree`
+2. lores param gen
+3. lores coeffgen
+4. lores solve
 
-This replaces the current need to run full-res coeffgen before lores sizing.
+This replaces the current need to run full-res coeffgen before lores sizing,
+while still keeping lores honest to the real polynomial degree.
 
-## 2. Safe hires chunk sizing
+## 3. Safe hires chunk sizing
 
-After lores coeffgen completes, the planner computes a safe minimum hires chunk
-count.
+After the degree probe completes, the planner computes a safe minimum hires
+chunk count.
 
 Inputs:
 
@@ -191,7 +241,10 @@ Outputs:
 
 The planner must reject any requested `n_chunks < min_safe_chunks`.
 
-## 3. Fused hires chunk worker
+The safe count calculation must be based on the worst stage inside the fused
+worker, not on an average across stages.
+
+## 4. Fused hires chunk worker
 
 Each full-res work item becomes one fused chunk Lambda.
 
@@ -205,15 +258,89 @@ Worker contract:
   - coeff transform chain
   - function
   - solver mode
-  - thread counts
+  - fused worker thread count
   - output keys:
     - params
     - coeffs
     - roots
 - output:
-  - params metadata
-  - coeff metadata
-  - solve metadata
+  - one chunk result record
+
+Thread model:
+
+- one Lambda owns one not-yet-generated chunk
+- inside that Lambda, each stage runs to completion before the next starts
+- each stage is locally multithreaded
+- all stage threads write into shared output buffers/files for that stage
+- once a stage completes:
+  - upload its artifact
+  - emit timing/byte logs
+  - free memory and/or unlink local files no longer needed
+  - proceed to the next stage
+
+Stage threading:
+
+- param gen uses `fused_threads`
+- coeffgen uses `fused_threads`
+- solve uses `fused_threads`
+
+The fused sizing model must use this exact `fused_threads` value.
+
+For v1, `fused_threads` is one knob that applies to all three stages inside the
+fused Lambda.
+
+The classic path keeps its existing stage-specific knobs:
+
+- `param_gen_threads`
+- `coeffgen_threads`
+- `lores_param_gen_threads`
+- `lores_coeffgen_threads`
+
+Those classic knobs are not reused as hidden defaults for the fused path.
+Fused gets its own explicit control.
+
+The fused worker result must be backward-compatible with the classic solve
+result that [lambda/handler_compute_plan.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_compute_plan.py)
+already consumes in `finalize_metadata`.
+
+Required top-level fields:
+
+- `chunk_idx`
+- `s3_key`
+- `bin_size`
+- `compute_us`
+- `n_t`
+- `degree`
+- `avg_iterations`
+
+Required additional fused fields:
+
+- `params_key`
+- `params_size`
+- `params_step_start`
+- `params_step_count`
+- `coeffs_key`
+- `coeffs_size`
+- `param_gen_us`
+- `coeffgen_us`
+- `solve_us`
+- `upload_params_us`
+- `upload_coeffs_us`
+- `upload_roots_us`
+- `param_gen_threads`
+- `coeffgen_threads`
+- `fused_threads`
+- `peak_estimated_bytes`
+- `execution_method`
+
+Rule:
+
+- the classic fields stay byte-for-byte compatible in meaning
+- the fused fields are additive only
+- `finalize_metadata` should be able to consume fused results with no lossy
+  translation step
+- `calc.json` for fused jobs should remain identical in shape to classic jobs,
+  with optional additive metadata only
 
 Execution inside one Lambda:
 
@@ -227,7 +354,7 @@ Execution inside one Lambda:
 8. release coeffs local artifact
 9. emit one combined chunk result record
 
-The key point is:
+The key points are:
 
 - stage outputs still get persisted
 - cross-stage reuse happens locally inside one Lambda
@@ -326,16 +453,18 @@ Recommended values:
 Meaning:
 
 - `classic_chunk_pipeline`
-  - existing full-res execution shape
+  - existing current compute workflow, unchanged
   - `param_gen -> coeffgen -> solve`
   - separate Step Functions phases and Lambdas
 - `fused_chunk_pipeline`
-  - lores-first probe
+  - degree probe first
   - one fused hires worker per chunk
 
 It should show:
 
 - selected execution method
+- discovered `degree`
+- discovered `n_coeffs`
 - total steps
 - requested hires chunk count
 - minimum safe hires chunk count
@@ -345,12 +474,14 @@ It should show:
 - estimated peak bytes per fused chunk
 - fused worker Lambda memory
 - solver mode
-- thread count used in sizing
+- fused worker thread count used in sizing
 
 Rules:
 
 - the execution method must be visible in the popup, persisted, and restored by
   results populate
+- `classic_chunk_pipeline` and `fused_chunk_pipeline` must not share hidden
+  sequencing changes
 - the chunk count control must display the safe minimum next to it
 - the user must be able to select the safe minimum directly
 - the user must not be allowed to choose a smaller chunk count
@@ -376,9 +507,11 @@ If manual:
 Workflow Changes
 ----------------
 
-## New order
+## Classic branch
 
-Replace the current sequence:
+Do not change the classic branch while fused is being introduced.
+
+The current classic sequence stays:
 
 - full-res param gen
 - full-res coeffgen
@@ -388,14 +521,27 @@ Replace the current sequence:
 - lores solve
 - full-res solve
 
-with:
+This is the A/B baseline.
 
+## Fused branch
+
+The fused branch is a fresh sequence:
+
+- degree probe param gen
+- degree probe coeffgen
+- fused sizing / lores sizing
 - lores param gen
 - lores coeffgen
 - lores solve
-- post lores coeffgen probe
-- full-res fused chunk map
+- fused hires chunk map
 - finalize metadata
+
+The fused branch should expose its own knob:
+
+- `fused_threads`
+
+That value controls local multithreading for param gen, coeffgen, and solve
+inside each fused chunk Lambda.
 
 ## New worker phase
 
@@ -453,12 +599,12 @@ That is useful, but not required for the first rollout.
 Phased Rollout
 --------------
 
-## Phase 1: Lores-first probe + sizing UI
+## Phase 1: Degree probe + sizing UI
 
 Implement:
 
-- move lores before hires fan-out
-- derive `degree` / `n_coeffs` from lores coeffgen
+- add degree probe step
+- derive `degree` / `n_coeffs` from the degree probe
 - add safe hires chunk sizing calculation
 - add compute execution-method selector to the UI
 - persist and restore that selection
@@ -466,9 +612,11 @@ Implement:
 - reject unsafe manual chunk counts
 
 Do not yet fuse full-res execution.
+Do not mutate the classic branch.
 
 This phase proves:
 
+- degree probe contract
 - sizing logic
 - UI behavior
 - execution-method persistence
@@ -478,6 +626,7 @@ This phase proves:
 
 Implement:
 
+- separate fused workflow branch
 - new fused hires worker phase
 - local sequential execution:
   - param gen
@@ -486,17 +635,7 @@ Implement:
 - same S3 output contract as today
 - same `calc.json` output fields as today
 
-Remove:
-
-- full-res `ParamGenMap`
-- full-res `CoeffgenMap`
-- full-res `SolveMap`
-
-Replace them with:
-
-- one `FusedChunkMap`
-
-Keep lores separate and first.
+Keep lores separate and first in the fused branch.
 
 Important rollout constraint:
 
@@ -551,11 +690,12 @@ Testing Plan
 
 Add tests for:
 
-- lores-first plan order
+- degree-probe-first fused plan order
 - safe-min chunk calculation
 - unsafe manual chunk rejection
 - auto chunk selection
 - solver-specific sizing branches
+- classic branch remains unchanged
 
 Targets:
 
@@ -570,9 +710,12 @@ Add tests for:
   - params chunk
   - coeffs chunk
   - roots chunk
+- fused worker result includes the classic solve fields unchanged
 - metadata matches current contract
 - stage-local cleanup happens
 - retry of a failed fused chunk is safe
+- per-stage thread counts are forwarded and logged
+- `fused_threads` is forwarded consistently to all three fused stages
 
 ## End-to-end tests
 
@@ -580,6 +723,7 @@ Add coverage for:
 
 - UI can select both classic and fused compute methods
 - selected method persists into results metadata and populate
+- probe result is surfaced in the popup
 - `Calculate-AE-MT` popup reflects safe min chunks
 - unsafe smaller chunk count is rejected
 - successful fused compute still produces a normal `calc.json`
@@ -594,18 +738,25 @@ Checklist
       `classic_chunk_pipeline` vs `fused_chunk_pipeline`.
 - [ ] Persist and restore the selected execution method.
 - [ ] Show the selected execution method in compute logs and result metadata.
-- [ ] Move lores ahead of full-res fan-out.
-- [ ] Add lores coeff probe result handling for `degree` / `n_coeffs`.
+- [ ] Add dedicated `degree_probe` step.
+- [ ] Surface `degree` / `n_coeffs` from the probe in the popup.
+- [ ] Keep the classic workflow unchanged while fused is introduced.
+- [ ] Add fused branch sequencing independent of classic.
 - [ ] Add safe hires chunk count calculation.
 - [ ] Expose safe min chunk count in `Calculate-AE-MT`.
 - [ ] Add `auto hires chunks` mode.
 - [ ] Reject unsafe manual chunk counts.
+- [ ] Add explicit `fused_threads` control to the UI.
+- [ ] Use `fused_threads` consistently across paramgen, coeffgen, and solve in
+      the fused worker.
 - [ ] Add fused hires chunk worker phase.
 - [ ] Keep the classic full-res pipeline available in parallel during rollout.
 - [ ] Reuse current paramgen / coeffgen / solve binaries locally in the fused
       worker.
 - [ ] Keep current S3 artifact naming for params / coeffs / roots.
 - [ ] Keep current `calc.json` fields.
+- [ ] Keep the classic solve-result fields identical in the fused worker
+      result contract.
 - [ ] Add per-stage timing and byte logging.
 - [ ] Add planner / worker / end-to-end tests.
 - [ ] Benchmark the same compute job through both UI-selectable methods before
@@ -629,10 +780,10 @@ Bottom Line
 
 This refactor is worth doing.
 
-The clean execution shape is:
+The clean fused execution shape is:
 
-- `lores` first
-- use lores to discover output shape
+- degree probe first
+- use the probe to discover output shape
 - compute safe hires chunking
 - one fused hires worker per chunk
 

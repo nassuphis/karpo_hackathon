@@ -263,15 +263,6 @@ def build_logical_section_items(chunk_items, *, section_count, degree, n_coeffs,
     for section_idx, solve_count in enumerate(section_sizes):
         if solve_count <= 0:
             continue
-        spans = build_logical_section_spans(
-            items,
-            solve_start=cursor,
-            solve_count=solve_count,
-            degree=degree,
-            n_coeffs=n_coeffs,
-            include_coeff=include_coeff,
-            include_param=include_param,
-        )
         section = {
             "chunk_idx": section_idx,
             "section_idx": section_idx,
@@ -287,12 +278,6 @@ def build_logical_section_items(chunk_items, *, section_count, degree, n_coeffs,
             "params_step_start": 0,
             "params_step_count": solve_count if include_param else 0,
         }
-        if spans["root_spans"]:
-            section["bin_key"] = spans["root_spans"][0]["key"]
-        if include_coeff and spans["coeff_spans"]:
-            section["coeffs_key"] = spans["coeff_spans"][0]["key"]
-        if include_param and spans["param_spans"]:
-            section["params_key"] = spans["param_spans"][0]["key"]
         out.append(section)
         cursor += solve_count
     return out

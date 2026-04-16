@@ -236,6 +236,63 @@ class TestFinalizePixelBins(unittest.TestCase):
     @patch("handler_finalize.subprocess.run")
     @patch("handler_finalize.subprocess.Popen")
     @patch("handler_finalize._finalize_s3_client")
+    def test_finalize_derives_tile_shape_and_pixel_bin_key_from_prefix(self, mock_client_factory, mock_popen, mock_run, mock_report):
+        import handler_finalize as mod
+
+        uploads = {}
+        fake_s3 = MagicMock()
+        pixel_bin_prefix = f"renders/{TEST_JOB_ID}/color/{TEST_ARTIFACT_ID}/pixel_bins/tile_"
+        expected_key = f"{pixel_bin_prefix}0001.bin"
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key == f"renders/{TEST_JOB_ID}/pixbin_chunk_0000_t0001.pbx":
+                return {"Body": _Body(b"\x05" * 4)}
+            raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "missing"}}, "GetObject")
+
+        def upload_fileobj(fileobj, bucket, key):
+            uploads[key] = fileobj.read()
+
+        def run_side_effect(cmd, capture_output=False, text=False, timeout=None):
+            self.assertEqual(os.path.basename(cmd[0]), "pixel_bins_render")
+            self.assertIn("--tile_w=1", cmd)
+            self.assertIn("--tile_h=2", cmd)
+            with open(cmd[2], "wb") as fh:
+                fh.write(struct.pack("<III", 1, 2, 3))
+                fh.write(b"\xaa\xbb\xcc" * 2)
+            return MagicMock(returncode=0, stderr="")
+
+        fake_s3.get_object.side_effect = get_object
+        fake_s3.upload_fileobj.side_effect = upload_fileobj
+        mock_client_factory.return_value = fake_s3
+        mock_popen.side_effect = lambda *args, **kwargs: _FakeProc(args[0])
+        mock_run.side_effect = run_side_effect
+
+        result = mod.handler(_event(
+            tile_idx=1,
+            tile_w=None,
+            tile_h=None,
+            width=3,
+            height=3,
+            tile_size=2,
+            n_tile_cols=2,
+            n_tile_rows=2,
+            pixel_bins_out_key="",
+            pixel_bins_out_prefix=pixel_bin_prefix,
+            pixel_bins_drive_rgb=True,
+        ), None)
+
+        body = json.loads(result["body"])
+        self.assertEqual(body["pixel_bins_key"], expected_key)
+        self.assertIn(expected_key, uploads)
+        started_data = mock_report.call_args_list[0].kwargs["result_data"]
+        self.assertEqual(started_data["tile_w"], 1)
+        self.assertEqual(started_data["tile_h"], 2)
+
+    @patch("handler_finalize.report_status")
+    @patch("handler_finalize.subprocess.run")
+    @patch("handler_finalize.subprocess.Popen")
+    @patch("handler_finalize._finalize_s3_client")
     def test_finalize_can_render_rgb_from_dense_group_pixel_bins(self, mock_client_factory, mock_popen, mock_run, mock_report):
         import handler_finalize as mod
 
@@ -359,6 +416,43 @@ class TestFinalizePixelBins(unittest.TestCase):
         self.assertIn("assembled", statuses)
         self.assertIn("uploading_raw", statuses)
         self.assertIn("done", statuses)
+
+    @patch("handler_finalize.report_status")
+    @patch("handler_finalize.subprocess.Popen")
+    @patch("handler_finalize._finalize_s3_client")
+    def test_finalize_does_not_fallback_to_legacy_pix_keys(self, mock_client_factory, mock_popen, mock_report):
+        import handler_finalize as mod
+
+        uploads = {}
+        requested_keys = []
+        fake_s3 = MagicMock()
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            requested_keys.append(key)
+            if key == f"renders/{TEST_JOB_ID}/pix_chunk_0000_t0000.pix":
+                raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "missing"}}, "GetObject")
+            if key == f"renders/{TEST_JOB_ID}/pix_0000_t0000.pix":
+                return {"Body": _Body(b"\x99" * 8)}
+            raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "missing"}}, "GetObject")
+
+        def upload_fileobj(fileobj, bucket, key):
+            uploads[key] = fileobj.read()
+
+        fake_s3.get_object.side_effect = get_object
+        fake_s3.upload_fileobj.side_effect = upload_fileobj
+        mock_client_factory.return_value = fake_s3
+        mock_popen.side_effect = lambda *args, **kwargs: _FakeProc(args[0])
+
+        with tempfile.TemporaryDirectory() as td, \
+             patch("handler_finalize.PIXASSEMBLE", "pixassemble"):
+            result = mod.handler(_event(emit_pixel_bins=False, pixel_bins_out_key=""), None)
+
+        body = json.loads(result["body"])
+        self.assertEqual(body["pix_files"], 0)
+        self.assertIn(TEST_RAW_KEY, uploads)
+        self.assertIn(f"renders/{TEST_JOB_ID}/pix_chunk_0000_t0000.pix", requested_keys)
+        self.assertNotIn(f"renders/{TEST_JOB_ID}/pix_0000_t0000.pix", requested_keys)
 
 
 if __name__ == "__main__":

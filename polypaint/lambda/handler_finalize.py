@@ -1,7 +1,7 @@
 """
 Finalize Lambda handler — assembles tile-bucketed .pix files into a .raw tile.
 
-One Lambda per 2D tile. Downloads all .pix files for this tile from all stripes,
+One Lambda per 2D tile. Downloads all .pix files for this tile from all chunks,
 pipes them to pixassemble (via stdin), uploads the resulting .raw file.
 Reports completion status to DynamoDB for poll-based orchestration.
 """
@@ -42,6 +42,19 @@ def _parse_int(value, default):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _tile_shape(tile_idx, width, height, tile_size, n_tile_cols):
+    tile_idx = int(tile_idx)
+    width = int(width)
+    height = int(height)
+    tile_size = int(tile_size)
+    n_tile_cols = int(n_tile_cols)
+    row = tile_idx // n_tile_cols
+    col = tile_idx % n_tile_cols
+    tile_w = max(0, min(tile_size, width - col * tile_size))
+    tile_h = max(0, min(tile_size, height - row * tile_size))
+    return tile_w, tile_h
 
 
 def _finalize_static_progress(
@@ -111,22 +124,14 @@ def _read_body_bytes(body):
     return b"".join(chunks)
 
 
-def _load_finalize_blob(finalize_s3, key, legacy_key=None):
+def _load_finalize_blob(finalize_s3, key):
     try:
         obj = finalize_s3.get_object(Bucket=BUCKET, Key=key)
         return {"key": key, "data": _read_body_bytes(obj["Body"])}
     except ClientError as exc:
         if not _is_missing_s3_error(exc):
             raise
-    if not legacy_key:
-        return None
-    try:
-        obj = finalize_s3.get_object(Bucket=BUCKET, Key=legacy_key)
-        return {"key": legacy_key, "data": _read_body_bytes(obj["Body"])}
-    except ClientError as exc:
-        if _is_missing_s3_error(exc):
-            return None
-        raise
+    return None
 
 
 def _ordered_prefetch(n_items, workers, load_fn):
@@ -370,11 +375,23 @@ def handler(event, context):
     n_chunks = params.get("n_chunks", params.get("n_stripes"))
     if n_chunks is None:
         raise RuntimeError("finalize requires n_chunks")
-    tile_w = params["tile_w"]
-    tile_h = params["tile_h"]
+    tile_w = params.get("tile_w")
+    tile_h = params.get("tile_h")
+    if tile_w in (None, "") or tile_h in (None, ""):
+        tile_w, tile_h = _tile_shape(
+            tile_idx,
+            params["width"],
+            params["height"],
+            params["tile_size"],
+            params["n_tile_cols"],
+        )
     task_id = params.get("task_id", f"tile_{tile_idx}")
     emit_pixel_bins_requested = _parse_boolish(params.get("emit_pixel_bins"), False)
     pixel_bins_out_key = params.get("pixel_bins_out_key")
+    if not pixel_bins_out_key:
+        pixel_bins_out_prefix = str(params.get("pixel_bins_out_prefix") or "").strip()
+        if pixel_bins_out_prefix:
+            pixel_bins_out_key = f"{pixel_bins_out_prefix}{int(tile_idx):04d}.bin"
     emit_pixel_bins = emit_pixel_bins_requested and bool(pixel_bins_out_key)
     pixel_bins_drive_rgb = _parse_boolish(params.get("pixel_bins_drive_rgb"), False)
     if pixel_bins_drive_rgb and not emit_pixel_bins:
@@ -513,7 +530,6 @@ def handler(event, context):
                 lambda idx: _load_finalize_blob(
                     finalize_s3,
                     f"renders/{job_id}/pix_chunk_{idx:04d}_t{tile_idx:04d}.pix",
-                    legacy_key=f"renders/{job_id}/pix_{idx:04d}_t{tile_idx:04d}.pix",
                 ),
             ):
                 if loaded is None:

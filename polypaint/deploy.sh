@@ -1,6 +1,6 @@
 #!/bin/bash
 # Deploy the polypaint Lambda functions
-# Usage: ./deploy.sh [create|update]
+# Usage: ./deploy.sh [create|update|show-build]
 #
 # Core Lambdas:
 #   polypaint-sweep        — single-thread AE root solver (sweep binary)
@@ -134,6 +134,11 @@ elif [ -x "$SCRIPT_DIR/../.venv/bin/python" ]; then
 else
     TEST_PYTHON=(python3)
 fi
+ACTION="${1:-create}"
+
+print_usage() {
+    echo "Usage: $0 [create|update|show-build]"
+}
 
 # --- S3 website bucket setup (idempotent) ---
 ensure_bucket_website() {
@@ -227,6 +232,203 @@ verify_frontend_assets() {
         echo "  ${asset}: HTTP ${STATUS} OK"
     done
 }
+
+zip_content_hash() {
+    local ZIP_PATH="$1"
+    "${TEST_PYTHON[@]}" - "$ZIP_PATH" <<'PY'
+import hashlib
+import sys
+import zipfile
+
+zip_path = sys.argv[1]
+with zipfile.ZipFile(zip_path) as zf:
+    names = sorted(name for name in zf.namelist() if not name.endswith("/"))
+    h = hashlib.sha256()
+    for name in names:
+        data = zf.read(name)
+        h.update(name.encode("utf-8"))
+        h.update(b"\0")
+        h.update(hashlib.sha256(data).digest())
+        h.update(b"\n")
+print(h.hexdigest())
+PY
+}
+
+json_content_hash() {
+    local JSON_PATH="$1"
+    "${TEST_PYTHON[@]}" - "$JSON_PATH" <<'PY'
+import hashlib
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+payload = json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+print(hashlib.sha256(payload).hexdigest())
+PY
+}
+
+package_render_plan_zip() {
+    local ZIP_PATH="$1"
+    local PLAN_DIR="$2"
+    rm -rf "$PLAN_DIR"
+    mkdir -p "$PLAN_DIR"
+    cp lambda/handler_render_plan.py lambda/shared.py \
+       lambda/logical_sections.py \
+       lambda/param_source.py \
+       lambda/solve_score_chain.py \
+       lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PLAN_DIR/"
+    cd "$PLAN_DIR" && zip -r9 "$ZIP_PATH" . -q && cd "$SCRIPT_DIR"
+}
+
+render_render_workflow_definition() {
+    local OUT_PATH="$1"
+    local ACCT="$2"
+    local RENDER_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PLAN_NAME}"
+    local RENDER_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_STATUS_NAME}"
+    local RASTER_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RASTER_NAME}"
+    local FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_NAME}"
+    local ENCODE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ENCODE_NAME}"
+    local STORAGE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${STORAGE_NAME}"
+    local BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
+    local BILEVEL_STITCH_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_STITCH_NAME}"
+    local SOLVE_PROXIMITY_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
+    local PALETTE_CHUNK_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_CHUNK_NAME}"
+    local PALETTE_FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_FINALIZE_NAME}"
+    local PREVIEW_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PREVIEW_NAME}"
+
+    sed -e "s|\${PlanFunctionArn}|${RENDER_PLAN_ARN}|g" \
+        -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
+        -e "s|\${RasterFunctionArn}|${RASTER_ARN}|g" \
+        -e "s|\${FinalizeFunctionArn}|${FINALIZE_ARN}|g" \
+        -e "s|\${EncodeFunctionArn}|${ENCODE_ARN}|g" \
+        -e "s|\${StorageFunctionArn}|${STORAGE_ARN}|g" \
+        -e "s|\${BilevelFunctionArn}|${BILEVEL_ARN}|g" \
+        -e "s|\${BilevelStitchFunctionArn}|${BILEVEL_STITCH_ARN}|g" \
+        -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
+        -e "s|\${PaletteChunkFunctionArn}|${PALETTE_CHUNK_ARN}|g" \
+        -e "s|\${PaletteFinalizeFunctionArn}|${PALETTE_FINALIZE_ARN}|g" \
+        -e "s|\${PreviewFunctionArn}|${PREVIEW_ARN}|g" \
+        stepfunctions/render_workflow.asl.json.template > "$OUT_PATH"
+}
+
+show_build() {
+    build_deploy_metadata
+    local TMP_DIR
+    TMP_DIR=$(mktemp -d /tmp/polypaint-show-build.XXXXXX)
+    trap 'rm -rf "$TMP_DIR"' RETURN
+
+    local CONFIG_URL="https://${BUCKET}.s3.${REGION}.amazonaws.com/config.json"
+    local CONFIG_PATH="$TMP_DIR/config.json"
+    curl -fsS "$CONFIG_URL" -o "$CONFIG_PATH"
+
+    local LOCAL_RENDER_PLAN_ZIP="$TMP_DIR/render-plan-local.zip"
+    local LOCAL_RENDER_PLAN_DIR="$TMP_DIR/render-plan-local"
+    package_render_plan_zip "$LOCAL_RENDER_PLAN_ZIP" "$LOCAL_RENDER_PLAN_DIR"
+    local LOCAL_RENDER_PLAN_HASH
+    LOCAL_RENDER_PLAN_HASH=$(zip_content_hash "$LOCAL_RENDER_PLAN_ZIP")
+
+    local DEPLOYED_RENDER_PLAN_URL
+    DEPLOYED_RENDER_PLAN_URL=$(aws lambda get-function \
+        --function-name "$RENDER_PLAN_NAME" \
+        --region "$REGION" \
+        --query 'Code.Location' --output text)
+    local DEPLOYED_RENDER_PLAN_ZIP="$TMP_DIR/render-plan-deployed.zip"
+    curl -fsS "$DEPLOYED_RENDER_PLAN_URL" -o "$DEPLOYED_RENDER_PLAN_ZIP"
+    local DEPLOYED_RENDER_PLAN_HASH
+    DEPLOYED_RENDER_PLAN_HASH=$(zip_content_hash "$DEPLOYED_RENDER_PLAN_ZIP")
+
+    local ACCT
+    ACCT=$(aws sts get-caller-identity --region "$REGION" --query 'Account' --output text)
+    local LOCAL_RENDER_WORKFLOW="$TMP_DIR/render_workflow_local.json"
+    render_render_workflow_definition "$LOCAL_RENDER_WORKFLOW" "$ACCT"
+    local DEPLOYED_RENDER_WORKFLOW="$TMP_DIR/render_workflow_deployed.json"
+    aws stepfunctions describe-state-machine \
+        --state-machine-arn "arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}" \
+        --region "$REGION" \
+        --query 'definition' --output text > "$DEPLOYED_RENDER_WORKFLOW"
+    local LOCAL_RENDER_WORKFLOW_HASH
+    local DEPLOYED_RENDER_WORKFLOW_HASH
+    LOCAL_RENDER_WORKFLOW_HASH=$(json_content_hash "$LOCAL_RENDER_WORKFLOW")
+    DEPLOYED_RENDER_WORKFLOW_HASH=$(json_content_hash "$DEPLOYED_RENDER_WORKFLOW")
+
+    "${TEST_PYTHON[@]}" - \
+        "$CONFIG_PATH" \
+        "$BUILD_ID" \
+        "$BUILD_GIT_REV" \
+        "$BUILD_GIT_DIRTY" \
+        "$BUILD_FRONTEND_SHA256" \
+        "$LOCAL_RENDER_PLAN_HASH" \
+        "$DEPLOYED_RENDER_PLAN_HASH" \
+        "$LOCAL_RENDER_WORKFLOW_HASH" \
+        "$DEPLOYED_RENDER_WORKFLOW_HASH" <<'PY'
+import json
+import sys
+
+(
+    config_path,
+    local_build_id,
+    local_git_rev,
+    local_git_dirty_raw,
+    local_frontend_sha,
+    local_render_plan_hash,
+    deployed_render_plan_hash,
+    local_render_workflow_hash,
+    deployed_render_workflow_hash,
+) = sys.argv[1:]
+
+with open(config_path, "r", encoding="utf-8") as fh:
+    config = json.load(fh)
+build = dict(config.get("build") or {})
+deployed_build_id = str(build.get("build_id") or "")
+deployed_git_rev = str(build.get("git_rev") or "")
+deployed_frontend_sha = str(build.get("frontend_sha256") or "")
+deployed_git_dirty = bool(build.get("git_dirty"))
+local_git_dirty = local_git_dirty_raw.lower() == "true"
+
+frontend_match = (
+    deployed_git_rev == local_git_rev
+    and deployed_git_dirty == local_git_dirty
+    and deployed_frontend_sha == local_frontend_sha
+)
+render_plan_match = local_render_plan_hash == deployed_render_plan_hash
+render_workflow_match = local_render_workflow_hash == deployed_render_workflow_hash
+overall_match = frontend_match and render_plan_match and render_workflow_match
+
+print("Local source")
+print(f"  build_id(now):        {local_build_id}")
+print(f"  git_rev:              {local_git_rev}")
+print(f"  git_dirty:            {str(local_git_dirty).lower()}")
+print(f"  frontend_sha256:      {local_frontend_sha}")
+print("Deployed frontend")
+print(f"  build_id:             {deployed_build_id}")
+print(f"  git_rev:              {deployed_git_rev}")
+print(f"  git_dirty:            {str(deployed_git_dirty).lower()}")
+print(f"  frontend_sha256:      {deployed_frontend_sha}")
+print(f"  source_match:         {'yes' if frontend_match else 'no'}")
+print("Render plan bundle")
+print(f"  local_content_hash:   {local_render_plan_hash}")
+print(f"  deployed_content_hash:{deployed_render_plan_hash}")
+print(f"  match:                {'yes' if render_plan_match else 'no'}")
+print("Render workflow")
+print(f"  local_json_hash:      {local_render_workflow_hash}")
+print(f"  deployed_json_hash:   {deployed_render_workflow_hash}")
+print(f"  match:                {'yes' if render_workflow_match else 'no'}")
+print(f"Overall: {'MATCH' if overall_match else 'MISMATCH'}")
+sys.exit(0 if overall_match else 2)
+PY
+}
+
+if [ "$ACTION" = "show-build" ]; then
+    show_build
+    exit $?
+fi
+
+if [ "$ACTION" != "create" ] && [ "$ACTION" != "update" ]; then
+    print_usage
+    exit 1
+fi
 
 # --- Generate palette assets ---
 echo "Generating palette assets..."
@@ -1074,8 +1276,6 @@ cp lambda/sweep_cm "$CM_DIR/"
 chmod +x "$CM_DIR"/sweep_cm
 cd "$CM_DIR" && zip -r9 /tmp/polypaint-sweep-cm.zip . -q && cd "$SCRIPT_DIR"
 echo "  SweepCM: $(du -h /tmp/polypaint-sweep-cm.zip | cut -f1)  (sweep_cm + LAPACK layer)"
-
-ACTION="${1:-create}"
 
 # Helper: create a Lambda function
 create_lambda() {
@@ -2096,6 +2296,6 @@ elif [ "$ACTION" = "update" ]; then
     echo "    HTTP:   http://$BUCKET.s3-website-$REGION.amazonaws.com"
     echo "    HTTPS:  https://$BUCKET.s3.$REGION.amazonaws.com/index.html"
 else
-    echo "Usage: $0 [create|update]"
+    print_usage
     exit 1
 fi

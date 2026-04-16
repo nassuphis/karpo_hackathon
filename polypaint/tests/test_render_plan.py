@@ -163,11 +163,10 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["grid"]["n_tile_cols"] == 2
         assert plan["grid"]["n_tile_rows"] == 2
         assert plan["grid"]["n_tiles"] == 4
-        assert len(plan["grid"]["tile_keys"]) == 4
-        assert plan["grid"]["tile_keys"][0] == "renders/j/tile_0000.raw"
+        assert plan["grid"]["raw_tile_prefix"] == "renders/j/tile_"
+        assert plan["grid"]["pixel_bin_tile_prefix"] == ""
         assert len(plan["tile_items"]) == 4
-        assert plan["tile_items"][0]["tile_w"] == 512
-        assert plan["tile_items"][0]["tile_h"] == 512
+        assert plan["tile_items"][0] == {"tile_idx": 0}
 
     @patch("handler_render_plan._storage_call")
     def test_solve_score_plan(self, mock_storage):
@@ -214,7 +213,7 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["outputs"]["metadata"]["rgb_source"] == "pixel_bins"
         assert plan["outputs"]["metadata"]["pixel_bins_prefix"] == "renders/j/color/color_run_t/pixel_bins/tile_"
         assert plan["outputs"]["metadata"]["pixel_bins_layout"] == "tile_u8_v1"
-        assert plan["grid"]["pixel_bin_tile_keys"][0] == "renders/j/color/color_run_t/pixel_bins/tile_0000.bin"
+        assert plan["grid"]["pixel_bin_tile_prefix"] == "renders/j/color/color_run_t/pixel_bins/tile_"
         assert plan["raster"]["requested_engine"] == "single"
         assert plan["raster"]["pixel_bin_fragment_mode"] == "sparse_chunks"
         assert plan["raster"]["raster_bin_group_size"] == ""
@@ -277,7 +276,7 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["raster"]["pixel_bin_fragment_mode"] == "sparse_chunks"
         assert plan["raster"]["raster_bin_group_size"] == ""
         assert plan["raster"]["item_count"] == 3
-        assert [item["chunk_indices"] for item in plan["raster_items"]] == [[0], [1], [2]]
+        assert plan["raster_items"] == []
 
     @patch("handler_render_plan._storage_call")
     def test_render_plan_persists_full_render_execution_config(self, mock_storage):
@@ -398,9 +397,9 @@ class TestRenderPlan(unittest.TestCase):
         self.assertNotIn("root_spans", first)
         self.assertNotIn("coeff_spans", first)
         self.assertNotIn("param_spans", first)
-        self.assertEqual(first["bin_key"], "renders/j/chunk_0.bin")
-        self.assertEqual(first["coeffs_key"], "renders/j/coeffs_0000.bin")
-        self.assertEqual(first["params_key"], "renders/j/params.bin")
+        self.assertEqual(first["bin_key"], "")
+        self.assertEqual(first["coeffs_key"], "")
+        self.assertEqual(first["params_key"], "")
         spans = build_logical_section_spans(
             plan["chunk_items"],
             solve_start=first["step_start"],
@@ -492,6 +491,47 @@ class TestRenderPlan(unittest.TestCase):
                 solve_score_section_count=1,
             ), None)
         self.assertIn("safe minimum", str(ctx.exception))
+
+    @patch("handler_render_plan._storage_call")
+    def test_plan_too_large_message_uses_current_controls(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 70,
+            "n_coeffs": 71,
+            "N": 4_000_000,
+            "times": 1,
+            "params_key": "renders/j/params.bin",
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_count": 1_000_000},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_count": 1_000_000},
+                {"idx": 2, "bin_key": "renders/j/chunk_2.bin", "step_count": 1_000_000},
+                {"idx": 3, "bin_key": "renders/j/chunk_3.bin", "step_count": 1_000_000},
+            ],
+            "lores": {
+                "bin_key": "renders/j/lores.bin",
+                "coeffs_key": "renders/j/lores_coeffs.bin",
+                "params_key": "renders/j/lores_params.bin",
+            },
+        })
+        import handler_render_plan as mod
+
+        with patch.object(mod, "MAX_PLAN_BYTES", 1500):
+            with self.assertRaises(RuntimeError) as ctx:
+                mod.handler(_make_event(
+                    color_mode="solve_score",
+                    solve_score_threads=4,
+                    solve_score_chain=[["spread", "cf", "1"], ["t1_abs", "pm", "1"], ["avg"]],
+                    solve_score_section_mode="logical_sections_auto",
+                    save_associated_palette=True,
+                    palette_section_mode="logical_sections_auto",
+                    pix=4096,
+                    tile_size=512,
+                ), None)
+        msg = str(ctx.exception)
+        self.assertIn("Counts: chunks=", msg)
+        self.assertIn("solve_score_items=", msg)
+        self.assertIn("palette_items=", msg)
+        self.assertIn("tile_size", msg)
+        self.assertNotIn("stripe count", msg.lower())
 
     @patch("handler_render_plan._storage_call")
     def test_solve_score_chain_input_compiles_to_scalar_contract(self, mock_storage):
@@ -993,6 +1033,8 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(first["step_count"], 34)
         self.assertNotIn("root_spans", first)
         self.assertNotIn("coeff_spans", first)
+        self.assertEqual(first["bin_key"], "")
+        self.assertEqual(first["coeffs_key"], "")
         spans = build_logical_section_spans(
             plan["chunk_items"],
             solve_start=first["step_start"],

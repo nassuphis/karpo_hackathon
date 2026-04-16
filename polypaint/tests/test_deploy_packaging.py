@@ -349,6 +349,26 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('echo "    HTTPS:  https://$BUCKET.s3.$REGION.amazonaws.com/index.html"', DEPLOY_TEXT)
         self.assertIn('echo "  SolvPrxB: $SOLVE_PROXIMITY_BENCH_NAME ($SOLVE_PROXIMITY_BENCH_MEMORY MB)"', DEPLOY_TEXT)
 
+    def test_deploy_usage_includes_show_build_mode(self):
+        self.assertIn('# Usage: ./deploy.sh [create|update|show-build]', DEPLOY_TEXT)
+        self.assertIn('print_usage() {', DEPLOY_TEXT)
+        self.assertIn('echo "Usage: $0 [create|update|show-build]"', DEPLOY_TEXT)
+
+    def test_show_build_mode_compares_frontend_render_plan_and_workflow(self):
+        self.assertIn('show_build() {', DEPLOY_TEXT)
+        self.assertIn('if [ "$ACTION" = "show-build" ]; then', DEPLOY_TEXT)
+        self.assertIn('package_render_plan_zip "$LOCAL_RENDER_PLAN_ZIP" "$LOCAL_RENDER_PLAN_DIR"', DEPLOY_TEXT)
+        self.assertIn('aws lambda get-function \\', DEPLOY_TEXT)
+        self.assertIn('--function-name "$RENDER_PLAN_NAME"', DEPLOY_TEXT)
+        self.assertIn('--region "$REGION"', DEPLOY_TEXT)
+        self.assertIn("aws sts get-caller-identity --region \"$REGION\"", DEPLOY_TEXT)
+        self.assertIn('aws stepfunctions describe-state-machine \\', DEPLOY_TEXT)
+        self.assertIn('"arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}"', DEPLOY_TEXT)
+        self.assertIn("Deployed frontend", DEPLOY_TEXT)
+        self.assertIn("Render plan bundle", DEPLOY_TEXT)
+        self.assertIn("Render workflow", DEPLOY_TEXT)
+        self.assertIn("Overall: {'MATCH' if overall_match else 'MISMATCH'}", DEPLOY_TEXT)
+
     def test_deploy_writes_build_metadata_into_config_json(self):
         self.assertIn('build_deploy_metadata()', DEPLOY_TEXT)
         self.assertIn('"build": {', DEPLOY_TEXT)
